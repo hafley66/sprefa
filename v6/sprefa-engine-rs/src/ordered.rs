@@ -169,13 +169,11 @@ fn snapshot_pre(program: &GenProgram, seam: &SqliteSeam) {
             .map(|column| quote_identifier(column))
             .collect::<Vec<_>>()
             .join(", ");
-        statements.push(format!(
-            "DELETE FROM {}",
-            quote_identifier(&format!("__pre_{name}"))
-        ));
+        let pre_table = quote_identifier(&format!("__pre_{}", relation.table_name));
+        statements.push(format!("DELETE FROM {pre_table}"));
         statements.push(format!(
             "INSERT INTO {} ({}) SELECT {} FROM {}",
-            quote_identifier(&format!("__pre_{name}")),
+            pre_table,
             columns,
             columns,
             quote_identifier(&relation.table_name)
@@ -200,7 +198,7 @@ fn recompute_levels(program: &GenProgram, seam: &SqliteSeam) {
                 .iter()
                 .map(|statement| format!(
                     "(SELECT count(*) FROM {})",
-                    quote_identifier(&statement.head_rel)
+                    quote_identifier(&statement.head_table_name)
                 ))
                 .collect::<Vec<_>>()
                 .join(" + ")
@@ -419,7 +417,7 @@ fn pre_write_statement(arm: &OrderedEdgeArm, row: &[ScalarValue]) -> Option<SqlS
     if !arm.evolves_pre {
         return None;
     }
-    let table = quote_identifier(&format!("__pre_{}", arm.head_rel));
+    let table = quote_identifier(&format!("__pre_{}", arm.head_table_name));
     let columns = arm
         .head_columns
         .iter()

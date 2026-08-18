@@ -151,7 +151,7 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 export const STRUCT_TYPES: readonly IStructTypePlan[] = [
-  { name: "span", columns: ["start", "end"], refs: [null, null], key_indices: [0, 1], conflict_sql: `SELECT i.value AS "__requested", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]') WHERE json_array(t."start", t."end") <> i.value`, intern_sql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`, lookup_sql: `SELECT i.value AS "__lookup", t."__id", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]')` },
+  { name: "span", columns: ["start", "end"], refs: [null, null], key_indices: [0, 1], conflict_sql: `SELECT i.value AS "__requested", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "struct_shared_child_survives_one_release_span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]') WHERE json_array(t."start", t."end") <> i.value`, intern_sql: `INSERT OR IGNORE INTO "struct_shared_child_survives_one_release_span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`, lookup_sql: `SELECT i.value AS "__lookup", t."__id", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "struct_shared_child_survives_one_release_span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]')` },
 ];
 
 export const STRUCT_REF_COLUMNS: IStructRefColumns = {
@@ -168,23 +168,23 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "hit" ("__id" INTEGER PRIMARY KEY, "owner" INTEGER NOT NULL, "at" INTEGER NOT NULL, UNIQUE ("owner", "at"))`,
-  `CREATE TEMP VIEW "__txt_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner", t."at" AS "at" FROM "hit" t`,
-  `CREATE TABLE "span" ("__id" INTEGER PRIMARY KEY, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, UNIQUE ("start", "end"))`,
-  `CREATE TEMP VIEW "__ref_span" AS SELECT t."__id", "start", "end", json_object('start', t."start", 'end', t."end") AS "__rendered" FROM "span" t`,
-  `CREATE TEMP TABLE "__delta_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "owner" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_hit_sign" ON "__delta_hit" ("_sign")`,
-  `CREATE INDEX "__delta_hit_group" ON "__delta_hit" ("owner", "at")`,
-  `CREATE TEMP TABLE "__frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "owner" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_hit_phase" ON "__frontier_hit" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "owner" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner", t."at" AS "at", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_hit" t`,
-  `CREATE TEMP TABLE "__delta_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_span_sign" ON "__delta_span" ("_sign")`,
-  `CREATE INDEX "__delta_span_group" ON "__delta_span" ("start", "end")`,
-  `CREATE TEMP TABLE "__frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_span_phase" ON "__frontier_span" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE TABLE "struct_shared_child_survives_one_release_hit" ("__id" INTEGER PRIMARY KEY, "owner" INTEGER NOT NULL, "at" INTEGER NOT NULL, UNIQUE ("owner", "at"))`,
+  `CREATE TEMP VIEW "__txt_struct_shared_child_survives_one_release_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner", t."at" AS "at" FROM "struct_shared_child_survives_one_release_hit" t`,
+  `CREATE TABLE "struct_shared_child_survives_one_release_span" ("__id" INTEGER PRIMARY KEY, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, UNIQUE ("start", "end"))`,
+  `CREATE TEMP VIEW "__ref_struct_shared_child_survives_one_release_span" AS SELECT t."__id", "start", "end", json_object('start', t."start", 'end', t."end") AS "__rendered" FROM "struct_shared_child_survives_one_release_span" t`,
+  `CREATE TEMP TABLE "__delta_struct_shared_child_survives_one_release_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "owner" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_struct_shared_child_survives_one_release_hit_sign" ON "__delta_struct_shared_child_survives_one_release_hit" ("_sign")`,
+  `CREATE INDEX "__delta_struct_shared_child_survives_one_release_hit_group" ON "__delta_struct_shared_child_survives_one_release_hit" ("owner", "at")`,
+  `CREATE TEMP TABLE "__frontier_struct_shared_child_survives_one_release_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "owner" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_struct_shared_child_survives_one_release_hit_phase" ON "__frontier_struct_shared_child_survives_one_release_hit" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_struct_shared_child_survives_one_release_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "owner" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_struct_shared_child_survives_one_release_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner", t."at" AS "at", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_struct_shared_child_survives_one_release_hit" t`,
+  `CREATE TEMP TABLE "__delta_struct_shared_child_survives_one_release_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_struct_shared_child_survives_one_release_span_sign" ON "__delta_struct_shared_child_survives_one_release_span" ("_sign")`,
+  `CREATE INDEX "__delta_struct_shared_child_survives_one_release_span_group" ON "__delta_struct_shared_child_survives_one_release_span" ("start", "end")`,
+  `CREATE TEMP TABLE "__frontier_struct_shared_child_survives_one_release_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_struct_shared_child_survives_one_release_span_phase" ON "__frontier_struct_shared_child_survives_one_release_span" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_struct_shared_child_survives_one_release_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -216,16 +216,16 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 11, parent_id: 7, ordinal: 0, local_name: "span", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "a29d32c9d6864d17", h_schema: "302755ba572df023", h_rule: "" },
   { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "start", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "15a0bb20a6820145", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 11, ordinal: 2, local_name: "end", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "bc22fc6f40982b16", h_schema: "", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_hit", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "100098c09239251d", h_schema: "e251b2e901d4dac7", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_hit", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "a59b9f1f214efe63", h_schema: "881f77270e64e461", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_hit", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "cacb1b34143f28e2", h_schema: "881f77270e64e461", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_hit", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "17f39935e9b160f7", h_schema: "2b224c9085bb730f", h_rule: "" },
-  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_hit", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "df0747d053bf3451", h_schema: "2b224c9085bb730f", h_rule: "" },
-  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_span", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "fea596f482659462", h_schema: "b1b864f950ffae18", h_rule: "" },
-  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_span", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "5116e24748dccd7d", h_schema: "81f811d7185f8016", h_rule: "" },
-  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_span", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "4785932cdd510485", h_schema: "81f811d7185f8016", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_struct_shared_child_survives_one_release_hit", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "440fdbd53efb57f9", h_schema: "e251b2e901d4dac7", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_struct_shared_child_survives_one_release_hit", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "3102a38d5f1bc27e", h_schema: "881f77270e64e461", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_struct_shared_child_survives_one_release_hit", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "ec45a0810d318a33", h_schema: "881f77270e64e461", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_struct_shared_child_survives_one_release_hit", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "e46615177c17b98d", h_schema: "2b224c9085bb730f", h_rule: "" },
+  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_struct_shared_child_survives_one_release_hit", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "256e77ff0b4f6692", h_schema: "2b224c9085bb730f", h_rule: "" },
+  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_struct_shared_child_survives_one_release_span", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "363fe83f8039fe73", h_schema: "b1b864f950ffae18", h_rule: "" },
+  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_struct_shared_child_survives_one_release_span", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "f874b37d68276be1", h_schema: "81f811d7185f8016", h_rule: "" },
+  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_struct_shared_child_survives_one_release_span", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "439f4dfddfe18efd", h_schema: "81f811d7185f8016", h_rule: "" },
   { rel_id: 22, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "1edc4b6960405cad", h_schema: "", h_rule: "" },
-  { rel_id: 23, parent_id: 7, ordinal: 0, local_name: "__ref_span", kind: "dictionary", type_id: 11, arity: 4, module_id: 7, h_id: "cd3da4b9d86b953b", h_schema: "302755ba572df023", h_rule: "" },
+  { rel_id: 23, parent_id: 7, ordinal: 0, local_name: "__ref_struct_shared_child_survives_one_release_span", kind: "dictionary", type_id: 11, arity: 4, module_id: 7, h_id: "0baa54032f327162", h_schema: "302755ba572df023", h_rule: "" },
   { rel_id: 24, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "d9b9e7a08ec684b6", h_schema: "", h_rule: "" },
   { rel_id: 25, parent_id: 10, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "751bdb0b3468fc9b", h_schema: "", h_rule: "" },
   { rel_id: 26, parent_id: 12, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "afdef1fb002873cb", h_schema: "", h_rule: "" },
@@ -243,13 +243,13 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  hit: `SELECT CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at" FROM "__txt_hit" t`,
-  span: `SELECT t."start", t."end" FROM "span" t`,
+  hit: `SELECT CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner", (SELECT d."__rendered" FROM "__ref_struct_shared_child_survives_one_release_span" d WHERE d."__id" = t."at") AS "at" FROM "__txt_struct_shared_child_survives_one_release_hit" t`,
+  span: `SELECT t."start", t."end" FROM "struct_shared_child_survives_one_release_span" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "hit", kind: "set", table_name: "hit", delta_table_name: "__delta_hit", frontier_table_name: "__frontier_hit", next_frontier_table_name: "__next_frontier_hit", columns: ["owner", "at"], column_types: ["text", "ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "hit" ("owner", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "owner", "at"`, arrival_del_sql: `DELETE FROM "hit" WHERE ("owner", "at") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "owner", "at"`, boundary_sql: `SELECT CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_hit" t WHERE t."_sign" IN (-1, 1) GROUP BY t."owner", t."at", t."_sign"`, rule_observers: [] },
-  { rel: "span", kind: "set", table_name: "span", delta_table_name: "__delta_span", frontier_table_name: "__frontier_span", next_frontier_table_name: "__next_frontier_span", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrival_del_sql: `DELETE FROM "span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundary_sql: `SELECT t."start", t."end", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" t WHERE t."_sign" IN (-1, 1) GROUP BY t."start", t."end", t."_sign"`, rule_observers: [] },
+  { rel: "hit", kind: "set", table_name: "struct_shared_child_survives_one_release_hit", delta_table_name: "__delta_struct_shared_child_survives_one_release_hit", frontier_table_name: "__frontier_struct_shared_child_survives_one_release_hit", next_frontier_table_name: "__next_frontier_struct_shared_child_survives_one_release_hit", columns: ["owner", "at"], column_types: ["text", "ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "struct_shared_child_survives_one_release_hit" ("owner", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "owner", "at"`, arrival_del_sql: `DELETE FROM "struct_shared_child_survives_one_release_hit" WHERE ("owner", "at") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "owner", "at"`, boundary_sql: `SELECT CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner", (SELECT d."__rendered" FROM "__ref_struct_shared_child_survives_one_release_span" d WHERE d."__id" = t."at") AS "at", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_struct_shared_child_survives_one_release_hit" t WHERE t."_sign" IN (-1, 1) GROUP BY t."owner", t."at", t."_sign"`, rule_observers: [] },
+  { rel: "span", kind: "set", table_name: "struct_shared_child_survives_one_release_span", delta_table_name: "__delta_struct_shared_child_survives_one_release_span", frontier_table_name: "__frontier_struct_shared_child_survives_one_release_span", next_frontier_table_name: "__next_frontier_struct_shared_child_survives_one_release_span", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "struct_shared_child_survives_one_release_span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrival_del_sql: `DELETE FROM "struct_shared_child_survives_one_release_span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundary_sql: `SELECT t."start", t."end", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_struct_shared_child_survives_one_release_span" t WHERE t."_sign" IN (-1, 1) GROUP BY t."start", t."end", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

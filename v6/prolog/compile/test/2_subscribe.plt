@@ -238,7 +238,8 @@ test(emitted_boot_statements_name_their_rel) :-
       Codes),
     parse_dl(Codes, Program, Bindings, []),
     emitted_text(emitted_boot_statements_name_their_rel, Program, Bindings, Text),
-    once(sub_atom(Text, _, _, _, '{ rel: "job", sql: `DELETE FROM "job"`, params: [] },')),
+    once(sub_atom(Text, _, _, _,
+                  '{ rel: "job", sql: `DELETE FROM "emitted_boot_statements_name_their_rel_job"`, params: [] },')),
     !.
 
 % The hand-computed cone of this program: the query seeds job/2, job's one rule

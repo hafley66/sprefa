@@ -157,23 +157,23 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "source" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, UNIQUE ("name"))`,
-  `CREATE TEMP VIEW "__txt_source" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "source" t`,
-  `CREATE TABLE "tallied" ("__id" INTEGER PRIMARY KEY, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("line", "column", "total"))`,
-  `CREATE TEMP TABLE "__delta_source" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_source_sign" ON "__delta_source" ("_sign")`,
-  `CREATE INDEX "__delta_source_group" ON "__delta_source" ("name")`,
-  `CREATE TEMP TABLE "__frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_source_phase" ON "__frontier_source" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_source" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_source" t`,
-  `CREATE TEMP TABLE "__delta_tallied" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_tallied_sign" ON "__delta_tallied" ("_sign")`,
-  `CREATE INDEX "__delta_tallied_group" ON "__delta_tallied" ("line", "column", "total")`,
-  `CREATE TEMP TABLE "__frontier_tallied" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_tallied_phase" ON "__frontier_tallied" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_tallied" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__agg_scope_tallied" ("line" INTEGER NOT NULL, "column" INTEGER NOT NULL, PRIMARY KEY ("line", "column")) WITHOUT ROWID`,
+  `CREATE TABLE "groupby_aggregate_two_bare_integer_literals_source" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, UNIQUE ("name"))`,
+  `CREATE TEMP VIEW "__txt_groupby_aggregate_two_bare_integer_literals_source" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "groupby_aggregate_two_bare_integer_literals_source" t`,
+  `CREATE TABLE "groupby_aggregate_two_bare_integer_literals_tallied" ("__id" INTEGER PRIMARY KEY, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("line", "column", "total"))`,
+  `CREATE TEMP TABLE "__delta_groupby_aggregate_two_bare_integer_literals_source" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_groupby_aggregate_two_bare_integer_literals_source_sign" ON "__delta_groupby_aggregate_two_bare_integer_literals_source" ("_sign")`,
+  `CREATE INDEX "__delta_groupby_aggregate_two_bare_integer_literals_source_group" ON "__delta_groupby_aggregate_two_bare_integer_literals_source" ("name")`,
+  `CREATE TEMP TABLE "__frontier_groupby_aggregate_two_bare_integer_literals_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_groupby_aggregate_two_bare_integer_literals_source_phase" ON "__frontier_groupby_aggregate_two_bare_integer_literals_source" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_groupby_aggregate_two_bare_integer_literals_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_groupby_aggregate_two_bare_integer_literals_source" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_groupby_aggregate_two_bare_integer_literals_source" t`,
+  `CREATE TEMP TABLE "__delta_groupby_aggregate_two_bare_integer_literals_tallied" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_groupby_aggregate_two_bare_integer_literals_tallied_sign" ON "__delta_groupby_aggregate_two_bare_integer_literals_tallied" ("_sign")`,
+  `CREATE INDEX "__delta_groupby_aggregate_two_bare_integer_literals_tallied_group" ON "__delta_groupby_aggregate_two_bare_integer_literals_tallied" ("line", "column", "total")`,
+  `CREATE TEMP TABLE "__frontier_groupby_aggregate_two_bare_integer_literals_tallied" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_groupby_aggregate_two_bare_integer_literals_tallied_phase" ON "__frontier_groupby_aggregate_two_bare_integer_literals_tallied" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_groupby_aggregate_two_bare_integer_literals_tallied" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__agg_scope_groupby_aggregate_two_bare_integer_literals_tallied" ("line" INTEGER NOT NULL, "column" INTEGER NOT NULL, PRIMARY KEY ("line", "column")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -205,16 +205,16 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "line", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "e5e34427ae7b739b", h_schema: "", h_rule: "" },
   { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "column", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "60a8d63ca255ebd9", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 10, ordinal: 3, local_name: "total", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "beca331657e0344b", h_schema: "", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_source", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "e2687a92e0fa426b", h_schema: "178788c545e561e2", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_source", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "577b2fd07e0666a6", h_schema: "de5b51999f205894", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_source", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "943a387c6ab61c2f", h_schema: "de5b51999f205894", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_source", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "e3ef13b4c547cb09", h_schema: "a30b139c04a632dd", h_rule: "" },
-  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_source", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "9811fdbdf9650608", h_schema: "a30b139c04a632dd", h_rule: "" },
-  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__delta_tallied", kind: "delta", type_id: 0, arity: 5, module_id: 7, h_id: "445548f20083769d", h_schema: "7d2e4bce038b43bd", h_rule: "" },
-  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__frontier_tallied", kind: "frontier", type_id: 0, arity: 5, module_id: 7, h_id: "f441757f42067794", h_schema: "a366918105f0ef3c", h_rule: "" },
-  { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__next_frontier_tallied", kind: "next_frontier", type_id: 0, arity: 5, module_id: 7, h_id: "f6eab5bb3346cd90", h_schema: "a366918105f0ef3c", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_groupby_aggregate_two_bare_integer_literals_source", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "90f20514dd3cb5ee", h_schema: "178788c545e561e2", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_groupby_aggregate_two_bare_integer_literals_source", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "a3e06eb7c443a3d1", h_schema: "de5b51999f205894", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_groupby_aggregate_two_bare_integer_literals_source", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "ec9b74cd6b0c0b24", h_schema: "de5b51999f205894", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_groupby_aggregate_two_bare_integer_literals_source", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "f21a505f5d504799", h_schema: "a30b139c04a632dd", h_rule: "" },
+  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_groupby_aggregate_two_bare_integer_literals_source", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "2267aa5654f31930", h_schema: "a30b139c04a632dd", h_rule: "" },
+  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__delta_groupby_aggregate_two_bare_integer_literals_tallied", kind: "delta", type_id: 0, arity: 5, module_id: 7, h_id: "037d45c402457a15", h_schema: "7d2e4bce038b43bd", h_rule: "" },
+  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__frontier_groupby_aggregate_two_bare_integer_literals_tallied", kind: "frontier", type_id: 0, arity: 5, module_id: 7, h_id: "4a291ca09cded2a2", h_schema: "a366918105f0ef3c", h_rule: "" },
+  { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__next_frontier_groupby_aggregate_two_bare_integer_literals_tallied", kind: "next_frontier", type_id: 0, arity: 5, module_id: 7, h_id: "ced8569e2b584d9f", h_schema: "a366918105f0ef3c", h_rule: "" },
   { rel_id: 22, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "6faa14dddb4ff360", h_schema: "", h_rule: "" },
-  { rel_id: 23, parent_id: 10, ordinal: 0, local_name: "__agg_scope_tallied", kind: "scope", type_id: 0, arity: 2, module_id: 7, h_id: "03b66260e11e3f40", h_schema: "ed8d94bf3ecf6614", h_rule: "" },
+  { rel_id: 23, parent_id: 10, ordinal: 0, local_name: "__agg_scope_groupby_aggregate_two_bare_integer_literals_tallied", kind: "scope", type_id: 0, arity: 2, module_id: 7, h_id: "d7e5356f77f38d42", h_schema: "ed8d94bf3ecf6614", h_rule: "" },
   { rel_id: 24, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "85a32640cb92c967", h_schema: "", h_rule: "" },
   { rel_id: 25, parent_id: 11, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "784c8e43ec7eb891", h_schema: "", h_rule: "" },
   { rel_id: 26, parent_id: 12, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "551cf49baeb9abb3", h_schema: "", h_rule: "" },
@@ -229,26 +229,26 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["source"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "tallied", sql: `DELETE FROM "tallied"`, params: [] },
-  { rel: "tallied", sql: `INSERT OR IGNORE INTO "tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "source" b0 GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0`, params: [] },
+  { rel: "tallied", sql: `DELETE FROM "groupby_aggregate_two_bare_integer_literals_tallied"`, params: [] },
+  { rel: "tallied", sql: `INSERT OR IGNORE INTO "groupby_aggregate_two_bare_integer_literals_tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "groupby_aggregate_two_bare_integer_literals_source" b0 GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
-  source: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_source" t`,
-  tallied: `SELECT t."line", t."column", t."total" FROM "tallied" t`,
+  source: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_groupby_aggregate_two_bare_integer_literals_source" t`,
+  tallied: `SELECT t."line", t."column", t."total" FROM "groupby_aggregate_two_bare_integer_literals_tallied" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "source", kind: "set", table_name: "source", delta_table_name: "__delta_source", frontier_table_name: "__frontier_source", next_frontier_table_name: "__next_frontier_source", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrival_del_sql: `DELETE FROM "source" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_source" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."_sign"`, rule_observers: ["tallied/3"] },
-  { rel: "tallied", kind: "set", table_name: "tallied", delta_table_name: "__delta_tallied", frontier_table_name: "__frontier_tallied", next_frontier_table_name: "__next_frontier_tallied", columns: ["line", "column", "total"], column_types: ["int", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."line", t."column", t."total", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tallied" t WHERE t."_sign" IN (-1, 1) GROUP BY t."line", t."column", t."total", t."_sign"`, rule_observers: [] },
+  { rel: "source", kind: "set", table_name: "groupby_aggregate_two_bare_integer_literals_source", delta_table_name: "__delta_groupby_aggregate_two_bare_integer_literals_source", frontier_table_name: "__frontier_groupby_aggregate_two_bare_integer_literals_source", next_frontier_table_name: "__next_frontier_groupby_aggregate_two_bare_integer_literals_source", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "groupby_aggregate_two_bare_integer_literals_source" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrival_del_sql: `DELETE FROM "groupby_aggregate_two_bare_integer_literals_source" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_groupby_aggregate_two_bare_integer_literals_source" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."_sign"`, rule_observers: ["tallied/3"] },
+  { rel: "tallied", kind: "set", table_name: "groupby_aggregate_two_bare_integer_literals_tallied", delta_table_name: "__delta_groupby_aggregate_two_bare_integer_literals_tallied", frontier_table_name: "__frontier_groupby_aggregate_two_bare_integer_literals_tallied", next_frontier_table_name: "__next_frontier_groupby_aggregate_two_bare_integer_literals_tallied", columns: ["line", "column", "total"], column_types: ["int", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."line", t."column", t."total", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_groupby_aggregate_two_bare_integer_literals_tallied" t WHERE t."_sign" IN (-1, 1) GROUP BY t."line", t."column", t."total", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "tallied", rule_id: "groupby_aggregate_two_bare_integer_literals:tallied/3#1", head_delta_table_name: "__delta_tallied", head_columns: ["line", "column", "total"], insert_sql: null, select_sql: `SELECT "line", "column", "total" FROM "tallied"`, recompute_sql: `DELETE FROM "tallied";
-INSERT OR IGNORE INTO "tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "source" b0 GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_tallied"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_tallied" ("line", "column") SELECT DISTINCT (0 + 0), (0 + 0) FROM "__delta_source" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "tallied" WHERE ("line", "column") IN (SELECT "line", "column" FROM "__agg_scope_tallied") RETURNING "line", "column", "total"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "source" b0 WHERE ((0 + 0), (0 + 0)) IN (SELECT "line", "column" FROM "__agg_scope_tallied") GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0 RETURNING "line", "column", "total"`], delta_maintained: false } },
+  { head_rel: "tallied", rule_id: "groupby_aggregate_two_bare_integer_literals:tallied/3#1", head_delta_table_name: "__delta_groupby_aggregate_two_bare_integer_literals_tallied", head_columns: ["line", "column", "total"], insert_sql: null, select_sql: `SELECT "line", "column", "total" FROM "groupby_aggregate_two_bare_integer_literals_tallied"`, recompute_sql: `DELETE FROM "groupby_aggregate_two_bare_integer_literals_tallied";
+INSERT OR IGNORE INTO "groupby_aggregate_two_bare_integer_literals_tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "groupby_aggregate_two_bare_integer_literals_source" b0 GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_groupby_aggregate_two_bare_integer_literals_tallied"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_groupby_aggregate_two_bare_integer_literals_tallied" ("line", "column") SELECT DISTINCT (0 + 0), (0 + 0) FROM "__delta_groupby_aggregate_two_bare_integer_literals_source" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "groupby_aggregate_two_bare_integer_literals_tallied" WHERE ("line", "column") IN (SELECT "line", "column" FROM "__agg_scope_groupby_aggregate_two_bare_integer_literals_tallied") RETURNING "line", "column", "total"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "groupby_aggregate_two_bare_integer_literals_tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "groupby_aggregate_two_bare_integer_literals_source" b0 WHERE ((0 + 0), (0 + 0)) IN (SELECT "line", "column" FROM "__agg_scope_groupby_aggregate_two_bare_integer_literals_tallied") GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0 RETURNING "line", "column", "total"`], delta_maintained: false } },
 ];
 
 const RECONCILE_EVERY_TICK = false;

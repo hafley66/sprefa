@@ -146,23 +146,23 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "kept" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value"))`,
-  `CREATE TABLE "row" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
-  `CREATE TEMP TABLE "__delta_kept" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_kept_sign" ON "__delta_kept" ("_sign")`,
-  `CREATE INDEX "__delta_kept_group" ON "__delta_kept" ("value")`,
-  `CREATE TEMP TABLE "__frontier_kept" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_kept_phase" ON "__frontier_kept" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_kept" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_row_sign" ON "__delta_row" ("_sign")`,
-  `CREATE INDEX "__delta_row_group" ON "__delta_row" ("value")`,
-  `CREATE TEMP TABLE "__frontier_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_row_phase" ON "__frontier_row" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_kept" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_kept" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
-  `CREATE INDEX "kept_zero" ON "kept" ("__refcount") WHERE "__refcount" <= 0`,
+  `CREATE TABLE "numeric_inequality_operator_filters_kept" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value"))`,
+  `CREATE TABLE "numeric_inequality_operator_filters_row" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
+  `CREATE TEMP TABLE "__delta_numeric_inequality_operator_filters_kept" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_numeric_inequality_operator_filters_kept_sign" ON "__delta_numeric_inequality_operator_filters_kept" ("_sign")`,
+  `CREATE INDEX "__delta_numeric_inequality_operator_filters_kept_group" ON "__delta_numeric_inequality_operator_filters_kept" ("value")`,
+  `CREATE TEMP TABLE "__frontier_numeric_inequality_operator_filters_kept" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_numeric_inequality_operator_filters_kept_phase" ON "__frontier_numeric_inequality_operator_filters_kept" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_numeric_inequality_operator_filters_kept" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_numeric_inequality_operator_filters_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_numeric_inequality_operator_filters_row_sign" ON "__delta_numeric_inequality_operator_filters_row" ("_sign")`,
+  `CREATE INDEX "__delta_numeric_inequality_operator_filters_row_group" ON "__delta_numeric_inequality_operator_filters_row" ("value")`,
+  `CREATE TEMP TABLE "__frontier_numeric_inequality_operator_filters_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_numeric_inequality_operator_filters_row_phase" ON "__frontier_numeric_inequality_operator_filters_row" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_numeric_inequality_operator_filters_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_numeric_inequality_operator_filters_kept" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_numeric_inequality_operator_filters_kept" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "numeric_inequality_operator_filters_kept_zero" ON "numeric_inequality_operator_filters_kept" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -192,14 +192,14 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "value", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "3e99e3722b2105ca", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 7, ordinal: 0, local_name: "row", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "0a6fa9c10aa8a123", h_schema: "7e38e778eed579a5", h_rule: "" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "value", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "d7f7e3d3aee17013", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_kept", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "bc8e148d197bc476", h_schema: "d59487c5bf23d586", h_rule: "" },
-  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_kept", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "9a79c3e6ba5c26cd", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_kept", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "70b51c6dfb88ae30", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_row", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "abe9ff7dee6299d1", h_schema: "d59487c5bf23d586", h_rule: "" },
-  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_row", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "f852c8ea2e22f712", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_row", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "ba0da49e4f0ccf82", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__support_next_kept", kind: "refcount", type_id: 0, arity: 2, module_id: 7, h_id: "8c716134a7ea63a2", h_schema: "", h_rule: "" },
-  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__new_kept", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 7, h_id: "aefe3e19a042a765", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_numeric_inequality_operator_filters_kept", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "ab9b9ef1ab78b5d5", h_schema: "d59487c5bf23d586", h_rule: "" },
+  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_numeric_inequality_operator_filters_kept", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "fca3ac8479b1d682", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_numeric_inequality_operator_filters_kept", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "11fd9fc99112bc60", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_numeric_inequality_operator_filters_row", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "a999ca1fc825153d", h_schema: "d59487c5bf23d586", h_rule: "" },
+  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_numeric_inequality_operator_filters_row", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "3207404209866ad5", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_numeric_inequality_operator_filters_row", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "ff3e0285c5ac4fff", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__support_next_numeric_inequality_operator_filters_kept", kind: "refcount", type_id: 0, arity: 2, module_id: 7, h_id: "ca37ab4f39611e3b", h_schema: "", h_rule: "" },
+  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__new_numeric_inequality_operator_filters_kept", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 7, h_id: "052cbfe03888254b", h_schema: "", h_rule: "" },
   { rel_id: 20, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "2edeb70aa7329f48", h_schema: "", h_rule: "" },
   { rel_id: 21, parent_id: 11, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "4a05075a96f8e175", h_schema: "", h_rule: "" },
 ];
@@ -210,29 +210,29 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["row"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "row", sql: `INSERT OR IGNORE INTO "row" ("value") VALUES (?)`, params: [1] },
-  { rel: "row", sql: `INSERT OR IGNORE INTO "row" ("value") VALUES (?)`, params: [2] },
-  { rel: "row", sql: `INSERT OR IGNORE INTO "row" ("value") VALUES (?)`, params: [3] },
-  { rel: "kept", sql: `DELETE FROM "kept"`, params: [] },
-  { rel: "kept", sql: `INSERT OR IGNORE INTO "kept" ("value") SELECT b0."value" FROM "row" b0 WHERE (b0."value" <> 2)`, params: [] },
+  { rel: "row", sql: `INSERT OR IGNORE INTO "numeric_inequality_operator_filters_row" ("value") VALUES (?)`, params: [1] },
+  { rel: "row", sql: `INSERT OR IGNORE INTO "numeric_inequality_operator_filters_row" ("value") VALUES (?)`, params: [2] },
+  { rel: "row", sql: `INSERT OR IGNORE INTO "numeric_inequality_operator_filters_row" ("value") VALUES (?)`, params: [3] },
+  { rel: "kept", sql: `DELETE FROM "numeric_inequality_operator_filters_kept"`, params: [] },
+  { rel: "kept", sql: `INSERT OR IGNORE INTO "numeric_inequality_operator_filters_kept" ("value") SELECT b0."value" FROM "numeric_inequality_operator_filters_row" b0 WHERE (b0."value" <> 2)`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
-  kept: `SELECT t."value" FROM "kept" t`,
-  row: `SELECT t."value" FROM "row" t`,
+  kept: `SELECT t."value" FROM "numeric_inequality_operator_filters_kept" t`,
+  row: `SELECT t."value" FROM "numeric_inequality_operator_filters_row" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "kept", kind: "set", table_name: "kept", delta_table_name: "__delta_kept", frontier_table_name: "__frontier_kept", next_frontier_table_name: "__next_frontier_kept", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_kept" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
-  { rel: "row", kind: "set", table_name: "row", delta_table_name: "__delta_row", frontier_table_name: "__frontier_row", next_frontier_table_name: "__next_frontier_row", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "row" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "row" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_row" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["kept/1"] },
+  { rel: "kept", kind: "set", table_name: "numeric_inequality_operator_filters_kept", delta_table_name: "__delta_numeric_inequality_operator_filters_kept", frontier_table_name: "__frontier_numeric_inequality_operator_filters_kept", next_frontier_table_name: "__next_frontier_numeric_inequality_operator_filters_kept", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_numeric_inequality_operator_filters_kept" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "row", kind: "set", table_name: "numeric_inequality_operator_filters_row", delta_table_name: "__delta_numeric_inequality_operator_filters_row", frontier_table_name: "__frontier_numeric_inequality_operator_filters_row", next_frontier_table_name: "__next_frontier_numeric_inequality_operator_filters_row", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "numeric_inequality_operator_filters_row" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "numeric_inequality_operator_filters_row" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_numeric_inequality_operator_filters_row" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["kept/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "kept", rule_id: "numeric_inequality_operator_filters:kept/1#1", head_delta_table_name: "__delta_kept", head_columns: ["value"], insert_sql: `INSERT OR IGNORE INTO "kept" ("value") SELECT DISTINCT d0."value" FROM "__frontier_row" d0 WHERE d0."_phase" >= 0 AND (d0."value" <> 2) RETURNING "value"`, select_sql: `SELECT "value" FROM "kept"`, recompute_sql: `DELETE FROM "kept";
-INSERT OR IGNORE INTO "kept" ("value") SELECT b0."value" FROM "row" b0 WHERE (b0."value" <> 2)`, support_sql: [`DELETE FROM "__support_next_kept"`, `INSERT INTO "__support_next_kept" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."value" AS "value", count(*) AS "__refcount" FROM "row" b0 WHERE (b0."value" <> 2) GROUP BY b0."value") GROUP BY "value"`, `UPDATE "kept" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_kept" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_kept" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "kept" WHERE "__refcount" <= 0`, `DELETE FROM "kept" WHERE "__refcount" <= 0`, `DELETE FROM "__new_kept"`, `INSERT INTO "__new_kept" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_kept" n LEFT JOIN "kept" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_kept" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_kept"`, `INSERT INTO "__frontier_kept" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_kept"`, `INSERT INTO "__next_frontier_kept" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_kept"`, `INSERT OR IGNORE INTO "kept" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_kept" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "kept", rule_id: "numeric_inequality_operator_filters:kept/1#1", head_delta_table_name: "__delta_numeric_inequality_operator_filters_kept", head_columns: ["value"], insert_sql: `INSERT OR IGNORE INTO "numeric_inequality_operator_filters_kept" ("value") SELECT DISTINCT d0."value" FROM "__frontier_numeric_inequality_operator_filters_row" d0 WHERE d0."_phase" >= 0 AND (d0."value" <> 2) RETURNING "value"`, select_sql: `SELECT "value" FROM "numeric_inequality_operator_filters_kept"`, recompute_sql: `DELETE FROM "numeric_inequality_operator_filters_kept";
+INSERT OR IGNORE INTO "numeric_inequality_operator_filters_kept" ("value") SELECT b0."value" FROM "numeric_inequality_operator_filters_row" b0 WHERE (b0."value" <> 2)`, support_sql: [`DELETE FROM "__support_next_numeric_inequality_operator_filters_kept"`, `INSERT INTO "__support_next_numeric_inequality_operator_filters_kept" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."value" AS "value", count(*) AS "__refcount" FROM "numeric_inequality_operator_filters_row" b0 WHERE (b0."value" <> 2) GROUP BY b0."value") GROUP BY "value"`, `UPDATE "numeric_inequality_operator_filters_kept" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_numeric_inequality_operator_filters_kept" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_numeric_inequality_operator_filters_kept" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "numeric_inequality_operator_filters_kept" WHERE "__refcount" <= 0`, `DELETE FROM "numeric_inequality_operator_filters_kept" WHERE "__refcount" <= 0`, `DELETE FROM "__new_numeric_inequality_operator_filters_kept"`, `INSERT INTO "__new_numeric_inequality_operator_filters_kept" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_numeric_inequality_operator_filters_kept" n LEFT JOIN "numeric_inequality_operator_filters_kept" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_numeric_inequality_operator_filters_kept" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_numeric_inequality_operator_filters_kept"`, `INSERT INTO "__frontier_numeric_inequality_operator_filters_kept" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_numeric_inequality_operator_filters_kept"`, `INSERT INTO "__next_frontier_numeric_inequality_operator_filters_kept" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_numeric_inequality_operator_filters_kept"`, `INSERT OR IGNORE INTO "numeric_inequality_operator_filters_kept" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_numeric_inequality_operator_filters_kept" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const RECONCILE_EVERY_TICK = false;

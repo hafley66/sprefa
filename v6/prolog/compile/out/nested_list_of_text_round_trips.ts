@@ -146,23 +146,23 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "carry" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("id", "rows"))`,
-  `CREATE TABLE "grid" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'), UNIQUE ("id", "rows"))`,
-  `CREATE TEMP TABLE "__delta_carry" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'))`,
-  `CREATE INDEX "__delta_carry_sign" ON "__delta_carry" ("_sign")`,
-  `CREATE INDEX "__delta_carry_group" ON "__delta_carry" ("id", "rows")`,
-  `CREATE TEMP TABLE "__frontier_carry" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'))`,
-  `CREATE INDEX "__frontier_carry_phase" ON "__frontier_carry" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_carry" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'))`,
-  `CREATE TEMP TABLE "__delta_grid" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'))`,
-  `CREATE INDEX "__delta_grid_sign" ON "__delta_grid" ("_sign")`,
-  `CREATE INDEX "__delta_grid_group" ON "__delta_grid" ("id", "rows")`,
-  `CREATE TEMP TABLE "__frontier_grid" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'))`,
-  `CREATE INDEX "__frontier_grid_phase" ON "__frontier_grid" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_grid" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'))`,
-  `CREATE TEMP TABLE "__support_next_carry" ("id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "rows")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_carry" ("id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'), "__refcount" INTEGER NOT NULL)`,
-  `CREATE INDEX "carry_zero" ON "carry" ("__refcount") WHERE "__refcount" <= 0`,
+  `CREATE TABLE "nested_list_of_text_round_trips_carry" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("id", "rows"))`,
+  `CREATE TABLE "nested_list_of_text_round_trips_grid" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'), UNIQUE ("id", "rows"))`,
+  `CREATE TEMP TABLE "__delta_nested_list_of_text_round_trips_carry" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'))`,
+  `CREATE INDEX "__delta_nested_list_of_text_round_trips_carry_sign" ON "__delta_nested_list_of_text_round_trips_carry" ("_sign")`,
+  `CREATE INDEX "__delta_nested_list_of_text_round_trips_carry_group" ON "__delta_nested_list_of_text_round_trips_carry" ("id", "rows")`,
+  `CREATE TEMP TABLE "__frontier_nested_list_of_text_round_trips_carry" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'))`,
+  `CREATE INDEX "__frontier_nested_list_of_text_round_trips_carry_phase" ON "__frontier_nested_list_of_text_round_trips_carry" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_nested_list_of_text_round_trips_carry" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'))`,
+  `CREATE TEMP TABLE "__delta_nested_list_of_text_round_trips_grid" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'))`,
+  `CREATE INDEX "__delta_nested_list_of_text_round_trips_grid_sign" ON "__delta_nested_list_of_text_round_trips_grid" ("_sign")`,
+  `CREATE INDEX "__delta_nested_list_of_text_round_trips_grid_group" ON "__delta_nested_list_of_text_round_trips_grid" ("id", "rows")`,
+  `CREATE TEMP TABLE "__frontier_nested_list_of_text_round_trips_grid" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'))`,
+  `CREATE INDEX "__frontier_nested_list_of_text_round_trips_grid_phase" ON "__frontier_nested_list_of_text_round_trips_grid" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_nested_list_of_text_round_trips_grid" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'))`,
+  `CREATE TEMP TABLE "__support_next_nested_list_of_text_round_trips_carry" ("id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "rows")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_nested_list_of_text_round_trips_carry" ("id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'), "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "nested_list_of_text_round_trips_carry_zero" ON "nested_list_of_text_round_trips_carry" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -196,14 +196,14 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 13, parent_id: 9, ordinal: 0, local_name: "grid", kind: "rel", type_id: 0, arity: 2, module_id: 9, h_id: "d9e704b3764ddacc", h_schema: "fa722cb25af20b90", h_rule: "" },
   { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 9, h_id: "1c5a9e7cd498dabd", h_schema: "", h_rule: "" },
   { rel_id: 15, parent_id: 13, ordinal: 2, local_name: "rows", kind: "column", type_id: 8, arity: 0, module_id: 9, h_id: "e3138f314a55a8cb", h_schema: "", h_rule: "" },
-  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__delta_carry", kind: "delta", type_id: 0, arity: 4, module_id: 9, h_id: "3b3d89304e46ae37", h_schema: "89aa770c0cecc8c8", h_rule: "" },
-  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__frontier_carry", kind: "frontier", type_id: 0, arity: 4, module_id: 9, h_id: "16e764f2ef23f40f", h_schema: "2926a607ed46bd0e", h_rule: "" },
-  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__next_frontier_carry", kind: "next_frontier", type_id: 0, arity: 4, module_id: 9, h_id: "234de7425a726869", h_schema: "2926a607ed46bd0e", h_rule: "" },
-  { rel_id: 19, parent_id: 13, ordinal: 0, local_name: "__delta_grid", kind: "delta", type_id: 0, arity: 4, module_id: 9, h_id: "fea79f9945886d39", h_schema: "89aa770c0cecc8c8", h_rule: "" },
-  { rel_id: 20, parent_id: 13, ordinal: 0, local_name: "__frontier_grid", kind: "frontier", type_id: 0, arity: 4, module_id: 9, h_id: "95d9fdd86812f510", h_schema: "2926a607ed46bd0e", h_rule: "" },
-  { rel_id: 21, parent_id: 13, ordinal: 0, local_name: "__next_frontier_grid", kind: "next_frontier", type_id: 0, arity: 4, module_id: 9, h_id: "b2415e38a4a291bc", h_schema: "2926a607ed46bd0e", h_rule: "" },
-  { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__support_next_carry", kind: "refcount", type_id: 0, arity: 3, module_id: 9, h_id: "2e35097d4f3394cd", h_schema: "", h_rule: "" },
-  { rel_id: 23, parent_id: 10, ordinal: 0, local_name: "__new_carry", kind: "refcount_staging", type_id: 0, arity: 3, module_id: 9, h_id: "c4743e8bfa32d7f6", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__delta_nested_list_of_text_round_trips_carry", kind: "delta", type_id: 0, arity: 4, module_id: 9, h_id: "f35d36ec42b4b4e0", h_schema: "89aa770c0cecc8c8", h_rule: "" },
+  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__frontier_nested_list_of_text_round_trips_carry", kind: "frontier", type_id: 0, arity: 4, module_id: 9, h_id: "a6644b8cca132648", h_schema: "2926a607ed46bd0e", h_rule: "" },
+  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__next_frontier_nested_list_of_text_round_trips_carry", kind: "next_frontier", type_id: 0, arity: 4, module_id: 9, h_id: "632df12fdba95251", h_schema: "2926a607ed46bd0e", h_rule: "" },
+  { rel_id: 19, parent_id: 13, ordinal: 0, local_name: "__delta_nested_list_of_text_round_trips_grid", kind: "delta", type_id: 0, arity: 4, module_id: 9, h_id: "4a26718f5bc2d5b2", h_schema: "89aa770c0cecc8c8", h_rule: "" },
+  { rel_id: 20, parent_id: 13, ordinal: 0, local_name: "__frontier_nested_list_of_text_round_trips_grid", kind: "frontier", type_id: 0, arity: 4, module_id: 9, h_id: "a96a9da6df676986", h_schema: "2926a607ed46bd0e", h_rule: "" },
+  { rel_id: 21, parent_id: 13, ordinal: 0, local_name: "__next_frontier_nested_list_of_text_round_trips_grid", kind: "next_frontier", type_id: 0, arity: 4, module_id: 9, h_id: "9983be348685ae02", h_schema: "2926a607ed46bd0e", h_rule: "" },
+  { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__support_next_nested_list_of_text_round_trips_carry", kind: "refcount", type_id: 0, arity: 3, module_id: 9, h_id: "5b445b9055c53bb5", h_schema: "", h_rule: "" },
+  { rel_id: 23, parent_id: 10, ordinal: 0, local_name: "__new_nested_list_of_text_round_trips_carry", kind: "refcount_staging", type_id: 0, arity: 3, module_id: 9, h_id: "663b899333e4804d", h_schema: "", h_rule: "" },
   { rel_id: 24, parent_id: 11, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 9, h_id: "7517b45fcbe15c4b", h_schema: "", h_rule: "" },
   { rel_id: 25, parent_id: 12, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 9, h_id: "34e5f7292fddb7bd", h_schema: "", h_rule: "" },
   { rel_id: 26, parent_id: 14, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 9, h_id: "9bff5595bddb02e7", h_schema: "", h_rule: "" },
@@ -217,27 +217,27 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["grid"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "grid", sql: `INSERT OR IGNORE INTO "grid" ("id", "rows") VALUES (?, ?)`, params: [1, "[[\"a\",\"b\"],[\"c\"]]"] },
-  { rel: "carry", sql: `DELETE FROM "carry"`, params: [] },
-  { rel: "carry", sql: `INSERT OR IGNORE INTO "carry" ("id", "rows") SELECT b0."id", b0."rows" FROM "grid" b0`, params: [] },
+  { rel: "grid", sql: `INSERT OR IGNORE INTO "nested_list_of_text_round_trips_grid" ("id", "rows") VALUES (?, ?)`, params: [1, "[[\"a\",\"b\"],[\"c\"]]"] },
+  { rel: "carry", sql: `DELETE FROM "nested_list_of_text_round_trips_carry"`, params: [] },
+  { rel: "carry", sql: `INSERT OR IGNORE INTO "nested_list_of_text_round_trips_carry" ("id", "rows") SELECT b0."id", b0."rows" FROM "nested_list_of_text_round_trips_grid" b0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
-  carry: `SELECT t."id", t."rows" FROM "carry" t`,
-  grid: `SELECT t."id", t."rows" FROM "grid" t`,
+  carry: `SELECT t."id", t."rows" FROM "nested_list_of_text_round_trips_carry" t`,
+  grid: `SELECT t."id", t."rows" FROM "nested_list_of_text_round_trips_grid" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "carry", kind: "set", table_name: "carry", delta_table_name: "__delta_carry", frontier_table_name: "__frontier_carry", next_frontier_table_name: "__next_frontier_carry", columns: ["id", "rows"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", t."rows", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_carry" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."rows", t."_sign"`, rule_observers: [] },
-  { rel: "grid", kind: "set", table_name: "grid", delta_table_name: "__delta_grid", frontier_table_name: "__frontier_grid", next_frontier_table_name: "__next_frontier_grid", columns: ["id", "rows"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "grid" ("id", "rows") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "rows"`, arrival_del_sql: `DELETE FROM "grid" WHERE ("id", "rows") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "rows"`, boundary_sql: `SELECT t."id", t."rows", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_grid" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."rows", t."_sign"`, rule_observers: ["carry/2"] },
+  { rel: "carry", kind: "set", table_name: "nested_list_of_text_round_trips_carry", delta_table_name: "__delta_nested_list_of_text_round_trips_carry", frontier_table_name: "__frontier_nested_list_of_text_round_trips_carry", next_frontier_table_name: "__next_frontier_nested_list_of_text_round_trips_carry", columns: ["id", "rows"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", t."rows", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_nested_list_of_text_round_trips_carry" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."rows", t."_sign"`, rule_observers: [] },
+  { rel: "grid", kind: "set", table_name: "nested_list_of_text_round_trips_grid", delta_table_name: "__delta_nested_list_of_text_round_trips_grid", frontier_table_name: "__frontier_nested_list_of_text_round_trips_grid", next_frontier_table_name: "__next_frontier_nested_list_of_text_round_trips_grid", columns: ["id", "rows"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "nested_list_of_text_round_trips_grid" ("id", "rows") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "rows"`, arrival_del_sql: `DELETE FROM "nested_list_of_text_round_trips_grid" WHERE ("id", "rows") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "rows"`, boundary_sql: `SELECT t."id", t."rows", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_nested_list_of_text_round_trips_grid" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."rows", t."_sign"`, rule_observers: ["carry/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "carry", rule_id: "nested_list_of_text_round_trips:carry/2#1", head_delta_table_name: "__delta_carry", head_columns: ["id", "rows"], insert_sql: `INSERT OR IGNORE INTO "carry" ("id", "rows") SELECT DISTINCT d0."id", d0."rows" FROM "__frontier_grid" d0 WHERE d0."_phase" >= 0 RETURNING "id", "rows"`, select_sql: `SELECT "id", "rows" FROM "carry"`, recompute_sql: `DELETE FROM "carry";
-INSERT OR IGNORE INTO "carry" ("id", "rows") SELECT b0."id", b0."rows" FROM "grid" b0`, support_sql: [`DELETE FROM "__support_next_carry"`, `INSERT INTO "__support_next_carry" ("id", "rows", "__refcount") SELECT "id", "rows", sum("__refcount") FROM (SELECT b0."id" AS "id", b0."rows" AS "rows", count(*) AS "__refcount" FROM "grid" b0 GROUP BY b0."id", b0."rows") GROUP BY "id", "rows"`, `UPDATE "carry" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_carry" n WHERE n."id" = h."id" AND n."rows" = h."rows"), 0)`, `INSERT INTO "__delta_carry" ("_sign", "_sequence", "id", "rows") SELECT -1, row_number() OVER () - 1, "id", "rows" FROM "carry" WHERE "__refcount" <= 0`, `DELETE FROM "carry" WHERE "__refcount" <= 0`, `DELETE FROM "__new_carry"`, `INSERT INTO "__new_carry" ("id", "rows", "__refcount") SELECT n."id", n."rows", n."__refcount" FROM "__support_next_carry" n LEFT JOIN "carry" h ON n."id" = h."id" AND n."rows" = h."rows" WHERE h."id" IS NULL`, `INSERT INTO "__delta_carry" ("_sign", "_sequence", "id", "rows") SELECT 1, "rowid" - 1, "id", "rows" FROM "__new_carry"`, `INSERT INTO "__frontier_carry" ("_phase", "_sequence", "id", "rows") SELECT ?, "rowid" - 1, "id", "rows" FROM "__new_carry"`, `INSERT INTO "__next_frontier_carry" ("_phase", "_sequence", "id", "rows") SELECT ?, "rowid" - 1, "id", "rows" FROM "__new_carry"`, `INSERT OR IGNORE INTO "carry" ("id", "rows", "__refcount") SELECT n."id", n."rows", n."__refcount" FROM "__support_next_carry" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "carry", rule_id: "nested_list_of_text_round_trips:carry/2#1", head_delta_table_name: "__delta_nested_list_of_text_round_trips_carry", head_columns: ["id", "rows"], insert_sql: `INSERT OR IGNORE INTO "nested_list_of_text_round_trips_carry" ("id", "rows") SELECT DISTINCT d0."id", d0."rows" FROM "__frontier_nested_list_of_text_round_trips_grid" d0 WHERE d0."_phase" >= 0 RETURNING "id", "rows"`, select_sql: `SELECT "id", "rows" FROM "nested_list_of_text_round_trips_carry"`, recompute_sql: `DELETE FROM "nested_list_of_text_round_trips_carry";
+INSERT OR IGNORE INTO "nested_list_of_text_round_trips_carry" ("id", "rows") SELECT b0."id", b0."rows" FROM "nested_list_of_text_round_trips_grid" b0`, support_sql: [`DELETE FROM "__support_next_nested_list_of_text_round_trips_carry"`, `INSERT INTO "__support_next_nested_list_of_text_round_trips_carry" ("id", "rows", "__refcount") SELECT "id", "rows", sum("__refcount") FROM (SELECT b0."id" AS "id", b0."rows" AS "rows", count(*) AS "__refcount" FROM "nested_list_of_text_round_trips_grid" b0 GROUP BY b0."id", b0."rows") GROUP BY "id", "rows"`, `UPDATE "nested_list_of_text_round_trips_carry" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_nested_list_of_text_round_trips_carry" n WHERE n."id" = h."id" AND n."rows" = h."rows"), 0)`, `INSERT INTO "__delta_nested_list_of_text_round_trips_carry" ("_sign", "_sequence", "id", "rows") SELECT -1, row_number() OVER () - 1, "id", "rows" FROM "nested_list_of_text_round_trips_carry" WHERE "__refcount" <= 0`, `DELETE FROM "nested_list_of_text_round_trips_carry" WHERE "__refcount" <= 0`, `DELETE FROM "__new_nested_list_of_text_round_trips_carry"`, `INSERT INTO "__new_nested_list_of_text_round_trips_carry" ("id", "rows", "__refcount") SELECT n."id", n."rows", n."__refcount" FROM "__support_next_nested_list_of_text_round_trips_carry" n LEFT JOIN "nested_list_of_text_round_trips_carry" h ON n."id" = h."id" AND n."rows" = h."rows" WHERE h."id" IS NULL`, `INSERT INTO "__delta_nested_list_of_text_round_trips_carry" ("_sign", "_sequence", "id", "rows") SELECT 1, "rowid" - 1, "id", "rows" FROM "__new_nested_list_of_text_round_trips_carry"`, `INSERT INTO "__frontier_nested_list_of_text_round_trips_carry" ("_phase", "_sequence", "id", "rows") SELECT ?, "rowid" - 1, "id", "rows" FROM "__new_nested_list_of_text_round_trips_carry"`, `INSERT INTO "__next_frontier_nested_list_of_text_round_trips_carry" ("_phase", "_sequence", "id", "rows") SELECT ?, "rowid" - 1, "id", "rows" FROM "__new_nested_list_of_text_round_trips_carry"`, `INSERT OR IGNORE INTO "nested_list_of_text_round_trips_carry" ("id", "rows", "__refcount") SELECT n."id", n."rows", n."__refcount" FROM "__support_next_nested_list_of_text_round_trips_carry" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const RECONCILE_EVERY_TICK = false;

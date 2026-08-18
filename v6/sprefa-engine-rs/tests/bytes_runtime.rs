@@ -116,7 +116,10 @@ async fn authored_dl6_program_runs_native_bytes_through_rust_runtime() {
     );
     let blob_type = seam
         .execute(&SqlStatement {
-            sql: "SELECT typeof(value) FROM byte_source ORDER BY value".to_string(),
+            // The rel is authored `byte_source`; the table carries this
+            // compilation unit's module prefix.
+            sql: "SELECT typeof(value) FROM bytes_type_system_byte_source ORDER BY value"
+                .to_string(),
             args: vec![],
         })
         .expect("blob type");

@@ -100,7 +100,7 @@ async function exhaust_policy_seam(live_tab_rows: number): Promise<{ seam: ISqlS
   if (values.length > 0) {
     await run(
       seam,
-      `INSERT INTO "live_tab" ("session_id", "tab_id", "__refcount") VALUES ${values.join(",")}`,
+      `INSERT INTO "exhaust_policy_live_tab" ("session_id", "tab_id", "__refcount") VALUES ${values.join(",")}`,
     );
   }
   // One tick's worth of arrival, staged the way IncrementalRuntime.applyArrivals
@@ -108,7 +108,7 @@ async function exhaust_policy_seam(live_tab_rows: number): Promise<{ seam: ISqlS
   // not (the guard must admit it).
   await run(
     seam,
-    `INSERT INTO "__frontier_open_request" ("_phase","_sequence","session_id","tab_id") VALUES ` +
+    `INSERT INTO "__frontier_exhaust_policy_open_request" ("_phase","_sequence","session_id","tab_id") VALUES ` +
       `(0, 0, 'session_0', 'tab_again'), (0, 1, 'session_new', 'tab_fresh'), (0, 2, 'session_1', 'tab_again')`,
   );
   return { seam, source };
@@ -116,7 +116,7 @@ async function exhaust_policy_seam(live_tab_rows: number): Promise<{ seam: ISqlS
 
 test("edge-body negation SEARCHes the negated rel by key, never SCANs it", async () => {
   const { seam, source } = await exhaust_policy_seam(5000);
-  const project_sql = emitted_edge_project_sql(source, "open_tab", "__frontier_open_request");
+  const project_sql = emitted_edge_project_sql(source, "open_tab", "__frontier_exhaust_policy_open_request");
   assert.ok(project_sql.includes("NOT EXISTS"), `the arm must carry the negation, got: ${project_sql}`);
 
   // `n0` is compile_negative_uses/4's alias for the negated rel; sqlite prints
@@ -135,7 +135,7 @@ test("edge-body negation SEARCHes the negated rel by key, never SCANs it", async
 
 test("edge-body negation admits exactly the arrivals its guard lets through", async () => {
   const { seam, source } = await exhaust_policy_seam(5000);
-  const derived = await run(seam, emitted_edge_project_sql(source, "open_tab", "__frontier_open_request"));
+  const derived = await run(seam, emitted_edge_project_sql(source, "open_tab", "__frontier_exhaust_policy_open_request"));
   assert.equal(derived.rows.length, 1, "only the arrival with no live_tab row may derive");
   assert.equal(String(derived.rows[0]!.session_id), "session_new");
 });
@@ -143,7 +143,7 @@ test("edge-body negation admits exactly the arrivals its guard lets through", as
 test("edge-body negation plan does not change shape as the negated rel grows", async () => {
   const small = await exhaust_policy_seam(10);
   const large = await exhaust_policy_seam(5000);
-  const project_sql = emitted_edge_project_sql(small.source, "open_tab", "__frontier_open_request");
+  const project_sql = emitted_edge_project_sql(small.source, "open_tab", "__frontier_exhaust_policy_open_request");
   const small_plan = (await plan_lines(small.seam, project_sql)).join(" | ");
   const large_plan = (await plan_lines(large.seam, project_sql)).join(" | ");
   assert.equal(large_plan, small_plan, "the arm's plan must be flat in the negated rel's size");
@@ -155,10 +155,10 @@ test("edge-body comparison and bind filter and compute inside the arm", async ()
   await firstValueFrom(ScratchStore.boot(seam, emitted_ddl(source)));
   await run(
     seam,
-    `INSERT INTO "__frontier_pulse" ("_phase","_sequence","next") VALUES (0,0,1), (0,1,2), (0,2,3), (0,3,4)`,
+    `INSERT INTO "__frontier_repeat_is_a_self_carry_chain_pulse" ("_phase","_sequence","next") VALUES (0,0,1), (0,1,2), (0,2,3), (0,3,4)`,
   );
 
-  const project_sql = emitted_edge_project_sql(source, "pulse", "__frontier_pulse");
+  const project_sql = emitted_edge_project_sql(source, "pulse", "__frontier_repeat_is_a_self_carry_chain_pulse");
   assert.ok(/\(.*<\s*3\)/.test(project_sql), `the arm must carry the comparison, got: ${project_sql}`);
 
   const derived = await run(seam, project_sql);

@@ -146,23 +146,23 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "echoed" ("__id" INTEGER PRIMARY KEY, "body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("body"))`,
-  `CREATE TABLE "raw_doc" ("__id" INTEGER PRIMARY KEY, "body" TEXT NOT NULL CHECK (json_valid("body")), UNIQUE ("body"))`,
-  `CREATE TEMP TABLE "__delta_echoed" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE INDEX "__delta_echoed_sign" ON "__delta_echoed" ("_sign")`,
-  `CREATE INDEX "__delta_echoed_group" ON "__delta_echoed" ("body")`,
-  `CREATE TEMP TABLE "__frontier_echoed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE INDEX "__frontier_echoed_phase" ON "__frontier_echoed" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_echoed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE TEMP TABLE "__delta_raw_doc" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE INDEX "__delta_raw_doc_sign" ON "__delta_raw_doc" ("_sign")`,
-  `CREATE INDEX "__delta_raw_doc_group" ON "__delta_raw_doc" ("body")`,
-  `CREATE TEMP TABLE "__frontier_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE INDEX "__frontier_raw_doc_phase" ON "__frontier_raw_doc" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE TEMP TABLE "__support_next_echoed" ("body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("body")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_echoed" ("body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL)`,
-  `CREATE INDEX "echoed_zero" ON "echoed" ("__refcount") WHERE "__refcount" <= 0`,
+  `CREATE TABLE "json_control_escapes_inside_a_document_echoed" ("__id" INTEGER PRIMARY KEY, "body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("body"))`,
+  `CREATE TABLE "json_control_escapes_inside_a_document_raw_doc" ("__id" INTEGER PRIMARY KEY, "body" TEXT NOT NULL CHECK (json_valid("body")), UNIQUE ("body"))`,
+  `CREATE TEMP TABLE "__delta_json_control_escapes_inside_a_document_echoed" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
+  `CREATE INDEX "__delta_json_control_escapes_inside_a_document_echoed_sign" ON "__delta_json_control_escapes_inside_a_document_echoed" ("_sign")`,
+  `CREATE INDEX "__delta_json_control_escapes_inside_a_document_echoed_group" ON "__delta_json_control_escapes_inside_a_document_echoed" ("body")`,
+  `CREATE TEMP TABLE "__frontier_json_control_escapes_inside_a_document_echoed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
+  `CREATE INDEX "__frontier_json_control_escapes_inside_a_document_echoed_phase" ON "__frontier_json_control_escapes_inside_a_document_echoed" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_json_control_escapes_inside_a_document_echoed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
+  `CREATE TEMP TABLE "__delta_json_control_escapes_inside_a_document_raw_doc" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
+  `CREATE INDEX "__delta_json_control_escapes_inside_a_document_raw_doc_sign" ON "__delta_json_control_escapes_inside_a_document_raw_doc" ("_sign")`,
+  `CREATE INDEX "__delta_json_control_escapes_inside_a_document_raw_doc_group" ON "__delta_json_control_escapes_inside_a_document_raw_doc" ("body")`,
+  `CREATE TEMP TABLE "__frontier_json_control_escapes_inside_a_document_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
+  `CREATE INDEX "__frontier_json_control_escapes_inside_a_document_raw_doc_phase" ON "__frontier_json_control_escapes_inside_a_document_raw_doc" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_json_control_escapes_inside_a_document_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
+  `CREATE TEMP TABLE "__support_next_json_control_escapes_inside_a_document_echoed" ("body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("body")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_json_control_escapes_inside_a_document_echoed" ("body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "json_control_escapes_inside_a_document_echoed_zero" ON "json_control_escapes_inside_a_document_echoed" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -192,14 +192,14 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "body", kind: "column", type_id: 5, arity: 0, module_id: 7, h_id: "d1517156865f0210", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 7, ordinal: 0, local_name: "raw_doc", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "eb09ee3af87d1824", h_schema: "d12f7c978de0f0d7", h_rule: "" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "body", kind: "column", type_id: 5, arity: 0, module_id: 7, h_id: "a3cd8af14507331b", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_echoed", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "91ac3377aa053067", h_schema: "669db8c8e0e7991f", h_rule: "" },
-  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_echoed", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "26495d4f91421edc", h_schema: "c0ff50f985c9f689", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_echoed", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "5d129313ce52a432", h_schema: "c0ff50f985c9f689", h_rule: "" },
-  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_raw_doc", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "394469dfe12f27b1", h_schema: "669db8c8e0e7991f", h_rule: "" },
-  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_raw_doc", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "21dd7a9e45ef91c7", h_schema: "c0ff50f985c9f689", h_rule: "" },
-  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_raw_doc", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "608f34b704a13100", h_schema: "c0ff50f985c9f689", h_rule: "" },
-  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__support_next_echoed", kind: "refcount", type_id: 0, arity: 2, module_id: 7, h_id: "9c814ae3cee49672", h_schema: "", h_rule: "" },
-  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__new_echoed", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 7, h_id: "5af4dbe26e506e1d", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_json_control_escapes_inside_a_document_echoed", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "e78808dee5390115", h_schema: "669db8c8e0e7991f", h_rule: "" },
+  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_json_control_escapes_inside_a_document_echoed", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "319c3456955dfb15", h_schema: "c0ff50f985c9f689", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_json_control_escapes_inside_a_document_echoed", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "5a6645413520481a", h_schema: "c0ff50f985c9f689", h_rule: "" },
+  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_json_control_escapes_inside_a_document_raw_doc", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "6b62cbfd91eb3374", h_schema: "669db8c8e0e7991f", h_rule: "" },
+  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_json_control_escapes_inside_a_document_raw_doc", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "f6f3d3102bb8508f", h_schema: "c0ff50f985c9f689", h_rule: "" },
+  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_json_control_escapes_inside_a_document_raw_doc", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "aaa45dec675a3155", h_schema: "c0ff50f985c9f689", h_rule: "" },
+  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__support_next_json_control_escapes_inside_a_document_echoed", kind: "refcount", type_id: 0, arity: 2, module_id: 7, h_id: "482edac155b3dd87", h_schema: "", h_rule: "" },
+  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__new_json_control_escapes_inside_a_document_echoed", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 7, h_id: "dac393659ded1894", h_schema: "", h_rule: "" },
   { rel_id: 20, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "8f6a6de3a97ae9ac", h_schema: "", h_rule: "" },
   { rel_id: 21, parent_id: 11, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "6fbc7d306e1c3d16", h_schema: "", h_rule: "" },
 ];
@@ -212,27 +212,27 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["raw_doc"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "raw_doc", sql: `INSERT OR IGNORE INTO "raw_doc" ("body") VALUES (?)`, params: ["{\"formfeed\":\"a\\fb\",\"quote\":\"a\\\"b\",\"solidus\":\"a/b\",\"tab\":\"a\\tb\"}"] },
-  { rel: "echoed", sql: `DELETE FROM "echoed"`, params: [] },
-  { rel: "echoed", sql: `INSERT OR IGNORE INTO "echoed" ("body") SELECT b0."body" FROM "raw_doc" b0`, params: [] },
+  { rel: "raw_doc", sql: `INSERT OR IGNORE INTO "json_control_escapes_inside_a_document_raw_doc" ("body") VALUES (?)`, params: ["{\"formfeed\":\"a\\fb\",\"quote\":\"a\\\"b\",\"solidus\":\"a/b\",\"tab\":\"a\\tb\"}"] },
+  { rel: "echoed", sql: `DELETE FROM "json_control_escapes_inside_a_document_echoed"`, params: [] },
+  { rel: "echoed", sql: `INSERT OR IGNORE INTO "json_control_escapes_inside_a_document_echoed" ("body") SELECT b0."body" FROM "json_control_escapes_inside_a_document_raw_doc" b0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
-  echoed: `SELECT t."body" FROM "echoed" t`,
-  raw_doc: `SELECT t."body" FROM "raw_doc" t`,
+  echoed: `SELECT t."body" FROM "json_control_escapes_inside_a_document_echoed" t`,
+  raw_doc: `SELECT t."body" FROM "json_control_escapes_inside_a_document_raw_doc" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "echoed", kind: "set", table_name: "echoed", delta_table_name: "__delta_echoed", frontier_table_name: "__frontier_echoed", next_frontier_table_name: "__next_frontier_echoed", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."body", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_echoed" t WHERE t."_sign" IN (-1, 1) GROUP BY t."body", t."_sign"`, rule_observers: [] },
-  { rel: "raw_doc", kind: "set", table_name: "raw_doc", delta_table_name: "__delta_raw_doc", frontier_table_name: "__frontier_raw_doc", next_frontier_table_name: "__next_frontier_raw_doc", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "raw_doc" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrival_del_sql: `DELETE FROM "raw_doc" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundary_sql: `SELECT t."body", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_raw_doc" t WHERE t."_sign" IN (-1, 1) GROUP BY t."body", t."_sign"`, rule_observers: ["echoed/1"] },
+  { rel: "echoed", kind: "set", table_name: "json_control_escapes_inside_a_document_echoed", delta_table_name: "__delta_json_control_escapes_inside_a_document_echoed", frontier_table_name: "__frontier_json_control_escapes_inside_a_document_echoed", next_frontier_table_name: "__next_frontier_json_control_escapes_inside_a_document_echoed", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."body", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_json_control_escapes_inside_a_document_echoed" t WHERE t."_sign" IN (-1, 1) GROUP BY t."body", t."_sign"`, rule_observers: [] },
+  { rel: "raw_doc", kind: "set", table_name: "json_control_escapes_inside_a_document_raw_doc", delta_table_name: "__delta_json_control_escapes_inside_a_document_raw_doc", frontier_table_name: "__frontier_json_control_escapes_inside_a_document_raw_doc", next_frontier_table_name: "__next_frontier_json_control_escapes_inside_a_document_raw_doc", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "json_control_escapes_inside_a_document_raw_doc" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrival_del_sql: `DELETE FROM "json_control_escapes_inside_a_document_raw_doc" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundary_sql: `SELECT t."body", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_json_control_escapes_inside_a_document_raw_doc" t WHERE t."_sign" IN (-1, 1) GROUP BY t."body", t."_sign"`, rule_observers: ["echoed/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "echoed", rule_id: "json_control_escapes_inside_a_document:echoed/1#1", head_delta_table_name: "__delta_echoed", head_columns: ["body"], insert_sql: `INSERT OR IGNORE INTO "echoed" ("body") SELECT DISTINCT d0."body" FROM "__frontier_raw_doc" d0 WHERE d0."_phase" >= 0 RETURNING "body"`, select_sql: `SELECT "body" FROM "echoed"`, recompute_sql: `DELETE FROM "echoed";
-INSERT OR IGNORE INTO "echoed" ("body") SELECT b0."body" FROM "raw_doc" b0`, support_sql: [`DELETE FROM "__support_next_echoed"`, `INSERT INTO "__support_next_echoed" ("body", "__refcount") SELECT "body", sum("__refcount") FROM (SELECT b0."body" AS "body", count(*) AS "__refcount" FROM "raw_doc" b0 GROUP BY b0."body") GROUP BY "body"`, `UPDATE "echoed" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_echoed" n WHERE n."body" = h."body"), 0)`, `INSERT INTO "__delta_echoed" ("_sign", "_sequence", "body") SELECT -1, row_number() OVER () - 1, "body" FROM "echoed" WHERE "__refcount" <= 0`, `DELETE FROM "echoed" WHERE "__refcount" <= 0`, `DELETE FROM "__new_echoed"`, `INSERT INTO "__new_echoed" ("body", "__refcount") SELECT n."body", n."__refcount" FROM "__support_next_echoed" n LEFT JOIN "echoed" h ON n."body" = h."body" WHERE h."body" IS NULL`, `INSERT INTO "__delta_echoed" ("_sign", "_sequence", "body") SELECT 1, "rowid" - 1, "body" FROM "__new_echoed"`, `INSERT INTO "__frontier_echoed" ("_phase", "_sequence", "body") SELECT ?, "rowid" - 1, "body" FROM "__new_echoed"`, `INSERT INTO "__next_frontier_echoed" ("_phase", "_sequence", "body") SELECT ?, "rowid" - 1, "body" FROM "__new_echoed"`, `INSERT OR IGNORE INTO "echoed" ("body", "__refcount") SELECT n."body", n."__refcount" FROM "__support_next_echoed" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "echoed", rule_id: "json_control_escapes_inside_a_document:echoed/1#1", head_delta_table_name: "__delta_json_control_escapes_inside_a_document_echoed", head_columns: ["body"], insert_sql: `INSERT OR IGNORE INTO "json_control_escapes_inside_a_document_echoed" ("body") SELECT DISTINCT d0."body" FROM "__frontier_json_control_escapes_inside_a_document_raw_doc" d0 WHERE d0."_phase" >= 0 RETURNING "body"`, select_sql: `SELECT "body" FROM "json_control_escapes_inside_a_document_echoed"`, recompute_sql: `DELETE FROM "json_control_escapes_inside_a_document_echoed";
+INSERT OR IGNORE INTO "json_control_escapes_inside_a_document_echoed" ("body") SELECT b0."body" FROM "json_control_escapes_inside_a_document_raw_doc" b0`, support_sql: [`DELETE FROM "__support_next_json_control_escapes_inside_a_document_echoed"`, `INSERT INTO "__support_next_json_control_escapes_inside_a_document_echoed" ("body", "__refcount") SELECT "body", sum("__refcount") FROM (SELECT b0."body" AS "body", count(*) AS "__refcount" FROM "json_control_escapes_inside_a_document_raw_doc" b0 GROUP BY b0."body") GROUP BY "body"`, `UPDATE "json_control_escapes_inside_a_document_echoed" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_json_control_escapes_inside_a_document_echoed" n WHERE n."body" = h."body"), 0)`, `INSERT INTO "__delta_json_control_escapes_inside_a_document_echoed" ("_sign", "_sequence", "body") SELECT -1, row_number() OVER () - 1, "body" FROM "json_control_escapes_inside_a_document_echoed" WHERE "__refcount" <= 0`, `DELETE FROM "json_control_escapes_inside_a_document_echoed" WHERE "__refcount" <= 0`, `DELETE FROM "__new_json_control_escapes_inside_a_document_echoed"`, `INSERT INTO "__new_json_control_escapes_inside_a_document_echoed" ("body", "__refcount") SELECT n."body", n."__refcount" FROM "__support_next_json_control_escapes_inside_a_document_echoed" n LEFT JOIN "json_control_escapes_inside_a_document_echoed" h ON n."body" = h."body" WHERE h."body" IS NULL`, `INSERT INTO "__delta_json_control_escapes_inside_a_document_echoed" ("_sign", "_sequence", "body") SELECT 1, "rowid" - 1, "body" FROM "__new_json_control_escapes_inside_a_document_echoed"`, `INSERT INTO "__frontier_json_control_escapes_inside_a_document_echoed" ("_phase", "_sequence", "body") SELECT ?, "rowid" - 1, "body" FROM "__new_json_control_escapes_inside_a_document_echoed"`, `INSERT INTO "__next_frontier_json_control_escapes_inside_a_document_echoed" ("_phase", "_sequence", "body") SELECT ?, "rowid" - 1, "body" FROM "__new_json_control_escapes_inside_a_document_echoed"`, `INSERT OR IGNORE INTO "json_control_escapes_inside_a_document_echoed" ("body", "__refcount") SELECT n."body", n."__refcount" FROM "__support_next_json_control_escapes_inside_a_document_echoed" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const RECONCILE_EVERY_TICK = false;

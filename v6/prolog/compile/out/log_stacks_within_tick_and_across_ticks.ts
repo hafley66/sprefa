@@ -158,24 +158,24 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "heard" ("item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_heard" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "heard" t`,
-  `CREATE TABLE "heard_count" ("item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_heard_count" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "heard_count" t`,
-  `CREATE TEMP TABLE "__delta_heard" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_heard_sign" ON "__delta_heard" ("_sign")`,
-  `CREATE INDEX "__delta_heard_group" ON "__delta_heard" ("item")`,
-  `CREATE TEMP TABLE "__frontier_heard" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_heard_phase" ON "__frontier_heard" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_heard" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_heard" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_heard" t`,
-  `CREATE TEMP TABLE "__delta_heard_count" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_heard_count_sign" ON "__delta_heard_count" ("_sign")`,
-  `CREATE INDEX "__delta_heard_count_group" ON "__delta_heard_count" ("item")`,
-  `CREATE TEMP TABLE "__frontier_heard_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_heard_count_phase" ON "__frontier_heard_count" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_heard_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_heard_count" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_heard_count" t`,
+  `CREATE TABLE "log_stacks_within_tick_and_across_ticks_heard" ("item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_log_stacks_within_tick_and_across_ticks_heard" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "log_stacks_within_tick_and_across_ticks_heard" t`,
+  `CREATE TABLE "log_stacks_within_tick_and_across_ticks_heard_count" ("item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_log_stacks_within_tick_and_across_ticks_heard_count" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "log_stacks_within_tick_and_across_ticks_heard_count" t`,
+  `CREATE TEMP TABLE "__delta_log_stacks_within_tick_and_across_ticks_heard" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_log_stacks_within_tick_and_across_ticks_heard_sign" ON "__delta_log_stacks_within_tick_and_across_ticks_heard" ("_sign")`,
+  `CREATE INDEX "__delta_log_stacks_within_tick_and_across_ticks_heard_group" ON "__delta_log_stacks_within_tick_and_across_ticks_heard" ("item")`,
+  `CREATE TEMP TABLE "__frontier_log_stacks_within_tick_and_across_ticks_heard" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_log_stacks_within_tick_and_across_ticks_heard_phase" ON "__frontier_log_stacks_within_tick_and_across_ticks_heard" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_log_stacks_within_tick_and_across_ticks_heard" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_log_stacks_within_tick_and_across_ticks_heard" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_log_stacks_within_tick_and_across_ticks_heard" t`,
+  `CREATE TEMP TABLE "__delta_log_stacks_within_tick_and_across_ticks_heard_count" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_log_stacks_within_tick_and_across_ticks_heard_count_sign" ON "__delta_log_stacks_within_tick_and_across_ticks_heard_count" ("_sign")`,
+  `CREATE INDEX "__delta_log_stacks_within_tick_and_across_ticks_heard_count_group" ON "__delta_log_stacks_within_tick_and_across_ticks_heard_count" ("item")`,
+  `CREATE TEMP TABLE "__frontier_log_stacks_within_tick_and_across_ticks_heard_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_log_stacks_within_tick_and_across_ticks_heard_count_phase" ON "__frontier_log_stacks_within_tick_and_across_ticks_heard_count" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_log_stacks_within_tick_and_across_ticks_heard_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_log_stacks_within_tick_and_across_ticks_heard_count" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_log_stacks_within_tick_and_across_ticks_heard_count" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -205,16 +205,16 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "item", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "c15ba99569a11f57", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 7, ordinal: 0, local_name: "heard_count", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "d736c85a00139aa3", h_schema: "4f9957ccb96234b6", h_rule: "94b5e9735c2966c4" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "item", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "f0ce19324cd2326e", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_heard", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "9ee391f4513ab507", h_schema: "15e84563064d7c4c", h_rule: "" },
-  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_heard", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "a7ada90843a25260", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_heard", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "5eb4c8f18812bfc2", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__txt_heard", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "f0274c21714ba15c", h_schema: "4f9957ccb96234b6", h_rule: "" },
-  { rel_id: 16, parent_id: 12, ordinal: 0, local_name: "__txt___delta_heard", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "29e01a41953460c0", h_schema: "4f9957ccb96234b6", h_rule: "" },
-  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__delta_heard_count", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "f2fd2fb1e71c33e6", h_schema: "15e84563064d7c4c", h_rule: "" },
-  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__frontier_heard_count", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "07c20c029e716ca2", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__next_frontier_heard_count", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "3e4f9b2fb722cdb8", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__txt_heard_count", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "4a8c08a67f50db97", h_schema: "4f9957ccb96234b6", h_rule: "" },
-  { rel_id: 21, parent_id: 17, ordinal: 0, local_name: "__txt___delta_heard_count", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "d3d9393228e91b42", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_log_stacks_within_tick_and_across_ticks_heard", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "b145d72ca631414e", h_schema: "15e84563064d7c4c", h_rule: "" },
+  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_log_stacks_within_tick_and_across_ticks_heard", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "d06425b389afb130", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_log_stacks_within_tick_and_across_ticks_heard", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "5c3d816c72eed605", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__txt_log_stacks_within_tick_and_across_ticks_heard", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "4143ba2dfe95b454", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 16, parent_id: 12, ordinal: 0, local_name: "__txt___delta_log_stacks_within_tick_and_across_ticks_heard", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "8ac6171809b8bfe6", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__delta_log_stacks_within_tick_and_across_ticks_heard_count", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "703588dec967d35e", h_schema: "15e84563064d7c4c", h_rule: "" },
+  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__frontier_log_stacks_within_tick_and_across_ticks_heard_count", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "fef19f0f8327a525", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__next_frontier_log_stacks_within_tick_and_across_ticks_heard_count", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "a7678442329b4ac9", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__txt_log_stacks_within_tick_and_across_ticks_heard_count", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "f426f94441d8bf35", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 21, parent_id: 17, ordinal: 0, local_name: "__txt___delta_log_stacks_within_tick_and_across_ticks_heard_count", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "b2b92d785c9eedf5", h_schema: "4f9957ccb96234b6", h_rule: "" },
   { rel_id: 22, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "86920616f70ad45e", h_schema: "", h_rule: "" },
   { rel_id: 23, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "e4e3c116161369e1", h_schema: "", h_rule: "" },
   { rel_id: 24, parent_id: 11, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "ecc5fa6766ab1e29", h_schema: "", h_rule: "" },
@@ -229,17 +229,17 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  heard: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_heard" t`,
-  heard_count: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_heard_count" t`,
+  heard: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_log_stacks_within_tick_and_across_ticks_heard" t`,
+  heard_count: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_log_stacks_within_tick_and_across_ticks_heard_count" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "heard", kind: "log", table_name: "heard", delta_table_name: "__delta_heard", frontier_table_name: "__frontier_heard", next_frontier_table_name: "__next_frontier_heard", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "heard" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_heard" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["heard_count/1"] },
-  { rel: "heard_count", kind: "log", table_name: "heard_count", delta_table_name: "__delta_heard_count", frontier_table_name: "__frontier_heard_count", next_frontier_table_name: "__next_frontier_heard_count", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_heard_count" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: [] },
+  { rel: "heard", kind: "log", table_name: "log_stacks_within_tick_and_across_ticks_heard", delta_table_name: "__delta_log_stacks_within_tick_and_across_ticks_heard", frontier_table_name: "__frontier_log_stacks_within_tick_and_across_ticks_heard", next_frontier_table_name: "__next_frontier_log_stacks_within_tick_and_across_ticks_heard", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "log_stacks_within_tick_and_across_ticks_heard" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_log_stacks_within_tick_and_across_ticks_heard" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["heard_count/1"] },
+  { rel: "heard_count", kind: "log", table_name: "log_stacks_within_tick_and_across_ticks_heard_count", delta_table_name: "__delta_log_stacks_within_tick_and_across_ticks_heard_count", frontier_table_name: "__frontier_log_stacks_within_tick_and_across_ticks_heard_count", next_frontier_table_name: "__next_frontier_log_stacks_within_tick_and_across_ticks_heard_count", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_log_stacks_within_tick_and_across_ticks_heard_count" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "heard_count", rule_id: "log_stacks_within_tick_and_across_ticks:heard_count/1#1", head_kind: "log", head_table_name: "heard_count", head_delta_table_name: "__delta_heard_count", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_heard" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "heard_count", rule_id: "log_stacks_within_tick_and_across_ticks:heard_count/1#1", head_kind: "log", head_table_name: "log_stacks_within_tick_and_across_ticks_heard_count", head_delta_table_name: "__delta_log_stacks_within_tick_and_across_ticks_heard_count", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_log_stacks_within_tick_and_across_ticks_heard" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

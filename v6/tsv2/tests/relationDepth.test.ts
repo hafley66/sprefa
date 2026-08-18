@@ -129,9 +129,16 @@ function insert_sql_for(plan: IIncrementalProgramPlan, rel: string): string {
 }
 
 /** The distinct dictionary views one statement joins. */
+/** The emitted object carries this compilation unit's module prefix
+ *  (compile.pl relation_storage_names/4); the names asserted below are the
+ *  authored ones, so strip that one segment before comparing. */
+function without_module_prefix(name: string): string {
+  return name.replace(/relation_depth[23]_construct_and_read_/, "");
+}
+
 function dictionary_views(sql: string): string[] {
   const names = new Set<string>();
-  for (const match of sql.matchAll(/"(__ref_[a-z_]+)"/g)) names.add(match[1]!);
+  for (const match of sql.matchAll(/"(__ref_[a-z_0-9]+)"/g)) names.add(without_module_prefix(match[1]!));
   return [...names].sort();
 }
 
@@ -142,7 +149,7 @@ function dictionary_views(sql: string): string[] {
  *  count rather than compared raw. */
 function dictionary_joins_per_arm(sql: string): number {
   const arms = (sql.match(/ UNION ALL /g) ?? []).length + 1;
-  const joins = (sql.match(/"__ref_[a-z_]+" b\d+/g) ?? []).length;
+  const joins = (sql.match(/"__ref_[a-z_0-9]+" b\d+/g) ?? []).length;
   assert.equal(joins % arms, 0, `every delta arm must carry the same chain: ${sql}`);
   return joins / arms;
 }
@@ -164,7 +171,9 @@ function dictionary_joins_per_arm(sql: string): number {
 function row_sources_per_arm(sql: string): string[][] {
   return sql.split(" UNION ALL ").map((arm) => {
     const from_clause = arm.slice(arm.indexOf(' FROM "'));
-    return [...from_clause.matchAll(/"([a-z_0-9]+)" [bdrn]\d+/g)].map((match) => match[1]!);
+    return [...from_clause.matchAll(/"([a-z_0-9]+)" [bdrn]\d+/g)].map((match) =>
+      without_module_prefix(match[1]!),
+    );
   });
 }
 
