@@ -40,6 +40,8 @@ SHAPES=(
   "shape_option_of_list"
   "shape_option_nested_enum"
   "shape_list_nesting_depth_five"
+  "shape_list_nesting_depth_six"
+  "shape_float_column"
   "shape_camel_case_module"
   "shape_concrete_dunder_rel"
 )

@@ -42,7 +42,50 @@ module_defs(ModuleId, Rows, RefPrefix, Pairs) :-
               RelRow = row(_, _, _, LocalName, rel, _, _, ModuleId, _, _, _),
               \+ compiler_helper_rel(LocalName) ),
             RelRows),
-    maplist(rel_def_pair(Rows, RefPrefix), RelRows, Pairs).
+    referenced_helper_rows(Rows, RelRows, HelperRows),
+    append(RelRows, HelperRows, DefRows),
+    maplist(rel_def_pair(Rows, RefPrefix), DefRows, Pairs).
+
+% A minted rel an author rel points at still receives a `$ref`, so the `__`
+% filter alone leaves that pointer without a target.
+referenced_helper_rows(Rows, SeedRows, HelperRows) :-
+    maplist(rel_row_id, SeedRows, SeedIds0),
+    sort(SeedIds0, SeedIds),
+    closure_rel_ids(Rows, SeedIds, SeedIds, AllIds),
+    subtract(AllIds, SeedIds, HelperIds),
+    findall(HelperRow,
+            ( member(HelperId, HelperIds),
+              once(( member(HelperRow, Rows),
+                     HelperRow = row(HelperId, _, _, _, rel, _, _, _, _, _, _) )) ),
+            HelperRows).
+
+rel_row_id(row(RelId, _, _, _, rel, _, _, _, _, _, _), RelId).
+
+closure_rel_ids(_Rows, [], Seen, Seen).
+closure_rel_ids(Rows, [RelId | Queue0], Seen0, Seen) :-
+    findall(TargetId, referenced_rel_id(Rows, RelId, TargetId), TargetIds0),
+    sort(TargetIds0, TargetIds),
+    subtract(TargetIds, Seen0, Fresh),
+    append(Seen0, Fresh, Seen1),
+    append(Queue0, Fresh, Queue),
+    closure_rel_ids(Rows, Queue, Seen1, Seen).
+
+referenced_rel_id(Rows, RelId, TargetId) :-
+    member(row(_, RelId, _, _, column, ColumnTypeId, _, _, _, _, _), Rows),
+    rel_type_id(Rows, ColumnTypeId, TargetId).
+
+rel_type_id(Rows, TypeId, TargetId) :-
+    once(row_at(Rows, TypeId, TypeRow)),
+    TypeRow = row(_, _, _, _, Kind, ElementTypeId, _, _, _, _, _),
+    (   Kind == rel
+    ->  TargetId = TypeId
+    ;   wrapper_kind(Kind),
+        rel_type_id(Rows, ElementTypeId, TargetId)
+    ).
+
+wrapper_kind(list).
+wrapper_kind(json_list).
+wrapper_kind(option).
 
 % The `__` namespace is compiler-owned (option enums, list companions,
 % ref-option split rels); authors cannot spell it, so the marker identifies a minted helper.

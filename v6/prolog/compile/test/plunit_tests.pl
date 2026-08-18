@@ -87,7 +87,7 @@
                 reconcile_every_tick/2,
                 derived_edge_carry_required/3, retraction_guard/2 ]).
 :- use_module('../../lower', [ boot_statements/7 ]).
-:- use_module('../../compile/4_emit_jsonschema', [ jsonschema_text/3, option_rows/3 ]).
+:- use_module('../../compile/4_emit_jsonschema', [ jsonschema_text/3, jsonschema_document/3, option_rows/3 ]).
 :- use_module('../../compile/5_emit_openapi', [ openapi_text/3 ]).
 :- use_module('../../compile/7_emit_ts_types', [ ts_types_text/3 ]).
 :- use_module('../../compile/8_emit_rust_types', [ rust_types_text/3 ]).
@@ -9952,6 +9952,89 @@ test(snake_name_allcaps_pinning) :-
 
 :- end_tests(snake_name_allcaps).
 
+:- begin_tests(schema_emit_metaschema).
+
+% One rel with one option column, the shape every option column reaches
+% through kind_schema/7's option arm.
+nullable_schema_rows([
+    row(1, 0, 0, text, primitive, 0, 0, 0, '', '', ''),
+    row(2, 0, 0, 'option(text)', option, 1, 0, 0, '', '', ''),
+    row(3, 0, 0, doc, module, 0, 0, 0, 'deadbeefdeadbeef', '', ''),
+    row(4, 3, 0, note, rel, 0, 0, 3, '', '', ''),
+    row(5, 4, 0, body, column, 2, 0, 3, '', '', '')
+]).
+
+% FAIL-PRE-FIX: the arm wrote the atom `null`, which json_write_dict/3 renders
+% as the JSON literal, and 2020-12 reads `type` as a string or array of
+% strings only. 166 occurrences stood in compile/out/*.schema.json and 159 in
+% pokeapi_shape.openapi.json.
+test(a_nullable_column_emits_no_null_json_literal_as_a_type) :-
+    nullable_schema_rows(Rows),
+    jsonschema_text(doc, Rows, Text),
+    sub_atom(Text, _, _, _, '"tag"'),
+    \+ sub_atom(Text, _, _, _, '"type":null'), !.
+
+% A minted rel an author rel points at, plus a minted rel nothing points at.
+dangling_ref_rows([
+    row(1, 0, 0, int, primitive, 0, 0, 0, '', '', ''),
+    row(2, 0, 0, doc, module, 0, 0, 0, 'deadbeefdeadbeef', '', ''),
+    row(3, 2, 0, '__gen__pair_int_deadbeef', rel, 0, 0, 2, '', '', ''),
+    row(4, 3, 0, first, column, 1, 0, 2, '', '', ''),
+    row(5, 2, 0, edge, rel, 0, 0, 2, '', '', ''),
+    row(6, 5, 0, endpoints, column, 3, 0, 2, '', '', ''),
+    row(7, 2, 0, '__opt_text_tag', rel, 0, 0, 2, '', '', ''),
+    row(8, 7, 0, tag, column, 1, 0, 2, '', '', '')
+]).
+
+% FAIL-PRE-FIX: the `__` filter ran on the defs and not on the refs, so four
+% committed schemas carried a `$ref` at a pointer `$defs` had no key for.
+test(a_minted_rel_a_ref_reaches_carries_its_own_def) :-
+    dangling_ref_rows(Rows),
+    jsonschema_document(doc, Rows, Doc),
+    get_dict('$defs', Doc, Defs),
+    get_dict(edge, Defs, EdgeSchema),
+    get_dict(properties, EdgeSchema, Properties),
+    get_dict(endpoints, Properties, Property),
+    get_dict('$ref', Property, Ref),
+    atom_concat('#/$defs/', Pointer, Ref),
+    get_dict(Pointer, Defs, _), !.
+
+% The filter still earns its keep: a minted rel nothing points at stays out.
+test(an_unreached_minted_rel_stays_out_of_the_defs) :-
+    dangling_ref_rows(Rows),
+    jsonschema_document(doc, Rows, Doc),
+    get_dict('$defs', Doc, Defs),
+    \+ get_dict('__opt_text_tag', Defs, _), !.
+
+:- end_tests(schema_emit_metaschema).
+
+:- begin_tests(rust_types_keyword_escape).
+
+% A column named for a Rust keyword, in a plain rel and in a generic rel.
+keyword_column_rows([
+    row(1, 0, 0, text, primitive, 0, 0, 0, '', '', ''),
+    row(2, 0, 0, doc, module, 0, 0, 0, 'deadbeefdeadbeef', '', ''),
+    row(3, 2, 0, diag, rel, 0, 0, 2, '', '', ''),
+    row(4, 3, 0, where, column, 1, 0, 2, '', '', ''),
+    row(5, 3, 1, type, column, 1, 0, 2, '', '', ''),
+    row(6, 3, 2, message, column, 1, 0, 2, '', '', ''),
+    row(7, 0, 0, boxed, generic_rel, 0, 0, 2, '', '', ''),
+    row(8, 7, 0, move, generic_column, 1, 0, 2, '', '', '')
+]).
+
+% FAIL-PRE-FIX: `pub where: String,` reached the file and rustc stopped at
+% "expected identifier, found keyword `where`"; 1 of 342 committed .types.rs
+% carried it.
+test(a_keyword_column_takes_the_raw_identifier_escape) :-
+    keyword_column_rows(Rows),
+    once(rust_types_text(doc, Rows, Text)),
+    sub_string(Text, _, _, _, "pub r#where: String,"),
+    sub_string(Text, _, _, _, "pub r#type: String,"),
+    sub_string(Text, _, _, _, "pub r#move: String,"),
+    sub_string(Text, _, _, _, "pub message: String,"),
+    \+ sub_string(Text, _, _, _, "pub where:"), !.
+
+:- end_tests(rust_types_keyword_escape).
 :- begin_tests(bytes_type_system).
 
 test(bytes_parses_prints_and_reparses_as_a_scalar_type) :-

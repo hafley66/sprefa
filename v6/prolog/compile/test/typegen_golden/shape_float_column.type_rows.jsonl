@@ -1,0 +1,12 @@
+{"rel": "type_row", "row": [1, 0, 0, "int", "primitive", 0, 0], "sign": "add"}
+{"rel": "type_row", "row": [2, 0, 0, "float", "primitive", 0, 0], "sign": "add"}
+{"rel": "type_row", "row": [3, 0, 0, "text", "primitive", 0, 0], "sign": "add"}
+{"rel": "type_row", "row": [4, 0, 0, "shape_float_column", "module", 0, 4], "sign": "add"}
+{"rel": "type_row", "row": [5, 0, 0, "json_list(float)", "json_list", 2, 0], "sign": "add"}
+{"rel": "type_row", "row": [6, 0, 0, "option(float)", "option", 2, 0], "sign": "add"}
+{"rel": "type_row", "row": [7, 4, 0, "measurement", "rel", 0, 4], "sign": "add"}
+{"rel": "type_row", "row": [8, 7, 1, "id", "column", 1, 4], "sign": "add"}
+{"rel": "type_row", "row": [9, 7, 2, "ratio", "column", 2, 4], "sign": "add"}
+{"rel": "type_row", "row": [10, 7, 3, "label", "column", 3, 4], "sign": "add"}
+{"rel": "type_row", "row": [11, 7, 4, "samples", "column", 5, 4], "sign": "add"}
+{"rel": "type_row", "row": [12, 7, 5, "margin", "column", 6, 4], "sign": "add"}

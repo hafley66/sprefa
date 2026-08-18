@@ -16,7 +16,22 @@
       "additionalProperties":false,
       "properties": {
         "id": {"type":"integer"},
-        "value": {"anyOf": [ {"type":"integer"},  {"type":null} ]}
+        "value": {
+          "anyOf": [
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"none"}},
+              "required": ["tag" ],
+              "type":"object"
+            },
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"some"},"value": {"type":"integer"}},
+              "required": ["tag", "value" ],
+              "type":"object"
+            }
+          ]
+        }
       },
       "required": ["id", "value" ],
       "type":"object"
@@ -25,7 +40,22 @@
       "additionalProperties":false,
       "properties": {
         "id": {"type":"integer"},
-        "value": {"anyOf": [ {"type":"integer"},  {"type":null} ]}
+        "value": {
+          "anyOf": [
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"none"}},
+              "required": ["tag" ],
+              "type":"object"
+            },
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"some"},"value": {"type":"integer"}},
+              "required": ["tag", "value" ],
+              "type":"object"
+            }
+          ]
+        }
       },
       "required": ["id", "value" ],
       "type":"object"
@@ -82,7 +112,22 @@
       "additionalProperties":false,
       "properties": {
         "id": {"type":"integer"},
-        "title": {"anyOf": [ {"type":"string"},  {"type":null} ]}
+        "title": {
+          "anyOf": [
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"none"}},
+              "required": ["tag" ],
+              "type":"object"
+            },
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"some"},"value": {"type":"string"}},
+              "required": ["tag", "value" ],
+              "type":"object"
+            }
+          ]
+        }
       },
       "required": ["id", "title" ],
       "type":"object"
@@ -91,7 +136,22 @@
       "additionalProperties":false,
       "properties": {
         "id": {"type":"integer"},
-        "title": {"anyOf": [ {"type":"string"},  {"type":null} ]}
+        "title": {
+          "anyOf": [
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"none"}},
+              "required": ["tag" ],
+              "type":"object"
+            },
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"some"},"value": {"type":"string"}},
+              "required": ["tag", "value" ],
+              "type":"object"
+            }
+          ]
+        }
       },
       "required": ["id", "title" ],
       "type":"object"

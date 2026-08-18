@@ -1,0 +1,48 @@
+{
+  "$defs": {
+    "squad": {
+      "additionalProperties":false,
+      "properties": {
+        "id": {"type":"integer"},
+        "rank": {
+          "anyOf": [
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"none"}},
+              "required": ["tag" ],
+              "type":"object"
+            },
+            {
+              "additionalProperties":false,
+              "properties": {
+                "tag": {"const":"some"},
+                "value": {
+                  "anyOf": [
+                    {
+                      "additionalProperties":false,
+                      "properties": {"tag": {"const":"none"}},
+                      "required": ["tag" ],
+                      "type":"object"
+                    },
+                    {
+                      "additionalProperties":false,
+                      "properties": {"tag": {"const":"some"},"value": {"type":"integer"}},
+                      "required": ["tag", "value" ],
+                      "type":"object"
+                    }
+                  ]
+                }
+              },
+              "required": ["tag", "value" ],
+              "type":"object"
+            }
+          ]
+        }
+      },
+      "required": ["id", "rank" ],
+      "type":"object"
+    }
+  },
+  "$id":"option_of_option_of_scalar_keeps_its_stop#30dce476681b0e1e",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

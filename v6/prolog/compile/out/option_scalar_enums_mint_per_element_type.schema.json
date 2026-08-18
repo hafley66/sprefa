@@ -3,8 +3,38 @@
     "measurement": {
       "additionalProperties":false,
       "properties": {
-        "label": {"anyOf": [ {"type":"string"},  {"type":null} ]},
-        "reading": {"anyOf": [ {"type":"integer"},  {"type":null} ]},
+        "label": {
+          "anyOf": [
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"none"}},
+              "required": ["tag" ],
+              "type":"object"
+            },
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"some"},"value": {"type":"string"}},
+              "required": ["tag", "value" ],
+              "type":"object"
+            }
+          ]
+        },
+        "reading": {
+          "anyOf": [
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"none"}},
+              "required": ["tag" ],
+              "type":"object"
+            },
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"some"},"value": {"type":"integer"}},
+              "required": ["tag", "value" ],
+              "type":"object"
+            }
+          ]
+        },
         "sensor_id": {"type":"integer"}
       },
       "required": ["sensor_id", "label", "reading" ],

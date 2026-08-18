@@ -1,5 +1,11 @@
 {
   "$defs": {
+    "__gen__entry_text_int_a6c3f6c7e60e6b95": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"value": {"type":"integer"}},
+      "required": ["key", "value" ],
+      "type":"object"
+    },
     "carry": {
       "additionalProperties":false,
       "properties": {

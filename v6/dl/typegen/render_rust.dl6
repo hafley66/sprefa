@@ -147,44 +147,41 @@ rel list_row(id: int, element_id: int).
 list_row(Id, ElemId) <- type_row(Id, kind: 'json_list', type_id: ElemId).
 list_row(Id, ElemId) <- type_row(Id, kind: 'list', type_id: ElemId).
 
-# @comment-ok: nesting bound; a self-recursive stratum settles a tick late.
-# Nesting unrolls to five levels; a recursive list_type derives one level per tick, so a single arrival batch renders short.
-rel list_depth_one(id: int, text: text).
-list_depth_one(Id, Text) <-
-  list_row(Id, ElemId),
-  list_element(ElemId, Element),
-  Text := concat(['Vec<', Element, '>']).
+# Step 1 is the outermost wrap, inner_id what is left inside after that many.
+# The head carries an int: lower.pl:5258 stops a built text in a recursive head.
+rel list_step(list_id: int, step: int, inner_id: int).
+list_step(Id, 1, ElemId) <- list_row(Id, ElemId).
+list_step(Id, Step, InnerId) <-
+  list_step(Id, Step0, MiddleId),
+  list_row(MiddleId, InnerId),
+  Step := Step0 + 1.
 
-rel list_depth_two(id: int, text: text).
-list_depth_two(Id, Text) <-
-  list_row(Id, ElemId),
-  list_depth_one(ElemId, Element),
-  Text := concat(['Vec<', Element, '>']).
+# Exactly one step of a chain lands on something a list can hold.
+rel list_innermost(list_id: int, element_text: text).
+list_innermost(Id, ElementText) <-
+  list_step(Id, _, InnerId),
+  list_element(InnerId, ElementText).
 
-rel list_depth_three(id: int, text: text).
-list_depth_three(Id, Text) <-
-  list_row(Id, ElemId),
-  list_depth_two(ElemId, Element),
-  Text := concat(['Vec<', Element, '>']).
+# One opener and one closer per step, folded by group_concat, so nesting
+# carries no depth bound.
+rel list_open_part(list_id: int, step: int, part: text).
+list_open_part(Id, Step, 'Vec<') <- list_step(Id, Step, _).
 
-rel list_depth_four(id: int, text: text).
-list_depth_four(Id, Text) <-
-  list_row(Id, ElemId),
-  list_depth_three(ElemId, Element),
-  Text := concat(['Vec<', Element, '>']).
+rel list_close_part(list_id: int, step: int, part: text).
+list_close_part(Id, Step, '>') <- list_step(Id, Step, _).
 
-rel list_depth_five(id: int, text: text).
-list_depth_five(Id, Text) <-
-  list_row(Id, ElemId),
-  list_depth_four(ElemId, Element),
-  Text := concat(['Vec<', Element, '>']).
+rel list_open_text(list_id: int, open_text: text).
+list_open_text(Id, group_concat(Part, '', Step)) <- list_open_part(Id, Step, Part).
+
+rel list_close_text(list_id: int, close_text: text).
+list_close_text(Id, group_concat(Part, '', Step)) <- list_close_part(Id, Step, Part).
 
 rel list_type(id: int, text: text).
-list_type(Id, Text) <- list_depth_one(Id, Text).
-list_type(Id, Text) <- list_depth_two(Id, Text).
-list_type(Id, Text) <- list_depth_three(Id, Text).
-list_type(Id, Text) <- list_depth_four(Id, Text).
-list_type(Id, Text) <- list_depth_five(Id, Text).
+list_type(Id, Text) <-
+  list_innermost(Id, ElementText),
+  list_open_text(Id, OpenText),
+  list_close_text(Id, CloseText),
+  Text := concat([OpenText, ElementText, CloseText]).
 
 # What an option wraps: a leaf, or a list of any rendered depth.
 rel element_type(id: int, text: text).

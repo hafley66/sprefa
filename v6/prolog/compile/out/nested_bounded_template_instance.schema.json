@@ -1,5 +1,26 @@
 {
   "$defs": {
+    "__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e": {
+      "additionalProperties":false,
+      "properties": {
+        "first": {"$ref":"#/$defs/__gen__wrap_int_74568235536ee9d4"},
+        "second": {"$ref":"#/$defs/__gen__wrap_text_2bd6acc46ade78fd"}
+      },
+      "required": ["first", "second" ],
+      "type":"object"
+    },
+    "__gen__wrap_int_74568235536ee9d4": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    },
+    "__gen__wrap_text_2bd6acc46ade78fd": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"string"}},
+      "required": ["value" ],
+      "type":"object"
+    },
     "carry": {
       "additionalProperties":false,
       "properties": {
