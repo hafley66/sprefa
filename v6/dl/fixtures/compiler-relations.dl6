@@ -1,0 +1,6 @@
+# Compiler-plane facts use SemanticTypeId values and are erased before runtime
+# relation planning.  This fixture intentionally leaves `capability` with no
+# runtime table or arrival surface.
+rel Document(id: int).
+rel capability(Self: type, Format: type).
+capability(Document, text).
