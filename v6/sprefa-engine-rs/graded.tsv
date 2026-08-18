@@ -310,6 +310,7 @@ over_baseline_diag_exact_rows	clean	byte-clean
 over_baseline_gate_blocks_commit_only	clean	byte-clean
 pairwise_pairs_adjacent_values_when_the_source_idles	clean	byte-clean
 pairwise_reads_state_at_the_departure_tick	clean	byte-clean
+parameterized_enum_two_instantiations	clean	byte-clean
 paren_in_literal_inside_wrapper	clean	byte-clean
 pin_to_unknown_repo_derives_repo_candidate	clean	byte-clean
 pipe_stage_costs_one_tick	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
