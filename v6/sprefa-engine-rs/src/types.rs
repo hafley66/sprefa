@@ -590,9 +590,25 @@ pub struct HostAdapterRow {
     pub response_rel: String,
 }
 
-pub fn load_host_adapter_rows(path: impl AsRef<std::path::Path>) -> std::io::Result<Vec<HostAdapterRow>> {
+pub fn load_host_adapter_rows(
+    path: impl AsRef<std::path::Path>,
+) -> std::io::Result<Vec<HostAdapterRow>> {
     let text = std::fs::read_to_string(path)?;
     serde_json::from_str(&text).map_err(std::io::Error::other)
+}
+
+pub fn load_program_host_adapter_rows(program: &str) -> std::io::Result<Vec<HostAdapterRow>> {
+    let directory = std::env::var_os("DL_ADAPTERS_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dl/fixtures")
+        });
+    let path = directory.join(format!("{program}.adapters.json"));
+    match load_host_adapter_rows(path) {
+        Ok(rows) => Ok(rows),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
 }
 
 // The serde mirror of the emitted program: one JSON object per fixture.

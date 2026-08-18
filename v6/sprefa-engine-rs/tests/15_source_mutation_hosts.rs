@@ -6,7 +6,7 @@ use sprefa_engine_rs::hosts::{HostLiveRunner, IHostExecutor, SoopyMutationExecut
 use sprefa_engine_rs::program::run_boot;
 use sprefa_engine_rs::sql::SqliteSeam;
 use sprefa_engine_rs::types::{
-    Arrival, ArrivalSign, HostColumnPlan, HostPlanData, RelDelta, TickDeltas, Value,
+    Arrival, ArrivalSign, HostAdapterRow, HostColumnPlan, HostPlanData, RelDelta, TickDeltas, Value,
 };
 use sprefa_engine_rs::GenProgram;
 use tempfile::TempDir;
@@ -148,7 +148,7 @@ fn mutation_plan(
         template: "unused".to_string(),
         demand_rel: demand_rel.to_string(),
         response_rel: response_rel.to_string(),
-        execution: "soopy_mutation".to_string(),
+        execution: "shell".to_string(),
         request_type: None,
         response_type: None,
     }
@@ -171,8 +171,21 @@ fn compiled_dl6_source_mutation_golden_stages_approves_commits_and_replays() {
     let seam = SqliteSeam::in_memory().expect("program seam");
     seam.run_ddl(&program.ddl).expect("program DDL");
     run_boot(&seam, &program.boot);
+    let adapter_rows = [
+        HostAdapterRow {
+            adapter: "soopy".to_string(),
+            demand_rel: "__host_demand_source_stage".to_string(),
+            response_rel: "__host_response_source_stage".to_string(),
+        },
+        HostAdapterRow {
+            adapter: "soopy".to_string(),
+            demand_rel: "__host_demand_source_commit".to_string(),
+            response_rel: "__host_response_source_commit".to_string(),
+        },
+    ];
     let mut runner =
-        HostLiveRunner::new(&program.host_plans, &program.rel_columns).expect("generated hosts");
+        HostLiveRunner::with_adapter_rows(&program.host_plans, &program.rel_columns, &adapter_rows)
+            .expect("sidecar routes generated hosts in process");
 
     // Tick 1: authored source evidence joins to the generated source_stage
     // demand. Its only side effect is durable staging outside the target root.
@@ -326,7 +339,8 @@ fn compiled_dl6_source_mutation_golden_stages_approves_commits_and_replays() {
     // Replaying the emitted commit demand uses the durable Soopy receipt and
     // leaves the target bytes unchanged.
     let mut restarted =
-        HostLiveRunner::new(&program.host_plans, &program.rel_columns).expect("restarted hosts");
+        HostLiveRunner::with_adapter_rows(&program.host_plans, &program.rel_columns, &adapter_rows)
+            .expect("restarted sidecar hosts");
     let replayed = restarted
         .collect(&approved)
         .expect("idempotent replay host response");
@@ -391,7 +405,13 @@ fn stage_and_commit_responses_reenter_the_generic_host_runner_on_later_ticks() {
         ),
     ]);
     let stage_plans = [stage_plan];
-    let mut stage_runner = HostLiveRunner::new(&stage_plans, &columns).expect("stage runner");
+    let stage_rows = [HostAdapterRow {
+        adapter: "soopy".to_string(),
+        demand_rel: "stage_demand".to_string(),
+        response_rel: "stage_response".to_string(),
+    }];
+    let mut stage_runner = HostLiveRunner::with_adapter_rows(&stage_plans, &columns, &stage_rows)
+        .expect("sidecar routes stage runner in process");
     let staged = stage_runner
         .collect(&TickDeltas {
             rels: vec![RelDelta {
@@ -450,7 +470,14 @@ fn stage_and_commit_responses_reenter_the_generic_host_runner_on_later_ticks() {
         ],
     );
     let commit_plans = [commit_plan];
-    let mut commit_runner = HostLiveRunner::new(&commit_plans, &columns).expect("commit runner");
+    let commit_rows = [HostAdapterRow {
+        adapter: "soopy".to_string(),
+        demand_rel: "commit_demand".to_string(),
+        response_rel: "commit_response".to_string(),
+    }];
+    let mut commit_runner =
+        HostLiveRunner::with_adapter_rows(&commit_plans, &columns, &commit_rows)
+            .expect("sidecar routes commit runner in process");
     let committed = commit_runner
         .collect(&TickDeltas {
             rels: vec![RelDelta {

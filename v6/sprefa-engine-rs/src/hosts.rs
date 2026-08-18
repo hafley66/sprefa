@@ -16,8 +16,8 @@ use crate::dep_resolve::{
     DEP_VISITED_COLUMNS,
 };
 use crate::types::{
-    Arrival, ArrivalSign, BoundaryError, HostAdapterRow, HostColumnPlan, HostPlanData, ScalarSeam, ScalarValue,
-    TickDeltas, Value,
+    Arrival, ArrivalSign, BoundaryError, HostAdapterRow, HostColumnPlan, HostPlanData, ScalarSeam,
+    ScalarValue, TickDeltas, Value,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,23 +46,31 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
         "shell" => Some(&ShellExecutor),
         "soopy" => Some(&SoopyMutationExecutor),
         // The linked twin: sprefa-extract runs in this process, no child spawn.
-        "sprefa_extract" | "sprefa_extract_repo" => Some(&*EXTRACT),
+        "sprefa_extract" => Some(&*EXTRACT),
         _ => None,
     }
 }
 
-// `sh files*` is an established emitted HostPlanData contract. Keeping its
-// execution tag and template byte-for-byte preserves the TS/runtime ABI; the
-// Rust live runner recognizes these four ruled names and delegates their Git
-// mechanics to Soopy instead of spawning the emitted pipeline.
-fn executor_for_plan(plan: &HostPlanData) -> Option<&'static dyn IHostExecutor> {
-    executor_for(&plan.execution)
+fn execution_for_plan(plan: &HostPlanData, adapter_rows: &[HostAdapterRow]) -> String {
+    if plan.execution != "shell" {
+        return plan.execution.clone();
+    }
+    adapter_rows
+        .iter()
+        .find(|row| row.demand_rel == plan.demand_rel && row.response_rel == plan.response_rel)
+        .map(|row| row.adapter.clone())
+        .unwrap_or_else(|| plan.execution.clone())
 }
 
-// Executors whose invocations fold across identical (execution, template,
-// inputs), the ApplicativeExecutors set in serve/1_hosts.ts.
+fn executor_for_plan(
+    plan: &HostPlanData,
+    adapter_rows: &[HostAdapterRow],
+) -> Option<&'static dyn IHostExecutor> {
+    executor_for(&execution_for_plan(plan, adapter_rows))
+}
+
 fn is_applicative(execution: &str) -> bool {
-    matches!(execution, "sprefa_extract" | "sprefa_extract_repo")
+    execution == "sprefa_extract"
 }
 
 pub struct ShellExecutor;
@@ -1694,12 +1702,8 @@ impl<'p> HostLiveRunner<'p> {
         adapter_rows: &[HostAdapterRow],
     ) -> Result<Self, HostError> {
         for plan in plans {
-            let execution = adapter_rows
-                .iter()
-                .find(|row| row.demand_rel == plan.demand_rel && row.response_rel == plan.response_rel)
-                .map(|row| row.adapter.as_str())
-                .unwrap_or(&plan.execution);
-            if executor_for(execution).is_none() {
+            let execution = execution_for_plan(plan, adapter_rows);
+            if executor_for_plan(plan, adapter_rows).is_none() {
                 return Err(HostError {
                     host: plan.name.clone(),
                     message: format!("unknown process adapter '{execution}'"),
@@ -1719,11 +1723,7 @@ impl<'p> HostLiveRunner<'p> {
     }
 
     fn execution_for(&self, plan: &HostPlanData) -> String {
-        self.adapter_rows
-            .iter()
-            .find(|row| row.demand_rel == plan.demand_rel && row.response_rel == plan.response_rel)
-            .map(|row| row.adapter.clone())
-            .unwrap_or_else(|| plan.execution.clone())
+        execution_for_plan(plan, &self.adapter_rows)
     }
 
     // The one place a demand row's values become template arguments, so the
@@ -1885,10 +1885,7 @@ impl<'p> HostLiveRunner<'p> {
                     )
                 })
                 .collect();
-            let key = format!(
-                "{}|{:?}",
-                execution, ordered_inputs
-            );
+            let key = format!("{}|{:?}", execution, ordered_inputs);
             match group_index.get(&key) {
                 Some(&index) => groups[index].push(demand),
                 None => {
@@ -1899,8 +1896,8 @@ impl<'p> HostLiveRunner<'p> {
         }
         for group in groups {
             let first = group[0];
-            let execution = self.execution_for(first.plan);
-            let executor = executor_for(&execution).expect("validated at construction");
+            let executor = executor_for_plan(first.plan, &self.adapter_rows)
+                .expect("validated at construction");
             let command_line = fill_template(&first.plan.template, &first.inputs);
             let env = env_for_inputs(&first.inputs);
             let stdout = executor.run(&first.plan.name, &command_line, &env)?;

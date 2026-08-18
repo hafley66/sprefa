@@ -3247,7 +3247,7 @@ test(host_shell_local_dollar_name_is_not_a_column) :-
               template("R={ep}; P=$prev; printf '%s' \"$R\"")),
       _).
 
-test(extract_host_uses_compiler_known_executor) :-
+test(extract_host_keeps_shell_execution) :-
     compile_host_decl(
       sh_decl(extract,
               [col(path, text), col(digest, text)],
@@ -3257,9 +3257,9 @@ test(extract_host_uses_compiler_known_executor) :-
                 input_roles([identity, freshness]))),
     !.
 
-test(named_extractor_projection_uses_template_selected_executor) :-
+test(named_extractor_projection_keeps_shell_execution) :-
     Template = "\"$DL_EXTRACT_BIN\" --family cst,type,call,df {path}",
-    host_execution(call_node, Template, sprefa_extract),
+    host_execution(call_node, Template, shell),
     compile_host_decl(
       sh_decl(call_node,
               [col(path, text), col(digest, text)],
@@ -3269,8 +3269,7 @@ test(named_extractor_projection_uses_template_selected_executor) :-
                 input_roles([identity, freshness]))),
     !.
 
-test(extract_host_refuses_non_path_input,
-     [throws(host_executor_mismatch(extract, sprefa_extract, [col(file, text)]))]) :-
+test(extract_host_keeps_its_declared_input_columns) :-
     compile_host_decl(
       sh_decl(extract,
               [col(file, text)],
@@ -9070,7 +9069,7 @@ test(source_mutations_fixture_keeps_one_document_boundary_and_exact_approval_joi
           once(read_file_to_string(OutFile, Text, [])),
           sub_string(Text, _, _, _, 'name: "source_stage"'),
           sub_string(Text, _, _, _, 'name: "source_commit"'),
-          sub_string(Text, _, _, _, 'execution: "soopy_mutation"'),
+          sub_string(Text, _, _, _, 'execution: "shell"'),
           sub_string(Text, _, _, _, 'source_proposal_candidate'),
           sub_string(Text, _, _, _, 'source_dependency'),
           sub_string(Text, _, _, _, 'source_ownership'),

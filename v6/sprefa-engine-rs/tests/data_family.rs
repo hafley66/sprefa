@@ -52,12 +52,12 @@ fn compile_fixture(name: &str) -> GenProgram {
 fn row_count(program: &GenProgram, seam: &SqliteSeam, rel: &str) -> usize {
     let select = program.final_select.get(rel).expect("final select for rel");
     seam.execute(&SqlStatement {
-            sql: format!("SELECT * FROM ({select})"),
-            args: vec![],
-        })
-        .expect("read rel")
-        .rows
-        .len()
+        sql: format!("SELECT * FROM ({select})"),
+        args: vec![],
+    })
+    .expect("read rel")
+    .rows
+    .len()
 }
 
 // FAIL-PRE-FIX: the run stopped rc=101 with `sh host 'extract': family `data`

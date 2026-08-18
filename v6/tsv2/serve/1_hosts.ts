@@ -451,7 +451,9 @@ const SprefaExtractAdapter: IProcessAdapter = {
   command(demand) {
     const path = String(demand.inputs.get("path") ?? "");
     const repo = demand.inputs.get("repo");
-    const flags = String(demand.inputs.get("flags") ?? "").split(" ").filter(Boolean);
+    const flags = Array.isArray(demand.inputs.get("flags"))
+      ? demand.inputs.get("flags") as readonly string[]
+      : String(demand.inputs.get("flags") ?? "").split(" ").filter(Boolean);
     return {
       argv: [process.env.DL_EXTRACT_BIN ?? "extract", ...flags, repo === undefined ? path : `${repo}/${path}`],
       env: {},
@@ -484,7 +486,11 @@ const BoopAdapter: IProcessAdapter = {
     return {
       argv: ["boop", "host", "oneshot"],
       env: {},
-      stdin: JSON.stringify(Object.fromEntries(demand.inputs)),
+      stdin: JSON.stringify({
+        request_id: demand.inputs.get("request_id") ?? "",
+        model: demand.inputs.get("model") ?? "",
+        prompt: demand.inputs.get("prompt") ?? "",
+      }),
     };
   },
   decode(stdout, plan) {

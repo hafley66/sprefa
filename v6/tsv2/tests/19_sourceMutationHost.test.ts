@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 
 import { ProcessAdapters } from "../serve/1_hosts.ts";
+import type { IRowValue } from "../runtime/types.ts";
 
 test("the TypeScript target reports the Rust-only Soopy mutation capability as ordinary output", async () => {
   const adapter = ProcessAdapters.get("soopy");
@@ -29,5 +30,22 @@ test("the TypeScript target reports the Rust-only Soopy mutation capability as o
     outcome: "unsupported",
     detail: "soopy requires the Rust runtime target",
     document: {},
+  });
+});
+
+test("the extractor adapter constructs argv from demand columns", () => {
+  const adapter = ProcessAdapters.get("sprefa_extract");
+  assert.ok(adapter);
+  const spec = adapter.command({
+    plan: { name: "extract" } as never,
+    witness_digest: "",
+    inputs: new Map([
+      ["flags", ["--family", "call"] as unknown as IRowValue],
+      ["path", "src/main.ts"],
+    ]) as never,
+  });
+  assert.deepEqual(spec, {
+    argv: [process.env.DL_EXTRACT_BIN ?? "extract", "--family", "call", "src/main.ts"],
+    env: {},
   });
 });
