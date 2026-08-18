@@ -213,9 +213,20 @@ enum_tag_names(SugaredDecls, EnumToTag) :-
 
 % An enum column holds the instance id, so reading a variant is an ordinary join
 % on the tag rel. A ref would make the DERIVED tag rel an arrival target too.
+% The enum_column/3 marker survives so catalog-backed emitters can recover the
+% enum's declared type from the retargeted int column (mirrors option_column).
 retarget_enum_column_types([], Decls, Decls) :- !.
 retarget_enum_column_types(EnumToTag, Decls0, Decls) :-
-    maplist(retarget_enum_column_type(EnumToTag), Decls0, Decls).
+    enum_columns(EnumToTag, Decls0, Markers),
+    maplist(retarget_enum_column_type(EnumToTag), Decls0, Retargeted),
+    append(Retargeted, Markers, Decls).
+
+enum_columns(EnumToTag, Decls0, Markers) :-
+    findall(enum_column(Ref, Column, EnumName),
+            ( member(col_type(Ref, Column, EnumName), Decls0),
+              memberchk(EnumName-_, EnumToTag),
+              \+ memberchk(option_column(Ref, Column, _), Decls0) ),
+            Markers).
 
 retarget_enum_column_type(EnumToTag,
                           col_type(Ref, Column, EnumName),

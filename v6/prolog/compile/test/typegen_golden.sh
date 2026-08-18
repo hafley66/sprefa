@@ -42,6 +42,7 @@ SHAPES=(
   "shape_list_nesting_depth_five"
   "shape_camel_case_module"
   "shape_concrete_dunder_rel"
+  "parameterized_enum_two_instantiations"
 )
 
 swipl_run() { # goal ; runs from v6/prolog so conformance/... paths resolve

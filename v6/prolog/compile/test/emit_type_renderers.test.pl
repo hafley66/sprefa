@@ -57,4 +57,47 @@ test(rust_preserves_generic_declaration_and_bound) :-
     once(rust_types_text(main, Rows, Text)),
     Text == "pub trait JsonEncodable {}\n\n#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Pair<T: JsonEncodable> {\n    pub first: T,\n    pub second: T,\n}\n".
 
+% A concrete generic sum (minted by generic expansion, lowered by enum
+% expansion) renders as a tagged union carrying its substituted payload types.
+% These rows are what the catalog produces for
+%   Result(host_error, boop_response)
+%   with payload relations host_error(code:int) and boop_response(body:text).
+generic_sum_rows([
+    row(1, 0, 0, int, primitive, 0, 0, 0, '', '', ''),
+    row(2, 0, 0, text, primitive, 0, 0, 0, '', '', ''),
+    row(10, 0, 0, host_error, rel, 0, 0, 10, '', '', ''),
+    row(11, 10, 1, code, column, 1, 0, 10, '', '', ''),
+    row(20, 0, 0, boop_response, rel, 0, 0, 10, '', '', ''),
+    row(21, 20, 1, body, column, 2, 0, 10, '', '', ''),
+    row(30, 0, 0, result_hm, rel, 0, 0, 10, '', '', ''),
+    row(31, 30, 1, id, column, 1, 0, 10, '', '', ''),
+    row(32, 30, 2, outcome, column, 40, 0, 10, '', '', ''),
+    row(40, 0, 0, concrete_result, enum, 0, 0, 0, '', '', ''),
+    row(41, 40, 1, err, enum_variant, 50, 0, 0, '', '', ''),
+    row(42, 40, 2, ok, enum_variant, 60, 0, 0, '', '', ''),
+    row(50, 0, 0, concrete_result_err, rel, 0, 0, 10, '', '', ''),
+    row(51, 50, 1, id, column, 1, 0, 10, '', '', ''),
+    row(52, 50, 2, error, column, 10, 0, 10, '', '', ''),
+    row(60, 0, 0, concrete_result_ok, rel, 0, 0, 10, '', '', ''),
+    row(61, 60, 1, id, column, 1, 0, 10, '', '', ''),
+    row(62, 60, 2, value, column, 20, 0, 10, '', '', '')
+]).
+
+test(ts_concrete_sum_emits_a_tagged_union_with_substituted_payloads) :-
+    generic_sum_rows(Rows),
+    once(ts_types_text(main, Rows, Text)),
+    sub_atom(Text, _, _, _, "export type ConcreteResult ="),
+    sub_atom(Text, _, _, _, "{ tag: 'err'; error: HostError; }"),
+    sub_atom(Text, _, _, _, "{ tag: 'ok'; value: BoopResponse; }"),
+    sub_atom(Text, _, _, _, "outcome: ConcreteResult;"), !.
+
+test(rust_concrete_sum_emits_a_serde_tagged_enum_with_substituted_payloads) :-
+    generic_sum_rows(Rows),
+    once(rust_types_text(main, Rows, Text)),
+    sub_atom(Text, _, _, _, "#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub enum ConcreteResult {"),
+    sub_atom(Text, _, _, _, "Err { error: HostError },"),
+    sub_atom(Text, _, _, _, "Ok { value: BoopResponse },"),
+    sub_atom(Text, _, _, _, "pub outcome: ConcreteResult,"), !.
+
+
 :- end_tests(emit_type_renderers).

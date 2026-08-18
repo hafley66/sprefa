@@ -471,24 +471,34 @@ rel_stmt(Decls) -->
     ( ident(Name), #`(`, enum_variants(Variants), #`)`, #`.`,
       { Decls = [enum_decl(Name, Variants)],
         record_enum_column_orders(Name, Variants) }
-    % A template mints no col_type/kind entry: this ONE term is the record.
-    ; dotted_path(Segs), generic_parameters(Parameters),
-      #`(`, args(decl_a_column, Specs), #`)`, #`.`,
-      { Decls = [rel_template(Segs, Parameters, Specs)] }
-    ; dotted_path(Segs), #`(`,
-      args(decl_a_column, Specs), #`)`,
-      { length(Specs, Arity),
-        module_path_name(Segs, Name),
-        Ref = Name/Arity,
-        record_spec_names(Name, Specs) },
-      ws,
-      { typed_decl_entries(Ref, Specs, Typed) },
-      rel_modifiers(Ref, Mods),
-      is_clause(Ref, Conformance),
-      { module_path_decls(Segs, Ref, PathDecls),
-        column_less_decls(Ref, Specs, Mods, UnitDecls),
-        append([Typed, Mods, PathDecls, UnitDecls, Conformance], Decls) },
-      #`.`
+    ; dotted_path(Segs),
+      (   generic_parameters(Parameters), #`(`,
+          (   enum_variants(Variants), #`)`, #`.`,
+              % A parameterized enum: the first group is generic type
+              % parameters, the second the mutually-exclusive variant set.
+              % Minted like a rel template but into enum_decl terms, so the
+              % enum lowering phase owns the sum.
+              { Decls = [rel_template_enum(Segs, Parameters, Variants)] }
+          ;   args(decl_a_column, Specs), #`)`, #`.`,
+              % A template mints no col_type/kind entry: this ONE term is the
+              % record.
+              { Decls = [rel_template(Segs, Parameters, Specs)] }
+          )
+      ;   #`(`,
+          args(decl_a_column, Specs), #`)`,
+          { length(Specs, Arity),
+            module_path_name(Segs, Name),
+            Ref = Name/Arity,
+            record_spec_names(Name, Specs) },
+          ws,
+          { typed_decl_entries(Ref, Specs, Typed) },
+          rel_modifiers(Ref, Mods),
+          is_clause(Ref, Conformance),
+          { module_path_decls(Segs, Ref, PathDecls),
+            column_less_decls(Ref, Specs, Mods, UnitDecls),
+            append([Typed, Mods, PathDecls, UnitDecls, Conformance], Decls) },
+          #`.`
+      )
     ; decl_b_tail(Decls)
     ).
 
