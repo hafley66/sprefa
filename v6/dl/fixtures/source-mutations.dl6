@@ -1,0 +1,104 @@
+# source-mutations.dl6 -- the staged source-action host boundary.
+#
+# The request is ONE canonical StageRequest JSON document carried by a `text`
+# column. DL6 host inputs presently require display values, while `json` is an
+# output/document type, so the JSON protocol crosses this host input as text.
+# DL6 can derive
+# findings, source spans, dependency facts, ownership facts, and type facts
+# before a boundary producer constructs that document. It cannot yet collect an
+# arbitrary relation of action rows into a JSON array, so no fake per-action
+# host relation appears here. The transport boundary is explicit until a real
+# aggregate or host batch form exists.
+#
+# `root` names the mutable checkout or plain directory. `state` names an
+# existing separate durable state directory. The Rust host refuses a state
+# directory inside root. It stores stage manifests and
+# output blobs below state/stages, journals and commit receipts below
+# state/commits. It never creates those files under root.
+
+use "source.dl6" as source.
+
+# Facts from extraction and analysis meet before a staged source action exists.
+# `at` is the ordinary source coordinate, so candidate identity keeps the exact
+# revision-backed file and its half-open byte range. `request` is already a
+# complete StageRequest JSON document supplied by the boundary producer. These
+# rules select and explain a candidate; they do not construct its action array.
+rel source_request(proposal: text, root: text, state: text, request: text,
+                   at: source.span).
+rel source_dependency(at: source.span, target: text, kind: text).
+rel source_ownership(at: source.span, owner: text).
+rel source_type(at: source.span, name: text, kind: text).
+
+rel source_proposal_candidate(proposal: text, root: text, state: text,
+                              request: text, at: source.span, dependency: text,
+                              owner: text, type_name: text).
+source_proposal_candidate(Proposal, Root, State, Request, At, Dependency, Owner, TypeName) <-
+  source_request(Proposal, Root, State, Request, At),
+  source_dependency(At, Dependency, _),
+  source_ownership(At, Owner),
+  source_type(At, TypeName, _).
+
+rel source_proposal(proposal: text, root: text, state: text, request: text).
+source_proposal(Proposal, Root, State, Request) <-
+  source_proposal_candidate(Proposal, Root, State, Request, _, _, _, _).
+
+# The template is the portable declaration record. The Rust target selects
+# `soopy_mutation` for this fixed host name and invokes Soopy in-process.
+sh source_stage(root: text, state: text, request: text) ->
+  (stage_id: text, outcome: text, detail: text, document: json) =
+  `"$SPREFA_SOOPY_HOST" stage "{root}" "{state}" "{request}"`.
+
+rel source_stage_result(proposal: text, root: text, state: text,
+                        stage_id: text, outcome: text, detail: text, document: json).
+source_stage_result(Proposal, Root, State, StageId, Outcome, Detail, Document) <-
+  source_proposal(Proposal, Root, State, Request),
+  source_stage(Root, State, Request, StageId, Outcome, Detail, Document).
+
+rel source_stage_preview(proposal: text, stage_id: text, preview: json).
+source_stage_preview(Proposal, StageId, Preview) <-
+  source_stage_result(Proposal, _, _, StageId, "staged", _, Preview).
+
+rel source_stage_refusal(proposal: text, detail: text).
+source_stage_refusal(Proposal, Detail) <-
+  source_stage_result(Proposal, _, _, _, "refused", Detail, _).
+
+rel source_stage_unavailable(proposal: text, detail: text).
+source_stage_unavailable(Proposal, Detail) <-
+  source_stage_result(Proposal, _, _, _, "unsupported", Detail, _).
+
+# Approval is an arrival on a later tick. The join carries the exact StageId,
+# so an approval for another proposal or another stage has no commit demand.
+rel source_approval(proposal: text, stage_id: text).
+rel source_commit_demand(root: text, state: text, stage_id: text).
+source_commit_demand(Root, State, StageId) <-
+  source_stage_result(Proposal, Root, State, StageId, "staged", _, _),
+  source_approval(Proposal, StageId).
+
+sh source_commit(root: text, state: text, stage_id: text) ->
+  (outcome: text, detail: text, document: json) =
+  `"$SPREFA_SOOPY_HOST" commit "{root}" "{state}" "{stage_id}"`.
+
+# These response facts arrive after the demand tick. While no approval joins,
+# there is no source_commit demand and the dataflow stays quiescent.
+rel source_commit_result(root: text, state: text, stage_id: text,
+                         outcome: text, detail: text, document: json).
+source_commit_result(Root, State, StageId, Outcome, Detail, Document) <-
+  source_commit_demand(Root, State, StageId),
+  source_commit(Root, State, StageId, Outcome, Detail, Document).
+
+rel source_commit_receipt(stage_id: text, receipt: json).
+source_commit_receipt(StageId, Receipt) <-
+  source_commit_result(_, _, StageId, "committed", _, Receipt).
+
+rel source_commit_refusal(stage_id: text, detail: text).
+source_commit_refusal(StageId, Detail) <-
+  source_commit_result(_, _, StageId, "refused", Detail, _).
+
+rel source_commit_unavailable(stage_id: text, detail: text).
+source_commit_unavailable(StageId, Detail) <-
+  source_commit_result(_, _, StageId, "unsupported", Detail, _).
+
+# The committed receipt document includes Soopy's watcher correlation:
+# stage_id, exact paths, post-commit presence, and content IDs. A watcher can
+# use that receipt to coalesce its following source events without a second
+# language-level side channel.

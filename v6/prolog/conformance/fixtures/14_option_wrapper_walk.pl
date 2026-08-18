@@ -133,8 +133,8 @@ fixture(option_of_json_list_keeps_its_stop,
   [ throws(unsupported_construct(
              option_element_type_unknown(json_list(int)))) ]).
 
-% option over option over a scalar reaches no element the option desugar
-% admits, and reports the element it could not place.
+% Nested scalar options are two enum layers. The outer some payload is an
+% inner option id, preserving none, some(none), and some(some(value)).
 fixture(option_of_option_of_scalar_keeps_its_stop,
   prog([ col_type(squad/2, id, int),
          col_type(squad/2, rank, option(option(int))),
@@ -142,8 +142,7 @@ fixture(option_of_option_of_scalar_keeps_its_stop,
        []),
   [],
   [],
-  [ throws(unsupported_construct(
-             option_element_type_unknown(option(int)))) ]).
+  []).
 
 % The interned-set value dictionary keys on scalar content whatever wraps it.
 % Before the walk this spelling hid the rel element from

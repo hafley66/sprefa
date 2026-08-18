@@ -200,9 +200,9 @@ records the era when this leg was unwired and mail queued forever.
 - **"always merge fixes"** (2026-08-16): a fix PR the coordinator graded green
   merges without waiting for a per-PR word.
 - **"no coercions."** An untyped column does not silently take part in a
-  comparison or a numeric aggregate. In code at `lower.pl:1826`
-  (`comparison_type_mismatch`) and `lower.pl:335` (`join_column_type_mismatch`),
-  pinned by `compile/test/plunit_tests.pl:2284` and `:2295`.
+  comparison or a numeric aggregate. In code at `lower.pl:2319`
+  (`comparison_type_mismatch`) and `lower.pl:347` (`join_column_type_mismatch`),
+  pinned by `compile/test/plunit_tests.pl:2460` and `:2471`.
 - **"TAKE THE CORRECT AND MOST CONSISTENT ONE EVEN IF IT MEANS MORE WORK."**
   Applied to set-rel DDL: ONE shape,
   `("__id" INTEGER PRIMARY KEY, <cols>, UNIQUE (<cols>))`, zero columns
@@ -216,13 +216,13 @@ records the era when this leg was unwired and mail queued forever.
   standalone hand-written kernel is CANCELLED. The dd algebra arrives through an
   emitter.
 - **Type-name collisions resolve by MODULE PREFIX.** Not a numeric suffix, not an
-  error. `type_name/2` at `compile/7_emit_ts_types.pl:61-64` and
-  `compile/8_emit_rust_types.pl:61-64` is not injective.
+  error. `type_name/2` at `compile/7_emit_ts_types.pl:172-176` and
+  `compile/8_emit_rust_types.pl:172-176` is not injective.
 - **Generics need a written inspection, in docs, before any generics work.**
   Do not implement. Document the current wrapper set and how each lowers first.
-  Starting points: `0_type_plane.pl:145-151` (wrapper inventory),
-  `0_generic_expand.pl:125-176` (collection artifacts), `0_option_expand.pl:39-49`
-  (the scalar-vs-reference split).
+  Starting points: `0_type_plane.pl:153-157` (wrapper inventory, `type_wrapper/2`),
+  `0_generic_expand.pl:766-816` (collection artifacts, `list_flavor_artifacts/2`),
+  `0_option_expand.pl:53-75` (the scalar-vs-reference split, `desugar_option_column/5`).
 - **v5 housekeeping: NEVER ASK.** The former ask-list wakes only if the user
   raises it. No agent re-surfaces it.
 
@@ -253,7 +253,9 @@ records the era when this leg was unwired and mail queued forever.
   Roster: `v6/sprefa-extract/src/lang/mod.rs` `sources()`.
 - **Awaiting user word:** prolog folder names/numbering; flash-prolog worktree
   fate; bop-run idle-exit vs rail receipts; push + tag (gated on
-  `release_gate_v620`, `rulings.pl:532`); string split/substr primitive.
+  `release_gate_v620`, `rulings.pl:532`). String split/substr primitive is
+  already registered (`compile/registry.pl:285-286` `substr/2,3`,
+  `compile/registry.pl:294` `split/2`), so this is stale and needs no user word.
   A14 comment_span default picked (issues/a14-comment-span-default); the
   `.types.*` files in `compile/out/` were already tracked, stragglers landed
   (PR #324).

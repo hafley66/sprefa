@@ -1134,6 +1134,27 @@
     "final_detail": ""
   },
   {
+    "name": "module_path_in_coalesce_wrapper",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "module_path_in_latest_wrapper",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "module_path_in_combine_wrapper",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "json_string_control_escapes_are_valid_json",
     "bucket": "identical",
     "detail": "",

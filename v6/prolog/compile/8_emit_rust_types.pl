@@ -1,16 +1,58 @@
 :- module(emit_rust_types, [ rust_types_text/3, emit_rust_types/3 ]).
 
 :- use_module(library(lists)).
+:- use_module(library(pairs)).
 
 rust_types_text(_Name, Rows, Text) :-
+    rust_option_alias_text(Rows, OptionAlias),
+    rust_option_alias_parts(OptionAlias, OptionParts),
     findall(InterfaceText, rust_interface_text(Rows, InterfaceText), InterfaceParts),
     findall(GenericText, rust_generic_text(Rows, GenericText), GenericParts),
+    findall(EnumText, rust_enum_text(Rows, EnumText), EnumParts),
     findall(RelRow, renderable_rel(Rows, RelRow), RelRows),
     collision_type_names(RelRows, CollisionTypeNames),
     maplist(rust_rel_text(Rows, CollisionTypeNames), RelRows, RelParts),
-    append([InterfaceParts, GenericParts, RelParts], Parts),
+    append([OptionParts, InterfaceParts, GenericParts, EnumParts, RelParts], Parts),
     atomic_list_concat(Parts, '\n', Atom),
     atom_string(Atom, Text).
+
+% serde's built-in Option serializes None and Some(None) identically as null.
+% This tagged carrier preserves every recursive option state on the wire.
+rust_option_alias_text(Rows,
+                       '#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n#[serde(tag = "tag", content = "value", rename_all = "snake_case")]\npub enum DlOption<T> {\n    None,\n    Some(T),\n}\n') :-
+    member(row(_, _, _, _, option, _, _, _, _, _, _), Rows), !.
+rust_option_alias_text(_, '').
+
+rust_option_alias_parts('', []) :- !.
+rust_option_alias_parts(Text, [Text]).
+
+rust_enum_text(Rows, Text) :-
+    member(row(EnumId, _, _, Name, enum, _, _, _, _, _, _), Rows),
+    \+ compiler_helper_rel(Name),
+    type_name(Name, TypeName),
+    findall(Ordinal-VariantText,
+            ( member(row(_, EnumId, Ordinal, VariantName, enum_variant,
+                         VariantRelId, _, _, _, _, _), Rows),
+              rust_enum_variant_text(Rows, VariantName, VariantRelId, VariantText) ),
+            Unsorted),
+    keysort(Unsorted, Ordered),
+    pairs_values(Ordered, Variants),
+    atomic_list_concat(Variants, '', Body),
+    format(string(Text), '#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub enum ~w {\n~s}\n', [TypeName, Body]).
+
+rust_enum_variant_text(Rows, VariantName, VariantRelId, Text) :-
+    type_name(VariantName, VariantNameText),
+    findall(Name-Type,
+            ( member(row(_, VariantRelId, _, Name, column, TypeId, _, _, _, _, _), Rows),
+              Name \== id, rust_type(Rows, TypeId, Type) ), Fields),
+    ( Fields == []
+    -> format(string(Text), '    ~w,\n', [VariantNameText])
+    ; maplist(rust_enum_field_text, Fields, FieldTexts),
+      atomic_list_concat(FieldTexts, ', ', Body),
+      format(string(Text), '    ~w { ~s },\n', [VariantNameText, Body])
+    ).
+
+rust_enum_field_text(Name-Type, Text) :- format(string(Text), '~w: ~w', [Name, Type]).
 
 emit_rust_types(Name, Rows, Path) :-
     rust_types_text(Name, Rows, Text),
@@ -160,7 +202,9 @@ rust_kind(Rows, CollisionTypeNames, _TypeRow, _Name, list, ElementId, Type) :-
     format(string(Type), 'Vec<~w>', [Element]).
 rust_kind(Rows, CollisionTypeNames, _TypeRow, _Name, option, ElementId, Type) :-
     rust_type(Rows, CollisionTypeNames, ElementId, Element),
-    format(string(Type), 'Option<~w>', [Element]).
+    format(string(Type), 'DlOption<~w>', [Element]).
+rust_kind(_Rows, _CollisionTypeNames, _TypeRow, Name, enum, _ElementId, Type) :-
+    type_name(Name, Type).
 rust_kind(Rows, CollisionTypeNames, TypeRow, _Name, rel, _ElementId, Type) :-
     emitted_type_name(Rows, CollisionTypeNames, TypeRow, Type).
 

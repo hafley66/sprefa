@@ -100,7 +100,7 @@ find_fixture(Stream, Name, Term, Bindings) :-
 %      SubscribedRels, InternMode)
 %   Types: 0_type_plane.pl:type_definitions/2 over Prog's Decls; carried so
 %          plan consumers read it instead of re-deriving it.
-%   RelPlans: 0_rel_record.pl's rel/4, one per ref program_refs/2 or a typed
+%   RelPlans: 0_rel_record.pl's rel/5, one per ref program_refs/2 or a typed
 %             declaration finds; arrival targets and derived rels alike.
 %   RuleOrder: level rules in strat.pl:sql_rule_order/2 order.
 %   EdgeRules: edge rules, program order (engine.pl tries edge rules in
@@ -206,6 +206,7 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     seeded_refs(Initial, SeededRefs),
     append([RuleRefs, DeclaredRefs, SeededRefs], AllRefs0), sort(AllRefs0, AllRefs),
     check_single_arity_per_name(AllRefs),
+    relation_storage_names(Decls, AllRefs, StorageNames),
     derived_refs(Rules, DerivedRefs),
     % The catalog is seeded by DDL, so it is never an arrival target; leaving it
     % in would open the serve door to writes against a compiler-owned table.
@@ -224,8 +225,9 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
             RefColumns),
     program_column_types(Decls, Types, Rules, Initial, Schedule, AllRefs,
                          RefColumns, RefTypes),
-    findall(rel(Ref, Kind, Cols, KeyOrNone),
+    findall(rel(Ref, StorageName, Kind, Cols, KeyOrNone),
             ( member(Ref, AllRefs),
+              memberchk(Ref-StorageName, StorageNames),
               rel_kind(Decls, Ref, Kind),
               memberchk(Ref-Columns, RefColumns),
               memberchk(Ref-ColumnTypes, RefTypes),
@@ -331,6 +333,105 @@ check_single_arity_per_name([Name/LowArity, Name/HighArity | _]) :-
     throw_as_compiler_unsupported(rel_arity_collision(Name, LowArity, HighArity)).
 check_single_arity_per_name([_ | Rest]) :-
     check_single_arity_per_name(Rest).
+
+% The authored Ref remains Name/Arity throughout semantic analysis.  This
+% registry gives the storage lowering a second, physical identity from the
+% module that declared the relation.  A same Ref declared by separate modules
+% is already one runtime relation before lowering, so refuse it rather than
+% inventing two SQLite tables that the runtime cannot distinguish.
+relation_storage_names(Decls, Refs, Names) :-
+    maplist(relation_storage_candidate(Decls), Refs, Candidates),
+    keysort(Candidates, Ordered),
+    allocate_storage_names(Ordered, [], Names).
+
+relation_storage_candidate(Decls, Ref, Key-(Ref-Base)) :-
+    Ref = Name/Arity,
+    relation_declaring_module(Decls, Ref, ModuleStem),
+    storage_identifier(ModuleStem, ModulePart),
+    storage_identifier(Name, RelationPart),
+    storage_base_name(ModulePart, RelationPart, Base),
+    sqlite_ascii_fold(Base, Folded),
+    Key = key(Folded, ModuleStem, Name, Arity).
+
+relation_declaring_module(Decls, Name/_Arity, ModuleStem) :-
+    findall(Hash, member(rel_module_decl(Name, Hash), Decls), Hashes0),
+    sort(Hashes0, Hashes),
+    relation_declaring_module_hash(Decls, Name, Hashes, Hash),
+    (   memberchk(module_storage_decl(Hash, ModuleStem), Decls)
+    ->  true
+    ;   ModuleStem = none
+    ).
+
+relation_declaring_module_hash(_Decls, _Name, [Hash], Hash) :- !.
+relation_declaring_module_hash(_Decls, Name, [First, Second | Rest], _) :-
+    Hashes = [First, Second | Rest],
+    throw_as_compiler_unsupported(rel_module_identity_collision(Name, Hashes)).
+relation_declaring_module_hash(_Decls, Name, [], none) :-
+    compiler_owned_contract(Name),
+    !.
+relation_declaring_module_hash(Decls, _Name, [], Hash) :-
+    memberchk(entry_module_decl(Hash), Decls),
+    !.
+relation_declaring_module_hash(_Decls, _Name, [], none).
+
+% Fixture terms and compiler-owned relations have no source module.  Keep
+% their established physical spelling, while text-door relations receive a
+% module path prefix above.
+storage_identifier(none, '') :- !.
+storage_identifier(Value, Identifier) :-
+    atom_codes(Value, Codes),
+    maplist(storage_identifier_code, Codes, SafeCodes),
+    atom_codes(Identifier, SafeCodes).
+
+storage_identifier_code(Code, Code) :-
+    ( Code >= 0'a, Code =< 0'z
+    ; Code >= 0'A, Code =< 0'Z
+    ; Code >= 0'0, Code =< 0'9
+    ; Code =:= 0'_
+    ), !.
+storage_identifier_code(_, 0'_).
+
+storage_base_name('', RelationPart, RelationPart) :- !.
+storage_base_name(ModulePart, RelationPart, Base) :-
+    atomic_list_concat([ModulePart, RelationPart], '_', Base).
+
+sqlite_ascii_fold(Text, Folded) :-
+    atom_codes(Text, Codes),
+    maplist(sqlite_ascii_fold_code, Codes, FoldedCodes),
+    atom_codes(Folded, FoldedCodes).
+
+sqlite_ascii_fold_code(Code, Folded) :-
+    Code >= 0'A, Code =< 0'Z,
+    !,
+    Folded is Code + 32.
+sqlite_ascii_fold_code(Code, Code).
+
+allocate_storage_names([], _, []).
+allocate_storage_names([_Key-(Ref-Base) | Rest], UsedFolds,
+                       [Ref-StorageName | Names]) :-
+    unique_storage_name(Base, UsedFolds, StorageName, StorageFold),
+    allocate_storage_names(Rest, [StorageFold | UsedFolds], Names).
+
+% A suffix minted for an ASCII-fold collision can itself equal another source
+% base (person vs person_2).  Reserve every final folded spelling, not only
+% each source base group, so SQLite never aliases the two tables.
+unique_storage_name(Base, UsedFolds, StorageName, StorageFold) :-
+    sqlite_ascii_fold(Base, BaseFold),
+    (   memberchk(BaseFold, UsedFolds)
+    ->  unique_storage_suffix(Base, 2, UsedFolds, StorageName, StorageFold)
+    ;   StorageName = Base,
+        StorageFold = BaseFold
+    ).
+
+unique_storage_suffix(Base, Suffix, UsedFolds, StorageName, StorageFold) :-
+    format(atom(Candidate), '~w_~w', [Base, Suffix]),
+    sqlite_ascii_fold(Candidate, CandidateFold),
+    (   memberchk(CandidateFold, UsedFolds)
+    ->  NextSuffix is Suffix + 1,
+        unique_storage_suffix(Base, NextSuffix, UsedFolds, StorageName, StorageFold)
+    ;   StorageName = Candidate,
+        StorageFold = CandidateFold
+    ).
 
 compile_dl6(File, OutFile) :-
     default_intern_mode(Mode),

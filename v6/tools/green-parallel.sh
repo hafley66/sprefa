@@ -20,7 +20,7 @@ trap 'rm -rf "$WORK"' EXIT
 PHASE_WALL=(scale-floor)
 
 PHASE_A=(conformance roundtrip text-door sweep import-gate
-         staleness-gate golden-flex tsv2-test getting-started)
+         staleness-gate docs-staleness golden-flex tsv2-test getting-started)
 
 # Each entry is "leg[:ENV=VALUE...]". Ordered longest-first: on a bounded pool
 # the makespan is set by the slowest job if it starts last.
@@ -40,6 +40,8 @@ PHASE_B=(
   "lsp-diags:TSV2_LSP_DIAG_PORT=17810"
   "compile-speed"
   "plunit"
+  "arm-census"
+  "rust-grade"
   "typecheck"
   "rtkq-golden:TSV2_PARITY_PORT=17813"
   "watch-scale"

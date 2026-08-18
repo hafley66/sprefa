@@ -38,12 +38,19 @@ pub fn json_array_text(items: &[Value]) -> BoundaryResult<String> {
 }
 
 fn value_to_json(value: &Value) -> BoundaryResult<String> {
+    if let Value::Bytes(bytes) = value {
+        return Ok(format!(
+            "{{\"$bytes\":{}}}",
+            crate::ticklog::json_string(&crate::types::bytes_to_base64(bytes))
+        ));
+    }
     Ok(
         match ScalarValue::at_seam(value, ScalarSeam::ArrivalPayload)? {
             ScalarValue::Integer(v) => format!("{}", v),
             ScalarValue::Real(v) => crate::ticklog::js_float_text(v),
             ScalarValue::Bool(b) => (if b { "true" } else { "false" }).to_string(),
             ScalarValue::Text(v) => crate::ticklog::json_string(&v),
+            ScalarValue::Bytes(_) => unreachable!("bytes cannot reach arrival JSON staging"),
         },
     )
 }
@@ -64,6 +71,12 @@ fn boundary_stage_statement(
     relation: &IncrementalRelationPlan,
     events: &[DeltaEvent],
 ) -> BoundaryResult<SqlStatement> {
+    if relation
+        .column_types
+        .contains(&crate::types::RowColumnType::Bytes)
+    {
+        return direct_stage_statement(relation, &relation.delta_table_name, false, 0, events);
+    }
     let mut columns = vec!["_sign".to_string(), "_sequence".to_string()];
     columns.extend(relation.columns.clone());
     let columns_text: Vec<String> = columns.iter().map(|c| quote_identifier(c)).collect();
@@ -100,6 +113,12 @@ fn frontier_stage_statement(
     phase: i64,
     events: &[DeltaEvent],
 ) -> BoundaryResult<SqlStatement> {
+    if relation
+        .column_types
+        .contains(&crate::types::RowColumnType::Bytes)
+    {
+        return direct_stage_statement(relation, table_name, true, phase, events);
+    }
     let mut columns = vec!["_phase".to_string(), "_sequence".to_string()];
     columns.extend(relation.columns.clone());
     let columns_text: Vec<String> = columns.iter().map(|c| quote_identifier(c)).collect();
@@ -125,6 +144,41 @@ fn frontier_stage_statement(
             value_expressions.join(", ")
         ),
         args: vec![ScalarValue::Text(format!("[{}]", encoded))],
+    })
+}
+
+fn direct_stage_statement(
+    relation: &IncrementalRelationPlan,
+    table_name: &str,
+    frontier: bool,
+    phase: i64,
+    events: &[DeltaEvent],
+) -> BoundaryResult<SqlStatement> {
+    let mut columns = if frontier {
+        vec!["_phase".to_string(), "_sequence".to_string()]
+    } else {
+        vec!["_sign".to_string(), "_sequence".to_string()]
+    };
+    columns.extend(relation.columns.clone());
+    let columns_text: Vec<String> = columns.iter().map(|c| quote_identifier(c)).collect();
+    let mut args = Vec::new();
+    for event in events {
+        args.push(ScalarValue::Integer(if frontier {
+            phase
+        } else {
+            event.sign as i64
+        }));
+        args.push(ScalarValue::Integer(event.sequence as i64));
+        args.extend(bind_args(&event.row)?);
+    }
+    Ok(SqlStatement {
+        sql: format!(
+            "INSERT INTO {} ({}) VALUES {}",
+            quote_identifier(table_name),
+            columns_text.join(", "),
+            values_sql(events.len(), columns.len())
+        ),
+        args,
     })
 }
 
@@ -230,6 +284,72 @@ fn keyed_arrival_rows_statement(
     })
 }
 
+fn direct_arrival_statement(
+    relation: &IncrementalRelationPlan,
+    sign: i8,
+    rows: &[Row],
+) -> BoundaryResult<SqlStatement> {
+    let columns: Vec<String> = relation
+        .columns
+        .iter()
+        .map(|c| quote_identifier(c))
+        .collect();
+    let args = flat_bind_args(rows)?;
+    if sign < 0 {
+        return Ok(SqlStatement {
+            sql: format!(
+                "DELETE FROM {} WHERE ({}) IN ({}) RETURNING {}",
+                quote_identifier(&relation.table_name),
+                columns.join(", "),
+                values_sql(rows.len(), columns.len()),
+                columns.join(", ")
+            ),
+            args,
+        });
+    }
+    let (prefix, conflict) = if relation.key_indices.is_empty() {
+        ("INSERT OR IGNORE", String::new())
+    } else {
+        let keys: Vec<String> = relation
+            .key_indices
+            .iter()
+            .map(|index| columns[*index].clone())
+            .collect();
+        let non_keys: Vec<String> = columns
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !relation.key_indices.contains(index))
+            .map(|(_, col)| col.clone())
+            .collect();
+        let conflict = if non_keys.is_empty() {
+            format!(" ON CONFLICT({}) DO NOTHING", keys.join(", "))
+        } else {
+            format!(
+                " ON CONFLICT({}) DO UPDATE SET {}",
+                keys.join(", "),
+                non_keys
+                    .iter()
+                    .map(|column| format!("{} = excluded.{}", column, column))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        ("INSERT", conflict)
+    };
+    Ok(SqlStatement {
+        sql: format!(
+            "{} INTO {} ({}) VALUES {}{} RETURNING {}",
+            prefix,
+            quote_identifier(&relation.table_name),
+            columns.join(", "),
+            values_sql(rows.len(), columns.len()),
+            conflict,
+            columns.join(", ")
+        ),
+        args,
+    })
+}
+
 // Port of IncrementalRuntime.apply_arrivals. Groups consecutive same-rel/sign
 // arrivals and writes them through the relation's arrival_add/arrival_del SQL.
 pub fn apply_arrivals(
@@ -264,25 +384,39 @@ pub fn apply_arrivals(
         groups.push((relation, sign, vec![entry]));
     }
     for (relation, sign, entries) in groups {
-        let sql = if sign == 1 {
-            relation
-                .arrival_add_sql
-                .clone()
-                .expect("incremental add statement missing")
+        let write_statement = if relation
+            .column_types
+            .contains(&crate::types::RowColumnType::Bytes)
+        {
+            direct_arrival_statement(
+                relation,
+                sign,
+                &entries
+                    .iter()
+                    .map(|(_, row)| row.clone())
+                    .collect::<Vec<_>>(),
+            )?
         } else {
-            relation
-                .arrival_del_sql
-                .clone()
-                .expect("incremental delete statement missing")
-        };
-        let encoded_rows: String = entries
-            .iter()
-            .map(|(_, row)| json_array_text(row))
-            .collect::<BoundaryResult<Vec<_>>>()?
-            .join(",");
-        let write_statement = SqlStatement {
-            sql,
-            args: vec![ScalarValue::Text(format!("[{}]", encoded_rows))],
+            let sql = if sign == 1 {
+                relation
+                    .arrival_add_sql
+                    .clone()
+                    .expect("incremental add statement missing")
+            } else {
+                relation
+                    .arrival_del_sql
+                    .clone()
+                    .expect("incremental delete statement missing")
+            };
+            let encoded_rows: String = entries
+                .iter()
+                .map(|(_, row)| json_array_text(row))
+                .collect::<BoundaryResult<Vec<_>>>()?
+                .join(",");
+            SqlStatement {
+                sql,
+                args: vec![ScalarValue::Text(format!("[{}]", encoded_rows))],
+            }
         };
         let key_indices = relation.key_indices.clone();
         if relation.kind == RelationKind::Set && sign == 1 && !key_indices.is_empty() {
@@ -494,6 +628,7 @@ fn normalize_boundary(
                 }),
             }
         }
+        (Some(crate::types::RowColumnType::Bytes), Value::Bytes(bytes)) => Ok(Value::Bytes(bytes)),
         (_, v) => Ok(v),
     }
 }

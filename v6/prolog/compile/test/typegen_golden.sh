@@ -38,6 +38,7 @@ SHAPES=(
   "shape_module_prefix_collision"
   "shape_list_nesting_depth"
   "shape_option_of_list"
+  "shape_option_nested_enum"
   "shape_list_nesting_depth_five"
   "shape_list_nesting_depth_six"
   "shape_float_column"

@@ -777,7 +777,7 @@ declared_column_type_name(Decls, Name) :-
     ),
     \+ scalar_column_type(Name).
 
-scalar_column_type(T) :- member(T, [int, text, json, bool, float]).
+scalar_column_type(T) :- member(T, [int, text, json, bool, float, bytes]).
 
 
 bind_decl_stmt(bind_decl(Name, Cols)) -->
@@ -1101,10 +1101,13 @@ parse_full(Goal, Codes) :-
     ws(Left, Left1),
     ( Left1 == [] -> true ; throw(dl_parse_error(trailing_input(Left1))) ).
 
+% maplist/3 runs arg_value/2 backwards to lift positional exprs into the pos/1
+% shape path_atom/4 reads; a wrapped rel atom resolves as a bare body one does.
 rel_atom_term(Term) -->
-    ident(Name), #`(`,
-    args(expr, Args), #`)`,
-    { Term =.. [Name | Args] }.
+    dotted_path(Segments), #`(`,
+    args(expr, Values), #`)`,
+    { maplist(arg_value, Args, Values),
+      path_atom(body, Segments, Args, Term) }.
 
 comma_pair(P1, P2, A, B) -->
     ws, call(P1, A), #`,`, ws, call(P2, B).

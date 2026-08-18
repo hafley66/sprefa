@@ -59,6 +59,7 @@ import type {
   IWitnessRows,
 } from "../runtime/types.ts";
 import { ServeTrace } from "./0_trace.ts";
+import { base64_to_bytes } from "../runtime/boundary.ts";
 
 const WITNESS_TABLE = "__host_witness";
 
@@ -253,6 +254,21 @@ function runSprefaExtract(host: string, commandLine: string, env: Record<string,
   return runShellLine(host, commandLine, env);
 }
 
+/**
+ * The Rust target links Soopy's stage store and commit engine in-process.
+ * The TypeScript target has no Rust FFI boundary, so it returns one ordinary
+ * capability-refusal row instead of spawning the template or duplicating the
+ * mutation engine. The declared source-mutation fixture exposes this outcome
+ * as data for callers that selected the TS target.
+ */
+function runSoopyMutation(host: string): Observable<string> {
+  const detail = "soopy_mutation requires the Rust runtime target";
+  const row = host === "source_stage"
+    ? { stage_id: "", outcome: "unsupported", detail, document: [] }
+    : { outcome: "unsupported", detail, document: {} };
+  return of(JSON.stringify(row));
+}
+
 /** Executor registry. `sprefa_extract` retains the declaration's current
  * subprocess command while isolating the V6.2 process boundary from DL6.
  * `sprefa_extract_repo` is the repo-scoped twin (ruling repo_column_spelling =
@@ -262,6 +278,7 @@ export const HostExecutors: ReadonlyMap<string, HostExecutor> = new Map([
   ["shell", runShellLine],
   ["sprefa_extract", runSprefaExtract],
   ["sprefa_extract_repo", runSprefaExtract],
+  ["soopy_mutation", runSoopyMutation],
 ]);
 
 /**
@@ -281,6 +298,16 @@ const ApplicativeExecutors: ReadonlySet<string> = new Set(["sprefa_extract", "sp
 // ─────────────────────────────────────────────────────────────────────────────
 
 function coerce(host: string, column: IHostColumnPlan, raw: unknown): IRowValue {
+  if (column.type === "bytes") {
+    if (raw !== null && typeof raw === "object" && !Array.isArray(raw) && Object.keys(raw).length === 1 && typeof (raw as { readonly $bytes?: unknown }).$bytes === "string") {
+      try {
+        return base64_to_bytes((raw as { readonly $bytes: string }).$bytes);
+      } catch {
+        throw new Error(`host '${host}' produced invalid_bytes_base64 for bytes column '${column.name}'`);
+      }
+    }
+    throw new Error(`host '${host}' produced bytes_host_transport_unsupported for bytes column '${column.name}'`);
+  }
   if (column.type === "bool") {
     if (raw === true || raw === "true") return true;
     if (raw === false || raw === "false") return false;

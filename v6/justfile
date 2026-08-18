@@ -75,6 +75,19 @@ xref:
 prolog-lint:
     cd {{ v6 }}/prolog && bash tools/prolog-lint.sh
 
+# lower.pl coverage census: throw sites vs manifest.json reasons, plus
+# never-entered clause arms over the corpus compile. See scripts/arm_census.pl.
+arm-census:
+    bash {{ v6 }}/prolog/compile/scripts/arm_census.sh
+
+# SYNTAX.md / CONSTRUCT-REFERENCE.md staleness (staleness-gate.sh §c shape):
+# regenerate, fail if checked-in bytes differ, always restore the tree.
+docs-staleness:
+    swipl -q -l {{ v6 }}/prolog/compile/1_emit_registry_docs.pl -g emit_registry_docs -g halt
+    test -x {{ v6 }}/sprefa-extract/target/release/extract || (cd {{ v6 }}/sprefa-extract && cargo build --release --features cli --bin extract)
+    bash {{ v6 }}/tsv2/scripts/reference-docs.sh >/dev/null
+    git diff --exit-code -- prolog/compile/SYNTAX.md prolog/compile/CONSTRUCT-REFERENCE.md; rc=$?; git checkout -- prolog/compile/SYNTAX.md prolog/compile/CONSTRUCT-REFERENCE.md prolog/compile/HOST-CONTRACTS.md ../editors/vscode-dl/syntaxes/dl6.tmLanguage.json; exit $rc
+
 # ratcheted compiler-cost gate: SWI inference counts per pinned .dl6 program
 # per phase, against scripts/compile-speed-baseline.tsv. Inferences because
 # they are byte-reproducible run to run where wall ms is not -- the 255s
@@ -492,9 +505,9 @@ green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test im
 
 # everything, phased: scale-floor alone (its verdict is a wall reading), then
 # the memory leak test alone (its flatness check reddens under a load ramp),
-# then the gen-writers serially, then the rest 6-up. Same 29 legs, same
+# then the gen-writers serially, then the rest 6-up. Same 32 legs, same
 # verdicts, one ordered PASS/FAIL table.
-# (expect: GREEN ALL HOLDS: 29 legs, exit 0; ~177s vs ~254s one at a time)
+# (expect: GREEN ALL HOLDS: 32 legs, exit 0; ~177s vs ~254s one at a time)
 green-all:
     bash {{ v6 }}/tools/green-parallel.sh
 
