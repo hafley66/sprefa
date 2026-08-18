@@ -13,7 +13,7 @@
 %   swipl -q -l golden_oracle.pl -g "oracle_final('p.dl6','s.json')"   -g halt
 
 :- ensure_loaded('../oracle_dump').        % pulls ticklog.pl -> go.pl -> engine.pl
-:- use_module('../parse_dl_dcg', [parse_dl_file/4]).
+:- use_module('../../use_resolve', [expand_uses/8]).
 :- use_module('0_json_arrival', [arrival_column_types/4, schedule_value/5]).
 
 oracle_ticklog(Dl6File, ScheduleFile) :-
@@ -36,7 +36,7 @@ oracle_both(Dl6File, ScheduleFile) :-
     format('~w~n', [Line]).
 
 golden_program(Dl6File, ScheduleFile, Prog, Schedule) :-
-    parse_dl_file(Dl6File, Prog, Bindings, Findings),
+    expand_uses(Dl6File, [], [], _Loaded, Prog, _ModuleTable, Bindings, Findings),
     ( Findings == []
     -> true
     ;  format(user_error, "golden_oracle: parse findings ~q~n", [Findings]), halt(1)

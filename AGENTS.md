@@ -48,3 +48,9 @@ Do not pass individual file paths to `cargo fmt`; Cargo may format every target
 in the workspace anyway. Do not run the repository-wide formatter during
 implementation. Run `cargo fmt` once immediately before commit and include all
 resulting formatting in that commit.
+
+## CI Reporting
+
+CI means build, compile, and test execution. Report whether new work adds,
+changes, or removes CI coverage. Do not report formatter or linter status.
+Report only current results; omit stale, previous, and baseline-matching data.

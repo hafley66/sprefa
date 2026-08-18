@@ -52,7 +52,7 @@
 :- module(bop_check, [bop_check/1, bop_check_env/0]).
 
 :- use_module('../../compile', [compile_program/6, throw_text_door_error/2, dl6_seeded_form/3]).
-:- use_module('../parse_dl_dcg', [parse_dl_file/4]).
+:- use_module('../../use_resolve', [expand_uses/8]).
 :- use_module(library(lists)).
 
 bop_check_env :-
@@ -72,7 +72,7 @@ exit_code(File, Code) :-
     result_code(Result, Code).
 
 check_result(File, Result) :-
-    parse_dl_file(File, Prog, Bindings, Findings),
+    expand_uses(File, [], [], _Loaded, Prog, _ModuleTable, Bindings, Findings),
     ( Findings \== []
     -> Result = findings(Findings)
     ;  compile_pure(File, Prog, Bindings), Result = clean

@@ -30,7 +30,7 @@
 %      exit 0 = covered, exit 1 = a named construct is missing.
 
 :- use_module('../registry', [surface/5, expression/5]).
-:- use_module('../parse_dl_dcg', [parse_dl_file/4]).
+:- use_module('../../use_resolve', [expand_uses/8]).
 
 % Resolved at LOAD time (prolog_load_context/2 is a read-time-only predicate),
 % so the gate runs from any cwd -- the same fix `just arch` needed.
@@ -74,7 +74,7 @@ text_detected(combine/variadic, 'combine(').
 
 run :-
     golden_file(Path),
-    parse_dl_file(Path, Program, _Bindings, Findings),
+    expand_uses(Path, [], [], _Loaded, Program, _ModuleTable, _Bindings, Findings),
     ( Findings == []
     -> true
     ;  format("GOLDEN_COVERAGE FAIL: golden-flex.dl6 has parse findings ~q~n", [Findings]), halt(1)
@@ -83,7 +83,9 @@ run :-
     strip_comments(Source, Code),
     term_signatures(Program, Signatures),
     required_rows(Rows),
-    findall(Problem, row_problem(Rows, Signatures, Code, Source, Problem), Problems),
+    findall(Problem, row_problem(Rows, Signatures, Code, Source, Problem), RowProblems),
+    findall(Problem, spelling_problem(Code, Problem), SpellingProblems),
+    append(RowProblems, SpellingProblems, Problems),
     length(Rows, Total),
     findall(Signature,
             ( member(row(Signature, _), Rows), \+ expected_absent(Signature, _) ),
@@ -102,6 +104,54 @@ run :-
        halt(1)
     ),
     ignore(Source = _).
+
+required_spelling(use_plain,                 "use \"").
+required_spelling(use_alias,                 " as types.").
+required_spelling(interface,                 "interface json_encodable.").
+required_spelling(parameterized_interface,   "interface container(T).").
+required_spelling(generic_parameter,         "GenericPair(T:").
+required_spelling(generic_multiple_bounds,   "json_encodable + addressable").
+required_spelling(generic_free_parameter,    "GenericEntry(Key: json_encodable, Value)").
+required_spelling(generic_application,       "GenericPair(int)").
+required_spelling(interface_implementation,  " is json_encodable, container(text)").
+required_spelling(capitalized_relation,      "rel Person(").
+required_spelling(case_distinct_relation,    "rel person(").
+required_spelling(dotted_relation,           "rel OrchardRoot.Child(").
+required_spelling(payloadless_enum_variant,  "Status(ready()").
+required_spelling(payload_enum_variant,      "failed(reason: text)").
+required_spelling(nested_option,              "option(option(int))").
+required_spelling(option_enum,                "option(Status)").
+required_spelling(option_postfix,             "brief: text?").
+required_spelling(bytes_column,               "content: bytes").
+required_spelling(relation_value,             "revision: Revision").
+required_spelling(relation_endpoint,          "Revision.id").
+required_spelling(relation_endpoint_list,     "list(Revision.id)").
+required_spelling(bound_relation_endpoint,    ".revision.id").
+required_spelling(named_argument,             "picker: 'ada'").
+required_spelling(argument_pun,               "pick_event(Tree_id, picker: Picker)").
+required_spelling(alias_not_equal,            "Species != 'weed'").
+required_spelling(alias_equal,                "Species = Species").
+required_spelling(alias_less_equal,           "Kilos <= 99.5").
+required_spelling(negative_integer,           "TreeId > -1").
+required_spelling(single_quoted_json_key,      "{'species': Species}").
+required_spelling(double_quoted_json_key,      "{\"species\": Species}").
+
+spelling_problem(Code, Problem) :-
+    required_spelling(Mechanic, Marker),
+    \+ sub_string(Code, _, _, _, Marker),
+    format(atom(Problem), "language mechanic ~w is absent; expected source marker ~q",
+           [Mechanic, Marker]).
+
+required_gap(zero_arity_relation, "defect zero-arity runtime SQL").
+required_gap(option_bytes, "defect option bytes wrapper semantics").
+
+spelling_problem(_Code, Problem) :-
+    required_gap(Mechanic, Reason),
+    golden_file(Path),
+    read_source_text(Path, Source),
+    \+ sub_string(Source, _, _, _, Reason),
+    format(atom(Problem), "language mechanic gap ~w lacks reason ~q",
+           [Mechanic, Reason]).
 
 %% required_rows(-Rows) is det.
 %  Every construct the golden must account for: registry surface/5 rows of any
@@ -125,7 +175,7 @@ row_problem(Rows, Signatures, Code, Source, Problem) :-
 
 row_satisfied(Signature, Kind, Signatures, Code, Source) :-
     ( expected_absent(Signature, Reason)
-    -> absence_verified(Signature, Kind, Reason, Signatures, Source)
+    -> absence_verified(Signature, Kind, Reason, Code, Source)
     ;  construct_present(Signature, Signatures, Code)
     ).
 
@@ -133,10 +183,18 @@ row_satisfied(Signature, Kind, Signatures, Code, Source) :-
 %  An expected absence is only honoured when (a) the golden's header carries the
 %  reason text, (b) the construct really is absent from the program, and (c) a
 %  reason that claims a registry status agrees with the registry.
-absence_verified(Signature, Kind, Reason, Signatures, Source) :-
+absence_verified(Signature, Kind, Reason, Code, Source) :-
     sub_string(Source, _, _, _, Reason),
-    \+ memberchk(Signature, Signatures),
+    \+ absent_construct_spelled(Signature, Code),
     status_agrees(Signature, Kind, Reason).
+
+absent_construct_spelled(set/0, Code) :-
+    sub_string(Code, _, _, _, " set").
+absent_construct_spelled(tagged_brace/1, Code) :-
+    sub_string(Code, _, _, _, "Tag{").
+absent_construct_spelled(Name/_, Code) :-
+    format(string(Marker), "~w(", [Name]),
+    sub_string(Code, _, _, _, Marker).
 
 status_agrees(_Signature, expression, _Reason) :- !.
 status_agrees(Signature, surface(Status), Reason) :-

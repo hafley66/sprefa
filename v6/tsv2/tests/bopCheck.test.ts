@@ -21,7 +21,6 @@ import { fileURLToPath } from "node:url";
 
 const BOP = fileURLToPath(new URL("../cli/bop.ts", import.meta.url));
 const CLEAN_DL6 = fileURLToPath(new URL("../../dl/fixtures/door-handwritten.dl6", import.meta.url));
-const FINDINGS_DL6 = fileURLToPath(new URL("../../dl/fixtures/ghcacher.dl6", import.meta.url));
 
 function run_check(file: string): { readonly status: number | null; readonly stderr: string } {
   const result = spawnSync("node", ["--experimental-transform-types", BOP, "check", file], { encoding: "utf8" });
@@ -33,8 +32,28 @@ test("check: a program with zero findings that compiles clean exits 0, silently"
   assert.equal(outcome.status, 0, outcome.stderr);
 });
 
+test("check: use declarations compile through the same module expansion as compile_dl6", () => {
+  const work_dir = mkdtempSync(join(tmpdir(), "bop-check-use-"));
+  writeFileSync(join(work_dir, "model.dl6"), "rel Item(name: text).\n", "utf8");
+  const program_path = join(work_dir, "main.dl6");
+  writeFileSync(
+    program_path,
+    'use "model.dl6" as model.\nrel Seen(name: text).\nSeen(Name) <- model.Item(Name).\n',
+    "utf8",
+  );
+  const outcome = run_check(program_path);
+  assert.equal(outcome.status, 0, outcome.stderr);
+});
+
 test("check: a program that hits a named compiler unsupported construct exits 2 and names it on stderr", () => {
-  const outcome = run_check(FINDINGS_DL6);
+  const work_dir = mkdtempSync(join(tmpdir(), "bop-check-unsupported-"));
+  const program_path = join(work_dir, "unsupported.dl6");
+  writeFileSync(
+    program_path,
+    "rel Item(value: list(option(bytes))).\n",
+    "utf8",
+  );
+  const outcome = run_check(program_path);
   assert.equal(outcome.status, 2, outcome.stderr);
   assert.match(outcome.stderr, /unsupported_construct/);
 });
