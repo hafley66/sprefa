@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -157,19 +157,23 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "log_retraction_rejected_event" ("col1" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_log_retraction_rejected_event" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1" FROM "log_retraction_rejected_event" t`,
-  `CREATE TEMP TABLE "__delta_log_retraction_rejected_event" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_log_retraction_rejected_event_sign" ON "__delta_log_retraction_rejected_event" ("_sign")`,
-  `CREATE INDEX "__delta_log_retraction_rejected_event_group" ON "__delta_log_retraction_rejected_event" ("col1")`,
-  `CREATE TEMP TABLE "__frontier_log_retraction_rejected_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_log_retraction_rejected_event_phase" ON "__frontier_log_retraction_rejected_event" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_log_retraction_rejected_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_log_retraction_rejected_event" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_log_retraction_rejected_event" t`,
+  `CREATE TABLE "log_retraction_rejected_event_595cc703c300" ("col1" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_log_retraction_rejected_event_595cc703c300" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1" FROM "log_retraction_rejected_event_595cc703c300" t`,
+  `CREATE TEMP TABLE "__delta_log_retraction_rejected_event_595cc703c300" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_log_retraction_rejected_event_595cc703c300_sign" ON "__delta_log_retraction_rejected_event_595cc703c300" ("_sign")`,
+  `CREATE INDEX "__delta_log_retraction_rejected_event_595cc703c300_group" ON "__delta_log_retraction_rejected_event_595cc703c300" ("col1")`,
+  `CREATE TEMP TABLE "__frontier_log_retraction_rejected_event_595cc703c300" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_log_retraction_rejected_event_595cc703c300_phase" ON "__frontier_log_retraction_rejected_event_595cc703c300" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_log_retraction_rejected_event_595cc703c300" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_log_retraction_rejected_event_595cc703c300" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_log_retraction_rejected_event_595cc703c300" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   event: ["col1"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  event: "log_retraction_rejected_event_595cc703c300",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -190,11 +194,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 7, parent_id: 0, ordinal: 0, local_name: "log_retraction_rejected", kind: "module", type_id: 0, arity: 0, module_id: 7, h_id: "9a362457c1521a98", h_schema: "", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 0, local_name: "event", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "f5eba94edc4e303d", h_schema: "32b13250133857cf", h_rule: "" },
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "col1", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "b9cc4ea278b116a1", h_schema: "", h_rule: "" },
-  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_log_retraction_rejected_event", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "0293f3dc5913febe", h_schema: "8e22fd46a4219fe1", h_rule: "" },
-  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_log_retraction_rejected_event", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "c05e4f92b33bde87", h_schema: "987415a90c19f0a7", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_log_retraction_rejected_event", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "f244d992a3383a39", h_schema: "987415a90c19f0a7", h_rule: "" },
-  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__txt_log_retraction_rejected_event", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "7f9dd75393440c03", h_schema: "32b13250133857cf", h_rule: "" },
-  { rel_id: 14, parent_id: 10, ordinal: 0, local_name: "__txt___delta_log_retraction_rejected_event", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "ee0a2c2fd33dad16", h_schema: "32b13250133857cf", h_rule: "" },
+  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_log_retraction_rejected_event_595cc703c300", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "80471a8a4f966807", h_schema: "8e22fd46a4219fe1", h_rule: "" },
+  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_log_retraction_rejected_event_595cc703c300", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "dbfe2cdb25d69458", h_schema: "987415a90c19f0a7", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_log_retraction_rejected_event_595cc703c300", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "066cb3f85daa8b0d", h_schema: "987415a90c19f0a7", h_rule: "" },
+  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__txt_log_retraction_rejected_event_595cc703c300", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "f4de95ae922d19f1", h_schema: "32b13250133857cf", h_rule: "" },
+  { rel_id: 14, parent_id: 10, ordinal: 0, local_name: "__txt___delta_log_retraction_rejected_event_595cc703c300", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "d6e0fabdbbe0dcfb", h_schema: "32b13250133857cf", h_rule: "" },
   { rel_id: 15, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "30c587d69a2c4ec4", h_schema: "", h_rule: "" },
   { rel_id: 16, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "22970e57b8d9d1b4", h_schema: "", h_rule: "" },
 ];
@@ -208,11 +212,11 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  event: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1" FROM "__txt_log_retraction_rejected_event" t`,
+  event: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1" FROM "__txt_log_retraction_rejected_event_595cc703c300" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "event", kind: "log", table_name: "log_retraction_rejected_event", delta_table_name: "__delta_log_retraction_rejected_event", frontier_table_name: "__frontier_log_retraction_rejected_event", next_frontier_table_name: "__next_frontier_log_retraction_rejected_event", columns: ["col1"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "log_retraction_rejected_event" ("col1") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "col1"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_log_retraction_rejected_event" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."_sign"`, rule_observers: [] },
+  { rel: "event", kind: "log", table_name: "log_retraction_rejected_event_595cc703c300", delta_table_name: "__delta_log_retraction_rejected_event_595cc703c300", frontier_table_name: "__frontier_log_retraction_rejected_event_595cc703c300", next_frontier_table_name: "__next_frontier_log_retraction_rejected_event_595cc703c300", columns: ["col1"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "log_retraction_rejected_event_595cc703c300" ("col1") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "col1"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_log_retraction_rejected_event_595cc703c300" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -269,6 +273,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

@@ -1480,6 +1480,7 @@ impl Source for KotlinSource {
             types,
             call,
             df,
+            data: None,
         }
     }
 }

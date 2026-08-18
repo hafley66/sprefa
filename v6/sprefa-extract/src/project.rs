@@ -687,6 +687,12 @@ pub static RESOLVE_ARMS: &[ResolveArm] = &[
         call: None,
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&MarkdownSource, out, cx)),
     },
+    // Nothing on the data plane names another file, so it resolves nothing.
+    ResolveArm {
+        name: "data",
+        call: None,
+        types: None,
+    },
     ResolveArm {
         name: "astgrep",
         call: None,

@@ -629,7 +629,7 @@ test(switch_as_keyed_replace_edge_sql) :-
     UpsertSql ==
       'INSERT INTO "switch_as_keyed_replace_open_scope" ("session_id", "target") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "target" = excluded."target"',
     DeltaProjectSql ==
-      'SELECT d0."session_id" AS "session_id", json_object(\'fn\', \'route_data\', \'args\', json_array(d0."route_id")) AS "target" FROM "__frontier_switch_as_keyed_replace_route_change" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"'.
+      'SELECT d0."session_id" AS "session_id", json_object(\'fn\', \'route_data\', \'args\', json_array(d0."route_id")) AS "target" FROM "__frontier_switch_as_keyed_replace_route_change_720f4a32a3a3" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"'.
 
 % An edge-headed keyed rel's table carries UNIQUE on the KEY COLUMNS ALONE,
 % matching the UPSERT's ON CONFLICT target -- SQLite
@@ -661,13 +661,13 @@ test(switch_as_keyed_replace_ddl_pk_shape) :-
 %     world_fed_keyed_arrival_uses_key_constraint_and_replace passed
 % EMITTER RED, both modes:
 %   WRONG world_fed_keyed_arrival_replaces first diff at line 2:
-%     actual={"tick":2,"deltas":{"world_fed_keyed_arrival_replaces_world_mode":{
+%     actual={"tick":2,"deltas":{"world_fed_keyed_arrival_replaces_world_mode_32cd53f28cb0":{
 %       "add":[[1,"b"]],"del":[]}}}
-%     oracle={"tick":2,"deltas":{"world_fed_keyed_arrival_replaces_world_mode":{
+%     oracle={"tick":2,"deltas":{"world_fed_keyed_arrival_replaces_world_mode_32cd53f28cb0":{
 %       "add":[[1,"b"]],"del":[[1,"a"]]}}}
 %   FINAL_WRONG world_fed_keyed_arrival_replaces
-%     actual={"final":{"world_fed_keyed_arrival_replaces_world_mode":[[1,"a"],[1,"b"]]}}
-%     oracle={"final":{"world_fed_keyed_arrival_replaces_world_mode":[[1,"b"]]}}
+%     actual={"final":{"world_fed_keyed_arrival_replaces_world_mode_32cd53f28cb0":[[1,"a"],[1,"b"]]}}
+%     oracle={"final":{"world_fed_keyed_arrival_replaces_world_mode_32cd53f28cb0":[[1,"b"]]}}
 % EMITTER GREEN, both modes:
 %   RUN total=70 identical=67 wrong=0 run_error=2 no_oracle_log=1
 %   FINAL total=70 final_identical=67 final_wrong=2 no_oracle_final=1
@@ -682,17 +682,17 @@ test(world_fed_keyed_arrival_uses_key_constraint_and_replace) :-
         arrivalstmt(
             world_mode/2,
             set,
-            'INSERT INTO "world_fed_keyed_arrival_replaces_world_mode" ("col1", "col2") VALUES (?, ?) ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2"',
-            'DELETE FROM "world_fed_keyed_arrival_replaces_world_mode" WHERE "col1" = ? AND "col2" = ?',
-            'INSERT INTO "world_fed_keyed_arrival_replaces_world_mode" ("col1", "col2") SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?) WHERE true ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2" RETURNING "col1", "col2"',
-            'DELETE FROM "world_fed_keyed_arrival_replaces_world_mode" WHERE ("col1", "col2") IN (SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?)) RETURNING "col1", "col2"'),
+            'INSERT INTO "world_fed_keyed_arrival_replaces_world_mode_32cd53f28cb0" ("col1", "col2") VALUES (?, ?) ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2"',
+            'DELETE FROM "world_fed_keyed_arrival_replaces_world_mode_32cd53f28cb0" WHERE "col1" = ? AND "col2" = ?',
+            'INSERT INTO "world_fed_keyed_arrival_replaces_world_mode_32cd53f28cb0" ("col1", "col2") SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?) WHERE true ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2" RETURNING "col1", "col2"',
+            'DELETE FROM "world_fed_keyed_arrival_replaces_world_mode_32cd53f28cb0" WHERE ("col1", "col2") IN (SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?)) RETURNING "col1", "col2"'),
         ArrivalStatements).
 
 test(switch_as_keyed_replace_frontier_ddl) :-
     interning_lowered(direct, switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, Ddl, _, _, _, _, _, _),
-    memberchk('CREATE TEMP TABLE "__frontier_switch_as_keyed_replace_route_change" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "route_id" TEXT NOT NULL)', Ddl),
-    memberchk('CREATE INDEX "__frontier_switch_as_keyed_replace_route_change_phase" ON "__frontier_switch_as_keyed_replace_route_change" ("_phase")', Ddl),
+    memberchk('CREATE TEMP TABLE "__frontier_switch_as_keyed_replace_route_change_720f4a32a3a3" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "route_id" TEXT NOT NULL)', Ddl),
+    memberchk('CREATE INDEX "__frontier_switch_as_keyed_replace_route_change_720f4a32a3a3_phase" ON "__frontier_switch_as_keyed_replace_route_change_720f4a32a3a3" ("_phase")', Ddl),
     memberchk('CREATE TEMP TABLE "__next_frontier_switch_as_keyed_replace_open_scope" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "target" TEXT NOT NULL)', Ddl).
 
 % FAIL-FIRST RECEIPT: pre/1 in an edge body needs a tick-local snapshot read
@@ -731,16 +731,41 @@ test(ordered_pre_snapshots_once_then_mirrors_each_write) :-
     once(sub_atom(Text, _, _, _, 'function ordered_pre_write_statement')),
     \+ sub_atom(Text, _, _, _, 'refreshOrderedPre').
 
-% Table is the authored rel; the emitted object carries the compilation
-% unit's module prefix, so match the tail of the quoted name.
+% Table is the authored rel; the emitted object carries the compilation unit's
+% module prefix and, for a stored rel, its shape digest, so compare the parts of
+% the first quoted name rather than a literal spelling.
 ddl_for_table(Table, Ddl) :-
-    sub_atom(Ddl, 0, _, _, 'CREATE TABLE "'),
-    (   format(atom(Exact), 'CREATE TABLE "~w" (', [Table]),
-        sub_atom(Ddl, 0, _, _, Exact)
+    atomic_list_concat(Parts, '"', Ddl),
+    Parts = ['CREATE TABLE ', PhysicalName | _],
+    physical_name_of_relation(PhysicalName, Table).
+
+physical_name_of_relation(PhysicalName, Table) :-
+    storage_digest_stripped(PhysicalName, Stripped),
+    (   Stripped == Table
     ->  true
-    ;   format(atom(Suffixed), '_~w" (', [Table]),
-        sub_atom(Ddl, _, _, _, Suffixed)
+    ;   format(atom(Suffixed), '_~w', [Table]),
+        sub_atom(Stripped, _, _, 0, Suffixed)
     ).
+
+% `<prefix>_<rel>_<digest>` and its `_<n>` collision form both strip to
+% `<prefix>_<rel>`; a derived rel's name is already its own stripped form.
+storage_digest_stripped(PhysicalName, Stripped) :-
+    atomic_list_concat(Parts, '_', PhysicalName),
+    (   append(Head, [Digest], Parts),
+        storage_digest_atom(Digest)
+    ->  atomic_list_concat(Head, '_', Stripped)
+    ;   append(Head, [Digest, Ordinal], Parts),
+        storage_digest_atom(Digest),
+        atom_number(Ordinal, _)
+    ->  atomic_list_concat(Head, '_', Stripped)
+    ;   Stripped = PhysicalName
+    ).
+
+storage_digest_atom(Atom) :-
+    atom_length(Atom, 12),
+    atom_codes(Atom, Codes),
+    forall(member(Code, Codes),
+           ( Code >= 0'0, Code =< 0'9 ; Code >= 0'a, Code =< 0'f )).
 
 % InsertSqls is a LIST (one entry per rule clause sharing the head ref --
 % lower.pl:level_statement_group/3, the phase C multi-clause-per-head fix);
@@ -754,7 +779,7 @@ test(switch_as_keyed_replace_level_sql) :-
     DemandedInsert == 'INSERT OR IGNORE INTO "switch_as_keyed_replace_demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "switch_as_keyed_replace_open_scope" b0',
     RouteViewDelete == 'DELETE FROM "switch_as_keyed_replace_route_view"',
     RouteViewInsert ==
-      'INSERT OR IGNORE INTO "switch_as_keyed_replace_route_view" ("route_id", "body") SELECT json_extract(b0."target", \'$.args[0]\'), b1."body" FROM "switch_as_keyed_replace_demanded" b0, "switch_as_keyed_replace_route_row" b1 WHERE json_extract(b0."target", \'$.fn\') = \'route_data\' AND b1."route_id" = json_extract(b0."target", \'$.args[0]\')'.
+      'INSERT OR IGNORE INTO "switch_as_keyed_replace_route_view" ("route_id", "body") SELECT json_extract(b0."target", \'$.args[0]\'), b1."body" FROM "switch_as_keyed_replace_demanded" b0, "switch_as_keyed_replace_route_row_9dc737fb0c19" b1 WHERE json_extract(b0."target", \'$.fn\') = \'route_data\' AND b1."route_id" = json_extract(b0."target", \'$.args[0]\')'.
 
 test(demand_laziness_no_edge_rules) :-
     lowered_for(demand_laziness_effect_rows, Lowered),
@@ -766,16 +791,16 @@ test(demand_laziness_incremental_arrival_is_one_batch_statement) :-
     memberchk(arrivalstmt(open_feed/2, set, _, _, IncrementalAddSql, _),
               ArrivalStatements),
     IncrementalAddSql ==
-      'INSERT INTO "demand_laziness_effect_rows_open_feed" ("session_id", "target") SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?) WHERE true ON CONFLICT ("session_id") DO UPDATE SET "target" = excluded."target" RETURNING "session_id", "target"'.
+      'INSERT INTO "demand_laziness_effect_rows_open_feed_5654b2bc3f64" ("session_id", "target") SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?) WHERE true ON CONFLICT ("session_id") DO UPDATE SET "target" = excluded."target" RETURNING "session_id", "target"'.
 
 test(demand_laziness_level_sql) :-
     lowered_for(demand_laziness_effect_rows, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     LevelStatements = [levelstmt(demanded/2, _, [DemandedInsert], DemandedDeltaInsert, _, none, _), levelstmt(effect_call/1, _, [EffectCallInsert], EffectCallDeltaInsert, _, none, _)],
-    DemandedInsert == 'INSERT OR IGNORE INTO "demand_laziness_effect_rows_demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "demand_laziness_effect_rows_open_feed" b0',
+    DemandedInsert == 'INSERT OR IGNORE INTO "demand_laziness_effect_rows_demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "demand_laziness_effect_rows_open_feed_5654b2bc3f64" b0',
     EffectCallInsert == 'INSERT OR IGNORE INTO "demand_laziness_effect_rows_effect_call" ("target") SELECT b0."target" FROM "demand_laziness_effect_rows_demanded" b0',
     DemandedDeltaInsert ==
-      'INSERT OR IGNORE INTO "demand_laziness_effect_rows_demanded" ("target", "session_id") SELECT DISTINCT d0."target", d0."session_id" FROM "__frontier_demand_laziness_effect_rows_open_feed" d0 WHERE d0."_phase" >= 0 RETURNING "target", "session_id"',
+      'INSERT OR IGNORE INTO "demand_laziness_effect_rows_demanded" ("target", "session_id") SELECT DISTINCT d0."target", d0."session_id" FROM "__frontier_demand_laziness_effect_rows_open_feed_5654b2bc3f64" d0 WHERE d0."_phase" >= 0 RETURNING "target", "session_id"',
     EffectCallDeltaInsert ==
       'INSERT OR IGNORE INTO "demand_laziness_effect_rows_effect_call" ("target") SELECT DISTINCT d0."target" FROM "__frontier_demand_laziness_effect_rows_demanded" d0 WHERE d0."_phase" >= 0 RETURNING "target"'.
 
@@ -863,7 +888,7 @@ test(switch_as_keyed_replace_delta_sql_route_change_log) :-
     interning_lowered(direct, switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, _, DeltaStatements, _, _),
     memberchk(deltastmt(route_change/2, SelectSql, __delta_route_change, _, _), DeltaStatements),
-    once(sub_atom(SelectSql, _, _, _, 'FROM "switch_as_keyed_replace_route_change"')),
+    once(sub_atom(SelectSql, _, _, _, 'FROM "switch_as_keyed_replace_route_change_720f4a32a3a3"')),
     once(sub_atom(SelectSql, _, _, _, 'json_valid(t."route_id")')),
     once(sub_atom(SelectSql, _, _, _, 'AS "route_id"')).
 
@@ -876,9 +901,9 @@ test(latest_edge_sample_reads_base_table_in_both_sql_families) :-
             change_ev/1,
             [client, item],
             [],
-            'SELECT b0."client" AS "client", ?1 AS "item" FROM "marker_stops_backlog_replay_subscriber" b0',
+            'SELECT b0."client" AS "client", ?1 AS "item" FROM "marker_stops_backlog_replay_subscriber_d380626d01a5" b0',
             _,
-            'SELECT b0."client" AS "client", d0."item" AS "item" FROM "__frontier_marker_stops_backlog_replay_change_ev" d0, "marker_stops_backlog_replay_subscriber" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"',
+            'SELECT b0."client" AS "client", d0."item" AS "item" FROM "__frontier_marker_stops_backlog_replay_change_ev_193643fb2783" d0, "marker_stops_backlog_replay_subscriber_d380626d01a5" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"',
             arrival, _)
     ].
 
@@ -930,7 +955,7 @@ test(latest_keyed_sample_is_one_edge_arm_with_key_predicates) :-
             [],
             'SELECT ?1 AS "args", ?2 AS "salt", ?3 AS "payload" FROM "identical_demand_dedups_demand" b0 WHERE b0."args" = ?1 AND b0."salt" = ?2',
             _,
-            'SELECT d0."args" AS "args", d0."salt" AS "salt", d0."payload" AS "payload" FROM "__frontier_identical_demand_dedups_fill" d0, "identical_demand_dedups_demand" b0 WHERE d0."_phase" >= 0 AND b0."args" = d0."args" AND b0."salt" = d0."salt" ORDER BY d0."_phase", d0."_sequence"',
+            'SELECT d0."args" AS "args", d0."salt" AS "salt", d0."payload" AS "payload" FROM "__frontier_identical_demand_dedups_fill_3d9eb2ac63c4" d0, "identical_demand_dedups_demand" b0 WHERE d0."_phase" >= 0 AND b0."args" = d0."args" AND b0."salt" = d0."salt" ORDER BY d0."_phase", d0."_sequence"',
             arrival, _)
     ].
 
@@ -1228,7 +1253,7 @@ test(set_delete_arrival_is_one_json_batch_statement) :-
     memberchk(arrivalstmt(open_feed/2, set, _, _, _, IncrementalDelSql),
               ArrivalStatements),
     IncrementalDelSql ==
-      'DELETE FROM "shared_demand_refcount_open_feed" WHERE ("session_id", "target") IN (SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?)) RETURNING "session_id", "target"'.
+      'DELETE FROM "shared_demand_refcount_open_feed_5654b2bc3f64" WHERE ("session_id", "target") IN (SELECT json_extract(value, \'$[0]\'), json_extract(value, \'$[1]\') FROM json_each(?)) RETURNING "session_id", "target"'.
 
 :- end_tests(incremental_mode).
 
@@ -2241,7 +2266,7 @@ test(json_object_aggregate_lowers_with_order_and_duplicate_key_guard) :-
     program_plan(Term-[], [intern(direct)], Plan),
     plan_rule_level_statements(Plan, Statements),
     memberchk(levelstmt(doc/2, _, [InsertSql], _, _, _, _), Statements),
-    InsertSql == 'INSERT OR IGNORE INTO "json_object_aggregate_sql_doc" ("col1", "col2") SELECT b0."col1", CASE WHEN count(DISTINCT json_array(b0."col2", json(b0."col3"))) = count(DISTINCT b0."col2") THEN json_group_object(b0."col2", json(b0."col3") ORDER BY b0."col2") ELSE json(\'json_object_dup_key\') END FROM "json_object_aggregate_sql_pair" b0 GROUP BY b0."col1" HAVING count(*) > 0'.
+    InsertSql == 'INSERT OR IGNORE INTO "json_object_aggregate_sql_doc" ("col1", "col2") SELECT b0."col1", CASE WHEN count(DISTINCT json_array(b0."col2", json(b0."col3"))) = count(DISTINCT b0."col2") THEN json_group_object(b0."col2", json(b0."col3") ORDER BY b0."col2") ELSE json(\'json_object_dup_key\') END FROM "json_object_aggregate_sql_pair_f1412e7030cc" b0 GROUP BY b0."col1" HAVING count(*) > 0'.
 
 % FOUND BY PROBE 2026-08-13: `Body := group_concat(...)` compiled rc=0 and
 % stored the literal `{"fn":"group_concat","args":[...]}` through the
@@ -2453,7 +2478,7 @@ test(initial_only_ref_still_gets_a_table) :-
     Prog = prog([kind(ping/1, log), keep(ping/1, all)], []),
     program_plan(fixture(seeded, Prog, [known_repo(2)], [], [])-[], Plan),
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
-    memberchk('CREATE TABLE "seeded_known_repo" ("__id" INTEGER PRIMARY KEY, "col1" INTEGER NOT NULL, UNIQUE ("col1"))', Ddl).
+    memberchk('CREATE TABLE "seeded_known_repo_5786d5bb8602" ("__id" INTEGER PRIMARY KEY, "col1" INTEGER NOT NULL, UNIQUE ("col1"))', Ddl).
 
 % The class the TICK PHASE ALIGNMENT arc opened: an edge arm joining a level
 % rel an ARRIVAL can retract. It used to throw
@@ -2697,10 +2722,10 @@ test(delta_and_frontier_tables_repeat_column_affinity) :-
     Lowered = lowered(_, Ddl, _, _, _, _, _, _),
     forall(member(Prefix, ['', '__delta_', '__frontier_', '__next_frontier_']),
            ( atomic_list_concat(['CREATE TEMP TABLE "', Prefix,
-                                 'head_expression_evaluates_derived_column_callee_set_size"'],
+                                 'head_expression_evaluates_derived_column_callee_set_size'],
                                 TempHead),
              atomic_list_concat(['CREATE TABLE "', Prefix,
-                                 'head_expression_evaluates_derived_column_callee_set_size"'],
+                                 'head_expression_evaluates_derived_column_callee_set_size'],
                                 BaseHead),
              once(( member(Sql, Ddl),
                     ( sub_atom(Sql, 0, _, _, TempHead) ; sub_atom(Sql, 0, _, _, BaseHead) ),
@@ -2991,7 +3016,7 @@ test(retention_count_is_one_set_based_delete_statement) :-
         retentionstmt(
             event/1,
             2,
-            'DELETE FROM "retention_count_prunes_oldest_event" WHERE rowid NOT IN (SELECT rowid FROM "retention_count_prunes_oldest_event" ORDER BY rowid DESC LIMIT 2) RETURNING "col1"'),
+            'DELETE FROM "retention_count_prunes_oldest_event_595cc703c300" WHERE rowid NOT IN (SELECT rowid FROM "retention_count_prunes_oldest_event_595cc703c300" ORDER BY rowid DESC LIMIT 2) RETURNING "col1"'),
         LevelStatements).
 
 :- end_tests(match_block).
@@ -5628,13 +5653,13 @@ test(bool_and_float_storage_constraints_are_exact) :-
                          BoolLowered),
     BoolLowered = lowered(_, BoolDdl, _, _, _, _, _, _),
     memberchk(
-      'CREATE TABLE "bool_literals_round_trip_flag" ("__id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)), UNIQUE ("name", "enabled"))',
+      'CREATE TABLE "bool_literals_round_trip_flag_928da2c2d5b2" ("__id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)), UNIQUE ("name", "enabled"))',
       BoolDdl),
     interning_lowered_in('5_value_plane.pl', direct, float_arithmetic_is_binary64,
                          FloatLowered),
     FloatLowered = lowered(_, FloatDdl, _, _, _, _, _, _),
     once(( member(ScoreDdl, FloatDdl),
-           sub_atom(ScoreDdl, 0, _, _, 'CREATE TABLE "float_arithmetic_is_binary64_score"'),
+           sub_atom(ScoreDdl, 0, _, _, 'CREATE TABLE "float_arithmetic_is_binary64_score_74f788ec9f37"'),
            sub_atom(ScoreDdl, _, _, _,
                     '"value" REAL NOT NULL CHECK (typeof("value") = \'real\' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308)') )).
 
@@ -5893,11 +5918,11 @@ test(head_value_that_is_a_body_atom_needs_no_dictionary_join) :-
     memberchk(levelstmt(selected/1, _, InsertSqls, DeltaSql, _, _, _), LevelStatements),
     atomic_list_concat(InsertSqls, ' ', Sql),
     once(sub_atom(Sql, _, _, _,
-                  'SELECT b0."__id" FROM "depth_one_identity_user" b0')),
-    \+ sub_atom(Sql, _, _, _, '__ref_depth_one_identity_user'),
+                  'SELECT b0."__id" FROM "depth_one_identity_user_a429a5abde3f" b0')),
+    \+ sub_atom(Sql, _, _, _, '__ref_depth_one_identity_user_a429a5abde3f'),
     once(sub_atom(DeltaSql, _, _, _,
-                  'FROM "__frontier_depth_one_identity_user" d0, "depth_one_identity_user" r0')),
-    \+ sub_atom(DeltaSql, _, _, _, '__ref_depth_one_identity_user').
+                  'FROM "__frontier_depth_one_identity_user_a429a5abde3f" d0, "depth_one_identity_user_a429a5abde3f" r0')),
+    \+ sub_atom(DeltaSql, _, _, _, '__ref_depth_one_identity_user_a429a5abde3f').
 
 :- end_tests(relation_depth_lowering).
 
@@ -7337,8 +7362,8 @@ test(dl6_fact_seeds_initial) :-
     dl6_compile_text(Text, OutFile, Result),
     (   Result = ok
     ->  read_seeded_text(OutFile, Emitted),
-        (   sub_atom(Emitted, _, _, _,
-                     '_max_run" ("limit_lines") VALUES (?)')
+        (   sub_atom(Emitted, _, _, _, '_max_run_'),
+            sub_atom(Emitted, _, _, _, '" ("limit_lines") VALUES (?)')
         ->  true
         ;   throw(seed_row_missing(Emitted))
         )
@@ -7890,9 +7915,9 @@ test(delta_arm_interns_before_the_row_insert) :-
     sub_atom(InternSql, 0, _, _,
              'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT'),
     sub_atom(InternSql, _, _, _,
-             'FROM "__frontier_interpolation_desugars_to_concat_eprintln_hit" d0 WHERE d0."_phase" >= 0'),
+             'FROM "__frontier_interpolation_desugars_to_concat_eprintln_hit_83ebe90615c9" d0 WHERE d0."_phase" >= 0'),
     sub_atom(DeltaInsertSql, _, _, _,
-             'FROM "__frontier_interpolation_desugars_to_concat_eprintln_hit" d0 WHERE d0."_phase" >= 0').
+             'FROM "__frontier_interpolation_desugars_to_concat_eprintln_hit_83ebe90615c9" d0 WHERE d0."_phase" >= 0').
 
 test(delta_arm_interns_nothing_at_direct) :-
     interning_level_statement(direct, 'expressions.pl',
@@ -7909,7 +7934,7 @@ test(ref_count_seed_interns_before_it_groups) :-
                               [InternSql]),
     sub_atom(InternSql, 0, _, _,
              'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT'),
-    sub_atom(InternSql, _, _, _, 'FROM "interpolation_desugars_to_concat_eprintln_hit" b0').
+    sub_atom(InternSql, _, _, _, 'FROM "interpolation_desugars_to_concat_eprintln_hit_83ebe90615c9" b0').
 
 test(ref_count_seed_interns_nothing_at_direct) :-
     interning_level_statement(direct, 'expressions.pl',
@@ -8105,14 +8130,14 @@ test(departure_frontier_stays_characters_at_dict) :-
                             pairwise_reads_state_at_the_departure_tick,
                             '__departure_frontier_pairwise_reads_state_at_the_departure_tick_reading',
                             Ddl),
-    Ddl == 'CREATE TEMP TABLE "__departure_frontier_pairwise_reads_state_at_the_departure_tick_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL)'.
+    Ddl == 'CREATE TEMP TABLE "__departure_frontier_pairwise_reads_state_at_the_departure_tick_reading_d90a837f26b0" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL)'.
 
 test(departure_frontier_is_unchanged_at_direct) :-
     interning_departure_ddl(direct, 'engine_core.pl',
                             pairwise_reads_state_at_the_departure_tick,
                             '__departure_frontier_pairwise_reads_state_at_the_departure_tick_reading',
                             Ddl),
-    Ddl == 'CREATE TEMP TABLE "__departure_frontier_pairwise_reads_state_at_the_departure_tick_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL)'.
+    Ddl == 'CREATE TEMP TABLE "__departure_frontier_pairwise_reads_state_at_the_departure_tick_reading_d90a837f26b0" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL)'.
 
 % RED before this landed: `b0."sensor" = d0."sensor"` compared an id against
 % characters, so the arm returned zero rows and `step` never fired.
@@ -8196,7 +8221,7 @@ test(an_aggregate_text_head_interns_the_group_concat) :-
 test(an_aggregate_text_head_is_a_bare_group_concat_at_direct) :-
     interning_aggregate_level(direct, ordered_group_concat_value, value_joined,
                               [InsertSql], _),
-    InsertSql == 'INSERT OR IGNORE INTO "ordered_group_concat_value_value_joined" ("group", "col2") SELECT b0."group", group_concat(b0."value", \' > \' ORDER BY b0."value") FROM "ordered_group_concat_value_item" b0 GROUP BY b0."group" HAVING count(*) > 0'.
+    InsertSql == 'INSERT OR IGNORE INTO "ordered_group_concat_value_value_joined" ("group", "col2") SELECT b0."group", group_concat(b0."value", \' > \' ORDER BY b0."value") FROM "ordered_group_concat_value_item_19c6d1de3e0a" b0 GROUP BY b0."group" HAVING count(*) > 0'.
 
 % The value exists once per GROUP: a row-wise DISTINCT scan would intern one
 % concatenation of the whole relation, an id no head row ever asks for.
@@ -8547,10 +8572,10 @@ test(module_storage_name_reaches_ts_and_rust_executable_plans) :-
     read_file_to_string(TsOut, TsText, []),
     read_file_to_string(RustOut, RustText, []),
     sub_string(TsText, _, _, _, 'rel: "Person"'),
-    sub_string(TsText, _, _, _, 'table_name: "main_Person"'),
-    sub_string(TsText, _, _, _, 'delta_table_name: "__delta_main_Person"'),
+    sub_string(TsText, _, _, _, 'table_name: "main_Person_'),
+    sub_string(TsText, _, _, _, 'delta_table_name: "__delta_main_Person_'),
     sub_string(RustText, _, _, _, '"rel":"Person"'),
-    sub_string(RustText, _, _, _, '"table_name":"main_Person"').
+    sub_string(RustText, _, _, _, '"table_name":"main_Person_').
 
 % The full relative path is kept, rather than only a basename or a hash.
 test(nested_same_basename_modules_keep_distinct_storage_prefixes) :-
@@ -8567,9 +8592,9 @@ test(nested_same_basename_modules_keep_distinct_storage_prefixes) :-
     atomic_list_concat([Dir, '/main.ts'], OutFile),
     compile_dl6(Entry, OutFile),
     read_file_to_string(OutFile, Text, []),
-    sub_string(Text, _, _, _, 'table_name: "a_model_First"'),
-    sub_string(Text, _, _, _, 'table_name: "b_model_Second"'),
-    sub_string(Text, _, _, _, 'table_name: "main_Root"').
+    sub_string(Text, _, _, _, 'table_name: "a_model_First_'),
+    sub_string(Text, _, _, _, 'table_name: "b_model_Second_'),
+    sub_string(Text, _, _, _, 'table_name: "main_Root_').
 
 % SQLite folds ASCII identifiers.  The suffix allocation is stable because
 % candidates sort by module path, exact relation spelling, and arity.
@@ -8580,9 +8605,17 @@ test(case_only_relation_names_get_deterministic_storage_suffixes) :-
     atomic_list_concat([Dir, '/main.ts'], OutFile),
     compile_dl6(Entry, OutFile),
     read_file_to_string(OutFile, Text, []),
-    sub_string(Text, _, _, _, 'table_name: "main_Person"'),
-    sub_string(Text, _, _, _, 'table_name: "main_person_2"'),
-    sub_string(Text, _, _, _, 'table_name: "main_person_2_2"').
+    sub_string(Text, _, _, _, 'table_name: "main_Person_'),
+    entry_storage_names(
+        "rel Person(value:int).\nrel person(value:int).\nrel person_2(value:int).\n",
+        Names),
+    findall(Folded,
+            ( member(_-StorageName, Names),
+              string_lower(StorageName, Folded) ),
+            Folds),
+    sort(Folds, Distinct),
+    length(Folds, Count),
+    length(Distinct, Count).
 
 % A same Name/Arity from two declaring modules was already one semantic Ref
 % before storage lowering.  The refusal keeps that collapse visible.
@@ -8623,7 +8656,7 @@ test(generated_relations_use_entry_storage_prefix) :-
     atomic_list_concat([Dir, '/main.ts'], OutFile),
     compile_dl6(Entry, OutFile),
     read_file_to_string(OutFile, Text, []),
-    sub_string(Text, _, _, _, 'table_name: "main_edge"'),
+    sub_string(Text, _, _, _, 'table_name: "main_edge_'),
     sub_string(Text, _, _, _, 'CREATE TABLE "main___gen__pair_').
 
 test(enum_option_and_list_mints_use_entry_storage_prefix) :-
@@ -8634,7 +8667,7 @@ test(enum_option_and_list_mints_use_entry_storage_prefix) :-
     atomic_list_concat([Dir, '/main.ts'], OutFile),
     compile_dl6(Entry, OutFile),
     read_file_to_string(OutFile, Text, []),
-    sub_string(Text, _, _, _, 'CREATE TABLE "main_status_ready"'),
+    sub_string(Text, _, _, _, 'CREATE TABLE "main_status_ready_'),
     sub_string(Text, _, _, _, 'CREATE TABLE "main___opt_int_none"'),
     sub_string(Text, _, _, _, 'CREATE TABLE "main___gen__list_text_').
 
@@ -8655,7 +8688,7 @@ test(a_program_without_module_decls_takes_the_entry_storage_prefix) :-
                     Initial, TermOut, emit_ts:emit_program),
     read_file_to_string(TextOut, TextText, []),
     read_file_to_string(TermOut, TermText, []),
-    sub_string(TermText, _, _, _, 'CREATE TABLE "main_Root"'),
+    sub_string(TermText, _, _, _, 'CREATE TABLE "main_Root_'),
     TermText == TextText.
 
 % Both compile paths read the same resolved program, so a `use` chain reaches
@@ -8678,9 +8711,73 @@ test(a_two_module_program_lowers_one_ddl_on_both_paths) :-
                     Initial, TermOut, emit_ts:emit_program),
     read_file_to_string(TextOut, TextText, []),
     read_file_to_string(TermOut, TermText, []),
-    sub_string(TermText, _, _, _, 'CREATE TABLE "a_model_First"'),
+    sub_string(TermText, _, _, _, 'CREATE TABLE "a_model_First_'),
     sub_string(TermText, _, _, _, 'CREATE TABLE "main_Root"'),
     TermText == TextText.
+
+% A reference column puts the target's shape inside the referrer's digest, so
+% the two paths agree only if both walk the same closure.
+test(a_reference_column_closure_digests_alike_on_both_paths) :-
+    make_use_dir(Dir),
+    atomic_list_concat([Dir, '/a'], LeftDir),
+    make_directory_path(LeftDir),
+    write_use_file(Dir, 'a/model.dl6' = "rel First(value:int).\n"),
+    write_use_file(Dir, 'main.dl6' =
+        "use \"a/model.dl6\".\nrel Place(city: text).\nrel Stay(guest: text, at: Place).\nrel Root(value:int).\nRoot(Value) <- First(Value).\n"),
+    use_entry(Dir, 'main.dl6', Entry),
+    atomic_list_concat([Dir, '/text.ts'], TextOut),
+    atomic_list_concat([Dir, '/term.ts'], TermOut),
+    compile_dl6(Entry, TextOut),
+    expand_uses(Entry, [], [], _, Prog, _, Bindings, []),
+    dl6_seeded_form(Prog, Initial, TermProg),
+    compile_program(main, fixture(main, TermProg, Initial, [], []), Bindings,
+                    Initial, TermOut, emit_ts:emit_program),
+    read_file_to_string(TextOut, TextText, []),
+    read_file_to_string(TermOut, TermText, []),
+    sub_string(TermText, _, _, _, 'CREATE TABLE "a_model_First_'),
+    sub_string(TermText, _, _, _, 'CREATE TABLE "main_Place_'),
+    sub_string(TermText, _, _, _, 'CREATE TABLE "main_Stay_'),
+    TermText == TextText.
+
+% FAIL-FIRST EVIDENCE: with the physical name a pure function of the module
+% path, both halves passed vacuously -- every spelling here was already equal,
+% including the one the widening moves.
+test(an_edit_that_moves_no_shape_moves_no_physical_name) :-
+    entry_storage_names(
+        "rel address(city: text).\nrel person(name: text, home: address).\nrel note(body: text).\n",
+        Before),
+    entry_storage_names(
+        "rel address(city: text).\n\nrel person(name: text, home: address).\n\nrel note(body: text).\nrel loud(body: text).\nloud(Body) <- note(Body).\n",
+        After),
+    forall(member(Relation, [address, person, note]),
+           ( storage_name_of(Before, Relation, Same),
+             storage_name_of(After, Relation, Same) )).
+
+test(a_widened_reference_target_moves_itself_and_its_referrer_only) :-
+    entry_storage_names(
+        "rel address(city: text).\nrel person(name: text, home: address).\nrel note(body: text).\n",
+        Before),
+    entry_storage_names(
+        "rel address(city: text, zip: text).\nrel person(name: text, home: address).\nrel note(body: text).\n",
+        After),
+    storage_name_of(Before, address, BeforeAddress),
+    storage_name_of(After, address, AfterAddress),
+    BeforeAddress \== AfterAddress,
+    storage_name_of(Before, person, BeforePerson),
+    storage_name_of(After, person, AfterPerson),
+    BeforePerson \== AfterPerson,
+    storage_name_of(Before, note, SameNote),
+    storage_name_of(After, note, SameNote).
+
+% A derived rel's rows are re-derived on every load, so its physical name
+% carries no digest and the seam that would add one lives in compile.pl.
+test(a_derived_relation_keeps_the_bare_prefixed_physical_name) :-
+    entry_storage_names(
+        "rel seed(value: int).\nrel doubled(value: int).\ndoubled(Value) <- seed(Value).\n",
+        Names),
+    storage_name_of(Names, doubled, main_doubled),
+    storage_name_of(Names, seed, SeedStorage),
+    SeedStorage \== main_seed.
 
 :- end_tests(use_module_system).
 
@@ -8699,6 +8796,25 @@ module_bookkeeping_decl(module_decl(_, _)).
 module_bookkeeping_decl(module_storage_decl(_, _)).
 module_bookkeeping_decl(rel_module_decl(_, _)).
 module_bookkeeping_decl(entry_module_decl(_)).
+
+% The physical name per relation, read off the plan the emitters consume, so
+% a check names storage without re-deriving the spelling from emitted text.
+entry_storage_names(Source, Names) :-
+    make_use_fixture(Dir, ["main.dl6" = Source]),
+    use_entry(Dir, 'main.dl6', Entry),
+    expand_uses(Entry, [], [], _, Prog, _, Bindings, []),
+    dl6_seeded_form(Prog, Initial, ProgOut),
+    program_plan(fixture(main, ProgOut, Initial, [], [])-Bindings,
+                 plan(_, _, _, RelPlans, _, _, _, _, _)),
+    findall(Relation-StorageName,
+            ( member(RelPlan, RelPlans),
+              relplan_parts(RelPlan, Relation/_, _, _, _, _),
+              relplan_storage_name(RelPlan, StorageName) ),
+            Names0),
+    msort(Names0, Names).
+
+storage_name_of(Names, Relation, StorageName) :-
+    memberchk(Relation-StorageName, Names).
 
 text_program_lowered(Entry, Lowered) :-
     expand_uses(Entry, [], [], _, Prog, _, Bindings, []),
@@ -8901,13 +9017,13 @@ test(source_mutations_fixture_keeps_one_document_boundary_and_exact_approval_joi
                'source_commit_demand(Root, State, StageId)'),
     \+ sub_string(SourceText, _, _, _, 'source_action('),
     tmp_file(source_mutations, OutFile),
-    % once/1, never a bare conjunction: a failing assertion below used to
-    % backtrack into compile_dl6/2 and re-drive the whole compiler, and the
-    % test ran past a 7 minute cap instead of failing in under a second.
+    % once/1 AROUND compile_dl6/2, not around the conjunction: a failing
+    % assertion below backtracks inside an outer once/1 and re-drives the whole
+    % compiler, which is how this test ran 60s instead of failing in one.
     setup_call_cleanup(
         true,
-        once(( compile_dl6(Source, OutFile),
-          read_file_to_string(OutFile, Text, []),
+        ( once(compile_dl6(Source, OutFile)),
+          once(read_file_to_string(OutFile, Text, [])),
           sub_string(Text, _, _, _, 'name: "source_stage"'),
           sub_string(Text, _, _, _, 'name: "source_commit"'),
           sub_string(Text, _, _, _, 'execution: "soopy_mutation"'),
@@ -8915,10 +9031,13 @@ test(source_mutations_fixture_keeps_one_document_boundary_and_exact_approval_joi
           sub_string(Text, _, _, _, 'source_dependency'),
           sub_string(Text, _, _, _, 'source_ownership'),
           sub_string(Text, _, _, _, 'source_type'),
+          % source_stage_result is a rule head, so it takes no shape digest;
+          % source_approval is stored, so its physical name carries one.
           sub_string(Text, _, _, _,
-                     'FROM "source_mutations_source_stage_result" b0, "source_mutations_source_approval" b1 WHERE b0."outcome"'),
+                     'FROM "source_mutations_source_stage_result" b0, "source_mutations_source_approval_'),
+          sub_string(Text, _, _, _, '" b1 WHERE b0."outcome"'),
           sub_string(Text, _, _, _, 'b1."proposal" = b0."proposal"'),
-          sub_string(Text, _, _, _, 'b1."stage_id" = b0."stage_id"') )),
+          sub_string(Text, _, _, _, 'b1."stage_id" = b0."stage_id"') ),
         catch(delete_file(OutFile), _, true)).
 
 % ── the mount reaches the catalog as data ───────────────────────────────────
@@ -9304,7 +9423,7 @@ test(braces_literal_value_lowers_to_sorted_json_object) :-
     program_plan(Term-[], [intern(direct)], Plan),
     plan_rule_level_statements(Plan, Statements),
     memberchk(levelstmt(doc/1, _, [InsertSql], _, _, _, _), Statements),
-    InsertSql == 'INSERT OR IGNORE INTO "braces_value_sql_doc" ("col1") SELECT json_object(\'name\', b0."col1", \'stars\', json(\'4\')) FROM "braces_value_sql_seed" b0'.
+    InsertSql == 'INSERT OR IGNORE INTO "braces_value_sql_doc" ("col1") SELECT json_object(\'name\', b0."col1", \'stars\', json(\'4\')) FROM "braces_value_sql_seed_47bccf1923d8" b0'.
 
 % A head-position braces literal is the same expression compiler, and a fully
 % ground document renders through canonical_json_text/2 in ONE json() call.
@@ -9315,7 +9434,7 @@ test(braces_head_position_lowers_to_one_ground_document) :-
     program_plan(Term-[], [intern(direct)], Plan),
     plan_rule_level_statements(Plan, Statements),
     memberchk(levelstmt(doc_out/1, _, [InsertSql], _, _, _, _), Statements),
-    InsertSql == 'INSERT OR IGNORE INTO "braces_head_sql_doc_out" ("col1") SELECT json(\'{"repo":"cli"}\') FROM "braces_head_sql_seed" b0'.
+    InsertSql == 'INSERT OR IGNORE INTO "braces_head_sql_doc_out" ("col1") SELECT json(\'{"repo":"cli"}\') FROM "braces_head_sql_seed_47bccf1923d8" b0'.
 
 % A list literal in value position is the array carrier, same arm.
 test(list_literal_value_lowers_to_json_array) :-
@@ -9326,7 +9445,7 @@ test(list_literal_value_lowers_to_json_array) :-
     program_plan(Term-[], [intern(direct)], Plan),
     plan_rule_level_statements(Plan, Statements),
     memberchk(levelstmt(bag/1, _, [InsertSql], _, _, _, _), Statements),
-    InsertSql == 'INSERT OR IGNORE INTO "list_value_sql_bag" ("col1") SELECT json_array(b0."col1", json(\'7\')) FROM "list_value_sql_seed" b0'.
+    InsertSql == 'INSERT OR IGNORE INTO "list_value_sql_bag" ("col1") SELECT json_array(b0."col1", json(\'7\')) FROM "list_value_sql_seed_47bccf1923d8" b0'.
 
 % The document's column is json storage, so the delta read passes the stored
 % text through and the tick-log encoder parses it as a document rather than
@@ -9378,7 +9497,7 @@ test(compound_term_value_still_renders_as_tagged_term) :-
     program_plan(Term-[], [intern(direct)], Plan),
     plan_rule_level_statements(Plan, Statements),
     memberchk(levelstmt(doc/1, _, [InsertSql], _, _, _, _), Statements),
-    InsertSql == 'INSERT OR IGNORE INTO "tagged_term_sql_doc" ("col1") SELECT json_object(\'fn\', \'route_data\', \'args\', json_array(b0."col1")) FROM "tagged_term_sql_seed" b0'.
+    InsertSql == 'INSERT OR IGNORE INTO "tagged_term_sql_doc" ("col1") SELECT json_object(\'fn\', \'route_data\', \'args\', json_array(b0."col1")) FROM "tagged_term_sql_seed_47bccf1923d8" b0'.
 
 % A partial list keeps the named unsupported construct: cons with an unbound
 % tail is not a json array on either door.
@@ -9932,7 +10051,7 @@ test(the_emitted_table_ddl_does_not_move) :-
     program_plan(fixture(list_spelling_ddl, Program, [], [], [])-[],
                  [intern(direct)], Plan),
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
-    memberchk('CREATE TABLE "list_spelling_ddl_row_parts" ("__id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "parts" INTEGER NOT NULL, UNIQUE ("name"))', Ddl).
+    memberchk('CREATE TABLE "list_spelling_ddl_row_parts_e6fdf4a268f0" ("__id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "parts" INTEGER NOT NULL, UNIQUE ("name"))', Ddl).
 
 % The ELEMENTS are the boundary value, read off the joined `__list_` view;
 % the entity id stays in storage exactly as a ref column's "__id" does.
@@ -10097,7 +10216,7 @@ test(a_self_typed_option_emits_a_creatable_companion_table) :-
     program_plan(fixture(self_ref_option, Program, [], [], [])-[],
                  [intern(direct)], Plan),
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
-    memberchk('CREATE TABLE "self_ref_option_node__parent" ("__id" INTEGER PRIMARY KEY, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL, UNIQUE ("node_id"))', Ddl).
+    memberchk('CREATE TABLE "self_ref_option_node__parent_5b01990dda1b" ("__id" INTEGER PRIMARY KEY, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL, UNIQUE ("node_id"))', Ddl).
 
 % The qualifying rule fires ONLY when the element rel is the owner rel; every
 % other option(<rel>) column keeps the element-named endpoint.
@@ -10169,7 +10288,7 @@ test(the_explicit_spelling_emits_the_bare_spellings_companion_table) :-
     program_plan(fixture(acyclic_surface, Program, [], [], [])-[],
                  [intern(direct)], Plan),
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
-    memberchk('CREATE TABLE "acyclic_surface_node__parent" ("__id" INTEGER PRIMARY KEY, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL, UNIQUE ("node_id"))', Ddl).
+    memberchk('CREATE TABLE "acyclic_surface_node__parent_5b01990dda1b" ("__id" INTEGER PRIMARY KEY, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL, UNIQUE ("node_id"))', Ddl).
 
 % A chain to walk is what the guard needs, so acyclic over anything that is
 % not an option of the DECLARING rel is named rather than silently dropped.
@@ -10236,7 +10355,7 @@ test(the_guard_ddl_walks_the_companions_unique_index) :-
     program_plan(fixture(guard_ddl, Program, [], [], [])-[],
                  [intern(direct)], Plan),
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
-    memberchk('CREATE TRIGGER "__acyclic_guard_ddl_node__parent" BEFORE INSERT ON "guard_ddl_node__parent" WHEN EXISTS (WITH RECURSIVE "__parent_chain" ("__node") AS (SELECT NEW."parent_node_id" UNION SELECT g."parent_node_id" FROM "guard_ddl_node__parent" g JOIN "__parent_chain" ON g."node_id" = "__parent_chain"."__node") SELECT 1 FROM "__parent_chain" WHERE "__node" = NEW."node_id") BEGIN SELECT RAISE(ABORT, \'parent_cycle(node, parent)\'); END', Ddl).
+    memberchk('CREATE TRIGGER "__acyclic_guard_ddl_node__parent_5b01990dda1b" BEFORE INSERT ON "guard_ddl_node__parent_5b01990dda1b" WHEN EXISTS (WITH RECURSIVE "__parent_chain" ("__node") AS (SELECT NEW."parent_node_id" UNION SELECT g."parent_node_id" FROM "guard_ddl_node__parent_5b01990dda1b" g JOIN "__parent_chain" ON g."node_id" = "__parent_chain"."__node") SELECT 1 FROM "__parent_chain" WHERE "__node" = NEW."node_id") BEGIN SELECT RAISE(ABORT, \'parent_cycle(node, parent)\'); END', Ddl).
 
 % The guard reaches SQLite as a keyed search, not a scan of the companion.
 test(the_guard_walk_searches_rather_than_scans) :-
@@ -10248,10 +10367,10 @@ test(the_guard_walk_searches_rather_than_scans) :-
     program_plan(fixture(guard_plan, Program, [], [], [])-[],
                  [intern(direct)], Plan),
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
-    Walk = 'WITH RECURSIVE "__parent_chain" ("__node") AS (SELECT 1 UNION SELECT g."parent_node_id" FROM "guard_plan_node__parent" g JOIN "__parent_chain" ON g."node_id" = "__parent_chain"."__node") SELECT 1 FROM "__parent_chain" WHERE "__node" = 2',
+    Walk = 'WITH RECURSIVE "__parent_chain" ("__node") AS (SELECT 1 UNION SELECT g."parent_node_id" FROM "guard_plan_node__parent_5b01990dda1b" g JOIN "__parent_chain" ON g."node_id" = "__parent_chain"."__node") SELECT 1 FROM "__parent_chain" WHERE "__node" = 2',
     explain_query_plan(Ddl, Walk, QueryPlan),
     once(sub_atom(QueryPlan, _, _, _,
-                  'SEARCH g USING INDEX sqlite_autoindex_guard_plan_node__parent_1 (node_id=?)')),
+                  'SEARCH g USING INDEX sqlite_autoindex_guard_plan_node__parent_5b01990dda1b_1 (node_id=?)')),
     \+ sub_atom(QueryPlan, _, _, _, 'SCAN g').
 
 % A cross-rel option forms no chain, so it mints no guard.
@@ -10407,6 +10526,85 @@ test(a_relation_arrow_return_column_takes_the_raw_identifier_escape) :-
     sub_string(Ts, _, _, _, "return: string;").
 
 :- end_tests(rust_types_keyword_escape).
+
+:- begin_tests(rust_types_compile_under_rustc).
+
+% `tree` at the top of the module and `orchard.tree` under a path rel, the
+% shape module_path_local_name_binds_before_the_dotted_one carries.
+dotted_collision_rows([
+    row(1, 0, 0, int, primitive, 0, 0, 0, '', '', ''),
+    row(2, 0, 0, grove, module, 0, 0, 2, 'deadbeefdeadbeef', '', ''),
+    row(3, 2, 0, tree, rel, 0, 1, 2, '', '', ''),
+    row(4, 3, 1, tree_id, column, 1, 0, 2, '', '', ''),
+    row(5, 2, 0, orchard, rel, 0, 0, 2, '', '', ''),
+    row(6, 5, 0, tree, rel, 0, 1, 2, '', '', ''),
+    row(7, 6, 1, tree_id, column, 1, 0, 2, '', '', '')
+]).
+
+% FAIL-PRE-FIX: both rels took the entry module's prefix and rustc stopped at
+% E0428, the name `GroveTree` defined multiple times.
+test(a_dotted_rel_qualifies_on_its_own_path) :-
+    dotted_collision_rows(Rows),
+    once(rust_types_text(grove, Rows, Text)),
+    sub_string(Text, _, _, _, "pub struct GroveTree {"),
+    sub_string(Text, _, _, _, "pub struct GroveOrchardTree {"), !.
+
+% A template whose second column mints no member row, the shape every
+% rel_template lands in through 0_generic_expand.pl:186.
+one_unused_parameter_rows([
+    row(1, 0, 0, int, primitive, 0, 0, 0, '', '', ''),
+    row(2, 0, 0, doc, module, 0, 0, 2, 'deadbeefdeadbeef', '', ''),
+    row(3, 0, 0, span, generic_rel, 0, 0, 2, '', '', ''),
+    row(4, 3, 1, 'Start', type_parameter, 0, 0, 0, '', '', ''),
+    row(5, 3, 2, 'Label', type_parameter, 0, 0, 0, '', '', ''),
+    row(6, 3, 1, start, generic_column, 4, 0, 0, '', '', '')
+]).
+
+% FAIL-PRE-FIX: `pub struct Span<Start, Label> { pub start: Start, }` stopped
+% rustc at E0392, type parameter `Label` is never used.
+test(one_unused_parameter_takes_a_one_element_marker) :-
+    one_unused_parameter_rows(Rows),
+    once(rust_types_text(doc, Rows, Text)),
+    sub_string(Text, _, _, _, "pub struct Span<Start, Label> {"),
+    sub_string(Text, _, _, _, "pub start: Start,"),
+    sub_string(Text, _, _, _, "#[serde(skip)]"),
+    sub_string(Text, _, _, _,
+               "pub phantom: std::marker::PhantomData<fn() -> (Label,)>,"), !.
+
+no_column_rows([
+    row(1, 0, 0, int, primitive, 0, 0, 0, '', '', ''),
+    row(2, 0, 0, doc, module, 0, 0, 2, 'deadbeefdeadbeef', '', ''),
+    row(3, 0, 0, couple, generic_rel, 0, 0, 2, '', '', ''),
+    row(4, 3, 1, 'Left', type_parameter, 0, 0, 0, '', '', ''),
+    row(5, 3, 2, 'Right', type_parameter, 0, 0, 0, '', '', '')
+]).
+
+% FAIL-PRE-FIX: `pub struct Couple<Left, Right> {}` stopped rustc at E0392 on
+% both parameters at once.
+test(two_unused_parameters_share_one_marker) :-
+    no_column_rows(Rows),
+    once(rust_types_text(doc, Rows, Text)),
+    sub_string(Text, _, _, _,
+               "pub phantom: std::marker::PhantomData<fn() -> (Left, Right)>,"),
+    \+ sub_string(Text, _, _, _, "(Left,)"), !.
+
+% The parameter reaches the field through a list, so the field mentions it.
+list_column_rows([
+    row(1, 0, 0, int, primitive, 0, 0, 0, '', '', ''),
+    row(2, 0, 0, doc, module, 0, 0, 2, 'deadbeefdeadbeef', '', ''),
+    row(3, 0, 0, bag, generic_rel, 0, 0, 2, '', '', ''),
+    row(4, 3, 1, 'Item', type_parameter, 0, 0, 0, '', '', ''),
+    row(5, 0, 0, item_list, list, 4, 0, 0, '', '', ''),
+    row(6, 3, 1, items, generic_column, 5, 0, 0, '', '', '')
+]).
+
+test(a_parameter_used_inside_a_list_mints_no_marker) :-
+    list_column_rows(Rows),
+    once(rust_types_text(doc, Rows, Text)),
+    sub_string(Text, _, _, _, "pub items: Vec<Item>,"),
+    \+ sub_string(Text, _, _, _, "PhantomData<fn()"), !.
+
+:- end_tests(rust_types_compile_under_rustc).
 :- begin_tests(bytes_type_system).
 
 test(bytes_parses_prints_and_reparses_as_a_scalar_type) :-

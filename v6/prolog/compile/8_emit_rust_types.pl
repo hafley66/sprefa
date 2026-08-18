@@ -102,9 +102,47 @@ rust_generic_text(Rows, Text) :-
                        _, _, _, _, _), Rows), Columns0),
     keysort(Columns0, Columns),
     maplist(rust_generic_property_text(Rows), Columns, Properties),
-    atomic_list_concat(Properties, '', Body),
+    rust_phantom_property_text(Rows, GenericId, Columns, PhantomText),
+    atomic_list_concat(Properties, '', PropertyBody),
+    atomic_list_concat([PropertyBody, PhantomText], Body),
     format(string(Text), '#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct ~w~w {\n~s}\n',
            [TypeName, ParametersText, Body]).
+
+% rustc stops at E0392 on a parameter no field mentions, and the member rows a
+% template declares arrive short of its columns (0_generic_expand.pl:186).
+rust_phantom_property_text(Rows, GenericId, Columns, Text) :-
+    findall(ParameterId,
+            member(row(ParameterId, GenericId, _, _, type_parameter,
+                       _, _, _, _, _, _), Rows), Declared),
+    findall(UsedId,
+            ( member(_Ord-_Column-TypeId, Columns),
+              rust_parameter_reference(Rows, TypeId, UsedId) ), Used),
+    findall(Name,
+            ( member(ParameterId, Declared),
+              \+ memberchk(ParameterId, Used),
+              memberchk(row(ParameterId, _, _, Name, type_parameter,
+                            _, _, _, _, _, _), Rows) ), Unused),
+    (   Unused == []
+    ->  Text = ''
+    ;   rust_phantom_tuple_text(Unused, Tuple),
+        format(string(Text),
+               '    #[serde(skip)]\n    pub phantom: std::marker::PhantomData<fn() -> ~w>,\n',
+               [Tuple])
+    ).
+
+% A one-element Rust tuple keeps the trailing comma; a wider one drops it.
+rust_phantom_tuple_text([Name], Tuple) :- !, format(atom(Tuple), '(~w,)', [Name]).
+rust_phantom_tuple_text(Names, Tuple) :-
+    atomic_list_concat(Names, ', ', Joined),
+    format(atom(Tuple), '(~w)', [Joined]).
+
+rust_parameter_reference(Rows, TypeId, ParameterId) :-
+    member(row(TypeId, _, _, _, Kind, ElementId, _, _, _, _, _), Rows),
+    (   Kind == type_parameter
+    ->  ParameterId = TypeId
+    ;   memberchk(Kind, [json_list, list, option]),
+        rust_parameter_reference(Rows, ElementId, ParameterId)
+    ).
 
 rust_generic_parameters_text(Rows, GenericId, Text) :-
     findall(Ord-Name-ParameterId,
@@ -251,14 +289,31 @@ rust_kind(Rows, CollisionTypeNames, TypeRow, _Name, rel, _ElementId, Type) :-
     emitted_type_name(Rows, CollisionTypeNames, TypeRow, Type).
 
 emitted_type_name(Rows, CollisionTypeNames,
-                  row(_, _, _, Name, rel, _, _, ModuleId, _, _, _), Type) :-
+                  row(_, ParentId, _, Name, rel, _, _, ModuleId, _, _, _), Type) :-
     type_name(Name, BareType),
     (   memberchk(BareType, CollisionTypeNames)
-    ->  memberchk(row(ModuleId, _, _, ModuleName, module, _, _, _, _, _, _), Rows),
-        module_type_name(ModuleName, ModuleType),
-        atom_concat(ModuleType, BareType, Type)
+    ->  rel_qualifier(Rows, ParentId, ModuleId, Qualifier),
+        atom_concat(Qualifier, BareType, Type)
     ;   Type = BareType
     ).
+
+% A dotted rel parents on its path rel, so a module-only prefix leaves two rels
+% of one module colliding. The walk reaches the module row at the top only.
+rel_qualifier(Rows, ParentId, _ModuleId, Qualifier) :-
+    parent_rel_row(Rows, ParentId, ParentRow),
+    !,
+    ParentRow = row(_, GrandParentId, _, ParentName, rel, _, _,
+                    ParentModuleId, _, _, _),
+    type_name(ParentName, ParentType),
+    rel_qualifier(Rows, GrandParentId, ParentModuleId, Above),
+    atom_concat(Above, ParentType, Qualifier).
+rel_qualifier(Rows, _ParentId, ModuleId, Qualifier) :-
+    memberchk(row(ModuleId, _, _, ModuleName, module, _, _, _, _, _, _), Rows),
+    module_type_name(ModuleName, Qualifier).
+
+parent_rel_row(Rows, ParentId, ParentRow) :-
+    ParentRow = row(ParentId, _, _, _, rel, _, _, _, _, _, _),
+    memberchk(ParentRow, Rows).
 
 module_type_name(ModuleName, Type) :-
     atom_codes(ModuleName, Codes),

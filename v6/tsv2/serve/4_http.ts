@@ -175,7 +175,10 @@ function run_program$(state: ServerState, config: IServeConfig, load: ProgramLoa
     // one: a cold boot must keep tolerating tables it did not build.
     const previous_catalog: readonly IRelCatalogRow[] = state.program?.rel_catalog ?? [];
     const swapped = previous_catalog.length > 0;
-    const reload_plan = ReloadPlanner.plan(previous_catalog, load.program.rel_catalog, true);
+    const reload_plan = ReloadPlanner.plan(previous_catalog, load.program.rel_catalog, true, {
+      prev: state.program?.rel_physical_names ?? {},
+      next: load.program.rel_physical_names ?? {},
+    });
     const outcome = reload_outcome(load.program, reload_plan);
     dispose_program(state);
     const seam = ScratchStore.open(config.db_url);

@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -158,17 +158,17 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "ordered_json_group_array_nested_json_child" ("__id" INTEGER PRIMARY KEY, "group" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")), UNIQUE ("group", "payload"))`,
-  `CREATE TEMP VIEW "__txt_ordered_json_group_array_nested_json_child" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."payload" AS "payload" FROM "ordered_json_group_array_nested_json_child" t`,
+  `CREATE TABLE "ordered_json_group_array_nested_json_child_13806b1dfdd5" ("__id" INTEGER PRIMARY KEY, "group" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")), UNIQUE ("group", "payload"))`,
+  `CREATE TEMP VIEW "__txt_ordered_json_group_array_nested_json_child_13806b1dfdd5" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."payload" AS "payload" FROM "ordered_json_group_array_nested_json_child_13806b1dfdd5" t`,
   `CREATE TABLE "ordered_json_group_array_nested_json_nested" ("__id" INTEGER PRIMARY KEY, "group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("group", "col2"))`,
   `CREATE TEMP VIEW "__txt_ordered_json_group_array_nested_json_nested" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "ordered_json_group_array_nested_json_nested" t`,
-  `CREATE TEMP TABLE "__delta_ordered_json_group_array_nested_json_child" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
-  `CREATE INDEX "__delta_ordered_json_group_array_nested_json_child_sign" ON "__delta_ordered_json_group_array_nested_json_child" ("_sign")`,
-  `CREATE INDEX "__delta_ordered_json_group_array_nested_json_child_group" ON "__delta_ordered_json_group_array_nested_json_child" ("group", "payload")`,
-  `CREATE TEMP TABLE "__frontier_ordered_json_group_array_nested_json_child" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
-  `CREATE INDEX "__frontier_ordered_json_group_array_nested_json_child_phase" ON "__frontier_ordered_json_group_array_nested_json_child" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_ordered_json_group_array_nested_json_child" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
-  `CREATE TEMP VIEW "__txt___delta_ordered_json_group_array_nested_json_child" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."payload" AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_ordered_json_group_array_nested_json_child" t`,
+  `CREATE TEMP TABLE "__delta_ordered_json_group_array_nested_json_child_13806b1dfdd5" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
+  `CREATE INDEX "__delta_ordered_json_group_array_nested_json_child_13806b1dfdd5_sign" ON "__delta_ordered_json_group_array_nested_json_child_13806b1dfdd5" ("_sign")`,
+  `CREATE INDEX "__delta_ordered_json_group_array_nested_json_child_13806b1dfdd5_group" ON "__delta_ordered_json_group_array_nested_json_child_13806b1dfdd5" ("group", "payload")`,
+  `CREATE TEMP TABLE "__frontier_ordered_json_group_array_nested_json_child_13806b1dfdd5" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
+  `CREATE INDEX "__frontier_ordered_json_group_array_nested_json_child_13806b1dfdd5_phase" ON "__frontier_ordered_json_group_array_nested_json_child_13806b1dfdd5" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_ordered_json_group_array_nested_json_child_13806b1dfdd5" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
+  `CREATE TEMP VIEW "__txt___delta_ordered_json_group_array_nested_json_child_13806b1dfdd5" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."payload" AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_ordered_json_group_array_nested_json_child_13806b1dfdd5" t`,
   `CREATE TEMP TABLE "__delta_ordered_json_group_array_nested_json_nested" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__delta_ordered_json_group_array_nested_json_nested_sign" ON "__delta_ordered_json_group_array_nested_json_nested" ("_sign")`,
   `CREATE INDEX "__delta_ordered_json_group_array_nested_json_nested_group" ON "__delta_ordered_json_group_array_nested_json_nested" ("group", "col2")`,
@@ -182,6 +182,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   child: ["group", "payload"],
   nested: ["group", "col2"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  child: "ordered_json_group_array_nested_json_child_13806b1dfdd5",
+  nested: "ordered_json_group_array_nested_json_nested",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -208,11 +213,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 11, parent_id: 7, ordinal: 0, local_name: "nested", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "85f0be0000289c15", h_schema: "599d26db6e75d77a", h_rule: "53fcf10f49794c6d" },
   { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "group", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "03e0861aa4f61d68", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 11, ordinal: 2, local_name: "col2", kind: "column", type_id: 5, arity: 0, module_id: 7, h_id: "e149d59b7ce155c4", h_schema: "", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_ordered_json_group_array_nested_json_child", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "0f5c55bf2ab5c8fd", h_schema: "7e62e5108163f3d6", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_ordered_json_group_array_nested_json_child", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "10af143e4a5ad9c8", h_schema: "af4e1d05ddeaef18", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_ordered_json_group_array_nested_json_child", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "16a8d2960e04207c", h_schema: "af4e1d05ddeaef18", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_ordered_json_group_array_nested_json_child", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "a01c8bf5fde95dd8", h_schema: "c567ad4c3e6c6220", h_rule: "" },
-  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_ordered_json_group_array_nested_json_child", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "b3e694960a3e2e08", h_schema: "c567ad4c3e6c6220", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_ordered_json_group_array_nested_json_child_13806b1dfdd5", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "0c9d20f6ad71a422", h_schema: "7e62e5108163f3d6", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_ordered_json_group_array_nested_json_child_13806b1dfdd5", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "42a55f09763a2a73", h_schema: "af4e1d05ddeaef18", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_ordered_json_group_array_nested_json_child_13806b1dfdd5", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "befde2d661a858d1", h_schema: "af4e1d05ddeaef18", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_ordered_json_group_array_nested_json_child_13806b1dfdd5", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "94068b95cbbd1917", h_schema: "c567ad4c3e6c6220", h_rule: "" },
+  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_ordered_json_group_array_nested_json_child_13806b1dfdd5", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "5dd11995d628e958", h_schema: "c567ad4c3e6c6220", h_rule: "" },
   { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_ordered_json_group_array_nested_json_nested", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "d65658c46555f097", h_schema: "f2509ecb8733d404", h_rule: "" },
   { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_ordered_json_group_array_nested_json_nested", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "cc4ada3337dccc13", h_schema: "ccb1c2f26ce378b1", h_rule: "" },
   { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_ordered_json_group_array_nested_json_nested", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "42e6e3811cd0bcea", h_schema: "ccb1c2f26ce378b1", h_rule: "" },
@@ -234,20 +239,20 @@ const arrival_targets: readonly string[] = ["child"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "child", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["north"] },
-  { rel: "child", sql: `INSERT OR IGNORE INTO "ordered_json_group_array_nested_json_child" ("group", "payload") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["north", "{\"a\":2,\"z\":1}"] },
+  { rel: "child", sql: `INSERT OR IGNORE INTO "ordered_json_group_array_nested_json_child_13806b1dfdd5" ("group", "payload") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["north", "{\"a\":2,\"z\":1}"] },
   { rel: "child", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["north"] },
-  { rel: "child", sql: `INSERT OR IGNORE INTO "ordered_json_group_array_nested_json_child" ("group", "payload") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["north", "{\"a\":3,\"z\":4}"] },
+  { rel: "child", sql: `INSERT OR IGNORE INTO "ordered_json_group_array_nested_json_child_13806b1dfdd5" ("group", "payload") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["north", "{\"a\":3,\"z\":4}"] },
   { rel: "nested", sql: `DELETE FROM "ordered_json_group_array_nested_json_nested"`, params: [] },
-  { rel: "nested", sql: `INSERT OR IGNORE INTO "ordered_json_group_array_nested_json_nested" ("group", "col2") SELECT b0."group", json_group_array(json(b0."payload") ORDER BY b0."payload") FROM "ordered_json_group_array_nested_json_child" b0 GROUP BY b0."group" HAVING count(*) > 0`, params: [] },
+  { rel: "nested", sql: `INSERT OR IGNORE INTO "ordered_json_group_array_nested_json_nested" ("group", "col2") SELECT b0."group", json_group_array(json(b0."payload") ORDER BY b0."payload") FROM "ordered_json_group_array_nested_json_child_13806b1dfdd5" b0 GROUP BY b0."group" HAVING count(*) > 0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
-  child: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."payload" FROM "__txt_ordered_json_group_array_nested_json_child" t`,
+  child: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."payload" FROM "__txt_ordered_json_group_array_nested_json_child_13806b1dfdd5" t`,
   nested: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."col2" FROM "__txt_ordered_json_group_array_nested_json_nested" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "child", kind: "set", table_name: "ordered_json_group_array_nested_json_child", delta_table_name: "__delta_ordered_json_group_array_nested_json_child", frontier_table_name: "__frontier_ordered_json_group_array_nested_json_child", next_frontier_table_name: "__next_frontier_ordered_json_group_array_nested_json_child", columns: ["group", "payload"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "ordered_json_group_array_nested_json_child" ("group", "payload") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "group", "payload"`, arrival_del_sql: `DELETE FROM "ordered_json_group_array_nested_json_child" WHERE ("group", "payload") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "group", "payload"`, boundary_sql: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_ordered_json_group_array_nested_json_child" t WHERE t."_sign" IN (-1, 1) GROUP BY t."group", t."payload", t."_sign"`, rule_observers: ["nested/2"] },
+  { rel: "child", kind: "set", table_name: "ordered_json_group_array_nested_json_child_13806b1dfdd5", delta_table_name: "__delta_ordered_json_group_array_nested_json_child_13806b1dfdd5", frontier_table_name: "__frontier_ordered_json_group_array_nested_json_child_13806b1dfdd5", next_frontier_table_name: "__next_frontier_ordered_json_group_array_nested_json_child_13806b1dfdd5", columns: ["group", "payload"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "ordered_json_group_array_nested_json_child_13806b1dfdd5" ("group", "payload") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "group", "payload"`, arrival_del_sql: `DELETE FROM "ordered_json_group_array_nested_json_child_13806b1dfdd5" WHERE ("group", "payload") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "group", "payload"`, boundary_sql: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_ordered_json_group_array_nested_json_child_13806b1dfdd5" t WHERE t."_sign" IN (-1, 1) GROUP BY t."group", t."payload", t."_sign"`, rule_observers: ["nested/2"] },
   { rel: "nested", kind: "set", table_name: "ordered_json_group_array_nested_json_nested", delta_table_name: "__delta_ordered_json_group_array_nested_json_nested", frontier_table_name: "__frontier_ordered_json_group_array_nested_json_nested", next_frontier_table_name: "__next_frontier_ordered_json_group_array_nested_json_nested", columns: ["group", "col2"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."col2", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_ordered_json_group_array_nested_json_nested" t WHERE t."_sign" IN (-1, 1) GROUP BY t."group", t."col2", t."_sign"`, rule_observers: [] },
 ];
 
@@ -256,7 +261,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { head_rel: "nested", rule_id: "ordered_json_group_array_nested_json:nested/2#1", head_delta_table_name: "__delta_ordered_json_group_array_nested_json_nested", head_columns: ["group", "col2"], insert_sql: null, select_sql: `SELECT "group", "col2" FROM "ordered_json_group_array_nested_json_nested"`, recompute_sql: `DELETE FROM "ordered_json_group_array_nested_json_nested";
-INSERT OR IGNORE INTO "ordered_json_group_array_nested_json_nested" ("group", "col2") SELECT b0."group", json_group_array(json(b0."payload") ORDER BY b0."payload") FROM "ordered_json_group_array_nested_json_child" b0 GROUP BY b0."group" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_ordered_json_group_array_nested_json_nested"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_ordered_json_group_array_nested_json_nested" ("group") SELECT DISTINCT d0."group" FROM "__delta_ordered_json_group_array_nested_json_child" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "ordered_json_group_array_nested_json_nested" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_ordered_json_group_array_nested_json_nested") RETURNING "group", "col2"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "ordered_json_group_array_nested_json_nested" ("group", "col2") SELECT b0."group", json_group_array(json(b0."payload") ORDER BY b0."payload") FROM "ordered_json_group_array_nested_json_child" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_ordered_json_group_array_nested_json_nested") GROUP BY b0."group" HAVING count(*) > 0 RETURNING "group", "col2"`], delta_maintained: false } },
+INSERT OR IGNORE INTO "ordered_json_group_array_nested_json_nested" ("group", "col2") SELECT b0."group", json_group_array(json(b0."payload") ORDER BY b0."payload") FROM "ordered_json_group_array_nested_json_child_13806b1dfdd5" b0 GROUP BY b0."group" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_ordered_json_group_array_nested_json_nested"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_ordered_json_group_array_nested_json_nested" ("group") SELECT DISTINCT d0."group" FROM "__delta_ordered_json_group_array_nested_json_child_13806b1dfdd5" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "ordered_json_group_array_nested_json_nested" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_ordered_json_group_array_nested_json_nested") RETURNING "group", "col2"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "ordered_json_group_array_nested_json_nested" ("group", "col2") SELECT b0."group", json_group_array(json(b0."payload") ORDER BY b0."payload") FROM "ordered_json_group_array_nested_json_child_13806b1dfdd5" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_ordered_json_group_array_nested_json_nested") GROUP BY b0."group" HAVING count(*) > 0 RETURNING "group", "col2"`], delta_maintained: false } },
 ];
 
 const RECONCILE_EVERY_TICK = false;
@@ -307,6 +312,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

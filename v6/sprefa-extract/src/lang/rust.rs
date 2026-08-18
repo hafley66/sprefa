@@ -2569,6 +2569,7 @@ impl Source for RustSource {
             types,
             call,
             df,
+            data: None,
         }
     }
 }

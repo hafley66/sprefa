@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -160,8 +160,8 @@ const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "keyed_edge_head_still_replaces_current_value" ("__id" INTEGER PRIMARY KEY, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("key"))`,
   `CREATE TEMP VIEW "__txt_keyed_edge_head_still_replaces_current_value" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "keyed_edge_head_still_replaces_current_value" t`,
-  `CREATE TABLE "keyed_edge_head_still_replaces_update_value" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_keyed_edge_head_still_replaces_update_value" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "keyed_edge_head_still_replaces_update_value" t`,
+  `CREATE TABLE "keyed_edge_head_still_replaces_update_value_e7a2a44c403a" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_keyed_edge_head_still_replaces_update_value_e7a2a44c403a" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "keyed_edge_head_still_replaces_update_value_e7a2a44c403a" t`,
   `CREATE TEMP TABLE "__delta_keyed_edge_head_still_replaces_current_value" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_keyed_edge_head_still_replaces_current_value_sign" ON "__delta_keyed_edge_head_still_replaces_current_value" ("_sign")`,
   `CREATE INDEX "__delta_keyed_edge_head_still_replaces_current_value_group" ON "__delta_keyed_edge_head_still_replaces_current_value" ("key", "value")`,
@@ -169,18 +169,23 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_keyed_edge_head_still_replaces_current_value_phase" ON "__frontier_keyed_edge_head_still_replaces_current_value" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_keyed_edge_head_still_replaces_current_value" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt___delta_keyed_edge_head_still_replaces_current_value" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_keyed_edge_head_still_replaces_current_value" t`,
-  `CREATE TEMP TABLE "__delta_keyed_edge_head_still_replaces_update_value" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_keyed_edge_head_still_replaces_update_value_sign" ON "__delta_keyed_edge_head_still_replaces_update_value" ("_sign")`,
-  `CREATE INDEX "__delta_keyed_edge_head_still_replaces_update_value_group" ON "__delta_keyed_edge_head_still_replaces_update_value" ("key", "value")`,
-  `CREATE TEMP TABLE "__frontier_keyed_edge_head_still_replaces_update_value" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_keyed_edge_head_still_replaces_update_value_phase" ON "__frontier_keyed_edge_head_still_replaces_update_value" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_keyed_edge_head_still_replaces_update_value" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_keyed_edge_head_still_replaces_update_value" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_keyed_edge_head_still_replaces_update_value" t`,
+  `CREATE TEMP TABLE "__delta_keyed_edge_head_still_replaces_update_value_e7a2a44c403a" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_keyed_edge_head_still_replaces_update_value_e7a2a44c403a_sign" ON "__delta_keyed_edge_head_still_replaces_update_value_e7a2a44c403a" ("_sign")`,
+  `CREATE INDEX "__delta_keyed_edge_head_still_replaces_update_value_e7a2a44c403a_group" ON "__delta_keyed_edge_head_still_replaces_update_value_e7a2a44c403a" ("key", "value")`,
+  `CREATE TEMP TABLE "__frontier_keyed_edge_head_still_replaces_update_value_e7a2a44c403a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_keyed_edge_head_still_replaces_update_value_e7a2a44c403a_phase" ON "__frontier_keyed_edge_head_still_replaces_update_value_e7a2a44c403a" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_keyed_edge_head_still_replaces_update_value_e7a2a44c403a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_keyed_edge_head_still_replaces_update_value_e7a2a44c403a" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_keyed_edge_head_still_replaces_update_value_e7a2a44c403a" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   current_value: ["key", "value"],
   update_value: ["key", "value"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  current_value: "keyed_edge_head_still_replaces_current_value",
+  update_value: "keyed_edge_head_still_replaces_update_value_e7a2a44c403a",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -212,11 +217,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_keyed_edge_head_still_replaces_current_value", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "df80fd3dbfad7758", h_schema: "9dceee669bf5f906", h_rule: "" },
   { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_keyed_edge_head_still_replaces_current_value", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "c962763dad81b202", h_schema: "7d4194af9c268071", h_rule: "" },
   { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_keyed_edge_head_still_replaces_current_value", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "ac4c85bda6964682", h_schema: "7d4194af9c268071", h_rule: "" },
-  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_keyed_edge_head_still_replaces_update_value", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "cbbe7b098b5b1dce", h_schema: "fdf6b6ef55287c94", h_rule: "" },
-  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_keyed_edge_head_still_replaces_update_value", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "f889073e8d7bb171", h_schema: "9dceee669bf5f906", h_rule: "" },
-  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_keyed_edge_head_still_replaces_update_value", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "29236a9d1630307d", h_schema: "9dceee669bf5f906", h_rule: "" },
-  { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__txt_keyed_edge_head_still_replaces_update_value", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "ad4436d70bb65d4a", h_schema: "7d4194af9c268071", h_rule: "" },
-  { rel_id: 23, parent_id: 19, ordinal: 0, local_name: "__txt___delta_keyed_edge_head_still_replaces_update_value", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "0f685a62bf287e9e", h_schema: "7d4194af9c268071", h_rule: "" },
+  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_keyed_edge_head_still_replaces_update_value_e7a2a44c403a", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "e14fc472e7bf54dd", h_schema: "fdf6b6ef55287c94", h_rule: "" },
+  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_keyed_edge_head_still_replaces_update_value_e7a2a44c403a", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "2dbcaf6737806a87", h_schema: "9dceee669bf5f906", h_rule: "" },
+  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_keyed_edge_head_still_replaces_update_value_e7a2a44c403a", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "a26df0d61139bade", h_schema: "9dceee669bf5f906", h_rule: "" },
+  { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__txt_keyed_edge_head_still_replaces_update_value_e7a2a44c403a", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "1e150efe29c11dd9", h_schema: "7d4194af9c268071", h_rule: "" },
+  { rel_id: 23, parent_id: 19, ordinal: 0, local_name: "__txt___delta_keyed_edge_head_still_replaces_update_value_e7a2a44c403a", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "b0b5ec9e621ecc2f", h_schema: "7d4194af9c268071", h_rule: "" },
   { rel_id: 24, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "7c2597e93c563723", h_schema: "", h_rule: "" },
   { rel_id: 25, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "ad49e080e9daf817", h_schema: "", h_rule: "" },
   { rel_id: 26, parent_id: 10, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "69b8effc3eee6445", h_schema: "", h_rule: "" },
@@ -234,16 +239,16 @@ const boot: readonly IBootStatement[] = [
 
 const final_select: Record<string, string> = {
   current_value: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_keyed_edge_head_still_replaces_current_value" t`,
-  update_value: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_keyed_edge_head_still_replaces_update_value" t`,
+  update_value: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_keyed_edge_head_still_replaces_update_value_e7a2a44c403a" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "current_value", kind: "set", table_name: "keyed_edge_head_still_replaces_current_value", delta_table_name: "__delta_keyed_edge_head_still_replaces_current_value", frontier_table_name: "__frontier_keyed_edge_head_still_replaces_current_value", next_frontier_table_name: "__next_frontier_keyed_edge_head_still_replaces_current_value", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_keyed_edge_head_still_replaces_current_value" t WHERE t."_sign" IN (-1, 1) GROUP BY t."key", t."value", t."_sign"`, rule_observers: [] },
-  { rel: "update_value", kind: "log", table_name: "keyed_edge_head_still_replaces_update_value", delta_table_name: "__delta_keyed_edge_head_still_replaces_update_value", frontier_table_name: "__frontier_keyed_edge_head_still_replaces_update_value", next_frontier_table_name: "__next_frontier_keyed_edge_head_still_replaces_update_value", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "keyed_edge_head_still_replaces_update_value" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_keyed_edge_head_still_replaces_update_value" t WHERE t."_sign" IN (-1, 1) GROUP BY t."key", t."value", t."_sign"`, rule_observers: ["current_value/2"] },
+  { rel: "update_value", kind: "log", table_name: "keyed_edge_head_still_replaces_update_value_e7a2a44c403a", delta_table_name: "__delta_keyed_edge_head_still_replaces_update_value_e7a2a44c403a", frontier_table_name: "__frontier_keyed_edge_head_still_replaces_update_value_e7a2a44c403a", next_frontier_table_name: "__next_frontier_keyed_edge_head_still_replaces_update_value_e7a2a44c403a", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "keyed_edge_head_still_replaces_update_value_e7a2a44c403a" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_keyed_edge_head_still_replaces_update_value_e7a2a44c403a" t WHERE t."_sign" IN (-1, 1) GROUP BY t."key", t."value", t."_sign"`, rule_observers: ["current_value/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "current_value", rule_id: "keyed_edge_head_still_replaces:current_value/2#1", head_kind: "set", head_table_name: "keyed_edge_head_still_replaces_current_value", head_delta_table_name: "__delta_keyed_edge_head_still_replaces_current_value", head_columns: ["key", "value"], key_indices: [0], project_sql: `SELECT d0."key" AS "key", d0."value" AS "value" FROM "__frontier_keyed_edge_head_still_replaces_update_value" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "current_value", rule_id: "keyed_edge_head_still_replaces:current_value/2#1", head_kind: "set", head_table_name: "keyed_edge_head_still_replaces_current_value", head_delta_table_name: "__delta_keyed_edge_head_still_replaces_current_value", head_columns: ["key", "value"], key_indices: [0], project_sql: `SELECT d0."key" AS "key", d0."value" AS "value" FROM "__frontier_keyed_edge_head_still_replaces_update_value_e7a2a44c403a" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -298,6 +303,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

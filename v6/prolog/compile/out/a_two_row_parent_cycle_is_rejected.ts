@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -157,28 +157,33 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "a_two_row_parent_cycle_is_rejected_node" ("__id" INTEGER PRIMARY KEY, "node_id" INTEGER NOT NULL, "name" INTEGER NOT NULL, UNIQUE ("node_id"))`,
-  `CREATE TEMP VIEW "__txt_a_two_row_parent_cycle_is_rejected_node" AS SELECT t."node_id" AS "node_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "a_two_row_parent_cycle_is_rejected_node" t`,
-  `CREATE TABLE "a_two_row_parent_cycle_is_rejected_node__parent" ("__id" INTEGER PRIMARY KEY, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL, UNIQUE ("node_id"))`,
-  `CREATE TRIGGER "__acyclic_a_two_row_parent_cycle_is_rejected_node__parent" BEFORE INSERT ON "a_two_row_parent_cycle_is_rejected_node__parent" WHEN EXISTS (WITH RECURSIVE "__parent_chain" ("__node") AS (SELECT NEW."parent_node_id" UNION SELECT g."parent_node_id" FROM "a_two_row_parent_cycle_is_rejected_node__parent" g JOIN "__parent_chain" ON g."node_id" = "__parent_chain"."__node") SELECT 1 FROM "__parent_chain" WHERE "__node" = NEW."node_id") BEGIN SELECT RAISE(ABORT, 'parent_cycle(node, parent)'); END`,
-  `CREATE TEMP TABLE "__delta_a_two_row_parent_cycle_is_rejected_node" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node_id" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_a_two_row_parent_cycle_is_rejected_node_sign" ON "__delta_a_two_row_parent_cycle_is_rejected_node" ("_sign")`,
-  `CREATE INDEX "__delta_a_two_row_parent_cycle_is_rejected_node_group" ON "__delta_a_two_row_parent_cycle_is_rejected_node" ("node_id", "name")`,
-  `CREATE TEMP TABLE "__frontier_a_two_row_parent_cycle_is_rejected_node" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node_id" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_a_two_row_parent_cycle_is_rejected_node_phase" ON "__frontier_a_two_row_parent_cycle_is_rejected_node" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_a_two_row_parent_cycle_is_rejected_node" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node_id" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_a_two_row_parent_cycle_is_rejected_node" AS SELECT t."node_id" AS "node_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_a_two_row_parent_cycle_is_rejected_node" t`,
-  `CREATE TEMP TABLE "__delta_a_two_row_parent_cycle_is_rejected_node__parent" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_a_two_row_parent_cycle_is_rejected_node__parent_sign" ON "__delta_a_two_row_parent_cycle_is_rejected_node__parent" ("_sign")`,
-  `CREATE INDEX "__delta_a_two_row_parent_cycle_is_rejected_node__parent_group" ON "__delta_a_two_row_parent_cycle_is_rejected_node__parent" ("node_id", "parent_node_id")`,
-  `CREATE TEMP TABLE "__frontier_a_two_row_parent_cycle_is_rejected_node__parent" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_a_two_row_parent_cycle_is_rejected_node__parent_phase" ON "__frontier_a_two_row_parent_cycle_is_rejected_node__parent" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_a_two_row_parent_cycle_is_rejected_node__parent" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL)`,
+  `CREATE TABLE "a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0" ("__id" INTEGER PRIMARY KEY, "node_id" INTEGER NOT NULL, "name" INTEGER NOT NULL, UNIQUE ("node_id"))`,
+  `CREATE TEMP VIEW "__txt_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0" AS SELECT t."node_id" AS "node_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0" t`,
+  `CREATE TABLE "a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b" ("__id" INTEGER PRIMARY KEY, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL, UNIQUE ("node_id"))`,
+  `CREATE TRIGGER "__acyclic_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b" BEFORE INSERT ON "a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b" WHEN EXISTS (WITH RECURSIVE "__parent_chain" ("__node") AS (SELECT NEW."parent_node_id" UNION SELECT g."parent_node_id" FROM "a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b" g JOIN "__parent_chain" ON g."node_id" = "__parent_chain"."__node") SELECT 1 FROM "__parent_chain" WHERE "__node" = NEW."node_id") BEGIN SELECT RAISE(ABORT, 'parent_cycle(node, parent)'); END`,
+  `CREATE TEMP TABLE "__delta_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node_id" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0_sign" ON "__delta_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0" ("_sign")`,
+  `CREATE INDEX "__delta_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0_group" ON "__delta_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0" ("node_id", "name")`,
+  `CREATE TEMP TABLE "__frontier_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node_id" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0_phase" ON "__frontier_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node_id" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0" AS SELECT t."node_id" AS "node_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0" t`,
+  `CREATE TEMP TABLE "__delta_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b_sign" ON "__delta_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b" ("_sign")`,
+  `CREATE INDEX "__delta_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b_group" ON "__delta_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b" ("node_id", "parent_node_id")`,
+  `CREATE TEMP TABLE "__frontier_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b_phase" ON "__frontier_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   node: ["node_id", "name"],
   node__parent: ["node_id", "parent_node_id"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  node: "a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0",
+  node__parent: "a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -205,14 +210,14 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 11, parent_id: 7, ordinal: 0, local_name: "node__parent", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "4c56a125904558c7", h_schema: "0b460462706e696c", h_rule: "" },
   { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "node_id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "a8cd7dbdbba9c761", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 11, ordinal: 2, local_name: "parent_node_id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "78aa7386fa0fae0c", h_schema: "", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_a_two_row_parent_cycle_is_rejected_node", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "4a18eb4b5f3a7f47", h_schema: "9d7f3bcf4a515dcd", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_a_two_row_parent_cycle_is_rejected_node", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "2441080b1d836bee", h_schema: "da741733f6482367", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_a_two_row_parent_cycle_is_rejected_node", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "22f7c9fd30cc9fcb", h_schema: "da741733f6482367", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_a_two_row_parent_cycle_is_rejected_node", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "c6becc49aeac93cf", h_schema: "0195ea51c6660a54", h_rule: "" },
-  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_a_two_row_parent_cycle_is_rejected_node", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "6a18fdba39365178", h_schema: "0195ea51c6660a54", h_rule: "" },
-  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_a_two_row_parent_cycle_is_rejected_node__parent", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "4e1a8ddba43aa68c", h_schema: "c8e06541efb2e2f2", h_rule: "" },
-  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_a_two_row_parent_cycle_is_rejected_node__parent", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "2ee8453b26b2a0da", h_schema: "9b1c700150fba073", h_rule: "" },
-  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_a_two_row_parent_cycle_is_rejected_node__parent", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "daf559659086bba2", h_schema: "9b1c700150fba073", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "dd72f95c361e5bec", h_schema: "9d7f3bcf4a515dcd", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "30a840ab2b643320", h_schema: "da741733f6482367", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "f416bdd5b0ab252d", h_schema: "da741733f6482367", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "565a1a047684bf95", h_schema: "0195ea51c6660a54", h_rule: "" },
+  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "82318deca57600f2", h_schema: "0195ea51c6660a54", h_rule: "" },
+  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "c60b501ec221aef4", h_schema: "c8e06541efb2e2f2", h_rule: "" },
+  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "8fb1594afdac6e97", h_schema: "9b1c700150fba073", h_rule: "" },
+  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "860df0a0db2e5c5a", h_schema: "9b1c700150fba073", h_rule: "" },
   { rel_id: 22, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "3f8e6afa09c8e700", h_schema: "", h_rule: "" },
   { rel_id: 23, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "668935ba56aa5a41", h_schema: "", h_rule: "" },
   { rel_id: 24, parent_id: 10, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "1687aaa238c53adf", h_schema: "", h_rule: "" },
@@ -231,13 +236,13 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  node: `SELECT t."node_id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_a_two_row_parent_cycle_is_rejected_node" t`,
-  node__parent: `SELECT t."node_id", t."parent_node_id" FROM "a_two_row_parent_cycle_is_rejected_node__parent" t`,
+  node: `SELECT t."node_id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0" t`,
+  node__parent: `SELECT t."node_id", t."parent_node_id" FROM "a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "node", kind: "set", table_name: "a_two_row_parent_cycle_is_rejected_node", delta_table_name: "__delta_a_two_row_parent_cycle_is_rejected_node", frontier_table_name: "__frontier_a_two_row_parent_cycle_is_rejected_node", next_frontier_table_name: "__next_frontier_a_two_row_parent_cycle_is_rejected_node", columns: ["node_id", "name"], column_types: ["int", "text"], key_indices: [0], arrival_add_sql: `INSERT INTO "a_two_row_parent_cycle_is_rejected_node" ("node_id", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("node_id") DO UPDATE SET "name" = excluded."name" RETURNING "node_id", "name"`, arrival_del_sql: `DELETE FROM "a_two_row_parent_cycle_is_rejected_node" WHERE ("node_id", "name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "node_id", "name"`, boundary_sql: `SELECT t."node_id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_a_two_row_parent_cycle_is_rejected_node" t WHERE t."_sign" IN (-1, 1) GROUP BY t."node_id", t."name", t."_sign"`, rule_observers: [] },
-  { rel: "node__parent", kind: "set", table_name: "a_two_row_parent_cycle_is_rejected_node__parent", delta_table_name: "__delta_a_two_row_parent_cycle_is_rejected_node__parent", frontier_table_name: "__frontier_a_two_row_parent_cycle_is_rejected_node__parent", next_frontier_table_name: "__next_frontier_a_two_row_parent_cycle_is_rejected_node__parent", columns: ["node_id", "parent_node_id"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: `INSERT INTO "a_two_row_parent_cycle_is_rejected_node__parent" ("node_id", "parent_node_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("node_id") DO UPDATE SET "parent_node_id" = excluded."parent_node_id" RETURNING "node_id", "parent_node_id"`, arrival_del_sql: `DELETE FROM "a_two_row_parent_cycle_is_rejected_node__parent" WHERE ("node_id", "parent_node_id") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "node_id", "parent_node_id"`, boundary_sql: `SELECT t."node_id", t."parent_node_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_a_two_row_parent_cycle_is_rejected_node__parent" t WHERE t."_sign" IN (-1, 1) GROUP BY t."node_id", t."parent_node_id", t."_sign"`, rule_observers: [] },
+  { rel: "node", kind: "set", table_name: "a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0", delta_table_name: "__delta_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0", frontier_table_name: "__frontier_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0", next_frontier_table_name: "__next_frontier_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0", columns: ["node_id", "name"], column_types: ["int", "text"], key_indices: [0], arrival_add_sql: `INSERT INTO "a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0" ("node_id", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("node_id") DO UPDATE SET "name" = excluded."name" RETURNING "node_id", "name"`, arrival_del_sql: `DELETE FROM "a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0" WHERE ("node_id", "name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "node_id", "name"`, boundary_sql: `SELECT t."node_id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_a_two_row_parent_cycle_is_rejected_node_90a37b1e70a0" t WHERE t."_sign" IN (-1, 1) GROUP BY t."node_id", t."name", t."_sign"`, rule_observers: [] },
+  { rel: "node__parent", kind: "set", table_name: "a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b", delta_table_name: "__delta_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b", frontier_table_name: "__frontier_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b", next_frontier_table_name: "__next_frontier_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b", columns: ["node_id", "parent_node_id"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: `INSERT INTO "a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b" ("node_id", "parent_node_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("node_id") DO UPDATE SET "parent_node_id" = excluded."parent_node_id" RETURNING "node_id", "parent_node_id"`, arrival_del_sql: `DELETE FROM "a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b" WHERE ("node_id", "parent_node_id") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "node_id", "parent_node_id"`, boundary_sql: `SELECT t."node_id", t."parent_node_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_a_two_row_parent_cycle_is_rejected_node__parent_5b01990dda1b" t WHERE t."_sign" IN (-1, 1) GROUP BY t."node_id", t."parent_node_id", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -294,6 +299,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

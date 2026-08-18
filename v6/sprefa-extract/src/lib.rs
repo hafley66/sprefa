@@ -57,7 +57,8 @@ pub use family::{
     TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };
 pub use lang::{
-    query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource, DlSource,
+    query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource, DataSource,
+    DlSource,
     GoSource, KotlinSource, MarkdownSource, PrologSource, PythonSource, RustSource, TsSource,
 };
 pub use manifests::{

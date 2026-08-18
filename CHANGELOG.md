@@ -14,6 +14,12 @@ tags consumed by cargo-dist.
   plans and Rust `ProgramJson` retain the authored relation name alongside the
   physical table name. Multi-module integration fixtures compile and execute
   the same arrivals and derived rows through both SQLite runtimes.
+- A stored rel's physical SQLite name now ends in a 12-character digest of its
+  storage shape and, transitively, of every shape its columns reference
+  (`docs/storage-name-hash.md`). Rows survive an edit exactly when that closure
+  did not move. A derived rel keeps the bare prefixed name. Served programs
+  compile under the stable entry module `main`, so editing a posted program no
+  longer renames every table, and the reload plan discards by physical name.
 
 ## [0.12.0] - 2026-07-21
 

@@ -48,6 +48,8 @@ import { firstValueFrom } from "rxjs";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import type { ISqlSeam } from "../runtime/types.ts";
 
+import { physical_name_in_source } from "./physicalNames.ts";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMPILE_OUT = join(HERE, "..", "..", "prolog", "compile", "out");
 const FIXTURE = "aggregate_min_recomputes_when_the_minimum_is_retracted";
@@ -78,18 +80,18 @@ async function loaded_seam(): Promise<{ seam: ISqlSeam; source: string }> {
   for (let repo = 0; repo < 5000; repo += 1) {
     for (let star = 1; star <= 4; star += 1) values.push(`('repo_${repo}', ${star})`);
   }
-  await run(seam, `INSERT INTO "${FIXTURE}_star_row" ("repo", "stars") VALUES ${values.join(",")}`);
+  await run(seam, `INSERT INTO "${physical_name_in_source(source, "star_row")}" ("repo", "stars") VALUES ${values.join(",")}`);
   await run(
     seam,
-    `INSERT INTO "${FIXTURE}_stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", count(*), min(b0."stars"), max(b0."stars") FROM "${FIXTURE}_star_row" b0 GROUP BY b0."repo"`,
+    `INSERT INTO "${physical_name_in_source(source, "stat")}" ("repo", "col2", "col3", "col4") SELECT b0."repo", count(*), min(b0."stars"), max(b0."stars") FROM "${physical_name_in_source(source, "star_row")}" b0 GROUP BY b0."repo"`,
   );
 
   // One tick's worth of change: retract repo_7's minimum, stage it the way
   // IncrementalRuntime.applyArrivals would.
-  await run(seam, `DELETE FROM "${FIXTURE}_star_row" WHERE "repo" = 'repo_7' AND "stars" = 1`);
+  await run(seam, `DELETE FROM "${physical_name_in_source(source, "star_row")}" WHERE "repo" = 'repo_7' AND "stars" = 1`);
   await run(
     seam,
-    `INSERT INTO "__delta_${FIXTURE}_star_row" ("_sign","_sequence","repo","stars") VALUES (-1, 0, 'repo_7', 1)`,
+    `INSERT INTO "__delta_${physical_name_in_source(source, "star_row")}" ("_sign","_sequence","repo","stars") VALUES (-1, 0, 'repo_7', 1)`,
   );
   await run(seam, emitted_aggregate_sql(source, "scope_clear_sql"));
   await run(seam, emitted_aggregate_sql(source, "scope_seed_sql"));
@@ -102,10 +104,10 @@ async function plan_lines(seam: ISqlSeam, sql: string): Promise<string[]> {
 }
 
 test("aggregate scope seed selects only the groups this tick touched", async () => {
-  const { seam } = await loaded_seam();
-  const groups = await run(seam, `SELECT count(*) AS c FROM "${FIXTURE}_stat"`);
+  const { seam, source } = await loaded_seam();
+  const groups = await run(seam, `SELECT count(*) AS c FROM "${physical_name_in_source(source, "stat")}"`);
   assert.equal(Number(groups.rows[0]!.c), 5000, "corpus must be big enough for scan-vs-search to matter");
-  const derivations = await run(seam, `SELECT count(*) AS c FROM "${FIXTURE}_star_row"`);
+  const derivations = await run(seam, `SELECT count(*) AS c FROM "${physical_name_in_source(source, "star_row")}"`);
   assert.equal(Number(derivations.rows[0]!.c), 19999);
   const scope = await run(seam, `SELECT count(*) AS c FROM "__agg_scope_${FIXTURE}_stat"`);
   assert.equal(Number(scope.rows[0]!.c), 1, "one changed row must scope exactly one group");

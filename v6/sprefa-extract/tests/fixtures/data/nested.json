@@ -1,0 +1,14 @@
+{
+  "name": "pokeapi",
+  "version": 2,
+  "ratio": 1.5,
+  "public": true,
+  "retired": null,
+  "paths": {
+    "/pets": {
+      "get": { "operationId": "list_pets" }
+    }
+  },
+  "tags": ["a", "b"],
+  "escaped": "line\nbreak"
+}

@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -179,19 +179,19 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('q')`,
-  `CREATE TABLE "seq_wire_surface_arrival" ("__id" INTEGER PRIMARY KEY, "payload" INTEGER NOT NULL, UNIQUE ("payload"))`,
-  `CREATE TEMP VIEW "__txt_seq_wire_surface_arrival" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "seq_wire_surface_arrival" t`,
+  `CREATE TABLE "seq_wire_surface_arrival_32da94d2c4c8" ("__id" INTEGER PRIMARY KEY, "payload" INTEGER NOT NULL, UNIQUE ("payload"))`,
+  `CREATE TEMP VIEW "__txt_seq_wire_surface_arrival_32da94d2c4c8" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "seq_wire_surface_arrival_32da94d2c4c8" t`,
   `CREATE TABLE "seq_wire_surface_numbered" ("ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_seq_wire_surface_numbered" AS SELECT t."ordinal" AS "ordinal", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "seq_wire_surface_numbered" t`,
   `CREATE TABLE "seq_wire_surface_seq_numbered_1" ("__id" INTEGER PRIMARY KEY, "partition" INTEGER NOT NULL, "at" INTEGER NOT NULL, UNIQUE ("partition"))`,
   `CREATE TEMP VIEW "__txt_seq_wire_surface_seq_numbered_1" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."partition") AS "partition", t."at" AS "at" FROM "seq_wire_surface_seq_numbered_1" t`,
-  `CREATE TEMP TABLE "__delta_seq_wire_surface_arrival" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_seq_wire_surface_arrival_sign" ON "__delta_seq_wire_surface_arrival" ("_sign")`,
-  `CREATE INDEX "__delta_seq_wire_surface_arrival_group" ON "__delta_seq_wire_surface_arrival" ("payload")`,
-  `CREATE TEMP TABLE "__frontier_seq_wire_surface_arrival" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_seq_wire_surface_arrival_phase" ON "__frontier_seq_wire_surface_arrival" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_seq_wire_surface_arrival" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_seq_wire_surface_arrival" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_seq_wire_surface_arrival" t`,
+  `CREATE TEMP TABLE "__delta_seq_wire_surface_arrival_32da94d2c4c8" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_seq_wire_surface_arrival_32da94d2c4c8_sign" ON "__delta_seq_wire_surface_arrival_32da94d2c4c8" ("_sign")`,
+  `CREATE INDEX "__delta_seq_wire_surface_arrival_32da94d2c4c8_group" ON "__delta_seq_wire_surface_arrival_32da94d2c4c8" ("payload")`,
+  `CREATE TEMP TABLE "__frontier_seq_wire_surface_arrival_32da94d2c4c8" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_seq_wire_surface_arrival_32da94d2c4c8_phase" ON "__frontier_seq_wire_surface_arrival_32da94d2c4c8" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_seq_wire_surface_arrival_32da94d2c4c8" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_seq_wire_surface_arrival_32da94d2c4c8" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_seq_wire_surface_arrival_32da94d2c4c8" t`,
   `CREATE TEMP TABLE "__delta_seq_wire_surface_numbered" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_seq_wire_surface_numbered_sign" ON "__delta_seq_wire_surface_numbered" ("_sign")`,
   `CREATE INDEX "__delta_seq_wire_surface_numbered_group" ON "__delta_seq_wire_surface_numbered" ("ordinal", "payload")`,
@@ -213,6 +213,12 @@ const rel_columns: Record<string, readonly string[]> = {
   arrival: ["payload"],
   numbered: ["ordinal", "payload"],
   seq_numbered_1: ["partition", "at"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  arrival: "seq_wire_surface_arrival_32da94d2c4c8",
+  numbered: "seq_wire_surface_numbered",
+  seq_numbered_1: "seq_wire_surface_seq_numbered_1",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -243,11 +249,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 13, parent_id: 7, ordinal: 0, local_name: "seq_numbered_1", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "7b70a7ec9d17ba27", h_schema: "e4c3fc2bc60f3a9e", h_rule: "911fb95722d89062" },
   { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "partition", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "0aea00c5c16aea73", h_schema: "", h_rule: "" },
   { rel_id: 15, parent_id: 13, ordinal: 2, local_name: "at", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "06f1dc4f9ad92384", h_schema: "", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__delta_seq_wire_surface_arrival", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "6847966fef2d9be5", h_schema: "a78080c56fbc69a8", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__frontier_seq_wire_surface_arrival", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "dcef1ae16cf14d00", h_schema: "cda92b437bd60136", h_rule: "" },
-  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__next_frontier_seq_wire_surface_arrival", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "c3e8c02b6994e37a", h_schema: "cda92b437bd60136", h_rule: "" },
-  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__txt_seq_wire_surface_arrival", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "5a4ad4548bca6185", h_schema: "c78b9e06d3cd491a", h_rule: "" },
-  { rel_id: 20, parent_id: 16, ordinal: 0, local_name: "__txt___delta_seq_wire_surface_arrival", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "60e80c66e062622f", h_schema: "c78b9e06d3cd491a", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__delta_seq_wire_surface_arrival_32da94d2c4c8", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "2627328f42a4189d", h_schema: "a78080c56fbc69a8", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__frontier_seq_wire_surface_arrival_32da94d2c4c8", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "01326a9e069cfa0c", h_schema: "cda92b437bd60136", h_rule: "" },
+  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__next_frontier_seq_wire_surface_arrival_32da94d2c4c8", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "77fea15f6886f399", h_schema: "cda92b437bd60136", h_rule: "" },
+  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__txt_seq_wire_surface_arrival_32da94d2c4c8", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "a5109184ed9d3815", h_schema: "c78b9e06d3cd491a", h_rule: "" },
+  { rel_id: 20, parent_id: 16, ordinal: 0, local_name: "__txt___delta_seq_wire_surface_arrival_32da94d2c4c8", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "aa535e0db85a2f28", h_schema: "c78b9e06d3cd491a", h_rule: "" },
   { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__delta_seq_wire_surface_numbered", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "251b24c325315a87", h_schema: "3b08a0c8f807ffcd", h_rule: "" },
   { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__frontier_seq_wire_surface_numbered", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "a1b2acf5154a129c", h_schema: "33a0babd395759ff", h_rule: "" },
   { rel_id: 23, parent_id: 10, ordinal: 0, local_name: "__next_frontier_seq_wire_surface_numbered", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "81f6da9a8fedf37f", h_schema: "33a0babd395759ff", h_rule: "" },
@@ -286,7 +292,7 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    arrival: select_rows(seam, `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_seq_wire_surface_arrival" t`, rel_columns.arrival!, rel_column_types.arrival!),
+    arrival: select_rows(seam, `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_seq_wire_surface_arrival_32da94d2c4c8" t`, rel_columns.arrival!, rel_column_types.arrival!),
     numbered: select_rows(seam, `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_seq_wire_surface_numbered" t`, rel_columns.numbered!, rel_column_types.numbered!),
     seq_numbered_1: select_rows(seam, `SELECT CASE WHEN json_valid(t."partition") AND json_type(t."partition") = 'object' AND json_type(t."partition", '$.fn') = 'text' AND json_type(t."partition", '$.args') = 'array' THEN json_extract(t."partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."partition", '$.args')), '') || ')' ELSE t."partition" END AS "partition", t."at" FROM "__txt_seq_wire_surface_seq_numbered_1" t`, rel_columns.seq_numbered_1!, rel_column_types.seq_numbered_1!),
   });
@@ -296,7 +302,7 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    arrival: select_rows(seam, `SELECT "payload" FROM "seq_wire_surface_arrival"`, rel_columns.arrival!, rel_stored_column_types.arrival!),
+    arrival: select_rows(seam, `SELECT "payload" FROM "seq_wire_surface_arrival_32da94d2c4c8"`, rel_columns.arrival!, rel_stored_column_types.arrival!),
     numbered: select_rows(seam, `SELECT "ordinal", "payload" FROM "seq_wire_surface_numbered"`, rel_columns.numbered!, rel_stored_column_types.numbered!),
     seq_numbered_1: select_rows(seam, `SELECT "partition", "at" FROM "seq_wire_surface_seq_numbered_1"`, rel_columns.seq_numbered_1!, rel_stored_column_types.seq_numbered_1!),
   });
@@ -307,13 +313,13 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  arrival: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_seq_wire_surface_arrival" t`,
+  arrival: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_seq_wire_surface_arrival_32da94d2c4c8" t`,
   numbered: `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_seq_wire_surface_numbered" t`,
   seq_numbered_1: `SELECT CASE WHEN json_valid(t."partition") AND json_type(t."partition") = 'object' AND json_type(t."partition", '$.fn') = 'text' AND json_type(t."partition", '$.args') = 'array' THEN json_extract(t."partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."partition", '$.args')), '') || ')' ELSE t."partition" END AS "partition", t."at" FROM "__txt_seq_wire_surface_seq_numbered_1" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  arrival: { kind: "set", add_sql: `INSERT OR IGNORE INTO "seq_wire_surface_arrival" ("payload") VALUES (?)`, del_sql: `DELETE FROM "seq_wire_surface_arrival" WHERE "payload" = ?` },
+  arrival: { kind: "set", add_sql: `INSERT OR IGNORE INTO "seq_wire_surface_arrival_32da94d2c4c8" ("payload") VALUES (?)`, del_sql: `DELETE FROM "seq_wire_surface_arrival_32da94d2c4c8" WHERE "payload" = ?` },
 };
 
 function arrival_statement(arrival: IArrivalRow): SqlStatement {
@@ -339,16 +345,16 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "arrival", kind: "set", table_name: "seq_wire_surface_arrival", delta_table_name: "__delta_seq_wire_surface_arrival", frontier_table_name: "__frontier_seq_wire_surface_arrival", next_frontier_table_name: "__next_frontier_seq_wire_surface_arrival", columns: ["payload"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "seq_wire_surface_arrival" ("payload") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "payload"`, arrival_del_sql: `DELETE FROM "seq_wire_surface_arrival" WHERE ("payload") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "payload"`, boundary_sql: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seq_wire_surface_arrival" t WHERE t."_sign" IN (-1, 1) GROUP BY t."payload", t."_sign"`, rule_observers: ["numbered/2", "seq_numbered_1/2"] },
+  { rel: "arrival", kind: "set", table_name: "seq_wire_surface_arrival_32da94d2c4c8", delta_table_name: "__delta_seq_wire_surface_arrival_32da94d2c4c8", frontier_table_name: "__frontier_seq_wire_surface_arrival_32da94d2c4c8", next_frontier_table_name: "__next_frontier_seq_wire_surface_arrival_32da94d2c4c8", columns: ["payload"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "seq_wire_surface_arrival_32da94d2c4c8" ("payload") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "payload"`, arrival_del_sql: `DELETE FROM "seq_wire_surface_arrival_32da94d2c4c8" WHERE ("payload") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "payload"`, boundary_sql: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seq_wire_surface_arrival_32da94d2c4c8" t WHERE t."_sign" IN (-1, 1) GROUP BY t."payload", t."_sign"`, rule_observers: ["numbered/2", "seq_numbered_1/2"] },
   { rel: "numbered", kind: "log", table_name: "seq_wire_surface_numbered", delta_table_name: "__delta_seq_wire_surface_numbered", frontier_table_name: "__frontier_seq_wire_surface_numbered", next_frontier_table_name: "__next_frontier_seq_wire_surface_numbered", columns: ["ordinal", "payload"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seq_wire_surface_numbered" t WHERE t."_sign" IN (-1, 1) GROUP BY t."ordinal", t."payload", t."_sign"`, rule_observers: [] },
   { rel: "seq_numbered_1", kind: "set", table_name: "seq_wire_surface_seq_numbered_1", delta_table_name: "__delta_seq_wire_surface_seq_numbered_1", frontier_table_name: "__frontier_seq_wire_surface_seq_numbered_1", next_frontier_table_name: "__next_frontier_seq_wire_surface_seq_numbered_1", columns: ["partition", "at"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."partition") AND json_type(t."partition") = 'object' AND json_type(t."partition", '$.fn') = 'text' AND json_type(t."partition", '$.args') = 'array' THEN json_extract(t."partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."partition", '$.args')), '') || ')' ELSE t."partition" END AS "partition", t."at", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seq_wire_surface_seq_numbered_1" t WHERE t."_sign" IN (-1, 1) GROUP BY t."partition", t."at", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "seq_numbered_1", rule_id: "seq_wire_surface:seq_numbered_1/2#1", head_kind: "set", head_table_name: "seq_wire_surface_seq_numbered_1", head_delta_table_name: "__delta_seq_wire_surface_seq_numbered_1", head_columns: ["partition", "at"], key_indices: [0], project_sql: `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') AS "partition", 1 AS "at" FROM "__frontier_seq_wire_surface_arrival" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "seq_wire_surface_seq_numbered_1" n0 WHERE n0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q')) ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "seq_numbered_1", rule_id: "seq_wire_surface:seq_numbered_1/2#2", head_kind: "set", head_table_name: "seq_wire_surface_seq_numbered_1", head_delta_table_name: "__delta_seq_wire_surface_seq_numbered_1", head_columns: ["partition", "at"], key_indices: [0], project_sql: `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') AS "partition", (b0."at" + 1) AS "at" FROM "__frontier_seq_wire_surface_arrival" d0, "__pre_seq_wire_surface_seq_numbered_1" b0 WHERE d0."_phase" >= 0 AND b0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "numbered", rule_id: "seq_wire_surface:numbered/2#1", head_kind: "log", head_table_name: "seq_wire_surface_numbered", head_delta_table_name: "__delta_seq_wire_surface_numbered", head_columns: ["ordinal", "payload"], key_indices: [], project_sql: `SELECT 1 AS "ordinal", d0."payload" AS "payload" FROM "__frontier_seq_wire_surface_arrival" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "seq_wire_surface_seq_numbered_1" n0 WHERE n0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q')) ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "numbered", rule_id: "seq_wire_surface:numbered/2#2", head_kind: "log", head_table_name: "seq_wire_surface_numbered", head_delta_table_name: "__delta_seq_wire_surface_numbered", head_columns: ["ordinal", "payload"], key_indices: [], project_sql: `SELECT (b0."at" + 1) AS "ordinal", d0."payload" AS "payload" FROM "__frontier_seq_wire_surface_arrival" d0, "__pre_seq_wire_surface_seq_numbered_1" b0 WHERE d0."_phase" >= 0 AND b0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "seq_numbered_1", rule_id: "seq_wire_surface:seq_numbered_1/2#1", head_kind: "set", head_table_name: "seq_wire_surface_seq_numbered_1", head_delta_table_name: "__delta_seq_wire_surface_seq_numbered_1", head_columns: ["partition", "at"], key_indices: [0], project_sql: `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') AS "partition", 1 AS "at" FROM "__frontier_seq_wire_surface_arrival_32da94d2c4c8" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "seq_wire_surface_seq_numbered_1" n0 WHERE n0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q')) ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "seq_numbered_1", rule_id: "seq_wire_surface:seq_numbered_1/2#2", head_kind: "set", head_table_name: "seq_wire_surface_seq_numbered_1", head_delta_table_name: "__delta_seq_wire_surface_seq_numbered_1", head_columns: ["partition", "at"], key_indices: [0], project_sql: `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') AS "partition", (b0."at" + 1) AS "at" FROM "__frontier_seq_wire_surface_arrival_32da94d2c4c8" d0, "__pre_seq_wire_surface_seq_numbered_1" b0 WHERE d0."_phase" >= 0 AND b0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "numbered", rule_id: "seq_wire_surface:numbered/2#1", head_kind: "log", head_table_name: "seq_wire_surface_numbered", head_delta_table_name: "__delta_seq_wire_surface_numbered", head_columns: ["ordinal", "payload"], key_indices: [], project_sql: `SELECT 1 AS "ordinal", d0."payload" AS "payload" FROM "__frontier_seq_wire_surface_arrival_32da94d2c4c8" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "seq_wire_surface_seq_numbered_1" n0 WHERE n0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q')) ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "numbered", rule_id: "seq_wire_surface:numbered/2#2", head_kind: "log", head_table_name: "seq_wire_surface_numbered", head_delta_table_name: "__delta_seq_wire_surface_numbered", head_columns: ["ordinal", "payload"], key_indices: [], project_sql: `SELECT (b0."at" + 1) AS "ordinal", d0."payload" AS "payload" FROM "__frontier_seq_wire_surface_arrival_32da94d2c4c8" d0, "__pre_seq_wire_surface_seq_numbered_1" b0 WHERE d0."_phase" >= 0 AND b0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -396,7 +402,7 @@ const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: st
 ];
 
 const ORDERED_CARRY_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
-  { rel: "arrival", sql: `SELECT "_sequence" AS "__sequence", "payload" FROM "__frontier_seq_wire_surface_arrival" ORDER BY "_phase", "_sequence"`, columns: ["payload"] },
+  { rel: "arrival", sql: `SELECT "_sequence" AS "__sequence", "payload" FROM "__frontier_seq_wire_surface_arrival_32da94d2c4c8" ORDER BY "_phase", "_sequence"`, columns: ["payload"] },
 ];
 
 function ordered_outside_occurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {
@@ -582,6 +588,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

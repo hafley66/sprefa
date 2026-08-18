@@ -10,7 +10,11 @@ description = "Rust runtime the emit_rust emitter lowers against: the IGenProgra
 anyhow = "1"
 rusqlite = { version = "0.40", features = ["bundled", "functions"] }
 regex = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "signal"] }
+# 0.8 is the version whose `tokio::net::UnixListener` implements
+# `axum::serve::Listener` (plans/2026-08-17-openapi-clap-uds.PLAN.md section 6).
+axum = "0.8"
+tokio-util = "0.7"
 futures = "0.3"
 async-stream = "0.3"
 serde = { version = "1", features = ["derive"] }
@@ -30,6 +34,11 @@ harness = []
 
 [dev-dependencies]
 tempfile = "3"
+# One non-pooled connection per client needs no connector or URI layer, so raw
+# hyper client-conn over a UnixStream, never hyperlocal.
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
 
 [[bin]]
 name = "emit_rust_harness"

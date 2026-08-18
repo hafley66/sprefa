@@ -1,11 +1,12 @@
 ---
 created: 2026-08-17
-updated: 2026-08-17
+updated: 2026-08-18
 type: task
-status: open
+status: done
 priority: normal
 epic: openapi-clap-uds-lab
 related: ['@engine-rs-serve-uds']
+closed: 2026-08-18
 ---
 
 # sprefa-extract: data family (json/jsonl/yaml/toml), v5 datapath plane ported, hosted both doors

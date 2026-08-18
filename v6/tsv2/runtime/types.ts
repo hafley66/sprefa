@@ -462,11 +462,19 @@ export interface IReloadPlan {
   readonly unsupported: readonly string[];
 }
 
+/** The physical table behind each rel of the two programs a swap compares. A
+ *  rel absent from a side discards under its own semantic name. */
+export interface IPhysicalTables {
+  readonly prev: Readonly<Record<string, string>>;
+  readonly next: Readonly<Record<string, string>>;
+}
+
 export interface IReloadPlanner {
   plan(
     prev: readonly IRelCatalogRow[],
     next: readonly IRelCatalogRow[],
     allow_drop: boolean,
+    physical?: IPhysicalTables,
   ): IReloadPlan;
 }
 
@@ -514,6 +522,10 @@ export interface IGenProgram {
   readonly internMode: IInternMode;
   readonly ddl: readonly string[];
   readonly rel_columns: Readonly<Record<string, readonly string[]>>;
+  /** Semantic rel name to the SQLite object it stores in. A stored rel's
+   *  physical name carries a digest of its shape, so it moves when the shape
+   *  moves; a hand-built program may omit the map and store under its own name. */
+  readonly rel_physical_names?: Readonly<Record<string, string>>;
   readonly rel_column_types?: Readonly<Record<string, readonly IRowColumnType[]>>;
   readonly arrival_targets: readonly string[];
   tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas>;

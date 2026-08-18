@@ -516,12 +516,13 @@ fn parse_mask(families: &[String]) -> Result<FamilyMask, String> {
             "type" | "types" => mask.types = true,
             "call" => mask.call = true,
             "df" => mask.df = true,
+            "data" => mask.data = true,
             // The cfg plane is derived from the cst parse, so it turns cst on.
             "cfg" => mask.cst = true,
             other => {
                 return Err(format!(
                     "--family '{other}' is not a mask family; per-file families are \
-                     cst, type, call, df, cfg"
+                     cst, type, call, df, data, cfg"
                 ))
             }
         }
@@ -577,7 +578,7 @@ fn bench(
         (0, None)
     };
     eprintln!(
-        "{}: extract {:?} serial {:?}{} (cst={} type={} call={} df={} cfg={} facts={})",
+        "{}: extract {:?} serial {:?}{} (cst={} type={} call={} df={} data={} cfg={} facts={})",
         src.name(),
         extract,
         serial,
@@ -586,6 +587,9 @@ fn bench(
         out.types.as_ref().map_or(0, |b| b.nodes.len()),
         out.call.as_ref().map_or(0, |b| b.nodes.len()),
         out.df.as_ref().map_or(0, |b| b.nodes.len()),
+        out.data
+            .as_ref()
+            .map_or(0, |b| b.aux.docs.len() + b.aux.values.len()),
         cfg_nodes,
         facts.len(),
     );

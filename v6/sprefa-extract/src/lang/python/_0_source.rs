@@ -514,6 +514,7 @@ impl Source for PythonSource {
             types,
             call,
             df: None,
+            data: None,
         }
     }
 }

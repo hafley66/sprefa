@@ -45,7 +45,7 @@ test("keep(count) lowers to one set-based retention statement", () => {
         rel: "event",
         count: 2,
         delete_sql:
-          'DELETE FROM "retention_count_prunes_oldest_event" WHERE rowid NOT IN (SELECT rowid FROM "retention_count_prunes_oldest_event" ORDER BY rowid DESC LIMIT 2) RETURNING "col1"',
+          'DELETE FROM "retention_count_prunes_oldest_event_595cc703c300" WHERE rowid NOT IN (SELECT rowid FROM "retention_count_prunes_oldest_event_595cc703c300" ORDER BY rowid DESC LIMIT 2) RETURNING "col1"',
       },
     ],
   );

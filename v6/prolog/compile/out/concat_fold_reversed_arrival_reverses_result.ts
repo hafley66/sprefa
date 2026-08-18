@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -177,17 +177,17 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "concat_fold_reversed_arrival_reverses_result_append_line" ("channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_concat_fold_reversed_arrival_reverses_result_append_line" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."channel") AS "channel", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."piece") AS "piece" FROM "concat_fold_reversed_arrival_reverses_result_append_line" t`,
+  `CREATE TABLE "concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" ("channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."channel") AS "channel", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."piece") AS "piece" FROM "concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" t`,
   `CREATE TABLE "concat_fold_reversed_arrival_reverses_result_log_text" ("__id" INTEGER PRIMARY KEY, "channel" INTEGER NOT NULL, "next" INTEGER NOT NULL, UNIQUE ("channel"))`,
   `CREATE TEMP VIEW "__txt_concat_fold_reversed_arrival_reverses_result_log_text" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."channel") AS "channel", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."next") AS "next" FROM "concat_fold_reversed_arrival_reverses_result_log_text" t`,
-  `CREATE TEMP TABLE "__delta_concat_fold_reversed_arrival_reverses_result_append_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_concat_fold_reversed_arrival_reverses_result_append_line_sign" ON "__delta_concat_fold_reversed_arrival_reverses_result_append_line" ("_sign")`,
-  `CREATE INDEX "__delta_concat_fold_reversed_arrival_reverses_result_append_line_group" ON "__delta_concat_fold_reversed_arrival_reverses_result_append_line" ("channel", "piece")`,
-  `CREATE TEMP TABLE "__frontier_concat_fold_reversed_arrival_reverses_result_append_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_concat_fold_reversed_arrival_reverses_result_append_line_phase" ON "__frontier_concat_fold_reversed_arrival_reverses_result_append_line" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_concat_fold_reversed_arrival_reverses_result_append_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_concat_fold_reversed_arrival_reverses_result_append_line" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."channel") AS "channel", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."piece") AS "piece", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_concat_fold_reversed_arrival_reverses_result_append_line" t`,
+  `CREATE TEMP TABLE "__delta_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15_sign" ON "__delta_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" ("_sign")`,
+  `CREATE INDEX "__delta_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15_group" ON "__delta_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" ("channel", "piece")`,
+  `CREATE TEMP TABLE "__frontier_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15_phase" ON "__frontier_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."channel") AS "channel", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."piece") AS "piece", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" t`,
   `CREATE TEMP TABLE "__delta_concat_fold_reversed_arrival_reverses_result_log_text" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_concat_fold_reversed_arrival_reverses_result_log_text_sign" ON "__delta_concat_fold_reversed_arrival_reverses_result_log_text" ("_sign")`,
   `CREATE INDEX "__delta_concat_fold_reversed_arrival_reverses_result_log_text_group" ON "__delta_concat_fold_reversed_arrival_reverses_result_log_text" ("channel", "next")`,
@@ -201,6 +201,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   append_line: ["channel", "piece"],
   log_text: ["channel", "next"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  append_line: "concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15",
+  log_text: "concat_fold_reversed_arrival_reverses_result_log_text",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -227,11 +232,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 11, parent_id: 7, ordinal: 0, local_name: "log_text", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "09df1341b6cbcb45", h_schema: "7b5fb7c6440be0a0", h_rule: "4c8179ff39074d97" },
   { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "channel", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "10b793c2220b1f6f", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 11, ordinal: 2, local_name: "next", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "30bade3eb1d11e52", h_schema: "", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_concat_fold_reversed_arrival_reverses_result_append_line", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "c353b3b615b4eb01", h_schema: "6a61fbe18c90b9ff", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_concat_fold_reversed_arrival_reverses_result_append_line", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "45feb4ba4288b3ae", h_schema: "9a35737892978e29", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_concat_fold_reversed_arrival_reverses_result_append_line", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "0cb55e70b73f9d4c", h_schema: "9a35737892978e29", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_concat_fold_reversed_arrival_reverses_result_append_line", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "51fb030ba64f324a", h_schema: "8457c5aa5b496623", h_rule: "" },
-  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_concat_fold_reversed_arrival_reverses_result_append_line", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "8284b682d7327862", h_schema: "8457c5aa5b496623", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "bd61662e366d1553", h_schema: "6a61fbe18c90b9ff", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "6790f3067701895f", h_schema: "9a35737892978e29", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "38fdc9416ef33d2b", h_schema: "9a35737892978e29", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "a27a48864fbc13c3", h_schema: "8457c5aa5b496623", h_rule: "" },
+  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "ccf3948af27fb031", h_schema: "8457c5aa5b496623", h_rule: "" },
   { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_concat_fold_reversed_arrival_reverses_result_log_text", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "f860079ebddfc414", h_schema: "ac18887c3096a667", h_rule: "" },
   { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_concat_fold_reversed_arrival_reverses_result_log_text", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "a970289f7fb13fdd", h_schema: "7713e5490b4f2efa", h_rule: "" },
   { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_concat_fold_reversed_arrival_reverses_result_log_text", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "0e62dfd7db6a9255", h_schema: "7713e5490b4f2efa", h_rule: "" },
@@ -263,7 +268,7 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    append_line: select_rows(seam, `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."piece") AND json_type(t."piece") = 'object' AND json_type(t."piece", '$.fn') = 'text' AND json_type(t."piece", '$.args') = 'array' THEN json_extract(t."piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."piece", '$.args')), '') || ')' ELSE t."piece" END AS "piece" FROM "__txt_concat_fold_reversed_arrival_reverses_result_append_line" t`, rel_columns.append_line!, rel_column_types.append_line!),
+    append_line: select_rows(seam, `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."piece") AND json_type(t."piece") = 'object' AND json_type(t."piece", '$.fn') = 'text' AND json_type(t."piece", '$.args') = 'array' THEN json_extract(t."piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."piece", '$.args')), '') || ')' ELSE t."piece" END AS "piece" FROM "__txt_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" t`, rel_columns.append_line!, rel_column_types.append_line!),
     log_text: select_rows(seam, `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."next") AND json_type(t."next") = 'object' AND json_type(t."next", '$.fn') = 'text' AND json_type(t."next", '$.args') = 'array' THEN json_extract(t."next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."next", '$.args')), '') || ')' ELSE t."next" END AS "next" FROM "__txt_concat_fold_reversed_arrival_reverses_result_log_text" t`, rel_columns.log_text!, rel_column_types.log_text!),
   });
 }
@@ -272,7 +277,7 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    append_line: select_rows(seam, `SELECT "channel", "piece" FROM "concat_fold_reversed_arrival_reverses_result_append_line"`, rel_columns.append_line!, rel_stored_column_types.append_line!),
+    append_line: select_rows(seam, `SELECT "channel", "piece" FROM "concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15"`, rel_columns.append_line!, rel_stored_column_types.append_line!),
     log_text: select_rows(seam, `SELECT "channel", "next" FROM "concat_fold_reversed_arrival_reverses_result_log_text"`, rel_columns.log_text!, rel_stored_column_types.log_text!),
   });
 }
@@ -282,12 +287,12 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  append_line: `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."piece") AND json_type(t."piece") = 'object' AND json_type(t."piece", '$.fn') = 'text' AND json_type(t."piece", '$.args') = 'array' THEN json_extract(t."piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."piece", '$.args')), '') || ')' ELSE t."piece" END AS "piece" FROM "__txt_concat_fold_reversed_arrival_reverses_result_append_line" t`,
+  append_line: `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."piece") AND json_type(t."piece") = 'object' AND json_type(t."piece", '$.fn') = 'text' AND json_type(t."piece", '$.args') = 'array' THEN json_extract(t."piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."piece", '$.args')), '') || ')' ELSE t."piece" END AS "piece" FROM "__txt_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" t`,
   log_text: `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."next") AND json_type(t."next") = 'object' AND json_type(t."next", '$.fn') = 'text' AND json_type(t."next", '$.args') = 'array' THEN json_extract(t."next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."next", '$.args')), '') || ')' ELSE t."next" END AS "next" FROM "__txt_concat_fold_reversed_arrival_reverses_result_log_text" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  append_line: { kind: "log", add_sql: `INSERT INTO "concat_fold_reversed_arrival_reverses_result_append_line" ("channel", "piece") VALUES (?, ?)`, del_sql: null },
+  append_line: { kind: "log", add_sql: `INSERT INTO "concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" ("channel", "piece") VALUES (?, ?)`, del_sql: null },
 };
 
 function arrival_statement(arrival: IArrivalRow): SqlStatement {
@@ -313,12 +318,12 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "append_line", kind: "log", table_name: "concat_fold_reversed_arrival_reverses_result_append_line", delta_table_name: "__delta_concat_fold_reversed_arrival_reverses_result_append_line", frontier_table_name: "__frontier_concat_fold_reversed_arrival_reverses_result_append_line", next_frontier_table_name: "__next_frontier_concat_fold_reversed_arrival_reverses_result_append_line", columns: ["channel", "piece"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "concat_fold_reversed_arrival_reverses_result_append_line" ("channel", "piece") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "channel", "piece"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."piece") AND json_type(t."piece") = 'object' AND json_type(t."piece", '$.fn') = 'text' AND json_type(t."piece", '$.args') = 'array' THEN json_extract(t."piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."piece", '$.args')), '') || ')' ELSE t."piece" END AS "piece", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_concat_fold_reversed_arrival_reverses_result_append_line" t WHERE t."_sign" IN (-1, 1) GROUP BY t."channel", t."piece", t."_sign"`, rule_observers: ["log_text/2"] },
+  { rel: "append_line", kind: "log", table_name: "concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15", delta_table_name: "__delta_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15", frontier_table_name: "__frontier_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15", next_frontier_table_name: "__next_frontier_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15", columns: ["channel", "piece"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" ("channel", "piece") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "channel", "piece"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."piece") AND json_type(t."piece") = 'object' AND json_type(t."piece", '$.fn') = 'text' AND json_type(t."piece", '$.args') = 'array' THEN json_extract(t."piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."piece", '$.args')), '') || ')' ELSE t."piece" END AS "piece", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" t WHERE t."_sign" IN (-1, 1) GROUP BY t."channel", t."piece", t."_sign"`, rule_observers: ["log_text/2"] },
   { rel: "log_text", kind: "set", table_name: "concat_fold_reversed_arrival_reverses_result_log_text", delta_table_name: "__delta_concat_fold_reversed_arrival_reverses_result_log_text", frontier_table_name: "__frontier_concat_fold_reversed_arrival_reverses_result_log_text", next_frontier_table_name: "__next_frontier_concat_fold_reversed_arrival_reverses_result_log_text", columns: ["channel", "next"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."next") AND json_type(t."next") = 'object' AND json_type(t."next", '$.fn') = 'text' AND json_type(t."next", '$.args') = 'array' THEN json_extract(t."next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."next", '$.args')), '') || ')' ELSE t."next" END AS "next", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_concat_fold_reversed_arrival_reverses_result_log_text" t WHERE t."_sign" IN (-1, 1) GROUP BY t."channel", t."next", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "log_text", rule_id: "concat_fold_reversed_arrival_reverses_result:log_text/2#1", head_kind: "set", head_table_name: "concat_fold_reversed_arrival_reverses_result_log_text", head_delta_table_name: "__delta_concat_fold_reversed_arrival_reverses_result_log_text", head_columns: ["channel", "next"], key_indices: [0], project_sql: `SELECT d0."channel" AS "channel", (SELECT s."__id" FROM "__str" s WHERE s."content" = ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."next") || (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."piece"))) AS "next" FROM "__frontier_concat_fold_reversed_arrival_reverses_result_append_line" d0, "__pre_concat_fold_reversed_arrival_reverses_result_log_text" b0 WHERE d0."_phase" >= 0 AND b0."channel" = d0."channel" ORDER BY d0."_phase", d0."_sequence"`, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."next") || (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."piece")) FROM "__frontier_concat_fold_reversed_arrival_reverses_result_append_line" d0, "__pre_concat_fold_reversed_arrival_reverses_result_log_text" b0 WHERE d0."_phase" >= 0 AND b0."channel" = d0."channel"`] },
+  { head_rel: "log_text", rule_id: "concat_fold_reversed_arrival_reverses_result:log_text/2#1", head_kind: "set", head_table_name: "concat_fold_reversed_arrival_reverses_result_log_text", head_delta_table_name: "__delta_concat_fold_reversed_arrival_reverses_result_log_text", head_columns: ["channel", "next"], key_indices: [0], project_sql: `SELECT d0."channel" AS "channel", (SELECT s."__id" FROM "__str" s WHERE s."content" = ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."next") || (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."piece"))) AS "next" FROM "__frontier_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" d0, "__pre_concat_fold_reversed_arrival_reverses_result_log_text" b0 WHERE d0."_phase" >= 0 AND b0."channel" = d0."channel" ORDER BY d0."_phase", d0."_sequence"`, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."next") || (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."piece")) FROM "__frontier_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" d0, "__pre_concat_fold_reversed_arrival_reverses_result_log_text" b0 WHERE d0."_phase" >= 0 AND b0."channel" = d0."channel"`] },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -363,7 +368,7 @@ const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: st
 ];
 
 const ORDERED_CARRY_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
-  { rel: "append_line", sql: `SELECT "_sequence" AS "__sequence", "channel", "piece" FROM "__frontier_concat_fold_reversed_arrival_reverses_result_append_line" ORDER BY "_phase", "_sequence"`, columns: ["channel", "piece"] },
+  { rel: "append_line", sql: `SELECT "_sequence" AS "__sequence", "channel", "piece" FROM "__frontier_concat_fold_reversed_arrival_reverses_result_append_line_5e2108864d15" ORDER BY "_phase", "_sequence"`, columns: ["channel", "piece"] },
 ];
 
 function ordered_outside_occurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {
@@ -547,6 +552,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

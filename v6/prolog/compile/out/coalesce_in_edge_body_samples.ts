@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -161,9 +161,9 @@ const ddl: readonly string[] = [
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('unnamed')`,
   `CREATE TABLE "coalesce_in_edge_body_samples_labelled" ("tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_coalesce_in_edge_body_samples_labelled" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label" FROM "coalesce_in_edge_body_samples_labelled" t`,
-  `CREATE TABLE "coalesce_in_edge_body_samples_name" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL, UNIQUE ("tree_id", "label"))`,
-  `CREATE TEMP VIEW "__txt_coalesce_in_edge_body_samples_name" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label" FROM "coalesce_in_edge_body_samples_name" t`,
-  `CREATE TABLE "coalesce_in_edge_body_samples_ping" ("tree_id" INTEGER NOT NULL)`,
+  `CREATE TABLE "coalesce_in_edge_body_samples_name_9267639f6ef8" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL, UNIQUE ("tree_id", "label"))`,
+  `CREATE TEMP VIEW "__txt_coalesce_in_edge_body_samples_name_9267639f6ef8" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label" FROM "coalesce_in_edge_body_samples_name_9267639f6ef8" t`,
+  `CREATE TABLE "coalesce_in_edge_body_samples_ping_72c6ac0097f9" ("tree_id" INTEGER NOT NULL)`,
   `CREATE TEMP TABLE "__delta_coalesce_in_edge_body_samples_labelled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_coalesce_in_edge_body_samples_labelled_sign" ON "__delta_coalesce_in_edge_body_samples_labelled" ("_sign")`,
   `CREATE INDEX "__delta_coalesce_in_edge_body_samples_labelled_group" ON "__delta_coalesce_in_edge_body_samples_labelled" ("tree_id", "label")`,
@@ -171,25 +171,31 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_coalesce_in_edge_body_samples_labelled_phase" ON "__frontier_coalesce_in_edge_body_samples_labelled" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_coalesce_in_edge_body_samples_labelled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt___delta_coalesce_in_edge_body_samples_labelled" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_coalesce_in_edge_body_samples_labelled" t`,
-  `CREATE TEMP TABLE "__delta_coalesce_in_edge_body_samples_name" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_coalesce_in_edge_body_samples_name_sign" ON "__delta_coalesce_in_edge_body_samples_name" ("_sign")`,
-  `CREATE INDEX "__delta_coalesce_in_edge_body_samples_name_group" ON "__delta_coalesce_in_edge_body_samples_name" ("tree_id", "label")`,
-  `CREATE TEMP TABLE "__frontier_coalesce_in_edge_body_samples_name" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_coalesce_in_edge_body_samples_name_phase" ON "__frontier_coalesce_in_edge_body_samples_name" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_coalesce_in_edge_body_samples_name" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_coalesce_in_edge_body_samples_name" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_coalesce_in_edge_body_samples_name" t`,
-  `CREATE TEMP TABLE "__delta_coalesce_in_edge_body_samples_ping" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_coalesce_in_edge_body_samples_ping_sign" ON "__delta_coalesce_in_edge_body_samples_ping" ("_sign")`,
-  `CREATE INDEX "__delta_coalesce_in_edge_body_samples_ping_group" ON "__delta_coalesce_in_edge_body_samples_ping" ("tree_id")`,
-  `CREATE TEMP TABLE "__frontier_coalesce_in_edge_body_samples_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_coalesce_in_edge_body_samples_ping_phase" ON "__frontier_coalesce_in_edge_body_samples_ping" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_coalesce_in_edge_body_samples_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_coalesce_in_edge_body_samples_name_9267639f6ef8" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_coalesce_in_edge_body_samples_name_9267639f6ef8_sign" ON "__delta_coalesce_in_edge_body_samples_name_9267639f6ef8" ("_sign")`,
+  `CREATE INDEX "__delta_coalesce_in_edge_body_samples_name_9267639f6ef8_group" ON "__delta_coalesce_in_edge_body_samples_name_9267639f6ef8" ("tree_id", "label")`,
+  `CREATE TEMP TABLE "__frontier_coalesce_in_edge_body_samples_name_9267639f6ef8" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_coalesce_in_edge_body_samples_name_9267639f6ef8_phase" ON "__frontier_coalesce_in_edge_body_samples_name_9267639f6ef8" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_coalesce_in_edge_body_samples_name_9267639f6ef8" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_coalesce_in_edge_body_samples_name_9267639f6ef8" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_coalesce_in_edge_body_samples_name_9267639f6ef8" t`,
+  `CREATE TEMP TABLE "__delta_coalesce_in_edge_body_samples_ping_72c6ac0097f9" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_coalesce_in_edge_body_samples_ping_72c6ac0097f9_sign" ON "__delta_coalesce_in_edge_body_samples_ping_72c6ac0097f9" ("_sign")`,
+  `CREATE INDEX "__delta_coalesce_in_edge_body_samples_ping_72c6ac0097f9_group" ON "__delta_coalesce_in_edge_body_samples_ping_72c6ac0097f9" ("tree_id")`,
+  `CREATE TEMP TABLE "__frontier_coalesce_in_edge_body_samples_ping_72c6ac0097f9" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_coalesce_in_edge_body_samples_ping_72c6ac0097f9_phase" ON "__frontier_coalesce_in_edge_body_samples_ping_72c6ac0097f9" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_coalesce_in_edge_body_samples_ping_72c6ac0097f9" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   labelled: ["tree_id", "label"],
   name: ["tree_id", "label"],
   ping: ["tree_id"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  labelled: "coalesce_in_edge_body_samples_labelled",
+  name: "coalesce_in_edge_body_samples_name_9267639f6ef8",
+  ping: "coalesce_in_edge_body_samples_ping_72c6ac0097f9",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -225,14 +231,14 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__next_frontier_coalesce_in_edge_body_samples_labelled", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "a29219fecd97cb78", h_schema: "1eaf14e02aaf0865", h_rule: "" },
   { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__txt_coalesce_in_edge_body_samples_labelled", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "0ae8de6c59cd6256", h_schema: "fb36a663153d63f3", h_rule: "" },
   { rel_id: 20, parent_id: 16, ordinal: 0, local_name: "__txt___delta_coalesce_in_edge_body_samples_labelled", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "c924639fa47e7dec", h_schema: "fb36a663153d63f3", h_rule: "" },
-  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__delta_coalesce_in_edge_body_samples_name", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "c29c99d4c7008209", h_schema: "f3452d19d0ea8367", h_rule: "" },
-  { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__frontier_coalesce_in_edge_body_samples_name", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "90add362d5f865c9", h_schema: "1eaf14e02aaf0865", h_rule: "" },
-  { rel_id: 23, parent_id: 11, ordinal: 0, local_name: "__next_frontier_coalesce_in_edge_body_samples_name", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "fac55272a0ebd7ce", h_schema: "1eaf14e02aaf0865", h_rule: "" },
-  { rel_id: 24, parent_id: 11, ordinal: 0, local_name: "__txt_coalesce_in_edge_body_samples_name", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "6d0090f5b5d5bfdf", h_schema: "fb36a663153d63f3", h_rule: "" },
-  { rel_id: 25, parent_id: 21, ordinal: 0, local_name: "__txt___delta_coalesce_in_edge_body_samples_name", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "8b308bab9534f25f", h_schema: "fb36a663153d63f3", h_rule: "" },
-  { rel_id: 26, parent_id: 14, ordinal: 0, local_name: "__delta_coalesce_in_edge_body_samples_ping", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "beb8d3f3519c9f25", h_schema: "3fac23d94c210ea6", h_rule: "" },
-  { rel_id: 27, parent_id: 14, ordinal: 0, local_name: "__frontier_coalesce_in_edge_body_samples_ping", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "16fa7508a2ff7413", h_schema: "459af400e4fe51d7", h_rule: "" },
-  { rel_id: 28, parent_id: 14, ordinal: 0, local_name: "__next_frontier_coalesce_in_edge_body_samples_ping", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "69210c6839af35f6", h_schema: "459af400e4fe51d7", h_rule: "" },
+  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__delta_coalesce_in_edge_body_samples_name_9267639f6ef8", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "6ef4dd5f1638a0f3", h_schema: "f3452d19d0ea8367", h_rule: "" },
+  { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__frontier_coalesce_in_edge_body_samples_name_9267639f6ef8", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "b37f8280f5830f91", h_schema: "1eaf14e02aaf0865", h_rule: "" },
+  { rel_id: 23, parent_id: 11, ordinal: 0, local_name: "__next_frontier_coalesce_in_edge_body_samples_name_9267639f6ef8", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "bc54d34edc71a408", h_schema: "1eaf14e02aaf0865", h_rule: "" },
+  { rel_id: 24, parent_id: 11, ordinal: 0, local_name: "__txt_coalesce_in_edge_body_samples_name_9267639f6ef8", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "482a3831a70d7e7c", h_schema: "fb36a663153d63f3", h_rule: "" },
+  { rel_id: 25, parent_id: 21, ordinal: 0, local_name: "__txt___delta_coalesce_in_edge_body_samples_name_9267639f6ef8", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "94bd39f8cdb7b38b", h_schema: "fb36a663153d63f3", h_rule: "" },
+  { rel_id: 26, parent_id: 14, ordinal: 0, local_name: "__delta_coalesce_in_edge_body_samples_ping_72c6ac0097f9", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "7b493117ebc313b1", h_schema: "3fac23d94c210ea6", h_rule: "" },
+  { rel_id: 27, parent_id: 14, ordinal: 0, local_name: "__frontier_coalesce_in_edge_body_samples_ping_72c6ac0097f9", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "307620055824653d", h_schema: "459af400e4fe51d7", h_rule: "" },
+  { rel_id: 28, parent_id: 14, ordinal: 0, local_name: "__next_frontier_coalesce_in_edge_body_samples_ping_72c6ac0097f9", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "3f3df87549e3a78a", h_schema: "459af400e4fe51d7", h_rule: "" },
   { rel_id: 29, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "b9290525b2322c29", h_schema: "", h_rule: "" },
   { rel_id: 30, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "b0ff5200435f1602", h_schema: "", h_rule: "" },
   { rel_id: 31, parent_id: 10, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "58e9866d59ba3b14", h_schema: "", h_rule: "" },
@@ -251,24 +257,24 @@ const arrival_targets: readonly string[] = ["name", "ping"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "name", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["oak"] },
-  { rel: "name", sql: `INSERT OR IGNORE INTO "coalesce_in_edge_body_samples_name" ("tree_id", "label") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [1, "oak"] },
+  { rel: "name", sql: `INSERT OR IGNORE INTO "coalesce_in_edge_body_samples_name_9267639f6ef8" ("tree_id", "label") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [1, "oak"] },
 ];
 
 const final_select: Record<string, string> = {
   labelled: `SELECT t."tree_id", CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label" FROM "__txt_coalesce_in_edge_body_samples_labelled" t`,
-  name: `SELECT t."tree_id", CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label" FROM "__txt_coalesce_in_edge_body_samples_name" t`,
-  ping: `SELECT t."tree_id" FROM "coalesce_in_edge_body_samples_ping" t`,
+  name: `SELECT t."tree_id", CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label" FROM "__txt_coalesce_in_edge_body_samples_name_9267639f6ef8" t`,
+  ping: `SELECT t."tree_id" FROM "coalesce_in_edge_body_samples_ping_72c6ac0097f9" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "labelled", kind: "log", table_name: "coalesce_in_edge_body_samples_labelled", delta_table_name: "__delta_coalesce_in_edge_body_samples_labelled", frontier_table_name: "__frontier_coalesce_in_edge_body_samples_labelled", next_frontier_table_name: "__next_frontier_coalesce_in_edge_body_samples_labelled", columns: ["tree_id", "label"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_coalesce_in_edge_body_samples_labelled" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."label", t."_sign"`, rule_observers: [] },
-  { rel: "name", kind: "set", table_name: "coalesce_in_edge_body_samples_name", delta_table_name: "__delta_coalesce_in_edge_body_samples_name", frontier_table_name: "__frontier_coalesce_in_edge_body_samples_name", next_frontier_table_name: "__next_frontier_coalesce_in_edge_body_samples_name", columns: ["tree_id", "label"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "coalesce_in_edge_body_samples_name" ("tree_id", "label") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "label"`, arrival_del_sql: `DELETE FROM "coalesce_in_edge_body_samples_name" WHERE ("tree_id", "label") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "label"`, boundary_sql: `SELECT t."tree_id", CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_coalesce_in_edge_body_samples_name" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."label", t."_sign"`, rule_observers: [] },
-  { rel: "ping", kind: "log", table_name: "coalesce_in_edge_body_samples_ping", delta_table_name: "__delta_coalesce_in_edge_body_samples_ping", frontier_table_name: "__frontier_coalesce_in_edge_body_samples_ping", next_frontier_table_name: "__next_frontier_coalesce_in_edge_body_samples_ping", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT INTO "coalesce_in_edge_body_samples_ping" ("tree_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "tree_id"`, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_coalesce_in_edge_body_samples_ping" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."_sign"`, rule_observers: ["labelled/2"] },
+  { rel: "name", kind: "set", table_name: "coalesce_in_edge_body_samples_name_9267639f6ef8", delta_table_name: "__delta_coalesce_in_edge_body_samples_name_9267639f6ef8", frontier_table_name: "__frontier_coalesce_in_edge_body_samples_name_9267639f6ef8", next_frontier_table_name: "__next_frontier_coalesce_in_edge_body_samples_name_9267639f6ef8", columns: ["tree_id", "label"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "coalesce_in_edge_body_samples_name_9267639f6ef8" ("tree_id", "label") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "label"`, arrival_del_sql: `DELETE FROM "coalesce_in_edge_body_samples_name_9267639f6ef8" WHERE ("tree_id", "label") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "label"`, boundary_sql: `SELECT t."tree_id", CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_coalesce_in_edge_body_samples_name_9267639f6ef8" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."label", t."_sign"`, rule_observers: [] },
+  { rel: "ping", kind: "log", table_name: "coalesce_in_edge_body_samples_ping_72c6ac0097f9", delta_table_name: "__delta_coalesce_in_edge_body_samples_ping_72c6ac0097f9", frontier_table_name: "__frontier_coalesce_in_edge_body_samples_ping_72c6ac0097f9", next_frontier_table_name: "__next_frontier_coalesce_in_edge_body_samples_ping_72c6ac0097f9", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT INTO "coalesce_in_edge_body_samples_ping_72c6ac0097f9" ("tree_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "tree_id"`, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_coalesce_in_edge_body_samples_ping_72c6ac0097f9" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."_sign"`, rule_observers: ["labelled/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "labelled", rule_id: "coalesce_in_edge_body_samples:labelled/2#1", head_kind: "log", head_table_name: "coalesce_in_edge_body_samples_labelled", head_delta_table_name: "__delta_coalesce_in_edge_body_samples_labelled", head_columns: ["tree_id", "label"], key_indices: [], project_sql: `SELECT d0."tree_id" AS "tree_id", b0."label" AS "label" FROM "__frontier_coalesce_in_edge_body_samples_ping" d0, "coalesce_in_edge_body_samples_name" b0 WHERE d0."_phase" >= 0 AND b0."tree_id" = d0."tree_id" ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "labelled", rule_id: "coalesce_in_edge_body_samples:labelled/2#2", head_kind: "log", head_table_name: "coalesce_in_edge_body_samples_labelled", head_delta_table_name: "__delta_coalesce_in_edge_body_samples_labelled", head_columns: ["tree_id", "label"], key_indices: [], project_sql: `SELECT d0."tree_id" AS "tree_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'unnamed') AS "label" FROM "__frontier_coalesce_in_edge_body_samples_ping" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "coalesce_in_edge_body_samples_name" n0 WHERE n0."tree_id" = d0."tree_id") ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "labelled", rule_id: "coalesce_in_edge_body_samples:labelled/2#1", head_kind: "log", head_table_name: "coalesce_in_edge_body_samples_labelled", head_delta_table_name: "__delta_coalesce_in_edge_body_samples_labelled", head_columns: ["tree_id", "label"], key_indices: [], project_sql: `SELECT d0."tree_id" AS "tree_id", b0."label" AS "label" FROM "__frontier_coalesce_in_edge_body_samples_ping_72c6ac0097f9" d0, "coalesce_in_edge_body_samples_name_9267639f6ef8" b0 WHERE d0."_phase" >= 0 AND b0."tree_id" = d0."tree_id" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "labelled", rule_id: "coalesce_in_edge_body_samples:labelled/2#2", head_kind: "log", head_table_name: "coalesce_in_edge_body_samples_labelled", head_delta_table_name: "__delta_coalesce_in_edge_body_samples_labelled", head_columns: ["tree_id", "label"], key_indices: [], project_sql: `SELECT d0."tree_id" AS "tree_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'unnamed') AS "label" FROM "__frontier_coalesce_in_edge_body_samples_ping_72c6ac0097f9" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "coalesce_in_edge_body_samples_name_9267639f6ef8" n0 WHERE n0."tree_id" = d0."tree_id") ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -323,6 +329,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

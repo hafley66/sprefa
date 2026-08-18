@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -160,8 +160,8 @@ const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "regexp_non_match_matched" ("__id" INTEGER PRIMARY KEY, "text" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("text"))`,
   `CREATE TEMP VIEW "__txt_regexp_non_match_matched" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text", t."__refcount" AS "__refcount" FROM "regexp_non_match_matched" t`,
-  `CREATE TABLE "regexp_non_match_source" ("__id" INTEGER PRIMARY KEY, "text" INTEGER NOT NULL, UNIQUE ("text"))`,
-  `CREATE TEMP VIEW "__txt_regexp_non_match_source" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text" FROM "regexp_non_match_source" t`,
+  `CREATE TABLE "regexp_non_match_source_758e6290c675" ("__id" INTEGER PRIMARY KEY, "text" INTEGER NOT NULL, UNIQUE ("text"))`,
+  `CREATE TEMP VIEW "__txt_regexp_non_match_source_758e6290c675" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text" FROM "regexp_non_match_source_758e6290c675" t`,
   `CREATE TEMP TABLE "__delta_regexp_non_match_matched" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_regexp_non_match_matched_sign" ON "__delta_regexp_non_match_matched" ("_sign")`,
   `CREATE INDEX "__delta_regexp_non_match_matched_group" ON "__delta_regexp_non_match_matched" ("text")`,
@@ -169,13 +169,13 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_regexp_non_match_matched_phase" ON "__frontier_regexp_non_match_matched" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_regexp_non_match_matched" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt___delta_regexp_non_match_matched" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_regexp_non_match_matched" t`,
-  `CREATE TEMP TABLE "__delta_regexp_non_match_source" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_regexp_non_match_source_sign" ON "__delta_regexp_non_match_source" ("_sign")`,
-  `CREATE INDEX "__delta_regexp_non_match_source_group" ON "__delta_regexp_non_match_source" ("text")`,
-  `CREATE TEMP TABLE "__frontier_regexp_non_match_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_regexp_non_match_source_phase" ON "__frontier_regexp_non_match_source" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_regexp_non_match_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_regexp_non_match_source" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_regexp_non_match_source" t`,
+  `CREATE TEMP TABLE "__delta_regexp_non_match_source_758e6290c675" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_regexp_non_match_source_758e6290c675_sign" ON "__delta_regexp_non_match_source_758e6290c675" ("_sign")`,
+  `CREATE INDEX "__delta_regexp_non_match_source_758e6290c675_group" ON "__delta_regexp_non_match_source_758e6290c675" ("text")`,
+  `CREATE TEMP TABLE "__frontier_regexp_non_match_source_758e6290c675" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_regexp_non_match_source_758e6290c675_phase" ON "__frontier_regexp_non_match_source_758e6290c675" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_regexp_non_match_source_758e6290c675" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_regexp_non_match_source_758e6290c675" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_regexp_non_match_source_758e6290c675" t`,
   `CREATE TEMP TABLE "__support_next_regexp_non_match_matched" ("text" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("text")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__new_regexp_non_match_matched" ("text" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "regexp_non_match_matched_zero" ON "regexp_non_match_matched" ("__refcount") WHERE "__refcount" <= 0`,
@@ -184,6 +184,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   matched: ["text"],
   source: ["text"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  matched: "regexp_non_match_matched",
+  source: "regexp_non_match_source_758e6290c675",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -213,11 +218,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_regexp_non_match_matched", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "17d7bf78a2ab8c56", h_schema: "2822306bd878024e", h_rule: "" },
   { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__txt_regexp_non_match_matched", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "d08adeac00ceae07", h_schema: "a477182a3bbcf663", h_rule: "" },
   { rel_id: 16, parent_id: 12, ordinal: 0, local_name: "__txt___delta_regexp_non_match_matched", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "162d1b844e8474c5", h_schema: "a477182a3bbcf663", h_rule: "" },
-  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__delta_regexp_non_match_source", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "abfb24761faf4f2b", h_schema: "6cd577d2d022c9c5", h_rule: "" },
-  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__frontier_regexp_non_match_source", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "d40a4e3e1c4ef173", h_schema: "2822306bd878024e", h_rule: "" },
-  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__next_frontier_regexp_non_match_source", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "b437873545907e0b", h_schema: "2822306bd878024e", h_rule: "" },
-  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__txt_regexp_non_match_source", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "165216689d1ec786", h_schema: "a477182a3bbcf663", h_rule: "" },
-  { rel_id: 21, parent_id: 17, ordinal: 0, local_name: "__txt___delta_regexp_non_match_source", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "405462fcbe4a338d", h_schema: "a477182a3bbcf663", h_rule: "" },
+  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__delta_regexp_non_match_source_758e6290c675", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "6e4a8ab818e553be", h_schema: "6cd577d2d022c9c5", h_rule: "" },
+  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__frontier_regexp_non_match_source_758e6290c675", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "95872b35cc161e19", h_schema: "2822306bd878024e", h_rule: "" },
+  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__next_frontier_regexp_non_match_source_758e6290c675", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "1a908fea77c7656f", h_schema: "2822306bd878024e", h_rule: "" },
+  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__txt_regexp_non_match_source_758e6290c675", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "b0dcc28065651a04", h_schema: "a477182a3bbcf663", h_rule: "" },
+  { rel_id: 21, parent_id: 17, ordinal: 0, local_name: "__txt___delta_regexp_non_match_source_758e6290c675", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "3c984655c43ea3a7", h_schema: "a477182a3bbcf663", h_rule: "" },
   { rel_id: 22, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "939463e69cb85541", h_schema: "", h_rule: "" },
   { rel_id: 23, parent_id: 8, ordinal: 0, local_name: "__support_next_regexp_non_match_matched", kind: "refcount", type_id: 0, arity: 2, module_id: 7, h_id: "643bb93bd998b31b", h_schema: "", h_rule: "" },
   { rel_id: 24, parent_id: 8, ordinal: 0, local_name: "__new_regexp_non_match_matched", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 7, h_id: "6c357720b3710cc7", h_schema: "", h_rule: "" },
@@ -233,29 +238,29 @@ const arrival_targets: readonly string[] = ["source"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "source", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["abc"] },
-  { rel: "source", sql: `INSERT OR IGNORE INTO "regexp_non_match_source" ("text") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["abc"] },
+  { rel: "source", sql: `INSERT OR IGNORE INTO "regexp_non_match_source_758e6290c675" ("text") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["abc"] },
   { rel: "source", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["axc"] },
-  { rel: "source", sql: `INSERT OR IGNORE INTO "regexp_non_match_source" ("text") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["axc"] },
+  { rel: "source", sql: `INSERT OR IGNORE INTO "regexp_non_match_source_758e6290c675" ("text") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["axc"] },
   { rel: "matched", sql: `DELETE FROM "regexp_non_match_matched"`, params: [] },
-  { rel: "matched", sql: `INSERT OR IGNORE INTO "regexp_non_match_matched" ("text") SELECT b0."text" FROM "regexp_non_match_source" b0 WHERE ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text") REGEXP '^z+$')`, params: [] },
+  { rel: "matched", sql: `INSERT OR IGNORE INTO "regexp_non_match_matched" ("text") SELECT b0."text" FROM "regexp_non_match_source_758e6290c675" b0 WHERE ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text") REGEXP '^z+$')`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
   matched: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text" FROM "__txt_regexp_non_match_matched" t`,
-  source: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text" FROM "__txt_regexp_non_match_source" t`,
+  source: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text" FROM "__txt_regexp_non_match_source_758e6290c675" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "matched", kind: "set", table_name: "regexp_non_match_matched", delta_table_name: "__delta_regexp_non_match_matched", frontier_table_name: "__frontier_regexp_non_match_matched", next_frontier_table_name: "__next_frontier_regexp_non_match_matched", columns: ["text"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_regexp_non_match_matched" t WHERE t."_sign" IN (-1, 1) GROUP BY t."text", t."_sign"`, rule_observers: [] },
-  { rel: "source", kind: "set", table_name: "regexp_non_match_source", delta_table_name: "__delta_regexp_non_match_source", frontier_table_name: "__frontier_regexp_non_match_source", next_frontier_table_name: "__next_frontier_regexp_non_match_source", columns: ["text"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "regexp_non_match_source" ("text") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "text"`, arrival_del_sql: `DELETE FROM "regexp_non_match_source" WHERE ("text") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "text"`, boundary_sql: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_regexp_non_match_source" t WHERE t."_sign" IN (-1, 1) GROUP BY t."text", t."_sign"`, rule_observers: ["matched/1"] },
+  { rel: "source", kind: "set", table_name: "regexp_non_match_source_758e6290c675", delta_table_name: "__delta_regexp_non_match_source_758e6290c675", frontier_table_name: "__frontier_regexp_non_match_source_758e6290c675", next_frontier_table_name: "__next_frontier_regexp_non_match_source_758e6290c675", columns: ["text"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "regexp_non_match_source_758e6290c675" ("text") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "text"`, arrival_del_sql: `DELETE FROM "regexp_non_match_source_758e6290c675" WHERE ("text") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "text"`, boundary_sql: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_regexp_non_match_source_758e6290c675" t WHERE t."_sign" IN (-1, 1) GROUP BY t."text", t."_sign"`, rule_observers: ["matched/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "matched", rule_id: "regexp_non_match:matched/1#1", head_delta_table_name: "__delta_regexp_non_match_matched", head_columns: ["text"], insert_sql: `INSERT OR IGNORE INTO "regexp_non_match_matched" ("text") SELECT DISTINCT d0."text" FROM "__frontier_regexp_non_match_source" d0 WHERE d0."_phase" >= 0 AND ((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."text") REGEXP '^z+$') RETURNING "text"`, select_sql: `SELECT "text" FROM "regexp_non_match_matched"`, recompute_sql: `DELETE FROM "regexp_non_match_matched";
-INSERT OR IGNORE INTO "regexp_non_match_matched" ("text") SELECT b0."text" FROM "regexp_non_match_source" b0 WHERE ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text") REGEXP '^z+$')`, support_sql: [`DELETE FROM "__support_next_regexp_non_match_matched"`, `INSERT INTO "__support_next_regexp_non_match_matched" ("text", "__refcount") SELECT "text", sum("__refcount") FROM (SELECT b0."text" AS "text", count(*) AS "__refcount" FROM "regexp_non_match_source" b0 WHERE ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text") REGEXP '^z+$') GROUP BY b0."text") GROUP BY "text"`, `UPDATE "regexp_non_match_matched" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_regexp_non_match_matched" n WHERE n."text" = h."text"), 0)`, `INSERT INTO "__delta_regexp_non_match_matched" ("_sign", "_sequence", "text") SELECT -1, row_number() OVER () - 1, "text" FROM "regexp_non_match_matched" WHERE "__refcount" <= 0`, `DELETE FROM "regexp_non_match_matched" WHERE "__refcount" <= 0`, `DELETE FROM "__new_regexp_non_match_matched"`, `INSERT INTO "__new_regexp_non_match_matched" ("text", "__refcount") SELECT n."text", n."__refcount" FROM "__support_next_regexp_non_match_matched" n LEFT JOIN "regexp_non_match_matched" h ON n."text" = h."text" WHERE h."text" IS NULL`, `INSERT INTO "__delta_regexp_non_match_matched" ("_sign", "_sequence", "text") SELECT 1, "rowid" - 1, "text" FROM "__new_regexp_non_match_matched"`, `INSERT INTO "__frontier_regexp_non_match_matched" ("_phase", "_sequence", "text") SELECT ?, "rowid" - 1, "text" FROM "__new_regexp_non_match_matched"`, `INSERT INTO "__next_frontier_regexp_non_match_matched" ("_phase", "_sequence", "text") SELECT ?, "rowid" - 1, "text" FROM "__new_regexp_non_match_matched"`, `INSERT OR IGNORE INTO "regexp_non_match_matched" ("text", "__refcount") SELECT n."text", n."__refcount" FROM "__support_next_regexp_non_match_matched" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "matched", rule_id: "regexp_non_match:matched/1#1", head_delta_table_name: "__delta_regexp_non_match_matched", head_columns: ["text"], insert_sql: `INSERT OR IGNORE INTO "regexp_non_match_matched" ("text") SELECT DISTINCT d0."text" FROM "__frontier_regexp_non_match_source_758e6290c675" d0 WHERE d0."_phase" >= 0 AND ((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."text") REGEXP '^z+$') RETURNING "text"`, select_sql: `SELECT "text" FROM "regexp_non_match_matched"`, recompute_sql: `DELETE FROM "regexp_non_match_matched";
+INSERT OR IGNORE INTO "regexp_non_match_matched" ("text") SELECT b0."text" FROM "regexp_non_match_source_758e6290c675" b0 WHERE ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text") REGEXP '^z+$')`, support_sql: [`DELETE FROM "__support_next_regexp_non_match_matched"`, `INSERT INTO "__support_next_regexp_non_match_matched" ("text", "__refcount") SELECT "text", sum("__refcount") FROM (SELECT b0."text" AS "text", count(*) AS "__refcount" FROM "regexp_non_match_source_758e6290c675" b0 WHERE ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text") REGEXP '^z+$') GROUP BY b0."text") GROUP BY "text"`, `UPDATE "regexp_non_match_matched" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_regexp_non_match_matched" n WHERE n."text" = h."text"), 0)`, `INSERT INTO "__delta_regexp_non_match_matched" ("_sign", "_sequence", "text") SELECT -1, row_number() OVER () - 1, "text" FROM "regexp_non_match_matched" WHERE "__refcount" <= 0`, `DELETE FROM "regexp_non_match_matched" WHERE "__refcount" <= 0`, `DELETE FROM "__new_regexp_non_match_matched"`, `INSERT INTO "__new_regexp_non_match_matched" ("text", "__refcount") SELECT n."text", n."__refcount" FROM "__support_next_regexp_non_match_matched" n LEFT JOIN "regexp_non_match_matched" h ON n."text" = h."text" WHERE h."text" IS NULL`, `INSERT INTO "__delta_regexp_non_match_matched" ("_sign", "_sequence", "text") SELECT 1, "rowid" - 1, "text" FROM "__new_regexp_non_match_matched"`, `INSERT INTO "__frontier_regexp_non_match_matched" ("_phase", "_sequence", "text") SELECT ?, "rowid" - 1, "text" FROM "__new_regexp_non_match_matched"`, `INSERT INTO "__next_frontier_regexp_non_match_matched" ("_phase", "_sequence", "text") SELECT ?, "rowid" - 1, "text" FROM "__new_regexp_non_match_matched"`, `INSERT OR IGNORE INTO "regexp_non_match_matched" ("text", "__refcount") SELECT n."text", n."__refcount" FROM "__support_next_regexp_non_match_matched" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const RECONCILE_EVERY_TICK = false;
@@ -306,6 +311,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

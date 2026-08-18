@@ -53,7 +53,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -146,14 +146,14 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "arrival_affinity_rewrite_keeps_delta_probe_in" ("probe_value" INTEGER NOT NULL)`,
+  `CREATE TABLE "arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e" ("probe_value" INTEGER NOT NULL)`,
   `CREATE TABLE "arrival_affinity_rewrite_keeps_delta_probe_out" ("__id" INTEGER PRIMARY KEY, "probe_value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("probe_value"))`,
-  `CREATE TEMP TABLE "__delta_arrival_affinity_rewrite_keeps_delta_probe_in" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "probe_value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_arrival_affinity_rewrite_keeps_delta_probe_in_sign" ON "__delta_arrival_affinity_rewrite_keeps_delta_probe_in" ("_sign")`,
-  `CREATE INDEX "__delta_arrival_affinity_rewrite_keeps_delta_probe_in_group" ON "__delta_arrival_affinity_rewrite_keeps_delta_probe_in" ("probe_value")`,
-  `CREATE TEMP TABLE "__frontier_arrival_affinity_rewrite_keeps_delta_probe_in" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "probe_value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_arrival_affinity_rewrite_keeps_delta_probe_in_phase" ON "__frontier_arrival_affinity_rewrite_keeps_delta_probe_in" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_arrival_affinity_rewrite_keeps_delta_probe_in" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "probe_value" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "probe_value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e_sign" ON "__delta_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e" ("_sign")`,
+  `CREATE INDEX "__delta_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e_group" ON "__delta_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e" ("probe_value")`,
+  `CREATE TEMP TABLE "__frontier_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "probe_value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e_phase" ON "__frontier_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "probe_value" INTEGER NOT NULL)`,
   `CREATE TEMP TABLE "__delta_arrival_affinity_rewrite_keeps_delta_probe_out" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "probe_value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_arrival_affinity_rewrite_keeps_delta_probe_out_sign" ON "__delta_arrival_affinity_rewrite_keeps_delta_probe_out" ("_sign")`,
   `CREATE INDEX "__delta_arrival_affinity_rewrite_keeps_delta_probe_out_group" ON "__delta_arrival_affinity_rewrite_keeps_delta_probe_out" ("probe_value")`,
@@ -168,6 +168,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   probe_in: ["probe_value"],
   probe_out: ["probe_value"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  probe_in: "arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e",
+  probe_out: "arrival_affinity_rewrite_keeps_delta_probe_out",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -192,9 +197,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "probe_value", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "9724d65857ec8014", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 7, ordinal: 0, local_name: "probe_out", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "d57ced030785fa98", h_schema: "abe8b09709bc1ed9", h_rule: "0710cc1507526cfd" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "probe_value", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "b948624c4e43df3a", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_arrival_affinity_rewrite_keeps_delta_probe_in", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "50940d30718ac693", h_schema: "a08f8a8633764288", h_rule: "" },
-  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_arrival_affinity_rewrite_keeps_delta_probe_in", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "98f28736ae978dc8", h_schema: "0c9ce32d1824717e", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_arrival_affinity_rewrite_keeps_delta_probe_in", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "75065d8922b0c313", h_schema: "0c9ce32d1824717e", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "deb00ec052370a67", h_schema: "a08f8a8633764288", h_rule: "" },
+  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "a5988f6f5be0e109", h_schema: "0c9ce32d1824717e", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "d1014ffa4ca73062", h_schema: "0c9ce32d1824717e", h_rule: "" },
   { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_arrival_affinity_rewrite_keeps_delta_probe_out", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "35c5ce20e4aa5cd4", h_schema: "a08f8a8633764288", h_rule: "" },
   { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_arrival_affinity_rewrite_keeps_delta_probe_out", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "f12404ab11a6d40b", h_schema: "0c9ce32d1824717e", h_rule: "" },
   { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_arrival_affinity_rewrite_keeps_delta_probe_out", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "b0cd8ebb00084b23", h_schema: "0c9ce32d1824717e", h_rule: "" },
@@ -211,16 +216,16 @@ const arrival_targets: readonly string[] = ["probe_in"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "probe_out", sql: `DELETE FROM "arrival_affinity_rewrite_keeps_delta_probe_out"`, params: [] },
-  { rel: "probe_out", sql: `INSERT OR IGNORE INTO "arrival_affinity_rewrite_keeps_delta_probe_out" ("probe_value") SELECT b0."probe_value" FROM "arrival_affinity_rewrite_keeps_delta_probe_in" b0`, params: [] },
+  { rel: "probe_out", sql: `INSERT OR IGNORE INTO "arrival_affinity_rewrite_keeps_delta_probe_out" ("probe_value") SELECT b0."probe_value" FROM "arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e" b0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
-  probe_in: `SELECT t."probe_value" FROM "arrival_affinity_rewrite_keeps_delta_probe_in" t`,
+  probe_in: `SELECT t."probe_value" FROM "arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e" t`,
   probe_out: `SELECT t."probe_value" FROM "arrival_affinity_rewrite_keeps_delta_probe_out" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "probe_in", kind: "log", table_name: "arrival_affinity_rewrite_keeps_delta_probe_in", delta_table_name: "__delta_arrival_affinity_rewrite_keeps_delta_probe_in", frontier_table_name: "__frontier_arrival_affinity_rewrite_keeps_delta_probe_in", next_frontier_table_name: "__next_frontier_arrival_affinity_rewrite_keeps_delta_probe_in", columns: ["probe_value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT INTO "arrival_affinity_rewrite_keeps_delta_probe_in" ("probe_value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "probe_value"`, arrival_del_sql: null, boundary_sql: `SELECT t."probe_value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_arrival_affinity_rewrite_keeps_delta_probe_in" t WHERE t."_sign" IN (-1, 1) GROUP BY t."probe_value", t."_sign"`, rule_observers: ["probe_out/1"] },
+  { rel: "probe_in", kind: "log", table_name: "arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e", delta_table_name: "__delta_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e", frontier_table_name: "__frontier_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e", next_frontier_table_name: "__next_frontier_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e", columns: ["probe_value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT INTO "arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e" ("probe_value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "probe_value"`, arrival_del_sql: null, boundary_sql: `SELECT t."probe_value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e" t WHERE t."_sign" IN (-1, 1) GROUP BY t."probe_value", t."_sign"`, rule_observers: ["probe_out/1"] },
   { rel: "probe_out", kind: "set", table_name: "arrival_affinity_rewrite_keeps_delta_probe_out", delta_table_name: "__delta_arrival_affinity_rewrite_keeps_delta_probe_out", frontier_table_name: "__frontier_arrival_affinity_rewrite_keeps_delta_probe_out", next_frontier_table_name: "__next_frontier_arrival_affinity_rewrite_keeps_delta_probe_out", columns: ["probe_value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."probe_value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_arrival_affinity_rewrite_keeps_delta_probe_out" t WHERE t."_sign" IN (-1, 1) GROUP BY t."probe_value", t."_sign"`, rule_observers: [] },
 ];
 
@@ -228,8 +233,8 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "probe_out", rule_id: "arrival_affinity_rewrite_keeps_delta:probe_out/1#1", head_delta_table_name: "__delta_arrival_affinity_rewrite_keeps_delta_probe_out", head_columns: ["probe_value"], insert_sql: `INSERT OR IGNORE INTO "arrival_affinity_rewrite_keeps_delta_probe_out" ("probe_value") SELECT DISTINCT d0."probe_value" FROM "__frontier_arrival_affinity_rewrite_keeps_delta_probe_in" d0 WHERE d0."_phase" >= 0 RETURNING "probe_value"`, select_sql: `SELECT "probe_value" FROM "arrival_affinity_rewrite_keeps_delta_probe_out"`, recompute_sql: `DELETE FROM "arrival_affinity_rewrite_keeps_delta_probe_out";
-INSERT OR IGNORE INTO "arrival_affinity_rewrite_keeps_delta_probe_out" ("probe_value") SELECT b0."probe_value" FROM "arrival_affinity_rewrite_keeps_delta_probe_in" b0`, support_sql: [`DELETE FROM "__support_next_arrival_affinity_rewrite_keeps_delta_probe_out"`, `INSERT INTO "__support_next_arrival_affinity_rewrite_keeps_delta_probe_out" ("probe_value", "__refcount") SELECT "probe_value", sum("__refcount") FROM (SELECT b0."probe_value" AS "probe_value", count(*) AS "__refcount" FROM "arrival_affinity_rewrite_keeps_delta_probe_in" b0 GROUP BY b0."probe_value") GROUP BY "probe_value"`, `UPDATE "arrival_affinity_rewrite_keeps_delta_probe_out" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_arrival_affinity_rewrite_keeps_delta_probe_out" n WHERE n."probe_value" = h."probe_value"), 0)`, `INSERT INTO "__delta_arrival_affinity_rewrite_keeps_delta_probe_out" ("_sign", "_sequence", "probe_value") SELECT -1, row_number() OVER () - 1, "probe_value" FROM "arrival_affinity_rewrite_keeps_delta_probe_out" WHERE "__refcount" <= 0`, `DELETE FROM "arrival_affinity_rewrite_keeps_delta_probe_out" WHERE "__refcount" <= 0`, `DELETE FROM "__new_arrival_affinity_rewrite_keeps_delta_probe_out"`, `INSERT INTO "__new_arrival_affinity_rewrite_keeps_delta_probe_out" ("probe_value", "__refcount") SELECT n."probe_value", n."__refcount" FROM "__support_next_arrival_affinity_rewrite_keeps_delta_probe_out" n LEFT JOIN "arrival_affinity_rewrite_keeps_delta_probe_out" h ON n."probe_value" = h."probe_value" WHERE h."probe_value" IS NULL`, `INSERT INTO "__delta_arrival_affinity_rewrite_keeps_delta_probe_out" ("_sign", "_sequence", "probe_value") SELECT 1, "rowid" - 1, "probe_value" FROM "__new_arrival_affinity_rewrite_keeps_delta_probe_out"`, `INSERT INTO "__frontier_arrival_affinity_rewrite_keeps_delta_probe_out" ("_phase", "_sequence", "probe_value") SELECT ?, "rowid" - 1, "probe_value" FROM "__new_arrival_affinity_rewrite_keeps_delta_probe_out"`, `INSERT INTO "__next_frontier_arrival_affinity_rewrite_keeps_delta_probe_out" ("_phase", "_sequence", "probe_value") SELECT ?, "rowid" - 1, "probe_value" FROM "__new_arrival_affinity_rewrite_keeps_delta_probe_out"`, `INSERT OR IGNORE INTO "arrival_affinity_rewrite_keeps_delta_probe_out" ("probe_value", "__refcount") SELECT n."probe_value", n."__refcount" FROM "__support_next_arrival_affinity_rewrite_keeps_delta_probe_out" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "probe_out", rule_id: "arrival_affinity_rewrite_keeps_delta:probe_out/1#1", head_delta_table_name: "__delta_arrival_affinity_rewrite_keeps_delta_probe_out", head_columns: ["probe_value"], insert_sql: `INSERT OR IGNORE INTO "arrival_affinity_rewrite_keeps_delta_probe_out" ("probe_value") SELECT DISTINCT d0."probe_value" FROM "__frontier_arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e" d0 WHERE d0."_phase" >= 0 RETURNING "probe_value"`, select_sql: `SELECT "probe_value" FROM "arrival_affinity_rewrite_keeps_delta_probe_out"`, recompute_sql: `DELETE FROM "arrival_affinity_rewrite_keeps_delta_probe_out";
+INSERT OR IGNORE INTO "arrival_affinity_rewrite_keeps_delta_probe_out" ("probe_value") SELECT b0."probe_value" FROM "arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e" b0`, support_sql: [`DELETE FROM "__support_next_arrival_affinity_rewrite_keeps_delta_probe_out"`, `INSERT INTO "__support_next_arrival_affinity_rewrite_keeps_delta_probe_out" ("probe_value", "__refcount") SELECT "probe_value", sum("__refcount") FROM (SELECT b0."probe_value" AS "probe_value", count(*) AS "__refcount" FROM "arrival_affinity_rewrite_keeps_delta_probe_in_783bca235b1e" b0 GROUP BY b0."probe_value") GROUP BY "probe_value"`, `UPDATE "arrival_affinity_rewrite_keeps_delta_probe_out" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_arrival_affinity_rewrite_keeps_delta_probe_out" n WHERE n."probe_value" = h."probe_value"), 0)`, `INSERT INTO "__delta_arrival_affinity_rewrite_keeps_delta_probe_out" ("_sign", "_sequence", "probe_value") SELECT -1, row_number() OVER () - 1, "probe_value" FROM "arrival_affinity_rewrite_keeps_delta_probe_out" WHERE "__refcount" <= 0`, `DELETE FROM "arrival_affinity_rewrite_keeps_delta_probe_out" WHERE "__refcount" <= 0`, `DELETE FROM "__new_arrival_affinity_rewrite_keeps_delta_probe_out"`, `INSERT INTO "__new_arrival_affinity_rewrite_keeps_delta_probe_out" ("probe_value", "__refcount") SELECT n."probe_value", n."__refcount" FROM "__support_next_arrival_affinity_rewrite_keeps_delta_probe_out" n LEFT JOIN "arrival_affinity_rewrite_keeps_delta_probe_out" h ON n."probe_value" = h."probe_value" WHERE h."probe_value" IS NULL`, `INSERT INTO "__delta_arrival_affinity_rewrite_keeps_delta_probe_out" ("_sign", "_sequence", "probe_value") SELECT 1, "rowid" - 1, "probe_value" FROM "__new_arrival_affinity_rewrite_keeps_delta_probe_out"`, `INSERT INTO "__frontier_arrival_affinity_rewrite_keeps_delta_probe_out" ("_phase", "_sequence", "probe_value") SELECT ?, "rowid" - 1, "probe_value" FROM "__new_arrival_affinity_rewrite_keeps_delta_probe_out"`, `INSERT INTO "__next_frontier_arrival_affinity_rewrite_keeps_delta_probe_out" ("_phase", "_sequence", "probe_value") SELECT ?, "rowid" - 1, "probe_value" FROM "__new_arrival_affinity_rewrite_keeps_delta_probe_out"`, `INSERT OR IGNORE INTO "arrival_affinity_rewrite_keeps_delta_probe_out" ("probe_value", "__refcount") SELECT n."probe_value", n."__refcount" FROM "__support_next_arrival_affinity_rewrite_keeps_delta_probe_out" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const RECONCILE_EVERY_TICK = false;
@@ -277,6 +282,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

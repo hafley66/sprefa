@@ -85,6 +85,7 @@ pub enum FamilyTag {
     Module,
     Cst,
     Cfg,
+    Data,
 }
 
 /// The per-file string interner backing every `NameId`. One per extraction; the
@@ -1024,6 +1025,118 @@ impl Family for CfgF {
     const TAG: FamilyTag = FamilyTag::Cfg;
 }
 
+// ── DATA plane: DataF ───────────────────────────────────
+
+/// json / jsonl / yaml / toml as ONE plane, v5 `src/datapath.rs` ported: one
+/// grammar per extension, every hit with a byte span. A row TABLE, not a graph,
+/// so `nodes` and `edges` stay empty and every row rides `DataFAux`.
+#[derive(Default, Copy, Clone, Debug)]
+pub struct DataF;
+
+/// Which grammar read the file, from its extension (v5 `datapath.rs` `fmt_of`).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum DataFormat {
+    #[default]
+    Json,
+    Jsonl,
+    Yaml,
+    Toml,
+}
+
+impl DataFormat {
+    /// `.jsonl`/`.ndjson` -> Jsonl, `.yaml`/`.yml` -> Yaml, `.toml` -> Toml,
+    /// anything else -> Json (v5 `fmt_of`, datapath.rs:18-25).
+    pub fn of_path(path: &str) -> Self {
+        match path.rsplit('.').next().unwrap_or("") {
+            "jsonl" | "ndjson" => DataFormat::Jsonl,
+            "yaml" | "yml" => DataFormat::Yaml,
+            "toml" => DataFormat::Toml,
+            _ => DataFormat::Json,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DataFormat::Json => "json",
+            DataFormat::Jsonl => "jsonl",
+            DataFormat::Yaml => "yaml",
+            DataFormat::Toml => "toml",
+        }
+    }
+}
+
+/// The value classes every data document is built from.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DataValueKind {
+    Object,
+    Array,
+    String,
+    Number,
+    Boolean,
+    Null,
+}
+
+impl DataValueKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DataValueKind::Object => "object",
+            DataValueKind::Array => "array",
+            DataValueKind::String => "string",
+            DataValueKind::Number => "number",
+            DataValueKind::Boolean => "boolean",
+            DataValueKind::Null => "null",
+        }
+    }
+}
+
+/// One document of a file: a yaml stream yields one per `---` document, a jsonl
+/// file one per non-empty line, json and toml exactly one. `ordinal` is the
+/// surrogate key every `DataValueRow` of the document joins on. `value` is the
+/// document as a json VALUE built from the same parse the rows come from, and it
+/// is the column dl6's `decode/2` brace pattern reads.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DataDoc {
+    pub ordinal: u32,
+    pub span: Span,
+    pub value: serde_json::Value,
+}
+
+/// One value inside a document. `path` is v5's dotted address (`paths./pets.get`,
+/// array indices as decimal, a toml dotted key expanded to one segment each);
+/// the root value's path is the empty string. `text` is the scalar's unquoted,
+/// unescaped source text and is None for `Object`/`Array`, whose `span` already
+/// delimits the whole subtree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DataValueRow {
+    pub doc: u32,
+    pub path: NameId,
+    pub kind: DataValueKind,
+    pub text: Option<NameId>,
+    pub span: Span,
+}
+
+/// The DataF side-channel: the plane's whole output.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DataFAux {
+    pub format: DataFormat,
+    pub docs: Vec<DataDoc>,
+    pub values: Vec<DataValueRow>,
+}
+
+/// Nothing on this plane relates two nodes; the parent link is spelled by the
+/// dotted `path` prefix, never by an edge.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DataEdgeKind {
+    Child,
+}
+
+impl Family for DataF {
+    type NodeKind = DataValueKind;
+    type EdgeKind = DataEdgeKind;
+    type Aux = DataFAux;
+    const TAG: FamilyTag = FamilyTag::Data;
+}
+
 // ── RESOLUTION plane: ModuleF  (COLLAPSED BY DECISION - not a family) ───────
 // Fork C, chosen by Chris 2026-08-17 (issue extract-modulef-collapse): no new
 // family. Phase-1 specifier rows stay in `CallFAux.specifiers`, and v5's
@@ -1734,6 +1847,7 @@ pub struct FamilyMask {
     pub types: bool,
     pub call: bool,
     pub df: bool,
+    pub data: bool,
 }
 
 impl FamilyMask {
@@ -1742,12 +1856,14 @@ impl FamilyMask {
         types: true,
         call: true,
         df: true,
+        data: true,
     };
     pub const NONE: Self = Self {
         cst: false,
         types: false,
         call: false,
         df: false,
+        data: false,
     };
 }
 
@@ -1760,6 +1876,7 @@ pub struct ExtractOutput {
     pub types: Option<FamilyBundle<TypeF>>,
     pub call: Option<FamilyBundle<CallF>>,
     pub df: Option<FamilyBundle<DfF>>,
+    pub data: Option<FamilyBundle<DataF>>,
 }
 
 /// One language binding: a Parser + its per-family Project<F>s behind one masked
@@ -1913,6 +2030,27 @@ pub enum FlatFact {
         tag: String,
         arg: Option<String>,
         text: String,
+    },
+    /// DataF document row: one json/jsonl/yaml/toml document of the file.
+    /// `doc` is the whole document as a json VALUE, the column `decode/2` reads.
+    #[serde(rename = "data_doc")]
+    DataDocOut {
+        family: FamilyTag,
+        ordinal: u32,
+        span: SpanOut,
+        format: String,
+        doc: serde_json::Value,
+    },
+    /// DataF value row: one value inside a document, addressed by its dotted
+    /// path. `text` is null for objects and arrays.
+    #[serde(rename = "data_value")]
+    DataValueOut {
+        family: FamilyTag,
+        ordinal: u32,
+        path: String,
+        kind: String,
+        text: Option<String>,
+        span: SpanOut,
     },
     /// TypeF doc structure row: one heading or fenced code block of a document.
     #[serde(rename = "doc_node")]

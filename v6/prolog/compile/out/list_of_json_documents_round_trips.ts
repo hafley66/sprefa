@@ -53,7 +53,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -146,14 +146,14 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "list_of_json_documents_round_trips_batch" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "payloads" TEXT NOT NULL CHECK (json_valid("payloads") AND json_type("payloads") = 'array'), UNIQUE ("id", "payloads"))`,
+  `CREATE TABLE "list_of_json_documents_round_trips_batch_34e0b1a1ffaf" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "payloads" TEXT NOT NULL CHECK (json_valid("payloads") AND json_type("payloads") = 'array'), UNIQUE ("id", "payloads"))`,
   `CREATE TABLE "list_of_json_documents_round_trips_carry" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "payloads" TEXT NOT NULL CHECK (json_valid("payloads") AND json_type("payloads") = 'array'), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("id", "payloads"))`,
-  `CREATE TEMP TABLE "__delta_list_of_json_documents_round_trips_batch" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payloads" TEXT NOT NULL CHECK (json_valid("payloads") AND json_type("payloads") = 'array'))`,
-  `CREATE INDEX "__delta_list_of_json_documents_round_trips_batch_sign" ON "__delta_list_of_json_documents_round_trips_batch" ("_sign")`,
-  `CREATE INDEX "__delta_list_of_json_documents_round_trips_batch_group" ON "__delta_list_of_json_documents_round_trips_batch" ("id", "payloads")`,
-  `CREATE TEMP TABLE "__frontier_list_of_json_documents_round_trips_batch" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payloads" TEXT NOT NULL CHECK (json_valid("payloads") AND json_type("payloads") = 'array'))`,
-  `CREATE INDEX "__frontier_list_of_json_documents_round_trips_batch_phase" ON "__frontier_list_of_json_documents_round_trips_batch" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_list_of_json_documents_round_trips_batch" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payloads" TEXT NOT NULL CHECK (json_valid("payloads") AND json_type("payloads") = 'array'))`,
+  `CREATE TEMP TABLE "__delta_list_of_json_documents_round_trips_batch_34e0b1a1ffaf" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payloads" TEXT NOT NULL CHECK (json_valid("payloads") AND json_type("payloads") = 'array'))`,
+  `CREATE INDEX "__delta_list_of_json_documents_round_trips_batch_34e0b1a1ffaf_sign" ON "__delta_list_of_json_documents_round_trips_batch_34e0b1a1ffaf" ("_sign")`,
+  `CREATE INDEX "__delta_list_of_json_documents_round_trips_batch_34e0b1a1ffaf_group" ON "__delta_list_of_json_documents_round_trips_batch_34e0b1a1ffaf" ("id", "payloads")`,
+  `CREATE TEMP TABLE "__frontier_list_of_json_documents_round_trips_batch_34e0b1a1ffaf" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payloads" TEXT NOT NULL CHECK (json_valid("payloads") AND json_type("payloads") = 'array'))`,
+  `CREATE INDEX "__frontier_list_of_json_documents_round_trips_batch_34e0b1a1ffaf_phase" ON "__frontier_list_of_json_documents_round_trips_batch_34e0b1a1ffaf" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_list_of_json_documents_round_trips_batch_34e0b1a1ffaf" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payloads" TEXT NOT NULL CHECK (json_valid("payloads") AND json_type("payloads") = 'array'))`,
   `CREATE TEMP TABLE "__delta_list_of_json_documents_round_trips_carry" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payloads" TEXT NOT NULL CHECK (json_valid("payloads") AND json_type("payloads") = 'array'))`,
   `CREATE INDEX "__delta_list_of_json_documents_round_trips_carry_sign" ON "__delta_list_of_json_documents_round_trips_carry" ("_sign")`,
   `CREATE INDEX "__delta_list_of_json_documents_round_trips_carry_group" ON "__delta_list_of_json_documents_round_trips_carry" ("id", "payloads")`,
@@ -168,6 +168,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   batch: ["id", "payloads"],
   carry: ["id", "payloads"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  batch: "list_of_json_documents_round_trips_batch_34e0b1a1ffaf",
+  carry: "list_of_json_documents_round_trips_carry",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -195,9 +200,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "carry", kind: "rel", type_id: 0, arity: 2, module_id: 8, h_id: "153fc2474ee9b8d3", h_schema: "07f6aa84faf14a28", h_rule: "53f8657cc493cc5e" },
   { rel_id: 13, parent_id: 12, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 8, h_id: "482de137aa18c575", h_schema: "", h_rule: "" },
   { rel_id: 14, parent_id: 12, ordinal: 2, local_name: "payloads", kind: "column", type_id: 7, arity: 0, module_id: 8, h_id: "93b6e2e96a6a90be", h_schema: "", h_rule: "" },
-  { rel_id: 15, parent_id: 9, ordinal: 0, local_name: "__delta_list_of_json_documents_round_trips_batch", kind: "delta", type_id: 0, arity: 4, module_id: 8, h_id: "b7a68382ccf6acef", h_schema: "6fb61c80f56b3114", h_rule: "" },
-  { rel_id: 16, parent_id: 9, ordinal: 0, local_name: "__frontier_list_of_json_documents_round_trips_batch", kind: "frontier", type_id: 0, arity: 4, module_id: 8, h_id: "6a4659041347a0f5", h_schema: "9bccc3713f942e22", h_rule: "" },
-  { rel_id: 17, parent_id: 9, ordinal: 0, local_name: "__next_frontier_list_of_json_documents_round_trips_batch", kind: "next_frontier", type_id: 0, arity: 4, module_id: 8, h_id: "13f308dd6f93fe2d", h_schema: "9bccc3713f942e22", h_rule: "" },
+  { rel_id: 15, parent_id: 9, ordinal: 0, local_name: "__delta_list_of_json_documents_round_trips_batch_34e0b1a1ffaf", kind: "delta", type_id: 0, arity: 4, module_id: 8, h_id: "04805a0c43d0e253", h_schema: "6fb61c80f56b3114", h_rule: "" },
+  { rel_id: 16, parent_id: 9, ordinal: 0, local_name: "__frontier_list_of_json_documents_round_trips_batch_34e0b1a1ffaf", kind: "frontier", type_id: 0, arity: 4, module_id: 8, h_id: "5a65f17248c02b9e", h_schema: "9bccc3713f942e22", h_rule: "" },
+  { rel_id: 17, parent_id: 9, ordinal: 0, local_name: "__next_frontier_list_of_json_documents_round_trips_batch_34e0b1a1ffaf", kind: "next_frontier", type_id: 0, arity: 4, module_id: 8, h_id: "4849de7a48046c0b", h_schema: "9bccc3713f942e22", h_rule: "" },
   { rel_id: 18, parent_id: 12, ordinal: 0, local_name: "__delta_list_of_json_documents_round_trips_carry", kind: "delta", type_id: 0, arity: 4, module_id: 8, h_id: "23fb83df30685ed1", h_schema: "6fb61c80f56b3114", h_rule: "" },
   { rel_id: 19, parent_id: 12, ordinal: 0, local_name: "__frontier_list_of_json_documents_round_trips_carry", kind: "frontier", type_id: 0, arity: 4, module_id: 8, h_id: "966aa428af5b191c", h_schema: "9bccc3713f942e22", h_rule: "" },
   { rel_id: 20, parent_id: 12, ordinal: 0, local_name: "__next_frontier_list_of_json_documents_round_trips_carry", kind: "next_frontier", type_id: 0, arity: 4, module_id: 8, h_id: "07c2621288713961", h_schema: "9bccc3713f942e22", h_rule: "" },
@@ -216,18 +221,18 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["batch"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "batch", sql: `INSERT OR IGNORE INTO "list_of_json_documents_round_trips_batch" ("id", "payloads") VALUES (?, ?)`, params: [1, "[{\"a\":1},42]"] },
+  { rel: "batch", sql: `INSERT OR IGNORE INTO "list_of_json_documents_round_trips_batch_34e0b1a1ffaf" ("id", "payloads") VALUES (?, ?)`, params: [1, "[{\"a\":1},42]"] },
   { rel: "carry", sql: `DELETE FROM "list_of_json_documents_round_trips_carry"`, params: [] },
-  { rel: "carry", sql: `INSERT OR IGNORE INTO "list_of_json_documents_round_trips_carry" ("id", "payloads") SELECT b0."id", b0."payloads" FROM "list_of_json_documents_round_trips_batch" b0`, params: [] },
+  { rel: "carry", sql: `INSERT OR IGNORE INTO "list_of_json_documents_round_trips_carry" ("id", "payloads") SELECT b0."id", b0."payloads" FROM "list_of_json_documents_round_trips_batch_34e0b1a1ffaf" b0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
-  batch: `SELECT t."id", t."payloads" FROM "list_of_json_documents_round_trips_batch" t`,
+  batch: `SELECT t."id", t."payloads" FROM "list_of_json_documents_round_trips_batch_34e0b1a1ffaf" t`,
   carry: `SELECT t."id", t."payloads" FROM "list_of_json_documents_round_trips_carry" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "batch", kind: "set", table_name: "list_of_json_documents_round_trips_batch", delta_table_name: "__delta_list_of_json_documents_round_trips_batch", frontier_table_name: "__frontier_list_of_json_documents_round_trips_batch", next_frontier_table_name: "__next_frontier_list_of_json_documents_round_trips_batch", columns: ["id", "payloads"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "list_of_json_documents_round_trips_batch" ("id", "payloads") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "payloads"`, arrival_del_sql: `DELETE FROM "list_of_json_documents_round_trips_batch" WHERE ("id", "payloads") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "payloads"`, boundary_sql: `SELECT t."id", t."payloads", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_list_of_json_documents_round_trips_batch" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."payloads", t."_sign"`, rule_observers: ["carry/2"] },
+  { rel: "batch", kind: "set", table_name: "list_of_json_documents_round_trips_batch_34e0b1a1ffaf", delta_table_name: "__delta_list_of_json_documents_round_trips_batch_34e0b1a1ffaf", frontier_table_name: "__frontier_list_of_json_documents_round_trips_batch_34e0b1a1ffaf", next_frontier_table_name: "__next_frontier_list_of_json_documents_round_trips_batch_34e0b1a1ffaf", columns: ["id", "payloads"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "list_of_json_documents_round_trips_batch_34e0b1a1ffaf" ("id", "payloads") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "payloads"`, arrival_del_sql: `DELETE FROM "list_of_json_documents_round_trips_batch_34e0b1a1ffaf" WHERE ("id", "payloads") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "payloads"`, boundary_sql: `SELECT t."id", t."payloads", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_list_of_json_documents_round_trips_batch_34e0b1a1ffaf" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."payloads", t."_sign"`, rule_observers: ["carry/2"] },
   { rel: "carry", kind: "set", table_name: "list_of_json_documents_round_trips_carry", delta_table_name: "__delta_list_of_json_documents_round_trips_carry", frontier_table_name: "__frontier_list_of_json_documents_round_trips_carry", next_frontier_table_name: "__next_frontier_list_of_json_documents_round_trips_carry", columns: ["id", "payloads"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", t."payloads", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_list_of_json_documents_round_trips_carry" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."payloads", t."_sign"`, rule_observers: [] },
 ];
 
@@ -235,8 +240,8 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "carry", rule_id: "list_of_json_documents_round_trips:carry/2#1", head_delta_table_name: "__delta_list_of_json_documents_round_trips_carry", head_columns: ["id", "payloads"], insert_sql: `INSERT OR IGNORE INTO "list_of_json_documents_round_trips_carry" ("id", "payloads") SELECT DISTINCT d0."id", d0."payloads" FROM "__frontier_list_of_json_documents_round_trips_batch" d0 WHERE d0."_phase" >= 0 RETURNING "id", "payloads"`, select_sql: `SELECT "id", "payloads" FROM "list_of_json_documents_round_trips_carry"`, recompute_sql: `DELETE FROM "list_of_json_documents_round_trips_carry";
-INSERT OR IGNORE INTO "list_of_json_documents_round_trips_carry" ("id", "payloads") SELECT b0."id", b0."payloads" FROM "list_of_json_documents_round_trips_batch" b0`, support_sql: [`DELETE FROM "__support_next_list_of_json_documents_round_trips_carry"`, `INSERT INTO "__support_next_list_of_json_documents_round_trips_carry" ("id", "payloads", "__refcount") SELECT "id", "payloads", sum("__refcount") FROM (SELECT b0."id" AS "id", b0."payloads" AS "payloads", count(*) AS "__refcount" FROM "list_of_json_documents_round_trips_batch" b0 GROUP BY b0."id", b0."payloads") GROUP BY "id", "payloads"`, `UPDATE "list_of_json_documents_round_trips_carry" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_list_of_json_documents_round_trips_carry" n WHERE n."id" = h."id" AND n."payloads" = h."payloads"), 0)`, `INSERT INTO "__delta_list_of_json_documents_round_trips_carry" ("_sign", "_sequence", "id", "payloads") SELECT -1, row_number() OVER () - 1, "id", "payloads" FROM "list_of_json_documents_round_trips_carry" WHERE "__refcount" <= 0`, `DELETE FROM "list_of_json_documents_round_trips_carry" WHERE "__refcount" <= 0`, `DELETE FROM "__new_list_of_json_documents_round_trips_carry"`, `INSERT INTO "__new_list_of_json_documents_round_trips_carry" ("id", "payloads", "__refcount") SELECT n."id", n."payloads", n."__refcount" FROM "__support_next_list_of_json_documents_round_trips_carry" n LEFT JOIN "list_of_json_documents_round_trips_carry" h ON n."id" = h."id" AND n."payloads" = h."payloads" WHERE h."id" IS NULL`, `INSERT INTO "__delta_list_of_json_documents_round_trips_carry" ("_sign", "_sequence", "id", "payloads") SELECT 1, "rowid" - 1, "id", "payloads" FROM "__new_list_of_json_documents_round_trips_carry"`, `INSERT INTO "__frontier_list_of_json_documents_round_trips_carry" ("_phase", "_sequence", "id", "payloads") SELECT ?, "rowid" - 1, "id", "payloads" FROM "__new_list_of_json_documents_round_trips_carry"`, `INSERT INTO "__next_frontier_list_of_json_documents_round_trips_carry" ("_phase", "_sequence", "id", "payloads") SELECT ?, "rowid" - 1, "id", "payloads" FROM "__new_list_of_json_documents_round_trips_carry"`, `INSERT OR IGNORE INTO "list_of_json_documents_round_trips_carry" ("id", "payloads", "__refcount") SELECT n."id", n."payloads", n."__refcount" FROM "__support_next_list_of_json_documents_round_trips_carry" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "carry", rule_id: "list_of_json_documents_round_trips:carry/2#1", head_delta_table_name: "__delta_list_of_json_documents_round_trips_carry", head_columns: ["id", "payloads"], insert_sql: `INSERT OR IGNORE INTO "list_of_json_documents_round_trips_carry" ("id", "payloads") SELECT DISTINCT d0."id", d0."payloads" FROM "__frontier_list_of_json_documents_round_trips_batch_34e0b1a1ffaf" d0 WHERE d0."_phase" >= 0 RETURNING "id", "payloads"`, select_sql: `SELECT "id", "payloads" FROM "list_of_json_documents_round_trips_carry"`, recompute_sql: `DELETE FROM "list_of_json_documents_round_trips_carry";
+INSERT OR IGNORE INTO "list_of_json_documents_round_trips_carry" ("id", "payloads") SELECT b0."id", b0."payloads" FROM "list_of_json_documents_round_trips_batch_34e0b1a1ffaf" b0`, support_sql: [`DELETE FROM "__support_next_list_of_json_documents_round_trips_carry"`, `INSERT INTO "__support_next_list_of_json_documents_round_trips_carry" ("id", "payloads", "__refcount") SELECT "id", "payloads", sum("__refcount") FROM (SELECT b0."id" AS "id", b0."payloads" AS "payloads", count(*) AS "__refcount" FROM "list_of_json_documents_round_trips_batch_34e0b1a1ffaf" b0 GROUP BY b0."id", b0."payloads") GROUP BY "id", "payloads"`, `UPDATE "list_of_json_documents_round_trips_carry" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_list_of_json_documents_round_trips_carry" n WHERE n."id" = h."id" AND n."payloads" = h."payloads"), 0)`, `INSERT INTO "__delta_list_of_json_documents_round_trips_carry" ("_sign", "_sequence", "id", "payloads") SELECT -1, row_number() OVER () - 1, "id", "payloads" FROM "list_of_json_documents_round_trips_carry" WHERE "__refcount" <= 0`, `DELETE FROM "list_of_json_documents_round_trips_carry" WHERE "__refcount" <= 0`, `DELETE FROM "__new_list_of_json_documents_round_trips_carry"`, `INSERT INTO "__new_list_of_json_documents_round_trips_carry" ("id", "payloads", "__refcount") SELECT n."id", n."payloads", n."__refcount" FROM "__support_next_list_of_json_documents_round_trips_carry" n LEFT JOIN "list_of_json_documents_round_trips_carry" h ON n."id" = h."id" AND n."payloads" = h."payloads" WHERE h."id" IS NULL`, `INSERT INTO "__delta_list_of_json_documents_round_trips_carry" ("_sign", "_sequence", "id", "payloads") SELECT 1, "rowid" - 1, "id", "payloads" FROM "__new_list_of_json_documents_round_trips_carry"`, `INSERT INTO "__frontier_list_of_json_documents_round_trips_carry" ("_phase", "_sequence", "id", "payloads") SELECT ?, "rowid" - 1, "id", "payloads" FROM "__new_list_of_json_documents_round_trips_carry"`, `INSERT INTO "__next_frontier_list_of_json_documents_round_trips_carry" ("_phase", "_sequence", "id", "payloads") SELECT ?, "rowid" - 1, "id", "payloads" FROM "__new_list_of_json_documents_round_trips_carry"`, `INSERT OR IGNORE INTO "list_of_json_documents_round_trips_carry" ("id", "payloads", "__refcount") SELECT n."id", n."payloads", n."__refcount" FROM "__support_next_list_of_json_documents_round_trips_carry" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const RECONCILE_EVERY_TICK = false;
@@ -284,6 +289,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,
