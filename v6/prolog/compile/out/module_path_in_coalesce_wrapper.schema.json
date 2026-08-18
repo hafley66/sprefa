@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "git": {
+      "additionalProperties":false,
+      "properties": {},
+      "required": [],
+      "type":"object"
+    },
+    "git.latest_commit": {
+      "additionalProperties":false,
+      "properties": {"commit": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "commit" ],
+      "type":"object"
+    },
+    "repo": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "repo_latest": {
+      "additionalProperties":false,
+      "properties": {"commit": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "commit" ],
+      "type":"object"
+    }
+  },
+  "$id":"module_path_in_coalesce_wrapper#31a5b1b38a451989",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

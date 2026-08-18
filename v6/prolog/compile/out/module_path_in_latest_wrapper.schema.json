@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "bell": {
+      "additionalProperties":false,
+      "properties": {"tree_id": {"type":"integer"}},
+      "required": ["tree_id" ],
+      "type":"object"
+    },
+    "called": {
+      "additionalProperties":false,
+      "properties": {"owner": {"type":"string"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "owner" ],
+      "type":"object"
+    },
+    "orchard": {
+      "additionalProperties":false,
+      "properties": {},
+      "required": [],
+      "type":"object"
+    },
+    "orchard.roster": {
+      "additionalProperties":false,
+      "properties": {"owner": {"type":"string"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "owner" ],
+      "type":"object"
+    }
+  },
+  "$id":"module_path_in_latest_wrapper#1ef46c6125c425b4",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

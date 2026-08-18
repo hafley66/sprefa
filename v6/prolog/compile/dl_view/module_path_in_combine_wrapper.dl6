@@ -1,0 +1,5 @@
+rel orchard.tree(tree_id: int).
+rel orchard.plot(tree_id: int, plot: text).
+rel sited(tree_id: int, plot: text).
+
+sited(TreeId, Plot) <- combine(orchard.tree(TreeId), orchard.plot(TreeId, Plot)).
