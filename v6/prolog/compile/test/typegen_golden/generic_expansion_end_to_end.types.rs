@@ -1,4 +1,11 @@
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "tag", content = "value", rename_all = "snake_case")]
+pub enum DlOption<T> {
+    None,
+    Some(T),
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AuthorAudit {
     pub id: i64,
     pub tag: String,
@@ -12,13 +19,13 @@ pub struct Bucket {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Metric {
     pub id: i64,
-    pub value: Option<i64>,
+    pub value: DlOption<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MetricCopy {
     pub id: i64,
-    pub value: Option<i64>,
+    pub value: DlOption<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -69,11 +76,11 @@ pub struct SeenTicket {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Ticket {
     pub id: i64,
-    pub title: Option<String>,
+    pub title: DlOption<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TicketCopy {
     pub id: i64,
-    pub title: Option<String>,
+    pub title: DlOption<String>,
 }

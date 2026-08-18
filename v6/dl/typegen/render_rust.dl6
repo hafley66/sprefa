@@ -18,8 +18,8 @@ rel type_row(id: int, parent: int, ordinal: int, name: text, kind: text,
 rel type_storage(id: int, column_id: int, ordinal: int, local_name: text,
                  module_id: int).
 
-rel has_option(value: int).
-has_option(1) <- type_row(kind: 'option').
+rel first_option(id: int).
+first_option(min(Id)) <- type_row(Id, kind: 'option').
 
 # The Rust 2021 keyword set 8_emit_rust_types.pl carries. `crate`, `self`,
 # `Self`, `super` are absent: Rust bars them from the r# escape.
@@ -187,7 +187,7 @@ rel option_of_leaf(id: int, text: text).
 option_of_leaf(Id, Text) <-
   type_row(Id, kind: 'option', type_id: ElemId),
   leaf_type(ElemId, Element),
-  Text := concat(['Option<', Element, '>']).
+  Text := concat(['DlOption<', Element, '>']).
 
 # The innermost thing a list holds: a leaf, or a nullable leaf.
 rel list_element(id: int, text: text).
@@ -328,9 +328,9 @@ rendered_type(TypeName, 2, RelId, FileText) <-
   FileText := concat(['#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n',
                       'pub struct ', TypeName, ' {\n', Body, '\n}\n']).
 
-rendered_type('DlOption', 0, 0,
-              '#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n#[serde(tag = "tag", content = "value", rename_all = "snake_case")]\npub enum DlOption<T> {\n    None,\n    Some(T),\n}\n') <-
-  has_option(1).
+rendered_type('DlOption', 0, 0, FileText) <-
+  first_option(_),
+  FileText := concat(['#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n#[serde(tag = "tag", content = "value", rename_all = "snake_case")]\npub enum DlOption<T> {\n    None,\n    Some(T),\n}\n']).
 
 rendered_type('RelationId', 0, -1,
               '#[repr(transparent)]\n#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]\npub struct RelationId<T>(pub i64, pub std::marker::PhantomData<fn() -> T>);\n\nimpl<T> serde::Serialize for RelationId<T> {\n    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {\n        serde::Serialize::serialize(&self.0, serializer)\n    }\n}\n\nimpl<\'de, T> serde::Deserialize<\'de> for RelationId<T> {\n    fn deserialize<D: serde::Deserializer<\'de>>(deserializer: D) -> Result<Self, D::Error> {\n        let value = <i64 as serde::Deserialize>::deserialize(deserializer)?;\n        Ok(Self(value, std::marker::PhantomData))\n    }\n}\n') <-
@@ -375,7 +375,7 @@ rel enum_body(enum_id: int, body: text).
 enum_body(EnumId, group_concat(Line, '\n', Ordinal)) <-
   enum_variant_line(EnumId, Ordinal, Line).
 
-rendered_type(TypeName, 2, EnumId, FileText) <-
+rendered_type(TypeName, 1, EnumId, FileText) <-
   type_row(id: EnumId, name: EnumName, kind: 'enum'),
   enum_body(EnumId, Body),
   TypeName := replace(initcap(EnumName), '_', ''),

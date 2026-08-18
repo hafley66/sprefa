@@ -19,8 +19,8 @@ rel type_storage(id: int, column_id: int, ordinal: int, local_name: text,
                  module_id: int).
 
 # Option is a tagged carrier so option(option(T)) retains every state.
-rel has_option(value: int).
-has_option(1) <- type_row(kind: 'option').
+rel first_option(id: int).
+first_option(min(Id)) <- type_row(Id, kind: 'option').
 
 # PascalCase = replace(initcap(Name), '_', ''), matching the prolog emitter.
 # Inline, because an assignment-only rule has no positive body to group on.
@@ -324,15 +324,15 @@ rel enum_body(enum_id: int, body: text).
 enum_body(EnumId, group_concat(Line, '\n', Ordinal)) <-
   enum_variant_line(EnumId, Ordinal, Line).
 
-rendered_type(TypeName, 2, EnumId, FileText) <-
+rendered_type(TypeName, 1, EnumId, FileText) <-
   type_row(id: EnumId, name: EnumName, kind: 'enum'),
   enum_body(EnumId, Body),
   TypeName := replace(initcap(EnumName), '_', ''),
-  FileText := concat(['export type ', TypeName, ' =\n', Body, ';\n']).
+  FileText := concat(['export type ', TypeName, ' =\n', Body, '\n;\n']).
 
-rendered_type('Option', 0, 0,
-              'export type Option<T> = { tag: \'none\' } | { tag: \'some\'; value: T };\n') <-
-  has_option(1).
+rendered_type('Option', 0, 0, FileText) <-
+  first_option(_),
+  FileText := concat(['export type Option<T> = { tag: \'none\' } | { tag: \'some\'; value: T };\n']).
 
 rendered_type('RelationId', 0, -1,
               'declare const __dl6RelationId: unique symbol;\nexport type RelationId<T extends string> = number & { readonly [__dl6RelationId]: T };\n') <-

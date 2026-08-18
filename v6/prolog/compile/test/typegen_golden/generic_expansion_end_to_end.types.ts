@@ -1,3 +1,5 @@
+export type Option<T> = { tag: 'none' } | { tag: 'some'; value: T };
+
 export interface AuthorAudit {
   id: number;
   tag: string;
@@ -9,12 +11,12 @@ export interface Bucket {
 
 export interface Metric {
   id: number;
-  value: number | null;
+  value: Option<number>;
 }
 
 export interface MetricCopy {
   id: number;
-  value: number | null;
+  value: Option<number>;
 }
 
 export interface Person {
@@ -56,10 +58,10 @@ export interface SeenTicket {
 
 export interface Ticket {
   id: number;
-  title: string | null;
+  title: Option<string>;
 }
 
 export interface TicketCopy {
   id: number;
-  title: string | null;
+  title: Option<string>;
 }
