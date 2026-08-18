@@ -15,7 +15,8 @@
             normalize_key_wrappers/2,
             schema_member_rows/2,
             type_relation_rows/2,
-            schema_member_transport_rows/3
+            schema_member_transport_rows/3,
+            expand_generic_program_with_bindings/3
           ]).
 
 :- use_module(library(apply)).
@@ -28,25 +29,37 @@
               [ decl_id/4, primitive_id/2, param_id/4, member_id/4,
                 constraint_id/3, impl_id/3, app_id/3, arg_id/3,
                 id_kind_name/3 ]).
+:- use_module('0_compiler_relations',
+              [ partition_compiler_program/5,
+                evaluate_compiler_relations/3 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
 
-expand_generic_in_context(_Context, Program, Expanded) :-
+expand_generic_in_context(expansion_context(_, Bindings), Program, Expanded) :-
+    !,
+    expand_generic_program_with_bindings(Program, Bindings, Expanded).
+expand_generic_in_context(_, Program, Expanded) :-
     expand_generic_program(Program, Expanded).
 
-expand_generic_program(prog(Decls0, Rules0), prog(Decls, Rules)) :-
+expand_generic_program(Program, Expanded) :-
+    expand_generic_program_with_bindings(Program, [], Expanded).
+
+expand_generic_program_with_bindings(prog(Decls0, Rules0), Bindings,
+                                     prog(Decls, Rules)) :-
     expand_user_templates(Decls0, Rules0, _UserInstances, UserDecls),
     expand_user_enum_templates(UserDecls, _EnumInstances, WithEnumDecls),
     generic_fixpoint(WithEnumDecls, Instances, WithMintedDecls),
     validate_generated_name_collisions(UserDecls, Rules0, Instances),
-    expand_list_decodes(WithMintedDecls, Rules0, Rules),
+    expand_list_decodes(WithMintedDecls, Rules0, ExpandedRules),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
     normalize_key_wrappers(RewrittenDecls, KeyNormalizedDecls),
     generic_artifact_order(Instances, KeyNormalizedDecls, CanonicalDecls),
     merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
     expand_option_decls(FlavorRowedDecls, OptionDecls),
-    retarget_type_decl_mirrors(OptionDecls, Decls).
+    retarget_type_decl_mirrors(OptionDecls, ExpandedDecls),
+    elaborate_and_erase_compiler_relations(ExpandedDecls, ExpandedRules,
+                                           Bindings, Decls, Rules).
 
 % Executable comparison arm, written as a second path so the template and
 % replacement logic cannot drift apart from the wired entry above.
@@ -55,13 +68,15 @@ expand_generic_program_raw(prog(Decls0, Rules0), prog(Decls, Rules)) :-
     expand_user_enum_templates(UserDecls, _EnumInstances, WithEnumDecls),
     generic_fixpoint(WithEnumDecls, Instances, WithMintedDecls),
     validate_generated_name_collisions(UserDecls, Rules0, Instances),
-    expand_list_decodes(WithMintedDecls, Rules0, Rules),
+    expand_list_decodes(WithMintedDecls, Rules0, ExpandedRules),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
     normalize_key_wrappers(RewrittenDecls, KeyNormalizedDecls),
     generic_artifact_order(Instances, KeyNormalizedDecls, CanonicalDecls),
     merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
     expand_option_decls(FlavorRowedDecls, OptionDecls),
-    retarget_type_decl_mirrors(OptionDecls, Decls).
+    retarget_type_decl_mirrors(OptionDecls, ExpandedDecls),
+    elaborate_and_erase_compiler_relations(ExpandedDecls, ExpandedRules, [],
+                                           Decls, Rules).
 
 % `decode(Parts, [... Part])` over a list(T) source is a keyed read of the
 % minted member rel, and becomes that atom for BOTH doors here.
@@ -148,6 +163,109 @@ expand_user_templates(Decls0, Rules, Instances, Decls) :-
 
 is_rel_template(rel_template(_, _, _)).
 is_rel_template_enum(rel_template_enum(_, _, _)).
+
+% The compiler plane closes before enum, storage, and runtime planning.  Its
+% declarations/rules disappear from the executable program while the semantic
+% member/type-relation rows remain available to catalog and typegen consumers.
+elaborate_and_erase_compiler_relations(Decls0, Rules0, Bindings, Decls, Rules) :-
+    partition_compiler_program(Decls0, Rules0, CompilerDecls0, RuntimeDecls,
+                               RuntimeRules),
+    CompilerDecls0 = compiler_relations(Relations, CompilerRules0),
+    ( Relations == []
+    -> Decls = RuntimeDecls,
+       Rules = RuntimeRules
+    ;  type_relation_rows(Decls0, MetadataRows),
+       elaborate_compiler_rules(Decls0, Bindings, CompilerRules0,
+                                CompilerRules, SeedRows),
+       evaluate_compiler_relations(compiler_relations(Relations, CompilerRules),
+                                   SeedRows, ClosureRows),
+       append(RuntimeDecls,
+              [compiler_type_metadata(MetadataRows, ClosureRows)], Decls),
+       Rules = RuntimeRules
+    ).
+
+elaborate_compiler_rules(Decls, Bindings, Rules0, Rules, SeedRows) :-
+    findall(Row,
+            ( member(Rule, Rules0), compiler_fact_rule(Rule, Head),
+              elaborate_compiler_atom(Decls, Bindings, Head, Row) ),
+            SeedRows0),
+    sort(SeedRows0, SeedRows),
+    findall(Rule,
+            ( member(Rule0, Rules0), \+ compiler_fact_rule(Rule0, _),
+              elaborate_compiler_rule(Decls, Bindings, Rule0, Rule) ),
+            Rules).
+
+compiler_fact_rule((Head <- true), Head) :- !.
+compiler_fact_rule(Head, Head) :-
+    compound(Head),
+    Head \= (_ <- _),
+    Head \= (_ <+ _).
+
+elaborate_compiler_rule(Decls, Bindings, (Head <- Body0), (Head1 <- Body)) :-
+    !,
+    elaborate_compiler_atom(Decls, Bindings, Head, Head1),
+    elaborate_compiler_body(Decls, Bindings, Body0, Body).
+elaborate_compiler_rule(Decls, Bindings, (Head <+ Body0), (Head1 <+ Body)) :-
+    !,
+    elaborate_compiler_atom(Decls, Bindings, Head, Head1),
+    elaborate_compiler_body(Decls, Bindings, Body0, Body).
+
+elaborate_compiler_body(_, _, true, true) :- !.
+elaborate_compiler_body(Decls, Bindings, (Left0, Right0), (Left, Right)) :- !,
+    elaborate_compiler_body(Decls, Bindings, Left0, Left),
+    elaborate_compiler_body(Decls, Bindings, Right0, Right).
+elaborate_compiler_body(Decls, Bindings, Atom0, Atom) :-
+    elaborate_compiler_atom(Decls, Bindings, Atom0, Atom).
+
+elaborate_compiler_atom(Decls, Bindings, Atom0, Atom) :-
+    Atom0 =.. [Name | Arguments0],
+    maplist(elaborate_compiler_argument(Decls, Bindings), Arguments0, Arguments),
+    Atom =.. [Name | Arguments].
+
+elaborate_compiler_argument(Decls, Bindings, Argument, Elaborated) :-
+    var(Argument),
+    !,
+    ( source_variable_name(Bindings, Argument, Name),
+      compiler_declared_type(Decls, Name)
+    -> semantic_type_id(Decls, Name, Elaborated)
+    ; Elaborated = Argument
+    ).
+elaborate_compiler_argument(Decls, _, Argument, Elaborated) :-
+    compiler_declared_type_term(Decls, Argument),
+    !,
+    semantic_type_id(Decls, Argument, Elaborated).
+elaborate_compiler_argument(_, _, Argument, _) :-
+    throw(unsupported_construct(compiler_relation_type_unknown(Argument))).
+
+source_variable_name(Bindings, Variable, Name) :-
+    member(Binding, Bindings),
+    ( Binding = (Name=Existing) ; Binding = Name-Existing ),
+    Existing == Variable,
+    !.
+
+compiler_declared_type(Decls, Name) :- compiler_declared_type_term(Decls, Name).
+
+compiler_declared_type_term(_, Type) :- atom(Type), semantic_primitive(Type), !.
+compiler_declared_type_term(Decls, Type) :-
+    atom(Type),
+    ( member(type_decl(Type, _), Decls)
+    ; member(col_type(Type/_, _, _), Decls)
+    ; member(rel_template(Segments, _, _), Decls), atomic_list_concat(Segments, '__', Type)
+    ; member(enum_decl(Type, _), Decls)
+    ; member(rel_template_enum(Segments, _, _), Decls), atomic_list_concat(Segments, '__', Type)
+    ), !.
+compiler_declared_type_term(Decls, Type) :-
+    compound(Type),
+    Type =.. [Constructor | Arguments],
+    compiler_type_constructor(Decls, Constructor),
+    maplist(compiler_declared_type_term(Decls), Arguments).
+
+compiler_type_constructor(_, option).
+compiler_type_constructor(_, json_list).
+compiler_type_constructor(_, list).
+compiler_type_constructor(Decls, Constructor) :-
+    member(rel_template(Segments, _, _), Decls),
+    atomic_list_concat(Segments, '__', Constructor).
 
 % A parameterized enum template mints one concrete enum_decl per ground
 % application, with variant payload types substituted. The enum lowering phase
@@ -300,7 +418,14 @@ type_relation_rows(Decls, Rows) :-
     findall(Row,
             type_relation_row(Decls, MemberRows, Row),
             RelationRows),
-    append(MemberRows, RelationRows, Rows).
+    compiler_metadata_rows(Decls, MetadataRows),
+    append([MemberRows, RelationRows, MetadataRows], Rows0),
+    sort(Rows0, Rows).
+
+compiler_metadata_rows(Decls, Rows) :-
+    member(compiler_type_metadata(Rows, _), Decls),
+    !.
+compiler_metadata_rows(_, []).
 
 %! schema_member_transport_rows(+CatalogRows, +RelationRows, -Rows) is det.
 %  Add typed child rows and the catalog-column bridge used at artifact
@@ -420,7 +545,7 @@ anonymous_owner_path(type_ref(named(Type)), Path) :-
     !,
     anonymous_owner_path(Type, Path).
 
-type_relation_row(Decls, MemberRows,
+type_relation_row(_Decls, MemberRows,
                   type_relation(OwnerId, SelfMemberId, InputMemberIds,
                                 ReturnMemberOrNone, KeyMemberIds)) :-
     setof(Owner,
@@ -434,8 +559,6 @@ type_relation_row(Decls, MemberRows,
                                   _, _), MemberRows), MemberPairs0),
     sort(MemberPairs0, MemberPairs),
     self_members(MemberPairs, SelfMembers),
-    trait_projection_owner(Decls, OwnerId, MemberPairs, SelfMembers, TraitLike),
-    validate_trait_self(TraitLike, OwnerId, SelfMembers),
     self_member_or_none(SelfMembers, SelfMemberId),
     input_member_ids(MemberPairs, InputMemberIds),
     return_member_or_none(MemberPairs, ReturnMemberOrNone),
@@ -444,28 +567,6 @@ type_relation_row(Decls, MemberRows,
 self_members(MemberPairs, SelfMembers) :-
     findall(Position-MemberId-Type,
             member(Position-MemberId-'Self'-Type, MemberPairs), SelfMembers).
-
-trait_projection_owner(_Decls, _OwnerId, _MemberPairs, SelfMembers, true) :-
-    SelfMembers \== [],
-    !.
-trait_projection_owner(_Decls, _OwnerId, MemberPairs, _SelfMembers, true) :-
-    member(_-_-_-type, MemberPairs),
-    !.
-trait_projection_owner(_, _, _, _, false).
-
-validate_trait_self(false, _, _) :- !.
-validate_trait_self(true, OwnerId, []) :-
-    throw(unsupported_construct(type_relation_self_missing(OwnerId))).
-validate_trait_self(true, OwnerId, [_, _ | _]) :-
-    throw(unsupported_construct(type_relation_self_duplicate(OwnerId))).
-validate_trait_self(true, OwnerId, [Position-MemberId-Type]) :-
-    ( Position =\= 1
-    -> throw(unsupported_construct(type_relation_self_not_first(OwnerId)))
-    ; Type \== type
-    -> throw(unsupported_construct(type_relation_self_not_type(OwnerId,
-                                                                MemberId)))
-    ; true
-    ).
 
 self_member_or_none([], none).
 self_member_or_none([_-MemberId-_|_], MemberId).
@@ -861,14 +962,23 @@ compile_type_query(Plane, conforms(Type, Interface), Proof) :-
     interface_application_parts(Interface, InterfaceName, Patterns),
     compile_type_conformance(Plane, Type, interface_pattern(InterfaceName, Patterns), [], Proof).
 
-% Direct implementation facts are read through the normalized relation view.
+% Direct implementation evidence enters the same set evaluator as authored
+% compiler facts.  Structural json_encodable evidence remains the existing
+% adapter below because its universal field/payload check is not a positive
+% row rule in this first slice.
 compile_type_conformance(Plane, Type, Interface, _, impl(ImplId)) :-
     atom(Type),
     Interface = interface_pattern(InterfaceName, Patterns),
-    compile_type_relation(Plane, implementation, [Type, InterfaceName,
-                                                   ConcreteArgs, ImplId]),
-    interface_arguments_match(Patterns, ConcreteArgs),
+    Plane = type_plane(Decls, _),
+    semantic_type_id(Decls, Type, SubjectId),
+    semantic_decl_id(Decls, interface, InterfaceName, InterfaceId),
+    interface_pattern_type_ids(Decls, Patterns, PatternIds),
+    interface_evidence_closure(Plane, Closure),
+    member(interface_evidence(SubjectId, InterfaceId, ConcreteArgs, ImplId),
+           Closure),
+    interface_arguments_match(PatternIds, ConcreteArgs),
     !.
+
 % A recursive revisit closes the structural proof after direct implementation
 % facts, preserving authored `is json_encodable` precedence.
 compile_type_conformance(_, Type, interface_pattern(json_encodable, []), Seen,
@@ -920,6 +1030,23 @@ compile_type_conformance(Plane, Type, interface_pattern(json_encodable, []), See
 compile_type_conformance_with_seen(Plane, Seen, Type) :-
     compile_type_conformance(Plane, Type,
                              interface_pattern(json_encodable, []), Seen, _).
+
+interface_evidence_closure(Plane, Closure) :-
+    Plane = type_plane(Decls, _),
+    findall(interface_evidence(SubjectId, InterfaceId, ArgumentIds, ImplId),
+            ( compile_type_relation(Plane, implementation,
+                                    [Subject, Interface, Arguments, ImplId]),
+              semantic_type_id(Decls, Subject, SubjectId),
+              semantic_decl_id(Decls, interface, Interface, InterfaceId),
+              maplist(semantic_application_argument_id(Decls), Arguments,
+                      ArgumentIds) ),
+            SeedRows),
+    evaluate_compiler_relations(
+        compiler_relations([compiler_relation(interface_evidence/4, 4, [])], []),
+        SeedRows, Closure).
+
+interface_pattern_type_ids(Decls, Patterns, PatternIds) :-
+    maplist(semantic_application_argument_id(Decls), Patterns, PatternIds).
 
 % Checked at the source terms as well as normalized rows: interface application
 % arguments remain visible for arity validation and conformance matching.
@@ -1031,6 +1158,7 @@ interface_arguments_match(Patterns, Arguments) :-
     maplist(interface_argument_matches, Patterns, Arguments).
 
 interface_argument_matches(any, _) :- !.
+interface_argument_matches(any_pattern, _) :- !.
 interface_argument_matches(Pattern, Argument) :- Pattern == Argument.
 
 ref_name(Name/_, Name) :- !.

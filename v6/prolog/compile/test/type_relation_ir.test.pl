@@ -186,26 +186,29 @@ test(trait_relation_projects_self_inputs_return_and_keys) :-
                               [SelfId, InputId]), Rows)),
     InputId = member(Owner, 2, 'Input').
 
-test(trait_self_missing_is_named,
-     [throws(unsupported_construct(type_relation_self_missing(_)))]) :-
+test(type_relation_without_self_remains_metadata) :-
     Decls = [type_decl('Convert', [col('Input', type)]),
              rel_is_implementation('Convert'/1, [codec])],
-    type_relation_rows(Decls, _).
+    type_relation_rows(Decls, Rows),
+    member(type_relation(_, none, [_], none, []), Rows).
 
-test(trait_self_duplicate_is_named,
-     [throws(unsupported_construct(type_relation_self_duplicate(_)))]) :-
+test(type_relation_duplicate_self_remains_metadata) :-
     Decls = [type_decl('Convert', [col('Self', type), col('Self', type)])],
-    type_relation_rows(Decls, _).
+    type_relation_rows(Decls, Rows),
+    member(type_relation(_, Self, _, none, []), Rows),
+    Self \== none.
 
-test(trait_self_not_first_is_named,
-     [throws(unsupported_construct(type_relation_self_not_first(_)))]) :-
+test(type_relation_self_position_remains_metadata) :-
     Decls = [type_decl('Convert', [col('Input', text), col('Self', type)])],
-    type_relation_rows(Decls, _).
+    type_relation_rows(Decls, Rows),
+    member(type_relation(_, Self, _, none, []), Rows),
+    Self = member(_, 2, 'Self').
 
-test(trait_self_not_type_is_named,
-     [throws(unsupported_construct(type_relation_self_not_type(_, _)))]) :-
+test(type_relation_self_value_type_remains_metadata) :-
     Decls = [type_decl('Convert', [col('Self', text), col('Input', text)])],
-    type_relation_rows(Decls, _).
+    type_relation_rows(Decls, Rows),
+    member(type_relation(_, Self, _, none, []), Rows),
+    Self = member(_, 1, 'Self').
 
 test(catalog_metadata_is_the_same_parallel_stream) :-
     ordinary_schema_decls(Decls),

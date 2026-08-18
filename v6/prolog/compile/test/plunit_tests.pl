@@ -134,6 +134,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 :- ensure_loaded('6_isolated_compiler_dd.test.pl').
 :- ensure_loaded('emit_type_renderers.test.pl').
 :- ensure_loaded('type_relation_ir.test.pl').
+:- ensure_loaded('compiler_relations.test.pl').
 :- ensure_loaded('../../conformance/fixtures/0_generic_expand.pl').
 
 % Resolved relative to this file's own load-time directory (mirrors

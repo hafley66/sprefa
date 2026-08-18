@@ -102,6 +102,8 @@ run_phase(_, _-_-unwired, Program, Program) :- !.
 % the clause below re-runs ast on the wrong argument as a second solution.
 run_phase(Context, _-ast-Expander, Program, Expanded) :- !,
     call(Expander, Context, Program, Expanded).
+run_phase(Context, _-option-Expander, Program, Expanded) :- !,
+    call(Expander, Context, Program, Expanded).
 run_phase(expansion_context(EnumContext, _), _-_-Expander,
           Program, Expanded) :-
     call(Expander, EnumContext, Program, Expanded).
