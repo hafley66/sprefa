@@ -3,8 +3,7 @@ pub trait JsonEncodable {}
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Entry<Key: JsonEncodable, Value> {
     pub key: Key,
-    #[serde(skip)]
-    pub phantom: std::marker::PhantomData<fn() -> (Value,)>,
+    pub value: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

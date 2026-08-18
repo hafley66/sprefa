@@ -2,6 +2,7 @@ export interface JsonEncodable {}
 
 export interface Pair<T extends JsonEncodable> {
   first: T;
+  second: T;
 }
 
 export interface GenPairInt8b7ec0fa0e1f9d69 {

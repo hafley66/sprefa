@@ -2,8 +2,8 @@ pub trait JsonEncodable {}
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Couple<Left: JsonEncodable, Right: JsonEncodable> {
-    #[serde(skip)]
-    pub phantom: std::marker::PhantomData<fn() -> (Left, Right)>,
+    pub first: Left,
+    pub second: Right,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

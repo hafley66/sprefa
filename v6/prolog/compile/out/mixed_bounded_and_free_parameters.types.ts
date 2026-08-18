@@ -2,6 +2,7 @@ export interface JsonEncodable {}
 
 export interface Entry<Key extends JsonEncodable, Value> {
   key: Key;
+  value: Value;
 }
 
 export interface GenEntryTextIntA6c3f6c7e60e6b95 {
