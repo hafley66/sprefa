@@ -177,9 +177,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 7, parent_id: 0, ordinal: 0, local_name: "typed_int_without_literal_witness", kind: "module", type_id: 0, arity: 0, module_id: 7, h_id: "ee04d17fe681d371", h_schema: "", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 0, local_name: "typed_input", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "80dd8b45f0a74ab0", h_schema: "7e38e778eed579a5", h_rule: "" },
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "value", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "960d8d2b6906bd48", h_schema: "", h_rule: "" },
-  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_typed_input", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "56b10d37231674cf", h_schema: "d59487c5bf23d586", h_rule: "" },
-  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_typed_input", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "64a23c60b96c69db", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_typed_input", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "2af60d1b6bbb4ef1", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_typed_int_without_literal_witness_typed_input", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "39d0412aa04b7792", h_schema: "d59487c5bf23d586", h_rule: "" },
+  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_typed_int_without_literal_witness_typed_input", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "a6b6f1f39e437724", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_typed_int_without_literal_witness_typed_input", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "aec2e8b6fe27d6ef", h_schema: "f0cee8555a0aeabb", h_rule: "" },
   { rel_id: 13, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "7c99a1e6126ca8f2", h_schema: "", h_rule: "" },
 ];
 

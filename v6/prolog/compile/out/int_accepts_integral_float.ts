@@ -177,9 +177,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 7, parent_id: 0, ordinal: 0, local_name: "int_accepts_integral_float", kind: "module", type_id: 0, arity: 0, module_id: 7, h_id: "c92d584d75d9b7d3", h_schema: "", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 0, local_name: "measure", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "b7efc2058eca1520", h_schema: "7e38e778eed579a5", h_rule: "" },
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "value", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "a2f23110093623b4", h_schema: "", h_rule: "" },
-  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_measure", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "29d335a8f7aafe3d", h_schema: "d59487c5bf23d586", h_rule: "" },
-  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_measure", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "2a4d7ce90cbaee57", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_measure", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "ed6086c02800cc6b", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_int_accepts_integral_float_measure", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "8c534ca05270f63b", h_schema: "d59487c5bf23d586", h_rule: "" },
+  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_int_accepts_integral_float_measure", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "e4c878e083999daf", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_int_accepts_integral_float_measure", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "da60ec7b3e0742c4", h_schema: "f0cee8555a0aeabb", h_rule: "" },
   { rel_id: 13, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "e6dd84d7c722a318", h_schema: "", h_rule: "" },
 ];
 

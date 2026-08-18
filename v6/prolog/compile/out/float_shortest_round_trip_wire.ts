@@ -177,9 +177,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 7, parent_id: 0, ordinal: 0, local_name: "float_shortest_round_trip_wire", kind: "module", type_id: 0, arity: 0, module_id: 7, h_id: "e9e391a6d100076c", h_schema: "", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 0, local_name: "sample", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "5dbccfad58303c3f", h_schema: "bec07f8b9884a74a", h_rule: "" },
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "value", kind: "column", type_id: 3, arity: 0, module_id: 7, h_id: "8971bcef2ebbf0a2", h_schema: "", h_rule: "" },
-  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_sample", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "1bacbee6d6fd3b30", h_schema: "77c595d6e8d5f80c", h_rule: "" },
-  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_sample", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "6d16b882beefd77b", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_sample", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "cd563b598febf73e", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
+  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_float_shortest_round_trip_wire_sample", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "25391fc062d1547e", h_schema: "77c595d6e8d5f80c", h_rule: "" },
+  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_float_shortest_round_trip_wire_sample", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "761778e73f7cf213", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_float_shortest_round_trip_wire_sample", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "ea01ca4a09723322", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
   { rel_id: 13, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "b9ac546664408e6c", h_schema: "", h_rule: "" },
 ];
 

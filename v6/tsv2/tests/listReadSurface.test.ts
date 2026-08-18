@@ -49,11 +49,16 @@ import * as rel_list from "../gen_emitted/recursive_list_arg_parent_holds_child_
 
 type EmittedProgram = IGenProgram & { readonly boot: readonly IBootStatement[] };
 
+// The rel names are what a schedule names; the table names carry the
+// compilation unit's module prefix (compile.pl relation_storage_names/4).
+const SCALAR_MODULE = "split_value_is_the_interned_list_id";
 const SCALAR_ENTITY = "__gen__list_text_df210f232c1299bd";
-const SCALAR_VIEW = `__list_${SCALAR_ENTITY}`;
+const SCALAR_TABLE = `${SCALAR_MODULE}_${SCALAR_ENTITY}`;
+const SCALAR_VIEW = `__list_${SCALAR_TABLE}`;
+const NODE_MODULE = "recursive_list_arg_parent_holds_child_node_values";
 const NODE_ENTITY = "__gen__list_node_4205b0871c875897";
 const NODE_MEMBER = `${NODE_ENTITY}__member`;
-const NODE_VIEW = `__list_${NODE_ENTITY}`;
+const NODE_VIEW = `__list_${NODE_MODULE}_${NODE_ENTITY}`;
 
 function booted_seam(program: EmittedProgram, path = ":memory:", temporary_only = false): Promise<ISqlSeam> {
   const seam = ScratchStore.open(path);
@@ -87,12 +92,16 @@ function boundary_read(plan: typeof scalar_list.incremental_plan, rel: string): 
 
 // ── the surface is a VIEW, never a table ─────────────────────────────────────
 
-test("the list read surface is a non-materialized TEMP VIEW over entities and members", () => {
+test("the list read surface is a non-materialized TEMP VIEW over member rows", () => {
   const ddl = (scalar_list.program as EmittedProgram).ddl;
   const view = ddl.find((line) => line.includes(`CREATE TEMP VIEW "${SCALAR_VIEW}"`));
   assert.ok(view, `no __list_ view in the emitted DDL: ${ddl.join(" | ")}`);
   assert.match(view, /json_group_array/, "the elements must aggregate in SQL, never in JS");
-  assert.match(view, /FROM "__gen__list_text_[0-9a-f]+" e$/, "the view starts from durable list entities");
+  assert.match(
+    view,
+    /FROM "[a-z_0-9]*__gen__list_text_[0-9a-f]+__member" m0 WHERE NOT EXISTS \(SELECT 1 FROM "[a-z_0-9]*__gen__list_text_[0-9a-f]+__member" m1 WHERE m1\."list_id" = m0\."list_id" AND m1\."idx" < m0\."idx"\)$/,
+    "one outer row per list id, taken off the member plane so the view stays flattenable",
+  );
   assert.ok(
     !ddl.some((line) => line.includes(`CREATE TABLE "${SCALAR_VIEW}"`)),
     "the read surface must add no table",
@@ -107,7 +116,7 @@ test("plan: a keyed view read orders members through the member index", async ()
   const plan = await query_plan(seam, `SELECT "list_id", "value_text" FROM "${SCALAR_VIEW}"`);
   assert.match(
     plan,
-    /SEARCH m USING INDEX sqlite_autoindex___gen__list_text_[0-9a-f]+__member_1 \(list_id=\?\)/,
+    /SEARCH m USING INDEX sqlite_autoindex_[a-z_0-9]*__gen__list_text_[0-9a-f]+__member_1 \(list_id=\?\)/,
     `the correlated aggregate must use the keyed member index, got: ${plan}`,
   );
 });
@@ -129,9 +138,16 @@ test("generated ticks preserve order, duplicates, empty lists, deletion, and res
       before_restart.rows.some((row) => row.value_text === '["beta","alpha","beta"]'),
       `generated list members must retain order and duplicate values: ${JSON.stringify(before_restart.rows)}`,
     );
-    assert.ok(
-      before_restart.rows.some((row) => row.value_text === "[]"),
-      `a generated empty entity must remain readable: ${JSON.stringify(before_restart.rows)}`,
+    const empty = await firstValueFrom(
+      initial.runner.execute(
+        initial.db,
+        `SELECT coalesce((SELECT "value_text" FROM "${SCALAR_VIEW}" WHERE "list_id" = -1), '[]') AS "value_text"`,
+      ),
+    );
+    assert.equal(
+      empty.rows[0]?.value_text,
+      "[]",
+      `a list id with no member rows reads as the empty list through the boundary coalesce: ${JSON.stringify(empty.rows)}`,
     );
     initial.db.close();
 
@@ -178,17 +194,17 @@ test("plan: the whole-rel render stays flattened and keyed", async () => {
   const plan = await query_plan(seam, sql.replace(/\?/g, "1"));
   assert.match(
     plan,
-    /SEARCH e USING INTEGER PRIMARY KEY \(rowid=\?\)/,
-    `the entity side must use its primary key, got: ${plan}`,
+    /SEARCH m0 USING COVERING INDEX sqlite_autoindex_[a-z_0-9]*__gen__list_text_[0-9a-f]+__member_1 \(list_id=\?\)/,
+    `the id side must seek the member index, got: ${plan}`,
   );
   assert.match(
     plan,
-    /SEARCH m USING INDEX sqlite_autoindex___gen__list_text_[0-9a-f]+__member_1 \(list_id=\?\)/,
+    /SEARCH m USING INDEX sqlite_autoindex_[a-z_0-9]*__gen__list_text_[0-9a-f]+__member_1 \(list_id=\?\)/,
     `the correlated member aggregate must use the list_id index, got: ${plan}`,
   );
   assert.doesNotMatch(
     plan,
-    /MATERIALIZE __list___gen__list_text_|SCAN m USING INDEX sqlite_autoindex___gen__list_text_[0-9a-f]+__member_1/,
+    /MATERIALIZE __list_[a-z_0-9]*__gen__list_text_|SCAN m USING INDEX sqlite_autoindex_[a-z_0-9]*__gen__list_text_[0-9a-f]+__member_1/,
     `the boundary must not materialize every list or scan every member, got: ${plan}`,
   );
 });
@@ -198,11 +214,15 @@ test("plan: the whole-rel render stays flattened and keyed", async () => {
 test("plan: a point lookup keeps the ordered member scan keyed", async () => {
   const seam = await booted_seam(scalar_list.program as EmittedProgram);
   const plan = await query_plan(seam, `SELECT "value_text" FROM "${SCALAR_VIEW}" WHERE "list_id" = 1`);
-  assert.doesNotMatch(plan, /CO-ROUTINE __list___gen__list_text_/, `the keyed view is flattened, got: ${plan}`);
-  assert.match(plan, /SEARCH e USING INTEGER PRIMARY KEY \(rowid=\?\)/, `the entity lookup must be keyed, got: ${plan}`);
+  assert.doesNotMatch(plan, /CO-ROUTINE __list_[a-z_0-9]*__gen__list_text_/, `the keyed view is flattened, got: ${plan}`);
   assert.match(
     plan,
-    /SEARCH m USING INDEX sqlite_autoindex___gen__list_text_[0-9a-f]+__member_1 \(list_id=\?\)/,
+    /SEARCH m0 USING COVERING INDEX sqlite_autoindex_[a-z_0-9]*__gen__list_text_[0-9a-f]+__member_1 \(list_id=\?\)/,
+    `the id lookup must be keyed, got: ${plan}`,
+  );
+  assert.match(
+    plan,
+    /SEARCH m USING INDEX sqlite_autoindex_[a-z_0-9]*__gen__list_text_[0-9a-f]+__member_1 \(list_id=\?\)/,
     `the ordered input must use the member index with list_id pushdown, got: ${plan}`,
   );
 });
@@ -229,10 +249,14 @@ test("cost: the boundary render of N rows is ONE statement, not one per row", as
 
 test("a rel element aggregates the target view's __rendered, not its id", () => {
   const ddl = (rel_list.program as EmittedProgram).ddl;
-  const view = ddl.find((line) => line.startsWith('CREATE TEMP VIEW "__list___gen__list_node_'));
+  const view = ddl.find((line) => line.startsWith(`CREATE TEMP VIEW "${NODE_VIEW}"`));
   assert.ok(view, `no __list_ view for a rel-element list: ${ddl.join(" | ")}`);
   assert.match(view, /json\(r\."__rendered"\)/, `the element is the target's value, got: ${view}`);
-  assert.match(view, /LEFT JOIN "__ref_node" r ON r\."__id" = m\."value"/, `a join, not a probe: ${view}`);
+  assert.match(
+    view,
+    new RegExp(`LEFT JOIN "__ref_${NODE_MODULE}_node" r ON r\\."__id" = m\\."value"`),
+    `a join, not a probe: ${view}`,
+  );
 });
 
 test("generated nested structured elements survive a restart", async () => {
