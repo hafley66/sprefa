@@ -11,7 +11,10 @@
             canonical_type_encoding/2,
             generic_artifact_order/3,
             generated_generic_name/1,
-            generic_type_ir/2
+            generic_type_ir/2,
+            schema_member_rows/2,
+            type_relation_rows/2,
+            schema_member_transport_rows/3
           ]).
 
 :- use_module(library(apply)).
@@ -265,6 +268,221 @@ merge_one_enum_template_rows(_, Decl, Decl).
 generic_type_ir(Decls, Rows) :-
     normalized_type_rows(Decls, Rows).
 
+%! schema_member_rows(+Decls, -Rows) is det.
+%
+% This is a parallel compiler metadata view.  It deliberately stays out of
+% semantic_type_rows/1 so the existing runtime declaration term and all
+% ordinary type artifacts remain byte-stable while catalog/typegen consumers
+% can request the richer role-bearing schema.
+schema_member_rows(Decls, Rows) :-
+    normalized_member_rows(Decls, MemberRows),
+    findall(Row,
+            ( member(member(MemberId, OwnerId, Position, Name, TypeRef),
+                     MemberRows),
+              authored_member_type(Decls, OwnerId, Position, AuthoredType),
+              schema_value_type_id(Decls, TypeRef, ValueTypeId),
+              schema_member_roles(Decls, OwnerId, Position, Name, TypeRef,
+                                  Roles),
+              Row = schema_member(MemberId, OwnerId, Position, Name,
+                                  AuthoredType, ValueTypeId, Roles) ),
+            Unsorted),
+    sort(Unsorted, Rows).
+
+%! type_relation_rows(+Decls, -Rows) is det.
+%  Rows is the concatenation of normalized schema_member/7 and
+%  type_relation/5 terms.  A relation without a Self member remains an
+%  ordinary relation row and does not enter trait validation.
+type_relation_rows(Decls, Rows) :-
+    schema_member_rows(Decls, MemberRows),
+    findall(Row,
+            type_relation_row(Decls, MemberRows, Row),
+            RelationRows),
+    append(MemberRows, RelationRows, Rows).
+
+%! schema_member_transport_rows(+CatalogRows, +RelationRows, -Rows) is det.
+%  Add typed child rows and the catalog-column bridge used at artifact
+%  boundaries.  The normalized schema_member/7 and type_relation/5 terms stay
+%  internal; these rows carry no Prolog list-valued columns.
+schema_member_transport_rows(CatalogRows, RelationRows, Rows) :-
+    findall(schema_member_column(ColumnId, MemberId),
+            schema_member_catalog_column(CatalogRows, RelationRows,
+                                         MemberId, ColumnId),
+            ColumnRows0),
+    sort(ColumnRows0, ColumnRows),
+    findall(schema_member_role(MemberId, Ordinal, Role, Argument),
+            schema_member_role_row(RelationRows, MemberId, Ordinal, Role,
+                                   Argument),
+            RoleRows),
+    findall(type_relation_input(OwnerId, Ordinal, MemberId),
+            ( member(type_relation(OwnerId, _, InputMemberIds, _, _),
+                     RelationRows),
+              nth1(Ordinal, InputMemberIds, MemberId) ),
+            InputRows),
+    findall(type_relation_key(OwnerId, Ordinal, MemberId),
+            ( member(type_relation(OwnerId, _, _, _, KeyMemberIds),
+                     RelationRows),
+              nth1(Ordinal, KeyMemberIds, MemberId) ),
+            KeyRows),
+    append([ColumnRows, RoleRows, InputRows, KeyRows],
+           Rows0),
+    sort(Rows0, Rows).
+
+schema_member_catalog_column(CatalogRows, RelationRows, MemberId, ColumnId) :-
+    member(schema_member(MemberId, OwnerId, Position, _, _, _, _),
+           RelationRows),
+    id_kind_name(OwnerId, relation, OwnerName),
+    member(row(RelId, _, _, OwnerName, rel, _, _, _, _, _, _), CatalogRows),
+    member(row(ColumnId, RelId, Ordinal, _, column, _, _, _, _, _, _),
+           CatalogRows),
+    Position is Ordinal + 1.
+
+schema_member_role_row(RelationRows, MemberId, Ordinal, Role, Argument) :-
+    member(schema_member(MemberId, _, _, _, _, _, Roles), RelationRows),
+    nth1(Ordinal, Roles, RoleTerm),
+    transport_role(RoleTerm, Role, Argument).
+
+transport_role(self_subject, self_subject, '') :- !.
+transport_role(key, key, '') :- !.
+transport_role(return, return, '') :- !.
+transport_role(anonymous_owner(Path), anonymous_owner, Path).
+
+normalized_member_rows(Decls, Rows) :-
+    findall(Row, normalized_member_row(Decls, Row), Rows0),
+    first_member_row_per_id(Rows0, Rows).
+
+authored_member_type(Decls, OwnerId, Position, Type) :-
+    id_kind_name(OwnerId, relation, OwnerName),
+    (   member(rel_template(Segments, _, Specs), Decls),
+        atomic_list_concat(Segments, '__', OwnerName)
+    ->  nth1(Position, Specs, column(_, Type))
+    ;   member(type_decl(OwnerName, Specs), Decls)
+    ->  nth1(Position, Specs, col(_, Type))
+    ;   findall(Name-Type0,
+                member(col_type(OwnerName/_, Name, Type0), Decls), Pairs),
+        nth1(Position, Pairs, _-Type)
+    ).
+
+schema_value_type_id(_Decls, type_ref(parameter(ParameterId)), ParameterId) :-
+    !.
+schema_value_type_id(_Decls, type_ref(declaration(TypeId)), TypeId) :- !.
+schema_value_type_id(_Decls, type_ref(application(TypeId)), TypeId) :- !.
+schema_value_type_id(Decls, type_ref(primitive(Type)), TypeId) :-
+    !,
+    ( Type == type
+    -> primitive_id(type, TypeId)
+    ;  semantic_type_id(Decls, Type, TypeId)
+    ).
+schema_value_type_id(Decls, type_ref(named(Type)), TypeId) :-
+    !,
+    ( Type == type
+    -> primitive_id(type, TypeId)
+    ;  semantic_type_id(Decls, Type, TypeId)
+    ).
+schema_value_type_id(Decls, Type, TypeId) :-
+    semantic_type_id(Decls, Type, TypeId).
+
+schema_member_roles(Decls, OwnerId, Position, Name, TypeRef, Roles) :-
+    ( Name == 'Self' -> SelfRoles = [self_subject] ; SelfRoles = [] ),
+    ( owner_key_position(Decls, OwnerId, Position)
+    -> KeyRoles = [key]
+    ;  KeyRoles = []
+    ),
+    ( Name == return -> ReturnRoles = [return] ; ReturnRoles = [] ),
+    ( ( anonymous_owner_path_for_member(Decls, OwnerId, Position, Path)
+      ; anonymous_owner_path(TypeRef, Path)
+      )
+    -> AnonymousRoles = [anonymous_owner(Path)]
+    ;  AnonymousRoles = []
+    ),
+    append([SelfRoles, KeyRoles, ReturnRoles, AnonymousRoles], RawRoles),
+    list_to_set(RawRoles, Roles).
+
+anonymous_owner_path_for_member(Decls, OwnerId, Position, Path) :-
+    authored_member_type(Decls, OwnerId, Position, Type),
+    anonymous_owner_source_path(Type, Path).
+
+anonymous_owner_source_path(anonymous_product(Path, _), Path) :- !.
+anonymous_owner_source_path(anonymous_sum(Path, _), Path) :- !.
+anonymous_owner_source_path(anonymous(Path, _), Path) :- !.
+
+owner_key_position(Decls, OwnerId, Position) :-
+    id_kind_name(OwnerId, relation, OwnerName),
+    member(keyed(OwnerName/_, Positions), Decls),
+    memberchk(Position, Positions).
+
+anonymous_owner_path(anonymous_product(Path, _), Path) :- !.
+anonymous_owner_path(anonymous_sum(Path, _), Path) :- !.
+anonymous_owner_path(anonymous(Path, _), Path) :- !.
+anonymous_owner_path(type_ref(named(Type)), Path) :-
+    !,
+    anonymous_owner_path(Type, Path).
+
+type_relation_row(Decls, MemberRows,
+                  type_relation(OwnerId, SelfMemberId, InputMemberIds,
+                                ReturnMemberOrNone, KeyMemberIds)) :-
+    setof(Owner,
+          MemberId^Position^Name^AuthoredType^ValueType^Roles^
+          member(schema_member(MemberId, Owner, Position, Name,
+                                AuthoredType, ValueType, Roles), MemberRows),
+          Owners),
+    member(OwnerId, Owners),
+    findall(Position-MemberId-Name-Type,
+            member(schema_member(MemberId, OwnerId, Position, Name, Type,
+                                  _, _), MemberRows), MemberPairs0),
+    sort(MemberPairs0, MemberPairs),
+    self_members(MemberPairs, SelfMembers),
+    trait_projection_owner(Decls, OwnerId, MemberPairs, SelfMembers, TraitLike),
+    validate_trait_self(TraitLike, OwnerId, SelfMembers),
+    self_member_or_none(SelfMembers, SelfMemberId),
+    input_member_ids(MemberPairs, InputMemberIds),
+    return_member_or_none(MemberPairs, ReturnMemberOrNone),
+    key_member_ids(MemberRows, OwnerId, KeyMemberIds).
+
+self_members(MemberPairs, SelfMembers) :-
+    findall(Position-MemberId-Type,
+            member(Position-MemberId-'Self'-Type, MemberPairs), SelfMembers).
+
+trait_projection_owner(_Decls, _OwnerId, _MemberPairs, SelfMembers, true) :-
+    SelfMembers \== [],
+    !.
+trait_projection_owner(_Decls, _OwnerId, MemberPairs, _SelfMembers, true) :-
+    member(_-_-_-type, MemberPairs),
+    !.
+trait_projection_owner(_, _, _, _, false).
+
+validate_trait_self(false, _, _) :- !.
+validate_trait_self(true, OwnerId, []) :-
+    throw(unsupported_construct(type_relation_self_missing(OwnerId))).
+validate_trait_self(true, OwnerId, [_, _ | _]) :-
+    throw(unsupported_construct(type_relation_self_duplicate(OwnerId))).
+validate_trait_self(true, OwnerId, [Position-MemberId-Type]) :-
+    ( Position =\= 1
+    -> throw(unsupported_construct(type_relation_self_not_first(OwnerId)))
+    ; Type \== type
+    -> throw(unsupported_construct(type_relation_self_not_type(OwnerId,
+                                                                MemberId)))
+    ; true
+    ).
+
+self_member_or_none([], none).
+self_member_or_none([_-MemberId-_|_], MemberId).
+
+input_member_ids(MemberPairs, InputMemberIds) :-
+    findall(MemberId,
+            ( member(_-MemberId-Name-_, MemberPairs),
+              Name \== 'Self', Name \== return ),
+            InputMemberIds).
+
+return_member_or_none(MemberPairs, MemberId) :-
+    ( member(_-MemberId-return-_, MemberPairs) -> true ; MemberId = none ).
+
+key_member_ids(MemberRows, OwnerId, KeyMemberIds) :-
+    findall(MemberId,
+            ( member(schema_member(MemberId, OwnerId, _, _, _, _, Roles),
+                     MemberRows),
+              memberchk(key, Roles) ),
+            KeyMemberIds).
+
 normalized_type_rows(Decls, Rows) :-
     findall(Row, normalized_declaration_row(Decls, Row), DeclarationRows),
     findall(Row, normalized_parameter_row(Decls, Row), ParameterRows),
@@ -319,6 +537,25 @@ normalized_member_row(Decls, member(Id, Owner, Ordinal, Name, Type)) :-
     nth1(Ordinal, Specs, col(Name, Type0)),
     normalized_type(Decls, Owner, [], Type0, Type),
     member_id(Owner, Ordinal, Name, Id).
+normalized_member_row(Decls, member(Id, Owner, Ordinal, Name, Type)) :-
+    plain_relation_specs(Decls, OwnerName, Specs),
+    semantic_decl_id(Decls, relation, OwnerName, Owner),
+    nth1(Ordinal, Specs, col(Name, Type0)),
+    normalized_type(Decls, Owner, [], Type0, Type),
+    member_id(Owner, Ordinal, Name, Id).
+
+% A few compiler-owned and conformance programs provide only col_type/3
+% entries.  Keep the normalized member graph available for those programs as
+% well as for parser-produced type_decl/2 entries.
+plain_relation_specs(Decls, OwnerName, Specs) :-
+    member(col_type(OwnerName/_, _, _), Decls),
+    findall(Name-Type,
+            member(col_type(OwnerName/_, Name, Type), Decls), Pairs0),
+    Pairs0 \== [],
+    maplist(pair_col, Pairs0, Specs),
+    \+ member(type_decl(OwnerName, _), Decls).
+
+pair_col(Name-Type, col(Name, Type)).
 
 % A template and a plain rel sharing a name mint one member id twice, once per
 % clause; the template clause runs first and its row wins.

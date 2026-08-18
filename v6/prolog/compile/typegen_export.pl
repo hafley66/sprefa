@@ -2,7 +2,9 @@
 % typegen_export.pl: the dl6 door beside 7_emit_ts_types.pl. Dumps the same
 % semantic type rows the emitter consumes (lower:catalog_type_rows/6 then
 % emit_jsonschema:option_rows/3, module-qualified) as one JSONL arrival per row
-% for render_ts.dl6's EDB rel type_row/7, type_storage/5, and type_pattern/3, so the two doors
+% for render_ts.dl6's EDB rel type_row/7, type_storage/5, type_pattern/3,
+% schema_member/6, schema_member_role/4, schema_member_column/2,
+% type_relation/3, type_relation_input/3, and type_relation_key/3, so the two doors
 % cannot drift.
 % row/11 -> type_row/7: id, parent, ordinal, name, kind, type_id, module_id
 % (Arity and Hash are dropped). Constraint trailing patterns are emitted as
@@ -11,6 +13,12 @@
 %   {"rel":"type_row","sign":"add","row":[<id>,<parent>,<ordinal>,"<name>","<kind>",<type_id>,<module_id>]}
 %   {"rel":"type_storage","sign":"add","row":[<id>,<column_id>,<ordinal>,"<local_name>",<module_id>]}
 %   {"rel":"type_pattern","sign":"add","row":[<constraint_id>,<ordinal>,"<term>"]}
+%   {"rel":"schema_member","sign":"add","row":[<member_id>,<owner_id>,<position>,"<name>","<authored_type>",<value_type_id>]}
+%   {"rel":"schema_member_role","sign":"add","row":[<member_id>,<ordinal>,"<role>","<argument>"]}
+%   {"rel":"schema_member_column","sign":"add","row":[<column_id>,<member_id>]}
+%   {"rel":"type_relation","sign":"add","row":[<owner_id>,<self_member_id_or_empty>,<return_member_id_or_empty>]}
+%   {"rel":"type_relation_input","sign":"add","row":[<owner_id>,<ordinal>,<member_id>]}
+%   {"rel":"type_relation_key","sign":"add","row":[<owner_id>,<ordinal>,<member_id>]}
 
 :- module(typegen_export, [ dump_type_rows/2, dump_fixture_rows/3,
                             write_prolog_types/2 ]).
@@ -20,7 +28,10 @@
 :- use_module(library(pairs)).
 
 :- use_module('../compile', [ program_plan/3 ]).
-:- use_module('../lower', [ catalog_type_rows/6 ]).
+:- use_module('../lower', [ catalog_type_rows/6,
+                            catalog_type_transport_rows/4,
+                            catalog_type_relation_rows/3 ]).
+:- use_module('../0_type_ids', [ semantic_type_id_text/2 ]).
 :- use_module('4_emit_jsonschema', [ option_rows/3 ]).
 :- use_module('7_emit_ts_types', [ ts_types_text/3 ]).
 
@@ -30,8 +41,12 @@ dump_type_rows(plan(Name, prog(Decls, Rules), _Types, RelPlans, _, _, _, _, Mode
                JsonlPath) :-
     catalog_type_rows(Mode, Name, Rules, RelPlans, Decls, Rows),
     option_rows(Decls, Rows, RowsOpt),
+    catalog_type_relation_rows(Name, Decls, RelationRows),
+    catalog_type_transport_rows(Name, RowsOpt, Decls, ChildRows),
+    append([RowsOpt, RelationRows, ChildRows], TransportRows),
     setup_call_cleanup(open(JsonlPath, write, Stream),
-                       forall(member(Row, RowsOpt), write_row_line(Stream, Row)),
+                       forall(member(Row, TransportRows),
+                              write_row_line(Stream, Row)),
                        close(Stream)).
 
 %! dump_fixture_rows(+FixtureFile, +FixtureName, +JsonlPath) is det.
@@ -99,6 +114,29 @@ row_of_dict(Dict, row(Id, ColumnId, Ordinal, LocalName, storage, 0, 0,
 row_of_dict(Dict, type_pattern(Id, Ordinal, PatternText)) :-
     Dict.rel == type_pattern,
     _{ row: [Id, Ordinal, PatternText] } :< Dict.
+row_of_dict(Dict, schema_member(MemberId, OwnerId, Position, Name,
+                                AuthoredTypeText, ValueTypeId)) :-
+    Dict.rel == schema_member,
+    _{ row: [MemberIdText, OwnerIdText, Position, Name,
+             AuthoredTypeText, ValueTypeIdText] } :< Dict,
+    MemberId = MemberIdText,
+    OwnerId = OwnerIdText,
+    ValueTypeId = ValueTypeIdText.
+row_of_dict(Dict, schema_member_role(MemberId, Ordinal, Role, Argument)) :-
+    Dict.rel == schema_member_role,
+    _{ row: [MemberId, Ordinal, Role, Argument] } :< Dict.
+row_of_dict(Dict, schema_member_column(ColumnId, MemberId)) :-
+    Dict.rel == schema_member_column,
+    _{ row: [ColumnId, MemberId] } :< Dict.
+row_of_dict(Dict, type_relation(OwnerId, SelfMemberId, ReturnMemberId)) :-
+    Dict.rel == type_relation,
+    _{ row: [OwnerId, SelfMemberId, ReturnMemberId] } :< Dict.
+row_of_dict(Dict, type_relation_input(OwnerId, Ordinal, MemberId)) :-
+    Dict.rel == type_relation_input,
+    _{ row: [OwnerId, Ordinal, MemberId] } :< Dict.
+row_of_dict(Dict, type_relation_key(OwnerId, Ordinal, MemberId)) :-
+    Dict.rel == type_relation_key,
+    _{ row: [OwnerId, Ordinal, MemberId] } :< Dict.
 
 restore_pattern_rows(RawRows, Rows) :-
     findall(Row,
@@ -129,6 +167,86 @@ write_row_line(Stream, row(Id, ColumnId, Ordinal, LocalName, storage, _TypeId,
                        row: [Id, ColumnId, Ordinal, LocalName, ModuleId] },
                     [width(0)]),
     format(Stream, '\n', []).
+write_row_line(Stream,
+               schema_member(MemberId, OwnerId, Position, Name, AuthoredType,
+                             ValueTypeId, _Roles)) :-
+    boundary_id_text(MemberId, MemberIdText),
+    boundary_id_text(OwnerId, OwnerIdText),
+    term_string(AuthoredType, AuthoredTypeText,
+                [quoted(false), portray(false)]),
+    boundary_id_text(ValueTypeId, ValueTypeIdText),
+    json_write_dict(Stream,
+                    _{ rel: schema_member, sign: add,
+                       row: [MemberIdText, OwnerIdText, Position, Name,
+                             AuthoredTypeText, ValueTypeIdText] },
+                    [width(0)]),
+    format(Stream, '\n', []).
+write_row_line(Stream,
+               schema_member(MemberId, OwnerId, Position, Name,
+                             AuthoredTypeText, ValueTypeId)) :-
+    boundary_id_text(MemberId, MemberIdText),
+    boundary_id_text(OwnerId, OwnerIdText),
+    boundary_id_text(ValueTypeId, ValueTypeIdText),
+    json_write_dict(Stream,
+                    _{ rel: schema_member, sign: add,
+                       row: [MemberIdText, OwnerIdText, Position, Name,
+                             AuthoredTypeText, ValueTypeIdText] },
+                    [width(0)]),
+    format(Stream, '\n', []).
+write_row_line(Stream,
+               type_relation(OwnerId, SelfMemberId, _InputMemberIds,
+                             ReturnMemberId, _KeyMemberIds)) :-
+    boundary_id_text(OwnerId, OwnerIdText),
+    optional_boundary_id_text(SelfMemberId, SelfMemberText),
+    optional_boundary_id_text(ReturnMemberId, ReturnMemberText),
+    json_write_dict(Stream,
+                    _{ rel: type_relation, sign: add,
+                       row: [OwnerIdText, SelfMemberText, ReturnMemberText] },
+                    [width(0)]),
+    format(Stream, '\n', []).
+write_row_line(Stream,
+               schema_member_column(ColumnId, MemberId)) :-
+    boundary_id_text(MemberId, MemberIdText),
+    json_write_dict(Stream,
+                    _{ rel: schema_member_column, sign: add,
+                       row: [ColumnId, MemberIdText] },
+                    [width(0)]),
+    format(Stream, '\n', []).
+write_row_line(Stream,
+               schema_member_role(MemberId, Ordinal, Role, Argument)) :-
+    boundary_id_text(MemberId, MemberIdText),
+    transport_argument_text(Argument, ArgumentText),
+    json_write_dict(Stream,
+                    _{ rel: schema_member_role, sign: add,
+                       row: [MemberIdText, Ordinal, Role, ArgumentText] },
+                    [width(0)]),
+    format(Stream, '\n', []).
+write_row_line(Stream,
+               type_relation(OwnerId, SelfMemberId, ReturnMemberId)) :-
+    boundary_id_text(OwnerId, OwnerIdText),
+    optional_boundary_id_text(SelfMemberId, SelfMemberText),
+    optional_boundary_id_text(ReturnMemberId, ReturnMemberText),
+    json_write_dict(Stream,
+                    _{ rel: type_relation, sign: add,
+                       row: [OwnerIdText, SelfMemberText, ReturnMemberText] },
+                    [width(0)]),
+    format(Stream, '\n', []).
+write_row_line(Stream, type_relation_input(OwnerId, Ordinal, MemberId)) :-
+    boundary_id_text(OwnerId, OwnerIdText),
+    boundary_id_text(MemberId, MemberIdText),
+    json_write_dict(Stream,
+                    _{ rel: type_relation_input, sign: add,
+                       row: [OwnerIdText, Ordinal, MemberIdText] },
+                    [width(0)]),
+    format(Stream, '\n', []).
+write_row_line(Stream, type_relation_key(OwnerId, Ordinal, MemberId)) :-
+    boundary_id_text(OwnerId, OwnerIdText),
+    boundary_id_text(MemberId, MemberIdText),
+    json_write_dict(Stream,
+                    _{ rel: type_relation_key, sign: add,
+                       row: [OwnerIdText, Ordinal, MemberIdText] },
+                    [width(0)]),
+    format(Stream, '\n', []).
 write_row_line(Stream, row(Id, Parent, Ordinal, Name, constraint,
                            InterfaceId, Arity, ModuleId, Hash, RuleHash, Patterns)) :-
     !,
@@ -144,6 +262,30 @@ write_row_line(Stream, row(Id, Parent, Ordinal, Name, Kind, TypeId, _Arity,
                        row: [Id, Parent, Ordinal, Name, Kind, TypeId, ModuleId] },
                     [width(0)]),
     format(Stream, '\n', []).
+
+boundary_id_text(Text, Text) :- string(Text), !.
+boundary_id_text(Text, Text) :-
+    atom(Text),
+    atom_length(Text, 64),
+    atom_chars(Text, Chars),
+    maplist(hex_char, Chars),
+    !.
+boundary_id_text(Id, Text) :- semantic_type_id_text(Id, Text).
+
+hex_char(Char) :-
+    char_code(Char, Code),
+    ( between(0'0, 0'9, Code)
+    ; between(0'a, 0'f, Code)
+    ; between(0'A, 0'F, Code)
+    ).
+
+optional_boundary_id_text(none, '') :- !.
+optional_boundary_id_text('', '') :- !.
+optional_boundary_id_text(Id, Text) :- boundary_id_text(Id, Text).
+
+transport_argument_text('', '') :- !.
+transport_argument_text(Argument, Text) :-
+    term_string(Argument, Text, [quoted(false), portray(false)]).
 
 write_pattern_lines(_Stream, _Id, [], _Ordinal).
 write_pattern_lines(_Stream, _Id, '', _Ordinal).

@@ -275,9 +275,23 @@ rust_rel_text(Rows, CollisionTypeNames, RelRow, Text) :-
     format(string(Text), '#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct ~w {\n~s}\n', [TypeName, Body]).
 
 rust_property_text(Rows, CollisionTypeNames, _Ord-ColumnId-Name-TypeId, Text) :-
+    (   rust_self_subject_column(Rows, ColumnId)
+    ->  Text = ''
+    ;   rust_property_text_included(Rows, CollisionTypeNames,
+                                    ColumnId, Name, TypeId, Text)
+    ).
+
+rust_property_text_included(Rows, CollisionTypeNames, ColumnId, Name, TypeId,
+                            Text) :-
     rust_column_value_type(Rows, CollisionTypeNames, ColumnId, TypeId, Type),
     rust_field_name(Name, Field),
     format(string(Text), '    pub ~w: ~w,\n', [Field, Type]).
+
+rust_self_subject_column(Rows, ColumnId) :-
+    member(row(ColumnId, _, _, _, column, _, _, _, _, _, _), Rows),
+    member(schema_member_column(ColumnId, MemberId), Rows),
+    member(schema_member_role(MemberId, _, self_subject, _), Rows),
+    !.
 
 rust_column_type(Rows, _Ord-ColumnId-_Name-TypeId, Type) :-
     rust_column_value_type(Rows, [], ColumnId, TypeId, Type).

@@ -18,6 +18,15 @@ rel type_row(id: int, parent: int, ordinal: int, name: text, kind: text,
 rel type_storage(id: int, column_id: int, ordinal: int, local_name: text,
                  module_id: int).
 rel type_pattern(id: int, ordinal: int, value: text).
+rel schema_member(member_id: text, owner_type_id: text, position: int,
+                  name: text, authored_type: text, value_type_id: text).
+rel schema_member_role(member_id: text, ordinal: int, role: text,
+                       argument: text).
+rel schema_member_column(column_id: int, member_id: text).
+rel type_relation(owner_type_id: text, self_member_id: text,
+                  return_member_id: text).
+rel type_relation_input(owner_type_id: text, ordinal: int, member_id: text).
+rel type_relation_key(owner_type_id: text, ordinal: int, member_id: text).
 
 # Option is a tagged carrier so option(option(T)) retains every state.
 rel first_option(id: int).

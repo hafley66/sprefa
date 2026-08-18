@@ -152,6 +152,8 @@
             % storage representation that distinguishes a followed ref from
             % an identity-only endpoint.
             catalog_type_rows/6,
+            catalog_type_relation_rows/3,
+            catalog_type_transport_rows/4,
             % The decl half alone, with the id layout the nesting rail reads.
             catalog_decl_rows/6,
             % Reproduce the RuleLevelStatements input the producer needs, used
@@ -166,7 +168,9 @@
 :- use_module(analyze).
 :- use_module(use_resolve, [short_hash/2]).
 :- use_module('0_rel_record').
-:- use_module('0_generic_expand', [canonical_type_name/2]).
+:- use_module('0_generic_expand', [canonical_type_name/2,
+                                   type_relation_rows/2,
+                                   schema_member_transport_rows/3]).
 :- use_module('0_type_ids', [id_kind_name/3, semantic_type_id_text/2]).
 :- use_module('0_option_expand', [acyclic_companion/5]).
 :- use_module('compile/registry', [expression/5, surface/5, body_surface_for_term/6]).
@@ -1193,6 +1197,20 @@ catalog_type_rows(Mode, ModuleName, Rules, RelPlans, Decls, Rows) :-
     catalog_storage_rows(Mode, RelPlans, RelIdMap, Modules, StartId,
                          StorageRows, _),
     append(DeclRows, StorageRows, Rows).
+
+%! catalog_type_relation_rows(+ModuleName, +Decls, -Rows) is det.
+%  Target-independent schema metadata is a parallel catalog stream.  The
+%  existing row/11 catalog remains the runtime-artifact stream; callers that
+%  need authored roles request these normalized rows explicitly.
+catalog_type_relation_rows(_ModuleName, Decls, Rows) :-
+    type_relation_rows(Decls, Rows).
+
+%! catalog_type_transport_rows(+ModuleName, +CatalogRows, +Decls, -Rows) is det.
+%  The artifact transport view is derived from the target-independent rows
+%  and catalog column IDs, without changing the existing catalog rows.
+catalog_type_transport_rows(_ModuleName, CatalogRows, Decls, Rows) :-
+    type_relation_rows(Decls, RelationRows),
+    schema_member_transport_rows(CatalogRows, RelationRows, Rows).
 
 % The plane half is appended after the rels+columns block (plan 4) so no
 % existing id moves. Plane ids start at the decl block's FinalId.

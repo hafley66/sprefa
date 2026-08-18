@@ -1,0 +1,4 @@
+# Metadata transport fixture. The compiler relation stream remains ordinary
+# runtime data while the parallel type stream records its members and keys.
+rel person(id: int, name: text) key(1).
+rel convert(input: text) -> text.
