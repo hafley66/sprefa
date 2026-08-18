@@ -1,0 +1,23 @@
+{"record":"data_doc","family":"data","ordinal":0,"span":{"start":0,"end":135},"format":"yaml","doc":{"openapi":"3.1.0","paths":{"/pets":{"get":{"operationId":"list_pets"}}},"servers":[{"url":"https://one.example"},{"url":"https://two.example"}]}}
+{"record":"data_doc","family":"data","ordinal":1,"span":{"start":140,"end":264},"format":"yaml","doc":{"count":7,"enabled":true,"missing":null,"openapi":"3.1.0","paths":{"/pets/{id}":{"get":{"operationId":"get_pet"}}},"quoted":"a: b"}}
+{"record":"data_value","family":"data","ordinal":0,"path":"","kind":"object","text":null,"span":{"start":0,"end":135}}
+{"record":"data_value","family":"data","ordinal":0,"path":"openapi","kind":"string","text":"3.1.0","span":{"start":9,"end":14}}
+{"record":"data_value","family":"data","ordinal":0,"path":"paths","kind":"object","text":null,"span":{"start":24,"end":68}}
+{"record":"data_value","family":"data","ordinal":0,"path":"paths./pets","kind":"object","text":null,"span":{"start":35,"end":68}}
+{"record":"data_value","family":"data","ordinal":0,"path":"paths./pets.get","kind":"object","text":null,"span":{"start":46,"end":68}}
+{"record":"data_value","family":"data","ordinal":0,"path":"paths./pets.get.operationId","kind":"string","text":"list_pets","span":{"start":59,"end":68}}
+{"record":"data_value","family":"data","ordinal":0,"path":"servers","kind":"array","text":null,"span":{"start":80,"end":135}}
+{"record":"data_value","family":"data","ordinal":0,"path":"servers.0","kind":"object","text":null,"span":{"start":82,"end":106}}
+{"record":"data_value","family":"data","ordinal":0,"path":"servers.0.url","kind":"string","text":"https://one.example","span":{"start":87,"end":106}}
+{"record":"data_value","family":"data","ordinal":0,"path":"servers.1","kind":"object","text":null,"span":{"start":111,"end":135}}
+{"record":"data_value","family":"data","ordinal":0,"path":"servers.1.url","kind":"string","text":"https://two.example","span":{"start":116,"end":135}}
+{"record":"data_value","family":"data","ordinal":1,"path":"","kind":"object","text":null,"span":{"start":140,"end":264}}
+{"record":"data_value","family":"data","ordinal":1,"path":"openapi","kind":"string","text":"3.1.0","span":{"start":149,"end":154}}
+{"record":"data_value","family":"data","ordinal":1,"path":"paths","kind":"object","text":null,"span":{"start":164,"end":211}}
+{"record":"data_value","family":"data","ordinal":1,"path":"paths./pets/{id}","kind":"object","text":null,"span":{"start":180,"end":211}}
+{"record":"data_value","family":"data","ordinal":1,"path":"paths./pets/{id}.get","kind":"object","text":null,"span":{"start":191,"end":211}}
+{"record":"data_value","family":"data","ordinal":1,"path":"paths./pets/{id}.get.operationId","kind":"string","text":"get_pet","span":{"start":204,"end":211}}
+{"record":"data_value","family":"data","ordinal":1,"path":"enabled","kind":"boolean","text":"true","span":{"start":221,"end":225}}
+{"record":"data_value","family":"data","ordinal":1,"path":"missing","kind":"null","text":"null","span":{"start":235,"end":239}}
+{"record":"data_value","family":"data","ordinal":1,"path":"count","kind":"number","text":"7","span":{"start":247,"end":248}}
+{"record":"data_value","family":"data","ordinal":1,"path":"quoted","kind":"string","text":"a: b","span":{"start":258,"end":262}}

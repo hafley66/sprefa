@@ -36,6 +36,8 @@ RECORD SHAPES
   record=doc    family=type                owner={start,end}  parent=<string|null>  text=<string>
   record=doc_tag  family=type              owner={start,end}  tag=<string>  arg=<string|null>  text=<string>
   record=doc_node  family=type             span={start,end}   kind=<heading|code_block>  name=<string>  parent=<string|null>
+  record=data_doc  family=data            ordinal=<u32>  span={start,end}  format=<json|jsonl|yaml|toml>  doc=<json value>
+  record=data_value  family=data          ordinal=<u32>  path=<dotted>  kind=<object|array|string|number|boolean|null>  text=<string|null>  span={start,end}
   record=specifier  family=call            span={start,end}   name=<string>  kind=<slug>  module=<string|null>  imported=<string|null>
   record=unresolved  family=call           span={start,end}   reason=<slug>  detail=<string>
   record=capture  query=<id>  capture=<name>  text=<string>  start=<u32>  end=<u32>  match_start=<u32>  match_end=<u32>

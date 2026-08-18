@@ -1711,6 +1711,7 @@ impl Source for GoSource {
             types,
             call,
             df,
+            data: None,
         }
     }
 }

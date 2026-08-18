@@ -213,7 +213,11 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
                         span.start
                     ));
                 }
-                FamilyTag::Cst | FamilyTag::Module | FamilyTag::Flow | FamilyTag::Cfg => {}
+                FamilyTag::Cst
+                | FamilyTag::Module
+                | FamilyTag::Flow
+                | FamilyTag::Cfg
+                | FamilyTag::Data => {}
             },
             FlatFact::Edge {
                 family, from, to, ..

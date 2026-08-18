@@ -23,12 +23,14 @@ const TYPES_ONLY: FamilyMask = FamilyMask {
     types: true,
     call: false,
     df: false,
+    data: false,
 };
 const CST_ONLY: FamilyMask = FamilyMask {
     cst: true,
     types: false,
     call: false,
     df: false,
+    data: false,
 };
 
 /// The exact `doc_node` row set the fixture projects, hand-derived byte spans.
