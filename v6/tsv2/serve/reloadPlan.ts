@@ -1,9 +1,18 @@
 import type {
+  IPhysicalTables,
   IRelCatalogRow,
   IReloadPlan,
   IReloadPlanner,
   RelVerdict,
 } from "../runtime/types.ts";
+
+const NO_PHYSICAL_TABLES: IPhysicalTables = { prev: {}, next: {} };
+
+/** A stored rel's physical name carries its shape digest, so a recreate drops
+ *  the OUTGOING table: the incoming shape lives under a different name. */
+function physical_table(names: Readonly<Record<string, string>>, row: IRelCatalogRow): string {
+  return names[row.local_name] ?? row.local_name;
+}
 
 // module_id is positional across emits (one id sequence with primitives and
 // synthetic rows), so keying on it reads any id-layout shift as drop-everything.
@@ -28,7 +37,7 @@ function rels_by_key(rows: readonly IRelCatalogRow[]): Map<string, IRelCatalogRo
 }
 
 export const ReloadPlanner: IReloadPlanner = {
-  plan(prev, next, allow_drop) {
+  plan(prev, next, allow_drop, physical = NO_PHYSICAL_TABLES) {
     const prev_rels = rels_by_key(prev);
     const next_rels = rels_by_key(next);
 
@@ -42,10 +51,10 @@ export const ReloadPlanner: IReloadPlanner = {
         verdicts.set(key, "create");
       } else if (prev_row.h_schema !== next_row.h_schema) {
         verdicts.set(key, "recreate");
-        statements.push(`DROP TABLE IF EXISTS "${next_row.local_name}"`);
+        statements.push(`DROP TABLE IF EXISTS "${physical_table(physical.prev, prev_row)}"`);
       } else if (prev_row.h_rule !== next_row.h_rule) {
         verdicts.set(key, "refill");
-        statements.push(`DELETE FROM "${next_row.local_name}"`);
+        statements.push(`DELETE FROM "${physical_table(physical.next, next_row)}"`);
       } else {
         verdicts.set(key, "keep");
       }
@@ -55,7 +64,7 @@ export const ReloadPlanner: IReloadPlanner = {
       if (next_rels.has(key)) continue;
       if (allow_drop) {
         verdicts.set(key, "drop");
-        statements.push(`DROP TABLE IF EXISTS "${prev_row.local_name}"`);
+        statements.push(`DROP TABLE IF EXISTS "${physical_table(physical.prev, prev_row)}"`);
       } else {
         unsupported.push(`rel_drop_needs_allow_drop(${prev_row.local_name})`);
       }

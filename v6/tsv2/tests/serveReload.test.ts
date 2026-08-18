@@ -18,6 +18,14 @@
  * SABOTAGE RECEIPT (run 2026-08-09, reverted): forcing `allow_drop` to false at
  * the `ReloadPlanner.plan` call site turns test 2 red (the drop becomes an
  * `unsupported` entry and the table survives) and leaves the other three green.
+ *
+ * RED-BEFORE, tests 2, 3 and 5, measured 2026-08-18 by restoring serve/0_compile.ts
+ * to its digest-named entry file: the entry file stem is the module prefix on
+ * every physical table, so a digest-named entry renamed every table on every
+ * edit. Tests 3 and 5 read `[]` where they expected the surviving `edge_row`
+ * row; test 2 could not find `reach_row`'s table at all. Test 1 passed
+ * VACUOUSLY there: the widened program simply built fresh tables under a fresh
+ * prefix, and its DROP hit nothing.
  */
 
 import assert from "node:assert/strict";
@@ -53,11 +61,25 @@ rel reach_row(src_node: text, dst_node: text, weight_units: int).
 reach_row(SrcNode, DstNode, WeightUnits) <- edge_row(SrcNode, DstNode, WeightUnits).
 `;
 
+/** Same rels, same rules, same wiring; a comment and a blank line added. */
+const COMMENTED = `# the edges a client posts
+rel edge_row(src_node: text, dst_node: text).
+
+rel reach_row(src_node: text, dst_node: text).
+
+reach_row(SrcNode, DstNode) <- edge_row(SrcNode, DstNode).
+`;
+
 const WITHOUT_REACH = `rel edge_row(src_node: text, dst_node: text).
 
 rel loop_row(src_node: text).
 loop_row(SrcNode) <- edge_row(SrcNode, SrcNode).
 `;
+
+/** Every served program compiles under the entry module `main` (serve/0_compile.ts),
+ *  and a DERIVED rel takes no shape digest, so both tables are named in full. */
+const REACH_TABLE = "main_reach_row";
+const LOOP_TABLE = "main_loop_row";
 
 type RowSet = { readonly rows: readonly (readonly (string | number)[])[] };
 type LoadReply = { readonly loaded: boolean; readonly reload?: IReloadOutcome };
@@ -126,15 +148,15 @@ test("a rel the incoming program does not declare loses its table", { timeout: 8
   try {
     assert.equal((await post_program(served.port, NARROW)).statusCode, 200);
     await post_arrivals(served.port, [{ rel: "edge_row", sign: "add", row: ["one", "two"] }]);
-    assert.ok((await table_names(db_url)).includes("reach_row"));
+    assert.ok((await table_names(db_url)).includes(REACH_TABLE));
 
     const swap = await within(post_program(served.port, WITHOUT_REACH), 5000, "reload dropping a rel");
     assert.equal(swap.statusCode, 200, swap.body);
     assert.equal(verdict_of((JSON.parse(swap.body) as LoadReply).reload, "reach_row"), "drop");
 
     const remaining = await table_names(db_url);
-    assert.ok(!remaining.includes("reach_row"), `reach_row survived its drop: ${remaining.join(", ")}`);
-    assert.ok(remaining.includes("loop_row"), `loop_row was never created: ${remaining.join(", ")}`);
+    assert.ok(!remaining.includes(REACH_TABLE), `${REACH_TABLE} survived its drop: ${remaining.join(", ")}`);
+    assert.ok(remaining.includes(LOOP_TABLE), `${LOOP_TABLE} was never created: ${remaining.join(", ")}`);
   } finally {
     await served.stop();
   }
@@ -161,6 +183,31 @@ test("a rule whose head wiring moved refills and re-derives", { timeout: 8000 },
 
     assert.deepEqual(rows_of((await request(served.port, "/idb/edge_row", "GET")).body), [["one", "two"]]);
     assert.deepEqual(rows_of((await request(served.port, "/idb/reach_row", "GET")).body), [["two", "one"]]);
+  } finally {
+    await served.stop();
+  }
+});
+
+/**
+ * THE HEADLINE of the shape digest: an edit that moves no shape moves no table
+ * name, so the rows stay where they are. The comment and the blank line are
+ * the whole diff.
+ */
+test("an edit that moves no shape keeps every row", { timeout: 8000 }, async () => {
+  const db_url = scratch_db_url();
+  const served = await start_served(0, undefined, db_url);
+  try {
+    assert.equal((await post_program(served.port, NARROW)).statusCode, 200);
+    await post_arrivals(served.port, [{ rel: "edge_row", sign: "add", row: ["one", "two"] }]);
+
+    const swap = await within(post_program(served.port, COMMENTED), 5000, "reload of a commented program");
+    assert.equal(swap.statusCode, 200, swap.body);
+    const reply = JSON.parse(swap.body) as LoadReply;
+    assert.equal(verdict_of(reply.reload, "edge_row"), "keep");
+    assert.equal(verdict_of(reply.reload, "reach_row"), "keep");
+
+    assert.deepEqual(rows_of((await request(served.port, "/idb/edge_row", "GET")).body), [["one", "two"]]);
+    assert.deepEqual(rows_of((await request(served.port, "/idb/reach_row", "GET")).body), [["one", "two"]]);
   } finally {
     await served.stop();
   }
