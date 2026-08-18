@@ -24,7 +24,7 @@
 :- use_module('0_type_plane',
               [ type_definitions/2, type_cycle_witness/2, declared_type_name/2,
                 type_definition/4, relation_columns_and_types/5, column_storage/3,
-                relation_value_shape/3 ]).
+                relation_value_shape/3, relation_value_term/4 ]).
 :- use_module('compile/registry', [surface_for_term/6, surface/5]).
 
 :- op(1150, xfx, <-).
@@ -381,6 +381,18 @@ program_violation(relation_pattern_not_a_relation_value, prog(Decls, Rules),
     arg(Position, Atom, Argument),
     relation_argument_violation(Types, AtomRef, AtomColumn, DeclaredType,
                                 Argument, pattern(Ref, Column, TypeName, Value)),
+    !.
+
+program_violation(reserved_relation_value_carrier, prog(Decls, _), obj/1) :-
+    declared_ref(Decls, obj/1).
+
+declared_ref(Decls, Ref) :-
+    member(Decl, Decls),
+    ( Decl = kind(Ref, _)
+    ; Decl = keyed(Ref, _)
+    ; Decl = keep(Ref, _)
+    ; Decl = col_type(Ref, _, _)
+    ),
     !.
 
 % The SAME law one hop out, where the offending value is not written down.
@@ -939,13 +951,13 @@ rule_column_variable(Decls, Types, Rule, Argument, Ref, Column, Type) :-
 % the innermost one that actually holds the bad term.
 relation_argument_violation(Types, Ref, Column, TypeName, Value, Violation) :-
     nonvar(Value),
-    (   relation_value_shape(Types, TypeName, Value)
+    (   relation_value_term(Types, TypeName, Value, Term)
     ->  type_definition(Types, TypeName, Columns, ColumnTypes),
         length(Columns, Arity),
         nth1(Position, ColumnTypes, ChildType),
         declared_type_name(Types, ChildType),
         nth1(Position, Columns, ChildColumn),
-        arg(Position, Value, ChildValue),
+        arg(Position, Term, ChildValue),
         relation_argument_violation(Types, TypeName/Arity, ChildColumn,
                                     ChildType, ChildValue, Violation)
     ;   Violation = pattern(Ref, Column, TypeName, Value)

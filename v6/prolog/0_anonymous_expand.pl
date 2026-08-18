@@ -166,11 +166,12 @@ anonymous_mint(Decls, Owner, Path, Type0, Type, ExtraDecls, Rows) :-
     compound(Type0),
     Type0 =.. [Functor | Args0],
     mint_arguments(Decls, Owner, Path, 1, Args0, Args, ArgDecls, ArgRows),
+    !,
     ( Args == Args0
     -> Type = Type0, ExtraDecls = [], Rows = []
     ; Type =.. [Functor | Args],
-      append(ArgDecls, ExtraDecls),
-      ArgRows = Rows
+      ExtraDecls = ArgDecls,
+      Rows = ArgRows
     ).
 anonymous_mint(_, _, _, Type, Type, [], []).
 
@@ -371,7 +372,7 @@ anonymous_generated_id(Decls, Shape, GeneratedId) :-
             member(anonymous(Owner, Path, Shape), Rows),
             member(derived_from(Id, anonymous(Owner, Path, Shape)), Rows),
             member(declaration(Id, root, GeneratedName, _, _), Rows) ),
-          [GeneratedId]).
+          [GeneratedId | _]).
 
 % ═══ role path (shared with schema_member_roles) ═════════════════════════════
 

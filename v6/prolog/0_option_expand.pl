@@ -101,7 +101,9 @@ option_value_element(Decls, option(Element)) :-
 
 declared_rel_element(Decls, Element) :-
     atom(Element),
-    memberchk(col_type(Element/_, _, _), Decls).
+    ( memberchk(col_type(Element/_, _, _), Decls)
+    ; memberchk(type_decl(Element, _), Decls)
+    ).
 
 % Positions are meaningful only fully typed; the length check is that
 % requirement.

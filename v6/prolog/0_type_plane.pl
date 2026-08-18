@@ -52,7 +52,8 @@
             json_object_value/2,
             relation_columns_and_types/5,
             relation_value_shape/3,
-            relation_value_object/4
+            relation_value_object/4,
+            relation_value_term/4
           ]).
 
 :- use_module(library(lists)).
@@ -233,6 +234,59 @@ relation_value_shape(Types, TypeName, Value) :-
     type_definition(Types, TypeName, Columns, _),
     length(Columns, Arity).
 
+% A relation-valued column supplies the missing context for an object literal.
+% The named relation-term spelling remains accepted, while `{field: value}`
+% and the canonical obj/1 spelling are lowered to the same positional term
+% before the dictionary rewrite runs. This is deliberately exact: a partial or
+% extra object cannot be assigned to a product owner by field resemblance.
+relation_value_term(Types, TypeName, Value, Term) :-
+    relation_value_shape(Types, TypeName, Value),
+    !,
+    Term = Value.
+relation_value_term(Types, TypeName, Value, Term) :-
+    relation_object_fields(Types, TypeName, Value, Fields),
+    Term =.. [TypeName | Fields].
+
+relation_object_fields(Types, TypeName, Value, Fields) :-
+    object_pairs_preserving_variables(Value, Pairs),
+    type_definition(Types, TypeName, Columns, ColumnTypes),
+    pairs_keys(Pairs, PairKeys0),
+    sort(PairKeys0, PairKeys),
+    length(Pairs, PairCount),
+    length(PairKeys, KeyCount),
+    PairCount =:= KeyCount,
+    sort(Columns, ColumnKeys),
+    PairKeys == ColumnKeys,
+    maplist(relation_object_field(Types, Pairs), Columns, ColumnTypes,
+            Fields).
+
+relation_object_field(Types, Pairs, Column, ColumnType, Field) :-
+    memberchk(Column-Value, Pairs),
+    ( declared_type_name(Types, ColumnType)
+    -> relation_value_term(Types, ColumnType, Value, Field)
+    ;  Field = Value
+    ).
+
+object_pairs_preserving_variables(obj(Pairs0), Pairs) :-
+    is_list(Pairs0),
+    maplist(object_pair, Pairs0, Pairs1),
+    keysort(Pairs1, Pairs).
+object_pairs_preserving_variables(Value, Pairs) :-
+    nonvar(Value),
+    Value = '{}'(Raw),
+    conjunction_pairs(Raw, RawPairs),
+    maplist(object_pair, RawPairs, Pairs1),
+    keysort(Pairs1, Pairs).
+
+object_pair(Key-Value, Key-Value) :- !.
+object_pair(Key:Value, Key-Value).
+
+conjunction_pairs((Left, Right), Pairs) :- !,
+    conjunction_pairs(Left, LeftPairs),
+    conjunction_pairs(Right, RightPairs),
+    append(LeftPairs, RightPairs, Pairs).
+conjunction_pairs(Pair, [Pair]).
+
 % The canonical object a relation-value term denotes, recursively, with keys
 % sorted the way every other object in the system is sorted. Unbound arguments
 % pass through as themselves, so a PATTERN (`file(_, fpath(Path))`) becomes a
@@ -242,6 +296,12 @@ relation_value_object(Types, TypeName, Value, obj(Sorted)) :-
     type_definition(Types, TypeName, Columns, ColumnTypes),
     Value =.. [_ | Args],
     maplist(relation_field_object(Types), Columns, ColumnTypes, Args, Pairs),
+    keysort(Pairs, Sorted).
+relation_value_object(Types, TypeName, Value, obj(Sorted)) :-
+    relation_object_fields(Types, TypeName, Value, Fields),
+    type_definition(Types, TypeName, Columns, ColumnTypes),
+    maplist(relation_field_object(Types), Columns, ColumnTypes, Fields,
+            Pairs),
     keysort(Pairs, Sorted).
 
 relation_field_object(Types, Column, ChildType, Arg, Column-Out) :-
@@ -477,6 +537,14 @@ canonicalize_column(Decls, Types, Ref, Column, Value0, Value) :-
     ;   Value = Value0
     ).
 
+canonical_struct_value(Types, TypeName, Value0, Value) :-
+    % Rule-authored object construction is first made positional by
+    % relation_pattern.pl.  The positional child can itself be an anonymous
+    % product, so run the same relation-value normalization here before the
+    % ordinary JSON/object path.  This keeps nested authored and ingress
+    % values on the same canonical object representation.
+    relation_value_object(Types, TypeName, Value0, Value),
+    !.
 canonical_struct_value(Types, TypeName, Value0, obj(Pairs)) :-
     json_object_value(Value0, Pairs0),
     type_definition(Types, TypeName, Columns, ColumnTypes),

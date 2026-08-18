@@ -273,11 +273,20 @@ reserved_namespace_name(Name) :-
     sub_atom(Name, 0, 2, _, '__').
 
 check_reserved_namespace(SugaredProg) :-
-    (   SugaredProg = prog(Decls, Rules),
+    (   SugaredProg = prog(Decls, _Rules),
+        reserved_relation_value_violation(Decls, obj/1)
+    ->  throw(unsupported_construct(reserved_relation_value_carrier(obj/1)))
+    ;   SugaredProg = prog(Decls, Rules),
         reserved_namespace_violation(Decls, Rules, Name)
     ->  throw(unsupported_construct(reserved_rel_namespace(Name)))
     ;   true
     ).
+
+% obj/1 is the canonical runtime carrier for relation-valued columns. A
+% declaration with that reference would collide before contextual normalization.
+reserved_relation_value_violation(Decls, Ref) :-
+    declared_refs(Decls, DeclaredRefs),
+    memberchk(Ref, DeclaredRefs).
 
 % Reading a contract rel is allowed and writing one is not, which is the split
 % compile.pl already enforces by subtracting the catalog from ArrivalTargets.

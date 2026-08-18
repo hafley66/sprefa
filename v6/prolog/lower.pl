@@ -179,7 +179,7 @@
                 type_topological_order/2, type_canonical_json/4,
                 type_field_values/4, declared_type_name/2,
                 relation_columns_and_types/5, relation_value_shape/3,
-                canonical_json_text/2 ]).
+                relation_value_term/4, canonical_json_text/2 ]).
 :- use_module('0_body_walk', [walk_body/3, body_relation_atoms/4]).
 :- use_module('conformance/body', [rel_ref/2]).
 
@@ -3420,8 +3420,8 @@ rewrite_relation_arguments(Types, [ColumnType | Types0], [Arg0 | Args0],
                            [Arg | Args], State0, State) :-
     !,
     (   ColumnType = ref(TypeName),
-        relation_value_shape(Types, TypeName, Arg0)
-    ->  intern_relation_value(Types, TypeName, Arg0, Arg, State0, State1)
+        relation_value_term(Types, TypeName, Arg0, Value)
+    ->  intern_relation_value(Types, TypeName, Value, Arg, State0, State1)
     ;   Arg = Arg0, State1 = State0
     ),
     rewrite_relation_arguments(Types, Types0, Args0, Args, State1, State).
@@ -3488,7 +3488,14 @@ relation_pattern_residue(Types, RelPlans, Head, Body,
     nth1(Position, ColumnTypes, ref(TypeName)),
     nth1(Position, Columns, Column),
     arg(Position, Atom, Value),
-    relation_value_shape(Types, TypeName, Value).
+    ( relation_value_shape(Types, TypeName, Value)
+    ; contextual_relation_value_shape(Types, TypeName, Value) ).
+
+contextual_relation_value_shape(Types, TypeName, Value) :-
+    compound(Value),
+    functor(Value, Functor, 1),
+    memberchk(Functor, ['{}', obj]),
+    \+ relation_value_term(Types, TypeName, Value, _).
 % Left NONDETERMINISTIC on purpose. Both callers commit to the first solution
 % through their own `->`, and check_relation_patterns_lowered/5 has to be able
 % to step PAST a term the elision put back before deciding there is no residue.

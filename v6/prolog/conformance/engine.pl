@@ -126,6 +126,7 @@ engine_check_order([ key_position_out_of_range,
                      % is not a relation atom at all, so nothing below has a
                      % meaningful question to ask about it.
                      dynamic_relation_name,
+                     reserved_relation_value_carrier,
                      relation_pattern_not_a_relation_value,
                      % Straight after the concrete-argument class it extends:
                      % the same law where the offending value is a variable.
@@ -236,6 +237,8 @@ engine_unsupported(relation_pattern_not_a_relation_value,
                pattern(Ref, Column, TypeName, Value),
                relation_pattern_not_a_relation_value(Ref, Column, TypeName, Value)).
 engine_unsupported(dynamic_relation_name, Ref, dynamic_relation_name(Ref)).
+engine_unsupported(reserved_relation_value_carrier, Ref,
+                   reserved_relation_value_carrier(Ref)).
 % The oracle uses one unsupported construct term for all reserved body words.
 engine_unsupported(reserved_body_word, reserved(Ref, _), reserved_body_word(Ref)).
 engine_unsupported(relation_value_under_negation,
