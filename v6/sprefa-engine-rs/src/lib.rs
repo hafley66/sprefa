@@ -11,6 +11,7 @@ pub mod hosts;
 pub mod incremental;
 pub mod ordered;
 pub mod program;
+pub mod serve;
 pub mod source_bind;
 pub mod sql;
 pub mod struct_plane;
@@ -19,6 +20,7 @@ pub mod ticklog;
 pub mod types;
 
 pub use program::GenProgram;
+pub use serve::{router, serve_on, serve_unix, ServeError, ServeState};
 pub use sql::{result_rows, SqlRunner, SqliteSeam};
 pub use ticklog::{js_float_text, tick_line};
 pub use types::*;

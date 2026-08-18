@@ -10178,6 +10178,85 @@ test(a_keyword_column_takes_the_raw_identifier_escape) :-
     \+ sub_string(Text, _, _, _, "pub where:"), !.
 
 :- end_tests(rust_types_keyword_escape).
+
+:- begin_tests(rust_types_compile_under_rustc).
+
+% `tree` at the top of the module and `orchard.tree` under a path rel, the
+% shape module_path_local_name_binds_before_the_dotted_one carries.
+dotted_collision_rows([
+    row(1, 0, 0, int, primitive, 0, 0, 0, '', '', ''),
+    row(2, 0, 0, grove, module, 0, 0, 2, 'deadbeefdeadbeef', '', ''),
+    row(3, 2, 0, tree, rel, 0, 1, 2, '', '', ''),
+    row(4, 3, 1, tree_id, column, 1, 0, 2, '', '', ''),
+    row(5, 2, 0, orchard, rel, 0, 0, 2, '', '', ''),
+    row(6, 5, 0, tree, rel, 0, 1, 2, '', '', ''),
+    row(7, 6, 1, tree_id, column, 1, 0, 2, '', '', '')
+]).
+
+% FAIL-PRE-FIX: both rels took the entry module's prefix and rustc stopped at
+% E0428, the name `GroveTree` defined multiple times.
+test(a_dotted_rel_qualifies_on_its_own_path) :-
+    dotted_collision_rows(Rows),
+    once(rust_types_text(grove, Rows, Text)),
+    sub_string(Text, _, _, _, "pub struct GroveTree {"),
+    sub_string(Text, _, _, _, "pub struct GroveOrchardTree {"), !.
+
+% A template whose second column mints no member row, the shape every
+% rel_template lands in through 0_generic_expand.pl:186.
+one_unused_parameter_rows([
+    row(1, 0, 0, int, primitive, 0, 0, 0, '', '', ''),
+    row(2, 0, 0, doc, module, 0, 0, 2, 'deadbeefdeadbeef', '', ''),
+    row(3, 0, 0, span, generic_rel, 0, 0, 2, '', '', ''),
+    row(4, 3, 1, 'Start', type_parameter, 0, 0, 0, '', '', ''),
+    row(5, 3, 2, 'Label', type_parameter, 0, 0, 0, '', '', ''),
+    row(6, 3, 1, start, generic_column, 4, 0, 0, '', '', '')
+]).
+
+% FAIL-PRE-FIX: `pub struct Span<Start, Label> { pub start: Start, }` stopped
+% rustc at E0392, type parameter `Label` is never used.
+test(one_unused_parameter_takes_a_one_element_marker) :-
+    one_unused_parameter_rows(Rows),
+    once(rust_types_text(doc, Rows, Text)),
+    sub_string(Text, _, _, _, "pub struct Span<Start, Label> {"),
+    sub_string(Text, _, _, _, "pub start: Start,"),
+    sub_string(Text, _, _, _, "#[serde(skip)]"),
+    sub_string(Text, _, _, _,
+               "pub phantom: std::marker::PhantomData<fn() -> (Label,)>,"), !.
+
+no_column_rows([
+    row(1, 0, 0, int, primitive, 0, 0, 0, '', '', ''),
+    row(2, 0, 0, doc, module, 0, 0, 2, 'deadbeefdeadbeef', '', ''),
+    row(3, 0, 0, couple, generic_rel, 0, 0, 2, '', '', ''),
+    row(4, 3, 1, 'Left', type_parameter, 0, 0, 0, '', '', ''),
+    row(5, 3, 2, 'Right', type_parameter, 0, 0, 0, '', '', '')
+]).
+
+% FAIL-PRE-FIX: `pub struct Couple<Left, Right> {}` stopped rustc at E0392 on
+% both parameters at once.
+test(two_unused_parameters_share_one_marker) :-
+    no_column_rows(Rows),
+    once(rust_types_text(doc, Rows, Text)),
+    sub_string(Text, _, _, _,
+               "pub phantom: std::marker::PhantomData<fn() -> (Left, Right)>,"),
+    \+ sub_string(Text, _, _, _, "(Left,)"), !.
+
+% The parameter reaches the field through a list, so the field mentions it.
+list_column_rows([
+    row(1, 0, 0, int, primitive, 0, 0, 0, '', '', ''),
+    row(2, 0, 0, doc, module, 0, 0, 2, 'deadbeefdeadbeef', '', ''),
+    row(3, 0, 0, bag, generic_rel, 0, 0, 2, '', '', ''),
+    row(4, 3, 1, 'Item', type_parameter, 0, 0, 0, '', '', ''),
+    row(5, 0, 0, item_list, list, 4, 0, 0, '', '', ''),
+    row(6, 3, 1, items, generic_column, 5, 0, 0, '', '', '')
+]).
+
+test(a_parameter_used_inside_a_list_mints_no_marker) :-
+    list_column_rows(Rows),
+    once(rust_types_text(doc, Rows, Text)),
+    sub_string(Text, _, _, _, "pub items: Vec<Item>,"),
+    \+ sub_string(Text, _, _, _, "PhantomData<fn()"), !.
+
+:- end_tests(rust_types_compile_under_rustc).
 :- begin_tests(bytes_type_system).
 
 test(bytes_parses_prints_and_reparses_as_a_scalar_type) :-

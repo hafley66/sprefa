@@ -4,7 +4,7 @@ pub struct LocalPick {
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ModulePathLocalNameBindsBeforeTheDottedOneTree {
+pub struct ModulePathLocalNameBindsBeforeTheDottedOneOrchardTree {
     pub tree_id: i64,
 }
 
