@@ -224,6 +224,7 @@ shadowed_by_type_decl(Decls, Name/Arity) :-
     length(Specs, Arity).
 
 decl_order_item(enum_decl(Name, Variants), enum_decl(Name, Variants)).
+decl_order_item(Decl, Decl) :- Decl = rel_template_enum(_, _, _).
 decl_order_item(Decl, Decl) :- Decl = interface_decl(_, _).
 decl_order_item(Decl, Decl) :- Decl = rel_template(_, _, _).
 decl_order_item(Decl, Decl) :- Decl = type_decl(_, _).
@@ -280,6 +281,16 @@ decl_line(_, _, _, rel_template(Segments, Parameters, Specs), Line) :-
     maplist(print_template_column, Specs, ColumnTexts),
     atomic_list_concat(ColumnTexts, ', ', ColumnsText),
     format(atom(Line), "rel ~w(~w)(~w).~n", [Name, ParametersText, ColumnsText]).
+
+% A parameterized enum prints its parameters in the first paren group and its
+% variants in the second, mirroring the parser's two-group surface.
+decl_line(_, _, _, rel_template_enum(Segments, Parameters, Variants), Line) :-
+    !,
+    atomic_list_concat(Segments, '.', Name),
+    maplist(print_generic_parameter, Parameters, ParameterTexts),
+    atomic_list_concat(ParameterTexts, ', ', ParametersText),
+    print_enum_variants(Variants, VariantsText),
+    format(atom(Line), "rel ~w(~w)(~w).~n", [Name, ParametersText, VariantsText]).
 
 % shadowed_by_type_decl/2 suppresses this ref's bare decl line, so the
 % modifiers carried by its kind/keep/keyed entries have nowhere else to print.

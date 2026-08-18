@@ -105,15 +105,47 @@ option_rows(Decls, Rows0, Rows) :-
     option_surface_types(Decls, Elements),
     wrapper_type_closure(Elements, OptionTypes),
     validate_option_render_depth(OptionTypes),
-    option_enum_names(Decls, Elements, EnumNames),
+    option_enum_names(Decls, Elements, OptionEnumNames),
+    direct_enum_names(Decls, DirectEnumNames),
+    list_to_set(OptionEnumNames, OptionEnumSet),
+    list_to_set(DirectEnumNames, DirectEnumSet),
+    subtract(DirectEnumSet, OptionEnumSet, OnlyDirect),
+    append(OptionEnumNames, OnlyDirect, EnumNames),
     max_row_id(Rows0, MaxId),
     enum_row_ids(EnumNames, MaxId, EnumToId, EnumRows, AfterEnums),
     enum_variant_rows(Decls, Rows0, EnumToId, AfterEnums, EnumVariantRows,
                       AfterVariants),
     option_row_ids(OptionTypes, AfterVariants, EnumToId, OptionToId, OptionRows, _),
     append([EnumRows, EnumVariantRows, OptionRows], WrapperRows),
-    maplist(rewrite_option_column(Decls, Rows0, OptionToId), Rows0, Rewritten),
+    maplist(rewrite_option_column(Decls, Rows0, OptionToId), Rows0, Rewritten0),
+    maplist(rewrite_enum_column(Decls, Rows0, EnumToId), Rewritten0, Rewritten),
     append(Rewritten, WrapperRows, Rows).
+
+% Direct enum columns (a col_type typed as an enum, not wrapped in option) are
+% collected from the enum_column/3 markers enum expansion records. This is what
+% lets a concrete generic sum, minted and lowered like a nominal enum, emit as a
+% tagged union.
+direct_enum_names(Decls, Names) :-
+    findall(Name,
+            ( member(enum_column(_, _, Name), Decls),
+              semantic_enum_name(Decls, Name) ),
+            Found),
+    sort(Found, Names).
+
+% The column's declared type was the enum; point it at the enum row so the
+% emitter renders `state: Status` rather than `state: number`.
+rewrite_enum_column(Decls, Rows0, EnumToId, Row0, Row) :-
+    Row0 = row(Id, RelId, Ord, Name, column, _TypeId, Arity, ModuleId, HId, HS, HR),
+    enum_column_element(Decls, Rows0, RelId, Name, EnumName),
+    memberchk(EnumName-EnumId, EnumToId),
+    !,
+    Row = row(Id, RelId, Ord, Name, column, EnumId, Arity, ModuleId, HId, HS, HR).
+rewrite_enum_column(_Decls, _Rows0, _EnumToId, Row, Row).
+
+enum_column_element(Decls, Rows0, RelId, ColumnName, EnumName) :-
+    member(enum_column(RelName/_, ColumnName, EnumName), Decls),
+    semantic_enum_name(Decls, EnumName),
+    member(row(RelId, _, _, RelName, rel, _, _, _, _, _, _), Rows0).
 
 scalar_option_element(text).
 scalar_option_element(int).

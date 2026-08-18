@@ -6821,6 +6821,126 @@ test(a_template_declaration_parses_to_one_record_and_no_rel_entry) :-
     Decls == [rel_template([pair], [type_parameter('T', [])],
                            [column(first, 'T'), column(second, 'T')])].
 
+% A parameterized enum is one template term carrying its generic parameters and
+% its variant set. The parser owns the surface; generic expansion mints the
+% concrete enum_decls, and enum expansion lowers them.
+test(a_parameterized_enum_parses_to_one_template_term_with_parameters_and_variants) :-
+    surface_decls(
+        'rel Result(L, R)(err(error: L); ok(value: R)).',
+        Decls),
+    Decls == [rel_template_enum(
+                  ['Result'],
+                  [type_parameter('L', []), type_parameter('R', [])],
+                  (err(error:'L') ; ok(value:'R')))].
+
+test(a_parameterized_enum_round_trips_through_the_printer) :-
+    surface_round_trip(
+        'rel Result(L, R)(err(error: L); ok(value: R)).',
+        Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _,
+                  'rel Result(L, R)(err(error: L) ; ok(value: R)).')),
+    Program =@= RoundTripped.
+
+test(a_parameterized_enum_sits_beside_an_ordinary_generic_rel) :-
+    surface_decls(
+        'rel Result(L, R)(err(error: L); ok(value: R)). rel Box(T)(value: T).',
+        Decls),
+    memberchk(rel_template_enum(['Result'], [type_parameter('L', []),
+                                           type_parameter('R', [])],
+                                (err(error:'L') ; ok(value:'R'))), Decls),
+    memberchk(rel_template(['Box'], [type_parameter('T', [])],
+                           [column(value, 'T')]), Decls).
+
+test(a_parameterized_enum_duplicate_parameter_is_a_named_surface_finding) :-
+    surface_findings('rel Result(T, T)(err(error: T); ok(value: T)).', Findings),
+    Findings == [unsupported_surface(duplicate_generic_parameter('T'))].
+
+% Generic expansion mints one concrete enum_decl per ground application, with
+% the variant payload types substituted, and dedupes equal applications.
+test(generic_expansion_mints_a_concrete_enum_with_substituted_payloads) :-
+    Program = prog(
+        [ rel_template_enum([result], [type_parameter('L', []),
+                                       type_parameter('R', [])],
+                            (err(error:'L') ; ok(value:'R'))),
+          col_type(host_error/1, code, int),
+          col_type(boop_response/1, body, text),
+          col_type(job/2, id, int),
+          col_type(job/2, outcome, result(host_error, boop_response)) ],
+        []),
+    expand_generic_program(Program, prog(Decls, [])),
+    canonical_type_name(result(host_error, boop_response), ConcreteName),
+    memberchk(enum_decl(ConcreteName,
+                        (err(error:host_error) ; ok(value:boop_response))),
+              Decls),
+    memberchk(col_type(job/2, outcome, ConcreteName), Decls).
+
+test(generic_expansion_dedupes_equal_applications_and_distinguishes_unequal) :-
+    Program = prog(
+        [ rel_template_enum([result], [type_parameter('L', []),
+                                       type_parameter('R', [])],
+                            (err(error:'L') ; ok(value:'R'))),
+          col_type(a/2, id, int),
+          col_type(a/2, outcome, result(host_error, boop_response)),
+          col_type(b/2, id, int),
+          col_type(b/2, outcome, result(host_error, boop_response)),
+          col_type(c/2, id, int),
+          col_type(c/2, outcome, result(parse_error, syntax_tree)) ],
+        []),
+    expand_generic_program(Program, prog(Decls, [])),
+    canonical_type_name(result(host_error, boop_response), HostName),
+    canonical_type_name(result(parse_error, syntax_tree), ParseName),
+    findall(Name, member(enum_decl(Name, _), Decls), Names),
+    list_to_set(Names, UniqueNames),
+    UniqueNames == [HostName, ParseName],
+    memberchk(col_type(a/2, outcome, HostName), Decls),
+    memberchk(col_type(b/2, outcome, HostName), Decls),
+    memberchk(col_type(c/2, outcome, ParseName), Decls).
+
+test(generic_expansion_wrong_enum_arity_is_named) :-
+    Program = prog(
+        [ rel_template_enum([result], [type_parameter('L', []),
+                                       type_parameter('R', [])],
+                            (err(error:'L') ; ok(value:'R'))),
+          col_type(edge/1, endpoints, result(int)) ],
+        []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(generic_template_arity(result, 2, 1)).
+
+test(generic_expansion_refuses_a_non_ground_enum_application) :-
+    Program = prog(
+        [ rel_template_enum([result], [type_parameter('L', []),
+                                       type_parameter('R', [])],
+                            (err(error:'L') ; ok(value:'R'))),
+          col_type(edge/1, endpoints, result(int, _)) ],
+        []),
+    once(catch(expand_generic_program(Program, _), Thrown, true)),
+    once(( sub_term(generic_type_not_ground, Thrown)
+         ; sub_term(generic_type_not_ground(_), Thrown) )).
+
+% Enum expansion lowers a minted concrete enum into a tag relation and one
+% relation per variant, with the substituted payload types intact.
+test(enum_lowering_mints_tag_and_one_variant_rel_per_concrete_enum) :-
+    Program = prog(
+        [ rel_template_enum([result], [type_parameter('L', []),
+                                       type_parameter('R', [])],
+                            (err(error:'L') ; ok(value:'R'))),
+          col_type(host_error/1, code, int),
+          col_type(boop_response/1, body, text),
+          col_type(job/2, id, int),
+          col_type(job/2, outcome, result(host_error, boop_response)) ],
+        []),
+    expand_generic_program(Program, prog(GenericDecls, [])),
+    expand_enum_program(prog(GenericDecls, []), prog(EnumDecls, _)),
+    canonical_type_name(result(host_error, boop_response), ConcreteName),
+    atomic_list_concat([ConcreteName, 'err'], '_', ErrRel),
+    atomic_list_concat([ConcreteName, 'ok'], '_', OkRel),
+    atomic_list_concat([ConcreteName, 'tag'], '_', TagRel),
+    memberchk(col_type(ErrRel/2, error, host_error), EnumDecls),
+    memberchk(col_type(OkRel/2, value, boop_response), EnumDecls),
+    memberchk(col_type(TagRel/2, tag, text), EnumDecls),
+    memberchk(col_type(job/2, outcome, int), EnumDecls).
+
+
 test(a_template_declaration_round_trips_through_the_printer) :-
     surface_round_trip('rel pair(T)(first: T, second: T).',
                        Program, RoundTripped, Text),

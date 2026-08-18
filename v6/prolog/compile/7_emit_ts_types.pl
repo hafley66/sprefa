@@ -47,7 +47,7 @@ relation_id_alias_parts(Text, [Text]).
 
 ts_enum_text(Rows, Text) :-
     member(row(EnumId, _, _, Name, enum, _, _, _, _, _, _), Rows),
-    \+ compiler_helper_rel(Name),
+    ( \+ compiler_helper_rel(Name) ; generic_minted_enum(Name) ),
     type_name(Name, TypeName),
     findall(Ordinal-VariantText,
             ( member(row(_, EnumId, Ordinal, VariantName, enum_variant,
@@ -86,6 +86,10 @@ renderable_rel(Rows, RelRow) :-
     maplist(ts_column_type(Rows), Columns, _).
 
 compiler_helper_rel(Name) :- sub_atom(Name, _, _, _, '__').
+% A concrete generic sum is a user-facing enum minted from a template; its
+% canonical name carries the `__gen_` marker, so it must survive the helper-rel
+% filter that hides the compiler's own `__opt_`/`__support_` enums.
+generic_minted_enum(Name) :- sub_atom(Name, 0, _, _, '__gen_').
 concrete_rel(Rows, RelId) :-
     memberchk(row(_, RelId, _, _, concrete_type, _, _, _, _, _, _), Rows).
 

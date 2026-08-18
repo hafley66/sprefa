@@ -48,6 +48,7 @@ SHAPES=(
   "shape_camel_case_module"
   "shape_concrete_dunder_rel"
   "shape_keyword_column"
+  "parameterized_enum_two_instantiations"
 )
 
 swipl_run() { # goal ; runs from v6/prolog so conformance/... paths resolve
