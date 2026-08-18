@@ -100,7 +100,18 @@ pub async fn run_schedule_live(
 ) -> Result<TickFold, RunError> {
     seam.run_ddl(&program.ddl).expect("DDL execution failed");
     run_boot(seam, &program.boot);
-    let mut runner = crate::hosts::HostLiveRunner::new(&program.host_plans, &program.rel_columns)?;
+    let adapter_rows =
+        crate::types::load_program_host_adapter_rows(&program.name).map_err(|error| {
+            crate::hosts::HostError {
+                host: program.name.clone(),
+                message: format!("read process adapter sidecar: {error}"),
+            }
+        })?;
+    let mut runner = crate::hosts::HostLiveRunner::with_adapter_rows(
+        &program.host_plans,
+        &program.rel_columns,
+        &adapter_rows,
+    )?;
     let mut pending: std::collections::VecDeque<Vec<Arrival>> = std::collections::VecDeque::new();
     let mut lines = Vec::new();
     let mut tick_number = 0usize;

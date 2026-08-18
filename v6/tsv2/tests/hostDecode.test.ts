@@ -21,11 +21,11 @@
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { test } from "node:test";
+import { test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { firstValueFrom } from "rxjs";
 
-import { HostExecutors } from "../serve/1_hosts.ts";
+import { ProcessAdapters } from "../serve/1_hosts.ts";
 import { log_of_ticks, oracle_log, post_arrivals, post_program, request, schedule_from_ticks, start_served, tick_events } from "./serveHelpers.ts";
 
 const JSON_PROJECTION_DL6 = fileURLToPath(new URL("../../dl/fixtures/served-json-projection.dl6", import.meta.url));
@@ -215,10 +215,7 @@ test("sh host: one value per line still wins when the lines are not a grid", asy
   }
 });
 
-test("compiler-known extract host uses the registered process executor", async () => {
-  const executor = HostExecutors.get("sprefa_extract");
-  assert.ok(executor);
-  const stdout = await firstValueFrom(executor("extract", "printf '%s' extractor-row", {}));
-  assert.equal(stdout, "extractor-row");
-  assert.ok(HostExecutors.has("shell"));
+test("the process adapter registry names extract and shell", () => {
+  assert.ok(ProcessAdapters.has("sprefa_extract"));
+  assert.ok(ProcessAdapters.has("shell"));
 });

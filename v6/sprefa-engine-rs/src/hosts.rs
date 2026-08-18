@@ -16,8 +16,8 @@ use crate::dep_resolve::{
     DEP_VISITED_COLUMNS,
 };
 use crate::types::{
-    Arrival, ArrivalSign, BoundaryError, HostColumnPlan, HostPlanData, ScalarSeam, ScalarValue,
-    TickDeltas, Value,
+    Arrival, ArrivalSign, BoundaryError, HostAdapterRow, HostColumnPlan, HostPlanData, ScalarSeam,
+    ScalarValue, TickDeltas, Value,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,48 +44,33 @@ pub trait IHostExecutor: Sync {
 pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
     match execution {
         "shell" => Some(&ShellExecutor),
-        "soopy_mutation" => Some(&SoopyMutationExecutor),
+        "soopy" => Some(&SoopyMutationExecutor),
         // The linked twin: sprefa-extract runs in this process, no child spawn.
-        "sprefa_extract" | "sprefa_extract_repo" => Some(&*EXTRACT),
+        "sprefa_extract" => Some(&*EXTRACT),
         _ => None,
     }
 }
 
-// `sh files*` is an established emitted HostPlanData contract. Keeping its
-// execution tag and template byte-for-byte preserves the TS/runtime ABI; the
-// Rust live runner recognizes these four ruled names and delegates their Git
-// mechanics to Soopy instead of spawning the emitted pipeline.
-fn executor_for_plan(plan: &HostPlanData) -> Option<&'static dyn IHostExecutor> {
-    if plan.execution == "soopy_mutation" {
-        return Some(&SoopyMutationExecutor);
+fn execution_for_plan(plan: &HostPlanData, adapter_rows: &[HostAdapterRow]) -> String {
+    if plan.execution != "shell" {
+        return plan.execution.clone();
     }
-    if plan.execution == "shell"
-        && matches!(
-            plan.name.as_str(),
-            "files" | "files_at" | "repo_files" | "repo_files_at"
-        )
-    {
-        return Some(&SoopyFilesExecutor);
-    }
-    if plan.execution == "shell" && DEP_CRAWL_HOSTS.contains(&plan.name.as_str()) {
-        return Some(&*DEP_CRAWL);
-    }
-    if plan.execution == "shell" && GIT_REF_HOSTS.contains(&plan.name.as_str()) {
-        return Some(&*GIT_REFS);
-    }
-    if plan.execution == "shell" && GIT_REVISION_HOSTS.contains(&plan.name.as_str()) {
-        return Some(&*GIT_REVISIONS);
-    }
-    if plan.execution == "shell" && GIT_CHANGE_HOSTS.contains(&plan.name.as_str()) {
-        return Some(&*GIT_CHANGES);
-    }
-    executor_for(&plan.execution)
+    adapter_rows
+        .iter()
+        .find(|row| row.demand_rel == plan.demand_rel && row.response_rel == plan.response_rel)
+        .map(|row| row.adapter.clone())
+        .unwrap_or_else(|| plan.execution.clone())
 }
 
-// Executors whose invocations fold across identical (execution, template,
-// inputs), the ApplicativeExecutors set in serve/1_hosts.ts.
+fn executor_for_plan(
+    plan: &HostPlanData,
+    adapter_rows: &[HostAdapterRow],
+) -> Option<&'static dyn IHostExecutor> {
+    executor_for(&execution_for_plan(plan, adapter_rows))
+}
+
 fn is_applicative(execution: &str) -> bool {
-    matches!(execution, "sprefa_extract" | "sprefa_extract_repo")
+    execution == "sprefa_extract"
 }
 
 pub struct ShellExecutor;
@@ -1697,6 +1682,7 @@ struct HostDemand<'p> {
 pub struct HostLiveRunner<'p> {
     plans: Vec<&'p HostPlanData>,
     rel_columns: &'p HashMap<String, Vec<String>>,
+    adapter_rows: Vec<HostAdapterRow>,
     claimed: HashSet<String>,
 }
 
@@ -1707,23 +1693,37 @@ impl<'p> HostLiveRunner<'p> {
         plans: &'p [HostPlanData],
         rel_columns: &'p HashMap<String, Vec<String>>,
     ) -> Result<Self, HostError> {
+        Self::with_adapter_rows(plans, rel_columns, &[])
+    }
+
+    pub fn with_adapter_rows(
+        plans: &'p [HostPlanData],
+        rel_columns: &'p HashMap<String, Vec<String>>,
+        adapter_rows: &[HostAdapterRow],
+    ) -> Result<Self, HostError> {
         for plan in plans {
-            if executor_for_plan(plan).is_none() {
+            let execution = execution_for_plan(plan, adapter_rows);
+            if executor_for_plan(plan, adapter_rows).is_none() {
                 return Err(HostError {
                     host: plan.name.clone(),
-                    message: format!("unknown host executor '{}'", plan.execution),
+                    message: format!("unknown process adapter '{execution}'"),
                 });
             }
         }
         Ok(HostLiveRunner {
             plans: plans.iter().collect(),
             rel_columns,
+            adapter_rows: adapter_rows.to_vec(),
             claimed: HashSet::new(),
         })
     }
 
     pub fn has_plans(&self) -> bool {
         !self.plans.is_empty()
+    }
+
+    fn execution_for(&self, plan: &HostPlanData) -> String {
+        execution_for_plan(plan, &self.adapter_rows)
     }
 
     // The one place a demand row's values become template arguments, so the
@@ -1749,7 +1749,7 @@ impl<'p> HostLiveRunner<'p> {
                 .position(|column| *column == input.name)
                 .and_then(|index| row.get(index).cloned())
                 .unwrap_or(Value::Text(String::new()));
-            let scalar = if plan.execution == "shell" {
+            let scalar = if self.execution_for(plan) == "shell" {
                 ShellHostAdapter::input(&plan.name, input, &value)?
             } else {
                 // Native executors own their typed decode seam.  The current
@@ -1865,7 +1865,8 @@ impl<'p> HostLiveRunner<'p> {
         let mut groups: Vec<Vec<&HostDemand<'p>>> = Vec::new();
         for demand in &claimed {
             reject_binary_host_transport(&demand.plan.name, &demand.inputs)?;
-            if !is_applicative(&demand.plan.execution) {
+            let execution = self.execution_for(demand.plan);
+            if !is_applicative(&execution) {
                 groups.push(vec![demand]);
                 continue;
             }
@@ -1884,10 +1885,7 @@ impl<'p> HostLiveRunner<'p> {
                     )
                 })
                 .collect();
-            let key = format!(
-                "{}|{}|{:?}",
-                demand.plan.execution, demand.plan.template, ordered_inputs
-            );
+            let key = format!("{}|{:?}", execution, ordered_inputs);
             match group_index.get(&key) {
                 Some(&index) => groups[index].push(demand),
                 None => {
@@ -1898,7 +1896,8 @@ impl<'p> HostLiveRunner<'p> {
         }
         for group in groups {
             let first = group[0];
-            let executor = executor_for_plan(first.plan).expect("validated at construction");
+            let executor = executor_for_plan(first.plan, &self.adapter_rows)
+                .expect("validated at construction");
             let command_line = fill_template(&first.plan.template, &first.inputs);
             let env = env_for_inputs(&first.inputs);
             let stdout = executor.run(&first.plan.name, &command_line, &env)?;

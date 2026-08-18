@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 
 import {
   Observable,
@@ -13,7 +13,9 @@ import {
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import type {
   IArrivalBatch,
+  IHostAdapterRow,
   IHostEffectDone,
+  IProcessAdapter,
   IHostPlan,
   ILiveEngine,
   IRow,
@@ -54,12 +56,6 @@ const EXTRACT_STDOUT = [
     ty: "number",
   }),
 ].join("\n");
-
-type Executor = (
-  host: string,
-  command_line: string,
-  env: Record<string, string>,
-) => Observable<string>;
 
 type Scenario = {
   readonly effects: readonly IHostEffectDone[];
@@ -166,6 +162,7 @@ async function run_scenario(
   expected_effects: number,
   options: {
     readonly boot_rows?: Readonly<Record<string, readonly IRow[]>>;
+    readonly adapter_rows?: readonly IHostAdapterRow[];
     readonly answered?: readonly {
       readonly host: string;
       readonly witness_digest: string;
@@ -190,21 +187,31 @@ async function run_scenario(
   let host_runs = 0;
   let extractor_runs = 0;
 
-  const executors = new Map<string, Executor>([
+  const executors = new Map<string, IProcessAdapter>([
     [
       "shell",
-      (host) => {
-        host_runs += 1;
-        if (host === "resolve_at") extractor_runs += 1;
-        return of("");
+      {
+        name: "shell",
+        applicative: false,
+        command(demand) {
+          host_runs += 1;
+          if (demand.plan.name === "resolve_at") extractor_runs += 1;
+          return { argv: [], env: {}, stdin: "" };
+        },
+        decode() { return []; },
       },
     ],
     [
       "sprefa_extract",
-      () => {
-        host_runs += 1;
-        extractor_runs += 1;
-        return of(EXTRACT_STDOUT);
+      {
+        name: "sprefa_extract",
+        applicative: true,
+        command() {
+          host_runs += 1;
+          extractor_runs += 1;
+          return { argv: [], env: {}, stdin: EXTRACT_STDOUT };
+        },
+        decode(_stdout, plan) { return [plan.outputs.map(() => "")]; },
       },
     ],
   ]);
@@ -224,7 +231,7 @@ async function run_scenario(
 
   try {
     const effects_promise = firstValueFrom(
-      new HostRunner(engine, seam, plans, executors).effects$.pipe(
+      new HostRunner(engine, seam, plans, executors, options.adapter_rows).effects$.pipe(
         take(expected_effects),
         toArray(),
       ),
@@ -239,6 +246,14 @@ async function run_scenario(
   }
 }
 
+function extract_rows(plans: readonly IHostPlan[]): readonly IHostAdapterRow[] {
+  return plans.map((current) => ({
+    adapter: "sprefa_extract",
+    demand_rel: current.demand_rel,
+    response_rel: current.response_rel,
+  }));
+}
+
 test("callgraph, diagnostics, and flow obey one extractor process per path and digest", async () => {
   const files = [
     ["a.ts", "a1"],
@@ -247,8 +262,8 @@ test("callgraph, diagnostics, and flow obey one extractor process per path and d
   ] as const;
   const files_at = plan("files_at", "shell", columns("found"), "files_at {path}");
   const call_plans = [
-    plan("call_node", "sprefa_extract", columns("record", "family", "kind", "name")),
-    plan("call_ref", "sprefa_extract", columns("record", "family", "callee")),
+    plan("call_node", "shell", columns("record", "family", "kind", "name")),
+    plan("call_ref", "shell", columns("record", "family", "callee")),
   ];
   const callgraph = await run_scenario(
     [files_at, ...call_plans],
@@ -257,6 +272,7 @@ test("callgraph, diagnostics, and flow obey one extractor process per path and d
       tick(2, call_plans, files),
     ],
     1 + call_plans.length * files.length,
+    { adapter_rows: extract_rows(call_plans) },
   );
   assert.deepEqual(
     {
@@ -271,6 +287,7 @@ test("callgraph, diagnostics, and flow obey one extractor process per path and d
     call_plans,
     [tick(1, call_plans, files)],
     call_plans.length * files.length,
+    { adapter_rows: extract_rows(call_plans) },
   );
   assert.deepEqual(
     {
@@ -283,13 +300,13 @@ test("callgraph, diagnostics, and flow obey one extractor process per path and d
 
   const resolve = plan("resolve_at", "shell", columns("edge"), "resolve {path}");
   const flow_plans = [
-    plan("df_node_at", "sprefa_extract", columns("record", "family", "span", "kind")),
-    plan("df_edge_at", "sprefa_extract", columns("record", "family", "kind", "from", "to")),
-    plan("df_param_at", "sprefa_extract", columns("record", "family", "span", "pos")),
-    plan("df_arg_at", "sprefa_extract", columns("record", "family", "call", "pos", "arg")),
-    plan("call_node_at", "sprefa_extract", columns("record", "family", "span", "kind", "name")),
-    plan("type_node_at", "sprefa_extract", columns("record", "family", "span", "kind", "name")),
-    plan("sig_at", "sprefa_extract", columns("record", "family", "owner_start", "owner_end", "slot", "pos", "ty")),
+    plan("df_node_at", "shell", columns("record", "family", "span", "kind")),
+    plan("df_edge_at", "shell", columns("record", "family", "kind", "from", "to")),
+    plan("df_param_at", "shell", columns("record", "family", "span", "pos")),
+    plan("df_arg_at", "shell", columns("record", "family", "call", "pos", "arg")),
+    plan("call_node_at", "shell", columns("record", "family", "span", "kind", "name")),
+    plan("type_node_at", "shell", columns("record", "family", "span", "kind", "name")),
+    plan("sig_at", "shell", columns("record", "family", "owner_start", "owner_end", "slot", "pos", "ty")),
   ];
   const flow = await run_scenario(
     [files_at, resolve, ...flow_plans],
@@ -298,6 +315,7 @@ test("callgraph, diagnostics, and flow obey one extractor process per path and d
       tick(2, flow_plans, files),
     ],
     2 + flow_plans.length * files.length,
+    { adapter_rows: extract_rows(flow_plans) },
   );
   assert.deepEqual(
     {
@@ -315,8 +333,8 @@ test("callgraph, diagnostics, and flow obey one extractor process per path and d
 
 test("extractor batching is frontier-local, digest-separated, and ignores demand retractions", async () => {
   const projections = [
-    plan("call_node", "sprefa_extract", columns("record", "family", "kind", "name")),
-    plan("call_ref", "sprefa_extract", columns("record", "family", "callee")),
+    plan("call_node", "shell", columns("record", "family", "kind", "name")),
+    plan("call_ref", "shell", columns("record", "family", "callee")),
   ];
   const old_input = [["a.ts", "old"]] as const;
   const next_input = [["a.ts", "next"]] as const;
@@ -329,6 +347,7 @@ test("extractor batching is frontier-local, digest-separated, and ignores demand
       tick(4, projections, next_input),
     ],
     projections.length * 2,
+    { adapter_rows: extract_rows(projections) },
   );
 
   assert.equal(result.host_runs, 2);
@@ -370,13 +389,14 @@ test("generic shell demands remain one process per witness", async () => {
 
 test("a cached projection is omitted while its unanswered sibling still runs", async () => {
   const projections = [
-    plan("call_node", "sprefa_extract", columns("record", "family", "kind", "name")),
-    plan("call_ref", "sprefa_extract", columns("record", "family", "callee")),
+    plan("call_node", "shell", columns("record", "family", "kind", "name")),
+    plan("call_ref", "shell", columns("record", "family", "callee")),
   ];
   const node_witness = "witness|call_node|a.ts|same";
   const ref_witness = "witness|call_ref|a.ts|same";
   const result = await run_scenario(projections, [], 1, {
     answered: [{ host: "call_node", witness_digest: node_witness }],
+    adapter_rows: extract_rows(projections),
     boot_rows: {
       __host_demand_call_node: [
         ["identity|call_node|a.ts", node_witness, "a.ts", "same"],

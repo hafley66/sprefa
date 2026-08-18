@@ -30,8 +30,6 @@
 :- use_module('0_body_walk', [body_conjunction_goals/3]).
 :- use_module('compile/registry',
               [ bind_definition/2,
-                host_execution/3,
-                host_executor_contract/2,
                 host_input_roles/3
               ]).
 :- use_module('0_cst_query', [ serialize_ts_query/2 ]).
@@ -194,7 +192,6 @@ compile_host_decl(
     disjoint_columns(InputNames, OutputNames),
     no_reserved_columns(Name, input, InputNames),
     no_reserved_columns(Name, output, OutputNames),
-    validate_host_executor(Name, Template, Inputs),
     host_input_roles(Name, Inputs, Roles),
     validate_template(Template, InputNames, OutputNames, Roles),
     host_relation_refs(Name, DemandRef, ResponseRef),
@@ -220,13 +217,6 @@ host_plan_contract(
     atom(Name).
 
 host_field(col(Name, Type), field(Name, Type)).
-
-validate_host_executor(Name, Template, Inputs) :-
-    host_execution(Name, Template, Executor),
-    ( host_executor_contract(Executor, Inputs)
-    -> true
-    ; throw(host_executor_mismatch(Name, Executor, Inputs))
-    ).
 
 validate_columns(Columns, Role) :-
     is_list(Columns),

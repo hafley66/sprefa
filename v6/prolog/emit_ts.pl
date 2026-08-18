@@ -21,7 +21,7 @@
 :- use_module(strat, [recursive_stratum_groups/2, cyclic_head_groups/2]).
 :- use_module('1_host_expand', [compile_host_decl/2, compile_query/2,
                                 host_plan_contract/2]).
-:- use_module('compile/registry', [bind_executor/2, host_execution/3]).
+:- use_module('compile/registry', [bind_executor/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -470,7 +470,7 @@ host_plan_json(HostPlan, Json) :-
     js_string(Template, TemplateJson),
     js_string(DemandName, DemandJson),
     js_string(ResponseName, ResponseRelJson),
-    host_execution(Name, Template, Executor),
+    Executor = shell,
     format(atom(BaseJson),
            '{ name: ~w, inputs: ~w, outputs: ~w, template: ~w, demand_rel: ~w, response_rel: ~w, execution: "~w"',
            [NameJson, InputsJson, OutputsJson, TemplateJson,

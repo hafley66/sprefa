@@ -36,6 +36,8 @@
  */
 
 import * as http from "node:http";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import {
   EMPTY,
@@ -65,6 +67,7 @@ import { ServeStats } from "../runtime/serveStats.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
+  IHostAdapterRow,
   IRelCatalogRow,
   IReloadOutcome,
   IReloadPlan,
@@ -108,6 +111,26 @@ interface ServerState {
 
 function new_server_state(): ServerState {
   return { program: null, seam: null, engine: null, openapi: buildOpenapi(null) };
+}
+
+export function adapter_rows_for(program: string): readonly IHostAdapterRow[] {
+  const directory = process.env.DL_ADAPTERS_DIR ?? resolve(process.cwd(), "../dl/fixtures");
+  try {
+    const rows: unknown = JSON.parse(readFileSync(resolve(directory, `${program}.adapters.json`), "utf8"));
+    if (!Array.isArray(rows)) throw new Error("adapter sidecar must be an array");
+    return rows.map((row): IHostAdapterRow => {
+      if (
+        row === null || typeof row !== "object" ||
+        typeof (row as IHostAdapterRow).adapter !== "string" ||
+        typeof (row as IHostAdapterRow).demand_rel !== "string" ||
+        typeof (row as IHostAdapterRow).response_rel !== "string"
+      ) throw new Error(`invalid adapter row in ${program}.adapters.json`);
+      return row as IHostAdapterRow;
+    });
+  } catch (failure: unknown) {
+    if ((failure as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw failure;
+  }
 }
 
 function write_json(response: http.ServerResponse, status: number, body: unknown): void {
@@ -200,7 +223,7 @@ function run_program$(state: ServerState, config: IServeConfig, load: ProgramLoa
         booted
           ? merge(
               engine.ticks$.pipe(map((tick): IServeEvent => ({ kind: "tick", outcome: tick }))),
-              new HostRunner(engine, seam, load.program.host_plans).effects$.pipe(
+              new HostRunner(engine, seam, load.program.host_plans, undefined, adapter_rows_for(load.program.name)).effects$.pipe(
                 map((done): IServeEvent => ({ kind: "effect", done })),
               ),
               new IntervalBindRunner(engine, bind_plans_for(load.program.bind_plans, "live_interval"), scheduler).firings$.pipe(
