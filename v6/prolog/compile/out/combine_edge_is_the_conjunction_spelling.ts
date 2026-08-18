@@ -146,27 +146,27 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "pair" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, UNIQUE ("left"))`,
-  `CREATE TABLE "source_a" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, UNIQUE ("left"))`,
-  `CREATE TABLE "source_b" ("__id" INTEGER PRIMARY KEY, "right" INTEGER NOT NULL, UNIQUE ("right"))`,
-  `CREATE TEMP TABLE "__delta_pair" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_pair_sign" ON "__delta_pair" ("_sign")`,
-  `CREATE INDEX "__delta_pair_group" ON "__delta_pair" ("left", "right")`,
-  `CREATE TEMP TABLE "__frontier_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_pair_phase" ON "__frontier_pair" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_source_a" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_source_a_sign" ON "__delta_source_a" ("_sign")`,
-  `CREATE INDEX "__delta_source_a_group" ON "__delta_source_a" ("left")`,
-  `CREATE TEMP TABLE "__frontier_source_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_source_a_phase" ON "__frontier_source_a" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_source_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_source_b" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_source_b_sign" ON "__delta_source_b" ("_sign")`,
-  `CREATE INDEX "__delta_source_b_group" ON "__delta_source_b" ("right")`,
-  `CREATE TEMP TABLE "__frontier_source_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_source_b_phase" ON "__frontier_source_b" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_source_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
+  `CREATE TABLE "combine_edge_is_the_conjunction_spelling_pair" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, UNIQUE ("left"))`,
+  `CREATE TABLE "combine_edge_is_the_conjunction_spelling_source_a" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, UNIQUE ("left"))`,
+  `CREATE TABLE "combine_edge_is_the_conjunction_spelling_source_b" ("__id" INTEGER PRIMARY KEY, "right" INTEGER NOT NULL, UNIQUE ("right"))`,
+  `CREATE TEMP TABLE "__delta_combine_edge_is_the_conjunction_spelling_pair" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_combine_edge_is_the_conjunction_spelling_pair_sign" ON "__delta_combine_edge_is_the_conjunction_spelling_pair" ("_sign")`,
+  `CREATE INDEX "__delta_combine_edge_is_the_conjunction_spelling_pair_group" ON "__delta_combine_edge_is_the_conjunction_spelling_pair" ("left", "right")`,
+  `CREATE TEMP TABLE "__frontier_combine_edge_is_the_conjunction_spelling_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_combine_edge_is_the_conjunction_spelling_pair_phase" ON "__frontier_combine_edge_is_the_conjunction_spelling_pair" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_combine_edge_is_the_conjunction_spelling_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_combine_edge_is_the_conjunction_spelling_source_a" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_combine_edge_is_the_conjunction_spelling_source_a_sign" ON "__delta_combine_edge_is_the_conjunction_spelling_source_a" ("_sign")`,
+  `CREATE INDEX "__delta_combine_edge_is_the_conjunction_spelling_source_a_group" ON "__delta_combine_edge_is_the_conjunction_spelling_source_a" ("left")`,
+  `CREATE TEMP TABLE "__frontier_combine_edge_is_the_conjunction_spelling_source_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_combine_edge_is_the_conjunction_spelling_source_a_phase" ON "__frontier_combine_edge_is_the_conjunction_spelling_source_a" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_combine_edge_is_the_conjunction_spelling_source_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_combine_edge_is_the_conjunction_spelling_source_b" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_combine_edge_is_the_conjunction_spelling_source_b_sign" ON "__delta_combine_edge_is_the_conjunction_spelling_source_b" ("_sign")`,
+  `CREATE INDEX "__delta_combine_edge_is_the_conjunction_spelling_source_b_group" ON "__delta_combine_edge_is_the_conjunction_spelling_source_b" ("right")`,
+  `CREATE TEMP TABLE "__frontier_combine_edge_is_the_conjunction_spelling_source_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_combine_edge_is_the_conjunction_spelling_source_b_phase" ON "__frontier_combine_edge_is_the_conjunction_spelling_source_b" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_combine_edge_is_the_conjunction_spelling_source_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -202,15 +202,15 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "left", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "22e4df043b741072", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 7, ordinal: 0, local_name: "source_b", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "d3a40d3d9b69aa6d", h_schema: "df1f2b9efcfed35f", h_rule: "" },
   { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "right", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "fa006d3b1e5596c6", h_schema: "", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__delta_pair", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "60eaf275f0f45b69", h_schema: "691d2aac47379567", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__frontier_pair", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "71eba87f6519e18b", h_schema: "e317bdafb05c6ac6", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__next_frontier_pair", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "cb7b1bb09dd24af3", h_schema: "e317bdafb05c6ac6", h_rule: "" },
-  { rel_id: 18, parent_id: 11, ordinal: 0, local_name: "__delta_source_a", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "3adf14650072fb61", h_schema: "d3d9e0ceac75549f", h_rule: "" },
-  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__frontier_source_a", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "db6912c732836455", h_schema: "bbac68972c4eee12", h_rule: "" },
-  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__next_frontier_source_a", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "39cc66ba2c0a2f3a", h_schema: "bbac68972c4eee12", h_rule: "" },
-  { rel_id: 21, parent_id: 13, ordinal: 0, local_name: "__delta_source_b", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "f74ed62d76d2ce9a", h_schema: "ab858f006835a437", h_rule: "" },
-  { rel_id: 22, parent_id: 13, ordinal: 0, local_name: "__frontier_source_b", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "461356df4d2f66b2", h_schema: "dfb634b09e13e15b", h_rule: "" },
-  { rel_id: 23, parent_id: 13, ordinal: 0, local_name: "__next_frontier_source_b", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "2ee22cee82b3447c", h_schema: "dfb634b09e13e15b", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__delta_combine_edge_is_the_conjunction_spelling_pair", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "2dc921dd21b47982", h_schema: "691d2aac47379567", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__frontier_combine_edge_is_the_conjunction_spelling_pair", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "85ea1b110ada7603", h_schema: "e317bdafb05c6ac6", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__next_frontier_combine_edge_is_the_conjunction_spelling_pair", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "30b974b47829d102", h_schema: "e317bdafb05c6ac6", h_rule: "" },
+  { rel_id: 18, parent_id: 11, ordinal: 0, local_name: "__delta_combine_edge_is_the_conjunction_spelling_source_a", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "a5da8832f974f073", h_schema: "d3d9e0ceac75549f", h_rule: "" },
+  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__frontier_combine_edge_is_the_conjunction_spelling_source_a", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "bdf16f4d2845b905", h_schema: "bbac68972c4eee12", h_rule: "" },
+  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__next_frontier_combine_edge_is_the_conjunction_spelling_source_a", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "5883d9db1c53c0c6", h_schema: "bbac68972c4eee12", h_rule: "" },
+  { rel_id: 21, parent_id: 13, ordinal: 0, local_name: "__delta_combine_edge_is_the_conjunction_spelling_source_b", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "84dfc27499ea85a4", h_schema: "ab858f006835a437", h_rule: "" },
+  { rel_id: 22, parent_id: 13, ordinal: 0, local_name: "__frontier_combine_edge_is_the_conjunction_spelling_source_b", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "0746869617804612", h_schema: "dfb634b09e13e15b", h_rule: "" },
+  { rel_id: 23, parent_id: 13, ordinal: 0, local_name: "__next_frontier_combine_edge_is_the_conjunction_spelling_source_b", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "c8300629e827e6d8", h_schema: "dfb634b09e13e15b", h_rule: "" },
   { rel_id: 24, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "970736275e024c10", h_schema: "", h_rule: "" },
   { rel_id: 25, parent_id: 10, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "87b5f51851fada59", h_schema: "", h_rule: "" },
   { rel_id: 26, parent_id: 12, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "bc233c1d65b15bc5", h_schema: "", h_rule: "" },
@@ -226,20 +226,20 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  pair: `SELECT t."left", t."right" FROM "pair" t`,
-  source_a: `SELECT t."left" FROM "source_a" t`,
-  source_b: `SELECT t."right" FROM "source_b" t`,
+  pair: `SELECT t."left", t."right" FROM "combine_edge_is_the_conjunction_spelling_pair" t`,
+  source_a: `SELECT t."left" FROM "combine_edge_is_the_conjunction_spelling_source_a" t`,
+  source_b: `SELECT t."right" FROM "combine_edge_is_the_conjunction_spelling_source_b" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "pair", kind: "set", table_name: "pair", delta_table_name: "__delta_pair", frontier_table_name: "__frontier_pair", next_frontier_table_name: "__next_frontier_pair", columns: ["left", "right"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."left", t."right", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pair" t WHERE t."_sign" IN (-1, 1) GROUP BY t."left", t."right", t."_sign"`, rule_observers: [] },
-  { rel: "source_a", kind: "set", table_name: "source_a", delta_table_name: "__delta_source_a", frontier_table_name: "__frontier_source_a", next_frontier_table_name: "__next_frontier_source_a", columns: ["left"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source_a" ("left") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "left"`, arrival_del_sql: `DELETE FROM "source_a" WHERE ("left") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "left"`, boundary_sql: `SELECT t."left", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source_a" t WHERE t."_sign" IN (-1, 1) GROUP BY t."left", t."_sign"`, rule_observers: ["pair/2"] },
-  { rel: "source_b", kind: "set", table_name: "source_b", delta_table_name: "__delta_source_b", frontier_table_name: "__frontier_source_b", next_frontier_table_name: "__next_frontier_source_b", columns: ["right"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source_b" ("right") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "right"`, arrival_del_sql: `DELETE FROM "source_b" WHERE ("right") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "right"`, boundary_sql: `SELECT t."right", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source_b" t WHERE t."_sign" IN (-1, 1) GROUP BY t."right", t."_sign"`, rule_observers: ["pair/2"] },
+  { rel: "pair", kind: "set", table_name: "combine_edge_is_the_conjunction_spelling_pair", delta_table_name: "__delta_combine_edge_is_the_conjunction_spelling_pair", frontier_table_name: "__frontier_combine_edge_is_the_conjunction_spelling_pair", next_frontier_table_name: "__next_frontier_combine_edge_is_the_conjunction_spelling_pair", columns: ["left", "right"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."left", t."right", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_combine_edge_is_the_conjunction_spelling_pair" t WHERE t."_sign" IN (-1, 1) GROUP BY t."left", t."right", t."_sign"`, rule_observers: [] },
+  { rel: "source_a", kind: "set", table_name: "combine_edge_is_the_conjunction_spelling_source_a", delta_table_name: "__delta_combine_edge_is_the_conjunction_spelling_source_a", frontier_table_name: "__frontier_combine_edge_is_the_conjunction_spelling_source_a", next_frontier_table_name: "__next_frontier_combine_edge_is_the_conjunction_spelling_source_a", columns: ["left"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "combine_edge_is_the_conjunction_spelling_source_a" ("left") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "left"`, arrival_del_sql: `DELETE FROM "combine_edge_is_the_conjunction_spelling_source_a" WHERE ("left") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "left"`, boundary_sql: `SELECT t."left", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_combine_edge_is_the_conjunction_spelling_source_a" t WHERE t."_sign" IN (-1, 1) GROUP BY t."left", t."_sign"`, rule_observers: ["pair/2"] },
+  { rel: "source_b", kind: "set", table_name: "combine_edge_is_the_conjunction_spelling_source_b", delta_table_name: "__delta_combine_edge_is_the_conjunction_spelling_source_b", frontier_table_name: "__frontier_combine_edge_is_the_conjunction_spelling_source_b", next_frontier_table_name: "__next_frontier_combine_edge_is_the_conjunction_spelling_source_b", columns: ["right"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "combine_edge_is_the_conjunction_spelling_source_b" ("right") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "right"`, arrival_del_sql: `DELETE FROM "combine_edge_is_the_conjunction_spelling_source_b" WHERE ("right") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "right"`, boundary_sql: `SELECT t."right", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_combine_edge_is_the_conjunction_spelling_source_b" t WHERE t."_sign" IN (-1, 1) GROUP BY t."right", t."_sign"`, rule_observers: ["pair/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "pair", rule_id: "combine_edge_is_the_conjunction_spelling:pair/2#1", head_kind: "set", head_table_name: "pair", head_delta_table_name: "__delta_pair", head_columns: ["left", "right"], key_indices: [0], project_sql: `SELECT d0."left" AS "left", b0."right" AS "right" FROM "__frontier_source_a" d0, "source_b" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "pair", rule_id: "combine_edge_is_the_conjunction_spelling:pair/2#2", head_kind: "set", head_table_name: "pair", head_delta_table_name: "__delta_pair", head_columns: ["left", "right"], key_indices: [0], project_sql: `SELECT b0."left" AS "left", d0."right" AS "right" FROM "__frontier_source_b" d0, "source_a" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "pair", rule_id: "combine_edge_is_the_conjunction_spelling:pair/2#1", head_kind: "set", head_table_name: "combine_edge_is_the_conjunction_spelling_pair", head_delta_table_name: "__delta_combine_edge_is_the_conjunction_spelling_pair", head_columns: ["left", "right"], key_indices: [0], project_sql: `SELECT d0."left" AS "left", b0."right" AS "right" FROM "__frontier_combine_edge_is_the_conjunction_spelling_source_a" d0, "combine_edge_is_the_conjunction_spelling_source_b" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "pair", rule_id: "combine_edge_is_the_conjunction_spelling:pair/2#2", head_kind: "set", head_table_name: "combine_edge_is_the_conjunction_spelling_pair", head_delta_table_name: "__delta_combine_edge_is_the_conjunction_spelling_pair", head_columns: ["left", "right"], key_indices: [0], project_sql: `SELECT b0."left" AS "left", d0."right" AS "right" FROM "__frontier_combine_edge_is_the_conjunction_spelling_source_b" d0, "combine_edge_is_the_conjunction_spelling_source_a" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

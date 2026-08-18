@@ -146,13 +146,13 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "score" ("__id" INTEGER PRIMARY KEY, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), UNIQUE ("value"))`,
-  `CREATE TEMP TABLE "__delta_score" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
-  `CREATE INDEX "__delta_score_sign" ON "__delta_score" ("_sign")`,
-  `CREATE INDEX "__delta_score_group" ON "__delta_score" ("value")`,
-  `CREATE TEMP TABLE "__frontier_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
-  `CREATE INDEX "__frontier_score_phase" ON "__frontier_score" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE TABLE "float_widens_wide_integer_ingress_score" ("__id" INTEGER PRIMARY KEY, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), UNIQUE ("value"))`,
+  `CREATE TEMP TABLE "__delta_float_widens_wide_integer_ingress_score" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE INDEX "__delta_float_widens_wide_integer_ingress_score_sign" ON "__delta_float_widens_wide_integer_ingress_score" ("_sign")`,
+  `CREATE INDEX "__delta_float_widens_wide_integer_ingress_score_group" ON "__delta_float_widens_wide_integer_ingress_score" ("value")`,
+  `CREATE TEMP TABLE "__frontier_float_widens_wide_integer_ingress_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE INDEX "__frontier_float_widens_wide_integer_ingress_score_phase" ON "__frontier_float_widens_wide_integer_ingress_score" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_float_widens_wide_integer_ingress_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -177,9 +177,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 7, parent_id: 0, ordinal: 0, local_name: "float_widens_wide_integer_ingress", kind: "module", type_id: 0, arity: 0, module_id: 7, h_id: "5d171108d0a96fbc", h_schema: "", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 0, local_name: "score", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "52334f978068c3e5", h_schema: "bec07f8b9884a74a", h_rule: "" },
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "value", kind: "column", type_id: 3, arity: 0, module_id: 7, h_id: "9648c8d997af1375", h_schema: "", h_rule: "" },
-  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_score", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "0cac56d4a5c8daaf", h_schema: "77c595d6e8d5f80c", h_rule: "" },
-  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_score", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "1d77be44d05804ca", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_score", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "4e2b8c1a3954a738", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
+  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_float_widens_wide_integer_ingress_score", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "b7ebfae6aed8b828", h_schema: "77c595d6e8d5f80c", h_rule: "" },
+  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_float_widens_wide_integer_ingress_score", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "15d5160957f113c0", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_float_widens_wide_integer_ingress_score", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "8b92d571e91704b9", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
   { rel_id: 13, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "9fca5ae20a3d6c8c", h_schema: "", h_rule: "" },
 ];
 
@@ -190,15 +190,15 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["score"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "score", sql: `INSERT OR IGNORE INTO "score" ("value") VALUES (?)`, params: [9007199254740993] },
+  { rel: "score", sql: `INSERT OR IGNORE INTO "float_widens_wide_integer_ingress_score" ("value") VALUES (?)`, params: [9007199254740993] },
 ];
 
 const final_select: Record<string, string> = {
-  score: `SELECT t."value" FROM "score" t`,
+  score: `SELECT t."value" FROM "float_widens_wide_integer_ingress_score" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "score", kind: "set", table_name: "score", delta_table_name: "__delta_score", frontier_table_name: "__frontier_score", next_frontier_table_name: "__next_frontier_score", columns: ["value"], column_types: ["float"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "score" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "score" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_score" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "score", kind: "set", table_name: "float_widens_wide_integer_ingress_score", delta_table_name: "__delta_float_widens_wide_integer_ingress_score", frontier_table_name: "__frontier_float_widens_wide_integer_ingress_score", next_frontier_table_name: "__next_frontier_float_widens_wide_integer_ingress_score", columns: ["value"], column_types: ["float"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "float_widens_wide_integer_ingress_score" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "float_widens_wide_integer_ingress_score" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_float_widens_wide_integer_ingress_score" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

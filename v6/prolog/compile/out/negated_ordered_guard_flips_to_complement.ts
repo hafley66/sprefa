@@ -146,23 +146,23 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "row" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
-  `CREATE TABLE "small" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value"))`,
-  `CREATE TEMP TABLE "__delta_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_row_sign" ON "__delta_row" ("_sign")`,
-  `CREATE INDEX "__delta_row_group" ON "__delta_row" ("value")`,
-  `CREATE TEMP TABLE "__frontier_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_row_phase" ON "__frontier_row" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_small" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_small_sign" ON "__delta_small" ("_sign")`,
-  `CREATE INDEX "__delta_small_group" ON "__delta_small" ("value")`,
-  `CREATE TEMP TABLE "__frontier_small" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_small_phase" ON "__frontier_small" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_small" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_small" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_small" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
-  `CREATE INDEX "small_zero" ON "small" ("__refcount") WHERE "__refcount" <= 0`,
+  `CREATE TABLE "negated_ordered_guard_flips_to_complement_row" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
+  `CREATE TABLE "negated_ordered_guard_flips_to_complement_small" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value"))`,
+  `CREATE TEMP TABLE "__delta_negated_ordered_guard_flips_to_complement_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_negated_ordered_guard_flips_to_complement_row_sign" ON "__delta_negated_ordered_guard_flips_to_complement_row" ("_sign")`,
+  `CREATE INDEX "__delta_negated_ordered_guard_flips_to_complement_row_group" ON "__delta_negated_ordered_guard_flips_to_complement_row" ("value")`,
+  `CREATE TEMP TABLE "__frontier_negated_ordered_guard_flips_to_complement_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_negated_ordered_guard_flips_to_complement_row_phase" ON "__frontier_negated_ordered_guard_flips_to_complement_row" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_negated_ordered_guard_flips_to_complement_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_negated_ordered_guard_flips_to_complement_small" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_negated_ordered_guard_flips_to_complement_small_sign" ON "__delta_negated_ordered_guard_flips_to_complement_small" ("_sign")`,
+  `CREATE INDEX "__delta_negated_ordered_guard_flips_to_complement_small_group" ON "__delta_negated_ordered_guard_flips_to_complement_small" ("value")`,
+  `CREATE TEMP TABLE "__frontier_negated_ordered_guard_flips_to_complement_small" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_negated_ordered_guard_flips_to_complement_small_phase" ON "__frontier_negated_ordered_guard_flips_to_complement_small" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_negated_ordered_guard_flips_to_complement_small" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_negated_ordered_guard_flips_to_complement_small" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_negated_ordered_guard_flips_to_complement_small" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "negated_ordered_guard_flips_to_complement_small_zero" ON "negated_ordered_guard_flips_to_complement_small" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -192,14 +192,14 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "value", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "7642cfc3d5830806", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 7, ordinal: 0, local_name: "small", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "2bfbf6df78426fa7", h_schema: "7e38e778eed579a5", h_rule: "11ab4dba30d20116" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "value", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "5c43354e257e3af2", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_row", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "be9cbdd123da7493", h_schema: "d59487c5bf23d586", h_rule: "" },
-  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_row", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "bef7a84a6b203e4e", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_row", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "13a1b689ccc9283b", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_small", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "bfa4b4ab6ec2531a", h_schema: "d59487c5bf23d586", h_rule: "" },
-  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_small", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "248447cb9b9221a6", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_small", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "cd5b767334d27e60", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__support_next_small", kind: "refcount", type_id: 0, arity: 2, module_id: 7, h_id: "8f4deb787eac496c", h_schema: "", h_rule: "" },
-  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__new_small", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 7, h_id: "c1e54802dd6f893b", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_negated_ordered_guard_flips_to_complement_row", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "544c798e4e1496f7", h_schema: "d59487c5bf23d586", h_rule: "" },
+  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_negated_ordered_guard_flips_to_complement_row", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "9ef8ee26ada6fec3", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_negated_ordered_guard_flips_to_complement_row", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "566e88f76e0fefc5", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_negated_ordered_guard_flips_to_complement_small", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "a9962151dcd7b5b3", h_schema: "d59487c5bf23d586", h_rule: "" },
+  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_negated_ordered_guard_flips_to_complement_small", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "e50635728f30d186", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_negated_ordered_guard_flips_to_complement_small", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "a14499f51dd0e2e7", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__support_next_negated_ordered_guard_flips_to_complement_small", kind: "refcount", type_id: 0, arity: 2, module_id: 7, h_id: "0a0db555571670d0", h_schema: "", h_rule: "" },
+  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__new_negated_ordered_guard_flips_to_complement_small", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 7, h_id: "7b1b3b9ddac24ce3", h_schema: "", h_rule: "" },
   { rel_id: 20, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "37454c3486cc7ef9", h_schema: "", h_rule: "" },
   { rel_id: 21, parent_id: 11, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "eafefed53aee6a18", h_schema: "", h_rule: "" },
 ];
@@ -210,29 +210,29 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["row"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "row", sql: `INSERT OR IGNORE INTO "row" ("value") VALUES (?)`, params: [1] },
-  { rel: "row", sql: `INSERT OR IGNORE INTO "row" ("value") VALUES (?)`, params: [2] },
-  { rel: "row", sql: `INSERT OR IGNORE INTO "row" ("value") VALUES (?)`, params: [3] },
-  { rel: "small", sql: `DELETE FROM "small"`, params: [] },
-  { rel: "small", sql: `INSERT OR IGNORE INTO "small" ("value") SELECT b0."value" FROM "row" b0 WHERE (b0."value" <= 1)`, params: [] },
+  { rel: "row", sql: `INSERT OR IGNORE INTO "negated_ordered_guard_flips_to_complement_row" ("value") VALUES (?)`, params: [1] },
+  { rel: "row", sql: `INSERT OR IGNORE INTO "negated_ordered_guard_flips_to_complement_row" ("value") VALUES (?)`, params: [2] },
+  { rel: "row", sql: `INSERT OR IGNORE INTO "negated_ordered_guard_flips_to_complement_row" ("value") VALUES (?)`, params: [3] },
+  { rel: "small", sql: `DELETE FROM "negated_ordered_guard_flips_to_complement_small"`, params: [] },
+  { rel: "small", sql: `INSERT OR IGNORE INTO "negated_ordered_guard_flips_to_complement_small" ("value") SELECT b0."value" FROM "negated_ordered_guard_flips_to_complement_row" b0 WHERE (b0."value" <= 1)`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
-  row: `SELECT t."value" FROM "row" t`,
-  small: `SELECT t."value" FROM "small" t`,
+  row: `SELECT t."value" FROM "negated_ordered_guard_flips_to_complement_row" t`,
+  small: `SELECT t."value" FROM "negated_ordered_guard_flips_to_complement_small" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "row", kind: "set", table_name: "row", delta_table_name: "__delta_row", frontier_table_name: "__frontier_row", next_frontier_table_name: "__next_frontier_row", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "row" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "row" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_row" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["small/1"] },
-  { rel: "small", kind: "set", table_name: "small", delta_table_name: "__delta_small", frontier_table_name: "__frontier_small", next_frontier_table_name: "__next_frontier_small", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_small" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "row", kind: "set", table_name: "negated_ordered_guard_flips_to_complement_row", delta_table_name: "__delta_negated_ordered_guard_flips_to_complement_row", frontier_table_name: "__frontier_negated_ordered_guard_flips_to_complement_row", next_frontier_table_name: "__next_frontier_negated_ordered_guard_flips_to_complement_row", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "negated_ordered_guard_flips_to_complement_row" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "negated_ordered_guard_flips_to_complement_row" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_negated_ordered_guard_flips_to_complement_row" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["small/1"] },
+  { rel: "small", kind: "set", table_name: "negated_ordered_guard_flips_to_complement_small", delta_table_name: "__delta_negated_ordered_guard_flips_to_complement_small", frontier_table_name: "__frontier_negated_ordered_guard_flips_to_complement_small", next_frontier_table_name: "__next_frontier_negated_ordered_guard_flips_to_complement_small", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_negated_ordered_guard_flips_to_complement_small" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "small", rule_id: "negated_ordered_guard_flips_to_complement:small/1#1", head_delta_table_name: "__delta_small", head_columns: ["value"], insert_sql: `INSERT OR IGNORE INTO "small" ("value") SELECT DISTINCT d0."value" FROM "__frontier_row" d0 WHERE d0."_phase" >= 0 AND (d0."value" <= 1) RETURNING "value"`, select_sql: `SELECT "value" FROM "small"`, recompute_sql: `DELETE FROM "small";
-INSERT OR IGNORE INTO "small" ("value") SELECT b0."value" FROM "row" b0 WHERE (b0."value" <= 1)`, support_sql: [`DELETE FROM "__support_next_small"`, `INSERT INTO "__support_next_small" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."value" AS "value", count(*) AS "__refcount" FROM "row" b0 WHERE (b0."value" <= 1) GROUP BY b0."value") GROUP BY "value"`, `UPDATE "small" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_small" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_small" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "small" WHERE "__refcount" <= 0`, `DELETE FROM "small" WHERE "__refcount" <= 0`, `DELETE FROM "__new_small"`, `INSERT INTO "__new_small" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_small" n LEFT JOIN "small" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_small" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_small"`, `INSERT INTO "__frontier_small" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_small"`, `INSERT INTO "__next_frontier_small" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_small"`, `INSERT OR IGNORE INTO "small" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_small" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "small", rule_id: "negated_ordered_guard_flips_to_complement:small/1#1", head_delta_table_name: "__delta_negated_ordered_guard_flips_to_complement_small", head_columns: ["value"], insert_sql: `INSERT OR IGNORE INTO "negated_ordered_guard_flips_to_complement_small" ("value") SELECT DISTINCT d0."value" FROM "__frontier_negated_ordered_guard_flips_to_complement_row" d0 WHERE d0."_phase" >= 0 AND (d0."value" <= 1) RETURNING "value"`, select_sql: `SELECT "value" FROM "negated_ordered_guard_flips_to_complement_small"`, recompute_sql: `DELETE FROM "negated_ordered_guard_flips_to_complement_small";
+INSERT OR IGNORE INTO "negated_ordered_guard_flips_to_complement_small" ("value") SELECT b0."value" FROM "negated_ordered_guard_flips_to_complement_row" b0 WHERE (b0."value" <= 1)`, support_sql: [`DELETE FROM "__support_next_negated_ordered_guard_flips_to_complement_small"`, `INSERT INTO "__support_next_negated_ordered_guard_flips_to_complement_small" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."value" AS "value", count(*) AS "__refcount" FROM "negated_ordered_guard_flips_to_complement_row" b0 WHERE (b0."value" <= 1) GROUP BY b0."value") GROUP BY "value"`, `UPDATE "negated_ordered_guard_flips_to_complement_small" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_negated_ordered_guard_flips_to_complement_small" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_negated_ordered_guard_flips_to_complement_small" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "negated_ordered_guard_flips_to_complement_small" WHERE "__refcount" <= 0`, `DELETE FROM "negated_ordered_guard_flips_to_complement_small" WHERE "__refcount" <= 0`, `DELETE FROM "__new_negated_ordered_guard_flips_to_complement_small"`, `INSERT INTO "__new_negated_ordered_guard_flips_to_complement_small" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_negated_ordered_guard_flips_to_complement_small" n LEFT JOIN "negated_ordered_guard_flips_to_complement_small" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_negated_ordered_guard_flips_to_complement_small" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_negated_ordered_guard_flips_to_complement_small"`, `INSERT INTO "__frontier_negated_ordered_guard_flips_to_complement_small" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_negated_ordered_guard_flips_to_complement_small"`, `INSERT INTO "__next_frontier_negated_ordered_guard_flips_to_complement_small" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_negated_ordered_guard_flips_to_complement_small"`, `INSERT OR IGNORE INTO "negated_ordered_guard_flips_to_complement_small" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_negated_ordered_guard_flips_to_complement_small" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const RECONCILE_EVERY_TICK = false;

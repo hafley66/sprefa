@@ -206,7 +206,7 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     seeded_refs(Initial, SeededRefs),
     append([RuleRefs, DeclaredRefs, SeededRefs], AllRefs0), sort(AllRefs0, AllRefs),
     check_single_arity_per_name(AllRefs),
-    relation_storage_names(Decls, AllRefs, StorageNames),
+    relation_storage_names(Name, Decls, AllRefs, StorageNames),
     derived_refs(Rules, DerivedRefs),
     % The catalog is seeded by DDL, so it is never an arrival target; leaving it
     % in would open the serve door to writes against a compiler-owned table.
@@ -339,44 +339,49 @@ check_single_arity_per_name([_ | Rest]) :-
 % module that declared the relation.  A same Ref declared by separate modules
 % is already one runtime relation before lowering, so refuse it rather than
 % inventing two SQLite tables that the runtime cannot distinguish.
-relation_storage_names(Decls, Refs, Names) :-
-    maplist(relation_storage_candidate(Decls), Refs, Candidates),
+relation_storage_names(EntryStem, Decls, Refs, Names) :-
+    maplist(relation_storage_candidate(EntryStem, Decls), Refs, Candidates),
     keysort(Candidates, Ordered),
     allocate_storage_names(Ordered, [], Names).
 
-relation_storage_candidate(Decls, Ref, Key-(Ref-Base)) :-
+relation_storage_candidate(EntryStem, Decls, Ref, Key-(Ref-Base)) :-
     Ref = Name/Arity,
-    relation_declaring_module(Decls, Ref, ModuleStem),
+    relation_declaring_module(EntryStem, Decls, Ref, ModuleStem),
     storage_identifier(ModuleStem, ModulePart),
     storage_identifier(Name, RelationPart),
     storage_base_name(ModulePart, RelationPart, Base),
     sqlite_ascii_fold(Base, Folded),
     Key = key(Folded, ModuleStem, Name, Arity).
 
-relation_declaring_module(Decls, Name/_Arity, ModuleStem) :-
+% EntryStem is the compilation unit's own name: the .dl6 entry file stem on
+% the text path, the fixture name on the term path.  Both paths must reach
+% the same physical spelling for the same program, which is what
+% compile/scripts/text_door_receipt.pl compares byte for byte.
+relation_declaring_module(EntryStem, Decls, Name/_Arity, ModuleStem) :-
     findall(Hash, member(rel_module_decl(Name, Hash), Decls), Hashes0),
     sort(Hashes0, Hashes),
-    relation_declaring_module_hash(Decls, Name, Hashes, Hash),
-    (   memberchk(module_storage_decl(Hash, ModuleStem), Decls)
-    ->  true
+    relation_declaring_module_stem(EntryStem, Decls, Name, Hashes, ModuleStem).
+
+relation_declaring_module_stem(_EntryStem, Decls, _Name, [Hash], ModuleStem) :-
+    !,
+    (   memberchk(module_storage_decl(Hash, Stem), Decls)
+    ->  ModuleStem = Stem
     ;   ModuleStem = none
     ).
-
-relation_declaring_module_hash(_Decls, _Name, [Hash], Hash) :- !.
-relation_declaring_module_hash(_Decls, Name, [First, Second | Rest], _) :-
+relation_declaring_module_stem(_EntryStem, _Decls, Name, [First, Second | Rest], _) :-
     Hashes = [First, Second | Rest],
     throw_as_compiler_unsupported(rel_module_identity_collision(Name, Hashes)).
-relation_declaring_module_hash(_Decls, Name, [], none) :-
+relation_declaring_module_stem(_EntryStem, _Decls, Name, [], none) :-
     compiler_owned_contract(Name),
     !.
-relation_declaring_module_hash(Decls, _Name, [], Hash) :-
+relation_declaring_module_stem(_EntryStem, Decls, _Name, [], ModuleStem) :-
     memberchk(entry_module_decl(Hash), Decls),
+    memberchk(module_storage_decl(Hash, ModuleStem), Decls),
     !.
-relation_declaring_module_hash(_Decls, _Name, [], none).
+relation_declaring_module_stem(EntryStem, _Decls, _Name, [], EntryStem).
 
-% Fixture terms and compiler-owned relations have no source module.  Keep
-% their established physical spelling, while text-door relations receive a
-% module path prefix above.
+% A compiler-owned relation keeps its established physical spelling; every
+% other relation carries the module path that declared it.
 storage_identifier(none, '') :- !.
 storage_identifier(Value, Identifier) :-
     atom_codes(Value, Codes),

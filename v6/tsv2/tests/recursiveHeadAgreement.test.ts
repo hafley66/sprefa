@@ -47,6 +47,10 @@ import { test } from "node:test";
 import { firstValueFrom, tap } from "rxjs";
 
 import { program } from "../gen_emitted/flagship_flow_reach_over_batched_resolved_edges.ts";
+
+// The rel is authored `flow_reach`; the table carries this compilation
+// unit's module prefix (compile.pl relation_storage_names/4).
+const FLOW_REACH_TABLE = "flagship_flow_reach_over_batched_resolved_edges_flow_reach";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 // ISqlRunner is not on runtime/types.ts's re-export list; this is the module
 // runtime/types.ts itself sources it from.
@@ -267,11 +271,11 @@ test("an unobserved head bails past cone > head/4 and still agrees with the refe
   // The skip is only sound if it actually skipped: a staged event here would
   // mean the unobserved path wrote copies nobody reads.
   assert.ok(
-    !executed.some((sql) => sql.includes("__delta_flow_reach")),
+    !executed.some((sql) => sql.includes(`__delta_${FLOW_REACH_TABLE}`)),
     "an unobserved head must stage no delta rows on a bail tick",
   );
   assert.ok(
-    executed.some((sql) => sql.includes("__support_next_flow_reach")),
+    executed.some((sql) => sql.includes(`__support_next_${FLOW_REACH_TABLE}`)),
     "expected the bail to fall back to the refCount recompute",
   );
   seam.db.close();
@@ -297,11 +301,11 @@ test("an unobserved head under the cone cap finishes the walk in place", async (
     "the in-place tick must agree with the referee",
   );
   assert.ok(
-    !executed.some((sql) => sql.includes("__support_next_flow_reach")),
+    !executed.some((sql) => sql.includes(`__support_next_${FLOW_REACH_TABLE}`)),
     "a walk under the cap must not fall back to the recompute",
   );
   assert.ok(
-    executed.some((sql) => sql.includes('DELETE FROM "flow_reach" WHERE')),
+    executed.some((sql) => sql.includes(`DELETE FROM "${FLOW_REACH_TABLE}" WHERE`)),
     "expected the in-place walk to reach headDelete",
   );
   seam.db.close();

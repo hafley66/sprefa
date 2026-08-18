@@ -149,7 +149,7 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 export const STRUCT_TYPES: readonly IStructTypePlan[] = [
-  { name: "span", columns: ["start", "end"], refs: [null, null], key_indices: [0, 1], conflict_sql: `SELECT i.value AS "__requested", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]') WHERE json_array(t."start", t."end") <> i.value`, intern_sql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`, lookup_sql: `SELECT i.value AS "__lookup", t."__id", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]')` },
+  { name: "span", columns: ["start", "end"], refs: [null, null], key_indices: [0, 1], conflict_sql: `SELECT i.value AS "__requested", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "struct_intern_order_b_span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]') WHERE json_array(t."start", t."end") <> i.value`, intern_sql: `INSERT OR IGNORE INTO "struct_intern_order_b_span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`, lookup_sql: `SELECT i.value AS "__lookup", t."__id", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "struct_intern_order_b_span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]')` },
 ];
 
 export const STRUCT_REF_COLUMNS: IStructRefColumns = {
@@ -157,21 +157,21 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
 };
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "mark" ("__id" INTEGER PRIMARY KEY, "at" INTEGER NOT NULL, UNIQUE ("at"))`,
-  `CREATE TABLE "span" ("__id" INTEGER PRIMARY KEY, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, UNIQUE ("start", "end"))`,
-  `CREATE TEMP VIEW "__ref_span" AS SELECT t."__id", "start", "end", json_object('start', t."start", 'end', t."end") AS "__rendered" FROM "span" t`,
-  `CREATE TEMP TABLE "__delta_mark" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_mark_sign" ON "__delta_mark" ("_sign")`,
-  `CREATE INDEX "__delta_mark_group" ON "__delta_mark" ("at")`,
-  `CREATE TEMP TABLE "__frontier_mark" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_mark_phase" ON "__frontier_mark" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_mark" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_span_sign" ON "__delta_span" ("_sign")`,
-  `CREATE INDEX "__delta_span_group" ON "__delta_span" ("start", "end")`,
-  `CREATE TEMP TABLE "__frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_span_phase" ON "__frontier_span" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE TABLE "struct_intern_order_b_mark" ("__id" INTEGER PRIMARY KEY, "at" INTEGER NOT NULL, UNIQUE ("at"))`,
+  `CREATE TABLE "struct_intern_order_b_span" ("__id" INTEGER PRIMARY KEY, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, UNIQUE ("start", "end"))`,
+  `CREATE TEMP VIEW "__ref_struct_intern_order_b_span" AS SELECT t."__id", "start", "end", json_object('start', t."start", 'end', t."end") AS "__rendered" FROM "struct_intern_order_b_span" t`,
+  `CREATE TEMP TABLE "__delta_struct_intern_order_b_mark" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_struct_intern_order_b_mark_sign" ON "__delta_struct_intern_order_b_mark" ("_sign")`,
+  `CREATE INDEX "__delta_struct_intern_order_b_mark_group" ON "__delta_struct_intern_order_b_mark" ("at")`,
+  `CREATE TEMP TABLE "__frontier_struct_intern_order_b_mark" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_struct_intern_order_b_mark_phase" ON "__frontier_struct_intern_order_b_mark" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_struct_intern_order_b_mark" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_struct_intern_order_b_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_struct_intern_order_b_span_sign" ON "__delta_struct_intern_order_b_span" ("_sign")`,
+  `CREATE INDEX "__delta_struct_intern_order_b_span_group" ON "__delta_struct_intern_order_b_span" ("start", "end")`,
+  `CREATE TEMP TABLE "__frontier_struct_intern_order_b_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_struct_intern_order_b_span_phase" ON "__frontier_struct_intern_order_b_span" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_struct_intern_order_b_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -202,13 +202,13 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 10, parent_id: 7, ordinal: 0, local_name: "span", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "4642142c986c7af4", h_schema: "302755ba572df023", h_rule: "" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "start", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "c5fc9a0be239d88f", h_schema: "", h_rule: "" },
   { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "end", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "e6909dd8853267bd", h_schema: "", h_rule: "" },
-  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__delta_mark", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "ed61d5438cfb7beb", h_schema: "1972c7f2750d357e", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__frontier_mark", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "016b72f7221274ac", h_schema: "80fbfbb2963ade71", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__next_frontier_mark", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "cb37aa6ff92863c4", h_schema: "80fbfbb2963ade71", h_rule: "" },
-  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__delta_span", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "92d31a844e3fed67", h_schema: "b1b864f950ffae18", h_rule: "" },
-  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__frontier_span", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "6246b0e81982a446", h_schema: "81f811d7185f8016", h_rule: "" },
-  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__next_frontier_span", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "b02b3be5a2483f32", h_schema: "81f811d7185f8016", h_rule: "" },
-  { rel_id: 19, parent_id: 7, ordinal: 0, local_name: "__ref_span", kind: "dictionary", type_id: 10, arity: 4, module_id: 7, h_id: "e72923d2ec01feae", h_schema: "302755ba572df023", h_rule: "" },
+  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__delta_struct_intern_order_b_mark", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "6dc7de7d337fbe36", h_schema: "1972c7f2750d357e", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__frontier_struct_intern_order_b_mark", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "e4fbe8e9c8e8dca4", h_schema: "80fbfbb2963ade71", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__next_frontier_struct_intern_order_b_mark", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "cbbce847d695c8b6", h_schema: "80fbfbb2963ade71", h_rule: "" },
+  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__delta_struct_intern_order_b_span", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "d4b616f8a58a5a50", h_schema: "b1b864f950ffae18", h_rule: "" },
+  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__frontier_struct_intern_order_b_span", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "b95f4c0c80510dae", h_schema: "81f811d7185f8016", h_rule: "" },
+  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__next_frontier_struct_intern_order_b_span", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "a6b419925dc13a90", h_schema: "81f811d7185f8016", h_rule: "" },
+  { rel_id: 19, parent_id: 7, ordinal: 0, local_name: "__ref_struct_intern_order_b_span", kind: "dictionary", type_id: 10, arity: 4, module_id: 7, h_id: "89fcc87606a65ff2", h_schema: "302755ba572df023", h_rule: "" },
   { rel_id: 20, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "88ce13b817ebb097", h_schema: "", h_rule: "" },
   { rel_id: 21, parent_id: 11, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "0fccd930bf8dff91", h_schema: "", h_rule: "" },
   { rel_id: 22, parent_id: 12, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "df9a6d5cc95ce95f", h_schema: "", h_rule: "" },
@@ -225,13 +225,13 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  mark: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at" FROM "mark" t`,
-  span: `SELECT t."start", t."end" FROM "span" t`,
+  mark: `SELECT (SELECT d."__rendered" FROM "__ref_struct_intern_order_b_span" d WHERE d."__id" = t."at") AS "at" FROM "struct_intern_order_b_mark" t`,
+  span: `SELECT t."start", t."end" FROM "struct_intern_order_b_span" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "mark", kind: "set", table_name: "mark", delta_table_name: "__delta_mark", frontier_table_name: "__frontier_mark", next_frontier_table_name: "__next_frontier_mark", columns: ["at"], column_types: ["ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "mark" ("at") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "at"`, arrival_del_sql: `DELETE FROM "mark" WHERE ("at") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "at"`, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_mark" t WHERE t."_sign" IN (-1, 1) GROUP BY t."at", t."_sign"`, rule_observers: [] },
-  { rel: "span", kind: "set", table_name: "span", delta_table_name: "__delta_span", frontier_table_name: "__frontier_span", next_frontier_table_name: "__next_frontier_span", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrival_del_sql: `DELETE FROM "span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundary_sql: `SELECT t."start", t."end", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" t WHERE t."_sign" IN (-1, 1) GROUP BY t."start", t."end", t."_sign"`, rule_observers: [] },
+  { rel: "mark", kind: "set", table_name: "struct_intern_order_b_mark", delta_table_name: "__delta_struct_intern_order_b_mark", frontier_table_name: "__frontier_struct_intern_order_b_mark", next_frontier_table_name: "__next_frontier_struct_intern_order_b_mark", columns: ["at"], column_types: ["ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "struct_intern_order_b_mark" ("at") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "at"`, arrival_del_sql: `DELETE FROM "struct_intern_order_b_mark" WHERE ("at") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "at"`, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_struct_intern_order_b_span" d WHERE d."__id" = t."at") AS "at", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_struct_intern_order_b_mark" t WHERE t."_sign" IN (-1, 1) GROUP BY t."at", t."_sign"`, rule_observers: [] },
+  { rel: "span", kind: "set", table_name: "struct_intern_order_b_span", delta_table_name: "__delta_struct_intern_order_b_span", frontier_table_name: "__frontier_struct_intern_order_b_span", next_frontier_table_name: "__next_frontier_struct_intern_order_b_span", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "struct_intern_order_b_span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrival_del_sql: `DELETE FROM "struct_intern_order_b_span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundary_sql: `SELECT t."start", t."end", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_struct_intern_order_b_span" t WHERE t."_sign" IN (-1, 1) GROUP BY t."start", t."end", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

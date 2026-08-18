@@ -157,15 +157,15 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "world_mode" ("__id" INTEGER PRIMARY KEY, "col1" INTEGER NOT NULL, "col2" INTEGER NOT NULL, UNIQUE ("col1"))`,
-  `CREATE TEMP VIEW "__txt_world_mode" AS SELECT t."col1" AS "col1", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2" FROM "world_mode" t`,
-  `CREATE TEMP TABLE "__delta_world_mode" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_world_mode_sign" ON "__delta_world_mode" ("_sign")`,
-  `CREATE INDEX "__delta_world_mode_group" ON "__delta_world_mode" ("col1", "col2")`,
-  `CREATE TEMP TABLE "__frontier_world_mode" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_world_mode_phase" ON "__frontier_world_mode" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_world_mode" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_world_mode" AS SELECT t."col1" AS "col1", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_world_mode" t`,
+  `CREATE TABLE "world_fed_keyed_arrival_replaces_world_mode" ("__id" INTEGER PRIMARY KEY, "col1" INTEGER NOT NULL, "col2" INTEGER NOT NULL, UNIQUE ("col1"))`,
+  `CREATE TEMP VIEW "__txt_world_fed_keyed_arrival_replaces_world_mode" AS SELECT t."col1" AS "col1", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2" FROM "world_fed_keyed_arrival_replaces_world_mode" t`,
+  `CREATE TEMP TABLE "__delta_world_fed_keyed_arrival_replaces_world_mode" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_world_fed_keyed_arrival_replaces_world_mode_sign" ON "__delta_world_fed_keyed_arrival_replaces_world_mode" ("_sign")`,
+  `CREATE INDEX "__delta_world_fed_keyed_arrival_replaces_world_mode_group" ON "__delta_world_fed_keyed_arrival_replaces_world_mode" ("col1", "col2")`,
+  `CREATE TEMP TABLE "__frontier_world_fed_keyed_arrival_replaces_world_mode" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_world_fed_keyed_arrival_replaces_world_mode_phase" ON "__frontier_world_fed_keyed_arrival_replaces_world_mode" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_world_fed_keyed_arrival_replaces_world_mode" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_world_fed_keyed_arrival_replaces_world_mode" AS SELECT t."col1" AS "col1", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_world_fed_keyed_arrival_replaces_world_mode" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -191,11 +191,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 8, parent_id: 7, ordinal: 0, local_name: "world_mode", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "d19a14970a9061a4", h_schema: "959f9ff0725663ea", h_rule: "" },
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "col1", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "8c8b82ecd2a13c42", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 8, ordinal: 2, local_name: "col2", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "ba89e414c7b2bbf9", h_schema: "", h_rule: "" },
-  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__delta_world_mode", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "a4be1b1177bbb0ae", h_schema: "0b625e3404b3b8a5", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__frontier_world_mode", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "3ffa6c6f82eb85d1", h_schema: "a9ad28741624f135", h_rule: "" },
-  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__next_frontier_world_mode", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "807dbd710dc440a6", h_schema: "a9ad28741624f135", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__txt_world_mode", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "130fd5a5b60913dc", h_schema: "df1cb47113637daf", h_rule: "" },
-  { rel_id: 15, parent_id: 11, ordinal: 0, local_name: "__txt___delta_world_mode", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "455f5aa3060d17f2", h_schema: "df1cb47113637daf", h_rule: "" },
+  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__delta_world_fed_keyed_arrival_replaces_world_mode", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "967d0080d9c877c0", h_schema: "0b625e3404b3b8a5", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__frontier_world_fed_keyed_arrival_replaces_world_mode", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "f61b4031792afd7d", h_schema: "a9ad28741624f135", h_rule: "" },
+  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__next_frontier_world_fed_keyed_arrival_replaces_world_mode", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "9e243c98183e4d48", h_schema: "a9ad28741624f135", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__txt_world_fed_keyed_arrival_replaces_world_mode", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "240a0c706d96cbca", h_schema: "df1cb47113637daf", h_rule: "" },
+  { rel_id: 15, parent_id: 11, ordinal: 0, local_name: "__txt___delta_world_fed_keyed_arrival_replaces_world_mode", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "c9c7156be1163f23", h_schema: "df1cb47113637daf", h_rule: "" },
   { rel_id: 16, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "73dcb1cbc33d2bb1", h_schema: "", h_rule: "" },
   { rel_id: 17, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "9b8849d3851786e1", h_schema: "", h_rule: "" },
   { rel_id: 18, parent_id: 10, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "0a9b78cbb6afafa9", h_schema: "", h_rule: "" },
@@ -210,11 +210,11 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  world_mode: `SELECT t."col1", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_world_mode" t`,
+  world_mode: `SELECT t."col1", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_world_fed_keyed_arrival_replaces_world_mode" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "world_mode", kind: "set", table_name: "world_mode", delta_table_name: "__delta_world_mode", frontier_table_name: "__frontier_world_mode", next_frontier_table_name: "__next_frontier_world_mode", columns: ["col1", "col2"], column_types: ["int", "text"], key_indices: [0], arrival_add_sql: `INSERT INTO "world_mode" ("col1", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2" RETURNING "col1", "col2"`, arrival_del_sql: `DELETE FROM "world_mode" WHERE ("col1", "col2") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "col1", "col2"`, boundary_sql: `SELECT t."col1", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_world_mode" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."col2", t."_sign"`, rule_observers: [] },
+  { rel: "world_mode", kind: "set", table_name: "world_fed_keyed_arrival_replaces_world_mode", delta_table_name: "__delta_world_fed_keyed_arrival_replaces_world_mode", frontier_table_name: "__frontier_world_fed_keyed_arrival_replaces_world_mode", next_frontier_table_name: "__next_frontier_world_fed_keyed_arrival_replaces_world_mode", columns: ["col1", "col2"], column_types: ["int", "text"], key_indices: [0], arrival_add_sql: `INSERT INTO "world_fed_keyed_arrival_replaces_world_mode" ("col1", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2" RETURNING "col1", "col2"`, arrival_del_sql: `DELETE FROM "world_fed_keyed_arrival_replaces_world_mode" WHERE ("col1", "col2") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "col1", "col2"`, boundary_sql: `SELECT t."col1", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_world_fed_keyed_arrival_replaces_world_mode" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."col2", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

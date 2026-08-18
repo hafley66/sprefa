@@ -726,7 +726,8 @@ list_intern_sql(split, split_list_intern, [TextSql, SeparatorSql], ElementType,
 
 list_entity_id_lookup(ElementType, ArraySql, Sql) :-
     canonical_type_name(list(ElementType), EntityName),
-    quote_ident(EntityName, QuotedEntity),
+    table_name(EntityName/1, EntityTable),
+    quote_ident(EntityTable, QuotedEntity),
     interned_id_sql(ArraySql, ContentIdSql),
     format(atom(Sql),
            '(SELECT e."__id" FROM ~w e WHERE e."content" = ~w)',
@@ -1137,7 +1138,13 @@ catalog_row_ddl(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
 %   then level_statement_groups/4) so a caller outside lower_program/2 can plan
 %   the same level rows the DDL minted. Faithful because every step is the same
 %   predicate.
-plan_rule_level_statements(
+plan_rule_level_statements(Plan, RuleLevelStatements) :-
+    Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
+    with_storage_context(RelPlans,
+                         plan_rule_level_statements_in_context(Plan,
+                                                               RuleLevelStatements)).
+
+plan_rule_level_statements_in_context(
         plan(_Name, prog(_Decls, _Rules), LoweringTypes, RelPlans,
              _ArrivalTargets, RuleOrder, _EdgeRules, _SubscribedRels, Mode),
         RuleLevelStatements) :-
@@ -1158,8 +1165,19 @@ plan_rule_level_statements(
 %   the level-statement families, and the sh/bind port rows). DepartureRefs,
 %   PreRefs, RuleLevelStatements and Decls mirror the lower_program/2 call-site
 %   derivations so a plane row exists exactly where its DDL mint site emitted.
+% The plane rows name SQLite objects, so this door installs the same storage
+% context lower_program/2 does: outside it the catalog described tables the
+% DDL never created.
 catalog_all_rows(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
                  Types, RuleLevelStatements, Decls, AllRows) :-
+    with_storage_context(RelPlans,
+        catalog_all_rows_in_context(Mode, ModuleName, Rules, RelPlans,
+                                    DepartureRefs, PreRefs, Types,
+                                    RuleLevelStatements, Decls, AllRows)).
+
+catalog_all_rows_in_context(Mode, ModuleName, Rules, RelPlans, DepartureRefs,
+                            PreRefs, Types, RuleLevelStatements, Decls,
+                            AllRows) :-
     catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, DeclRows, Context),
     catalog_plane_rows(Mode, ModuleName, RelPlans, DepartureRefs, PreRefs,
                        Types, RuleLevelStatements, Decls, Context, PlaneRows),
@@ -2441,9 +2459,9 @@ list_intern_statements(ListInterns, FromSql, WhereSql, Statements) :-
 list_intern_statement(FromSql, WhereSql, list_intern(ElementType, ArraySql),
                       Statements) :-
     canonical_type_name(list(ElementType), EntityName),
-    atomic_list_concat([EntityName, member], '__', MemberName),
     table_name(EntityName/1, EntityTable),
-    table_name(MemberName/3, MemberTable),
+    list_member_ref(EntityName, MemberRef),
+    table_name(MemberRef, MemberTable),
     quote_ident(EntityTable, QuotedEntity),
     quote_ident(MemberTable, QuotedMember),
     interned_id_sql(ArraySql, ContentIdSql),
@@ -2923,16 +2941,15 @@ list_view_ddl(Mode, RelPlans, Element, Ddl) :-
     canonical_type_name(list(Element), EntityName),
     list_view_name(EntityName, ViewName),
     quote_ident(ViewName, QuotedViewName),
-    table_name(EntityName/1, EntityTable),
-    quote_ident(EntityTable, QuotedEntity),
     list_member_ref(EntityName, MemberRef),
     table_name(MemberRef, MemberTable),
     quote_ident(MemberTable, QuotedMemberTable),
     list_member_value_type(RelPlans, MemberRef, ValueType),
     list_element_render(Mode, ValueType, ValueExpr, AggregateValueExpr, JoinSql),
     format(atom(Ddl),
-           'CREATE TEMP VIEW ~w AS SELECT e."__id" AS "list_id", coalesce((SELECT json_group_array(~w) FROM (SELECT ~w AS "value" FROM ~w m~w WHERE m."list_id" = e."__id" ORDER BY m."idx") ordered), ''[]'') AS "value_text" FROM ~w e',
-           [QuotedViewName, AggregateValueExpr, ValueExpr, QuotedMemberTable, JoinSql, QuotedEntity]).
+           'CREATE TEMP VIEW ~w AS SELECT m0."list_id" AS "list_id", coalesce((SELECT json_group_array(~w) FROM (SELECT ~w AS "value" FROM ~w m~w WHERE m."list_id" = m0."list_id" ORDER BY m."idx") ordered), ''[]'') AS "value_text" FROM ~w m0 WHERE NOT EXISTS (SELECT 1 FROM ~w m1 WHERE m1."list_id" = m0."list_id" AND m1."idx" < m0."idx")',
+           [QuotedViewName, AggregateValueExpr, ValueExpr, QuotedMemberTable,
+            JoinSql, QuotedMemberTable, QuotedMemberTable]).
 
 list_member_value_type(RelPlans, MemberRef, ValueType) :-
     member(RelPlan, RelPlans),
@@ -2965,9 +2982,13 @@ list_element_render(Mode, ValueType, 's."content"', 'ordered."value"', JoinSql) 
            [QuotedDictionary]).
 list_element_render(_, _, 'm."value"', 'ordered."value"', '').
 
-% The entity table is the durable list identity plane. Reading it as the outer
-% relation gives empty lists a row, while the correlated member aggregate is
-% keyed by list_id and orders by idx before json_group_array sees its input.
+% list_id is the list's identity and the member rel is where it lives: an id
+% needs no row in the entity table, which is a content dictionary that also
+% allocates ids. One outer row per id, taken as the member with no smaller
+% idx, keeps the view flattenable, so a read keyed on list_id stays an index
+% seek instead of materializing the whole list plane (EXPLAIN in
+% v6/tsv2/tests/listReadSurface.test.ts). A list with no member rows has no
+% row here and reads '[]' through the boundary coalesce below.
 list_column_join(Column, ColumnType, Join) :-
     ColumnType = list(Element),
     canonical_type_name(list(Element), EntityName),

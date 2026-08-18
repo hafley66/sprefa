@@ -90,6 +90,7 @@ fn fixture_program() -> GenProgram {
         edges: vec![],
         levels: vec![IncrementalLevelStatement {
             head_rel: "seen".to_string(),
+            head_table_name: "seen".to_string(),
             head_delta_table_name: "__delta_seen".to_string(),
             head_columns: vec!["value".to_string()],
             head_column_types: vec![RowColumnType::Int],

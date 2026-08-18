@@ -129,21 +129,33 @@ test("the ordered/pre snapshot copies the whole relation every tick, arrivals or
   // `pre` row to exist before it derives anything. Seeded directly, because
   // what is being measured is the copy, not how the rows got there.
   await firstValueFrom(
-    seam.runner.execute(seam.db, `INSERT INTO "counter" ("name", "next") VALUES ('a', 1), ('b', 2), ('c', 3)`),
+    seam.runner.execute(
+      seam.db,
+      `INSERT INTO "batched_increments_both_count_counter" ("name", "next") VALUES ('a', 1), ('b', 2), ('c', 3)`,
+    ),
   );
 
   stmt_counter.reset();
   await firstValueFrom(program.tick(seam, []));
   assert.equal(stmt_counter.get(), 17, "the constant term runs in full on a tick with no arrivals");
 
-  const counter_rows = await firstValueFrom(seam.runner.execute(seam.db, 'SELECT count(*) AS n FROM "__pre_counter"'));
+  const counter_rows = await firstValueFrom(
+    seam.runner.execute(seam.db, 'SELECT count(*) AS n FROM "__pre_batched_increments_both_count_counter"'),
+  );
   assert.equal(counter_rows.rows[0]!.n, 3, "the pre table holds a full copy of the relation, not a delta");
 
   const plan = await firstValueFrom(
-    seam.runner.execute(seam.db, 'EXPLAIN QUERY PLAN INSERT INTO "__pre_counter" ("name", "next") SELECT "name", "next" FROM "counter"'),
+    seam.runner.execute(
+      seam.db,
+      'EXPLAIN QUERY PLAN INSERT INTO "__pre_batched_increments_both_count_counter" ("name", "next") SELECT "name", "next" FROM "batched_increments_both_count_counter"',
+    ),
   );
   const detail = plan.rows.map((row) => String(row.detail)).join(" | ");
-  assert.match(detail, /SCAN counter/, `the snapshot reads the whole relation: ${detail}`);
+  assert.match(
+    detail,
+    /SCAN batched_increments_both_count_counter/,
+    `the snapshot reads the whole relation: ${detail}`,
+  );
   seam.db.close();
 });
 

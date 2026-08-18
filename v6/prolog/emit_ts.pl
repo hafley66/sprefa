@@ -1665,6 +1665,7 @@ ordered_arm_entry_line(RelPlans, PreRefs,
     ref_name(HeadRef, HeadName),
     ref_name(TriggerRef, TriggerName),
     relplan_kind(RelPlans, HeadRef, HeadKind),
+    relplan_storage_name(RelPlans, HeadRef, HeadStorageName),
     ordered_trigger_kind(EdgeTriggerKind, TriggerKind),
     quoted_string_array_text(HeadColumns, HeadColumnsText),
     key_indices(HeadColumns, KeyColumns, KeyIndices),
@@ -1674,8 +1675,9 @@ ordered_arm_entry_line(RelPlans, PreRefs,
     ( memberchk(HeadRef, PreRefs) -> EvolvesPre = true ; EvolvesPre = false ),
     intern_sql_field(ProjectInternSqls, InternField),
     format(atom(Line),
-           '  { trigger_rel: "~w", trigger_kind: "~w", head_rel: "~w", head_kind: "~w", head_columns: ~w, key_indices: [~w], project_sql: ~w, write_sql: ~w, evolves_pre: ~w~w },',
-           [TriggerName, TriggerKind, HeadName, HeadKind, HeadColumnsText,
+           '  { trigger_rel: "~w", trigger_kind: "~w", head_rel: "~w", head_table_name: "~w", head_kind: "~w", head_columns: ~w, key_indices: [~w], project_sql: ~w, write_sql: ~w, evolves_pre: ~w~w },',
+           [TriggerName, TriggerKind, HeadName, HeadStorageName, HeadKind,
+            HeadColumnsText,
             KeyIndicesText, ProjectTemplate, WriteTemplate, EvolvesPre,
             InternField]).
 
@@ -1732,9 +1734,9 @@ edge_statements_intern(_, false).
 % Two spellings, picked by whether ANY arm builds a string: the direct-mode
 % text is the one that was already there, byte for byte.
 ordered_arm_interface_line(false,
-    'interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }') :- !.
+    'interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_table_name: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }') :- !.
 ordered_arm_interface_line(true,
-    'interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean; readonly intern_sql?: readonly string[] }').
+    'interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_table_name: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean; readonly intern_sql?: readonly string[] }').
 
 ordered_arm_project_line(false,
     '  return forkJoin(arms.map((arm) => seam.runner.execute(seam.db, { sql: arm.project_sql, args: bind_args(occurrence.row) }).pipe(') :- !.
@@ -1799,7 +1801,7 @@ ordered_occurrence_lines(true, EdgeStatements, RelPlans, PreRefs,
           'function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null {',
           '  const { arm, row } = write;',
           '  if (!arm.evolves_pre) return null;',
-          '  const table = quote_ordered_identifier("__pre_" + arm.head_rel);',
+          '  const table = quote_ordered_identifier("__pre_" + arm.head_table_name);',
           '  const columns = arm.head_columns.map(quote_ordered_identifier);',
           '  const placeholders = columns.map(() => "?").join(", ");',
           '  if (arm.head_kind === "log") {',

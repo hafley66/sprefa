@@ -157,25 +157,25 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "doc" ("__id" INTEGER PRIMARY KEY, "value" TEXT NOT NULL CHECK (json_valid("value")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value"))`,
-  `CREATE TABLE "seed" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, UNIQUE ("name"))`,
-  `CREATE TEMP VIEW "__txt_seed" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "seed" t`,
-  `CREATE TEMP TABLE "__delta_doc" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
-  `CREATE INDEX "__delta_doc_sign" ON "__delta_doc" ("_sign")`,
-  `CREATE INDEX "__delta_doc_group" ON "__delta_doc" ("value")`,
-  `CREATE TEMP TABLE "__frontier_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
-  `CREATE INDEX "__frontier_doc_phase" ON "__frontier_doc" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
-  `CREATE TEMP TABLE "__delta_seed" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_seed_sign" ON "__delta_seed" ("_sign")`,
-  `CREATE INDEX "__delta_seed_group" ON "__delta_seed" ("name")`,
-  `CREATE TEMP TABLE "__frontier_seed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_seed_phase" ON "__frontier_seed" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_seed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_seed" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_seed" t`,
-  `CREATE TEMP TABLE "__support_next_doc" ("value" TEXT NOT NULL CHECK (json_valid("value")), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_doc" ("value" TEXT NOT NULL CHECK (json_valid("value")), "__refcount" INTEGER NOT NULL)`,
-  `CREATE INDEX "doc_zero" ON "doc" ("__refcount") WHERE "__refcount" <= 0`,
+  `CREATE TABLE "braces_literal_canonicalizes_doc" ("__id" INTEGER PRIMARY KEY, "value" TEXT NOT NULL CHECK (json_valid("value")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value"))`,
+  `CREATE TABLE "braces_literal_canonicalizes_seed" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, UNIQUE ("name"))`,
+  `CREATE TEMP VIEW "__txt_braces_literal_canonicalizes_seed" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "braces_literal_canonicalizes_seed" t`,
+  `CREATE TEMP TABLE "__delta_braces_literal_canonicalizes_doc" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
+  `CREATE INDEX "__delta_braces_literal_canonicalizes_doc_sign" ON "__delta_braces_literal_canonicalizes_doc" ("_sign")`,
+  `CREATE INDEX "__delta_braces_literal_canonicalizes_doc_group" ON "__delta_braces_literal_canonicalizes_doc" ("value")`,
+  `CREATE TEMP TABLE "__frontier_braces_literal_canonicalizes_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
+  `CREATE INDEX "__frontier_braces_literal_canonicalizes_doc_phase" ON "__frontier_braces_literal_canonicalizes_doc" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_braces_literal_canonicalizes_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
+  `CREATE TEMP TABLE "__delta_braces_literal_canonicalizes_seed" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_braces_literal_canonicalizes_seed_sign" ON "__delta_braces_literal_canonicalizes_seed" ("_sign")`,
+  `CREATE INDEX "__delta_braces_literal_canonicalizes_seed_group" ON "__delta_braces_literal_canonicalizes_seed" ("name")`,
+  `CREATE TEMP TABLE "__frontier_braces_literal_canonicalizes_seed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_braces_literal_canonicalizes_seed_phase" ON "__frontier_braces_literal_canonicalizes_seed" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_braces_literal_canonicalizes_seed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_braces_literal_canonicalizes_seed" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_braces_literal_canonicalizes_seed" t`,
+  `CREATE TEMP TABLE "__support_next_braces_literal_canonicalizes_doc" ("value" TEXT NOT NULL CHECK (json_valid("value")), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_braces_literal_canonicalizes_doc" ("value" TEXT NOT NULL CHECK (json_valid("value")), "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "braces_literal_canonicalizes_doc_zero" ON "braces_literal_canonicalizes_doc" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -205,17 +205,17 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "value", kind: "column", type_id: 5, arity: 0, module_id: 7, h_id: "b42ffe0be793c354", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 7, ordinal: 0, local_name: "seed", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "853f4776fd3423d6", h_schema: "a30b139c04a632dd", h_rule: "" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "27ae0ebc5118aec3", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_doc", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "3d07565193de3974", h_schema: "016fd229617c284d", h_rule: "" },
-  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_doc", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "32be2f594a40caa3", h_schema: "d831c45bc56bba79", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_doc", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "634c03d2fea893b1", h_schema: "d831c45bc56bba79", h_rule: "" },
-  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_seed", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "6e840109e6a174f5", h_schema: "178788c545e561e2", h_rule: "" },
-  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_seed", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "8274e732bcc423f8", h_schema: "de5b51999f205894", h_rule: "" },
-  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_seed", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "82a6f9b14faf47c3", h_schema: "de5b51999f205894", h_rule: "" },
-  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__txt_seed", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "1a3f830c53ec4970", h_schema: "a30b139c04a632dd", h_rule: "" },
-  { rel_id: 19, parent_id: 15, ordinal: 0, local_name: "__txt___delta_seed", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "a87ec4167f2b2db4", h_schema: "a30b139c04a632dd", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_braces_literal_canonicalizes_doc", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "962aa99be9d0f3b8", h_schema: "016fd229617c284d", h_rule: "" },
+  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_braces_literal_canonicalizes_doc", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "3288dc2cb34582e4", h_schema: "d831c45bc56bba79", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_braces_literal_canonicalizes_doc", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "4cdb96c93387960a", h_schema: "d831c45bc56bba79", h_rule: "" },
+  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_braces_literal_canonicalizes_seed", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "5e4f4403f08020fd", h_schema: "178788c545e561e2", h_rule: "" },
+  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_braces_literal_canonicalizes_seed", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "e5688bb5b88d5169", h_schema: "de5b51999f205894", h_rule: "" },
+  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_braces_literal_canonicalizes_seed", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "c5510e89c902710b", h_schema: "de5b51999f205894", h_rule: "" },
+  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__txt_braces_literal_canonicalizes_seed", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "b58bcfcc8805cc43", h_schema: "a30b139c04a632dd", h_rule: "" },
+  { rel_id: 19, parent_id: 15, ordinal: 0, local_name: "__txt___delta_braces_literal_canonicalizes_seed", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "819275c539304b94", h_schema: "a30b139c04a632dd", h_rule: "" },
   { rel_id: 20, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "872dd4c57dc5b514", h_schema: "", h_rule: "" },
-  { rel_id: 21, parent_id: 8, ordinal: 0, local_name: "__support_next_doc", kind: "refcount", type_id: 0, arity: 2, module_id: 7, h_id: "31d011683be0736f", h_schema: "", h_rule: "" },
-  { rel_id: 22, parent_id: 8, ordinal: 0, local_name: "__new_doc", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 7, h_id: "fdd964b43a347c4e", h_schema: "", h_rule: "" },
+  { rel_id: 21, parent_id: 8, ordinal: 0, local_name: "__support_next_braces_literal_canonicalizes_doc", kind: "refcount", type_id: 0, arity: 2, module_id: 7, h_id: "7c2413f9a0383915", h_schema: "", h_rule: "" },
+  { rel_id: 22, parent_id: 8, ordinal: 0, local_name: "__new_braces_literal_canonicalizes_doc", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 7, h_id: "cef1fca59ab67828", h_schema: "", h_rule: "" },
   { rel_id: 23, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "94e631fbfbb0034f", h_schema: "", h_rule: "" },
   { rel_id: 24, parent_id: 11, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "77301753d06714a9", h_schema: "", h_rule: "" },
 ];
@@ -227,27 +227,27 @@ const arrival_targets: readonly string[] = ["seed"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "seed", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["cli"] },
-  { rel: "seed", sql: `INSERT OR IGNORE INTO "seed" ("name") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["cli"] },
-  { rel: "doc", sql: `DELETE FROM "doc"`, params: [] },
-  { rel: "doc", sql: `INSERT OR IGNORE INTO "doc" ("value") SELECT json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name"), 'stars', json('4')) FROM "seed" b0`, params: [] },
+  { rel: "seed", sql: `INSERT OR IGNORE INTO "braces_literal_canonicalizes_seed" ("name") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["cli"] },
+  { rel: "doc", sql: `DELETE FROM "braces_literal_canonicalizes_doc"`, params: [] },
+  { rel: "doc", sql: `INSERT OR IGNORE INTO "braces_literal_canonicalizes_doc" ("value") SELECT json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name"), 'stars', json('4')) FROM "braces_literal_canonicalizes_seed" b0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
-  doc: `SELECT t."value" FROM "doc" t`,
-  seed: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_seed" t`,
+  doc: `SELECT t."value" FROM "braces_literal_canonicalizes_doc" t`,
+  seed: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_braces_literal_canonicalizes_seed" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "doc", kind: "set", table_name: "doc", delta_table_name: "__delta_doc", frontier_table_name: "__frontier_doc", next_frontier_table_name: "__next_frontier_doc", columns: ["value"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_doc" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
-  { rel: "seed", kind: "set", table_name: "seed", delta_table_name: "__delta_seed", frontier_table_name: "__frontier_seed", next_frontier_table_name: "__next_frontier_seed", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "seed" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrival_del_sql: `DELETE FROM "seed" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seed" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."_sign"`, rule_observers: ["doc/1"] },
+  { rel: "doc", kind: "set", table_name: "braces_literal_canonicalizes_doc", delta_table_name: "__delta_braces_literal_canonicalizes_doc", frontier_table_name: "__frontier_braces_literal_canonicalizes_doc", next_frontier_table_name: "__next_frontier_braces_literal_canonicalizes_doc", columns: ["value"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_braces_literal_canonicalizes_doc" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "seed", kind: "set", table_name: "braces_literal_canonicalizes_seed", delta_table_name: "__delta_braces_literal_canonicalizes_seed", frontier_table_name: "__frontier_braces_literal_canonicalizes_seed", next_frontier_table_name: "__next_frontier_braces_literal_canonicalizes_seed", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "braces_literal_canonicalizes_seed" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrival_del_sql: `DELETE FROM "braces_literal_canonicalizes_seed" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_braces_literal_canonicalizes_seed" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."_sign"`, rule_observers: ["doc/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "doc", rule_id: "braces_literal_canonicalizes:doc/1#1", head_delta_table_name: "__delta_doc", head_columns: ["value"], insert_sql: `INSERT OR IGNORE INTO "doc" ("value") SELECT DISTINCT json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."name"), 'stars', json('4')) FROM "__frontier_seed" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, select_sql: `SELECT "value" FROM "doc"`, recompute_sql: `DELETE FROM "doc";
-INSERT OR IGNORE INTO "doc" ("value") SELECT json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name"), 'stars', json('4')) FROM "seed" b0`, support_sql: [`DELETE FROM "__support_next_doc"`, `INSERT INTO "__support_next_doc" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name"), 'stars', json('4')) AS "value", count(*) AS "__refcount" FROM "seed" b0 GROUP BY json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name"), 'stars', json('4'))) GROUP BY "value"`, `UPDATE "doc" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_doc" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_doc" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "doc" WHERE "__refcount" <= 0`, `DELETE FROM "doc" WHERE "__refcount" <= 0`, `DELETE FROM "__new_doc"`, `INSERT INTO "__new_doc" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_doc" n LEFT JOIN "doc" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_doc" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_doc"`, `INSERT INTO "__frontier_doc" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_doc"`, `INSERT INTO "__next_frontier_doc" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_doc"`, `INSERT OR IGNORE INTO "doc" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_doc" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "doc", rule_id: "braces_literal_canonicalizes:doc/1#1", head_delta_table_name: "__delta_braces_literal_canonicalizes_doc", head_columns: ["value"], insert_sql: `INSERT OR IGNORE INTO "braces_literal_canonicalizes_doc" ("value") SELECT DISTINCT json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."name"), 'stars', json('4')) FROM "__frontier_braces_literal_canonicalizes_seed" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, select_sql: `SELECT "value" FROM "braces_literal_canonicalizes_doc"`, recompute_sql: `DELETE FROM "braces_literal_canonicalizes_doc";
+INSERT OR IGNORE INTO "braces_literal_canonicalizes_doc" ("value") SELECT json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name"), 'stars', json('4')) FROM "braces_literal_canonicalizes_seed" b0`, support_sql: [`DELETE FROM "__support_next_braces_literal_canonicalizes_doc"`, `INSERT INTO "__support_next_braces_literal_canonicalizes_doc" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name"), 'stars', json('4')) AS "value", count(*) AS "__refcount" FROM "braces_literal_canonicalizes_seed" b0 GROUP BY json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name"), 'stars', json('4'))) GROUP BY "value"`, `UPDATE "braces_literal_canonicalizes_doc" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_braces_literal_canonicalizes_doc" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_braces_literal_canonicalizes_doc" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "braces_literal_canonicalizes_doc" WHERE "__refcount" <= 0`, `DELETE FROM "braces_literal_canonicalizes_doc" WHERE "__refcount" <= 0`, `DELETE FROM "__new_braces_literal_canonicalizes_doc"`, `INSERT INTO "__new_braces_literal_canonicalizes_doc" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_braces_literal_canonicalizes_doc" n LEFT JOIN "braces_literal_canonicalizes_doc" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_braces_literal_canonicalizes_doc" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_braces_literal_canonicalizes_doc"`, `INSERT INTO "__frontier_braces_literal_canonicalizes_doc" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_braces_literal_canonicalizes_doc"`, `INSERT INTO "__next_frontier_braces_literal_canonicalizes_doc" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_braces_literal_canonicalizes_doc"`, `INSERT OR IGNORE INTO "braces_literal_canonicalizes_doc" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_braces_literal_canonicalizes_doc" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const RECONCILE_EVERY_TICK = false;

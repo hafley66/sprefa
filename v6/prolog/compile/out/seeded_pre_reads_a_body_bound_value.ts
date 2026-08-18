@@ -177,25 +177,25 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "counter" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "next" INTEGER NOT NULL, UNIQUE ("name"))`,
-  `CREATE TEMP VIEW "__txt_counter" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."next" AS "next" FROM "counter" t`,
-  `CREATE TABLE "increment" ("name" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_increment" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."start" AS "start" FROM "increment" t`,
-  `CREATE TEMP TABLE "__delta_counter" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_counter_sign" ON "__delta_counter" ("_sign")`,
-  `CREATE INDEX "__delta_counter_group" ON "__delta_counter" ("name", "next")`,
-  `CREATE TEMP TABLE "__frontier_counter" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_counter_phase" ON "__frontier_counter" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_counter" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_counter" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."next" AS "next", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_counter" t`,
-  `CREATE TEMP TABLE "__delta_increment" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_increment_sign" ON "__delta_increment" ("_sign")`,
-  `CREATE INDEX "__delta_increment_group" ON "__delta_increment" ("name", "start")`,
-  `CREATE TEMP TABLE "__frontier_increment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_increment_phase" ON "__frontier_increment" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_increment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_increment" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."start" AS "start", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_increment" t`,
-  `CREATE TEMP TABLE "__pre_counter" ("name" INTEGER NOT NULL, "next" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TABLE "seeded_pre_reads_a_body_bound_value_counter" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "next" INTEGER NOT NULL, UNIQUE ("name"))`,
+  `CREATE TEMP VIEW "__txt_seeded_pre_reads_a_body_bound_value_counter" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."next" AS "next" FROM "seeded_pre_reads_a_body_bound_value_counter" t`,
+  `CREATE TABLE "seeded_pre_reads_a_body_bound_value_increment" ("name" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_seeded_pre_reads_a_body_bound_value_increment" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."start" AS "start" FROM "seeded_pre_reads_a_body_bound_value_increment" t`,
+  `CREATE TEMP TABLE "__delta_seeded_pre_reads_a_body_bound_value_counter" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_seeded_pre_reads_a_body_bound_value_counter_sign" ON "__delta_seeded_pre_reads_a_body_bound_value_counter" ("_sign")`,
+  `CREATE INDEX "__delta_seeded_pre_reads_a_body_bound_value_counter_group" ON "__delta_seeded_pre_reads_a_body_bound_value_counter" ("name", "next")`,
+  `CREATE TEMP TABLE "__frontier_seeded_pre_reads_a_body_bound_value_counter" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_seeded_pre_reads_a_body_bound_value_counter_phase" ON "__frontier_seeded_pre_reads_a_body_bound_value_counter" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_seeded_pre_reads_a_body_bound_value_counter" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_seeded_pre_reads_a_body_bound_value_counter" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."next" AS "next", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_seeded_pre_reads_a_body_bound_value_counter" t`,
+  `CREATE TEMP TABLE "__delta_seeded_pre_reads_a_body_bound_value_increment" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_seeded_pre_reads_a_body_bound_value_increment_sign" ON "__delta_seeded_pre_reads_a_body_bound_value_increment" ("_sign")`,
+  `CREATE INDEX "__delta_seeded_pre_reads_a_body_bound_value_increment_group" ON "__delta_seeded_pre_reads_a_body_bound_value_increment" ("name", "start")`,
+  `CREATE TEMP TABLE "__frontier_seeded_pre_reads_a_body_bound_value_increment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_seeded_pre_reads_a_body_bound_value_increment_phase" ON "__frontier_seeded_pre_reads_a_body_bound_value_increment" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_seeded_pre_reads_a_body_bound_value_increment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_seeded_pre_reads_a_body_bound_value_increment" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."start" AS "start", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_seeded_pre_reads_a_body_bound_value_increment" t`,
+  `CREATE TEMP TABLE "__pre_seeded_pre_reads_a_body_bound_value_counter" ("name" INTEGER NOT NULL, "next" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -227,17 +227,17 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 11, parent_id: 7, ordinal: 0, local_name: "increment", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "839f2735c540172e", h_schema: "05aa70120adc10c5", h_rule: "" },
   { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "26650ed63fc4211f", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 11, ordinal: 2, local_name: "start", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "39091de35abd17c4", h_schema: "", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_counter", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "750d774dc45d7ed6", h_schema: "c3757034e2f49f24", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_counter", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "8d531eb49844477e", h_schema: "2f6a4bf525335dfb", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_counter", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "e9848fa19e0d2c9b", h_schema: "2f6a4bf525335dfb", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__pre_counter", kind: "pre", type_id: 0, arity: 2, module_id: 7, h_id: "63f2e018515aa4e0", h_schema: "9b39b6c3641ecd2d", h_rule: "" },
-  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__txt_counter", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "2d82758e2842619c", h_schema: "9b39b6c3641ecd2d", h_rule: "" },
-  { rel_id: 19, parent_id: 14, ordinal: 0, local_name: "__txt___delta_counter", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "06c6307a83a0826c", h_schema: "9b39b6c3641ecd2d", h_rule: "" },
-  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__delta_increment", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "bfba43e885ee2c7e", h_schema: "2328b68cad75f122", h_rule: "" },
-  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__frontier_increment", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "c735c82bac096bbc", h_schema: "2327fe875e9c13bf", h_rule: "" },
-  { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__next_frontier_increment", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "c0278a1646decaa4", h_schema: "2327fe875e9c13bf", h_rule: "" },
-  { rel_id: 23, parent_id: 11, ordinal: 0, local_name: "__txt_increment", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "230d7b8151edc7b9", h_schema: "05aa70120adc10c5", h_rule: "" },
-  { rel_id: 24, parent_id: 20, ordinal: 0, local_name: "__txt___delta_increment", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "1e30900378bf170e", h_schema: "05aa70120adc10c5", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_seeded_pre_reads_a_body_bound_value_counter", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "967c93ad571123b5", h_schema: "c3757034e2f49f24", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_seeded_pre_reads_a_body_bound_value_counter", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "c510816ad195a297", h_schema: "2f6a4bf525335dfb", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_seeded_pre_reads_a_body_bound_value_counter", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "bbebe9bfbed526dd", h_schema: "2f6a4bf525335dfb", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__pre_seeded_pre_reads_a_body_bound_value_counter", kind: "pre", type_id: 0, arity: 2, module_id: 7, h_id: "af2f935eac947791", h_schema: "9b39b6c3641ecd2d", h_rule: "" },
+  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__txt_seeded_pre_reads_a_body_bound_value_counter", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "35ed0645f443b42f", h_schema: "9b39b6c3641ecd2d", h_rule: "" },
+  { rel_id: 19, parent_id: 14, ordinal: 0, local_name: "__txt___delta_seeded_pre_reads_a_body_bound_value_counter", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "707132c57cac3b97", h_schema: "9b39b6c3641ecd2d", h_rule: "" },
+  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__delta_seeded_pre_reads_a_body_bound_value_increment", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "c24a6c384a1b0dc2", h_schema: "2328b68cad75f122", h_rule: "" },
+  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__frontier_seeded_pre_reads_a_body_bound_value_increment", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "2a5d13fec0d710cd", h_schema: "2327fe875e9c13bf", h_rule: "" },
+  { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__next_frontier_seeded_pre_reads_a_body_bound_value_increment", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "7ce4f8a032844d56", h_schema: "2327fe875e9c13bf", h_rule: "" },
+  { rel_id: 23, parent_id: 11, ordinal: 0, local_name: "__txt_seeded_pre_reads_a_body_bound_value_increment", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "ee2079ebca6d6a76", h_schema: "05aa70120adc10c5", h_rule: "" },
+  { rel_id: 24, parent_id: 20, ordinal: 0, local_name: "__txt___delta_seeded_pre_reads_a_body_bound_value_increment", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "0150b46a230d13c7", h_schema: "05aa70120adc10c5", h_rule: "" },
   { rel_id: 25, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "52e0fb8ffbffa31f", h_schema: "", h_rule: "" },
   { rel_id: 26, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "7fe50a47c962fbd7", h_schema: "", h_rule: "" },
   { rel_id: 27, parent_id: 10, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "c5e0db6594ddf186", h_schema: "", h_rule: "" },
@@ -260,8 +260,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    counter: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."next" FROM "__txt_counter" t`, rel_columns.counter!, rel_column_types.counter!),
-    increment: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."start" FROM "__txt_increment" t`, rel_columns.increment!, rel_column_types.increment!),
+    counter: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."next" FROM "__txt_seeded_pre_reads_a_body_bound_value_counter" t`, rel_columns.counter!, rel_column_types.counter!),
+    increment: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."start" FROM "__txt_seeded_pre_reads_a_body_bound_value_increment" t`, rel_columns.increment!, rel_column_types.increment!),
   });
 }
 
@@ -269,8 +269,8 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    counter: select_rows(seam, `SELECT "name", "next" FROM "counter"`, rel_columns.counter!, rel_stored_column_types.counter!),
-    increment: select_rows(seam, `SELECT "name", "start" FROM "increment"`, rel_columns.increment!, rel_stored_column_types.increment!),
+    counter: select_rows(seam, `SELECT "name", "next" FROM "seeded_pre_reads_a_body_bound_value_counter"`, rel_columns.counter!, rel_stored_column_types.counter!),
+    increment: select_rows(seam, `SELECT "name", "start" FROM "seeded_pre_reads_a_body_bound_value_increment"`, rel_columns.increment!, rel_stored_column_types.increment!),
   });
 }
 
@@ -279,12 +279,12 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  counter: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."next" FROM "__txt_counter" t`,
-  increment: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."start" FROM "__txt_increment" t`,
+  counter: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."next" FROM "__txt_seeded_pre_reads_a_body_bound_value_counter" t`,
+  increment: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."start" FROM "__txt_seeded_pre_reads_a_body_bound_value_increment" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  increment: { kind: "log", add_sql: `INSERT INTO "increment" ("name", "start") VALUES (?, ?)`, del_sql: null },
+  increment: { kind: "log", add_sql: `INSERT INTO "seeded_pre_reads_a_body_bound_value_increment" ("name", "start") VALUES (?, ?)`, del_sql: null },
 };
 
 function arrival_statement(arrival: IArrivalRow): SqlStatement {
@@ -310,26 +310,26 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "counter", kind: "set", table_name: "counter", delta_table_name: "__delta_counter", frontier_table_name: "__frontier_counter", next_frontier_table_name: "__next_frontier_counter", columns: ["name", "next"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."next", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_counter" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."next", t."_sign"`, rule_observers: [] },
-  { rel: "increment", kind: "log", table_name: "increment", delta_table_name: "__delta_increment", frontier_table_name: "__frontier_increment", next_frontier_table_name: "__next_frontier_increment", columns: ["name", "start"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT INTO "increment" ("name", "start") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "start"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."start", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_increment" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."start", t."_sign"`, rule_observers: ["counter/2"] },
+  { rel: "counter", kind: "set", table_name: "seeded_pre_reads_a_body_bound_value_counter", delta_table_name: "__delta_seeded_pre_reads_a_body_bound_value_counter", frontier_table_name: "__frontier_seeded_pre_reads_a_body_bound_value_counter", next_frontier_table_name: "__next_frontier_seeded_pre_reads_a_body_bound_value_counter", columns: ["name", "next"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."next", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seeded_pre_reads_a_body_bound_value_counter" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."next", t."_sign"`, rule_observers: [] },
+  { rel: "increment", kind: "log", table_name: "seeded_pre_reads_a_body_bound_value_increment", delta_table_name: "__delta_seeded_pre_reads_a_body_bound_value_increment", frontier_table_name: "__frontier_seeded_pre_reads_a_body_bound_value_increment", next_frontier_table_name: "__next_frontier_seeded_pre_reads_a_body_bound_value_increment", columns: ["name", "start"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT INTO "seeded_pre_reads_a_body_bound_value_increment" ("name", "start") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "start"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."start", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seeded_pre_reads_a_body_bound_value_increment" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."start", t."_sign"`, rule_observers: ["counter/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "counter", rule_id: "seeded_pre_reads_a_body_bound_value:counter/2#1", head_kind: "set", head_table_name: "counter", head_delta_table_name: "__delta_counter", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT d0."name" AS "name", (COALESCE((SELECT b0."next" FROM "__pre_counter" b0 WHERE b0."name" = d0."name"), d0."start") + 1) AS "next" FROM "__frontier_increment" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "counter", rule_id: "seeded_pre_reads_a_body_bound_value:counter/2#2", head_kind: "set", head_table_name: "counter", head_delta_table_name: "__delta_counter", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT d0."name" AS "name", (b0."next" + 1) AS "next" FROM "__frontier_increment" d0, "counter" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "counter", rule_id: "seeded_pre_reads_a_body_bound_value:counter/2#3", head_kind: "set", head_table_name: "counter", head_delta_table_name: "__delta_counter", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT d0."name" AS "name", (COALESCE((SELECT b0."next" FROM "__pre_counter" b0 WHERE b0."name" = d0."name"), d0."start") + 1) AS "next" FROM "__frontier_increment" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "counter", rule_id: "seeded_pre_reads_a_body_bound_value:counter/2#4", head_kind: "set", head_table_name: "counter", head_delta_table_name: "__delta_counter", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT d0."name" AS "name", (b0."next" + 1) AS "next" FROM "__frontier_increment" d0, "counter" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "counter", rule_id: "seeded_pre_reads_a_body_bound_value:counter/2#1", head_kind: "set", head_table_name: "seeded_pre_reads_a_body_bound_value_counter", head_delta_table_name: "__delta_seeded_pre_reads_a_body_bound_value_counter", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT d0."name" AS "name", (COALESCE((SELECT b0."next" FROM "__pre_seeded_pre_reads_a_body_bound_value_counter" b0 WHERE b0."name" = d0."name"), d0."start") + 1) AS "next" FROM "__frontier_seeded_pre_reads_a_body_bound_value_increment" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "counter", rule_id: "seeded_pre_reads_a_body_bound_value:counter/2#2", head_kind: "set", head_table_name: "seeded_pre_reads_a_body_bound_value_counter", head_delta_table_name: "__delta_seeded_pre_reads_a_body_bound_value_counter", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT d0."name" AS "name", (b0."next" + 1) AS "next" FROM "__frontier_seeded_pre_reads_a_body_bound_value_increment" d0, "seeded_pre_reads_a_body_bound_value_counter" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "counter", rule_id: "seeded_pre_reads_a_body_bound_value:counter/2#3", head_kind: "set", head_table_name: "seeded_pre_reads_a_body_bound_value_counter", head_delta_table_name: "__delta_seeded_pre_reads_a_body_bound_value_counter", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT d0."name" AS "name", (COALESCE((SELECT b0."next" FROM "__pre_seeded_pre_reads_a_body_bound_value_counter" b0 WHERE b0."name" = d0."name"), d0."start") + 1) AS "next" FROM "__frontier_seeded_pre_reads_a_body_bound_value_increment" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "counter", rule_id: "seeded_pre_reads_a_body_bound_value:counter/2#4", head_kind: "set", head_table_name: "seeded_pre_reads_a_body_bound_value_counter", head_delta_table_name: "__delta_seeded_pre_reads_a_body_bound_value_counter", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT d0."name" AS "name", (b0."next" + 1) AS "next" FROM "__frontier_seeded_pre_reads_a_body_bound_value_increment" d0, "seeded_pre_reads_a_body_bound_value_counter" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
 function snapshot_ordered_pre(seam: ISqlSeam): Observable<void> {
-  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_counter";
-INSERT INTO "__pre_counter" ("name", "next") SELECT "name", "next" FROM "counter"`);
+  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_seeded_pre_reads_a_body_bound_value_counter";
+INSERT INTO "__pre_seeded_pre_reads_a_body_bound_value_counter" ("name", "next") SELECT "name", "next" FROM "seeded_pre_reads_a_body_bound_value_counter"`);
 }
 
-interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }
+interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_table_name: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }
 interface IOrderedOccurrence { readonly rel: string; readonly kind: "arrival" | "departure"; readonly row: IRow; readonly sequence?: number }
 interface IOrderedWrite { readonly arm: IOrderedEdgeArm; readonly row: IRow }
 
@@ -340,7 +340,7 @@ function quote_ordered_identifier(identifier: string): string {
 function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null {
   const { arm, row } = write;
   if (!arm.evolves_pre) return null;
-  const table = quote_ordered_identifier("__pre_" + arm.head_rel);
+  const table = quote_ordered_identifier("__pre_" + arm.head_table_name);
   const columns = arm.head_columns.map(quote_ordered_identifier);
   const placeholders = columns.map(() => "?").join(", ");
   if (arm.head_kind === "log") {
@@ -356,17 +356,17 @@ function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null 
 }
 
 const ORDERED_EDGE_ARMS: readonly IOrderedEdgeArm[] = [
-  { trigger_rel: "increment", trigger_kind: "arrival", head_rel: "counter", head_kind: "set", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT ?1 AS "name", (COALESCE((SELECT b0."next" FROM "__pre_counter" b0 WHERE b0."name" = ?1), ?2) + 1) AS "next"`, write_sql: `INSERT INTO "counter" ("name", "next") VALUES (?, ?) ON CONFLICT("name") DO UPDATE SET "next" = excluded."next"`, evolves_pre: true },
-  { trigger_rel: "increment", trigger_kind: "arrival", head_rel: "counter", head_kind: "set", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT ?1 AS "name", (COALESCE((SELECT b0."next" FROM "__pre_counter" b0 WHERE b0."name" = ?1), ?2) + 1) AS "next"`, write_sql: `INSERT INTO "counter" ("name", "next") VALUES (?, ?) ON CONFLICT("name") DO UPDATE SET "next" = excluded."next"`, evolves_pre: true },
-  { trigger_rel: "increment", trigger_kind: "arrival", head_rel: "counter", head_kind: "set", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT ?1 AS "name", (b0."next" + 1) AS "next" FROM "counter" b0 WHERE b0."name" = ?1`, write_sql: `INSERT INTO "counter" ("name", "next") VALUES (?, ?) ON CONFLICT("name") DO UPDATE SET "next" = excluded."next"`, evolves_pre: true },
-  { trigger_rel: "increment", trigger_kind: "arrival", head_rel: "counter", head_kind: "set", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT ?1 AS "name", (b0."next" + 1) AS "next" FROM "counter" b0 WHERE b0."name" = ?1`, write_sql: `INSERT INTO "counter" ("name", "next") VALUES (?, ?) ON CONFLICT("name") DO UPDATE SET "next" = excluded."next"`, evolves_pre: true },
+  { trigger_rel: "increment", trigger_kind: "arrival", head_rel: "counter", head_table_name: "seeded_pre_reads_a_body_bound_value_counter", head_kind: "set", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT ?1 AS "name", (COALESCE((SELECT b0."next" FROM "__pre_seeded_pre_reads_a_body_bound_value_counter" b0 WHERE b0."name" = ?1), ?2) + 1) AS "next"`, write_sql: `INSERT INTO "seeded_pre_reads_a_body_bound_value_counter" ("name", "next") VALUES (?, ?) ON CONFLICT("name") DO UPDATE SET "next" = excluded."next"`, evolves_pre: true },
+  { trigger_rel: "increment", trigger_kind: "arrival", head_rel: "counter", head_table_name: "seeded_pre_reads_a_body_bound_value_counter", head_kind: "set", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT ?1 AS "name", (COALESCE((SELECT b0."next" FROM "__pre_seeded_pre_reads_a_body_bound_value_counter" b0 WHERE b0."name" = ?1), ?2) + 1) AS "next"`, write_sql: `INSERT INTO "seeded_pre_reads_a_body_bound_value_counter" ("name", "next") VALUES (?, ?) ON CONFLICT("name") DO UPDATE SET "next" = excluded."next"`, evolves_pre: true },
+  { trigger_rel: "increment", trigger_kind: "arrival", head_rel: "counter", head_table_name: "seeded_pre_reads_a_body_bound_value_counter", head_kind: "set", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT ?1 AS "name", (b0."next" + 1) AS "next" FROM "seeded_pre_reads_a_body_bound_value_counter" b0 WHERE b0."name" = ?1`, write_sql: `INSERT INTO "seeded_pre_reads_a_body_bound_value_counter" ("name", "next") VALUES (?, ?) ON CONFLICT("name") DO UPDATE SET "next" = excluded."next"`, evolves_pre: true },
+  { trigger_rel: "increment", trigger_kind: "arrival", head_rel: "counter", head_table_name: "seeded_pre_reads_a_body_bound_value_counter", head_kind: "set", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT ?1 AS "name", (b0."next" + 1) AS "next" FROM "seeded_pre_reads_a_body_bound_value_counter" b0 WHERE b0."name" = ?1`, write_sql: `INSERT INTO "seeded_pre_reads_a_body_bound_value_counter" ("name", "next") VALUES (?, ?) ON CONFLICT("name") DO UPDATE SET "next" = excluded."next"`, evolves_pre: true },
 ];
 
 const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
 ];
 
 const ORDERED_CARRY_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
-  { rel: "increment", sql: `SELECT "_sequence" AS "__sequence", "name", "start" FROM "__frontier_increment" ORDER BY "_phase", "_sequence"`, columns: ["name", "start"] },
+  { rel: "increment", sql: `SELECT "_sequence" AS "__sequence", "name", "start" FROM "__frontier_seeded_pre_reads_a_body_bound_value_increment" ORDER BY "_phase", "_sequence"`, columns: ["name", "start"] },
 ];
 
 function ordered_outside_occurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {

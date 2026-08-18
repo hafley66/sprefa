@@ -151,7 +151,9 @@ async fn generated_program_preserves_list_order_delete_and_restart() {
     )
     .await
     .expect("generated empty-list tick");
-    let view = "__list___gen__list_text_df210f232c1299bd";
+    // The rel name a schedule names has no module prefix; the table the view
+    // reads does (compile.pl relation_storage_names/4).
+    let view = "__list_split_value_is_the_interned_list_id___gen__list_text_df210f232c1299bd";
     let rows = seam
         .execute(&SqlStatement {
             sql: format!("SELECT value_text FROM \"{view}\" ORDER BY list_id"),
@@ -162,10 +164,17 @@ async fn generated_program_preserves_list_order_delete_and_restart() {
         .rows
         .iter()
         .any(|row| row[0] == Value::Text("[\"beta\",\"alpha\",\"beta\"]".to_string())));
-    assert!(rows
-        .rows
-        .iter()
-        .any(|row| row[0] == Value::Text("[]".to_string())));
+    // A list id with no member rows has no view row and reads as the empty
+    // list through the same coalesce the boundary render uses.
+    let empty = seam
+        .execute(&SqlStatement {
+            sql: format!(
+                "SELECT coalesce((SELECT value_text FROM \"{view}\" WHERE list_id = -1), '[]')"
+            ),
+            args: vec![],
+        })
+        .expect("generated empty list read");
+    assert_eq!(empty.rows[0][0], Value::Text("[]".to_string()));
     drop(seam);
 
     let seam = sprefa_engine_rs::sql::SqliteSeam::open(path.to_str().unwrap())

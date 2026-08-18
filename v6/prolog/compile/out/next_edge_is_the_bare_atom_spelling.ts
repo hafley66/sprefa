@@ -146,20 +146,20 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "seen" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
-  `CREATE TABLE "source" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
-  `CREATE TEMP TABLE "__delta_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_seen_sign" ON "__delta_seen" ("_sign")`,
-  `CREATE INDEX "__delta_seen_group" ON "__delta_seen" ("value")`,
-  `CREATE TEMP TABLE "__frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_seen_phase" ON "__frontier_seen" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_source" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_source_sign" ON "__delta_source" ("_sign")`,
-  `CREATE INDEX "__delta_source_group" ON "__delta_source" ("value")`,
-  `CREATE TEMP TABLE "__frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_source_phase" ON "__frontier_source" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TABLE "next_edge_is_the_bare_atom_spelling_seen" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
+  `CREATE TABLE "next_edge_is_the_bare_atom_spelling_source" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
+  `CREATE TEMP TABLE "__delta_next_edge_is_the_bare_atom_spelling_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_next_edge_is_the_bare_atom_spelling_seen_sign" ON "__delta_next_edge_is_the_bare_atom_spelling_seen" ("_sign")`,
+  `CREATE INDEX "__delta_next_edge_is_the_bare_atom_spelling_seen_group" ON "__delta_next_edge_is_the_bare_atom_spelling_seen" ("value")`,
+  `CREATE TEMP TABLE "__frontier_next_edge_is_the_bare_atom_spelling_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_next_edge_is_the_bare_atom_spelling_seen_phase" ON "__frontier_next_edge_is_the_bare_atom_spelling_seen" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_next_edge_is_the_bare_atom_spelling_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_next_edge_is_the_bare_atom_spelling_source" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_next_edge_is_the_bare_atom_spelling_source_sign" ON "__delta_next_edge_is_the_bare_atom_spelling_source" ("_sign")`,
+  `CREATE INDEX "__delta_next_edge_is_the_bare_atom_spelling_source_group" ON "__delta_next_edge_is_the_bare_atom_spelling_source" ("value")`,
+  `CREATE TEMP TABLE "__frontier_next_edge_is_the_bare_atom_spelling_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_next_edge_is_the_bare_atom_spelling_source_phase" ON "__frontier_next_edge_is_the_bare_atom_spelling_source" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_next_edge_is_the_bare_atom_spelling_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -189,12 +189,12 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "value", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "030e9d8a0fdd070d", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 7, ordinal: 0, local_name: "source", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "cfcf9aa145ce27cc", h_schema: "7e38e778eed579a5", h_rule: "" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "value", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "9f3bc810520bc97f", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_seen", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "a5abb48b0ae35a37", h_schema: "d59487c5bf23d586", h_rule: "" },
-  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_seen", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "955e28da0a01b735", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_seen", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "12cc21d99a0a0d82", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_source", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "6fce64b6fc21dcf1", h_schema: "d59487c5bf23d586", h_rule: "" },
-  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_source", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "1da300a2c92295f9", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_source", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "f1c1f38dddff5f99", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_next_edge_is_the_bare_atom_spelling_seen", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "fecf3b6774ba7e6d", h_schema: "d59487c5bf23d586", h_rule: "" },
+  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_next_edge_is_the_bare_atom_spelling_seen", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "2141f587a1e02cae", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_next_edge_is_the_bare_atom_spelling_seen", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "39ff837028700994", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_next_edge_is_the_bare_atom_spelling_source", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "5c8da81d1c4b970c", h_schema: "d59487c5bf23d586", h_rule: "" },
+  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_next_edge_is_the_bare_atom_spelling_source", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "5d6af4ff411e280f", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_next_edge_is_the_bare_atom_spelling_source", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "1da340bb3d6b6d16", h_schema: "f0cee8555a0aeabb", h_rule: "" },
   { rel_id: 18, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "48a9df90ebcb6c59", h_schema: "", h_rule: "" },
   { rel_id: 19, parent_id: 11, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "1104614989d81bfe", h_schema: "", h_rule: "" },
 ];
@@ -208,17 +208,17 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  seen: `SELECT t."value" FROM "seen" t`,
-  source: `SELECT t."value" FROM "source" t`,
+  seen: `SELECT t."value" FROM "next_edge_is_the_bare_atom_spelling_seen" t`,
+  source: `SELECT t."value" FROM "next_edge_is_the_bare_atom_spelling_source" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "seen", kind: "set", table_name: "seen", delta_table_name: "__delta_seen", frontier_table_name: "__frontier_seen", next_frontier_table_name: "__next_frontier_seen", columns: ["value"], column_types: ["int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_seen" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
-  { rel: "source", kind: "set", table_name: "source", delta_table_name: "__delta_source", frontier_table_name: "__frontier_source", next_frontier_table_name: "__next_frontier_source", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "source" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["seen/1"] },
+  { rel: "seen", kind: "set", table_name: "next_edge_is_the_bare_atom_spelling_seen", delta_table_name: "__delta_next_edge_is_the_bare_atom_spelling_seen", frontier_table_name: "__frontier_next_edge_is_the_bare_atom_spelling_seen", next_frontier_table_name: "__next_frontier_next_edge_is_the_bare_atom_spelling_seen", columns: ["value"], column_types: ["int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_next_edge_is_the_bare_atom_spelling_seen" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "source", kind: "set", table_name: "next_edge_is_the_bare_atom_spelling_source", delta_table_name: "__delta_next_edge_is_the_bare_atom_spelling_source", frontier_table_name: "__frontier_next_edge_is_the_bare_atom_spelling_source", next_frontier_table_name: "__next_frontier_next_edge_is_the_bare_atom_spelling_source", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "next_edge_is_the_bare_atom_spelling_source" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "next_edge_is_the_bare_atom_spelling_source" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_next_edge_is_the_bare_atom_spelling_source" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["seen/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "seen", rule_id: "next_edge_is_the_bare_atom_spelling:seen/1#1", head_kind: "set", head_table_name: "seen", head_delta_table_name: "__delta_seen", head_columns: ["value"], key_indices: [0], project_sql: `SELECT d0."value" AS "value" FROM "__frontier_source" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "seen", rule_id: "next_edge_is_the_bare_atom_spelling:seen/1#1", head_kind: "set", head_table_name: "next_edge_is_the_bare_atom_spelling_seen", head_delta_table_name: "__delta_next_edge_is_the_bare_atom_spelling_seen", head_columns: ["value"], key_indices: [0], project_sql: `SELECT d0."value" AS "value" FROM "__frontier_next_edge_is_the_bare_atom_spelling_source" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

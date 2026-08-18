@@ -146,13 +146,13 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "typed_input" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
-  `CREATE TEMP TABLE "__delta_typed_input" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_typed_input_sign" ON "__delta_typed_input" ("_sign")`,
-  `CREATE INDEX "__delta_typed_input_group" ON "__delta_typed_input" ("value")`,
-  `CREATE TEMP TABLE "__frontier_typed_input" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_typed_input_phase" ON "__frontier_typed_input" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_typed_input" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TABLE "typed_int_without_literal_witness_typed_input" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
+  `CREATE TEMP TABLE "__delta_typed_int_without_literal_witness_typed_input" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_typed_int_without_literal_witness_typed_input_sign" ON "__delta_typed_int_without_literal_witness_typed_input" ("_sign")`,
+  `CREATE INDEX "__delta_typed_int_without_literal_witness_typed_input_group" ON "__delta_typed_int_without_literal_witness_typed_input" ("value")`,
+  `CREATE TEMP TABLE "__frontier_typed_int_without_literal_witness_typed_input" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_typed_int_without_literal_witness_typed_input_phase" ON "__frontier_typed_int_without_literal_witness_typed_input" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_typed_int_without_literal_witness_typed_input" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -177,9 +177,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 7, parent_id: 0, ordinal: 0, local_name: "typed_int_without_literal_witness", kind: "module", type_id: 0, arity: 0, module_id: 7, h_id: "ee04d17fe681d371", h_schema: "", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 0, local_name: "typed_input", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "80dd8b45f0a74ab0", h_schema: "7e38e778eed579a5", h_rule: "" },
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "value", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "960d8d2b6906bd48", h_schema: "", h_rule: "" },
-  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_typed_input", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "56b10d37231674cf", h_schema: "d59487c5bf23d586", h_rule: "" },
-  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_typed_input", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "64a23c60b96c69db", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_typed_input", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "2af60d1b6bbb4ef1", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_typed_int_without_literal_witness_typed_input", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "39d0412aa04b7792", h_schema: "d59487c5bf23d586", h_rule: "" },
+  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_typed_int_without_literal_witness_typed_input", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "a6b6f1f39e437724", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_typed_int_without_literal_witness_typed_input", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "aec2e8b6fe27d6ef", h_schema: "f0cee8555a0aeabb", h_rule: "" },
   { rel_id: 13, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "7c99a1e6126ca8f2", h_schema: "", h_rule: "" },
 ];
 
@@ -193,11 +193,11 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  typed_input: `SELECT t."value" FROM "typed_input" t`,
+  typed_input: `SELECT t."value" FROM "typed_int_without_literal_witness_typed_input" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "typed_input", kind: "set", table_name: "typed_input", delta_table_name: "__delta_typed_input", frontier_table_name: "__frontier_typed_input", next_frontier_table_name: "__next_frontier_typed_input", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "typed_input" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "typed_input" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_typed_input" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "typed_input", kind: "set", table_name: "typed_int_without_literal_witness_typed_input", delta_table_name: "__delta_typed_int_without_literal_witness_typed_input", frontier_table_name: "__frontier_typed_int_without_literal_witness_typed_input", next_frontier_table_name: "__next_frontier_typed_int_without_literal_witness_typed_input", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "typed_int_without_literal_witness_typed_input" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "typed_int_without_literal_witness_typed_input" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_typed_int_without_literal_witness_typed_input" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
