@@ -5112,6 +5112,36 @@ test(generic_type_ir_reuses_equal_application) :-
     findall(Id, member(application(Id, _), Rows), ApplicationIds),
     ApplicationIds = [_].
 
+% FAIL-PRE-FIX: only the ordinal-1 row reached Rows, so memberchk on `right`
+% failed.
+test(generic_type_ir_mints_a_row_for_every_template_column) :-
+    Decls = [ rel_template([pair], ['T'],
+                           [column(left, 'T'), column(right, 'T')]) ],
+    generic_type_ir(Decls, Rows),
+    decl_id(relation, pair, PairId),
+    memberchk(member(_, PairId, 1, left, _), Rows),
+    memberchk(member(_, PairId, 2, right, _), Rows).
+
+% FAIL-PRE-FIX: pair's first column was the only member row in the program and
+% box minted none.
+test(generic_type_ir_mints_member_rows_for_every_template) :-
+    Decls = [ rel_template([pair], ['T'], [column(left, 'T')]),
+              rel_template([box], ['U'], [column(inner, 'U')]) ],
+    generic_type_ir(Decls, Rows),
+    decl_id(relation, pair, PairId),
+    decl_id(relation, box, BoxId),
+    memberchk(member(_, PairId, 1, left, _), Rows),
+    memberchk(member(_, BoxId, 1, inner, _), Rows).
+
+% FAIL-PRE-FIX: cell had no member row at all; the type_decl clause never ran
+% while any template stood in the same program.
+test(generic_type_ir_mints_plain_rel_members_beside_a_template) :-
+    Decls = [ rel_template([pair], ['T'], [column(left, 'T')]),
+              type_decl(cell, [col(id, int)]) ],
+    generic_type_ir(Decls, Rows),
+    decl_id(relation, cell, CellId),
+    memberchk(member(_, CellId, 1, id, type_ref(primitive(int))), Rows).
+
 test(json_encodable_bound_accepts_a_primitive) :-
     Program = prog(
         [ interface_decl(json_encodable, []),
@@ -10549,8 +10579,7 @@ test(a_dotted_rel_qualifies_on_its_own_path) :-
     sub_string(Text, _, _, _, "pub struct GroveTree {"),
     sub_string(Text, _, _, _, "pub struct GroveOrchardTree {"), !.
 
-% A template whose second column mints no member row, the shape every
-% rel_template lands in through 0_generic_expand.pl:186.
+% A template that declares two parameters and spends only the first.
 one_unused_parameter_rows([
     row(1, 0, 0, int, primitive, 0, 0, 0, '', '', ''),
     row(2, 0, 0, doc, module, 0, 0, 2, 'deadbeefdeadbeef', '', ''),
@@ -10603,6 +10632,35 @@ test(a_parameter_used_inside_a_list_mints_no_marker) :-
     once(rust_types_text(doc, Rows, Text)),
     sub_string(Text, _, _, _, "pub items: Vec<Item>,"),
     \+ sub_string(Text, _, _, _, "PhantomData<fn()"), !.
+
+mixed_bounded_and_free_parameter_rows(Rows) :-
+    Program = prog([ interface_decl(json_encodable, []),
+                     rel_template([entry],
+                                  [type_parameter('Key', [json_encodable]),
+                                   type_parameter('Value', [])],
+                                  [column(key, 'Key'), column(value, 'Value')]),
+                     col_type(cell/2, id, int),
+                     col_type(cell/2, slot, entry(text, int)),
+                     keyed(cell/2, [1]) ],
+                   [ (carry(Id, Slot) <- cell(Id, Slot)) ]),
+    program_plan(fixture(mixed_bounded_and_free_parameters,
+                         Program, [], [], [])-[],
+                 [intern(dict)],
+                 plan(_, prog(Decls, Rules), _, RelPlans, _, _, _, _, _)),
+    catalog_decl_rows(mixed_bounded_and_free_parameters, Rules, RelPlans,
+                      Decls, CatalogRows, _),
+    option_rows(Decls, CatalogRows, Rows).
+
+% FAIL-PRE-FIX: `pub struct Entry<Key: JsonEncodable, Value> { pub key: Key, }`
+% carried a PhantomData marker where the value field belongs.
+test(a_free_parameter_column_reaches_the_rust_struct) :-
+    mixed_bounded_and_free_parameter_rows(Rows),
+    once(rust_types_text(mixed_bounded_and_free_parameters, Rows, Text)),
+    sub_string(Text, _, _, _,
+               "pub struct Entry<Key: JsonEncodable, Value> {"),
+    sub_string(Text, _, _, _, "pub key: Key,"),
+    sub_string(Text, _, _, _, "pub value: Value,"),
+    \+ sub_string(Text, _, _, _, "phantom"), !.
 
 :- end_tests(rust_types_compile_under_rustc).
 :- begin_tests(bytes_type_system).

@@ -3,8 +3,7 @@ pub trait JsonEncodable {}
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Span<Start: JsonEncodable, Label: JsonEncodable> {
     pub start: Start,
-    #[serde(skip)]
-    pub phantom: std::marker::PhantomData<fn() -> (Label,)>,
+    pub label: Label,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

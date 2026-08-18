@@ -2,6 +2,7 @@ export interface JsonEncodable {}
 
 export interface Span<Start extends JsonEncodable, Label extends JsonEncodable> {
   start: Start;
+  label: Label;
 }
 
 export interface GenSpanIntTextE5126de851365aff {

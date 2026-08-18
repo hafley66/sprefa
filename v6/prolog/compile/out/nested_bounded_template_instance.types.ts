@@ -1,6 +1,8 @@
 export interface JsonEncodable {}
 
 export interface Couple<Left extends JsonEncodable, Right extends JsonEncodable> {
+  first: Left;
+  second: Right;
 }
 
 export interface Wrap<T extends JsonEncodable> {

@@ -108,8 +108,8 @@ rust_generic_text(Rows, Text) :-
     format(string(Text), '#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct ~w~w {\n~s}\n',
            [TypeName, ParametersText, Body]).
 
-% rustc stops at E0392 on a parameter no field mentions, and the member rows a
-% template declares arrive short of its columns (0_generic_expand.pl:186).
+% rustc stops at E0392 on a type parameter no field mentions, and a template
+% declaring a parameter it never spends in a column is legal dl6.
 rust_phantom_property_text(Rows, GenericId, Columns, Text) :-
     findall(ParameterId,
             member(row(ParameterId, GenericId, _, _, type_parameter,

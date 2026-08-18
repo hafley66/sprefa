@@ -267,7 +267,8 @@ generic_type_ir(Decls, Rows) :-
 normalized_type_rows(Decls, Rows) :-
     findall(Row, normalized_declaration_row(Decls, Row), DeclarationRows),
     findall(Row, normalized_parameter_row(Decls, Row), ParameterRows),
-    findall(Row, normalized_member_row(Decls, Row), MemberRows),
+    findall(Row, normalized_member_row(Decls, Row), MemberRows0),
+    first_member_row_per_id(MemberRows0, MemberRows),
     findall(Row, normalized_constraint_row(Decls, Row), ConstraintRows),
     normalized_application_rows(Decls, ApplicationRows),
     findall(Row, normalized_implementation_row(Decls, Row), ImplementationRows),
@@ -310,14 +311,23 @@ normalized_member_row(Decls, member(Id, Owner, Ordinal, Name, Type)) :-
     decl_id(relation, OwnerName, Owner),
     nth1(Ordinal, Specs, column(Name, Type0)),
     normalized_type(Decls, Owner, Parameters, Type0, Type),
-    member_id(Owner, Ordinal, Name, Id),
-    !.
+    member_id(Owner, Ordinal, Name, Id).
 normalized_member_row(Decls, member(Id, Owner, Ordinal, Name, Type)) :-
     member(type_decl(OwnerName, Specs), Decls),
     decl_id(relation, OwnerName, Owner),
     nth1(Ordinal, Specs, col(Name, Type0)),
     normalized_type(Decls, Owner, [], Type0, Type),
     member_id(Owner, Ordinal, Name, Id).
+
+% A template and a plain rel sharing a name mint one member id twice, once per
+% clause; the template clause runs first and its row wins.
+first_member_row_per_id([], []).
+first_member_row_per_id([Row | Rest], [Row | Kept]) :-
+    Row = member(Id, _, _, _, _),
+    exclude(member_row_of_id(Id), Rest, Remaining),
+    first_member_row_per_id(Remaining, Kept).
+
+member_row_of_id(Id, member(Id, _, _, _, _)).
 
 normalized_constraint_row(Decls, constraint(Id, ParameterId, InterfaceId)) :-
     generic_owner_parameters(Decls, OwnerName, Parameters),
