@@ -8,13 +8,15 @@ rust_types_text(_Name, Rows, Text) :-
     rust_relation_id_alias_parts(RelationIdAlias, RelationIdParts),
     rust_option_alias_text(Rows, OptionAlias),
     rust_option_alias_parts(OptionAlias, OptionParts),
+    rust_any_alias_text(Rows, AnyAlias),
+    rust_any_alias_parts(AnyAlias, AnyParts),
     findall(InterfaceText, rust_interface_text(Rows, InterfaceText), InterfaceParts),
     findall(GenericText, rust_generic_text(Rows, GenericText), GenericParts),
     findall(EnumText, rust_enum_text(Rows, EnumText), EnumParts),
     findall(RelRow, renderable_rel(Rows, RelRow), RelRows),
     collision_type_names(RelRows, CollisionTypeNames),
     maplist(rust_rel_text(Rows, CollisionTypeNames), RelRows, RelParts),
-    append([RelationIdParts, OptionParts, InterfaceParts, GenericParts, EnumParts, RelParts], Parts),
+    append([RelationIdParts, OptionParts, AnyParts, InterfaceParts, GenericParts, EnumParts, RelParts], Parts),
     atomic_list_concat(Parts, '\n', Atom),
     atom_string(Atom, Text).
 
@@ -27,6 +29,23 @@ rust_option_alias_text(_, '').
 
 rust_option_alias_parts('', []) :- !.
 rust_option_alias_parts(Text, [Text]).
+
+% Rust has no bound wildcard for a generic trait argument. `Any` is a
+% compiler-owned marker type used as the representational witness for the
+% authored `any` pattern. It is emitted only when the catalog contains one.
+rust_any_alias_text(Rows,
+                    '#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]\npub enum Any {}\n') :-
+    member(row(_, _, _, _, constraint, _, _, _, _, _, Patterns), Rows),
+    pattern_list(Patterns, PatternList),
+    memberchk(any, PatternList), !.
+rust_any_alias_text(_, '').
+
+pattern_list('', []).
+pattern_list([], []).
+pattern_list(Patterns, Patterns) :- is_list(Patterns).
+
+rust_any_alias_parts('', []) :- !.
+rust_any_alias_parts(Text, [Text]).
 
 % The marker carries target identity in Rust's type system while serde keeps
 % the public wire representation as the one SQLite INTEGER endpoint.

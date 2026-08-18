@@ -691,7 +691,14 @@ validate_interface_applications(Decls) :-
              parameter_parts(Parameter, ParameterName, Constraints),
              member(Constraint, Constraints) ),
            ( validate_interface_application(Constraint, Interfaces),
-             reject_repeated_subject_bound(ParameterName, Constraint) )).
+             reject_repeated_subject_bound(ParameterName, Constraint),
+             reject_nested_bound_wildcard(Constraint),
+             reject_multiple_bound_wildcards(Constraint) )),
+    forall(( source_generic_application(Decls, Application),
+             contains_any(Application) ),
+           ( functor(Application, Constructor, _),
+             throw(unsupported_construct(
+                       interface_wildcard_in_concrete_application(Constructor))) )).
 
 validate_interface_application(Application, Interfaces) :-
     ( compound(Application)
@@ -715,7 +722,39 @@ reject_interface_wildcard(Application) :-
     memberchk(any, Arguments),
     throw(unsupported_construct(
               interface_wildcard_outside_bound(InterfaceName))).
+reject_interface_wildcard(Application) :-
+    interface_application_parts(Application, InterfaceName, Arguments),
+    member(Argument, Arguments),
+    compound(Argument),
+    contains_any(Argument),
+    throw(unsupported_construct(
+              interface_wildcard_outside_bound(InterfaceName))).
 reject_interface_wildcard(_).
+
+reject_nested_bound_wildcard(Constraint) :-
+    interface_application_parts(Constraint, InterfaceName, Arguments),
+    member(Argument, Arguments),
+    compound(Argument),
+    contains_any(Argument),
+    throw(unsupported_construct(
+              interface_nested_wildcard(InterfaceName, Argument))).
+reject_nested_bound_wildcard(_).
+
+reject_multiple_bound_wildcards(Constraint) :-
+    interface_application_parts(Constraint, InterfaceName, Arguments),
+    include(==(any), Arguments, Wildcards),
+    length(Wildcards, Count),
+    Count > 1,
+    throw(unsupported_construct(
+              interface_multiple_wildcards(InterfaceName))).
+reject_multiple_bound_wildcards(_).
+
+contains_any(any) :- !.
+contains_any(Term) :-
+    compound(Term),
+    compound_name_arguments(Term, _, Arguments),
+    member(Argument, Arguments),
+    contains_any(Argument).
 
 parameter_parts(type_parameter(Name, Constraints), Name, Constraints) :- !.
 parameter_parts(Name, Name, []).

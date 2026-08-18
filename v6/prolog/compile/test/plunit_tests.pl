@@ -7247,6 +7247,25 @@ test(repeated_subject_bound_keeps_a_named_refusal) :-
     catch(expand_generic_program(Program, _), Error, true),
     Error == unsupported_construct(repeated_subject_interface_bound('T', codec)).
 
+test(nested_bound_wildcard_keeps_a_named_refusal) :-
+    Program = prog(
+        [ interface_decl(codec, ['Format']),
+          interface_decl(wrapper, ['Value']),
+          rel_template([box], [type_parameter('T', [codec(wrapper(any))])],
+                       [column(value, 'T')]) ], []),
+    catch(expand_generic_program(Program, _), Error, true),
+    Error == unsupported_construct(interface_nested_wildcard(codec,
+                                                              wrapper(any))).
+
+test(concrete_generic_wildcard_keeps_a_named_refusal) :-
+    Program = prog(
+        [ interface_decl(codec, ['Format']),
+          rel_template([box], [type_parameter('T', [])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(any)) ], []),
+    catch(expand_generic_program(Program, _), Error, true),
+    Error == unsupported_construct(interface_wildcard_in_concrete_application(box)).
+
 test(same_subject_interface_applications_coexist_and_select_exactly) :-
     Decls = [ interface_decl(codec, ['Format']),
               type_decl(document, [col(body, json)]),

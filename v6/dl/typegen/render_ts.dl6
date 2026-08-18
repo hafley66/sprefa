@@ -17,6 +17,7 @@ rel type_row(id: int, parent: int, ordinal: int, name: text, kind: text,
              type_id: int, module_id: int).
 rel type_storage(id: int, column_id: int, ordinal: int, local_name: text,
                  module_id: int).
+rel type_pattern(id: int, ordinal: int, value: text).
 
 # Option is a tagged carrier so option(option(T)) retains every state.
 rel first_option(id: int).
@@ -342,15 +343,59 @@ rendered_type('RelationId', 0, -1,
 # whole text is the empty-brace pair on one line.
 rendered_type(TypeName, 0, InterfaceId, FileText) <-
   type_row(id: InterfaceId, name: InterfaceName, kind: 'interface'),
+  interface_head(InterfaceId, TypeName, HeadText),
+  FileText := concat(['export interface ', HeadText, ' {}\n']).
+
+rel interface_head(interface_id: int, type_name: text, head_text: text).
+interface_head(InterfaceId, TypeName, HeadText) <-
+  type_row(id: InterfaceId, name: InterfaceName, kind: 'interface'),
   TypeName := replace(initcap(InterfaceName), '_', ''),
-  FileText := concat(['export interface ', TypeName, ' {}\n']).
+  interface_parameters(InterfaceId, Parameters),
+  HeadText := concat([TypeName, '<', Parameters, '>']).
+interface_head(InterfaceId, TypeName, TypeName) <-
+  type_row(id: InterfaceId, name: InterfaceName, kind: 'interface'),
+  TypeName := replace(initcap(InterfaceName), '_', ''),
+  not(interface_parameterized(InterfaceId)).
+
+rel interface_parameterized(interface_id: int).
+interface_parameterized(InterfaceId) <-
+  type_row(parent: InterfaceId, kind: 'type_parameter').
+
+rel interface_parameter(interface_id: int, ordinal: int, name: text).
+interface_parameter(InterfaceId, Ordinal, Name) <-
+  type_row(parent: InterfaceId, ordinal: Ordinal, name: Name,
+           kind: 'type_parameter').
+
+rel interface_parameters(interface_id: int, parameters: text).
+interface_parameters(InterfaceId, group_concat(Name, ', ', Ordinal)) <-
+  interface_parameter(InterfaceId, Ordinal, Name).
 
 # A constraint row hangs off the parameter it bounds; TS joins bounds with ' & '.
 rel constraint_type(parameter_id: int, ordinal: int, type_name: text).
 constraint_type(ParameterId, Ordinal, TypeName) <-
-  type_row(parent: ParameterId, ordinal: Ordinal, name: InterfaceName,
-           kind: 'constraint'),
+  type_row(id: ConstraintId, parent: ParameterId, ordinal: Ordinal,
+           name: InterfaceName, kind: 'constraint'),
+  type_pattern(ConstraintId, _, _),
+  constraint_arguments(ConstraintId, Arguments),
+  InterfaceText := replace(initcap(InterfaceName), '_', ''),
+  TypeName := concat([InterfaceText, '<', Arguments, '>']).
+constraint_type(ParameterId, Ordinal, TypeName) <-
+  type_row(id: ConstraintId, parent: ParameterId, ordinal: Ordinal,
+           name: InterfaceName, kind: 'constraint'),
+  not(type_pattern(ConstraintId, _, _)),
   TypeName := replace(initcap(InterfaceName), '_', '').
+
+rel constraint_arguments(id: int, arguments: text).
+constraint_arguments(ConstraintId, group_concat(Value, ', ', Ordinal)) <-
+  constraint_argument_text(ConstraintId, Value, Ordinal).
+
+rel constraint_argument_text(id: int, value: text, ordinal: int).
+constraint_argument_text(ConstraintId, 'any', Ordinal) <-
+  type_pattern(ConstraintId, Ordinal, value: 'any').
+constraint_argument_text(ConstraintId, ValueText, Ordinal) <-
+  type_pattern(ConstraintId, Ordinal, value: Value),
+  Value != 'any',
+  ValueText := replace(initcap(Value), '_', '').
 
 rel parameter_bound(parameter_id: int, bound: text).
 parameter_bound(ParameterId, group_concat(TypeName, ' & ', Ordinal)) <-
