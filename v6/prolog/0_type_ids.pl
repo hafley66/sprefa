@@ -5,7 +5,9 @@
             param_id/4,
             member_id/4,
             constraint_id/3,
+            constraint_id/4,
             impl_id/3,
+            impl_id/4,
             app_id/3,
             arg_id/3,
             id_kind_name/3
@@ -26,9 +28,17 @@ member_id(Owner, Ordinal, Name, Id) :-
 constraint_id(Subject, Interface, Id) :-
     atomic_list_concat([Subject, constraint, Interface], ':', Id).
 
+constraint_id(Subject, Interface, Patterns, Id) :-
+    term_to_atom(Patterns, Encoded),
+    atomic_list_concat([Subject, constraint, Interface, Encoded], ':', Id).
+
 %! impl_id(+Subject, +Interface, -Id) is det.
 impl_id(Subject, Interface, Id) :-
     atomic_list_concat([Subject, impl, Interface], ':', Id).
+
+impl_id(Subject, Interface, Arguments, Id) :-
+    term_to_atom(Arguments, Encoded),
+    atomic_list_concat([Subject, impl, Interface, Encoded], ':', Id).
 
 %! app_id(+Constructor, +Arguments, -Id) is det.
 app_id(Constructor, Arguments, Id) :-

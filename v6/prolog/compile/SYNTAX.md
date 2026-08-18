@@ -4,6 +4,23 @@ Contract: `plans/2026-07-28-tsv2-phase-d-parser-header.md`. This file is the
 term-form-construct -> `.dl6` spelling -> grammar-authority mapping the
 contract asks for, plus every gap finding with evidence.
 
+## Generic interface bounds
+
+Generic parameters use interface applications:
+
+```dl6
+interface json_encodable(Format).
+rel box(T: json_encodable(any))(value: T).
+rel text_box(T: json_encodable(text))(value: T).
+```
+
+`T` is the implementing type. `any` is a wildcard for one complete
+interface argument. Bare `T: comparable` remains a zero-argument bound.
+Implementations use `rel document(...) is json_encodable(json).`; matching
+checks interface name, arity, and argument patterns. Patterns and compiler
+proofs are erased before runtime lowering, while ordered arguments remain in
+type metadata.
+
 ## Ruling that reframes this whole document (relayed mid-flight)
 
 `v6/dl/grammar/dl.langium` was always a stopgap. Effective now, **the

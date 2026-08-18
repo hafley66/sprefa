@@ -1640,9 +1640,10 @@ semantic_generic(Rows, Name, Parameters, Specs) :-
     member(declaration(Owner, _, Name, relation, compile_time), Rows),
     findall(Ordinal-Parameter,
             ( member(parameter(ParameterId, Owner, Ordinal, ParameterName), Rows),
-              findall(ConstraintName,
-                      ( member(constraint(_, ParameterId, InterfaceId), Rows),
-                        id_kind_name(InterfaceId, interface, ConstraintName) ),
+              findall(Constraint,
+                      ( member(Row, Rows),
+                        semantic_constraint_surface(Row, ParameterId,
+                                                    Constraint) ),
                       Constraints),
               Parameter = type_parameter(ParameterName, Constraints) ),
             ParameterPairs),
@@ -1662,6 +1663,14 @@ semantic_surface_type(_, type_ref(named(Type)), Type) :- !.
 semantic_surface_type(_, type_ref(declaration(DeclId)), Name) :-
     id_kind_name(DeclId, relation, Name), !.
 semantic_surface_type(_, Type, Type).
+
+semantic_constraint_surface(constraint(_, ParameterId, InterfaceId), ParameterId,
+                            InterfaceName) :-
+    id_kind_name(InterfaceId, interface, InterfaceName).
+semantic_constraint_surface(constraint(_, ParameterId, InterfaceId, Patterns),
+                            ParameterId, Application) :-
+    id_kind_name(InterfaceId, interface, InterfaceName),
+    Application =.. [InterfaceName | Patterns].
 
 %! semantic_generic_instance(+Rows, -Concrete, -Generic, -Arguments) is nondet.
 semantic_generic_instance(Rows, Concrete, Generic, Arguments) :-
@@ -1710,16 +1719,22 @@ catalog_semantic_id(row(_, OwnerId, Ordinal, Name, generic_column, _, _, _, _, _
                     AllRows, Rows, Id) :-
     semantic_owner_id(OwnerId, AllRows, Rows, Owner),
     member(member(Id, Owner, Ordinal, Name, _), Rows), !.
-catalog_semantic_id(row(_, ParameterId, _, Name, constraint, _, _, _, _, _, _),
+catalog_semantic_id(row(_, ParameterId, _, Name, constraint, _, _, _, _, _, Patterns),
                     AllRows, Rows, Id) :-
     semantic_parameter_id(ParameterId, AllRows, Rows, Parameter),
     id_kind_name(Interface, interface, Name),
-    member(constraint(Id, Parameter, Interface), Rows), !.
-catalog_semantic_id(row(_, SubjectId, _, Interface, implementation, _, _, _, _, _, _),
+    ( Patterns == [], member(constraint(Id, Parameter, Interface), Rows)
+    ; member(constraint(Id, Parameter, Interface, Patterns), Rows)
+    ), !.
+catalog_semantic_id(row(_, SubjectId, _, Interface, implementation, _, _, _, _, _, Arguments),
                     AllRows, Rows, Id) :-
     semantic_relation_id(SubjectId, AllRows, Rows, Subject),
     id_kind_name(InterfaceId, interface, Interface),
-    member(implementation(Id, Subject, interface_application(InterfaceId)), Rows), !.
+    ( Arguments == [],
+      member(implementation(Id, Subject, interface_application(InterfaceId)), Rows)
+    ; member(implementation(Id, Subject,
+                            interface_application(InterfaceId, Arguments)), Rows)
+    ), !.
 catalog_semantic_id(row(_, _, _, Name, concrete_type, _, _, _, _, _, _), _, Rows, Id) :-
     member(declaration(Id, _, Name, relation, materialized), Rows), !.
 catalog_semantic_id(_, _, _, '').
@@ -1778,13 +1793,21 @@ metadata_parameter_parts(Name, Name, []).
 metadata_constraint_rows([], _, _, _, Id, [], Id).
 metadata_constraint_rows([Interface | Rest], ParameterId, InterfaceMap,
                          Ordinal, Id0,
-                         [row(Id0, ParameterId, Ordinal, Interface, constraint,
-                              InterfaceId, 0, 0, '', '', '') | Rows], IdFinal) :-
-    ( memberchk(Interface-InterfaceId, InterfaceMap) -> true ; InterfaceId = 0 ),
+                         [row(Id0, ParameterId, Ordinal, InterfaceName, constraint,
+                              InterfaceId, 0, 0, '', '', Patterns) | Rows], IdFinal) :-
+    interface_application_parts(Interface, InterfaceName, Patterns),
+    ( memberchk(InterfaceName-InterfaceId, InterfaceMap) -> true ; InterfaceId = 0 ),
     Id1 is Id0 + 1,
     NextOrdinal is Ordinal + 1,
     metadata_constraint_rows(Rest, ParameterId, InterfaceMap, NextOrdinal,
                              Id1, Rows, IdFinal).
+
+interface_application_parts(Application, Name, []) :-
+    atom(Application), !,
+    Name = Application.
+interface_application_parts(Application, Name, Arguments) :-
+    compound(Application),
+    Application =.. [Name | Arguments].
 
 metadata_generic_column_rows([], _, _, _, _, Id, [], Id).
 metadata_generic_column_rows([generic(Name, _Parameters, Specs) | Rest], GenericMap, RelIdMap,
@@ -1858,11 +1881,9 @@ metadata_implementation_rows([], _, _, Id, [], Id).
 metadata_implementation_rows([implementation(Name/_, Application) | Rest],
                              InterfaceMap, RelIdMap, Id0,
                              [row(Id0, SubjectId, 0, Interface, implementation,
-                                  InterfaceId, 0, 0, '', '', '') | Rows],
+                                  InterfaceId, 0, 0, '', '', Arguments) | Rows],
                              IdFinal) :-
-    ( compound(Application)
-    -> functor(Application, Interface, _)
-    ; Interface = Application ),
+    interface_application_parts(Application, Interface, Arguments),
     ( memberchk(Interface-InterfaceId, InterfaceMap) -> true ; InterfaceId = 0 ),
     ( rel_row_id(RelIdMap, Name, SubjectId) -> true ; SubjectId = 0 ),
     Id1 is Id0 + 1,

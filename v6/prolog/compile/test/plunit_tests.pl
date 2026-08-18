@@ -7153,6 +7153,138 @@ test(a_bounded_generic_parameter_round_trips) :-
                   'rel pair(T: json_encodable)(value: T).')),
     Program =@= RoundTripped.
 
+test(an_interface_application_bound_round_trips_with_any_pattern) :-
+    surface_round_trip(
+        'interface json_encodable(Format). rel pair(T: json_encodable(any))(value: T).',
+        Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _,
+                  'rel pair(T: json_encodable(any))(value: T).')),
+    Program =@= RoundTripped.
+
+test(interface_bound_rows_retain_patterns_and_implementation_arguments) :-
+    Decls = [ interface_decl(codec, ['Format']),
+              rel_template([box], [type_parameter('T', [codec(any)])],
+                           [column(value, 'T')]),
+              type_decl(document, [col(body, json)]),
+              rel_is_implementation(document/1, [codec(json)]) ],
+    generic_type_ir(Decls, Rows),
+    member(constraint(_, _, InterfaceId, [any]), Rows),
+    member(implementation(_, _, interface_application(InterfaceId, [json])), Rows).
+
+test(bare_zero_argument_interface_bound_accepts_and_missing_refuses) :-
+    Accepted = prog(
+        [ interface_decl(comparable, []),
+          type_decl(document, [col(body, json)]),
+          rel_is_implementation(document/1, [comparable]),
+          rel_template([box], [type_parameter('T', [comparable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(document)) ], []),
+    expand_generic_program(Accepted, _),
+    Missing = prog(
+        [ interface_decl(comparable, []),
+          type_decl(document, [col(body, json)]),
+          rel_template([box], [type_parameter('T', [comparable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(document)) ], []),
+    catch(expand_generic_program(Missing, _), Error, true),
+    Error = unsupported_construct(generic_bound_unsatisfied(
+                                      document, comparable, _)).
+
+test(wildcard_interface_bound_accepts_and_missing_refuses) :-
+    Accepted = prog(
+        [ interface_decl(codec, ['Format']),
+          type_decl(document, [col(body, json)]),
+          rel_is_implementation(document/1, [codec(json)]),
+          rel_template([box], [type_parameter('T', [codec(any)])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(document)) ], []),
+    expand_generic_program(Accepted, _),
+    Missing = prog(
+        [ interface_decl(codec, ['Format']),
+          type_decl(document, [col(body, json)]),
+          rel_template([box], [type_parameter('T', [codec(any)])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(document)) ], []),
+    catch(expand_generic_program(Missing, _), Error, true),
+    Error = unsupported_construct(generic_bound_unsatisfied(
+                                      document, codec(any), _)).
+
+test(exact_interface_argument_accepts_and_wrong_argument_refuses) :-
+    Accepted = prog(
+        [ interface_decl(codec, ['Format']),
+          type_decl(document, [col(body, json)]),
+          rel_is_implementation(document/1, [codec(text)]),
+          rel_template([box], [type_parameter('T', [codec(text)])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(document)) ], []),
+    expand_generic_program(Accepted, _),
+    Wrong = prog(
+        [ interface_decl(codec, ['Format']),
+          type_decl(document, [col(body, json)]),
+          rel_is_implementation(document/1, [codec(bytes)]),
+          rel_template([box], [type_parameter('T', [codec(text)])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(document)) ], []),
+    catch(expand_generic_program(Wrong, _), Error, true),
+    Error = unsupported_construct(generic_bound_unsatisfied(
+                                      document, codec(text), _)).
+
+test(interface_bound_wrong_arity_is_rejected_before_judgment) :-
+    Program = prog(
+        [ interface_decl(codec, ['Format']),
+          rel_template([box], [type_parameter('T', [codec])],
+                       [column(value, 'T')]),
+          type_decl(document, [col(body, json)]),
+          col_type(holder/1, value, box(document)) ], []),
+    catch(expand_generic_program(Program, _), Error, true),
+    Error == unsupported_construct(interface_arity(codec, 1, 0)).
+
+test(repeated_subject_bound_keeps_a_named_refusal) :-
+    Program = prog(
+        [ interface_decl(codec, ['Format']),
+          rel_template([box], [type_parameter('T', [codec('T')])],
+                       [column(value, 'T')]) ], []),
+    catch(expand_generic_program(Program, _), Error, true),
+    Error == unsupported_construct(repeated_subject_interface_bound('T', codec)).
+
+test(same_subject_interface_applications_coexist_and_select_exactly) :-
+    Decls = [ interface_decl(codec, ['Format']),
+              type_decl(document, [col(body, json)]),
+              rel_is_implementation(document/1, [codec(text), codec(bytes)]) ],
+    generic_type_ir(Decls, Rows),
+    findall(Args,
+            member(implementation(_, _, interface_application(_, Args)), Rows),
+            Args),
+    Args == [[bytes], [text]],
+    generic_expand:compile_type_plane(Decls, Rows, Plane),
+    generic_expand:compile_type_query(Plane, conforms(document, codec(text)),
+                                      impl(_)),
+    generic_expand:compile_type_query(Plane, conforms(document, codec(any)),
+                                      impl(_)),
+    findall(Proof,
+            generic_expand:compile_type_query(Plane,
+                                              conforms(document, codec(any)),
+                                              Proof),
+            Proofs),
+    Proofs = [_].
+
+test(wildcard_and_proof_rows_stay_compiler_local_while_catalog_keeps_args) :-
+    Program = prog(
+        [ interface_decl(codec, ['Format']),
+          type_decl(document, [col(body, json)]),
+          rel_is_implementation(document/1, [codec(text), codec(bytes)]),
+          rel_template([box], [type_parameter('T', [codec(any)])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(document)) ], []),
+    expand_generic_program(Program, prog(Decls, [])),
+    memberchk(semantic_type_rows(Rows), Decls),
+    member(implementation(_, _, interface_application(_, [bytes])), Rows),
+    member(implementation(_, _, interface_application(_, [text])), Rows),
+    member(constraint(_, _, _, [any]), Rows),
+    member(resolved_by(_, impl(_)), Rows),
+    \+ member(constraint(_, _, _, _), Decls),
+    \+ member(implementation(_, _, _), Decls).
+
 test(an_interface_declaration_parses_to_one_record) :-
     surface_decls('interface json_encodable.', Decls),
     Decls == [interface_decl(json_encodable, [])].

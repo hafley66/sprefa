@@ -22,7 +22,8 @@
 :- use_module('0_type_plane', [unwrapped_column_type/2]).
 :- use_module('0_type_ids',
               [ decl_id/3, param_id/4, member_id/4, constraint_id/3,
-                impl_id/3, app_id/3, arg_id/3, id_kind_name/3 ]).
+                constraint_id/4,
+                impl_id/3, impl_id/4, app_id/3, arg_id/3, id_kind_name/3 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -336,7 +337,7 @@ normalized_constraint_row(Decls, constraint(Id, ParameterId, InterfaceId)) :-
     parameter_parts(Parameter0, Name, Constraints),
     param_id(Owner, Ordinal, Name, ParameterId),
     member(Constraint, Constraints),
-    interface_application_name(Constraint, InterfaceName),
+    interface_application_parts(Constraint, InterfaceName, []),
     decl_id(interface, InterfaceName, InterfaceId),
     constraint_id(ParameterId, InterfaceId, Id).
 
@@ -347,9 +348,33 @@ normalized_constraint_row(Decls, constraint(Id, ParameterId, InterfaceId)) :-
     parameter_parts(Parameter0, Name, Constraints),
     param_id(Owner, Ordinal, Name, ParameterId),
     member(Constraint, Constraints),
-    interface_application_name(Constraint, InterfaceName),
+    interface_application_parts(Constraint, InterfaceName, []),
     decl_id(interface, InterfaceName, InterfaceId),
     constraint_id(ParameterId, InterfaceId, Id).
+
+normalized_constraint_row(Decls, constraint(Id, ParameterId, InterfaceId, Patterns)) :-
+    generic_owner_parameters(Decls, OwnerName, Parameters),
+    decl_id(relation, OwnerName, Owner),
+    nth1(Ordinal, Parameters, Parameter0),
+    parameter_parts(Parameter0, Name, Constraints),
+    param_id(Owner, Ordinal, Name, ParameterId),
+    member(Constraint, Constraints),
+    interface_application_parts(Constraint, InterfaceName, Patterns),
+    Patterns \== [],
+    decl_id(interface, InterfaceName, InterfaceId),
+    constraint_id(ParameterId, InterfaceId, Patterns, Id).
+
+normalized_constraint_row(Decls, constraint(Id, ParameterId, InterfaceId, Patterns)) :-
+    member(interface_decl(OwnerName, Parameters), Decls),
+    decl_id(interface, OwnerName, Owner),
+    nth1(Ordinal, Parameters, Parameter0),
+    parameter_parts(Parameter0, Name, Constraints),
+    param_id(Owner, Ordinal, Name, ParameterId),
+    member(Constraint, Constraints),
+    interface_application_parts(Constraint, InterfaceName, Patterns),
+    Patterns \== [],
+    decl_id(interface, InterfaceName, InterfaceId),
+    constraint_id(ParameterId, InterfaceId, Patterns, Id).
 
 normalized_implementation_row(Decls,
                               implementation(Id, Subject, interface_application(InterfaceId))) :-
@@ -357,9 +382,33 @@ normalized_implementation_row(Decls,
     ref_name(Ref, SubjectName),
     decl_id(relation, SubjectName, Subject),
     member(Application, Applications),
-    interface_application_name(Application, InterfaceName),
+    interface_application_parts(Application, InterfaceName, []),
     decl_id(interface, InterfaceName, InterfaceId),
     impl_id(Subject, InterfaceId, Id).
+
+normalized_implementation_row(Decls,
+                              implementation(Id, Subject,
+                                            interface_application(InterfaceId,
+                                                                  Arguments))) :-
+    member(rel_is_implementation(Ref, Applications), Decls),
+    ref_name(Ref, SubjectName),
+    decl_id(relation, SubjectName, Subject),
+    member(Application, Applications),
+    interface_application_parts(Application, InterfaceName, Arguments),
+    Arguments \== [],
+    decl_id(interface, InterfaceName, InterfaceId),
+    impl_id(Subject, InterfaceId, Arguments, Id).
+
+member_constraint_row(Rows, ParameterId, InterfaceId, []) :-
+    member(constraint(_, ParameterId, InterfaceId), Rows).
+member_constraint_row(Rows, ParameterId, InterfaceId, Patterns) :-
+    member(constraint(_, ParameterId, InterfaceId, Patterns), Rows).
+
+member_implementation_row(Rows, Id, Subject, InterfaceId, []) :-
+    member(implementation(Id, Subject, interface_application(InterfaceId)), Rows).
+member_implementation_row(Rows, Id, Subject, InterfaceId, Arguments) :-
+    member(implementation(Id, Subject,
+                          interface_application(InterfaceId, Arguments)), Rows).
 
 normalized_application_rows(Decls, Rows) :-
     findall(Application, source_generic_application(Decls, Application), Found),
@@ -456,21 +505,29 @@ generic_template_parameters(Rows, Name, Parameters) :-
     decl_id(relation, Name, Owner),
     findall(Ordinal-Parameter,
             ( member(parameter(ParameterId, Owner, Ordinal, ParameterName), Rows),
-              findall(ConstraintName,
-                      ( member(constraint(_, ParameterId, ConstraintId), Rows),
-                        id_kind_name(ConstraintId, interface, ConstraintName) ),
+              findall(Constraint,
+                      ( member(Row, Rows),
+                        constraint_surface_row(Row, ParameterId, Constraint) ),
                       Constraints),
               Parameter = type_parameter(ParameterName, Constraints) ),
             Ordered),
     keysort(Ordered, Pairs),
     pairs_values(Pairs, Parameters).
 
+constraint_surface_row(constraint(_, ParameterId, InterfaceId), ParameterId,
+                       InterfaceName) :-
+    id_kind_name(InterfaceId, interface, InterfaceName).
+constraint_surface_row(constraint(_, ParameterId, InterfaceId, Patterns),
+                       ParameterId, Application) :-
+    id_kind_name(InterfaceId, interface, InterfaceName),
+    Application =.. [InterfaceName | Patterns].
+
 validate_type_rows(Rows) :-
-    forall(member(constraint(_, _, InterfaceId), Rows),
+    forall(member_constraint_row(Rows, _, InterfaceId, _),
            ( memberchk(declaration(InterfaceId, _, _, interface, _), Rows) -> true
            ; id_kind_name(InterfaceId, interface, InterfaceName),
              throw(unsupported_construct(interface_unknown(InterfaceName))) )),
-    forall(member(implementation(_, _, interface_application(InterfaceId)), Rows),
+    forall(member_implementation_row(Rows, _, _, InterfaceId, _),
            ( memberchk(declaration(InterfaceId, _, _, interface, _), Rows) -> true
            ; id_kind_name(InterfaceId, interface, InterfaceName),
              throw(unsupported_construct(interface_unknown(InterfaceName))) )).
@@ -508,7 +565,12 @@ compile_type_relation(type_plane(_, Rows), interface, [Name, Arity]) :-
     length(Parameters, Arity).
 compile_type_relation(type_plane(_, Rows), implementation,
                       [SubjectName, InterfaceName, ImplId]) :-
-    member(implementation(ImplId, Subject, interface_application(InterfaceId)), Rows),
+    member_implementation_row(Rows, ImplId, Subject, InterfaceId, _),
+    id_kind_name(Subject, relation, SubjectName),
+    id_kind_name(InterfaceId, interface, InterfaceName).
+compile_type_relation(type_plane(_, Rows), implementation,
+                      [SubjectName, InterfaceName, Arguments, ImplId]) :-
+    member_implementation_row(Rows, ImplId, Subject, InterfaceId, Arguments),
     id_kind_name(Subject, relation, SubjectName),
     id_kind_name(InterfaceId, interface, InterfaceName).
 compile_type_relation(type_plane(Decls, _), named_type, [Name]) :-
@@ -536,51 +598,60 @@ compile_type_query(type_plane(Decls, _), duplicate_interface(Name), duplicate) :
     !.
 compile_type_query(type_plane(Decls, _), duplicate_implementation(Subject, Interface),
                    duplicate) :-
-    findall(SubjectName-InterfaceName,
+    findall(SubjectName-Application,
             ( member(rel_is_implementation(Ref, Applications), Decls),
               ref_name(Ref, SubjectName),
-              member(Application, Applications),
-              interface_application_name(Application, InterfaceName) ),
+              member(Application, Applications) ),
             Implementations),
-    select(Subject-Interface, Implementations, Rest),
-    memberchk(Subject-Interface, Rest),
+    select(Subject-Application, Implementations, Rest),
+    memberchk(Subject-Application, Rest),
+    Interface = Application,
     !.
+compile_type_query(Plane, conforms(Type, interface_pattern(InterfaceName, Patterns)), Proof) :-
+    compile_type_conformance(Plane, Type,
+                             interface_pattern(InterfaceName, Patterns), [], Proof).
 compile_type_query(Plane, conforms(Type, Interface), Proof) :-
-    compile_type_conformance(Plane, Type, Interface, [], Proof).
+    interface_application_parts(Interface, InterfaceName, Patterns),
+    compile_type_conformance(Plane, Type, interface_pattern(InterfaceName, Patterns), [], Proof).
 
 % Direct implementation facts are read through the normalized relation view.
 compile_type_conformance(Plane, Type, Interface, _, impl(ImplId)) :-
     atom(Type),
-    compile_type_relation(Plane, implementation, [Type, Interface, ImplId]),
+    Interface = interface_pattern(InterfaceName, Patterns),
+    compile_type_relation(Plane, implementation, [Type, InterfaceName,
+                                                   ConcreteArgs, ImplId]),
+    interface_arguments_match(Patterns, ConcreteArgs),
     !.
 % A recursive revisit closes the structural proof after direct implementation
 % facts, preserving authored `is json_encodable` precedence.
-compile_type_conformance(_, Type, json_encodable, Seen, structural(Type)) :-
+compile_type_conformance(_, Type, interface_pattern(json_encodable, []), Seen,
+                         structural(Type)) :-
     atom(Type),
     memberchk(Type, Seen),
     !.
 % The generated rules remain ordinary compile-time relation rules.  The
 % evaluator below is deliberately thin: it only supplies recursion guards and
 % the all-fields/all-payloads join needed by JsonEncodable's existing rule.
-compile_type_conformance(_, Type, json_encodable, _, structural(Type)) :-
+compile_type_conformance(_, Type, interface_pattern(json_encodable, []), _,
+                         structural(Type)) :-
     scalar_element(Type),
     !.
-compile_type_conformance(Plane, option(Type), json_encodable, Seen,
+compile_type_conformance(Plane, option(Type), interface_pattern(json_encodable, []), Seen,
                         structural(option(Type))) :-
     !,
-    compile_type_conformance(Plane, Type, json_encodable, Seen, _).
-compile_type_conformance(Plane, json_list(Type), json_encodable, Seen,
+    compile_type_conformance(Plane, Type, interface_pattern(json_encodable, []), Seen, _).
+compile_type_conformance(Plane, json_list(Type), interface_pattern(json_encodable, []), Seen,
                         structural(json_list(Type))) :-
     !,
-    compile_type_conformance(Plane, Type, json_encodable, Seen, _).
-compile_type_conformance(Plane, Name, json_encodable, Seen, structural(Name)) :-
+    compile_type_conformance(Plane, Type, interface_pattern(json_encodable, []), Seen, _).
+compile_type_conformance(Plane, Name, interface_pattern(json_encodable, []), Seen, structural(Name)) :-
     atom(Name),
     \+ memberchk(Name, Seen),
     compile_type_relation(Plane, named_type, [Name]),
     findall(FieldType, compile_type_relation(Plane, field, [Name, FieldType]), FieldTypes),
     maplist(compile_type_conformance_with_seen(Plane, [Name | Seen]), FieldTypes),
     !.
-compile_type_conformance(Plane, Name, json_encodable, Seen, structural(Name)) :-
+compile_type_conformance(Plane, Name, interface_pattern(json_encodable, []), Seen, structural(Name)) :-
     atom(Name),
     \+ memberchk(Name, Seen),
     compile_type_relation(Plane, enum, [Name]),
@@ -589,19 +660,22 @@ compile_type_conformance(Plane, Name, json_encodable, Seen, structural(Name)) :-
             PayloadTypes),
     maplist(compile_type_conformance_with_seen(Plane, [Name | Seen]), PayloadTypes),
     !.
-compile_type_conformance(Plane, Type, json_encodable, Seen, structural(Type)) :-
+compile_type_conformance(Plane, Type, interface_pattern(json_encodable, []), Seen, structural(Type)) :-
     compound(Type),
     Plane = type_plane(Decls, _),
     generic_application_name(Decls, Type),
     \+ memberchk(Type, Seen),
     canonical_type_name(Type, ConcreteName),
-    compile_type_conformance(Plane, ConcreteName, json_encodable, [Type | Seen], _).
+    compile_type_conformance(Plane, ConcreteName,
+                             interface_pattern(json_encodable, []),
+                             [Type | Seen], _).
 
 compile_type_conformance_with_seen(Plane, Seen, Type) :-
-    compile_type_conformance(Plane, Type, json_encodable, Seen, _).
+    compile_type_conformance(Plane, Type,
+                             interface_pattern(json_encodable, []), Seen, _).
 
-% Checked at the source terms: the normalized implementation row drops the
-% application's explicit arguments, so arity is invisible in the row graph.
+% Checked at the source terms as well as normalized rows: interface application
+% arguments remain visible for arity validation and conformance matching.
 validate_interface_applications(Decls) :-
     findall(Name-Arity,
             ( member(interface_decl(Name, Parameters), Decls),
@@ -609,7 +683,15 @@ validate_interface_applications(Decls) :-
             Interfaces),
     forall(( member(rel_is_implementation(_, Applications), Decls),
              member(Application, Applications) ),
-           validate_interface_application(Application, Interfaces)).
+           ( validate_interface_application(Application, Interfaces),
+             reject_interface_wildcard(Application) )),
+    forall(( member(Template, Decls),
+             template_parameters(Template, Parameters),
+             member(Parameter, Parameters),
+             parameter_parts(Parameter, ParameterName, Constraints),
+             member(Constraint, Constraints) ),
+           ( validate_interface_application(Constraint, Interfaces),
+             reject_repeated_subject_bound(ParameterName, Constraint) )).
 
 validate_interface_application(Application, Interfaces) :-
     ( compound(Application)
@@ -621,6 +703,19 @@ validate_interface_application(Application, Interfaces) :-
        ; throw(unsupported_construct(
                    interface_arity(Name, Expected, Arity))) )
     ; throw(unsupported_construct(interface_unknown(Name))) ).
+
+reject_repeated_subject_bound(ParameterName, Constraint) :-
+    interface_application_parts(Constraint, InterfaceName, [ParameterName]),
+    throw(unsupported_construct(
+              repeated_subject_interface_bound(ParameterName, InterfaceName))).
+reject_repeated_subject_bound(_, _).
+
+reject_interface_wildcard(Application) :-
+    interface_application_parts(Application, InterfaceName, Arguments),
+    memberchk(any, Arguments),
+    throw(unsupported_construct(
+              interface_wildcard_outside_bound(InterfaceName))).
+reject_interface_wildcard(_).
 
 parameter_parts(type_parameter(Name, Constraints), Name, Constraints) :- !.
 parameter_parts(Name, Name, []).
@@ -637,6 +732,20 @@ generic_owner_parameters(Decls, Name, Parameters) :-
 interface_application_name(Application, Name) :-
     ( compound(Application) -> functor(Application, Name, _)
     ; Name = Application ).
+
+interface_application_parts(Application, Name, []) :-
+    atom(Application), !,
+    Name = Application.
+interface_application_parts(Application, Name, Arguments) :-
+    compound(Application),
+    Application =.. [Name | Arguments].
+
+interface_arguments_match(Patterns, Arguments) :-
+    same_length(Patterns, Arguments),
+    maplist(interface_argument_matches, Patterns, Arguments).
+
+interface_argument_matches(any, _) :- !.
+interface_argument_matches(Pattern, Argument) :- Pattern == Argument.
 
 ref_name(Name/_, Name) :- !.
 ref_name(Name, Name).
@@ -677,6 +786,9 @@ merge_flavor_type_rows(Instances, Decls0, Decls) :-
     ->  maplist(merge_one_flavor_type_rows(Rows), Decls0, Decls)
     ;   append(Decls0, [semantic_type_rows(Rows)], Decls)
     ).
+
+template_parameters(rel_template(_, Parameters, _), Parameters).
+template_parameters(rel_template_enum(_, Parameters, _), Parameters).
 
 merge_one_flavor_type_rows(FlavorRows, semantic_type_rows(Rows0),
                            semantic_type_rows(Rows)) :-
@@ -820,17 +932,37 @@ obligation_judgment(Plane, _Constructor, AppId, Parameters, Arguments,
     parameter_constraints(Parameter, Constraints),
     nth1(Ordinal, Arguments, ArgType),
     member(Constraint, Constraints),
-    interface_application_name(Constraint, Interface),
+    interface_application_parts(Constraint, Interface, Patterns),
     decl_id(interface, Interface, InterfaceId),
     arg_id(AppId, Ordinal, ArgId),
-    constraint_id(ArgId, InterfaceId, ObligationId),
-    (   compile_type_query(Plane, conforms(ArgType, Interface), Evidence)
-    ->  Judgment = judged(Ordinal,
-                          obligation(ObligationId, AppId, InterfaceId,
-                                     ArgType),
-                          resolved_by(ObligationId, Evidence))
-    ;   Judgment = unresolved(Ordinal, ArgType, Interface)
+    constraint_obligation_id(ArgId, InterfaceId, Patterns, ObligationId),
+    (   compile_type_query(Plane,
+                           conforms(ArgType,
+                                    interface_pattern(Interface, Patterns)),
+                           Evidence)
+    ->  obligation_judgment_row(Patterns, Ordinal, ObligationId, AppId,
+                                InterfaceId, ArgType, Evidence, Judgment)
+    ;   Judgment = unresolved(Ordinal, ArgType, Constraint)
     ).
+
+constraint_obligation_id(ArgId, InterfaceId, [], Id) :-
+    constraint_id(ArgId, InterfaceId, Id).
+constraint_obligation_id(ArgId, InterfaceId, Patterns, Id) :-
+    Patterns \== [],
+    constraint_id(ArgId, InterfaceId, Patterns, Id).
+
+obligation_judgment_row([], Ordinal, ObligationId, AppId, InterfaceId,
+                        ArgType, Evidence,
+                        judged(Ordinal,
+                               obligation(ObligationId, AppId, InterfaceId,
+                                          ArgType),
+                               resolved_by(ObligationId, Evidence))).
+obligation_judgment_row(Patterns, Ordinal, ObligationId, AppId, InterfaceId,
+                        ArgType, Evidence,
+                        judged(Ordinal,
+                               obligation(ObligationId, AppId, InterfaceId,
+                                          ArgType, Patterns),
+                               resolved_by(ObligationId, Evidence))).
 
 named_type_columns(Decls, Name, ColumnTypes) :-
     ( member(type_decl(Name, Specs), Decls)

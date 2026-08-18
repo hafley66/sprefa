@@ -57,6 +57,27 @@ test(rust_preserves_generic_declaration_and_bound) :-
     once(rust_types_text(main, Rows, Text)),
     Text == "pub trait JsonEncodable {}\n\n#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Pair<T: JsonEncodable> {\n    pub first: T,\n    pub second: T,\n}\n".
 
+generic_application_bound_rows([
+    row(1, 0, 0, any, primitive, 0, 0, 0, '', '', ''),
+    row(2, 0, 0, codec, interface, 0, 0, 0, '', '', ''),
+    row(3, 2, 1, 'Format', type_parameter, 0, 0, 0, '', '', ''),
+    row(4, 0, 0, box, generic_rel, 0, 0, 0, '', '', ''),
+    row(5, 4, 1, 'T', type_parameter, 0, 0, 0, '', '', ''),
+    row(6, 5, 1, codec, constraint, 2, 0, 0, '', '', [any])
+]).
+
+test(ts_renders_interface_application_wildcard_bound) :-
+    generic_application_bound_rows(Rows),
+    once(ts_types_text(main, Rows, Text)),
+    sub_atom(Text, _, _, _, 'export interface Codec<Format> {}'),
+    sub_atom(Text, _, _, _, 'export interface Box<T extends Codec<any>').
+
+test(rust_renders_interface_application_wildcard_bound) :-
+    generic_application_bound_rows(Rows),
+    once(rust_types_text(main, Rows, Text)),
+    sub_atom(Text, _, _, _, 'pub trait Codec<Format> {}'),
+    sub_atom(Text, _, _, _, 'pub struct Box<T: Codec<Any>').
+
 % A concrete generic sum (minted by generic expansion, lowered by enum
 % expansion) renders as a tagged union carrying its substituted payload types.
 % These rows are what the catalog produces for

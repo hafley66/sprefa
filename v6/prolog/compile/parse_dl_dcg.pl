@@ -531,7 +531,7 @@ generic_parameters(Parameters) -->
 generic_parameter(type_parameter(Name, Constraints)) -->
     ident(Name), ws,
     ( @`:`
-    -> ws, sep_plus(ident, Constraints)
+    -> ws, sep_plus(type_application, Constraints)
     ;  { Constraints = [] }
     ).
 

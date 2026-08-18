@@ -249,7 +249,8 @@ dedup_preserve_order_([X | Xs], Acc, Out) :-
 
 print_generic_parameter(type_parameter(Name, []), Name) :- !.
 print_generic_parameter(type_parameter(Name, Constraints), Text) :-
-    atomic_list_concat(Constraints, ' + ', ConstraintText),
+    maplist(print_type_application, Constraints, ConstraintTexts),
+    atomic_list_concat(ConstraintTexts, ' + ', ConstraintText),
     format(atom(Text), "~w: ~w", [Name, ConstraintText]).
 print_generic_parameter(Name, Name).
 

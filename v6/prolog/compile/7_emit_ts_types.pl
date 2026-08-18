@@ -94,9 +94,20 @@ concrete_rel(Rows, RelId) :-
     memberchk(row(_, RelId, _, _, concrete_type, _, _, _, _, _, _), Rows).
 
 ts_interface_text(Rows, Text) :-
-    member(row(_, _, _, Name, interface, _, _, _, _, _, _), Rows),
+    member(row(InterfaceId, _, _, Name, interface, _, _, _, _, _, _), Rows),
     type_name(Name, TypeName),
-    format(string(Text), 'export interface ~w {}\n', [TypeName]).
+    interface_parameters_text(Rows, InterfaceId, ParametersText),
+    format(string(Text), 'export interface ~w~w {}\n', [TypeName, ParametersText]).
+
+interface_parameters_text(Rows, InterfaceId, Text) :-
+    findall(Ord-Name,
+            member(row(_, InterfaceId, Ord, Name, type_parameter, _, _, _, _, _, _), Rows),
+            Parameters0),
+    keysort(Parameters0, Parameters),
+    pairs_values(Parameters, Names),
+    ( Names == [] -> Text = ''
+    ; atomic_list_concat(Names, ', ', Joined),
+      format(atom(Text), '<~w>', [Joined]) ).
 
 ts_generic_text(Rows, Text) :-
     member(row(GenericId, _, _, Name, generic_rel, _, _, _, _, _, _), Rows),
@@ -124,11 +135,25 @@ generic_parameters_text(Rows, GenericId, Text) :-
 ts_parameter_text(Rows, _Ord-Name-ParameterId, Text) :-
     findall(Constraint,
             ( member(row(_, ParameterId, _, Interface, constraint, _, _, _,
-                         _, _, _), Rows),
-              type_name(Interface, Constraint) ), Constraints),
+                         _, _, Patterns), Rows),
+              ts_constraint_text(Interface, Patterns, Constraint) ), Constraints),
     ( Constraints == [] -> Text = Name
     ; atomic_list_concat(Constraints, ' & ', Bound),
       format(atom(Text), '~w extends ~w', [Name, Bound]) ).
+
+ts_constraint_text(Interface, [], Constraint) :-
+    type_name(Interface, Constraint).
+ts_constraint_text(Interface, '', Constraint) :-
+    type_name(Interface, Constraint).
+ts_constraint_text(Interface, Patterns, Constraint) :-
+    Patterns \== [],
+    type_name(Interface, InterfaceName),
+    maplist(ts_constraint_argument_text, Patterns, ArgumentTexts),
+    atomic_list_concat(ArgumentTexts, ', ', Arguments),
+    format(atom(Constraint), '~w<~w>', [InterfaceName, Arguments]).
+
+ts_constraint_argument_text(any, 'any') :- !.
+ts_constraint_argument_text(Type, Text) :- type_name(Type, Text).
 
 ts_generic_property_text(Rows, _Ord-Name-TypeId, Text) :-
     ts_type(Rows, TypeId, Type),

@@ -89,9 +89,20 @@ concrete_rel(Rows, RelId) :-
     memberchk(row(_, RelId, _, _, concrete_type, _, _, _, _, _, _), Rows).
 
 rust_interface_text(Rows, Text) :-
-    member(row(_, _, _, Name, interface, _, _, _, _, _, _), Rows),
+    member(row(InterfaceId, _, _, Name, interface, _, _, _, _, _, _), Rows),
     type_name(Name, TypeName),
-    format(string(Text), 'pub trait ~w {}\n', [TypeName]).
+    rust_interface_parameters_text(Rows, InterfaceId, ParametersText),
+    format(string(Text), 'pub trait ~w~w {}\n', [TypeName, ParametersText]).
+
+rust_interface_parameters_text(Rows, InterfaceId, Text) :-
+    findall(Ord-Name,
+            member(row(_, InterfaceId, Ord, Name, type_parameter, _, _, _, _, _, _), Rows),
+            Parameters0),
+    keysort(Parameters0, Parameters),
+    pairs_values(Parameters, Names),
+    ( Names == [] -> Text = ''
+    ; atomic_list_concat(Names, ', ', Joined),
+      format(atom(Text), '<~w>', [Joined]) ).
 
 rust_generic_text(Rows, Text) :-
     member(row(GenericId, _, _, Name, generic_rel, _, _, _, _, _, _), Rows),
@@ -157,11 +168,25 @@ rust_generic_parameters_text(Rows, GenericId, Text) :-
 rust_parameter_text(Rows, _Ord-Name-ParameterId, Text) :-
     findall(Constraint,
             ( member(row(_, ParameterId, _, Interface, constraint, _, _, _,
-                         _, _, _), Rows),
-              type_name(Interface, Constraint) ), Constraints),
+                         _, _, Patterns), Rows),
+              rust_constraint_text(Interface, Patterns, Constraint) ), Constraints),
     ( Constraints == [] -> Text = Name
     ; atomic_list_concat(Constraints, ' + ', Bound),
       format(atom(Text), '~w: ~w', [Name, Bound]) ).
+
+rust_constraint_text(Interface, [], Constraint) :-
+    type_name(Interface, Constraint).
+rust_constraint_text(Interface, '', Constraint) :-
+    type_name(Interface, Constraint).
+rust_constraint_text(Interface, Patterns, Constraint) :-
+    Patterns \== [],
+    type_name(Interface, InterfaceName),
+    maplist(rust_constraint_argument_text, Patterns, ArgumentTexts),
+    atomic_list_concat(ArgumentTexts, ', ', Arguments),
+    format(atom(Constraint), '~w<~w>', [InterfaceName, Arguments]).
+
+rust_constraint_argument_text(any, 'Any') :- !.
+rust_constraint_argument_text(Type, Text) :- type_name(Type, Text).
 
 rust_generic_property_text(Rows, _Ord-Name-TypeId, Text) :-
     rust_type(Rows, TypeId, Type),

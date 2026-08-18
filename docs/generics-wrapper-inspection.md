@@ -195,9 +195,16 @@ CREATE TABLE "__gen__pair_int_8b7ec0fa0e1f9d69" ("__id" INTEGER PRIMARY KEY,
 ```
 
 Interfaces carry no members. `interface_decl(Name, Parameters)` is a name plus
-parameter names; a bound is discharged by a `rel ... is Name(...)` row or by
-`json_encodable_type/3` structural admission (`0_generic_expand.pl:605-634`).
-Nothing dispatches on an interface at runtime.
+parameter names. A generic bound names an interface application:
+`rel box(T: json_encodable(any))(value: T).` keeps `T` as the implementing
+type and treats `any` as a wildcard for one complete interface argument.
+`rel text_box(T: encodable_as(text))(value: T).` requires the exact argument.
+Bare interfaces remain zero-argument shorthand. Implementations use the same
+application spelling in `rel ... is Name(...)`; implementation rows with
+different arguments coexist, while duplicate full applications are refused.
+The patterns and proofs live in the compiler `$type` plane and are erased
+before runtime declarations; ordered application arguments remain in catalog
+metadata for type generation.
 
 The type IR leaving expansion is `semantic_type_rows/1`, one sorted set of
 `declaration/5`, `parameter/4`, `member/5`, `constraint/3`, application,
