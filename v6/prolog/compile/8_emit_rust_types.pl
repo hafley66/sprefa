@@ -32,8 +32,12 @@ rust_option_alias_parts(Text, [Text]).
 % the public wire representation as the one SQLite INTEGER endpoint.
 rust_relation_id_alias_text(Rows,
                             '#[repr(transparent)]\n#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]\npub struct RelationId<T>(pub i64, pub std::marker::PhantomData<fn() -> T>);\n\nimpl<T> serde::Serialize for RelationId<T> {\n    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {\n        serde::Serialize::serialize(&self.0, serializer)\n    }\n}\n\nimpl<''de, T> serde::Deserialize<''de> for RelationId<T> {\n    fn deserialize<D: serde::Deserializer<''de>>(deserializer: D) -> Result<Self, D::Error> {\n        let value = <i64 as serde::Deserialize>::deserialize(deserializer)?;\n        Ok(Self(value, std::marker::PhantomData))\n    }\n}\n') :-
-    rust_relation_id_storage(Rows, _), !.
+    rust_relation_id_used(Rows), !.
 rust_relation_id_alias_text(_, '').
+
+rust_relation_id_used(Rows) :- rust_relation_id_storage(Rows, _), !.
+rust_relation_id_used(Rows) :-
+    member(row(_, _, _, _, relation_id_list, _, _, _, _, _, _), Rows).
 
 rust_relation_id_alias_parts('', []) :- !.
 rust_relation_id_alias_parts(Text, [Text]).
@@ -231,6 +235,12 @@ rust_kind(Rows, CollisionTypeNames, _TypeRow, _Name, json_list, ElementId, Type)
 rust_kind(Rows, CollisionTypeNames, _TypeRow, _Name, list, ElementId, Type) :-
     rust_type(Rows, CollisionTypeNames, ElementId, Element),
     format(string(Type), 'Vec<~w>', [Element]).
+rust_kind(Rows, CollisionTypeNames, _TypeRow, _Name, relation_id_list,
+          ElementId, Type) :-
+    member(TargetRow, Rows),
+    TargetRow = row(ElementId, _, _, _, rel, _, _, _, _, _, _),
+    emitted_type_name(Rows, CollisionTypeNames, TargetRow, Target),
+    format(string(Type), 'Vec<RelationId<~w>>', [Target]).
 rust_kind(Rows, CollisionTypeNames, _TypeRow, _Name, option, ElementId, Type) :-
     rust_type(Rows, CollisionTypeNames, ElementId, Element),
     format(string(Type), 'DlOption<~w>', [Element]).

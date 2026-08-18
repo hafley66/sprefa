@@ -84,6 +84,7 @@ rel_type_id(Rows, TypeId, TargetId) :-
     ).
 
 wrapper_kind(list).
+wrapper_kind(relation_id_list).
 wrapper_kind(json_list).
 wrapper_kind(option).
 
@@ -311,6 +312,10 @@ kind_schema(_Rows, _Prefix, _Target, Name, primitive, _Element, Schema) :-
     primitive_schema(Name, Schema).
 kind_schema(Rows, Prefix, _Target, _Name, list, ElementTypeId, Schema) :-
     column_schema(Rows, Prefix, ElementTypeId, ItemSchema),
+    Schema = _{ type: array, items: ItemSchema }.
+kind_schema(Rows, _Prefix, _Target, _Name, relation_id_list, ElementTypeId,
+            Schema) :-
+    relation_id_schema(Rows, ElementTypeId, ItemSchema),
     Schema = _{ type: array, items: ItemSchema }.
 kind_schema(Rows, Prefix, _Target, _Name, json_list, ElementTypeId, Schema) :-
     column_schema(Rows, Prefix, ElementTypeId, ItemSchema),
