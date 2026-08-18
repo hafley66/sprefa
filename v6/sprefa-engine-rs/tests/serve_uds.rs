@@ -60,8 +60,8 @@ fn compile_fixture(out_dir: &Path) -> GenProgram {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let module_text =
-        std::fs::read_to_string(out_dir.join(format!("{FIXTURE}.rs"))).expect("read emitted module");
+    let module_text = std::fs::read_to_string(out_dir.join(format!("{FIXTURE}.rs")))
+        .expect("read emitted module");
     let start = module_text.find("r#\"").expect("raw string open") + 3;
     let end = module_text[start..].find("\"#;").expect("raw string close") + start;
     let program_json: ProgramJson =
@@ -101,7 +101,9 @@ async fn boot_on_socket() -> Served {
         let socket = socket.clone();
         let cancel = cancel.clone();
         tokio::spawn(async move {
-            serve_on(state, listener, &socket, cancel).await.expect("serve");
+            serve_on(state, listener, &socket, cancel)
+                .await
+                .expect("serve");
         })
     };
     Served {
@@ -117,11 +119,10 @@ async fn client(socket: &Path) -> SendRequest<Full<Bytes>> {
     let stream = tokio::net::UnixStream::connect(socket)
         .await
         .expect("connect socket file");
-    let (sender, connection) = hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(
-        stream,
-    ))
-    .await
-    .expect("http handshake on the socket file");
+    let (sender, connection) =
+        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream))
+            .await
+            .expect("http handshake on the socket file");
     tokio::spawn(connection);
     sender
 }
@@ -328,7 +329,11 @@ async fn a_read_during_a_fold_is_never_torn() {
     let (_, settled) = call(&mut reader, "GET", "/rel/doubled", None).await;
     assert_eq!(rows_as_arrays(&settled), after);
 
-    let _ = served.state.read_rel("doubled").await.expect("library read");
+    let _ = served
+        .state
+        .read_rel("doubled")
+        .await
+        .expect("library read");
     served.cancel.cancel();
     served.task.await.expect("server task");
 }

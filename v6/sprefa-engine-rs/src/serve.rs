@@ -238,7 +238,9 @@ impl ServeState {
         F: FnOnce(oneshot::Sender<ServeResult>) -> EngineJob,
     {
         let (reply, answer) = oneshot::channel();
-        self.jobs.send(job(reply)).map_err(|_| ServeError::EngineGone)?;
+        self.jobs
+            .send(job(reply))
+            .map_err(|_| ServeError::EngineGone)?;
         answer.await.map_err(|_| ServeError::EngineGone)?
     }
 }
@@ -311,7 +313,11 @@ fn read_rel(program: &GenProgram, seam: &SqliteSeam, rel: &str) -> ServeResult {
         .get(rel)
         .ok_or_else(|| ServeError::NoSuchRel(rel.to_string()))?;
     let columns = program.rel_columns.get(rel).cloned().unwrap_or_default();
-    let types = program.rel_column_types.get(rel).cloned().unwrap_or_default();
+    let types = program
+        .rel_column_types
+        .get(rel)
+        .cloned()
+        .unwrap_or_default();
     let result = seam
         .execute(&SqlStatement {
             sql: select.clone(),
@@ -327,11 +333,7 @@ fn read_rel(program: &GenProgram, seam: &SqliteSeam, rel: &str) -> ServeResult {
     Ok(json!({ "rel": rel, "columns": columns, "rows": rows }))
 }
 
-fn row_object(
-    columns: &[String],
-    types: &[RowColumnType],
-    row: &[Value],
-) -> serde_json::Value {
+fn row_object(columns: &[String], types: &[RowColumnType], row: &[Value]) -> serde_json::Value {
     let mut object = serde_json::Map::new();
     for (index, value) in row.iter().enumerate() {
         let column = match columns.get(index) {
@@ -371,7 +373,9 @@ pub fn value_from_json(value: &serde_json::Value) -> Value {
         serde_json::Value::Bool(b) => Value::Bool(*b),
         serde_json::Value::String(text) => Value::Text(text.clone()),
         serde_json::Value::Null => Value::Text(String::new()),
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => Value::Text(value.to_string()),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            Value::Text(value.to_string())
+        }
     }
 }
 

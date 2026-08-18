@@ -21,7 +21,7 @@
 :- use_module(library(pairs)).
 :- use_module(analyze,
               [ conjunction_goals/2, edge_headed_refs/2,
-                program_refs/2, rule_head_ref/2,
+                declared_refs/2, program_refs/2, rule_head_ref/2,
                 rule_is_edge/1, rule_is_level/1 ]).
 :- use_module('compile/registry', [ body_surface_for_term/6, clock_role/4 ]).
 :- use_module('0_program_check', [relation_kind/3]).
@@ -370,6 +370,14 @@ clock_boundary(Program,
             TriggerRefs0),
     sort(TriggerRefs0, TriggerRefs),
     TriggerRefs = [_, _ | _].
+
+clock_boundary(Program, not_provable(externally_fed(Ref))) :-
+    Program = prog(Decls, Rules),
+    declared_refs(Decls, DeclaredRefs),
+    memberchk(Ref, DeclaredRefs),
+    clock_dependencies(Program, Dependencies),
+    member(dependency(_, Ref, _, _, _, _, _, _), Dependencies),
+    \+ ( member(Rule, Rules), rule_head_ref(Rule, Ref) ).
 
 % An arm's not(Atom) is a zero-test against a plane, and WHICH plane decides
 % whether the arm is a function of tick-start state or of arrival order.

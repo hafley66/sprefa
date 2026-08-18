@@ -1,8 +1,14 @@
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum Tree {
+    Leaf { value: i64 },
+    Branch { left: Tree, right: Tree },
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TreeBranch {
     pub id: i64,
-    pub left: i64,
-    pub right: i64,
+    pub left: Tree,
+    pub right: Tree,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

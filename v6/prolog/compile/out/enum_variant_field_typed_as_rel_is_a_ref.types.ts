@@ -1,3 +1,8 @@
+export type Grade =
+  | { tag: 'ripe'; subject: Tree; }
+  | { tag: 'bruised'; reason: string; }
+;
+
 export interface GradeBruised {
   id: number;
   reason: string;
@@ -15,7 +20,7 @@ export interface GradeTag {
 
 export interface Graded {
   id: number;
-  g: number;
+  g: Grade;
 }
 
 export interface GradedTag {

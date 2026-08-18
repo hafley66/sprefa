@@ -1,4 +1,10 @@
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum Grade {
+    Ripe { subject: Tree },
+    Bruised { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GradeBruised {
     pub id: i64,
     pub reason: String,
@@ -19,7 +25,7 @@ pub struct GradeTag {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Graded {
     pub id: i64,
-    pub g: i64,
+    pub g: Grade,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

@@ -93,7 +93,12 @@ async fn six_turns_fold_into_four_runs_one_bundle_and_one_ask() {
                 text("user"),
                 text("more\nplease")
             ],
-            vec![text("s"), Value::Integer(6), text("assistant"), text("done")],
+            vec![
+                text("s"),
+                Value::Integer(6),
+                text("assistant"),
+                text("done")
+            ],
         ],
         "a run is the maximal same-role stretch, its turns concatenated in turn order"
     );

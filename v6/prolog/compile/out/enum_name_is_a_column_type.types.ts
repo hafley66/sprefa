@@ -1,3 +1,8 @@
+export type Grade =
+  | { tag: 'ripe'; sugar: number; }
+  | { tag: 'green'; days: number; }
+;
+
 export interface GradeGreen {
   id: number;
   days: number;
@@ -15,7 +20,7 @@ export interface GradeTag {
 
 export interface Picked {
   id: number;
-  g: number;
+  g: Grade;
 }
 
 export interface PickedTag {
