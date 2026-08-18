@@ -66,11 +66,12 @@ export const query_plans: readonly IQueryPlanData[] = [];
 export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
-function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint | Uint8Array)[] {
   return values.map((value) => {
     if (typeof value === "boolean") return BigInt(value ? 1 : 0);
     if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
     if (typeof value === "string") return value;
+    if (value instanceof Uint8Array) return value;
     throw list_at_scalar_seam("sql_parameter");
   });
 }
@@ -113,6 +114,10 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
         : type === "float" ? false
         : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      if (type === "bytes") {
+        if (!(value instanceof Uint8Array)) throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bytes`);
+        return value;
+      }
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
         return value;
@@ -236,51 +241,52 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
-  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "option_list_of_rel_round_trips_absent_and_present", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "4894f3f5e18179b3", h_schema: "", h_rule: "" },
-  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "__gen__list_fighter_summary_b424a4b49951eef7", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "db1f6a3b1a3aae37", h_schema: "81c1647cd32d17ae", h_rule: "" },
-  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "content", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "bcb2714212b062d4", h_schema: "", h_rule: "" },
-  { rel_id: 9, parent_id: 6, ordinal: 0, local_name: "__gen__list_fighter_summary_b424a4b49951eef7__member", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "4d1ba07fe40deb61", h_schema: "623606f2ec0476d3", h_rule: "" },
-  { rel_id: 10, parent_id: 9, ordinal: 1, local_name: "list_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "4f1b8e7e8c70b834", h_schema: "", h_rule: "" },
-  { rel_id: 11, parent_id: 9, ordinal: 2, local_name: "idx", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "e47ad097ae50203c", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 9, ordinal: 3, local_name: "value", kind: "column", type_id: 13, arity: 0, module_id: 6, h_id: "29f0801daf57d86b", h_schema: "", h_rule: "" },
-  { rel_id: 13, parent_id: 6, ordinal: 0, local_name: "fighter_summary", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "3ae7bba0f87792cc", h_schema: "39127c1a394f7ecd", h_rule: "" },
-  { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "523b3220c51de674", h_schema: "", h_rule: "" },
-  { rel_id: 15, parent_id: 13, ordinal: 2, local_name: "url", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "9f020936df99b2c5", h_schema: "", h_rule: "" },
-  { rel_id: 16, parent_id: 6, ordinal: 0, local_name: "squad", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "cb015c5eb0231f98", h_schema: "a910993d429fe6c3", h_rule: "" },
-  { rel_id: 17, parent_id: 16, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "3dd9f90c61354c5c", h_schema: "", h_rule: "" },
-  { rel_id: 18, parent_id: 6, ordinal: 0, local_name: "squad__members", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "6f44491c00109ea0", h_schema: "fe43912585e781e2", h_rule: "" },
-  { rel_id: 19, parent_id: 18, ordinal: 1, local_name: "squad_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "d949388b63540a2f", h_schema: "", h_rule: "" },
-  { rel_id: 20, parent_id: 18, ordinal: 2, local_name: "__gen__list_fighter_summary_b424a4b49951eef7_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "6022f93a934a6e1f", h_schema: "", h_rule: "" },
-  { rel_id: 21, parent_id: 7, ordinal: 0, local_name: "__delta___gen__list_fighter_summary_b424a4b49951eef7", kind: "delta", type_id: 0, arity: 3, module_id: 6, h_id: "f907e175d8f23ce6", h_schema: "9e01bcca4b88a13b", h_rule: "" },
-  { rel_id: 22, parent_id: 7, ordinal: 0, local_name: "__frontier___gen__list_fighter_summary_b424a4b49951eef7", kind: "frontier", type_id: 0, arity: 3, module_id: 6, h_id: "286399da1121e457", h_schema: "dc680ebcab7482bc", h_rule: "" },
-  { rel_id: 23, parent_id: 7, ordinal: 0, local_name: "__next_frontier___gen__list_fighter_summary_b424a4b49951eef7", kind: "next_frontier", type_id: 0, arity: 3, module_id: 6, h_id: "ff2502fd05f77a01", h_schema: "dc680ebcab7482bc", h_rule: "" },
-  { rel_id: 24, parent_id: 7, ordinal: 0, local_name: "__txt___gen__list_fighter_summary_b424a4b49951eef7", kind: "view", type_id: 0, arity: 1, module_id: 6, h_id: "e3d252266cbcf516", h_schema: "cdeff6a16f5bcfee", h_rule: "" },
-  { rel_id: 25, parent_id: 21, ordinal: 0, local_name: "__txt___delta___gen__list_fighter_summary_b424a4b49951eef7", kind: "view", type_id: 0, arity: 3, module_id: 6, h_id: "2063f5d3d2c91479", h_schema: "cdeff6a16f5bcfee", h_rule: "" },
-  { rel_id: 26, parent_id: 9, ordinal: 0, local_name: "__delta___gen__list_fighter_summary_b424a4b49951eef7__member", kind: "delta", type_id: 0, arity: 5, module_id: 6, h_id: "5c4daf1a441c25ac", h_schema: "b2a7f40bf7763e58", h_rule: "" },
-  { rel_id: 27, parent_id: 9, ordinal: 0, local_name: "__frontier___gen__list_fighter_summary_b424a4b49951eef7__member", kind: "frontier", type_id: 0, arity: 5, module_id: 6, h_id: "0ee53354ba7756e1", h_schema: "493f64c8369b6945", h_rule: "" },
-  { rel_id: 28, parent_id: 9, ordinal: 0, local_name: "__next_frontier___gen__list_fighter_summary_b424a4b49951eef7__member", kind: "next_frontier", type_id: 0, arity: 5, module_id: 6, h_id: "e4a4385dc097d7ca", h_schema: "493f64c8369b6945", h_rule: "" },
-  { rel_id: 29, parent_id: 13, ordinal: 0, local_name: "__delta_fighter_summary", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "6490322dbf341e04", h_schema: "237bb8ba4ec279bb", h_rule: "" },
-  { rel_id: 30, parent_id: 13, ordinal: 0, local_name: "__frontier_fighter_summary", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "5243d22de501348b", h_schema: "9fe6e05191af163e", h_rule: "" },
-  { rel_id: 31, parent_id: 13, ordinal: 0, local_name: "__next_frontier_fighter_summary", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "f0d69b570a3fd92e", h_schema: "9fe6e05191af163e", h_rule: "" },
-  { rel_id: 32, parent_id: 13, ordinal: 0, local_name: "__txt_fighter_summary", kind: "view", type_id: 0, arity: 2, module_id: 6, h_id: "1517b38af66c5749", h_schema: "39127c1a394f7ecd", h_rule: "" },
-  { rel_id: 33, parent_id: 29, ordinal: 0, local_name: "__txt___delta_fighter_summary", kind: "view", type_id: 0, arity: 4, module_id: 6, h_id: "e5b47192905d1e2f", h_schema: "39127c1a394f7ecd", h_rule: "" },
-  { rel_id: 34, parent_id: 16, ordinal: 0, local_name: "__delta_squad", kind: "delta", type_id: 0, arity: 3, module_id: 6, h_id: "59eb0961da57e40d", h_schema: "d63e416beccf4892", h_rule: "" },
-  { rel_id: 35, parent_id: 16, ordinal: 0, local_name: "__frontier_squad", kind: "frontier", type_id: 0, arity: 3, module_id: 6, h_id: "e40a145997cc827f", h_schema: "a186680c4c0c99e7", h_rule: "" },
-  { rel_id: 36, parent_id: 16, ordinal: 0, local_name: "__next_frontier_squad", kind: "next_frontier", type_id: 0, arity: 3, module_id: 6, h_id: "30ad0a9a4f6de995", h_schema: "a186680c4c0c99e7", h_rule: "" },
-  { rel_id: 37, parent_id: 18, ordinal: 0, local_name: "__delta_squad__members", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "0791c319c36cb826", h_schema: "34a98920ab247bff", h_rule: "" },
-  { rel_id: 38, parent_id: 18, ordinal: 0, local_name: "__frontier_squad__members", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "3a16200116cf2986", h_schema: "68245381787988c4", h_rule: "" },
-  { rel_id: 39, parent_id: 18, ordinal: 0, local_name: "__next_frontier_squad__members", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "59964a344c943173", h_schema: "68245381787988c4", h_rule: "" },
-  { rel_id: 40, parent_id: 6, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 6, h_id: "01b45099e2988278", h_schema: "", h_rule: "" },
-  { rel_id: 41, parent_id: 6, ordinal: 0, local_name: "__ref_fighter_summary", kind: "dictionary", type_id: 13, arity: 4, module_id: 6, h_id: "5e1f71cece52d383", h_schema: "39127c1a394f7ecd", h_rule: "" },
-  { rel_id: 42, parent_id: 8, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "c9760a7b8427ca49", h_schema: "", h_rule: "" },
-  { rel_id: 43, parent_id: 10, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "5a5d7fceb898e0df", h_schema: "", h_rule: "" },
-  { rel_id: 44, parent_id: 11, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "d6af7f7b59252d0c", h_schema: "", h_rule: "" },
-  { rel_id: 45, parent_id: 12, ordinal: 3, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "cbf4b86723bdaf8b", h_schema: "", h_rule: "" },
-  { rel_id: 46, parent_id: 14, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "4505cd94dadac8b3", h_schema: "", h_rule: "" },
-  { rel_id: 47, parent_id: 15, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "b100ca62f4992fec", h_schema: "", h_rule: "" },
-  { rel_id: 48, parent_id: 17, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "e979760d0927895f", h_schema: "", h_rule: "" },
-  { rel_id: 49, parent_id: 19, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "8df6b65f16d5b172", h_schema: "", h_rule: "" },
-  { rel_id: 50, parent_id: 20, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "1008111db591b78b", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "bytes", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 0, ordinal: 0, local_name: "option_list_of_rel_round_trips_absent_and_present", kind: "module", type_id: 0, arity: 0, module_id: 7, h_id: "4894f3f5e18179b3", h_schema: "", h_rule: "" },
+  { rel_id: 8, parent_id: 7, ordinal: 0, local_name: "__gen__list_fighter_summary_b424a4b49951eef7", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "db1f6a3b1a3aae37", h_schema: "81c1647cd32d17ae", h_rule: "" },
+  { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "content", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "bcb2714212b062d4", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 7, ordinal: 0, local_name: "__gen__list_fighter_summary_b424a4b49951eef7__member", kind: "rel", type_id: 0, arity: 3, module_id: 7, h_id: "4d1ba07fe40deb61", h_schema: "623606f2ec0476d3", h_rule: "" },
+  { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "list_id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "4f1b8e7e8c70b834", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "idx", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "e47ad097ae50203c", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 10, ordinal: 3, local_name: "value", kind: "column", type_id: 14, arity: 0, module_id: 7, h_id: "29f0801daf57d86b", h_schema: "", h_rule: "" },
+  { rel_id: 14, parent_id: 7, ordinal: 0, local_name: "fighter_summary", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "3ae7bba0f87792cc", h_schema: "39127c1a394f7ecd", h_rule: "" },
+  { rel_id: 15, parent_id: 14, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "523b3220c51de674", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 14, ordinal: 2, local_name: "url", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "9f020936df99b2c5", h_schema: "", h_rule: "" },
+  { rel_id: 17, parent_id: 7, ordinal: 0, local_name: "squad", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "cb015c5eb0231f98", h_schema: "a910993d429fe6c3", h_rule: "" },
+  { rel_id: 18, parent_id: 17, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "3dd9f90c61354c5c", h_schema: "", h_rule: "" },
+  { rel_id: 19, parent_id: 7, ordinal: 0, local_name: "squad__members", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "6f44491c00109ea0", h_schema: "fe43912585e781e2", h_rule: "" },
+  { rel_id: 20, parent_id: 19, ordinal: 1, local_name: "squad_id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "d949388b63540a2f", h_schema: "", h_rule: "" },
+  { rel_id: 21, parent_id: 19, ordinal: 2, local_name: "__gen__list_fighter_summary_b424a4b49951eef7_id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "6022f93a934a6e1f", h_schema: "", h_rule: "" },
+  { rel_id: 22, parent_id: 8, ordinal: 0, local_name: "__delta___gen__list_fighter_summary_b424a4b49951eef7", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "f907e175d8f23ce6", h_schema: "9e01bcca4b88a13b", h_rule: "" },
+  { rel_id: 23, parent_id: 8, ordinal: 0, local_name: "__frontier___gen__list_fighter_summary_b424a4b49951eef7", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "286399da1121e457", h_schema: "dc680ebcab7482bc", h_rule: "" },
+  { rel_id: 24, parent_id: 8, ordinal: 0, local_name: "__next_frontier___gen__list_fighter_summary_b424a4b49951eef7", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "ff2502fd05f77a01", h_schema: "dc680ebcab7482bc", h_rule: "" },
+  { rel_id: 25, parent_id: 8, ordinal: 0, local_name: "__txt___gen__list_fighter_summary_b424a4b49951eef7", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "e3d252266cbcf516", h_schema: "cdeff6a16f5bcfee", h_rule: "" },
+  { rel_id: 26, parent_id: 22, ordinal: 0, local_name: "__txt___delta___gen__list_fighter_summary_b424a4b49951eef7", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "2063f5d3d2c91479", h_schema: "cdeff6a16f5bcfee", h_rule: "" },
+  { rel_id: 27, parent_id: 10, ordinal: 0, local_name: "__delta___gen__list_fighter_summary_b424a4b49951eef7__member", kind: "delta", type_id: 0, arity: 5, module_id: 7, h_id: "5c4daf1a441c25ac", h_schema: "b2a7f40bf7763e58", h_rule: "" },
+  { rel_id: 28, parent_id: 10, ordinal: 0, local_name: "__frontier___gen__list_fighter_summary_b424a4b49951eef7__member", kind: "frontier", type_id: 0, arity: 5, module_id: 7, h_id: "0ee53354ba7756e1", h_schema: "493f64c8369b6945", h_rule: "" },
+  { rel_id: 29, parent_id: 10, ordinal: 0, local_name: "__next_frontier___gen__list_fighter_summary_b424a4b49951eef7__member", kind: "next_frontier", type_id: 0, arity: 5, module_id: 7, h_id: "e4a4385dc097d7ca", h_schema: "493f64c8369b6945", h_rule: "" },
+  { rel_id: 30, parent_id: 14, ordinal: 0, local_name: "__delta_fighter_summary", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "6490322dbf341e04", h_schema: "237bb8ba4ec279bb", h_rule: "" },
+  { rel_id: 31, parent_id: 14, ordinal: 0, local_name: "__frontier_fighter_summary", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "5243d22de501348b", h_schema: "9fe6e05191af163e", h_rule: "" },
+  { rel_id: 32, parent_id: 14, ordinal: 0, local_name: "__next_frontier_fighter_summary", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "f0d69b570a3fd92e", h_schema: "9fe6e05191af163e", h_rule: "" },
+  { rel_id: 33, parent_id: 14, ordinal: 0, local_name: "__txt_fighter_summary", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "1517b38af66c5749", h_schema: "39127c1a394f7ecd", h_rule: "" },
+  { rel_id: 34, parent_id: 30, ordinal: 0, local_name: "__txt___delta_fighter_summary", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "e5b47192905d1e2f", h_schema: "39127c1a394f7ecd", h_rule: "" },
+  { rel_id: 35, parent_id: 17, ordinal: 0, local_name: "__delta_squad", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "59eb0961da57e40d", h_schema: "d63e416beccf4892", h_rule: "" },
+  { rel_id: 36, parent_id: 17, ordinal: 0, local_name: "__frontier_squad", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "e40a145997cc827f", h_schema: "a186680c4c0c99e7", h_rule: "" },
+  { rel_id: 37, parent_id: 17, ordinal: 0, local_name: "__next_frontier_squad", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "30ad0a9a4f6de995", h_schema: "a186680c4c0c99e7", h_rule: "" },
+  { rel_id: 38, parent_id: 19, ordinal: 0, local_name: "__delta_squad__members", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "0791c319c36cb826", h_schema: "34a98920ab247bff", h_rule: "" },
+  { rel_id: 39, parent_id: 19, ordinal: 0, local_name: "__frontier_squad__members", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "3a16200116cf2986", h_schema: "68245381787988c4", h_rule: "" },
+  { rel_id: 40, parent_id: 19, ordinal: 0, local_name: "__next_frontier_squad__members", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "59964a344c943173", h_schema: "68245381787988c4", h_rule: "" },
+  { rel_id: 41, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "01b45099e2988278", h_schema: "", h_rule: "" },
+  { rel_id: 42, parent_id: 7, ordinal: 0, local_name: "__ref_fighter_summary", kind: "dictionary", type_id: 14, arity: 4, module_id: 7, h_id: "5e1f71cece52d383", h_schema: "39127c1a394f7ecd", h_rule: "" },
+  { rel_id: 43, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "c9760a7b8427ca49", h_schema: "", h_rule: "" },
+  { rel_id: 44, parent_id: 11, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "5a5d7fceb898e0df", h_schema: "", h_rule: "" },
+  { rel_id: 45, parent_id: 12, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "d6af7f7b59252d0c", h_schema: "", h_rule: "" },
+  { rel_id: 46, parent_id: 13, ordinal: 3, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "cbf4b86723bdaf8b", h_schema: "", h_rule: "" },
+  { rel_id: 47, parent_id: 15, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "4505cd94dadac8b3", h_schema: "", h_rule: "" },
+  { rel_id: 48, parent_id: 16, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "b100ca62f4992fec", h_schema: "", h_rule: "" },
+  { rel_id: 49, parent_id: 18, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "e979760d0927895f", h_schema: "", h_rule: "" },
+  { rel_id: 50, parent_id: 20, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "8df6b65f16d5b172", h_schema: "", h_rule: "" },
+  { rel_id: 51, parent_id: 21, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "1008111db591b78b", h_schema: "", h_rule: "" },
 ];
 
 const rel_declared_column_types: Record<string, readonly string[]> = {

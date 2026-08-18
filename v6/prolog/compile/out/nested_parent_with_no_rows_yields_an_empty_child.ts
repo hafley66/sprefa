@@ -64,11 +64,12 @@ export const query_plans: readonly IQueryPlanData[] = [];
 export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
-function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint | Uint8Array)[] {
   return values.map((value) => {
     if (typeof value === "boolean") return BigInt(value ? 1 : 0);
     if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
     if (typeof value === "string") return value;
+    if (value instanceof Uint8Array) return value;
     throw list_at_scalar_seam("sql_parameter");
   });
 }
@@ -111,6 +112,10 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
         : type === "float" ? false
         : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      if (type === "bytes") {
+        if (!(value instanceof Uint8Array)) throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bytes`);
+        return value;
+      }
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
         return value;
@@ -216,42 +221,43 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
-  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "nested_parent_with_no_rows_yields_an_empty_child", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "f10da5bb14376346", h_schema: "", h_rule: "" },
-  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "orchard", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "2c27e25ae5b4c35e", h_schema: "bfc7760ce646b511", h_rule: "a19e77b4c907d9e4" },
-  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "orchard_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "7a4a523a8f681795", h_schema: "", h_rule: "" },
-  { rel_id: 9, parent_id: 7, ordinal: 0, local_name: "tree", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "6bd2b850858c526f", h_schema: "24f8644f82c60a70", h_rule: "1a1e9238d1daa4b1" },
-  { rel_id: 10, parent_id: 9, ordinal: 1, local_name: "parent", kind: "column", type_id: 7, arity: 0, module_id: 6, h_id: "0d8fdfab71117d3e", h_schema: "", h_rule: "" },
-  { rel_id: 11, parent_id: 9, ordinal: 2, local_name: "tree_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "a9f745a3a1c98f09", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 6, ordinal: 0, local_name: "planted", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "06850b1addcde2d3", h_schema: "64811b7b6593ff9a", h_rule: "" },
-  { rel_id: 13, parent_id: 12, ordinal: 1, local_name: "orchard_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "4bd8a0e265d72bd1", h_schema: "", h_rule: "" },
-  { rel_id: 14, parent_id: 12, ordinal: 2, local_name: "tree_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "79f9b9b8a87b43dc", h_schema: "", h_rule: "" },
-  { rel_id: 15, parent_id: 6, ordinal: 0, local_name: "seeded", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "e8607d09d8ecc5ad", h_schema: "64811b7b6593ff9a", h_rule: "" },
-  { rel_id: 16, parent_id: 15, ordinal: 1, local_name: "orchard_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "5fc3e8832bfd777a", h_schema: "", h_rule: "" },
-  { rel_id: 17, parent_id: 15, ordinal: 2, local_name: "tree_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "4491fb73cbf17e03", h_schema: "", h_rule: "" },
-  { rel_id: 18, parent_id: 7, ordinal: 0, local_name: "__delta_orchard", kind: "delta", type_id: 0, arity: 3, module_id: 6, h_id: "95676068257512f7", h_schema: "9d7430d8859f29e3", h_rule: "" },
-  { rel_id: 19, parent_id: 7, ordinal: 0, local_name: "__frontier_orchard", kind: "frontier", type_id: 0, arity: 3, module_id: 6, h_id: "e83749d18830a978", h_schema: "f8a0192467caa03f", h_rule: "" },
-  { rel_id: 20, parent_id: 7, ordinal: 0, local_name: "__next_frontier_orchard", kind: "next_frontier", type_id: 0, arity: 3, module_id: 6, h_id: "a8cdca4ee1e832cf", h_schema: "f8a0192467caa03f", h_rule: "" },
-  { rel_id: 21, parent_id: 9, ordinal: 0, local_name: "__delta_orchard__tree", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "f64288812373d815", h_schema: "1cccc6934739c59d", h_rule: "" },
-  { rel_id: 22, parent_id: 9, ordinal: 0, local_name: "__frontier_orchard__tree", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "e948757e3615f742", h_schema: "7ca2780c51472bcd", h_rule: "" },
-  { rel_id: 23, parent_id: 9, ordinal: 0, local_name: "__next_frontier_orchard__tree", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "fdb9392ef355c57d", h_schema: "7ca2780c51472bcd", h_rule: "" },
-  { rel_id: 24, parent_id: 12, ordinal: 0, local_name: "__delta_planted", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "e900925021729269", h_schema: "4dfcfad980c79599", h_rule: "" },
-  { rel_id: 25, parent_id: 12, ordinal: 0, local_name: "__frontier_planted", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "01f312c0b3a3e087", h_schema: "61d28582e7d22eba", h_rule: "" },
-  { rel_id: 26, parent_id: 12, ordinal: 0, local_name: "__next_frontier_planted", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "710f1cb56661a5d2", h_schema: "61d28582e7d22eba", h_rule: "" },
-  { rel_id: 27, parent_id: 15, ordinal: 0, local_name: "__delta_seeded", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "a7236ac5a0c7c5d8", h_schema: "4dfcfad980c79599", h_rule: "" },
-  { rel_id: 28, parent_id: 15, ordinal: 0, local_name: "__frontier_seeded", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "a0512e1db979bc9d", h_schema: "61d28582e7d22eba", h_rule: "" },
-  { rel_id: 29, parent_id: 15, ordinal: 0, local_name: "__next_frontier_seeded", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "4628862f23092683", h_schema: "61d28582e7d22eba", h_rule: "" },
-  { rel_id: 30, parent_id: 6, ordinal: 0, local_name: "__ref_orchard", kind: "dictionary", type_id: 7, arity: 3, module_id: 6, h_id: "2b79cfadda8b87ac", h_schema: "bfc7760ce646b511", h_rule: "" },
-  { rel_id: 31, parent_id: 7, ordinal: 0, local_name: "__support_next_orchard", kind: "refcount", type_id: 0, arity: 2, module_id: 6, h_id: "032bc55123d2b30e", h_schema: "", h_rule: "" },
-  { rel_id: 32, parent_id: 7, ordinal: 0, local_name: "__new_orchard", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 6, h_id: "771e0861a9b8514c", h_schema: "", h_rule: "" },
-  { rel_id: 33, parent_id: 9, ordinal: 0, local_name: "__support_next_orchard__tree", kind: "refcount", type_id: 0, arity: 3, module_id: 6, h_id: "f54555d668142e22", h_schema: "", h_rule: "" },
-  { rel_id: 34, parent_id: 9, ordinal: 0, local_name: "__new_orchard__tree", kind: "refcount_staging", type_id: 0, arity: 3, module_id: 6, h_id: "164a2cb0a45a852c", h_schema: "", h_rule: "" },
-  { rel_id: 35, parent_id: 8, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "faf346372327113c", h_schema: "", h_rule: "" },
-  { rel_id: 36, parent_id: 10, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "84b6f475ff8f65b8", h_schema: "", h_rule: "" },
-  { rel_id: 37, parent_id: 11, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "1c0cbf50d15fc091", h_schema: "", h_rule: "" },
-  { rel_id: 38, parent_id: 13, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "0e9f997e1529bcb5", h_schema: "", h_rule: "" },
-  { rel_id: 39, parent_id: 14, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "db59a6241a91e2b3", h_schema: "", h_rule: "" },
-  { rel_id: 40, parent_id: 16, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "a0f3a881032d7a95", h_schema: "", h_rule: "" },
-  { rel_id: 41, parent_id: 17, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "397a0f8ae3036853", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "bytes", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 0, ordinal: 0, local_name: "nested_parent_with_no_rows_yields_an_empty_child", kind: "module", type_id: 0, arity: 0, module_id: 7, h_id: "f10da5bb14376346", h_schema: "", h_rule: "" },
+  { rel_id: 8, parent_id: 7, ordinal: 0, local_name: "orchard", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "2c27e25ae5b4c35e", h_schema: "bfc7760ce646b511", h_rule: "a19e77b4c907d9e4" },
+  { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "orchard_id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "7a4a523a8f681795", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "tree", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "6bd2b850858c526f", h_schema: "24f8644f82c60a70", h_rule: "1a1e9238d1daa4b1" },
+  { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "parent", kind: "column", type_id: 8, arity: 0, module_id: 7, h_id: "0d8fdfab71117d3e", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "tree_id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "a9f745a3a1c98f09", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 7, ordinal: 0, local_name: "planted", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "06850b1addcde2d3", h_schema: "64811b7b6593ff9a", h_rule: "" },
+  { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "orchard_id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "4bd8a0e265d72bd1", h_schema: "", h_rule: "" },
+  { rel_id: 15, parent_id: 13, ordinal: 2, local_name: "tree_id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "79f9b9b8a87b43dc", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 7, ordinal: 0, local_name: "seeded", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "e8607d09d8ecc5ad", h_schema: "64811b7b6593ff9a", h_rule: "" },
+  { rel_id: 17, parent_id: 16, ordinal: 1, local_name: "orchard_id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "5fc3e8832bfd777a", h_schema: "", h_rule: "" },
+  { rel_id: 18, parent_id: 16, ordinal: 2, local_name: "tree_id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "4491fb73cbf17e03", h_schema: "", h_rule: "" },
+  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__delta_orchard", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "95676068257512f7", h_schema: "9d7430d8859f29e3", h_rule: "" },
+  { rel_id: 20, parent_id: 8, ordinal: 0, local_name: "__frontier_orchard", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "e83749d18830a978", h_schema: "f8a0192467caa03f", h_rule: "" },
+  { rel_id: 21, parent_id: 8, ordinal: 0, local_name: "__next_frontier_orchard", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "a8cdca4ee1e832cf", h_schema: "f8a0192467caa03f", h_rule: "" },
+  { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__delta_orchard__tree", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "f64288812373d815", h_schema: "1cccc6934739c59d", h_rule: "" },
+  { rel_id: 23, parent_id: 10, ordinal: 0, local_name: "__frontier_orchard__tree", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "e948757e3615f742", h_schema: "7ca2780c51472bcd", h_rule: "" },
+  { rel_id: 24, parent_id: 10, ordinal: 0, local_name: "__next_frontier_orchard__tree", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "fdb9392ef355c57d", h_schema: "7ca2780c51472bcd", h_rule: "" },
+  { rel_id: 25, parent_id: 13, ordinal: 0, local_name: "__delta_planted", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "e900925021729269", h_schema: "4dfcfad980c79599", h_rule: "" },
+  { rel_id: 26, parent_id: 13, ordinal: 0, local_name: "__frontier_planted", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "01f312c0b3a3e087", h_schema: "61d28582e7d22eba", h_rule: "" },
+  { rel_id: 27, parent_id: 13, ordinal: 0, local_name: "__next_frontier_planted", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "710f1cb56661a5d2", h_schema: "61d28582e7d22eba", h_rule: "" },
+  { rel_id: 28, parent_id: 16, ordinal: 0, local_name: "__delta_seeded", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "a7236ac5a0c7c5d8", h_schema: "4dfcfad980c79599", h_rule: "" },
+  { rel_id: 29, parent_id: 16, ordinal: 0, local_name: "__frontier_seeded", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "a0512e1db979bc9d", h_schema: "61d28582e7d22eba", h_rule: "" },
+  { rel_id: 30, parent_id: 16, ordinal: 0, local_name: "__next_frontier_seeded", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "4628862f23092683", h_schema: "61d28582e7d22eba", h_rule: "" },
+  { rel_id: 31, parent_id: 7, ordinal: 0, local_name: "__ref_orchard", kind: "dictionary", type_id: 8, arity: 3, module_id: 7, h_id: "2b79cfadda8b87ac", h_schema: "bfc7760ce646b511", h_rule: "" },
+  { rel_id: 32, parent_id: 8, ordinal: 0, local_name: "__support_next_orchard", kind: "refcount", type_id: 0, arity: 2, module_id: 7, h_id: "032bc55123d2b30e", h_schema: "", h_rule: "" },
+  { rel_id: 33, parent_id: 8, ordinal: 0, local_name: "__new_orchard", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 7, h_id: "771e0861a9b8514c", h_schema: "", h_rule: "" },
+  { rel_id: 34, parent_id: 10, ordinal: 0, local_name: "__support_next_orchard__tree", kind: "refcount", type_id: 0, arity: 3, module_id: 7, h_id: "f54555d668142e22", h_schema: "", h_rule: "" },
+  { rel_id: 35, parent_id: 10, ordinal: 0, local_name: "__new_orchard__tree", kind: "refcount_staging", type_id: 0, arity: 3, module_id: 7, h_id: "164a2cb0a45a852c", h_schema: "", h_rule: "" },
+  { rel_id: 36, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "faf346372327113c", h_schema: "", h_rule: "" },
+  { rel_id: 37, parent_id: 11, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "84b6f475ff8f65b8", h_schema: "", h_rule: "" },
+  { rel_id: 38, parent_id: 12, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "1c0cbf50d15fc091", h_schema: "", h_rule: "" },
+  { rel_id: 39, parent_id: 14, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "0e9f997e1529bcb5", h_schema: "", h_rule: "" },
+  { rel_id: 40, parent_id: 15, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "db59a6241a91e2b3", h_schema: "", h_rule: "" },
+  { rel_id: 41, parent_id: 17, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "a0f3a881032d7a95", h_schema: "", h_rule: "" },
+  { rel_id: 42, parent_id: 18, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "397a0f8ae3036853", h_schema: "", h_rule: "" },
 ];
 
 const rel_declared_column_types: Record<string, readonly string[]> = {

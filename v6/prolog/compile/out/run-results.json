@@ -85,10 +85,10 @@
   },
   {
     "name": "list_bare_column_round_trips",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "wrong",
+    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"__gen__list_text_df210f232c1299bd\":{\"add\":[[\"[\\\"alpha\\\",\\\"beta\\\"]\"]],\"del\":[]},\"__gen__list_text_df210f232c1299bd__member\":{\"add\":[[100,0,\"alpha\"],[100,1,\"beta\"]],\"del\":[]},\"box\":{\"add\":[[1,[]]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"__gen__list_text_df210f232c1299bd\":{\"add\":[[\"[\\\"alpha\\\",\\\"beta\\\"]\"]],\"del\":[]},\"__gen__list_text_df210f232c1299bd__member\":{\"add\":[[100,0,\"alpha\"],[100,1,\"beta\"]],\"del\":[]},\"box\":{\"add\":[[1,[\"alpha\",\"beta\"]]],\"del\":[]}}}",
+    "final_bucket": "final_wrong",
+    "final_detail": "actual={\"final\":{\"__gen__list_text_df210f232c1299bd\":[[\"[\\\"alpha\\\",\\\"beta\\\"]\"]],\"__gen__list_text_df210f232c1299bd__member\":[[100,0,\"alpha\"]],\"box\":[[1,[]]]}} oracle={\"final\":{\"__gen__list_text_df210f232c1299bd\":[[\"[\\\"alpha\\\",\\\"beta\\\"]\"]],\"__gen__list_text_df210f232c1299bd__member\":[[100,0,\"alpha\"]],\"box\":[[1,[\"alpha\"]]]}}"
   },
   {
     "name": "list_bare_text_door",
@@ -162,17 +162,17 @@
   },
   {
     "name": "rel_element_list_round_trips",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "wrong",
+    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"__gen__list_fighter_summary_b424a4b49951eef7\":{\"add\":[[\"[{\\\"name\\\":\\\"ada\\\",\\\"url\\\":\\\"ada.io\\\"},{\\\"name\\\":\\\"bo\\\",\\\"url\\\":\\\"bo.io\\\"}]\"]],\"del\":[]},\"__gen__list_fighter_summary_b424a4b49951eef7__member\":{\"add\":[[100,0,{\"name\":\"ada\",\"url\":\"ada.io\"}],[100,1,{\"name\":\"bo\",\"url\":\"bo.io\"}]],\"del\":[]},\"fighter_summary\":{\"add\":[[\"ada\",\"ada.io\"],[\"bo\",\"bo.io\"]],\"del\":[]},\"squad\":{\"add\":[[1,[]]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"__gen__list_fighter_summary_b424a4b49951eef7\":{\"add\":[[\"[{\\\"name\\\":\\\"ada\\\",\\\"url\\\":\\\"ada.io\\\"},{\\\"name\\\":\\\"bo\\\",\\\"url\\\":\\\"bo.io\\\"}]\"]],\"del\":[]},\"__gen__list_fighter_summary_b424a4b49951eef7__member\":{\"add\":[[100,0,{\"name\":\"ada\",\"url\":\"ada.io\"}],[100,1,{\"name\":\"bo\",\"url\":\"bo.io\"}]],\"del\":[]},\"fighter_summary\":{\"add\":[[\"ada\",\"ada.io\"],[\"bo\",\"bo.io\"]],\"del\":[]},\"squad\":{\"add\":[[1,[{\"name\":\"ada\",\"url\":\"ada.io\"},{\"name\":\"bo\",\"url\":\"bo.io\"}]]],\"del\":[]}}}",
+    "final_bucket": "final_wrong",
+    "final_detail": "actual={\"final\":{\"__gen__list_fighter_summary_b424a4b49951eef7\":[[\"[{\\\"name\\\":\\\"ada\\\",\\\"url\\\":\\\"ada.io\\\"},{\\\"name\\\":\\\"bo\\\",\\\"url\\\":\\\"bo.io\\\"}]\"]],\"__gen__list_fighter_summary_b424a4b49951eef7__member\":[[100,0,{\"name\":\"ada\",\"url\":\"ada.io\"}],[100,2,{\"name\":\"cat\",\"url\":\"cat.io\"}]],\"fighter_summary\":[[\"ada\",\"ada.io\"],[\"bo\",\"bo.io\"],[\"cat\",\"cat.io\"]],\"squad\":[[1,[]]]}} oracle={\"final\":{\"__gen__list_fighter_summary_b424a4b49951eef7\":[[\"[{\\\"name\\\":\\\"ada\\\",\\\"url\\\":\\\"ada.io\\\"},{\\\"name\\\":\\\"bo\\\",\\\"url\\\":\\\"bo.io\\\"}]\"]],\"__gen__list_fighter_summary_b424a4b49951eef7__member\":[[100,0,{\"name\":\"ada\",\"url\":\"ada.io\"}],[100,2,{\"name\":\"cat\",\"url\":\"cat.io\"}]],\"fighter_summary\":[[\"ada\",\"ada.io\"],[\"bo\",\"bo.io\"],[\"cat\",\"cat.io\"]],\"squad\":[[1,[{\"name\":\"ada\",\"url\":\"ada.io\"},{\"name\":\"cat\",\"u"
   },
   {
     "name": "nested_rel_element_list_round_trips",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "wrong",
+    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"__gen__list_fighter_summary_b424a4b49951eef7\":{\"add\":[[\"[{\\\"name\\\":\\\"ada\\\",\\\"url\\\":\\\"ada.io\\\"}]\"]],\"del\":[]},\"__gen__list_fighter_summary_b424a4b49951eef7__member\":{\"add\":[[100,0,{\"name\":\"ada\",\"url\":\"ada.io\"}]],\"del\":[]},\"__gen__list_list_fighter_summary_de80754d44b67a64\":{\"add\":[[\"[[{\\\"name\\\":\\\"ada\\\",\\\"url\\\":\\\"ada.io\\\"}]]\"]],\"del\":[]},\"__gen__list_list_fighter_summary_de80754d44b67a64__member\":{\"add\":[[900,0,[]]],\"del\":[]},\"fighter_summary\":{\"add\":[[\"ada\",\"ada.io\"]],\"del\":[]},\"squad\":{\"add\":[[1,[]]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"__gen__list_fighter_summary_b424a4b49951eef7\":{\"add\":[[\"[{\\\"name\\\":\\\"ada\\\",\\\"url\\\":\\\"ada.io\\\"}]\"]],\"del\":[]},\"__gen__list_fighter_summary_b424a4b49951eef7__member\":{\"add\":[[100,0,{\"name\":\"ada\",\"url\":\"ada.io\"}]],\"del\":[]},\"__gen__list_list_fighter_summary_de80754d44b67a64\":{\"add\":[[\"[[{\\\"name\\\":\\\"ada\\\",\\\"url\\\":\\\"ada.io\\\"}]]\"]],\"del\":[]},\"__gen__list_list_fighter_summary_de80754d44b67a64__member\":{\"add\":[[900,0,[{\"name\":\"ada\",\"url\":\"ada.io\"}]]],\"del\":[]},\"fighter_summary\":{\"add\":[[\"ada\",\"ada.io\"]],\"del\":[]},\"squad\":{\"add\":[[1,[[{\"name\":\"ada\",\"url\":\"ada.io\"}]]]],\"del\":[]}}}",
+    "final_bucket": "final_wrong",
+    "final_detail": "actual={\"final\":{\"__gen__list_fighter_summary_b424a4b49951eef7\":[[\"[{\\\"name\\\":\\\"ada\\\",\\\"url\\\":\\\"ada.io\\\"}]\"]],\"__gen__list_fighter_summary_b424a4b49951eef7__member\":[[100,0,{\"name\":\"ada\",\"url\":\"ada.io\"}]],\"__gen__list_list_fighter_summary_de80754d44b67a64\":[[\"[[{\\\"name\\\":\\\"ada\\\",\\\"url\\\":\\\"ada.io\\\"}]]\"]],\"__gen__list_list_fighter_summary_de80754d44b67a64__member\":[[900,0,[]]],\"fighter_summary\":[[\"ada\",\"ad oracle={\"final\":{\"__gen__list_fighter_summary_b424a4b49951eef7\":[[\"[{\\\"name\\\":\\\"ada\\\",\\\"url\\\":\\\"ada.io\\\"}]\"]],\"__gen__list_fighter_summary_b424a4b49951eef7__member\":[[100,0,{\"name\":\"ada\",\"url\":\"ada.io\"}]],\"__gen__list_list_fighter_summary_de80754d44b67a64\":[[\"[[{\\\"name\\\":\\\"ada\\\",\\\"url\\\":\\\"ada.io\\\"}]]\"]],\"__gen__list_list_fighter_summary_de80754d44b67a64__member\":[[900,0,[{\"name\":\"ada\",\"url\":\"ada.io\"}]]],"
   },
   {
     "name": "rtrim_strips_trailing_chars",
@@ -385,6 +385,13 @@
     "final_detail": ""
   },
   {
+    "name": "option_of_option_of_scalar_keeps_its_stop",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "split_parts_carry_as_a_json_array",
     "bucket": "identical",
     "detail": "",
@@ -477,10 +484,10 @@
   },
   {
     "name": "recursive_list_arg_parent_holds_child_node_values",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "wrong",
+    "detail": "first diff at line 1: actual={\"tick\":1,\"deltas\":{\"__gen__list_node_4205b0871c875897\":{\"add\":[[\"[{\\\"children\\\":200,\\\"name\\\":\\\"leaf\\\"}]\"]],\"del\":[]},\"__gen__list_node_4205b0871c875897__member\":{\"add\":[[100,0,{\"children\":200,\"name\":\"leaf\"}]],\"del\":[]},\"node\":{\"add\":[[\"leaf\",[]],[\"root\",[]]],\"del\":[]}}} oracle={\"tick\":1,\"deltas\":{\"__gen__list_node_4205b0871c875897\":{\"add\":[[\"[{\\\"children\\\":200,\\\"name\\\":\\\"leaf\\\"}]\"]],\"del\":[]},\"__gen__list_node_4205b0871c875897__member\":{\"add\":[[100,0,{\"children\":200,\"name\":\"leaf\"}]],\"del\":[]},\"node\":{\"add\":[[\"leaf\",[]],[\"root\",[{\"children\":200,\"name\":\"leaf\"}]]],\"del\":[]}}}",
+    "final_bucket": "final_wrong",
+    "final_detail": "actual={\"final\":{\"__gen__list_node_4205b0871c875897\":[[\"[{\\\"children\\\":200,\\\"name\\\":\\\"leaf\\\"}]\"]],\"__gen__list_node_4205b0871c875897__member\":[[100,0,{\"children\":200,\"name\":\"leaf\"}]],\"node\":[[\"leaf\",[]],[\"root\",[]]]}} oracle={\"final\":{\"__gen__list_node_4205b0871c875897\":[[\"[{\\\"children\\\":200,\\\"name\\\":\\\"leaf\\\"}]\"]],\"__gen__list_node_4205b0871c875897__member\":[[100,0,{\"children\":200,\"name\":\"leaf\"}]],\"node\":[[\"leaf\",[]],[\"root\",[{\"children\":200,\"name\":\"leaf\"}]]]}}"
   },
   {
     "name": "split_value_is_the_interned_list_id",

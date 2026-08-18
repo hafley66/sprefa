@@ -63,11 +63,12 @@ export const query_plans: readonly IQueryPlanData[] = [];
 export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
-function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint | Uint8Array)[] {
   return values.map((value) => {
     if (typeof value === "boolean") return BigInt(value ? 1 : 0);
     if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
     if (typeof value === "string") return value;
+    if (value instanceof Uint8Array) return value;
     throw list_at_scalar_seam("sql_parameter");
   });
 }
@@ -110,6 +111,10 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
         : type === "float" ? false
         : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      if (type === "bytes") {
+        if (!(value instanceof Uint8Array)) throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bytes`);
+        return value;
+      }
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
         return value;
@@ -211,38 +216,39 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
-  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "coalesce_defaults_the_absent_row", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "493f644239a2dcce", h_schema: "", h_rule: "" },
-  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "latest_commit", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "d86ea41331bdc334", h_schema: "d4f3566ce68ea8d7", h_rule: "" },
-  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "ff171c27c95504d3", h_schema: "", h_rule: "" },
-  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "commit", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "6676d8bcfb330f05", h_schema: "", h_rule: "" },
-  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "repo", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "fb5bf5637a400c6d", h_schema: "a30b139c04a632dd", h_rule: "" },
-  { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "59120e6a2953bf7c", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 6, ordinal: 0, local_name: "repo_latest", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "7bbdefbd11ede7d6", h_schema: "d4f3566ce68ea8d7", h_rule: "c3efb226f7ab1144" },
-  { rel_id: 13, parent_id: 12, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "c53bf22b20321ba1", h_schema: "", h_rule: "" },
-  { rel_id: 14, parent_id: 12, ordinal: 2, local_name: "commit", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "f3e7cf27cef9963c", h_schema: "", h_rule: "" },
-  { rel_id: 15, parent_id: 7, ordinal: 0, local_name: "__delta_latest_commit", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "960f02108b1b3acd", h_schema: "9c8263b123d6a75d", h_rule: "" },
-  { rel_id: 16, parent_id: 7, ordinal: 0, local_name: "__frontier_latest_commit", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "1b01d1e7ebefe029", h_schema: "c1c3d361b1c63a4d", h_rule: "" },
-  { rel_id: 17, parent_id: 7, ordinal: 0, local_name: "__next_frontier_latest_commit", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "2c8b12e3290a5b86", h_schema: "c1c3d361b1c63a4d", h_rule: "" },
-  { rel_id: 18, parent_id: 7, ordinal: 0, local_name: "__txt_latest_commit", kind: "view", type_id: 0, arity: 2, module_id: 6, h_id: "d38c0bad5aa04c02", h_schema: "d4f3566ce68ea8d7", h_rule: "" },
-  { rel_id: 19, parent_id: 15, ordinal: 0, local_name: "__txt___delta_latest_commit", kind: "view", type_id: 0, arity: 4, module_id: 6, h_id: "cf390c5d2acce09b", h_schema: "d4f3566ce68ea8d7", h_rule: "" },
-  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__delta_repo", kind: "delta", type_id: 0, arity: 3, module_id: 6, h_id: "79fcee0f5fa4b25d", h_schema: "178788c545e561e2", h_rule: "" },
-  { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__frontier_repo", kind: "frontier", type_id: 0, arity: 3, module_id: 6, h_id: "7cb6e967dcf2b79e", h_schema: "de5b51999f205894", h_rule: "" },
-  { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__next_frontier_repo", kind: "next_frontier", type_id: 0, arity: 3, module_id: 6, h_id: "fa0513100e3333bb", h_schema: "de5b51999f205894", h_rule: "" },
-  { rel_id: 23, parent_id: 10, ordinal: 0, local_name: "__txt_repo", kind: "view", type_id: 0, arity: 1, module_id: 6, h_id: "ed0bd3a7a6837133", h_schema: "a30b139c04a632dd", h_rule: "" },
-  { rel_id: 24, parent_id: 20, ordinal: 0, local_name: "__txt___delta_repo", kind: "view", type_id: 0, arity: 3, module_id: 6, h_id: "15142ed5bf312d46", h_schema: "a30b139c04a632dd", h_rule: "" },
-  { rel_id: 25, parent_id: 12, ordinal: 0, local_name: "__delta_repo_latest", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "e36a150db280087d", h_schema: "9c8263b123d6a75d", h_rule: "" },
-  { rel_id: 26, parent_id: 12, ordinal: 0, local_name: "__frontier_repo_latest", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "3d293787f5e4c42a", h_schema: "c1c3d361b1c63a4d", h_rule: "" },
-  { rel_id: 27, parent_id: 12, ordinal: 0, local_name: "__next_frontier_repo_latest", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "8ee2d4d6cc8a6c25", h_schema: "c1c3d361b1c63a4d", h_rule: "" },
-  { rel_id: 28, parent_id: 12, ordinal: 0, local_name: "__txt_repo_latest", kind: "view", type_id: 0, arity: 2, module_id: 6, h_id: "8f8ab542910497ce", h_schema: "d4f3566ce68ea8d7", h_rule: "" },
-  { rel_id: 29, parent_id: 25, ordinal: 0, local_name: "__txt___delta_repo_latest", kind: "view", type_id: 0, arity: 4, module_id: 6, h_id: "fc515d849a924385", h_schema: "d4f3566ce68ea8d7", h_rule: "" },
-  { rel_id: 30, parent_id: 6, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 6, h_id: "e54624c92bebd97d", h_schema: "", h_rule: "" },
-  { rel_id: 31, parent_id: 12, ordinal: 0, local_name: "__support_next_repo_latest", kind: "refcount", type_id: 0, arity: 3, module_id: 6, h_id: "debef49295cfda57", h_schema: "", h_rule: "" },
-  { rel_id: 32, parent_id: 12, ordinal: 0, local_name: "__new_repo_latest", kind: "refcount_staging", type_id: 0, arity: 3, module_id: 6, h_id: "1f1c667a4e1e29a2", h_schema: "", h_rule: "" },
-  { rel_id: 33, parent_id: 8, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "44eaba39d85a344d", h_schema: "", h_rule: "" },
-  { rel_id: 34, parent_id: 9, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "47cc4277c587f076", h_schema: "", h_rule: "" },
-  { rel_id: 35, parent_id: 11, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "89e1111ea2625fea", h_schema: "", h_rule: "" },
-  { rel_id: 36, parent_id: 13, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "00b00c26e0cf3389", h_schema: "", h_rule: "" },
-  { rel_id: 37, parent_id: 14, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "41ecd46ea596ea99", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "bytes", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 0, ordinal: 0, local_name: "coalesce_defaults_the_absent_row", kind: "module", type_id: 0, arity: 0, module_id: 7, h_id: "493f644239a2dcce", h_schema: "", h_rule: "" },
+  { rel_id: 8, parent_id: 7, ordinal: 0, local_name: "latest_commit", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "d86ea41331bdc334", h_schema: "d4f3566ce68ea8d7", h_rule: "" },
+  { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "ff171c27c95504d3", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 8, ordinal: 2, local_name: "commit", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "6676d8bcfb330f05", h_schema: "", h_rule: "" },
+  { rel_id: 11, parent_id: 7, ordinal: 0, local_name: "repo", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "fb5bf5637a400c6d", h_schema: "a30b139c04a632dd", h_rule: "" },
+  { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "59120e6a2953bf7c", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 7, ordinal: 0, local_name: "repo_latest", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "7bbdefbd11ede7d6", h_schema: "d4f3566ce68ea8d7", h_rule: "c3efb226f7ab1144" },
+  { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "c53bf22b20321ba1", h_schema: "", h_rule: "" },
+  { rel_id: 15, parent_id: 13, ordinal: 2, local_name: "commit", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "f3e7cf27cef9963c", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__delta_latest_commit", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "960f02108b1b3acd", h_schema: "9c8263b123d6a75d", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__frontier_latest_commit", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "1b01d1e7ebefe029", h_schema: "c1c3d361b1c63a4d", h_rule: "" },
+  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__next_frontier_latest_commit", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "2c8b12e3290a5b86", h_schema: "c1c3d361b1c63a4d", h_rule: "" },
+  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__txt_latest_commit", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "d38c0bad5aa04c02", h_schema: "d4f3566ce68ea8d7", h_rule: "" },
+  { rel_id: 20, parent_id: 16, ordinal: 0, local_name: "__txt___delta_latest_commit", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "cf390c5d2acce09b", h_schema: "d4f3566ce68ea8d7", h_rule: "" },
+  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__delta_repo", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "79fcee0f5fa4b25d", h_schema: "178788c545e561e2", h_rule: "" },
+  { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__frontier_repo", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "7cb6e967dcf2b79e", h_schema: "de5b51999f205894", h_rule: "" },
+  { rel_id: 23, parent_id: 11, ordinal: 0, local_name: "__next_frontier_repo", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "fa0513100e3333bb", h_schema: "de5b51999f205894", h_rule: "" },
+  { rel_id: 24, parent_id: 11, ordinal: 0, local_name: "__txt_repo", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "ed0bd3a7a6837133", h_schema: "a30b139c04a632dd", h_rule: "" },
+  { rel_id: 25, parent_id: 21, ordinal: 0, local_name: "__txt___delta_repo", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "15142ed5bf312d46", h_schema: "a30b139c04a632dd", h_rule: "" },
+  { rel_id: 26, parent_id: 13, ordinal: 0, local_name: "__delta_repo_latest", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "e36a150db280087d", h_schema: "9c8263b123d6a75d", h_rule: "" },
+  { rel_id: 27, parent_id: 13, ordinal: 0, local_name: "__frontier_repo_latest", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "3d293787f5e4c42a", h_schema: "c1c3d361b1c63a4d", h_rule: "" },
+  { rel_id: 28, parent_id: 13, ordinal: 0, local_name: "__next_frontier_repo_latest", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "8ee2d4d6cc8a6c25", h_schema: "c1c3d361b1c63a4d", h_rule: "" },
+  { rel_id: 29, parent_id: 13, ordinal: 0, local_name: "__txt_repo_latest", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "8f8ab542910497ce", h_schema: "d4f3566ce68ea8d7", h_rule: "" },
+  { rel_id: 30, parent_id: 26, ordinal: 0, local_name: "__txt___delta_repo_latest", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "fc515d849a924385", h_schema: "d4f3566ce68ea8d7", h_rule: "" },
+  { rel_id: 31, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "e54624c92bebd97d", h_schema: "", h_rule: "" },
+  { rel_id: 32, parent_id: 13, ordinal: 0, local_name: "__support_next_repo_latest", kind: "refcount", type_id: 0, arity: 3, module_id: 7, h_id: "debef49295cfda57", h_schema: "", h_rule: "" },
+  { rel_id: 33, parent_id: 13, ordinal: 0, local_name: "__new_repo_latest", kind: "refcount_staging", type_id: 0, arity: 3, module_id: 7, h_id: "1f1c667a4e1e29a2", h_schema: "", h_rule: "" },
+  { rel_id: 34, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "44eaba39d85a344d", h_schema: "", h_rule: "" },
+  { rel_id: 35, parent_id: 10, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "47cc4277c587f076", h_schema: "", h_rule: "" },
+  { rel_id: 36, parent_id: 12, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "89e1111ea2625fea", h_schema: "", h_rule: "" },
+  { rel_id: 37, parent_id: 14, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "00b00c26e0cf3389", h_schema: "", h_rule: "" },
+  { rel_id: 38, parent_id: 15, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "41ecd46ea596ea99", h_schema: "", h_rule: "" },
 ];
 
 const rel_declared_column_types: Record<string, readonly string[]> = {

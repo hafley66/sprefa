@@ -62,7 +62,7 @@
   {"name":"option_dense_sequence_of_rel_round_trips_absent_and_present","file":"14_option_wrapper_walk.pl","bucket":"compiled","reason":""},
   {"name":"option_list_of_scalar_and_of_rel_in_one_rel","file":"14_option_wrapper_walk.pl","bucket":"compiled","reason":""},
   {"name":"option_of_json_list_keeps_its_stop","file":"14_option_wrapper_walk.pl","bucket":"unsupported","reason":"option_element_type_unknown(json_list(int))"},
-  {"name":"option_of_option_of_scalar_keeps_its_stop","file":"14_option_wrapper_walk.pl","bucket":"unsupported","reason":"option_element_type_unknown(option(int))"},
+  {"name":"option_of_option_of_scalar_keeps_its_stop","file":"14_option_wrapper_walk.pl","bucket":"compiled","reason":""},
   {"name":"option_of_interned_set_of_rel_is_refused","file":"14_option_wrapper_walk.pl","bucket":"unsupported","reason":"list_interned_set_relation_element(fighter_summary)"},
   {"name":"option_companion_name_collision_is_named","file":"14_option_wrapper_walk.pl","bucket":"unsupported","reason":"option_companion_name_collision(pair_holder__before/1,pair_holder/2,before)"},
   {"name":"reference_target_emptied_by_option_split_is_named","file":"14_option_wrapper_walk.pl","bucket":"unsupported","reason":"reference_target_has_no_columns(squad/0)"},
