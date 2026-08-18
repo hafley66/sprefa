@@ -1,0 +1,12 @@
+use "a/model.dl6".
+use "b/model.dl6".
+
+rel Person(name: text).
+rel person(name: text).
+rel source(name: text).
+rel imported(name: text).
+rel derived(name: text).
+
+source("direct").
+imported(Name) <- First(Name).
+derived(Name) <- imported(Name).
