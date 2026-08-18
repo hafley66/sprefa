@@ -336,6 +336,14 @@ pick_count(TreeId, PickCountValue) <+
 # reference id column) plus the derived tag view grade_tag/2.
 rel grade(ripe(sugar: int) ; green(days: int) ; bruised(reason: text)).
 
+# A generic enum carried through declaration-only relation-arrow sugar. The
+# arrow contributes the ordinary final `return` column; rules keep their
+# positional head spelling when one is added later.
+rel ParseError(code: text).
+rel Ast(node: text).
+rel Result(E, T)(err(error: E); ok(value: T)).
+rel parse(source: text) -> Result(ParseError, Ast).
+
 # ═══ the shell host (sh_decl/4) and the clock bind (bind_decl/2) ════════════
 # Hermetic: printf only, no network, no filesystem. The answer is
 # content-addressed on the declared inputs, so the same (tree, grams) pair is

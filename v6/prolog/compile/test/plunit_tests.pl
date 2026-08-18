@@ -6938,6 +6938,35 @@ test(a_parameterized_enum_sits_beside_an_ordinary_generic_rel) :-
     memberchk(rel_template(['Box'], [type_parameter('T', [])],
                            [column(value, 'T')]), Decls).
 
+test(a_relation_arrow_appends_one_ordinary_return_column) :-
+    surface_decls(
+        'rel Parse(source: text) -> Result(ParseError, Ast).',
+        Decls),
+    Decls == [col_type('Parse'/2, source, text),
+              col_type('Parse'/2, return, 'Result'('ParseError', 'Ast'))].
+
+test(a_relation_arrow_prints_the_equivalent_explicit_declaration) :-
+    surface_round_trip(
+        'rel Parse(source: text) -> Result(ParseError, Ast).',
+        Program, RoundTripped, Text),
+    Text == 'rel Parse(source: text, return: Result(ParseError,Ast)).\n',
+    Program =@= RoundTripped.
+
+test(a_relation_arrow_keeps_the_ordinary_rule_head_shape) :-
+    atom_codes(
+        'rel Parse(source: text) -> Result(ParseError, Ast).\nrel source(value: Result(ParseError, Ast)).\nParse(Source, Return) <- source(Return).',
+        Codes),
+    once(parse_dl(Codes, prog(Decls, [Rule]), _, [])),
+    memberchk(col_type('Parse'/2, return, 'Result'('ParseError', 'Ast')), Decls),
+    Rule = ('Parse'(Source, Return) <- source(Return)).
+
+test(a_relation_arrow_return_collision_is_named) :-
+    atom_codes(
+        'rel Parse(source: text, return: text) -> Result(ParseError, Ast).',
+        Codes),
+    catch(parse_dl(Codes, _, _, _), Thrown, true),
+    Thrown == unsupported_construct(arrow_return_column_collision('Parse'/3)).
+
 test(a_parameterized_enum_duplicate_parameter_is_a_named_surface_finding) :-
     surface_findings('rel Result(T, T)(err(error: T); ok(value: T)).', Findings),
     Findings == [unsupported_surface(duplicate_generic_parameter('T'))].
@@ -10364,6 +10393,18 @@ test(a_keyword_column_takes_the_raw_identifier_escape) :-
     sub_string(Text, _, _, _, "pub r#move: String,"),
     sub_string(Text, _, _, _, "pub message: String,"),
     \+ sub_string(Text, _, _, _, "pub where:"), !.
+
+test(a_relation_arrow_return_column_takes_the_raw_identifier_escape) :-
+    Rows = [
+        row(1, 0, 0, text, primitive, 0, 0, 0, '', '', ''),
+        row(2, 0, 0, doc, module, 0, 0, 0, 'deadbeefdeadbeef', '', '', ''),
+        row(3, 2, 0, parse, rel, 0, 0, 1, '', '', ''),
+        row(4, 3, 0, return, column, 1, 0, 1, '', '', '')
+    ],
+    once(rust_types_text(doc, Rows, Text)),
+    sub_string(Text, _, _, _, "pub r#return: String,"),
+    once(ts_types_text(doc, Rows, Ts)),
+    sub_string(Ts, _, _, _, "return: string;").
 
 :- end_tests(rust_types_keyword_escape).
 :- begin_tests(bytes_type_system).

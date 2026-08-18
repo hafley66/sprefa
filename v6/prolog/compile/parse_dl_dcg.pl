@@ -486,20 +486,39 @@ rel_stmt(Decls) -->
           )
       ;   #`(`,
           args(decl_a_column, Specs), #`)`,
-          { length(Specs, Arity),
+          relation_arrow_output(Segs, Specs, ArrowSpecs),
+          { length(ArrowSpecs, Arity),
             module_path_name(Segs, Name),
             Ref = Name/Arity,
-            record_spec_names(Name, Specs) },
+            record_spec_names(Name, ArrowSpecs) },
           ws,
-          { typed_decl_entries(Ref, Specs, Typed) },
+          { typed_decl_entries(Ref, ArrowSpecs, Typed) },
           rel_modifiers(Ref, Mods),
           is_clause(Ref, Conformance),
           { module_path_decls(Segs, Ref, PathDecls),
-            column_less_decls(Ref, Specs, Mods, UnitDecls),
+            column_less_decls(Ref, ArrowSpecs, Mods, UnitDecls),
             append([Typed, Mods, PathDecls, UnitDecls, Conformance], Decls) },
           #`.`
       )
     ; decl_b_tail(Decls)
+    ).
+
+% Relation arrows are declaration-only sugar. The output is represented by
+% the same ordinary final column as the explicit spelling, so every later
+% compiler phase consumes one canonical declaration shape.
+relation_arrow_output(Segs, Specs, ArrowSpecs) -->
+    ( ws, @`->`
+    -> ws, type_expr(OutputType),
+       { module_path_name(Segs, Name),
+         length(Specs, InputArity),
+         FinalArity is InputArity + 1,
+         ( memberchk(column(return, _), Specs)
+         -> throw(unsupported_construct(
+                     arrow_return_column_collision(Name/FinalArity)))
+         ;  true
+         ),
+         append(Specs, [column(return, OutputType)], ArrowSpecs) }
+    ;  { ArrowSpecs = Specs }
     ).
 
 % Parameters only when a SECOND group follows; the peek below decides it
