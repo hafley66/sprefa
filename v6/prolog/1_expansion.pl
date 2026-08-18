@@ -75,8 +75,11 @@ expand_program_with_bindings(SurfaceProgram, Bindings,
     expand_program_run(SurfaceProgram, Bindings, ExpandedProgram,
                        ExpansionContext).
 
-expand_program_run(SurfaceProgram, Bindings, ExpandedProgram,
+expand_program_run(SurfaceProgram0, Bindings, ExpandedProgram,
                    ExpansionContext) :-
+    % BEFORE phase 5. `list(orchard.tree)` mints its artifact name from the
+    % element, and a path is not a name until the decl tree resolves it.
+    dot_expand:resolve_qualified_types(SurfaceProgram0, SurfaceProgram),
     SurfaceProgram = prog(SurfaceDecls, _),
     % The context includes enums option expansion mints.  Generic expansion is
     % deterministic and idempotent for its rewritten declaration form.

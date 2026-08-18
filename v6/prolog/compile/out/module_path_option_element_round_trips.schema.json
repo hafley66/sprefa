@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "grove": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "orchard": {
+      "additionalProperties":false,
+      "properties": {},
+      "required": [],
+      "type":"object"
+    },
+    "orchard.tree": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"name": {"type":"string"}},
+      "required": ["id", "name" ],
+      "type":"object"
+    },
+    "planted": {
+      "additionalProperties":false,
+      "properties": {"grove_id": {"type":"integer"},"tree_name": {"type":"string"}},
+      "required": ["grove_id", "tree_name" ],
+      "type":"object"
+    }
+  },
+  "$id":"module_path_option_element_round_trips#9922cf17e77711e6",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
