@@ -618,9 +618,19 @@ with_emit_context(Initial, fixture(_, _, _, Schedule, _), Goal) :-
     assertz(dd_compile_context(Initial, Schedule)),
     setup_call_cleanup(true, Goal, retractall(dd_compile_context(_, _))).
 
-run_compile_phase(_Phase, Goal, Measurement) :-
+:- multifile prolog:message//1.
+
+prolog:message(compile_phase_failed(Phase)) -->
+    [ 'compile phase ~w failed and threw no ball'-[Phase] ].
+
+% A phase that FAILS carries no ball, and `swipl -q -g Goal` prints nothing for
+% a failed goal, so the name of the phase is the only thing left to report.
+run_compile_phase(Phase, Goal, Measurement) :-
     measure_phase(Goal, Measurement, Outcome),
-    restore_phase_outcome(Outcome).
+    (   Outcome == failed
+    ->  throw(compile_phase_failed(Phase))
+    ;   restore_phase_outcome(Outcome)
+    ).
 
 measure_phase(Goal, Measurement, Outcome) :-
     setup_call_cleanup(

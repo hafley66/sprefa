@@ -372,6 +372,11 @@ print_host_column(col(Name, Type), Text) :-
     print_column_type(Type, TypeText),
     format(atom(Text), "~w: ~w", [Name, TypeText]).
 
+% Mirror of decl_ref_spelling/3 for an element type: the dotted spelling is
+% what reparses onto the same rel.
+print_column_type(type_path(Segments), Text) :-
+    !,
+    atomic_list_concat(Segments, '.', Text).
 % The retained internal term is json_list(T); the text door renders it with the
 % same spelling.
 print_column_type(json_list(Element), Text) :-

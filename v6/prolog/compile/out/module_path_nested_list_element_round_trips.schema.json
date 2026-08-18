@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "grove": {
+      "additionalProperties":false,
+      "properties": {
+        "id": {"type":"integer"},
+        "members": {
+          "items": {"items": {"$ref":"#/$defs/orchard.tree"},"type":"array"},
+          "type":"array"
+        }
+      },
+      "required": ["id", "members" ],
+      "type":"object"
+    },
+    "orchard": {
+      "additionalProperties":false,
+      "properties": {},
+      "required": [],
+      "type":"object"
+    },
+    "orchard.tree": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+      "required": ["name", "url" ],
+      "type":"object"
+    }
+  },
+  "$id":"module_path_nested_list_element_round_trips#560e1a3096e5c136",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

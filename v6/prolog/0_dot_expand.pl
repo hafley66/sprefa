@@ -50,6 +50,9 @@
 
 :- module(dot_expand,
           [ expand_dot_in_context/3,
+            % 1_expansion.pl runs this ahead of every phase: generic expansion
+            % mints an artifact NAME from a wrapper's element type.
+            resolve_qualified_types/2,
             % use_resolve.pl reads a mounted subtree's paths off the same
             % projection the scope tree is built from.
             declared_path/3 ]).
@@ -58,6 +61,7 @@
 :- use_module(library(apply)).
 :- use_module(library(occurs), [sub_term/2]).
 :- use_module('compile/registry', [surface/5]).
+:- use_module('0_type_plane', [column_element_type_name/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -74,6 +78,9 @@ expand_dot_in_context(EnumContext, prog(Decls0, Rules0), prog(Decls, Rules)) :-
     ),
     expand_nested_parent_refs(Decls1, Rules2, Decls, Rules3),
     maplist(expand_dot_rule, Rules3, Rules).
+
+resolve_qualified_types(prog(Decls0, Rules), prog(Decls, Rules)) :-
+    resolve_qualified_type_paths(Decls0, Decls).
 
 % Qualified types retain their path until mount_decl/4 supplies scope here.
 % Resolution produces the same flat relation identity as a qualified call.
@@ -103,11 +110,14 @@ resolve_qualified_type(Scopes, Type0, Type) :-
     Type =.. [Functor | Args].
 resolve_qualified_type(_, Type, Type).
 
+% The type_decl/2 mirror the parser (normalize_relation_value_decls/2) gives a
+% bare name, at the same wrapper positions and no others.
 qualified_type_names(Scopes, Decls, Names) :-
     findall(Name,
-            ( member(col_type(_, _, Type), Decls),
-              qualified_type_path(Type, Segments),
-              resolve_path(Scopes, Segments, Name) ),
+            ( member(col_type(_, _, Surface), Decls),
+              qualified_type_path(Surface, _),
+              resolve_qualified_type(Scopes, Surface, Resolved),
+              column_element_type_name(Resolved, Name) ),
             Names0),
     sort(Names0, Names).
 
