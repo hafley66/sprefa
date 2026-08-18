@@ -135,10 +135,6 @@ column_storage(Types, json_list(Element), json_list(Element)) :-
 % lands in the member rel's `value` column, so every column type is admissible.
 column_storage(Types, list(Element), list(Element)) :-
     !,
-    ( relation_id_type(Element, Name)
-    -> throw(unsupported_construct(list_of_relation_ids(Name)))
-    ; true
-    ),
     column_storage(Types, Element, _).
 
 column_storage(_, bool, bool) :- !.
@@ -185,6 +181,10 @@ unwrapped_column_type(Type, Inner) :-
 % The rel name a spelling puts in COLUMN position, hence the name that needs a
 % type_decl/2 mirror: the bare name, or the element of a value-storing wrapper.
 column_element_type_name(Name, Name) :- atom(Name).
+column_element_type_name(Type, Name) :-
+    unwrapped_column_type(Type, id(Name)),
+    atom(Name),
+    !.
 column_element_type_name(Type, Name) :-
     unwrapped_column_type(Type, Inner),
     Inner =.. [Wrapper, Name],

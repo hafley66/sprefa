@@ -30,7 +30,6 @@ expand_generic_in_context(_Context, Program, Expanded) :-
     expand_generic_program(Program, Expanded).
 
 expand_generic_program(prog(Decls0, Rules0), prog(Decls, Rules)) :-
-    reject_relation_id_lists(Decls0),
     expand_user_templates(Decls0, Rules0, _UserInstances, UserDecls),
     generic_fixpoint(UserDecls, Instances, WithMintedDecls),
     validate_generated_name_collisions(UserDecls, Rules0, Instances),
@@ -44,7 +43,6 @@ expand_generic_program(prog(Decls0, Rules0), prog(Decls, Rules)) :-
 % Executable comparison arm, written as a second path so the template and
 % replacement logic cannot drift apart from the wired entry above.
 expand_generic_program_raw(prog(Decls0, Rules0), prog(Decls, Rules)) :-
-    reject_relation_id_lists(Decls0),
     expand_user_templates(Decls0, Rules0, _UserInstances, UserDecls),
     generic_fixpoint(UserDecls, Instances, WithMintedDecls),
     validate_generated_name_collisions(UserDecls, Rules0, Instances),
@@ -54,22 +52,6 @@ expand_generic_program_raw(prog(Decls0, Rules0), prog(Decls, Rules)) :-
     merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
     expand_option_decls(FlavorRowedDecls, OptionDecls),
     retarget_type_decl_mirrors(OptionDecls, Decls).
-
-% Generic artifact minting runs before qualified type paths resolve. A list of
-% a relation endpoint would otherwise fail while trying to mint its member
-% relation, before the storage plane can report why it is unavailable. Keep
-% the refusal at the authored wrapper boundary until list member storage grows
-% a typed endpoint representation.
-reject_relation_id_lists(Decls) :-
-    member(col_type(_, _, Type), Decls),
-    relation_id_list_path(Type, Name),
-    !,
-    throw(unsupported_construct(list_of_relation_ids(Name))).
-reject_relation_id_lists(_).
-
-relation_id_list_path(list(type_path([Name, id])), Name) :- !.
-relation_id_list_path(option(Type), Name) :- !,
-    relation_id_list_path(Type, Name).
 
 % `decode(Parts, [... Part])` over a list(T) source is a keyed read of the
 % minted member rel, and becomes that atom for BOTH doors here.

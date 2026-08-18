@@ -35,8 +35,12 @@ option_alias_parts(Text, [Text]).
 % rather than a followed relation value.
 relation_id_alias_text(Rows,
                        'declare const __dl6RelationId: unique symbol;\nexport type RelationId<T extends string> = number & { readonly [__dl6RelationId]: T };\n') :-
-    relation_id_storage(Rows, _), !.
+    relation_id_used(Rows), !.
 relation_id_alias_text(_, '').
+
+relation_id_used(Rows) :- relation_id_storage(Rows, _), !.
+relation_id_used(Rows) :-
+    member(row(_, _, _, _, relation_id_list, _, _, _, _, _, _), Rows).
 
 relation_id_alias_parts('', []) :- !.
 relation_id_alias_parts(Text, [Text]).
@@ -204,6 +208,10 @@ ts_kind(Rows, CollisionTypeNames, _TypeRow, _Name, json_list, ElementId, Type) :
 ts_kind(Rows, CollisionTypeNames, _TypeRow, _Name, list, ElementId, Type) :-
     ts_type(Rows, CollisionTypeNames, ElementId, Element),
     format(string(Type), 'Array<~w>', [Element]).
+ts_kind(Rows, _CollisionTypeNames, _TypeRow, _Name, relation_id_list,
+        ElementId, Type) :-
+    member(row(ElementId, _, _, TargetName, rel, _, _, _, _, _, _), Rows),
+    format(string(Type), 'Array<RelationId<\'~w\'>>', [TargetName]).
 ts_kind(Rows, CollisionTypeNames, _TypeRow, _Name, option, ElementId, Type) :-
     ts_type(Rows, CollisionTypeNames, ElementId, Element),
     format(string(Type), 'Option<~w>', [Element]).

@@ -10106,16 +10106,47 @@ test(mounted_wrapper_path_and_terminal_relation_id_resolve_together) :-
     memberchk(col_type(holder/2, span_id, id(span)), Decls),
     memberchk(type_decl(span, [col(oid, text)]), Decls).
 
-test(relation_id_list_is_a_named_refusal) :-
+test(relation_id_list_mints_a_direct_integer_member_column) :-
     string_codes(
         "rel Revision(oid: text).\nrel Batch(revisions: list(Revision.id)).\n",
         Codes),
     parse_dl(Codes, Program, Bindings, []),
-    catch(
-        ( program_plan(fixture(relation_id_list, Program, [], [], [])-Bindings, _), Thrown = none ),
-        Thrown,
-        true),
-    Thrown == unsupported_construct(list_of_relation_ids('Revision')).
+    program_plan(fixture(relation_id_list, Program, [], [], [])-Bindings,
+                 plan(_, _, _, RelPlans, _, _, _, _, _)),
+    generic_expand:canonical_type_name(list(id('Revision')), Entity),
+    atomic_list_concat([Entity, member], '__', Member),
+    memberchk(rel(Member/3, _, set,
+                  [ col(list_id, declared(int), int),
+                    col(idx, declared(int), int),
+                    col(value, declared(id('Revision')), idref('Revision')) ],
+                  key([1, 2])), RelPlans).
+
+relation_id_list_catalog_rows(Rows) :-
+    string_codes(
+        "rel Revision(oid: text).\nrel Batch(revisions: list(Revision.id)).\n",
+        Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    program_plan(fixture(relation_id_list, Program, [], [], [])-Bindings,
+                 [intern(direct)],
+                 plan(_, prog(Decls, Rules), _, RelPlans, _, _, _, _, _)),
+    catalog_decl_rows(relation_id_list, Rules, RelPlans, Decls, Rows, _).
+
+test(relation_id_list_type_artifacts_keep_the_endpoint_target) :-
+    relation_id_list_catalog_rows(Rows),
+    memberchk(row(RevisionId, _, _, 'Revision', rel, _, _, _, _, _, _), Rows),
+    memberchk(row(ListId, 0, 0, 'list(id(Revision))', relation_id_list,
+                  RevisionId, _, _, _, _, _), Rows),
+    memberchk(row(_, _, 1, revisions, column, ListId, _, _, _, _, _), Rows),
+    ts_types_text(relation_id_list, Rows, Ts),
+    rust_types_text(relation_id_list, Rows, Rust),
+    jsonschema_text(relation_id_list, Rows, Schema),
+    sub_string(Ts, _, _, _, 'export type RelationId<T extends string>'),
+    sub_string(Ts, _, _, _, "revisions: Array<RelationId<'Revision'>>;"),
+    sub_string(Rust, _, _, _, 'pub struct RelationId<T>'),
+    sub_string(Rust, _, _, _, 'pub revisions: Vec<RelationId<Revision>>,'),
+    sub_string(Schema, _, _, _, '"$comment":"DL6 relation identity for Revision"'),
+    sub_string(Schema, _, _, _, '"type":"integer"'),
+    sub_string(Schema, _, _, _, '"type":"array"').
 
 relation_id_catalog_rows(Rows) :-
     inferred_relplans(
