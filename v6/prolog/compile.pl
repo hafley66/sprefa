@@ -52,7 +52,7 @@
 :- use_module('compile/parse_dl_dcg', [ parse_dl_line_for_reason/2 ]).
 :- use_module('compile/scripts/0_json_arrival',
               [ arrival_column_types/4, schedule_value/5 ]).
-:- use_module('use_resolve', [expand_uses/8]).
+:- use_module('use_resolve', [expand_uses/8, short_hash/2]).
 :- use_module(library(http/json), [json_read_dict/3]).
 :- use_module('diag', [emit_diag_file/2]).
 :- use_module('0_type_plane',
@@ -206,7 +206,6 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     seeded_refs(Initial, SeededRefs),
     append([RuleRefs, DeclaredRefs, SeededRefs], AllRefs0), sort(AllRefs0, AllRefs),
     check_single_arity_per_name(AllRefs),
-    relation_storage_names(Name, Decls, AllRefs, StorageNames),
     derived_refs(Rules, DerivedRefs),
     % The catalog is seeded by DDL, so it is never an arrival target; leaving it
     % in would open the serve door to writes against a compiler-owned table.
@@ -225,6 +224,11 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
             RefColumns),
     program_column_types(Decls, Types, Rules, Initial, Schedule, AllRefs,
                          RefColumns, RefTypes),
+    % Ordered after the typing fixpoint: a stored rel's physical name carries a
+    % digest of the storage shape that fixpoint settles.
+    relation_shapes(Decls, AllRefs, RefColumns, RefTypes, Shapes),
+    relation_storage_names(Name, Decls, DerivedRefs, Shapes, AllRefs,
+                           StorageNames),
     findall(rel(Ref, StorageName, Kind, Cols, KeyOrNone),
             ( member(Ref, AllRefs),
               memberchk(Ref-StorageName, StorageNames),
@@ -339,19 +343,97 @@ check_single_arity_per_name([_ | Rest]) :-
 % module that declared the relation.  A same Ref declared by separate modules
 % is already one runtime relation before lowering, so refuse it rather than
 % inventing two SQLite tables that the runtime cannot distinguish.
-relation_storage_names(EntryStem, Decls, Refs, Names) :-
-    maplist(relation_storage_candidate(EntryStem, Decls), Refs, Candidates),
+relation_storage_names(EntryStem, Decls, DerivedRefs, Shapes, Refs, Names) :-
+    maplist(relation_storage_candidate(EntryStem, Decls, DerivedRefs, Shapes),
+            Refs, Candidates),
     keysort(Candidates, Ordered),
     allocate_storage_names(Ordered, [], Names).
 
-relation_storage_candidate(EntryStem, Decls, Ref, Key-(Ref-Base)) :-
+relation_storage_candidate(EntryStem, Decls, DerivedRefs, Shapes, Ref,
+                           Key-(Ref-Base)) :-
     Ref = Name/Arity,
     relation_declaring_module(EntryStem, Decls, Ref, ModuleStem),
     storage_identifier(ModuleStem, ModulePart),
     storage_identifier(Name, RelationPart),
-    storage_base_name(ModulePart, RelationPart, Base),
+    storage_base_name(ModulePart, RelationPart, Prefixed),
+    storage_shape_suffix(DerivedRefs, Shapes, Ref, Base, Prefixed),
     sqlite_ascii_fold(Base, Folded),
     Key = key(Folded, ModuleStem, Name, Arity).
+
+% ═══ shape identity : docs/storage-name-hash.md ═════════════════════════════
+
+% THE DERIVED SEAM: a derived rel keeps the bare prefixed spelling.
+storage_shape_suffix(DerivedRefs, _Shapes, Ref, Prefixed, Prefixed) :-
+    memberchk(Ref, DerivedRefs),
+    !.
+storage_shape_suffix(_DerivedRefs, _Shapes, Name/_Arity, Prefixed, Prefixed) :-
+    reserved_namespace_name(Name),
+    !.
+storage_shape_suffix(_DerivedRefs, Shapes, Ref, Base, Prefixed) :-
+    storage_shape_digest(Shapes, Ref, Digest),
+    !,
+    atomic_list_concat([Prefixed, Digest], '_', Base).
+storage_shape_suffix(_DerivedRefs, _Shapes, _Ref, Prefixed, Prefixed).
+
+%! storage_shape_digest(+Shapes, +Ref, -Digest) is semidet.
+%   Fails for a Ref with no shape, the same Ref the rel record drops.
+storage_shape_digest(Shapes, Ref, Digest) :-
+    memberchk(Ref-OwnShape, Shapes),
+    shape_closure(Shapes, [Ref], [], Reached0),
+    sort(Reached0, Reached),
+    findall(Target-Shape,
+            ( member(Target, Reached),
+              Target \== Ref,
+              memberchk(Target-Shape, Shapes) ),
+            Referenced),
+    format(atom(Canonical), '~q', [OwnShape-Referenced]),
+    short_hash(Canonical, Full),
+    sub_atom(Full, 0, 12, _, Digest).
+
+shape_closure(_Shapes, [], Reached, Reached).
+shape_closure(Shapes, [Ref | Rest], Seen, Reached) :-
+    memberchk(Ref, Seen),
+    !,
+    shape_closure(Shapes, Rest, Seen, Reached).
+shape_closure(Shapes, [Ref | Rest], Seen, Reached) :-
+    (   memberchk(Ref-shape(_Kind, Columns, _Key), Shapes)
+    ->  shape_column_targets(Shapes, Columns, Targets)
+    ;   Targets = []
+    ),
+    append(Targets, Rest, Pending),
+    shape_closure(Shapes, Pending, [Ref | Seen], Reached).
+
+% A target type name resolves through the shape table, so the arity comes from
+% the program rather than from a second lookup.
+shape_column_targets(Shapes, Columns, Targets) :-
+    findall(TargetName/Arity,
+            ( member(column(_, ColumnType), Columns),
+              type_reference_name(ColumnType, TargetName),
+              memberchk(TargetName/Arity-_, Shapes) ),
+            Targets).
+
+type_reference_name(ref(Name), Name) :- !.
+type_reference_name(Type, Name) :-
+    compound(Type),
+    Type =.. [_ | Arguments],
+    member(Argument, Arguments),
+    type_reference_name(Argument, Name).
+
+%! relation_shapes(+Decls, +Refs, +RefColumns, +RefTypes, -Shapes) is det.
+%   One shape/3 per rel: what SQLite stores, never rule text or filename.
+relation_shapes(Decls, Refs, RefColumns, RefTypes, Shapes) :-
+    findall(Ref-shape(Kind, Columns, KeyOrNone),
+            ( member(Ref, Refs),
+              rel_kind(Decls, Ref, Kind),
+              memberchk(Ref-Names, RefColumns),
+              memberchk(Ref-ColumnTypes, RefTypes),
+              maplist(shape_column, Names, ColumnTypes, Columns),
+              ( decl_key(Decls, Ref, Positions)
+              -> KeyOrNone = key(Positions)
+              ;  KeyOrNone = none )
+            ), Shapes).
+
+shape_column(Name, ColumnType, column(Name, ColumnType)).
 
 % EntryStem is the compilation unit's own name: the .dl6 entry file stem on
 % the text path, the fixture name on the term path.  Both paths must reach
