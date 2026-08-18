@@ -35,6 +35,8 @@ import { firstValueFrom } from "rxjs";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import type { ISqlSeam } from "../runtime/types.ts";
 
+import { physical_name_in_source } from "./physicalNames.ts";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMPILE_OUT = join(HERE, "..", "..", "prolog", "compile", "out");
 const FIXTURE = "now_reads_the_tick";
@@ -94,7 +96,7 @@ test("now() reads the counter as a scalar subquery, never a joined row", async (
   await run(seam, emitted_advance_sql(source));
   await run(
     seam,
-    `INSERT INTO "__frontier_${FIXTURE}_ping" ("_phase","_sequence","name") VALUES (0,0,'alpha'), (0,1,'beta')`,
+    `INSERT INTO "__frontier_${physical_name_in_source(source, "ping")}" ("_phase","_sequence","name") VALUES (0,0,'alpha'), (0,1,'beta')`,
   );
 
   const project_sql = source

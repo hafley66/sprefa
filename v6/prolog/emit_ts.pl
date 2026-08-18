@@ -395,7 +395,7 @@ local_types_lines(Plan,
         '  params: readonly IRowScalar[];',
         '}',
         '',
-        'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };'
+        'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };'
       ], Lines).
 
 plan_has_structured_host(plan(_, prog(Decls, _), _, _, _, _, _, _, _)) :-
@@ -813,6 +813,21 @@ rel_columns_entry_line(RelPlan, Line) :-
     quoted_string_array_text(Columns, ColumnsSql),
     js_object_key(Name, NameKey),
     format(atom(Line), '  ~w: ~w,', [NameKey, ColumnsSql]).
+
+% The reload plan discards a table by NAME, and a rel's physical name moves
+% with its shape digest, so the semantic-to-physical map ships with the program.
+rel_physical_names_lines(RelPlans, Lines) :-
+    maplist(rel_physical_names_entry_line, RelPlans, EntryLines),
+    append([ ['const rel_physical_names: Record<string, string> = {'],
+             EntryLines, ['};'] ], Lines).
+
+rel_physical_names_entry_line(RelPlan, Line) :-
+    relplan_parts(RelPlan, Ref, _Kind, _Columns, _Key, _ColumnTypes),
+    ref_name(Ref, Name),
+    relplan_storage_name(RelPlan, StorageName),
+    js_string(StorageName, StorageText),
+    js_object_key(Name, NameKey),
+    format(atom(Line), '  ~w: ~w,', [NameKey, StorageText]).
 
 rel_column_types_lines(RelPlans, Lines) :-
     maplist(rel_column_types_entry_line, RelPlans, EntryLines),
@@ -2431,6 +2446,7 @@ program_export_lines(Name, InternMode,
       InternModeLine,
       '  ddl,',
       '  rel_columns,',
+      '  rel_physical_names,',
       '  rel_column_types,',
       '  arrival_targets,',
       '  boot: SUBSCRIBED_BOOT,',
@@ -2498,6 +2514,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     sort(LevelRefs0, LevelHeadedRefs),
     ddl_lines(Ddl, DdlLines),
     rel_columns_lines(RelPlans, RelColumnsLines),
+    rel_physical_names_lines(RelPlans, RelPhysicalNamesLines),
     rel_column_types_lines(RelPlans, RelColumnTypesLines),
     rel_stored_column_types_lines(RelPlans, RelStoredColumnTypesLines),
     program_catalog_rows(InternMode, Name, PlanDecls, PlanRules, RelPlans,
@@ -2573,7 +2590,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     [ HeaderLines, ImportLines, LocalTypeLines, WorldPlanLines,
       BindArgsHelperLines, ArrivalValueGuardLines, TriggerOccurrencesHelperLines,
       StructPlaneLines, TextInternPlanLines,
-      DdlLines, RelColumnsLines, RelColumnTypesLines, RelStoredColumnTypesLines, RelCatalogLines,
+      DdlLines, RelColumnsLines, RelPhysicalNamesLines, RelColumnTypesLines, RelStoredColumnTypesLines, RelCatalogLines,
       RelDeclaredColumnTypesLines, ArrivalTargetsLines,
       BootLines, SnapshotTypeLines, ReadSnapshotFnLines,
       ReadStoredSnapshotFnLines, FinalSelectLines,

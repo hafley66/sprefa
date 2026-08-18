@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -160,8 +160,8 @@ const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "match_edge_arm_keeps_edge_semantics_cache" ("__id" INTEGER PRIMARY KEY, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("key"))`,
   `CREATE TEMP VIEW "__txt_match_edge_arm_keeps_edge_semantics_cache" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "match_edge_arm_keeps_edge_semantics_cache" t`,
-  `CREATE TABLE "match_edge_arm_keeps_edge_semantics_poll_result" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_match_edge_arm_keeps_edge_semantics_poll_result" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "match_edge_arm_keeps_edge_semantics_poll_result" t`,
+  `CREATE TABLE "match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a" t`,
   `CREATE TEMP TABLE "__delta_match_edge_arm_keeps_edge_semantics_cache" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_match_edge_arm_keeps_edge_semantics_cache_sign" ON "__delta_match_edge_arm_keeps_edge_semantics_cache" ("_sign")`,
   `CREATE INDEX "__delta_match_edge_arm_keeps_edge_semantics_cache_group" ON "__delta_match_edge_arm_keeps_edge_semantics_cache" ("key", "value")`,
@@ -169,18 +169,23 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_match_edge_arm_keeps_edge_semantics_cache_phase" ON "__frontier_match_edge_arm_keeps_edge_semantics_cache" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_match_edge_arm_keeps_edge_semantics_cache" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt___delta_match_edge_arm_keeps_edge_semantics_cache" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_match_edge_arm_keeps_edge_semantics_cache" t`,
-  `CREATE TEMP TABLE "__delta_match_edge_arm_keeps_edge_semantics_poll_result" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_match_edge_arm_keeps_edge_semantics_poll_result_sign" ON "__delta_match_edge_arm_keeps_edge_semantics_poll_result" ("_sign")`,
-  `CREATE INDEX "__delta_match_edge_arm_keeps_edge_semantics_poll_result_group" ON "__delta_match_edge_arm_keeps_edge_semantics_poll_result" ("key", "value")`,
-  `CREATE TEMP TABLE "__frontier_match_edge_arm_keeps_edge_semantics_poll_result" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_match_edge_arm_keeps_edge_semantics_poll_result_phase" ON "__frontier_match_edge_arm_keeps_edge_semantics_poll_result" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_match_edge_arm_keeps_edge_semantics_poll_result" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_match_edge_arm_keeps_edge_semantics_poll_result" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_match_edge_arm_keeps_edge_semantics_poll_result" t`,
+  `CREATE TEMP TABLE "__delta_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a_sign" ON "__delta_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a" ("_sign")`,
+  `CREATE INDEX "__delta_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a_group" ON "__delta_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a" ("key", "value")`,
+  `CREATE TEMP TABLE "__frontier_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a_phase" ON "__frontier_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   cache: ["key", "value"],
   poll_result: ["key", "value"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  cache: "match_edge_arm_keeps_edge_semantics_cache",
+  poll_result: "match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -212,11 +217,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_match_edge_arm_keeps_edge_semantics_cache", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "1164bef8fc161262", h_schema: "9dceee669bf5f906", h_rule: "" },
   { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_match_edge_arm_keeps_edge_semantics_cache", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "960939ff222f8874", h_schema: "7d4194af9c268071", h_rule: "" },
   { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_match_edge_arm_keeps_edge_semantics_cache", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "a7c86b56d0560774", h_schema: "7d4194af9c268071", h_rule: "" },
-  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_match_edge_arm_keeps_edge_semantics_poll_result", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "d05ba3a09fe53f4d", h_schema: "fdf6b6ef55287c94", h_rule: "" },
-  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_match_edge_arm_keeps_edge_semantics_poll_result", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "13b5adbbf8e22779", h_schema: "9dceee669bf5f906", h_rule: "" },
-  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_match_edge_arm_keeps_edge_semantics_poll_result", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "fe513492373e3166", h_schema: "9dceee669bf5f906", h_rule: "" },
-  { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__txt_match_edge_arm_keeps_edge_semantics_poll_result", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "19652509250f7786", h_schema: "7d4194af9c268071", h_rule: "" },
-  { rel_id: 23, parent_id: 19, ordinal: 0, local_name: "__txt___delta_match_edge_arm_keeps_edge_semantics_poll_result", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "b485474cda9d87a9", h_schema: "7d4194af9c268071", h_rule: "" },
+  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "ec6e9c64f7ebf008", h_schema: "fdf6b6ef55287c94", h_rule: "" },
+  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "c42d6972fc0195fb", h_schema: "9dceee669bf5f906", h_rule: "" },
+  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "f3e696cb191f8f6b", h_schema: "9dceee669bf5f906", h_rule: "" },
+  { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__txt_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "235e1a1c6e2ebc65", h_schema: "7d4194af9c268071", h_rule: "" },
+  { rel_id: 23, parent_id: 19, ordinal: 0, local_name: "__txt___delta_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "7a3b6ea4552a2be4", h_schema: "7d4194af9c268071", h_rule: "" },
   { rel_id: 24, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "02aed998af5a9466", h_schema: "", h_rule: "" },
   { rel_id: 25, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "c5559fae90f4a449", h_schema: "", h_rule: "" },
   { rel_id: 26, parent_id: 10, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "cc2d521f6ea0ef87", h_schema: "", h_rule: "" },
@@ -234,16 +239,16 @@ const boot: readonly IBootStatement[] = [
 
 const final_select: Record<string, string> = {
   cache: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_match_edge_arm_keeps_edge_semantics_cache" t`,
-  poll_result: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_match_edge_arm_keeps_edge_semantics_poll_result" t`,
+  poll_result: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "cache", kind: "set", table_name: "match_edge_arm_keeps_edge_semantics_cache", delta_table_name: "__delta_match_edge_arm_keeps_edge_semantics_cache", frontier_table_name: "__frontier_match_edge_arm_keeps_edge_semantics_cache", next_frontier_table_name: "__next_frontier_match_edge_arm_keeps_edge_semantics_cache", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_match_edge_arm_keeps_edge_semantics_cache" t WHERE t."_sign" IN (-1, 1) GROUP BY t."key", t."value", t."_sign"`, rule_observers: [] },
-  { rel: "poll_result", kind: "log", table_name: "match_edge_arm_keeps_edge_semantics_poll_result", delta_table_name: "__delta_match_edge_arm_keeps_edge_semantics_poll_result", frontier_table_name: "__frontier_match_edge_arm_keeps_edge_semantics_poll_result", next_frontier_table_name: "__next_frontier_match_edge_arm_keeps_edge_semantics_poll_result", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "match_edge_arm_keeps_edge_semantics_poll_result" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_match_edge_arm_keeps_edge_semantics_poll_result" t WHERE t."_sign" IN (-1, 1) GROUP BY t."key", t."value", t."_sign"`, rule_observers: ["cache/2"] },
+  { rel: "poll_result", kind: "log", table_name: "match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a", delta_table_name: "__delta_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a", frontier_table_name: "__frontier_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a", next_frontier_table_name: "__next_frontier_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a" t WHERE t."_sign" IN (-1, 1) GROUP BY t."key", t."value", t."_sign"`, rule_observers: ["cache/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "cache", rule_id: "match_edge_arm_keeps_edge_semantics:cache/2#1", head_kind: "set", head_table_name: "match_edge_arm_keeps_edge_semantics_cache", head_delta_table_name: "__delta_match_edge_arm_keeps_edge_semantics_cache", head_columns: ["key", "value"], key_indices: [0], project_sql: `SELECT d0."key" AS "key", d0."value" AS "value" FROM "__frontier_match_edge_arm_keeps_edge_semantics_poll_result" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "cache", rule_id: "match_edge_arm_keeps_edge_semantics:cache/2#1", head_kind: "set", head_table_name: "match_edge_arm_keeps_edge_semantics_cache", head_delta_table_name: "__delta_match_edge_arm_keeps_edge_semantics_cache", head_columns: ["key", "value"], key_indices: [0], project_sql: `SELECT d0."key" AS "key", d0."value" AS "value" FROM "__frontier_match_edge_arm_keeps_edge_semantics_poll_result_e7a2a44c403a" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -298,6 +303,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

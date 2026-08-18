@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -160,21 +160,21 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "set_dedups_log_stacks_heard" ("item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_set_dedups_log_stacks_heard" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "set_dedups_log_stacks_heard" t`,
+  `CREATE TABLE "set_dedups_log_stacks_heard_193643fb2783" ("item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_set_dedups_log_stacks_heard_193643fb2783" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "set_dedups_log_stacks_heard_193643fb2783" t`,
   `CREATE TABLE "set_dedups_log_stacks_heard_count" ("item" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_set_dedups_log_stacks_heard_count" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "set_dedups_log_stacks_heard_count" t`,
-  `CREATE TABLE "set_dedups_log_stacks_seen" ("__id" INTEGER PRIMARY KEY, "item" INTEGER NOT NULL, UNIQUE ("item"))`,
-  `CREATE TEMP VIEW "__txt_set_dedups_log_stacks_seen" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "set_dedups_log_stacks_seen" t`,
+  `CREATE TABLE "set_dedups_log_stacks_seen_5d708b109b9c" ("__id" INTEGER PRIMARY KEY, "item" INTEGER NOT NULL, UNIQUE ("item"))`,
+  `CREATE TEMP VIEW "__txt_set_dedups_log_stacks_seen_5d708b109b9c" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "set_dedups_log_stacks_seen_5d708b109b9c" t`,
   `CREATE TABLE "set_dedups_log_stacks_seen_count" ("item" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_set_dedups_log_stacks_seen_count" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "set_dedups_log_stacks_seen_count" t`,
-  `CREATE TEMP TABLE "__delta_set_dedups_log_stacks_heard" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_set_dedups_log_stacks_heard_sign" ON "__delta_set_dedups_log_stacks_heard" ("_sign")`,
-  `CREATE INDEX "__delta_set_dedups_log_stacks_heard_group" ON "__delta_set_dedups_log_stacks_heard" ("item")`,
-  `CREATE TEMP TABLE "__frontier_set_dedups_log_stacks_heard" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_set_dedups_log_stacks_heard_phase" ON "__frontier_set_dedups_log_stacks_heard" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_set_dedups_log_stacks_heard" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_set_dedups_log_stacks_heard" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_set_dedups_log_stacks_heard" t`,
+  `CREATE TEMP TABLE "__delta_set_dedups_log_stacks_heard_193643fb2783" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_set_dedups_log_stacks_heard_193643fb2783_sign" ON "__delta_set_dedups_log_stacks_heard_193643fb2783" ("_sign")`,
+  `CREATE INDEX "__delta_set_dedups_log_stacks_heard_193643fb2783_group" ON "__delta_set_dedups_log_stacks_heard_193643fb2783" ("item")`,
+  `CREATE TEMP TABLE "__frontier_set_dedups_log_stacks_heard_193643fb2783" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_set_dedups_log_stacks_heard_193643fb2783_phase" ON "__frontier_set_dedups_log_stacks_heard_193643fb2783" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_set_dedups_log_stacks_heard_193643fb2783" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_set_dedups_log_stacks_heard_193643fb2783" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_set_dedups_log_stacks_heard_193643fb2783" t`,
   `CREATE TEMP TABLE "__delta_set_dedups_log_stacks_heard_count" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_set_dedups_log_stacks_heard_count_sign" ON "__delta_set_dedups_log_stacks_heard_count" ("_sign")`,
   `CREATE INDEX "__delta_set_dedups_log_stacks_heard_count_group" ON "__delta_set_dedups_log_stacks_heard_count" ("item")`,
@@ -182,13 +182,13 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_set_dedups_log_stacks_heard_count_phase" ON "__frontier_set_dedups_log_stacks_heard_count" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_set_dedups_log_stacks_heard_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt___delta_set_dedups_log_stacks_heard_count" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_set_dedups_log_stacks_heard_count" t`,
-  `CREATE TEMP TABLE "__delta_set_dedups_log_stacks_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_set_dedups_log_stacks_seen_sign" ON "__delta_set_dedups_log_stacks_seen" ("_sign")`,
-  `CREATE INDEX "__delta_set_dedups_log_stacks_seen_group" ON "__delta_set_dedups_log_stacks_seen" ("item")`,
-  `CREATE TEMP TABLE "__frontier_set_dedups_log_stacks_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_set_dedups_log_stacks_seen_phase" ON "__frontier_set_dedups_log_stacks_seen" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_set_dedups_log_stacks_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_set_dedups_log_stacks_seen" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_set_dedups_log_stacks_seen" t`,
+  `CREATE TEMP TABLE "__delta_set_dedups_log_stacks_seen_5d708b109b9c" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_set_dedups_log_stacks_seen_5d708b109b9c_sign" ON "__delta_set_dedups_log_stacks_seen_5d708b109b9c" ("_sign")`,
+  `CREATE INDEX "__delta_set_dedups_log_stacks_seen_5d708b109b9c_group" ON "__delta_set_dedups_log_stacks_seen_5d708b109b9c" ("item")`,
+  `CREATE TEMP TABLE "__frontier_set_dedups_log_stacks_seen_5d708b109b9c" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_set_dedups_log_stacks_seen_5d708b109b9c_phase" ON "__frontier_set_dedups_log_stacks_seen_5d708b109b9c" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_set_dedups_log_stacks_seen_5d708b109b9c" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_set_dedups_log_stacks_seen_5d708b109b9c" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_set_dedups_log_stacks_seen_5d708b109b9c" t`,
   `CREATE TEMP TABLE "__delta_set_dedups_log_stacks_seen_count" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_set_dedups_log_stacks_seen_count_sign" ON "__delta_set_dedups_log_stacks_seen_count" ("_sign")`,
   `CREATE INDEX "__delta_set_dedups_log_stacks_seen_count_group" ON "__delta_set_dedups_log_stacks_seen_count" ("item")`,
@@ -203,6 +203,13 @@ const rel_columns: Record<string, readonly string[]> = {
   heard_count: ["item"],
   seen: ["item"],
   seen_count: ["item"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  heard: "set_dedups_log_stacks_heard_193643fb2783",
+  heard_count: "set_dedups_log_stacks_heard_count",
+  seen: "set_dedups_log_stacks_seen_5d708b109b9c",
+  seen_count: "set_dedups_log_stacks_seen_count",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -235,21 +242,21 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 13, parent_id: 12, ordinal: 1, local_name: "item", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "6f056f981566e3e9", h_schema: "", h_rule: "" },
   { rel_id: 14, parent_id: 7, ordinal: 0, local_name: "seen_count", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "2550b7687d9653a9", h_schema: "4f9957ccb96234b6", h_rule: "6923382052ff50a5" },
   { rel_id: 15, parent_id: 14, ordinal: 1, local_name: "item", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "af0c0045d6664cab", h_schema: "", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__delta_set_dedups_log_stacks_heard", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "5277b761f24186e4", h_schema: "15e84563064d7c4c", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__frontier_set_dedups_log_stacks_heard", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "a668bb5add292ee5", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__next_frontier_set_dedups_log_stacks_heard", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "91eb41cce072f965", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__txt_set_dedups_log_stacks_heard", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "8669714410c7c845", h_schema: "4f9957ccb96234b6", h_rule: "" },
-  { rel_id: 20, parent_id: 16, ordinal: 0, local_name: "__txt___delta_set_dedups_log_stacks_heard", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "d9cfd79face70442", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__delta_set_dedups_log_stacks_heard_193643fb2783", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "9140bbd3523deeba", h_schema: "15e84563064d7c4c", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__frontier_set_dedups_log_stacks_heard_193643fb2783", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "cfe846f3b231bb70", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__next_frontier_set_dedups_log_stacks_heard_193643fb2783", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "22f3465133b61214", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__txt_set_dedups_log_stacks_heard_193643fb2783", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "fe9afdffe2cb2f88", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 20, parent_id: 16, ordinal: 0, local_name: "__txt___delta_set_dedups_log_stacks_heard_193643fb2783", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "310bae23e02464fd", h_schema: "4f9957ccb96234b6", h_rule: "" },
   { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__delta_set_dedups_log_stacks_heard_count", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "7cdb3a010a17330e", h_schema: "15e84563064d7c4c", h_rule: "" },
   { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__frontier_set_dedups_log_stacks_heard_count", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "4ce664b894647b9d", h_schema: "c35a652f9e4a4d00", h_rule: "" },
   { rel_id: 23, parent_id: 10, ordinal: 0, local_name: "__next_frontier_set_dedups_log_stacks_heard_count", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "fea8ee0c69581e7b", h_schema: "c35a652f9e4a4d00", h_rule: "" },
   { rel_id: 24, parent_id: 10, ordinal: 0, local_name: "__txt_set_dedups_log_stacks_heard_count", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "7e217939e423eee9", h_schema: "4f9957ccb96234b6", h_rule: "" },
   { rel_id: 25, parent_id: 21, ordinal: 0, local_name: "__txt___delta_set_dedups_log_stacks_heard_count", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "b9e64b8aecef6e81", h_schema: "4f9957ccb96234b6", h_rule: "" },
-  { rel_id: 26, parent_id: 12, ordinal: 0, local_name: "__delta_set_dedups_log_stacks_seen", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "422d8e1b17022181", h_schema: "15e84563064d7c4c", h_rule: "" },
-  { rel_id: 27, parent_id: 12, ordinal: 0, local_name: "__frontier_set_dedups_log_stacks_seen", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "e9b44aa396c1c431", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 28, parent_id: 12, ordinal: 0, local_name: "__next_frontier_set_dedups_log_stacks_seen", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "ee94da317f994f54", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 29, parent_id: 12, ordinal: 0, local_name: "__txt_set_dedups_log_stacks_seen", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "609ea0d646d9c384", h_schema: "4f9957ccb96234b6", h_rule: "" },
-  { rel_id: 30, parent_id: 26, ordinal: 0, local_name: "__txt___delta_set_dedups_log_stacks_seen", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "4a96ff66a949032e", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 26, parent_id: 12, ordinal: 0, local_name: "__delta_set_dedups_log_stacks_seen_5d708b109b9c", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "a3884af42c62f2dc", h_schema: "15e84563064d7c4c", h_rule: "" },
+  { rel_id: 27, parent_id: 12, ordinal: 0, local_name: "__frontier_set_dedups_log_stacks_seen_5d708b109b9c", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "398873b9614e3e55", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 28, parent_id: 12, ordinal: 0, local_name: "__next_frontier_set_dedups_log_stacks_seen_5d708b109b9c", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "183fece5d72836f9", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 29, parent_id: 12, ordinal: 0, local_name: "__txt_set_dedups_log_stacks_seen_5d708b109b9c", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "84a5c001d40a45d1", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 30, parent_id: 26, ordinal: 0, local_name: "__txt___delta_set_dedups_log_stacks_seen_5d708b109b9c", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "4001f42fab4bf561", h_schema: "4f9957ccb96234b6", h_rule: "" },
   { rel_id: 31, parent_id: 14, ordinal: 0, local_name: "__delta_set_dedups_log_stacks_seen_count", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "d5ec2504e8242412", h_schema: "15e84563064d7c4c", h_rule: "" },
   { rel_id: 32, parent_id: 14, ordinal: 0, local_name: "__frontier_set_dedups_log_stacks_seen_count", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "702a379ca82c13dc", h_schema: "c35a652f9e4a4d00", h_rule: "" },
   { rel_id: 33, parent_id: 14, ordinal: 0, local_name: "__next_frontier_set_dedups_log_stacks_seen_count", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "c1aac5ef72915f35", h_schema: "c35a652f9e4a4d00", h_rule: "" },
@@ -271,22 +278,22 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  heard: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_set_dedups_log_stacks_heard" t`,
+  heard: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_set_dedups_log_stacks_heard_193643fb2783" t`,
   heard_count: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_set_dedups_log_stacks_heard_count" t`,
-  seen: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_set_dedups_log_stacks_seen" t`,
+  seen: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_set_dedups_log_stacks_seen_5d708b109b9c" t`,
   seen_count: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_set_dedups_log_stacks_seen_count" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "heard", kind: "log", table_name: "set_dedups_log_stacks_heard", delta_table_name: "__delta_set_dedups_log_stacks_heard", frontier_table_name: "__frontier_set_dedups_log_stacks_heard", next_frontier_table_name: "__next_frontier_set_dedups_log_stacks_heard", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "set_dedups_log_stacks_heard" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_set_dedups_log_stacks_heard" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["heard_count/1"] },
+  { rel: "heard", kind: "log", table_name: "set_dedups_log_stacks_heard_193643fb2783", delta_table_name: "__delta_set_dedups_log_stacks_heard_193643fb2783", frontier_table_name: "__frontier_set_dedups_log_stacks_heard_193643fb2783", next_frontier_table_name: "__next_frontier_set_dedups_log_stacks_heard_193643fb2783", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "set_dedups_log_stacks_heard_193643fb2783" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_set_dedups_log_stacks_heard_193643fb2783" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["heard_count/1"] },
   { rel: "heard_count", kind: "log", table_name: "set_dedups_log_stacks_heard_count", delta_table_name: "__delta_set_dedups_log_stacks_heard_count", frontier_table_name: "__frontier_set_dedups_log_stacks_heard_count", next_frontier_table_name: "__next_frontier_set_dedups_log_stacks_heard_count", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_set_dedups_log_stacks_heard_count" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: [] },
-  { rel: "seen", kind: "set", table_name: "set_dedups_log_stacks_seen", delta_table_name: "__delta_set_dedups_log_stacks_seen", frontier_table_name: "__frontier_set_dedups_log_stacks_seen", next_frontier_table_name: "__next_frontier_set_dedups_log_stacks_seen", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "set_dedups_log_stacks_seen" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: `DELETE FROM "set_dedups_log_stacks_seen" WHERE ("item") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "item"`, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_set_dedups_log_stacks_seen" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["seen_count/1"] },
+  { rel: "seen", kind: "set", table_name: "set_dedups_log_stacks_seen_5d708b109b9c", delta_table_name: "__delta_set_dedups_log_stacks_seen_5d708b109b9c", frontier_table_name: "__frontier_set_dedups_log_stacks_seen_5d708b109b9c", next_frontier_table_name: "__next_frontier_set_dedups_log_stacks_seen_5d708b109b9c", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "set_dedups_log_stacks_seen_5d708b109b9c" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: `DELETE FROM "set_dedups_log_stacks_seen_5d708b109b9c" WHERE ("item") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "item"`, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_set_dedups_log_stacks_seen_5d708b109b9c" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["seen_count/1"] },
   { rel: "seen_count", kind: "log", table_name: "set_dedups_log_stacks_seen_count", delta_table_name: "__delta_set_dedups_log_stacks_seen_count", frontier_table_name: "__frontier_set_dedups_log_stacks_seen_count", next_frontier_table_name: "__next_frontier_set_dedups_log_stacks_seen_count", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_set_dedups_log_stacks_seen_count" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "seen_count", rule_id: "set_dedups_log_stacks:seen_count/1#1", head_kind: "log", head_table_name: "set_dedups_log_stacks_seen_count", head_delta_table_name: "__delta_set_dedups_log_stacks_seen_count", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_set_dedups_log_stacks_seen" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "heard_count", rule_id: "set_dedups_log_stacks:heard_count/1#1", head_kind: "log", head_table_name: "set_dedups_log_stacks_heard_count", head_delta_table_name: "__delta_set_dedups_log_stacks_heard_count", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_set_dedups_log_stacks_heard" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "seen_count", rule_id: "set_dedups_log_stacks:seen_count/1#1", head_kind: "log", head_table_name: "set_dedups_log_stacks_seen_count", head_delta_table_name: "__delta_set_dedups_log_stacks_seen_count", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_set_dedups_log_stacks_seen_5d708b109b9c" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "heard_count", rule_id: "set_dedups_log_stacks:heard_count/1#1", head_kind: "log", head_table_name: "set_dedups_log_stacks_heard_count", head_delta_table_name: "__delta_set_dedups_log_stacks_heard_count", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_set_dedups_log_stacks_heard_193643fb2783" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -341,6 +348,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

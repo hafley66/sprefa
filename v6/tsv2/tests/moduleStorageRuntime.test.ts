@@ -32,6 +32,19 @@ const ROOT = join(V6, "..");
 const SOURCE = join(TSV2, "goldens", "module_storage_runtime", "0_module_storage_runtime.dl6");
 const COMPILE = join(V6, "prolog", "compile", "scripts", "compile_dl6.sh");
 
+/** Every stored rel here is `rel X(name: text)`, so one shape digest covers all
+ *  five; a DERIVED rel takes none. `person` folds onto `Person` in SQLite even
+ *  with the digest, so it keeps the deterministic `_2` collision suffix. */
+const SHAPE = "7a5ef237b7b9";
+const ENTRY = "0_module_storage_runtime";
+const PERSON_TABLE = `${ENTRY}_Person_${SHAPE}`;
+const PERSON_LOWER_TABLE = `${ENTRY}_person_${SHAPE}_2`;
+const SOURCE_TABLE = `${ENTRY}_source_${SHAPE}`;
+const IMPORTED_TABLE = `${ENTRY}_imported`;
+const DERIVED_TABLE = `${ENTRY}_derived`;
+const FIRST_TABLE = `a_model_First_${SHAPE}`;
+const SECOND_TABLE = `b_model_Second_${SHAPE}`;
+
 function normalized_rows(rows: readonly Record<string, unknown>[]): string[][] {
   return rows.map((row) => Object.values(row).map((value) => String(value)));
 }
@@ -55,13 +68,13 @@ test("module storage names execute through the TypeScript SQLite runtime", async
   assert.deepEqual(
     [...physical].map(([rel, plan]) => [rel, plan.table_name]),
     [
-      ["First", "a_model_First"],
-      ["Person", "0_module_storage_runtime_Person"],
-      ["Second", "b_model_Second"],
-      ["derived", "0_module_storage_runtime_derived"],
-      ["imported", "0_module_storage_runtime_imported"],
-      ["person", "0_module_storage_runtime_person_2"],
-      ["source", "0_module_storage_runtime_source"],
+      ["First", FIRST_TABLE],
+      ["Person", PERSON_TABLE],
+      ["Second", SECOND_TABLE],
+      ["derived", DERIVED_TABLE],
+      ["imported", IMPORTED_TABLE],
+      ["person", PERSON_LOWER_TABLE],
+      ["source", SOURCE_TABLE],
     ],
   );
 
@@ -71,21 +84,21 @@ test("module storage names execute through the TypeScript SQLite runtime", async
   assert.ok(person);
   assert.ok(imported);
   assert.ok(derived);
-  assert.match(person.arrival_add_sql ?? "", /0_module_storage_runtime_Person/);
-  assert.match(person.delta_table_name, /^__delta_0_module_storage_runtime_Person$/);
-  assert.match(person.frontier_table_name, /^__frontier_0_module_storage_runtime_Person$/);
-  assert.match(person.next_frontier_table_name, /^__next_frontier_0_module_storage_runtime_Person$/);
+  assert.ok((person.arrival_add_sql ?? "").includes(PERSON_TABLE));
+  assert.equal(person.delta_table_name, `__delta_${PERSON_TABLE}`);
+  assert.equal(person.frontier_table_name, `__frontier_${PERSON_TABLE}`);
+  assert.equal(person.next_frontier_table_name, `__next_frontier_${PERSON_TABLE}`);
 
   const imported_rule = incremental_plan.levels.find((level) => level.head_rel === "imported");
   const derived_rule = incremental_plan.levels.find((level) => level.head_rel === "derived");
   assert.ok(imported_rule);
   assert.ok(derived_rule);
-  assert.match(imported_rule.insert_sql ?? "", /__frontier_a_model_First/);
-  assert.match(imported_rule.recompute_sql ?? "", /a_model_First/);
-  assert.match(imported_rule.insert_sql ?? "", /0_module_storage_runtime_imported/);
-  assert.match(derived_rule.insert_sql ?? "", /__frontier_0_module_storage_runtime_imported/);
-  assert.match(derived_rule.recompute_sql ?? "", /0_module_storage_runtime_imported/);
-  assert.match(derived_rule.insert_sql ?? "", /0_module_storage_runtime_derived/);
+  assert.ok((imported_rule.insert_sql ?? "").includes(`__frontier_${FIRST_TABLE}`));
+  assert.ok((imported_rule.recompute_sql ?? "").includes(FIRST_TABLE));
+  assert.ok((imported_rule.insert_sql ?? "").includes(IMPORTED_TABLE));
+  assert.ok((derived_rule.insert_sql ?? "").includes(`__frontier_${IMPORTED_TABLE}`));
+  assert.ok((derived_rule.recompute_sql ?? "").includes(IMPORTED_TABLE));
+  assert.ok((derived_rule.insert_sql ?? "").includes(DERIVED_TABLE));
 
   const seam = ScratchStore.open(":memory:");
   await firstValueFrom(
@@ -123,14 +136,14 @@ test("module storage names execute through the TypeScript SQLite runtime", async
     seam.runner.execute(seam.db, `SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`),
   )).rows.map((row) => String(row.name));
   assert.deepEqual(public_tables, [
-    "0_module_storage_runtime_Person",
-    "0_module_storage_runtime_derived",
-    "0_module_storage_runtime_imported",
-    "0_module_storage_runtime_person_2",
-    "0_module_storage_runtime_source",
+    PERSON_TABLE,
+    DERIVED_TABLE,
+    IMPORTED_TABLE,
+    PERSON_LOWER_TABLE,
+    SOURCE_TABLE,
     "__str",
-    "a_model_First",
-    "b_model_Second",
+    FIRST_TABLE,
+    SECOND_TABLE,
   ]);
   for (const name of ["First", "Person", "Second", "derived", "imported", "person", "source"]) {
     assert.equal(public_tables.includes(name), false, `unprefixed table leaked: ${name}`);

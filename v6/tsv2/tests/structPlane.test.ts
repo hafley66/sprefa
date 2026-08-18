@@ -78,6 +78,7 @@ import * as order_a from "../gen_emitted/struct_intern_order_a.ts";
 import * as order_b from "../gen_emitted/struct_intern_order_b.ts";
 import * as shared from "../gen_emitted/struct_shared_child_survives_one_release.ts";
 import * as option_text from "../gen_emitted/option_text_column_reads_through_tag_join.ts";
+import { physical_name } from "./physicalNames.ts";
 
 type EmittedProgram = IGenProgram & { readonly boot: readonly IBootStatement[] };
 
@@ -137,11 +138,11 @@ function dense_ids(seam: ISqlSeam, table: string, columns: readonly string[]): P
 test("edge 1: two build orders render identically while their dense ids differ", async () => {
   const seam_a = await booted_seam(order_a.program as EmittedProgram);
   const lines_a = await run_schedule(order_a.program as EmittedProgram, seam_a, ORDER_A_SCHEDULE);
-  const ids_a = await dense_ids(seam_a, `${ORDER_A}_span`, ["start", "end"]);
+  const ids_a = await dense_ids(seam_a, physical_name(order_a.program, "span"), ["start", "end"]);
 
   const seam_b = await booted_seam(order_b.program as EmittedProgram);
   const lines_b = await run_schedule(order_b.program as EmittedProgram, seam_b, ORDER_B_SCHEDULE);
-  const ids_b = await dense_ids(seam_b, `${ORDER_B}_span`, ["start", "end"]);
+  const ids_b = await dense_ids(seam_b, physical_name(order_b.program, "span"), ["start", "end"]);
 
   const shared_semantic = "[1,2]";
   assert.notEqual(
@@ -212,7 +213,7 @@ test("edge 2: the nested target and parent are public arrivals in one tick", asy
       .pipe(map((result) => result.rows.map((row) => row["name"] as string))),
   );
   assert.ok(
-    tables.includes(`${SHARED}_span`),
+    tables.includes(physical_name(shared.program, "span")),
     `the target relation table must exist: ${tables.join(", ")}`,
   );
 });
@@ -368,7 +369,7 @@ test("plan: the boundary render of a ref column SEARCHes the target view by rowi
   const seam = await booted_seam(order_a.program as EmittedProgram);
   const sql = order_a.incremental_plan.relations.find((relation) => relation.rel === "mark")!.boundary_sql;
   assert.ok(
-    sql.includes(`"__ref_${ORDER_A}_span"`),
+    sql.includes(`"__ref_${physical_name(order_a.program, "span")}"`),
     `this fixture's boundary read must touch the target view: ${sql}`,
   );
   const plan = await firstValueFrom(
@@ -428,11 +429,11 @@ test("crash: standalone resolution replay follows ordinary duplicate-arrival sem
     // direction that WOULD break the boundary render, is unreachable.
     const crashed = await booted_seam(order_a.program as EmittedProgram, path);
     await firstValueFrom(StructPlane.intern(crashed, SPAN_TYPES, SPAN_REF_COLUMNS, mark_batch(1)));
-    const orphan_ids = await dense_ids(crashed, `${ORDER_A}_span`, ["start", "end"]);
+    const orphan_ids = await dense_ids(crashed, physical_name(order_a.program, "span"), ["start", "end"]);
     assert.deepEqual(Object.keys(orphan_ids), ["[1,2]"]);
     const marks = await firstValueFrom(
       crashed.runner
-        .execute(crashed.db, `SELECT count(*) AS n FROM "${ORDER_A}_mark"`)
+        .execute(crashed.db, `SELECT count(*) AS n FROM "${physical_name(order_a.program, "mark")}"`)
         .pipe(map((r) => Number(r.rows[0]!["n"]))),
     );
     assert.equal(marks, 0, "the parent row must be absent; only the target row survived");
@@ -442,7 +443,7 @@ test("crash: standalone resolution replay follows ordinary duplicate-arrival sem
     // second one. As with replaying any ordinary set arrival, the standing
     // target has no second add delta; the parent still arrives at this tick.
     const replayed = await run_schedule(order_a.program as EmittedProgram, crashed, ORDER_A_SCHEDULE);
-    const after_ids = await dense_ids(crashed, `${ORDER_A}_span`, ["start", "end"]);
+    const after_ids = await dense_ids(crashed, physical_name(order_a.program, "span"), ["start", "end"]);
     assert.equal(
       Object.keys(after_ids).length,
       2,

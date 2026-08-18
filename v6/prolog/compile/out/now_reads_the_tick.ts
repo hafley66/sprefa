@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -158,17 +158,17 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "now_reads_the_tick_ping" ("name" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_now_reads_the_tick_ping" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "now_reads_the_tick_ping" t`,
+  `CREATE TABLE "now_reads_the_tick_ping_00cffbcf9f02" ("name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_now_reads_the_tick_ping_00cffbcf9f02" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "now_reads_the_tick_ping_00cffbcf9f02" t`,
   `CREATE TABLE "now_reads_the_tick_seen_at" ("name" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_now_reads_the_tick_seen_at" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."tick" AS "tick" FROM "now_reads_the_tick_seen_at" t`,
-  `CREATE TEMP TABLE "__delta_now_reads_the_tick_ping" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_now_reads_the_tick_ping_sign" ON "__delta_now_reads_the_tick_ping" ("_sign")`,
-  `CREATE INDEX "__delta_now_reads_the_tick_ping_group" ON "__delta_now_reads_the_tick_ping" ("name")`,
-  `CREATE TEMP TABLE "__frontier_now_reads_the_tick_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_now_reads_the_tick_ping_phase" ON "__frontier_now_reads_the_tick_ping" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_now_reads_the_tick_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_now_reads_the_tick_ping" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_now_reads_the_tick_ping" t`,
+  `CREATE TEMP TABLE "__delta_now_reads_the_tick_ping_00cffbcf9f02" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_now_reads_the_tick_ping_00cffbcf9f02_sign" ON "__delta_now_reads_the_tick_ping_00cffbcf9f02" ("_sign")`,
+  `CREATE INDEX "__delta_now_reads_the_tick_ping_00cffbcf9f02_group" ON "__delta_now_reads_the_tick_ping_00cffbcf9f02" ("name")`,
+  `CREATE TEMP TABLE "__frontier_now_reads_the_tick_ping_00cffbcf9f02" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_now_reads_the_tick_ping_00cffbcf9f02_phase" ON "__frontier_now_reads_the_tick_ping_00cffbcf9f02" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_now_reads_the_tick_ping_00cffbcf9f02" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_now_reads_the_tick_ping_00cffbcf9f02" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_now_reads_the_tick_ping_00cffbcf9f02" t`,
   `CREATE TEMP TABLE "__delta_now_reads_the_tick_seen_at" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_now_reads_the_tick_seen_at_sign" ON "__delta_now_reads_the_tick_seen_at" ("_sign")`,
   `CREATE INDEX "__delta_now_reads_the_tick_seen_at_group" ON "__delta_now_reads_the_tick_seen_at" ("name", "tick")`,
@@ -183,6 +183,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   ping: ["name"],
   seen_at: ["name", "tick"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  ping: "now_reads_the_tick_ping_00cffbcf9f02",
+  seen_at: "now_reads_the_tick_seen_at",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -208,11 +213,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 10, parent_id: 7, ordinal: 0, local_name: "seen_at", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "6f81e7e4a46ce7cb", h_schema: "3dc49401c9582dc0", h_rule: "a8ce8c40232eaafc" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "fd876b2b75ae8e9d", h_schema: "", h_rule: "" },
   { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "tick", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "cb753279daaac85c", h_schema: "", h_rule: "" },
-  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__delta_now_reads_the_tick_ping", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "75a335d9ead6be01", h_schema: "178788c545e561e2", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__frontier_now_reads_the_tick_ping", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "4573a3a6a505c673", h_schema: "de5b51999f205894", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__next_frontier_now_reads_the_tick_ping", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "042100cae91e1c84", h_schema: "de5b51999f205894", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__txt_now_reads_the_tick_ping", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "86592651191e3450", h_schema: "a30b139c04a632dd", h_rule: "" },
-  { rel_id: 17, parent_id: 13, ordinal: 0, local_name: "__txt___delta_now_reads_the_tick_ping", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "b572b90c402bd1ce", h_schema: "a30b139c04a632dd", h_rule: "" },
+  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__delta_now_reads_the_tick_ping_00cffbcf9f02", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "c5fb9f8f1eda5e3f", h_schema: "178788c545e561e2", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__frontier_now_reads_the_tick_ping_00cffbcf9f02", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "bb34cf12124559a6", h_schema: "de5b51999f205894", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__next_frontier_now_reads_the_tick_ping_00cffbcf9f02", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "3779f44537028d46", h_schema: "de5b51999f205894", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__txt_now_reads_the_tick_ping_00cffbcf9f02", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "b26c2d24dce7d2e9", h_schema: "a30b139c04a632dd", h_rule: "" },
+  { rel_id: 17, parent_id: 13, ordinal: 0, local_name: "__txt___delta_now_reads_the_tick_ping_00cffbcf9f02", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "0f73d0d537f11386", h_schema: "a30b139c04a632dd", h_rule: "" },
   { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__delta_now_reads_the_tick_seen_at", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "c0ae4251c0867583", h_schema: "e943605c7607f1c6", h_rule: "" },
   { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__frontier_now_reads_the_tick_seen_at", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "368a85af692b9e51", h_schema: "1fc7dd4438ee6df5", h_rule: "" },
   { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__next_frontier_now_reads_the_tick_seen_at", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "26ab68a7428f4730", h_schema: "1fc7dd4438ee6df5", h_rule: "" },
@@ -233,17 +238,17 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  ping: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_now_reads_the_tick_ping" t`,
+  ping: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_now_reads_the_tick_ping_00cffbcf9f02" t`,
   seen_at: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."tick" FROM "__txt_now_reads_the_tick_seen_at" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "ping", kind: "log", table_name: "now_reads_the_tick_ping", delta_table_name: "__delta_now_reads_the_tick_ping", frontier_table_name: "__frontier_now_reads_the_tick_ping", next_frontier_table_name: "__next_frontier_now_reads_the_tick_ping", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "now_reads_the_tick_ping" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_now_reads_the_tick_ping" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."_sign"`, rule_observers: ["seen_at/2"] },
+  { rel: "ping", kind: "log", table_name: "now_reads_the_tick_ping_00cffbcf9f02", delta_table_name: "__delta_now_reads_the_tick_ping_00cffbcf9f02", frontier_table_name: "__frontier_now_reads_the_tick_ping_00cffbcf9f02", next_frontier_table_name: "__next_frontier_now_reads_the_tick_ping_00cffbcf9f02", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "now_reads_the_tick_ping_00cffbcf9f02" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_now_reads_the_tick_ping_00cffbcf9f02" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."_sign"`, rule_observers: ["seen_at/2"] },
   { rel: "seen_at", kind: "log", table_name: "now_reads_the_tick_seen_at", delta_table_name: "__delta_now_reads_the_tick_seen_at", frontier_table_name: "__frontier_now_reads_the_tick_seen_at", next_frontier_table_name: "__next_frontier_now_reads_the_tick_seen_at", columns: ["name", "tick"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."tick", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_now_reads_the_tick_seen_at" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."tick", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "seen_at", rule_id: "now_reads_the_tick:seen_at/2#1", head_kind: "log", head_table_name: "now_reads_the_tick_seen_at", head_delta_table_name: "__delta_now_reads_the_tick_seen_at", head_columns: ["name", "tick"], key_indices: [], project_sql: `SELECT d0."name" AS "name", (SELECT "n" FROM "__tick") AS "tick" FROM "__frontier_now_reads_the_tick_ping" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "seen_at", rule_id: "now_reads_the_tick:seen_at/2#1", head_kind: "log", head_table_name: "now_reads_the_tick_seen_at", head_delta_table_name: "__delta_now_reads_the_tick_seen_at", head_columns: ["name", "tick"], key_indices: [], project_sql: `SELECT d0."name" AS "name", (SELECT "n" FROM "__tick") AS "tick" FROM "__frontier_now_reads_the_tick_ping_00cffbcf9f02" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -303,6 +308,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -177,17 +177,17 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "seeded_pre_multicolumn_fee_stats_fold_fee" ("account" INTEGER NOT NULL, "amount" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_seeded_pre_multicolumn_fee_stats_fold_fee" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."account") AS "account", t."amount" AS "amount" FROM "seeded_pre_multicolumn_fee_stats_fold_fee" t`,
+  `CREATE TABLE "seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" ("account" INTEGER NOT NULL, "amount" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."account") AS "account", t."amount" AS "amount" FROM "seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" t`,
   `CREATE TABLE "seeded_pre_multicolumn_fee_stats_fold_fee_stats" ("__id" INTEGER PRIMARY KEY, "account" INTEGER NOT NULL, "next" INTEGER NOT NULL, UNIQUE ("account"))`,
   `CREATE TEMP VIEW "__txt_seeded_pre_multicolumn_fee_stats_fold_fee_stats" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."account") AS "account", t."next" AS "next" FROM "seeded_pre_multicolumn_fee_stats_fold_fee_stats" t`,
-  `CREATE TEMP TABLE "__delta_seeded_pre_multicolumn_fee_stats_fold_fee" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "account" INTEGER NOT NULL, "amount" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_sign" ON "__delta_seeded_pre_multicolumn_fee_stats_fold_fee" ("_sign")`,
-  `CREATE INDEX "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_group" ON "__delta_seeded_pre_multicolumn_fee_stats_fold_fee" ("account", "amount")`,
-  `CREATE TEMP TABLE "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "account" INTEGER NOT NULL, "amount" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee_phase" ON "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_seeded_pre_multicolumn_fee_stats_fold_fee" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "account" INTEGER NOT NULL, "amount" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_seeded_pre_multicolumn_fee_stats_fold_fee" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."account") AS "account", t."amount" AS "amount", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_seeded_pre_multicolumn_fee_stats_fold_fee" t`,
+  `CREATE TEMP TABLE "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "account" INTEGER NOT NULL, "amount" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308_sign" ON "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" ("_sign")`,
+  `CREATE INDEX "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308_group" ON "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" ("account", "amount")`,
+  `CREATE TEMP TABLE "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "account" INTEGER NOT NULL, "amount" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308_phase" ON "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "account" INTEGER NOT NULL, "amount" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."account") AS "account", t."amount" AS "amount", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" t`,
   `CREATE TEMP TABLE "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "account" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats_sign" ON "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats" ("_sign")`,
   `CREATE INDEX "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats_group" ON "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats" ("account", "next")`,
@@ -201,6 +201,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   fee: ["account", "amount"],
   fee_stats: ["account", "next"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  fee: "seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308",
+  fee_stats: "seeded_pre_multicolumn_fee_stats_fold_fee_stats",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -227,11 +232,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 11, parent_id: 7, ordinal: 0, local_name: "fee_stats", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "d75a03cd1dd085d4", h_schema: "861c32610a8447c4", h_rule: "bbe06a5ce4317d68" },
   { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "account", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "68b0d9e999484913", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 11, ordinal: 2, local_name: "next", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "a9ed60074b79de21", h_schema: "", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_seeded_pre_multicolumn_fee_stats_fold_fee", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "994286ae8e71c196", h_schema: "c3b37a1f1d7cdccf", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "fe90e21eeafc3086", h_schema: "3a4373fe345f748e", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_seeded_pre_multicolumn_fee_stats_fold_fee", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "ed11e425d4434d27", h_schema: "3a4373fe345f748e", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_seeded_pre_multicolumn_fee_stats_fold_fee", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "878c99a7ffc61a40", h_schema: "c54cff34e9342292", h_rule: "" },
-  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_seeded_pre_multicolumn_fee_stats_fold_fee", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "0645f8ee3fb15515", h_schema: "c54cff34e9342292", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "4d2472985ad9176e", h_schema: "c3b37a1f1d7cdccf", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "5339c48906dba894", h_schema: "3a4373fe345f748e", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "fde226aa4bb44fca", h_schema: "3a4373fe345f748e", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "85cb3e501e2a942d", h_schema: "c54cff34e9342292", h_rule: "" },
+  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "eb9dc7b8d813ef29", h_schema: "c54cff34e9342292", h_rule: "" },
   { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "bac4627dfefeca37", h_schema: "1d71683b82c0d8d9", h_rule: "" },
   { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee_stats", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "1b078c03a0a41d6c", h_schema: "318d4f61dc7c62a2", h_rule: "" },
   { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_seeded_pre_multicolumn_fee_stats_fold_fee_stats", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "68f3bb37626b0912", h_schema: "318d4f61dc7c62a2", h_rule: "" },
@@ -260,7 +265,7 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    fee: select_rows(seam, `SELECT CASE WHEN json_valid(t."account") AND json_type(t."account") = 'object' AND json_type(t."account", '$.fn') = 'text' AND json_type(t."account", '$.args') = 'array' THEN json_extract(t."account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."account", '$.args')), '') || ')' ELSE t."account" END AS "account", t."amount" FROM "__txt_seeded_pre_multicolumn_fee_stats_fold_fee" t`, rel_columns.fee!, rel_column_types.fee!),
+    fee: select_rows(seam, `SELECT CASE WHEN json_valid(t."account") AND json_type(t."account") = 'object' AND json_type(t."account", '$.fn') = 'text' AND json_type(t."account", '$.args') = 'array' THEN json_extract(t."account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."account", '$.args')), '') || ')' ELSE t."account" END AS "account", t."amount" FROM "__txt_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" t`, rel_columns.fee!, rel_column_types.fee!),
     fee_stats: select_rows(seam, `SELECT CASE WHEN json_valid(t."account") AND json_type(t."account") = 'object' AND json_type(t."account", '$.fn') = 'text' AND json_type(t."account", '$.args') = 'array' THEN json_extract(t."account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."account", '$.args')), '') || ')' ELSE t."account" END AS "account", t."next" FROM "__txt_seeded_pre_multicolumn_fee_stats_fold_fee_stats" t`, rel_columns.fee_stats!, rel_column_types.fee_stats!),
   });
 }
@@ -269,7 +274,7 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    fee: select_rows(seam, `SELECT "account", "amount" FROM "seeded_pre_multicolumn_fee_stats_fold_fee"`, rel_columns.fee!, rel_stored_column_types.fee!),
+    fee: select_rows(seam, `SELECT "account", "amount" FROM "seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308"`, rel_columns.fee!, rel_stored_column_types.fee!),
     fee_stats: select_rows(seam, `SELECT "account", "next" FROM "seeded_pre_multicolumn_fee_stats_fold_fee_stats"`, rel_columns.fee_stats!, rel_stored_column_types.fee_stats!),
   });
 }
@@ -279,12 +284,12 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  fee: `SELECT CASE WHEN json_valid(t."account") AND json_type(t."account") = 'object' AND json_type(t."account", '$.fn') = 'text' AND json_type(t."account", '$.args') = 'array' THEN json_extract(t."account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."account", '$.args')), '') || ')' ELSE t."account" END AS "account", t."amount" FROM "__txt_seeded_pre_multicolumn_fee_stats_fold_fee" t`,
+  fee: `SELECT CASE WHEN json_valid(t."account") AND json_type(t."account") = 'object' AND json_type(t."account", '$.fn') = 'text' AND json_type(t."account", '$.args') = 'array' THEN json_extract(t."account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."account", '$.args')), '') || ')' ELSE t."account" END AS "account", t."amount" FROM "__txt_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" t`,
   fee_stats: `SELECT CASE WHEN json_valid(t."account") AND json_type(t."account") = 'object' AND json_type(t."account", '$.fn') = 'text' AND json_type(t."account", '$.args') = 'array' THEN json_extract(t."account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."account", '$.args')), '') || ')' ELSE t."account" END AS "account", t."next" FROM "__txt_seeded_pre_multicolumn_fee_stats_fold_fee_stats" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  fee: { kind: "log", add_sql: `INSERT INTO "seeded_pre_multicolumn_fee_stats_fold_fee" ("account", "amount") VALUES (?, ?)`, del_sql: null },
+  fee: { kind: "log", add_sql: `INSERT INTO "seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" ("account", "amount") VALUES (?, ?)`, del_sql: null },
 };
 
 function arrival_statement(arrival: IArrivalRow): SqlStatement {
@@ -310,15 +315,15 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "fee", kind: "log", table_name: "seeded_pre_multicolumn_fee_stats_fold_fee", delta_table_name: "__delta_seeded_pre_multicolumn_fee_stats_fold_fee", frontier_table_name: "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee", next_frontier_table_name: "__next_frontier_seeded_pre_multicolumn_fee_stats_fold_fee", columns: ["account", "amount"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT INTO "seeded_pre_multicolumn_fee_stats_fold_fee" ("account", "amount") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "account", "amount"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."account") AND json_type(t."account") = 'object' AND json_type(t."account", '$.fn') = 'text' AND json_type(t."account", '$.args') = 'array' THEN json_extract(t."account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."account", '$.args')), '') || ')' ELSE t."account" END AS "account", t."amount", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seeded_pre_multicolumn_fee_stats_fold_fee" t WHERE t."_sign" IN (-1, 1) GROUP BY t."account", t."amount", t."_sign"`, rule_observers: ["fee_stats/2"] },
+  { rel: "fee", kind: "log", table_name: "seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308", delta_table_name: "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308", frontier_table_name: "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308", next_frontier_table_name: "__next_frontier_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308", columns: ["account", "amount"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT INTO "seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" ("account", "amount") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "account", "amount"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."account") AND json_type(t."account") = 'object' AND json_type(t."account", '$.fn') = 'text' AND json_type(t."account", '$.args') = 'array' THEN json_extract(t."account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."account", '$.args')), '') || ')' ELSE t."account" END AS "account", t."amount", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" t WHERE t."_sign" IN (-1, 1) GROUP BY t."account", t."amount", t."_sign"`, rule_observers: ["fee_stats/2"] },
   { rel: "fee_stats", kind: "set", table_name: "seeded_pre_multicolumn_fee_stats_fold_fee_stats", delta_table_name: "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats", frontier_table_name: "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee_stats", next_frontier_table_name: "__next_frontier_seeded_pre_multicolumn_fee_stats_fold_fee_stats", columns: ["account", "next"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."account") AND json_type(t."account") = 'object' AND json_type(t."account", '$.fn') = 'text' AND json_type(t."account", '$.args') = 'array' THEN json_extract(t."account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."account", '$.args')), '') || ')' ELSE t."account" END AS "account", t."next", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats" t WHERE t."_sign" IN (-1, 1) GROUP BY t."account", t."next", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "fee_stats", rule_id: "seeded_pre_multicolumn_fee_stats_fold:fee_stats/2#1", head_kind: "set", head_table_name: "seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_delta_table_name: "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_columns: ["account", "next"], key_indices: [0], project_sql: `SELECT d0."account" AS "account", (COALESCE((SELECT b0."next" FROM "__pre_seeded_pre_multicolumn_fee_stats_fold_fee_stats" b0 WHERE b0."account" = d0."account"), 0) + d0."amount") AS "next" FROM "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "fee_stats", rule_id: "seeded_pre_multicolumn_fee_stats_fold:fee_stats/2#2", head_kind: "set", head_table_name: "seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_delta_table_name: "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_columns: ["account", "next"], key_indices: [0], project_sql: `SELECT d0."account" AS "account", (b0."next" + d0."amount") AS "next" FROM "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee" d0, "seeded_pre_multicolumn_fee_stats_fold_fee_stats" b0 WHERE d0."_phase" >= 0 AND b0."account" = d0."account" ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "fee_stats", rule_id: "seeded_pre_multicolumn_fee_stats_fold:fee_stats/2#3", head_kind: "set", head_table_name: "seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_delta_table_name: "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_columns: ["account", "next"], key_indices: [0], project_sql: `SELECT d0."account" AS "account", (COALESCE((SELECT b0."next" FROM "__pre_seeded_pre_multicolumn_fee_stats_fold_fee_stats" b0 WHERE b0."account" = d0."account"), 0) + d0."amount") AS "next" FROM "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "fee_stats", rule_id: "seeded_pre_multicolumn_fee_stats_fold:fee_stats/2#4", head_kind: "set", head_table_name: "seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_delta_table_name: "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_columns: ["account", "next"], key_indices: [0], project_sql: `SELECT d0."account" AS "account", (b0."next" + d0."amount") AS "next" FROM "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee" d0, "seeded_pre_multicolumn_fee_stats_fold_fee_stats" b0 WHERE d0."_phase" >= 0 AND b0."account" = d0."account" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "fee_stats", rule_id: "seeded_pre_multicolumn_fee_stats_fold:fee_stats/2#1", head_kind: "set", head_table_name: "seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_delta_table_name: "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_columns: ["account", "next"], key_indices: [0], project_sql: `SELECT d0."account" AS "account", (COALESCE((SELECT b0."next" FROM "__pre_seeded_pre_multicolumn_fee_stats_fold_fee_stats" b0 WHERE b0."account" = d0."account"), 0) + d0."amount") AS "next" FROM "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "fee_stats", rule_id: "seeded_pre_multicolumn_fee_stats_fold:fee_stats/2#2", head_kind: "set", head_table_name: "seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_delta_table_name: "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_columns: ["account", "next"], key_indices: [0], project_sql: `SELECT d0."account" AS "account", (b0."next" + d0."amount") AS "next" FROM "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" d0, "seeded_pre_multicolumn_fee_stats_fold_fee_stats" b0 WHERE d0."_phase" >= 0 AND b0."account" = d0."account" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "fee_stats", rule_id: "seeded_pre_multicolumn_fee_stats_fold:fee_stats/2#3", head_kind: "set", head_table_name: "seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_delta_table_name: "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_columns: ["account", "next"], key_indices: [0], project_sql: `SELECT d0."account" AS "account", (COALESCE((SELECT b0."next" FROM "__pre_seeded_pre_multicolumn_fee_stats_fold_fee_stats" b0 WHERE b0."account" = d0."account"), 0) + d0."amount") AS "next" FROM "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "fee_stats", rule_id: "seeded_pre_multicolumn_fee_stats_fold:fee_stats/2#4", head_kind: "set", head_table_name: "seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_delta_table_name: "__delta_seeded_pre_multicolumn_fee_stats_fold_fee_stats", head_columns: ["account", "next"], key_indices: [0], project_sql: `SELECT d0."account" AS "account", (b0."next" + d0."amount") AS "next" FROM "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" d0, "seeded_pre_multicolumn_fee_stats_fold_fee_stats" b0 WHERE d0."_phase" >= 0 AND b0."account" = d0."account" ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -366,7 +371,7 @@ const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: st
 ];
 
 const ORDERED_CARRY_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
-  { rel: "fee", sql: `SELECT "_sequence" AS "__sequence", "account", "amount" FROM "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee" ORDER BY "_phase", "_sequence"`, columns: ["account", "amount"] },
+  { rel: "fee", sql: `SELECT "_sequence" AS "__sequence", "account", "amount" FROM "__frontier_seeded_pre_multicolumn_fee_stats_fold_fee_c3a70f002308" ORDER BY "_phase", "_sequence"`, columns: ["account", "amount"] },
 ];
 
 function ordered_outside_occurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {
@@ -550,6 +555,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

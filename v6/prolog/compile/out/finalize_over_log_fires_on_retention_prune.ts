@@ -56,7 +56,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -159,18 +159,18 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "finalize_over_log_fires_on_retention_prune_ev" ("ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_finalize_over_log_fires_on_retention_prune_ev" AS SELECT t."ordinal" AS "ordinal", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "finalize_over_log_fires_on_retention_prune_ev" t`,
+  `CREATE TABLE "finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" ("ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" AS SELECT t."ordinal" AS "ordinal", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" t`,
   `CREATE TABLE "finalize_over_log_fires_on_retention_prune_gone" ("ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_finalize_over_log_fires_on_retention_prune_gone" AS SELECT t."ordinal" AS "ordinal", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "finalize_over_log_fires_on_retention_prune_gone" t`,
-  `CREATE TEMP TABLE "__delta_finalize_over_log_fires_on_retention_prune_ev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_finalize_over_log_fires_on_retention_prune_ev_sign" ON "__delta_finalize_over_log_fires_on_retention_prune_ev" ("_sign")`,
-  `CREATE INDEX "__delta_finalize_over_log_fires_on_retention_prune_ev_group" ON "__delta_finalize_over_log_fires_on_retention_prune_ev" ("ordinal", "payload")`,
-  `CREATE TEMP TABLE "__frontier_finalize_over_log_fires_on_retention_prune_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_finalize_over_log_fires_on_retention_prune_ev_phase" ON "__frontier_finalize_over_log_fires_on_retention_prune_ev" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_finalize_over_log_fires_on_retention_prune_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_finalize_over_log_fires_on_retention_prune_ev" AS SELECT t."ordinal" AS "ordinal", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_finalize_over_log_fires_on_retention_prune_ev" t`,
-  `CREATE TEMP TABLE "__departure_frontier_finalize_over_log_fires_on_retention_prune_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f_sign" ON "__delta_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" ("_sign")`,
+  `CREATE INDEX "__delta_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f_group" ON "__delta_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" ("ordinal", "payload")`,
+  `CREATE TEMP TABLE "__frontier_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f_phase" ON "__frontier_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" AS SELECT t."ordinal" AS "ordinal", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" t`,
+  `CREATE TEMP TABLE "__departure_frontier_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE TEMP TABLE "__delta_finalize_over_log_fires_on_retention_prune_gone" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_finalize_over_log_fires_on_retention_prune_gone_sign" ON "__delta_finalize_over_log_fires_on_retention_prune_gone" ("_sign")`,
   `CREATE INDEX "__delta_finalize_over_log_fires_on_retention_prune_gone_group" ON "__delta_finalize_over_log_fires_on_retention_prune_gone" ("ordinal", "payload")`,
@@ -183,6 +183,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   ev: ["ordinal", "payload"],
   gone: ["ordinal", "payload"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  ev: "finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f",
+  gone: "finalize_over_log_fires_on_retention_prune_gone",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -209,12 +214,12 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 11, parent_id: 7, ordinal: 0, local_name: "gone", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "29ee4792a805b826", h_schema: "86198db6aac4a59c", h_rule: "aa66fe6c10cbe86a" },
   { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "ordinal", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "74d69b05c9da2c20", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 11, ordinal: 2, local_name: "payload", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "a1dc93cf4424e759", h_schema: "", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_finalize_over_log_fires_on_retention_prune_ev", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "228b9eb0335129e7", h_schema: "3b08a0c8f807ffcd", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_finalize_over_log_fires_on_retention_prune_ev", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "de2770e0393cd2b8", h_schema: "33a0babd395759ff", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_finalize_over_log_fires_on_retention_prune_ev", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "08dfba2048647e66", h_schema: "33a0babd395759ff", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__departure_frontier_finalize_over_log_fires_on_retention_prune_ev", kind: "departure", type_id: 0, arity: 4, module_id: 7, h_id: "fbb430ef89edded9", h_schema: "33a0babd395759ff", h_rule: "" },
-  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__txt_finalize_over_log_fires_on_retention_prune_ev", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "8652cc1bf8c16c36", h_schema: "86198db6aac4a59c", h_rule: "" },
-  { rel_id: 19, parent_id: 14, ordinal: 0, local_name: "__txt___delta_finalize_over_log_fires_on_retention_prune_ev", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "e24a47cee6760364", h_schema: "86198db6aac4a59c", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "438b51e0a0ce5d9a", h_schema: "3b08a0c8f807ffcd", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "75bd2eab65d0338b", h_schema: "33a0babd395759ff", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "e419bde69e61ea22", h_schema: "33a0babd395759ff", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__departure_frontier_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f", kind: "departure", type_id: 0, arity: 4, module_id: 7, h_id: "1868711885be2cd9", h_schema: "33a0babd395759ff", h_rule: "" },
+  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__txt_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "6043ebb60ef6f64c", h_schema: "86198db6aac4a59c", h_rule: "" },
+  { rel_id: 19, parent_id: 14, ordinal: 0, local_name: "__txt___delta_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "0b21c6a958d4c528", h_schema: "86198db6aac4a59c", h_rule: "" },
   { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__delta_finalize_over_log_fires_on_retention_prune_gone", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "c0c119b62336e63e", h_schema: "3b08a0c8f807ffcd", h_rule: "" },
   { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__frontier_finalize_over_log_fires_on_retention_prune_gone", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "76d0b1b711b44f28", h_schema: "33a0babd395759ff", h_rule: "" },
   { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__next_frontier_finalize_over_log_fires_on_retention_prune_gone", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "31313e99aea25bb0", h_schema: "33a0babd395759ff", h_rule: "" },
@@ -236,24 +241,24 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  ev: `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_finalize_over_log_fires_on_retention_prune_ev" t`,
+  ev: `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" t`,
   gone: `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_finalize_over_log_fires_on_retention_prune_gone" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "ev", kind: "log", table_name: "finalize_over_log_fires_on_retention_prune_ev", delta_table_name: "__delta_finalize_over_log_fires_on_retention_prune_ev", frontier_table_name: "__frontier_finalize_over_log_fires_on_retention_prune_ev", next_frontier_table_name: "__next_frontier_finalize_over_log_fires_on_retention_prune_ev", columns: ["ordinal", "payload"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "finalize_over_log_fires_on_retention_prune_ev" ("ordinal", "payload") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "ordinal", "payload"`, arrival_del_sql: null, boundary_sql: `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_finalize_over_log_fires_on_retention_prune_ev" t WHERE t."_sign" IN (-1, 1) GROUP BY t."ordinal", t."payload", t."_sign"`, departure_frontier_table_name: "__departure_frontier_finalize_over_log_fires_on_retention_prune_ev", rule_observers: ["gone/2"] },
+  { rel: "ev", kind: "log", table_name: "finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f", delta_table_name: "__delta_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f", frontier_table_name: "__frontier_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f", next_frontier_table_name: "__next_frontier_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f", columns: ["ordinal", "payload"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" ("ordinal", "payload") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "ordinal", "payload"`, arrival_del_sql: null, boundary_sql: `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" t WHERE t."_sign" IN (-1, 1) GROUP BY t."ordinal", t."payload", t."_sign"`, departure_frontier_table_name: "__departure_frontier_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f", rule_observers: ["gone/2"] },
   { rel: "gone", kind: "log", table_name: "finalize_over_log_fires_on_retention_prune_gone", delta_table_name: "__delta_finalize_over_log_fires_on_retention_prune_gone", frontier_table_name: "__frontier_finalize_over_log_fires_on_retention_prune_gone", next_frontier_table_name: "__next_frontier_finalize_over_log_fires_on_retention_prune_gone", columns: ["ordinal", "payload"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_finalize_over_log_fires_on_retention_prune_gone" t WHERE t."_sign" IN (-1, 1) GROUP BY t."ordinal", t."payload", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "gone", rule_id: "finalize_over_log_fires_on_retention_prune:gone/2#1", head_kind: "log", head_table_name: "finalize_over_log_fires_on_retention_prune_gone", head_delta_table_name: "__delta_finalize_over_log_fires_on_retention_prune_gone", head_columns: ["ordinal", "payload"], key_indices: [], project_sql: `SELECT d0."ordinal" AS "ordinal", (SELECT s."__id" FROM "__str" s WHERE s."content" = d0."payload") AS "payload" FROM "__departure_frontier_finalize_over_log_fires_on_retention_prune_ev" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"`, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT d0."payload" FROM "__departure_frontier_finalize_over_log_fires_on_retention_prune_ev" d0 WHERE d0."_phase" >= 0`] },
+  { head_rel: "gone", rule_id: "finalize_over_log_fires_on_retention_prune:gone/2#1", head_kind: "log", head_table_name: "finalize_over_log_fires_on_retention_prune_gone", head_delta_table_name: "__delta_finalize_over_log_fires_on_retention_prune_gone", head_columns: ["ordinal", "payload"], key_indices: [], project_sql: `SELECT d0."ordinal" AS "ordinal", (SELECT s."__id" FROM "__str" s WHERE s."content" = d0."payload") AS "payload" FROM "__departure_frontier_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"`, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT d0."payload" FROM "__departure_frontier_finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" d0 WHERE d0."_phase" >= 0`] },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
 const INCREMENTAL_RETENTION_STATEMENTS: readonly IIncrementalRetentionStatement[] = [
-  { rel: "ev", count: 2, delete_sql: `DELETE FROM "finalize_over_log_fires_on_retention_prune_ev" WHERE rowid NOT IN (SELECT rowid FROM "finalize_over_log_fires_on_retention_prune_ev" ORDER BY rowid DESC LIMIT 2) RETURNING "ordinal", "payload"` },
+  { rel: "ev", count: 2, delete_sql: `DELETE FROM "finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" WHERE rowid NOT IN (SELECT rowid FROM "finalize_over_log_fires_on_retention_prune_ev_326d4e8a956f" ORDER BY rowid DESC LIMIT 2) RETURNING "ordinal", "payload"` },
 ];
 
 const RECONCILE_EVERY_TICK = false;
@@ -309,6 +314,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -169,7 +169,7 @@ const ddl: readonly string[] = [
   `CREATE UNIQUE INDEX "option_of_option_of_scalar_keeps_its_stop___opt_option_int_some_id" ON "option_of_option_of_scalar_keeps_its_stop___opt_option_int_some" ("id")`,
   `CREATE TABLE "option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("id", "tag"))`,
   `CREATE TEMP VIEW "__txt_option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."__refcount" AS "__refcount" FROM "option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag" t`,
-  `CREATE TABLE "option_of_option_of_scalar_keeps_its_stop_squad" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "rank" INTEGER NOT NULL, UNIQUE ("id"))`,
+  `CREATE TABLE "option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "rank" INTEGER NOT NULL, UNIQUE ("id"))`,
   `CREATE TEMP TABLE "__delta_option_of_option_of_scalar_keeps_its_stop___opt_int_none" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_option_of_option_of_scalar_keeps_its_stop___opt_int_none_sign" ON "__delta_option_of_option_of_scalar_keeps_its_stop___opt_int_none" ("_sign")`,
   `CREATE INDEX "__delta_option_of_option_of_scalar_keeps_its_stop___opt_int_none_group" ON "__delta_option_of_option_of_scalar_keeps_its_stop___opt_int_none" ("id")`,
@@ -208,12 +208,12 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag_phase" ON "__frontier_option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt___delta_option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag" t`,
-  `CREATE TEMP TABLE "__delta_option_of_option_of_scalar_keeps_its_stop_squad" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rank" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_option_of_option_of_scalar_keeps_its_stop_squad_sign" ON "__delta_option_of_option_of_scalar_keeps_its_stop_squad" ("_sign")`,
-  `CREATE INDEX "__delta_option_of_option_of_scalar_keeps_its_stop_squad_group" ON "__delta_option_of_option_of_scalar_keeps_its_stop_squad" ("id", "rank")`,
-  `CREATE TEMP TABLE "__frontier_option_of_option_of_scalar_keeps_its_stop_squad" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rank" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_option_of_option_of_scalar_keeps_its_stop_squad_phase" ON "__frontier_option_of_option_of_scalar_keeps_its_stop_squad" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_option_of_option_of_scalar_keeps_its_stop_squad" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rank" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rank" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d_sign" ON "__delta_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d" ("_sign")`,
+  `CREATE INDEX "__delta_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d_group" ON "__delta_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d" ("id", "rank")`,
+  `CREATE TEMP TABLE "__frontier_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rank" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d_phase" ON "__frontier_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rank" INTEGER NOT NULL)`,
   `CREATE TEMP TABLE "__support_next_option_of_option_of_scalar_keeps_its_stop___opt_int_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__new_option_of_option_of_scalar_keeps_its_stop___opt_int_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "option_of_option_of_scalar_keeps_its_stop___opt_int_tag_zero" ON "option_of_option_of_scalar_keeps_its_stop___opt_int_tag" ("__refcount") WHERE "__refcount" <= 0`,
@@ -230,6 +230,16 @@ const rel_columns: Record<string, readonly string[]> = {
   __opt_option_int_some: ["id", "value"],
   __opt_option_int_tag: ["id", "tag"],
   squad: ["id", "rank"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  __opt_int_none: "option_of_option_of_scalar_keeps_its_stop___opt_int_none",
+  __opt_int_some: "option_of_option_of_scalar_keeps_its_stop___opt_int_some",
+  __opt_int_tag: "option_of_option_of_scalar_keeps_its_stop___opt_int_tag",
+  __opt_option_int_none: "option_of_option_of_scalar_keeps_its_stop___opt_option_int_none",
+  __opt_option_int_some: "option_of_option_of_scalar_keeps_its_stop___opt_option_int_some",
+  __opt_option_int_tag: "option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag",
+  squad: "option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -301,9 +311,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 46, parent_id: 21, ordinal: 0, local_name: "__next_frontier_option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "5a8003edb343023d", h_schema: "373ae2761a729e21", h_rule: "" },
   { rel_id: 47, parent_id: 21, ordinal: 0, local_name: "__txt_option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "a8846646d2f87377", h_schema: "2901e6f8122ebf0c", h_rule: "" },
   { rel_id: 48, parent_id: 44, ordinal: 0, local_name: "__txt___delta_option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "57c59e101752e8fb", h_schema: "2901e6f8122ebf0c", h_rule: "" },
-  { rel_id: 49, parent_id: 24, ordinal: 0, local_name: "__delta_option_of_option_of_scalar_keeps_its_stop_squad", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "b9c2232cb816d233", h_schema: "8343d958716ea662", h_rule: "" },
-  { rel_id: 50, parent_id: 24, ordinal: 0, local_name: "__frontier_option_of_option_of_scalar_keeps_its_stop_squad", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "0efe4e0b4529da95", h_schema: "280584b757e3681a", h_rule: "" },
-  { rel_id: 51, parent_id: 24, ordinal: 0, local_name: "__next_frontier_option_of_option_of_scalar_keeps_its_stop_squad", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "4a2f04f3df39169a", h_schema: "280584b757e3681a", h_rule: "" },
+  { rel_id: 49, parent_id: 24, ordinal: 0, local_name: "__delta_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "5d42d6bc383dd6bc", h_schema: "8343d958716ea662", h_rule: "" },
+  { rel_id: 50, parent_id: 24, ordinal: 0, local_name: "__frontier_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "b587f6f17bea56d9", h_schema: "280584b757e3681a", h_rule: "" },
+  { rel_id: 51, parent_id: 24, ordinal: 0, local_name: "__next_frontier_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "0c5b199a37cff9eb", h_schema: "280584b757e3681a", h_rule: "" },
   { rel_id: 52, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "a4ff6f9a4bece00f", h_schema: "", h_rule: "" },
   { rel_id: 53, parent_id: 13, ordinal: 0, local_name: "__support_next_option_of_option_of_scalar_keeps_its_stop___opt_int_tag", kind: "refcount", type_id: 0, arity: 3, module_id: 7, h_id: "f6d228615002f6e6", h_schema: "", h_rule: "" },
   { rel_id: 54, parent_id: 13, ordinal: 0, local_name: "__new_option_of_option_of_scalar_keeps_its_stop___opt_int_tag", kind: "refcount_staging", type_id: 0, arity: 3, module_id: 7, h_id: "1e94a5c05108a929", h_schema: "", h_rule: "" },
@@ -351,7 +361,7 @@ const final_select: Record<string, string> = {
   __opt_option_int_none: `SELECT t."id" FROM "option_of_option_of_scalar_keeps_its_stop___opt_option_int_none" t`,
   __opt_option_int_some: `SELECT t."id", t."value" FROM "option_of_option_of_scalar_keeps_its_stop___opt_option_int_some" t`,
   __opt_option_int_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag" t`,
-  squad: `SELECT t."id", t."rank" FROM "option_of_option_of_scalar_keeps_its_stop_squad" t`,
+  squad: `SELECT t."id", t."rank" FROM "option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
@@ -361,7 +371,7 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__opt_option_int_none", kind: "set", table_name: "option_of_option_of_scalar_keeps_its_stop___opt_option_int_none", delta_table_name: "__delta_option_of_option_of_scalar_keeps_its_stop___opt_option_int_none", frontier_table_name: "__frontier_option_of_option_of_scalar_keeps_its_stop___opt_option_int_none", next_frontier_table_name: "__next_frontier_option_of_option_of_scalar_keeps_its_stop___opt_option_int_none", columns: ["id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "option_of_option_of_scalar_keeps_its_stop___opt_option_int_none" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO NOTHING RETURNING "id"`, arrival_del_sql: `DELETE FROM "option_of_option_of_scalar_keeps_its_stop___opt_option_int_none" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT t."id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_option_of_option_of_scalar_keeps_its_stop___opt_option_int_none" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."_sign"`, rule_observers: ["__opt_option_int_tag/2"] },
   { rel: "__opt_option_int_some", kind: "set", table_name: "option_of_option_of_scalar_keeps_its_stop___opt_option_int_some", delta_table_name: "__delta_option_of_option_of_scalar_keeps_its_stop___opt_option_int_some", frontier_table_name: "__frontier_option_of_option_of_scalar_keeps_its_stop___opt_option_int_some", next_frontier_table_name: "__next_frontier_option_of_option_of_scalar_keeps_its_stop___opt_option_int_some", columns: ["id", "value"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "option_of_option_of_scalar_keeps_its_stop___opt_option_int_some" ("id", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id" RETURNING "id", "value"`, arrival_del_sql: `DELETE FROM "option_of_option_of_scalar_keeps_its_stop___opt_option_int_some" WHERE ("id", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "value"`, boundary_sql: `SELECT t."id", t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_option_of_option_of_scalar_keeps_its_stop___opt_option_int_some" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."value", t."_sign"`, rule_observers: ["__opt_option_int_tag/2"] },
   { rel: "__opt_option_int_tag", kind: "set", table_name: "option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag", delta_table_name: "__delta_option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag", frontier_table_name: "__frontier_option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag", next_frontier_table_name: "__next_frontier_option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_option_of_option_of_scalar_keeps_its_stop___opt_option_int_tag" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."tag", t."_sign"`, rule_observers: [] },
-  { rel: "squad", kind: "set", table_name: "option_of_option_of_scalar_keeps_its_stop_squad", delta_table_name: "__delta_option_of_option_of_scalar_keeps_its_stop_squad", frontier_table_name: "__frontier_option_of_option_of_scalar_keeps_its_stop_squad", next_frontier_table_name: "__next_frontier_option_of_option_of_scalar_keeps_its_stop_squad", columns: ["id", "rank"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: `INSERT INTO "option_of_option_of_scalar_keeps_its_stop_squad" ("id", "rank") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO UPDATE SET "rank" = excluded."rank" RETURNING "id", "rank"`, arrival_del_sql: `DELETE FROM "option_of_option_of_scalar_keeps_its_stop_squad" WHERE ("id", "rank") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "rank"`, boundary_sql: `SELECT t."id", t."rank", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_option_of_option_of_scalar_keeps_its_stop_squad" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."rank", t."_sign"`, rule_observers: [] },
+  { rel: "squad", kind: "set", table_name: "option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d", delta_table_name: "__delta_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d", frontier_table_name: "__frontier_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d", next_frontier_table_name: "__next_frontier_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d", columns: ["id", "rank"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: `INSERT INTO "option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d" ("id", "rank") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO UPDATE SET "rank" = excluded."rank" RETURNING "id", "rank"`, arrival_del_sql: `DELETE FROM "option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d" WHERE ("id", "rank") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "rank"`, boundary_sql: `SELECT t."id", t."rank", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_option_of_option_of_scalar_keeps_its_stop_squad_e2330cd8377d" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."rank", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -424,6 +434,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

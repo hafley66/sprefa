@@ -2,6 +2,13 @@
  * Output is content-addressed in gitignored `gen_served/` so relative runtime
  * imports resolve and repeated source loads share the module cache. The
  * detached child runs under `TSV2_COMPILE_BUDGET_MS`; timeout kills its group.
+ *
+ * Source goes in a per-digest DIRECTORY under the stable basename `main.dl6`:
+ * the compiler reads the entry module name off the entry file stem
+ * (v6/prolog/compile.pl compile_dl6/3, use_resolve.pl module_stem/3), and that
+ * name prefixes every physical table. A digest-named source file therefore
+ * renamed every table on every edit and the reload plan matched nothing. The
+ * emitted module stays one level up so its `../runtime/*.ts` imports resolve.
  */
 
 import { spawn } from "node:child_process";
@@ -18,6 +25,10 @@ const COMPILE_PL = fileURLToPath(new URL("../../prolog/compile.pl", import.meta.
 const GEN_SERVED_DIR = fileURLToPath(new URL("../gen_served", import.meta.url));
 
 const DEFAULT_COMPILE_BUDGET_MS = 600_000;
+
+/** The entry module name every served program compiles under, so a table's
+ *  prefix survives an edit. */
+const ENTRY_MODULE_NAME = "main";
 
 function compile_budget_ms(): number {
   const raw = Number(process.env.TSV2_COMPILE_BUDGET_MS ?? "");
@@ -97,9 +108,10 @@ function run_swipl(args: readonly string[], budget_ms: number): Observable<strin
 export const ProgramCompiler: IProgramCompiler = {
   compile(source: string): Observable<IServedProgram> {
     const name = source_digest(source);
-    const source_path = `${GEN_SERVED_DIR}/${name}.dl6`;
+    const source_dir = `${GEN_SERVED_DIR}/${name}`;
+    const source_path = `${source_dir}/${ENTRY_MODULE_NAME}.dl6`;
     const module_path = `${GEN_SERVED_DIR}/${name}.ts`;
-    mkdirSync(GEN_SERVED_DIR, { recursive: true });
+    mkdirSync(source_dir, { recursive: true });
     writeFileSync(source_path, source, "utf8");
     // The `-g` goal is a prolog term, so the two paths are quoted as atoms.
     // Both are this process's own absolute paths under gen_served/, never

@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -159,19 +159,19 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "edge_chain_hops_tick_per_stage_source_ev" ("item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_edge_chain_hops_tick_per_stage_source_ev" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "edge_chain_hops_tick_per_stage_source_ev" t`,
+  `CREATE TABLE "edge_chain_hops_tick_per_stage_source_ev_193643fb2783" ("item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_edge_chain_hops_tick_per_stage_source_ev_193643fb2783" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "edge_chain_hops_tick_per_stage_source_ev_193643fb2783" t`,
   `CREATE TABLE "edge_chain_hops_tick_per_stage_stage_one" ("item" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_edge_chain_hops_tick_per_stage_stage_one" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "edge_chain_hops_tick_per_stage_stage_one" t`,
   `CREATE TABLE "edge_chain_hops_tick_per_stage_stage_two" ("item" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_edge_chain_hops_tick_per_stage_stage_two" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "edge_chain_hops_tick_per_stage_stage_two" t`,
-  `CREATE TEMP TABLE "__delta_edge_chain_hops_tick_per_stage_source_ev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_edge_chain_hops_tick_per_stage_source_ev_sign" ON "__delta_edge_chain_hops_tick_per_stage_source_ev" ("_sign")`,
-  `CREATE INDEX "__delta_edge_chain_hops_tick_per_stage_source_ev_group" ON "__delta_edge_chain_hops_tick_per_stage_source_ev" ("item")`,
-  `CREATE TEMP TABLE "__frontier_edge_chain_hops_tick_per_stage_source_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_edge_chain_hops_tick_per_stage_source_ev_phase" ON "__frontier_edge_chain_hops_tick_per_stage_source_ev" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_edge_chain_hops_tick_per_stage_source_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_edge_chain_hops_tick_per_stage_source_ev" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_edge_chain_hops_tick_per_stage_source_ev" t`,
+  `CREATE TEMP TABLE "__delta_edge_chain_hops_tick_per_stage_source_ev_193643fb2783" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_edge_chain_hops_tick_per_stage_source_ev_193643fb2783_sign" ON "__delta_edge_chain_hops_tick_per_stage_source_ev_193643fb2783" ("_sign")`,
+  `CREATE INDEX "__delta_edge_chain_hops_tick_per_stage_source_ev_193643fb2783_group" ON "__delta_edge_chain_hops_tick_per_stage_source_ev_193643fb2783" ("item")`,
+  `CREATE TEMP TABLE "__frontier_edge_chain_hops_tick_per_stage_source_ev_193643fb2783" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_edge_chain_hops_tick_per_stage_source_ev_193643fb2783_phase" ON "__frontier_edge_chain_hops_tick_per_stage_source_ev_193643fb2783" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_edge_chain_hops_tick_per_stage_source_ev_193643fb2783" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_edge_chain_hops_tick_per_stage_source_ev_193643fb2783" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_edge_chain_hops_tick_per_stage_source_ev_193643fb2783" t`,
   `CREATE TEMP TABLE "__delta_edge_chain_hops_tick_per_stage_stage_one" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_edge_chain_hops_tick_per_stage_stage_one_sign" ON "__delta_edge_chain_hops_tick_per_stage_stage_one" ("_sign")`,
   `CREATE INDEX "__delta_edge_chain_hops_tick_per_stage_stage_one_group" ON "__delta_edge_chain_hops_tick_per_stage_stage_one" ("item")`,
@@ -192,6 +192,12 @@ const rel_columns: Record<string, readonly string[]> = {
   source_ev: ["item"],
   stage_one: ["item"],
   stage_two: ["item"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  source_ev: "edge_chain_hops_tick_per_stage_source_ev_193643fb2783",
+  stage_one: "edge_chain_hops_tick_per_stage_stage_one",
+  stage_two: "edge_chain_hops_tick_per_stage_stage_two",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -220,11 +226,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "item", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "7370b585a9681790", h_schema: "", h_rule: "" },
   { rel_id: 12, parent_id: 7, ordinal: 0, local_name: "stage_two", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "1b14b5388a2c1411", h_schema: "4f9957ccb96234b6", h_rule: "0b6e82c55b0a3f76" },
   { rel_id: 13, parent_id: 12, ordinal: 1, local_name: "item", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "b2b796190e5d1be6", h_schema: "", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_edge_chain_hops_tick_per_stage_source_ev", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "7009b8e7847117f9", h_schema: "15e84563064d7c4c", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_edge_chain_hops_tick_per_stage_source_ev", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "a5a6109abf042818", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_edge_chain_hops_tick_per_stage_source_ev", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "726ce75b3b1423a7", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_edge_chain_hops_tick_per_stage_source_ev", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "d007f76f6e9f3a2b", h_schema: "4f9957ccb96234b6", h_rule: "" },
-  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_edge_chain_hops_tick_per_stage_source_ev", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "58a5fd2ac15bc581", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_edge_chain_hops_tick_per_stage_source_ev_193643fb2783", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "da911dc57550e8d2", h_schema: "15e84563064d7c4c", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_edge_chain_hops_tick_per_stage_source_ev_193643fb2783", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "3579b55b9ea84e9b", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_edge_chain_hops_tick_per_stage_source_ev_193643fb2783", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "a207cbfaa66ac809", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_edge_chain_hops_tick_per_stage_source_ev_193643fb2783", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "16b92e4e1ec57288", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_edge_chain_hops_tick_per_stage_source_ev_193643fb2783", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "51d253c8eaa73e09", h_schema: "4f9957ccb96234b6", h_rule: "" },
   { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__delta_edge_chain_hops_tick_per_stage_stage_one", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "c6c9071980d4a720", h_schema: "15e84563064d7c4c", h_rule: "" },
   { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__frontier_edge_chain_hops_tick_per_stage_stage_one", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "3d6ba8a348264fa2", h_schema: "c35a652f9e4a4d00", h_rule: "" },
   { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__next_frontier_edge_chain_hops_tick_per_stage_stage_one", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "36bbbd3d0085c4cb", h_schema: "c35a652f9e4a4d00", h_rule: "" },
@@ -250,19 +256,19 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  source_ev: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_edge_chain_hops_tick_per_stage_source_ev" t`,
+  source_ev: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_edge_chain_hops_tick_per_stage_source_ev_193643fb2783" t`,
   stage_one: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_edge_chain_hops_tick_per_stage_stage_one" t`,
   stage_two: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_edge_chain_hops_tick_per_stage_stage_two" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "source_ev", kind: "log", table_name: "edge_chain_hops_tick_per_stage_source_ev", delta_table_name: "__delta_edge_chain_hops_tick_per_stage_source_ev", frontier_table_name: "__frontier_edge_chain_hops_tick_per_stage_source_ev", next_frontier_table_name: "__next_frontier_edge_chain_hops_tick_per_stage_source_ev", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "edge_chain_hops_tick_per_stage_source_ev" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_edge_chain_hops_tick_per_stage_source_ev" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["stage_one/1"] },
+  { rel: "source_ev", kind: "log", table_name: "edge_chain_hops_tick_per_stage_source_ev_193643fb2783", delta_table_name: "__delta_edge_chain_hops_tick_per_stage_source_ev_193643fb2783", frontier_table_name: "__frontier_edge_chain_hops_tick_per_stage_source_ev_193643fb2783", next_frontier_table_name: "__next_frontier_edge_chain_hops_tick_per_stage_source_ev_193643fb2783", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "edge_chain_hops_tick_per_stage_source_ev_193643fb2783" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_edge_chain_hops_tick_per_stage_source_ev_193643fb2783" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["stage_one/1"] },
   { rel: "stage_one", kind: "log", table_name: "edge_chain_hops_tick_per_stage_stage_one", delta_table_name: "__delta_edge_chain_hops_tick_per_stage_stage_one", frontier_table_name: "__frontier_edge_chain_hops_tick_per_stage_stage_one", next_frontier_table_name: "__next_frontier_edge_chain_hops_tick_per_stage_stage_one", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_edge_chain_hops_tick_per_stage_stage_one" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["stage_two/1"] },
   { rel: "stage_two", kind: "log", table_name: "edge_chain_hops_tick_per_stage_stage_two", delta_table_name: "__delta_edge_chain_hops_tick_per_stage_stage_two", frontier_table_name: "__frontier_edge_chain_hops_tick_per_stage_stage_two", next_frontier_table_name: "__next_frontier_edge_chain_hops_tick_per_stage_stage_two", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_edge_chain_hops_tick_per_stage_stage_two" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "stage_one", rule_id: "edge_chain_hops_tick_per_stage:stage_one/1#1", head_kind: "log", head_table_name: "edge_chain_hops_tick_per_stage_stage_one", head_delta_table_name: "__delta_edge_chain_hops_tick_per_stage_stage_one", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_edge_chain_hops_tick_per_stage_source_ev" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "stage_one", rule_id: "edge_chain_hops_tick_per_stage:stage_one/1#1", head_kind: "log", head_table_name: "edge_chain_hops_tick_per_stage_stage_one", head_delta_table_name: "__delta_edge_chain_hops_tick_per_stage_stage_one", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_edge_chain_hops_tick_per_stage_source_ev_193643fb2783" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
   { head_rel: "stage_two", rule_id: "edge_chain_hops_tick_per_stage:stage_two/1#1", head_kind: "log", head_table_name: "edge_chain_hops_tick_per_stage_stage_two", head_delta_table_name: "__delta_edge_chain_hops_tick_per_stage_stage_two", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_edge_chain_hops_tick_per_stage_stage_one" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
@@ -318,6 +324,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

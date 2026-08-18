@@ -53,7 +53,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -147,24 +147,29 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "head_move_replaces_key_head" ("__id" INTEGER PRIMARY KEY, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, UNIQUE ("repo_id"))`,
-  `CREATE TABLE "head_move_replaces_key_head_move" ("repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
+  `CREATE TABLE "head_move_replaces_key_head_move_16df169b3583" ("repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE TEMP TABLE "__delta_head_move_replaces_key_head" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_head_move_replaces_key_head_sign" ON "__delta_head_move_replaces_key_head" ("_sign")`,
   `CREATE INDEX "__delta_head_move_replaces_key_head_group" ON "__delta_head_move_replaces_key_head" ("repo_id", "rev_id")`,
   `CREATE TEMP TABLE "__frontier_head_move_replaces_key_head" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_head_move_replaces_key_head_phase" ON "__frontier_head_move_replaces_key_head" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_head_move_replaces_key_head" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_head_move_replaces_key_head_move" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_head_move_replaces_key_head_move_sign" ON "__delta_head_move_replaces_key_head_move" ("_sign")`,
-  `CREATE INDEX "__delta_head_move_replaces_key_head_move_group" ON "__delta_head_move_replaces_key_head_move" ("repo_id", "rev_id")`,
-  `CREATE TEMP TABLE "__frontier_head_move_replaces_key_head_move" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_head_move_replaces_key_head_move_phase" ON "__frontier_head_move_replaces_key_head_move" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_head_move_replaces_key_head_move" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_head_move_replaces_key_head_move_16df169b3583" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_head_move_replaces_key_head_move_16df169b3583_sign" ON "__delta_head_move_replaces_key_head_move_16df169b3583" ("_sign")`,
+  `CREATE INDEX "__delta_head_move_replaces_key_head_move_16df169b3583_group" ON "__delta_head_move_replaces_key_head_move_16df169b3583" ("repo_id", "rev_id")`,
+  `CREATE TEMP TABLE "__frontier_head_move_replaces_key_head_move_16df169b3583" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_head_move_replaces_key_head_move_16df169b3583_phase" ON "__frontier_head_move_replaces_key_head_move_16df169b3583" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_head_move_replaces_key_head_move_16df169b3583" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   head: ["repo_id", "rev_id"],
   head_move: ["repo_id", "rev_id"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  head: "head_move_replaces_key_head",
+  head_move: "head_move_replaces_key_head_move_16df169b3583",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -194,9 +199,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_head_move_replaces_key_head", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "03e7cd439fb917cd", h_schema: "b706dcd53b1b9f70", h_rule: "" },
   { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_head_move_replaces_key_head", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "e7049dfa026f9168", h_schema: "a16c6d6a1b34cc39", h_rule: "" },
   { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_head_move_replaces_key_head", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "019ca33a583d0391", h_schema: "a16c6d6a1b34cc39", h_rule: "" },
-  { rel_id: 17, parent_id: 11, ordinal: 0, local_name: "__delta_head_move_replaces_key_head_move", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "611daafaae01fb39", h_schema: "b706dcd53b1b9f70", h_rule: "" },
-  { rel_id: 18, parent_id: 11, ordinal: 0, local_name: "__frontier_head_move_replaces_key_head_move", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "c3e299aa3bd38a4c", h_schema: "a16c6d6a1b34cc39", h_rule: "" },
-  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__next_frontier_head_move_replaces_key_head_move", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "61b68c2320a98f58", h_schema: "a16c6d6a1b34cc39", h_rule: "" },
+  { rel_id: 17, parent_id: 11, ordinal: 0, local_name: "__delta_head_move_replaces_key_head_move_16df169b3583", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "32128e9177e456eb", h_schema: "b706dcd53b1b9f70", h_rule: "" },
+  { rel_id: 18, parent_id: 11, ordinal: 0, local_name: "__frontier_head_move_replaces_key_head_move_16df169b3583", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "a8dfe3906fdfc61f", h_schema: "a16c6d6a1b34cc39", h_rule: "" },
+  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__next_frontier_head_move_replaces_key_head_move_16df169b3583", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "81f09c1ce520aa9f", h_schema: "a16c6d6a1b34cc39", h_rule: "" },
   { rel_id: 20, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "db49899321c34e60", h_schema: "", h_rule: "" },
   { rel_id: 21, parent_id: 10, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "ed54791f9b19aafb", h_schema: "", h_rule: "" },
   { rel_id: 22, parent_id: 12, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "1bd9622e1d1cee4b", h_schema: "", h_rule: "" },
@@ -214,16 +219,16 @@ const boot: readonly IBootStatement[] = [
 
 const final_select: Record<string, string> = {
   head: `SELECT t."repo_id", t."rev_id" FROM "head_move_replaces_key_head" t`,
-  head_move: `SELECT t."repo_id", t."rev_id" FROM "head_move_replaces_key_head_move" t`,
+  head_move: `SELECT t."repo_id", t."rev_id" FROM "head_move_replaces_key_head_move_16df169b3583" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "head", kind: "set", table_name: "head_move_replaces_key_head", delta_table_name: "__delta_head_move_replaces_key_head", frontier_table_name: "__frontier_head_move_replaces_key_head", next_frontier_table_name: "__next_frontier_head_move_replaces_key_head", columns: ["repo_id", "rev_id"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."repo_id", t."rev_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_move_replaces_key_head" t WHERE t."_sign" IN (-1, 1) GROUP BY t."repo_id", t."rev_id", t."_sign"`, rule_observers: [] },
-  { rel: "head_move", kind: "log", table_name: "head_move_replaces_key_head_move", delta_table_name: "__delta_head_move_replaces_key_head_move", frontier_table_name: "__frontier_head_move_replaces_key_head_move", next_frontier_table_name: "__next_frontier_head_move_replaces_key_head_move", columns: ["repo_id", "rev_id"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT INTO "head_move_replaces_key_head_move" ("repo_id", "rev_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "repo_id", "rev_id"`, arrival_del_sql: null, boundary_sql: `SELECT t."repo_id", t."rev_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_move_replaces_key_head_move" t WHERE t."_sign" IN (-1, 1) GROUP BY t."repo_id", t."rev_id", t."_sign"`, rule_observers: ["head/2"] },
+  { rel: "head_move", kind: "log", table_name: "head_move_replaces_key_head_move_16df169b3583", delta_table_name: "__delta_head_move_replaces_key_head_move_16df169b3583", frontier_table_name: "__frontier_head_move_replaces_key_head_move_16df169b3583", next_frontier_table_name: "__next_frontier_head_move_replaces_key_head_move_16df169b3583", columns: ["repo_id", "rev_id"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT INTO "head_move_replaces_key_head_move_16df169b3583" ("repo_id", "rev_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "repo_id", "rev_id"`, arrival_del_sql: null, boundary_sql: `SELECT t."repo_id", t."rev_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_move_replaces_key_head_move_16df169b3583" t WHERE t."_sign" IN (-1, 1) GROUP BY t."repo_id", t."rev_id", t."_sign"`, rule_observers: ["head/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "head", rule_id: "head_move_replaces_key:head/2#1", head_kind: "set", head_table_name: "head_move_replaces_key_head", head_delta_table_name: "__delta_head_move_replaces_key_head", head_columns: ["repo_id", "rev_id"], key_indices: [0], project_sql: `SELECT d0."repo_id" AS "repo_id", d0."rev_id" AS "rev_id" FROM "__frontier_head_move_replaces_key_head_move" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "head", rule_id: "head_move_replaces_key:head/2#1", head_kind: "set", head_table_name: "head_move_replaces_key_head", head_delta_table_name: "__delta_head_move_replaces_key_head", head_columns: ["repo_id", "rev_id"], key_indices: [0], project_sql: `SELECT d0."repo_id" AS "repo_id", d0."rev_id" AS "rev_id" FROM "__frontier_head_move_replaces_key_head_move_16df169b3583" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -276,6 +281,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

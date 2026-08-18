@@ -43,6 +43,20 @@ fn compile_program() -> GenProgram {
     GenProgram::from_json(program_json)
 }
 
+/// Every stored rel here is `rel X(name: text)`, so one shape digest covers all
+/// five; a derived rel takes none. `person` folds onto `Person` in SQLite even
+/// with the digest, so it keeps the deterministic `_2` collision suffix.
+const SHAPE: &str = "7a5ef237b7b9";
+const ENTRY: &str = "0_module_storage_runtime";
+
+fn entry_table(rel: &str) -> String {
+    format!("{ENTRY}_{rel}")
+}
+
+fn stored_table(prefix: &str, rel: &str) -> String {
+    format!("{prefix}_{rel}_{SHAPE}")
+}
+
 fn text(value: &str) -> Value {
     Value::Text(value.to_string())
 }
@@ -79,28 +93,16 @@ async fn generated_program_json_executes_module_storage_names() {
     assert_eq!(
         physical,
         BTreeMap::from([
-            ("First".to_string(), "a_model_First".to_string()),
-            (
-                "Person".to_string(),
-                "0_module_storage_runtime_Person".to_string(),
-            ),
-            ("Second".to_string(), "b_model_Second".to_string()),
-            (
-                "derived".to_string(),
-                "0_module_storage_runtime_derived".to_string(),
-            ),
-            (
-                "imported".to_string(),
-                "0_module_storage_runtime_imported".to_string(),
-            ),
+            ("First".to_string(), stored_table("a_model", "First")),
+            ("Person".to_string(), stored_table(ENTRY, "Person")),
+            ("Second".to_string(), stored_table("b_model", "Second")),
+            ("derived".to_string(), entry_table("derived")),
+            ("imported".to_string(), entry_table("imported")),
             (
                 "person".to_string(),
-                "0_module_storage_runtime_person_2".to_string(),
+                format!("{}_2", stored_table(ENTRY, "person")),
             ),
-            (
-                "source".to_string(),
-                "0_module_storage_runtime_source".to_string(),
-            ),
+            ("source".to_string(), stored_table(ENTRY, "source")),
         ])
     );
 
@@ -114,30 +116,30 @@ async fn generated_program_json_executes_module_storage_names() {
         .iter()
         .find(|level| level.head_rel == "derived")
         .expect("derived rule");
+    let first_table = stored_table("a_model", "First");
+    let imported_table = entry_table("imported");
     assert!(imported_rule
         .insert_sql
         .as_ref()
         .expect("imported insert SQL")
-        .contains("__frontier_a_model_First"));
-    assert!(imported_rule.recompute_sql.contains("a_model_First"));
+        .contains(&format!("__frontier_{first_table}")));
+    assert!(imported_rule.recompute_sql.contains(&first_table));
     assert!(imported_rule
         .insert_sql
         .as_ref()
         .expect("imported insert SQL")
-        .contains("0_module_storage_runtime_imported"));
+        .contains(&imported_table));
     assert!(derived_rule
         .insert_sql
         .as_ref()
         .expect("derived insert SQL")
-        .contains("__frontier_0_module_storage_runtime_imported"));
-    assert!(derived_rule
-        .recompute_sql
-        .contains("0_module_storage_runtime_imported"));
+        .contains(&format!("__frontier_{imported_table}")));
+    assert!(derived_rule.recompute_sql.contains(&imported_table));
     assert!(derived_rule
         .insert_sql
         .as_ref()
         .expect("derived insert SQL")
-        .contains("0_module_storage_runtime_derived"));
+        .contains(&entry_table("derived")));
 
     let seam = SqliteSeam::in_memory().expect("SQLite seam");
     let fold = run_schedule(
@@ -205,14 +207,14 @@ async fn generated_program_json_executes_module_storage_names() {
     assert_eq!(
         public_tables,
         vec![
-            "0_module_storage_runtime_Person",
-            "0_module_storage_runtime_derived",
-            "0_module_storage_runtime_imported",
-            "0_module_storage_runtime_person_2",
-            "0_module_storage_runtime_source",
-            "__str",
-            "a_model_First",
-            "b_model_Second",
+            stored_table(ENTRY, "Person"),
+            entry_table("derived"),
+            entry_table("imported"),
+            format!("{}_2", stored_table(ENTRY, "person")),
+            stored_table(ENTRY, "source"),
+            "__str".to_string(),
+            stored_table("a_model", "First"),
+            stored_table("b_model", "Second"),
         ]
     );
     for name in [

@@ -129,11 +129,11 @@ function insert_sql_for(plan: IIncrementalProgramPlan, rel: string): string {
 }
 
 /** The distinct dictionary views one statement joins. */
-/** The emitted object carries this compilation unit's module prefix
- *  (compile.pl relation_storage_names/4); the names asserted below are the
- *  authored ones, so strip that one segment before comparing. */
+/** The emitted object carries this compilation unit's module prefix and, for a
+ *  stored rel, its shape digest (docs/storage-name-hash.md); the names asserted
+ *  below are the authored ones, so strip both before comparing. */
 function without_module_prefix(name: string): string {
-  return name.replace(/relation_depth[23]_construct_and_read_/, "");
+  return name.replace(/relation_depth[23]_construct_and_read_/, "").replace(/_[0-9a-f]{12}$/, "");
 }
 
 function dictionary_views(sql: string): string[] {

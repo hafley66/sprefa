@@ -42,9 +42,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { sha256 } from "@noble/hashes/sha2.js";
-import { bytesToHex } from "@noble/hashes/utils.js";
-import { VirtualTimeScheduler, firstValueFrom } from "rxjs";
+import { VirtualTimeScheduler, firstValueFrom, map } from "rxjs";
 
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { oracle_log, log_of_ticks, post_arrivals, post_program, request, schedule_from_ticks, start_served, tick_events } from "./serveHelpers.ts";
@@ -236,14 +234,20 @@ test("declared-struct live host output interns once and tick logs render the can
 
     const inspection = ScratchStore.open(db_url);
     try {
-      // Every SQLite object carries its compilation unit's module prefix, and
-      // the served door writes the posted source under a content digest.
-      const module_prefix = bytesToHex(sha256(new TextEncoder().encode(STRUCT_HOST_DL6))).slice(0, 32);
+      // Every SQLite object carries its compilation unit's module prefix, which
+      // for a served program is the stable `main` (serve/0_compile.ts), plus the
+      // stored rel's shape digest (docs/storage-name-hash.md).
+      const target_table = await firstValueFrom(
+        inspection.runner
+          .execute(
+            inspection.db,
+            `SELECT "name" FROM "sqlite_master" WHERE "type" = 'table' AND "name" LIKE 'main_span%'`,
+          )
+          .pipe(map((result) => String(result.rows[0]?.name))),
+      );
+      assert.match(String(target_table), /^main_span_[0-9a-f]{12}$/);
       const target_rows = await firstValueFrom(
-        inspection.runner.scalar(
-          inspection.db,
-          `SELECT count(*) FROM "${module_prefix}_span"`,
-        ),
+        inspection.runner.scalar(inspection.db, `SELECT count(*) FROM "${String(target_table)}"`),
       );
       assert.equal(target_rows, 1);
     } finally {

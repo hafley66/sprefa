@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -160,8 +160,8 @@ const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "ordered_json_group_array_integer_values_integer_sorted" ("__id" INTEGER PRIMARY KEY, "group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("group", "col2"))`,
   `CREATE TEMP VIEW "__txt_ordered_json_group_array_integer_values_integer_sorted" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "ordered_json_group_array_integer_values_integer_sorted" t`,
-  `CREATE TABLE "ordered_json_group_array_integer_values_item" ("__id" INTEGER PRIMARY KEY, "group" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("group", "value"))`,
-  `CREATE TEMP VIEW "__txt_ordered_json_group_array_integer_values_item" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."value" AS "value" FROM "ordered_json_group_array_integer_values_item" t`,
+  `CREATE TABLE "ordered_json_group_array_integer_values_item_97731972d243" ("__id" INTEGER PRIMARY KEY, "group" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("group", "value"))`,
+  `CREATE TEMP VIEW "__txt_ordered_json_group_array_integer_values_item_97731972d243" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."value" AS "value" FROM "ordered_json_group_array_integer_values_item_97731972d243" t`,
   `CREATE TEMP TABLE "__delta_ordered_json_group_array_integer_values_integer_sorted" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__delta_ordered_json_group_array_integer_values_integer_sorted_sign" ON "__delta_ordered_json_group_array_integer_values_integer_sorted" ("_sign")`,
   `CREATE INDEX "__delta_ordered_json_group_array_integer_values_integer_sorted_group" ON "__delta_ordered_json_group_array_integer_values_integer_sorted" ("group", "col2")`,
@@ -169,19 +169,24 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_ordered_json_group_array_integer_values_integer_sorted_phase" ON "__frontier_ordered_json_group_array_integer_values_integer_sorted" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_ordered_json_group_array_integer_values_integer_sorted" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE TEMP VIEW "__txt___delta_ordered_json_group_array_integer_values_integer_sorted" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."col2" AS "col2", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_ordered_json_group_array_integer_values_integer_sorted" t`,
-  `CREATE TEMP TABLE "__delta_ordered_json_group_array_integer_values_item" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_ordered_json_group_array_integer_values_item_sign" ON "__delta_ordered_json_group_array_integer_values_item" ("_sign")`,
-  `CREATE INDEX "__delta_ordered_json_group_array_integer_values_item_group" ON "__delta_ordered_json_group_array_integer_values_item" ("group", "value")`,
-  `CREATE TEMP TABLE "__frontier_ordered_json_group_array_integer_values_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_ordered_json_group_array_integer_values_item_phase" ON "__frontier_ordered_json_group_array_integer_values_item" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_ordered_json_group_array_integer_values_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_ordered_json_group_array_integer_values_item" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."value" AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_ordered_json_group_array_integer_values_item" t`,
+  `CREATE TEMP TABLE "__delta_ordered_json_group_array_integer_values_item_97731972d243" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_ordered_json_group_array_integer_values_item_97731972d243_sign" ON "__delta_ordered_json_group_array_integer_values_item_97731972d243" ("_sign")`,
+  `CREATE INDEX "__delta_ordered_json_group_array_integer_values_item_97731972d243_group" ON "__delta_ordered_json_group_array_integer_values_item_97731972d243" ("group", "value")`,
+  `CREATE TEMP TABLE "__frontier_ordered_json_group_array_integer_values_item_97731972d243" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_ordered_json_group_array_integer_values_item_97731972d243_phase" ON "__frontier_ordered_json_group_array_integer_values_item_97731972d243" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_ordered_json_group_array_integer_values_item_97731972d243" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_ordered_json_group_array_integer_values_item_97731972d243" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."value" AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_ordered_json_group_array_integer_values_item_97731972d243" t`,
   `CREATE TEMP TABLE "__agg_scope_ordered_json_group_array_integer_values_integer_sorted" ("group" INTEGER NOT NULL, PRIMARY KEY ("group")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   integer_sorted: ["group", "col2"],
   item: ["group", "value"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  integer_sorted: "ordered_json_group_array_integer_values_integer_sorted",
+  item: "ordered_json_group_array_integer_values_item_97731972d243",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -213,11 +218,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_ordered_json_group_array_integer_values_integer_sorted", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "dff9f5dd08237b31", h_schema: "ccb1c2f26ce378b1", h_rule: "" },
   { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_ordered_json_group_array_integer_values_integer_sorted", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "17c9cad18a408dc4", h_schema: "599d26db6e75d77a", h_rule: "" },
   { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_ordered_json_group_array_integer_values_integer_sorted", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "726c995263e42bc9", h_schema: "599d26db6e75d77a", h_rule: "" },
-  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_ordered_json_group_array_integer_values_item", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "2f8871fcfb2604fa", h_schema: "a925a4c6b6cf188e", h_rule: "" },
-  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_ordered_json_group_array_integer_values_item", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "afcc0d29837983d4", h_schema: "de347da0ad18e8e8", h_rule: "" },
-  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_ordered_json_group_array_integer_values_item", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "05d6014ed53fa809", h_schema: "de347da0ad18e8e8", h_rule: "" },
-  { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__txt_ordered_json_group_array_integer_values_item", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "af7b7427045b02e4", h_schema: "b7ff4e7cf72071f2", h_rule: "" },
-  { rel_id: 23, parent_id: 19, ordinal: 0, local_name: "__txt___delta_ordered_json_group_array_integer_values_item", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "cd1a8c29bc64c4d6", h_schema: "b7ff4e7cf72071f2", h_rule: "" },
+  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_ordered_json_group_array_integer_values_item_97731972d243", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "451c3d4a851dde5a", h_schema: "a925a4c6b6cf188e", h_rule: "" },
+  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_ordered_json_group_array_integer_values_item_97731972d243", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "e3f640b427d5f30e", h_schema: "de347da0ad18e8e8", h_rule: "" },
+  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_ordered_json_group_array_integer_values_item_97731972d243", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "8bbe0b82bf4a0c33", h_schema: "de347da0ad18e8e8", h_rule: "" },
+  { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__txt_ordered_json_group_array_integer_values_item_97731972d243", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "977729d4d11f4346", h_schema: "b7ff4e7cf72071f2", h_rule: "" },
+  { rel_id: 23, parent_id: 19, ordinal: 0, local_name: "__txt___delta_ordered_json_group_array_integer_values_item_97731972d243", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "608ff999dec96a5e", h_schema: "b7ff4e7cf72071f2", h_rule: "" },
   { rel_id: 24, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "10ae8013c429338a", h_schema: "", h_rule: "" },
   { rel_id: 25, parent_id: 8, ordinal: 0, local_name: "__agg_scope_ordered_json_group_array_integer_values_integer_sorted", kind: "scope", type_id: 0, arity: 1, module_id: 7, h_id: "ef33b23132058501", h_schema: "af8b07b10d8881d5", h_rule: "" },
   { rel_id: 26, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "5e082a55fe537e3e", h_schema: "", h_rule: "" },
@@ -233,21 +238,21 @@ const arrival_targets: readonly string[] = ["item"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "item", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["north"] },
-  { rel: "item", sql: `INSERT OR IGNORE INTO "ordered_json_group_array_integer_values_item" ("group", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["north", 2] },
+  { rel: "item", sql: `INSERT OR IGNORE INTO "ordered_json_group_array_integer_values_item_97731972d243" ("group", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["north", 2] },
   { rel: "item", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["north"] },
-  { rel: "item", sql: `INSERT OR IGNORE INTO "ordered_json_group_array_integer_values_item" ("group", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["north", 1] },
+  { rel: "item", sql: `INSERT OR IGNORE INTO "ordered_json_group_array_integer_values_item_97731972d243" ("group", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["north", 1] },
   { rel: "integer_sorted", sql: `DELETE FROM "ordered_json_group_array_integer_values_integer_sorted"`, params: [] },
-  { rel: "integer_sorted", sql: `INSERT OR IGNORE INTO "ordered_json_group_array_integer_values_integer_sorted" ("group", "col2") SELECT b0."group", json_group_array(b0."value" ORDER BY b0."value") FROM "ordered_json_group_array_integer_values_item" b0 GROUP BY b0."group" HAVING count(*) > 0`, params: [] },
+  { rel: "integer_sorted", sql: `INSERT OR IGNORE INTO "ordered_json_group_array_integer_values_integer_sorted" ("group", "col2") SELECT b0."group", json_group_array(b0."value" ORDER BY b0."value") FROM "ordered_json_group_array_integer_values_item_97731972d243" b0 GROUP BY b0."group" HAVING count(*) > 0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
   integer_sorted: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."col2" FROM "__txt_ordered_json_group_array_integer_values_integer_sorted" t`,
-  item: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."value" FROM "__txt_ordered_json_group_array_integer_values_item" t`,
+  item: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."value" FROM "__txt_ordered_json_group_array_integer_values_item_97731972d243" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "integer_sorted", kind: "set", table_name: "ordered_json_group_array_integer_values_integer_sorted", delta_table_name: "__delta_ordered_json_group_array_integer_values_integer_sorted", frontier_table_name: "__frontier_ordered_json_group_array_integer_values_integer_sorted", next_frontier_table_name: "__next_frontier_ordered_json_group_array_integer_values_integer_sorted", columns: ["group", "col2"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."col2", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_ordered_json_group_array_integer_values_integer_sorted" t WHERE t."_sign" IN (-1, 1) GROUP BY t."group", t."col2", t."_sign"`, rule_observers: [] },
-  { rel: "item", kind: "set", table_name: "ordered_json_group_array_integer_values_item", delta_table_name: "__delta_ordered_json_group_array_integer_values_item", frontier_table_name: "__frontier_ordered_json_group_array_integer_values_item", next_frontier_table_name: "__next_frontier_ordered_json_group_array_integer_values_item", columns: ["group", "value"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "ordered_json_group_array_integer_values_item" ("group", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "group", "value"`, arrival_del_sql: `DELETE FROM "ordered_json_group_array_integer_values_item" WHERE ("group", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "group", "value"`, boundary_sql: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_ordered_json_group_array_integer_values_item" t WHERE t."_sign" IN (-1, 1) GROUP BY t."group", t."value", t."_sign"`, rule_observers: ["integer_sorted/2"] },
+  { rel: "item", kind: "set", table_name: "ordered_json_group_array_integer_values_item_97731972d243", delta_table_name: "__delta_ordered_json_group_array_integer_values_item_97731972d243", frontier_table_name: "__frontier_ordered_json_group_array_integer_values_item_97731972d243", next_frontier_table_name: "__next_frontier_ordered_json_group_array_integer_values_item_97731972d243", columns: ["group", "value"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "ordered_json_group_array_integer_values_item_97731972d243" ("group", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "group", "value"`, arrival_del_sql: `DELETE FROM "ordered_json_group_array_integer_values_item_97731972d243" WHERE ("group", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "group", "value"`, boundary_sql: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_ordered_json_group_array_integer_values_item_97731972d243" t WHERE t."_sign" IN (-1, 1) GROUP BY t."group", t."value", t."_sign"`, rule_observers: ["integer_sorted/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -255,7 +260,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { head_rel: "integer_sorted", rule_id: "ordered_json_group_array_integer_values:integer_sorted/2#1", head_delta_table_name: "__delta_ordered_json_group_array_integer_values_integer_sorted", head_columns: ["group", "col2"], insert_sql: null, select_sql: `SELECT "group", "col2" FROM "ordered_json_group_array_integer_values_integer_sorted"`, recompute_sql: `DELETE FROM "ordered_json_group_array_integer_values_integer_sorted";
-INSERT OR IGNORE INTO "ordered_json_group_array_integer_values_integer_sorted" ("group", "col2") SELECT b0."group", json_group_array(b0."value" ORDER BY b0."value") FROM "ordered_json_group_array_integer_values_item" b0 GROUP BY b0."group" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_ordered_json_group_array_integer_values_integer_sorted"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_ordered_json_group_array_integer_values_integer_sorted" ("group") SELECT DISTINCT d0."group" FROM "__delta_ordered_json_group_array_integer_values_item" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "ordered_json_group_array_integer_values_integer_sorted" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_ordered_json_group_array_integer_values_integer_sorted") RETURNING "group", "col2"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "ordered_json_group_array_integer_values_integer_sorted" ("group", "col2") SELECT b0."group", json_group_array(b0."value" ORDER BY b0."value") FROM "ordered_json_group_array_integer_values_item" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_ordered_json_group_array_integer_values_integer_sorted") GROUP BY b0."group" HAVING count(*) > 0 RETURNING "group", "col2"`], delta_maintained: false } },
+INSERT OR IGNORE INTO "ordered_json_group_array_integer_values_integer_sorted" ("group", "col2") SELECT b0."group", json_group_array(b0."value" ORDER BY b0."value") FROM "ordered_json_group_array_integer_values_item_97731972d243" b0 GROUP BY b0."group" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_ordered_json_group_array_integer_values_integer_sorted"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_ordered_json_group_array_integer_values_integer_sorted" ("group") SELECT DISTINCT d0."group" FROM "__delta_ordered_json_group_array_integer_values_item_97731972d243" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "ordered_json_group_array_integer_values_integer_sorted" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_ordered_json_group_array_integer_values_integer_sorted") RETURNING "group", "col2"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "ordered_json_group_array_integer_values_integer_sorted" ("group", "col2") SELECT b0."group", json_group_array(b0."value" ORDER BY b0."value") FROM "ordered_json_group_array_integer_values_item_97731972d243" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_ordered_json_group_array_integer_values_integer_sorted") GROUP BY b0."group" HAVING count(*) > 0 RETURNING "group", "col2"`], delta_maintained: false } },
 ];
 
 const RECONCILE_EVERY_TICK = false;
@@ -306,6 +311,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

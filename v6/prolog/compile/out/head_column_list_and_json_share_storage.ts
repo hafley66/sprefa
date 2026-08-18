@@ -53,7 +53,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -147,19 +147,19 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "head_column_list_and_json_share_storage_copied" ("__id" INTEGER PRIMARY KEY, "items" TEXT NOT NULL CHECK (json_valid("items")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("items"))`,
-  `CREATE TABLE "head_column_list_and_json_share_storage_source" ("__id" INTEGER PRIMARY KEY, "items" TEXT NOT NULL CHECK (json_valid("items") AND json_type("items") = 'array'), UNIQUE ("items"))`,
+  `CREATE TABLE "head_column_list_and_json_share_storage_source_de24b2dc7fa5" ("__id" INTEGER PRIMARY KEY, "items" TEXT NOT NULL CHECK (json_valid("items") AND json_type("items") = 'array'), UNIQUE ("items"))`,
   `CREATE TEMP TABLE "__delta_head_column_list_and_json_share_storage_copied" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items")))`,
   `CREATE INDEX "__delta_head_column_list_and_json_share_storage_copied_sign" ON "__delta_head_column_list_and_json_share_storage_copied" ("_sign")`,
   `CREATE INDEX "__delta_head_column_list_and_json_share_storage_copied_group" ON "__delta_head_column_list_and_json_share_storage_copied" ("items")`,
   `CREATE TEMP TABLE "__frontier_head_column_list_and_json_share_storage_copied" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items")))`,
   `CREATE INDEX "__frontier_head_column_list_and_json_share_storage_copied_phase" ON "__frontier_head_column_list_and_json_share_storage_copied" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_head_column_list_and_json_share_storage_copied" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items")))`,
-  `CREATE TEMP TABLE "__delta_head_column_list_and_json_share_storage_source" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items") AND json_type("items") = 'array'))`,
-  `CREATE INDEX "__delta_head_column_list_and_json_share_storage_source_sign" ON "__delta_head_column_list_and_json_share_storage_source" ("_sign")`,
-  `CREATE INDEX "__delta_head_column_list_and_json_share_storage_source_group" ON "__delta_head_column_list_and_json_share_storage_source" ("items")`,
-  `CREATE TEMP TABLE "__frontier_head_column_list_and_json_share_storage_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items") AND json_type("items") = 'array'))`,
-  `CREATE INDEX "__frontier_head_column_list_and_json_share_storage_source_phase" ON "__frontier_head_column_list_and_json_share_storage_source" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_head_column_list_and_json_share_storage_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items") AND json_type("items") = 'array'))`,
+  `CREATE TEMP TABLE "__delta_head_column_list_and_json_share_storage_source_de24b2dc7fa5" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items") AND json_type("items") = 'array'))`,
+  `CREATE INDEX "__delta_head_column_list_and_json_share_storage_source_de24b2dc7fa5_sign" ON "__delta_head_column_list_and_json_share_storage_source_de24b2dc7fa5" ("_sign")`,
+  `CREATE INDEX "__delta_head_column_list_and_json_share_storage_source_de24b2dc7fa5_group" ON "__delta_head_column_list_and_json_share_storage_source_de24b2dc7fa5" ("items")`,
+  `CREATE TEMP TABLE "__frontier_head_column_list_and_json_share_storage_source_de24b2dc7fa5" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items") AND json_type("items") = 'array'))`,
+  `CREATE INDEX "__frontier_head_column_list_and_json_share_storage_source_de24b2dc7fa5_phase" ON "__frontier_head_column_list_and_json_share_storage_source_de24b2dc7fa5" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_head_column_list_and_json_share_storage_source_de24b2dc7fa5" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items") AND json_type("items") = 'array'))`,
   `CREATE TEMP TABLE "__support_next_head_column_list_and_json_share_storage_copied" ("items" TEXT NOT NULL CHECK (json_valid("items")), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("items")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__new_head_column_list_and_json_share_storage_copied" ("items" TEXT NOT NULL CHECK (json_valid("items")), "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "head_column_list_and_json_share_storage_copied_zero" ON "head_column_list_and_json_share_storage_copied" ("__refcount") WHERE "__refcount" <= 0`,
@@ -168,6 +168,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   copied: ["items"],
   source: ["items"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  copied: "head_column_list_and_json_share_storage_copied",
+  source: "head_column_list_and_json_share_storage_source_de24b2dc7fa5",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -196,9 +201,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 13, parent_id: 9, ordinal: 0, local_name: "__delta_head_column_list_and_json_share_storage_copied", kind: "delta", type_id: 0, arity: 3, module_id: 8, h_id: "6a7a2654169535a4", h_schema: "3f24f7f537723280", h_rule: "" },
   { rel_id: 14, parent_id: 9, ordinal: 0, local_name: "__frontier_head_column_list_and_json_share_storage_copied", kind: "frontier", type_id: 0, arity: 3, module_id: 8, h_id: "fa3aef8ec89bfaf8", h_schema: "b57e34e754f92de4", h_rule: "" },
   { rel_id: 15, parent_id: 9, ordinal: 0, local_name: "__next_frontier_head_column_list_and_json_share_storage_copied", kind: "next_frontier", type_id: 0, arity: 3, module_id: 8, h_id: "2095fb698d607796", h_schema: "b57e34e754f92de4", h_rule: "" },
-  { rel_id: 16, parent_id: 11, ordinal: 0, local_name: "__delta_head_column_list_and_json_share_storage_source", kind: "delta", type_id: 0, arity: 3, module_id: 8, h_id: "5be2ab19b3032382", h_schema: "72b93f14932f9ca8", h_rule: "" },
-  { rel_id: 17, parent_id: 11, ordinal: 0, local_name: "__frontier_head_column_list_and_json_share_storage_source", kind: "frontier", type_id: 0, arity: 3, module_id: 8, h_id: "0512917179ddf308", h_schema: "ec41f249ee0c7183", h_rule: "" },
-  { rel_id: 18, parent_id: 11, ordinal: 0, local_name: "__next_frontier_head_column_list_and_json_share_storage_source", kind: "next_frontier", type_id: 0, arity: 3, module_id: 8, h_id: "d5e5c6e570c219aa", h_schema: "ec41f249ee0c7183", h_rule: "" },
+  { rel_id: 16, parent_id: 11, ordinal: 0, local_name: "__delta_head_column_list_and_json_share_storage_source_de24b2dc7fa5", kind: "delta", type_id: 0, arity: 3, module_id: 8, h_id: "710e88025f703017", h_schema: "72b93f14932f9ca8", h_rule: "" },
+  { rel_id: 17, parent_id: 11, ordinal: 0, local_name: "__frontier_head_column_list_and_json_share_storage_source_de24b2dc7fa5", kind: "frontier", type_id: 0, arity: 3, module_id: 8, h_id: "9458176748ef3be0", h_schema: "ec41f249ee0c7183", h_rule: "" },
+  { rel_id: 18, parent_id: 11, ordinal: 0, local_name: "__next_frontier_head_column_list_and_json_share_storage_source_de24b2dc7fa5", kind: "next_frontier", type_id: 0, arity: 3, module_id: 8, h_id: "e22ed8acc9c8ec70", h_schema: "ec41f249ee0c7183", h_rule: "" },
   { rel_id: 19, parent_id: 9, ordinal: 0, local_name: "__support_next_head_column_list_and_json_share_storage_copied", kind: "refcount", type_id: 0, arity: 2, module_id: 8, h_id: "19f0c45e86b5e6d2", h_schema: "", h_rule: "" },
   { rel_id: 20, parent_id: 9, ordinal: 0, local_name: "__new_head_column_list_and_json_share_storage_copied", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 8, h_id: "1fa3cb9120554f7b", h_schema: "", h_rule: "" },
   { rel_id: 21, parent_id: 10, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 8, h_id: "5c1574521055b881", h_schema: "", h_rule: "" },
@@ -213,27 +218,27 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["source"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "source", sql: `INSERT OR IGNORE INTO "head_column_list_and_json_share_storage_source" ("items") VALUES (?)`, params: ["[\"a\",\"b\"]"] },
+  { rel: "source", sql: `INSERT OR IGNORE INTO "head_column_list_and_json_share_storage_source_de24b2dc7fa5" ("items") VALUES (?)`, params: ["[\"a\",\"b\"]"] },
   { rel: "copied", sql: `DELETE FROM "head_column_list_and_json_share_storage_copied"`, params: [] },
-  { rel: "copied", sql: `INSERT OR IGNORE INTO "head_column_list_and_json_share_storage_copied" ("items") SELECT b0."items" FROM "head_column_list_and_json_share_storage_source" b0`, params: [] },
+  { rel: "copied", sql: `INSERT OR IGNORE INTO "head_column_list_and_json_share_storage_copied" ("items") SELECT b0."items" FROM "head_column_list_and_json_share_storage_source_de24b2dc7fa5" b0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
   copied: `SELECT t."items" FROM "head_column_list_and_json_share_storage_copied" t`,
-  source: `SELECT t."items" FROM "head_column_list_and_json_share_storage_source" t`,
+  source: `SELECT t."items" FROM "head_column_list_and_json_share_storage_source_de24b2dc7fa5" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "copied", kind: "set", table_name: "head_column_list_and_json_share_storage_copied", delta_table_name: "__delta_head_column_list_and_json_share_storage_copied", frontier_table_name: "__frontier_head_column_list_and_json_share_storage_copied", next_frontier_table_name: "__next_frontier_head_column_list_and_json_share_storage_copied", columns: ["items"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."items", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_column_list_and_json_share_storage_copied" t WHERE t."_sign" IN (-1, 1) GROUP BY t."items", t."_sign"`, rule_observers: [] },
-  { rel: "source", kind: "set", table_name: "head_column_list_and_json_share_storage_source", delta_table_name: "__delta_head_column_list_and_json_share_storage_source", frontier_table_name: "__frontier_head_column_list_and_json_share_storage_source", next_frontier_table_name: "__next_frontier_head_column_list_and_json_share_storage_source", columns: ["items"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "head_column_list_and_json_share_storage_source" ("items") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "items"`, arrival_del_sql: `DELETE FROM "head_column_list_and_json_share_storage_source" WHERE ("items") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "items"`, boundary_sql: `SELECT t."items", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_column_list_and_json_share_storage_source" t WHERE t."_sign" IN (-1, 1) GROUP BY t."items", t."_sign"`, rule_observers: ["copied/1"] },
+  { rel: "source", kind: "set", table_name: "head_column_list_and_json_share_storage_source_de24b2dc7fa5", delta_table_name: "__delta_head_column_list_and_json_share_storage_source_de24b2dc7fa5", frontier_table_name: "__frontier_head_column_list_and_json_share_storage_source_de24b2dc7fa5", next_frontier_table_name: "__next_frontier_head_column_list_and_json_share_storage_source_de24b2dc7fa5", columns: ["items"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "head_column_list_and_json_share_storage_source_de24b2dc7fa5" ("items") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "items"`, arrival_del_sql: `DELETE FROM "head_column_list_and_json_share_storage_source_de24b2dc7fa5" WHERE ("items") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "items"`, boundary_sql: `SELECT t."items", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_column_list_and_json_share_storage_source_de24b2dc7fa5" t WHERE t."_sign" IN (-1, 1) GROUP BY t."items", t."_sign"`, rule_observers: ["copied/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "copied", rule_id: "head_column_list_and_json_share_storage:copied/1#1", head_delta_table_name: "__delta_head_column_list_and_json_share_storage_copied", head_columns: ["items"], insert_sql: `INSERT OR IGNORE INTO "head_column_list_and_json_share_storage_copied" ("items") SELECT DISTINCT d0."items" FROM "__frontier_head_column_list_and_json_share_storage_source" d0 WHERE d0."_phase" >= 0 RETURNING "items"`, select_sql: `SELECT "items" FROM "head_column_list_and_json_share_storage_copied"`, recompute_sql: `DELETE FROM "head_column_list_and_json_share_storage_copied";
-INSERT OR IGNORE INTO "head_column_list_and_json_share_storage_copied" ("items") SELECT b0."items" FROM "head_column_list_and_json_share_storage_source" b0`, support_sql: [`DELETE FROM "__support_next_head_column_list_and_json_share_storage_copied"`, `INSERT INTO "__support_next_head_column_list_and_json_share_storage_copied" ("items", "__refcount") SELECT "items", sum("__refcount") FROM (SELECT b0."items" AS "items", count(*) AS "__refcount" FROM "head_column_list_and_json_share_storage_source" b0 GROUP BY b0."items") GROUP BY "items"`, `UPDATE "head_column_list_and_json_share_storage_copied" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_head_column_list_and_json_share_storage_copied" n WHERE n."items" = h."items"), 0)`, `INSERT INTO "__delta_head_column_list_and_json_share_storage_copied" ("_sign", "_sequence", "items") SELECT -1, row_number() OVER () - 1, "items" FROM "head_column_list_and_json_share_storage_copied" WHERE "__refcount" <= 0`, `DELETE FROM "head_column_list_and_json_share_storage_copied" WHERE "__refcount" <= 0`, `DELETE FROM "__new_head_column_list_and_json_share_storage_copied"`, `INSERT INTO "__new_head_column_list_and_json_share_storage_copied" ("items", "__refcount") SELECT n."items", n."__refcount" FROM "__support_next_head_column_list_and_json_share_storage_copied" n LEFT JOIN "head_column_list_and_json_share_storage_copied" h ON n."items" = h."items" WHERE h."items" IS NULL`, `INSERT INTO "__delta_head_column_list_and_json_share_storage_copied" ("_sign", "_sequence", "items") SELECT 1, "rowid" - 1, "items" FROM "__new_head_column_list_and_json_share_storage_copied"`, `INSERT INTO "__frontier_head_column_list_and_json_share_storage_copied" ("_phase", "_sequence", "items") SELECT ?, "rowid" - 1, "items" FROM "__new_head_column_list_and_json_share_storage_copied"`, `INSERT INTO "__next_frontier_head_column_list_and_json_share_storage_copied" ("_phase", "_sequence", "items") SELECT ?, "rowid" - 1, "items" FROM "__new_head_column_list_and_json_share_storage_copied"`, `INSERT OR IGNORE INTO "head_column_list_and_json_share_storage_copied" ("items", "__refcount") SELECT n."items", n."__refcount" FROM "__support_next_head_column_list_and_json_share_storage_copied" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "copied", rule_id: "head_column_list_and_json_share_storage:copied/1#1", head_delta_table_name: "__delta_head_column_list_and_json_share_storage_copied", head_columns: ["items"], insert_sql: `INSERT OR IGNORE INTO "head_column_list_and_json_share_storage_copied" ("items") SELECT DISTINCT d0."items" FROM "__frontier_head_column_list_and_json_share_storage_source_de24b2dc7fa5" d0 WHERE d0."_phase" >= 0 RETURNING "items"`, select_sql: `SELECT "items" FROM "head_column_list_and_json_share_storage_copied"`, recompute_sql: `DELETE FROM "head_column_list_and_json_share_storage_copied";
+INSERT OR IGNORE INTO "head_column_list_and_json_share_storage_copied" ("items") SELECT b0."items" FROM "head_column_list_and_json_share_storage_source_de24b2dc7fa5" b0`, support_sql: [`DELETE FROM "__support_next_head_column_list_and_json_share_storage_copied"`, `INSERT INTO "__support_next_head_column_list_and_json_share_storage_copied" ("items", "__refcount") SELECT "items", sum("__refcount") FROM (SELECT b0."items" AS "items", count(*) AS "__refcount" FROM "head_column_list_and_json_share_storage_source_de24b2dc7fa5" b0 GROUP BY b0."items") GROUP BY "items"`, `UPDATE "head_column_list_and_json_share_storage_copied" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_head_column_list_and_json_share_storage_copied" n WHERE n."items" = h."items"), 0)`, `INSERT INTO "__delta_head_column_list_and_json_share_storage_copied" ("_sign", "_sequence", "items") SELECT -1, row_number() OVER () - 1, "items" FROM "head_column_list_and_json_share_storage_copied" WHERE "__refcount" <= 0`, `DELETE FROM "head_column_list_and_json_share_storage_copied" WHERE "__refcount" <= 0`, `DELETE FROM "__new_head_column_list_and_json_share_storage_copied"`, `INSERT INTO "__new_head_column_list_and_json_share_storage_copied" ("items", "__refcount") SELECT n."items", n."__refcount" FROM "__support_next_head_column_list_and_json_share_storage_copied" n LEFT JOIN "head_column_list_and_json_share_storage_copied" h ON n."items" = h."items" WHERE h."items" IS NULL`, `INSERT INTO "__delta_head_column_list_and_json_share_storage_copied" ("_sign", "_sequence", "items") SELECT 1, "rowid" - 1, "items" FROM "__new_head_column_list_and_json_share_storage_copied"`, `INSERT INTO "__frontier_head_column_list_and_json_share_storage_copied" ("_phase", "_sequence", "items") SELECT ?, "rowid" - 1, "items" FROM "__new_head_column_list_and_json_share_storage_copied"`, `INSERT INTO "__next_frontier_head_column_list_and_json_share_storage_copied" ("_phase", "_sequence", "items") SELECT ?, "rowid" - 1, "items" FROM "__new_head_column_list_and_json_share_storage_copied"`, `INSERT OR IGNORE INTO "head_column_list_and_json_share_storage_copied" ("items", "__refcount") SELECT n."items", n."__refcount" FROM "__support_next_head_column_list_and_json_share_storage_copied" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const RECONCILE_EVERY_TICK = false;
@@ -281,6 +286,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,
