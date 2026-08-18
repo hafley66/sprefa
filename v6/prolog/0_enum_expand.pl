@@ -338,7 +338,6 @@ variant_column(FieldTerm, column(ColumnName, TypeName)) :-
     nonvar(FieldTerm),
     FieldTerm =.. [':', ColumnName, TypeName],
     atom(ColumnName),
-    atom(TypeName),
     !.
 variant_column(FieldTerm, _) :-
     throw(unsupported_construct(enum_variant_column_shape(FieldTerm))).

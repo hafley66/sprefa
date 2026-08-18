@@ -25,6 +25,7 @@
 :- use_module('0_option_expand', [expand_option_decls/2, scalar_element/1]).
 :- use_module('0_enum_expand', [enum_type_rows/2]).
 :- use_module('0_type_plane', [unwrapped_column_type/2]).
+:- use_module('0_anonymous_expand', [expand_anonymous_decls/2]).
 :- use_module('0_type_ids',
               [ decl_id/4, primitive_id/2, param_id/4, member_id/4,
                 constraint_id/3, impl_id/3, app_id/3, arg_id/3,
@@ -53,7 +54,8 @@ expand_generic_program_with_bindings(prog(Decls0, Rules0), Bindings,
     validate_generated_name_collisions(UserDecls, Rules0, Instances),
     expand_list_decodes(WithMintedDecls, Rules0, ExpandedRules),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
-    normalize_key_wrappers(RewrittenDecls, KeyNormalizedDecls),
+    expand_anonymous_decls(RewrittenDecls, AnonymousDecls),
+    normalize_key_wrappers(AnonymousDecls, KeyNormalizedDecls),
     generic_artifact_order(Instances, KeyNormalizedDecls, CanonicalDecls),
     merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
     expand_option_decls(FlavorRowedDecls, OptionDecls),
@@ -70,7 +72,8 @@ expand_generic_program_raw(prog(Decls0, Rules0), prog(Decls, Rules)) :-
     validate_generated_name_collisions(UserDecls, Rules0, Instances),
     expand_list_decodes(WithMintedDecls, Rules0, ExpandedRules),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
-    normalize_key_wrappers(RewrittenDecls, KeyNormalizedDecls),
+    expand_anonymous_decls(RewrittenDecls, AnonymousDecls),
+    normalize_key_wrappers(AnonymousDecls, KeyNormalizedDecls),
     generic_artifact_order(Instances, KeyNormalizedDecls, CanonicalDecls),
     merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
     expand_option_decls(FlavorRowedDecls, OptionDecls),
@@ -792,6 +795,9 @@ normalized_application_row(Decls, Application, Rows) :-
     Rows = [ApplicationRow | ArgumentRows].
 
 normalized_argument_type(_, Type, type_atom(Type)) :- atom(Type), !.
+normalized_argument_type(_, Type, type_named(Type)) :-
+    anonymous_type_term(Type),
+    !.
 normalized_argument_type(Decls, Type, type_application(Id)) :-
     compound(Type),
     Type =.. [Constructor | Arguments],
@@ -836,6 +842,9 @@ normalized_type(_, _, _, Type, type_ref(primitive(Type))) :-
 normalized_type(Decls, _, _, Type, type_ref(declaration(Id))) :-
     atom(Type), semantic_decl_id(Decls, relation, Type, Id),
     member(type_decl(Type, _), Decls), !.
+normalized_type(_, _, _, Type, type_ref(named(Type))) :-
+    anonymous_type_term(Type),
+    !.
 normalized_type(Decls, _, _, Type, type_ref(application(Id))) :-
     compound(Type), Type =.. [Name | Args],
     semantic_decl_id(Decls, relation, Name, Constructor),
@@ -1199,6 +1208,9 @@ semantic_type_id(_, Type, Id) :-
     semantic_primitive(Type),
     !,
     primitive_id(Type, Id).
+semantic_type_id(_, Type, anonymous_placeholder(Type)) :-
+    anonymous_type_term(Type),
+    !.
 semantic_type_id(Decls, Type, Id) :-
     atom(Type),
     !,
@@ -1210,6 +1222,9 @@ semantic_type_id(Decls, Type, Id) :-
 
 semantic_primitive(Type) :- scalar_element(Type).
 semantic_primitive(bytes).
+
+anonymous_type_term(product_type(_)).
+anonymous_type_term(sum_type(_)).
 
 semantic_named_type_id(Decls, Name, Id) :-
     member(semantic_decl_module(enum, Name, ModuleHash), Decls),
@@ -1917,6 +1932,7 @@ type_encoding_codes(Type, Codes) :-
     atom_codes(Type, AtomCodes), length(AtomCodes, Length),
     number_codes(Length, LengthCodes),
     append([[0'a], LengthCodes, [0':], AtomCodes], Codes).
+type_encoding_codes([], [0'l, 0':]) :- !.
 type_encoding_codes(Type, Codes) :-
     compound(Type),
     Type =.. [Constructor | Args],
@@ -1929,6 +1945,11 @@ type_encoding_codes(Type, Codes) :-
 
 readable_stem(Type, Stem) :-
     atom(Type), !, Stem = Type.
+readable_stem([], Stem) :- !, Stem = 'empty'.
+readable_stem(Type, Stem) :-
+    is_list(Type), !,
+    maplist(readable_stem, Type, Stems),
+    atomic_list_concat(Stems, '_', Stem).
 readable_stem(Type, Stem) :-
     Type =.. [Constructor | Args],
     maplist(readable_stem, Args, Stems),

@@ -1,0 +1,7 @@
+# Anonymous product/sum type CST shape. Variant names are lowercase here to
+# match the tree-sitter `identifier` token (lowercase-first), mirroring the
+# grammar's existing lowercase-identifier convention. Arrow returns are not in
+# the minimal grammar, so the product is written as an ordinary column type.
+rel resident(result: (a: int, b: text)).
+rel verdict(result: (ok(value: int); err(message: text))).
+rel nested(bundle: (x: int, y: (p: text, q: float))).

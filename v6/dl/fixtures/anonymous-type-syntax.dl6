@@ -1,0 +1,9 @@
+# Anonymous product/sum type syntax. Exercises the first slice of
+# @anonymous-type-syntax: an anonymous product return, a named-sum payload with
+# complete type expressions, a nested product, and a generic specialization
+# whose anonymous argument carries concrete types.
+rel resident(input: text) -> (a: int, b: text).
+rel verdict(derp: (Derp(value: int); Derpy(value: list(text)))).
+rel holder(bundle: (x: int, y: (p: text, q: float))).
+rel Box(T)(value: T).
+rel use(boxed: Box((a: int, b: text))).

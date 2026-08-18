@@ -1639,14 +1639,15 @@ catalog_type_metadata_rows(Decls, ModuleId, RelIdMap, ListIdMap, Id0, Rows,
             Instances),
     metadata_instance_rows(Instances, GenericMap, RelIdMap, ListIdMap, Id4a,
                            InstanceRows, Id5),
+    metadata_anonymous_rows(SemanticRows, RelIdMap, Id5, AnonymousRows, Id6),
     findall(implementation(Ref, Application),
             ( member(rel_is_implementation(Ref, Applications), Decls),
               member(Application, Applications) ), Implementations),
-    metadata_implementation_rows(Implementations, InterfaceMap, RelIdMap, Id5,
+    metadata_implementation_rows(Implementations, InterfaceMap, RelIdMap, Id6,
                                  ImplementationRows, IdFinal),
     append([InterfaceRows, GenericRows, InterfaceParameterRows,
             GenericParameterRows, GenericColumnRows, InstanceRows,
-            ImplementationRows], RawRows),
+            AnonymousRows, ImplementationRows], RawRows),
     annotate_catalog_semantic_ids(RawRows, RawRows, SemanticRows, Rows).
 
 semantic_rows_from_decls(Decls, Rows) :-
@@ -1885,6 +1886,29 @@ metadata_argument_rows([Argument | Rest], InstanceId, RelIdMap, ListIdMap,
     NextOrdinal is Ordinal + 1,
     metadata_argument_rows(Rest, InstanceId, RelIdMap, ListIdMap, NextOrdinal,
                            Id1, Rows, IdFinal).
+
+% Anonymous product/sum generated types are marked concrete so the catalog and
+% type emitters treat them as reachable user types rather than compiler
+% internals.  The marker comes from the semantic origin row
+% (derived_from(GeneratedId, anonymous(...))), never from the `__` name prefix.
+metadata_anonymous_rows(SemanticRows, RelIdMap, Id0, Rows, IdFinal) :-
+    findall(Name,
+            member(derived_from(named(_, _, Name), anonymous(_, _, _)),
+                   SemanticRows),
+            Names0),
+    sort(Names0, Names),
+    metadata_anonymous_rows_(Names, RelIdMap, Id0, Rows, IdFinal).
+
+metadata_anonymous_rows_([], _, Id, [], Id).
+metadata_anonymous_rows_([Name | Rest], RelIdMap, Id0,
+                         [row(Id0, RelId, 0, Name, concrete_type,
+                              0, 0, 0, '', '', '') | Rows],
+                         IdFinal) :-
+    rel_row_id(RelIdMap, Name, RelId),
+    Id1 is Id0 + 1,
+    metadata_anonymous_rows_(Rest, RelIdMap, Id1, Rows, IdFinal).
+metadata_anonymous_rows_([_Name | Rest], RelIdMap, Id0, Rows, IdFinal) :-
+    metadata_anonymous_rows_(Rest, RelIdMap, Id0, Rows, IdFinal).
 
 catalog_source_type_id(json_list(Element), _RelIdMap, ListIdMap, TypeId) :- !,
     ( list_row_id(ListIdMap, json_list(Element), TypeId) -> true ; TypeId = 0 ).

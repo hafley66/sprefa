@@ -418,6 +418,16 @@ print_column_type(list_entity_linked_sequence(Element), Text) :-
 print_column_type(id(Name), Text) :-
     !,
     format(atom(Text), "~w.id", [Name]).
+print_column_type(product_type(Fields), Text) :-
+    !,
+    maplist(print_product_field, Fields, FieldTexts),
+    atomic_list_concat(FieldTexts, ', ', Inner),
+    format(atom(Text), "(~w)", [Inner]).
+print_column_type(sum_type(Variants), Text) :-
+    !,
+    maplist(print_sum_variant, Variants, VariantTexts),
+    atomic_list_concat(VariantTexts, '; ', Inner),
+    format(atom(Text), "(~w)", [Inner]).
 print_column_type(type_path(Segments), Text) :-
     !,
     atomic_list_concat(Segments, '.', Text).
@@ -475,6 +485,15 @@ print_enum_field(Field, Text) :-
     Field =.. [':', ColumnName, TypeName],
     print_column_type(TypeName, TypeText),
     format(atom(Text), "~w: ~w", [ColumnName, TypeText]).
+
+print_product_field(field(Name, Type), Text) :-
+    print_column_type(Type, TypeText),
+    format(atom(Text), "~w: ~w", [Name, TypeText]).
+
+print_sum_variant(variant(Name, Fields), Text) :-
+    maplist(print_product_field, Fields, FieldTexts),
+    atomic_list_concat(FieldTexts, ', ', FieldsText),
+    format(atom(Text), "~w(~w)", [Name, FieldsText]).
 
 % ═══ rule line : `HeadText <- BodyText.` / `HeadText <+ BodyText.` ══════════
 
