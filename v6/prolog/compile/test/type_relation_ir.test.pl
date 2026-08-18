@@ -1,9 +1,20 @@
 :- begin_tests(type_relation_ir).
 
+:- op(1150, xfx, <-).
+:- op(1150, xfx, <+).
+
 :- use_module('../../0_generic_expand',
-              [ schema_member_rows/2, type_relation_rows/2 ]).
+              [ schema_member_rows/2, type_relation_rows/2,
+                expand_generic_program/2, normalize_key_wrappers/2 ]).
 :- use_module('../../lower', [ catalog_type_relation_rows/3,
-                               catalog_type_transport_rows/4 ]).
+                               catalog_type_transport_rows/4,
+                               lower_program/2 ]).
+:- use_module('../../compile', [ program_plan/2 ]).
+:- use_module('../../0_rel_record', [ relplan_shape/6 ]).
+:- use_module('../../compile/parse_dl_dcg', [ parse_dl/4 ]).
+:- use_module('../../print_dl', [ print_dl_program/3 ]).
+:- use_module('../../1_expansion', [ expand_program/3 ]).
+:- use_module('../../conformance/engine', [ run_program/5 ]).
 :- use_module('../../compile/typegen_export', []).
 :- use_module('../../compile/8_emit_rust_types', [ rust_types_text/3 ]).
 
@@ -13,6 +24,116 @@ ordinary_schema_decls([
     col_type(person/2, name, text),
     keyed(person/2, [1])
 ]).
+
+test(key_wrapper_normalizes_to_ordered_relation_key) :-
+    Decls0 = [ col_type(user/2, id, key(int)),
+               col_type(user/2, name, key(text)) ],
+    normalize_key_wrappers(Decls0, Decls),
+    Decls = [ col_type(user/2, id, int),
+              col_type(user/2, name, text),
+              keyed(user/2, [1, 2]) ].
+
+test(key_wrapper_and_legacy_key_deduplicate) :-
+    Decls0 = [ col_type(user/2, id, key(int)),
+               col_type(user/2, name, key(text)),
+               keyed(user/2, [2, 1]) ],
+    normalize_key_wrappers(Decls0, Decls),
+    Decls = [ col_type(user/2, id, int),
+              col_type(user/2, name, text),
+              keyed(user/2, [1, 2]) ].
+
+test(key_wrapper_generic_specialization_normalizes_after_substitution) :-
+    Surface = prog([
+        rel_template([user], [type_parameter('T', [])],
+                      [column(id, key('T')), column(name, text)]),
+        col_type(holder/1, value, user(text))
+    ], []),
+    expand_generic_program(Surface, prog(Decls, [])),
+    member(col_type(Concrete/2, id, text), Decls),
+    member(keyed(Concrete/2, [1]), Decls),
+    member(col_type(Concrete/2, name, text), Decls).
+
+test(key_wrapper_nested_is_named,
+     [throws(unsupported_construct(key_wrapper_nested(user/1, 1)))]) :-
+    normalize_key_wrappers([col_type(user/1, id, list(key(int)))], _).
+
+test(key_wrapper_repeated_is_named,
+     [throws(unsupported_construct(key_wrapper_repeated(user/1, 1)))]) :-
+    normalize_key_wrappers([col_type(user/1, id, key(key(int)))], _).
+
+test(key_wrapper_legacy_conflict_is_named,
+     [throws(unsupported_construct(
+          key_wrapper_legacy_conflict(user/2, [1], [2])))]) :-
+    normalize_key_wrappers([col_type(user/2, id, key(int)),
+                            col_type(user/2, name, text),
+                            keyed(user/2, [2])], _).
+
+test(key_wrapper_option_uses_existing_refusal,
+     [throws(unsupported_construct(option_in_key_column(user/1, id)))]) :-
+    expand_generic_program(
+        prog([col_type(user/1, id, key(option(int)))], []), _).
+
+test(key_wrapper_print_reparse_canonicalizes_to_legacy_key) :-
+    string_codes("rel user(id: key(int), name: text).\n", Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    print_dl_program(Program, Bindings, Printed),
+    string_codes(Printed, PrintedCodes),
+    parse_dl(PrintedCodes, Reparsed, _, []),
+    expansion:expand_program(Program, Expanded, _),
+    expansion:expand_program(Reparsed, Reexpanded, _),
+    Expanded =@= Reexpanded.
+
+test(key_wrapper_legacy_plan_and_lowering_are_exactly_equal) :-
+    Wrapper = fixture(key_wrapper_parity,
+                      prog([col_type(user/2, id, key(int)),
+                            col_type(user/2, name, text)], []),
+                      [], [], []),
+    Legacy = fixture(key_wrapper_parity,
+                     prog([col_type(user/2, id, int),
+                           col_type(user/2, name, text),
+                           keyed(user/2, [1])], []),
+                     [], [], []),
+    program_plan(Wrapper-[], WrapperPlan),
+    program_plan(Legacy-[], LegacyPlan),
+    WrapperPlan =@= LegacyPlan,
+    lower_program(WrapperPlan, WrapperLowered),
+    lower_program(LegacyPlan, LegacyLowered),
+    WrapperLowered =@= LegacyLowered.
+
+test(key_wrapper_reuses_rel_key_ddl_and_edge_upsert) :-
+    Program = fixture(key_wrapper_plan,
+                      prog([ col_type(user/2, id, key(int)),
+                             col_type(user/2, name, text),
+                             col_type(source/2, id, int),
+                             col_type(source/2, name, text) ],
+                            [(user(Id, Name) <+ source(Id, Name))]),
+                      [], [], []),
+    program_plan(Program-[], Plan),
+    Plan = plan(_, prog(Decls, _), _, RelPlans, _, _, _, _, _),
+    memberchk(keyed(user/2, [1]), Decls),
+    relplan_shape(RelPlans, user/2, set, [id, name], key([1]),
+                  [int, text]),
+    lower_program(Plan, lowered(_, Ddl, _, EdgeStatements, _, _, _, _)),
+    once(( member(Statement, Ddl),
+           sub_atom(Statement, _, _, _, 'UNIQUE ("id")') )),
+    once(( member(edgestmt(user/2, source/2, _, [id], _, UpsertSql, _, _, _),
+                  EdgeStatements),
+           sub_atom(UpsertSql, _, _, _, 'ON CONFLICT("id") DO UPDATE') )).
+
+test(key_wrapper_replacement_then_old_row_retraction_matches_legacy) :-
+    Wrapper = prog([col_type(user/2, id, key(int)),
+                    col_type(user/2, name, text)], []),
+    Legacy = prog([col_type(user/2, id, int),
+                   col_type(user/2, name, text),
+                   keyed(user/2, [1])], []),
+    Schedule = [[+user(1, a)], [+user(1, b)], [-user(1, a)]],
+    expand_program(Wrapper, ExpandedWrapper, _),
+    expand_program(Legacy, ExpandedLegacy, _),
+    run_program(ExpandedWrapper, [], Schedule, WrapperFinal, _),
+    run_program(ExpandedLegacy, [], Schedule, LegacyFinal, _),
+    WrapperFinal == [user(1, b)],
+    LegacyFinal == [user(1, b)],
+    WrapperFinal == LegacyFinal.
 
 test(ordinary_members_keep_authored_and_value_type_ids) :-
     ordinary_schema_decls(Decls),
