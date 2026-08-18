@@ -19,6 +19,43 @@ rel type_row(id: int, parent: int, ordinal: int, name: text, kind: text,
 rel has_option(value: int).
 has_option(1) <- type_row(kind: 'option').
 
+# The Rust 2021 keyword set 8_emit_rust_types.pl carries. `crate`, `self`,
+# `Self`, `super` are absent: Rust bars them from the r# escape.
+rel rust_keyword(word: text).
+rust_keyword('abstract'). rust_keyword('as').       rust_keyword('async').
+rust_keyword('await').    rust_keyword('become').   rust_keyword('box').
+rust_keyword('break').    rust_keyword('const').    rust_keyword('continue').
+rust_keyword('do').       rust_keyword('dyn').      rust_keyword('else').
+rust_keyword('enum').     rust_keyword('extern').   rust_keyword('false').
+rust_keyword('final').    rust_keyword('fn').       rust_keyword('for').
+rust_keyword('if').       rust_keyword('impl').     rust_keyword('in').
+rust_keyword('let').      rust_keyword('loop').     rust_keyword('macro').
+rust_keyword('match').    rust_keyword('mod').      rust_keyword('move').
+rust_keyword('mut').      rust_keyword('override'). rust_keyword('priv').
+rust_keyword('pub').      rust_keyword('ref').      rust_keyword('return').
+rust_keyword('static').   rust_keyword('struct').   rust_keyword('trait').
+rust_keyword('true').     rust_keyword('try').      rust_keyword('type').
+rust_keyword('typeof').   rust_keyword('unsafe').   rust_keyword('unsized').
+rust_keyword('use').      rust_keyword('virtual').  rust_keyword('where').
+rust_keyword('while').    rust_keyword('yield').
+
+# Every column name a struct or generic field line renders, the domain
+# field_ident arms over.
+rel column_name(name: text).
+column_name(ColumnName) <- type_row(kind: 'column', name: ColumnName).
+column_name(ColumnName) <- type_row(kind: 'generic_column', name: ColumnName).
+
+# A column named for a keyword takes the r# raw-identifier escape; serde
+# keeps rendering the wire name from the plain ColumnName upstream.
+rel field_ident(name: text, ident: text).
+field_ident(Name, Ident) <-
+  column_name(Name),
+  rust_keyword(Name),
+  Ident := concat(['r#', Name]).
+field_ident(Name, Name) <-
+  column_name(Name),
+  not(rust_keyword(Name)).
+
 # PascalCase = replace(initcap(Name), '_', ''), matching the prolog emitter.
 # Inline, because an assignment-only rule has no positive body to group on.
 
@@ -237,7 +274,8 @@ field_line(RelId, Ordinal, LineText) <-
            kind: 'column', type_id: TypeId),
   renderable_rel(RelId, _, _),
   type_of(TypeId, Type),
-  LineText := concat(['    pub ', ColumnName, ': ', Type, ',']).
+  field_ident(ColumnName, Ident),
+  LineText := concat(['    pub ', Ident, ': ', Type, ',']).
 
 # The struct body: field lines joined in ordinal order by newline.
 rel body_text(rel_id: int, body: text).
@@ -354,7 +392,8 @@ generic_field_line(GenericId, Ordinal, LineText) <-
   type_row(parent: GenericId, ordinal: Ordinal, name: ColumnName,
            kind: 'generic_column', type_id: TypeId),
   type_of(TypeId, Type),
-  LineText := concat(['    pub ', ColumnName, ': ', Type, ',']).
+  field_ident(ColumnName, Ident),
+  LineText := concat(['    pub ', Ident, ': ', Type, ',']).
 
 rel generic_body(generic_id: int, body: text).
 generic_body(GenericId, group_concat(LineText, '\n', Ordinal)) <-

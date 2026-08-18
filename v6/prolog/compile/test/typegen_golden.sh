@@ -44,6 +44,7 @@ SHAPES=(
   "shape_float_column"
   "shape_camel_case_module"
   "shape_concrete_dunder_rel"
+  "shape_keyword_column"
 )
 
 swipl_run() { # goal ; runs from v6/prolog so conformance/... paths resolve

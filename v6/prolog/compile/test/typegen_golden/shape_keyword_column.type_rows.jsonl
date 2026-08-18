@@ -1,0 +1,7 @@
+{"rel":"type_row","row": [1, 0, 0, "text", "primitive", 0, 0 ],"sign":"add"}
+{"rel":"type_row","row": [2, 0, 0, "shape_keyword_column", "module", 0, 2 ],"sign":"add"}
+{"rel":"type_row","row": [3, 2, 0, "widget", "rel", 0, 2 ],"sign":"add"}
+{"rel":"type_row","row": [4, 3, 1, "type", "column", 1, 2 ],"sign":"add"}
+{"rel":"type_row","row": [5, 3, 2, "match", "column", 1, 2 ],"sign":"add"}
+{"rel":"type_row","row": [6, 3, 3, "ref", "column", 1, 2 ],"sign":"add"}
+{"rel":"type_row","row": [7, 3, 4, "label", "column", 1, 2 ],"sign":"add"}
