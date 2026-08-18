@@ -10,6 +10,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
@@ -18,7 +19,7 @@ use serde_json::{json, Value};
 use sprefa_engine_rs::program::{run_boot, GenProgram};
 use sprefa_engine_rs::serve::{bind, serve_on, ServeState};
 use sprefa_engine_rs::sql::SqliteSeam;
-use sprefa_engine_rs::types::ProgramJson;
+use sprefa_engine_rs::types::{Arrival, ArrivalSign, ProgramJson, Value as RowValue};
 use tokio_util::sync::CancellationToken;
 
 mod emitted {
@@ -328,6 +329,145 @@ async fn a_read_during_a_fold_is_never_torn() {
     assert_eq!(rows_as_arrays(&settled), after);
 
     let _ = served.state.read_rel("doubled").await.expect("library read");
+    served.cancel.cancel();
+    served.task.await.expect("server task");
+}
+
+// The follow door. `since` is the last tick the caller folded, so a follower
+// two ticks behind reads both ticks' rows in one answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_follower_reads_every_tick_it_missed() {
+    let served = boot_on_socket().await;
+    let mut sender = client(&served.socket).await;
+
+    let (status, _) = call(
+        &mut sender,
+        "POST",
+        "/arrive",
+        Some(json!([
+            { "rel": "reading", "sign": "add", "row": ["net", 30] },
+            { "rel": "reading", "sign": "add", "row": ["gpu", 50] }
+        ])),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (status, first) = call(&mut sender, "GET", "/rel/reading/deltas?since=0", None).await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        first,
+        json!({ "tick": 1, "add": [["gpu", 50], ["net", 30]], "del": [] }),
+        "one tick's adds answer in the rel's column order"
+    );
+
+    let (status, _) = call(
+        &mut sender,
+        "POST",
+        "/arrive",
+        Some(arrive("reading", "del", json!(["cpu", 12]))),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (status, second) = call(&mut sender, "GET", "/rel/reading/deltas?since=1", None).await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        second,
+        json!({ "tick": 2, "add": [], "del": [["cpu", 12]] }),
+        "a retraction crosses as a del row"
+    );
+
+    let (status, both) = call(&mut sender, "GET", "/rel/reading/deltas?since=0", None).await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        both,
+        json!({ "tick": 2, "add": [["gpu", 50], ["net", 30]], "del": [["cpu", 12]] }),
+        "two ticks fold into one add/del pair"
+    );
+
+    let (status, derived) = call(&mut sender, "GET", "/rel/doubled/deltas?since=0", None).await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        derived,
+        json!({ "tick": 2, "add": [["gpu", 100], ["net", 60]], "del": [["cpu", 24]] }),
+        "a derived rel follows the same way its arrival source does"
+    );
+
+    let (status, missing) = call(&mut sender, "GET", "/rel/nowhere/deltas?since=0", None).await;
+    assert_eq!(status, 404);
+    assert_eq!(missing["error"], json!("no rel named nowhere"));
+
+    served.cancel.cancel();
+    served.task.await.expect("server task");
+}
+
+// A poll with nothing new parks on the next tick rather than answering empty,
+// so a follower needs no interval and sees no gap.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_poll_with_nothing_new_parks_until_the_next_tick() {
+    let served = boot_on_socket().await;
+    let mut writer = client(&served.socket).await;
+    let mut follower = client(&served.socket).await;
+
+    let poll = call(&mut follower, "GET", "/rel/doubled/deltas?since=0", None);
+    let push = async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        call(
+            &mut writer,
+            "POST",
+            "/arrive",
+            Some(arrive("reading", "add", json!(["net", 30]))),
+        )
+        .await
+    };
+    let ((poll_status, deltas), (push_status, _)) = tokio::join!(poll, push);
+    assert_eq!(push_status, 200);
+    assert_eq!(poll_status, 200);
+    assert_eq!(
+        deltas,
+        json!({ "tick": 1, "add": [["net", 60]], "del": [] }),
+        "the parked poll answers the tick that woke it"
+    );
+
+    served.cancel.cancel();
+    served.task.await.expect("server task");
+}
+
+// FAIL-PRE-FIX: with no ring the only answers were the current tick's deltas,
+// so a follower that missed a tick lost those rows with nothing said.
+// The ring is 256 ticks; the 257th evicts tick 1 and tick 0 is unreachable.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_follower_further_back_than_the_ring_is_told_so() {
+    let served = boot_on_socket().await;
+    for step in 0..257i64 {
+        served
+            .state
+            .arrive(vec![Arrival {
+                rel: "reading".to_string(),
+                sign: ArrivalSign::Add,
+                row: vec![RowValue::Text(format!("net{step}")), RowValue::Integer(30)],
+            }])
+            .await
+            .expect("fold one tick");
+    }
+    let mut sender = client(&served.socket).await;
+
+    let (status, gone) = call(&mut sender, "GET", "/rel/reading/deltas?since=0", None).await;
+    assert_eq!(status, 410);
+    assert_eq!(
+        gone["error"],
+        json!("deltas since tick 0 left the ring, oldest tick kept is 2"),
+        "the follower is told which tick it can still ask from"
+    );
+
+    let (status, kept) = call(&mut sender, "GET", "/rel/reading/deltas?since=256", None).await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        kept,
+        json!({ "tick": 257, "add": [["net256", 30]], "del": [] }),
+        "the tick still in the ring answers"
+    );
+
     served.cancel.cancel();
     served.task.await.expect("server task");
 }
