@@ -53,7 +53,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -147,19 +147,19 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "next_level_is_the_bare_atom_spelling_seen" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value"))`,
-  `CREATE TABLE "next_level_is_the_bare_atom_spelling_source" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
+  `CREATE TABLE "next_level_is_the_bare_atom_spelling_source_1230b8accab2" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
   `CREATE TEMP TABLE "__delta_next_level_is_the_bare_atom_spelling_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_next_level_is_the_bare_atom_spelling_seen_sign" ON "__delta_next_level_is_the_bare_atom_spelling_seen" ("_sign")`,
   `CREATE INDEX "__delta_next_level_is_the_bare_atom_spelling_seen_group" ON "__delta_next_level_is_the_bare_atom_spelling_seen" ("value")`,
   `CREATE TEMP TABLE "__frontier_next_level_is_the_bare_atom_spelling_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_next_level_is_the_bare_atom_spelling_seen_phase" ON "__frontier_next_level_is_the_bare_atom_spelling_seen" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_next_level_is_the_bare_atom_spelling_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_next_level_is_the_bare_atom_spelling_source" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_next_level_is_the_bare_atom_spelling_source_sign" ON "__delta_next_level_is_the_bare_atom_spelling_source" ("_sign")`,
-  `CREATE INDEX "__delta_next_level_is_the_bare_atom_spelling_source_group" ON "__delta_next_level_is_the_bare_atom_spelling_source" ("value")`,
-  `CREATE TEMP TABLE "__frontier_next_level_is_the_bare_atom_spelling_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_next_level_is_the_bare_atom_spelling_source_phase" ON "__frontier_next_level_is_the_bare_atom_spelling_source" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_next_level_is_the_bare_atom_spelling_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_next_level_is_the_bare_atom_spelling_source_1230b8accab2" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_next_level_is_the_bare_atom_spelling_source_1230b8accab2_sign" ON "__delta_next_level_is_the_bare_atom_spelling_source_1230b8accab2" ("_sign")`,
+  `CREATE INDEX "__delta_next_level_is_the_bare_atom_spelling_source_1230b8accab2_group" ON "__delta_next_level_is_the_bare_atom_spelling_source_1230b8accab2" ("value")`,
+  `CREATE TEMP TABLE "__frontier_next_level_is_the_bare_atom_spelling_source_1230b8accab2" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_next_level_is_the_bare_atom_spelling_source_1230b8accab2_phase" ON "__frontier_next_level_is_the_bare_atom_spelling_source_1230b8accab2" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_next_level_is_the_bare_atom_spelling_source_1230b8accab2" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE TEMP TABLE "__support_next_next_level_is_the_bare_atom_spelling_seen" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__new_next_level_is_the_bare_atom_spelling_seen" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "next_level_is_the_bare_atom_spelling_seen_zero" ON "next_level_is_the_bare_atom_spelling_seen" ("__refcount") WHERE "__refcount" <= 0`,
@@ -168,6 +168,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   seen: ["value"],
   source: ["value"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  seen: "next_level_is_the_bare_atom_spelling_seen",
+  source: "next_level_is_the_bare_atom_spelling_source_1230b8accab2",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -195,9 +200,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_next_level_is_the_bare_atom_spelling_seen", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "3320bed87af5528e", h_schema: "d59487c5bf23d586", h_rule: "" },
   { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_next_level_is_the_bare_atom_spelling_seen", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "80e5cd6796bc5ff5", h_schema: "f0cee8555a0aeabb", h_rule: "" },
   { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_next_level_is_the_bare_atom_spelling_seen", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "ab90b6215030d709", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_next_level_is_the_bare_atom_spelling_source", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "07e49aa6c10405e6", h_schema: "d59487c5bf23d586", h_rule: "" },
-  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_next_level_is_the_bare_atom_spelling_source", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "112b304f17605800", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_next_level_is_the_bare_atom_spelling_source", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "28bb958781d819db", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_next_level_is_the_bare_atom_spelling_source_1230b8accab2", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "82a3b7b992ecf254", h_schema: "d59487c5bf23d586", h_rule: "" },
+  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_next_level_is_the_bare_atom_spelling_source_1230b8accab2", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "120c80a2837e168e", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_next_level_is_the_bare_atom_spelling_source_1230b8accab2", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "2f932a77ae782f7a", h_schema: "f0cee8555a0aeabb", h_rule: "" },
   { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__support_next_next_level_is_the_bare_atom_spelling_seen", kind: "refcount", type_id: 0, arity: 2, module_id: 7, h_id: "ee51d5f62e0ebfda", h_schema: "", h_rule: "" },
   { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__new_next_level_is_the_bare_atom_spelling_seen", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 7, h_id: "4442e4af9029c400", h_schema: "", h_rule: "" },
   { rel_id: 20, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "a687633fa2111f2b", h_schema: "", h_rule: "" },
@@ -211,25 +216,25 @@ const arrival_targets: readonly string[] = ["source"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "seen", sql: `DELETE FROM "next_level_is_the_bare_atom_spelling_seen"`, params: [] },
-  { rel: "seen", sql: `INSERT OR IGNORE INTO "next_level_is_the_bare_atom_spelling_seen" ("value") SELECT b0."value" FROM "next_level_is_the_bare_atom_spelling_source" b0`, params: [] },
+  { rel: "seen", sql: `INSERT OR IGNORE INTO "next_level_is_the_bare_atom_spelling_seen" ("value") SELECT b0."value" FROM "next_level_is_the_bare_atom_spelling_source_1230b8accab2" b0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
   seen: `SELECT t."value" FROM "next_level_is_the_bare_atom_spelling_seen" t`,
-  source: `SELECT t."value" FROM "next_level_is_the_bare_atom_spelling_source" t`,
+  source: `SELECT t."value" FROM "next_level_is_the_bare_atom_spelling_source_1230b8accab2" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "seen", kind: "set", table_name: "next_level_is_the_bare_atom_spelling_seen", delta_table_name: "__delta_next_level_is_the_bare_atom_spelling_seen", frontier_table_name: "__frontier_next_level_is_the_bare_atom_spelling_seen", next_frontier_table_name: "__next_frontier_next_level_is_the_bare_atom_spelling_seen", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_next_level_is_the_bare_atom_spelling_seen" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
-  { rel: "source", kind: "set", table_name: "next_level_is_the_bare_atom_spelling_source", delta_table_name: "__delta_next_level_is_the_bare_atom_spelling_source", frontier_table_name: "__frontier_next_level_is_the_bare_atom_spelling_source", next_frontier_table_name: "__next_frontier_next_level_is_the_bare_atom_spelling_source", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "next_level_is_the_bare_atom_spelling_source" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "next_level_is_the_bare_atom_spelling_source" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_next_level_is_the_bare_atom_spelling_source" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["seen/1"] },
+  { rel: "source", kind: "set", table_name: "next_level_is_the_bare_atom_spelling_source_1230b8accab2", delta_table_name: "__delta_next_level_is_the_bare_atom_spelling_source_1230b8accab2", frontier_table_name: "__frontier_next_level_is_the_bare_atom_spelling_source_1230b8accab2", next_frontier_table_name: "__next_frontier_next_level_is_the_bare_atom_spelling_source_1230b8accab2", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "next_level_is_the_bare_atom_spelling_source_1230b8accab2" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "next_level_is_the_bare_atom_spelling_source_1230b8accab2" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_next_level_is_the_bare_atom_spelling_source_1230b8accab2" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["seen/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "seen", rule_id: "next_level_is_the_bare_atom_spelling:seen/1#1", head_delta_table_name: "__delta_next_level_is_the_bare_atom_spelling_seen", head_columns: ["value"], insert_sql: `INSERT OR IGNORE INTO "next_level_is_the_bare_atom_spelling_seen" ("value") SELECT DISTINCT d0."value" FROM "__frontier_next_level_is_the_bare_atom_spelling_source" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, select_sql: `SELECT "value" FROM "next_level_is_the_bare_atom_spelling_seen"`, recompute_sql: `DELETE FROM "next_level_is_the_bare_atom_spelling_seen";
-INSERT OR IGNORE INTO "next_level_is_the_bare_atom_spelling_seen" ("value") SELECT b0."value" FROM "next_level_is_the_bare_atom_spelling_source" b0`, support_sql: [`DELETE FROM "__support_next_next_level_is_the_bare_atom_spelling_seen"`, `INSERT INTO "__support_next_next_level_is_the_bare_atom_spelling_seen" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."value" AS "value", count(*) AS "__refcount" FROM "next_level_is_the_bare_atom_spelling_source" b0 GROUP BY b0."value") GROUP BY "value"`, `UPDATE "next_level_is_the_bare_atom_spelling_seen" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_next_level_is_the_bare_atom_spelling_seen" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_next_level_is_the_bare_atom_spelling_seen" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "next_level_is_the_bare_atom_spelling_seen" WHERE "__refcount" <= 0`, `DELETE FROM "next_level_is_the_bare_atom_spelling_seen" WHERE "__refcount" <= 0`, `DELETE FROM "__new_next_level_is_the_bare_atom_spelling_seen"`, `INSERT INTO "__new_next_level_is_the_bare_atom_spelling_seen" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_next_level_is_the_bare_atom_spelling_seen" n LEFT JOIN "next_level_is_the_bare_atom_spelling_seen" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_next_level_is_the_bare_atom_spelling_seen" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_next_level_is_the_bare_atom_spelling_seen"`, `INSERT INTO "__frontier_next_level_is_the_bare_atom_spelling_seen" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_next_level_is_the_bare_atom_spelling_seen"`, `INSERT INTO "__next_frontier_next_level_is_the_bare_atom_spelling_seen" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_next_level_is_the_bare_atom_spelling_seen"`, `INSERT OR IGNORE INTO "next_level_is_the_bare_atom_spelling_seen" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_next_level_is_the_bare_atom_spelling_seen" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "seen", rule_id: "next_level_is_the_bare_atom_spelling:seen/1#1", head_delta_table_name: "__delta_next_level_is_the_bare_atom_spelling_seen", head_columns: ["value"], insert_sql: `INSERT OR IGNORE INTO "next_level_is_the_bare_atom_spelling_seen" ("value") SELECT DISTINCT d0."value" FROM "__frontier_next_level_is_the_bare_atom_spelling_source_1230b8accab2" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, select_sql: `SELECT "value" FROM "next_level_is_the_bare_atom_spelling_seen"`, recompute_sql: `DELETE FROM "next_level_is_the_bare_atom_spelling_seen";
+INSERT OR IGNORE INTO "next_level_is_the_bare_atom_spelling_seen" ("value") SELECT b0."value" FROM "next_level_is_the_bare_atom_spelling_source_1230b8accab2" b0`, support_sql: [`DELETE FROM "__support_next_next_level_is_the_bare_atom_spelling_seen"`, `INSERT INTO "__support_next_next_level_is_the_bare_atom_spelling_seen" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."value" AS "value", count(*) AS "__refcount" FROM "next_level_is_the_bare_atom_spelling_source_1230b8accab2" b0 GROUP BY b0."value") GROUP BY "value"`, `UPDATE "next_level_is_the_bare_atom_spelling_seen" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_next_level_is_the_bare_atom_spelling_seen" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_next_level_is_the_bare_atom_spelling_seen" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "next_level_is_the_bare_atom_spelling_seen" WHERE "__refcount" <= 0`, `DELETE FROM "next_level_is_the_bare_atom_spelling_seen" WHERE "__refcount" <= 0`, `DELETE FROM "__new_next_level_is_the_bare_atom_spelling_seen"`, `INSERT INTO "__new_next_level_is_the_bare_atom_spelling_seen" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_next_level_is_the_bare_atom_spelling_seen" n LEFT JOIN "next_level_is_the_bare_atom_spelling_seen" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_next_level_is_the_bare_atom_spelling_seen" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_next_level_is_the_bare_atom_spelling_seen"`, `INSERT INTO "__frontier_next_level_is_the_bare_atom_spelling_seen" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_next_level_is_the_bare_atom_spelling_seen"`, `INSERT INTO "__next_frontier_next_level_is_the_bare_atom_spelling_seen" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_next_level_is_the_bare_atom_spelling_seen"`, `INSERT OR IGNORE INTO "next_level_is_the_bare_atom_spelling_seen" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_next_level_is_the_bare_atom_spelling_seen" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const RECONCILE_EVERY_TICK = false;
@@ -277,6 +282,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -159,19 +159,19 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "marker_stops_backlog_replay_change_ev" ("item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_marker_stops_backlog_replay_change_ev" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "marker_stops_backlog_replay_change_ev" t`,
+  `CREATE TABLE "marker_stops_backlog_replay_change_ev_193643fb2783" ("item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_marker_stops_backlog_replay_change_ev_193643fb2783" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "marker_stops_backlog_replay_change_ev_193643fb2783" t`,
   `CREATE TABLE "marker_stops_backlog_replay_sent" ("client" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_marker_stops_backlog_replay_sent" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."client") AS "client", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "marker_stops_backlog_replay_sent" t`,
-  `CREATE TABLE "marker_stops_backlog_replay_subscriber" ("client" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_marker_stops_backlog_replay_subscriber" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."client") AS "client" FROM "marker_stops_backlog_replay_subscriber" t`,
-  `CREATE TEMP TABLE "__delta_marker_stops_backlog_replay_change_ev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_marker_stops_backlog_replay_change_ev_sign" ON "__delta_marker_stops_backlog_replay_change_ev" ("_sign")`,
-  `CREATE INDEX "__delta_marker_stops_backlog_replay_change_ev_group" ON "__delta_marker_stops_backlog_replay_change_ev" ("item")`,
-  `CREATE TEMP TABLE "__frontier_marker_stops_backlog_replay_change_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_marker_stops_backlog_replay_change_ev_phase" ON "__frontier_marker_stops_backlog_replay_change_ev" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_marker_stops_backlog_replay_change_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_marker_stops_backlog_replay_change_ev" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_marker_stops_backlog_replay_change_ev" t`,
+  `CREATE TABLE "marker_stops_backlog_replay_subscriber_d380626d01a5" ("client" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_marker_stops_backlog_replay_subscriber_d380626d01a5" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."client") AS "client" FROM "marker_stops_backlog_replay_subscriber_d380626d01a5" t`,
+  `CREATE TEMP TABLE "__delta_marker_stops_backlog_replay_change_ev_193643fb2783" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_marker_stops_backlog_replay_change_ev_193643fb2783_sign" ON "__delta_marker_stops_backlog_replay_change_ev_193643fb2783" ("_sign")`,
+  `CREATE INDEX "__delta_marker_stops_backlog_replay_change_ev_193643fb2783_group" ON "__delta_marker_stops_backlog_replay_change_ev_193643fb2783" ("item")`,
+  `CREATE TEMP TABLE "__frontier_marker_stops_backlog_replay_change_ev_193643fb2783" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_marker_stops_backlog_replay_change_ev_193643fb2783_phase" ON "__frontier_marker_stops_backlog_replay_change_ev_193643fb2783" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_marker_stops_backlog_replay_change_ev_193643fb2783" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_marker_stops_backlog_replay_change_ev_193643fb2783" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_marker_stops_backlog_replay_change_ev_193643fb2783" t`,
   `CREATE TEMP TABLE "__delta_marker_stops_backlog_replay_sent" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_marker_stops_backlog_replay_sent_sign" ON "__delta_marker_stops_backlog_replay_sent" ("_sign")`,
   `CREATE INDEX "__delta_marker_stops_backlog_replay_sent_group" ON "__delta_marker_stops_backlog_replay_sent" ("client", "item")`,
@@ -179,19 +179,25 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_marker_stops_backlog_replay_sent_phase" ON "__frontier_marker_stops_backlog_replay_sent" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_marker_stops_backlog_replay_sent" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt___delta_marker_stops_backlog_replay_sent" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."client") AS "client", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_marker_stops_backlog_replay_sent" t`,
-  `CREATE TEMP TABLE "__delta_marker_stops_backlog_replay_subscriber" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_marker_stops_backlog_replay_subscriber_sign" ON "__delta_marker_stops_backlog_replay_subscriber" ("_sign")`,
-  `CREATE INDEX "__delta_marker_stops_backlog_replay_subscriber_group" ON "__delta_marker_stops_backlog_replay_subscriber" ("client")`,
-  `CREATE TEMP TABLE "__frontier_marker_stops_backlog_replay_subscriber" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_marker_stops_backlog_replay_subscriber_phase" ON "__frontier_marker_stops_backlog_replay_subscriber" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_marker_stops_backlog_replay_subscriber" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_marker_stops_backlog_replay_subscriber" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."client") AS "client", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_marker_stops_backlog_replay_subscriber" t`,
+  `CREATE TEMP TABLE "__delta_marker_stops_backlog_replay_subscriber_d380626d01a5" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_marker_stops_backlog_replay_subscriber_d380626d01a5_sign" ON "__delta_marker_stops_backlog_replay_subscriber_d380626d01a5" ("_sign")`,
+  `CREATE INDEX "__delta_marker_stops_backlog_replay_subscriber_d380626d01a5_group" ON "__delta_marker_stops_backlog_replay_subscriber_d380626d01a5" ("client")`,
+  `CREATE TEMP TABLE "__frontier_marker_stops_backlog_replay_subscriber_d380626d01a5" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_marker_stops_backlog_replay_subscriber_d380626d01a5_phase" ON "__frontier_marker_stops_backlog_replay_subscriber_d380626d01a5" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_marker_stops_backlog_replay_subscriber_d380626d01a5" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_marker_stops_backlog_replay_subscriber_d380626d01a5" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."client") AS "client", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_marker_stops_backlog_replay_subscriber_d380626d01a5" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   change_ev: ["item"],
   sent: ["client", "item"],
   subscriber: ["client"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  change_ev: "marker_stops_backlog_replay_change_ev_193643fb2783",
+  sent: "marker_stops_backlog_replay_sent",
+  subscriber: "marker_stops_backlog_replay_subscriber_d380626d01a5",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -221,21 +227,21 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "item", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "6aef5225777048f9", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 7, ordinal: 0, local_name: "subscriber", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "b259154ed53a8f0e", h_schema: "6c3919257e3b9861", h_rule: "" },
   { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "client", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "d5c2f8be66b18bf7", h_schema: "", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__delta_marker_stops_backlog_replay_change_ev", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "3cdc3b9733e93712", h_schema: "15e84563064d7c4c", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__frontier_marker_stops_backlog_replay_change_ev", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "c8c4e374d0daeda5", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__next_frontier_marker_stops_backlog_replay_change_ev", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "cf5e54de8c130fe4", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__txt_marker_stops_backlog_replay_change_ev", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "c382f67f86e0023a", h_schema: "4f9957ccb96234b6", h_rule: "" },
-  { rel_id: 19, parent_id: 15, ordinal: 0, local_name: "__txt___delta_marker_stops_backlog_replay_change_ev", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "a30d02210c2d9961", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__delta_marker_stops_backlog_replay_change_ev_193643fb2783", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "7c75027886784fac", h_schema: "15e84563064d7c4c", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__frontier_marker_stops_backlog_replay_change_ev_193643fb2783", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "7370c4d5b17a8b40", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__next_frontier_marker_stops_backlog_replay_change_ev_193643fb2783", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "7aacb8dd006fcc6b", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__txt_marker_stops_backlog_replay_change_ev_193643fb2783", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "1dfc89775aad9f45", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 19, parent_id: 15, ordinal: 0, local_name: "__txt___delta_marker_stops_backlog_replay_change_ev_193643fb2783", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "d16847b797e78680", h_schema: "4f9957ccb96234b6", h_rule: "" },
   { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__delta_marker_stops_backlog_replay_sent", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "afe6f6768782715a", h_schema: "b4e98c69cf2c0593", h_rule: "" },
   { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__frontier_marker_stops_backlog_replay_sent", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "308dc688ce5655f6", h_schema: "c4bb12a6f1022039", h_rule: "" },
   { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__next_frontier_marker_stops_backlog_replay_sent", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "6ecb641389f74f5a", h_schema: "c4bb12a6f1022039", h_rule: "" },
   { rel_id: 23, parent_id: 10, ordinal: 0, local_name: "__txt_marker_stops_backlog_replay_sent", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "9171d12a7ddc64d0", h_schema: "910973c8af69f083", h_rule: "" },
   { rel_id: 24, parent_id: 20, ordinal: 0, local_name: "__txt___delta_marker_stops_backlog_replay_sent", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "3725532c38241a9e", h_schema: "910973c8af69f083", h_rule: "" },
-  { rel_id: 25, parent_id: 13, ordinal: 0, local_name: "__delta_marker_stops_backlog_replay_subscriber", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "31707ed0ee7b72b5", h_schema: "c9fffe84ba4eaf25", h_rule: "" },
-  { rel_id: 26, parent_id: 13, ordinal: 0, local_name: "__frontier_marker_stops_backlog_replay_subscriber", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "26761320b85fc353", h_schema: "11415947ca6156a1", h_rule: "" },
-  { rel_id: 27, parent_id: 13, ordinal: 0, local_name: "__next_frontier_marker_stops_backlog_replay_subscriber", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "dd189ecf50d8f4dc", h_schema: "11415947ca6156a1", h_rule: "" },
-  { rel_id: 28, parent_id: 13, ordinal: 0, local_name: "__txt_marker_stops_backlog_replay_subscriber", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "186f854c1041be55", h_schema: "6c3919257e3b9861", h_rule: "" },
-  { rel_id: 29, parent_id: 25, ordinal: 0, local_name: "__txt___delta_marker_stops_backlog_replay_subscriber", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "cf7b939c806ffc1b", h_schema: "6c3919257e3b9861", h_rule: "" },
+  { rel_id: 25, parent_id: 13, ordinal: 0, local_name: "__delta_marker_stops_backlog_replay_subscriber_d380626d01a5", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "b2b49f22a87e9765", h_schema: "c9fffe84ba4eaf25", h_rule: "" },
+  { rel_id: 26, parent_id: 13, ordinal: 0, local_name: "__frontier_marker_stops_backlog_replay_subscriber_d380626d01a5", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "38b80d517850431d", h_schema: "11415947ca6156a1", h_rule: "" },
+  { rel_id: 27, parent_id: 13, ordinal: 0, local_name: "__next_frontier_marker_stops_backlog_replay_subscriber_d380626d01a5", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "9fe9083a9b42bb54", h_schema: "11415947ca6156a1", h_rule: "" },
+  { rel_id: 28, parent_id: 13, ordinal: 0, local_name: "__txt_marker_stops_backlog_replay_subscriber_d380626d01a5", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "1b34defc5f2d256f", h_schema: "6c3919257e3b9861", h_rule: "" },
+  { rel_id: 29, parent_id: 25, ordinal: 0, local_name: "__txt___delta_marker_stops_backlog_replay_subscriber_d380626d01a5", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "82774ea62b713a69", h_schema: "6c3919257e3b9861", h_rule: "" },
   { rel_id: 30, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "8dc507f90e227ef4", h_schema: "", h_rule: "" },
   { rel_id: 31, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "f29c60fde606b9ab", h_schema: "", h_rule: "" },
   { rel_id: 32, parent_id: 11, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "bcae5d69cabd0779", h_schema: "", h_rule: "" },
@@ -252,19 +258,19 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  change_ev: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_marker_stops_backlog_replay_change_ev" t`,
+  change_ev: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_marker_stops_backlog_replay_change_ev_193643fb2783" t`,
   sent: `SELECT CASE WHEN json_valid(t."client") AND json_type(t."client") = 'object' AND json_type(t."client", '$.fn') = 'text' AND json_type(t."client", '$.args') = 'array' THEN json_extract(t."client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."client", '$.args')), '') || ')' ELSE t."client" END AS "client", CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_marker_stops_backlog_replay_sent" t`,
-  subscriber: `SELECT CASE WHEN json_valid(t."client") AND json_type(t."client") = 'object' AND json_type(t."client", '$.fn') = 'text' AND json_type(t."client", '$.args') = 'array' THEN json_extract(t."client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."client", '$.args')), '') || ')' ELSE t."client" END AS "client" FROM "__txt_marker_stops_backlog_replay_subscriber" t`,
+  subscriber: `SELECT CASE WHEN json_valid(t."client") AND json_type(t."client") = 'object' AND json_type(t."client", '$.fn') = 'text' AND json_type(t."client", '$.args') = 'array' THEN json_extract(t."client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."client", '$.args')), '') || ')' ELSE t."client" END AS "client" FROM "__txt_marker_stops_backlog_replay_subscriber_d380626d01a5" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "change_ev", kind: "log", table_name: "marker_stops_backlog_replay_change_ev", delta_table_name: "__delta_marker_stops_backlog_replay_change_ev", frontier_table_name: "__frontier_marker_stops_backlog_replay_change_ev", next_frontier_table_name: "__next_frontier_marker_stops_backlog_replay_change_ev", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "marker_stops_backlog_replay_change_ev" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_marker_stops_backlog_replay_change_ev" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["sent/2"] },
+  { rel: "change_ev", kind: "log", table_name: "marker_stops_backlog_replay_change_ev_193643fb2783", delta_table_name: "__delta_marker_stops_backlog_replay_change_ev_193643fb2783", frontier_table_name: "__frontier_marker_stops_backlog_replay_change_ev_193643fb2783", next_frontier_table_name: "__next_frontier_marker_stops_backlog_replay_change_ev_193643fb2783", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "marker_stops_backlog_replay_change_ev_193643fb2783" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_marker_stops_backlog_replay_change_ev_193643fb2783" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["sent/2"] },
   { rel: "sent", kind: "log", table_name: "marker_stops_backlog_replay_sent", delta_table_name: "__delta_marker_stops_backlog_replay_sent", frontier_table_name: "__frontier_marker_stops_backlog_replay_sent", next_frontier_table_name: "__next_frontier_marker_stops_backlog_replay_sent", columns: ["client", "item"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."client") AND json_type(t."client") = 'object' AND json_type(t."client", '$.fn') = 'text' AND json_type(t."client", '$.args') = 'array' THEN json_extract(t."client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."client", '$.args')), '') || ')' ELSE t."client" END AS "client", CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_marker_stops_backlog_replay_sent" t WHERE t."_sign" IN (-1, 1) GROUP BY t."client", t."item", t."_sign"`, rule_observers: [] },
-  { rel: "subscriber", kind: "log", table_name: "marker_stops_backlog_replay_subscriber", delta_table_name: "__delta_marker_stops_backlog_replay_subscriber", frontier_table_name: "__frontier_marker_stops_backlog_replay_subscriber", next_frontier_table_name: "__next_frontier_marker_stops_backlog_replay_subscriber", columns: ["client"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "marker_stops_backlog_replay_subscriber" ("client") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "client"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."client") AND json_type(t."client") = 'object' AND json_type(t."client", '$.fn') = 'text' AND json_type(t."client", '$.args') = 'array' THEN json_extract(t."client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."client", '$.args')), '') || ')' ELSE t."client" END AS "client", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_marker_stops_backlog_replay_subscriber" t WHERE t."_sign" IN (-1, 1) GROUP BY t."client", t."_sign"`, rule_observers: [] },
+  { rel: "subscriber", kind: "log", table_name: "marker_stops_backlog_replay_subscriber_d380626d01a5", delta_table_name: "__delta_marker_stops_backlog_replay_subscriber_d380626d01a5", frontier_table_name: "__frontier_marker_stops_backlog_replay_subscriber_d380626d01a5", next_frontier_table_name: "__next_frontier_marker_stops_backlog_replay_subscriber_d380626d01a5", columns: ["client"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "marker_stops_backlog_replay_subscriber_d380626d01a5" ("client") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "client"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."client") AND json_type(t."client") = 'object' AND json_type(t."client", '$.fn') = 'text' AND json_type(t."client", '$.args') = 'array' THEN json_extract(t."client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."client", '$.args')), '') || ')' ELSE t."client" END AS "client", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_marker_stops_backlog_replay_subscriber_d380626d01a5" t WHERE t."_sign" IN (-1, 1) GROUP BY t."client", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "sent", rule_id: "marker_stops_backlog_replay:sent/2#1", head_kind: "log", head_table_name: "marker_stops_backlog_replay_sent", head_delta_table_name: "__delta_marker_stops_backlog_replay_sent", head_columns: ["client", "item"], key_indices: [], project_sql: `SELECT b0."client" AS "client", d0."item" AS "item" FROM "__frontier_marker_stops_backlog_replay_change_ev" d0, "marker_stops_backlog_replay_subscriber" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "sent", rule_id: "marker_stops_backlog_replay:sent/2#1", head_kind: "log", head_table_name: "marker_stops_backlog_replay_sent", head_delta_table_name: "__delta_marker_stops_backlog_replay_sent", head_columns: ["client", "item"], key_indices: [], project_sql: `SELECT b0."client" AS "client", d0."item" AS "item" FROM "__frontier_marker_stops_backlog_replay_change_ev_193643fb2783" d0, "marker_stops_backlog_replay_subscriber_d380626d01a5" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -319,6 +325,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

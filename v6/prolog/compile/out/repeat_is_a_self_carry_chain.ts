@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -157,16 +157,16 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "repeat_is_a_self_carry_chain_kick" ("col1" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_repeat_is_a_self_carry_chain_kick" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1" FROM "repeat_is_a_self_carry_chain_kick" t`,
+  `CREATE TABLE "repeat_is_a_self_carry_chain_kick_595cc703c300" ("col1" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_repeat_is_a_self_carry_chain_kick_595cc703c300" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1" FROM "repeat_is_a_self_carry_chain_kick_595cc703c300" t`,
   `CREATE TABLE "repeat_is_a_self_carry_chain_pulse" ("next" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_repeat_is_a_self_carry_chain_kick" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_repeat_is_a_self_carry_chain_kick_sign" ON "__delta_repeat_is_a_self_carry_chain_kick" ("_sign")`,
-  `CREATE INDEX "__delta_repeat_is_a_self_carry_chain_kick_group" ON "__delta_repeat_is_a_self_carry_chain_kick" ("col1")`,
-  `CREATE TEMP TABLE "__frontier_repeat_is_a_self_carry_chain_kick" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_repeat_is_a_self_carry_chain_kick_phase" ON "__frontier_repeat_is_a_self_carry_chain_kick" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_repeat_is_a_self_carry_chain_kick" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_repeat_is_a_self_carry_chain_kick" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_repeat_is_a_self_carry_chain_kick" t`,
+  `CREATE TEMP TABLE "__delta_repeat_is_a_self_carry_chain_kick_595cc703c300" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_repeat_is_a_self_carry_chain_kick_595cc703c300_sign" ON "__delta_repeat_is_a_self_carry_chain_kick_595cc703c300" ("_sign")`,
+  `CREATE INDEX "__delta_repeat_is_a_self_carry_chain_kick_595cc703c300_group" ON "__delta_repeat_is_a_self_carry_chain_kick_595cc703c300" ("col1")`,
+  `CREATE TEMP TABLE "__frontier_repeat_is_a_self_carry_chain_kick_595cc703c300" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_repeat_is_a_self_carry_chain_kick_595cc703c300_phase" ON "__frontier_repeat_is_a_self_carry_chain_kick_595cc703c300" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_repeat_is_a_self_carry_chain_kick_595cc703c300" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_repeat_is_a_self_carry_chain_kick_595cc703c300" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_repeat_is_a_self_carry_chain_kick_595cc703c300" t`,
   `CREATE TEMP TABLE "__delta_repeat_is_a_self_carry_chain_pulse" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_repeat_is_a_self_carry_chain_pulse_sign" ON "__delta_repeat_is_a_self_carry_chain_pulse" ("_sign")`,
   `CREATE INDEX "__delta_repeat_is_a_self_carry_chain_pulse_group" ON "__delta_repeat_is_a_self_carry_chain_pulse" ("next")`,
@@ -178,6 +178,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   kick: ["col1"],
   pulse: ["next"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  kick: "repeat_is_a_self_carry_chain_kick_595cc703c300",
+  pulse: "repeat_is_a_self_carry_chain_pulse",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -202,11 +207,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "col1", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "55c47f7b31da50f0", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 7, ordinal: 0, local_name: "pulse", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "9aa1ca2a77acd99f", h_schema: "9b306f10c014519c", h_rule: "90a69bdd68027b32" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "next", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "52a05ba4a91e9d7f", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_repeat_is_a_self_carry_chain_kick", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "0bca74a8ce2ba71b", h_schema: "8e22fd46a4219fe1", h_rule: "" },
-  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_repeat_is_a_self_carry_chain_kick", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "9111be8381c0be00", h_schema: "987415a90c19f0a7", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_repeat_is_a_self_carry_chain_kick", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "9aaf48c8ada3de30", h_schema: "987415a90c19f0a7", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__txt_repeat_is_a_self_carry_chain_kick", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "8b58b6f4a18dbc88", h_schema: "32b13250133857cf", h_rule: "" },
-  { rel_id: 16, parent_id: 12, ordinal: 0, local_name: "__txt___delta_repeat_is_a_self_carry_chain_kick", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "4211cacb297d94af", h_schema: "32b13250133857cf", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_repeat_is_a_self_carry_chain_kick_595cc703c300", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "ea43867f7c58515e", h_schema: "8e22fd46a4219fe1", h_rule: "" },
+  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_repeat_is_a_self_carry_chain_kick_595cc703c300", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "3da8efec8ee43cb1", h_schema: "987415a90c19f0a7", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_repeat_is_a_self_carry_chain_kick_595cc703c300", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "dec11a2b41ee025f", h_schema: "987415a90c19f0a7", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__txt_repeat_is_a_self_carry_chain_kick_595cc703c300", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "563206382ba612e5", h_schema: "32b13250133857cf", h_rule: "" },
+  { rel_id: 16, parent_id: 12, ordinal: 0, local_name: "__txt___delta_repeat_is_a_self_carry_chain_kick_595cc703c300", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "2d565da268b62a13", h_schema: "32b13250133857cf", h_rule: "" },
   { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__delta_repeat_is_a_self_carry_chain_pulse", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "1b356683c40b6798", h_schema: "b6b2a47fa166163f", h_rule: "" },
   { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__frontier_repeat_is_a_self_carry_chain_pulse", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "4434d0750bb8623c", h_schema: "7a81ce3264c340c5", h_rule: "" },
   { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__next_frontier_repeat_is_a_self_carry_chain_pulse", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "4d9b06fb77380fd7", h_schema: "7a81ce3264c340c5", h_rule: "" },
@@ -224,17 +229,17 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  kick: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1" FROM "__txt_repeat_is_a_self_carry_chain_kick" t`,
+  kick: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1" FROM "__txt_repeat_is_a_self_carry_chain_kick_595cc703c300" t`,
   pulse: `SELECT t."next" FROM "repeat_is_a_self_carry_chain_pulse" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "kick", kind: "log", table_name: "repeat_is_a_self_carry_chain_kick", delta_table_name: "__delta_repeat_is_a_self_carry_chain_kick", frontier_table_name: "__frontier_repeat_is_a_self_carry_chain_kick", next_frontier_table_name: "__next_frontier_repeat_is_a_self_carry_chain_kick", columns: ["col1"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "repeat_is_a_self_carry_chain_kick" ("col1") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "col1"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_repeat_is_a_self_carry_chain_kick" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."_sign"`, rule_observers: ["pulse/1"] },
+  { rel: "kick", kind: "log", table_name: "repeat_is_a_self_carry_chain_kick_595cc703c300", delta_table_name: "__delta_repeat_is_a_self_carry_chain_kick_595cc703c300", frontier_table_name: "__frontier_repeat_is_a_self_carry_chain_kick_595cc703c300", next_frontier_table_name: "__next_frontier_repeat_is_a_self_carry_chain_kick_595cc703c300", columns: ["col1"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "repeat_is_a_self_carry_chain_kick_595cc703c300" ("col1") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "col1"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_repeat_is_a_self_carry_chain_kick_595cc703c300" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."_sign"`, rule_observers: ["pulse/1"] },
   { rel: "pulse", kind: "log", table_name: "repeat_is_a_self_carry_chain_pulse", delta_table_name: "__delta_repeat_is_a_self_carry_chain_pulse", frontier_table_name: "__frontier_repeat_is_a_self_carry_chain_pulse", next_frontier_table_name: "__next_frontier_repeat_is_a_self_carry_chain_pulse", columns: ["next"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."next", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repeat_is_a_self_carry_chain_pulse" t WHERE t."_sign" IN (-1, 1) GROUP BY t."next", t."_sign"`, rule_observers: ["pulse/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "pulse", rule_id: "repeat_is_a_self_carry_chain:pulse/1#1", head_kind: "log", head_table_name: "repeat_is_a_self_carry_chain_pulse", head_delta_table_name: "__delta_repeat_is_a_self_carry_chain_pulse", head_columns: ["next"], key_indices: [], project_sql: `SELECT 1 AS "next" FROM "__frontier_repeat_is_a_self_carry_chain_kick" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "pulse", rule_id: "repeat_is_a_self_carry_chain:pulse/1#1", head_kind: "log", head_table_name: "repeat_is_a_self_carry_chain_pulse", head_delta_table_name: "__delta_repeat_is_a_self_carry_chain_pulse", head_columns: ["next"], key_indices: [], project_sql: `SELECT 1 AS "next" FROM "__frontier_repeat_is_a_self_carry_chain_kick_595cc703c300" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
   { head_rel: "pulse", rule_id: "repeat_is_a_self_carry_chain:pulse/1#2", head_kind: "log", head_table_name: "repeat_is_a_self_carry_chain_pulse", head_delta_table_name: "__delta_repeat_is_a_self_carry_chain_pulse", head_columns: ["next"], key_indices: [], project_sql: `SELECT (d0."next" + 1) AS "next" FROM "__frontier_repeat_is_a_self_carry_chain_pulse" d0 WHERE d0."_phase" >= 0 AND (d0."next" < 3) ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
@@ -290,6 +295,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

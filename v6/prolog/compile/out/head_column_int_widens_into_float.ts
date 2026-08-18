@@ -53,7 +53,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -147,19 +147,19 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "head_column_int_widens_into_float_scaled" ("__id" INTEGER PRIMARY KEY, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value"))`,
-  `CREATE TABLE "head_column_int_widens_into_float_source" ("__id" INTEGER PRIMARY KEY, "count" INTEGER NOT NULL, UNIQUE ("count"))`,
+  `CREATE TABLE "head_column_int_widens_into_float_source_8475e945e5b8" ("__id" INTEGER PRIMARY KEY, "count" INTEGER NOT NULL, UNIQUE ("count"))`,
   `CREATE TEMP TABLE "__delta_head_column_int_widens_into_float_scaled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__delta_head_column_int_widens_into_float_scaled_sign" ON "__delta_head_column_int_widens_into_float_scaled" ("_sign")`,
   `CREATE INDEX "__delta_head_column_int_widens_into_float_scaled_group" ON "__delta_head_column_int_widens_into_float_scaled" ("value")`,
   `CREATE TEMP TABLE "__frontier_head_column_int_widens_into_float_scaled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__frontier_head_column_int_widens_into_float_scaled_phase" ON "__frontier_head_column_int_widens_into_float_scaled" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_head_column_int_widens_into_float_scaled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
-  `CREATE TEMP TABLE "__delta_head_column_int_widens_into_float_source" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "count" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_head_column_int_widens_into_float_source_sign" ON "__delta_head_column_int_widens_into_float_source" ("_sign")`,
-  `CREATE INDEX "__delta_head_column_int_widens_into_float_source_group" ON "__delta_head_column_int_widens_into_float_source" ("count")`,
-  `CREATE TEMP TABLE "__frontier_head_column_int_widens_into_float_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "count" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_head_column_int_widens_into_float_source_phase" ON "__frontier_head_column_int_widens_into_float_source" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_head_column_int_widens_into_float_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "count" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_head_column_int_widens_into_float_source_8475e945e5b8" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "count" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_head_column_int_widens_into_float_source_8475e945e5b8_sign" ON "__delta_head_column_int_widens_into_float_source_8475e945e5b8" ("_sign")`,
+  `CREATE INDEX "__delta_head_column_int_widens_into_float_source_8475e945e5b8_group" ON "__delta_head_column_int_widens_into_float_source_8475e945e5b8" ("count")`,
+  `CREATE TEMP TABLE "__frontier_head_column_int_widens_into_float_source_8475e945e5b8" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "count" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_head_column_int_widens_into_float_source_8475e945e5b8_phase" ON "__frontier_head_column_int_widens_into_float_source_8475e945e5b8" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_head_column_int_widens_into_float_source_8475e945e5b8" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "count" INTEGER NOT NULL)`,
   `CREATE TEMP TABLE "__support_next_head_column_int_widens_into_float_scaled" ("value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__new_head_column_int_widens_into_float_scaled" ("value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "head_column_int_widens_into_float_scaled_zero" ON "head_column_int_widens_into_float_scaled" ("__refcount") WHERE "__refcount" <= 0`,
@@ -168,6 +168,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   scaled: ["value"],
   source: ["count"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  scaled: "head_column_int_widens_into_float_scaled",
+  source: "head_column_int_widens_into_float_source_8475e945e5b8",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -195,9 +200,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_head_column_int_widens_into_float_scaled", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "876d040175bd1916", h_schema: "77c595d6e8d5f80c", h_rule: "" },
   { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_head_column_int_widens_into_float_scaled", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "51de7dcde4f3eff5", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
   { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_head_column_int_widens_into_float_scaled", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "6e76424b8b282a64", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
-  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_head_column_int_widens_into_float_source", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "d357912fdd085696", h_schema: "09a28fd72da05779", h_rule: "" },
-  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_head_column_int_widens_into_float_source", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "aa21614d9cf9bd2d", h_schema: "0442c6f641eb3fe7", h_rule: "" },
-  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_head_column_int_widens_into_float_source", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "606988b3f2011709", h_schema: "0442c6f641eb3fe7", h_rule: "" },
+  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_head_column_int_widens_into_float_source_8475e945e5b8", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "091f1fbe5fd6d030", h_schema: "09a28fd72da05779", h_rule: "" },
+  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_head_column_int_widens_into_float_source_8475e945e5b8", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "e1fed743c9ef4332", h_schema: "0442c6f641eb3fe7", h_rule: "" },
+  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_head_column_int_widens_into_float_source_8475e945e5b8", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "62987572e978707f", h_schema: "0442c6f641eb3fe7", h_rule: "" },
   { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__support_next_head_column_int_widens_into_float_scaled", kind: "refcount", type_id: 0, arity: 2, module_id: 7, h_id: "efcbc9dfbbd4947a", h_schema: "", h_rule: "" },
   { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__new_head_column_int_widens_into_float_scaled", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 7, h_id: "7452b088925de4fe", h_schema: "", h_rule: "" },
   { rel_id: 20, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "499da669ad552a4e", h_schema: "", h_rule: "" },
@@ -212,27 +217,27 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["source"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "source", sql: `INSERT OR IGNORE INTO "head_column_int_widens_into_float_source" ("count") VALUES (?)`, params: [4] },
+  { rel: "source", sql: `INSERT OR IGNORE INTO "head_column_int_widens_into_float_source_8475e945e5b8" ("count") VALUES (?)`, params: [4] },
   { rel: "scaled", sql: `DELETE FROM "head_column_int_widens_into_float_scaled"`, params: [] },
-  { rel: "scaled", sql: `INSERT OR IGNORE INTO "head_column_int_widens_into_float_scaled" ("value") SELECT b0."count" FROM "head_column_int_widens_into_float_source" b0`, params: [] },
+  { rel: "scaled", sql: `INSERT OR IGNORE INTO "head_column_int_widens_into_float_scaled" ("value") SELECT b0."count" FROM "head_column_int_widens_into_float_source_8475e945e5b8" b0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
   scaled: `SELECT t."value" FROM "head_column_int_widens_into_float_scaled" t`,
-  source: `SELECT t."count" FROM "head_column_int_widens_into_float_source" t`,
+  source: `SELECT t."count" FROM "head_column_int_widens_into_float_source_8475e945e5b8" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "scaled", kind: "set", table_name: "head_column_int_widens_into_float_scaled", delta_table_name: "__delta_head_column_int_widens_into_float_scaled", frontier_table_name: "__frontier_head_column_int_widens_into_float_scaled", next_frontier_table_name: "__next_frontier_head_column_int_widens_into_float_scaled", columns: ["value"], column_types: ["float"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_column_int_widens_into_float_scaled" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
-  { rel: "source", kind: "set", table_name: "head_column_int_widens_into_float_source", delta_table_name: "__delta_head_column_int_widens_into_float_source", frontier_table_name: "__frontier_head_column_int_widens_into_float_source", next_frontier_table_name: "__next_frontier_head_column_int_widens_into_float_source", columns: ["count"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "head_column_int_widens_into_float_source" ("count") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "count"`, arrival_del_sql: `DELETE FROM "head_column_int_widens_into_float_source" WHERE ("count") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "count"`, boundary_sql: `SELECT t."count", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_column_int_widens_into_float_source" t WHERE t."_sign" IN (-1, 1) GROUP BY t."count", t."_sign"`, rule_observers: ["scaled/1"] },
+  { rel: "source", kind: "set", table_name: "head_column_int_widens_into_float_source_8475e945e5b8", delta_table_name: "__delta_head_column_int_widens_into_float_source_8475e945e5b8", frontier_table_name: "__frontier_head_column_int_widens_into_float_source_8475e945e5b8", next_frontier_table_name: "__next_frontier_head_column_int_widens_into_float_source_8475e945e5b8", columns: ["count"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "head_column_int_widens_into_float_source_8475e945e5b8" ("count") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "count"`, arrival_del_sql: `DELETE FROM "head_column_int_widens_into_float_source_8475e945e5b8" WHERE ("count") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "count"`, boundary_sql: `SELECT t."count", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_column_int_widens_into_float_source_8475e945e5b8" t WHERE t."_sign" IN (-1, 1) GROUP BY t."count", t."_sign"`, rule_observers: ["scaled/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "scaled", rule_id: "head_column_int_widens_into_float:scaled/1#1", head_delta_table_name: "__delta_head_column_int_widens_into_float_scaled", head_columns: ["value"], insert_sql: `INSERT OR IGNORE INTO "head_column_int_widens_into_float_scaled" ("value") SELECT DISTINCT d0."count" FROM "__frontier_head_column_int_widens_into_float_source" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, select_sql: `SELECT "value" FROM "head_column_int_widens_into_float_scaled"`, recompute_sql: `DELETE FROM "head_column_int_widens_into_float_scaled";
-INSERT OR IGNORE INTO "head_column_int_widens_into_float_scaled" ("value") SELECT b0."count" FROM "head_column_int_widens_into_float_source" b0`, support_sql: [`DELETE FROM "__support_next_head_column_int_widens_into_float_scaled"`, `INSERT INTO "__support_next_head_column_int_widens_into_float_scaled" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."count" AS "value", count(*) AS "__refcount" FROM "head_column_int_widens_into_float_source" b0 GROUP BY b0."count") GROUP BY "value"`, `UPDATE "head_column_int_widens_into_float_scaled" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_head_column_int_widens_into_float_scaled" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_head_column_int_widens_into_float_scaled" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "head_column_int_widens_into_float_scaled" WHERE "__refcount" <= 0`, `DELETE FROM "head_column_int_widens_into_float_scaled" WHERE "__refcount" <= 0`, `DELETE FROM "__new_head_column_int_widens_into_float_scaled"`, `INSERT INTO "__new_head_column_int_widens_into_float_scaled" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_head_column_int_widens_into_float_scaled" n LEFT JOIN "head_column_int_widens_into_float_scaled" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_head_column_int_widens_into_float_scaled" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_head_column_int_widens_into_float_scaled"`, `INSERT INTO "__frontier_head_column_int_widens_into_float_scaled" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_head_column_int_widens_into_float_scaled"`, `INSERT INTO "__next_frontier_head_column_int_widens_into_float_scaled" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_head_column_int_widens_into_float_scaled"`, `INSERT OR IGNORE INTO "head_column_int_widens_into_float_scaled" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_head_column_int_widens_into_float_scaled" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "scaled", rule_id: "head_column_int_widens_into_float:scaled/1#1", head_delta_table_name: "__delta_head_column_int_widens_into_float_scaled", head_columns: ["value"], insert_sql: `INSERT OR IGNORE INTO "head_column_int_widens_into_float_scaled" ("value") SELECT DISTINCT d0."count" FROM "__frontier_head_column_int_widens_into_float_source_8475e945e5b8" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, select_sql: `SELECT "value" FROM "head_column_int_widens_into_float_scaled"`, recompute_sql: `DELETE FROM "head_column_int_widens_into_float_scaled";
+INSERT OR IGNORE INTO "head_column_int_widens_into_float_scaled" ("value") SELECT b0."count" FROM "head_column_int_widens_into_float_source_8475e945e5b8" b0`, support_sql: [`DELETE FROM "__support_next_head_column_int_widens_into_float_scaled"`, `INSERT INTO "__support_next_head_column_int_widens_into_float_scaled" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."count" AS "value", count(*) AS "__refcount" FROM "head_column_int_widens_into_float_source_8475e945e5b8" b0 GROUP BY b0."count") GROUP BY "value"`, `UPDATE "head_column_int_widens_into_float_scaled" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_head_column_int_widens_into_float_scaled" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_head_column_int_widens_into_float_scaled" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "head_column_int_widens_into_float_scaled" WHERE "__refcount" <= 0`, `DELETE FROM "head_column_int_widens_into_float_scaled" WHERE "__refcount" <= 0`, `DELETE FROM "__new_head_column_int_widens_into_float_scaled"`, `INSERT INTO "__new_head_column_int_widens_into_float_scaled" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_head_column_int_widens_into_float_scaled" n LEFT JOIN "head_column_int_widens_into_float_scaled" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_head_column_int_widens_into_float_scaled" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_head_column_int_widens_into_float_scaled"`, `INSERT INTO "__frontier_head_column_int_widens_into_float_scaled" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_head_column_int_widens_into_float_scaled"`, `INSERT INTO "__next_frontier_head_column_int_widens_into_float_scaled" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_head_column_int_widens_into_float_scaled"`, `INSERT OR IGNORE INTO "head_column_int_widens_into_float_scaled" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_head_column_int_widens_into_float_scaled" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const RECONCILE_EVERY_TICK = false;
@@ -280,6 +285,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

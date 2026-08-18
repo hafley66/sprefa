@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -157,16 +157,16 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "json_object_dup_key_rejected_repo_kv" ("__id" INTEGER PRIMARY KEY, "key" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")), UNIQUE ("key", "value"))`,
-  `CREATE TEMP VIEW "__txt_json_object_dup_key_rejected_repo_kv" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", t."value" AS "value" FROM "json_object_dup_key_rejected_repo_kv" t`,
+  `CREATE TABLE "json_object_dup_key_rejected_repo_kv_649989dc3152" ("__id" INTEGER PRIMARY KEY, "key" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")), UNIQUE ("key", "value"))`,
+  `CREATE TEMP VIEW "__txt_json_object_dup_key_rejected_repo_kv_649989dc3152" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", t."value" AS "value" FROM "json_object_dup_key_rejected_repo_kv_649989dc3152" t`,
   `CREATE TABLE "json_object_dup_key_rejected_repo_meta" ("__id" INTEGER PRIMARY KEY, "col1" TEXT NOT NULL CHECK (json_valid("col1")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("col1"))`,
-  `CREATE TEMP TABLE "__delta_json_object_dup_key_rejected_repo_kv" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
-  `CREATE INDEX "__delta_json_object_dup_key_rejected_repo_kv_sign" ON "__delta_json_object_dup_key_rejected_repo_kv" ("_sign")`,
-  `CREATE INDEX "__delta_json_object_dup_key_rejected_repo_kv_group" ON "__delta_json_object_dup_key_rejected_repo_kv" ("key", "value")`,
-  `CREATE TEMP TABLE "__frontier_json_object_dup_key_rejected_repo_kv" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
-  `CREATE INDEX "__frontier_json_object_dup_key_rejected_repo_kv_phase" ON "__frontier_json_object_dup_key_rejected_repo_kv" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_json_object_dup_key_rejected_repo_kv" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
-  `CREATE TEMP VIEW "__txt___delta_json_object_dup_key_rejected_repo_kv" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", t."value" AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_json_object_dup_key_rejected_repo_kv" t`,
+  `CREATE TEMP TABLE "__delta_json_object_dup_key_rejected_repo_kv_649989dc3152" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
+  `CREATE INDEX "__delta_json_object_dup_key_rejected_repo_kv_649989dc3152_sign" ON "__delta_json_object_dup_key_rejected_repo_kv_649989dc3152" ("_sign")`,
+  `CREATE INDEX "__delta_json_object_dup_key_rejected_repo_kv_649989dc3152_group" ON "__delta_json_object_dup_key_rejected_repo_kv_649989dc3152" ("key", "value")`,
+  `CREATE TEMP TABLE "__frontier_json_object_dup_key_rejected_repo_kv_649989dc3152" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
+  `CREATE INDEX "__frontier_json_object_dup_key_rejected_repo_kv_649989dc3152_phase" ON "__frontier_json_object_dup_key_rejected_repo_kv_649989dc3152" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_json_object_dup_key_rejected_repo_kv_649989dc3152" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
+  `CREATE TEMP VIEW "__txt___delta_json_object_dup_key_rejected_repo_kv_649989dc3152" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", t."value" AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_json_object_dup_key_rejected_repo_kv_649989dc3152" t`,
   `CREATE TEMP TABLE "__delta_json_object_dup_key_rejected_repo_meta" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL CHECK (json_valid("col1")))`,
   `CREATE INDEX "__delta_json_object_dup_key_rejected_repo_meta_sign" ON "__delta_json_object_dup_key_rejected_repo_meta" ("_sign")`,
   `CREATE INDEX "__delta_json_object_dup_key_rejected_repo_meta_group" ON "__delta_json_object_dup_key_rejected_repo_meta" ("col1")`,
@@ -179,6 +179,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   repo_kv: ["key", "value"],
   repo_meta: ["col1"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  repo_kv: "json_object_dup_key_rejected_repo_kv_649989dc3152",
+  repo_meta: "json_object_dup_key_rejected_repo_meta",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -204,11 +209,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 10, parent_id: 8, ordinal: 2, local_name: "value", kind: "column", type_id: 5, arity: 0, module_id: 7, h_id: "2d5053173a103c54", h_schema: "", h_rule: "" },
   { rel_id: 11, parent_id: 7, ordinal: 0, local_name: "repo_meta", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "bd7b1503d5aa4536", h_schema: "40f3725ac590efd0", h_rule: "48a96293ef67856a" },
   { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "col1", kind: "column", type_id: 5, arity: 0, module_id: 7, h_id: "e260d97e78e4c85f", h_schema: "", h_rule: "" },
-  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__delta_json_object_dup_key_rejected_repo_kv", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "ff9c1b4bf3c921a0", h_schema: "237d607d3a29ead6", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__frontier_json_object_dup_key_rejected_repo_kv", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "cd4d2df5b747afe4", h_schema: "2d555f9037f0cfd0", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__next_frontier_json_object_dup_key_rejected_repo_kv", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "a22d41de068b3f73", h_schema: "2d555f9037f0cfd0", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__txt_json_object_dup_key_rejected_repo_kv", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "05f9bbe03ce72cd5", h_schema: "100aa7bc8d6a2620", h_rule: "" },
-  { rel_id: 17, parent_id: 13, ordinal: 0, local_name: "__txt___delta_json_object_dup_key_rejected_repo_kv", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "d0cb5ebc5c32e680", h_schema: "100aa7bc8d6a2620", h_rule: "" },
+  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__delta_json_object_dup_key_rejected_repo_kv_649989dc3152", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "4e46e325adcee930", h_schema: "237d607d3a29ead6", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__frontier_json_object_dup_key_rejected_repo_kv_649989dc3152", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "36522b68ddc9a307", h_schema: "2d555f9037f0cfd0", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__next_frontier_json_object_dup_key_rejected_repo_kv_649989dc3152", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "44ea9c763dab72db", h_schema: "2d555f9037f0cfd0", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__txt_json_object_dup_key_rejected_repo_kv_649989dc3152", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "938bb621021efbbb", h_schema: "100aa7bc8d6a2620", h_rule: "" },
+  { rel_id: 17, parent_id: 13, ordinal: 0, local_name: "__txt___delta_json_object_dup_key_rejected_repo_kv_649989dc3152", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "384a71e0041b5246", h_schema: "100aa7bc8d6a2620", h_rule: "" },
   { rel_id: 18, parent_id: 11, ordinal: 0, local_name: "__delta_json_object_dup_key_rejected_repo_meta", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "fbd6a1fe8e244f1e", h_schema: "6637d6a2c1e56e83", h_rule: "" },
   { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__frontier_json_object_dup_key_rejected_repo_meta", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "e06d41b9765ce510", h_schema: "e73f91920cc2d156", h_rule: "" },
   { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__next_frontier_json_object_dup_key_rejected_repo_meta", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "09db9364355c7f8a", h_schema: "e73f91920cc2d156", h_rule: "" },
@@ -226,20 +231,20 @@ const arrival_targets: readonly string[] = ["repo_kv"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "repo_kv", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["name"] },
-  { rel: "repo_kv", sql: `INSERT OR IGNORE INTO "json_object_dup_key_rejected_repo_kv" ("key", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["name", "\"cli\""] },
+  { rel: "repo_kv", sql: `INSERT OR IGNORE INTO "json_object_dup_key_rejected_repo_kv_649989dc3152" ("key", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["name", "\"cli\""] },
   { rel: "repo_kv", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["name"] },
-  { rel: "repo_kv", sql: `INSERT OR IGNORE INTO "json_object_dup_key_rejected_repo_kv" ("key", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["name", "\"shell\""] },
+  { rel: "repo_kv", sql: `INSERT OR IGNORE INTO "json_object_dup_key_rejected_repo_kv_649989dc3152" ("key", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["name", "\"shell\""] },
   { rel: "repo_meta", sql: `DELETE FROM "json_object_dup_key_rejected_repo_meta"`, params: [] },
-  { rel: "repo_meta", sql: `INSERT OR IGNORE INTO "json_object_dup_key_rejected_repo_meta" ("col1") SELECT CASE WHEN count(DISTINCT json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value"))) = count(DISTINCT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) THEN json_group_object((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value") ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) ELSE json('json_object_dup_key') END FROM "json_object_dup_key_rejected_repo_kv" b0 HAVING count(*) > 0`, params: [] },
+  { rel: "repo_meta", sql: `INSERT OR IGNORE INTO "json_object_dup_key_rejected_repo_meta" ("col1") SELECT CASE WHEN count(DISTINCT json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value"))) = count(DISTINCT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) THEN json_group_object((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value") ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) ELSE json('json_object_dup_key') END FROM "json_object_dup_key_rejected_repo_kv_649989dc3152" b0 HAVING count(*) > 0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
-  repo_kv: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value" FROM "__txt_json_object_dup_key_rejected_repo_kv" t`,
+  repo_kv: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value" FROM "__txt_json_object_dup_key_rejected_repo_kv_649989dc3152" t`,
   repo_meta: `SELECT t."col1" FROM "json_object_dup_key_rejected_repo_meta" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "repo_kv", kind: "set", table_name: "json_object_dup_key_rejected_repo_kv", delta_table_name: "__delta_json_object_dup_key_rejected_repo_kv", frontier_table_name: "__frontier_json_object_dup_key_rejected_repo_kv", next_frontier_table_name: "__next_frontier_json_object_dup_key_rejected_repo_kv", columns: ["key", "value"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "json_object_dup_key_rejected_repo_kv" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: `DELETE FROM "json_object_dup_key_rejected_repo_kv" WHERE ("key", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "key", "value"`, boundary_sql: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_json_object_dup_key_rejected_repo_kv" t WHERE t."_sign" IN (-1, 1) GROUP BY t."key", t."value", t."_sign"`, rule_observers: ["repo_meta/1"] },
+  { rel: "repo_kv", kind: "set", table_name: "json_object_dup_key_rejected_repo_kv_649989dc3152", delta_table_name: "__delta_json_object_dup_key_rejected_repo_kv_649989dc3152", frontier_table_name: "__frontier_json_object_dup_key_rejected_repo_kv_649989dc3152", next_frontier_table_name: "__next_frontier_json_object_dup_key_rejected_repo_kv_649989dc3152", columns: ["key", "value"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "json_object_dup_key_rejected_repo_kv_649989dc3152" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: `DELETE FROM "json_object_dup_key_rejected_repo_kv_649989dc3152" WHERE ("key", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "key", "value"`, boundary_sql: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_json_object_dup_key_rejected_repo_kv_649989dc3152" t WHERE t."_sign" IN (-1, 1) GROUP BY t."key", t."value", t."_sign"`, rule_observers: ["repo_meta/1"] },
   { rel: "repo_meta", kind: "set", table_name: "json_object_dup_key_rejected_repo_meta", delta_table_name: "__delta_json_object_dup_key_rejected_repo_meta", frontier_table_name: "__frontier_json_object_dup_key_rejected_repo_meta", next_frontier_table_name: "__next_frontier_json_object_dup_key_rejected_repo_meta", columns: ["col1"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."col1", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_json_object_dup_key_rejected_repo_meta" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."_sign"`, rule_observers: [] },
 ];
 
@@ -248,7 +253,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { head_rel: "repo_meta", rule_id: "json_object_dup_key_rejected:repo_meta/1#1", head_delta_table_name: "__delta_json_object_dup_key_rejected_repo_meta", head_columns: ["col1"], insert_sql: null, select_sql: `SELECT "col1" FROM "json_object_dup_key_rejected_repo_meta"`, recompute_sql: `DELETE FROM "json_object_dup_key_rejected_repo_meta";
-INSERT OR IGNORE INTO "json_object_dup_key_rejected_repo_meta" ("col1") SELECT CASE WHEN count(DISTINCT json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value"))) = count(DISTINCT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) THEN json_group_object((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value") ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) ELSE json('json_object_dup_key') END FROM "json_object_dup_key_rejected_repo_kv" b0 HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_json_object_dup_key_rejected_repo_meta"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_json_object_dup_key_rejected_repo_meta" ("_all") SELECT DISTINCT 0 FROM "__delta_json_object_dup_key_rejected_repo_kv" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "json_object_dup_key_rejected_repo_meta" WHERE EXISTS (SELECT 1 FROM "__agg_scope_json_object_dup_key_rejected_repo_meta") RETURNING "col1"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "json_object_dup_key_rejected_repo_meta" ("col1") SELECT CASE WHEN count(DISTINCT json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value"))) = count(DISTINCT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) THEN json_group_object((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value") ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) ELSE json('json_object_dup_key') END FROM "json_object_dup_key_rejected_repo_kv" b0 WHERE EXISTS (SELECT 1 FROM "__agg_scope_json_object_dup_key_rejected_repo_meta") HAVING count(*) > 0 RETURNING "col1"`], delta_maintained: false } },
+INSERT OR IGNORE INTO "json_object_dup_key_rejected_repo_meta" ("col1") SELECT CASE WHEN count(DISTINCT json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value"))) = count(DISTINCT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) THEN json_group_object((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value") ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) ELSE json('json_object_dup_key') END FROM "json_object_dup_key_rejected_repo_kv_649989dc3152" b0 HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_json_object_dup_key_rejected_repo_meta"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_json_object_dup_key_rejected_repo_meta" ("_all") SELECT DISTINCT 0 FROM "__delta_json_object_dup_key_rejected_repo_kv_649989dc3152" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "json_object_dup_key_rejected_repo_meta" WHERE EXISTS (SELECT 1 FROM "__agg_scope_json_object_dup_key_rejected_repo_meta") RETURNING "col1"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "json_object_dup_key_rejected_repo_meta" ("col1") SELECT CASE WHEN count(DISTINCT json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value"))) = count(DISTINCT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) THEN json_group_object((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value") ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) ELSE json('json_object_dup_key') END FROM "json_object_dup_key_rejected_repo_kv_649989dc3152" b0 WHERE EXISTS (SELECT 1 FROM "__agg_scope_json_object_dup_key_rejected_repo_meta") HAVING count(*) > 0 RETURNING "col1"`], delta_maintained: false } },
 ];
 
 const RECONCILE_EVERY_TICK = false;
@@ -299,6 +304,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

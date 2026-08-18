@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -158,21 +158,21 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "braces_in_head_position_doc_out" ("__id" INTEGER PRIMARY KEY, "col1" TEXT NOT NULL CHECK (json_valid("col1")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("col1"))`,
-  `CREATE TABLE "braces_in_head_position_seed" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, UNIQUE ("name"))`,
-  `CREATE TEMP VIEW "__txt_braces_in_head_position_seed" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "braces_in_head_position_seed" t`,
+  `CREATE TABLE "braces_in_head_position_seed_7a5ef237b7b9" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, UNIQUE ("name"))`,
+  `CREATE TEMP VIEW "__txt_braces_in_head_position_seed_7a5ef237b7b9" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "braces_in_head_position_seed_7a5ef237b7b9" t`,
   `CREATE TEMP TABLE "__delta_braces_in_head_position_doc_out" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL CHECK (json_valid("col1")))`,
   `CREATE INDEX "__delta_braces_in_head_position_doc_out_sign" ON "__delta_braces_in_head_position_doc_out" ("_sign")`,
   `CREATE INDEX "__delta_braces_in_head_position_doc_out_group" ON "__delta_braces_in_head_position_doc_out" ("col1")`,
   `CREATE TEMP TABLE "__frontier_braces_in_head_position_doc_out" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL CHECK (json_valid("col1")))`,
   `CREATE INDEX "__frontier_braces_in_head_position_doc_out_phase" ON "__frontier_braces_in_head_position_doc_out" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_braces_in_head_position_doc_out" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL CHECK (json_valid("col1")))`,
-  `CREATE TEMP TABLE "__delta_braces_in_head_position_seed" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_braces_in_head_position_seed_sign" ON "__delta_braces_in_head_position_seed" ("_sign")`,
-  `CREATE INDEX "__delta_braces_in_head_position_seed_group" ON "__delta_braces_in_head_position_seed" ("name")`,
-  `CREATE TEMP TABLE "__frontier_braces_in_head_position_seed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_braces_in_head_position_seed_phase" ON "__frontier_braces_in_head_position_seed" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_braces_in_head_position_seed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_braces_in_head_position_seed" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_braces_in_head_position_seed" t`,
+  `CREATE TEMP TABLE "__delta_braces_in_head_position_seed_7a5ef237b7b9" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_braces_in_head_position_seed_7a5ef237b7b9_sign" ON "__delta_braces_in_head_position_seed_7a5ef237b7b9" ("_sign")`,
+  `CREATE INDEX "__delta_braces_in_head_position_seed_7a5ef237b7b9_group" ON "__delta_braces_in_head_position_seed_7a5ef237b7b9" ("name")`,
+  `CREATE TEMP TABLE "__frontier_braces_in_head_position_seed_7a5ef237b7b9" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_braces_in_head_position_seed_7a5ef237b7b9_phase" ON "__frontier_braces_in_head_position_seed_7a5ef237b7b9" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_braces_in_head_position_seed_7a5ef237b7b9" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_braces_in_head_position_seed_7a5ef237b7b9" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_braces_in_head_position_seed_7a5ef237b7b9" t`,
   `CREATE TEMP TABLE "__support_next_braces_in_head_position_doc_out" ("col1" TEXT NOT NULL CHECK (json_valid("col1")), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__new_braces_in_head_position_doc_out" ("col1" TEXT NOT NULL CHECK (json_valid("col1")), "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "braces_in_head_position_doc_out_zero" ON "braces_in_head_position_doc_out" ("__refcount") WHERE "__refcount" <= 0`,
@@ -181,6 +181,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   doc_out: ["col1"],
   seed: ["name"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  doc_out: "braces_in_head_position_doc_out",
+  seed: "braces_in_head_position_seed_7a5ef237b7b9",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -208,11 +213,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_braces_in_head_position_doc_out", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "54ee7f12a5fc5272", h_schema: "6637d6a2c1e56e83", h_rule: "" },
   { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_braces_in_head_position_doc_out", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "4314d38e5ebfb51a", h_schema: "e73f91920cc2d156", h_rule: "" },
   { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_braces_in_head_position_doc_out", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "5ebd1c6dc627e2c2", h_schema: "e73f91920cc2d156", h_rule: "" },
-  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_braces_in_head_position_seed", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "5e0ddf34bf4beba5", h_schema: "178788c545e561e2", h_rule: "" },
-  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_braces_in_head_position_seed", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "461b695b046d974e", h_schema: "de5b51999f205894", h_rule: "" },
-  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_braces_in_head_position_seed", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "31afe7a1b8a5ca1c", h_schema: "de5b51999f205894", h_rule: "" },
-  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__txt_braces_in_head_position_seed", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "f8ed9bd59cf25b9d", h_schema: "a30b139c04a632dd", h_rule: "" },
-  { rel_id: 19, parent_id: 15, ordinal: 0, local_name: "__txt___delta_braces_in_head_position_seed", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "5928f00b5c69dda3", h_schema: "a30b139c04a632dd", h_rule: "" },
+  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_braces_in_head_position_seed_7a5ef237b7b9", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "91cf9111614ff6b6", h_schema: "178788c545e561e2", h_rule: "" },
+  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_braces_in_head_position_seed_7a5ef237b7b9", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "e5f785c554402b4c", h_schema: "de5b51999f205894", h_rule: "" },
+  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_braces_in_head_position_seed_7a5ef237b7b9", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "1e20a3c7d8e8e497", h_schema: "de5b51999f205894", h_rule: "" },
+  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__txt_braces_in_head_position_seed_7a5ef237b7b9", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "42364311a67ee251", h_schema: "a30b139c04a632dd", h_rule: "" },
+  { rel_id: 19, parent_id: 15, ordinal: 0, local_name: "__txt___delta_braces_in_head_position_seed_7a5ef237b7b9", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "490bced41755ecd6", h_schema: "a30b139c04a632dd", h_rule: "" },
   { rel_id: 20, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "d39055983fb00b0d", h_schema: "", h_rule: "" },
   { rel_id: 21, parent_id: 8, ordinal: 0, local_name: "__support_next_braces_in_head_position_doc_out", kind: "refcount", type_id: 0, arity: 2, module_id: 7, h_id: "08750ce4457593c4", h_schema: "", h_rule: "" },
   { rel_id: 22, parent_id: 8, ordinal: 0, local_name: "__new_braces_in_head_position_doc_out", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 7, h_id: "fed4a1e1f3891223", h_schema: "", h_rule: "" },
@@ -227,27 +232,27 @@ const arrival_targets: readonly string[] = ["seed"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "seed", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["cli"] },
-  { rel: "seed", sql: `INSERT OR IGNORE INTO "braces_in_head_position_seed" ("name") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["cli"] },
+  { rel: "seed", sql: `INSERT OR IGNORE INTO "braces_in_head_position_seed_7a5ef237b7b9" ("name") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["cli"] },
   { rel: "doc_out", sql: `DELETE FROM "braces_in_head_position_doc_out"`, params: [] },
-  { rel: "doc_out", sql: `INSERT OR IGNORE INTO "braces_in_head_position_doc_out" ("col1") SELECT json_object('repo', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) FROM "braces_in_head_position_seed" b0`, params: [] },
+  { rel: "doc_out", sql: `INSERT OR IGNORE INTO "braces_in_head_position_doc_out" ("col1") SELECT json_object('repo', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) FROM "braces_in_head_position_seed_7a5ef237b7b9" b0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
   doc_out: `SELECT t."col1" FROM "braces_in_head_position_doc_out" t`,
-  seed: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_braces_in_head_position_seed" t`,
+  seed: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_braces_in_head_position_seed_7a5ef237b7b9" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "doc_out", kind: "set", table_name: "braces_in_head_position_doc_out", delta_table_name: "__delta_braces_in_head_position_doc_out", frontier_table_name: "__frontier_braces_in_head_position_doc_out", next_frontier_table_name: "__next_frontier_braces_in_head_position_doc_out", columns: ["col1"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."col1", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_braces_in_head_position_doc_out" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."_sign"`, rule_observers: [] },
-  { rel: "seed", kind: "set", table_name: "braces_in_head_position_seed", delta_table_name: "__delta_braces_in_head_position_seed", frontier_table_name: "__frontier_braces_in_head_position_seed", next_frontier_table_name: "__next_frontier_braces_in_head_position_seed", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "braces_in_head_position_seed" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrival_del_sql: `DELETE FROM "braces_in_head_position_seed" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_braces_in_head_position_seed" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."_sign"`, rule_observers: ["doc_out/1"] },
+  { rel: "seed", kind: "set", table_name: "braces_in_head_position_seed_7a5ef237b7b9", delta_table_name: "__delta_braces_in_head_position_seed_7a5ef237b7b9", frontier_table_name: "__frontier_braces_in_head_position_seed_7a5ef237b7b9", next_frontier_table_name: "__next_frontier_braces_in_head_position_seed_7a5ef237b7b9", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "braces_in_head_position_seed_7a5ef237b7b9" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrival_del_sql: `DELETE FROM "braces_in_head_position_seed_7a5ef237b7b9" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_braces_in_head_position_seed_7a5ef237b7b9" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."_sign"`, rule_observers: ["doc_out/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "doc_out", rule_id: "braces_in_head_position:doc_out/1#1", head_delta_table_name: "__delta_braces_in_head_position_doc_out", head_columns: ["col1"], insert_sql: `INSERT OR IGNORE INTO "braces_in_head_position_doc_out" ("col1") SELECT DISTINCT json_object('repo', (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."name")) FROM "__frontier_braces_in_head_position_seed" d0 WHERE d0."_phase" >= 0 RETURNING "col1"`, select_sql: `SELECT "col1" FROM "braces_in_head_position_doc_out"`, recompute_sql: `DELETE FROM "braces_in_head_position_doc_out";
-INSERT OR IGNORE INTO "braces_in_head_position_doc_out" ("col1") SELECT json_object('repo', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) FROM "braces_in_head_position_seed" b0`, support_sql: [`DELETE FROM "__support_next_braces_in_head_position_doc_out"`, `INSERT INTO "__support_next_braces_in_head_position_doc_out" ("col1", "__refcount") SELECT "col1", sum("__refcount") FROM (SELECT json_object('repo', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) AS "col1", count(*) AS "__refcount" FROM "braces_in_head_position_seed" b0 GROUP BY json_object('repo', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name"))) GROUP BY "col1"`, `UPDATE "braces_in_head_position_doc_out" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_braces_in_head_position_doc_out" n WHERE n."col1" = h."col1"), 0)`, `INSERT INTO "__delta_braces_in_head_position_doc_out" ("_sign", "_sequence", "col1") SELECT -1, row_number() OVER () - 1, "col1" FROM "braces_in_head_position_doc_out" WHERE "__refcount" <= 0`, `DELETE FROM "braces_in_head_position_doc_out" WHERE "__refcount" <= 0`, `DELETE FROM "__new_braces_in_head_position_doc_out"`, `INSERT INTO "__new_braces_in_head_position_doc_out" ("col1", "__refcount") SELECT n."col1", n."__refcount" FROM "__support_next_braces_in_head_position_doc_out" n LEFT JOIN "braces_in_head_position_doc_out" h ON n."col1" = h."col1" WHERE h."col1" IS NULL`, `INSERT INTO "__delta_braces_in_head_position_doc_out" ("_sign", "_sequence", "col1") SELECT 1, "rowid" - 1, "col1" FROM "__new_braces_in_head_position_doc_out"`, `INSERT INTO "__frontier_braces_in_head_position_doc_out" ("_phase", "_sequence", "col1") SELECT ?, "rowid" - 1, "col1" FROM "__new_braces_in_head_position_doc_out"`, `INSERT INTO "__next_frontier_braces_in_head_position_doc_out" ("_phase", "_sequence", "col1") SELECT ?, "rowid" - 1, "col1" FROM "__new_braces_in_head_position_doc_out"`, `INSERT OR IGNORE INTO "braces_in_head_position_doc_out" ("col1", "__refcount") SELECT n."col1", n."__refcount" FROM "__support_next_braces_in_head_position_doc_out" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "doc_out", rule_id: "braces_in_head_position:doc_out/1#1", head_delta_table_name: "__delta_braces_in_head_position_doc_out", head_columns: ["col1"], insert_sql: `INSERT OR IGNORE INTO "braces_in_head_position_doc_out" ("col1") SELECT DISTINCT json_object('repo', (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."name")) FROM "__frontier_braces_in_head_position_seed_7a5ef237b7b9" d0 WHERE d0."_phase" >= 0 RETURNING "col1"`, select_sql: `SELECT "col1" FROM "braces_in_head_position_doc_out"`, recompute_sql: `DELETE FROM "braces_in_head_position_doc_out";
+INSERT OR IGNORE INTO "braces_in_head_position_doc_out" ("col1") SELECT json_object('repo', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) FROM "braces_in_head_position_seed_7a5ef237b7b9" b0`, support_sql: [`DELETE FROM "__support_next_braces_in_head_position_doc_out"`, `INSERT INTO "__support_next_braces_in_head_position_doc_out" ("col1", "__refcount") SELECT "col1", sum("__refcount") FROM (SELECT json_object('repo', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) AS "col1", count(*) AS "__refcount" FROM "braces_in_head_position_seed_7a5ef237b7b9" b0 GROUP BY json_object('repo', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name"))) GROUP BY "col1"`, `UPDATE "braces_in_head_position_doc_out" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_braces_in_head_position_doc_out" n WHERE n."col1" = h."col1"), 0)`, `INSERT INTO "__delta_braces_in_head_position_doc_out" ("_sign", "_sequence", "col1") SELECT -1, row_number() OVER () - 1, "col1" FROM "braces_in_head_position_doc_out" WHERE "__refcount" <= 0`, `DELETE FROM "braces_in_head_position_doc_out" WHERE "__refcount" <= 0`, `DELETE FROM "__new_braces_in_head_position_doc_out"`, `INSERT INTO "__new_braces_in_head_position_doc_out" ("col1", "__refcount") SELECT n."col1", n."__refcount" FROM "__support_next_braces_in_head_position_doc_out" n LEFT JOIN "braces_in_head_position_doc_out" h ON n."col1" = h."col1" WHERE h."col1" IS NULL`, `INSERT INTO "__delta_braces_in_head_position_doc_out" ("_sign", "_sequence", "col1") SELECT 1, "rowid" - 1, "col1" FROM "__new_braces_in_head_position_doc_out"`, `INSERT INTO "__frontier_braces_in_head_position_doc_out" ("_phase", "_sequence", "col1") SELECT ?, "rowid" - 1, "col1" FROM "__new_braces_in_head_position_doc_out"`, `INSERT INTO "__next_frontier_braces_in_head_position_doc_out" ("_phase", "_sequence", "col1") SELECT ?, "rowid" - 1, "col1" FROM "__new_braces_in_head_position_doc_out"`, `INSERT OR IGNORE INTO "braces_in_head_position_doc_out" ("col1", "__refcount") SELECT n."col1", n."__refcount" FROM "__support_next_braces_in_head_position_doc_out" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const RECONCILE_EVERY_TICK = false;
@@ -298,6 +303,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -179,8 +179,8 @@ const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "batched_increments_both_count_counter" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "next" INTEGER NOT NULL, UNIQUE ("name"))`,
   `CREATE TEMP VIEW "__txt_batched_increments_both_count_counter" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."next" AS "next" FROM "batched_increments_both_count_counter" t`,
-  `CREATE TABLE "batched_increments_both_count_increment" ("name" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_batched_increments_both_count_increment" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2" FROM "batched_increments_both_count_increment" t`,
+  `CREATE TABLE "batched_increments_both_count_increment_78b9bb5fa27a" ("name" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_batched_increments_both_count_increment_78b9bb5fa27a" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2" FROM "batched_increments_both_count_increment_78b9bb5fa27a" t`,
   `CREATE TEMP TABLE "__delta_batched_increments_both_count_counter" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_batched_increments_both_count_counter_sign" ON "__delta_batched_increments_both_count_counter" ("_sign")`,
   `CREATE INDEX "__delta_batched_increments_both_count_counter_group" ON "__delta_batched_increments_both_count_counter" ("name", "next")`,
@@ -188,19 +188,24 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_batched_increments_both_count_counter_phase" ON "__frontier_batched_increments_both_count_counter" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_batched_increments_both_count_counter" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt___delta_batched_increments_both_count_counter" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."next" AS "next", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_batched_increments_both_count_counter" t`,
-  `CREATE TEMP TABLE "__delta_batched_increments_both_count_increment" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_batched_increments_both_count_increment_sign" ON "__delta_batched_increments_both_count_increment" ("_sign")`,
-  `CREATE INDEX "__delta_batched_increments_both_count_increment_group" ON "__delta_batched_increments_both_count_increment" ("name", "col2")`,
-  `CREATE TEMP TABLE "__frontier_batched_increments_both_count_increment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_batched_increments_both_count_increment_phase" ON "__frontier_batched_increments_both_count_increment" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_batched_increments_both_count_increment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_batched_increments_both_count_increment" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_batched_increments_both_count_increment" t`,
+  `CREATE TEMP TABLE "__delta_batched_increments_both_count_increment_78b9bb5fa27a" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_batched_increments_both_count_increment_78b9bb5fa27a_sign" ON "__delta_batched_increments_both_count_increment_78b9bb5fa27a" ("_sign")`,
+  `CREATE INDEX "__delta_batched_increments_both_count_increment_78b9bb5fa27a_group" ON "__delta_batched_increments_both_count_increment_78b9bb5fa27a" ("name", "col2")`,
+  `CREATE TEMP TABLE "__frontier_batched_increments_both_count_increment_78b9bb5fa27a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_batched_increments_both_count_increment_78b9bb5fa27a_phase" ON "__frontier_batched_increments_both_count_increment_78b9bb5fa27a" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_batched_increments_both_count_increment_78b9bb5fa27a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_batched_increments_both_count_increment_78b9bb5fa27a" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_batched_increments_both_count_increment_78b9bb5fa27a" t`,
   `CREATE TEMP TABLE "__pre_batched_increments_both_count_counter" ("name" INTEGER NOT NULL, "next" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   counter: ["name", "next"],
   increment: ["name", "col2"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  counter: "batched_increments_both_count_counter",
+  increment: "batched_increments_both_count_increment_78b9bb5fa27a",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -233,11 +238,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__pre_batched_increments_both_count_counter", kind: "pre", type_id: 0, arity: 2, module_id: 7, h_id: "88df684f73244938", h_schema: "9b39b6c3641ecd2d", h_rule: "" },
   { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__txt_batched_increments_both_count_counter", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "bf11747e17b0b3ed", h_schema: "9b39b6c3641ecd2d", h_rule: "" },
   { rel_id: 19, parent_id: 14, ordinal: 0, local_name: "__txt___delta_batched_increments_both_count_counter", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "e2fa035b351e6aad", h_schema: "9b39b6c3641ecd2d", h_rule: "" },
-  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__delta_batched_increments_both_count_increment", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "990e08ee64c8b133", h_schema: "79913c4e8d6f19ff", h_rule: "" },
-  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__frontier_batched_increments_both_count_increment", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "85172fd333b2facf", h_schema: "2d01d553119b5b71", h_rule: "" },
-  { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__next_frontier_batched_increments_both_count_increment", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "7c82da0ee52e7711", h_schema: "2d01d553119b5b71", h_rule: "" },
-  { rel_id: 23, parent_id: 11, ordinal: 0, local_name: "__txt_batched_increments_both_count_increment", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "363fa508ad93b1ff", h_schema: "bd656f1e3e3dad1a", h_rule: "" },
-  { rel_id: 24, parent_id: 20, ordinal: 0, local_name: "__txt___delta_batched_increments_both_count_increment", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "bb90976c6bd883c9", h_schema: "bd656f1e3e3dad1a", h_rule: "" },
+  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__delta_batched_increments_both_count_increment_78b9bb5fa27a", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "4c608db5938d8574", h_schema: "79913c4e8d6f19ff", h_rule: "" },
+  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__frontier_batched_increments_both_count_increment_78b9bb5fa27a", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "2f4440fa4ac53b22", h_schema: "2d01d553119b5b71", h_rule: "" },
+  { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__next_frontier_batched_increments_both_count_increment_78b9bb5fa27a", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "78a963e75e19707b", h_schema: "2d01d553119b5b71", h_rule: "" },
+  { rel_id: 23, parent_id: 11, ordinal: 0, local_name: "__txt_batched_increments_both_count_increment_78b9bb5fa27a", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "bc1dcbd176263ac2", h_schema: "bd656f1e3e3dad1a", h_rule: "" },
+  { rel_id: 24, parent_id: 20, ordinal: 0, local_name: "__txt___delta_batched_increments_both_count_increment_78b9bb5fa27a", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "cdb48d79ad5aba0d", h_schema: "bd656f1e3e3dad1a", h_rule: "" },
   { rel_id: 25, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "6a9d171e9746978d", h_schema: "", h_rule: "" },
   { rel_id: 26, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "2bdd1d7ab4a75f73", h_schema: "", h_rule: "" },
   { rel_id: 27, parent_id: 10, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "a80243b75cfc9e6b", h_schema: "", h_rule: "" },
@@ -263,7 +268,7 @@ type Snapshot = {
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     counter: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."next" FROM "__txt_batched_increments_both_count_counter" t`, rel_columns.counter!, rel_column_types.counter!),
-    increment: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_batched_increments_both_count_increment" t`, rel_columns.increment!, rel_column_types.increment!),
+    increment: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_batched_increments_both_count_increment_78b9bb5fa27a" t`, rel_columns.increment!, rel_column_types.increment!),
   });
 }
 
@@ -272,7 +277,7 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     counter: select_rows(seam, `SELECT "name", "next" FROM "batched_increments_both_count_counter"`, rel_columns.counter!, rel_stored_column_types.counter!),
-    increment: select_rows(seam, `SELECT "name", "col2" FROM "batched_increments_both_count_increment"`, rel_columns.increment!, rel_stored_column_types.increment!),
+    increment: select_rows(seam, `SELECT "name", "col2" FROM "batched_increments_both_count_increment_78b9bb5fa27a"`, rel_columns.increment!, rel_stored_column_types.increment!),
   });
 }
 
@@ -282,11 +287,11 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 
 const final_select: Record<string, string> = {
   counter: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."next" FROM "__txt_batched_increments_both_count_counter" t`,
-  increment: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_batched_increments_both_count_increment" t`,
+  increment: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_batched_increments_both_count_increment_78b9bb5fa27a" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  increment: { kind: "log", add_sql: `INSERT INTO "batched_increments_both_count_increment" ("name", "col2") VALUES (?, ?)`, del_sql: null },
+  increment: { kind: "log", add_sql: `INSERT INTO "batched_increments_both_count_increment_78b9bb5fa27a" ("name", "col2") VALUES (?, ?)`, del_sql: null },
 };
 
 function arrival_statement(arrival: IArrivalRow): SqlStatement {
@@ -313,11 +318,11 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "counter", kind: "set", table_name: "batched_increments_both_count_counter", delta_table_name: "__delta_batched_increments_both_count_counter", frontier_table_name: "__frontier_batched_increments_both_count_counter", next_frontier_table_name: "__next_frontier_batched_increments_both_count_counter", columns: ["name", "next"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."next", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_batched_increments_both_count_counter" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."next", t."_sign"`, rule_observers: [] },
-  { rel: "increment", kind: "log", table_name: "batched_increments_both_count_increment", delta_table_name: "__delta_batched_increments_both_count_increment", frontier_table_name: "__frontier_batched_increments_both_count_increment", next_frontier_table_name: "__next_frontier_batched_increments_both_count_increment", columns: ["name", "col2"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "batched_increments_both_count_increment" ("name", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "col2"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_batched_increments_both_count_increment" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."col2", t."_sign"`, rule_observers: ["counter/2"] },
+  { rel: "increment", kind: "log", table_name: "batched_increments_both_count_increment_78b9bb5fa27a", delta_table_name: "__delta_batched_increments_both_count_increment_78b9bb5fa27a", frontier_table_name: "__frontier_batched_increments_both_count_increment_78b9bb5fa27a", next_frontier_table_name: "__next_frontier_batched_increments_both_count_increment_78b9bb5fa27a", columns: ["name", "col2"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "batched_increments_both_count_increment_78b9bb5fa27a" ("name", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "col2"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_batched_increments_both_count_increment_78b9bb5fa27a" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."col2", t."_sign"`, rule_observers: ["counter/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "counter", rule_id: "batched_increments_both_count:counter/2#1", head_kind: "set", head_table_name: "batched_increments_both_count_counter", head_delta_table_name: "__delta_batched_increments_both_count_counter", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT d0."name" AS "name", (b0."next" + 1) AS "next" FROM "__frontier_batched_increments_both_count_increment" d0, "__pre_batched_increments_both_count_counter" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "counter", rule_id: "batched_increments_both_count:counter/2#1", head_kind: "set", head_table_name: "batched_increments_both_count_counter", head_delta_table_name: "__delta_batched_increments_both_count_counter", head_columns: ["name", "next"], key_indices: [0], project_sql: `SELECT d0."name" AS "name", (b0."next" + 1) AS "next" FROM "__frontier_batched_increments_both_count_increment_78b9bb5fa27a" d0, "__pre_batched_increments_both_count_counter" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -362,7 +367,7 @@ const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: st
 ];
 
 const ORDERED_CARRY_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
-  { rel: "increment", sql: `SELECT "_sequence" AS "__sequence", "name", "col2" FROM "__frontier_batched_increments_both_count_increment" ORDER BY "_phase", "_sequence"`, columns: ["name", "col2"] },
+  { rel: "increment", sql: `SELECT "_sequence" AS "__sequence", "name", "col2" FROM "__frontier_batched_increments_both_count_increment_78b9bb5fa27a" ORDER BY "_phase", "_sequence"`, columns: ["name", "col2"] },
 ];
 
 function ordered_outside_occurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {
@@ -546,6 +551,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

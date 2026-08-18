@@ -53,7 +53,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -147,19 +147,19 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "numeric_equality_operator_filters_matched" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value"))`,
-  `CREATE TABLE "numeric_equality_operator_filters_row" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
+  `CREATE TABLE "numeric_equality_operator_filters_row_1230b8accab2" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
   `CREATE TEMP TABLE "__delta_numeric_equality_operator_filters_matched" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_numeric_equality_operator_filters_matched_sign" ON "__delta_numeric_equality_operator_filters_matched" ("_sign")`,
   `CREATE INDEX "__delta_numeric_equality_operator_filters_matched_group" ON "__delta_numeric_equality_operator_filters_matched" ("value")`,
   `CREATE TEMP TABLE "__frontier_numeric_equality_operator_filters_matched" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_numeric_equality_operator_filters_matched_phase" ON "__frontier_numeric_equality_operator_filters_matched" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_numeric_equality_operator_filters_matched" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_numeric_equality_operator_filters_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_numeric_equality_operator_filters_row_sign" ON "__delta_numeric_equality_operator_filters_row" ("_sign")`,
-  `CREATE INDEX "__delta_numeric_equality_operator_filters_row_group" ON "__delta_numeric_equality_operator_filters_row" ("value")`,
-  `CREATE TEMP TABLE "__frontier_numeric_equality_operator_filters_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_numeric_equality_operator_filters_row_phase" ON "__frontier_numeric_equality_operator_filters_row" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_numeric_equality_operator_filters_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_numeric_equality_operator_filters_row_1230b8accab2" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_numeric_equality_operator_filters_row_1230b8accab2_sign" ON "__delta_numeric_equality_operator_filters_row_1230b8accab2" ("_sign")`,
+  `CREATE INDEX "__delta_numeric_equality_operator_filters_row_1230b8accab2_group" ON "__delta_numeric_equality_operator_filters_row_1230b8accab2" ("value")`,
+  `CREATE TEMP TABLE "__frontier_numeric_equality_operator_filters_row_1230b8accab2" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_numeric_equality_operator_filters_row_1230b8accab2_phase" ON "__frontier_numeric_equality_operator_filters_row_1230b8accab2" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_numeric_equality_operator_filters_row_1230b8accab2" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE TEMP TABLE "__support_next_numeric_equality_operator_filters_matched" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__new_numeric_equality_operator_filters_matched" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "numeric_equality_operator_filters_matched_zero" ON "numeric_equality_operator_filters_matched" ("__refcount") WHERE "__refcount" <= 0`,
@@ -168,6 +168,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   matched: ["value"],
   row: ["value"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  matched: "numeric_equality_operator_filters_matched",
+  row: "numeric_equality_operator_filters_row_1230b8accab2",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -195,9 +200,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_numeric_equality_operator_filters_matched", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "b5763c58fd0398b5", h_schema: "d59487c5bf23d586", h_rule: "" },
   { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_numeric_equality_operator_filters_matched", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "963d7ad289774fcb", h_schema: "f0cee8555a0aeabb", h_rule: "" },
   { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_numeric_equality_operator_filters_matched", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "0cdc0d6535e5c7bd", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_numeric_equality_operator_filters_row", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "daa23e08a0731a62", h_schema: "d59487c5bf23d586", h_rule: "" },
-  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_numeric_equality_operator_filters_row", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "3da8437a0950c00f", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_numeric_equality_operator_filters_row", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "02c94eecacd6aac1", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 15, parent_id: 10, ordinal: 0, local_name: "__delta_numeric_equality_operator_filters_row_1230b8accab2", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "dd0048fc6157371f", h_schema: "d59487c5bf23d586", h_rule: "" },
+  { rel_id: 16, parent_id: 10, ordinal: 0, local_name: "__frontier_numeric_equality_operator_filters_row_1230b8accab2", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "1ad4527001c75cbc", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__next_frontier_numeric_equality_operator_filters_row_1230b8accab2", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "cd28ce0e71fc9e3f", h_schema: "f0cee8555a0aeabb", h_rule: "" },
   { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__support_next_numeric_equality_operator_filters_matched", kind: "refcount", type_id: 0, arity: 2, module_id: 7, h_id: "ed095cf9b4b4bfec", h_schema: "", h_rule: "" },
   { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__new_numeric_equality_operator_filters_matched", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 7, h_id: "4081d1089c5deaf0", h_schema: "", h_rule: "" },
   { rel_id: 20, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "05fb5bb31f182f20", h_schema: "", h_rule: "" },
@@ -210,29 +215,29 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["row"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "row", sql: `INSERT OR IGNORE INTO "numeric_equality_operator_filters_row" ("value") VALUES (?)`, params: [1] },
-  { rel: "row", sql: `INSERT OR IGNORE INTO "numeric_equality_operator_filters_row" ("value") VALUES (?)`, params: [2] },
-  { rel: "row", sql: `INSERT OR IGNORE INTO "numeric_equality_operator_filters_row" ("value") VALUES (?)`, params: [3] },
+  { rel: "row", sql: `INSERT OR IGNORE INTO "numeric_equality_operator_filters_row_1230b8accab2" ("value") VALUES (?)`, params: [1] },
+  { rel: "row", sql: `INSERT OR IGNORE INTO "numeric_equality_operator_filters_row_1230b8accab2" ("value") VALUES (?)`, params: [2] },
+  { rel: "row", sql: `INSERT OR IGNORE INTO "numeric_equality_operator_filters_row_1230b8accab2" ("value") VALUES (?)`, params: [3] },
   { rel: "matched", sql: `DELETE FROM "numeric_equality_operator_filters_matched"`, params: [] },
-  { rel: "matched", sql: `INSERT OR IGNORE INTO "numeric_equality_operator_filters_matched" ("value") SELECT b0."value" FROM "numeric_equality_operator_filters_row" b0 WHERE (b0."value" = 2)`, params: [] },
+  { rel: "matched", sql: `INSERT OR IGNORE INTO "numeric_equality_operator_filters_matched" ("value") SELECT b0."value" FROM "numeric_equality_operator_filters_row_1230b8accab2" b0 WHERE (b0."value" = 2)`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
   matched: `SELECT t."value" FROM "numeric_equality_operator_filters_matched" t`,
-  row: `SELECT t."value" FROM "numeric_equality_operator_filters_row" t`,
+  row: `SELECT t."value" FROM "numeric_equality_operator_filters_row_1230b8accab2" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "matched", kind: "set", table_name: "numeric_equality_operator_filters_matched", delta_table_name: "__delta_numeric_equality_operator_filters_matched", frontier_table_name: "__frontier_numeric_equality_operator_filters_matched", next_frontier_table_name: "__next_frontier_numeric_equality_operator_filters_matched", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_numeric_equality_operator_filters_matched" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
-  { rel: "row", kind: "set", table_name: "numeric_equality_operator_filters_row", delta_table_name: "__delta_numeric_equality_operator_filters_row", frontier_table_name: "__frontier_numeric_equality_operator_filters_row", next_frontier_table_name: "__next_frontier_numeric_equality_operator_filters_row", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "numeric_equality_operator_filters_row" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "numeric_equality_operator_filters_row" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_numeric_equality_operator_filters_row" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["matched/1"] },
+  { rel: "row", kind: "set", table_name: "numeric_equality_operator_filters_row_1230b8accab2", delta_table_name: "__delta_numeric_equality_operator_filters_row_1230b8accab2", frontier_table_name: "__frontier_numeric_equality_operator_filters_row_1230b8accab2", next_frontier_table_name: "__next_frontier_numeric_equality_operator_filters_row_1230b8accab2", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "numeric_equality_operator_filters_row_1230b8accab2" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "numeric_equality_operator_filters_row_1230b8accab2" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_numeric_equality_operator_filters_row_1230b8accab2" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["matched/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "matched", rule_id: "numeric_equality_operator_filters:matched/1#1", head_delta_table_name: "__delta_numeric_equality_operator_filters_matched", head_columns: ["value"], insert_sql: `INSERT OR IGNORE INTO "numeric_equality_operator_filters_matched" ("value") SELECT DISTINCT d0."value" FROM "__frontier_numeric_equality_operator_filters_row" d0 WHERE d0."_phase" >= 0 AND (d0."value" = 2) RETURNING "value"`, select_sql: `SELECT "value" FROM "numeric_equality_operator_filters_matched"`, recompute_sql: `DELETE FROM "numeric_equality_operator_filters_matched";
-INSERT OR IGNORE INTO "numeric_equality_operator_filters_matched" ("value") SELECT b0."value" FROM "numeric_equality_operator_filters_row" b0 WHERE (b0."value" = 2)`, support_sql: [`DELETE FROM "__support_next_numeric_equality_operator_filters_matched"`, `INSERT INTO "__support_next_numeric_equality_operator_filters_matched" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."value" AS "value", count(*) AS "__refcount" FROM "numeric_equality_operator_filters_row" b0 WHERE (b0."value" = 2) GROUP BY b0."value") GROUP BY "value"`, `UPDATE "numeric_equality_operator_filters_matched" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_numeric_equality_operator_filters_matched" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_numeric_equality_operator_filters_matched" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "numeric_equality_operator_filters_matched" WHERE "__refcount" <= 0`, `DELETE FROM "numeric_equality_operator_filters_matched" WHERE "__refcount" <= 0`, `DELETE FROM "__new_numeric_equality_operator_filters_matched"`, `INSERT INTO "__new_numeric_equality_operator_filters_matched" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_numeric_equality_operator_filters_matched" n LEFT JOIN "numeric_equality_operator_filters_matched" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_numeric_equality_operator_filters_matched" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_numeric_equality_operator_filters_matched"`, `INSERT INTO "__frontier_numeric_equality_operator_filters_matched" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_numeric_equality_operator_filters_matched"`, `INSERT INTO "__next_frontier_numeric_equality_operator_filters_matched" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_numeric_equality_operator_filters_matched"`, `INSERT OR IGNORE INTO "numeric_equality_operator_filters_matched" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_numeric_equality_operator_filters_matched" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "matched", rule_id: "numeric_equality_operator_filters:matched/1#1", head_delta_table_name: "__delta_numeric_equality_operator_filters_matched", head_columns: ["value"], insert_sql: `INSERT OR IGNORE INTO "numeric_equality_operator_filters_matched" ("value") SELECT DISTINCT d0."value" FROM "__frontier_numeric_equality_operator_filters_row_1230b8accab2" d0 WHERE d0."_phase" >= 0 AND (d0."value" = 2) RETURNING "value"`, select_sql: `SELECT "value" FROM "numeric_equality_operator_filters_matched"`, recompute_sql: `DELETE FROM "numeric_equality_operator_filters_matched";
+INSERT OR IGNORE INTO "numeric_equality_operator_filters_matched" ("value") SELECT b0."value" FROM "numeric_equality_operator_filters_row_1230b8accab2" b0 WHERE (b0."value" = 2)`, support_sql: [`DELETE FROM "__support_next_numeric_equality_operator_filters_matched"`, `INSERT INTO "__support_next_numeric_equality_operator_filters_matched" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."value" AS "value", count(*) AS "__refcount" FROM "numeric_equality_operator_filters_row_1230b8accab2" b0 WHERE (b0."value" = 2) GROUP BY b0."value") GROUP BY "value"`, `UPDATE "numeric_equality_operator_filters_matched" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_numeric_equality_operator_filters_matched" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_numeric_equality_operator_filters_matched" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "numeric_equality_operator_filters_matched" WHERE "__refcount" <= 0`, `DELETE FROM "numeric_equality_operator_filters_matched" WHERE "__refcount" <= 0`, `DELETE FROM "__new_numeric_equality_operator_filters_matched"`, `INSERT INTO "__new_numeric_equality_operator_filters_matched" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_numeric_equality_operator_filters_matched" n LEFT JOIN "numeric_equality_operator_filters_matched" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_numeric_equality_operator_filters_matched" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_numeric_equality_operator_filters_matched"`, `INSERT INTO "__frontier_numeric_equality_operator_filters_matched" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_numeric_equality_operator_filters_matched"`, `INSERT INTO "__next_frontier_numeric_equality_operator_filters_matched" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_numeric_equality_operator_filters_matched"`, `INSERT OR IGNORE INTO "numeric_equality_operator_filters_matched" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_numeric_equality_operator_filters_matched" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const RECONCILE_EVERY_TICK = false;
@@ -280,6 +285,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

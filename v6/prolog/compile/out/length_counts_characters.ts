@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -160,8 +160,8 @@ const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "length_counts_characters_measured" ("__id" INTEGER PRIMARY KEY, "text" INTEGER NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("text", "out"))`,
   `CREATE TEMP VIEW "__txt_length_counts_characters_measured" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text", t."out" AS "out", t."__refcount" AS "__refcount" FROM "length_counts_characters_measured" t`,
-  `CREATE TABLE "length_counts_characters_text" ("__id" INTEGER PRIMARY KEY, "text" INTEGER NOT NULL, UNIQUE ("text"))`,
-  `CREATE TEMP VIEW "__txt_length_counts_characters_text" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text" FROM "length_counts_characters_text" t`,
+  `CREATE TABLE "length_counts_characters_text_758e6290c675" ("__id" INTEGER PRIMARY KEY, "text" INTEGER NOT NULL, UNIQUE ("text"))`,
+  `CREATE TEMP VIEW "__txt_length_counts_characters_text_758e6290c675" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text" FROM "length_counts_characters_text_758e6290c675" t`,
   `CREATE TEMP TABLE "__delta_length_counts_characters_measured" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL, "out" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_length_counts_characters_measured_sign" ON "__delta_length_counts_characters_measured" ("_sign")`,
   `CREATE INDEX "__delta_length_counts_characters_measured_group" ON "__delta_length_counts_characters_measured" ("text", "out")`,
@@ -169,13 +169,13 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_length_counts_characters_measured_phase" ON "__frontier_length_counts_characters_measured" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_length_counts_characters_measured" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL, "out" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt___delta_length_counts_characters_measured" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text", t."out" AS "out", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_length_counts_characters_measured" t`,
-  `CREATE TEMP TABLE "__delta_length_counts_characters_text" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_length_counts_characters_text_sign" ON "__delta_length_counts_characters_text" ("_sign")`,
-  `CREATE INDEX "__delta_length_counts_characters_text_group" ON "__delta_length_counts_characters_text" ("text")`,
-  `CREATE TEMP TABLE "__frontier_length_counts_characters_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_length_counts_characters_text_phase" ON "__frontier_length_counts_characters_text" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_length_counts_characters_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_length_counts_characters_text" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_length_counts_characters_text" t`,
+  `CREATE TEMP TABLE "__delta_length_counts_characters_text_758e6290c675" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_length_counts_characters_text_758e6290c675_sign" ON "__delta_length_counts_characters_text_758e6290c675" ("_sign")`,
+  `CREATE INDEX "__delta_length_counts_characters_text_758e6290c675_group" ON "__delta_length_counts_characters_text_758e6290c675" ("text")`,
+  `CREATE TEMP TABLE "__frontier_length_counts_characters_text_758e6290c675" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_length_counts_characters_text_758e6290c675_phase" ON "__frontier_length_counts_characters_text_758e6290c675" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_length_counts_characters_text_758e6290c675" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_length_counts_characters_text_758e6290c675" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_length_counts_characters_text_758e6290c675" t`,
   `CREATE TEMP TABLE "__support_next_length_counts_characters_measured" ("text" INTEGER NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("text", "out")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__new_length_counts_characters_measured" ("text" INTEGER NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "length_counts_characters_measured_zero" ON "length_counts_characters_measured" ("__refcount") WHERE "__refcount" <= 0`,
@@ -184,6 +184,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   measured: ["text", "out"],
   text: ["text"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  measured: "length_counts_characters_measured",
+  text: "length_counts_characters_text_758e6290c675",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -214,11 +219,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__next_frontier_length_counts_characters_measured", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "224918b6ca6a9cd1", h_schema: "0d1f916220b798e3", h_rule: "" },
   { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__txt_length_counts_characters_measured", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "77d3a1c406f5b8bb", h_schema: "ea2e9a5ee5a43d58", h_rule: "" },
   { rel_id: 17, parent_id: 13, ordinal: 0, local_name: "__txt___delta_length_counts_characters_measured", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "9cd11079463b823e", h_schema: "ea2e9a5ee5a43d58", h_rule: "" },
-  { rel_id: 18, parent_id: 11, ordinal: 0, local_name: "__delta_length_counts_characters_text", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "2430e2fa2934bd10", h_schema: "6cd577d2d022c9c5", h_rule: "" },
-  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__frontier_length_counts_characters_text", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "fee482847112891f", h_schema: "2822306bd878024e", h_rule: "" },
-  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__next_frontier_length_counts_characters_text", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "4150169220e3ba3d", h_schema: "2822306bd878024e", h_rule: "" },
-  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__txt_length_counts_characters_text", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "d9dd4f76a9b2ae69", h_schema: "a477182a3bbcf663", h_rule: "" },
-  { rel_id: 22, parent_id: 18, ordinal: 0, local_name: "__txt___delta_length_counts_characters_text", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "e0e8da39bb7fcae9", h_schema: "a477182a3bbcf663", h_rule: "" },
+  { rel_id: 18, parent_id: 11, ordinal: 0, local_name: "__delta_length_counts_characters_text_758e6290c675", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "59c9d0ab899e57b9", h_schema: "6cd577d2d022c9c5", h_rule: "" },
+  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__frontier_length_counts_characters_text_758e6290c675", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "e7898d485602bd6b", h_schema: "2822306bd878024e", h_rule: "" },
+  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__next_frontier_length_counts_characters_text_758e6290c675", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "e2b72521b22785c5", h_schema: "2822306bd878024e", h_rule: "" },
+  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__txt_length_counts_characters_text_758e6290c675", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "c08c9bc0cb05ae14", h_schema: "a477182a3bbcf663", h_rule: "" },
+  { rel_id: 22, parent_id: 18, ordinal: 0, local_name: "__txt___delta_length_counts_characters_text_758e6290c675", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "a0dbb78b68238b05", h_schema: "a477182a3bbcf663", h_rule: "" },
   { rel_id: 23, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "c867b58d5c145667", h_schema: "", h_rule: "" },
   { rel_id: 24, parent_id: 8, ordinal: 0, local_name: "__support_next_length_counts_characters_measured", kind: "refcount", type_id: 0, arity: 3, module_id: 7, h_id: "c34275caafd017d7", h_schema: "", h_rule: "" },
   { rel_id: 25, parent_id: 8, ordinal: 0, local_name: "__new_length_counts_characters_measured", kind: "refcount_staging", type_id: 0, arity: 3, module_id: 7, h_id: "51f3bb523498c36f", h_schema: "", h_rule: "" },
@@ -234,31 +239,31 @@ const arrival_targets: readonly string[] = ["text"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "text", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["hello"] },
-  { rel: "text", sql: `INSERT OR IGNORE INTO "length_counts_characters_text" ("text") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["hello"] },
+  { rel: "text", sql: `INSERT OR IGNORE INTO "length_counts_characters_text_758e6290c675" ("text") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["hello"] },
   { rel: "text", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: [""] },
-  { rel: "text", sql: `INSERT OR IGNORE INTO "length_counts_characters_text" ("text") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [""] },
+  { rel: "text", sql: `INSERT OR IGNORE INTO "length_counts_characters_text_758e6290c675" ("text") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [""] },
   { rel: "text", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["é"] },
-  { rel: "text", sql: `INSERT OR IGNORE INTO "length_counts_characters_text" ("text") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["é"] },
+  { rel: "text", sql: `INSERT OR IGNORE INTO "length_counts_characters_text_758e6290c675" ("text") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["é"] },
   { rel: "measured", sql: `DELETE FROM "length_counts_characters_measured"`, params: [] },
-  { rel: "measured", sql: `INSERT OR IGNORE INTO "length_counts_characters_measured" ("text", "out") SELECT b0."text", length((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text")) FROM "length_counts_characters_text" b0`, params: [] },
+  { rel: "measured", sql: `INSERT OR IGNORE INTO "length_counts_characters_measured" ("text", "out") SELECT b0."text", length((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text")) FROM "length_counts_characters_text_758e6290c675" b0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
   measured: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text", t."out" FROM "__txt_length_counts_characters_measured" t`,
-  text: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text" FROM "__txt_length_counts_characters_text" t`,
+  text: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text" FROM "__txt_length_counts_characters_text_758e6290c675" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "measured", kind: "set", table_name: "length_counts_characters_measured", delta_table_name: "__delta_length_counts_characters_measured", frontier_table_name: "__frontier_length_counts_characters_measured", next_frontier_table_name: "__next_frontier_length_counts_characters_measured", columns: ["text", "out"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text", t."out", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_length_counts_characters_measured" t WHERE t."_sign" IN (-1, 1) GROUP BY t."text", t."out", t."_sign"`, rule_observers: [] },
-  { rel: "text", kind: "set", table_name: "length_counts_characters_text", delta_table_name: "__delta_length_counts_characters_text", frontier_table_name: "__frontier_length_counts_characters_text", next_frontier_table_name: "__next_frontier_length_counts_characters_text", columns: ["text"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "length_counts_characters_text" ("text") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "text"`, arrival_del_sql: `DELETE FROM "length_counts_characters_text" WHERE ("text") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "text"`, boundary_sql: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_length_counts_characters_text" t WHERE t."_sign" IN (-1, 1) GROUP BY t."text", t."_sign"`, rule_observers: ["measured/2"] },
+  { rel: "text", kind: "set", table_name: "length_counts_characters_text_758e6290c675", delta_table_name: "__delta_length_counts_characters_text_758e6290c675", frontier_table_name: "__frontier_length_counts_characters_text_758e6290c675", next_frontier_table_name: "__next_frontier_length_counts_characters_text_758e6290c675", columns: ["text"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "length_counts_characters_text_758e6290c675" ("text") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "text"`, arrival_del_sql: `DELETE FROM "length_counts_characters_text_758e6290c675" WHERE ("text") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "text"`, boundary_sql: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_length_counts_characters_text_758e6290c675" t WHERE t."_sign" IN (-1, 1) GROUP BY t."text", t."_sign"`, rule_observers: ["measured/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "measured", rule_id: "length_counts_characters:measured/2#1", head_delta_table_name: "__delta_length_counts_characters_measured", head_columns: ["text", "out"], insert_sql: `INSERT OR IGNORE INTO "length_counts_characters_measured" ("text", "out") SELECT DISTINCT d0."text", length((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."text")) FROM "__frontier_length_counts_characters_text" d0 WHERE d0."_phase" >= 0 RETURNING "text", "out"`, select_sql: `SELECT "text", "out" FROM "length_counts_characters_measured"`, recompute_sql: `DELETE FROM "length_counts_characters_measured";
-INSERT OR IGNORE INTO "length_counts_characters_measured" ("text", "out") SELECT b0."text", length((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text")) FROM "length_counts_characters_text" b0`, support_sql: [`DELETE FROM "__support_next_length_counts_characters_measured"`, `INSERT INTO "__support_next_length_counts_characters_measured" ("text", "out", "__refcount") SELECT "text", "out", sum("__refcount") FROM (SELECT b0."text" AS "text", length((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text")) AS "out", count(*) AS "__refcount" FROM "length_counts_characters_text" b0 GROUP BY b0."text", length((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text"))) GROUP BY "text", "out"`, `UPDATE "length_counts_characters_measured" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_length_counts_characters_measured" n WHERE n."text" = h."text" AND n."out" = h."out"), 0)`, `INSERT INTO "__delta_length_counts_characters_measured" ("_sign", "_sequence", "text", "out") SELECT -1, row_number() OVER () - 1, "text", "out" FROM "length_counts_characters_measured" WHERE "__refcount" <= 0`, `DELETE FROM "length_counts_characters_measured" WHERE "__refcount" <= 0`, `DELETE FROM "__new_length_counts_characters_measured"`, `INSERT INTO "__new_length_counts_characters_measured" ("text", "out", "__refcount") SELECT n."text", n."out", n."__refcount" FROM "__support_next_length_counts_characters_measured" n LEFT JOIN "length_counts_characters_measured" h ON n."text" = h."text" AND n."out" = h."out" WHERE h."text" IS NULL`, `INSERT INTO "__delta_length_counts_characters_measured" ("_sign", "_sequence", "text", "out") SELECT 1, "rowid" - 1, "text", "out" FROM "__new_length_counts_characters_measured"`, `INSERT INTO "__frontier_length_counts_characters_measured" ("_phase", "_sequence", "text", "out") SELECT ?, "rowid" - 1, "text", "out" FROM "__new_length_counts_characters_measured"`, `INSERT INTO "__next_frontier_length_counts_characters_measured" ("_phase", "_sequence", "text", "out") SELECT ?, "rowid" - 1, "text", "out" FROM "__new_length_counts_characters_measured"`, `INSERT OR IGNORE INTO "length_counts_characters_measured" ("text", "out", "__refcount") SELECT n."text", n."out", n."__refcount" FROM "__support_next_length_counts_characters_measured" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "measured", rule_id: "length_counts_characters:measured/2#1", head_delta_table_name: "__delta_length_counts_characters_measured", head_columns: ["text", "out"], insert_sql: `INSERT OR IGNORE INTO "length_counts_characters_measured" ("text", "out") SELECT DISTINCT d0."text", length((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."text")) FROM "__frontier_length_counts_characters_text_758e6290c675" d0 WHERE d0."_phase" >= 0 RETURNING "text", "out"`, select_sql: `SELECT "text", "out" FROM "length_counts_characters_measured"`, recompute_sql: `DELETE FROM "length_counts_characters_measured";
+INSERT OR IGNORE INTO "length_counts_characters_measured" ("text", "out") SELECT b0."text", length((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text")) FROM "length_counts_characters_text_758e6290c675" b0`, support_sql: [`DELETE FROM "__support_next_length_counts_characters_measured"`, `INSERT INTO "__support_next_length_counts_characters_measured" ("text", "out", "__refcount") SELECT "text", "out", sum("__refcount") FROM (SELECT b0."text" AS "text", length((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text")) AS "out", count(*) AS "__refcount" FROM "length_counts_characters_text_758e6290c675" b0 GROUP BY b0."text", length((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text"))) GROUP BY "text", "out"`, `UPDATE "length_counts_characters_measured" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_length_counts_characters_measured" n WHERE n."text" = h."text" AND n."out" = h."out"), 0)`, `INSERT INTO "__delta_length_counts_characters_measured" ("_sign", "_sequence", "text", "out") SELECT -1, row_number() OVER () - 1, "text", "out" FROM "length_counts_characters_measured" WHERE "__refcount" <= 0`, `DELETE FROM "length_counts_characters_measured" WHERE "__refcount" <= 0`, `DELETE FROM "__new_length_counts_characters_measured"`, `INSERT INTO "__new_length_counts_characters_measured" ("text", "out", "__refcount") SELECT n."text", n."out", n."__refcount" FROM "__support_next_length_counts_characters_measured" n LEFT JOIN "length_counts_characters_measured" h ON n."text" = h."text" AND n."out" = h."out" WHERE h."text" IS NULL`, `INSERT INTO "__delta_length_counts_characters_measured" ("_sign", "_sequence", "text", "out") SELECT 1, "rowid" - 1, "text", "out" FROM "__new_length_counts_characters_measured"`, `INSERT INTO "__frontier_length_counts_characters_measured" ("_phase", "_sequence", "text", "out") SELECT ?, "rowid" - 1, "text", "out" FROM "__new_length_counts_characters_measured"`, `INSERT INTO "__next_frontier_length_counts_characters_measured" ("_phase", "_sequence", "text", "out") SELECT ?, "rowid" - 1, "text", "out" FROM "__new_length_counts_characters_measured"`, `INSERT OR IGNORE INTO "length_counts_characters_measured" ("text", "out", "__refcount") SELECT n."text", n."out", n."__refcount" FROM "__support_next_length_counts_characters_measured" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const RECONCILE_EVERY_TICK = false;
@@ -309,6 +314,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

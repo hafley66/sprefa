@@ -53,7 +53,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -146,17 +146,21 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "float_negative_zero_canonical_boundary_score" ("__id" INTEGER PRIMARY KEY, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), UNIQUE ("value"))`,
-  `CREATE TEMP TABLE "__delta_float_negative_zero_canonical_boundary_score" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
-  `CREATE INDEX "__delta_float_negative_zero_canonical_boundary_score_sign" ON "__delta_float_negative_zero_canonical_boundary_score" ("_sign")`,
-  `CREATE INDEX "__delta_float_negative_zero_canonical_boundary_score_group" ON "__delta_float_negative_zero_canonical_boundary_score" ("value")`,
-  `CREATE TEMP TABLE "__frontier_float_negative_zero_canonical_boundary_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
-  `CREATE INDEX "__frontier_float_negative_zero_canonical_boundary_score_phase" ON "__frontier_float_negative_zero_canonical_boundary_score" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_float_negative_zero_canonical_boundary_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE TABLE "float_negative_zero_canonical_boundary_score_8742ec38c8d7" ("__id" INTEGER PRIMARY KEY, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), UNIQUE ("value"))`,
+  `CREATE TEMP TABLE "__delta_float_negative_zero_canonical_boundary_score_8742ec38c8d7" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE INDEX "__delta_float_negative_zero_canonical_boundary_score_8742ec38c8d7_sign" ON "__delta_float_negative_zero_canonical_boundary_score_8742ec38c8d7" ("_sign")`,
+  `CREATE INDEX "__delta_float_negative_zero_canonical_boundary_score_8742ec38c8d7_group" ON "__delta_float_negative_zero_canonical_boundary_score_8742ec38c8d7" ("value")`,
+  `CREATE TEMP TABLE "__frontier_float_negative_zero_canonical_boundary_score_8742ec38c8d7" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE INDEX "__frontier_float_negative_zero_canonical_boundary_score_8742ec38c8d7_phase" ON "__frontier_float_negative_zero_canonical_boundary_score_8742ec38c8d7" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_float_negative_zero_canonical_boundary_score_8742ec38c8d7" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   score: ["value"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  score: "float_negative_zero_canonical_boundary_score_8742ec38c8d7",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -177,9 +181,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 7, parent_id: 0, ordinal: 0, local_name: "float_negative_zero_canonical_boundary", kind: "module", type_id: 0, arity: 0, module_id: 7, h_id: "029f2ca57cdbc6e2", h_schema: "", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 0, local_name: "score", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "745004f845363362", h_schema: "bec07f8b9884a74a", h_rule: "" },
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "value", kind: "column", type_id: 3, arity: 0, module_id: 7, h_id: "a773408e86a4e4ab", h_schema: "", h_rule: "" },
-  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_float_negative_zero_canonical_boundary_score", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "1547a53aefd0cf05", h_schema: "77c595d6e8d5f80c", h_rule: "" },
-  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_float_negative_zero_canonical_boundary_score", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "4ad54f2b5aaafd78", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_float_negative_zero_canonical_boundary_score", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "8ec4da45ff5d73c8", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
+  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_float_negative_zero_canonical_boundary_score_8742ec38c8d7", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "5f1f17d2e76414ff", h_schema: "77c595d6e8d5f80c", h_rule: "" },
+  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_float_negative_zero_canonical_boundary_score_8742ec38c8d7", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "891861886ed9eae0", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_float_negative_zero_canonical_boundary_score_8742ec38c8d7", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "6d71d174b2329833", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
   { rel_id: 13, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "7a973766196c8c09", h_schema: "", h_rule: "" },
 ];
 
@@ -190,15 +194,15 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["score"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "score", sql: `INSERT OR IGNORE INTO "float_negative_zero_canonical_boundary_score" ("value") VALUES (?)`, params: [-0.0] },
+  { rel: "score", sql: `INSERT OR IGNORE INTO "float_negative_zero_canonical_boundary_score_8742ec38c8d7" ("value") VALUES (?)`, params: [-0.0] },
 ];
 
 const final_select: Record<string, string> = {
-  score: `SELECT t."value" FROM "float_negative_zero_canonical_boundary_score" t`,
+  score: `SELECT t."value" FROM "float_negative_zero_canonical_boundary_score_8742ec38c8d7" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "score", kind: "set", table_name: "float_negative_zero_canonical_boundary_score", delta_table_name: "__delta_float_negative_zero_canonical_boundary_score", frontier_table_name: "__frontier_float_negative_zero_canonical_boundary_score", next_frontier_table_name: "__next_frontier_float_negative_zero_canonical_boundary_score", columns: ["value"], column_types: ["float"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "float_negative_zero_canonical_boundary_score" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "float_negative_zero_canonical_boundary_score" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_float_negative_zero_canonical_boundary_score" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "score", kind: "set", table_name: "float_negative_zero_canonical_boundary_score_8742ec38c8d7", delta_table_name: "__delta_float_negative_zero_canonical_boundary_score_8742ec38c8d7", frontier_table_name: "__frontier_float_negative_zero_canonical_boundary_score_8742ec38c8d7", next_frontier_table_name: "__next_frontier_float_negative_zero_canonical_boundary_score_8742ec38c8d7", columns: ["value"], column_types: ["float"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "float_negative_zero_canonical_boundary_score_8742ec38c8d7" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "float_negative_zero_canonical_boundary_score_8742ec38c8d7" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_float_negative_zero_canonical_boundary_score_8742ec38c8d7" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -252,6 +256,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

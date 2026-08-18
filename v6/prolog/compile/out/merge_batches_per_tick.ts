@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -159,26 +159,26 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "merge_batches_per_tick_event_a" ("item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_merge_batches_per_tick_event_a" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "merge_batches_per_tick_event_a" t`,
-  `CREATE TABLE "merge_batches_per_tick_event_b" ("item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_merge_batches_per_tick_event_b" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "merge_batches_per_tick_event_b" t`,
+  `CREATE TABLE "merge_batches_per_tick_event_a_193643fb2783" ("item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_merge_batches_per_tick_event_a_193643fb2783" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "merge_batches_per_tick_event_a_193643fb2783" t`,
+  `CREATE TABLE "merge_batches_per_tick_event_b_193643fb2783" ("item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_merge_batches_per_tick_event_b_193643fb2783" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "merge_batches_per_tick_event_b_193643fb2783" t`,
   `CREATE TABLE "merge_batches_per_tick_out" ("item" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_merge_batches_per_tick_out" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "merge_batches_per_tick_out" t`,
-  `CREATE TEMP TABLE "__delta_merge_batches_per_tick_event_a" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_merge_batches_per_tick_event_a_sign" ON "__delta_merge_batches_per_tick_event_a" ("_sign")`,
-  `CREATE INDEX "__delta_merge_batches_per_tick_event_a_group" ON "__delta_merge_batches_per_tick_event_a" ("item")`,
-  `CREATE TEMP TABLE "__frontier_merge_batches_per_tick_event_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_merge_batches_per_tick_event_a_phase" ON "__frontier_merge_batches_per_tick_event_a" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_merge_batches_per_tick_event_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_merge_batches_per_tick_event_a" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_merge_batches_per_tick_event_a" t`,
-  `CREATE TEMP TABLE "__delta_merge_batches_per_tick_event_b" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_merge_batches_per_tick_event_b_sign" ON "__delta_merge_batches_per_tick_event_b" ("_sign")`,
-  `CREATE INDEX "__delta_merge_batches_per_tick_event_b_group" ON "__delta_merge_batches_per_tick_event_b" ("item")`,
-  `CREATE TEMP TABLE "__frontier_merge_batches_per_tick_event_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_merge_batches_per_tick_event_b_phase" ON "__frontier_merge_batches_per_tick_event_b" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_merge_batches_per_tick_event_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_merge_batches_per_tick_event_b" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_merge_batches_per_tick_event_b" t`,
+  `CREATE TEMP TABLE "__delta_merge_batches_per_tick_event_a_193643fb2783" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_merge_batches_per_tick_event_a_193643fb2783_sign" ON "__delta_merge_batches_per_tick_event_a_193643fb2783" ("_sign")`,
+  `CREATE INDEX "__delta_merge_batches_per_tick_event_a_193643fb2783_group" ON "__delta_merge_batches_per_tick_event_a_193643fb2783" ("item")`,
+  `CREATE TEMP TABLE "__frontier_merge_batches_per_tick_event_a_193643fb2783" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_merge_batches_per_tick_event_a_193643fb2783_phase" ON "__frontier_merge_batches_per_tick_event_a_193643fb2783" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_merge_batches_per_tick_event_a_193643fb2783" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_merge_batches_per_tick_event_a_193643fb2783" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_merge_batches_per_tick_event_a_193643fb2783" t`,
+  `CREATE TEMP TABLE "__delta_merge_batches_per_tick_event_b_193643fb2783" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_merge_batches_per_tick_event_b_193643fb2783_sign" ON "__delta_merge_batches_per_tick_event_b_193643fb2783" ("_sign")`,
+  `CREATE INDEX "__delta_merge_batches_per_tick_event_b_193643fb2783_group" ON "__delta_merge_batches_per_tick_event_b_193643fb2783" ("item")`,
+  `CREATE TEMP TABLE "__frontier_merge_batches_per_tick_event_b_193643fb2783" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_merge_batches_per_tick_event_b_193643fb2783_phase" ON "__frontier_merge_batches_per_tick_event_b_193643fb2783" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_merge_batches_per_tick_event_b_193643fb2783" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_merge_batches_per_tick_event_b_193643fb2783" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_merge_batches_per_tick_event_b_193643fb2783" t`,
   `CREATE TEMP TABLE "__delta_merge_batches_per_tick_out" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_merge_batches_per_tick_out_sign" ON "__delta_merge_batches_per_tick_out" ("_sign")`,
   `CREATE INDEX "__delta_merge_batches_per_tick_out_group" ON "__delta_merge_batches_per_tick_out" ("item")`,
@@ -192,6 +192,12 @@ const rel_columns: Record<string, readonly string[]> = {
   event_a: ["item"],
   event_b: ["item"],
   out: ["item"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  event_a: "merge_batches_per_tick_event_a_193643fb2783",
+  event_b: "merge_batches_per_tick_event_b_193643fb2783",
+  out: "merge_batches_per_tick_out",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -220,16 +226,16 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "item", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "861fabccc83d3a1c", h_schema: "", h_rule: "" },
   { rel_id: 12, parent_id: 7, ordinal: 0, local_name: "out", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "ffb70236b00a5e28", h_schema: "4f9957ccb96234b6", h_rule: "0a8d801033981190" },
   { rel_id: 13, parent_id: 12, ordinal: 1, local_name: "item", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "f0d24282179f14fa", h_schema: "", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_merge_batches_per_tick_event_a", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "064eff2324912e4a", h_schema: "15e84563064d7c4c", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_merge_batches_per_tick_event_a", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "721f002c8366453b", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_merge_batches_per_tick_event_a", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "a830d443f221f220", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_merge_batches_per_tick_event_a", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "210e6e967cad2027", h_schema: "4f9957ccb96234b6", h_rule: "" },
-  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_merge_batches_per_tick_event_a", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "56e2fd7e4b11e4d3", h_schema: "4f9957ccb96234b6", h_rule: "" },
-  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__delta_merge_batches_per_tick_event_b", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "70217fe3850e003d", h_schema: "15e84563064d7c4c", h_rule: "" },
-  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__frontier_merge_batches_per_tick_event_b", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "bebf8cbe0903eca1", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__next_frontier_merge_batches_per_tick_event_b", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "cb1a2b41a652f08d", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__txt_merge_batches_per_tick_event_b", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "fe88f5342d59d876", h_schema: "4f9957ccb96234b6", h_rule: "" },
-  { rel_id: 23, parent_id: 19, ordinal: 0, local_name: "__txt___delta_merge_batches_per_tick_event_b", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "e5daa04b156fc0c1", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_merge_batches_per_tick_event_a_193643fb2783", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "9fdeaf94fe1cbcc9", h_schema: "15e84563064d7c4c", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_merge_batches_per_tick_event_a_193643fb2783", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "c07a9b6685cc6631", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_merge_batches_per_tick_event_a_193643fb2783", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "fdf69fcbc265346c", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_merge_batches_per_tick_event_a_193643fb2783", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "185bbb43a35e24e7", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_merge_batches_per_tick_event_a_193643fb2783", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "ca8341e2bc281d1f", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__delta_merge_batches_per_tick_event_b_193643fb2783", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "bdd2c9fdc78f0c7a", h_schema: "15e84563064d7c4c", h_rule: "" },
+  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__frontier_merge_batches_per_tick_event_b_193643fb2783", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "690e88e05186449a", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__next_frontier_merge_batches_per_tick_event_b_193643fb2783", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "03c2cecd23a59be6", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__txt_merge_batches_per_tick_event_b_193643fb2783", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "e12640400f67d64b", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 23, parent_id: 19, ordinal: 0, local_name: "__txt___delta_merge_batches_per_tick_event_b_193643fb2783", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "10d37fb61e40f27d", h_schema: "4f9957ccb96234b6", h_rule: "" },
   { rel_id: 24, parent_id: 12, ordinal: 0, local_name: "__delta_merge_batches_per_tick_out", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "4474b84e19a54d06", h_schema: "15e84563064d7c4c", h_rule: "" },
   { rel_id: 25, parent_id: 12, ordinal: 0, local_name: "__frontier_merge_batches_per_tick_out", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "c985d46610744a46", h_schema: "c35a652f9e4a4d00", h_rule: "" },
   { rel_id: 26, parent_id: 12, ordinal: 0, local_name: "__next_frontier_merge_batches_per_tick_out", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "3ccf1b1b03e9cf56", h_schema: "c35a652f9e4a4d00", h_rule: "" },
@@ -250,20 +256,20 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  event_a: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_merge_batches_per_tick_event_a" t`,
-  event_b: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_merge_batches_per_tick_event_b" t`,
+  event_a: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_merge_batches_per_tick_event_a_193643fb2783" t`,
+  event_b: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_merge_batches_per_tick_event_b_193643fb2783" t`,
   out: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_merge_batches_per_tick_out" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "event_a", kind: "log", table_name: "merge_batches_per_tick_event_a", delta_table_name: "__delta_merge_batches_per_tick_event_a", frontier_table_name: "__frontier_merge_batches_per_tick_event_a", next_frontier_table_name: "__next_frontier_merge_batches_per_tick_event_a", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "merge_batches_per_tick_event_a" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_merge_batches_per_tick_event_a" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["out/1"] },
-  { rel: "event_b", kind: "log", table_name: "merge_batches_per_tick_event_b", delta_table_name: "__delta_merge_batches_per_tick_event_b", frontier_table_name: "__frontier_merge_batches_per_tick_event_b", next_frontier_table_name: "__next_frontier_merge_batches_per_tick_event_b", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "merge_batches_per_tick_event_b" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_merge_batches_per_tick_event_b" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["out/1"] },
+  { rel: "event_a", kind: "log", table_name: "merge_batches_per_tick_event_a_193643fb2783", delta_table_name: "__delta_merge_batches_per_tick_event_a_193643fb2783", frontier_table_name: "__frontier_merge_batches_per_tick_event_a_193643fb2783", next_frontier_table_name: "__next_frontier_merge_batches_per_tick_event_a_193643fb2783", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "merge_batches_per_tick_event_a_193643fb2783" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_merge_batches_per_tick_event_a_193643fb2783" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["out/1"] },
+  { rel: "event_b", kind: "log", table_name: "merge_batches_per_tick_event_b_193643fb2783", delta_table_name: "__delta_merge_batches_per_tick_event_b_193643fb2783", frontier_table_name: "__frontier_merge_batches_per_tick_event_b_193643fb2783", next_frontier_table_name: "__next_frontier_merge_batches_per_tick_event_b_193643fb2783", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "merge_batches_per_tick_event_b_193643fb2783" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_merge_batches_per_tick_event_b_193643fb2783" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["out/1"] },
   { rel: "out", kind: "log", table_name: "merge_batches_per_tick_out", delta_table_name: "__delta_merge_batches_per_tick_out", frontier_table_name: "__frontier_merge_batches_per_tick_out", next_frontier_table_name: "__next_frontier_merge_batches_per_tick_out", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_merge_batches_per_tick_out" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "out", rule_id: "merge_batches_per_tick:out/1#1", head_kind: "log", head_table_name: "merge_batches_per_tick_out", head_delta_table_name: "__delta_merge_batches_per_tick_out", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_merge_batches_per_tick_event_a" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "out", rule_id: "merge_batches_per_tick:out/1#2", head_kind: "log", head_table_name: "merge_batches_per_tick_out", head_delta_table_name: "__delta_merge_batches_per_tick_out", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_merge_batches_per_tick_event_b" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "out", rule_id: "merge_batches_per_tick:out/1#1", head_kind: "log", head_table_name: "merge_batches_per_tick_out", head_delta_table_name: "__delta_merge_batches_per_tick_out", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_merge_batches_per_tick_event_a_193643fb2783" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "out", rule_id: "merge_batches_per_tick:out/1#2", head_kind: "log", head_table_name: "merge_batches_per_tick_out", head_delta_table_name: "__delta_merge_batches_per_tick_out", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_merge_batches_per_tick_event_b_193643fb2783" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -318,6 +324,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

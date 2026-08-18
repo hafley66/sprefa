@@ -56,7 +56,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -161,8 +161,8 @@ const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "retention_single_arm_still_prunes_journal" ("payload" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_retention_single_arm_still_prunes_journal" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "retention_single_arm_still_prunes_journal" t`,
-  `CREATE TABLE "retention_single_arm_still_prunes_ping" ("payload" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_retention_single_arm_still_prunes_ping" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "retention_single_arm_still_prunes_ping" t`,
+  `CREATE TABLE "retention_single_arm_still_prunes_ping_39b063348338" ("payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_retention_single_arm_still_prunes_ping_39b063348338" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "retention_single_arm_still_prunes_ping_39b063348338" t`,
   `CREATE TEMP TABLE "__delta_retention_single_arm_still_prunes_journal" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_retention_single_arm_still_prunes_journal_sign" ON "__delta_retention_single_arm_still_prunes_journal" ("_sign")`,
   `CREATE INDEX "__delta_retention_single_arm_still_prunes_journal_group" ON "__delta_retention_single_arm_still_prunes_journal" ("payload")`,
@@ -170,18 +170,23 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_retention_single_arm_still_prunes_journal_phase" ON "__frontier_retention_single_arm_still_prunes_journal" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_retention_single_arm_still_prunes_journal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt___delta_retention_single_arm_still_prunes_journal" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_retention_single_arm_still_prunes_journal" t`,
-  `CREATE TEMP TABLE "__delta_retention_single_arm_still_prunes_ping" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_retention_single_arm_still_prunes_ping_sign" ON "__delta_retention_single_arm_still_prunes_ping" ("_sign")`,
-  `CREATE INDEX "__delta_retention_single_arm_still_prunes_ping_group" ON "__delta_retention_single_arm_still_prunes_ping" ("payload")`,
-  `CREATE TEMP TABLE "__frontier_retention_single_arm_still_prunes_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_retention_single_arm_still_prunes_ping_phase" ON "__frontier_retention_single_arm_still_prunes_ping" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_retention_single_arm_still_prunes_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_retention_single_arm_still_prunes_ping" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_retention_single_arm_still_prunes_ping" t`,
+  `CREATE TEMP TABLE "__delta_retention_single_arm_still_prunes_ping_39b063348338" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_retention_single_arm_still_prunes_ping_39b063348338_sign" ON "__delta_retention_single_arm_still_prunes_ping_39b063348338" ("_sign")`,
+  `CREATE INDEX "__delta_retention_single_arm_still_prunes_ping_39b063348338_group" ON "__delta_retention_single_arm_still_prunes_ping_39b063348338" ("payload")`,
+  `CREATE TEMP TABLE "__frontier_retention_single_arm_still_prunes_ping_39b063348338" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_retention_single_arm_still_prunes_ping_39b063348338_phase" ON "__frontier_retention_single_arm_still_prunes_ping_39b063348338" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_retention_single_arm_still_prunes_ping_39b063348338" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_retention_single_arm_still_prunes_ping_39b063348338" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_retention_single_arm_still_prunes_ping_39b063348338" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   journal: ["payload"],
   ping: ["payload"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  journal: "retention_single_arm_still_prunes_journal",
+  ping: "retention_single_arm_still_prunes_ping_39b063348338",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -211,11 +216,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_retention_single_arm_still_prunes_journal", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "c9fca79cb5e6ddfc", h_schema: "cda92b437bd60136", h_rule: "" },
   { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__txt_retention_single_arm_still_prunes_journal", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "6525483aa8375161", h_schema: "c78b9e06d3cd491a", h_rule: "" },
   { rel_id: 16, parent_id: 12, ordinal: 0, local_name: "__txt___delta_retention_single_arm_still_prunes_journal", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "c5bff68b728c4cf4", h_schema: "c78b9e06d3cd491a", h_rule: "" },
-  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__delta_retention_single_arm_still_prunes_ping", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "ca358d94212e8925", h_schema: "a78080c56fbc69a8", h_rule: "" },
-  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__frontier_retention_single_arm_still_prunes_ping", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "8f2c62a01aa4d9f9", h_schema: "cda92b437bd60136", h_rule: "" },
-  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__next_frontier_retention_single_arm_still_prunes_ping", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "6cb334989fcb6001", h_schema: "cda92b437bd60136", h_rule: "" },
-  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__txt_retention_single_arm_still_prunes_ping", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "d6aec44896cfc797", h_schema: "c78b9e06d3cd491a", h_rule: "" },
-  { rel_id: 21, parent_id: 17, ordinal: 0, local_name: "__txt___delta_retention_single_arm_still_prunes_ping", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "a38b6925c45f3fd9", h_schema: "c78b9e06d3cd491a", h_rule: "" },
+  { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__delta_retention_single_arm_still_prunes_ping_39b063348338", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "167e7044504c901d", h_schema: "a78080c56fbc69a8", h_rule: "" },
+  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__frontier_retention_single_arm_still_prunes_ping_39b063348338", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "9a59f905c20eae3b", h_schema: "cda92b437bd60136", h_rule: "" },
+  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__next_frontier_retention_single_arm_still_prunes_ping_39b063348338", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "cedaccaf2ef0d424", h_schema: "cda92b437bd60136", h_rule: "" },
+  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__txt_retention_single_arm_still_prunes_ping_39b063348338", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "b30fcf6cb8344e94", h_schema: "c78b9e06d3cd491a", h_rule: "" },
+  { rel_id: 21, parent_id: 17, ordinal: 0, local_name: "__txt___delta_retention_single_arm_still_prunes_ping_39b063348338", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "2a27e362ca884c42", h_schema: "c78b9e06d3cd491a", h_rule: "" },
   { rel_id: 22, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "243c37dc17c8507e", h_schema: "", h_rule: "" },
   { rel_id: 23, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "3ae10aa312065f46", h_schema: "", h_rule: "" },
   { rel_id: 24, parent_id: 11, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "cc88e82b53ccd796", h_schema: "", h_rule: "" },
@@ -231,16 +236,16 @@ const boot: readonly IBootStatement[] = [
 
 const final_select: Record<string, string> = {
   journal: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_retention_single_arm_still_prunes_journal" t`,
-  ping: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_retention_single_arm_still_prunes_ping" t`,
+  ping: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_retention_single_arm_still_prunes_ping_39b063348338" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "journal", kind: "log", table_name: "retention_single_arm_still_prunes_journal", delta_table_name: "__delta_retention_single_arm_still_prunes_journal", frontier_table_name: "__frontier_retention_single_arm_still_prunes_journal", next_frontier_table_name: "__next_frontier_retention_single_arm_still_prunes_journal", columns: ["payload"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_retention_single_arm_still_prunes_journal" t WHERE t."_sign" IN (-1, 1) GROUP BY t."payload", t."_sign"`, rule_observers: [] },
-  { rel: "ping", kind: "log", table_name: "retention_single_arm_still_prunes_ping", delta_table_name: "__delta_retention_single_arm_still_prunes_ping", frontier_table_name: "__frontier_retention_single_arm_still_prunes_ping", next_frontier_table_name: "__next_frontier_retention_single_arm_still_prunes_ping", columns: ["payload"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "retention_single_arm_still_prunes_ping" ("payload") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "payload"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_retention_single_arm_still_prunes_ping" t WHERE t."_sign" IN (-1, 1) GROUP BY t."payload", t."_sign"`, rule_observers: ["journal/1"] },
+  { rel: "ping", kind: "log", table_name: "retention_single_arm_still_prunes_ping_39b063348338", delta_table_name: "__delta_retention_single_arm_still_prunes_ping_39b063348338", frontier_table_name: "__frontier_retention_single_arm_still_prunes_ping_39b063348338", next_frontier_table_name: "__next_frontier_retention_single_arm_still_prunes_ping_39b063348338", columns: ["payload"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "retention_single_arm_still_prunes_ping_39b063348338" ("payload") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "payload"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_retention_single_arm_still_prunes_ping_39b063348338" t WHERE t."_sign" IN (-1, 1) GROUP BY t."payload", t."_sign"`, rule_observers: ["journal/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "journal", rule_id: "retention_single_arm_still_prunes:journal/1#1", head_kind: "log", head_table_name: "retention_single_arm_still_prunes_journal", head_delta_table_name: "__delta_retention_single_arm_still_prunes_journal", head_columns: ["payload"], key_indices: [], project_sql: `SELECT d0."payload" AS "payload" FROM "__frontier_retention_single_arm_still_prunes_ping" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "journal", rule_id: "retention_single_arm_still_prunes:journal/1#1", head_kind: "log", head_table_name: "retention_single_arm_still_prunes_journal", head_delta_table_name: "__delta_retention_single_arm_still_prunes_journal", head_columns: ["payload"], key_indices: [], project_sql: `SELECT d0."payload" AS "payload" FROM "__frontier_retention_single_arm_still_prunes_ping_39b063348338" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -302,6 +307,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

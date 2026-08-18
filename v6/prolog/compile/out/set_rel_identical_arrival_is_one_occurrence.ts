@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -158,17 +158,17 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "set_rel_identical_arrival_is_one_occurrence_ev" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, UNIQUE ("name"))`,
-  `CREATE TEMP VIEW "__txt_set_rel_identical_arrival_is_one_occurrence_ev" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "set_rel_identical_arrival_is_one_occurrence_ev" t`,
+  `CREATE TABLE "set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, UNIQUE ("name"))`,
+  `CREATE TEMP VIEW "__txt_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" t`,
   `CREATE TABLE "set_rel_identical_arrival_is_one_occurrence_fired" ("name" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_set_rel_identical_arrival_is_one_occurrence_fired" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "set_rel_identical_arrival_is_one_occurrence_fired" t`,
-  `CREATE TEMP TABLE "__delta_set_rel_identical_arrival_is_one_occurrence_ev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_set_rel_identical_arrival_is_one_occurrence_ev_sign" ON "__delta_set_rel_identical_arrival_is_one_occurrence_ev" ("_sign")`,
-  `CREATE INDEX "__delta_set_rel_identical_arrival_is_one_occurrence_ev_group" ON "__delta_set_rel_identical_arrival_is_one_occurrence_ev" ("name")`,
-  `CREATE TEMP TABLE "__frontier_set_rel_identical_arrival_is_one_occurrence_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_set_rel_identical_arrival_is_one_occurrence_ev_phase" ON "__frontier_set_rel_identical_arrival_is_one_occurrence_ev" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_set_rel_identical_arrival_is_one_occurrence_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_set_rel_identical_arrival_is_one_occurrence_ev" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_set_rel_identical_arrival_is_one_occurrence_ev" t`,
+  `CREATE TEMP TABLE "__delta_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9_sign" ON "__delta_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" ("_sign")`,
+  `CREATE INDEX "__delta_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9_group" ON "__delta_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" ("name")`,
+  `CREATE TEMP TABLE "__frontier_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9_phase" ON "__frontier_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" t`,
   `CREATE TEMP TABLE "__delta_set_rel_identical_arrival_is_one_occurrence_fired" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_set_rel_identical_arrival_is_one_occurrence_fired_sign" ON "__delta_set_rel_identical_arrival_is_one_occurrence_fired" ("_sign")`,
   `CREATE INDEX "__delta_set_rel_identical_arrival_is_one_occurrence_fired_group" ON "__delta_set_rel_identical_arrival_is_one_occurrence_fired" ("name")`,
@@ -181,6 +181,11 @@ const ddl: readonly string[] = [
 const rel_columns: Record<string, readonly string[]> = {
   ev: ["name"],
   fired: ["name"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  ev: "set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9",
+  fired: "set_rel_identical_arrival_is_one_occurrence_fired",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -205,11 +210,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "062afe340de5d4f5", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 7, ordinal: 0, local_name: "fired", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "a712f3f7db259327", h_schema: "a30b139c04a632dd", h_rule: "21f2344081b971a7" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "372c897043f861da", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_set_rel_identical_arrival_is_one_occurrence_ev", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "4c56ea499fdf64a0", h_schema: "178788c545e561e2", h_rule: "" },
-  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_set_rel_identical_arrival_is_one_occurrence_ev", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "caa7ae501dac4706", h_schema: "de5b51999f205894", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_set_rel_identical_arrival_is_one_occurrence_ev", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "73805e7f52b7e308", h_schema: "de5b51999f205894", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__txt_set_rel_identical_arrival_is_one_occurrence_ev", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "2fd92a4ec23cf6b7", h_schema: "a30b139c04a632dd", h_rule: "" },
-  { rel_id: 16, parent_id: 12, ordinal: 0, local_name: "__txt___delta_set_rel_identical_arrival_is_one_occurrence_ev", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "0487197aa614e6d9", h_schema: "a30b139c04a632dd", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__delta_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "cfab8190191d2bd9", h_schema: "178788c545e561e2", h_rule: "" },
+  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__frontier_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "2d57f9e763d1d29c", h_schema: "de5b51999f205894", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__next_frontier_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "716dbcadf60d19af", h_schema: "de5b51999f205894", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__txt_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "b7c27eb4ef62bfec", h_schema: "a30b139c04a632dd", h_rule: "" },
+  { rel_id: 16, parent_id: 12, ordinal: 0, local_name: "__txt___delta_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "215baa64d7e6b1f0", h_schema: "a30b139c04a632dd", h_rule: "" },
   { rel_id: 17, parent_id: 10, ordinal: 0, local_name: "__delta_set_rel_identical_arrival_is_one_occurrence_fired", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "6aa5c68a455da693", h_schema: "178788c545e561e2", h_rule: "" },
   { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__frontier_set_rel_identical_arrival_is_one_occurrence_fired", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "b50bb980f7563f8a", h_schema: "de5b51999f205894", h_rule: "" },
   { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__next_frontier_set_rel_identical_arrival_is_one_occurrence_fired", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "721b6b55167fcb9d", h_schema: "de5b51999f205894", h_rule: "" },
@@ -229,17 +234,17 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  ev: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_set_rel_identical_arrival_is_one_occurrence_ev" t`,
+  ev: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" t`,
   fired: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_set_rel_identical_arrival_is_one_occurrence_fired" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "ev", kind: "set", table_name: "set_rel_identical_arrival_is_one_occurrence_ev", delta_table_name: "__delta_set_rel_identical_arrival_is_one_occurrence_ev", frontier_table_name: "__frontier_set_rel_identical_arrival_is_one_occurrence_ev", next_frontier_table_name: "__next_frontier_set_rel_identical_arrival_is_one_occurrence_ev", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "set_rel_identical_arrival_is_one_occurrence_ev" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrival_del_sql: `DELETE FROM "set_rel_identical_arrival_is_one_occurrence_ev" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_set_rel_identical_arrival_is_one_occurrence_ev" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."_sign"`, rule_observers: ["fired/1"] },
+  { rel: "ev", kind: "set", table_name: "set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9", delta_table_name: "__delta_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9", frontier_table_name: "__frontier_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9", next_frontier_table_name: "__next_frontier_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrival_del_sql: `DELETE FROM "set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."_sign"`, rule_observers: ["fired/1"] },
   { rel: "fired", kind: "log", table_name: "set_rel_identical_arrival_is_one_occurrence_fired", delta_table_name: "__delta_set_rel_identical_arrival_is_one_occurrence_fired", frontier_table_name: "__frontier_set_rel_identical_arrival_is_one_occurrence_fired", next_frontier_table_name: "__next_frontier_set_rel_identical_arrival_is_one_occurrence_fired", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_set_rel_identical_arrival_is_one_occurrence_fired" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "fired", rule_id: "set_rel_identical_arrival_is_one_occurrence:fired/1#1", head_kind: "log", head_table_name: "set_rel_identical_arrival_is_one_occurrence_fired", head_delta_table_name: "__delta_set_rel_identical_arrival_is_one_occurrence_fired", head_columns: ["name"], key_indices: [], project_sql: `SELECT d0."name" AS "name" FROM "__frontier_set_rel_identical_arrival_is_one_occurrence_ev" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "fired", rule_id: "set_rel_identical_arrival_is_one_occurrence:fired/1#1", head_kind: "log", head_table_name: "set_rel_identical_arrival_is_one_occurrence_fired", head_delta_table_name: "__delta_set_rel_identical_arrival_is_one_occurrence_fired", head_columns: ["name"], key_indices: [], project_sql: `SELECT d0."name" AS "name" FROM "__frontier_set_rel_identical_arrival_is_one_occurrence_ev_7a5ef237b7b9" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -294,6 +299,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

@@ -53,7 +53,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -146,17 +146,21 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "int_accepts_integral_float_measure" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
-  `CREATE TEMP TABLE "__delta_int_accepts_integral_float_measure" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_int_accepts_integral_float_measure_sign" ON "__delta_int_accepts_integral_float_measure" ("_sign")`,
-  `CREATE INDEX "__delta_int_accepts_integral_float_measure_group" ON "__delta_int_accepts_integral_float_measure" ("value")`,
-  `CREATE TEMP TABLE "__frontier_int_accepts_integral_float_measure" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_int_accepts_integral_float_measure_phase" ON "__frontier_int_accepts_integral_float_measure" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_int_accepts_integral_float_measure" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TABLE "int_accepts_integral_float_measure_1230b8accab2" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
+  `CREATE TEMP TABLE "__delta_int_accepts_integral_float_measure_1230b8accab2" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_int_accepts_integral_float_measure_1230b8accab2_sign" ON "__delta_int_accepts_integral_float_measure_1230b8accab2" ("_sign")`,
+  `CREATE INDEX "__delta_int_accepts_integral_float_measure_1230b8accab2_group" ON "__delta_int_accepts_integral_float_measure_1230b8accab2" ("value")`,
+  `CREATE TEMP TABLE "__frontier_int_accepts_integral_float_measure_1230b8accab2" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_int_accepts_integral_float_measure_1230b8accab2_phase" ON "__frontier_int_accepts_integral_float_measure_1230b8accab2" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_int_accepts_integral_float_measure_1230b8accab2" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   measure: ["value"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  measure: "int_accepts_integral_float_measure_1230b8accab2",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -177,9 +181,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 7, parent_id: 0, ordinal: 0, local_name: "int_accepts_integral_float", kind: "module", type_id: 0, arity: 0, module_id: 7, h_id: "c92d584d75d9b7d3", h_schema: "", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 0, local_name: "measure", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "b7efc2058eca1520", h_schema: "7e38e778eed579a5", h_rule: "" },
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "value", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "a2f23110093623b4", h_schema: "", h_rule: "" },
-  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_int_accepts_integral_float_measure", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "8c534ca05270f63b", h_schema: "d59487c5bf23d586", h_rule: "" },
-  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_int_accepts_integral_float_measure", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "e4c878e083999daf", h_schema: "f0cee8555a0aeabb", h_rule: "" },
-  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_int_accepts_integral_float_measure", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "da60ec7b3e0742c4", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_int_accepts_integral_float_measure_1230b8accab2", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "b8488620b02692e7", h_schema: "d59487c5bf23d586", h_rule: "" },
+  { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_int_accepts_integral_float_measure_1230b8accab2", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "aad30f15b5869fe0", h_schema: "f0cee8555a0aeabb", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_int_accepts_integral_float_measure_1230b8accab2", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "310e2f654b4bdadf", h_schema: "f0cee8555a0aeabb", h_rule: "" },
   { rel_id: 13, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "e6dd84d7c722a318", h_schema: "", h_rule: "" },
 ];
 
@@ -190,15 +194,15 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["measure"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "measure", sql: `INSERT OR IGNORE INTO "int_accepts_integral_float_measure" ("value") VALUES (?)`, params: [1.0] },
+  { rel: "measure", sql: `INSERT OR IGNORE INTO "int_accepts_integral_float_measure_1230b8accab2" ("value") VALUES (?)`, params: [1.0] },
 ];
 
 const final_select: Record<string, string> = {
-  measure: `SELECT t."value" FROM "int_accepts_integral_float_measure" t`,
+  measure: `SELECT t."value" FROM "int_accepts_integral_float_measure_1230b8accab2" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "measure", kind: "set", table_name: "int_accepts_integral_float_measure", delta_table_name: "__delta_int_accepts_integral_float_measure", frontier_table_name: "__frontier_int_accepts_integral_float_measure", next_frontier_table_name: "__next_frontier_int_accepts_integral_float_measure", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "int_accepts_integral_float_measure" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "int_accepts_integral_float_measure" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_int_accepts_integral_float_measure" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "measure", kind: "set", table_name: "int_accepts_integral_float_measure_1230b8accab2", delta_table_name: "__delta_int_accepts_integral_float_measure_1230b8accab2", frontier_table_name: "__frontier_int_accepts_integral_float_measure_1230b8accab2", next_frontier_table_name: "__next_frontier_int_accepts_integral_float_measure_1230b8accab2", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "int_accepts_integral_float_measure_1230b8accab2" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "int_accepts_integral_float_measure_1230b8accab2" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_int_accepts_integral_float_measure_1230b8accab2" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -252,6 +256,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

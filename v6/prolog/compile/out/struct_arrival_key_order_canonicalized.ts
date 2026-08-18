@@ -58,7 +58,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -151,7 +151,7 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 export const STRUCT_TYPES: readonly IStructTypePlan[] = [
-  { name: "span", columns: ["start", "end"], refs: [null, null], key_indices: [0, 1], conflict_sql: `SELECT i.value AS "__requested", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "struct_arrival_key_order_canonicalized_span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]') WHERE json_array(t."start", t."end") <> i.value`, intern_sql: `INSERT OR IGNORE INTO "struct_arrival_key_order_canonicalized_span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`, lookup_sql: `SELECT i.value AS "__lookup", t."__id", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "struct_arrival_key_order_canonicalized_span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]')` },
+  { name: "span", columns: ["start", "end"], refs: [null, null], key_indices: [0, 1], conflict_sql: `SELECT i.value AS "__requested", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "struct_arrival_key_order_canonicalized_span_4843e6bb6162" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]') WHERE json_array(t."start", t."end") <> i.value`, intern_sql: `INSERT OR IGNORE INTO "struct_arrival_key_order_canonicalized_span_4843e6bb6162" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`, lookup_sql: `SELECT i.value AS "__lookup", t."__id", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "struct_arrival_key_order_canonicalized_span_4843e6bb6162" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]')` },
 ];
 
 export const STRUCT_REF_COLUMNS: IStructRefColumns = {
@@ -168,28 +168,33 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "struct_arrival_key_order_canonicalized_finding" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "at" INTEGER NOT NULL, UNIQUE ("path", "at"))`,
-  `CREATE TEMP VIEW "__txt_struct_arrival_key_order_canonicalized_finding" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."at" AS "at" FROM "struct_arrival_key_order_canonicalized_finding" t`,
-  `CREATE TABLE "struct_arrival_key_order_canonicalized_span" ("__id" INTEGER PRIMARY KEY, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, UNIQUE ("start", "end"))`,
-  `CREATE TEMP VIEW "__ref_struct_arrival_key_order_canonicalized_span" AS SELECT t."__id", "start", "end", json_object('start', t."start", 'end', t."end") AS "__rendered" FROM "struct_arrival_key_order_canonicalized_span" t`,
-  `CREATE TEMP TABLE "__delta_struct_arrival_key_order_canonicalized_finding" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_struct_arrival_key_order_canonicalized_finding_sign" ON "__delta_struct_arrival_key_order_canonicalized_finding" ("_sign")`,
-  `CREATE INDEX "__delta_struct_arrival_key_order_canonicalized_finding_group" ON "__delta_struct_arrival_key_order_canonicalized_finding" ("path", "at")`,
-  `CREATE TEMP TABLE "__frontier_struct_arrival_key_order_canonicalized_finding" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_struct_arrival_key_order_canonicalized_finding_phase" ON "__frontier_struct_arrival_key_order_canonicalized_finding" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_struct_arrival_key_order_canonicalized_finding" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_struct_arrival_key_order_canonicalized_finding" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."at" AS "at", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_struct_arrival_key_order_canonicalized_finding" t`,
-  `CREATE TEMP TABLE "__delta_struct_arrival_key_order_canonicalized_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_struct_arrival_key_order_canonicalized_span_sign" ON "__delta_struct_arrival_key_order_canonicalized_span" ("_sign")`,
-  `CREATE INDEX "__delta_struct_arrival_key_order_canonicalized_span_group" ON "__delta_struct_arrival_key_order_canonicalized_span" ("start", "end")`,
-  `CREATE TEMP TABLE "__frontier_struct_arrival_key_order_canonicalized_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_struct_arrival_key_order_canonicalized_span_phase" ON "__frontier_struct_arrival_key_order_canonicalized_span" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_struct_arrival_key_order_canonicalized_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE TABLE "struct_arrival_key_order_canonicalized_finding_10403fe184b9" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "at" INTEGER NOT NULL, UNIQUE ("path", "at"))`,
+  `CREATE TEMP VIEW "__txt_struct_arrival_key_order_canonicalized_finding_10403fe184b9" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."at" AS "at" FROM "struct_arrival_key_order_canonicalized_finding_10403fe184b9" t`,
+  `CREATE TABLE "struct_arrival_key_order_canonicalized_span_4843e6bb6162" ("__id" INTEGER PRIMARY KEY, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, UNIQUE ("start", "end"))`,
+  `CREATE TEMP VIEW "__ref_struct_arrival_key_order_canonicalized_span_4843e6bb6162" AS SELECT t."__id", "start", "end", json_object('start', t."start", 'end', t."end") AS "__rendered" FROM "struct_arrival_key_order_canonicalized_span_4843e6bb6162" t`,
+  `CREATE TEMP TABLE "__delta_struct_arrival_key_order_canonicalized_finding_10403fe184b9" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_struct_arrival_key_order_canonicalized_finding_10403fe184b9_sign" ON "__delta_struct_arrival_key_order_canonicalized_finding_10403fe184b9" ("_sign")`,
+  `CREATE INDEX "__delta_struct_arrival_key_order_canonicalized_finding_10403fe184b9_group" ON "__delta_struct_arrival_key_order_canonicalized_finding_10403fe184b9" ("path", "at")`,
+  `CREATE TEMP TABLE "__frontier_struct_arrival_key_order_canonicalized_finding_10403fe184b9" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_struct_arrival_key_order_canonicalized_finding_10403fe184b9_phase" ON "__frontier_struct_arrival_key_order_canonicalized_finding_10403fe184b9" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_struct_arrival_key_order_canonicalized_finding_10403fe184b9" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_struct_arrival_key_order_canonicalized_finding_10403fe184b9" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."at" AS "at", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_struct_arrival_key_order_canonicalized_finding_10403fe184b9" t`,
+  `CREATE TEMP TABLE "__delta_struct_arrival_key_order_canonicalized_span_4843e6bb6162" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_struct_arrival_key_order_canonicalized_span_4843e6bb6162_sign" ON "__delta_struct_arrival_key_order_canonicalized_span_4843e6bb6162" ("_sign")`,
+  `CREATE INDEX "__delta_struct_arrival_key_order_canonicalized_span_4843e6bb6162_group" ON "__delta_struct_arrival_key_order_canonicalized_span_4843e6bb6162" ("start", "end")`,
+  `CREATE TEMP TABLE "__frontier_struct_arrival_key_order_canonicalized_span_4843e6bb6162" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_struct_arrival_key_order_canonicalized_span_4843e6bb6162_phase" ON "__frontier_struct_arrival_key_order_canonicalized_span_4843e6bb6162" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_struct_arrival_key_order_canonicalized_span_4843e6bb6162" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   finding: ["path", "at"],
   span: ["start", "end"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  finding: "struct_arrival_key_order_canonicalized_finding_10403fe184b9",
+  span: "struct_arrival_key_order_canonicalized_span_4843e6bb6162",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -216,16 +221,16 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 11, parent_id: 7, ordinal: 0, local_name: "span", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "0bee8a572b3e4218", h_schema: "302755ba572df023", h_rule: "" },
   { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "start", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "c1c82340fb480cda", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 11, ordinal: 2, local_name: "end", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "1e59e421c5c6ceae", h_schema: "", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_struct_arrival_key_order_canonicalized_finding", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "72f7819b0ef65ea6", h_schema: "c5de6e465a7d67df", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_struct_arrival_key_order_canonicalized_finding", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "868da941e0b75496", h_schema: "e20064773382db12", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_struct_arrival_key_order_canonicalized_finding", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "55b9bcdc686417ab", h_schema: "e20064773382db12", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_struct_arrival_key_order_canonicalized_finding", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "f21142cc7f41b527", h_schema: "84e705b54ef112ba", h_rule: "" },
-  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_struct_arrival_key_order_canonicalized_finding", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "c1319c0d58001b1c", h_schema: "84e705b54ef112ba", h_rule: "" },
-  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_struct_arrival_key_order_canonicalized_span", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "addb241f960ddd1c", h_schema: "b1b864f950ffae18", h_rule: "" },
-  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_struct_arrival_key_order_canonicalized_span", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "09623a9d39871e2e", h_schema: "81f811d7185f8016", h_rule: "" },
-  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_struct_arrival_key_order_canonicalized_span", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "7caae334341c78fe", h_schema: "81f811d7185f8016", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_struct_arrival_key_order_canonicalized_finding_10403fe184b9", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "e96cb71348261cf4", h_schema: "c5de6e465a7d67df", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_struct_arrival_key_order_canonicalized_finding_10403fe184b9", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "2b85bd9ef1306ebf", h_schema: "e20064773382db12", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_struct_arrival_key_order_canonicalized_finding_10403fe184b9", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "f43c5405355c7e99", h_schema: "e20064773382db12", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_struct_arrival_key_order_canonicalized_finding_10403fe184b9", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "3ce1f27a9feae333", h_schema: "84e705b54ef112ba", h_rule: "" },
+  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_struct_arrival_key_order_canonicalized_finding_10403fe184b9", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "51ad22ebc27b3031", h_schema: "84e705b54ef112ba", h_rule: "" },
+  { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_struct_arrival_key_order_canonicalized_span_4843e6bb6162", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "e03afc74a5a66b2d", h_schema: "b1b864f950ffae18", h_rule: "" },
+  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_struct_arrival_key_order_canonicalized_span_4843e6bb6162", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "a3bc27530025508b", h_schema: "81f811d7185f8016", h_rule: "" },
+  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_struct_arrival_key_order_canonicalized_span_4843e6bb6162", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "4be63f00f718c4e4", h_schema: "81f811d7185f8016", h_rule: "" },
   { rel_id: 22, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "c8b1a6c4e8703da5", h_schema: "", h_rule: "" },
-  { rel_id: 23, parent_id: 7, ordinal: 0, local_name: "__ref_struct_arrival_key_order_canonicalized_span", kind: "dictionary", type_id: 11, arity: 4, module_id: 7, h_id: "7b613b0e92027afc", h_schema: "302755ba572df023", h_rule: "" },
+  { rel_id: 23, parent_id: 7, ordinal: 0, local_name: "__ref_struct_arrival_key_order_canonicalized_span_4843e6bb6162", kind: "dictionary", type_id: 11, arity: 4, module_id: 7, h_id: "78960123afa21708", h_schema: "302755ba572df023", h_rule: "" },
   { rel_id: 24, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "5e08f59c4d80efae", h_schema: "", h_rule: "" },
   { rel_id: 25, parent_id: 10, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "de90a28b0cd2bff1", h_schema: "", h_rule: "" },
   { rel_id: 26, parent_id: 12, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "c809428f163eedda", h_schema: "", h_rule: "" },
@@ -243,13 +248,13 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  finding: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", (SELECT d."__rendered" FROM "__ref_struct_arrival_key_order_canonicalized_span" d WHERE d."__id" = t."at") AS "at" FROM "__txt_struct_arrival_key_order_canonicalized_finding" t`,
-  span: `SELECT t."start", t."end" FROM "struct_arrival_key_order_canonicalized_span" t`,
+  finding: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", (SELECT d."__rendered" FROM "__ref_struct_arrival_key_order_canonicalized_span_4843e6bb6162" d WHERE d."__id" = t."at") AS "at" FROM "__txt_struct_arrival_key_order_canonicalized_finding_10403fe184b9" t`,
+  span: `SELECT t."start", t."end" FROM "struct_arrival_key_order_canonicalized_span_4843e6bb6162" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "finding", kind: "set", table_name: "struct_arrival_key_order_canonicalized_finding", delta_table_name: "__delta_struct_arrival_key_order_canonicalized_finding", frontier_table_name: "__frontier_struct_arrival_key_order_canonicalized_finding", next_frontier_table_name: "__next_frontier_struct_arrival_key_order_canonicalized_finding", columns: ["path", "at"], column_types: ["text", "ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "struct_arrival_key_order_canonicalized_finding" ("path", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "at"`, arrival_del_sql: `DELETE FROM "struct_arrival_key_order_canonicalized_finding" WHERE ("path", "at") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "at"`, boundary_sql: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", (SELECT d."__rendered" FROM "__ref_struct_arrival_key_order_canonicalized_span" d WHERE d."__id" = t."at") AS "at", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_struct_arrival_key_order_canonicalized_finding" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path", t."at", t."_sign"`, rule_observers: [] },
-  { rel: "span", kind: "set", table_name: "struct_arrival_key_order_canonicalized_span", delta_table_name: "__delta_struct_arrival_key_order_canonicalized_span", frontier_table_name: "__frontier_struct_arrival_key_order_canonicalized_span", next_frontier_table_name: "__next_frontier_struct_arrival_key_order_canonicalized_span", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "struct_arrival_key_order_canonicalized_span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrival_del_sql: `DELETE FROM "struct_arrival_key_order_canonicalized_span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundary_sql: `SELECT t."start", t."end", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_struct_arrival_key_order_canonicalized_span" t WHERE t."_sign" IN (-1, 1) GROUP BY t."start", t."end", t."_sign"`, rule_observers: [] },
+  { rel: "finding", kind: "set", table_name: "struct_arrival_key_order_canonicalized_finding_10403fe184b9", delta_table_name: "__delta_struct_arrival_key_order_canonicalized_finding_10403fe184b9", frontier_table_name: "__frontier_struct_arrival_key_order_canonicalized_finding_10403fe184b9", next_frontier_table_name: "__next_frontier_struct_arrival_key_order_canonicalized_finding_10403fe184b9", columns: ["path", "at"], column_types: ["text", "ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "struct_arrival_key_order_canonicalized_finding_10403fe184b9" ("path", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "at"`, arrival_del_sql: `DELETE FROM "struct_arrival_key_order_canonicalized_finding_10403fe184b9" WHERE ("path", "at") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "at"`, boundary_sql: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", (SELECT d."__rendered" FROM "__ref_struct_arrival_key_order_canonicalized_span_4843e6bb6162" d WHERE d."__id" = t."at") AS "at", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_struct_arrival_key_order_canonicalized_finding_10403fe184b9" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path", t."at", t."_sign"`, rule_observers: [] },
+  { rel: "span", kind: "set", table_name: "struct_arrival_key_order_canonicalized_span_4843e6bb6162", delta_table_name: "__delta_struct_arrival_key_order_canonicalized_span_4843e6bb6162", frontier_table_name: "__frontier_struct_arrival_key_order_canonicalized_span_4843e6bb6162", next_frontier_table_name: "__next_frontier_struct_arrival_key_order_canonicalized_span_4843e6bb6162", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "struct_arrival_key_order_canonicalized_span_4843e6bb6162" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrival_del_sql: `DELETE FROM "struct_arrival_key_order_canonicalized_span_4843e6bb6162" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundary_sql: `SELECT t."start", t."end", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_struct_arrival_key_order_canonicalized_span_4843e6bb6162" t WHERE t."_sign" IN (-1, 1) GROUP BY t."start", t."end", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -309,6 +314,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

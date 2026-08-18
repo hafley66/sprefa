@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -158,17 +158,17 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "module_path_in_latest_wrapper_bell" ("tree_id" INTEGER NOT NULL)`,
+  `CREATE TABLE "module_path_in_latest_wrapper_bell_72c6ac0097f9" ("tree_id" INTEGER NOT NULL)`,
   `CREATE TABLE "module_path_in_latest_wrapper_called" ("tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_module_path_in_latest_wrapper_called" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner" FROM "module_path_in_latest_wrapper_called" t`,
-  `CREATE TABLE "module_path_in_latest_wrapper_orchard__roster" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL, UNIQUE ("tree_id", "owner"))`,
-  `CREATE TEMP VIEW "__txt_module_path_in_latest_wrapper_orchard__roster" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner" FROM "module_path_in_latest_wrapper_orchard__roster" t`,
-  `CREATE TEMP TABLE "__delta_module_path_in_latest_wrapper_bell" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_module_path_in_latest_wrapper_bell_sign" ON "__delta_module_path_in_latest_wrapper_bell" ("_sign")`,
-  `CREATE INDEX "__delta_module_path_in_latest_wrapper_bell_group" ON "__delta_module_path_in_latest_wrapper_bell" ("tree_id")`,
-  `CREATE TEMP TABLE "__frontier_module_path_in_latest_wrapper_bell" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_module_path_in_latest_wrapper_bell_phase" ON "__frontier_module_path_in_latest_wrapper_bell" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_module_path_in_latest_wrapper_bell" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
+  `CREATE TABLE "module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL, UNIQUE ("tree_id", "owner"))`,
+  `CREATE TEMP VIEW "__txt_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner" FROM "module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" t`,
+  `CREATE TEMP TABLE "__delta_module_path_in_latest_wrapper_bell_72c6ac0097f9" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_module_path_in_latest_wrapper_bell_72c6ac0097f9_sign" ON "__delta_module_path_in_latest_wrapper_bell_72c6ac0097f9" ("_sign")`,
+  `CREATE INDEX "__delta_module_path_in_latest_wrapper_bell_72c6ac0097f9_group" ON "__delta_module_path_in_latest_wrapper_bell_72c6ac0097f9" ("tree_id")`,
+  `CREATE TEMP TABLE "__frontier_module_path_in_latest_wrapper_bell_72c6ac0097f9" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_module_path_in_latest_wrapper_bell_72c6ac0097f9_phase" ON "__frontier_module_path_in_latest_wrapper_bell_72c6ac0097f9" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_module_path_in_latest_wrapper_bell_72c6ac0097f9" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
   `CREATE TEMP TABLE "__delta_module_path_in_latest_wrapper_called" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_module_path_in_latest_wrapper_called_sign" ON "__delta_module_path_in_latest_wrapper_called" ("_sign")`,
   `CREATE INDEX "__delta_module_path_in_latest_wrapper_called_group" ON "__delta_module_path_in_latest_wrapper_called" ("tree_id", "owner")`,
@@ -176,19 +176,25 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_module_path_in_latest_wrapper_called_phase" ON "__frontier_module_path_in_latest_wrapper_called" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_module_path_in_latest_wrapper_called" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt___delta_module_path_in_latest_wrapper_called" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_module_path_in_latest_wrapper_called" t`,
-  `CREATE TEMP TABLE "__delta_module_path_in_latest_wrapper_orchard__roster" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_module_path_in_latest_wrapper_orchard__roster_sign" ON "__delta_module_path_in_latest_wrapper_orchard__roster" ("_sign")`,
-  `CREATE INDEX "__delta_module_path_in_latest_wrapper_orchard__roster_group" ON "__delta_module_path_in_latest_wrapper_orchard__roster" ("tree_id", "owner")`,
-  `CREATE TEMP TABLE "__frontier_module_path_in_latest_wrapper_orchard__roster" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_module_path_in_latest_wrapper_orchard__roster_phase" ON "__frontier_module_path_in_latest_wrapper_orchard__roster" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_module_path_in_latest_wrapper_orchard__roster" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_module_path_in_latest_wrapper_orchard__roster" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_module_path_in_latest_wrapper_orchard__roster" t`,
+  `CREATE TEMP TABLE "__delta_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946_sign" ON "__delta_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" ("_sign")`,
+  `CREATE INDEX "__delta_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946_group" ON "__delta_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" ("tree_id", "owner")`,
+  `CREATE TEMP TABLE "__frontier_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946_phase" ON "__frontier_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   bell: ["tree_id"],
   called: ["tree_id", "owner"],
   orchard__roster: ["tree_id", "owner"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  bell: "module_path_in_latest_wrapper_bell_72c6ac0097f9",
+  called: "module_path_in_latest_wrapper_called",
+  orchard__roster: "module_path_in_latest_wrapper_orchard__roster_fc0df26cb946",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -220,19 +226,19 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "tree_id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "70ecfddd8cf8ea0d", h_schema: "", h_rule: "" },
   { rel_id: 15, parent_id: 13, ordinal: 2, local_name: "owner", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "e62f322c476c3d91", h_schema: "", h_rule: "" },
   { rel_id: 16, parent_id: 7, ordinal: 0, local_name: "orchard", kind: "rel", type_id: 0, arity: 0, module_id: 7, h_id: "350c7a07e9f2a912", h_schema: "", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__delta_module_path_in_latest_wrapper_bell", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "de49b5c6a8323567", h_schema: "3fac23d94c210ea6", h_rule: "" },
-  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__frontier_module_path_in_latest_wrapper_bell", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "6fe73f48b8adfd34", h_schema: "459af400e4fe51d7", h_rule: "" },
-  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__next_frontier_module_path_in_latest_wrapper_bell", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "6aa88a0d689b57f3", h_schema: "459af400e4fe51d7", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__delta_module_path_in_latest_wrapper_bell_72c6ac0097f9", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "ab7d44b427b9c502", h_schema: "3fac23d94c210ea6", h_rule: "" },
+  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__frontier_module_path_in_latest_wrapper_bell_72c6ac0097f9", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "8f16e5b2c71d68eb", h_schema: "459af400e4fe51d7", h_rule: "" },
+  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__next_frontier_module_path_in_latest_wrapper_bell_72c6ac0097f9", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "6a11661c54f4ea38", h_schema: "459af400e4fe51d7", h_rule: "" },
   { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__delta_module_path_in_latest_wrapper_called", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "c51a9837cdf34b5e", h_schema: "dfe8e1c6e7d8cb81", h_rule: "" },
   { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__frontier_module_path_in_latest_wrapper_called", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "44e3dc5e92754cea", h_schema: "4c4524f922e27010", h_rule: "" },
   { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__next_frontier_module_path_in_latest_wrapper_called", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "62c36cc57679e46b", h_schema: "4c4524f922e27010", h_rule: "" },
   { rel_id: 23, parent_id: 10, ordinal: 0, local_name: "__txt_module_path_in_latest_wrapper_called", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "0cea221b8ecf240a", h_schema: "15c2f0ed9826d721", h_rule: "" },
   { rel_id: 24, parent_id: 20, ordinal: 0, local_name: "__txt___delta_module_path_in_latest_wrapper_called", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "54044ea2ce1c952d", h_schema: "15c2f0ed9826d721", h_rule: "" },
-  { rel_id: 25, parent_id: 13, ordinal: 0, local_name: "__delta_module_path_in_latest_wrapper_orchard__roster", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "0fd75db8faa0bf22", h_schema: "dfe8e1c6e7d8cb81", h_rule: "" },
-  { rel_id: 26, parent_id: 13, ordinal: 0, local_name: "__frontier_module_path_in_latest_wrapper_orchard__roster", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "d9b1bd1bb4e744d7", h_schema: "4c4524f922e27010", h_rule: "" },
-  { rel_id: 27, parent_id: 13, ordinal: 0, local_name: "__next_frontier_module_path_in_latest_wrapper_orchard__roster", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "fcc88ea9a3afe35f", h_schema: "4c4524f922e27010", h_rule: "" },
-  { rel_id: 28, parent_id: 13, ordinal: 0, local_name: "__txt_module_path_in_latest_wrapper_orchard__roster", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "4866973c0abbc29a", h_schema: "15c2f0ed9826d721", h_rule: "" },
-  { rel_id: 29, parent_id: 25, ordinal: 0, local_name: "__txt___delta_module_path_in_latest_wrapper_orchard__roster", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "7640112517578062", h_schema: "15c2f0ed9826d721", h_rule: "" },
+  { rel_id: 25, parent_id: 13, ordinal: 0, local_name: "__delta_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "966d862a0e49596a", h_schema: "dfe8e1c6e7d8cb81", h_rule: "" },
+  { rel_id: 26, parent_id: 13, ordinal: 0, local_name: "__frontier_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "c5eab16869489905", h_schema: "4c4524f922e27010", h_rule: "" },
+  { rel_id: 27, parent_id: 13, ordinal: 0, local_name: "__next_frontier_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "acceb77d5fd2f017", h_schema: "4c4524f922e27010", h_rule: "" },
+  { rel_id: 28, parent_id: 13, ordinal: 0, local_name: "__txt_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "1ef1accb1f51e580", h_schema: "15c2f0ed9826d721", h_rule: "" },
+  { rel_id: 29, parent_id: 25, ordinal: 0, local_name: "__txt___delta_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "b8ac0b0d0c6ed970", h_schema: "15c2f0ed9826d721", h_rule: "" },
   { rel_id: 30, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "313adcbae761eb88", h_schema: "", h_rule: "" },
   { rel_id: 31, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "ab67028783a2a8ce", h_schema: "", h_rule: "" },
   { rel_id: 32, parent_id: 11, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "041755978eb91306", h_schema: "", h_rule: "" },
@@ -251,25 +257,25 @@ const arrival_targets: readonly string[] = ["bell", "orchard__roster"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "orchard__roster", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["ada"] },
-  { rel: "orchard__roster", sql: `INSERT OR IGNORE INTO "module_path_in_latest_wrapper_orchard__roster" ("tree_id", "owner") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [1, "ada"] },
+  { rel: "orchard__roster", sql: `INSERT OR IGNORE INTO "module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" ("tree_id", "owner") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [1, "ada"] },
   { rel: "orchard__roster", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["bo"] },
-  { rel: "orchard__roster", sql: `INSERT OR IGNORE INTO "module_path_in_latest_wrapper_orchard__roster" ("tree_id", "owner") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [2, "bo"] },
+  { rel: "orchard__roster", sql: `INSERT OR IGNORE INTO "module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" ("tree_id", "owner") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [2, "bo"] },
 ];
 
 const final_select: Record<string, string> = {
-  bell: `SELECT t."tree_id" FROM "module_path_in_latest_wrapper_bell" t`,
+  bell: `SELECT t."tree_id" FROM "module_path_in_latest_wrapper_bell_72c6ac0097f9" t`,
   called: `SELECT t."tree_id", CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner" FROM "__txt_module_path_in_latest_wrapper_called" t`,
-  orchard__roster: `SELECT t."tree_id", CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner" FROM "__txt_module_path_in_latest_wrapper_orchard__roster" t`,
+  orchard__roster: `SELECT t."tree_id", CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner" FROM "__txt_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "bell", kind: "log", table_name: "module_path_in_latest_wrapper_bell", delta_table_name: "__delta_module_path_in_latest_wrapper_bell", frontier_table_name: "__frontier_module_path_in_latest_wrapper_bell", next_frontier_table_name: "__next_frontier_module_path_in_latest_wrapper_bell", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT INTO "module_path_in_latest_wrapper_bell" ("tree_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "tree_id"`, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_module_path_in_latest_wrapper_bell" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."_sign"`, rule_observers: ["called/2"] },
+  { rel: "bell", kind: "log", table_name: "module_path_in_latest_wrapper_bell_72c6ac0097f9", delta_table_name: "__delta_module_path_in_latest_wrapper_bell_72c6ac0097f9", frontier_table_name: "__frontier_module_path_in_latest_wrapper_bell_72c6ac0097f9", next_frontier_table_name: "__next_frontier_module_path_in_latest_wrapper_bell_72c6ac0097f9", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT INTO "module_path_in_latest_wrapper_bell_72c6ac0097f9" ("tree_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "tree_id"`, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_module_path_in_latest_wrapper_bell_72c6ac0097f9" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."_sign"`, rule_observers: ["called/2"] },
   { rel: "called", kind: "log", table_name: "module_path_in_latest_wrapper_called", delta_table_name: "__delta_module_path_in_latest_wrapper_called", frontier_table_name: "__frontier_module_path_in_latest_wrapper_called", next_frontier_table_name: "__next_frontier_module_path_in_latest_wrapper_called", columns: ["tree_id", "owner"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_module_path_in_latest_wrapper_called" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."owner", t."_sign"`, rule_observers: [] },
-  { rel: "orchard__roster", kind: "set", table_name: "module_path_in_latest_wrapper_orchard__roster", delta_table_name: "__delta_module_path_in_latest_wrapper_orchard__roster", frontier_table_name: "__frontier_module_path_in_latest_wrapper_orchard__roster", next_frontier_table_name: "__next_frontier_module_path_in_latest_wrapper_orchard__roster", columns: ["tree_id", "owner"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "module_path_in_latest_wrapper_orchard__roster" ("tree_id", "owner") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "owner"`, arrival_del_sql: `DELETE FROM "module_path_in_latest_wrapper_orchard__roster" WHERE ("tree_id", "owner") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "owner"`, boundary_sql: `SELECT t."tree_id", CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_module_path_in_latest_wrapper_orchard__roster" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."owner", t."_sign"`, rule_observers: [] },
+  { rel: "orchard__roster", kind: "set", table_name: "module_path_in_latest_wrapper_orchard__roster_fc0df26cb946", delta_table_name: "__delta_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946", frontier_table_name: "__frontier_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946", next_frontier_table_name: "__next_frontier_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946", columns: ["tree_id", "owner"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" ("tree_id", "owner") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "owner"`, arrival_del_sql: `DELETE FROM "module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" WHERE ("tree_id", "owner") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "owner"`, boundary_sql: `SELECT t."tree_id", CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."owner", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "called", rule_id: "module_path_in_latest_wrapper:called/2#1", head_kind: "log", head_table_name: "module_path_in_latest_wrapper_called", head_delta_table_name: "__delta_module_path_in_latest_wrapper_called", head_columns: ["tree_id", "owner"], key_indices: [], project_sql: `SELECT d0."tree_id" AS "tree_id", b0."owner" AS "owner" FROM "__frontier_module_path_in_latest_wrapper_bell" d0, "module_path_in_latest_wrapper_orchard__roster" b0 WHERE d0."_phase" >= 0 AND b0."tree_id" = d0."tree_id" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "called", rule_id: "module_path_in_latest_wrapper:called/2#1", head_kind: "log", head_table_name: "module_path_in_latest_wrapper_called", head_delta_table_name: "__delta_module_path_in_latest_wrapper_called", head_columns: ["tree_id", "owner"], key_indices: [], project_sql: `SELECT d0."tree_id" AS "tree_id", b0."owner" AS "owner" FROM "__frontier_module_path_in_latest_wrapper_bell_72c6ac0097f9" d0, "module_path_in_latest_wrapper_orchard__roster_fc0df26cb946" b0 WHERE d0."_phase" >= 0 AND b0."tree_id" = d0."tree_id" ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -324,6 +330,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

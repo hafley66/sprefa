@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -179,8 +179,8 @@ const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "json_patch_non_object_patch_replaces_the_document_metric_doc" ("__id" INTEGER PRIMARY KEY, "session" INTEGER NOT NULL, "snapshot" TEXT NOT NULL CHECK (json_valid("snapshot")), UNIQUE ("session"))`,
   `CREATE TEMP VIEW "__txt_json_patch_non_object_patch_replaces_the_document_metric_doc" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."session") AS "session", t."snapshot" AS "snapshot" FROM "json_patch_non_object_patch_replaces_the_document_metric_doc" t`,
-  `CREATE TABLE "json_patch_non_object_patch_replaces_the_document_metric_sample" ("session" INTEGER NOT NULL, "patch" TEXT NOT NULL CHECK (json_valid("patch")))`,
-  `CREATE TEMP VIEW "__txt_json_patch_non_object_patch_replaces_the_document_metric_sample" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."session") AS "session", t."patch" AS "patch" FROM "json_patch_non_object_patch_replaces_the_document_metric_sample" t`,
+  `CREATE TABLE "json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" ("session" INTEGER NOT NULL, "patch" TEXT NOT NULL CHECK (json_valid("patch")))`,
+  `CREATE TEMP VIEW "__txt_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."session") AS "session", t."patch" AS "patch" FROM "json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" t`,
   `CREATE TEMP TABLE "__delta_json_patch_non_object_patch_replaces_the_document_metric_doc" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session" INTEGER NOT NULL, "snapshot" TEXT NOT NULL CHECK (json_valid("snapshot")))`,
   `CREATE INDEX "__delta_json_patch_non_object_patch_replaces_the_document_metric_doc_sign" ON "__delta_json_patch_non_object_patch_replaces_the_document_metric_doc" ("_sign")`,
   `CREATE INDEX "__delta_json_patch_non_object_patch_replaces_the_document_metric_doc_group" ON "__delta_json_patch_non_object_patch_replaces_the_document_metric_doc" ("session", "snapshot")`,
@@ -188,19 +188,24 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_json_patch_non_object_patch_replaces_the_document_metric_doc_phase" ON "__frontier_json_patch_non_object_patch_replaces_the_document_metric_doc" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_json_patch_non_object_patch_replaces_the_document_metric_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session" INTEGER NOT NULL, "snapshot" TEXT NOT NULL CHECK (json_valid("snapshot")))`,
   `CREATE TEMP VIEW "__txt___delta_json_patch_non_object_patch_replaces_the_document_metric_doc" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."session") AS "session", t."snapshot" AS "snapshot", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_json_patch_non_object_patch_replaces_the_document_metric_doc" t`,
-  `CREATE TEMP TABLE "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session" INTEGER NOT NULL, "patch" TEXT NOT NULL CHECK (json_valid("patch")))`,
-  `CREATE INDEX "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample_sign" ON "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample" ("_sign")`,
-  `CREATE INDEX "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample_group" ON "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample" ("session", "patch")`,
-  `CREATE TEMP TABLE "__frontier_json_patch_non_object_patch_replaces_the_document_metric_sample" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session" INTEGER NOT NULL, "patch" TEXT NOT NULL CHECK (json_valid("patch")))`,
-  `CREATE INDEX "__frontier_json_patch_non_object_patch_replaces_the_document_metric_sample_phase" ON "__frontier_json_patch_non_object_patch_replaces_the_document_metric_sample" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_json_patch_non_object_patch_replaces_the_document_metric_sample" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session" INTEGER NOT NULL, "patch" TEXT NOT NULL CHECK (json_valid("patch")))`,
-  `CREATE TEMP VIEW "__txt___delta_json_patch_non_object_patch_replaces_the_document_metric_sample" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."session") AS "session", t."patch" AS "patch", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample" t`,
+  `CREATE TEMP TABLE "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session" INTEGER NOT NULL, "patch" TEXT NOT NULL CHECK (json_valid("patch")))`,
+  `CREATE INDEX "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a_sign" ON "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" ("_sign")`,
+  `CREATE INDEX "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a_group" ON "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" ("session", "patch")`,
+  `CREATE TEMP TABLE "__frontier_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session" INTEGER NOT NULL, "patch" TEXT NOT NULL CHECK (json_valid("patch")))`,
+  `CREATE INDEX "__frontier_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a_phase" ON "__frontier_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session" INTEGER NOT NULL, "patch" TEXT NOT NULL CHECK (json_valid("patch")))`,
+  `CREATE TEMP VIEW "__txt___delta_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."session") AS "session", t."patch" AS "patch", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" t`,
   `CREATE TEMP TABLE "__pre_json_patch_non_object_patch_replaces_the_document_metric_doc" ("session" INTEGER NOT NULL, "snapshot" TEXT NOT NULL CHECK (json_valid("snapshot")), PRIMARY KEY ("session")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   metric_doc: ["session", "snapshot"],
   metric_sample: ["session", "patch"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  metric_doc: "json_patch_non_object_patch_replaces_the_document_metric_doc",
+  metric_sample: "json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -233,11 +238,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__pre_json_patch_non_object_patch_replaces_the_document_metric_doc", kind: "pre", type_id: 0, arity: 2, module_id: 7, h_id: "07abb5ed907e9aa8", h_schema: "41e998b8550b253f", h_rule: "" },
   { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__txt_json_patch_non_object_patch_replaces_the_document_metric_doc", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "f49793839a1e6b99", h_schema: "41e998b8550b253f", h_rule: "" },
   { rel_id: 19, parent_id: 14, ordinal: 0, local_name: "__txt___delta_json_patch_non_object_patch_replaces_the_document_metric_doc", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "e4f4d1169070abe1", h_schema: "41e998b8550b253f", h_rule: "" },
-  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "88c74753bc5952da", h_schema: "c57327b6ae72c1d5", h_rule: "" },
-  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__frontier_json_patch_non_object_patch_replaces_the_document_metric_sample", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "0b148ffa8d842547", h_schema: "09a1fb321f2224ec", h_rule: "" },
-  { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__next_frontier_json_patch_non_object_patch_replaces_the_document_metric_sample", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "633b1e4d5c911334", h_schema: "09a1fb321f2224ec", h_rule: "" },
-  { rel_id: 23, parent_id: 11, ordinal: 0, local_name: "__txt_json_patch_non_object_patch_replaces_the_document_metric_sample", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "4a973d89024a75e1", h_schema: "09449400610c38a7", h_rule: "" },
-  { rel_id: 24, parent_id: 20, ordinal: 0, local_name: "__txt___delta_json_patch_non_object_patch_replaces_the_document_metric_sample", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "a5cb77d9fb8d9125", h_schema: "09449400610c38a7", h_rule: "" },
+  { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "2ae595b26c43c05d", h_schema: "c57327b6ae72c1d5", h_rule: "" },
+  { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__frontier_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "9ab008369ea873c0", h_schema: "09a1fb321f2224ec", h_rule: "" },
+  { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__next_frontier_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "f99dd72b9447dead", h_schema: "09a1fb321f2224ec", h_rule: "" },
+  { rel_id: 23, parent_id: 11, ordinal: 0, local_name: "__txt_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "a1d85830ba25c44b", h_schema: "09449400610c38a7", h_rule: "" },
+  { rel_id: 24, parent_id: 20, ordinal: 0, local_name: "__txt___delta_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "b8285538b9ec17f4", h_schema: "09449400610c38a7", h_rule: "" },
   { rel_id: 25, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "2aab32e0e01010eb", h_schema: "", h_rule: "" },
   { rel_id: 26, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "6999862a98c525d8", h_schema: "", h_rule: "" },
   { rel_id: 27, parent_id: 10, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "5d4496a4a501bc6e", h_schema: "", h_rule: "" },
@@ -265,7 +270,7 @@ type Snapshot = {
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     metric_doc: select_rows(seam, `SELECT CASE WHEN json_valid(t."session") AND json_type(t."session") = 'object' AND json_type(t."session", '$.fn') = 'text' AND json_type(t."session", '$.args') = 'array' THEN json_extract(t."session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session", '$.args')), '') || ')' ELSE t."session" END AS "session", t."snapshot" FROM "__txt_json_patch_non_object_patch_replaces_the_document_metric_doc" t`, rel_columns.metric_doc!, rel_column_types.metric_doc!),
-    metric_sample: select_rows(seam, `SELECT CASE WHEN json_valid(t."session") AND json_type(t."session") = 'object' AND json_type(t."session", '$.fn') = 'text' AND json_type(t."session", '$.args') = 'array' THEN json_extract(t."session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session", '$.args')), '') || ')' ELSE t."session" END AS "session", t."patch" FROM "__txt_json_patch_non_object_patch_replaces_the_document_metric_sample" t`, rel_columns.metric_sample!, rel_column_types.metric_sample!),
+    metric_sample: select_rows(seam, `SELECT CASE WHEN json_valid(t."session") AND json_type(t."session") = 'object' AND json_type(t."session", '$.fn') = 'text' AND json_type(t."session", '$.args') = 'array' THEN json_extract(t."session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session", '$.args')), '') || ')' ELSE t."session" END AS "session", t."patch" FROM "__txt_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" t`, rel_columns.metric_sample!, rel_column_types.metric_sample!),
   });
 }
 
@@ -274,7 +279,7 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     metric_doc: select_rows(seam, `SELECT "session", "snapshot" FROM "json_patch_non_object_patch_replaces_the_document_metric_doc"`, rel_columns.metric_doc!, rel_stored_column_types.metric_doc!),
-    metric_sample: select_rows(seam, `SELECT "session", "patch" FROM "json_patch_non_object_patch_replaces_the_document_metric_sample"`, rel_columns.metric_sample!, rel_stored_column_types.metric_sample!),
+    metric_sample: select_rows(seam, `SELECT "session", "patch" FROM "json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a"`, rel_columns.metric_sample!, rel_stored_column_types.metric_sample!),
   });
 }
 
@@ -284,11 +289,11 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 
 const final_select: Record<string, string> = {
   metric_doc: `SELECT CASE WHEN json_valid(t."session") AND json_type(t."session") = 'object' AND json_type(t."session", '$.fn') = 'text' AND json_type(t."session", '$.args') = 'array' THEN json_extract(t."session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session", '$.args')), '') || ')' ELSE t."session" END AS "session", t."snapshot" FROM "__txt_json_patch_non_object_patch_replaces_the_document_metric_doc" t`,
-  metric_sample: `SELECT CASE WHEN json_valid(t."session") AND json_type(t."session") = 'object' AND json_type(t."session", '$.fn') = 'text' AND json_type(t."session", '$.args') = 'array' THEN json_extract(t."session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session", '$.args')), '') || ')' ELSE t."session" END AS "session", t."patch" FROM "__txt_json_patch_non_object_patch_replaces_the_document_metric_sample" t`,
+  metric_sample: `SELECT CASE WHEN json_valid(t."session") AND json_type(t."session") = 'object' AND json_type(t."session", '$.fn') = 'text' AND json_type(t."session", '$.args') = 'array' THEN json_extract(t."session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session", '$.args')), '') || ')' ELSE t."session" END AS "session", t."patch" FROM "__txt_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  metric_sample: { kind: "log", add_sql: `INSERT INTO "json_patch_non_object_patch_replaces_the_document_metric_sample" ("session", "patch") VALUES (?, ?)`, del_sql: null },
+  metric_sample: { kind: "log", add_sql: `INSERT INTO "json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" ("session", "patch") VALUES (?, ?)`, del_sql: null },
 };
 
 function arrival_statement(arrival: IArrivalRow): SqlStatement {
@@ -315,11 +320,11 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "metric_doc", kind: "set", table_name: "json_patch_non_object_patch_replaces_the_document_metric_doc", delta_table_name: "__delta_json_patch_non_object_patch_replaces_the_document_metric_doc", frontier_table_name: "__frontier_json_patch_non_object_patch_replaces_the_document_metric_doc", next_frontier_table_name: "__next_frontier_json_patch_non_object_patch_replaces_the_document_metric_doc", columns: ["session", "snapshot"], column_types: ["text", "json"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."session") AND json_type(t."session") = 'object' AND json_type(t."session", '$.fn') = 'text' AND json_type(t."session", '$.args') = 'array' THEN json_extract(t."session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session", '$.args')), '') || ')' ELSE t."session" END AS "session", t."snapshot", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_json_patch_non_object_patch_replaces_the_document_metric_doc" t WHERE t."_sign" IN (-1, 1) GROUP BY t."session", t."snapshot", t."_sign"`, rule_observers: [] },
-  { rel: "metric_sample", kind: "log", table_name: "json_patch_non_object_patch_replaces_the_document_metric_sample", delta_table_name: "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample", frontier_table_name: "__frontier_json_patch_non_object_patch_replaces_the_document_metric_sample", next_frontier_table_name: "__next_frontier_json_patch_non_object_patch_replaces_the_document_metric_sample", columns: ["session", "patch"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT INTO "json_patch_non_object_patch_replaces_the_document_metric_sample" ("session", "patch") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "session", "patch"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."session") AND json_type(t."session") = 'object' AND json_type(t."session", '$.fn') = 'text' AND json_type(t."session", '$.args') = 'array' THEN json_extract(t."session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session", '$.args')), '') || ')' ELSE t."session" END AS "session", t."patch", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_json_patch_non_object_patch_replaces_the_document_metric_sample" t WHERE t."_sign" IN (-1, 1) GROUP BY t."session", t."patch", t."_sign"`, rule_observers: ["metric_doc/2"] },
+  { rel: "metric_sample", kind: "log", table_name: "json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a", delta_table_name: "__delta_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a", frontier_table_name: "__frontier_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a", next_frontier_table_name: "__next_frontier_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a", columns: ["session", "patch"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT INTO "json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" ("session", "patch") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "session", "patch"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."session") AND json_type(t."session") = 'object' AND json_type(t."session", '$.fn') = 'text' AND json_type(t."session", '$.args') = 'array' THEN json_extract(t."session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session", '$.args')), '') || ')' ELSE t."session" END AS "session", t."patch", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" t WHERE t."_sign" IN (-1, 1) GROUP BY t."session", t."patch", t."_sign"`, rule_observers: ["metric_doc/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "metric_doc", rule_id: "json_patch_non_object_patch_replaces_the_document:metric_doc/2#1", head_kind: "set", head_table_name: "json_patch_non_object_patch_replaces_the_document_metric_doc", head_delta_table_name: "__delta_json_patch_non_object_patch_replaces_the_document_metric_doc", head_columns: ["session", "snapshot"], key_indices: [0], project_sql: `SELECT d0."session" AS "session", json_patch(json(b0."snapshot"), json(d0."patch")) AS "snapshot" FROM "__frontier_json_patch_non_object_patch_replaces_the_document_metric_sample" d0, "__pre_json_patch_non_object_patch_replaces_the_document_metric_doc" b0 WHERE d0."_phase" >= 0 AND b0."session" = d0."session" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "metric_doc", rule_id: "json_patch_non_object_patch_replaces_the_document:metric_doc/2#1", head_kind: "set", head_table_name: "json_patch_non_object_patch_replaces_the_document_metric_doc", head_delta_table_name: "__delta_json_patch_non_object_patch_replaces_the_document_metric_doc", head_columns: ["session", "snapshot"], key_indices: [0], project_sql: `SELECT d0."session" AS "session", json_patch(json(b0."snapshot"), json(d0."patch")) AS "snapshot" FROM "__frontier_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" d0, "__pre_json_patch_non_object_patch_replaces_the_document_metric_doc" b0 WHERE d0."_phase" >= 0 AND b0."session" = d0."session" ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -364,7 +369,7 @@ const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: st
 ];
 
 const ORDERED_CARRY_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
-  { rel: "metric_sample", sql: `SELECT "_sequence" AS "__sequence", "session", "patch" FROM "__frontier_json_patch_non_object_patch_replaces_the_document_metric_sample" ORDER BY "_phase", "_sequence"`, columns: ["session", "patch"] },
+  { rel: "metric_sample", sql: `SELECT "_sequence" AS "__sequence", "session", "patch" FROM "__frontier_json_patch_non_object_patch_replaces_the_document_metric_sample_c7851eaf2e4a" ORDER BY "_phase", "_sequence"`, columns: ["session", "patch"] },
 ];
 
 function ordered_outside_occurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {
@@ -548,6 +553,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,

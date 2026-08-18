@@ -55,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -159,26 +159,26 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "merge_never_retracts_event_a" ("item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_merge_never_retracts_event_a" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "merge_never_retracts_event_a" t`,
-  `CREATE TABLE "merge_never_retracts_event_b" ("item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_merge_never_retracts_event_b" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "merge_never_retracts_event_b" t`,
+  `CREATE TABLE "merge_never_retracts_event_a_193643fb2783" ("item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_merge_never_retracts_event_a_193643fb2783" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "merge_never_retracts_event_a_193643fb2783" t`,
+  `CREATE TABLE "merge_never_retracts_event_b_193643fb2783" ("item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_merge_never_retracts_event_b_193643fb2783" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "merge_never_retracts_event_b_193643fb2783" t`,
   `CREATE TABLE "merge_never_retracts_out" ("item" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_merge_never_retracts_out" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "merge_never_retracts_out" t`,
-  `CREATE TEMP TABLE "__delta_merge_never_retracts_event_a" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_merge_never_retracts_event_a_sign" ON "__delta_merge_never_retracts_event_a" ("_sign")`,
-  `CREATE INDEX "__delta_merge_never_retracts_event_a_group" ON "__delta_merge_never_retracts_event_a" ("item")`,
-  `CREATE TEMP TABLE "__frontier_merge_never_retracts_event_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_merge_never_retracts_event_a_phase" ON "__frontier_merge_never_retracts_event_a" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_merge_never_retracts_event_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_merge_never_retracts_event_a" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_merge_never_retracts_event_a" t`,
-  `CREATE TEMP TABLE "__delta_merge_never_retracts_event_b" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_merge_never_retracts_event_b_sign" ON "__delta_merge_never_retracts_event_b" ("_sign")`,
-  `CREATE INDEX "__delta_merge_never_retracts_event_b_group" ON "__delta_merge_never_retracts_event_b" ("item")`,
-  `CREATE TEMP TABLE "__frontier_merge_never_retracts_event_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_merge_never_retracts_event_b_phase" ON "__frontier_merge_never_retracts_event_b" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_merge_never_retracts_event_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_merge_never_retracts_event_b" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_merge_never_retracts_event_b" t`,
+  `CREATE TEMP TABLE "__delta_merge_never_retracts_event_a_193643fb2783" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_merge_never_retracts_event_a_193643fb2783_sign" ON "__delta_merge_never_retracts_event_a_193643fb2783" ("_sign")`,
+  `CREATE INDEX "__delta_merge_never_retracts_event_a_193643fb2783_group" ON "__delta_merge_never_retracts_event_a_193643fb2783" ("item")`,
+  `CREATE TEMP TABLE "__frontier_merge_never_retracts_event_a_193643fb2783" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_merge_never_retracts_event_a_193643fb2783_phase" ON "__frontier_merge_never_retracts_event_a_193643fb2783" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_merge_never_retracts_event_a_193643fb2783" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_merge_never_retracts_event_a_193643fb2783" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_merge_never_retracts_event_a_193643fb2783" t`,
+  `CREATE TEMP TABLE "__delta_merge_never_retracts_event_b_193643fb2783" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_merge_never_retracts_event_b_193643fb2783_sign" ON "__delta_merge_never_retracts_event_b_193643fb2783" ("_sign")`,
+  `CREATE INDEX "__delta_merge_never_retracts_event_b_193643fb2783_group" ON "__delta_merge_never_retracts_event_b_193643fb2783" ("item")`,
+  `CREATE TEMP TABLE "__frontier_merge_never_retracts_event_b_193643fb2783" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_merge_never_retracts_event_b_193643fb2783_phase" ON "__frontier_merge_never_retracts_event_b_193643fb2783" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_merge_never_retracts_event_b_193643fb2783" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_merge_never_retracts_event_b_193643fb2783" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_merge_never_retracts_event_b_193643fb2783" t`,
   `CREATE TEMP TABLE "__delta_merge_never_retracts_out" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_merge_never_retracts_out_sign" ON "__delta_merge_never_retracts_out" ("_sign")`,
   `CREATE INDEX "__delta_merge_never_retracts_out_group" ON "__delta_merge_never_retracts_out" ("item")`,
@@ -192,6 +192,12 @@ const rel_columns: Record<string, readonly string[]> = {
   event_a: ["item"],
   event_b: ["item"],
   out: ["item"],
+};
+
+const rel_physical_names: Record<string, string> = {
+  event_a: "merge_never_retracts_event_a_193643fb2783",
+  event_b: "merge_never_retracts_event_b_193643fb2783",
+  out: "merge_never_retracts_out",
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -220,16 +226,16 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "item", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "aab84f6e0eb8db55", h_schema: "", h_rule: "" },
   { rel_id: 12, parent_id: 7, ordinal: 0, local_name: "out", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "2745ce043c8c066f", h_schema: "4f9957ccb96234b6", h_rule: "0a8d801033981190" },
   { rel_id: 13, parent_id: 12, ordinal: 1, local_name: "item", kind: "column", type_id: 1, arity: 0, module_id: 7, h_id: "043b85a45c57a60d", h_schema: "", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_merge_never_retracts_event_a", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "aa2d90aa258d2873", h_schema: "15e84563064d7c4c", h_rule: "" },
-  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_merge_never_retracts_event_a", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "551324684a92cce1", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_merge_never_retracts_event_a", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "66b3ce6f900c93cb", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_merge_never_retracts_event_a", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "2476795fd63616b4", h_schema: "4f9957ccb96234b6", h_rule: "" },
-  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_merge_never_retracts_event_a", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "60917d238c04740e", h_schema: "4f9957ccb96234b6", h_rule: "" },
-  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__delta_merge_never_retracts_event_b", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "4be62386743fc27d", h_schema: "15e84563064d7c4c", h_rule: "" },
-  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__frontier_merge_never_retracts_event_b", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "bff916aa6a3f8493", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__next_frontier_merge_never_retracts_event_b", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "dedd4030afc135f7", h_schema: "c35a652f9e4a4d00", h_rule: "" },
-  { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__txt_merge_never_retracts_event_b", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "3ae10fca69f697e4", h_schema: "4f9957ccb96234b6", h_rule: "" },
-  { rel_id: 23, parent_id: 19, ordinal: 0, local_name: "__txt___delta_merge_never_retracts_event_b", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "ff44bb4f9c16573e", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_merge_never_retracts_event_a_193643fb2783", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "cff44e7caa824da6", h_schema: "15e84563064d7c4c", h_rule: "" },
+  { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_merge_never_retracts_event_a_193643fb2783", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "305437395cfb3190", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_merge_never_retracts_event_a_193643fb2783", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "78e724bea5d453d5", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_merge_never_retracts_event_a_193643fb2783", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "7fadf404d1654366", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_merge_never_retracts_event_a_193643fb2783", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "47e6b02ae62f7bc0", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__delta_merge_never_retracts_event_b_193643fb2783", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "665e8c89a1d176ed", h_schema: "15e84563064d7c4c", h_rule: "" },
+  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__frontier_merge_never_retracts_event_b_193643fb2783", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "94e39c8bdaf578ae", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__next_frontier_merge_never_retracts_event_b_193643fb2783", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "ba31f4b4f82800e9", h_schema: "c35a652f9e4a4d00", h_rule: "" },
+  { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__txt_merge_never_retracts_event_b_193643fb2783", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "30a9b859897ebb3c", h_schema: "4f9957ccb96234b6", h_rule: "" },
+  { rel_id: 23, parent_id: 19, ordinal: 0, local_name: "__txt___delta_merge_never_retracts_event_b_193643fb2783", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "4ab625fd2357c5ae", h_schema: "4f9957ccb96234b6", h_rule: "" },
   { rel_id: 24, parent_id: 12, ordinal: 0, local_name: "__delta_merge_never_retracts_out", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "9677b599607a703b", h_schema: "15e84563064d7c4c", h_rule: "" },
   { rel_id: 25, parent_id: 12, ordinal: 0, local_name: "__frontier_merge_never_retracts_out", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "2bc4cab55d171416", h_schema: "c35a652f9e4a4d00", h_rule: "" },
   { rel_id: 26, parent_id: 12, ordinal: 0, local_name: "__next_frontier_merge_never_retracts_out", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "9403d6dd641f8a45", h_schema: "c35a652f9e4a4d00", h_rule: "" },
@@ -250,20 +256,20 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  event_a: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_merge_never_retracts_event_a" t`,
-  event_b: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_merge_never_retracts_event_b" t`,
+  event_a: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_merge_never_retracts_event_a_193643fb2783" t`,
+  event_b: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_merge_never_retracts_event_b_193643fb2783" t`,
   out: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_merge_never_retracts_out" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "event_a", kind: "log", table_name: "merge_never_retracts_event_a", delta_table_name: "__delta_merge_never_retracts_event_a", frontier_table_name: "__frontier_merge_never_retracts_event_a", next_frontier_table_name: "__next_frontier_merge_never_retracts_event_a", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "merge_never_retracts_event_a" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_merge_never_retracts_event_a" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["out/1"] },
-  { rel: "event_b", kind: "log", table_name: "merge_never_retracts_event_b", delta_table_name: "__delta_merge_never_retracts_event_b", frontier_table_name: "__frontier_merge_never_retracts_event_b", next_frontier_table_name: "__next_frontier_merge_never_retracts_event_b", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "merge_never_retracts_event_b" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_merge_never_retracts_event_b" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["out/1"] },
+  { rel: "event_a", kind: "log", table_name: "merge_never_retracts_event_a_193643fb2783", delta_table_name: "__delta_merge_never_retracts_event_a_193643fb2783", frontier_table_name: "__frontier_merge_never_retracts_event_a_193643fb2783", next_frontier_table_name: "__next_frontier_merge_never_retracts_event_a_193643fb2783", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "merge_never_retracts_event_a_193643fb2783" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_merge_never_retracts_event_a_193643fb2783" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["out/1"] },
+  { rel: "event_b", kind: "log", table_name: "merge_never_retracts_event_b_193643fb2783", delta_table_name: "__delta_merge_never_retracts_event_b_193643fb2783", frontier_table_name: "__frontier_merge_never_retracts_event_b_193643fb2783", next_frontier_table_name: "__next_frontier_merge_never_retracts_event_b_193643fb2783", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "merge_never_retracts_event_b_193643fb2783" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_merge_never_retracts_event_b_193643fb2783" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: ["out/1"] },
   { rel: "out", kind: "log", table_name: "merge_never_retracts_out", delta_table_name: "__delta_merge_never_retracts_out", frontier_table_name: "__frontier_merge_never_retracts_out", next_frontier_table_name: "__next_frontier_merge_never_retracts_out", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_merge_never_retracts_out" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "out", rule_id: "merge_never_retracts:out/1#1", head_kind: "log", head_table_name: "merge_never_retracts_out", head_delta_table_name: "__delta_merge_never_retracts_out", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_merge_never_retracts_event_a" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "out", rule_id: "merge_never_retracts:out/1#2", head_kind: "log", head_table_name: "merge_never_retracts_out", head_delta_table_name: "__delta_merge_never_retracts_out", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_merge_never_retracts_event_b" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "out", rule_id: "merge_never_retracts:out/1#1", head_kind: "log", head_table_name: "merge_never_retracts_out", head_delta_table_name: "__delta_merge_never_retracts_out", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_merge_never_retracts_event_a_193643fb2783" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "out", rule_id: "merge_never_retracts:out/1#2", head_kind: "log", head_table_name: "merge_never_retracts_out", head_delta_table_name: "__delta_merge_never_retracts_out", head_columns: ["item"], key_indices: [], project_sql: `SELECT d0."item" AS "item" FROM "__frontier_merge_never_retracts_event_b_193643fb2783" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -318,6 +324,7 @@ export const program: IGenProgramWithBoot = {
   internMode: "dict",
   ddl,
   rel_columns,
+  rel_physical_names,
   rel_column_types,
   arrival_targets,
   boot: SUBSCRIBED_BOOT,
