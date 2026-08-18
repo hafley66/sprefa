@@ -19,10 +19,20 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
+
 import { post_arrivals, post_program, request, start_served } from "./serveHelpers.ts";
 import type { IServeStatsSnapshot } from "../runtime/types.ts";
 
 const DOOR_DL6 = fileURLToPath(new URL("../../dl/fixtures/door-handwritten.dl6", import.meta.url));
+
+/** `tables=` names SQLite objects, and every object carries its compilation
+ *  unit's module prefix. The served door writes the posted source under a
+ *  content digest, so that digest is the prefix. */
+function served_module(source: string): string {
+  return bytesToHex(sha256(new TextEncoder().encode(source))).slice(0, 32);
+}
 
 test("GET /stats before any program is loaded is a 404, same convention as /idb/:rel", async () => {
   const served = await start_served();
@@ -36,6 +46,7 @@ test("GET /stats before any program is loaded is a 404, same convention as /idb/
 
 test("GET /stats reports process memory always, and dbstat page bytes for requested tables", async () => {
   const source = readFileSync(DOOR_DL6, "utf8");
+  const module_prefix = served_module(source);
   const served = await start_served();
   try {
     assert.equal((await post_program(served.port, source)).statusCode, 200);
@@ -55,7 +66,11 @@ test("GET /stats reports process memory always, and dbstat page bytes for reques
     // fallback path is never exercised here and `objectBytes` stays empty.
     assert.deepEqual(no_tables_body.sqlite.object_bytes, []);
 
-    const scoped = await request(served.port, "/stats?tables=event,current", "GET");
+    const scoped = await request(
+      served.port,
+      `/stats?tables=${module_prefix}_event,${module_prefix}_current`,
+      "GET",
+    );
     assert.equal(scoped.statusCode, 200);
     const scoped_body = JSON.parse(scoped.body) as IServeStatsSnapshot;
     // Verified empirically against @libsql/client 0.17.4 (module header):
@@ -63,8 +78,11 @@ test("GET /stats reports process memory always, and dbstat page bytes for reques
     // merely well-formed.
     assert.equal(scoped_body.sqlite.dbstat_available, true);
     const by_name = new Map(scoped_body.sqlite.object_bytes.map((entry) => [entry.name, entry.bytes]));
-    assert.ok(by_name.has("event"), `expected an "event" entry in ${JSON.stringify(scoped_body.sqlite.object_bytes)}`);
-    assert.ok((by_name.get("event") ?? 0) > 0);
+    assert.ok(
+      by_name.has(`${module_prefix}_event`),
+      `expected an event entry in ${JSON.stringify(scoped_body.sqlite.object_bytes)}`,
+    );
+    assert.ok((by_name.get(`${module_prefix}_event`) ?? 0) > 0);
     // A table this program never declares is silently absent, not a zero row
     // (dbstat only reports objects that exist).
     assert.ok(!by_name.has("no_such_table"));

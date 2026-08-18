@@ -168,8 +168,10 @@ async function replay(
   return { program, rows, statements };
 }
 
-function statements_naming(statements: readonly string[], table: string): number {
-  return statements.filter((statement) => statement.includes(`"${table}"`)).length;
+// The rel is authored; the SQLite object carries its compilation unit's
+// module prefix (compile.pl relation_storage_names/4), so name the module.
+function statements_naming(statements: readonly string[], module: string, table: string): number {
+  return statements.filter((statement) => statement.includes(`"${module}_${table}"`)).length;
 }
 
 // ── the filter itself: "off" is identity, by reference ───────────────────────
@@ -219,7 +221,7 @@ test("flag off + query-bearing: the fixture's own expectations, unpruned", async
     "unpruned, the host demand rel derives its row from file_digest x query_value",
   );
   assert.ok(
-    statements_naming(statements, "__host_demand_tree_sitter") > 0,
+    statements_naming(statements, QUERY_BEARING, "__host_demand_tree_sitter") > 0,
     "unpruned, the module runs the demand rel's derivation",
   );
 });
@@ -243,7 +245,7 @@ test("flag on + query-bearing: subscribed rels identical, the host edge held", a
     "host edge: the demand rel of a subscribed response rel still derives its row",
   );
   assert.ok(
-    statements_naming(pruned.statements, "__host_demand_tree_sitter") > 0,
+    statements_naming(pruned.statements, QUERY_BEARING, "__host_demand_tree_sitter") > 0,
     "host edge: and the statements that derive it still run, so a live host is asked",
   );
   assert.deepEqual(
@@ -282,13 +284,13 @@ test("flag on + host-free: the off-cone chain costs zero statements", async () =
 
   for (const rel of ["audited", "audit_trail"]) {
     assert.ok(
-      statements_naming(unpruned.statements, rel) > 0,
+      statements_naming(unpruned.statements, HOST_FREE, rel) > 0,
       `control: ${rel} costs statements when nothing is pruned`,
     );
     assert.equal(
-      statements_naming(pruned.statements, rel),
+      statements_naming(pruned.statements, HOST_FREE, rel),
       0,
-      `flag on + host-free: ${rel} is off cone, so no statement of it may run: ${statements_naming(pruned.statements, rel)} do`,
+      `flag on + host-free: ${rel} is off cone, so no statement of it may run: ${statements_naming(pruned.statements, HOST_FREE, rel)} do`,
     );
     assert.deepEqual(pruned.rows[rel], [], `and ${rel} ends empty`);
   }
@@ -314,9 +316,9 @@ test("flag on + zero-query: nothing derives, ingestion still lands", async () =>
   const { rows, statements } = await replay(ZERO_QUERY, "on", ZERO_QUERY_SCHEDULE);
   assert.deepEqual(rows["seen"], [], "a zero-query module subscribes to nothing, so it derives nothing");
   assert.equal(
-    statements_naming(statements, "seen"),
+    statements_naming(statements, ZERO_QUERY, "seen"),
     0,
-    `flag on + zero-query: a pruned rel's derivation must not run: ${statements_naming(statements, "seen")} statements name seen`,
+    `flag on + zero-query: a pruned rel's derivation must not run: ${statements_naming(statements, ZERO_QUERY, "seen")} statements name seen`,
   );
   assert.equal(rows["line"]?.length, 2, "flag on + zero-query: ingestion is never pruned");
 });

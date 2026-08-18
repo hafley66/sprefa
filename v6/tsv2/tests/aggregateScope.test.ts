@@ -78,18 +78,18 @@ async function loaded_seam(): Promise<{ seam: ISqlSeam; source: string }> {
   for (let repo = 0; repo < 5000; repo += 1) {
     for (let star = 1; star <= 4; star += 1) values.push(`('repo_${repo}', ${star})`);
   }
-  await run(seam, `INSERT INTO "star_row" ("repo", "stars") VALUES ${values.join(",")}`);
+  await run(seam, `INSERT INTO "${FIXTURE}_star_row" ("repo", "stars") VALUES ${values.join(",")}`);
   await run(
     seam,
-    `INSERT INTO "stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", count(*), min(b0."stars"), max(b0."stars") FROM "star_row" b0 GROUP BY b0."repo"`,
+    `INSERT INTO "${FIXTURE}_stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", count(*), min(b0."stars"), max(b0."stars") FROM "${FIXTURE}_star_row" b0 GROUP BY b0."repo"`,
   );
 
   // One tick's worth of change: retract repo_7's minimum, stage it the way
   // IncrementalRuntime.applyArrivals would.
-  await run(seam, `DELETE FROM "star_row" WHERE "repo" = 'repo_7' AND "stars" = 1`);
+  await run(seam, `DELETE FROM "${FIXTURE}_star_row" WHERE "repo" = 'repo_7' AND "stars" = 1`);
   await run(
     seam,
-    `INSERT INTO "__delta_star_row" ("_sign","_sequence","repo","stars") VALUES (-1, 0, 'repo_7', 1)`,
+    `INSERT INTO "__delta_${FIXTURE}_star_row" ("_sign","_sequence","repo","stars") VALUES (-1, 0, 'repo_7', 1)`,
   );
   await run(seam, emitted_aggregate_sql(source, "scope_clear_sql"));
   await run(seam, emitted_aggregate_sql(source, "scope_seed_sql"));
@@ -103,11 +103,11 @@ async function plan_lines(seam: ISqlSeam, sql: string): Promise<string[]> {
 
 test("aggregate scope seed selects only the groups this tick touched", async () => {
   const { seam } = await loaded_seam();
-  const groups = await run(seam, `SELECT count(*) AS c FROM "stat"`);
+  const groups = await run(seam, `SELECT count(*) AS c FROM "${FIXTURE}_stat"`);
   assert.equal(Number(groups.rows[0]!.c), 5000, "corpus must be big enough for scan-vs-search to matter");
-  const derivations = await run(seam, `SELECT count(*) AS c FROM "star_row"`);
+  const derivations = await run(seam, `SELECT count(*) AS c FROM "${FIXTURE}_star_row"`);
   assert.equal(Number(derivations.rows[0]!.c), 19999);
-  const scope = await run(seam, `SELECT count(*) AS c FROM "__agg_scope_stat"`);
+  const scope = await run(seam, `SELECT count(*) AS c FROM "__agg_scope_${FIXTURE}_stat"`);
   assert.equal(Number(scope.rows[0]!.c), 1, "one changed row must scope exactly one group");
 });
 
@@ -125,7 +125,7 @@ test("scoped delete and recompute SEARCH by group key, never SCAN", async () => 
       `${label} must not SCAN the whole table, got: ${lines.join(" | ")}`,
     );
     assert.ok(
-      lines.some((line) => line.includes("__agg_scope_stat")),
+      lines.some((line) => line.includes(`__agg_scope_${FIXTURE}_stat`)),
       `${label} must drive off the scope table, got: ${lines.join(" | ")}`,
     );
   }
@@ -142,6 +142,6 @@ test("scoped delete and recompute touch one group out of 5000, and min moves", a
     { repo: "repo_7", count: 3, min: 2, max: 4 },
     "retracting the group minimum must move min 1 -> 2, which only a re-read of the group can produce",
   );
-  const groups = await run(seam, `SELECT count(*) AS c FROM "stat"`);
+  const groups = await run(seam, `SELECT count(*) AS c FROM "${FIXTURE}_stat"`);
   assert.equal(Number(groups.rows[0]!.c), 5000, "every untouched group must survive the scoped delete");
 });

@@ -140,7 +140,7 @@ test("count: a program with no finalize emits no departure table anywhere", () =
   // ... and the listening program does carry all three, so the assertions
   // above are discriminating rather than vacuously true of every fixture.
   const listening = emitted_source("keyed_replace_departs_the_old_row");
-  assert.ok(listening.includes(`departure_frontier_table_name: "__departure_frontier_latest"`));
+  assert.ok(listening.includes(`departure_frontier_table_name: "__departure_frontier_keyed_replace_departs_the_old_row_latest"`));
   assert.ok(listening.includes("IncrementalRuntime.stage_departures"));
 });
 
@@ -166,7 +166,7 @@ test("count: staging is one clear, plus one insert only when something departed"
     1,
     `a listened rel with no departure is cleared, nothing else: ${quiet.statements.length} statements`,
   );
-  assert.match(quiet.statements[0]!, /^DELETE FROM "__departure_frontier_latest"$/);
+  assert.match(quiet.statements[0]!, /^DELETE FROM "__departure_frontier_keyed_replace_departs_the_old_row_latest"$/);
 
   const staged = counting_seam(base);
   await firstValueFrom(
@@ -178,7 +178,7 @@ test("count: staging is one clear, plus one insert only when something departed"
     `clear + one set-based insert, never one statement per row: ${staged.statements.length} statements`,
   );
   const rows = await firstValueFrom(
-    base.runner.execute(base.db, `SELECT "key", "value" FROM "__departure_frontier_latest"`),
+    base.runner.execute(base.db, `SELECT "key", "value" FROM "__departure_frontier_keyed_replace_departs_the_old_row_latest"`),
   );
   assert.deepEqual(rows.rows.map((row) => [row.key, row.value]), [["cli", "v1"]]);
 });
@@ -215,7 +215,7 @@ test("endurance: a staged departure is exactly as durable as a staged addition",
       IncrementalRuntime.stage_departures(seam, departure_plan.relations, DEPARTED),
     );
     const before = await firstValueFrom(
-      seam.runner.execute(seam.db, `SELECT count(*) AS n FROM "__departure_frontier_latest"`),
+      seam.runner.execute(seam.db, `SELECT count(*) AS n FROM "__departure_frontier_keyed_replace_departs_the_old_row_latest"`),
     );
     assert.equal(Number(before.rows[0]!.n), 1, "the departure must be staged before the reopen");
 
@@ -224,7 +224,7 @@ test("endurance: a staged departure is exactly as durable as a staged addition",
     const live = await firstValueFrom(seam.runner.execute(seam.db, carry_tables_sql));
     const live_names = live.rows.map((row) => String(row.name));
     assert.ok(
-      live_names.includes("__frontier_latest") && live_names.includes("__departure_frontier_latest"),
+      live_names.includes("__frontier_keyed_replace_departs_the_old_row_latest") && live_names.includes("__departure_frontier_keyed_replace_departs_the_old_row_latest"),
       `the probe must see both carry tables while the connection is open, got: ${live_names.join(", ")}`,
     );
 

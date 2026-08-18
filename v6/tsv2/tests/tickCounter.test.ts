@@ -94,7 +94,7 @@ test("now() reads the counter as a scalar subquery, never a joined row", async (
   await run(seam, emitted_advance_sql(source));
   await run(
     seam,
-    `INSERT INTO "__frontier_ping" ("_phase","_sequence","name") VALUES (0,0,'alpha'), (0,1,'beta')`,
+    `INSERT INTO "__frontier_${FIXTURE}_ping" ("_phase","_sequence","name") VALUES (0,0,'alpha'), (0,1,'beta')`,
   );
 
   const project_sql = source

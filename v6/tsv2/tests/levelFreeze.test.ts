@@ -143,7 +143,7 @@ test("count: a staged retraction reconciles exactly the plain level statements",
   const base = await booted_seam();
   await firstValueFrom(
     base.runner.execute(base.db, {
-      sql: `INSERT INTO "__delta_file_line" ("_sign", "_sequence", "path", "line", "code") VALUES (-1, 0, ?, ?, ?)`,
+      sql: `INSERT INTO "__delta_clock_rel_join_storms_file_line" ("_sign", "_sequence", "path", "line", "code") VALUES (-1, 0, ?, ?, ?)`,
       args: ["a_rs", 3n, "eprintln_ban"],
     }),
   );

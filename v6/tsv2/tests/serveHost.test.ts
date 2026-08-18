@@ -42,6 +42,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import { VirtualTimeScheduler, firstValueFrom } from "rxjs";
 
 import { ScratchStore } from "../runtime/scratchStore.ts";
@@ -234,10 +236,13 @@ test("declared-struct live host output interns once and tick logs render the can
 
     const inspection = ScratchStore.open(db_url);
     try {
+      // Every SQLite object carries its compilation unit's module prefix, and
+      // the served door writes the posted source under a content digest.
+      const module_prefix = bytesToHex(sha256(new TextEncoder().encode(STRUCT_HOST_DL6))).slice(0, 32);
       const target_rows = await firstValueFrom(
         inspection.runner.scalar(
           inspection.db,
-          'SELECT count(*) FROM "span"',
+          `SELECT count(*) FROM "${module_prefix}_span"`,
         ),
       );
       assert.equal(target_rows, 1);
