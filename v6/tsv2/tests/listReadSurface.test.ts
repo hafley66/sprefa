@@ -47,7 +47,10 @@ import type { IArrivalBatch, IBootStatement, IGenProgram, ISqlSeam } from "../ru
 import * as scalar_list from "../gen_emitted/split_value_is_the_interned_list_id.ts";
 import * as rel_list from "../gen_emitted/recursive_list_arg_parent_holds_child_node_values.ts";
 
-type EmittedProgram = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type EmittedProgram = IGenProgram & {
+  readonly boot: readonly IBootStatement[];
+  readonly final_select: Readonly<Record<string, string>>;
+};
 
 // The rel names are what a schedule names; the table names carry the
 // compilation unit's module prefix (compile.pl relation_storage_names/4).
@@ -165,7 +168,7 @@ test("generated ticks preserve order, duplicates, empty lists, deletion, and res
       [{ rel: "row_text", sign: "del", row: ["ordered", "beta/alpha/beta"] }],
     ]);
     const public_after_delete = await firstValueFrom(
-      reopened.runner.execute(reopened.db, program.final_select.row_parts),
+      reopened.runner.execute(reopened.db, program.final_select['row_parts']!),
     );
     assert.ok(
       !public_after_delete.rows.some((row) => row.name === "ordered"),
@@ -175,7 +178,7 @@ test("generated ticks preserve order, duplicates, empty lists, deletion, and res
 
     const after_delete_restart = await booted_seam(program, path, true);
     const public_after_delete_restart = await firstValueFrom(
-      after_delete_restart.runner.execute(after_delete_restart.db, program.final_select.row_parts),
+      after_delete_restart.runner.execute(after_delete_restart.db, program.final_select['row_parts']!),
     );
     assert.ok(
       !public_after_delete_restart.rows.some((row) => row.name === "ordered"),
@@ -267,7 +270,13 @@ test("generated nested structured elements survive a restart", async () => {
     const initial = await booted_seam(program, path);
     await run_schedule(program, initial, [
       [{ rel: NODE_ENTITY, sign: "add", row: ['[{"name":"leaf","children":1}]'] }],
-      [{ rel: NODE_MEMBER, sign: "add", row: [1, 0, { name: "leaf", children: 1 }] }],
+      [
+        {
+          rel: NODE_MEMBER,
+          sign: "add",
+          row: [1, 0, { name: "leaf", children: 1 } as unknown as string],
+        },
+      ],
     ]);
     const before_restart = await firstValueFrom(
       initial.runner.execute(initial.db, `SELECT "value_text" FROM "${NODE_VIEW}" WHERE "list_id" = 1`),
