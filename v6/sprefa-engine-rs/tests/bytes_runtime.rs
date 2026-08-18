@@ -117,8 +117,9 @@ async fn authored_dl6_program_runs_native_bytes_through_rust_runtime() {
     let blob_type = seam
         .execute(&SqlStatement {
             // The rel is authored `byte_source`; the table carries this
-            // compilation unit's module prefix.
-            sql: "SELECT typeof(value) FROM bytes_type_system_byte_source ORDER BY value"
+            // compilation unit's module prefix and the storage-name digest
+            // (PR #364).
+            sql: "SELECT typeof(value) FROM bytes_type_system_byte_source_0f21d1268d90 ORDER BY value"
                 .to_string(),
             args: vec![],
         })
