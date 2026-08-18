@@ -1,0 +1,60 @@
+# openapi-data-family.dl6 -- AN OPENAPI SPEC READ AS ROWS, NO CONVERSION STEP.
+#
+# `sprefa-extract --family data` reads json / jsonl / yaml / toml through one
+# grammar each and answers two record shapes off ONE parse: a `data_doc` per
+# document carrying it as a json VALUE, and a span-carrying `data_value` per
+# value inside it. `decode/2` is the query over the document column, so a yaml
+# spec reaches rules with no yaml-to-json pass anywhere.
+#
+# ── WHY THE HOST IS NAMED `extract` ─────────────────────────────────────────
+# `host_input_contract` is keyed on hardcoded host names (registry.pl:394-449),
+# so only a listed name gets the (identity, freshness) shape that keeps `digest`
+# off the template. Any other spelling falls to `identity_roles/2`
+# (registry.pl:526-534) and throws `template_mismatch(unreferenced_input(digest))`
+# at 1_host_expand.pl:301. ARCH.pl:879 defect D1, already filed and unbuilt.
+#
+# ── WHY ONLY THE DOCUMENT ROWS ARRIVE ───────────────────────────────────────
+# The declared response carries `doc`, and a row missing a declared column is
+# dropped, so the `data_value` rows stay out of this program by construction.
+# A program that wants the spans declares `path`/`kind`/`span` instead.
+#
+# ── ONE DOOR TODAY, AND THE OTHER STOPS BY NAME ─────────────────────────────
+# TS door, measured on pokeapi.openapi.yml: spec_doc 1, spec_operation 100,
+# spec_path 100. The emitted template spawns $DL_EXTRACT_BIN, so it reads the
+# family the CLI has.
+# RUST door: `emit_rust_harness --live-hosts` stops rc=101 with
+#   sh host 'extract': family `data` is not a known family; in-process families
+#   are cst, type, call, df
+# The in-process mask parser is a hardcoded list at sprefa-engine-rs
+# src/hosts.rs:1260-1285 and carries no `data` arm. Stopping by name is the
+# CORRECT half (a silent zero-row rc=0 is the F2 defect scip_combo pins); the
+# missing half is one arm, `"data" => mask.data = true`.
+#
+# ── THE RX LOWERING ─────────────────────────────────────────────────────────
+#   specFile$.pipe(map(mintIdentityAndWitness),
+#                  distinct(demand => demand.witnessDigest),
+#                  mergeMap(runExtract), mergeMap(commitEdbArrival))
+#   specDoc$.pipe(mergeMap(doc => from(jsonEach(doc, '$.paths'))),
+#                 mergeMap(([pathTemplate, methods]) =>
+#                   from(jsonEach(methods)).pipe(
+#                     map(([method, body]) =>
+#                       ({ pathTemplate, method, operationId: body.operationId })))))
+
+rel spec_file(path: text, digest: text) key(1, 2).
+
+sh extract(path: text, digest: text) -> (record: text, doc: json) =
+  `"$DL_EXTRACT_BIN" --family data {path}`.
+
+rel spec_doc(path: text, doc: json).
+spec_doc(path, doc) <-
+  spec_file(path, digest),
+  extract(path, digest, 'data_doc', doc).
+
+rel spec_operation(path_template: text, method: text, operation_id: text).
+spec_operation(path_template, method, operation_id) <-
+  spec_doc(_spec_path, doc),
+  decode(doc, {paths: {$path_template: {$method: {operationId: operation_id}}}}).
+
+rel spec_path(path_template: text).
+spec_path(path_template) <-
+  spec_operation(path_template, _method, _operation_id).

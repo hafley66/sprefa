@@ -36,7 +36,8 @@ impl CacheKey {
         let mask_bits = (mask.cst as u8)
             | ((mask.types as u8) << 1)
             | ((mask.call as u8) << 2)
-            | ((mask.df as u8) << 3);
+            | ((mask.df as u8) << 3)
+            | ((mask.data as u8) << 4);
         Self {
             blob,
             lang,

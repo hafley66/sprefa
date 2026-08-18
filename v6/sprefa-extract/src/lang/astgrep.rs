@@ -246,6 +246,7 @@ impl Source for AstgrepSource {
             types: None,
             call: None,
             df: None,
+            data: None,
         }
     }
 }

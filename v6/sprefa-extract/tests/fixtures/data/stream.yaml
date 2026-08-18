@@ -1,0 +1,18 @@
+openapi: 3.1.0
+paths:
+  /pets:
+    get:
+      operationId: list_pets
+servers:
+  - url: https://one.example
+  - url: https://two.example
+---
+openapi: 3.1.0
+paths:
+  /pets/{id}:
+    get:
+      operationId: get_pet
+enabled: true
+missing: null
+count: 7
+quoted: "a: b"
