@@ -46,6 +46,7 @@ import type { IArrivalBatch, IBootStatement, IGenProgram, ISqlSeam } from "../ru
 
 import * as scalar_list from "../gen_emitted/split_value_is_the_interned_list_id.ts";
 import * as rel_list from "../gen_emitted/recursive_list_arg_parent_holds_child_node_values.ts";
+import { physical_name } from "./physicalNames.ts";
 
 type EmittedProgram = IGenProgram & {
   readonly boot: readonly IBootStatement[];
@@ -257,7 +258,7 @@ test("a rel element aggregates the target view's __rendered, not its id", () => 
   assert.match(view, /json\(r\."__rendered"\)/, `the element is the target's value, got: ${view}`);
   assert.match(
     view,
-    new RegExp(`LEFT JOIN "__ref_${NODE_MODULE}_node" r ON r\\."__id" = m\\."value"`),
+    new RegExp(`LEFT JOIN "__ref_${physical_name(rel_list.program, "node")}" r ON r\\."__id" = m\\."value"`),
     `a join, not a probe: ${view}`,
   );
 });

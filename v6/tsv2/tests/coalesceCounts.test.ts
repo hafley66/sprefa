@@ -147,7 +147,7 @@ test("coalesce statements per tick are flat in the source rel's size", async () 
 test("the coalesce default arm SEARCHes the source rel, never SCANs it", async () => {
   const insert_sql = emitted_repo_latest_insert_sql();
   assert.ok(
-    insert_sql.includes(`NOT EXISTS (SELECT 1 FROM "coalesce_defaults_the_absent_row_latest_commit" n0`),
+    insert_sql.includes(`NOT EXISTS (SELECT 1 FROM "coalesce_defaults_the_absent_row_latest_commit_9b0759e37ad0" n0`),
     `the default arm must carry the negation over the source rel, got: ${insert_sql}`,
   );
 
