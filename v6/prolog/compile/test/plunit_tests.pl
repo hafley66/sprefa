@@ -8684,9 +8684,12 @@ test(source_mutations_fixture_keeps_one_document_boundary_and_exact_approval_joi
                'source_commit_demand(Root, State, StageId)'),
     \+ sub_string(SourceText, _, _, _, 'source_action('),
     tmp_file(source_mutations, OutFile),
+    % once/1, never a bare conjunction: a failing assertion below used to
+    % backtrack into compile_dl6/2 and re-drive the whole compiler, and the
+    % test ran past a 7 minute cap instead of failing in under a second.
     setup_call_cleanup(
         true,
-        ( compile_dl6(Source, OutFile),
+        once(( compile_dl6(Source, OutFile),
           read_file_to_string(OutFile, Text, []),
           sub_string(Text, _, _, _, 'name: "source_stage"'),
           sub_string(Text, _, _, _, 'name: "source_commit"'),
@@ -8696,9 +8699,9 @@ test(source_mutations_fixture_keeps_one_document_boundary_and_exact_approval_joi
           sub_string(Text, _, _, _, 'source_ownership'),
           sub_string(Text, _, _, _, 'source_type'),
           sub_string(Text, _, _, _,
-                     'FROM "source_stage_result" b0, "source_approval" b1 WHERE b0."outcome"'),
+                     'FROM "source_mutations_source_stage_result" b0, "source_mutations_source_approval" b1 WHERE b0."outcome"'),
           sub_string(Text, _, _, _, 'b1."proposal" = b0."proposal"'),
-          sub_string(Text, _, _, _, 'b1."stage_id" = b0."stage_id"') ),
+          sub_string(Text, _, _, _, 'b1."stage_id" = b0."stage_id"') )),
         catch(delete_file(OutFile), _, true)).
 
 % ── the mount reaches the catalog as data ───────────────────────────────────
