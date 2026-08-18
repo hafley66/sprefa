@@ -167,7 +167,7 @@
 :- use_module(use_resolve, [short_hash/2]).
 :- use_module('0_rel_record').
 :- use_module('0_generic_expand', [canonical_type_name/2]).
-:- use_module('0_type_ids', [id_kind_name/3]).
+:- use_module('0_type_ids', [id_kind_name/3, semantic_type_id_text/2]).
 :- use_module('0_option_expand', [acyclic_companion/5]).
 :- use_module('compile/registry', [expression/5, surface/5, body_surface_for_term/6]).
 :- use_module('0_type_plane',
@@ -1699,8 +1699,12 @@ annotate_catalog_semantic_ids([], _, _, []).
 annotate_catalog_semantic_ids([Row | Rest], AllRows, SemanticRows,
                               [Annotated | AnnotatedRest]) :-
     catalog_semantic_id(Row, AllRows, SemanticRows, SemanticId),
-    annotate_catalog_row(Row, SemanticId, Annotated),
+    catalog_semantic_id_text(SemanticId, SemanticText),
+    annotate_catalog_row(Row, SemanticText, Annotated),
     annotate_catalog_semantic_ids(Rest, AllRows, SemanticRows, AnnotatedRest).
+
+catalog_semantic_id_text('', '') :- !.
+catalog_semantic_id_text(SemanticId, Text) :- semantic_type_id_text(SemanticId, Text).
 
 annotate_catalog_row(row(Id, Parent, Ordinal, Name, Kind, TypeId, Arity,
                          ModuleId, Hash, _Extra, Extra2), SemanticId,

@@ -31,7 +31,7 @@
 :- use_module('0_program_check', [level_headed/2]).
 :- use_module('0_option_expand', [companion_rel_name/3, option_enum_name/2,
                                   option_value_element/2, scalar_element/1]).
-:- use_module('0_type_ids', [decl_id/3, member_id/4]).
+:- use_module('0_type_ids', [decl_id/4, member_id/4]).
 
 :- op(1150, xfx, <-).
 
@@ -131,13 +131,13 @@ option_type_row(Decls,
     member(option_column(ParentName/_, Column, Element), Decls),
     option_catalog_value_element(Decls, Element),
     option_enum_name(Element, EnumName),
-    decl_id(enum, EnumName, EnumId).
+    semantic_decl_id(Decls, enum, EnumName, EnumId).
 option_type_row(Decls, Row) :-
     member(option_column(ParentName/_, Column, Element), Decls),
     \+ option_catalog_value_element(Decls, Element),
     companion_rel_name(ParentName, Column, CompanionName),
-    decl_id(relation, ParentName, ParentId),
-    decl_id(relation, CompanionName, CompanionId),
+    semantic_decl_id(Decls, relation, ParentName, ParentId),
+    semantic_decl_id(Decls, relation, CompanionName, CompanionId),
     member(Row,
            [ declaration(ParentId, root, ParentName, relation, materialized),
              declaration(CompanionId, root, CompanionName, relation,
@@ -180,7 +180,7 @@ enum_type_rows(SurfaceDecls, Rows) :-
 
 enum_type_row(SurfaceDecls, declaration(EnumId, root, EnumName, enum, compile_time)) :-
     member(enum_decl(EnumName, _), SurfaceDecls),
-    decl_id(enum, EnumName, EnumId).
+    semantic_decl_id(SurfaceDecls, enum, EnumName, EnumId).
 enum_type_row(SurfaceDecls,
               declaration(VariantRelId, root, VariantRelName, relation, materialized)) :-
     enum_variant_position(SurfaceDecls, _, _, _, VariantRelName, VariantRelId).
@@ -196,14 +196,36 @@ enum_type_row(SurfaceDecls,
 enum_variant_position(SurfaceDecls, EnumId, Ordinal, VariantName, VariantRelName,
                       VariantRelId) :-
     member(enum_decl(EnumName, VariantTerms), SurfaceDecls),
-    decl_id(enum, EnumName, EnumId),
+    semantic_decl_id(SurfaceDecls, enum, EnumName, EnumId),
     findall(Name,
             ( enum_variant(VariantTerms, VariantTerm),
               variant_spec(VariantTerm, Name, _) ),
             VariantNames),
     nth1(Ordinal, VariantNames, VariantName),
     variant_rel_name(EnumName, VariantName, VariantRelName),
-    decl_id(relation, VariantRelName, VariantRelId).
+    semantic_decl_id(SurfaceDecls, relation, VariantRelName, VariantRelId).
+
+semantic_decl_id(Decls, Kind, Name, Id) :-
+    (   member(semantic_decl_module(Kind, Name, ModuleHash), Decls)
+    ->  true
+    ;   enum_generated_module(Decls, Kind, Name, ModuleHash)
+    ->  true
+    ;   ModuleHash = local
+    ),
+    decl_id(ModuleHash, Kind, Name, Id).
+
+enum_generated_module(Decls, relation, VariantRelName, ModuleHash) :-
+    member(enum_decl(EnumName, VariantTerms), Decls),
+    enum_variant(VariantTerms, VariantTerm),
+    variant_spec(VariantTerm, VariantName, _),
+    variant_rel_name(EnumName, VariantName, VariantRelName),
+    member(semantic_decl_module(enum, EnumName, ModuleHash), Decls),
+    !.
+enum_generated_module(Decls, relation, CompanionName, ModuleHash) :-
+    member(option_column(ParentName/_, Column, _), Decls),
+    companion_rel_name(ParentName, Column, CompanionName),
+    member(semantic_decl_module(relation, ParentName, ModuleHash), Decls),
+    !.
 
 enum_tag_names(SugaredDecls, EnumToTag) :-
     findall(EnumName-TagName,

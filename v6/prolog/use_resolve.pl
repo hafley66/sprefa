@@ -141,9 +141,11 @@ collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files, Tables,
     prog_parts(OwnProg, OwnDecls0, OwnRules, OwnQueries),
     check_use_local_name_collisions(OwnDecls0, EdgeDecls),
     rel_module_decls(OwnDecls0, EntryHash, RelModuleDecls),
+    semantic_decl_modules(OwnDecls0, EntryHash, SemanticDeclModules),
     entry_module_decls(OnStack, EntryHash, EntryModuleDecls),
     append([OwnDecls0, [module_storage_decl(EntryHash, EntryStem),
                         module_decl(EntryName, EntryHash)], RelModuleDecls,
+            SemanticDeclModules,
             EntryModuleDecls,
             EdgeDecls],
            OwnDecls),
@@ -177,6 +179,28 @@ source_relation_name(OwnDecls, Name) :-
     declared_path(OwnDecls, _Segments, Name).
 source_relation_name(OwnDecls, Name) :-
     member(rel_template(Segments, _, _), OwnDecls),
+    atomic_list_concat(Segments, '__', Name).
+
+% Semantic type identity needs a module-qualified source declaration before
+% import merging can erase file ownership.  Generated declarations inherit
+% their source constructor's module during generic expansion.
+semantic_decl_modules(OwnDecls, Hash, Decls) :-
+    findall(Kind-Name,
+            semantic_source_decl(OwnDecls, Kind, Name),
+            Pairs0),
+    sort(Pairs0, Pairs),
+    findall(semantic_decl_module(Kind, Name, Hash),
+            member(Kind-Name, Pairs),
+            Decls).
+
+semantic_source_decl(Decls, relation, Name) :-
+    source_relation_name(Decls, Name).
+semantic_source_decl(Decls, interface, Name) :-
+    member(interface_decl(Name, _), Decls).
+semantic_source_decl(Decls, enum, Name) :-
+    member(enum_decl(Name, _), Decls).
+semantic_source_decl(Decls, enum, Name) :-
+    member(rel_template_enum(Segments, _, _), Decls),
     atomic_list_concat(Segments, '__', Name).
 
 % A generated relation has no source declaration of its own.  Its storage

@@ -55,7 +55,11 @@
               [ expand_generic_program/2, expand_generic_program_raw/2,
                 canonical_type_name/2, generic_type_ir/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
-:- use_module('../../0_type_ids', [ decl_id/3, app_id/3, id_kind_name/3 ]).
+:- use_module('../../0_type_ids', [ decl_id/4, app_id/3, id_kind_name/3,
+                                    primitive_id/2, semantic_type_id_text/2 ]).
+
+% Fixture-only shorthand.  Production code always transports module identity.
+decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 :- use_module('../../0_ast_expand',
               [ expand_ast_program/2,
                 expand_ast_program_with_bindings/3 ]).
@@ -2009,9 +2013,12 @@ test(catalog_generic_rows_carry_normalized_semantic_ids) :-
           rel_spec(PairName/1, set, [value], none, [int]) ], RelPlans),
     lower:catalog_decl_rows(generic_semantic_catalog, [], RelPlans,
                             Expanded, Rows, _),
-    atomic_list_concat(['decl:relation:', PairName], SemanticConcreteId),
+    decl_id(relation, pair, PairSemanticId),
+    decl_id(relation, PairName, SemanticConcreteTerm),
+    semantic_type_id_text(PairSemanticId, PairSemanticText),
+    semantic_type_id_text(SemanticConcreteTerm, SemanticConcreteId),
     memberchk(row(_, _, _, pair, generic_rel, _, _, _, _,
-                  'decl:relation:pair', _), Rows),
+                  PairSemanticText, _), Rows),
     memberchk(row(_, _, _, PairName, concrete_type, _, _, _, _,
                   SemanticConcreteId, _), Rows),
     true.
@@ -2032,12 +2039,12 @@ test(no_decl_id_reverse_parse_outside_the_id_module) :-
             Offenders),
     Offenders == [].
 
-test(the_id_module_still_owns_one_reverse_parse) :-
+test(the_id_module_uses_structural_inverse) :-
     test_dir_fact(Here),
     atomic_list_concat([Here, '/../../0_type_ids.pl'], Path),
     read_file_to_string(Path, Text, []),
     type_id_rail_occurrences(Text, Count),
-    Count =:= 1.
+    Count =:= 0.
 
 type_id_rail_source(Path) :-
     test_dir_fact(Here),
@@ -2054,6 +2061,69 @@ type_id_rail_occurrences(Text, Count) :-
     length(Marks, Count).
 
 :- end_tests(type_id_rail).
+
+:- begin_tests(semantic_type_identity).
+
+test(named_types_keep_module_separation) :-
+    decl_id(module_a, relation, person, Left),
+    decl_id(module_b, relation, person, Right),
+    Left \== Right,
+    id_kind_name(Left, relation, person),
+    id_kind_name(Right, relation, person).
+
+test(application_identity_keeps_recursive_argument_order) :-
+    decl_id(module_a, relation, pair, Pair),
+    decl_id(module_a, relation, document, Document),
+    primitive_id(text, Text),
+    app_id(Pair, [Document, Text], Forward),
+    app_id(Pair, [Text, Document], Reverse),
+    app_id(Pair, [Forward, Document], Nested),
+    Forward \== Reverse,
+    Nested == application(Pair, [Forward, Document]).
+
+test(artifact_text_is_full_sha256_of_structural_identity) :-
+    decl_id(module_a, relation, person, Id),
+    semantic_type_id_text(Id, Text),
+    atom_length(Text, 64),
+    decl_id(module_b, relation, person, OtherId),
+    semantic_type_id_text(OtherId, OtherText),
+    Text \== OtherText.
+
+test(ascii_atom_lengths_prevent_delimiter_ambiguity) :-
+    Left = named('a:bc', relation, 'd:e'),
+    Right = named(a, 'bc:relation', 'd:e'),
+    type_ids:semantic_type_id_encoding(Left, "N4:a:bc8:relation3:d:e"),
+    type_ids:semantic_type_id_encoding(Right, "N1:a11:bc:relation3:d:e"),
+    semantic_type_id_text(Left,
+                          'ed6f765eba37e903c88b170660dab3ffbccb2b9af94226cd9768e8a7fff02743'),
+    semantic_type_id_text(Right,
+                          'f68e8beb51a3a302a2c6c6b756aebeebf3a30f1849567aaec19f84fab9be6f13').
+
+test(unicode_atom_lengths_use_utf8_bytes) :-
+    Id = named('\u03bc', relation, 'caf\u00e9'),
+    type_ids:semantic_type_id_encoding(Id,
+                                       "N2:\u03bc8:relation5:caf\u00e9"),
+    semantic_type_id_text(Id,
+                          '87ffef7672c80c12b9f699c6bca280d6867ff4a073f3bc04c26316b916affe79').
+
+test(type_ir_declaration_order_is_invariant_under_one_module) :-
+    A = [ semantic_decl_module(relation, span, module_a),
+          semantic_decl_module(interface, encodable, module_a),
+          type_decl(span, [col(value, text)]),
+          interface_decl(encodable, []) ],
+    reverse(A, B),
+    generic_type_ir(A, RowsA),
+    generic_type_ir(B, RowsB),
+    RowsA == RowsB.
+
+test(catalog_rows_remain_dense_while_semantic_ids_are_terms) :-
+    inferred_relplans([rel_spec(person/1, set, [name], none, [text])], RelPlans),
+    lower:catalog_rows(identity_catalog, [], RelPlans, Rows),
+    memberchk(row(8, 7, 0, person, rel, 0, 1, 7, _, _, _), Rows),
+    decl_id(module_a, relation, person, SemanticId),
+    compound(SemanticId).
+
+:- end_tests(semantic_type_identity).
 
 :- begin_tests(catalog_nested_rows).
 
@@ -4890,7 +4960,8 @@ test(list_flavor_mints_carry_origin_rows) :-
     canonical_type_name(list(text), EntityName),
     atomic_list_concat([EntityName, member], '__', MemberName),
     decl_id(relation, list, Constructor),
-    app_id(Constructor, [text], AppId),
+    primitive_id(text, TextId),
+    app_id(Constructor, [TextId], AppId),
     decl_id(relation, EntityName, EntityId),
     decl_id(relation, MemberName, MemberRelId),
     memberchk(application(AppId, Constructor), Rows),
@@ -4926,7 +4997,8 @@ test(all_four_list_families_carry_origin_rows) :-
                             list_entity_linked_sequence(int) ]),
            ( Flavor =.. [ConstructorName | Arguments],
              decl_id(relation, ConstructorName, Constructor),
-             app_id(Constructor, Arguments, AppId),
+             maplist(test_semantic_type_id, Arguments, ArgumentIds),
+             app_id(Constructor, ArgumentIds, AppId),
              canonical_type_name(Flavor, EntityName),
              decl_id(relation, EntityName, EntityId),
              memberchk(derived_from(EntityId, AppId), Rows) )),
@@ -4958,14 +5030,21 @@ test(nested_bounded_generic_application_compiles) :-
     memberchk(type_decl(OuterName, _), Decls),
     memberchk(semantic_type_rows(Rows), Decls),
     decl_id(relation, pair, Constructor),
-    app_id(Constructor, [document], InnerAppId),
-    app_id(Constructor, [pair(document)], OuterAppId),
+    decl_id(relation, document, DocumentId),
+    app_id(Constructor, [DocumentId], InnerAppId),
+    app_id(Constructor, [InnerAppId], OuterAppId),
     memberchk(well_formed(InnerAppId), Rows),
     memberchk(well_formed(OuterAppId), Rows),
     memberchk(substitution(OuterAppId, _, pair(document)), Rows),
     memberchk(obligation(_, OuterAppId, _, pair(document)), Rows),
     memberchk(resolved_by(_, structural(pair(document))), Rows),
     memberchk(resolved_by(_, impl(_)), Rows).
+
+test_semantic_type_id(Type, Id) :-
+    memberchk(Type, [int, text, float, bool, json, bytes]),
+    !,
+    primitive_id(Type, Id).
+test_semantic_type_id(Type, Id) :- decl_id(relation, Type, Id).
 
 % FAIL-PRE-FIX: the old payload was the bare leaf and interface; the path
 % (template -> application -> argument) was thrown away.

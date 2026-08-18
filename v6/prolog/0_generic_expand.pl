@@ -21,9 +21,9 @@
 :- use_module('0_enum_expand', [enum_type_rows/2]).
 :- use_module('0_type_plane', [unwrapped_column_type/2]).
 :- use_module('0_type_ids',
-              [ decl_id/3, param_id/4, member_id/4, constraint_id/3,
-                constraint_id/4,
-                impl_id/3, impl_id/4, app_id/3, arg_id/3, id_kind_name/3 ]).
+              [ decl_id/4, primitive_id/2, param_id/4, member_id/4,
+                constraint_id/3, impl_id/3, app_id/3, arg_id/3,
+                id_kind_name/3 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -137,7 +137,7 @@ expand_user_templates(Decls0, Rules, Instances, Decls) :-
     judge_template_bounds(ProofPlane, Templates, Instances, JudgmentRows),
     maplist(rewrite_user_template_decl(Instances), WithInstances, Rewritten),
     exclude(is_rel_template, Rewritten, RuntimeDecls),
-    generic_catalog_decls(TypeIr, Instances, JudgmentRows, CatalogDecls),
+    generic_catalog_decls(WithInstances, TypeIr, Instances, JudgmentRows, CatalogDecls),
     append(RuntimeDecls, CatalogDecls, Decls).
 
 is_rel_template(rel_template(_, _, _)).
@@ -280,28 +280,28 @@ normalized_type_rows(Decls, Rows) :-
 
 normalized_declaration_row(Decls, declaration(Id, root, Name, relation, materialized)) :-
     member(type_decl(Name, _), Decls),
-    decl_id(relation, Name, Id).
+    semantic_decl_id(Decls, relation, Name, Id).
 normalized_declaration_row(Decls, declaration(Id, root, Name, relation, compile_time)) :-
     member(rel_template(Segments, _, _), Decls),
     atomic_list_concat(Segments, '__', Name),
-    decl_id(relation, Name, Id).
+    semantic_decl_id(Decls, relation, Name, Id).
 normalized_declaration_row(Decls, declaration(Id, root, Name, interface, compile_time)) :-
     member(interface_decl(Name, _), Decls),
-    decl_id(interface, Name, Id).
+    semantic_decl_id(Decls, interface, Name, Id).
 normalized_declaration_row(Decls, declaration(Id, root, ConcreteName, relation, materialized)) :-
     source_generic_application(Decls, Application),
     canonical_type_name(Application, ConcreteName),
-    decl_id(relation, ConcreteName, Id).
+    semantic_decl_id(Decls, relation, ConcreteName, Id).
 
 normalized_parameter_row(Decls, parameter(Id, Owner, Ordinal, Name)) :-
     generic_owner_parameters(Decls, OwnerName, Parameters),
-    decl_id(relation, OwnerName, Owner),
+    semantic_decl_id(Decls, relation, OwnerName, Owner),
     nth1(Ordinal, Parameters, Parameter0),
     parameter_parts(Parameter0, Name, _),
     param_id(Owner, Ordinal, Name, Id).
 normalized_parameter_row(Decls, parameter(Id, Owner, Ordinal, Name)) :-
     member(interface_decl(OwnerName, Parameters), Decls),
-    decl_id(interface, OwnerName, Owner),
+    semantic_decl_id(Decls, interface, OwnerName, Owner),
     nth1(Ordinal, Parameters, Parameter0),
     parameter_parts(Parameter0, Name, _),
     param_id(Owner, Ordinal, Name, Id).
@@ -309,13 +309,13 @@ normalized_parameter_row(Decls, parameter(Id, Owner, Ordinal, Name)) :-
 normalized_member_row(Decls, member(Id, Owner, Ordinal, Name, Type)) :-
     member(rel_template(Segments, Parameters, Specs), Decls),
     atomic_list_concat(Segments, '__', OwnerName),
-    decl_id(relation, OwnerName, Owner),
+    semantic_decl_id(Decls, relation, OwnerName, Owner),
     nth1(Ordinal, Specs, column(Name, Type0)),
     normalized_type(Decls, Owner, Parameters, Type0, Type),
     member_id(Owner, Ordinal, Name, Id).
 normalized_member_row(Decls, member(Id, Owner, Ordinal, Name, Type)) :-
     member(type_decl(OwnerName, Specs), Decls),
-    decl_id(relation, OwnerName, Owner),
+    semantic_decl_id(Decls, relation, OwnerName, Owner),
     nth1(Ordinal, Specs, col(Name, Type0)),
     normalized_type(Decls, Owner, [], Type0, Type),
     member_id(Owner, Ordinal, Name, Id).
@@ -332,58 +332,60 @@ member_row_of_id(Id, member(Id, _, _, _, _)).
 
 normalized_constraint_row(Decls, constraint(Id, ParameterId, InterfaceId)) :-
     generic_owner_parameters(Decls, OwnerName, Parameters),
-    decl_id(relation, OwnerName, Owner),
+    semantic_decl_id(Decls, relation, OwnerName, Owner),
     nth1(Ordinal, Parameters, Parameter0),
     parameter_parts(Parameter0, Name, Constraints),
     param_id(Owner, Ordinal, Name, ParameterId),
     member(Constraint, Constraints),
     interface_application_parts(Constraint, InterfaceName, []),
-    decl_id(interface, InterfaceName, InterfaceId),
+    semantic_decl_id(Decls, interface, InterfaceName, InterfaceId),
     constraint_id(ParameterId, InterfaceId, Id).
 
 normalized_constraint_row(Decls, constraint(Id, ParameterId, InterfaceId)) :-
     member(interface_decl(OwnerName, Parameters), Decls),
-    decl_id(interface, OwnerName, Owner),
+    semantic_decl_id(Decls, interface, OwnerName, Owner),
     nth1(Ordinal, Parameters, Parameter0),
     parameter_parts(Parameter0, Name, Constraints),
     param_id(Owner, Ordinal, Name, ParameterId),
     member(Constraint, Constraints),
     interface_application_parts(Constraint, InterfaceName, []),
-    decl_id(interface, InterfaceName, InterfaceId),
+    semantic_decl_id(Decls, interface, InterfaceName, InterfaceId),
     constraint_id(ParameterId, InterfaceId, Id).
 
 normalized_constraint_row(Decls, constraint(Id, ParameterId, InterfaceId, Patterns)) :-
     generic_owner_parameters(Decls, OwnerName, Parameters),
-    decl_id(relation, OwnerName, Owner),
+    semantic_decl_id(Decls, relation, OwnerName, Owner),
     nth1(Ordinal, Parameters, Parameter0),
     parameter_parts(Parameter0, Name, Constraints),
     param_id(Owner, Ordinal, Name, ParameterId),
     member(Constraint, Constraints),
     interface_application_parts(Constraint, InterfaceName, Patterns),
     Patterns \== [],
-    decl_id(interface, InterfaceName, InterfaceId),
-    constraint_id(ParameterId, InterfaceId, Patterns, Id).
+    semantic_decl_id(Decls, interface, InterfaceName, InterfaceId),
+    semantic_application_id(Decls, InterfaceId, Patterns, InterfaceApplicationId),
+    constraint_id(ParameterId, InterfaceApplicationId, Id).
 
 normalized_constraint_row(Decls, constraint(Id, ParameterId, InterfaceId, Patterns)) :-
     member(interface_decl(OwnerName, Parameters), Decls),
-    decl_id(interface, OwnerName, Owner),
+    semantic_decl_id(Decls, interface, OwnerName, Owner),
     nth1(Ordinal, Parameters, Parameter0),
     parameter_parts(Parameter0, Name, Constraints),
     param_id(Owner, Ordinal, Name, ParameterId),
     member(Constraint, Constraints),
     interface_application_parts(Constraint, InterfaceName, Patterns),
     Patterns \== [],
-    decl_id(interface, InterfaceName, InterfaceId),
-    constraint_id(ParameterId, InterfaceId, Patterns, Id).
+    semantic_decl_id(Decls, interface, InterfaceName, InterfaceId),
+    semantic_application_id(Decls, InterfaceId, Patterns, InterfaceApplicationId),
+    constraint_id(ParameterId, InterfaceApplicationId, Id).
 
 normalized_implementation_row(Decls,
                               implementation(Id, Subject, interface_application(InterfaceId))) :-
     member(rel_is_implementation(Ref, Applications), Decls),
     ref_name(Ref, SubjectName),
-    decl_id(relation, SubjectName, Subject),
+    semantic_decl_id(Decls, relation, SubjectName, Subject),
     member(Application, Applications),
     interface_application_parts(Application, InterfaceName, []),
-    decl_id(interface, InterfaceName, InterfaceId),
+    semantic_decl_id(Decls, interface, InterfaceName, InterfaceId),
     impl_id(Subject, InterfaceId, Id).
 
 normalized_implementation_row(Decls,
@@ -392,12 +394,13 @@ normalized_implementation_row(Decls,
                                                                   Arguments))) :-
     member(rel_is_implementation(Ref, Applications), Decls),
     ref_name(Ref, SubjectName),
-    decl_id(relation, SubjectName, Subject),
+    semantic_decl_id(Decls, relation, SubjectName, Subject),
     member(Application, Applications),
     interface_application_parts(Application, InterfaceName, Arguments),
     Arguments \== [],
-    decl_id(interface, InterfaceName, InterfaceId),
-    impl_id(Subject, InterfaceId, Arguments, Id).
+    semantic_decl_id(Decls, interface, InterfaceName, InterfaceId),
+    semantic_application_id(Decls, InterfaceId, Arguments, InterfaceApplicationId),
+    impl_id(Subject, InterfaceApplicationId, Id).
 
 member_constraint_row(Rows, ParameterId, InterfaceId, []) :-
     member(constraint(_, ParameterId, InterfaceId), Rows).
@@ -413,7 +416,7 @@ member_implementation_row(Rows, Id, Subject, InterfaceId, Arguments) :-
 normalized_application_rows(Decls, Rows) :-
     findall(Application, source_generic_application(Decls, Application), Found),
     sort(Found, Applications),
-    maplist(normalized_application_row, Applications, Nested),
+    maplist(normalized_application_row(Decls), Applications, Nested),
     append(Nested, Rows).
 
 source_generic_application(Decls, Application) :-
@@ -434,25 +437,25 @@ generic_application_name(Decls, Application) :-
     atomic_list_concat(Segments, '__', Name),
     length(Parameters, Arity).
 
-normalized_application_row(Application, Rows) :-
+normalized_application_row(Decls, Application, Rows) :-
     Application =.. [Name | Arguments],
-    decl_id(relation, Name, Constructor),
-    app_id(Constructor, Arguments, Id),
+    semantic_decl_id(Decls, relation, Name, Constructor),
+    semantic_application_id(Decls, Constructor, Arguments, Id),
     ApplicationRow = application(Id, Constructor),
     findall(Row,
             ( nth1(Ordinal, Arguments, Type0),
-              normalized_argument_type(Type0, Type),
+              normalized_argument_type(Decls, Type0, Type),
               arg_id(Id, Ordinal, ArgumentId),
               Row = argument(ArgumentId, Id, Ordinal, Type) ),
             ArgumentRows),
     Rows = [ApplicationRow | ArgumentRows].
 
-normalized_argument_type(Type, type_atom(Type)) :- atom(Type), !.
-normalized_argument_type(Type, type_application(Id)) :-
+normalized_argument_type(_, Type, type_atom(Type)) :- atom(Type), !.
+normalized_argument_type(Decls, Type, type_application(Id)) :-
     compound(Type),
     Type =.. [Constructor | Arguments],
-    decl_id(relation, Constructor, ConstructorId),
-    app_id(ConstructorId, Arguments, Id).
+    semantic_decl_id(Decls, relation, Constructor, ConstructorId),
+    semantic_application_id(Decls, ConstructorId, Arguments, Id).
 
 normalized_derivation_rows(Decls, ApplicationRows, Rows) :-
     findall(derived_from(ConcreteId, ApplicationId),
@@ -460,9 +463,9 @@ normalized_derivation_rows(Decls, ApplicationRows, Rows) :-
               id_kind_name(ConstructorId, relation, ConstructorName),
               source_application_by_constructor(Decls, ConstructorName, Application),
               Application =.. [_ | Arguments],
-              app_id(ConstructorId, Arguments, ApplicationId),
+              semantic_application_id(Decls, ConstructorId, Arguments, ApplicationId),
               canonical_type_name(Application, ConcreteName),
-              decl_id(relation, ConcreteName, ConcreteId) ),
+              semantic_decl_id(Decls, relation, ConcreteName, ConcreteId) ),
             Found),
     sort(Found, Rows).
 
@@ -486,23 +489,23 @@ normalized_type(_, Owner, Parameters, Type0, type_ref(Type)) :-
 normalized_type(_, _, _, Type, type_ref(primitive(Type))) :-
     atom(Type), scalar_element(Type), !.
 normalized_type(Decls, _, _, Type, type_ref(declaration(Id))) :-
-    atom(Type), decl_id(relation, Type, Id),
+    atom(Type), semantic_decl_id(Decls, relation, Type, Id),
     member(type_decl(Type, _), Decls), !.
-normalized_type(_, _, _, Type, type_ref(application(Id))) :-
+normalized_type(Decls, _, _, Type, type_ref(application(Id))) :-
     compound(Type), Type =.. [Name | Args],
-    decl_id(relation, Name, Constructor),
-    app_id(Constructor, Args, Id), !.
+    semantic_decl_id(Decls, relation, Name, Constructor),
+    semantic_application_id(Decls, Constructor, Args, Id), !.
 normalized_type(_, _, _, Type, type_ref(named(Type))).
 
 type_row_templates(Decls, Rows, Templates) :-
     findall(template(Name, Parameters, Specs),
             ( member(rel_template(Segments, _, Specs), Decls),
               atomic_list_concat(Segments, '__', Name),
-              generic_template_parameters(Rows, Name, Parameters) ),
+              generic_template_parameters(Decls, Rows, Name, Parameters) ),
             Templates).
 
-generic_template_parameters(Rows, Name, Parameters) :-
-    decl_id(relation, Name, Owner),
+generic_template_parameters(Decls, Rows, Name, Parameters) :-
+    semantic_decl_id(Decls, relation, Name, Owner),
     findall(Ordinal-Parameter,
             ( member(parameter(ParameterId, Owner, Ordinal, ParameterName), Rows),
               findall(Constraint,
@@ -789,36 +792,89 @@ interface_argument_matches(Pattern, Argument) :- Pattern == Argument.
 ref_name(Name/_, Name) :- !.
 ref_name(Name, Name).
 
+semantic_decl_id(Decls, Kind, Name, Id) :-
+    (   member(semantic_decl_module(Kind, Name, ModuleHash), Decls)
+    ->  true
+    ;   generated_decl_module(Decls, Kind, Name, ModuleHash)
+    ->  true
+    ;   ModuleHash = local
+    ),
+    decl_id(ModuleHash, Kind, Name, Id).
+
+generated_decl_module(Decls, relation, Name, ModuleHash) :-
+    source_generic_application(Decls, Application),
+    canonical_type_name(Application, Name),
+    Application =.. [Constructor | _],
+    member(semantic_decl_module(relation, Constructor, ModuleHash), Decls),
+    !.
+generated_decl_module(Decls, relation, Name, ModuleHash) :-
+    source_generic_application(Decls, Application),
+    list_flavor_suffix(Application, Suffix),
+    flavor_ref(Application, Suffix, Name/_),
+    Application =.. [Constructor | _],
+    member(semantic_decl_module(relation, Constructor, ModuleHash), Decls),
+    !.
+
+semantic_application_id(Decls, Constructor, Arguments, Id) :-
+    maplist(semantic_application_argument_id(Decls), Arguments, ArgumentIds),
+    app_id(Constructor, ArgumentIds, Id).
+
+semantic_application_argument_id(_, any, any_pattern) :- !.
+semantic_application_argument_id(Decls, Type, Id) :- semantic_type_id(Decls, Type, Id).
+
+semantic_type_id(_, Type, Id) :-
+    atom(Type),
+    semantic_primitive(Type),
+    !,
+    primitive_id(Type, Id).
+semantic_type_id(Decls, Type, Id) :-
+    atom(Type),
+    !,
+    semantic_named_type_id(Decls, Type, Id).
+semantic_type_id(Decls, Type, Id) :-
+    Type =.. [Name | Arguments],
+    semantic_decl_id(Decls, relation, Name, Constructor),
+    semantic_application_id(Decls, Constructor, Arguments, Id).
+
+semantic_primitive(Type) :- scalar_element(Type).
+semantic_primitive(bytes).
+
+semantic_named_type_id(Decls, Name, Id) :-
+    member(semantic_decl_module(enum, Name, ModuleHash), Decls),
+    !,
+    decl_id(ModuleHash, enum, Name, Id).
+semantic_named_type_id(Decls, Name, Id) :- semantic_decl_id(Decls, relation, Name, Id).
+
 % Instances minted after the source scan carry their own rows: the graph is the
 % only generic freight leaving expansion.
-generic_catalog_decls(TypeIr, Instances, JudgmentRows, Decls) :-
-    instance_type_rows(Instances, InstanceRows),
+generic_catalog_decls(SourceDecls, TypeIr, Instances, JudgmentRows, Decls) :-
+    instance_type_rows(SourceDecls, Instances, InstanceRows),
     append([TypeIr, InstanceRows, JudgmentRows], Unsorted),
     sort(Unsorted, Rows),
     ( Rows == [] -> Decls = [] ; Decls = [semantic_type_rows(Rows)] ).
 
-instance_type_rows(Instances, Rows) :-
+instance_type_rows(Decls, Instances, Rows) :-
     findall(Row,
-            ( member(Application, Instances), instance_type_row(Application, Row) ),
+            ( member(Application, Instances), instance_type_row(Decls, Application, Row) ),
             Rows).
 
-instance_type_row(Application, Row) :-
-    normalized_application_row(Application, ApplicationRows),
+instance_type_row(Decls, Application, Row) :-
+    normalized_application_row(Decls, Application, ApplicationRows),
     member(Row, ApplicationRows).
-instance_type_row(Application, declaration(Id, root, Name, relation, materialized)) :-
+instance_type_row(Decls, Application, declaration(Id, root, Name, relation, materialized)) :-
     canonical_type_name(Application, Name),
-    decl_id(relation, Name, Id).
-instance_type_row(Application, derived_from(ConcreteId, ApplicationId)) :-
+    semantic_decl_id(Decls, relation, Name, Id).
+instance_type_row(Decls, Application, derived_from(ConcreteId, ApplicationId)) :-
     Application =.. [ConstructorName | Arguments],
-    decl_id(relation, ConstructorName, Constructor),
-    app_id(Constructor, Arguments, ApplicationId),
+    semantic_decl_id(Decls, relation, ConstructorName, Constructor),
+    semantic_application_id(Decls, Constructor, Arguments, ApplicationId),
     canonical_type_name(Application, ConcreteName),
-    decl_id(relation, ConcreteName, ConcreteId).
+    semantic_decl_id(Decls, relation, ConcreteName, ConcreteId).
 
 % NO compile_time row for the builtin constructor: semantic_generic_instance
 % in lower.pl requires one, so its absence keeps list mints out of the catalog.
 merge_flavor_type_rows(Instances, Decls0, Decls) :-
-    flavor_type_rows(Instances, Rows),
+    flavor_type_rows(Decls0, Instances, Rows),
     (   Rows == []
     ->  Decls = Decls0
     ;   memberchk(semantic_type_rows(_), Decls0)
@@ -836,21 +892,21 @@ merge_one_flavor_type_rows(FlavorRows, semantic_type_rows(Rows0),
     sort(Unsorted, Rows).
 merge_one_flavor_type_rows(_, Decl, Decl).
 
-flavor_type_rows(Instances, Rows) :-
-    instance_type_rows(Instances, ApplicationRows),
-    findall(Row, flavor_mint_row(Instances, Row), MintRows),
+flavor_type_rows(Decls, Instances, Rows) :-
+    instance_type_rows(Decls, Instances, ApplicationRows),
+    findall(Row, flavor_mint_row(Decls, Instances, Row), MintRows),
     append(ApplicationRows, MintRows, Unsorted),
     sort(Unsorted, Rows).
 
-flavor_mint_row(Instances, Row) :-
+flavor_mint_row(Decls, Instances, Row) :-
     member(Type, Instances),
     Type =.. [ConstructorName | Arguments],
-    decl_id(relation, ConstructorName, Constructor),
-    app_id(Constructor, Arguments, ApplicationId),
+    semantic_decl_id(Decls, relation, ConstructorName, Constructor),
+    semantic_application_id(Decls, Constructor, Arguments, ApplicationId),
     list_flavor_suffix(Type, Suffix),
     Suffix \== list,
     flavor_ref(Type, Suffix, MintName/_),
-    decl_id(relation, MintName, MintId),
+    semantic_decl_id(Decls, relation, MintName, MintId),
     member(Row,
            [ declaration(MintId, root, MintName, relation, materialized),
              derived_from(MintId, ApplicationId) ]).
@@ -930,16 +986,17 @@ parameter_constraints(_, []).
 % Bounds are judged AFTER the fixpoint on the completed declarations, so a
 % minted inner instance can discharge an outer application's bound.
 judge_template_bounds(Plane, Templates, Instances, Rows) :-
-    foldl(judge_application_bounds(Plane, Templates), Instances, [], Rows0),
+    Plane = type_plane(Decls, _),
+    foldl(judge_application_bounds(Decls, Plane, Templates), Instances, [], Rows0),
     sort(Rows0, Rows).
 
-judge_application_bounds(Plane, Templates, Application, Rows0, Rows) :-
+judge_application_bounds(Decls, Plane, Templates, Application, Rows0, Rows) :-
     Application =.. [Name | Arguments],
     memberchk(template(Name, Parameters, _), Templates),
-    decl_id(relation, Name, Constructor),
-    app_id(Constructor, Arguments, AppId),
+    semantic_decl_id(Decls, relation, Name, Constructor),
+    semantic_application_id(Decls, Constructor, Arguments, AppId),
     findall(Judgment,
-            obligation_judgment(Plane, Constructor, AppId, Parameters,
+            obligation_judgment(Decls, Plane, Constructor, AppId, Parameters,
                                 Arguments, Judgment),
             Judged),
     (   member(unresolved(Ordinal, ArgType, Interface), Judged)
@@ -965,16 +1022,16 @@ substitution_row(Constructor, AppId, Parameters, Arguments,
     param_id(Constructor, Ordinal, ParameterName, ParameterId),
     nth1(Ordinal, Arguments, ArgType).
 
-obligation_judgment(Plane, _Constructor, AppId, Parameters, Arguments,
+obligation_judgment(Decls, Plane, _Constructor, AppId, Parameters, Arguments,
                     Judgment) :-
     nth1(Ordinal, Parameters, Parameter),
     parameter_constraints(Parameter, Constraints),
     nth1(Ordinal, Arguments, ArgType),
     member(Constraint, Constraints),
     interface_application_parts(Constraint, Interface, Patterns),
-    decl_id(interface, Interface, InterfaceId),
+    semantic_decl_id(Decls, interface, Interface, InterfaceId),
     arg_id(AppId, Ordinal, ArgId),
-    constraint_obligation_id(ArgId, InterfaceId, Patterns, ObligationId),
+    constraint_obligation_id(Decls, ArgId, InterfaceId, Patterns, ObligationId),
     (   compile_type_query(Plane,
                            conforms(ArgType,
                                     interface_pattern(Interface, Patterns)),
@@ -984,11 +1041,12 @@ obligation_judgment(Plane, _Constructor, AppId, Parameters, Arguments,
     ;   Judgment = unresolved(Ordinal, ArgType, Constraint)
     ).
 
-constraint_obligation_id(ArgId, InterfaceId, [], Id) :-
+constraint_obligation_id(_, ArgId, InterfaceId, [], Id) :-
     constraint_id(ArgId, InterfaceId, Id).
-constraint_obligation_id(ArgId, InterfaceId, Patterns, Id) :-
+constraint_obligation_id(Decls, ArgId, InterfaceId, Patterns, Id) :-
     Patterns \== [],
-    constraint_id(ArgId, InterfaceId, Patterns, Id).
+    semantic_application_id(Decls, InterfaceId, Patterns, InterfaceApplicationId),
+    constraint_id(ArgId, InterfaceApplicationId, Id).
 
 obligation_judgment_row([], Ordinal, ObligationId, AppId, InterfaceId,
                         ArgType, Evidence,

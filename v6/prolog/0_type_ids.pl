@@ -1,65 +1,114 @@
-% Semantic-graph row ids.  Construction and deconstruction live here and
-% nowhere else; `id_kind_name/3` is the only inverse any consumer may use.
+% Semantic type identities are compiler values.  They remain ground Prolog
+% terms until an artifact boundary asks for their SHA-256 text form.
 :- module(type_ids,
-          [ decl_id/3,
+          [ decl_id/4,
+            primitive_id/2,
+            app_id/3,
             param_id/4,
             member_id/4,
             constraint_id/3,
-            constraint_id/4,
             impl_id/3,
-            impl_id/4,
-            app_id/3,
             arg_id/3,
-            id_kind_name/3
+            id_kind_name/3,
+            semantic_type_id_text/2
           ]).
 
-%! decl_id(?Kind, ?Name, ?Id) is det.
-decl_id(Kind, Name, Id) :- atomic_list_concat([decl, Kind, Name], ':', Id).
+:- use_module(library(crypto)).
 
-%! param_id(+Owner, +Ordinal, +Name, -Id) is det.
-param_id(Owner, Ordinal, Name, Id) :-
-    atomic_list_concat([Owner, param, Ordinal, Name], ':', Id).
+%! decl_id(+ModuleHash, +Kind, +Name, -SemanticTypeId) is det.
+decl_id(ModuleHash, Kind, Name, named(ModuleHash, Kind, Name)).
 
-%! member_id(+Owner, +Ordinal, +Name, -Id) is det.
-member_id(Owner, Ordinal, Name, Id) :-
-    atomic_list_concat([Owner, member, Ordinal, Name], ':', Id).
+%! primitive_id(+Name, -SemanticTypeId) is det.
+primitive_id(Name, primitive(Name)).
 
-%! constraint_id(+Subject, +Interface, -Id) is det.
-constraint_id(Subject, Interface, Id) :-
-    atomic_list_concat([Subject, constraint, Interface], ':', Id).
+%! app_id(+ConstructorSemanticTypeId, +ArgumentSemanticTypeIds,
+%!        -SemanticTypeId) is det.
+app_id(Constructor, Arguments, application(Constructor, Arguments)).
 
-constraint_id(Subject, Interface, Patterns, Id) :-
-    term_to_atom(Patterns, Encoded),
-    atomic_list_concat([Subject, constraint, Interface, Encoded], ':', Id).
+%! param_id(+OwnerId, +Ordinal, +Name, -SemanticNodeId) is det.
+param_id(Owner, Ordinal, Name, parameter(Owner, Ordinal, Name)).
 
-%! impl_id(+Subject, +Interface, -Id) is det.
-impl_id(Subject, Interface, Id) :-
-    atomic_list_concat([Subject, impl, Interface], ':', Id).
+%! member_id(+OwnerId, +Ordinal, +Name, -SemanticNodeId) is det.
+member_id(Owner, Ordinal, Name, member(Owner, Ordinal, Name)).
 
-impl_id(Subject, Interface, Arguments, Id) :-
-    term_to_atom(Arguments, Encoded),
-    atomic_list_concat([Subject, impl, Interface, Encoded], ':', Id).
+%! constraint_id(+SubjectNodeId, +InterfaceApplicationId, -SemanticNodeId) is det.
+constraint_id(Subject, InterfaceApplication, constraint(Subject, InterfaceApplication)).
 
-%! app_id(+Constructor, +Arguments, -Id) is det.
-app_id(Constructor, Arguments, Id) :-
-    term_to_atom(Arguments, Encoded),
-    atomic_list_concat([Constructor, app, Encoded], ':', Id).
+%! impl_id(+SubjectId, +InterfaceApplicationId, -SemanticNodeId) is det.
+impl_id(Subject, InterfaceApplication, implementation(Subject, InterfaceApplication)).
 
-%! arg_id(+Application, +Ordinal, -Id) is det.
-arg_id(Application, Ordinal, Id) :-
-    atomic_list_concat([Application, arg, Ordinal], ':', Id).
+%! arg_id(+ApplicationId, +Ordinal, -SemanticNodeId) is det.
+arg_id(Application, Ordinal, argument(Application, Ordinal)).
 
-% A declaration name may itself carry ':', so a bound Kind strips a prefix.
-%! id_kind_name(?Id, ?Kind, ?Name) is semidet.
-id_kind_name(Id, Kind, Name) :-
-    nonvar(Kind),
-    !,
-    atomic_list_concat([decl, Kind, ''], ':', Prefix),
-    atom_concat(Prefix, Name, Id).
-id_kind_name(Id, Kind, Name) :-
-    atom_concat('decl:', Rest, Id),
-    sub_atom(Rest, Before, 1, _, ':'),
-    !,
-    sub_atom(Rest, 0, Before, _, Kind),
-    After is Before + 1,
-    sub_atom(Rest, After, _, 0, Name).
+%! id_kind_name(+SemanticTypeId, ?Kind, ?Name) is semidet.
+id_kind_name(named(_, Kind, Name), Kind, Name).
+
+%! semantic_type_id_text(+SemanticTypeId, -Sha256Text) is det.
+%  The encoding carries each atom's UTF-8 byte length and each list's element
+%  count, preserving application nesting and argument order without delimiter
+%  ambiguity.  The SHA-256 input is the same UTF-8 byte sequence used for
+%  those lengths.  This conversion is reserved for catalog and emitted
+%  artifacts.
+semantic_type_id_text(Id, Text) :-
+    ground(Id),
+    semantic_type_id_encoding(Id, Encoding),
+    string_bytes(Encoding, Bytes, utf8),
+    crypto_data_hash(Bytes, Text, [algorithm(sha256), encoding(octet)]).
+
+semantic_type_id_encoding(named(Module, Kind, Name), Encoding) :-
+    atom_encoding(Module, ModuleEncoding),
+    atom_encoding(Kind, KindEncoding),
+    atom_encoding(Name, NameEncoding),
+    string_concat("N", ModuleEncoding, A),
+    string_concat(A, KindEncoding, B),
+    string_concat(B, NameEncoding, Encoding).
+semantic_type_id_encoding(primitive(Name), Encoding) :-
+    atom_encoding(Name, NameEncoding),
+    string_concat("P", NameEncoding, Encoding).
+semantic_type_id_encoding(any_pattern, "W").
+semantic_type_id_encoding(application(Constructor, Arguments), Encoding) :-
+    semantic_type_id_encoding(Constructor, ConstructorEncoding),
+    maplist(semantic_type_id_encoding, Arguments, ArgumentEncodings),
+    length(ArgumentEncodings, Arity),
+    format(string(ArityEncoding), "~d:", [Arity]),
+    string_concat("A", ConstructorEncoding, A),
+    string_concat(A, ArityEncoding, B),
+    foldl(append_encoding, ArgumentEncodings, B, Encoding).
+semantic_type_id_encoding(parameter(Owner, Ordinal, Name), Encoding) :-
+    semantic_type_id_encoding(Owner, OwnerEncoding),
+    atom_encoding(Name, NameEncoding),
+    format(string(OrdinalEncoding), "~d:", [Ordinal]),
+    string_concat("R", OwnerEncoding, A),
+    string_concat(A, OrdinalEncoding, B),
+    string_concat(B, NameEncoding, Encoding).
+semantic_type_id_encoding(member(Owner, Ordinal, Name), Encoding) :-
+    semantic_type_id_encoding(Owner, OwnerEncoding),
+    atom_encoding(Name, NameEncoding),
+    format(string(OrdinalEncoding), "~d:", [Ordinal]),
+    string_concat("M", OwnerEncoding, A),
+    string_concat(A, OrdinalEncoding, B),
+    string_concat(B, NameEncoding, Encoding).
+semantic_type_id_encoding(constraint(Subject, Interface), Encoding) :-
+    semantic_type_id_encoding(Subject, SubjectEncoding),
+    semantic_type_id_encoding(Interface, InterfaceEncoding),
+    string_concat("C", SubjectEncoding, A),
+    string_concat(A, InterfaceEncoding, Encoding).
+semantic_type_id_encoding(implementation(Subject, Interface), Encoding) :-
+    semantic_type_id_encoding(Subject, SubjectEncoding),
+    semantic_type_id_encoding(Interface, InterfaceEncoding),
+    string_concat("I", SubjectEncoding, A),
+    string_concat(A, InterfaceEncoding, Encoding).
+semantic_type_id_encoding(argument(Application, Ordinal), Encoding) :-
+    semantic_type_id_encoding(Application, ApplicationEncoding),
+    format(string(OrdinalEncoding), "~d:", [Ordinal]),
+    string_concat("G", ApplicationEncoding, A),
+    string_concat(A, OrdinalEncoding, Encoding).
+
+atom_encoding(Atom, Encoding) :-
+    atom_string(Atom, Text),
+    string_bytes(Text, Bytes, utf8),
+    length(Bytes, Length),
+    format(string(Prefix), "~d:", [Length]),
+    string_concat(Prefix, Text, Encoding).
+
+append_encoding(Part, Prefix, Encoding) :- string_concat(Prefix, Part, Encoding).
