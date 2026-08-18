@@ -121,13 +121,19 @@ goals_body_conjunction([Goal | Rest], (Goal, More)) :-
 % relation schema; downstream storage machinery sees no generic construct.
 expand_user_templates(Decls0, Rules, Instances, Decls) :-
     generic_type_ir(Decls0, TypeIr),
+    compile_type_plane(Decls0, TypeIr, ValidationPlane),
     validate_type_rows(TypeIr),
+    validate_compile_type_plane(ValidationPlane),
     validate_interface_applications(Decls0),
     type_row_templates(Decls0, TypeIr, Templates),
     check_template_application_arities(Decls0, Templates),
     user_template_fixpoint(Decls0, Templates, [], WithInstances, Instances),
     validate_user_template_collisions(Decls0, Rules, Instances),
-    judge_template_bounds(WithInstances, Templates, Instances, JudgmentRows),
+    % The proof relation sees the fixpoint declarations, including every
+    % concrete generic instance.  It is compiler-local and is never appended
+    % to the runtime declaration list.
+    compile_type_plane(WithInstances, TypeIr, ProofPlane),
+    judge_template_bounds(ProofPlane, Templates, Instances, JudgmentRows),
     maplist(rewrite_user_template_decl(Instances), WithInstances, Rewritten),
     exclude(is_rel_template, Rewritten, RuntimeDecls),
     generic_catalog_decls(TypeIr, Instances, JudgmentRows, CatalogDecls),
@@ -450,11 +456,6 @@ generic_template_parameters(Rows, Name, Parameters) :-
     pairs_values(Pairs, Parameters).
 
 validate_type_rows(Rows) :-
-    findall(Name-Arity,
-            ( member(declaration(Id, _, Name, interface, _), Rows),
-              findall(_, member(parameter(_, Id, _, _), Rows), Parameters),
-              length(Parameters, Arity) ), Interfaces),
-    validate_unique_interface_names(Interfaces),
     forall(member(constraint(_, _, InterfaceId), Rows),
            ( memberchk(declaration(InterfaceId, _, _, interface, _), Rows) -> true
            ; id_kind_name(InterfaceId, interface, InterfaceName),
@@ -462,21 +463,132 @@ validate_type_rows(Rows) :-
     forall(member(implementation(_, _, interface_application(InterfaceId)), Rows),
            ( memberchk(declaration(InterfaceId, _, _, interface, _), Rows) -> true
            ; id_kind_name(InterfaceId, interface, InterfaceName),
-             throw(unsupported_construct(interface_unknown(InterfaceName))) )),
-    validate_unique_implementations(Rows).
+             throw(unsupported_construct(interface_unknown(InterfaceName))) )).
 
-validate_unique_interface_names(Interfaces) :-
-    ( select(Name-_, Interfaces, Rest), memberchk(Name-_, Rest)
+% The source syntax stays in the authored declaration list.  This plane is a
+% compiler-only relational view over it and the normalized semantic rows.  It
+% never contributes a `col_type/3`, kind, fact, or rule to the runtime program.
+%
+% Type signatures and lifetime:
+%
+%   compile_type_plane(+Decls, +NormalizedRows, -Plane) is det.
+%   compile_type_query(+Plane, +Goal, -Proof) is semidet.
+%
+% A Plane exists from generic expansion's validation/fixpoint boundary through
+% bound judgment.  `semantic_type_rows/1` retains existing declaration and
+% accepted-obligation metadata for the catalog, while the view and its proof
+% values are discarded before runtime lowering.
+compile_type_plane(Decls, Rows, type_plane(Decls, Rows)).
+
+validate_compile_type_plane(Plane) :-
+    ( compile_type_query(Plane, duplicate_interface(Name), _)
     -> throw(unsupported_construct(interface_duplicate(Name)))
-    ; true ).
+    ; true
+    ),
+    ( compile_type_query(Plane, duplicate_implementation(Subject, Interface), _)
+    -> throw(unsupported_construct(interface_implementation_duplicate(
+                  Subject-Interface)))
+    ; true
+    ).
 
-validate_unique_implementations(TypeIr) :-
-    findall(Subject-Interface,
-            member(implementation(_, Subject, interface_application(Interface)), TypeIr),
+% Compile-time relation declarations and source facts.
+compile_type_relation(type_plane(_, Rows), interface, [Name, Arity]) :-
+    member(declaration(InterfaceId, root, Name, interface, compile_time), Rows),
+    findall(_, member(parameter(_, InterfaceId, _, _), Rows), Parameters),
+    length(Parameters, Arity).
+compile_type_relation(type_plane(_, Rows), implementation,
+                      [SubjectName, InterfaceName, ImplId]) :-
+    member(implementation(ImplId, Subject, interface_application(InterfaceId)), Rows),
+    id_kind_name(Subject, relation, SubjectName),
+    id_kind_name(InterfaceId, interface, InterfaceName).
+compile_type_relation(type_plane(Decls, _), named_type, [Name]) :-
+    ( member(type_decl(Name, _), Decls)
+    ; member(col_type(Name/_, _, _), Decls)
+    ).
+compile_type_relation(type_plane(Decls, _), field, [Name, Type]) :-
+    named_type_columns(Decls, Name, ColumnTypes),
+    member(Type, ColumnTypes).
+compile_type_relation(type_plane(Decls, _), enum, [Name]) :-
+    member(enum_decl(Name, _), Decls).
+compile_type_relation(type_plane(Decls, _), enum_payload, [Name, Type]) :-
+    member(enum_decl(Name, Variants), Decls),
+    enum_payload_types(Variants, PayloadTypes),
+    member(Type, PayloadTypes).
+
+% One query boundary for duplicate diagnostics, direct conformance facts, and
+% derived conformance rules.  Duplicate checks read authored implementation
+% facts so `sort/2` in the normalized catalog cannot hide a repeated source
+% declaration.
+compile_type_query(type_plane(Decls, _), duplicate_interface(Name), duplicate) :-
+    findall(InterfaceName, member(interface_decl(InterfaceName, _), Decls), Names),
+    select(Name, Names, Rest),
+    memberchk(Name, Rest),
+    !.
+compile_type_query(type_plane(Decls, _), duplicate_implementation(Subject, Interface),
+                   duplicate) :-
+    findall(SubjectName-InterfaceName,
+            ( member(rel_is_implementation(Ref, Applications), Decls),
+              ref_name(Ref, SubjectName),
+              member(Application, Applications),
+              interface_application_name(Application, InterfaceName) ),
             Implementations),
-    ( select(Item, Implementations, Rest), memberchk(Item, Rest)
-    -> throw(unsupported_construct(interface_implementation_duplicate(Item)))
-    ; true ).
+    select(Subject-Interface, Implementations, Rest),
+    memberchk(Subject-Interface, Rest),
+    !.
+compile_type_query(Plane, conforms(Type, Interface), Proof) :-
+    compile_type_conformance(Plane, Type, Interface, [], Proof).
+
+% Direct implementation facts are read through the normalized relation view.
+compile_type_conformance(Plane, Type, Interface, _, impl(ImplId)) :-
+    atom(Type),
+    compile_type_relation(Plane, implementation, [Type, Interface, ImplId]),
+    !.
+% A recursive revisit closes the structural proof after direct implementation
+% facts, preserving authored `is json_encodable` precedence.
+compile_type_conformance(_, Type, json_encodable, Seen, structural(Type)) :-
+    atom(Type),
+    memberchk(Type, Seen),
+    !.
+% The generated rules remain ordinary compile-time relation rules.  The
+% evaluator below is deliberately thin: it only supplies recursion guards and
+% the all-fields/all-payloads join needed by JsonEncodable's existing rule.
+compile_type_conformance(_, Type, json_encodable, _, structural(Type)) :-
+    scalar_element(Type),
+    !.
+compile_type_conformance(Plane, option(Type), json_encodable, Seen,
+                        structural(option(Type))) :-
+    !,
+    compile_type_conformance(Plane, Type, json_encodable, Seen, _).
+compile_type_conformance(Plane, json_list(Type), json_encodable, Seen,
+                        structural(json_list(Type))) :-
+    !,
+    compile_type_conformance(Plane, Type, json_encodable, Seen, _).
+compile_type_conformance(Plane, Name, json_encodable, Seen, structural(Name)) :-
+    atom(Name),
+    \+ memberchk(Name, Seen),
+    compile_type_relation(Plane, named_type, [Name]),
+    findall(FieldType, compile_type_relation(Plane, field, [Name, FieldType]), FieldTypes),
+    maplist(compile_type_conformance_with_seen(Plane, [Name | Seen]), FieldTypes),
+    !.
+compile_type_conformance(Plane, Name, json_encodable, Seen, structural(Name)) :-
+    atom(Name),
+    \+ memberchk(Name, Seen),
+    compile_type_relation(Plane, enum, [Name]),
+    findall(PayloadType,
+            compile_type_relation(Plane, enum_payload, [Name, PayloadType]),
+            PayloadTypes),
+    maplist(compile_type_conformance_with_seen(Plane, [Name | Seen]), PayloadTypes),
+    !.
+compile_type_conformance(Plane, Type, json_encodable, Seen, structural(Type)) :-
+    compound(Type),
+    Plane = type_plane(Decls, _),
+    generic_application_name(Decls, Type),
+    \+ memberchk(Type, Seen),
+    canonical_type_name(Type, ConcreteName),
+    compile_type_conformance(Plane, ConcreteName, json_encodable, [Type | Seen], _).
+
+compile_type_conformance_with_seen(Plane, Seen, Type) :-
+    compile_type_conformance(Plane, Type, json_encodable, Seen, _).
 
 % Checked at the source terms: the normalized implementation row drops the
 % application's explicit arguments, so arity is invisible in the row graph.
@@ -656,17 +768,17 @@ parameter_constraints(_, []).
 
 % Bounds are judged AFTER the fixpoint on the completed declarations, so a
 % minted inner instance can discharge an outer application's bound.
-judge_template_bounds(Decls, Templates, Instances, Rows) :-
-    foldl(judge_application_bounds(Decls, Templates), Instances, [], Rows0),
+judge_template_bounds(Plane, Templates, Instances, Rows) :-
+    foldl(judge_application_bounds(Plane, Templates), Instances, [], Rows0),
     sort(Rows0, Rows).
 
-judge_application_bounds(Decls, Templates, Application, Rows0, Rows) :-
+judge_application_bounds(Plane, Templates, Application, Rows0, Rows) :-
     Application =.. [Name | Arguments],
     memberchk(template(Name, Parameters, _), Templates),
     decl_id(relation, Name, Constructor),
     app_id(Constructor, Arguments, AppId),
     findall(Judgment,
-            obligation_judgment(Decls, Constructor, AppId, Parameters,
+            obligation_judgment(Plane, Constructor, AppId, Parameters,
                                 Arguments, Judgment),
             Judged),
     (   member(unresolved(Ordinal, ArgType, Interface), Judged)
@@ -692,7 +804,7 @@ substitution_row(Constructor, AppId, Parameters, Arguments,
     param_id(Constructor, Ordinal, ParameterName, ParameterId),
     nth1(Ordinal, Arguments, ArgType).
 
-obligation_judgment(Decls, _Constructor, AppId, Parameters, Arguments,
+obligation_judgment(Plane, _Constructor, AppId, Parameters, Arguments,
                     Judgment) :-
     nth1(Ordinal, Parameters, Parameter),
     parameter_constraints(Parameter, Constraints),
@@ -702,60 +814,13 @@ obligation_judgment(Decls, _Constructor, AppId, Parameters, Arguments,
     decl_id(interface, Interface, InterfaceId),
     arg_id(AppId, Ordinal, ArgId),
     constraint_id(ArgId, InterfaceId, ObligationId),
-    (   bound_evidence(Decls, ArgType, Interface, Evidence)
+    (   compile_type_query(Plane, conforms(ArgType, Interface), Evidence)
     ->  Judgment = judged(Ordinal,
                           obligation(ObligationId, AppId, InterfaceId,
                                      ArgType),
                           resolved_by(ObligationId, Evidence))
     ;   Judgment = unresolved(Ordinal, ArgType, Interface)
     ).
-
-bound_evidence(Decls, ArgType, Interface, impl(ImplId)) :-
-    atom(ArgType),
-    member(rel_is_implementation(Ref, Applications), Decls),
-    ref_name(Ref, ArgType),
-    member(Application, Applications),
-    interface_application_name(Application, Interface),
-    !,
-    decl_id(relation, ArgType, Subject),
-    decl_id(interface, Interface, InterfaceId),
-    impl_id(Subject, InterfaceId, ImplId).
-bound_evidence(Decls, ArgType, json_encodable, structural(ArgType)) :-
-    json_encodable_type(Decls, ArgType, []).
-
-json_encodable_type(_, Type, _) :-
-    atom(Type), scalar_element(Type), !.
-json_encodable_type(Decls, option(Type), Seen) :- !,
-    json_encodable_type(Decls, Type, Seen).
-json_encodable_type(Decls, json_list(Type), Seen) :- !,
-    json_encodable_type(Decls, Type, Seen).
-json_encodable_type(Decls, Name, _) :-
-    atom(Name),
-    member(rel_is_implementation(Name/_, Applications), Decls),
-    memberchk(json_encodable, Applications),
-    !.
-json_encodable_type(_, Name, Seen) :- memberchk(Name, Seen), !.
-json_encodable_type(Decls, Name, Seen) :-
-    atom(Name),
-    named_type_columns(Decls, Name, ColumnTypes),
-    maplist(json_encodable_type_with_seen(Decls, [Name | Seen]), ColumnTypes),
-    !.
-json_encodable_type(Decls, Name, Seen) :-
-    atom(Name),
-    member(enum_decl(Name, Variants), Decls),
-    enum_payload_types(Variants, PayloadTypes),
-    maplist(json_encodable_type_with_seen(Decls, [Name | Seen]), PayloadTypes).
-% A user-template application closes over its MINTED instance's columns; the
-% guard keeps builtin list flavors refused as before.
-json_encodable_type(Decls, Type, Seen) :-
-    compound(Type),
-    generic_application_name(Decls, Type),
-    \+ memberchk(Type, Seen),
-    canonical_type_name(Type, Name),
-    json_encodable_type(Decls, Name, [Type | Seen]).
-
-json_encodable_type_with_seen(Decls, Seen, Type) :-
-    json_encodable_type(Decls, Type, Seen).
 
 named_type_columns(Decls, Name, ColumnTypes) :-
     ( member(type_decl(Name, Specs), Decls)

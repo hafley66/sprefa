@@ -5027,6 +5027,36 @@ test(generic_type_ir_separates_declarations_and_implementations) :-
     member(implementation(_, SubjectId, interface_application(InterfaceId)), Rows),
     member(declaration(SubjectId, root, span, relation, materialized), Rows).
 
+% A derived conformance is a compile-time relation rule over the normalized
+% type rows and declared field relation.  The proof plane is local to generic
+% expansion, so this test uses it directly before the runtime lowering phase.
+test(compile_time_relation_rule_derives_structural_conformance) :-
+    Decls = [ interface_decl(json_encodable, []),
+              type_decl(span, [col(start, int), col(label, option(text))]),
+              col_type(span/2, start, int),
+              col_type(span/2, label, option(text)) ],
+    generic_type_ir(Decls, Rows),
+    generic_expand:compile_type_plane(Decls, Rows, Plane),
+    generic_expand:compile_type_query(Plane, conforms(span, json_encodable),
+                                      structural(span)).
+
+test(duplicate_interface_implementation_keeps_its_named_diagnostic) :-
+    Program = prog(
+        [ interface_decl(addressable, []),
+          col_type(file/1, path, text),
+          rel_is_implementation(file/1, [addressable]),
+          rel_is_implementation(file/1, [addressable]) ], []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(
+                  interface_implementation_duplicate(file-addressable)).
+
+test(duplicate_interface_declaration_keeps_its_named_diagnostic) :-
+    Program = prog(
+        [ interface_decl(addressable, []),
+          interface_decl(addressable, []) ], []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(interface_duplicate(addressable)).
+
 test(generic_type_ir_ids_survive_declaration_permutation) :-
     A = [ type_decl(span, [col(value, text)]),
           rel_template([pair], [type_parameter('T', [])],
@@ -5107,6 +5137,33 @@ test(json_encodable_bound_closes_over_enum_payloads) :-
     canonical_type_name(box(status), BoxName),
     memberchk(type_decl(BoxName, [col(value, int)]), Decls),
     memberchk(col_type(BoxName/1, value, status), Decls).
+
+test(recursive_enum_bound_closes_coinductively) :-
+    Program = prog(
+        [ interface_decl(json_encodable, []),
+          enum_decl(tree, node(child:option(tree))),
+          rel_template([box],
+                       [type_parameter('T', [json_encodable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(tree)) ], []),
+    expand_generic_program(Program, prog(Decls, [])),
+    canonical_type_name(box(tree), BoxName),
+    memberchk(type_decl(BoxName, [col(value, int)]), Decls),
+    memberchk(semantic_type_rows(Rows), Decls),
+    memberchk(resolved_by(_, structural(tree)), Rows).
+
+test(explicit_implementation_precedes_structural_recursion) :-
+    Program = prog(
+        [ interface_decl(json_encodable, []),
+          enum_decl(tree, node(child:option(tree))),
+          rel_is_implementation(tree/1, [json_encodable]),
+          rel_template([box],
+                       [type_parameter('T', [json_encodable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(tree)) ], []),
+    expand_generic_program(Program, prog(Decls, [])),
+    memberchk(semantic_type_rows(Rows), Decls),
+    memberchk(resolved_by(_, impl(_)), Rows).
 
 test(an_unknown_interface_is_named_before_expansion) :-
     Program = prog(
@@ -7108,6 +7165,17 @@ test(an_is_clause_emits_interface_catalog_metadata) :-
         WithoutClause),
     WithClause \== WithoutClause,
     once(sub_atom(WithClause, _, _, _, 'implementation')).
+
+% Compile-time interface relation declarations, facts, and proofs are erased
+% before the emitted SQLite/DD program.  The runtime catalog may retain its
+% existing author-facing `implementation` metadata, but never any proof-plane
+% relation name.
+test(interface_proof_plane_has_no_runtime_artifacts) :-
+    door_emitted_text(proof_plane,
+        'interface json_encodable.\nrel document(body: json) is json_encodable.\nrel evidence(document: document).\nrel box(T: json_encodable)(value: T).\nrel holder(value: box(document)).\n',
+        Emitted),
+    forall(member(Name, ['$type', 'compile_type_', 'type_plane', 'type_proof']),
+           \+ sub_atom(Emitted, _, _, _, Name)).
 
 % ═══ bounds inside the parameter parens (ruling template_bound_spelling) ═════
 
