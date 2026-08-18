@@ -18,17 +18,13 @@
 # dropped, so the `data_value` rows stay out of this program by construction.
 # A program that wants the spans declares `path`/`kind`/`span` instead.
 #
-# ── ONE DOOR TODAY, AND THE OTHER STOPS BY NAME ─────────────────────────────
-# TS door, measured on pokeapi.openapi.yml: spec_doc 1, spec_operation 100,
-# spec_path 100. The emitted template spawns $DL_EXTRACT_BIN, so it reads the
-# family the CLI has.
-# RUST door: `emit_rust_harness --live-hosts` stops rc=101 with
-#   sh host 'extract': family `data` is not a known family; in-process families
-#   are cst, type, call, df
-# The in-process mask parser is a hardcoded list at sprefa-engine-rs
-# src/hosts.rs:1260-1285 and carries no `data` arm. Stopping by name is the
-# CORRECT half (a silent zero-row rc=0 is the F2 defect scip_combo pins); the
-# missing half is one arm, `"data" => mask.data = true`.
+# ── BOTH DOORS, SAME ROWS ───────────────────────────────────────────────────
+# Measured on pokeapi.openapi.yml: spec_doc 1, spec_operation 100, spec_path
+# 100. The TS door's emitted template spawns $DL_EXTRACT_BIN, so it reads the
+# family the CLI has. The Rust door reads it in-process through the mask parser
+# at sprefa-engine-rs src/hosts.rs, pinned by tests/data_family.rs. An unlisted
+# family still stops by name there (a silent zero-row rc=0 is the F2 defect
+# scip_combo pins).
 #
 # ── THE RX LOWERING ─────────────────────────────────────────────────────────
 #   specFile$.pipe(map(mintIdentityAndWitness),
