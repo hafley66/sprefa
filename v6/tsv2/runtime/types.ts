@@ -14,7 +14,12 @@ export type { QueryResult, SqliteDb, SqlStatement, TraceStatement };
  * header, item 9: atoms and compound-term text both serialize as JSON
  * strings.
  */
-export type IRowValue = IRowScalar | IRowValueArray;
+export type IRowBytes = Uint8Array;
+
+/** The only JSON spelling for bytes at a serialization boundary. */
+export type IEncodedBytes = { readonly $bytes: string };
+
+export type IRowValue = IRowScalar | IRowValueArray | IRowBytes;
 
 /** What a SQL PARAMETER, a pinned query literal and a bind literal can be. A
  *  list column's parameter is the interned entity id, an int, so the array
@@ -34,7 +39,7 @@ export interface IRowValueArray extends ReadonlyArray<IRowValue> {}
  * value at any top level, a `text` column's value is a string even when its
  * bytes happen to parse. Before this member existed the encoder guessed by
  * looking at the first character and got both cases wrong (json_flex lab). */
-export type IRowColumnType = "text" | "int" | "bool" | "float" | "ref" | "json" | "list";
+export type IRowColumnType = "text" | "int" | "bool" | "float" | "ref" | "json" | "list" | "bytes";
 
 /** One relation row, columns in the rel's declared order (rel_columns). */
 export type IRow = readonly IRowValue[];
@@ -625,6 +630,18 @@ export interface IHostColumnPlan {
   readonly type: string;
 }
 
+/** Authored field layout carried by a structured host boundary. */
+export interface IHostTypeField {
+  readonly name: string;
+  readonly type: string;
+}
+
+/** A generated catalog port relation used as a typed request or response. */
+export interface IHostTypeDescriptor {
+  readonly ref: string;
+  readonly fields: readonly IHostTypeField[];
+}
+
 /**
  * One `sh_decl` as emitted data. `execution` is a target-neutral executor key.
  * `shell` preserves template execution; `sprefa_extract` selects the existing
@@ -638,6 +655,9 @@ export interface IHostPlan {
   readonly demand_rel: string;
   readonly response_rel: string;
   readonly execution: string;
+  /** Present for structured request/response hosts; absent on legacy scalar plans. */
+  readonly request_type?: IHostTypeDescriptor;
+  readonly response_type?: IHostTypeDescriptor;
 }
 
 /**

@@ -343,7 +343,7 @@ program_violation(type_cycle, prog(Decls, _), Names) :-
 program_violation(column_type_unknown, prog(Decls, _), Name) :-
     type_definitions(Decls, Types),
     declared_column_type_use(Decls, Name),
-    \+ memberchk(Name, [int, text, json, bool, float]),
+    \+ memberchk(Name, [int, text, json, bool, float, bytes]),
     \+ Name = json_list(_),
     \+ Name = list(_),
     \+ declared_type_name(Types, Name).
@@ -760,6 +760,12 @@ surface_row_is_live_aggregate(Name) :-
 declared_column_type_use(Decls, Name) :- member(col_type(_, _, Name), Decls).
 declared_column_type_use(Decls, Name) :-
     member(type_decl(_, Specs), Decls), member(col(_, Name), Specs).
+declared_column_type_use(Decls, Name) :-
+    member(sh_decl(_, Inputs, Outputs, _), Decls),
+    ( member(col(_, Name), Inputs) ; member(col(_, Name), Outputs) ).
+declared_column_type_use(Decls, Name) :-
+    member(bind_decl(_, Columns), Decls),
+    member(col(_, Name), Columns).
 
 % ── helpers for the relation-pattern class ───────────────────────────────────
 

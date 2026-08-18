@@ -80,6 +80,7 @@ fn content_of(value: &Value) -> BoundaryResult<String> {
         ScalarValue::Integer(number) => format!("{}", number),
         ScalarValue::Real(number) => crate::ticklog::js_float_text(number),
         ScalarValue::Bool(flag) => (if flag { "true" } else { "false" }).to_string(),
+        ScalarValue::Bytes(_) => unreachable!("bytes cannot reach text intern"),
     })
 }
 

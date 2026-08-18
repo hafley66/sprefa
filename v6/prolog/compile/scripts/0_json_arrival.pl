@@ -5,6 +5,7 @@
 
 :- use_module('../../analyze', [rel_columns/5]).
 :- use_module(library(http/json)).
+:- use_module(library(pcre)).
 
 arrival_column_types(Prog, Bindings, Ref, ColumnTypes) :-
     Ref = _Name/Arity,
@@ -25,7 +26,9 @@ declared_column_type(Decls, Ref, Column, Type) :-
     ).
 
 schedule_value(Context, Rel, Type, Value, Term) :-
-    ( json_arrival_type(Type)
+    ( Type = bytes
+    -> bytes_column_term(Context, Rel, Value, Term)
+    ; json_arrival_type(Type)
     -> json_column_term(Context, Rel, Value, Term)
     ; structured_arrival_value(Type, Value)
     -> json_parsed_term(Value, Term)
@@ -34,6 +37,44 @@ schedule_value(Context, Rel, Type, Value, Term) :-
 
 json_arrival_type(json).
 json_arrival_type(json_list(_)).
+
+bytes_column_term(_Context, _Rel, Value, bytes(Base64)) :-
+    is_dict(Value),
+    dict_keys(Value, ['$bytes']),
+    get_dict('$bytes', Value, Base64),
+    string(Base64),
+    re_match("^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$", Base64),
+    canonical_base64(Base64),
+    !.
+bytes_column_term(Context, Rel, Value, _) :-
+    format(user_error,
+           "type_arrival_shape_mismatch(~w, bytes, field_not_bytes) [~w]: bytes requires {$bytes: base64} object, got ~q~n",
+           [Rel, Context, Value]),
+    halt(1).
+
+canonical_base64(Text) :-
+    string_codes(Text, Codes),
+    ( Codes = []
+    ; append(Prefix, [A, B, C, D], Codes),
+      Prefix \= [],
+      base64_code(B, BValue),
+      ( C =:= 0'= -> BValue mod 16 =:= 0
+      ; D =:= 0'= -> base64_code(C, CValue), CValue mod 4 =:= 0
+      ; true )
+    ; append([], [A, B, C, D], Codes),
+      base64_code(B, BValue),
+      ( C =:= 0'= -> BValue mod 16 =:= 0
+      ; D =:= 0'= -> base64_code(C, CValue), CValue mod 4 =:= 0
+      ; true )
+    ),
+    ( var(A) -> true ; base64_code(A, _) ),
+    ( var(D) -> true ; D =:= 0'= ; base64_code(D, _) ).
+
+base64_code(Code, Value) :- Code >= 0'A, Code =< 0'Z, !, Value is Code - 0'A.
+base64_code(Code, Value) :- Code >= 0'a, Code =< 0'z, !, Value is Code - 0'a + 26.
+base64_code(Code, Value) :- Code >= 0'0, Code =< 0'9, !, Value is Code - 0'0 + 52.
+base64_code(0'+, 62).
+base64_code(0'/, 63).
 
 structured_arrival_value(Type, Value) :-
     Type \== none,

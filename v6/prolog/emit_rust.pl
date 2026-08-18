@@ -16,12 +16,13 @@
 :- use_module(library(pcre)).
 :- use_module(lower, [ departure_frontier_table_name/2,
                        program_text_intern_plan/3,
-                       struct_type_plans/3, fixpoint_round_cap/1 ]).
+                       struct_type_plans/3, struct_type_plans/4, fixpoint_round_cap/1 ]).
 :- use_module(strat, [cyclic_head_groups/2]).
 :- use_module('0_rel_record').
 :- use_module(analyze, [ body_ref_uses/2, level_body_pre_ref/2, rule_head_ref/2,
                          listened_departure_refs/2, program_uses_tick/2 ]).
-:- use_module('1_host_expand', [compile_host_decl/2]).
+:- use_module('1_host_expand', [compile_host_decl/2,
+                                host_plan_contract/2]).
 :- use_module('compile/registry', [host_execution/3]).
 
 :- op(1150, xfx, <-).
@@ -91,6 +92,7 @@ boundary_type_name(json, json) :- !.
 boundary_type_name(json_list(_), json) :- !.
 % F3 mirror: Vec<Value> at the row seam, the same name on both doors.
 boundary_type_name(list(_), list) :- !.
+boundary_type_name(bytes, bytes) :- !.
 boundary_type_name(T, T).
 
 boot_dict(bootstmt(Rel, Sql, Params), _{rel: Rel, sql: Sql, params: JsonParams}) :-
@@ -124,6 +126,7 @@ arrival_templates_map(ArrivalStatements, Map) :-
 relation_dict(RelPlans, ArrivalStatements, DepartureRefs,
               deltastmt(Ref, _Sel, DeltaTable, BoundarySql, _Stored), Dict) :-
     ref_name(Ref, Name),
+    relplan_storage_name(RelPlans, Ref, StorageName),
     relplan_shape(RelPlans, Ref, Kind, Columns, KeyOrNone, RawColumnTypes),
     maplist(boundary_type_name, RawColumnTypes, ColumnTypes),
     ( KeyOrNone = key(KeyPositions) -> maplist(position_index, KeyPositions, KeyIndices)
@@ -134,12 +137,12 @@ relation_dict(RelPlans, ArrivalStatements, DepartureRefs,
     ( memberchk(arrivalstmt(Ref, _, _, _, _, DelSql), ArrivalStatements),
       DelSql \== none
     -> DelText = DelSql ; DelText = null ),
-    format(atom(FrontierTable), '__frontier_~w', [Name]),
-    format(atom(NextFrontierTable), '__next_frontier_~w', [Name]),
+    format(atom(FrontierTable), '__frontier_~w', [StorageName]),
+    format(atom(NextFrontierTable), '__next_frontier_~w', [StorageName]),
     ( memberchk(Ref, DepartureRefs)
-    -> departure_frontier_table_name(Ref, DepartureTable), DepField = DepartureTable
+    -> format(atom(DepartureTable), '__departure_frontier_~w', [StorageName]), DepField = DepartureTable
     ; DepField = null ),
-    Dict = _{ rel: Name, kind: Kind, table_name: Name,
+    Dict = _{ rel: Name, kind: Kind, table_name: StorageName,
               delta_table_name: DeltaTable,
               frontier_table_name: FrontierTable,
               next_frontier_table_name: NextFrontierTable,
@@ -158,12 +161,13 @@ edge_dict(RelPlans,
                    DeltaProjectSql, _Kind, edgeinterns(_, DeltaInternSqls)),
           Dict) :-
     ref_name(HeadRef, HeadName),
+    relplan_storage_name(RelPlans, HeadRef, HeadStorageName),
     relplan_shape(RelPlans, HeadRef, HeadKind, _Columns, _Key, _Types),
-    format(atom(DeltaTable), '__delta_~w', [HeadName]),
+    format(atom(DeltaTable), '__delta_~w', [HeadStorageName]),
     head_to_key_indices(HeadColumns, KeyColumns, KeyIndices),
     intern_field(DeltaInternSqls, InternField),
     Dict = _{ head_rel: HeadName, head_columns: HeadColumns,
-              head_table_name: HeadName, head_delta_table_name: DeltaTable, head_kind: HeadKind,
+              head_table_name: HeadStorageName, head_delta_table_name: DeltaTable, head_kind: HeadKind,
               key_indices: KeyIndices, project_sql: DeltaProjectSql,
               intern_sql: InternField }.
 
@@ -232,18 +236,19 @@ ordered_fields(EdgeStatements, RelPlans, Rules, Ordered, Arms, PreNames,
     ;  Ordered = false, Arms = [], PreNames = [], RecursiveLevels = false
     ).
 
-level_dict(HeadTable, CyclicHeadGroups,
+level_dict(RelPlans, HeadTable, CyclicHeadGroups,
            levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
                      RefCountSql, AggregateSql, DeltaInternSqls),
            Dict) :-
     ref_name(HeadRef, HeadName),
+    relplan_storage_name(RelPlans, HeadRef, HeadStorageName),
     recursion_group_field(CyclicHeadGroups, HeadRef, RecursionGroupField),
-    format(atom(DeltaTable), '__delta_~w', [HeadName]),
+    format(atom(DeltaTable), '__delta_~w', [HeadStorageName]),
     memberchk(HeadName-[HeadColumns, RawHeadTypes], HeadTable),
     maplist(boundary_type_name, RawHeadTypes, HeadTypes),
     ( DeltaInsertSql = none -> InsertField = null ; InsertField = DeltaInsertSql ),
     atomic_list_concat([DeleteSql | InsertSqls], ';\n', RecomputeSql),
-    select_sql_text(HeadName, HeadColumns, SelectSql),
+    select_sql_text(HeadStorageName, HeadColumns, SelectSql),
     refcount_fields(RefCountSql, SupportField, ExpandField, DredField,
                     SupportInternField),
     aggregate_field(AggregateSql, AggregateField),
@@ -285,8 +290,8 @@ select_sql_text(HeadName, HeadColumns, SelectSql) :-
     format(atom(SelectSql), 'SELECT ~w FROM "~w"', [HeadSql, HeadName]).
 quote_ident_local(Col, Quoted) :- format(atom(Quoted), '"~w"', [Col]).
 
-levels_list(LevelStatements, HeadTable, CyclicHeadGroups, Dicts) :-
-    maplist(level_dict(HeadTable, CyclicHeadGroups), LevelStatements, Dicts).
+levels_list(RelPlans, LevelStatements, HeadTable, CyclicHeadGroups, Dicts) :-
+    maplist(level_dict(RelPlans, HeadTable, CyclicHeadGroups), LevelStatements, Dicts).
 
 retention_dict(retentionstmt(Ref, _Limit, DeleteSql), Dict) :-
     ref_name(Ref, Name),
@@ -382,9 +387,37 @@ host_plan_dict(host_plan(Name, Inputs, Outputs, template(Template),
     maplist(host_column_dict, Inputs, InputDicts),
     maplist(host_column_dict, Outputs, OutputDicts),
     host_execution(Name, Template, Executor),
-    Dict = _{ name: Name, inputs: InputDicts, outputs: OutputDicts,
+    Base = _{ name: Name, inputs: InputDicts, outputs: OutputDicts,
               template: Template, demand_rel: DemandName,
-              response_rel: ResponseName, execution: Executor }.
+              response_rel: ResponseName, execution: Executor },
+    HostPlan = host_plan(Name, Inputs, Outputs, template(Template),
+                         demand_ref(DemandName), response_ref(ResponseName), _),
+    host_plan_contract(HostPlan,
+                       host_contract(RequestType, ResponseType)),
+    (   host_contract_is_structured(RequestType, ResponseType)
+    ->  host_type_descriptor_dict(RequestType, RequestDict),
+        host_type_descriptor_dict(ResponseType, ResponseDict),
+        Dict = Base.put(_{request_type: RequestDict,
+                          response_type: ResponseDict})
+    ;   Dict = Base
+    ).
+
+host_contract_is_structured(type_descriptor(_, RequestFields),
+                            type_descriptor(_, ResponseFields)) :-
+    ( member(field(_, Type), RequestFields), structured_host_type(Type)
+    ; member(field(_, Type), ResponseFields), structured_host_type(Type)
+    ),
+    !.
+
+structured_host_type(Type) :-
+    \+ memberchk(Type, [text, int, float, bool]).
+
+host_type_descriptor_dict(type_descriptor(TypeName/Arity, Fields), Dict) :-
+    format(atom(Ref), '~w/~w', [TypeName, Arity]),
+    maplist(host_field_dict, Fields, FieldDicts),
+    Dict = _{ ref: Ref, fields: FieldDicts }.
+
+host_field_dict(field(Name, Type), _{ name: Name, type: Type }).
 
 host_column_dict(col(Name, Type), _{ name: Name, type: Type }).
 
@@ -431,11 +464,11 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
                    Relations),
     edges_list(RelPlans, EdgeStatements, Edges),
     cyclic_head_groups(PlanRules, CyclicHeadGroups),
-    levels_list(RuleLevelStatements, HeadTable, CyclicHeadGroups, Levels),
+    levels_list(RelPlans, RuleLevelStatements, HeadTable, CyclicHeadGroups, Levels),
     retentions_list(RetentionStatements, Retentions),
     program_text_intern_plan(InternMode, RelPlans, TextInternPlan),
     text_intern_field(TextInternPlan, TextInternField),
-    struct_type_plans(PlanDecls, LoweringTypes, StructPlans),
+    struct_type_plans(PlanDecls, LoweringTypes, RelPlans, StructPlans),
     maplist(struct_type_dict, StructPlans, StructTypes),
     struct_ref_columns_map(RelPlans, StructRefColumns),
     ordered_fields(EdgeStatements, RelPlans, PlanRules,

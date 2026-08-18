@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
+use std::str::FromStr;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::change_facts::{
@@ -43,6 +44,7 @@ pub trait IHostExecutor: Sync {
 pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
     match execution {
         "shell" => Some(&ShellExecutor),
+        "soopy_mutation" => Some(&SoopyMutationExecutor),
         // The linked twin: sprefa-extract runs in this process, no child spawn.
         "sprefa_extract" | "sprefa_extract_repo" => Some(&*EXTRACT),
         _ => None,
@@ -54,6 +56,9 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
 // Rust live runner recognizes these four ruled names and delegates their Git
 // mechanics to Soopy instead of spawning the emitted pipeline.
 fn executor_for_plan(plan: &HostPlanData) -> Option<&'static dyn IHostExecutor> {
+    if plan.execution == "soopy_mutation" {
+        return Some(&SoopyMutationExecutor);
+    }
     if plan.execution == "shell"
         && matches!(
             plan.name.as_str(),
@@ -109,6 +114,269 @@ impl IHostExecutor for ShellExecutor {
             });
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+}
+
+/// The shell target is a compatibility adapter for the typed host boundary.
+///
+/// A legacy `sh` declaration can interpolate only scalar columns.  The
+/// compiler still emits its original `HostPlanData` shape, including the
+/// original `execution: "shell"` and template bytes.  This adapter is the
+/// runtime seam that checks the declared type before converting the row value
+/// to the shell's string transport.  Keeping the check beside the conversion
+/// prevents a structured value represented by an integer relation reference
+/// from being mistaken for an ordinary integer argument.
+pub struct ShellHostAdapter;
+
+impl ShellHostAdapter {
+    fn input(host: &str, column: &HostColumnPlan, value: &Value) -> Result<ScalarValue, HostError> {
+        if column.column_type == "bytes" {
+            return Err(HostError {
+                host: host.to_string(),
+                message: "bytes_host_transport_unsupported".to_string(),
+            });
+        }
+        if !matches!(
+            column.column_type.as_str(),
+            "text" | "int" | "float" | "bool"
+        ) {
+            return Err(HostError {
+                host: host.to_string(),
+                message: format!(
+                    "typed_host_transport_unsupported for input column '{}' of type '{}'",
+                    column.name, column.column_type
+                ),
+            });
+        }
+        ScalarValue::at_seam(value, ScalarSeam::HostTemplateArgument).map_err(|error| HostError {
+            host: host.to_string(),
+            message: error.to_string(),
+        })
+    }
+}
+
+/// Linked executor for the two authored source-mutation hosts.
+///
+/// `source_stage` receives one complete canonical `StageRequest` document and
+/// persists its preview under `state/stages`. `source_commit` later receives
+/// the exact stage id that an approval relation joined, reloads the sealed
+/// transaction, and applies it through Soopy's durable commit engine. The
+/// ordinary host response rows carry both successes and typed refusals, so a
+/// refusal remains observable data instead of becoming a runner failure.
+pub struct SoopyMutationExecutor;
+
+impl IHostExecutor for SoopyMutationExecutor {
+    fn run(
+        &self,
+        host: &str,
+        _command_line: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, HostError> {
+        match host {
+            "source_stage" => source_stage_response(host, env),
+            "source_commit" => source_commit_response(host, env),
+            _ => Err(HostError {
+                host: host.to_string(),
+                message: "not a Soopy source-mutation host".to_string(),
+            }),
+        }
+    }
+}
+
+fn source_mutation_input(
+    host: &str,
+    env: &BTreeMap<String, String>,
+    name: &str,
+) -> Result<String, HostError> {
+    env.get(name).cloned().ok_or_else(|| HostError {
+        host: host.to_string(),
+        message: format!("missing required host input `{name}`"),
+    })
+}
+
+fn mutation_row(
+    stage_id: &str,
+    outcome: &str,
+    detail: String,
+    document: serde_json::Value,
+) -> Result<String, HostError> {
+    serde_json::to_string(&serde_json::json!({
+        "stage_id": stage_id,
+        "outcome": outcome,
+        "detail": detail,
+        "document": document,
+    }))
+    .map_err(|error| HostError {
+        host: "soopy_mutation".to_string(),
+        message: format!("serialize source-mutation response: {error}"),
+    })
+}
+
+fn mutation_root(
+    target_root: &Path,
+    request: &soopy::StageRequest,
+) -> Result<soopy::SourceRoot, String> {
+    match request.root {
+        soopy::SourceRootId::Directory { .. } => soopy::SourceRoot::open_directory(target_root),
+        soopy::SourceRootId::GitWorktree { .. } => soopy::SourceRoot::discover_git(target_root),
+    }
+    .map_err(|error| format!("open mutation root {}: {error}", target_root.display()))
+}
+
+fn mutation_state_root(target_root: &Path, state_root: &Path) -> Result<PathBuf, String> {
+    let target_root = target_root.canonicalize().map_err(|error| {
+        format!(
+            "canonicalize mutation root {}: {error}",
+            target_root.display()
+        )
+    })?;
+    let state_root = state_root.canonicalize().map_err(|error| {
+        format!(
+            "canonicalize mutation state {}: {error}",
+            state_root.display()
+        )
+    })?;
+    if !state_root.is_dir() {
+        return Err(format!(
+            "mutation state root is not a directory: {}",
+            state_root.display()
+        ));
+    }
+    if state_root.starts_with(&target_root) {
+        return Err(format!(
+            "mutation state root must be outside the target root: {}",
+            state_root.display()
+        ));
+    }
+    Ok(state_root)
+}
+
+fn source_stage_response(host: &str, env: &BTreeMap<String, String>) -> Result<String, HostError> {
+    let target_root = PathBuf::from(source_mutation_input(host, env, "root")?);
+    let state_root = PathBuf::from(source_mutation_input(host, env, "state")?);
+    let request_json = source_mutation_input(host, env, "request")?;
+    let request: soopy::StageRequest = match serde_json::from_str(&request_json) {
+        Ok(request) => request,
+        Err(error) => {
+            return mutation_row(
+                "",
+                "refused",
+                format!("decode StageRequest: {error}"),
+                serde_json::json!([]),
+            )
+        }
+    };
+    let state_root = match mutation_state_root(&target_root, &state_root) {
+        Ok(state_root) => state_root,
+        Err(detail) => return mutation_row("", "refused", detail, serde_json::json!([])),
+    };
+    let mut root = match mutation_root(&target_root, &request) {
+        Ok(root) => root,
+        Err(detail) => return mutation_row("", "refused", detail, serde_json::json!([])),
+    };
+    let mut store = match soopy::DurableStageStore::open(state_root.join("stages")) {
+        Ok(store) => store,
+        Err(error) => {
+            return mutation_row(
+                "",
+                "refused",
+                format!("open stage store: {error}"),
+                serde_json::json!([]),
+            )
+        }
+    };
+    match soopy::stage_mutations(&mut root, &request, &mut store) {
+        Ok(stage) => mutation_row(
+            &stage.id.to_string(),
+            "staged",
+            String::new(),
+            serde_json::to_value(stage.previews).map_err(|error| HostError {
+                host: host.to_string(),
+                message: format!("serialize stage previews: {error}"),
+            })?,
+        ),
+        Err(refusal) => mutation_row("", "refused", refusal.to_string(), serde_json::json!([])),
+    }
+}
+
+fn source_commit_response(host: &str, env: &BTreeMap<String, String>) -> Result<String, HostError> {
+    let target_root = PathBuf::from(source_mutation_input(host, env, "root")?);
+    let state_root = PathBuf::from(source_mutation_input(host, env, "state")?);
+    let stage_id_text = source_mutation_input(host, env, "stage_id")?;
+    let stage_id = match soopy::StageId::from_str(&stage_id_text) {
+        Ok(id) => id,
+        Err(error) => {
+            return mutation_row(
+                &stage_id_text,
+                "refused",
+                format!("decode StageId: {error}"),
+                serde_json::json!({}),
+            )
+        }
+    };
+    let state_root = match mutation_state_root(&target_root, &state_root) {
+        Ok(state_root) => state_root,
+        Err(detail) => {
+            return mutation_row(&stage_id_text, "refused", detail, serde_json::json!({}))
+        }
+    };
+    let store = match soopy::DurableStageStore::open(state_root.join("stages")) {
+        Ok(store) => store,
+        Err(error) => {
+            return mutation_row(
+                &stage_id_text,
+                "refused",
+                format!("open stage store: {error}"),
+                serde_json::json!({}),
+            )
+        }
+    };
+    let stage = match soopy::show_stage(&store, stage_id) {
+        Ok(Some(stage)) => stage,
+        Ok(None) => {
+            return mutation_row(
+                &stage_id_text,
+                "refused",
+                "stage is not present in this state root".to_string(),
+                serde_json::json!({}),
+            )
+        }
+        Err(error) => {
+            return mutation_row(
+                &stage_id_text,
+                "refused",
+                format!("load stage: {error}"),
+                serde_json::json!({}),
+            )
+        }
+    };
+    let engine = match soopy::CommitEngine::open(&target_root, state_root.join("commits")) {
+        Ok(engine) => engine,
+        Err(error) => {
+            return mutation_row(
+                &stage_id_text,
+                "refused",
+                format!("open commit engine: {error}"),
+                serde_json::json!({}),
+            )
+        }
+    };
+    match engine.commit(&stage) {
+        Ok(receipt) => mutation_row(
+            &stage_id_text,
+            "committed",
+            String::new(),
+            serde_json::to_value(receipt).map_err(|error| HostError {
+                host: host.to_string(),
+                message: format!("serialize commit receipt: {error}"),
+            })?,
+        ),
+        Err(refusal) => mutation_row(
+            &stage_id_text,
+            "refused",
+            refusal.to_string(),
+            serde_json::json!({}),
+        ),
     }
 }
 
@@ -1119,7 +1387,24 @@ pub fn shell_text(value: &ScalarValue) -> String {
         ScalarValue::Integer(number) => number.to_string(),
         ScalarValue::Real(number) => crate::ticklog::js_float_text(*number),
         ScalarValue::Bool(flag) => if *flag { "true" } else { "false" }.to_string(),
+        ScalarValue::Bytes(_) => unreachable!("bytes must be rejected before shell interpolation"),
     }
+}
+
+fn reject_binary_host_transport(
+    host: &str,
+    inputs: &BTreeMap<String, ScalarValue>,
+) -> Result<(), HostError> {
+    if inputs
+        .values()
+        .any(|value| matches!(value, ScalarValue::Bytes(_)))
+    {
+        return Err(HostError {
+            host: host.to_string(),
+            message: "bytes_host_transport_unsupported".to_string(),
+        });
+    }
+    Ok(())
 }
 
 pub fn fill_template(template: &str, inputs: &BTreeMap<String, ScalarValue>) -> String {
@@ -1192,6 +1477,26 @@ fn coerce(
         message,
     };
     match column.column_type.as_str() {
+        "bytes" => match raw {
+            serde_json::Value::Object(map) if map.len() == 1 => match map.get("$bytes") {
+                Some(serde_json::Value::String(encoded)) => crate::types::base64_to_bytes(encoded)
+                    .map(Value::Bytes)
+                    .map_err(|error| {
+                        named(format!(
+                            "invalid_bytes_base64 for bytes column '{}': {error}",
+                            column.name
+                        ))
+                    }),
+                _ => Err(named(format!(
+                    "bytes_host_transport_unsupported for bytes column '{}'",
+                    column.name
+                ))),
+            },
+            _ => Err(named(format!(
+                "bytes_host_transport_unsupported for bytes column '{}'",
+                column.name
+            ))),
+        },
         "bool" => match raw {
             serde_json::Value::Bool(flag) => Ok(Value::Bool(*flag)),
             serde_json::Value::String(text) if text == "true" => Ok(Value::Bool(true)),
@@ -1443,8 +1748,21 @@ impl<'p> HostLiveRunner<'p> {
                 .position(|column| *column == input.name)
                 .and_then(|index| row.get(index).cloned())
                 .unwrap_or(Value::Text(String::new()));
-            let scalar =
-                ScalarValue::at_seam(&value, ScalarSeam::HostTemplateArgument).map_err(&named)?;
+            let scalar = if plan.execution == "shell" {
+                ShellHostAdapter::input(&plan.name, input, &value)?
+            } else {
+                // Native executors own their typed decode seam.  The current
+                // demand ABI still carries scalar values for those executors,
+                // but must not route them through the shell adapter or its
+                // HostTemplateArgument boundary.  SqlParameter retains the
+                // pre-adapter bytes behavior until the native decoder lands.
+                ScalarValue::at_seam(&value, ScalarSeam::SqlParameter).map_err(|error| {
+                    HostError {
+                        host: plan.name.clone(),
+                        message: error.to_string(),
+                    }
+                })?
+            };
             inputs.insert(input.name.clone(), scalar);
         }
         let witness = columns
@@ -1453,9 +1771,16 @@ impl<'p> HostLiveRunner<'p> {
             .and_then(|index| row.get(index).cloned());
         let witness_digest = match witness {
             None => String::new(),
-            Some(value) => shell_text(
-                &ScalarValue::at_seam(&value, ScalarSeam::HostTemplateArgument).map_err(&named)?,
-            ),
+            Some(value) => match ScalarValue::at_seam(&value, ScalarSeam::HostTemplateArgument) {
+                Ok(scalar) => shell_text(&scalar),
+                Err(BoundaryError::BytesAtScalarSeam(_)) => {
+                    return Err(HostError {
+                        host: plan.name.clone(),
+                        message: "bytes_host_transport_unsupported".to_string(),
+                    })
+                }
+                Err(error) => return Err(named(error)),
+            },
         };
         Ok(HostDemand {
             plan,
@@ -1538,6 +1863,7 @@ impl<'p> HostLiveRunner<'p> {
         let mut group_index: HashMap<String, usize> = HashMap::new();
         let mut groups: Vec<Vec<&HostDemand<'p>>> = Vec::new();
         for demand in &claimed {
+            reject_binary_host_transport(&demand.plan.name, &demand.inputs)?;
             if !is_applicative(&demand.plan.execution) {
                 groups.push(vec![demand]);
                 continue;

@@ -30,12 +30,12 @@ type_rows([
 test(ts_types) :-
     type_rows(Rows),
     once(ts_types_text(main, Rows, Text)),
-    Text == "export interface Child {\n  id: number;\n}\n\nexport interface Parent {\n  count: number;\n  ratio: number;\n  name: string;\n  active: boolean;\n  value: unknown;\n  values: Array<number>;\n  note: string | null;\n  child: Child;\n}\n\nexport interface Holder {\n  values: Array<number>;\n}\n".
+    Text == "export type Option<T> = { tag: 'none' } | { tag: 'some'; value: T };\n\nexport interface Child {\n  id: number;\n}\n\nexport interface Parent {\n  count: number;\n  ratio: number;\n  name: string;\n  active: boolean;\n  value: unknown;\n  values: Array<number>;\n  note: Option<string>;\n  child: Child;\n}\n\nexport interface Holder {\n  values: Array<number>;\n}\n".
 
 test(rust_types) :-
     type_rows(Rows),
     once(rust_types_text(main, Rows, Text)),
-    Text == "#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Child {\n    pub id: i64,\n}\n\n#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Parent {\n    pub count: i64,\n    pub ratio: f64,\n    pub name: String,\n    pub active: bool,\n    pub value: serde_json::Value,\n    pub values: Vec<i64>,\n    pub note: Option<String>,\n    pub child: Child,\n}\n\n#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Holder {\n    pub values: Vec<i64>,\n}\n".
+    Text == "#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n#[serde(tag = \"tag\", content = \"value\", rename_all = \"snake_case\")]\npub enum DlOption<T> {\n    None,\n    Some(T),\n}\n\n#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Child {\n    pub id: i64,\n}\n\n#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Parent {\n    pub count: i64,\n    pub ratio: f64,\n    pub name: String,\n    pub active: bool,\n    pub value: serde_json::Value,\n    pub values: Vec<i64>,\n    pub note: DlOption<String>,\n    pub child: Child,\n}\n\n#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Holder {\n    pub values: Vec<i64>,\n}\n".
 
 generic_rows([
     row(1, 0, 0, int, primitive, 0, 0, 0, '', '', ''),

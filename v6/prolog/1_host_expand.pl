@@ -18,6 +18,7 @@
 :- module(host_expand,
           [ prepare_program/5,
             compile_host_decl/2,
+            host_plan_contract/2,
             compile_query/2,
             compile_ts_query/2,
             body_goals/2,
@@ -200,6 +201,25 @@ compile_host_decl(
     !.
 compile_host_decl(Decl, _) :-
     throw(refused_host_decl(Decl)).
+
+% The legacy host_plan/7 term remains the shared lowering shape used by the
+% oracle and the two emitters.  Its typed boundary companion is derived here,
+% at the same compiler seam, so request and response layouts do not get
+% reconstructed from emitted JSON.  `ref` names the generated catalog port
+% relation and its arity; fields retain the authored order and declared type.
+host_plan_contract(
+    host_plan(Name, Inputs, Outputs, _Template,
+              demand_ref(DemandRef), response_ref(ResponseRef), _Roles),
+    host_contract(
+        type_descriptor(DemandRef/RequestArity, RequestFields),
+        type_descriptor(ResponseRef/ResponseArity, ResponseFields))) :-
+    length(Inputs, RequestArity),
+    length(Outputs, ResponseArity),
+    maplist(host_field, Inputs, RequestFields),
+    maplist(host_field, Outputs, ResponseFields),
+    atom(Name).
+
+host_field(col(Name, Type), field(Name, Type)).
 
 validate_host_executor(Name, Template, Inputs) :-
     host_execution(Name, Template, Executor),

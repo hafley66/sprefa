@@ -13,14 +13,14 @@ pub enum RowColumnType {
     Json,
     Ref,
     List,
+    Bytes,
 }
 
 // A row value as it crosses a runtime boundary. Mirrors the values IRowValue
 // holds at boundary time in the TS runtime: integers, floats, booleans, and
 // text (json/document text rides as Text).
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Integer(i64),
     Real(f64),
@@ -31,6 +31,118 @@ pub enum Value {
     // the target's rendered object. Last, so untagged deserialization tries
     // every scalar first.
     List(Vec<serde_json::Value>),
+    Bytes(Vec<u8>),
+}
+
+pub(crate) fn bytes_to_base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let a = chunk[0];
+        let b = *chunk.get(1).unwrap_or(&0);
+        let c = *chunk.get(2).unwrap_or(&0);
+        out.push(ALPHABET[(a >> 2) as usize] as char);
+        out.push(ALPHABET[(((a & 3) << 4) | (b >> 4)) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[((b & 15) << 2 | c >> 6) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[(c & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+pub(crate) fn base64_to_bytes(text: &str) -> Result<Vec<u8>, String> {
+    if !text.len().is_multiple_of(4) {
+        return Err("invalid_bytes_base64".into());
+    }
+    let value = |byte: u8| match byte {
+        b'A'..=b'Z' => Some(byte - b'A'),
+        b'a'..=b'z' => Some(byte - b'a' + 26),
+        b'0'..=b'9' => Some(byte - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    };
+    let mut out = Vec::with_capacity(text.len() / 4 * 3);
+    for chunk in text.as_bytes().chunks(4) {
+        let a = value(chunk[0]).ok_or("invalid_bytes_base64")?;
+        let b = value(chunk[1]).ok_or("invalid_bytes_base64")?;
+        let c = if chunk[2] == b'=' {
+            0
+        } else {
+            value(chunk[2]).ok_or("invalid_bytes_base64")?
+        };
+        let d = if chunk[3] == b'=' {
+            0
+        } else {
+            value(chunk[3]).ok_or("invalid_bytes_base64")?
+        };
+        if chunk[2] == b'=' && chunk[3] != b'=' {
+            return Err("invalid_bytes_base64".into());
+        }
+        out.push((a << 2) | (b >> 4));
+        if chunk[2] != b'=' {
+            out.push((b << 4) | (c >> 2));
+        }
+        if chunk[3] != b'=' {
+            out.push((c << 6) | d);
+        }
+    }
+    if bytes_to_base64(&out) != text {
+        return Err("invalid_bytes_base64".into());
+    }
+    Ok(out)
+}
+
+fn serialize_value_json(value: &Value) -> serde_json::Value {
+    match value {
+        Value::Integer(v) => serde_json::json!(v),
+        Value::Real(v) => serde_json::json!(v),
+        Value::Bool(v) => serde_json::json!(v),
+        Value::Text(v) => serde_json::json!(v),
+        Value::List(v) => serde_json::Value::Array(v.clone()),
+        Value::Bytes(v) => serde_json::json!({"$bytes": bytes_to_base64(v)}),
+    }
+}
+
+impl Serialize for Value {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serialize_value_json(self).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Value {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Number(n) => n
+                .as_i64()
+                .map(Value::Integer)
+                .or_else(|| n.as_f64().map(Value::Real))
+                .ok_or_else(|| serde::de::Error::custom("invalid number")),
+            serde_json::Value::Bool(v) => Ok(Value::Bool(v)),
+            serde_json::Value::String(v) => Ok(Value::Text(v)),
+            serde_json::Value::Array(v) => Ok(Value::List(v)),
+            serde_json::Value::Object(mut v) if v.len() == 1 && v.contains_key("$bytes") => {
+                let encoded = v
+                    .remove("$bytes")
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .ok_or_else(|| serde::de::Error::custom("invalid bytes tag"))?;
+                base64_to_bytes(&encoded)
+                    .map(Value::Bytes)
+                    .map_err(serde::de::Error::custom)
+            }
+            other => Err(serde::de::Error::custom(format!(
+                "unsupported value {other}"
+            ))),
+        }
+    }
 }
 
 impl Value {
@@ -45,13 +157,53 @@ impl Value {
 
 // What a binder can take, mirroring IRowScalar. A list column's stored value
 // is its interned entity id, an int, so the array arm has no spelling here.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ScalarValue {
     Integer(i64),
     Real(f64),
     Bool(bool),
     Text(String),
+    Bytes(Vec<u8>),
+}
+
+impl Serialize for ScalarValue {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let value = match self {
+            ScalarValue::Integer(v) => serde_json::json!(v),
+            ScalarValue::Real(v) => serde_json::json!(v),
+            ScalarValue::Bool(v) => serde_json::json!(v),
+            ScalarValue::Text(v) => serde_json::json!(v),
+            ScalarValue::Bytes(v) => serde_json::json!({"$bytes": bytes_to_base64(v)}),
+        };
+        value.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ScalarValue {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Number(n) => n
+                .as_i64()
+                .map(ScalarValue::Integer)
+                .or_else(|| n.as_f64().map(ScalarValue::Real))
+                .ok_or_else(|| serde::de::Error::custom("invalid number")),
+            serde_json::Value::Bool(v) => Ok(ScalarValue::Bool(v)),
+            serde_json::Value::String(v) => Ok(ScalarValue::Text(v)),
+            serde_json::Value::Object(mut v) if v.len() == 1 && v.contains_key("$bytes") => {
+                let encoded = v
+                    .remove("$bytes")
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .ok_or_else(|| serde::de::Error::custom("invalid bytes tag"))?;
+                base64_to_bytes(&encoded)
+                    .map(ScalarValue::Bytes)
+                    .map_err(serde::de::Error::custom)
+            }
+            other => Err(serde::de::Error::custom(format!(
+                "unsupported scalar {other}"
+            ))),
+        }
+    }
 }
 
 // The binder a list value was asked to cross.
@@ -79,6 +231,7 @@ impl ScalarSeam {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BoundaryError {
     ListAtScalarSeam(ScalarSeam),
+    BytesAtScalarSeam(ScalarSeam),
     ListColumnNotAnArray { text: String, detail: String },
     DivergingMeasureRecursion { rel: String, round_cap: u64 },
 }
@@ -88,6 +241,9 @@ impl std::fmt::Display for BoundaryError {
         match self {
             BoundaryError::ListAtScalarSeam(seam) => {
                 write!(f, "a list value reached {}", seam.name())
+            }
+            BoundaryError::BytesAtScalarSeam(seam) => {
+                write!(f, "bytes reached {}", seam.name())
             }
             BoundaryError::ListColumnNotAnArray { text, detail } => write!(
                 f,
@@ -113,6 +269,10 @@ impl ScalarValue {
             Value::Bool(b) => Ok(ScalarValue::Bool(*b)),
             Value::Text(text) => Ok(ScalarValue::Text(text.clone())),
             Value::List(_) => Err(BoundaryError::ListAtScalarSeam(seam)),
+            Value::Bytes(bytes) => match seam {
+                ScalarSeam::SqlParameter => Ok(ScalarValue::Bytes(bytes.clone())),
+                _ => Err(BoundaryError::BytesAtScalarSeam(seam)),
+            },
         }
     }
 
@@ -130,6 +290,7 @@ impl From<ScalarValue> for Value {
             ScalarValue::Real(v) => Value::Real(v),
             ScalarValue::Bool(b) => Value::Bool(b),
             ScalarValue::Text(text) => Value::Text(text),
+            ScalarValue::Bytes(bytes) => Value::Bytes(bytes),
         }
     }
 }
@@ -386,8 +547,23 @@ pub struct HostColumnPlan {
     pub column_type: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostTypeField {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub field_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostTypeDescriptor {
+    #[serde(rename = "ref")]
+    pub type_ref: String,
+    pub fields: Vec<HostTypeField>,
+}
+
 // Mirrors emit_ts.pl's IHostPlanData row; the two runtimes read one
-// executor contract.
+// executor contract. Structured plans carry optional request/response
+// descriptors; omission is the legacy scalar shell-host shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostPlanData {
     pub name: String,
@@ -397,6 +573,10 @@ pub struct HostPlanData {
     pub demand_rel: String,
     pub response_rel: String,
     pub execution: String,
+    #[serde(default)]
+    pub request_type: Option<HostTypeDescriptor>,
+    #[serde(default)]
+    pub response_type: Option<HostTypeDescriptor>,
 }
 
 // The serde mirror of the emitted program: one JSON object per fixture.

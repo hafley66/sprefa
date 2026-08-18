@@ -33,6 +33,11 @@ export const row_value_from_sql: IRowValueFromSql = (type: IRowColumnType | unde
     if (!Array.isArray(parsed)) throw new Error(`list column crossed SQLite with non-array text ${value}`);
     return parsed as IRowValue;
   }
+  if (type === "bytes") {
+    if (value instanceof Uint8Array) return value;
+    if (value instanceof ArrayBuffer) return new Uint8Array(value);
+    throw new Error(`bytes column crossed SQLite with ${JSON.stringify(value)}`);
+  }
   if (type === "bool") {
     if (value === 0 || value === 0n) return false;
     if (value === 1 || value === 1n) return true;

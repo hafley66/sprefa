@@ -51,16 +51,25 @@ compiler_helper_rel(LocalName) :-
 
 % option_rows(+Decls, +Rows0, -Rows): the catalog lost option(T) when expansion
 % erased it, so fold the author's option columns back into `option` kind rows.
+%
+% Type signature and timeline:
+%   option_rows(+ExpandedDecls, +CatalogRows, -CatalogRowsWithWrappers) is det.
+%   option(option(T)) receives two synthetic rows, inner then outer. The parent
+%   column points at the outer row. This preserves the storage timeline
+%   none / some(none) / some(some(T)) for all target emitters.
 option_rows(Decls, Rows0, Rows) :-
-    findall(Element,
-            ( member(option_column(_, _, Element), Decls),
-              scalar_option_element(Element) ),
-            Elems0),
-    sort(Elems0, Elems),
+    option_surface_types(Decls, Elements),
+    wrapper_type_closure(Elements, OptionTypes),
+    validate_option_render_depth(OptionTypes),
+    option_enum_names(Decls, Elements, EnumNames),
     max_row_id(Rows0, MaxId),
-    option_row_ids(Elems, MaxId, ElementToId, OptionRows),
-    maplist(rewrite_option_column(Decls, Rows0, ElementToId), Rows0, Rewritten),
-    append(Rewritten, OptionRows, Rows).
+    enum_row_ids(EnumNames, MaxId, EnumToId, EnumRows, AfterEnums),
+    enum_variant_rows(Decls, Rows0, EnumToId, AfterEnums, EnumVariantRows,
+                      AfterVariants),
+    option_row_ids(OptionTypes, AfterVariants, EnumToId, OptionToId, OptionRows, _),
+    append([EnumRows, EnumVariantRows, OptionRows], WrapperRows),
+    maplist(rewrite_option_column(Decls, Rows0, OptionToId), Rows0, Rewritten),
+    append(Rewritten, WrapperRows, Rows).
 
 scalar_option_element(text).
 scalar_option_element(int).
@@ -72,12 +81,121 @@ max_row_id(Rows, MaxId) :-
     findall(Id, member(row(Id, _, _, _, _, _, _, _, _, _, _), Rows), Ids),
     max_list(Ids, MaxId).
 
-option_row_ids([], _Id, [], []).
-option_row_ids([Element | Rest], Id0, [Element-Id | Map], [Row | More]) :-
+option_surface_types(Decls, Elements) :-
+    findall(Element,
+            ( member(option_column(_, _, Element), Decls),
+              option_surface_value(Decls, Element) ),
+            Found),
+    sort(Found, Elements).
+
+option_surface_value(_, Element) :- scalar_option_element(Element), !.
+option_surface_value(_, option(_)) :- !.
+option_surface_value(Decls, Element) :-
+    atom(Element), semantic_enum_name(Decls, Element).
+
+wrapper_type_closure(Elements, Types) :-
+    findall(Type,
+            ( member(Element, Elements), option_type_member(Element, Type) ),
+            Found),
+    sort(Found, Unordered),
+    order_option_types(Unordered, Types).
+
+option_type_member(Element, option(Element)).
+option_type_member(option(Inner), Type) :- option_type_member(Inner, Type).
+
+% Every inner option precedes its direct parent. Sorting inside a depth makes
+% ids deterministic when several columns introduce independent wrapper trees.
+order_option_types(Types, Ordered) :-
+    findall(Depth-Type, (member(Type, Types), option_depth(Type, Depth)), Pairs),
+    keysort(Pairs, Sorted),
+    pairs_values(Sorted, Ordered).
+
+option_depth(option(Inner), Depth) :-
+    ( Inner = option(_) -> option_depth(Inner, InnerDepth), Depth is InnerDepth + 1
+    ; Depth = 1 ).
+
+% Both served DL6 renderers unroll this finite type-only recurrence. The
+% catalog rejects a deeper source type before either emitter can omit a field.
+% The bound applies only to generated target declarations; SQLite's enum-id
+% storage and option expansion recurse over the complete finite source term.
+option_type_render_depth_limit(5).
+
+validate_option_render_depth(Types) :-
+    option_type_render_depth_limit(Limit),
+    ( member(Type, Types), option_depth(Type, Depth), Depth > Limit
+    -> throw(unsupported_construct(type_emitter_option_depth(Type, Limit)))
+    ; true ).
+
+option_enum_names(Decls, Elements, Names) :-
+    findall(Name,
+            ( member(Element, Elements), atom(Element),
+              semantic_enum_name(Decls, Element), Name = Element ),
+            Found),
+    sort(Found, Names).
+
+semantic_enum_name(Decls, Name) :-
+    member(semantic_type_rows(SemanticRows), Decls),
+    member(declaration(_, root, Name, enum, compile_time), SemanticRows).
+
+enum_row_ids([], Id, [], [], Id).
+enum_row_ids([Name | Rest], Id0, [Name-Id | Map],
+             [row(Id, 0, 0, Name, enum, 0, 0, 0, '', '', '') | Rows], IdFinal) :-
+    Id1 is Id0 + 1,
+    Id = Id1,
+    enum_row_ids(Rest, Id1, Map, Rows, IdFinal).
+
+enum_variant_rows(Decls, Rows0, EnumToId, Id0, Rows, IdFinal) :-
+    findall(EnumName-Ordinal-VariantName-VariantRelId,
+            semantic_enum_variant(Decls, Rows0, EnumToId, EnumName, Ordinal,
+                                  VariantName, VariantRelId),
+            Unordered),
+    keysort(Unordered, Ordered),
+    enum_variant_rows_(Ordered, EnumToId, Id0, Rows, IdFinal).
+
+semantic_enum_variant(Decls, Rows0, EnumToId, EnumName, Ordinal, VariantName,
+                      VariantRelId) :-
+    member(EnumName-_, EnumToId),
+    member(semantic_type_rows(SemanticRows), Decls),
+    member(declaration(EnumSemanticId, root, EnumName, enum, compile_time),
+           SemanticRows),
+    member(member(_, EnumSemanticId, Ordinal, VariantName,
+                  type_ref(declaration(VariantSemanticId))), SemanticRows),
+    member(declaration(VariantSemanticId, _, VariantRelName, relation, _),
+           SemanticRows),
+    member(row(VariantRelId, _, _, VariantRelName, rel, _, _, _, _, _, _), Rows0).
+
+enum_variant_rows_([], _, Id, [], Id).
+enum_variant_rows_([EnumName-Ordinal-VariantName-VariantRelId | Rest], EnumToId,
+                   Id0,
+                   [row(Id, EnumId, Ordinal, VariantName, enum_variant,
+                        VariantRelId, 0, 0, '', '', '') | Rows], IdFinal) :-
     Id is Id0 + 1,
-    option_element_id(Element, ElementId),
-    Row = row(Id, 0, 0, Element, option, ElementId, 0, 0, '', '', ''),
-    option_row_ids(Rest, Id, Map, More).
+    memberchk(EnumName-EnumId, EnumToId),
+    enum_variant_rows_(Rest, EnumToId, Id, Rows, IdFinal).
+
+option_row_ids(Types, Id0, EnumToId, Map, Rows, IdFinal) :-
+    option_id_map(Types, Id0, Map, IdFinal),
+    option_rows_from_map(Types, EnumToId, Map, Rows).
+
+option_id_map([], Id, [], Id).
+option_id_map([Type | Rest], Id0, [Type-Id | Map], IdFinal) :-
+    Id is Id0 + 1,
+    option_id_map(Rest, Id, Map, IdFinal).
+
+option_rows_from_map([], _, _, []).
+option_rows_from_map([Type | Rest], EnumToId, OptionToId, [Row | More]) :-
+    memberchk(Type-Id, OptionToId),
+    Type = option(Element),
+    option_element_type_id(Element, EnumToId, OptionToId, ElementId),
+    term_string(Type, Name),
+    Row = row(Id, 0, 0, Name, option, ElementId, 0, 0, '', '', ''),
+    option_rows_from_map(Rest, EnumToId, OptionToId, More).
+
+option_element_type_id(Element, _, _, ElementId) :- option_element_id(Element, ElementId), !.
+option_element_type_id(Element, EnumToId, _, ElementId) :-
+    atom(Element), memberchk(Element-ElementId, EnumToId), !.
+option_element_type_id(Element, _, OptionToId, ElementId) :-
+    memberchk(Element-ElementId, OptionToId).
 
 option_element_id(text, 1).
 option_element_id(int, 2).
@@ -85,17 +203,17 @@ option_element_id(float, 3).
 option_element_id(bool, 4).
 option_element_id(json, 5).
 
-rewrite_option_column(Decls, Rows0, ElementToId, Row0, Row) :-
-    Row0 = row(Id, RelId, Ord, Name, column, TypeId, Arity, ModuleId, HId, HS, HR),
+rewrite_option_column(Decls, Rows0, OptionToId, Row0, Row) :-
+    Row0 = row(Id, RelId, Ord, Name, column, _TypeId, Arity, ModuleId, HId, HS, HR),
     option_column_element(Decls, Rows0, RelId, Name, Element),
-    memberchk(Element-OptId, ElementToId),
+    memberchk(option(Element)-OptId, OptionToId),
     !,
     Row = row(Id, RelId, Ord, Name, column, OptId, Arity, ModuleId, HId, HS, HR).
 rewrite_option_column(_Decls, _Rows0, _ElementToId, Row, Row).
 
 option_column_element(Decls, Rows0, RelId, ColumnName, Element) :-
     member(option_column(RelName/_, ColumnName, Element), Decls),
-    scalar_option_element(Element),
+    option_surface_value(Decls, Element),
     member(row(RelId, _, _, RelName, rel, _, _, _, _, _, _), Rows0).
 
 
@@ -143,7 +261,16 @@ kind_schema(Rows, Prefix, _Target, _Name, json_list, ElementTypeId, Schema) :-
     Schema = _{ type: array, items: ItemSchema }.
 kind_schema(Rows, Prefix, _Target, _Name, option, ElementTypeId, Schema) :-
     column_schema(Rows, Prefix, ElementTypeId, Inner),
-    Schema = _{ anyOf: [ Inner, _{ type: null } ] }.
+    % The tagged wire form is recursive: none, some(none), and some(value)
+    % remain different JSON documents for option(option(T)).
+    Schema = _{ anyOf: [
+        _{ type: object,
+           properties: _{ tag: _{ const: none } },
+           required: [tag], additionalProperties: false },
+        _{ type: object,
+           properties: _{ tag: _{ const: some }, value: Inner },
+           required: [tag, value], additionalProperties: false }
+    ] }.
 kind_schema(Rows, RefPrefix, TargetRow, _Name, rel, _Element, Schema) :-
     rel_path(Rows, TargetRow, Path),
     atomic_list_concat(Path, '.', Pointer),

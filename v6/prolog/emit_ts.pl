@@ -10,7 +10,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(lower, [ departure_frontier_table_name/2,
-                       departure_read_sql/3, struct_type_plans/3,
+                       departure_read_sql/3, struct_type_plans/3, struct_type_plans/4,
                        program_text_intern_plan/3,
                        statement_rule_ids/3, fixpoint_round_cap/1 ]).
 :- use_module('0_rel_record').
@@ -19,7 +19,8 @@
                 program_uses_tick/2, listened_departure_refs/2,
                 level_body_pre_ref/2, rel_rule_observers_map/2 ]).
 :- use_module(strat, [recursive_stratum_groups/2, cyclic_head_groups/2]).
-:- use_module('1_host_expand', [compile_host_decl/2, compile_query/2]).
+:- use_module('1_host_expand', [compile_host_decl/2, compile_query/2,
+                                host_plan_contract/2]).
 :- use_module('compile/registry', [bind_executor/2, host_execution/3]).
 
 :- op(1150, xfx, <-).
@@ -370,20 +371,43 @@ incremental_reference_normalize_lines(true, HasTextIntern,
 
 % ═══ local supporting types ══════════════════════════════════════════════════
 
-local_types_lines(
-    [ 'interface IHostColumnPlan { readonly name: string; readonly type: string }',
-      'interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }',
-      'interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }',
-      'interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }',
-      '',
-      'interface IBootStatement {',
-      '  rel: string;',
-      '  sql: string;',
-      '  params: readonly IRowScalar[];',
-      '}',
-      '',
-      'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };'
-    ]).
+local_types_lines(Plan,
+    Lines) :-
+    ( plan_has_structured_host(Plan)
+    -> HostTypes =
+       [ 'interface IHostTypeField { readonly name: string; readonly type: string }',
+         'interface IHostTypeDescriptor { readonly ref: string; readonly fields: readonly IHostTypeField[] }',
+         'interface IHostColumnPlan { readonly name: string; readonly type: string }',
+         'interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string; readonly request_type?: IHostTypeDescriptor; readonly response_type?: IHostTypeDescriptor }'
+       ]
+    ;  HostTypes =
+       [ 'interface IHostColumnPlan { readonly name: string; readonly type: string }',
+         'interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }'
+       ]
+    ),
+    append(HostTypes,
+      [ 'interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }',
+        'interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }',
+        '',
+        'interface IBootStatement {',
+        '  rel: string;',
+        '  sql: string;',
+        '  params: readonly IRowScalar[];',
+        '}',
+        '',
+        'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };'
+      ], Lines).
+
+plan_has_structured_host(plan(_, prog(Decls, _), _, _, _, _, _, _, _)) :-
+    member(Decl, Decls),
+    Decl = sh_decl(_, Inputs, Outputs, _),
+    ( member(col(_, Type), Inputs), structured_host_type(Type)
+    ; member(col(_, Type), Outputs), structured_host_type(Type)
+    ),
+    !.
+
+structured_host_type(Type) :-
+    \+ memberchk(Type, [text, int, float, bool]).
 
 world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _, _, SubscribedRels, _), Lines) :-
     findall(HostPlan,
@@ -437,21 +461,57 @@ array_const_line(Prefix, Rows, Line) :-
     atomic_list_concat(Rows, ', ', Body),
     format(atom(Line), '~w = [~w];', [Prefix, Body]).
 
-host_plan_json(
-    host_plan(Name, Inputs, Outputs, template(Template),
-              demand_ref(DemandName), response_ref(ResponseName), _),
-    Json) :-
+host_plan_json(HostPlan, Json) :-
+    HostPlan = host_plan(Name, Inputs, Outputs, template(Template),
+                         demand_ref(DemandName), response_ref(ResponseName), _),
     js_string(Name, NameJson),
     host_columns_json(Inputs, InputsJson),
     host_columns_json(Outputs, OutputsJson),
     js_string(Template, TemplateJson),
     js_string(DemandName, DemandJson),
-    js_string(ResponseName, ResponseJson),
+    js_string(ResponseName, ResponseRelJson),
     host_execution(Name, Template, Executor),
-    format(atom(Json),
-           '{ name: ~w, inputs: ~w, outputs: ~w, template: ~w, demand_rel: ~w, response_rel: ~w, execution: "~w" }',
+    format(atom(BaseJson),
+           '{ name: ~w, inputs: ~w, outputs: ~w, template: ~w, demand_rel: ~w, response_rel: ~w, execution: "~w"',
            [NameJson, InputsJson, OutputsJson, TemplateJson,
-            DemandJson, ResponseJson, Executor]).
+            DemandJson, ResponseRelJson, Executor]),
+    host_plan_contract(HostPlan,
+                       host_contract(RequestType, ResponseType)),
+    (   host_contract_is_structured(RequestType, ResponseType)
+    ->  host_type_descriptor_json(RequestType, RequestJson),
+        host_type_descriptor_json(ResponseType, ResponseJson),
+        format(atom(Json), '~w, request_type: ~w, response_type: ~w }',
+               [BaseJson, RequestJson, ResponseJson])
+    ;   atom_concat(BaseJson, ' }', Json)
+    ).
+
+host_contract_is_structured(type_descriptor(_, RequestFields),
+                            type_descriptor(_, ResponseFields)) :-
+    ( member(field(_, Type), RequestFields), structured_host_type(Type)
+    ; member(field(_, Type), ResponseFields), structured_host_type(Type)
+    ),
+    !.
+
+host_type_descriptor_json(type_descriptor(TypeRef, Fields), Json) :-
+    host_type_ref_json(TypeRef, RefJson),
+    maplist(host_field_json, Fields, FieldRows),
+    atomic_list_concat(FieldRows, ', ', FieldsJson),
+    format(atom(Json), '{ ref: ~w, fields: [~w] }', [RefJson, FieldsJson]).
+
+host_type_ref_json(Name/Arity, Json) :-
+    format(atom(Ref), '~w/~w', [Name, Arity]),
+    js_string(Ref, Json).
+
+host_field_json(field(Name, Type), Json) :-
+    js_string(Name, NameJson),
+    host_type_json_text(Type, TypeText),
+    js_string(TypeText, TypeJson),
+    format(atom(Json), '{ name: ~w, type: ~w }', [NameJson, TypeJson]).
+
+host_type_json_text(Type, Text) :-
+    ( atom(Type) -> Text = Type
+    ; term_to_atom(Type, Text)
+    ).
 
 bind_plan_json(bind_plan(Name, Columns, Literals), Json) :-
     js_string(Name, NameJson),
@@ -558,7 +618,8 @@ host_columns_json(Columns, Json) :-
 
 host_column_json(col(Name, Type), Json) :-
     js_string(Name, NameJson),
-    js_string(Type, TypeJson),
+    host_type_json_text(Type, TypeText),
+    js_string(TypeText, TypeJson),
     format(atom(Json), '{ name: ~w, type: ~w }', [NameJson, TypeJson]).
 
 % ═══ integer bind helper (phase C sweep finding) ═══════════════════════════
@@ -583,11 +644,12 @@ host_column_json(col(Name, Type), Json) :-
 % already returns a fresh mutable array; the annotation was simply too
 % narrow).
 bind_args_helper_lines(
-    [ 'function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {',
+    [ 'function bind_args(values: readonly IRowValue[]): (string | number | bigint | Uint8Array)[] {',
       '  return values.map((value) => {',
       '    if (typeof value === "boolean") return BigInt(value ? 1 : 0);',
       '    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;',
       '    if (typeof value === "string") return value;',
+      '    if (value instanceof Uint8Array) return value;',
       '    throw list_at_scalar_seam("sql_parameter");',
       '  });',
       '}'
@@ -660,6 +722,10 @@ arrival_value_guard_lines(
       '        : type === "float" ? false',
       '        : wide_integer_witness(value);',
       '      if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);',
+      '      if (type === "bytes") {',
+      '        if (!(value instanceof Uint8Array)) throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bytes`);',
+      '        return value;',
+      '      }',
       '      if (type === "bool") {',
       '        if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);',
       '        return value;',
@@ -844,6 +910,7 @@ gate_column_type(bool,  bool)  :- !.
 gate_column_type(text,  text)  :- !.
 gate_column_type(json,  json)  :- !.
 gate_column_type(json_list(_), json) :- !.
+gate_column_type(bytes, bytes) :- !.
 % The stored id is what the gate sees; the elements live in the member rel.
 gate_column_type(list(_), int) :- !.
 gate_column_type(_,     other).
@@ -865,6 +932,7 @@ boundary_column_type(ref(_), ref) :- !.
 % default text does); the seam that switches on it is ticklog.ts's encoder.
 boundary_column_type(json, json) :- !.
 boundary_column_type(json_list(_), json) :- !.
+boundary_column_type(bytes, bytes) :- !.
 % F3: the runtime parses the read surface's array text into Array<T> at the
 % row seam, so the boundary type names the list rather than borrowing json's.
 boundary_column_type(list(_), list) :- !.
@@ -1078,6 +1146,7 @@ incremental_relation_lines(RelPlans, Rules, ArrivalStatements, DeltaStatements,
 incremental_relation_entry_line(RelPlans, ObserverMap, ArrivalStatements, DepartureRefs,
         deltastmt(Ref, _SelectSql, DeltaTable, BoundarySql, _StoredSelectSql), Line) :-
     ref_name(Ref, Name),
+    relplan_storage_name(RelPlans, Ref, StorageName),
     relplan_shape(RelPlans, Ref, Kind, Columns, KeyOrNone, ColumnTypes),
     quoted_string_array_text(Columns, ColumnsText),
     maplist(boundary_column_type, ColumnTypes, BoundaryTypes),
@@ -1097,14 +1166,14 @@ incremental_relation_entry_line(RelPlans, ObserverMap, ArrivalStatements, Depart
     ; ArrivalDelTemplate = null
     ),
     js_template(BoundarySql, BoundaryTemplate),
-    format(atom(FrontierTable), '__frontier_~w', [Name]),
-    format(atom(NextFrontierTable), '__next_frontier_~w', [Name]),
+    format(atom(FrontierTable), '__frontier_~w', [StorageName]),
+    format(atom(NextFrontierTable), '__next_frontier_~w', [StorageName]),
     % departure_frontier_table_name is OPTIONAL on IIncrementalRelationPlan and
     % emitted only for a rel some rule binds with finalize/1, so a program
     % with no departure arm renders the entry it always rendered, character
     % for character.
     (   memberchk(Ref, DepartureRefs)
-    ->  departure_frontier_table_name(Ref, DepartureTable),
+    ->  format(atom(DepartureTable), '__departure_frontier_~w', [StorageName]),
         format(atom(DepartureField), ', departure_frontier_table_name: "~w"',
                [DepartureTable])
     ;   DepartureField = ''
@@ -1120,7 +1189,7 @@ incremental_relation_entry_line(RelPlans, ObserverMap, ArrivalStatements, Depart
     quoted_string_array_text(ObserverRefTexts, ObserversText),
     format(atom(Line),
            '  { rel: "~w", kind: "~w", table_name: "~w", delta_table_name: "~w", frontier_table_name: "~w", next_frontier_table_name: "~w", columns: ~w, column_types: ~w, key_indices: [~w], arrival_add_sql: ~w, arrival_del_sql: ~w, boundary_sql: ~w~w, rule_observers: ~w },',
-           [Name, Kind, Name, DeltaTable, FrontierTable, NextFrontierTable,
+           [Name, Kind, StorageName, DeltaTable, FrontierTable, NextFrontierTable,
             ColumnsText, ColumnTypesText, KeyIndicesText, ArrivalAddTemplate, ArrivalDelTemplate,
             BoundaryTemplate, DepartureField, ObserversText]).
 
@@ -1165,8 +1234,9 @@ incremental_edge_statement_entry_line(RelPlans,
                  _WriteSql, DeltaProjectSql, _EdgeTriggerKind,
                  edgeinterns(_, DeltaInternSqls)), RuleId, Line) :-
     ref_name(HeadRef, HeadName),
+    relplan_storage_name(RelPlans, HeadRef, HeadStorageName),
     relplan_kind(RelPlans, HeadRef, HeadKind),
-    format(atom(DeltaTable), '__delta_~w', [HeadName]),
+    format(atom(DeltaTable), '__delta_~w', [HeadStorageName]),
     quoted_string_array_text(HeadColumns, ColumnsText),
     key_indices(HeadColumns, KeyColumns, KeyIndices),
     atomic_list_concat(KeyIndices, ', ', KeyIndicesText),
@@ -1174,7 +1244,7 @@ incremental_edge_statement_entry_line(RelPlans,
     intern_sql_field(DeltaInternSqls, InternField),
     format(atom(Line),
            '  { head_rel: "~w", rule_id: "~w", head_kind: "~w", head_table_name: "~w", head_delta_table_name: "~w", head_columns: ~w, key_indices: [~w], project_sql: ~w~w },',
-           [HeadName, RuleId, HeadKind, HeadName, DeltaTable, ColumnsText,
+           [HeadName, RuleId, HeadKind, HeadStorageName, DeltaTable, ColumnsText,
             KeyIndicesText, DeltaProjectTemplate, InternField]).
 
 incremental_level_statement_lines(Program, LevelStatements, RelPlans,
@@ -1195,14 +1265,15 @@ incremental_level_statement_entry_line(RelPlans, CyclicHeadGroups,
         levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql, RefCountSql,
                   AggregateSql, DeltaInternSqls), RuleId, Line) :-
     ref_name(HeadRef, HeadName),
+    relplan_storage_name(RelPlans, HeadRef, HeadStorageName),
     recursion_group_field(CyclicHeadGroups, HeadRef, RecursionGroupField),
-    format(atom(DeltaTable), '__delta_~w', [HeadName]),
+    format(atom(DeltaTable), '__delta_~w', [HeadStorageName]),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     quoted_string_array_text(HeadColumns, ColumnsText),
     optional_sql_template(DeltaInsertSql, DeltaInsertTemplate),
     maplist(quote_ident_local, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
-    format(atom(SelectSql), 'SELECT ~w FROM "~w"', [HeadColumnsSql, HeadName]),
+    format(atom(SelectSql), 'SELECT ~w FROM "~w"', [HeadColumnsSql, HeadStorageName]),
     js_template(SelectSql, SelectTemplate),
     % A REAL newline, not the two-character sequence `\n`. These three joins
     % used to emit backslash-n and rely on the JS template literal to turn it
@@ -1524,13 +1595,13 @@ plan_pre_refs(plan(_, prog(_, Rules), _, _, _, _, _, _, _), Refs) :-
 
 pre_snapshot_statement(RelPlans, Ref, Statements) :-
     relplan_columns(RelPlans, Ref, Columns),
-    ref_name(Ref, Name),
+    relplan_storage_name(RelPlans, Ref, StorageName),
     maplist(quote_ident_local, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
-    format(atom(Delete), 'DELETE FROM "__pre_~w"', [Name]),
+    format(atom(Delete), 'DELETE FROM "__pre_~w"', [StorageName]),
     format(atom(Insert),
            'INSERT INTO "__pre_~w" (~w) SELECT ~w FROM "~w"',
-           [Name, ColumnsSql, ColumnsSql, Name]),
+           [StorageName, ColumnsSql, ColumnsSql, StorageName]),
     Statements = [Delete, Insert].
 
 ordered_pre_lines(false, _, _, _, []) :- !.
@@ -1613,8 +1684,13 @@ ordered_arrival_accept_line(RelPlans, TriggerRef, Line) :-
 
 ordered_departure_read_entry(RelPlans, TriggerRef, Line) :-
     ref_name(TriggerRef, TriggerName),
+    relplan_storage_name(RelPlans, TriggerRef, TriggerStorageName),
     relplan_columns(RelPlans, TriggerRef, TriggerColumns),
-    departure_read_sql(TriggerRef, TriggerColumns, Sql),
+    format(atom(DepartureTable), '__departure_frontier_~w', [TriggerStorageName]),
+    maplist(quote_ident_local, TriggerColumns, QuotedColumns),
+    atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
+    format(atom(Sql), 'SELECT ~w FROM "~w" ORDER BY "_phase", "_sequence"',
+           [ColumnsSql, DepartureTable]),
     js_template(Sql, SqlTemplate),
     quoted_string_array_text(TriggerColumns, ColumnsText),
     format(atom(Line),
@@ -1623,12 +1699,13 @@ ordered_departure_read_entry(RelPlans, TriggerRef, Line) :-
 
 ordered_carry_read_entry(RelPlans, TriggerRef, Line) :-
     ref_name(TriggerRef, TriggerName),
+    relplan_storage_name(RelPlans, TriggerRef, TriggerStorageName),
     relplan_columns(RelPlans, TriggerRef, TriggerColumns),
     maplist(quote_ident_local, TriggerColumns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
     format(atom(Sql),
            'SELECT "_sequence" AS "__sequence", ~w FROM "__frontier_~w" ORDER BY "_phase", "_sequence"',
-           [ColumnsSql, TriggerName]),
+           [ColumnsSql, TriggerStorageName]),
     js_template(Sql, SqlTemplate),
     quoted_string_array_text(TriggerColumns, ColumnsText),
     format(atom(Line),
@@ -1849,7 +1926,7 @@ ordered_occurrence_lines(true, EdgeStatements, RelPlans, PreRefs,
 % complete shape the async-becomes-rxjs law calls for (EMPTY would complete
 % without emitting, which starves the caller's `.pipe(map(() => before))` of
 % a value and stalls the whole tick chain).
-recompute_levels_fn_lines(_, [], Lines) :- !,
+recompute_levels_fn_lines(_, _, [], Lines) :- !,
     Lines =
     [ 'function recompute_levels(seam: ISqlSeam): Observable<void> {',
       '  void seam;',
@@ -1870,7 +1947,7 @@ recompute_levels_fn_lines(_, [], Lines) :- !,
 %
 % Every clause is INSERT OR IGNORE, so a round can only add rows and the count
 % is monotone; datalog closure over a finite store is what makes it stop.
-recompute_levels_fn_lines(SelfReferentialLevelRefs, LevelStatements, Lines) :-
+recompute_levels_fn_lines(RelPlans, SelfReferentialLevelRefs, LevelStatements, Lines) :-
     SelfReferentialLevelRefs \== [],
     LevelStatements \== [],
     !,
@@ -1886,7 +1963,7 @@ recompute_levels_fn_lines(SelfReferentialLevelRefs, LevelStatements, Lines) :-
     atomic_list_concat(RoundInsertSqls, ';\n', JoinedInsertSql),
     js_template(JoinedDeleteSql, DeleteTemplate),
     js_template(JoinedInsertSql, InsertTemplate),
-    level_row_count_sql(LevelStatements, CountSql),
+    level_row_count_sql(RelPlans, LevelStatements, CountSql),
     js_template(CountSql, CountTemplate),
     format(atom(DeleteLine), '  const delete_sql = ~w;', [DeleteTemplate]),
     format(atom(InsertLine), '  const insert_sql = ~w;', [InsertTemplate]),
@@ -1907,7 +1984,7 @@ recompute_levels_fn_lines(SelfReferentialLevelRefs, LevelStatements, Lines) :-
       '  );',
       '}'
     ].
-recompute_levels_fn_lines(_, LevelStatements, Lines) :-
+recompute_levels_fn_lines(_, _, LevelStatements, Lines) :-
     LevelStatements \== [],
     % InsertSqls is a LIST (lower.pl:level_statement_group/3 -- one entry per
     % rule clause sharing this head, so a multi-clause head's rows all
@@ -1928,11 +2005,11 @@ recompute_levels_fn_lines(_, LevelStatements, Lines) :-
 
 % ISqlRunner.scalar/2 reads the first column of the first row, so the round
 % count is one SELECT with no row shape to decode.
-level_row_count_sql(LevelStatements, Sql) :-
+level_row_count_sql(RelPlans, LevelStatements, Sql) :-
     findall(CountExpr,
             ( member(levelstmt(HeadRef, _, _, _, _, _, _), LevelStatements),
-              ref_name(HeadRef, HeadName),
-              quote_ident_local(HeadName, QuotedHead),
+              relplan_storage_name(RelPlans, HeadRef, StorageName),
+              quote_ident_local(StorageName, QuotedHead),
               format(atom(CountExpr), '(SELECT count(*) FROM ~w)',
                      [QuotedHead]) ),
             CountExprs),
@@ -2378,7 +2455,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     include(is_retention_statement, LevelStatements, RetentionStatements),
     ( RetentionStatements == [] -> HasRetention = false ; HasRetention = true ),
     Plan = plan(_, prog(PlanDecls, _), LoweringTypes, _, _, _, _, _, _),
-    struct_type_plans(PlanDecls, LoweringTypes, StructPlans),
+    struct_type_plans(PlanDecls, LoweringTypes, RelPlans, StructPlans),
     struct_plane_lines(StructPlans, RelPlans, StructPlaneLines, HasStructTypes),
     plan_intern_mode(Plan, InternMode),
     program_text_intern_plan(InternMode, RelPlans, TextInternPlan),
@@ -2396,7 +2473,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     imports_lines(HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
                   HasOrderedProgram, SelfReferentialLevelRefs, HasInternWrite,
                   ImportLines),
-    local_types_lines(LocalTypeLines),
+    local_types_lines(Plan, LocalTypeLines),
     world_plan_lines(Plan, WorldPlanLines),
     bind_args_helper_lines(BindArgsHelperLines),
     arrival_value_guard_lines(ArrivalValueGuardLines),
@@ -2456,7 +2533,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     ordered_carry_lines(HasOrderedProgram, EdgeStatements, LevelHeadedRefs,
                         OrderedCarryLines),
     ( HasOrderedProgram == true
-    -> recompute_levels_fn_lines(SelfReferentialLevelRefs, RuleLevelStatements,
+    -> recompute_levels_fn_lines(RelPlans, SelfReferentialLevelRefs, RuleLevelStatements,
                                  RecomputeLevelsFnLines),
        snapshot_retention_fn_lines(RetentionStatements, SnapshotRetentionFnLines),
        build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements,

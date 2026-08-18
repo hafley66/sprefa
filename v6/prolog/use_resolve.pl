@@ -133,6 +133,7 @@ collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files, Tables,
     include_roots(EntryPath, Roots),
     module_name(EntryAbs, EntryName),
     module_hash(BaseDir, EntryAbs, EntryHash),
+    module_stem(BaseDir, EntryAbs, EntryStem),
     collect_children(UseSpecs, Roots, BaseDir, [loaded(EntryAbs, []) | OnStack],
                      EntryName, EntryHash, Loaded0, Loaded1, ChildFiles,
                      ChildTables, EdgeDecls),
@@ -140,7 +141,10 @@ collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files, Tables,
     prog_parts(OwnProg, OwnDecls0, OwnRules, OwnQueries),
     check_use_local_name_collisions(OwnDecls0, EdgeDecls),
     rel_module_decls(OwnDecls0, EntryHash, RelModuleDecls),
-    append([OwnDecls0, [module_decl(EntryName, EntryHash)], RelModuleDecls,
+    entry_module_decls(OnStack, EntryHash, EntryModuleDecls),
+    append([OwnDecls0, [module_storage_decl(EntryHash, EntryStem),
+                        module_decl(EntryName, EntryHash)], RelModuleDecls,
+            EntryModuleDecls,
             EdgeDecls],
            OwnDecls),
     append(ChildFiles,
@@ -165,9 +169,21 @@ check_use_local_name_collision(Kind, LocalName, OwnDecls) :-
 % Read off the file's OWN decls, mounts excluded: a mounted rel keeps the
 % identity of the module that declared it, never the module that grafted it.
 rel_module_decls(OwnDecls, Hash, RelModuleDecls) :-
-    findall(Name, declared_path(OwnDecls, _Segments, Name), Names0),
+    findall(Name, source_relation_name(OwnDecls, Name), Names0),
     sort(Names0, Names),
     findall(rel_module_decl(Name, Hash), member(Name, Names), RelModuleDecls).
+
+source_relation_name(OwnDecls, Name) :-
+    declared_path(OwnDecls, _Segments, Name).
+source_relation_name(OwnDecls, Name) :-
+    member(rel_template(Segments, _, _), OwnDecls),
+    atomic_list_concat(Segments, '__', Name).
+
+% A generated relation has no source declaration of its own.  Its storage
+% belongs to the entry compilation unit, while direct source relations retain
+% their declaring module through rel_module_decl/2 above.
+entry_module_decls([], Hash, [entry_module_decl(Hash)]) :- !.
+entry_module_decls(_, _, []).
 
 on_stack_paths(OnStack, Paths) :-
     findall(Path, member(loaded(Path, _), OnStack), Paths).
@@ -296,14 +312,17 @@ module_name(Abs, Name) :-
 
 % Identity is the path relative to the ENTRY's directory, extension dropped:
 % equal basenames stay distinct and an entry hashes exactly its module name.
-module_hash(BaseDir, Abs, Hash) :-
+module_stem(BaseDir, Abs, Stem) :-
     relative_file_name(Abs, BaseDir, Relative),
     module_name(Relative, BaseStem),
     file_directory_name(Relative, Dir),
     (   Dir == '.'
     ->  Stem = BaseStem
     ;   atomic_list_concat([Dir, '/', BaseStem], Stem)
-    ),
+    ).
+
+module_hash(BaseDir, Abs, Hash) :-
+    module_stem(BaseDir, Abs, Stem),
     short_hash(Stem, Hash).
 
 % SHA-256 truncated to 16 hex characters. The compiler's one hash: module

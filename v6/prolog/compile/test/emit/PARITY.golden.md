@@ -7,7 +7,7 @@
 | $ref via declared type name | jsonschema | emits | a declared column type renders a `$ref` into `$defs`. |
 | $ref via rel-typed column | jsonschema | emits | a relational column renders a `$ref` into `$defs`. |
 | additionalProperties | jsonschema | emits | relation objects render `additionalProperties: false`. |
-| anyOf-null (option) | jsonschema | no_surface | option(T) schema rows are not produced by the current dl6 compiler. |
+| tagged option (catalog) | jsonschema | no_surface | option(T) schema rows are emitted from the catalog type path, not this dl6 fixture. |
 | array items | jsonschema | no_surface | list(T) is not accepted by the current inline compiler door. |
 | const | jsonschema | no_surface | no const literal or schema keyword exists in the dl6 surface. |
 | enum | jsonschema | no_surface | no enum schema emission path exists in the current emitter. |

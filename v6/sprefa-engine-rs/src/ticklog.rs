@@ -7,7 +7,7 @@
 // their JSON text; no spaces; no trailing newline (the caller adds it). Number
 // rendering matches the oracle's JS-float text so the diff stays empty.
 
-use crate::types::{RelDelta, Row, RowColumnType, TickDeltas, Value};
+use crate::types::{bytes_to_base64, RelDelta, Row, RowColumnType, TickDeltas, Value};
 
 pub fn tick_line(
     tick: usize,
@@ -79,6 +79,7 @@ fn encode_row(row: &Row, types: &[RowColumnType]) -> String {
 
 fn encode_value(value: &Value, ty: Option<RowColumnType>) -> String {
     match value {
+        Value::Bytes(bytes) => format!("{{\"$bytes\":{}}}", json_string(&bytes_to_base64(bytes))),
         Value::Integer(v) => format!("{}", v),
         Value::Real(v) => {
             if !v.is_finite() {

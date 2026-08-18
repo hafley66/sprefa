@@ -366,6 +366,13 @@ host_executor(_,       shell).
 % the applicative fold, so N named projections over one file become N
 % subprocesses instead of one. It also makes a QUOTING CHARACTER decide which
 % executor runs, which is the kind of silence this repo files as a defect.
+% Source mutations retain the ordinary `sh` declaration syntax and use two
+% fixed names. Their Rust executor owns the durable stage store and commit
+% journal in-process. `request` is one complete canonical StageRequest JSON
+% value: the current language has no aggregate that can collect arbitrary
+% action rows into that value.
+host_execution(source_stage, _, soopy_mutation) :- !.
+host_execution(source_commit, _, soopy_mutation) :- !.
 host_execution(_, Template, sprefa_extract_repo) :-
     string(Template),
     sub_string(Template, 0, _, _, "\"$DL_EXTRACT_BIN\" "),
@@ -384,6 +391,7 @@ host_executor_contract(sprefa_extract,
                        [col(path, text), col(digest, text)]).
 host_executor_contract(sprefa_extract_repo,
                        [col(repo, text), col(path, text), col(digest, text)]).
+host_executor_contract(soopy_mutation, _).
 host_executor_contract(shell, _).
 
 % Ordinary `sh` inputs can serve two existing internal host roles. Identity

@@ -16,6 +16,10 @@
 rel type_row(id: int, parent: int, ordinal: int, name: text, kind: text,
              type_id: int, module_id: int).
 
+# Option is a tagged carrier so option(option(T)) retains every state.
+rel has_option(value: int).
+has_option(1) <- type_row(kind: 'option').
+
 # PascalCase = replace(initcap(Name), '_', ''), matching the prolog emitter.
 # Inline, because an assignment-only rule has no positive body to group on.
 
@@ -27,6 +31,9 @@ leaf_type(Id, 'number') <- type_row(Id, name: 'int', kind: 'primitive').
 leaf_type(Id, 'boolean') <- type_row(Id, name: 'bool', kind: 'primitive').
 leaf_type(Id, 'unknown') <- type_row(Id, name: 'json', kind: 'primitive').
 leaf_type(Id, TypeName) <- emitted_type_name(Id, TypeName).
+leaf_type(Id, TypeName) <-
+  type_row(id: Id, name: EnumName, kind: 'enum'),
+  TypeName := replace(initcap(EnumName), '_', '').
 
 # A type parameter stands for itself inside its generic's body, uncased.
 leaf_type(Id, ParameterName) <-
@@ -124,7 +131,7 @@ rel option_of_leaf(id: int, text: text).
 option_of_leaf(Id, Text) <-
   type_row(Id, kind: 'option', type_id: ElemId),
   leaf_type(ElemId, Element),
-  Text := concat([Element, ' | null']).
+  Text := concat(['Option<', Element, '>']).
 
 # The innermost thing a list holds: a leaf, or a nullable leaf.
 rel list_element(id: int, text: text).
@@ -181,12 +188,41 @@ rel element_type(id: int, text: text).
 element_type(Id, Text) <- leaf_type(Id, Text).
 element_type(Id, Text) <- list_type(Id, Text).
 
-# An option column renders its element type suffixed with ' | null'.
+# The catalog refuses a source type deeper than five option edges before this
+# renderer runs (type_emitter_option_depth/2). Each layer settles in one
+# dataflow round, so the finite unroll renders from one arrival batch.
 rel option_type(id: int, text: text).
-option_type(Id, Text) <-
+rel option_depth_one(id: int, text: text).
+option_depth_one(Id, Text) <-
   type_row(Id, kind: 'option', type_id: ElemId),
   element_type(ElemId, Element),
-  Text := concat([Element, ' | null']).
+  Text := concat(['Option<', Element, '>']).
+
+rel option_depth_two(id: int, text: text).
+option_depth_two(Id, Text) <-
+  type_row(Id, kind: 'option', type_id: ElemId),
+  option_depth_one(ElemId, Element),
+  Text := concat(['Option<', Element, '>']).
+rel option_depth_three(id: int, text: text).
+option_depth_three(Id, Text) <-
+  type_row(Id, kind: 'option', type_id: ElemId),
+  option_depth_two(ElemId, Element),
+  Text := concat(['Option<', Element, '>']).
+rel option_depth_four(id: int, text: text).
+option_depth_four(Id, Text) <-
+  type_row(Id, kind: 'option', type_id: ElemId),
+  option_depth_three(ElemId, Element),
+  Text := concat(['Option<', Element, '>']).
+rel option_depth_five(id: int, text: text).
+option_depth_five(Id, Text) <-
+  type_row(Id, kind: 'option', type_id: ElemId),
+  option_depth_four(ElemId, Element),
+  Text := concat(['Option<', Element, '>']).
+option_type(Id, Text) <- option_depth_one(Id, Text).
+option_type(Id, Text) <- option_depth_two(Id, Text).
+option_type(Id, Text) <- option_depth_three(Id, Text).
+option_type(Id, Text) <- option_depth_four(Id, Text).
+option_type(Id, Text) <- option_depth_five(Id, Text).
 
 # type_of is the union of the kind arms; each type id is one kind.
 rel type_of(id: int, text: text).
@@ -216,6 +252,45 @@ rendered_type(TypeName, 2, RelId, FileText) <-
   body_text(RelId, Body),
   emitted_type_name(RelId, TypeName),
   FileText := concat(['export interface ', TypeName, ' {\n', Body, '\n}\n']).
+
+rel enum_variant_line(enum_id: int, ordinal: int, line: text).
+enum_variant_line(EnumId, Ordinal, Line) <-
+  type_row(parent: EnumId, ordinal: Ordinal, name: VariantName,
+           kind: 'enum_variant'),
+  not(enum_variant_field(EnumId, Ordinal, _, _, _)),
+  Line := concat(['  | { tag: \'', VariantName, '\' }']).
+enum_variant_line(EnumId, Ordinal, Line) <-
+  type_row(parent: EnumId, ordinal: Ordinal, name: VariantName,
+           kind: 'enum_variant'),
+  enum_variant_body(EnumId, Ordinal, Body),
+  Line := concat(['  | { tag: \'', VariantName, '\'; ', Body, ' }']).
+
+rel enum_variant_field(enum_id: int, ordinal: int, field_ordinal: int, name: text, text: text).
+enum_variant_field(EnumId, Ordinal, FieldOrdinal, FieldName, FieldText) <-
+  type_row(parent: EnumId, ordinal: Ordinal, kind: 'enum_variant', type_id: VariantId),
+  type_row(parent: VariantId, ordinal: FieldOrdinal, name: FieldName,
+           kind: 'column', type_id: TypeId),
+  FieldName != 'id',
+  type_of(TypeId, Type),
+  FieldText := concat([FieldName, ': ', Type, ';']).
+
+rel enum_variant_body(enum_id: int, ordinal: int, body: text).
+enum_variant_body(EnumId, Ordinal, group_concat(FieldText, ' ', FieldOrdinal)) <-
+  enum_variant_field(EnumId, Ordinal, FieldOrdinal, _FieldName, FieldText).
+
+rel enum_body(enum_id: int, body: text).
+enum_body(EnumId, group_concat(Line, '\n', Ordinal)) <-
+  enum_variant_line(EnumId, Ordinal, Line).
+
+rendered_type(TypeName, 2, EnumId, FileText) <-
+  type_row(id: EnumId, name: EnumName, kind: 'enum'),
+  enum_body(EnumId, Body),
+  TypeName := replace(initcap(EnumName), '_', ''),
+  FileText := concat(['export type ', TypeName, ' =\n', Body, ';\n']).
+
+rendered_type('Option', 0, 0,
+              'export type Option<T> = { tag: \'none\' } | { tag: \'some\'; value: T };\n') <-
+  has_option(1).
 
 # An interface declaration names a capability and holds no columns, so its
 # whole text is the empty-brace pair on one line.
