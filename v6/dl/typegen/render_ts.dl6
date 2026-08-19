@@ -27,6 +27,8 @@ rel type_relation(owner_type_id: text, self_member_id: text,
                   return_member_id: text).
 rel type_relation_input(owner_type_id: text, ordinal: int, member_id: text).
 rel type_relation_key(owner_type_id: text, ordinal: int, member_id: text).
+rel type_relation_owner(owner_type_id: text, module_id: text, name: text).
+rel type_relation_evidence(owner_type_id: text, evidence: text).
 
 # Option is a tagged carrier so option(option(T)) retains every state.
 rel first_option(id: int).

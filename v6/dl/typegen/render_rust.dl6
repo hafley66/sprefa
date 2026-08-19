@@ -27,6 +27,10 @@ rel type_relation(owner_type_id: text, self_member_id: text,
                   return_member_id: text).
 rel type_relation_input(owner_type_id: text, ordinal: int, member_id: text).
 rel type_relation_key(owner_type_id: text, ordinal: int, member_id: text).
+rel type_relation_owner(owner_type_id: text, module_id: text, name: text).
+rel type_relation_evidence(owner_type_id: text, evidence: text).
+rel type_relation_rust_impl(owner_type_id: text, text: text).
+rel type_relation_rust_name(owner_type_id: text, name: text).
 
 rel first_option(id: int).
 first_option(min(Id)) <- type_row(Id, kind: 'option').
@@ -343,8 +347,150 @@ rel rendered_type(type_name: text, part_ordinal: int, source_id: int,
 rendered_type(TypeName, 2, RelId, FileText) <-
   body_text(RelId, Body),
   emitted_type_name(RelId, TypeName),
+  not(type_relation_struct_name(TypeName)),
   FileText := concat(['#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n',
                       'pub struct ', TypeName, ' {\n', Body, '\n}\n']).
+
+# A compiler relation with the first member marked Self contributes a Rust
+# trait.  The member/key rows decide the generic parameters and output names;
+# evidence rows transport concrete impl fragments through the Rust adapter.
+rel type_relation_struct_name(type_name: text).
+type_relation_struct_name(TypeName) <-
+  relation_trait_self_valid(OwnerId),
+  type_relation_rust_name(owner_type_id: OwnerId, name: TypeName).
+
+rel relation_trait_self_valid(owner_type_id: text).
+relation_trait_self_valid(OwnerId) <-
+  type_relation(owner_type_id: OwnerId, self_member_id: SelfMemberId),
+  SelfMemberId != '',
+  schema_member(member_id: SelfMemberId, owner_type_id: OwnerId,
+                position: 1, name: 'Self', authored_type: 'type'),
+  schema_member_role(member_id: SelfMemberId, role: 'self_subject'),
+  relation_trait_self_count(OwnerId, 1).
+relation_trait_self_valid(OwnerId) <-
+  type_relation(owner_type_id: OwnerId, self_member_id: SelfMemberId),
+  SelfMemberId != '',
+  schema_member(member_id: SelfMemberId, owner_type_id: OwnerId,
+                position: 1, name: 'Self', authored_type: 'key(type)'),
+  schema_member_role(member_id: SelfMemberId, role: 'self_subject'),
+  relation_trait_self_count(OwnerId, 1).
+
+rel relation_trait_self_count(owner_type_id: text, count: int).
+relation_trait_self_count(OwnerId, count(MemberId)) <-
+  schema_member(member_id: MemberId, owner_type_id: OwnerId, name: 'Self').
+
+rel relation_trait(owner_type_id: text, type_name: text).
+relation_trait(OwnerId, TypeName) <-
+  relation_trait_self_valid(OwnerId),
+  type_relation_rust_name(owner_type_id: OwnerId, name: TypeName).
+
+rel relation_trait_input(owner_type_id: text, ordinal: int, name: text).
+relation_trait_input(OwnerId, Ordinal, Name) <-
+  type_relation_input(owner_type_id: OwnerId, ordinal: Ordinal, member_id: MemberId),
+  schema_member(member_id: MemberId, name: AuthoredName),
+  rust_associated_name(AuthoredName, Name).
+
+rel rust_associated_name(authored_name: text, rust_name: text).
+rust_associated_name('Self', 'SelfValue') <- schema_member(name: 'Self').
+rust_associated_name(AuthoredName, RustName) <-
+  schema_member(name: AuthoredName),
+  AuthoredName != 'Self',
+  RustName := replace(initcap(AuthoredName), '_', '').
+
+rel relation_trait_inputs(owner_type_id: text, text: text).
+relation_trait_inputs(OwnerId, group_concat(Name, ', ', Ordinal)) <-
+  relation_trait_input(OwnerId, Ordinal, Name).
+
+rel relation_trait_return(owner_type_id: text, member_id: text).
+relation_trait_return(OwnerId, ReturnMemberId) <-
+  type_relation(owner_type_id: OwnerId, return_member_id: ReturnMemberId),
+  ReturnMemberId != ''.
+
+rel relation_trait_selector_member(owner_type_id: text, member_id: text).
+relation_trait_selector_member(OwnerId, MemberId) <-
+  type_relation(owner_type_id: OwnerId, self_member_id: MemberId),
+  MemberId != ''.
+relation_trait_selector_member(OwnerId, MemberId) <-
+  type_relation_input(owner_type_id: OwnerId, member_id: MemberId).
+
+rel relation_trait_missing_key(owner_type_id: text).
+relation_trait_missing_key(OwnerId) <-
+  relation_trait_selector_member(OwnerId, MemberId),
+  not(type_relation_key(owner_type_id: OwnerId, member_id: MemberId)).
+
+rel relation_trait_extra_key(owner_type_id: text).
+relation_trait_extra_key(OwnerId) <-
+  type_relation_key(owner_type_id: OwnerId, member_id: MemberId),
+  not(relation_trait_selector_member(owner_type_id: OwnerId, member_id: MemberId)).
+
+rel relation_trait_functional(owner_type_id: text).
+relation_trait_functional(OwnerId) <-
+  relation_trait_return(OwnerId, _),
+  not(relation_trait_missing_key(OwnerId)),
+  not(relation_trait_extra_key(OwnerId)).
+
+rel relation_trait_output(owner_type_id: text, ordinal: int, name: text).
+relation_trait_output(OwnerId, 0, 'Output') <-
+  relation_trait_functional(OwnerId),
+  relation_trait_return(OwnerId, ReturnMemberId),
+  schema_member(member_id: ReturnMemberId, value_type_id: ReturnTypeId),
+  not(type_relation(owner_type_id: ReturnTypeId)).
+relation_trait_output(OwnerId, Ordinal, Name) <-
+  relation_trait_functional(OwnerId),
+  relation_trait_return(OwnerId, ReturnMemberId),
+  schema_member(member_id: ReturnMemberId, value_type_id: ReturnTypeId),
+  type_relation(owner_type_id: ReturnTypeId),
+  relation_trait_output_field(OwnerId, ReturnTypeId, Ordinal, Name).
+
+rel relation_trait_output_field(owner_type_id: text, return_type_id: text,
+                                ordinal: int, name: text).
+relation_trait_output_field(OwnerId, ReturnTypeId, Ordinal, Name) <-
+  relation_trait_return(OwnerId, ReturnMemberId),
+  schema_member(member_id: ReturnMemberId, value_type_id: ReturnTypeId),
+  schema_member(owner_type_id: ReturnTypeId, position: Ordinal,
+                name: FieldName),
+  rust_associated_name(FieldName, Name).
+
+rel relation_trait_output_line(owner_type_id: text, ordinal: int, text: text).
+relation_trait_output_line(OwnerId, Ordinal, Text) <-
+  relation_trait_output(OwnerId, Ordinal, Name),
+  Text := concat(['    type ', Name, ';\n']).
+
+rel relation_trait_body(owner_type_id: text, text: text).
+relation_trait_body(OwnerId, group_concat(Text, '', Ordinal)) <-
+  relation_trait_output_line(OwnerId, Ordinal, Text).
+
+rendered_type(TypeName, 0, 0, FileText) <-
+  relation_trait(OwnerId, TypeName),
+  relation_trait_inputs(OwnerId, Inputs),
+  relation_trait_body(OwnerId, Body),
+  FileText := concat(['pub trait ', TypeName, '<', Inputs, '> {\n', Body, '}\n']).
+rendered_type(TypeName, 0, 0, FileText) <-
+  relation_trait(OwnerId, TypeName),
+  not(relation_trait_input(OwnerId, _, _)),
+  relation_trait_body(OwnerId, Body),
+  FileText := concat(['pub trait ', TypeName, ' {\n', Body, '}\n']).
+rendered_type(TypeName, 0, 0, FileText) <-
+  relation_trait(OwnerId, TypeName),
+  relation_trait_inputs(OwnerId, Inputs),
+  not(relation_trait_output(OwnerId, _, _)),
+  FileText := concat(['pub trait ', TypeName, '<', Inputs, '> {}\n']).
+rendered_type(TypeName, 0, 0, FileText) <-
+  relation_trait(OwnerId, TypeName),
+  not(relation_trait_input(OwnerId, _, _)),
+  not(relation_trait_output(OwnerId, _, _)),
+  FileText := concat(['pub trait ', TypeName, ' {}\n']).
+
+# Evidence remains present as a source relation on the DL6 door.  The Rust
+# adapter writes a concrete impl only for evidence that passes the exact
+# selector arity and Self-role checks.
+rel relation_trait_evidence(owner_type_id: text).
+relation_trait_evidence(OwnerId) <-
+  type_relation_evidence(owner_type_id: OwnerId, evidence: _).
+
+rendered_type('EvidenceImpl', 1, 0, Text) <-
+  relation_trait_evidence(OwnerId),
+  type_relation_rust_impl(owner_type_id: OwnerId, text: Text).
 
 rendered_type('DlOption', 0, 0, FileText) <-
   first_option(_),

@@ -19,6 +19,7 @@
 %   {"rel":"type_relation","sign":"add","row":[<owner_id>,<self_member_id_or_empty>,<return_member_id_or_empty>]}
 %   {"rel":"type_relation_input","sign":"add","row":[<owner_id>,<ordinal>,<member_id>]}
 %   {"rel":"type_relation_key","sign":"add","row":[<owner_id>,<ordinal>,<member_id>]}
+%   {"rel":"type_relation_owner","sign":"add","row":[<owner_id>,<module_id>,"<name>"]}
 
 :- module(typegen_export, [ dump_type_rows/2, dump_fixture_rows/3,
                             write_prolog_types/2 ]).
@@ -34,6 +35,8 @@
 :- use_module('../0_type_ids', [ semantic_type_id_text/2 ]).
 :- use_module('4_emit_jsonschema', [ option_rows/3 ]).
 :- use_module('7_emit_ts_types', [ ts_types_text/3 ]).
+:- use_module('8_emit_rust_types', [ rust_type_relation_impl_texts/2,
+                                      rust_type_relation_owner_name/3 ]).
 
 %! dump_type_rows(+CompiledProgram, +JsonlPath) is det.
 %   CompiledProgram = plan(Name, prog(Decls, Rules), _, RelPlans, _, _, _, _, Mode).
@@ -43,7 +46,15 @@ dump_type_rows(plan(Name, prog(Decls, Rules), _Types, RelPlans, _, _, _, _, Mode
     option_rows(Decls, Rows, RowsOpt),
     catalog_type_relation_rows(Name, Decls, RelationRows),
     catalog_type_transport_rows(Name, RowsOpt, Decls, ChildRows),
-    append([RowsOpt, RelationRows, ChildRows], TransportRows),
+    append([RowsOpt, RelationRows, ChildRows], MetadataRows),
+    findall(type_relation_rust_impl(OwnerId, Text),
+            rust_type_relation_impl_texts(MetadataRows, OwnerId-Text),
+            RustImplRows),
+    findall(type_relation_rust_name(OwnerId, TypeName),
+            ( member(type_relation(OwnerId, _, _, _, _), RelationRows),
+              rust_type_relation_owner_name(MetadataRows, OwnerId, TypeName) ),
+            RustNameRows),
+    append([MetadataRows, RustNameRows, RustImplRows], TransportRows),
     setup_call_cleanup(open(JsonlPath, write, Stream),
                        forall(member(Row, TransportRows),
                               write_row_line(Stream, Row)),
@@ -137,6 +148,20 @@ row_of_dict(Dict, type_relation_input(OwnerId, Ordinal, MemberId)) :-
 row_of_dict(Dict, type_relation_key(OwnerId, Ordinal, MemberId)) :-
     Dict.rel == type_relation_key,
     _{ row: [OwnerId, Ordinal, MemberId] } :< Dict.
+row_of_dict(Dict, type_relation_evidence(OwnerId, Evidence)) :-
+    Dict.rel == type_relation_evidence,
+    _{ row: [OwnerIdText, EvidenceText] } :< Dict,
+    OwnerId = OwnerIdText,
+    atom_to_term(EvidenceText, Evidence, []).
+row_of_dict(Dict, type_relation_owner(OwnerId, ModuleId, Name)) :-
+    Dict.rel == type_relation_owner,
+    _{ row: [OwnerId, ModuleId, Name] } :< Dict.
+row_of_dict(Dict, type_relation_rust_impl(OwnerId, Text)) :-
+    Dict.rel == type_relation_rust_impl,
+    _{ row: [OwnerId, Text] } :< Dict.
+row_of_dict(Dict, type_relation_rust_name(OwnerId, Name)) :-
+    Dict.rel == type_relation_rust_name,
+    _{ row: [OwnerId, Name] } :< Dict.
 
 restore_pattern_rows(RawRows, Rows) :-
     findall(Row,
@@ -229,6 +254,36 @@ write_row_line(Stream,
     json_write_dict(Stream,
                     _{ rel: type_relation, sign: add,
                        row: [OwnerIdText, SelfMemberText, ReturnMemberText] },
+                    [width(0)]),
+    format(Stream, '\n', []).
+write_row_line(Stream, type_relation_evidence(OwnerId, Evidence)) :-
+    boundary_id_text(OwnerId, OwnerIdText),
+    term_string(Evidence, EvidenceText,
+                [quoted(true), portray(false)]),
+    json_write_dict(Stream,
+                    _{ rel: type_relation_evidence, sign: add,
+                       row: [OwnerIdText, EvidenceText] },
+                    [width(0)]),
+    format(Stream, '\n', []).
+write_row_line(Stream, type_relation_owner(OwnerId, ModuleId, Name)) :-
+    boundary_id_text(OwnerId, OwnerIdText),
+    json_write_dict(Stream,
+                    _{ rel: type_relation_owner, sign: add,
+                       row: [OwnerIdText, ModuleId, Name] },
+                    [width(0)]),
+    format(Stream, '\n', []).
+write_row_line(Stream, type_relation_rust_impl(OwnerId, Text)) :-
+    boundary_id_text(OwnerId, OwnerIdText),
+    json_write_dict(Stream,
+                    _{ rel: type_relation_rust_impl, sign: add,
+                       row: [OwnerIdText, Text] },
+                    [width(0)]),
+    format(Stream, '\n', []).
+write_row_line(Stream, type_relation_rust_name(OwnerId, Name)) :-
+    boundary_id_text(OwnerId, OwnerIdText),
+    json_write_dict(Stream,
+                    _{ rel: type_relation_rust_name, sign: add,
+                       row: [OwnerIdText, Name] },
                     [width(0)]),
     format(Stream, '\n', []).
 write_row_line(Stream, type_relation_input(OwnerId, Ordinal, MemberId)) :-

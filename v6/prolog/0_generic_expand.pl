@@ -453,9 +453,56 @@ type_relation_rows(Decls, Rows) :-
     sort(Rows0, Rows).
 
 compiler_metadata_rows(Decls, Rows) :-
-    member(compiler_type_metadata(Rows, _), Decls),
+    member(compiler_type_metadata(MetadataRows, ClosureRows), Decls),
+    compiler_evidence_rows(Decls, MetadataRows, ClosureRows, EvidenceRows),
+    append(MetadataRows, EvidenceRows, Rows),
     !.
 compiler_metadata_rows(_, []).
+
+% Evidence is carried beside the target-independent relation metadata so the
+% type artifact doors can make the same impl-emission decision as the
+% compiler.  One row names the relation owner and carries one complete,
+% ground compiler-plane fact.  A fact is complete when its functor is the
+% owner's relation name; arity and keyed-position validation remain the
+% emitter's responsibility because the relation row owns that contract.
+compiler_evidence_rows(Decls, MetadataRows, ClosureRows, EvidenceRows) :-
+    findall(type_relation_evidence(OwnerId, Evidence),
+            ( member(type_relation(OwnerId, _Self, _Inputs, _Return, _Keys),
+                     MetadataRows),
+              relation_owner_name(OwnerId, OwnerName),
+              compiler_evidence_owner_unambiguous(Decls, OwnerName),
+              compiler_evidence_arity(MetadataRows, OwnerId, Arity),
+              member(Evidence, ClosureRows),
+              compound(Evidence),
+              functor(Evidence, OwnerName, Arity),
+              ground(Evidence) ),
+            Unsorted),
+    sort(Unsorted, EvidenceRows).
+
+% Compiler closure terms carry a surface functor, while catalog identity is
+% module-qualified.  A name declared by more than one loaded module has no
+% source-module field left on that closure term, so it cannot authorize an
+% owner-specific Rust impl.  Suppress that evidence until the compiler-plane
+% evaluator transports the owner identity itself.
+compiler_evidence_owner_unambiguous(Decls, OwnerName) :-
+    findall(ModuleHash, member(rel_module_decl(OwnerName, ModuleHash), Decls),
+            Hashes0),
+    sort(Hashes0, Hashes),
+    ( Hashes = [] ; Hashes = [_] ).
+
+compiler_evidence_arity(MetadataRows, OwnerId, Arity) :-
+    findall(MemberId,
+            member(schema_member(MemberId, OwnerId, _, _, _, _, _),
+                   MetadataRows),
+            MemberIds),
+    length(MemberIds, Arity).
+
+relation_owner_name(named(_, relation, Name), Name) :- !.
+relation_owner_name(relation(Name), Name).
+
+metadata_relation_owner_identity(named(ModuleId, relation, Name), ModuleId,
+                                 Name) :- !.
+metadata_relation_owner_identity(relation(Name), local, Name).
 
 %! schema_member_transport_rows(+CatalogRows, +RelationRows, -Rows) is det.
 %  Add typed child rows and the catalog-column bridge used at artifact
@@ -481,7 +528,12 @@ schema_member_transport_rows(CatalogRows, RelationRows, Rows) :-
                      RelationRows),
               nth1(Ordinal, KeyMemberIds, MemberId) ),
             KeyRows),
-    append([ColumnRows, RoleRows, InputRows, KeyRows],
+    findall(type_relation_owner(OwnerId, ModuleId, Name),
+            ( member(type_relation(OwnerId, _, _, _, _), RelationRows),
+              metadata_relation_owner_identity(OwnerId, ModuleId, Name) ),
+            OwnerRows0),
+    sort(OwnerRows0, OwnerRows),
+    append([ColumnRows, RoleRows, InputRows, KeyRows, OwnerRows],
            Rows0),
     sort(Rows0, Rows).
 

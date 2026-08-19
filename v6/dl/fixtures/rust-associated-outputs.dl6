@@ -1,0 +1,5 @@
+# Compiler-plane fixture for Rust trait and associated-output emission.
+rel Document(id: int).
+rel Format(id: int).
+rel convert(Self: key(type), Input: key(type)) -> type.
+convert(Document, Format, text).

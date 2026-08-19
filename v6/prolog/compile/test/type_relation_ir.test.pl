@@ -6,10 +6,12 @@
 :- use_module('../../0_generic_expand',
               [ schema_member_rows/2, type_relation_rows/2,
                 expand_generic_program/2, normalize_key_wrappers/2 ]).
-:- use_module('../../lower', [ catalog_type_relation_rows/3,
+:- use_module('../../lower', [ catalog_type_rows/6,
+                               catalog_type_relation_rows/3,
                                catalog_type_transport_rows/4,
                                lower_program/2 ]).
 :- use_module('../../compile', [ program_plan/2 ]).
+:- use_module('../../compile', [ compile_dl6/2 ]).
 :- use_module('../../0_rel_record', [ relplan_shape/6 ]).
 :- use_module('../../compile/parse_dl_dcg', [ parse_dl/4 ]).
 :- use_module('../../print_dl', [ print_dl_program/3 ]).
@@ -17,6 +19,8 @@
 :- use_module('../../conformance/engine', [ run_program/5 ]).
 :- use_module('../../compile/typegen_export', []).
 :- use_module('../../compile/8_emit_rust_types', [ rust_types_text/3 ]).
+:- use_module('../../compile/4_emit_jsonschema', [ option_rows/3 ]).
+:- use_module(library(process)).
 
 ordinary_schema_decls([
     type_decl(person, [col(id, int), col(name, text)]),
@@ -284,5 +288,274 @@ test(typegen_metadata_round_trips_as_terms) :-
         close(Stream)),
     typegen_export:read_row_lines(Path, RoundTripped),
     RoundTripped =@= Rows, !.
+
+test(typegen_evidence_round_trips_as_terms) :-
+    Rows = [ type_relation_evidence(
+                 named(local, relation, 'Convert'),
+                 convert(named(local, relation, 'Document'),
+                         named(local, relation, 'Format'), primitive(text))) ],
+    Path = '/private/tmp/dl6-type-relation-evidence-roundtrip.jsonl',
+    setup_call_cleanup(
+        open(Path, write, Stream),
+        forall(member(Row, Rows), typegen_export:write_row_line(Stream, Row)),
+        close(Stream)),
+    typegen_export:read_row_lines(Path, RoundTripped),
+    RoundTripped = [type_relation_evidence(OwnerText, Evidence)],
+    atom_length(OwnerText, 64),
+    Evidence = convert(named(local, relation, 'Document'),
+                       named(local, relation, 'Format'), primitive(text)), !.
+
+associated_scalar_rows([
+    type_relation(named(local, relation, 'Convert'),
+                  member(named(local, relation, 'Convert'), 1, 'Self'),
+                  [member(named(local, relation, 'Convert'), 2, 'Input')],
+                  member(named(local, relation, 'Convert'), 3, return),
+                  [ member(named(local, relation, 'Convert'), 1, 'Self'),
+                    member(named(local, relation, 'Convert'), 2, 'Input') ]),
+    schema_member(member(named(local, relation, 'Convert'), 1, 'Self'),
+                  named(local, relation, 'Convert'), 1, 'Self', key(type),
+                  primitive(type), [self_subject, key]),
+    schema_member(member(named(local, relation, 'Convert'), 2, 'Input'),
+                  named(local, relation, 'Convert'), 2, 'Input', key(type),
+                  primitive(type), [key]),
+    schema_member(member(named(local, relation, 'Convert'), 3, return),
+                  named(local, relation, 'Convert'), 3, return, type,
+                  primitive(type), [return])
+]).
+
+test(rust_trait_consumes_self_and_projects_scalar_output) :-
+    associated_scalar_rows(Rows),
+    rust_types_text(doc, Rows, Text),
+    sub_string(Text, _, _, _, 'pub trait Convert<Input> {'),
+    sub_string(Text, _, _, _, '    type Output;'),
+    \+ sub_string(Text, _, _, _, 'pub struct Convert'),
+    \+ sub_string(Text, _, _, _, 'pub Self:').
+
+test(rust_marker_trait_keeps_nonfunctional_relation) :-
+    Rows = [ type_relation(named(local, relation, 'Codec'),
+                           member(named(local, relation, 'Codec'), 1, 'Self'),
+                           [member(named(local, relation, 'Codec'), 2, 'Format')],
+                           none, []),
+             schema_member(member(named(local, relation, 'Codec'), 1, 'Self'),
+                           named(local, relation, 'Codec'), 1, 'Self', type,
+                           primitive(type), [self_subject]),
+             schema_member(member(named(local, relation, 'Codec'), 2, 'Format'),
+                           named(local, relation, 'Codec'), 2, 'Format', type,
+                           primitive(type), []) ],
+    rust_types_text(doc, Rows, Text),
+    sub_string(Text, _, _, _, 'pub trait Codec<Format> {}').
+
+test(rust_trait_projects_anonymous_product_fields) :-
+    associated_scalar_rows(ScalarRows),
+    ScalarRows = [Relation | _],
+    Relation = type_relation(Owner, Self, Inputs, Return, Keys),
+    Return = member(Owner, 3, return),
+    Product = named(local, relation, pair),
+    maplist(replace_return_type(Return, Product), ScalarRows, BaseRows),
+    append(BaseRows,
+           [ type_relation(Product, none,
+                           [member(Product, 1, a), member(Product, 2, b)],
+                           none, []),
+             schema_member(member(Product, 1, a), Product, 1, a, int,
+                           primitive(int), []),
+             schema_member(member(Product, 2, b), Product, 2, b, text,
+                           primitive(text), []) ],
+           Rows),
+    rust_types_text(doc, Rows, Text),
+    sub_string(Text, _, _, _, 'type A;'),
+    sub_string(Text, _, _, _, 'type B;'),
+    \+ sub_string(Text, _, _, _, 'type Output;'),
+    _ = [Self, Inputs, Keys].
+
+test(rust_trait_refuses_self_outside_type_domain,
+     [throws(unsupported_construct(associated_output_self_domain('Convert')))]) :-
+    associated_scalar_rows(Rows0),
+    select(schema_member(Self, Owner, Position, 'Self', _Authored, ValueType,
+                         Roles), Rows0, Rest),
+    append([schema_member(Self, Owner, Position, 'Self', text, ValueType,
+                          Roles)], Rest, Rows),
+    rust_types_text(doc, Rows, _).
+
+test(rust_trait_refuses_duplicate_self_member,
+     [throws(unsupported_construct(associated_output_self_duplicate('Convert')))]) :-
+    associated_scalar_rows(Rows0),
+    Rows0 = [type_relation(Owner, _Self, _Inputs, _Return, _Keys) | _],
+    append(Rows0,
+           [schema_member(member(Owner, 4, 'Self'), Owner, 4, 'Self', type,
+                          primitive(type), [self_subject])],
+           Rows),
+    rust_types_text(doc, Rows, _).
+
+replace_return_type(ReturnMember, Product, Row, Replaced) :-
+    ( Row = schema_member(ReturnMember, Owner, Position, return, _Authored,
+                          _Value, Roles)
+    -> Replaced = schema_member(ReturnMember, Owner, Position, return, Product,
+                                Product, Roles)
+    ;  Replaced = Row
+    ).
+
+test(rust_trait_refuses_missing_functional_return,
+     [throws(unsupported_construct(associated_output_missing_return('Convert')))]) :-
+    associated_scalar_rows(Rows),
+    select(type_relation(Owner, Self, Inputs, _Return, _Keys), Rows, Rest),
+    append([type_relation(Owner, Self, Inputs, none, [Self | Inputs])], Rest,
+           Broken),
+    rust_types_text(doc, Broken, _).
+
+test(rust_trait_refuses_nonfunctional_selector,
+     [throws(unsupported_construct(associated_output_nonfunctional('Convert')))]) :-
+    associated_scalar_rows(Rows),
+    select(type_relation(Owner, Self, Inputs, Return, _Keys), Rows, Rest),
+    append([type_relation(Owner, Self, Inputs, Return, [])], Rest, Broken),
+    rust_types_text(doc, Broken, _).
+
+test(rust_trait_refuses_post_normalization_output_collision,
+     [throws(unsupported_construct(
+         associated_output_name_collision('Convert', AB)))]) :-
+    associated_scalar_rows(ScalarRows),
+    ScalarRows = [Relation | _],
+    Relation = type_relation(Owner, Self, Inputs, Return, Keys),
+    Product = named(local, relation, pair),
+    maplist(replace_return_type(Return, Product), ScalarRows, BaseRows),
+    append(BaseRows,
+           [ type_relation(Product, none,
+                           [member(Product, 1, a_b), member(Product, 2, 'AB')],
+                           none, []),
+             schema_member(member(Product, 1, a_b), Product, 1, a_b, int,
+                           primitive(int), []),
+             schema_member(member(Product, 2, 'AB'), Product, 2, 'AB', text,
+                           primitive(text), []) ],
+           Rows),
+    rust_types_text(doc, Rows, _),
+    _ = [Owner, Self, Inputs, Return, Keys, AB].
+
+test(rust_trait_emits_only_complete_compiler_evidence_impl) :-
+    associated_scalar_rows(ScalarRows),
+    append(ScalarRows,
+           [ type_relation_evidence(
+                 named(local, relation, 'Convert'),
+                 convert(named(local, relation, document),
+                         named(local, relation, format), primitive(text))) ],
+           Rows),
+    rust_types_text(doc, Rows, Text),
+    sub_string(Text, _, _, _,
+               'impl Convert<Format> for Document {\n    type Output = String;'),
+    \+ sub_string(Text, _, _, _, 'impl Convert<Input> for').
+
+test(rust_evidence_uses_module_qualified_same_name_relation_types) :-
+    associated_scalar_rows(ScalarRows),
+    append(ScalarRows,
+           [ type_relation(named(left_module, relation, document), none,
+                           [], none, []),
+             type_relation(named(right_module, relation, document), none,
+                           [], none, []),
+             type_relation(named(local, relation, format), none,
+                           [], none, []),
+             type_relation_owner(named(left_module, relation, document),
+                                 left_module, document),
+             type_relation_owner(named(right_module, relation, document),
+                                 right_module, document),
+             type_relation_owner(named(local, relation, format), local, format),
+             type_relation_evidence(
+                 named(local, relation, 'Convert'),
+                 convert(named(left_module, relation, document),
+                         named(local, relation, format), primitive(text))) ],
+           Rows),
+    rust_types_text(doc, Rows, Text),
+    sub_string(Text, _, _, _,
+               'impl Convert<Format> for LeftModuleDocument {\n    type Output = String;').
+
+test(module_ambiguous_compiler_evidence_does_not_cross_owner_boundary) :-
+    associated_scalar_rows(MetadataRows),
+    append([ [rel_module_decl('Convert', left_module),
+              rel_module_decl('Convert', right_module)],
+             [compiler_type_metadata(
+                  MetadataRows,
+                  [convert(named(left_module, relation, document),
+                           named(left_module, relation, format),
+                           primitive(text))])]],
+           Decls),
+    type_relation_rows(Decls, Rows),
+    \+ member(type_relation_evidence(_, _), Rows).
+
+test(authored_dl6_rust_renderer_emits_and_compiles_product_outputs) :-
+    predicate_property(plunit_type_relation_ir:associated_scalar_rows(_),
+                       file(ThisFile)),
+    file_directory_name(ThisFile, TestDir),
+    absolute_file_name('../../../dl/typegen/render_rust.dl6', Renderer,
+                       [relative_to(TestDir), access(read)]),
+    compile_dl6(Renderer, '/private/tmp/dl6-render-rust-door.ts'),
+    read_file_to_string(Renderer, Source, []),
+    string_codes(Source, SourceCodes),
+    parse_dl(SourceCodes, Program, _, []),
+    Initial = [
+        type_relation(project, self, return),
+        type_relation_input(project, 1, input),
+        type_relation_key(project, 1, self),
+        type_relation_key(project, 2, input),
+        type_relation_owner(project, local, project),
+        type_relation_rust_name(project, 'Project'),
+        schema_member(self, project, 1, 'Self', type, type),
+        schema_member_role(self, 1, self_subject, ''),
+        schema_member(input, project, 2, 'Input', type, type),
+        schema_member(return, project, 3, return, pair, pair),
+        type_relation(pair, '', ''),
+        schema_member(left, pair, 1, 'Self', int, int),
+        schema_member(right, pair, 2, right, text, text),
+        type_relation_evidence(project, evidence),
+        type_relation_rust_impl(project,
+          'impl Project<Format> for Document {\n    type SelfValue = i64;\n    type Right = String;\n}\n')
+    ],
+    run_program(Program, Initial, [], Final, _),
+    member(rendered_type('Project', 0, 0, TraitText), Final),
+    sub_string(TraitText, _, _, _, 'type SelfValue;'),
+    sub_string(TraitText, _, _, _, 'type Right;'),
+    member(rendered_type('EvidenceImpl', 1, 0, ImplText), Final),
+    RustPath = '/private/tmp/dl6-render-rust-associated-product.rs',
+    setup_call_cleanup(
+        open(RustPath, write, Stream),
+        ( format(Stream, 'pub struct Document;\npub struct Format;\n~s~s',
+                 [TraitText, ImplText]) ),
+        close(Stream)),
+    process_create(path(rustc),
+                   [RustPath, '--crate-type=lib', '--edition=2021',
+                    '-o', '/private/tmp/dl6-render-rust-associated-product.rlib'],
+                   [process(Pid)]),
+    process_wait(Pid, exit(0)).
+
+test(real_dl6_fixture_reaches_rust_typegen) :-
+    predicate_property(plunit_type_relation_ir:associated_scalar_rows(_),
+                       file(ThisFile)),
+    file_directory_name(ThisFile, TestDir),
+    absolute_file_name('../../../dl/fixtures/rust-associated-outputs.dl6',
+                       Fixture, [relative_to(TestDir), access(read)]),
+    read_file_to_string(Fixture, Source, []),
+    string_codes(Source, SourceCodes),
+    parse_dl(SourceCodes, Program, Bindings, []),
+    program_plan(fixture(rust_associated_outputs, Program, [], [], [])-
+                 Bindings, Plan),
+    Plan = plan(_, prog(Decls, Rules), _Types, RelPlans, _, _, _, _, Mode),
+    catalog_type_rows(Mode, rust_associated_outputs, Rules, RelPlans,
+                      Decls, CatalogRows0),
+    option_rows(Decls, CatalogRows0, CatalogRows),
+    catalog_type_relation_rows(rust_associated_outputs, Decls, RelationRows),
+    catalog_type_transport_rows(rust_associated_outputs, CatalogRows, Decls,
+                                ChildRows),
+    append([CatalogRows, RelationRows, ChildRows], Rows),
+    rust_types_text(rust_associated_outputs, Rows, Text),
+    sub_string(Text, _, _, _, 'pub trait Convert<Input> {'),
+    sub_string(Text, _, _, _,
+               'impl Convert<Format> for Document {\n    type Output = String;'),
+    \+ sub_string(Text, _, _, _, 'pub Self:'),
+    Jsonl = '/private/tmp/rust-associated-outputs.types.jsonl',
+    typegen_export:dump_type_rows(Plan, Jsonl),
+    typegen_export:read_row_lines(Jsonl, RoundTrippedRows),
+    member(type_relation_rust_impl(_, ImplText), RoundTrippedRows),
+    sub_string(ImplText, _, _, _, 'impl Convert<Format> for Document'),
+    rust_types_text(rust_associated_outputs, RoundTrippedRows,
+                    RoundTrippedText),
+    sub_string(RoundTrippedText, _, _, _, 'pub trait Convert<Input> {'),
+    sub_string(RoundTrippedText, _, _, _,
+               'impl Convert<Format> for Document {\n    type Output = String;').
 
 :- end_tests(type_relation_ir).

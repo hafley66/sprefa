@@ -1,24 +1,66 @@
-:- module(emit_rust_types, [ rust_types_text/3, emit_rust_types/3 ]).
+:- module(emit_rust_types, [ rust_types_text/3, emit_rust_types/3,
+                              rust_type_relation_impl_texts/2,
+                              rust_type_relation_owner_name/3 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(pairs)).
 
 rust_types_text(_Name, Rows, Text) :-
-    rust_relation_id_alias_text(Rows, RelationIdAlias),
+    rust_expand_relation_rows(Rows, RenderRows),
+    rust_relation_id_alias_text(RenderRows, RelationIdAlias),
     rust_relation_id_alias_parts(RelationIdAlias, RelationIdParts),
-    rust_option_alias_text(Rows, OptionAlias),
+    rust_option_alias_text(RenderRows, OptionAlias),
     rust_option_alias_parts(OptionAlias, OptionParts),
-    rust_any_alias_text(Rows, AnyAlias),
+    rust_any_alias_text(RenderRows, AnyAlias),
     rust_any_alias_parts(AnyAlias, AnyParts),
-    findall(InterfaceText, rust_interface_text(Rows, InterfaceText), InterfaceParts),
-    findall(GenericText, rust_generic_text(Rows, GenericText), GenericParts),
-    findall(EnumText, rust_enum_text(Rows, EnumText), EnumParts),
-    findall(RelRow, renderable_rel(Rows, RelRow), RelRows),
+    findall(InterfaceText, rust_interface_text(RenderRows, InterfaceText), InterfaceParts),
+    findall(RelationText, rust_type_relation_text(RenderRows, RelationText),
+            RelationParts),
+    findall(GenericText, rust_generic_text(RenderRows, GenericText), GenericParts),
+    findall(EnumText, rust_enum_text(RenderRows, EnumText), EnumParts),
+    findall(RelRow, renderable_rel(RenderRows, RelRow), RelRows),
     collision_type_names(RelRows, CollisionTypeNames),
-    maplist(rust_rel_text(Rows, CollisionTypeNames), RelRows, RelParts),
-    append([RelationIdParts, OptionParts, AnyParts, InterfaceParts, GenericParts, EnumParts, RelParts], Parts),
+    maplist(rust_rel_text(RenderRows, CollisionTypeNames), RelRows, RelParts),
+    append([RelationIdParts, OptionParts, AnyParts, InterfaceParts,
+            RelationParts, GenericParts, EnumParts, RelParts], Parts),
     atomic_list_concat(Parts, '\n', Atom),
     atom_string(Atom, Text).
+
+% The JSONL wire uses compact type_relation/3 plus child input/key rows.  The
+% Prolog emitter also accepts the internal type_relation/5 form, so rebuild
+% the latter at the renderer boundary while preserving the existing wire
+% rows for the TypeScript and DL6 doors.
+rust_expand_relation_rows(Rows, ExpandedRows) :-
+    findall(Row,
+            ( member(Row0, Rows),
+              rust_expand_relation_row(Rows, Row0, Row) ),
+            ExpandedRows).
+
+rust_expand_relation_row(_Rows, Row, Row) :-
+    Row = type_relation(_Owner, _Self, _Inputs, _Return, _Keys),
+    !.
+rust_expand_relation_row(Rows,
+                         type_relation(Owner, SelfMemberId, ReturnMemberId),
+                         type_relation(Owner, SelfMember, InputMemberIds,
+                                       ReturnMember, KeyMemberIds)) :-
+    rust_optional_relation_id(SelfMemberId, SelfMember),
+    rust_optional_relation_id(ReturnMemberId, ReturnMember),
+    findall(Ordinal-MemberId,
+            member(type_relation_input(Owner, Ordinal, MemberId), Rows),
+            InputPairs),
+    keysort(InputPairs, OrderedInputs),
+    pairs_values(OrderedInputs, InputMemberIds),
+    findall(Ordinal-MemberId,
+            member(type_relation_key(Owner, Ordinal, MemberId), Rows),
+            KeyPairs),
+    keysort(KeyPairs, OrderedKeys),
+    pairs_values(OrderedKeys, KeyMemberIds),
+    !.
+rust_expand_relation_row(_Rows, Row, Row).
+
+rust_optional_relation_id('', none) :- !.
+rust_optional_relation_id(none, none) :- !.
+rust_optional_relation_id(Id, Id).
 
 % serde's built-in Option serializes None and Some(None) identically as null.
 % This tagged carrier preserves every recursive option state on the wire.
@@ -126,6 +168,320 @@ rust_interface_parameters_text(Rows, InterfaceId, Text) :-
     ( Names == [] -> Text = ''
     ; atomic_list_concat(Names, ', ', Joined),
       format(atom(Text), '<~w>', [Joined]) ).
+
+% A type relation with a Self member is the compiler's trait-shaped relation.
+% Self is the implicit implementing subject.  Input members whose value
+% domain is `type` become Rust trait parameters; the relation key, rather than
+% observed evidence cardinality, decides whether an associated output is
+% legal.  Relations without Self remain ordinary emitted structs.
+rust_type_relation_text(Rows, Text) :-
+    member(type_relation(OwnerId, SelfMemberId, InputMemberIds,
+                         ReturnMemberId, KeyMemberIds), Rows),
+    SelfMemberId \== none,
+    SelfMemberId \== '',
+    rust_relation_owner_name(Rows, OwnerId, TraitName),
+    rust_validate_self(Rows, OwnerId, SelfMemberId, TraitName),
+    rust_type_relation_contract(Rows, TraitName, SelfMemberId,
+                                InputMemberIds, ReturnMemberId,
+                                KeyMemberIds, GenericNames, OutputNames),
+    rust_trait_parameters_text(GenericNames, ParametersText),
+    rust_trait_body_text(OutputNames, BodyText),
+    rust_type_relation_impls(Rows, OwnerId, TraitName, SelfMemberId,
+                             InputMemberIds, ReturnMemberId, KeyMemberIds,
+                             ImplTexts),
+    atomic_list_concat(ImplTexts, '', ImplBody),
+    format(string(TraitText), 'pub trait ~w~w ~s',
+           [TraitName, ParametersText, BodyText]),
+    atomic_list_concat([TraitText, ImplBody], Text).
+
+rust_type_relation_contract(Rows, TraitName, SelfMemberId, InputMemberIds,
+                            ReturnMemberId, KeyMemberIds, GenericNames,
+                            OutputNames) :-
+    rust_type_input_names(Rows, InputMemberIds, GenericNames),
+    (   ReturnMemberId == none
+    ->  ( KeyMemberIds == []
+        -> OutputNames = []
+        ;  throw(unsupported_construct(
+                    associated_output_missing_return(TraitName))) )
+    ;   rust_functional_selector(Rows, TraitName, SelfMemberId,
+                                 InputMemberIds, ReturnMemberId,
+                                 KeyMemberIds),
+        rust_associated_output_names(Rows, ReturnMemberId, TraitName,
+                                     OutputNames)
+    ).
+
+rust_functional_selector(_Rows, TraitName, _SelfMemberId, _InputMemberIds,
+                         _ReturnMemberId, KeyMemberIds) :-
+    KeyMemberIds == [],
+    !,
+    throw(unsupported_construct(associated_output_nonfunctional(TraitName))).
+rust_functional_selector(_Rows, _TraitName, SelfMemberId, InputMemberIds,
+                         _ReturnMemberId, KeyMemberIds) :-
+    append([ [SelfMemberId], InputMemberIds ], SelectorMembers),
+    msort(SelectorMembers, SelectorSet),
+    msort(KeyMemberIds, KeySet),
+    SelectorSet == KeySet,
+    !.
+rust_functional_selector(_Rows, TraitName, _SelfMemberId, _InputMemberIds,
+                         _ReturnMemberId, _KeyMemberIds) :-
+    throw(unsupported_construct(associated_output_nonfunctional(TraitName))).
+
+rust_schema_member(Rows, MemberId, OwnerId, Position, Name, AuthoredType,
+                   ValueTypeId, Roles) :-
+    member(schema_member(MemberId, OwnerId, Position, Name, AuthoredType,
+                         ValueTypeId, Roles), Rows),
+    true.
+rust_schema_member(Rows, MemberId, OwnerId, Position, Name, AuthoredType,
+                   ValueTypeId, Roles) :-
+    member(schema_member(MemberId, OwnerId, Position, Name, AuthoredType,
+                         ValueTypeId), Rows),
+    findall(Role, member(schema_member_role(MemberId, _, Role, _), Rows), Roles).
+
+rust_type_input_names(Rows, InputMemberIds, Names) :-
+    findall(Position-Name,
+            ( member(MemberId, InputMemberIds),
+              rust_schema_member(Rows, MemberId, _, Position, AuthoredName,
+                                 AuthoredType, _ValueTypeId, _Roles),
+              rust_type_domain(AuthoredType),
+              rust_associated_name(AuthoredName, Name) ),
+            Pairs),
+    keysort(Pairs, Ordered),
+    pairs_values(Ordered, Names).
+
+rust_type_domain(key(Type)) :- !, rust_type_domain(Type).
+rust_type_domain(type) :- !.
+rust_type_domain(type_ref(named(type))) :- !.
+rust_type_domain(type_ref(primitive(type))).
+
+rust_associated_name(AuthoredName, Name) :-
+    type_name(AuthoredName, Normalized),
+    ( Normalized == 'Self' -> Name = 'SelfValue' ; Name = Normalized ).
+
+rust_validate_self(Rows, OwnerId, SelfMemberId, TraitName) :-
+    findall(Id, rust_schema_member(Rows, Id, OwnerId, _Position, 'Self',
+                                   _AuthoredType, _ValueTypeId, _Roles), Ids),
+    ( Ids = [SelfMemberId] -> true
+    ; Ids = [] -> throw(unsupported_construct(associated_output_self_missing(TraitName)))
+    ; throw(unsupported_construct(associated_output_self_duplicate(TraitName)))
+    ),
+    rust_schema_member(Rows, SelfMemberId, OwnerId, Position, 'Self',
+                       AuthoredType, _ValueTypeId, Roles),
+    ( Position == 1 -> true
+    ; throw(unsupported_construct(associated_output_self_not_first(TraitName)))
+    ),
+    ( memberchk(self_subject, Roles) -> true
+    ; throw(unsupported_construct(associated_output_self_role(TraitName)))
+    ),
+    ( rust_type_domain(AuthoredType) -> true
+    ; throw(unsupported_construct(associated_output_self_domain(TraitName)))
+    ).
+
+rust_trait_parameters_text([], '').
+rust_trait_parameters_text(Names, Text) :-
+    Names \== [],
+    atomic_list_concat(Names, ', ', Joined),
+    format(atom(Text), '<~w>', [Joined]).
+
+rust_trait_body_text([], Text) :-
+    Text = '{}\n'.
+rust_trait_body_text(Names, Text) :-
+    Names \== [],
+    findall(Line,
+            ( member(Name, Names),
+              format(string(Line), '    type ~w;\n', [Name]) ),
+            Lines),
+    atomic_list_concat(Lines, '', Body),
+    format(string(Text), '{\n~s}\n', [Body]).
+
+rust_associated_output_names(Rows, ReturnMemberId, TraitName, Names) :-
+    rust_schema_member(Rows, ReturnMemberId, _, _, _ReturnName, _AuthoredType,
+                       ValueTypeId, _Roles),
+    (   member(type_relation(ValueTypeId, _ChildSelf, _ChildInputs,
+                             _ChildReturn, _ChildKeys), Rows)
+    ->  findall(Position-Name,
+                ( rust_schema_member(Rows, _, ValueTypeId, Position, FieldName,
+                                     _FieldAuthoredType, _FieldValueType,
+                                     _FieldRoles),
+                  rust_associated_name(FieldName, Name) ),
+                Pairs),
+        keysort(Pairs, Ordered),
+        pairs_values(Ordered, Names0),
+        reject_associated_output_collisions(TraitName, Names0),
+        Names = Names0
+    ;   Names = ['Output']
+    ).
+
+reject_associated_output_collisions(_TraitName, []).
+reject_associated_output_collisions(TraitName, [Name | Rest]) :-
+    ( memberchk(Name, Rest)
+    -> throw(unsupported_construct(
+                 associated_output_name_collision(TraitName, Name)))
+    ;  reject_associated_output_collisions(TraitName, Rest)
+    ).
+
+rust_relation_owner_name(Rows, OwnerId, TypeName) :-
+    (   member(type_relation_owner(OwnerId, ModuleId, Name), Rows)
+    ->  true
+    ;   relation_owner_identity(OwnerId, ModuleId, Name)
+    ),
+    type_name(Name, BareName),
+    findall(OtherBare,
+            ( member(type_relation(OtherOwner, _, _, _, _), Rows),
+              rust_relation_identity(Rows, OtherOwner, _OtherModule, OtherName),
+              type_name(OtherName, OtherBare) ),
+            BareNames),
+    include(same_atom(BareName), BareNames, MatchingNames),
+    length(MatchingNames, MatchingCount),
+    (   MatchingCount > 1,
+        module_type_name(ModuleId, Prefix),
+        atom_concat(Prefix, BareName, TypeName)
+    ;   TypeName = BareName
+    ),
+    !.
+
+relation_owner_identity(named(ModuleId, relation, Name), ModuleId, Name) :- !.
+relation_owner_identity(relation(Name), local, Name).
+
+rust_relation_identity(Rows, OwnerId, ModuleId, Name) :-
+    (   member(type_relation_owner(OwnerId, ModuleId, Name), Rows)
+    ->  true
+    ;   relation_owner_identity(OwnerId, ModuleId, Name)
+    ).
+
+same_atom(Expected, Actual) :- Expected == Actual.
+
+% Evidence rows are compiler closure facts.  Only a complete row for a
+% relation whose selector key is exactly Self plus every input can produce an
+% impl.  This keeps runtime observations out of Rust trait emission.
+rust_type_relation_impls(Rows, OwnerId, TraitName, SelfMemberId,
+                         InputMemberIds, ReturnMemberId, KeyMemberIds,
+                         ImplTexts) :-
+    (   ReturnMemberId == none
+    ->  ImplTexts = []
+    ;   findall(Text,
+                rust_one_type_relation_impl(Rows, OwnerId, TraitName,
+                                            SelfMemberId, InputMemberIds,
+                                            ReturnMemberId, KeyMemberIds,
+                                            Text),
+                ImplTexts)
+    ).
+
+% The DL6 renderer receives target-independent relation/member rows plus this
+% narrow target-text adapter for evidence values.  The renderer still derives
+% trait heads and associated output declarations from relational metadata; an
+% evidence term remains opaque at the JSONL boundary, so its Rust spelling is
+% formed at the target adapter boundary and transported as one implementation
+% fragment.
+rust_type_relation_impl_texts(Rows0, OwnerId-Text) :-
+    rust_expand_relation_rows(Rows0, Rows),
+    member(type_relation(OwnerId, SelfMemberId, InputMemberIds,
+                         ReturnMemberId, KeyMemberIds), Rows),
+    SelfMemberId \== none,
+    SelfMemberId \== '',
+    rust_relation_owner_name(Rows, OwnerId, TraitName),
+    rust_validate_self(Rows, OwnerId, SelfMemberId, TraitName),
+    rust_type_relation_contract(Rows, TraitName, SelfMemberId,
+                                InputMemberIds, ReturnMemberId,
+                                KeyMemberIds, _GenericNames, _OutputNames),
+    rust_one_type_relation_impl(Rows, OwnerId, TraitName, SelfMemberId,
+                                InputMemberIds, ReturnMemberId, KeyMemberIds,
+                                Text).
+
+rust_type_relation_owner_name(Rows0, OwnerId, TypeName) :-
+    rust_expand_relation_rows(Rows0, Rows),
+    rust_relation_owner_name(Rows, OwnerId, TypeName).
+
+rust_one_type_relation_impl(Rows, OwnerId, TraitName, SelfMemberId,
+                            InputMemberIds, ReturnMemberId, KeyMemberIds,
+                            Text) :-
+    member(type_relation_evidence(OwnerId, Evidence), Rows),
+    Evidence =.. [_Functor | Arguments],
+    rust_complete_evidence(Rows, SelfMemberId, InputMemberIds,
+                           ReturnMemberId, KeyMemberIds, Arguments),
+    rust_evidence_argument(Rows, SelfMemberId, Arguments, SelfType),
+    findall(Position-InputMember-RustType,
+            ( member(InputMember, InputMemberIds),
+              member_position(Rows, InputMember, Position),
+              rust_argument_at(Arguments, Position, Value),
+              rust_semantic_type(Rows, Value, RustType) ),
+            InputTypes0),
+    keysort(InputTypes0, InputTypes),
+    findall(RustType, member(_-_-RustType, InputTypes), GenericTypes),
+    rust_evidence_output_lines(Rows, ReturnMemberId, Arguments, OutputLines),
+    rust_trait_application_text(TraitName, GenericTypes, TraitApplication),
+    atomic_list_concat(OutputLines, '', OutputBody),
+    format(string(Text), 'impl ~w for ~w {\n~s}\n',
+           [TraitApplication, SelfType, OutputBody]).
+
+rust_complete_evidence(Rows, SelfMemberId, InputMemberIds, ReturnMemberId,
+                       KeyMemberIds, Arguments) :-
+    append([[SelfMemberId], InputMemberIds], SelectorMembers),
+    msort(SelectorMembers, MemberSet),
+    msort(KeyMemberIds, KeySet),
+    MemberSet == KeySet,
+    append([SelectorMembers, [ReturnMemberId]], Members),
+    findall(Position, (member(MemberId, Members), member_position(Rows, MemberId, Position)), Positions),
+    max_list(Positions, ExpectedArity),
+    length(Arguments, ExpectedArity),
+    forall(member(MemberId, Members),
+           ( member_position(Rows, MemberId, Position),
+             nth1(Position, Arguments, _Value) )).
+
+rust_evidence_argument(Rows, MemberId, Arguments, Type) :-
+    member_position(Rows, MemberId, Position),
+    rust_argument_at(Arguments, Position, Value),
+    rust_semantic_type(Rows, Value, Type).
+
+rust_argument_at(Arguments, Position, Value) :- nth1(Position, Arguments, Value).
+
+member_position(Rows, MemberId, Position) :-
+    rust_schema_member(Rows, MemberId, _, Position, _, _, _, _), !.
+
+rust_evidence_output_lines(Rows, ReturnMemberId, Arguments, Lines) :-
+    rust_schema_member(Rows, ReturnMemberId, _, _, _ReturnName, _AuthoredType,
+                       ReturnTypeId, _Roles),
+    (   member(type_relation(ReturnTypeId, _ChildSelf, _ChildInputs,
+                             _ChildReturn, _ChildKeys), Rows)
+    ->  findall(Position-Name-FieldType,
+                ( rust_schema_member(Rows, _, ReturnTypeId, Position, FieldName,
+                                     _FieldAuthoredType, FieldTypeId,
+                                     _FieldRoles),
+                  rust_associated_name(FieldName, Name),
+                  rust_semantic_type(Rows, FieldTypeId, FieldType) ),
+                Pairs),
+        keysort(Pairs, Ordered),
+        findall(Line,
+                ( member(_-Name-FieldType, Ordered),
+                  format(string(Line), '    type ~w = ~w;\n',
+                         [Name, FieldType]) ),
+                Lines)
+    ;   member_position(Rows, ReturnMemberId, Position),
+        rust_argument_at(Arguments, Position, ReturnValue),
+        rust_semantic_type(Rows, ReturnValue, ReturnType),
+        Lines = [Line],
+        format(string(Line), '    type Output = ~w;\n', [ReturnType])
+    ).
+
+rust_trait_application_text(TraitName, [], TraitName).
+rust_trait_application_text(TraitName, Types, Text) :-
+    Types \== [],
+    atomic_list_concat(Types, ', ', Joined),
+    format(atom(Text), '~w<~w>', [TraitName, Joined]).
+
+rust_semantic_type(_Rows, primitive(int), 'i64') :- !.
+rust_semantic_type(_Rows, primitive(float), 'f64') :- !.
+rust_semantic_type(_Rows, primitive(text), 'String') :- !.
+rust_semantic_type(_Rows, primitive(bool), 'bool') :- !.
+rust_semantic_type(_Rows, primitive(json), 'serde_json::Value') :- !.
+rust_semantic_type(_Rows, primitive(bytes), 'Vec<u8>') :- !.
+rust_semantic_type(_Rows, primitive(type), 'Any') :- !.
+rust_semantic_type(Rows, named(ModuleId, relation, Name), Type) :-
+    !,
+    rust_relation_owner_name(Rows, named(ModuleId, relation, Name), Type).
+rust_semantic_type(_Rows, named(_, _, Name), Type) :-
+    type_name(Name, Type).
+rust_semantic_type(_Rows, type_ref(Type), RustType) :-
+    rust_semantic_type([], Type, RustType).
 
 rust_generic_text(Rows, Text) :-
     member(row(GenericId, _, _, Name, generic_rel, _, _, _, _, _, _), Rows),
