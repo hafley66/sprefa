@@ -94,6 +94,20 @@ seen from a different door; the rendered message drops the column name
 | prolog-lint | `PROLOG_LINT findings=14 baseline=0 FAIL`, every finding `private_cross_module_call`: `generic_expand:compile_type_plane/3`, `generic_expand:compile_type_query/3`, `type_ids:semantic_type_id_encoding/2`, `typegen_export:read_row_lines/2`, `typegen_export:write_row_line/2`, each called from a plunit test module | `v6/prolog/tools/prolog-lint.sh:76` |
 | catalog-audit | `catalog-audit rail: probe arrival returned 500` | `v6/tsv2/scripts/catalog-audit-rail.sh:64` |
 
+### E. red on the GitHub runner only
+
+`v6/sprefa-engine-rs/Cargo.toml:25` depends on
+`../../../sprefa-v6/0_runtime/1_rust_runtime_host` by path, and
+`~/projects/sprefa-v6` is a local repo with no git remote and no GitHub
+mirror. No runner can build `sprefa-engine-rs` until that crate is published,
+vendored, or the dependency is cut. `hafley-rs` (the other sibling path dep)
+is public and ci.yml clones it; this one cannot be cloned.
+
+| leg | exact failure text (CI run 32280953042) | site |
+|---|---|---|
+| typegen-golden | `error: failed to load manifest for dependency \`sprefa-rust-runtime-host\`` / `Caused by: failed to read /Users/runner/work/sprefa/sprefa-v6/0_runtime/1_rust_runtime_host/Cargo.toml` / `FAIL  runtime product/sum checks` / `TYPEGEN GOLDEN: FAIL`. Green locally every run. | `v6/prolog/compile/test/typegen_golden.sh:210` (`cargo test --lib enum_plane` in sprefa-engine-rs) |
+| rust-grade | same manifest error, `exit=101` on the runner; locally it reaches `RUST-GRADE graded=462 byte-clean=335` (group B) | `v6/sprefa-engine-rs/grade.sh` |
+
 ## Flaky
 
 | leg | exact failure text | measured |
@@ -120,3 +134,4 @@ allow: sweep
 allow: text-door
 allow: tsv2-test
 allow: typecheck
+allow: typegen-golden
