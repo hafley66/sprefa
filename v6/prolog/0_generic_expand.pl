@@ -36,6 +36,7 @@
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
+:- discontiguous replace_generic_type/3.
 
 expand_generic_in_context(expansion_context(_, Bindings), Program, Expanded) :-
     !,
@@ -1652,11 +1653,14 @@ generic_type(list_entity_dense_sequence(_)).
 generic_type(list_interned_set(_)).
 generic_type(list_entity_linked_sequence(_)).
 generic_type(option(Type)) :- contains_list_flavor(Type).
+generic_type(annotated_type(Type, _)) :- generic_type(Type).
 
 contains_list_flavor(Type) :-
     once(( unwrapped_column_type(Type, Inner), list_flavor(Inner) )).
 
 generic_dependency(option(Type), Instance) :-
+    generic_dependency(Type, Instance).
+generic_dependency(annotated_type(Type, _), Instance) :-
     generic_dependency(Type, Instance).
 generic_dependency(list(Element), list(Element)).
 generic_dependency(Type, Type) :- named_list_flavor(Type).
@@ -2004,6 +2008,22 @@ replace_generic_type(list(Element0), Instances, list(Element)) :-
     memberchk(list(Element0), Instances),
     !,
     replace_generic_type(Element0, Instances, Element).
+% Keep annotation syntax attached to the substituted concrete type. Compiler
+% relation execution and evidence consumption happen after this phase.
+replace_generic_type(annotated_type(Type0, Applications0), Instances,
+                     annotated_type(Type, Applications)) :-
+    !,
+    replace_generic_type(Type0, Instances, Type),
+    maplist(replace_annotation_application(Instances), Applications0,
+            Applications).
+
+replace_annotation_application(Instances, Application0, Application) :-
+    Application0 =.. [Name | Arguments0],
+    Application =.. [Name | Arguments],
+    maplist(replace_annotation_argument(Instances), Arguments0, Arguments).
+replace_annotation_argument(_, named(Name, Value), named(Name, Value)).
+replace_annotation_argument(_, pos(Value), pos(Value)).
+
 replace_generic_type(Type, Instances, int) :-
     list_flavor(Type),
     memberchk(Type, Instances),

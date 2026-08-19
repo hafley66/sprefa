@@ -76,4 +76,20 @@ path(X, Y) <- edge(X, Y).
             result.err()
         );
     }
+
+    #[test]
+    fn parses_type_annotation_forms() {
+        let src = r#"
+rel annotated(id: @(int, []), configured: @(int, [key(), min(Value: 1)])).
+"#;
+        let result = parse_check(src);
+        assert!(result.is_ok(), "annotation error: {:?}", result.err());
+        let mut parser = Parser::new();
+        let lang = tree_sitter::Language::new(LANGUAGE);
+        parser.set_language(&lang).unwrap();
+        let tree = parser.parse(src, None).unwrap();
+        let sexp = tree.root_node().to_sexp();
+        assert!(sexp.contains("type_annotation"));
+        assert!(sexp.contains("annotation_application"));
+    }
 }

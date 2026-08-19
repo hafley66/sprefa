@@ -37,10 +37,16 @@ module.exports = grammar({
     column: $ => seq(field("name", $.identifier), ":", field("type", $.type)),
 
     type: $ => choice(
+      $.type_annotation,
       $.product_type,
       $.sum_type,
       seq(field("name", $.identifier), optional(seq("(", field("element", $.type), ")")), field("optional", optional("?"))),
     ),
+
+    type_annotation: $ => seq("@", "(", field("type", $.type), ",", field("applications", $.annotation_list), ")"),
+    annotation_list: $ => seq("[", optional(seq($.annotation_application, repeat(seq(",", $.annotation_application)))), "]"),
+    annotation_application: $ => seq(field("name", $.identifier), "(", optional(seq(choice($.annotation_named_argument, $.expression), repeat(seq(",", choice($.annotation_named_argument, $.expression))))), ")"),
+    annotation_named_argument: $ => seq(field("name", choice($.identifier, $.variable)), ":", field("value", $.expression)),
 
     product_type: $ => seq("(", field("fields", commaSep1($.field)), ")"),
     sum_type: $ => seq("(", $.sum_variant, repeat(seq(";", $.sum_variant)), ")"),
@@ -120,4 +126,3 @@ module.exports = grammar({
 function commaSep1(rule) {
   return seq(rule, repeat(seq(",", rule)));
 }
-

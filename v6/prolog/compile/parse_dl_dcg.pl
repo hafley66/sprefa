@@ -33,6 +33,7 @@
 % lex_token/2 rows sit beside the escape decoders they mirror, so the clauses
 % are spread across the file on purpose.
 :- discontiguous lex_token/2.
+:- discontiguous type_base/3.
 
 % Editor CST boundaries this parser erases: Nonterminal -> Node-FieldNames,
 % bare = shape from clauses, ref = name only, repeat = item only, '-' = unnamed.
@@ -51,6 +52,10 @@ cst_shape(interface_stmt/1, interface_declaration-[]).
 cst_shape(sh_decl_stmt/1,   shell_declaration-[]).
 cst_shape(typed_col/2,      ref(column)-[]).
 cst_shape(type_expr/1,      type-[]).
+cst_shape(annotation_type/1, type_annotation-[type, applications]).
+cst_shape(annotation_application/1, annotation_application-[name]).
+cst_shape(annotation_list/1, annotation_list-[]).
+cst_shape(annotation_argument/1-named, annotation_named_argument-[name, value]).
 cst_shape(enum_variant/1,   ref(enum_variant)-[]).
 cst_shape(rule_stmt/1,      rule-[head, arrow, body]).
 cst_shape(query_stmt/1,     ref(query)-[]).
@@ -604,6 +609,35 @@ decl_a_column(column(Name, Type)) -->
 type_expr(Type) -->
     type_base(Base),
     ( @`?` -> { Type = option(Base) } ; { Type = Base } ).
+
+% The annotation remains a distinct type node until the owner and concrete
+% generic substitution are known.  Its application arguments are expressions,
+% rather than type expressions, because compiler relations receive ordinary
+% compile-time values alongside their implicit Target input.
+type_base(Type) -->
+    annotation_type(Type), !.
+
+annotation_type(annotated_type(Type, Applications)) -->
+    @`@`, #`(`, type_expr(Type), #`,`, annotation_list(Applications), #`)`.
+
+annotation_list(Applications) -->
+    ws, @`[`, ws,
+    ( peek(0']) -> { Applications = [] }
+    ; sep(annotation_application, Applications)
+    ),
+    #`]`.
+
+annotation_application(Application) -->
+    ident(Name), #`(`,
+    args(annotation_argument, Arguments),
+    #`)`,
+    { Application =.. [Name | Arguments] }.
+
+annotation_argument(named(Name, Value)) -->
+    ident(Name), ws,
+    here([0':, Next | _]), { Next \== 0'=, Next \== 0': }, !,
+    @`:`, ws, expr(Value).
+annotation_argument(pos(Value)) --> expr(Value).
 
 type_base(T) --> { scalar_column_type(T) }, kw(T), !.
 type_base(T) -->
