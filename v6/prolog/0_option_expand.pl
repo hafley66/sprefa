@@ -68,6 +68,8 @@ desugar_option_column(Decls0, Ref, Column, Element, Decls) :-
     ),
     ( memberchk(keyed(Ref, KeyPositions), Decls0),
       memberchk(Position, KeyPositions)
+    % TODO(issue: option-key-normalization): relation `none` is companion-row
+    % absence and needs a portable key before sharing the scalar option path.
     -> throw(unsupported_construct(option_in_key_column(Ref, Column)))
     ; true
     ),
