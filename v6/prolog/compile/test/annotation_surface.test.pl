@@ -60,7 +60,7 @@ test(annotation_phase_handoff_preserves_carriers_and_source_order) :-
     parse_text(
       "rel Shapes(empty: @(int, []), one: @(text, [mark()]), configured: @(int, [min(Value: 1)]), composed: @(int, [first(), second()]), product: @((x: int), [mark()]), sum: @((ok(value: int); err()), [mark()]), listed: @(list(int), [mark()]), optional: @(option(int), [mark()])).",
       Program, Bindings),
-    expand_generic_program_with_bindings(Program, Bindings, prog(Decls, [])),
+    handoff_annotations_before_runtime(Program, Bindings, Decls),
     member(compiler_annotation_requests(Requests), Decls),
     length(Requests, 8),
     annotation_request_for(Requests, [], EmptyInput, []),
@@ -94,19 +94,15 @@ test(annotation_phase_handoff_preserves_carriers_and_source_order) :-
     !.
 
 test(annotation_phase_handoff_follows_concrete_generic_substitution) :-
-    parse_text("rel Box(T)(value: @(T, [mark()])). rel use(box: Box(int)).",
+    parse_text("rel mark(Target: type) -> type. mark(int, int). rel Box(T)(value: @(T, [mark()])). rel use(box: Box(int)).",
                Program, Bindings),
     expand_generic_program_with_bindings(Program, Bindings, prog(Decls, [])),
-    member(type_decl(Concrete, [col(value, annotated_type(int, [mark]))]), Decls),
+    member(type_decl(Concrete, [col(value, int)]), Decls),
     sub_atom(Concrete, 0, _, _, '__gen__Box'),
-    member(compiler_annotation_requests([Request]), Decls),
-    Request = annotation_request(named(local, relation, Concrete), MemberId,
-                                 [value],
-                                 annotated_type(int, [mark]),
-                                 annotation_steps(primitive(int),
-                                   [annotation_step(1, primitive(int),
-                                     mark(named('Target', primitive(int))),
-                                     annotation_result(1))])),
+    member(compiler_type_metadata(_, _, [Evidence]), Decls),
+    Evidence = annotation_evidence(MemberId, [value], 1, primitive(int),
+                                   mark(named('Target', primitive(int))),
+                                   primitive(int)),
     MemberId = member(named(local, relation, Concrete), 1, value),
     !.
 
@@ -139,7 +135,7 @@ test(annotation_phase_handoff_distinguishes_nested_sites_and_deduplicates) :-
     parse_text(
       "rel Deep(value: list(list(@(int, [first(), second()]))), pair: (left: @(text, [mark()]), right: @(int, [tag()]))).",
       Program, Bindings),
-    expand_generic_program_with_bindings(Program, Bindings, prog(Decls, [])),
+    handoff_annotations_before_runtime(Program, Bindings, Decls),
     member(compiler_annotation_requests(Requests), Decls),
     Requests = [ annotation_request(named(local, relation, 'Deep'),
                                     member(named(local, relation, 'Deep'), 1, value),
