@@ -160,6 +160,10 @@ anonymous_mint(Decls, Owner, Path, sum_type(Variants0), Type,
              derived_from(GeneratedId, Id)
            | VariantRows ],
     Type = GeneratedName.
+anonymous_mint(Decls, Owner, Path, annotated_type(Type0, Applications),
+               annotated_type(Type, Applications), ExtraDecls, Rows) :-
+    !,
+    anonymous_mint(Decls, Owner, Path, Type0, Type, ExtraDecls, Rows).
 % A wrapper (list/option/json_list) or a generic application: descend into each
 % argument with its ordinal appended to the path.
 anonymous_mint(Decls, Owner, Path, Type0, Type, ExtraDecls, Rows) :-
@@ -256,6 +260,9 @@ path_component_stem(A, A).
 
 type_contains_anonymous(product_type(_)) :- !.
 type_contains_anonymous(sum_type(_)) :- !.
+type_contains_anonymous(annotated_type(Type, _)) :-
+    !,
+    type_contains_anonymous(Type).
 type_contains_anonymous(Term) :-
     compound(Term),
     compound_name_arguments(Term, _, Args),
@@ -356,6 +363,10 @@ rewrite_anonymous_semantic_term(Decls, Type, GeneratedId) :-
     anonymous_type_shape(Type),
     !,
     anonymous_generated_id(Decls, Type, GeneratedId).
+rewrite_anonymous_semantic_term(Decls, annotated_type(Type0, Applications),
+                                annotated_type(Type, Applications)) :-
+    !,
+    rewrite_anonymous_semantic_term(Decls, Type0, Type).
 rewrite_anonymous_semantic_term(_, Term, Term) :- atomic(Term), !.
 rewrite_anonymous_semantic_term(Decls, Term0, Term) :-
     Term0 =.. [Functor | Args0],

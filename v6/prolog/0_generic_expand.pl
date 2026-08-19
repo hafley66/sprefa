@@ -26,6 +26,7 @@
 :- use_module('0_enum_expand', [enum_type_rows/2]).
 :- use_module('0_type_plane', [unwrapped_column_type/2]).
 :- use_module('0_anonymous_expand', [expand_anonymous_decls/2]).
+:- use_module('0_annotation_expand', [elaborate_annotation/3]).
 :- use_module('0_type_ids',
               [ decl_id/4, primitive_id/2, param_id/4, member_id/4,
                 constraint_id/3, impl_id/3, app_id/3, arg_id/3,
@@ -56,7 +57,8 @@ expand_generic_program_with_bindings(prog(Decls0, Rules0), Bindings,
     expand_list_decodes(WithMintedDecls, Rules0, ExpandedRules),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
     expand_anonymous_decls(RewrittenDecls, AnonymousDecls),
-    merge_anonymous_enum_type_rows(AnonymousDecls, AnonymousEnumRowedDecls),
+    handoff_annotation_requests(AnonymousDecls, AnnotationHandedOffDecls),
+    merge_anonymous_enum_type_rows(AnnotationHandedOffDecls, AnonymousEnumRowedDecls),
     normalize_key_wrappers(AnonymousEnumRowedDecls, KeyNormalizedDecls),
     generic_artifact_order(Instances, KeyNormalizedDecls, CanonicalDecls),
     merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
@@ -75,7 +77,8 @@ expand_generic_program_raw(prog(Decls0, Rules0), prog(Decls, Rules)) :-
     expand_list_decodes(WithMintedDecls, Rules0, ExpandedRules),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
     expand_anonymous_decls(RewrittenDecls, AnonymousDecls),
-    merge_anonymous_enum_type_rows(AnonymousDecls, AnonymousEnumRowedDecls),
+    handoff_annotation_requests(AnonymousDecls, AnnotationHandedOffDecls),
+    merge_anonymous_enum_type_rows(AnnotationHandedOffDecls, AnonymousEnumRowedDecls),
     normalize_key_wrappers(AnonymousEnumRowedDecls, KeyNormalizedDecls),
     generic_artifact_order(Instances, KeyNormalizedDecls, CanonicalDecls),
     merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
@@ -108,6 +111,48 @@ merge_anonymous_enum_type_rows_(EnumRows, semantic_type_rows(Rows0),
     append(Rows0, EnumRows, Unsorted),
     sort(Unsorted, Rows).
 merge_anonymous_enum_type_rows_(_, Decl, Decl).
+
+% The annotation carrier survives generic substitution and anonymous minting.
+% This is the first point where the owner/member identity and the concrete
+% underlying type are both available.  Execution remains in the next card;
+% its input is a typed request IR with the authored carrier intact.
+handoff_annotation_requests(Decls0, Decls) :-
+    findall(Request,
+            annotation_member_request(Decls0, Request),
+            Requests0),
+    sort(Requests0, Requests),
+    ( Requests == []
+    -> Decls = Decls0
+    ;  append(Decls0, [compiler_annotation_requests(Requests)], Decls)
+    ).
+
+annotation_member_request(Decls, Request) :-
+    member(col_type(Ref, Name, Type), Decls),
+    annotated_member_request(Decls, Ref, Name, Type, Request).
+annotation_member_request(Decls, Request) :-
+    member(type_decl(OwnerName, Specs), Decls),
+    member(col(Name, Type), Specs),
+    annotated_member_request(Decls, OwnerName, Name, Type, Request).
+
+annotated_member_request(Decls, Ref, Name, annotated_type(Type, Applications),
+                         annotation_request(OwnerId, MemberId,
+                                            annotated_type(Type, Applications),
+                                            Steps)) :-
+    ref_name(Ref, OwnerName),
+    semantic_decl_id(Decls, relation, OwnerName, OwnerId),
+    member_position(Decls, OwnerName, Name, Position),
+    member_id(OwnerId, Position, Name, MemberId),
+    semantic_type_id(Decls, Type, InputTypeId),
+    elaborate_annotation(InputTypeId, Applications, Steps).
+
+member_position(Decls, OwnerName, Name, Position) :-
+    findall(Column, member(col_type(OwnerName/_, Column, _), Decls), Columns),
+    Columns \== [],
+    nth1(Position, Columns, Name),
+    !.
+member_position(Decls, OwnerName, Name, Position) :-
+    member(type_decl(OwnerName, Specs), Decls),
+    nth1(Position, Specs, col(Name, _)).
 
 % `decode(Parts, [... Part])` over a list(T) source is a keyed read of the
 % minted member rel, and becomes that atom for BOTH doors here.
@@ -910,6 +955,9 @@ normalized_type(Decls, Owner, Parameters, Type0, type_ref(Type)) :-
     Type0 = key(Inner),
     !,
     normalized_type(Decls, Owner, Parameters, Inner, type_ref(Type)).
+normalized_type(Decls, Owner, Parameters, annotated_type(Inner, _), Type) :-
+    !,
+    normalized_type(Decls, Owner, Parameters, Inner, Type).
 normalized_type(_, Owner, Parameters, Type0, type_ref(Type)) :-
     atom(Type0),
     member(Parameter0, Parameters),
@@ -1288,6 +1336,9 @@ semantic_type_id(_, Type, Id) :-
     semantic_primitive(Type),
     !,
     primitive_id(Type, Id).
+semantic_type_id(Decls, annotated_type(Type, _), Id) :-
+    !,
+    semantic_type_id(Decls, Type, Id).
 semantic_type_id(_, Type, anonymous_placeholder(Type)) :-
     anonymous_type_term(Type),
     !.
@@ -1574,6 +1625,10 @@ rewrite_user_template_type(Instances, Type0, Type) :-
     memberchk(Type0, Instances),
     !,
     canonical_type_name(Type0, Type).
+rewrite_user_template_type(Instances, annotated_type(Type0, Applications),
+                           annotated_type(Type, Applications)) :-
+    !,
+    rewrite_user_template_type(Instances, Type0, Type).
 rewrite_user_template_type(_, Type, Type) :- atom(Type), !.
 rewrite_user_template_type(Instances, Type0, Type) :-
     Type0 =.. [Constructor | Args0],
@@ -2014,15 +2069,7 @@ replace_generic_type(annotated_type(Type0, Applications0), Instances,
                      annotated_type(Type, Applications)) :-
     !,
     replace_generic_type(Type0, Instances, Type),
-    maplist(replace_annotation_application(Instances), Applications0,
-            Applications).
-
-replace_annotation_application(Instances, Application0, Application) :-
-    Application0 =.. [Name | Arguments0],
-    Application =.. [Name | Arguments],
-    maplist(replace_annotation_argument(Instances), Arguments0, Arguments).
-replace_annotation_argument(_, named(Name, Value), named(Name, Value)).
-replace_annotation_argument(_, pos(Value), pos(Value)).
+    Applications = Applications0.
 
 replace_generic_type(Type, Instances, int) :-
     list_flavor(Type),

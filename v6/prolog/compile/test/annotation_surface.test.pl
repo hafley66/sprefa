@@ -4,6 +4,8 @@
 :- use_module('../../print_dl', [print_dl_program/3]).
 :- use_module('../../0_annotation_expand',
               [elaborate_annotation/3]).
+:- use_module('../../0_generic_expand',
+              [expand_generic_program_with_bindings/3]).
 
 parse_text(Text, Program, Bindings) :-
     string_codes(Text, Codes),
@@ -31,6 +33,17 @@ test(configured_annotation_round_trips) :-
     parse_dl(Codes, RoundTripped, _, []),
     Program =@= RoundTripped.
 
+test(annotation_carriers_print_and_reparse_byte_identically) :-
+    parse_text(
+      "rel Shapes(empty: @(int, []), one: @(text, [mark()]), configured: @(int, [min(Value: 1)]), composed: @(int, [first(), second()]), product: @((x: int), [mark()]), sum: @((ok(value: int); err()), [mark()]), listed: @(list(int), [mark()]), optional: @(option(int), [mark()])).",
+      Program, Bindings),
+    print_dl_program(Program, Bindings, Text1),
+    atom_codes(Text1, Codes),
+    parse_dl(Codes, RoundTripped, RoundTrippedBindings, []),
+    print_dl_program(RoundTripped, RoundTrippedBindings, Text2),
+    Program =@= RoundTripped,
+    Text2 == Text1.
+
 test(annotation_elaboration_adds_ordered_implicit_targets) :-
     elaborate_annotation(int,
       [key, min(named('Value', 1))],
@@ -41,5 +54,64 @@ test(annotation_elaboration_adds_ordered_implicit_targets) :-
           annotation_step(2, annotation_result(1),
             min(named('Target', annotation_result(1)), named('Value', 1)),
             annotation_result(2)) ] )).
+
+test(annotation_phase_handoff_preserves_carriers_and_source_order) :-
+    parse_text(
+      "rel Shapes(empty: @(int, []), one: @(text, [mark()]), configured: @(int, [min(Value: 1)]), composed: @(int, [first(), second()]), product: @((x: int), [mark()]), sum: @((ok(value: int); err()), [mark()]), listed: @(list(int), [mark()]), optional: @(option(int), [mark()])).",
+      Program, Bindings),
+    expand_generic_program_with_bindings(Program, Bindings, prog(Decls, [])),
+    member(compiler_annotation_requests(Requests), Decls),
+    length(Requests, 8),
+    annotation_request_for(Requests, [], EmptyInput, []),
+    EmptyInput == primitive(int),
+    annotation_request_for(Requests, [mark], OneInput,
+                           [annotation_step(1, OneInput,
+                                            mark(named('Target', OneInput)),
+                                            annotation_result(1))]),
+    OneInput == primitive(text),
+    annotation_request_for(Requests, [min(named('Value', 1))], _,
+                           [annotation_step(1, _,
+                             min(named('Target', _), named('Value', 1)),
+                             annotation_result(1))]),
+    annotation_request_for(Requests, [first, second], ComposedInput,
+                           [annotation_step(1, ComposedInput,
+                                            first(named('Target', ComposedInput)),
+                                            annotation_result(1)),
+                            annotation_step(2, annotation_result(1),
+                                            second(named('Target', annotation_result(1))),
+                                            annotation_result(2))]),
+    annotation_request_for(Requests, [mark], _, _, ProductRequest),
+    ProductRequest = annotation_request(_, _, annotated_type(ProductName, [mark]), _),
+    sub_atom(ProductName, 0, _, _, '__anon_'),
+    annotation_request_for(Requests, [mark], _, _, SumRequest),
+    SumRequest = annotation_request(_, _, annotated_type(SumName, [mark]), _),
+    sub_atom(SumName, 0, _, _, '__anon_'),
+    member(col_type('Shapes'/8, listed, annotated_type(list(int), [mark])), Decls),
+    member(col_type('Shapes'/8, optional, annotated_type(option(int), [mark])), Decls),
+    !.
+
+test(annotation_phase_handoff_follows_concrete_generic_substitution) :-
+    parse_text("rel Box(T)(value: @(T, [mark()])). rel use(box: Box(int)).",
+               Program, Bindings),
+    expand_generic_program_with_bindings(Program, Bindings, prog(Decls, [])),
+    member(type_decl(Concrete, [col(value, annotated_type(int, [mark]))]), Decls),
+    sub_atom(Concrete, 0, _, _, '__gen__Box'),
+    member(compiler_annotation_requests([Request]), Decls),
+    Request = annotation_request(named(local, relation, Concrete), MemberId,
+                                 annotated_type(int, [mark]),
+                                 annotation_steps(primitive(int),
+                                   [annotation_step(1, primitive(int),
+                                     mark(named('Target', primitive(int))),
+                                     annotation_result(1))])),
+    MemberId = member(named(local, relation, Concrete), 1, value),
+    !.
+
+annotation_request_for(Requests, Applications, Input, Steps) :-
+    annotation_request_for(Requests, Applications, Input, Steps, _).
+
+annotation_request_for(Requests, Applications, Input, Steps, Request) :-
+    member(Request, Requests),
+    Request = annotation_request(_, _, annotated_type(_, Applications),
+                                 annotation_steps(Input, Steps)).
 
 :- end_tests(annotation_surface).

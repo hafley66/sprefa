@@ -1,0 +1,49 @@
+==================
+annotated type carrier applications
+==================
+
+rel annotation(empty: @(int, []), configured: @(int, [key(), min(Value: 1)]), composed: @(list(int), [first(), second()])).
+
+---
+
+(source_file
+  (statement
+    (relation_declaration
+      name: (path
+        (identifier))
+      columns: (declaration_parameter
+        name: (identifier)
+        type: (type
+          (type_annotation
+            type: (type
+              name: (identifier))
+            applications: (annotation_list))))
+      columns: (declaration_parameter
+        name: (identifier)
+        type: (type
+          (type_annotation
+            type: (type
+              name: (identifier))
+            applications: (annotation_list
+              (annotation_application
+                name: (identifier))
+              (annotation_application
+                name: (identifier)
+                (annotation_named_argument
+                  name: (variable)
+                  value: (expression
+                    (literal
+                      (integer)))))))))
+      columns: (declaration_parameter
+        name: (identifier)
+        type: (type
+          (type_annotation
+            type: (type
+              name: (identifier)
+              element: (type
+                name: (identifier)))
+            applications: (annotation_list
+              (annotation_application
+                name: (identifier))
+              (annotation_application
+                name: (identifier)))))))))
