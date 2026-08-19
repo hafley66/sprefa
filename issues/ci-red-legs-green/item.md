@@ -45,6 +45,6 @@ the job's `Generate text-door corpus` step exited 124 on
 unblocked the gate runs and holds 17 red legs, not the 9 the allowlist listed.
 Seventeen are recorded with exact text and site. Nine of the seventeen are four
 shared defects (a fixture that fails to plan, an unfinished enum arrival
-encoding, `golden-flex.dl6`'s uncommitted `use` targets, and one emitted-fold
+encoding, `golden-flex.dl6` failing the type plane on `column_type_unknown('CodecDocument')` (`0_type_plane.pl:151`), and one emitted-fold
 shape bug now fixed), and the fixes for the rest live in `lower.pl`,
 `emit_rust.pl` and `compile.pl`, which this arc is forbidden to touch.

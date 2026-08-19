@@ -1,7 +1,7 @@
 # CI known-red allowlist
 
-Re-measured 2026-08-19 on branch `fix/ci-red-legs-green` (base `50eb5f919`) in
-a fresh worktree, three back-to-back `just green-all` runs plus a per-leg run
+Re-measured 2026-08-19 on branch `fix/ci-red-legs-green` (base `c554db778`) in
+a fresh worktree, three back-to-back `just green-all` runs at base `50eb5f919` and two more after the rebase (`476s`, `478s`, identical failing set), plus a per-leg run
 of every row below. The CI job runs the gate and uploads the raw log as an
 artifact; the job's own pass/fail is decided by the `allow:` lines at the
 bottom, so only a leg that fails and is NOT listed here turns the job red.
@@ -59,20 +59,24 @@ arrival. Eight fixtures, the same eight in both runtimes.
 | sweep | `RUN total=351 identical=337 wrong=0 emitted_crash=8 rejection=6 no_oracle_log=0` then `SWEEP GATE: 8 emitted module(s) crashed on a schedule the oracle completed`. Distinct messages: `enum_arrival_shape_mismatch: not_an_object(grade)` / `(tree)` / `(__opt_text)`, and `ambiguous_owner_context(user_profile, __opt_text)` / `(measurement, __opt_text)` / `(orchard__tree, __opt_text)`. | `v6/tsv2/runtime/enumPlane.ts:9,15,57` (throws), `v6/tsv2/scripts/sweep.ts:311` (verdict) |
 | rust-grade | `RUST-GRADE REGRESSION` naming the same eight plus `concat_program_queue` and `nested_zero_column_child_is_one_row_per_parent`; `RUST-GRADE graded=462 byte-clean=335`; `runtime-error 9` with the same `enum_arrival_shape_mismatch` messages, plus `1  boot statement failed: SqlInputError ... "no such function: reverse"` and `diff 1`. `concat_program_queue` is the Rust twin of the emitted-fold defect fixed for TypeScript in this PR at `emit_ts.pl:2233`; `emit_rust.pl` still carries it. | `v6/sprefa-engine-rs/grade.sh` |
 
-### C. `golden-flex.dl6` and its two `use` targets
+### C. `golden-flex.dl6` does not compile
 
-`golden-flex.dl6:14-15` import `0_golden-flex-imported.dl6` and
-`1_golden-flex-namespaced.dl6`, untracked since `69ea4a37c`. origin/main's
-`de8e2c0a2` commits both, AFTER this branch's base, so four of these five clear
-on merge; `golden-flex` itself does not, and its own text is recorded with the
-files present.
+Re-measured after rebasing onto `c554db778`, which carries the two `use`
+targets (`de8e2c0a2`). With them present the program still fails at
+`0_type_plane.pl:151` with `unsupported_construct(column_type_unknown('CodecDocument'))`:
+`golden-flex.dl6:28` writes `CodecUse(value: CodecBox(CodecDocument))` and the
+type plane does not resolve a rel name used as a template argument. Introduced
+with `69ea4a37c feat: preserve interface application bounds end to end`, the
+same commit that added the `use` lines. Every row below is that one failure
+seen from a different door; the rendered message drops the column name
+(`0_unsupported_messages.pl:116`, "rule-index unavailable").
 
 | leg | exact failure text | site |
 |---|---|---|
-| golden-flex | with the two fixtures absent: `ERROR: -g run: Unknown message: use_path_unresolved("0_golden-flex-imported.dl6", [.../dl/fixtures])` then `FAIL  coverage gate:`. With them present: `PASS  coverage gate` then `FAIL  bop check: ... unsupported: rule-index unavailable: unsupported_construct: compiler refused rule 'column_type_unknown' (column_type_unknown)`. Only the second is a real defect. | `v6/tsv2/scripts/golden-flex.sh:225` |
-| compile-speed | `compile-speed: golden-flex failed to compile` then `ERROR: -g compile_dl6_profiled(...): parse error at line 14, column 5: statement`. golden-flex is a pinned program and `compile_dl6_profiled/2` is a door with no `use` resolution, so it cannot read line 14 whether the targets exist or not. No inference count was produced, so the 17-regression ratchet from the previous table was never re-reached. | `v6/prolog/compile/scripts/1_compile_speed.sh:100` |
-| tsv2-test | `ℹ tests 239 / pass 235 / fail 3` (`232 / 220 / 11` at the base): `golden-flex served: the live host runs, and the served tick log matches the oracle replayed on the served schedule` and `tests/listStoredSnapshot.test.ts` (`Cannot find module '../gen_emitted/golden-flex.ts'`) are both this group; the third, `sabotage: editing fixture in temp dir modifies only the changed row`, is a concurrency flake, green 3/3 in isolation and red only under `npm test`'s `--test-concurrency=6` | `v6/tsv2/tests/listStoredSnapshot.test.ts:29`, `v6/tsv2/tests/7_live-extract.integration.test.ts` |
-| typecheck | one error: `tests/listStoredSnapshot.test.ts(29,25): error TS2307: Cannot find module '../gen_emitted/golden-flex.ts' or its corresponding type declarations.` Down from 219 errors at the base. | `v6/tsv2/tests/listStoredSnapshot.test.ts:29` |
+| golden-flex | `PASS  coverage gate` then `FAIL  bop check: ... unsupported: rule-index unavailable: unsupported_construct: compiler refused rule 'column_type_unknown' (column_type_unknown)` | `v6/tsv2/scripts/golden-flex.sh:56`, `v6/prolog/0_type_plane.pl:151` |
+| compile-speed | `compile-speed: golden-flex failed to compile` then `ERROR: -g compile_dl6_profiled(...): parse error at line 14, column 5: statement`. `compile_dl6_profiled/2` reads the file with no `use` resolution, so it stops at `golden-flex.dl6:14` before the type plane runs. No inference count is produced, so the ratchet is not reached. | `v6/prolog/compile/scripts/1_compile_speed.sh:100` |
+| tsv2-test | `ℹ tests 242 / pass 239 / fail 2` (`232 / 220 / 11` at the old base): `golden-flex served: ...` fails with `dl6 compile failed (swipl exit 2): use_path_unresolved("0_golden-flex-imported.dl6", [<gen_served dir>])` (the served door copies the one file into a scratch dir, so its `use` lines resolve against nothing); `tests/listStoredSnapshot.test.ts` imports `../gen_emitted/golden-flex.ts`, which only `golden-flex.sh` writes, after the compile that fails. | `v6/tsv2/tests/goldenFlexServed.test.ts`, `v6/tsv2/tests/listStoredSnapshot.test.ts:29` |
+| typecheck | one error: `tests/listStoredSnapshot.test.ts(29,25): error TS2307: Cannot find module '../gen_emitted/golden-flex.ts' or its corresponding type declarations.` Down from 219 errors at the old base. | `v6/tsv2/tests/listStoredSnapshot.test.ts:29` |
 | plunit | of `7 tests failed`, `subscribe_cone:golden_flex_cone_invariants` | `v6/prolog/compile/test/plunit_tests.pl` |
 
 ### D. one defect each
