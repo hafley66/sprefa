@@ -77,8 +77,10 @@ prolog-lint:
 
 # lower.pl coverage census: throw sites vs manifest.json reasons, plus
 # never-entered clause arms over the corpus compile. See scripts/arm_census.pl.
+# `just optional`, not green-all: SWI coverage/2 wraps the whole 461-fixture
+# corpus compile, which is a wall no merge gate can carry.
 arm-census:
-    bash {{ v6 }}/prolog/compile/scripts/arm_census.sh
+    {{ capped }} "${ARM_CENSUS_BUDGET_S:-3600}" bash {{ v6 }}/prolog/compile/scripts/arm_census.sh
 
 # SYNTAX.md / CONSTRUCT-REFERENCE.md staleness (staleness-gate.sh §c shape):
 # regenerate, fail if checked-in bytes differ, always restore the tree.
@@ -507,6 +509,12 @@ typegen-golden:
 # verdicts, one ordered PASS/FAIL table; the count is printed by the run.
 green-all:
     bash {{ v6 }}/tools/green-parallel.sh
+
+# legs that are NOT part of the merge gate, each with the reason it is out:
+#   arm-census  advisory census; SWI coverage/2 over the corpus compile runs
+#               past 25 minutes at 97% of one core with no verdict a merge
+#               needs, and it has never once completed inside a gate run.
+optional: arm-census
 
 # the original one-leg-at-a-time chain, kept for bisecting a parallel-only red
 green-all-serial: green dl6-budget serve-endurance serve-leak-soak memory-soak extraction-live files flagship ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden dep-crawl-golden git-refs-golden scip-combo rtkq-golden precommit-changed watch-scale getting-started

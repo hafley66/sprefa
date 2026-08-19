@@ -39,7 +39,6 @@ PHASE_B=(
   "serve-endurance:TSV2_ENDURANCE_PORT=17804"
   "compile-speed"
   "plunit"
-  "arm-census"
   "rust-grade"
   "typecheck"
   "rtkq-golden:TSV2_PARITY_PORT=17813"
