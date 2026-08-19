@@ -132,16 +132,16 @@ desugar_option_column(Decls0, Ref, Column, Element, Decls) :-
     -> true
     ; throw(unsupported_construct(option_column_untyped_siblings(Ref)))
     ),
-    ( memberchk(keyed(Ref, KeyPositions), Decls0),
-      memberchk(Position, KeyPositions)
-    % TODO(issue: option-key-normalization): relation `none` is companion-row
-    % absence and needs a portable key before sharing the scalar option path.
-    -> throw(unsupported_construct(option_in_key_column(Ref, Column)))
-    ; true
-    ),
     % option_column/3 survives so catalog-backed schema emitters can recover
     % the recursive tagged option tree from the desugared enum-id column.
     ( option_value_element(Decls0, Element)
+    -> desugar_value_option(Decls0, Ref, Column, Element, Decls1),
+       append(Decls1, [option_column(Ref, Column, Element)], Decls)
+    ; memberchk(keyed(Ref, KeyPositions), Decls0),
+      memberchk(Position, KeyPositions),
+      declared_rel_element(Decls0, Element)
+    % A keyed option must stay in its owner row: `none` and `some(Target)`
+    % are enum ids, so SQLite key equality never observes NULL/3VL.
     -> desugar_value_option(Decls0, Ref, Column, Element, Decls1),
        append(Decls1, [option_column(Ref, Column, Element)], Decls)
     ; declared_rel_element(Decls0, Element)
@@ -198,6 +198,8 @@ ensure_option_enum_decls(Decls0, Element, EnumName, Decls) :-
 option_enum_payload(Decls, Element, Element, Decls) :- scalar_element(Element), !.
 option_enum_payload(Decls, Element, Element, Decls) :-
     atom(Element), memberchk(enum_decl(Element, _), Decls), !.
+option_enum_payload(Decls, Element, Element, Decls) :-
+    declared_rel_element(Decls, Element), !.
 option_enum_payload(Decls0, option(Inner), InnerEnumName, Decls) :-
     ensure_option_enum_decls(Decls0, Inner, InnerEnumName, Decls).
 
