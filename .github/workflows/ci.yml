@@ -53,13 +53,18 @@ jobs:
         working-directory: v6/sprefa-store/js
         run: pnpm install --frozen-lockfile
 
-      # Corpus is generated, not committed; sweep before green-all's readers.
+      # Writes gen_emitted/ and compile/out/ for green-all's readers; sweep.sh's
+      # own grading verdict is the allowlisted `sweep` leg's, not this step's.
       - name: Generate text-door corpus
+        continue-on-error: true
         working-directory: v6/tsv2
         run: bash scripts/sweep.sh
 
+      # Under the default `bash -e`, a red leg would end the job here and the
+      # allowlist step below would decide nothing.
       - name: Run green-all gate
         id: gate
+        continue-on-error: true
         working-directory: v6
         run: |
           just green-all > green-all.log 2>&1
