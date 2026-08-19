@@ -21,10 +21,21 @@ TSV2_DIR="$V6_DIR/tsv2"
 RENDERER="$V6_DIR/dl/typegen/render_ts.dl6"
 RUST_RENDERER="$V6_DIR/dl/typegen/render_rust.dl6"
 GOLDEN_DIR="$SCRIPT_DIR/typegen_golden"
-SCHEMA_VALIDATOR="$SCRIPT_DIR/0_typegen_schema_validate.mjs"
+SCHEMA_VALIDATOR="$TSV2_DIR/scripts/0_typegen_schema_validate.mjs"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/typegen-golden.XXXXXX")"
 FAILED=0
+server_pid=""
+
+cleanup_server() {
+  if [ -n "${server_pid:-}" ] && kill -0 "$server_pid" 2>/dev/null; then
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  fi
+  server_pid=""
+}
+
+trap cleanup_server EXIT INT TERM
 
 # name:fixture_file  (fixture files live in v6/prolog/conformance/fixtures)
 PINNED=(
@@ -65,20 +76,24 @@ dump_rows() { # name fixture_file -> writes $WORK/<name>.jsonl
 
 render_fixture() { # name renderer outfile -> writes $WORK/<outfile>
   local name="$1" renderer="$2" outfile="$3"
-  local port="${TYPEGEN_PORT:-17820}"
-  local base="http://127.0.0.1:$port"
-  local server_pid=""
+  local port="${TYPEGEN_PORT:-0}"
+  local base=""
 
   (
     cd "$V6_DIR"
-    TSV2_DB=":memory:" TSV2_PORT="$port" NODE_NO_WARNINGS=1 \
+    exec env TSV2_DB=":memory:" TSV2_PORT="$port" NODE_NO_WARNINGS=1 \
       node --experimental-transform-types "$TSV2_DIR/serve/main.ts"
   ) >"$WORK/$name.server.log" 2>&1 &
   server_pid=$!
 
   local ready=0
   for _ in $(seq 1 100); do
-    if curl -s -o /dev/null --max-time 1 "$base/stats" 2>/dev/null; then ready=1; break; fi
+    local reported_port
+    reported_port="$(sed -n 's/^tsv2 serving on \([0-9][0-9]*\).*/\1/p' "$WORK/$name.server.log" | tail -1)"
+    if [ -n "$reported_port" ]; then
+      base="http://127.0.0.1:$reported_port"
+      if curl -sS -o /dev/null --max-time 1 "$base/stats" 2>/dev/null; then ready=1; break; fi
+    fi
     kill -0 "$server_pid" 2>/dev/null || break
     sleep 0.05
   done
@@ -90,22 +105,41 @@ import json,sys
 arrs=[json.loads(l) for l in open('$WORK/$name.jsonl') if l.strip()]
 json.dump({'batch':arrs}, open('$WORK/$name.arrivals.json','w'))
 "
-    if curl -s -o /dev/null -X POST --data-binary @"$renderer" "$base/program"; then
-      if curl -s -o /dev/null -X POST --data-binary @"$WORK/$name.arrivals.json" "$base/edb/events"; then
-        curl -s "$base/idb/rendered_type" >"$WORK/$name.rendered.json"
+    local program_status arrivals_status render_status
+    program_status="$(curl -sS -o "$WORK/$name.program.response" -w '%{http_code}' -X POST --data-binary @"$renderer" "$base/program" || true)"
+    if [ "$program_status" = 200 ]; then
+      arrivals_status="$(curl -sS -o "$WORK/$name.arrivals.response" -w '%{http_code}' -X POST --data-binary @"$WORK/$name.arrivals.json" "$base/edb/events" || true)"
+      if [ "$arrivals_status" = 200 ]; then
+        render_status="$(curl -sS -o "$WORK/$name.rendered.json" -w '%{http_code}' "$base/idb/rendered_type" || true)"
+        if [ "$render_status" = 200 ]; then
         python3 -c "
 import json
 d=json.load(open('$WORK/$name.rendered.json'))
 rows=sorted(d['rows'], key=lambda r: (r[1], r[2]))
 open('$WORK/$outfile','w').write('\n'.join(r[3] for r in rows))
 "
-        ok=1
+          ok=1
+        fi
       fi
     fi
+    if [ "$ok" != 1 ]; then
+      echo "FAIL  $name: tsv2 request failed (program=${program_status:-not-run}, arrivals=${arrivals_status:-not-run}, rendered_type=${render_status:-not-run})"
+      echo "SERVER LOG  $WORK/$name.server.log"
+      sed -n '1,160p' "$WORK/$name.server.log"
+      for response in "$WORK/$name.program.response" "$WORK/$name.arrivals.response"; do
+        if [ -s "$response" ]; then
+          echo "RESPONSE  $response"
+          sed -n '1,160p' "$response"
+        fi
+      done
+    fi
+  else
+    echo "FAIL  $name: tsv2 server did not become ready"
+    echo "SERVER LOG  $WORK/$name.server.log"
+    sed -n '1,160p' "$WORK/$name.server.log"
   fi
 
-  kill -9 "$server_pid" 2>/dev/null
-  wait "$server_pid" 2>/dev/null
+  cleanup_server
   [ "$ok" = 1 ]
 }
 
