@@ -243,3 +243,23 @@ install-dl6c: build-dl6c
     rm -f "$dest"
     cp "{{repo}}/v6/prolog/target/dl6c" "$dest"
     echo "install-dl6c: installed $("$dest" --version) at $dest"
+
+# One .dl6 program, one binary. `prog` is the source path, taken bare or as
+# `prog=<path>`; `out` defaults beside the generated crate under
+# v6/sprefa-engine-rs/target/dl6-build/.
+dl6-build prog out="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source='{{prog}}'
+    source="${source#prog=}"
+    [ -f "$source" ] || source="{{repo}}/$source"
+    source="$(cd "$(dirname "$source")" && pwd)/$(basename "$source")"
+    out='{{out}}'
+    out="${out#out=}"
+    cd "{{repo}}/v6/sprefa-engine-rs"
+    cargo build --quiet --bin dl6
+    if [ -n "$out" ]; then
+      ./target/debug/dl6 build "$source" --out "$out"
+    else
+      ./target/debug/dl6 build "$source"
+    fi

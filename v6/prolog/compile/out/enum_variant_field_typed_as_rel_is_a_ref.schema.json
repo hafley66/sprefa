@@ -20,7 +20,25 @@
     },
     "graded": {
       "additionalProperties":false,
-      "properties": {"g": {"type":"integer"},"id": {"type":"integer"}},
+      "properties": {
+        "g": {
+          "oneOf": [
+            {
+              "additionalProperties":false,
+              "properties": {"subject": {"$ref":"#/$defs/tree"},"tag": {"const":"ripe"}},
+              "required": ["tag", "subject" ],
+              "type":"object"
+            },
+            {
+              "additionalProperties":false,
+              "properties": {"reason": {"type":"string"},"tag": {"const":"bruised"}},
+              "required": ["tag", "reason" ],
+              "type":"object"
+            }
+          ]
+        },
+        "id": {"type":"integer"}
+      },
       "required": ["id", "g" ],
       "type":"object"
     },

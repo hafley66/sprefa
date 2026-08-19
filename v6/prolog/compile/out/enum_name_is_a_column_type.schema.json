@@ -20,7 +20,25 @@
     },
     "picked": {
       "additionalProperties":false,
-      "properties": {"g": {"type":"integer"},"id": {"type":"integer"}},
+      "properties": {
+        "g": {
+          "oneOf": [
+            {
+              "additionalProperties":false,
+              "properties": {"sugar": {"type":"integer"},"tag": {"const":"ripe"}},
+              "required": ["tag", "sugar" ],
+              "type":"object"
+            },
+            {
+              "additionalProperties":false,
+              "properties": {"days": {"type":"integer"},"tag": {"const":"green"}},
+              "required": ["tag", "days" ],
+              "type":"object"
+            }
+          ]
+        },
+        "id": {"type":"integer"}
+      },
       "required": ["id", "g" ],
       "type":"object"
     },

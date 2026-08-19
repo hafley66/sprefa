@@ -24,6 +24,7 @@ import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
 import { list_at_scalar_seam } from "../runtime/boundary.ts";
 import { StructPlane } from "../runtime/structPlane.ts";
+import { EnumPlane } from "../runtime/enumPlane.ts";
 import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
@@ -40,6 +41,8 @@ import type {
   IRowScalar,
   IRowValue,
   ISqlSeam,
+  IEnumRefColumns,
+  IEnumTypePlan,
   IStructRefColumns,
   IStructTypePlan,
   ITextInternPlan,
@@ -58,7 +61,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -161,6 +164,9 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
   "carry": [null, "__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e"],
   "index": [null, "__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e"],
 };
+
+export const ENUM_TYPES: readonly IEnumTypePlan[] = [];
+export const ENUM_REF_COLUMNS: IEnumRefColumns = {};
 
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
   internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
@@ -270,24 +276,24 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 18, parent_id: 7, ordinal: 0, local_name: "index", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "c7562421c25824b0", h_schema: "49ae08608e8f1c22", h_rule: "" },
   { rel_id: 19, parent_id: 18, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "eff7455f2a3bd523", h_schema: "", h_rule: "" },
   { rel_id: 20, parent_id: 18, ordinal: 2, local_name: "nested", kind: "column", type_id: 8, arity: 0, module_id: 7, h_id: "acefeb8f68e36410", h_schema: "", h_rule: "" },
-  { rel_id: 21, parent_id: 7, ordinal: 0, local_name: "json_encodable", kind: "interface", type_id: 0, arity: 0, module_id: 7, h_id: "", h_schema: "decl:interface:json_encodable", h_rule: "" },
-  { rel_id: 22, parent_id: 7, ordinal: 0, local_name: "couple", kind: "generic_rel", type_id: 0, arity: 0, module_id: 7, h_id: "", h_schema: "decl:relation:couple", h_rule: "" },
-  { rel_id: 23, parent_id: 7, ordinal: 0, local_name: "wrap", kind: "generic_rel", type_id: 0, arity: 0, module_id: 7, h_id: "", h_schema: "decl:relation:wrap", h_rule: "" },
-  { rel_id: 24, parent_id: 22, ordinal: 1, local_name: "Left", kind: "type_parameter", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:couple:param:1:Left", h_rule: "" },
-  { rel_id: 25, parent_id: 24, ordinal: 1, local_name: "json_encodable", kind: "constraint", type_id: 21, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:couple:param:1:Left:constraint:decl:interface:json_encodable", h_rule: "" },
-  { rel_id: 26, parent_id: 22, ordinal: 2, local_name: "Right", kind: "type_parameter", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:couple:param:2:Right", h_rule: "" },
-  { rel_id: 27, parent_id: 26, ordinal: 1, local_name: "json_encodable", kind: "constraint", type_id: 21, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:couple:param:2:Right:constraint:decl:interface:json_encodable", h_rule: "" },
-  { rel_id: 28, parent_id: 23, ordinal: 1, local_name: "T", kind: "type_parameter", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:wrap:param:1:T", h_rule: "" },
-  { rel_id: 29, parent_id: 28, ordinal: 1, local_name: "json_encodable", kind: "constraint", type_id: 21, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:wrap:param:1:T:constraint:decl:interface:json_encodable", h_rule: "" },
-  { rel_id: 30, parent_id: 22, ordinal: 1, local_name: "first", kind: "generic_column", type_id: 24, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:couple:member:1:first", h_rule: "" },
-  { rel_id: 31, parent_id: 22, ordinal: 2, local_name: "second", kind: "generic_column", type_id: 26, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:couple:member:2:second", h_rule: "" },
-  { rel_id: 32, parent_id: 23, ordinal: 1, local_name: "value", kind: "generic_column", type_id: 28, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:wrap:member:1:value", h_rule: "" },
-  { rel_id: 33, parent_id: 8, ordinal: 0, local_name: "__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e", kind: "concrete_type", type_id: 22, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e", h_rule: "" },
+  { rel_id: 21, parent_id: 7, ordinal: 0, local_name: "json_encodable", kind: "interface", type_id: 0, arity: 0, module_id: 7, h_id: "", h_schema: "41065078de40276dc2a51ecbe811318a0220ca8c192503f30a6e5f1aad903ced", h_rule: "" },
+  { rel_id: 22, parent_id: 7, ordinal: 0, local_name: "couple", kind: "generic_rel", type_id: 0, arity: 0, module_id: 7, h_id: "", h_schema: "407ce90a226f8beed5dc16287a50065ca72de6b999ddedea0e60f428d785a1cd", h_rule: "" },
+  { rel_id: 23, parent_id: 7, ordinal: 0, local_name: "wrap", kind: "generic_rel", type_id: 0, arity: 0, module_id: 7, h_id: "", h_schema: "6427b00dddacf3713e944a3e5b0143e48f23d2dda97270769982ce491dd20cf1", h_rule: "" },
+  { rel_id: 24, parent_id: 22, ordinal: 1, local_name: "Left", kind: "type_parameter", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "4c39b9f5cf2e222a3b8af233ba63500662d7f1117f628d8c6329d505fbc13339", h_rule: "" },
+  { rel_id: 25, parent_id: 24, ordinal: 1, local_name: "json_encodable", kind: "constraint", type_id: 21, arity: 0, module_id: 0, h_id: "", h_schema: "f2344b5c5c60963729d0bb6feb3341a46cdb0d27517dc360b97866e90ff52eda", h_rule: "" },
+  { rel_id: 26, parent_id: 22, ordinal: 2, local_name: "Right", kind: "type_parameter", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "348d4f906f52058985987402837a2451cb4fa50669189efa8f8b90c6c35dd98a", h_rule: "" },
+  { rel_id: 27, parent_id: 26, ordinal: 1, local_name: "json_encodable", kind: "constraint", type_id: 21, arity: 0, module_id: 0, h_id: "", h_schema: "3d65d689bfc35e12feb23cd08179a8665ef1fd49d323d12492b5bfb818fefe8a", h_rule: "" },
+  { rel_id: 28, parent_id: 23, ordinal: 1, local_name: "T", kind: "type_parameter", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "e75b1183ec11bad1c0f267330b05d98365bb037e8589057128987b140d2e2f3f", h_rule: "" },
+  { rel_id: 29, parent_id: 28, ordinal: 1, local_name: "json_encodable", kind: "constraint", type_id: 21, arity: 0, module_id: 0, h_id: "", h_schema: "1b8b10f8738dfc285b9dfe2fe1c92122a4ab5b3834e663210716748ee9260fb6", h_rule: "" },
+  { rel_id: 30, parent_id: 22, ordinal: 1, local_name: "first", kind: "generic_column", type_id: 24, arity: 0, module_id: 0, h_id: "", h_schema: "ffa7d85c948341ec0fa2d6ef271e636d055bbd04aee4a621c9383243cdf8f2f3", h_rule: "" },
+  { rel_id: 31, parent_id: 22, ordinal: 2, local_name: "second", kind: "generic_column", type_id: 26, arity: 0, module_id: 0, h_id: "", h_schema: "4d8208e759e77c3a65033dbd216dab794821ca048ef6cf07fecefbcde83e44a4", h_rule: "" },
+  { rel_id: 32, parent_id: 23, ordinal: 1, local_name: "value", kind: "generic_column", type_id: 28, arity: 0, module_id: 0, h_id: "", h_schema: "f59d59c4561918f05de9d08acd885495f92a54e787a83fbbac96eafc735bc877", h_rule: "" },
+  { rel_id: 33, parent_id: 8, ordinal: 0, local_name: "__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e", kind: "concrete_type", type_id: 22, arity: 0, module_id: 0, h_id: "", h_schema: "6263bc87529b36db19cf06e7eaa0d8597e279f260342a5a194cb55aa4fcdf7f8", h_rule: "" },
   { rel_id: 34, parent_id: 33, ordinal: 1, local_name: "argument", kind: "type_argument", type_id: 11, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 35, parent_id: 33, ordinal: 2, local_name: "argument", kind: "type_argument", type_id: 13, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
-  { rel_id: 36, parent_id: 11, ordinal: 0, local_name: "__gen__wrap_int_74568235536ee9d4", kind: "concrete_type", type_id: 23, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:__gen__wrap_int_74568235536ee9d4", h_rule: "" },
+  { rel_id: 36, parent_id: 11, ordinal: 0, local_name: "__gen__wrap_int_74568235536ee9d4", kind: "concrete_type", type_id: 23, arity: 0, module_id: 0, h_id: "", h_schema: "4c4adc80ad2800c7d8ad31750bb2d650deb1406376a1b6027a4acaf184b46bd7", h_rule: "" },
   { rel_id: 37, parent_id: 36, ordinal: 1, local_name: "argument", kind: "type_argument", type_id: 2, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
-  { rel_id: 38, parent_id: 13, ordinal: 0, local_name: "__gen__wrap_text_2bd6acc46ade78fd", kind: "concrete_type", type_id: 23, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:__gen__wrap_text_2bd6acc46ade78fd", h_rule: "" },
+  { rel_id: 38, parent_id: 13, ordinal: 0, local_name: "__gen__wrap_text_2bd6acc46ade78fd", kind: "concrete_type", type_id: 23, arity: 0, module_id: 0, h_id: "", h_schema: "f98361eac45e2c8b2d698596c885563066f40fb308773302f230a62a7d056a6e", h_rule: "" },
   { rel_id: 39, parent_id: 38, ordinal: 1, local_name: "argument", kind: "type_argument", type_id: 1, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 40, parent_id: 8, ordinal: 0, local_name: "__delta_nested_bounded_template_instance___gen__couple_wrap_int_wrap_text_fea7bde20e4f244e", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "c8ca2946f098e1ef", h_schema: "3978fc5392ca3b35", h_rule: "" },
   { rel_id: 41, parent_id: 8, ordinal: 0, local_name: "__frontier_nested_bounded_template_instance___gen__couple_wrap_int_wrap_text_fea7bde20e4f244e", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "7abe97dabfb00345", h_schema: "82d584c9309f1eca", h_rule: "" },
@@ -388,13 +394,16 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
+      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, rels).pipe(
+        map((decoded): ITickDeltas => ({ rels: decoded, carry_pending })),
+      )),
     )),
   );
 }
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
+  arrivals = EnumPlane.intern(ENUM_TYPES, ENUM_REF_COLUMNS, arrivals);
   return run_incremental_tick(seam, arrivals);
 }
 
@@ -408,6 +417,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "nested_bounded_template_instance",
+  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,
@@ -421,6 +431,8 @@ export const program: IGenProgramWithBoot = {
   query_plans,
   subscribed_rels,
   rel_catalog,
+  enum_types: ENUM_TYPES,
+  enum_ref_columns: ENUM_REF_COLUMNS,
   unsupported_execution,
   tick: run_tick,
 };

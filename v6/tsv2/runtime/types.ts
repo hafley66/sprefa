@@ -830,6 +830,10 @@ export interface ISubscribeCone {
  * engine needs all of it, so the whole thing is declared once, here.
  */
 export interface IServedProgram extends IGenProgram {
+  /** The shape version emit_ts.pl stamped on the module (`ir_version/1`).
+   *  Optional in the type because a hand-built test program stamps nothing;
+   *  `IIrVersionCheck` treats the absence as a mismatch all the same. */
+  readonly ir_version?: number;
   readonly boot: readonly IBootStatement[];
   readonly final_select: Readonly<Record<string, string>>;
   readonly host_plans: readonly IHostPlan[];
@@ -842,6 +846,13 @@ export interface IServedProgram extends IGenProgram {
   readonly rel_catalog: readonly IRelCatalogRow[];
   readonly enum_types?: readonly IEnumTypePlan[];
   readonly enum_ref_columns?: IEnumRefColumns;
+}
+
+/** Refuses a compiled module whose IR shape is not the one this runtime
+ *  interprets. The Rust door's twin is `program.rs try_from_json`. */
+export interface IIrVersionCheck {
+  readonly runtime_ir_version: number;
+  check(program: IServedProgram): IServedProgram;
 }
 
 export interface IProgramCompiler {

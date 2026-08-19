@@ -1,0 +1,90 @@
+{
+  "$defs": {
+    "boop_response": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"}},
+      "required": ["body" ],
+      "type":"object"
+    },
+    "compile": {
+      "additionalProperties":false,
+      "properties": {
+        "id": {"type":"integer"},
+        "outcome": {
+          "oneOf": [
+            {
+              "additionalProperties":false,
+              "properties": {
+                "error": {"$ref":"#/$defs/parse_error"},
+                "tag": {"const":"err"}
+              },
+              "required": ["tag", "error" ],
+              "type":"object"
+            },
+            {
+              "additionalProperties":false,
+              "properties": {
+                "tag": {"const":"ok"},
+                "value": {"$ref":"#/$defs/syntax_tree"}
+              },
+              "required": ["tag", "value" ],
+              "type":"object"
+            }
+          ]
+        }
+      },
+      "required": ["id", "outcome" ],
+      "type":"object"
+    },
+    "fetch": {
+      "additionalProperties":false,
+      "properties": {
+        "id": {"type":"integer"},
+        "outcome": {
+          "oneOf": [
+            {
+              "additionalProperties":false,
+              "properties": {
+                "error": {"$ref":"#/$defs/host_error"},
+                "tag": {"const":"err"}
+              },
+              "required": ["tag", "error" ],
+              "type":"object"
+            },
+            {
+              "additionalProperties":false,
+              "properties": {
+                "tag": {"const":"ok"},
+                "value": {"$ref":"#/$defs/boop_response"}
+              },
+              "required": ["tag", "value" ],
+              "type":"object"
+            }
+          ]
+        }
+      },
+      "required": ["id", "outcome" ],
+      "type":"object"
+    },
+    "host_error": {
+      "additionalProperties":false,
+      "properties": {"code": {"type":"integer"}},
+      "required": ["code" ],
+      "type":"object"
+    },
+    "parse_error": {
+      "additionalProperties":false,
+      "properties": {"message": {"type":"string"}},
+      "required": ["message" ],
+      "type":"object"
+    },
+    "syntax_tree": {
+      "additionalProperties":false,
+      "properties": {"root": {"type":"string"}},
+      "required": ["root" ],
+      "type":"object"
+    }
+  },
+  "$id":"parameterized_enum_two_instantiations#509810f89593e91f",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

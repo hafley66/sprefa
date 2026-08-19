@@ -24,6 +24,7 @@ import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
 import { list_at_scalar_seam } from "../runtime/boundary.ts";
 import { StructPlane } from "../runtime/structPlane.ts";
+import { EnumPlane } from "../runtime/enumPlane.ts";
 import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
@@ -40,6 +41,8 @@ import type {
   IRowScalar,
   IRowValue,
   ISqlSeam,
+  IEnumRefColumns,
+  IEnumTypePlan,
   IStructRefColumns,
   IStructTypePlan,
   ITextInternPlan,
@@ -58,7 +61,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -156,6 +159,14 @@ export const STRUCT_TYPES: readonly IStructTypePlan[] = [
 
 export const STRUCT_REF_COLUMNS: IStructRefColumns = {
   "grade_ripe": [null, "tree"],
+};
+
+export const ENUM_TYPES: readonly IEnumTypePlan[] = [
+  { name: "grade", variants: [{ tag: "bruised", rel: "grade_bruised", fields: ["reason"], field_types: ["text"], field_enums: [null], select_sql: `SELECT t."id", CASE WHEN json_valid(t."reason") AND json_type(t."reason") = 'object' AND json_type(t."reason", '$.fn') = 'text' AND json_type(t."reason", '$.args') = 'array' THEN json_extract(t."reason", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."reason", '$.args')), '') || ')' ELSE t."reason" END AS "reason" FROM "__txt_enum_variant_field_typed_as_rel_is_a_ref_grade_bruised_7cd7b8994656" t` }, { tag: "ripe", rel: "grade_ripe", fields: ["subject"], field_types: ["ref"], field_enums: [null], select_sql: `SELECT t."id", (SELECT d."__rendered" FROM "__ref_enum_variant_field_typed_as_rel_is_a_ref_tree_2a20c75875de" d WHERE d."__id" = t."subject") AS "subject" FROM "enum_variant_field_typed_as_rel_is_a_ref_grade_ripe_9aed9543019d" t` }] },
+];
+
+export const ENUM_REF_COLUMNS: IEnumRefColumns = {
+  "graded": [null, { name: "grade", endpoint_index: 0 }],
 };
 
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
@@ -415,13 +426,16 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
+      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, rels).pipe(
+        map((decoded): ITickDeltas => ({ rels: decoded, carry_pending })),
+      )),
     )),
   );
 }
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
+  arrivals = EnumPlane.intern(ENUM_TYPES, ENUM_REF_COLUMNS, arrivals);
   return run_incremental_tick(seam, arrivals);
 }
 
@@ -435,6 +449,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "enum_variant_field_typed_as_rel_is_a_ref",
+  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,
@@ -448,6 +463,8 @@ export const program: IGenProgramWithBoot = {
   query_plans,
   subscribed_rels,
   rel_catalog,
+  enum_types: ENUM_TYPES,
+  enum_ref_columns: ENUM_REF_COLUMNS,
   unsupported_execution,
   tick: run_tick,
 };

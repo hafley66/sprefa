@@ -8,6 +8,8 @@ description = "Rust runtime the emit_rust emitter lowers against: the IGenProgra
 
 [dependencies]
 anyhow = "1"
+# The `dl6` bin's option table; already in the lock through soopy.
+clap = { version = "4", features = ["derive"] }
 rusqlite = { version = "0.40", features = ["bundled", "functions"] }
 regex = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "signal", "time"] }
@@ -44,3 +46,7 @@ http-body-util = "0.1"
 name = "emit_rust_harness"
 path = "src/bin/emit_rust_harness.rs"
 required-features = ["harness"]
+
+[[bin]]
+name = "dl6"
+path = "src/bin/dl6.rs"

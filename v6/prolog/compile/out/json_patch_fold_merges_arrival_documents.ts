@@ -23,6 +23,7 @@ import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
 import { list_at_scalar_seam } from "../runtime/boundary.ts";
+import { EnumPlane } from "../runtime/enumPlane.ts";
 import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
@@ -39,6 +40,8 @@ import type {
   IRowScalar,
   IRowValue,
   ISqlSeam,
+  IEnumRefColumns,
+  IEnumTypePlan,
   ITextInternPlan,
   ITickDeltas,
   SqlStatement,
@@ -55,7 +58,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -165,6 +168,9 @@ function trigger_occurrences(
   }
   return occurrences;
 }
+
+export const ENUM_TYPES: readonly IEnumTypePlan[] = [];
+export const ENUM_REF_COLUMNS: IEnumRefColumns = {};
 
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
   internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
@@ -500,6 +506,9 @@ function run_ordered_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<I
     concatMap(({ mid, after, written, deltas, stored_deltas }) => stage_ordered_frontiers(seam, INCREMENTAL_RELATIONS, ordered_carry_additions(mid, after.stored, stored_deltas, written)).pipe(
       map((post_write_carry): ITickDeltas => ({ rels: deltas.rels, carry_pending: deltas.carry_pending || post_write_carry })),
     )),
+    concatMap((state) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, state.deltas.rels).pipe(
+      map((rels) => ({ ...state, deltas: { ...state.deltas, rels } })),
+    )), 
   );
   // json_patch_fold_merges_arrival_documents: ordered process_occurrences with evolving pre snapshots.
 }
@@ -530,13 +539,16 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
+      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, rels).pipe(
+        map((decoded): ITickDeltas => ({ rels: decoded, carry_pending })),
+      )),
     )),
   );
 }
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
+  arrivals = EnumPlane.intern(ENUM_TYPES, ENUM_REF_COLUMNS, arrivals);
   return run_ordered_tick(seam, arrivals);
 }
 
@@ -550,6 +562,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_patch_fold_merges_arrival_documents",
+  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,
@@ -563,6 +576,8 @@ export const program: IGenProgramWithBoot = {
   query_plans,
   subscribed_rels,
   rel_catalog,
+  enum_types: ENUM_TYPES,
+  enum_ref_columns: ENUM_REF_COLUMNS,
   unsupported_execution,
   tick: run_tick,
 };
