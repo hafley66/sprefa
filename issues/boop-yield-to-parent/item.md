@@ -2,11 +2,12 @@
 created: 2026-08-17
 updated: 2026-08-19
 type: task
-status: open
+status: done
 priority: normal
 related: ['@boop-parent-broadcast-easy-tell']
 labels:
 - area:boop
+closed: 2026-08-19
 ---
 
 # boop: one verb for a child to tell its parent chat it yields (done for current task)

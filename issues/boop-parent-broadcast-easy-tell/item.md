@@ -2,11 +2,12 @@
 created: 2026-08-16
 updated: 2026-08-19
 type: feature
-status: open
+status: done
 priority: high
 labels:
 - area:boop
 related: ['@boop-yield-to-parent']
+closed: 2026-08-19
 ---
 
 # boop: parent broadcast + least-args tell-parent (me/--me)
