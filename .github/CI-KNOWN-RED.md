@@ -25,8 +25,8 @@ WANT TO RUN V5 ANYTHING ANYMORE" leaves neither an arm), and `arm-census`
 461-fixture corpus compile ran past 25 minutes at 97% of one core with no
 budget, and has never once completed inside a gate run).
 
-Rows that closed at this measurement, each measured green 3/3: `docs-staleness`,
-`serve-leak-soak`, `memory-soak`'s two other findings. `roundtrip`,
+Rows that closed at this measurement, each measured green 3/3: `docs-staleness`
+and `memory-soak`'s two other findings. `roundtrip`,
 `compile-speed`, `plunit`, `tsv2-test` and `dd-grade` all stay red but under
 DIFFERENT text than the previous table recorded; the old text is not repeated.
 
@@ -96,8 +96,9 @@ seen from a different door; the rendered message drops the column name
 
 ## Flaky
 
-None recorded at this measurement. `serve-leak-soak`, the previous table's only
-flaky row, measured green 3/3 and is out of the allowlist.
+| leg | exact failure text | measured |
+|---|---|---|
+| serve-leak-soak | `✖ receipt (c): 20 program-swap cycles leave no handle, timer, or subscription behind` with `AssertionError: Expected values to be strictly deep-equal: + [ 'Immediate 0->1' ] - []` at `v6/tsv2/tests/serveLeak.test.ts:113` | green 3/3 in the first three whole-gate runs and green 3/3 in isolation every time; red once in one whole-gate run with 6 legs in parallel. One `setImmediate` still pending at the moment the handle count is read, under load only. |
 
 ## Allowlist
 
@@ -113,6 +114,7 @@ allow: prolog-lint
 allow: roundtrip
 allow: rust-grade
 allow: scale-floor
+allow: serve-leak-soak
 allow: staleness-gate
 allow: sweep
 allow: text-door

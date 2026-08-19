@@ -16,6 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # sprefa-extract and sprefa-engine-rs depend on `../../../hafley-rs/crates/soopy`
+      # by path: the sibling must sit beside the workspace, out of checkout's `path:` reach.
+      - name: Clone hafley-rs beside the workspace
+        run: git clone --depth 1 https://github.com/hafley66/hafley-rs "$GITHUB_WORKSPACE/../hafley-rs"
+
       - name: Install SWI-Prolog
         run: brew install swi-prolog
 
@@ -67,6 +72,7 @@ jobs:
         continue-on-error: true
         working-directory: v6
         run: |
+          set +e
           just green-all > green-all.log 2>&1
           rc=$?
           echo "green-all rc=$rc"

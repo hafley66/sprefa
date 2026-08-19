@@ -125,8 +125,16 @@ shell = subprocess.Popen(
     env={**os.environ, "SPREFA": repo, "PS1": "", "PS2": ""},
 )
 
+JOB_KILL = re.compile(r"^kill\s+(%\S+)\s*$")
+
 def send(command):
     """Run one command; return (output_lines, exit_status)."""
+    # bash prints `line N: PID Terminated: 15 <cmd>` for a signalled job at
+    # whichever command boundary it happens to reap it; reaping it right here
+    # with `wait` keeps that notice out of this block and the next.
+    job = JOB_KILL.match(command)
+    if job:
+        command = f"{command}; __gs_rc=$?; wait {job.group(1)} 2>/dev/null; (exit $__gs_rc)"
     shell.stdin.write(command + "\n")
     shell.stdin.write(f'printf "%s %s\\n" "{SENTINEL}" "$?"\n')
     shell.stdin.flush()
