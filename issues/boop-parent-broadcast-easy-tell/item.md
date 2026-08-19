@@ -1,11 +1,12 @@
 ---
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-19
 type: feature
 status: open
-priority: normal
+priority: high
 labels:
 - area:boop
+related: ['@boop-yield-to-parent']
 ---
 
 # boop: parent broadcast + least-args tell-parent (me/--me)
@@ -34,15 +35,26 @@ Two legs:
 
 ## Acceptance Criteria
 
-- [ ] A child with a recorded parent edge can reach its parent with a single
+- [x] A child with a recorded parent edge can reach its parent with a single
       command carrying only the message body (no route name).
-- [ ] A parent can broadcast one message to all live children in one command.
-- [ ] Both legs report delivery per target (landed / target dead), same as hail
+- [x] A parent can broadcast one message to all live children in one command.
+- [x] Both legs report delivery per target (landed / target dead), same as hail
       does today.
-- [ ] `boop --help` doctrine section documents both spellings.
+- [x] `boop --help` doctrine section documents both spellings.
 
 ## Comments
 
 Naming collision to resolve at design time: `boop me` currently registers an
 interactive Codex tmux pane as a coordinator route; the new surface must not
 overload that meaning ambiguously.
+
+## Decisions
+
+### 2026-08-19T00:01:26Z · @codex
+
+2026-08-18 observed receipt: a spawned lane already has caller identity plus parent edge, yet completion required spelling codex-147 in 'boop beep hail'. Required minimal surface: 'boop tell-parent --kind completion --body ...'; resolve caller through whoami/harness trait, then parent from registered edge, and return the mail message ID.
+
+### 2026-08-19T13:11:49Z · @opus-tell-parent
+
+Both legs landed in hafley-rs PR #33 as boop tell-parent [--kind completion|yield|note] [--body TEXT] and boop tell-children --body TEXT. No me/--me spelling and no boop me subcommand, so the boop me collision named in the comments does not arise. tell-children prints landed <name> <id> (<how>) or dead <name> per target and writes no row for a dead child. Two doctrine lines in boop --help.
+

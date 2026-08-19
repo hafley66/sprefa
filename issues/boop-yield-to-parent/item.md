@@ -1,6 +1,6 @@
 ---
 created: 2026-08-17
-updated: 2026-08-17
+updated: 2026-08-19
 type: task
 status: open
 priority: normal
@@ -41,3 +41,9 @@ the other reuses it.
 ## Receipt
 Spawn a lane on a throwaway tmux socket, have it run `boop yield`, assert the
 parent route's inbox has one `kind=yield` row and `boop inbox drain` prints it.
+
+## Decisions
+
+### 2026-08-19T13:11:49Z · @opus-tell-parent
+
+Built as tell-parent --kind yield in hafley-rs PR #33. No boop yield verb (Chris 2026-08-19: three spellings only, tell-parent/tell-children). Default body when --body is omitted: yield <lane> rc=0 branch=<branch> head=<sha>, read from the caller's registered worktree, dashes when git answers nothing. Writes a kind=yield mail row to the parent edge, delivers through the beep hail path, exits 0, and does not close the lane. Missing parent edge is a named error, exit 1.
