@@ -82,8 +82,11 @@ expand_program_run(SurfaceProgram0, Bindings, ExpandedProgram,
     dot_expand:resolve_qualified_types(SurfaceProgram0, SurfaceProgram),
     SurfaceProgram = prog(SurfaceDecls, _),
     % The context includes enums option expansion mints.  Generic expansion is
-    % deterministic and idempotent for its rewritten declaration form.
-    expand_generic_program(prog(SurfaceDecls, []), prog(DeclsForEnumContext, _)),
+    % deterministic and idempotent for its rewritten declaration form.  This
+    % prepass has no rule facts or source bindings, so annotation applications
+    % belong exclusively to phase 5's bound program expansion below.
+    annotation_context_decls(SurfaceDecls, ContextDecls),
+    expand_generic_program(prog(ContextDecls, []), prog(DeclsForEnumContext, _)),
     enum_context(DeclsForEnumContext, EnumContext),
     findall(Order-Name-Expander,
             expansion_phase(Order, Name, Expander),
@@ -96,6 +99,26 @@ expand_program_run(SurfaceProgram0, Bindings, ExpandedProgram,
     merge_enum_type_rows(SurfaceDecls, DroppedProgram, EnumRowedProgram),
     merge_option_type_rows(EnumRowedProgram, ExpandedProgram),
     ExpansionContext = EnumContext.
+
+annotation_context_decls(Decls0, Decls) :-
+    maplist(annotation_context_decl, Decls0, Decls).
+
+annotation_context_decl(col_type(Ref, Column, Type0),
+                        col_type(Ref, Column, Type)) :-
+    !,
+    annotation_context_type(Type0, Type).
+annotation_context_decl(Decl, Decl).
+
+annotation_context_type(annotated_type(Type0, _), Type) :-
+    !,
+    annotation_context_type(Type0, Type).
+annotation_context_type(Type0, Type) :-
+    compound(Type0),
+    !,
+    Type0 =.. [Name | Arguments0],
+    maplist(annotation_context_type, Arguments0, Arguments),
+    Type =.. [Name | Arguments].
+annotation_context_type(Type, Type).
 
 run_phase(_, _-_-unwired, Program, Program) :- !.
 % ast takes the whole context, every other phase the enum half; without the cut

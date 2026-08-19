@@ -501,7 +501,13 @@ perf-all-deep:
 # ── batteries ──
 
 # the review-gate battery minus the slow sweep; what a merge must pass
-green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex typegen-golden store-test dd-grade rust-grade
+green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex typegen-golden type-annotation-ci store-test dd-grade rust-grade
+
+# Applicative annotation closeout: emitted TypeScript executes its SQLite
+# replacement path in tsv2-test; this adds the emitted Rust ProgramJson SQLite
+# execution arm to the repository CI surface.
+type-annotation-ci:
+	cd {{ v6 }}/sprefa-engine-rs && cargo test --quiet --test type_annotation_ci
 
 # Compiler-authored DL6 type artifacts, direct/DL6 parity, target compilation,
 # schema validation, and the selected product/sum runtime tests.
