@@ -419,8 +419,8 @@ export interface IEnumPlane {
     ref_columns: IEnumRefColumns,
     arrivals: IArrivalBatch,
   ): IArrivalBatch;
-  decode_deltas(seam: ISqlSeam, types: readonly IEnumTypePlan[], ref_columns: IEnumRefColumns, relations: readonly IIncrementalRelationPlan[], deltas: readonly IRelDelta[]): Observable<readonly IRelDelta[]>;
-  decode_rows(seam: ISqlSeam, types: readonly IEnumTypePlan[], ref_columns: IEnumRefColumns, relations: readonly IIncrementalRelationPlan[], rel: string, rows: readonly IRow[]): Observable<readonly IRow[]>;
+  decode_deltas(seam: ISqlSeam, types: readonly IEnumTypePlan[], ref_columns: IEnumRefColumns, deltas: readonly IRelDelta[]): Observable<readonly IRelDelta[]>;
+  decode_rows(seam: ISqlSeam, types: readonly IEnumTypePlan[], ref_columns: IEnumRefColumns, rel: string, rows: readonly IRow[]): Observable<readonly IRow[]>;
 }
 
 export interface IStructPlane {
