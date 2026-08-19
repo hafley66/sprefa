@@ -64,7 +64,6 @@ default_seed(20260815).
 run :- default_seed(Seed), run(Seed).
 
 run(Seed) :-
-    set_prolog_flag(gc, false),
     format("~n═══ METAMORPHIC RENAME ═══~n"),
     format("seed = ~w~n", [Seed]),
     compiled_fixtures(Fixtures),

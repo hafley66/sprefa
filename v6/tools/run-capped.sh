@@ -48,6 +48,9 @@
 # Call sites choose defaults with headroom for their measured wall time.
 
 # run_capped SECONDS CMD... -- exit 124 on timeout, whole process group killed.
+# A child that DIES ON A SIGNAL exits 128+signal, never 0: `$? >> 8` alone is 0
+# for a signalled child, so a SIGKILLed leg used to report PASS. The waitpid
+# loop is for the same reason, an EINTR return left `$?` unset.
 run_capped() {
   local limit="$1"; shift
   perl -e '
@@ -56,9 +59,11 @@ run_capped() {
     if ($pid == 0) { setpgrp(0, 0); exec @ARGV; exit 127; }
     $SIG{ALRM} = sub { kill("KILL", -$pid); waitpid($pid, 0); exit 124; };
     alarm $limit;
-    waitpid($pid, 0);
+    my $reaped;
+    do { $reaped = waitpid($pid, 0) } while ($reaped == -1 && $!{EINTR});
     alarm 0;
-    exit($? >> 8);
+    my $wait_status = $?;
+    exit(($wait_status & 127) ? 128 + ($wait_status & 127) : ($wait_status >> 8));
   ' "$limit" "$@"
 }
 
