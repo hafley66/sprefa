@@ -221,3 +221,25 @@ boop-start:
       fi
     done
     echo "boop-start: ready in $((SECONDS - started))s"
+
+# The .dl6 compiler as one executable at v6/prolog/target/dl6c, HEAD's short
+# sha stamped into `dl6c --version`.
+build-dl6c:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sha="$(git -C "{{repo}}" rev-parse --short HEAD)"
+    mkdir -p "{{repo}}/v6/prolog/target"
+    DL6C_BUILD_SHA="$sha" swipl -q -l "{{repo}}/v6/prolog/dl6c.pl" \
+      -g "dl6c_save('{{repo}}/v6/prolog/target/dl6c')" -g halt
+    echo "build-dl6c: wrote {{repo}}/v6/prolog/target/dl6c ($sha)"
+
+# rm before cp: overwriting in place leaves the old macOS signature on new bytes
+# and the next run dies "Killed: 9". No codesign step, docs/failure-modes.md:56.
+install-dl6c: build-dl6c
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dest="${CARGO_HOME:-$HOME/.cargo}/bin/dl6c"
+    mkdir -p "$(dirname "$dest")"
+    rm -f "$dest"
+    cp "{{repo}}/v6/prolog/target/dl6c" "$dest"
+    echo "install-dl6c: installed $("$dest" --version) at $dest"
