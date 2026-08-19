@@ -8,7 +8,6 @@ v6/prolog/compile/1_emit_registry_docs.pl -g emit_registry_docs -g halt.
 
 - [bind_definition/2](#bind_definition2)
 - [bind_executor/2](#bind_executor2)
-- [host_executor_contract/2](#host_executor_contract2)
 - [host_input_contract/3](#host_input_contract3)
 - [http_route/3](#http_route3)
 
@@ -25,14 +24,6 @@ v6/prolog/compile/1_emit_registry_docs.pl -g emit_registry_docs -g halt.
 |---|---|
 | `interval` | `live_interval` |
 | `watch` | `live_watch` |
-
-## host_executor_contract/2
-
-| executor | contract |
-|---|---|
-| `sprefa_extract` | `[col(path,text),col(digest,text)]` |
-| `sprefa_extract_repo` | `[col(repo,text),col(path,text),col(digest,text)]` |
-| `shell` | `_` |
 
 ## host_input_contract/3
 

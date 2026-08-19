@@ -1,0 +1,7 @@
+rel sym(name: text).
+rel is_emit(name: text).
+
+is_emit(Name) <-
+  sym(Name),
+  Head := substr(Name, 1, length('emit_')),
+  Head == 'emit_'.

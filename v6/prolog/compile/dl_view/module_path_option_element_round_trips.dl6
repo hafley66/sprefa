@@ -1,0 +1,7 @@
+rel orchard.tree(id: int, name: text) key(1).
+rel grove(id: int, tree: option(orchard.tree)) key(1).
+rel planted(grove_id: int, tree_name: text).
+
+planted(GroveId, TreeName) <-
+  grove__tree(GroveId, TreeId),
+  orchard.tree(TreeId, TreeName).

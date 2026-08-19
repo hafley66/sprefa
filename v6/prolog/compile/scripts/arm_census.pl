@@ -53,7 +53,6 @@
 % ═══════════════════════════════════════════════════════════════════════════
 
 census :-
-    set_prolog_flag(gc, false),          % sweep.pl's own receipt: 10.0.2 GC bug
     throw_sites(Sites),
     manifest_reason_names(ReasonNames),
     classify_throws(Sites, ReasonNames, Reached, Unreached),

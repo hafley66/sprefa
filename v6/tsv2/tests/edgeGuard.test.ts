@@ -121,14 +121,16 @@ test("edge-body negation SEARCHes the negated rel by key, never SCANs it", async
 
   // `n0` is compile_negative_uses/4's alias for the negated rel; sqlite prints
   // the ALIAS in the plan detail, never the table name, so the alias is what
-  // these assertions read.
+  // these assertions read. A set rel's key is its `UNIQUE (<cols>)` autoindex,
+  // not its `__id` PRIMARY KEY, so the reading that matters is that the plan
+  // BINDS the key column, whichever index carries it.
   const lines = await plan_lines(seam, project_sql);
   assert.ok(
-    lines.some((line) => /SEARCH n0 USING PRIMARY KEY/.test(line)),
-    `negation must SEARCH the negated rel by key, got: ${lines.join(" | ")}`,
+    lines.some((line) => /\bSEARCH n0 USING\b.*\(session_id=\?\)/.test(line)),
+    `negation must SEARCH the negated rel on its key column, got: ${lines.join(" | ")}`,
   );
   assert.ok(
-    !lines.some((line) => /\b_scan n0\b/.test(line)),
+    !lines.some((line) => /\bSCAN n0\b/.test(line)),
     `negation must not SCAN the negated rel, got: ${lines.join(" | ")}`,
   );
 });

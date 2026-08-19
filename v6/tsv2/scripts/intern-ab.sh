@@ -14,7 +14,7 @@ compile_at() {
   local mode="$1" dest="$2"
   mkdir -p "$dest"
   swipl -q -l "$COMPILE_DIR/../sweep.pl" \
-        -g "set_prolog_flag(gc,false), sweep([intern($mode)])" -g halt > /dev/null
+        -g "sweep([intern($mode)])" -g halt > /dev/null
   cp -f "$COMPILE_OUT"/*.ts "$dest/"
 }
 
@@ -27,5 +27,5 @@ STATUS=$?
 set -e
 
 # Leave out/ in the mode the corpus is checked in at.
-swipl -q -l "$COMPILE_DIR/../sweep.pl" -g 'set_prolog_flag(gc,false), sweep' -g halt > /dev/null
+swipl -q -l "$COMPILE_DIR/../sweep.pl" -g sweep -g halt > /dev/null
 exit $STATUS

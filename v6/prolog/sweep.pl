@@ -100,7 +100,10 @@ clear_stale_compiled_outputs(OutDir) :-
 sweep_file(Options, File, Results) :-
     read_all_fixtures(File, Entries),
     findall(Result,
-            ( member(entry(Name, Term, Bindings), Entries), sweep_one(Options, File, Name, Term, Bindings, Result) ),
+            ( member(entry(Name, Term, Bindings), Entries),
+              ( sweep_one(Options, File, Name, Term, Bindings, Result)
+              -> true
+              ;  format("SWEEP_SILENT_FAIL ~w~n", [Name]), fail ) ),
             Results).
 
 sweep_one(Options, File, Name, Term, Bindings, result(Name, File, Bucket, Reason)) :-

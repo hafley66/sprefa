@@ -1,0 +1,7 @@
+rel seed_word(word: text).
+rel chain(word: text).
+
+chain(Word) <- seed_word(Word).
+chain(concat([Word, '/'])) <-
+  chain(Word),
+  seed_word(_).

@@ -1,0 +1,9 @@
+rel edge(from_node: int, to_node: int).
+rel path(from_node: int, to_node: int).
+rel reach(from_node: int, to_node: int).
+
+path(FromNode, ToNode) <- edge(FromNode, ToNode).
+path(FromNode, ToNode) <- reach(FromNode, ToNode).
+reach(FromNode, ToNode) <-
+  path(FromNode, MiddleNode),
+  edge(MiddleNode, ToNode).

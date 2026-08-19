@@ -62,12 +62,12 @@ export const EnumPlane: IEnumPlane = {
     return [...variants, ...parents];
   },
 
-  decode_deltas(seam, types, ref_columns, relations, deltas) {
+  decode_deltas(seam, types, ref_columns, deltas) {
     return from(deltas).pipe(
       concatMap((delta) =>
-        this.decode_rows(seam, types, ref_columns, relations, delta.rel, delta.add).pipe(
+        this.decode_rows(seam, types, ref_columns, delta.rel, delta.add).pipe(
           concatMap((add) =>
-            this.decode_rows(seam, types, ref_columns, relations, delta.rel, delta.del).pipe(
+            this.decode_rows(seam, types, ref_columns, delta.rel, delta.del).pipe(
               map((del) => ({ ...delta, add, del })),
             ),
           ),
@@ -77,7 +77,7 @@ export const EnumPlane: IEnumPlane = {
     );
   },
 
-  decode_rows(seam, types, ref_columns, relations, rel, rows) {
+  decode_rows(seam, types, ref_columns, rel, rows) {
     const refs = ref_columns[rel];
     if (refs === undefined || types.length === 0) return of(rows);
     const plans = new Map(types.map((plan) => [plan.name, plan]));

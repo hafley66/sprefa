@@ -13,7 +13,7 @@
 :- use_module(registry,
               [ surface/5, cli_command/3,
                 bind_definition/2, bind_executor/2,
-                host_executor_contract/2, host_input_contract/3,
+                host_input_contract/3,
                 http_route/3
               ]).
 :- use_module(library(lists)).
@@ -272,7 +272,6 @@ emit_host_contract_docs :-
 host_contract_doc_text(Text) :-
     bind_definition_table(BindDefTable),
     bind_executor_table(BindExecTable),
-    host_executor_contract_table(HostExecContractTable),
     host_input_contract_table(HostInputContractTable),
     http_route_table(HttpRouteTable),
     format(string(Text),
@@ -286,7 +285,6 @@ v6/prolog/compile/1_emit_registry_docs.pl -g emit_registry_docs -g halt.
 
 - [bind_definition/2](#bind_definition2)
 - [bind_executor/2](#bind_executor2)
-- [host_executor_contract/2](#host_executor_contract2)
 - [host_input_contract/3](#host_input_contract3)
 - [http_route/3](#http_route3)
 
@@ -296,9 +294,6 @@ v6/prolog/compile/1_emit_registry_docs.pl -g emit_registry_docs -g halt.
 ## bind_executor/2
 
 ~w
-## host_executor_contract/2
-
-~w
 ## host_input_contract/3
 
 ~w
@@ -306,7 +301,7 @@ v6/prolog/compile/1_emit_registry_docs.pl -g emit_registry_docs -g halt.
 
 ~w
 ",
-           [BindDefTable, BindExecTable, HostExecContractTable,
+           [BindDefTable, BindExecTable,
             HostInputContractTable, HttpRouteTable]).
 
 bind_definition_table(Table) :-
@@ -316,18 +311,6 @@ bind_definition_table(Table) :-
 bind_executor_table(Table) :-
     findall(Line, ( bind_executor(Name, Executor), two_col_row(Line, Name, Executor) ), RowLines),
     atomic_list_concat(['| bind | executor |\n', '|---|---|\n' | RowLines], Table).
-
-% `shell`'s Contract arg is `_`, leaving it unbound; contract_row/3 renders
-% that literally as `_` rather than an internal variable name.
-host_executor_contract_table(Table) :-
-    findall(Line,
-            ( host_executor_contract(Name, Contract), contract_row(Line, Name, Contract) ),
-            RowLines),
-    atomic_list_concat(['| executor | contract |\n', '|---|---|\n' | RowLines], Table).
-
-contract_row(Line, Name, Contract) :-
-    ( var(Contract) -> ContractText = '_' ; format(atom(ContractText), '~q', [Contract]) ),
-    format(atom(Line), '| `~w` | `~w` |~n', [Name, ContractText]).
 
 host_input_contract_table(Table) :-
     findall(Line,

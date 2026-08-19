@@ -217,11 +217,7 @@ function intern_one_type(
 ): Observable<unknown> {
   const semantics = [...bucket.keys()];
   const rows = [...bucket.values()].map((collected) =>
-    collected.fields.map((field) =>
-      typeof field === "object" && field !== null && "child_semantic" in field
-        ? id_for(ids, field.child_semantic)
-        : field
-    ) as IRow
+    collected.fields.map((field) => (is_child_reference(field) ? id_for(ids, field.child_semantic) : field)) as IRow
   );
   const arrivals: IArrivalBatch = rows.map((row): IArrivalRow => ({
     rel: plan.name,
@@ -290,6 +286,17 @@ function intern_target_rows(
       }
       return undefined;
     }),
+  );
+}
+
+/** IRowValue already admits a plain object, so `"child_semantic" in field`
+ *  alone leaves the field's own type in play; the predicate is what narrows. */
+function is_child_reference(
+  field: IRowValue | { readonly child_semantic: string },
+): field is { readonly child_semantic: string } {
+  return (
+    typeof field === "object" && field !== null && !Array.isArray(field) &&
+    "child_semantic" in field && typeof field.child_semantic === "string"
   );
 }
 

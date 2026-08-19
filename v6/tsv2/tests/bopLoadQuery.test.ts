@@ -7,8 +7,8 @@
  * `/program`/`/idb/:rel` http routes, so grading them against the routes
  * directly is the same contract with one fewer process in the way.
  *
- * `runBop` uses ASYNC `spawn`, never `spawnSync`, and this is load-bearing,
- * not a style choice: the server lives in THIS test process's own event
+ * `runBop` uses ASYNC `spawn`, never `spawnSync`, and that is a correctness
+ * constraint rather than a style choice: the server lives in THIS test process's own event
  * loop (that is what "in-process" means), and `spawnSync` blocks that exact
  * event loop until the child exits -- which deadlocks the moment the child
  * is a `bop load`/`bop q` waiting on an HTTP response from the very server
@@ -29,6 +29,9 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -106,11 +109,18 @@ test("q: a running server with no program loaded exits 1 (404 'no program loaded
   }
 });
 
+/* The program is written here rather than named out of dl/fixtures: this pins
+ * the EXIT CODE contract, and a fixture that graduates to compiling turns that
+ * into a false red. `ghcacher.dl6` used to be the one named here and now loads
+ * clean, which is what read as `0 !== 2`. Same construct bopCheck.test.ts
+ * uses for its own exit-2 receipt. */
 test("load: a program that hits a named compiler unsupported construct over http exits 2, not 1", async () => {
   const served = await start_served();
   try {
-    const ghcacher_dl6 = fileURLToPath(new URL("../../dl/fixtures/ghcacher.dl6", import.meta.url));
-    const outcome = await run_bop(["load", ghcacher_dl6, "--port", String(served.port)]);
+    const work_dir = mkdtempSync(join(tmpdir(), "bop-load-unsupported-"));
+    const program_path = join(work_dir, "unsupported.dl6");
+    writeFileSync(program_path, "rel Item(value: list(option(bytes))).\n", "utf8");
+    const outcome = await run_bop(["load", program_path, "--port", String(served.port)]);
     assert.equal(outcome.status, 2, outcome.stderr);
     assert.match(outcome.stderr, /unsupported_construct/);
   } finally {

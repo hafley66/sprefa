@@ -21,7 +21,7 @@
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { test } from "vitest";
+import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { firstValueFrom } from "rxjs";
 

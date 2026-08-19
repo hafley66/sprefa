@@ -1,0 +1,7 @@
+rel sym(name: text).
+rel has_sep(name: text).
+
+has_sep(Name) <-
+  sym(Name),
+  Position := instr(Name, '::'),
+  Position > 0.

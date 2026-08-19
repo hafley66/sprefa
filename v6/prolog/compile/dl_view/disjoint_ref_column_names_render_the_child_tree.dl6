@@ -1,0 +1,5 @@
+rel leaf_pair(left: int, right: int).
+rel shell_pair(head: leaf_pair, tail: leaf_pair).
+rel carrier(id: int, nested: shell_pair).
+
+seen(Id) <- carrier(Id, _Nested).

@@ -453,7 +453,7 @@ local_types_lines(Plan,
         '  params: readonly IRowScalar[];',
         '}',
         '',
-        'type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };'
+        'type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly enum_types: readonly IEnumTypePlan[]; readonly enum_ref_columns: IEnumRefColumns; readonly unsupported_execution: readonly string[] };'
       ], Lines).
 
 plan_has_structured_host(plan(_, prog(Decls, _), _, _, _, _, _, _, _)) :-
@@ -2235,8 +2235,10 @@ run_ordered_tick_fn_lines(true, Name, HasRetention, UsesTick, DepartureRefs,
       ],
       RetentionLines,
       AfterReadLines,
-      [ '    concatMap((state) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, state.deltas.rels).pipe(',
-        '      map((rels) => ({ ...state, deltas: { ...state.deltas, rels } })),',
+      %% AfterReadLines has already mapped the chain to ITickDeltas, so the
+      %% decode reads `state.rels` and not a `deltas` field no longer there.
+      [ '    concatMap((state) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, state.rels).pipe(',
+        '      map((rels): ITickDeltas => ({ ...state, rels })),',
         '    )), '
       ],
       DepartureStageLines,
@@ -2448,7 +2450,7 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
       DepartureStageLines,
       [
       '    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(',
-      '      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, rels).pipe(',
+      '      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, rels).pipe(',
       '        map((decoded): ITickDeltas => ({ rels: decoded, carry_pending })),',
       '      )),',
       '    )),',

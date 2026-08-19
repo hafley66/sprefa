@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "vitest";
+import { test } from "node:test";
 
 import { ProcessAdapters } from "../serve/1_hosts.ts";
 import type { IRowValue } from "../runtime/types.ts";

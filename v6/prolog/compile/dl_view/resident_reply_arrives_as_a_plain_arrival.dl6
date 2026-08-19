@@ -1,0 +1,38 @@
+prev_same_role(Session, TurnNumber) <-
+  turn(Session, TurnNumber, _, Role, _),
+  turn(Session, PrevNumber, _, Role, _),
+  PrevNumber == TurnNumber - 1.
+run_start(Session, TurnNumber, Role) <-
+  turn(Session, TurnNumber, _, Role, _),
+  not(prev_same_role(Session, TurnNumber)).
+later_start_between(Session, RunTurn, TurnNumber) <-
+  run_start(Session, RunTurn, _),
+  run_start(Session, LaterTurn, _),
+  turn(Session, TurnNumber, _, _, _),
+  RunTurn < LaterTurn,
+  LaterTurn =< TurnNumber.
+run_member(Session, RunTurn, TurnNumber) <-
+  run_start(Session, RunTurn, _),
+  turn(Session, TurnNumber, _, _, _),
+  RunTurn =< TurnNumber,
+  not(later_start_between(Session, RunTurn, TurnNumber)).
+run_said(Session, RunTurn, Role, TurnNumber, Said) <-
+  run_start(Session, RunTurn, Role),
+  run_member(Session, RunTurn, TurnNumber),
+  turn(Session, TurnNumber, _, _, Said).
+run(Session, RunTurn, Role, group_concat(Said, "\n", TurnNumber)) <- run_said(Session, RunTurn, Role, TurnNumber, Said).
+run_between(Session, AiRun, UserRun) <-
+  run_start(Session, AiRun, _),
+  run_start(Session, UserRun, _),
+  run_start(Session, MidRun, _),
+  AiRun < MidRun,
+  MidRun < UserRun.
+bundle(Session, AiRun, UserRun, AiText, UserText) <-
+  run(Session, AiRun, 'assistant', AiText),
+  run(Session, UserRun, 'user', UserText),
+  AiRun < UserRun,
+  not(run_between(Session, AiRun, UserRun)).
+resident_ask(Session, UserRun, Prompt) <-
+  bundle(Session, _, UserRun, AiText, UserText),
+  Prompt := concat(['<ai>\n', AiText, '\n</ai>\n<user>\n', UserText, '\n</user>']).
+handled(Session, UserRun) <- resident(Session, UserRun, _, _).

@@ -1,0 +1,13 @@
+rel sym(name: text).
+rel sym_parts(name: text, parts: list(text)).
+rel sym_word(name: text, word: text).
+rel pascal(name: text, rendered: text).
+
+sym_parts(Name, Parts) <-
+  sym(Name),
+  Parts := split(Name, '_').
+sym_word(Name, Word) <-
+  sym_parts(Name, Parts),
+  decode(Parts, [... Part]),
+  Word := initcap(Part).
+pascal(Name, group_concat(Word, '')) <- sym_word(Name, Word).

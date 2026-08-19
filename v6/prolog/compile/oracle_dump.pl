@@ -19,7 +19,13 @@ dump_all :-
     findall(Name, fixture(Name, _, _, _, _), Names),
     forall(member(Name, Names), dump_one(OutDir, Name)).
 
+% A fixture whose oracle FAILS rather than throws used to take the whole dump
+% down with it, silently and with no name: forall/2 propagated the failure and
+% the process exited 1 after the last ORACLE_OK line.
 dump_one(OutDir, Name) :-
+    ( dump_one_(OutDir, Name) -> true ; format("ORACLE_FAIL ~w~n", [Name]) ).
+
+dump_one_(OutDir, Name) :-
     catch(
         ( fixture(Name, Prog, Initial, Schedule, _Expectations),
           with_output_to(string(Text), print_ticklog(Prog, Initial, Schedule)),

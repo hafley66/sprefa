@@ -68,15 +68,15 @@
     },
     "decl-words": {
       "name": "storage.type.declaration.dl6",
-      "match": "\\b(rel|sh|bind|log|keep|key|int|float|bool|text|json|salt)\\b"
+      "match": "\\b(rel|sh|bind|log|keep|key|int|float|bool|text|json|bytes|salt)\\b"
     },
     "live-keywords": {
       "name": "keyword.control.dl6",
-      "match": "\\b(avg|bind_decl|coalesce|combine|count|decode|finalize|group_concat|is|json_group_array|latest|match|max|min|next|not|now|pre|probe|query|regexp|seq|sh_decl|sum|true|ts_query)\\b"
+      "match": "\\b(avg|bind_decl|coalesce|combine|count|decode|finalize|group_concat|is|json_group_array|json_object|latest|match|max|min|next|not|now|pre|probe|query|regexp|seq|sh_decl|sum|true|ts_query)\\b"
     },
     "reserved-keywords": {
       "name": "invalid.illegal.reserved.dl6",
-      "match": "\\b(complete|error|json_array|json_each|json_object|scan|set|sg_pattern|subscribe|unsubscribe|zip)\\b"
+      "match": "\\b(complete|error|json_array|json_each|scan|set|sg_pattern|subscribe|unsubscribe|zip)\\b"
     },
     "relation-call": {
       "name": "entity.name.function.dl6",

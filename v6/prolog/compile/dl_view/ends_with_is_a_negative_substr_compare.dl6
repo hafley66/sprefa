@@ -1,0 +1,7 @@
+rel path(name: text).
+rel is_prolog(name: text).
+
+is_prolog(Name) <-
+  path(Name),
+  Tail := substr(Name, 0 - length('.pl')),
+  Tail == '.pl'.

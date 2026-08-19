@@ -16,6 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # sprefa-extract and sprefa-engine-rs depend on `../../../hafley-rs/crates/soopy`
+      # by path: the sibling must sit beside the workspace, out of checkout's `path:` reach.
+      - name: Clone hafley-rs beside the workspace
+        run: git clone --depth 1 https://github.com/hafley66/hafley-rs "$GITHUB_WORKSPACE/../hafley-rs"
+
       - name: Install SWI-Prolog
         run: brew install swi-prolog
 
@@ -53,15 +58,21 @@ jobs:
         working-directory: v6/sprefa-store/js
         run: pnpm install --frozen-lockfile
 
-      # Corpus is generated, not committed; sweep before green-all's readers.
+      # Writes gen_emitted/ and compile/out/ for green-all's readers; sweep.sh's
+      # own grading verdict is the allowlisted `sweep` leg's, not this step's.
       - name: Generate text-door corpus
+        continue-on-error: true
         working-directory: v6/tsv2
         run: bash scripts/sweep.sh
 
+      # Under the default `bash -e`, a red leg would end the job here and the
+      # allowlist step below would decide nothing.
       - name: Run green-all gate
         id: gate
+        continue-on-error: true
         working-directory: v6
         run: |
+          set +e
           just green-all > green-all.log 2>&1
           rc=$?
           echo "green-all rc=$rc"

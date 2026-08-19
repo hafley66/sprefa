@@ -37,18 +37,15 @@ COMPILE_DIR="../prolog/compile"
 COMPILE_OUT="$COMPILE_DIR/out"
 
 echo "=== stage 1: compile sweep ==="
-# gc(false): swipl 10.0.2 aborts this batch under -g with
-#   "system error: Mismatch in up phase" (GC compaction bug, deterministic
-#   at the 88th collection once the corpus reached 163 fixtures; the same
-#   goal typed at the toplevel completes). One-shot process, peak RSS is
-#   tens of MB without GC, so disabling it is free. Receipt 2026-07-29.
-# Budget: the whole four-stage sweep measures 8.3s on this machine (196
-# fixtures) and this is its largest leg. 900s is ~100x the whole run, chosen
-# because a compile sweep that has not finished in fifteen minutes has hit a
-# cliff, not a corpus -- and because the leg's honest wall is small enough that
-# a tight multiple of it would be measuring machine load rather than the sweep.
+# GC stays ON. The corpus outgrew the `set_prolog_flag(gc,false)` workaround
+# this stage carried for the swipl 10.0.2 "Mismatch in up phase" compaction
+# abort: at 462 fixtures the collector-free heap never stops growing and the
+# stage runs past its whole 900s budget, where with GC on it completes in ~75s
+# at ~2.4 GB peak. The abort itself no longer reproduces on this corpus.
+# Budget: 900s is ~12x the measured wall; a compile sweep that has not finished
+# in fifteen minutes has hit a cliff, not a corpus.
 capped "${SWEEP_COMPILE_BUDGET_S:-900}" "stage 1 compile sweep" \
-  swipl -q -l "$COMPILE_DIR/../sweep.pl" -g 'set_prolog_flag(gc,false), sweep' -g halt
+  swipl -q -l "$COMPILE_DIR/../sweep.pl" -g sweep -g halt
 
 echo ""
 echo "=== stage 2: oracle dump ==="
