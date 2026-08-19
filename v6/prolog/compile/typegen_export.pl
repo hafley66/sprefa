@@ -22,6 +22,7 @@
 %   {"rel":"type_relation_owner","sign":"add","row":[<owner_id>,<module_id>,"<name>"]}
 
 :- module(typegen_export, [ dump_type_rows/2, dump_fixture_rows/3,
+                            dump_dl6_rows/3,
                             write_prolog_types/2 ]).
 
 :- use_module(library(http/json)).
@@ -29,6 +30,7 @@
 :- use_module(library(pairs)).
 
 :- use_module('../compile', [ program_plan/3 ]).
+:- use_module('../compile', [ dl6_seeded_form/3 ]).
 :- use_module('../lower', [ catalog_type_rows/6,
                             catalog_type_transport_rows/4,
                             catalog_type_relation_rows/3 ]).
@@ -37,6 +39,7 @@
 :- use_module('7_emit_ts_types', [ ts_types_text/3 ]).
 :- use_module('8_emit_rust_types', [ rust_type_relation_impl_texts/2,
                                       rust_type_relation_owner_name/3 ]).
+:- use_module('../use_resolve', [ expand_uses/8 ]).
 
 %! dump_type_rows(+CompiledProgram, +JsonlPath) is det.
 %   CompiledProgram = plan(Name, prog(Decls, Rules), _, RelPlans, _, _, _, _, Mode).
@@ -66,6 +69,22 @@ dump_fixture_rows(FixtureFile, FixtureName, JsonlPath) :-
     open(FixtureFile, read, Stream),
     call_cleanup(read_fixture_term(Stream, FixtureName, Term-Bindings), close(Stream)),
     program_plan(Term-Bindings, [intern(dict)], Plan),
+    dump_type_rows(Plan, JsonlPath).
+
+%! dump_dl6_rows(+Dl6File, +FixtureName, +JsonlPath) is det.
+%   The real-source door: parse and expand the authored .dl6 file, retain its
+%   seeded rows, and send the resulting plan through the same catalog/typegen
+%   path as dump_fixture_rows/3.  Keeping this here makes the CI receipt prove
+%   parser -> use expansion -> catalog -> typegen rather than only exercising
+%   hand-built fixture terms.
+dump_dl6_rows(Dl6File, FixtureName, JsonlPath) :-
+    expand_uses(Dl6File, [], [], _, Program, _, Bindings, Findings),
+    ( Findings == [] -> true
+    ; throw(unsupported_construct(surface_findings(Findings)))
+    ),
+    dl6_seeded_form(Program, Initial, SeededProgram),
+    program_plan(fixture(FixtureName, SeededProgram, Initial, [], [])-Bindings,
+                 [intern(dict)], Plan),
     dump_type_rows(Plan, JsonlPath).
 
 read_fixture_term(Stream, Name, Out) :-

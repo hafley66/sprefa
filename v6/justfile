@@ -501,7 +501,12 @@ perf-all-deep:
 # ── batteries ──
 
 # the review-gate battery minus the slow sweep; what a merge must pass
-green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex store-test dd-grade rust-grade
+green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex typegen-golden store-test dd-grade rust-grade
+
+# Compiler-authored DL6 type artifacts, direct/DL6 parity, target compilation,
+# schema validation, and the selected product/sum runtime tests.
+typegen-golden:
+	TYPEGEN_PORT=17820 bash {{ v6 }}/prolog/compile/test/typegen_golden.sh
 
 # everything, phased: scale-floor alone (its verdict is a wall reading), then
 # the memory leak test alone (its flatness check reddens under a load ramp),

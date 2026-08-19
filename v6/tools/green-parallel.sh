@@ -47,6 +47,7 @@ PHASE_B=(
   "watch-scale"
   "catalog-audit:CATALOG_AUDIT_PORT=17815"
   "ghcacher-golden:TSV2_PARITY_PORT=17811"
+  "typegen-golden:TYPEGEN_PORT=17820"
   "one-subscribe"
 )
 

@@ -21,6 +21,7 @@ TSV2_DIR="$V6_DIR/tsv2"
 RENDERER="$V6_DIR/dl/typegen/render_ts.dl6"
 RUST_RENDERER="$V6_DIR/dl/typegen/render_rust.dl6"
 GOLDEN_DIR="$SCRIPT_DIR/typegen_golden"
+SCHEMA_VALIDATOR="$SCRIPT_DIR/0_typegen_schema_validate.mjs"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/typegen-golden.XXXXXX")"
 FAILED=0
@@ -31,6 +32,8 @@ PINNED=(
   "nested_list_of_text_round_trips:10_list_elements.pl"
   "list_of_json_documents_round_trips:10_list_elements.pl"
   "split_initcap_and_fold_render_pascal_case:15_string_split.pl"
+  "anonymous-type-syntax:$V6_DIR/dl/fixtures/anonymous-type-syntax.dl6"
+  "rust-associated-outputs:$V6_DIR/dl/fixtures/rust-associated-outputs.dl6"
 )
 
 # Constructs the current type-plane door mints for no fixture; rows checked in
@@ -62,8 +65,7 @@ dump_rows() { # name fixture_file -> writes $WORK/<name>.jsonl
 
 render_fixture() { # name renderer outfile -> writes $WORK/<outfile>
   local name="$1" renderer="$2" outfile="$3"
-  local port
-  port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+  local port="${TYPEGEN_PORT:-17820}"
   local base="http://127.0.0.1:$port"
   local server_pid=""
 
@@ -113,6 +115,67 @@ render_prolog() { # name -> writes $WORK/<name>.prolog.ts from the same JSONL
   [ -s "$WORK/$name.prolog.ts" ]
 }
 
+render_prolog_schema() { # name -> writes $WORK/<name>.schema.json
+  local name="$1"
+  ( cd "$PROLOG_DIR" && swipl -q -l "$COMPILE_DIR/typegen_export.pl" \
+      -g "typegen_export:read_row_lines('$WORK/$name.jsonl', Rows), emit_jsonschema:jsonschema_text('$name', Rows, Text), open('$WORK/$name.schema.json', write, Stream), format(Stream, '~s', [Text]), close(Stream)" \
+      -g halt 2>/dev/null )
+  [ -s "$WORK/$name.schema.json" ]
+}
+
+compile_ts() {
+  local name="$1"
+  ( cd "$TSV2_DIR" && pnpm exec tsgo --ignoreConfig --noEmit --strict \
+      --skipLibCheck "$WORK/$name.types.ts" )
+}
+
+compile_rust() {
+  local name="$1"
+  local crate="$WORK/rust-$name"
+  mkdir -p "$crate/src"
+  cp "$WORK/$name.types.rs" "$crate/src/lib.rs"
+  cat >"$crate/Cargo.toml" <<'EOF'
+[package]
+name = "typegen_artifact"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+EOF
+  if [ "$name" = "generic_expansion_end_to_end" ]; then
+    cat >>"$crate/src/lib.rs" <<'EOF'
+
+#[cfg(test)]
+mod generated_value_tests {
+    use super::Person;
+
+    #[test]
+    fn product_value_round_trips_through_serde() {
+        let value = Person { id: 7, name: "Ada".to_owned() };
+        let wire = serde_json::to_string(&value).unwrap();
+        assert_eq!(serde_json::from_str::<Person>(&wire).unwrap(), value);
+    }
+}
+EOF
+  fi
+  cargo test --quiet --manifest-path "$crate/Cargo.toml"
+}
+
+validate_schema() {
+  local name="$1" kind="$2"
+  node "$SCHEMA_VALIDATOR" "$WORK/$name.schema.json" "$kind"
+}
+
+runtime_checks() {
+  ( cd "$PROLOG_DIR" && swipl -q -l compile/test/plunit_tests.pl \
+      -g "run_tests([anonymous_product_values, anonymous_sum_values])" -g halt )
+  ( cd "$TSV2_DIR" && node --test --experimental-transform-types \
+      tests/enumPlane.test.ts )
+  ( cd "$V6_DIR/sprefa-engine-rs" && cargo test --quiet --lib enum_plane )
+}
+
 # @comment-ok: 8_emit_rust_types has no JSONL reader; the rows come out of
 # typegen_export's reader (unexported, reached by module qualification), then
 # rust_types_text/3 renders them, so one golden judges both rust doors.
@@ -150,6 +213,12 @@ judge() { # name -> diffs the dl6 render and the prolog render against one golde
     FAILED=1
     return
   fi
+  if ! diff -u "$WORK/$name.types.ts" "$WORK/$name.prolog.ts" >"$WORK/$name.door.diff" 2>&1; then
+    echo "FAIL  $name: direct Prolog and DL6 renderers differ"
+    cat "$WORK/$name.door.diff"
+    FAILED=1
+    return
+  fi
   echo "PASS  $name"
 }
 
@@ -178,7 +247,59 @@ judge_rust() { # name -> diffs the rust dl6 render and the rust prolog render ag
     FAILED=1
     return
   fi
+  if ! diff -u -B "$WORK/$name.types.rs" "$WORK/$name.prolog.rs" >"$WORK/$name.rust.door.diff" 2>&1; then
+    echo "FAIL  $name: direct Prolog and DL6 Rust renderers differ"
+    cat "$WORK/$name.rust.door.diff"
+    FAILED=1
+    return
+  fi
   echo "PASS  $name (rust)"
+}
+
+judge_source() { # name -> parity and target compilation for a real .dl6 source
+  local name="$1" kind="plain"
+  case "$name" in
+    anonymous-type-syntax) kind="sum" ;;
+    rust-associated-outputs) kind="product" ;;
+  esac
+  if ! render_fixture "$name" "$RENDERER" "$name.types.ts"; then
+    echo "FAIL  $name: render_ts.dl6 did not run on tsv2"
+    FAILED=1
+    return
+  fi
+  if ! render_prolog "$name" || ! diff -u "$WORK/$name.types.ts" "$WORK/$name.prolog.ts" >"$WORK/$name.door.diff" 2>&1; then
+    echo "FAIL  $name: direct Prolog and DL6 TS renderers differ"
+    cat "$WORK/$name.door.diff" 2>/dev/null || true
+    FAILED=1
+    return
+  fi
+  if ! compile_ts "$name"; then
+    echo "FAIL  $name: generated TypeScript did not compile"
+    FAILED=1
+    return
+  fi
+  if ! render_fixture "$name" "$RUST_RENDERER" "$name.types.rs"; then
+    echo "FAIL  $name: render_rust.dl6 did not run on tsv2"
+    FAILED=1
+    return
+  fi
+  if ! render_rust_prolog "$name" || ! diff -u -B "$WORK/$name.types.rs" "$WORK/$name.prolog.rs" >"$WORK/$name.rust.door.diff" 2>&1; then
+    echo "FAIL  $name: direct Prolog and DL6 Rust renderers differ"
+    cat "$WORK/$name.rust.door.diff" 2>/dev/null || true
+    FAILED=1
+    return
+  fi
+  if ! compile_rust "$name"; then
+    echo "FAIL  $name: generated Rust temporary crate did not test"
+    FAILED=1
+    return
+  fi
+  if ! render_prolog_schema "$name" || ! validate_schema "$name" "$kind"; then
+    echo "FAIL  $name: generated JSON Schema did not validate"
+    FAILED=1
+    return
+  fi
+  echo "PASS  $name (real dl6, TS/Rust/schema)"
 }
 
 main() {
@@ -186,6 +307,15 @@ main() {
   for entry in "${PINNED[@]}"; do
     local name="${entry%%:*}"
     local fixture_file="${entry##*:}"
+    if [[ "$fixture_file" = "$V6_DIR/dl/fixtures/"* ]]; then
+      if ! swipl_run "typegen_export:dump_dl6_rows('$fixture_file', '$name', '$WORK/$name.jsonl')"; then
+        echo "FAIL  $name: real dl6 parser/expansion/typegen export failed"
+        FAILED=1
+        continue
+      fi
+      judge_source "$name"
+      continue
+    fi
     if ! dump_rows "$name" "$fixture_file"; then
       echo "FAIL  $name: dump_type_rows failed"
       FAILED=1
@@ -200,6 +330,13 @@ main() {
     judge "$name"
     judge_rust "$name"
   done
+
+  if ! runtime_checks; then
+    echo "FAIL  runtime product/sum checks"
+    FAILED=1
+  else
+    echo "PASS  runtime product/sum checks (Prolog, TSV2, Rust)"
+  fi
 
   if [ "$FAILED" = 1 ]; then
     echo "TYPEGEN GOLDEN: FAIL"

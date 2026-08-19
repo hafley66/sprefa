@@ -17,7 +17,7 @@ const types: readonly IEnumTypePlan[] = [
   ] },
 ];
 
-const refs: IEnumRefColumns = { resident: [{ name: "choice", endpoint_index: 0 }] };
+const refs: IEnumRefColumns = { resident: [null, { name: "choice", endpoint_index: 0 }] };
 let active = "none";
 
 const seam = {
@@ -53,13 +53,13 @@ test("enum egress yields structured nullary text list relation and nested values
     ["nested", { tag: "nested", value: { tag: "text", value: "inside" } }],
   ] as const) {
     active = tag;
-    const rows = await firstValueFrom(EnumPlane.decode_rows(seam, types, refs, [], "resident", [[7]]));
-    assert.deepEqual(rows, [[expected]], tag);
+    const rows = await firstValueFrom(EnumPlane.decode_rows(seam, types, refs, [], "resident", [[7, 7]]));
+    assert.deepEqual(rows, [[7, expected]], tag);
   }
 });
 
 test("structured enum rows survive final response serialization", async () => {
   active = "none";
-  const rows = await firstValueFrom(EnumPlane.decode_rows(seam, types, refs, [], "resident", [[7]]));
-  assert.equal(JSON.stringify({ rows }), '{"rows":[[{"tag":"none"}]]}');
+  const rows = await firstValueFrom(EnumPlane.decode_rows(seam, types, refs, [], "resident", [[7, 7]]));
+  assert.equal(JSON.stringify({ rows }), '{"rows":[[7,{"tag":"none"}]]}');
 });
