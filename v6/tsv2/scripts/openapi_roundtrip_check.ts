@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 
@@ -14,7 +14,6 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TSV2 = path.resolve(HERE, "..");
 const V6 = path.resolve(TSV2, "..");
 const DL_FIXTURES = path.join(V6, "dl", "fixtures");
-const COMPILE_SH = path.join(V6, "prolog", "compile", "scripts", "compile_dl6.sh");
 const PROLOG_DIR = path.join(V6, "prolog");
 
 const SOURCE = process.argv[2] ?? path.join(DL_FIXTURES, "pokeapi.openapi.yml");
@@ -174,16 +173,15 @@ function main(): void {
   // outside the package so the typechecker never scans the emit artifact.
   const compileOut = path.join(os.tmpdir(), "pe_pokeapi_gen.ts");
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const cp = spawnSync(COMPILE_SH, [GEN_DL6, compileOut], { encoding: "utf8", timeout: 120000 });
-  const compileExit = cp.status;
-  const compileStdout = (cp.stdout ?? "") + (cp.stderr ?? "");
-
-  // Emit step (step 3): attempt 4/5; record refusal (G3).
-  const emitDoc = spawnSync("swipl", ["-l", path.join(HERE, "pe_emit_driver.pl"), "-g", `main('${GEN_DL6}','${OUT_DIR}')`, "-g", "halt"], {
+  // Compile and emit-back share one parsed and planned program. The former
+  // two-process gate compiled the same 373-relation program twice.
+  const emitDoc = spawnSync("swipl", ["-l", path.join(HERE, "pe_emit_driver.pl"), "-g", `main('${GEN_DL6}','${OUT_DIR}','${compileOut}')`, "-g", "halt"], {
     cwd: PROLOG_DIR,
     encoding: "utf8",
     timeout: 120000,
   });
+  const compileExit = emitDoc.status;
+  const compileStdout = (emitDoc.stdout ?? "") + (emitDoc.stderr ?? "");
   const emitStdout = (emitDoc.stdout ?? "") + (emitDoc.stderr ?? "");
   const emitOk = fs.existsSync(path.join(OUT_DIR, "schema.json")) && fs.existsSync(path.join(OUT_DIR, "openapi.json"));
 
@@ -287,7 +285,7 @@ function main(): void {
   lines.push(`Source: \`${SOURCE}\``);
   lines.push(`Generated: \`${GEN_DL6}\``);
   lines.push("");
-  lines.push(`compile (compile_dl6.sh) exit code: ${compileExit === null ? "TIMEOUT" : compileExit}`);
+  lines.push(`compile + emit-back driver exit code: ${compileExit === null ? "TIMEOUT" : compileExit}`);
   lines.push(`emit-back (4_emit_jsonschema / 5_emit_openapi): ${emitOk ? "OK" : "REFUSED (json_list serialization gap, G3)"}`);
   lines.push(`source components: ${sourceModel.size} | generated component rels: ${compRels.length} | lifted/enum rels: ${liftedRels.size}`);
   lines.push("");

@@ -294,9 +294,13 @@ attach(query, I, Ds, Rs, Qs, Ds, Rs, [I | Qs]).
 cst_extra(comment, '#.*').
 
 ws(S0, S) :-
-    ( S0 = [C | S1], code_type(C, space) -> ws(S1, S)
-    ; S0 = [0'# | S1] -> skip_to_eol(S1, S2), ws(S2, S)
-    ; S = S0, mark(S0)
+    ws_skip(S0, S),
+    ( S0 == S -> true ; mark(S) ).
+
+ws_skip(S0, S) :-
+    ( S0 = [C | S1], code_type(C, space) -> ws_skip(S1, S)
+    ; S0 = [0'# | S1] -> skip_to_eol(S1, S2), ws_skip(S2, S)
+    ; S = S0
     ).
 
 skip_to_eol(S0, S) :-
@@ -371,6 +375,7 @@ float_tail(Cs) -->
 float_tail(Cs) --> exp(Cs).
 
 exp([M | Cs]) -->
+    here(Remaining), { mark(Remaining) },
     [M], { memberchk(M, `eE`) },
     ( [S], { memberchk(S, `+-`) } -> { Sign = [S] } ; { Sign = [] } ),
     digits1(Ds),
@@ -524,9 +529,47 @@ relation_arrow_output(Segs, Specs, ArrowSpecs) -->
 % Parameters only when a SECOND group follows; the peek below decides it
 % standing at the first group's closing paren.
 generic_parameters(Parameters) -->
+    here(Input), { generic_parameter_group_ahead(Input) },
     #`(`, args(generic_parameter, Parameters), { Parameters \== [] }, #`)`, ws,
     peek(0'(),
     { check_distinct_parameters(Parameters) }.
+
+generic_parameter_group_ahead([0'( | Rest]) :-
+    balanced_group_tail(Rest, 1, After),
+    whitespace_tail(After, [0'( | _]).
+
+balanced_group_tail([0'( | Rest], Depth0, After) :- !,
+    Depth is Depth0 + 1,
+    balanced_group_tail(Rest, Depth, After).
+balanced_group_tail([0') | Rest], 1, Rest) :- !.
+balanced_group_tail([0') | Rest], Depth0, After) :- !,
+    Depth is Depth0 - 1,
+    balanced_group_tail(Rest, Depth, After).
+balanced_group_tail([Quote | Rest], Depth, After) :-
+    memberchk(Quote, [0'\', 0'"]), !,
+    balanced_quoted_tail(Quote, Rest, QuotedAfter),
+    balanced_group_tail(QuotedAfter, Depth, After).
+balanced_group_tail([0'# | Rest], Depth, After) :- !,
+    skip_to_eol(Rest, CommentAfter),
+    balanced_group_tail(CommentAfter, Depth, After).
+balanced_group_tail([_ | Rest], Depth, After) :-
+    balanced_group_tail(Rest, Depth, After).
+
+balanced_quoted_tail(Quote, [Quote, Quote | Rest], After) :- !,
+    balanced_quoted_tail(Quote, Rest, After).
+balanced_quoted_tail(Quote, [Quote | Rest], Rest) :- !.
+balanced_quoted_tail(Quote, [0'\\, _ | Rest], After) :- !,
+    balanced_quoted_tail(Quote, Rest, After).
+balanced_quoted_tail(Quote, [_ | Rest], After) :-
+    balanced_quoted_tail(Quote, Rest, After).
+
+whitespace_tail([C | Rest], After) :-
+    code_type(C, space), !,
+    whitespace_tail(Rest, After).
+whitespace_tail([0'# | Rest], After) :- !,
+    skip_to_eol(Rest, CommentAfter),
+    whitespace_tail(CommentAfter, After).
+whitespace_tail(After, After).
 
 generic_parameter(type_parameter(Name, Constraints)) -->
     ident(Name), ws,

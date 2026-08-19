@@ -251,20 +251,30 @@ check_path_collisions([SegmentsA-NameA, SegmentsB-NameB | Rest]) :-
 declared_path(Decls, Segments, Name) :-
     member(rel_path_decl(Name/_, Segments), Decls).
 declared_path(Decls, [Name], Name) :-
-    declared_flat_name(Decls, Name),
-    \+ member(rel_path_decl(Name/_, _), Decls).
+    declared_flat_names(Decls, Names),
+    declared_path_names(Decls, PathNames),
+    member(Name, Names),
+    \+ memberchk(Name, PathNames).
 % The mount graft. The mounted module's rel keeps its own flat NAME, so a
 % reference through the alias resolves by identity and mints no new rel.
 declared_path(Decls, [Alias | Segments], Name) :-
     member(mount_decl(Alias, _Mounted, _Owner, Paths), Decls),
     member(Segments-Name, Paths).
 
-declared_flat_name(Decls, Name) :- member(col_type(Name/_, _, _), Decls).
-declared_flat_name(Decls, Name) :- member(kind(Name/_, _), Decls).
-declared_flat_name(Decls, Name) :- member(keyed(Name/_, _), Decls).
-declared_flat_name(Decls, Name) :- member(keep(Name/_, _), Decls).
-declared_flat_name(Decls, Name) :- member(type_decl(Name, _), Decls).
-declared_flat_name(Decls, Name) :- member(enum_decl(Name, _), Decls).
+declared_flat_names(Decls, Names) :-
+    findall(Name, declared_flat_name_raw(Decls, Name), Names0),
+    sort(Names0, Names).
+
+declared_path_names(Decls, Names) :-
+    findall(Name, member(rel_path_decl(Name/_, _), Decls), Names0),
+    sort(Names0, Names).
+
+declared_flat_name_raw(Decls, Name) :- member(col_type(Name/_, _, _), Decls).
+declared_flat_name_raw(Decls, Name) :- member(kind(Name/_, _), Decls).
+declared_flat_name_raw(Decls, Name) :- member(keyed(Name/_, _), Decls).
+declared_flat_name_raw(Decls, Name) :- member(keep(Name/_, _), Decls).
+declared_flat_name_raw(Decls, Name) :- member(type_decl(Name, _), Decls).
+declared_flat_name_raw(Decls, Name) :- member(enum_decl(Name, _), Decls).
 
 insert_path(Segments-Name, node(Local, Resolved, Children0),
             node(Local, Resolved, Children)) :-

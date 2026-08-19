@@ -10,6 +10,7 @@
 :- use_module(library(http/json)).
 :- use_module(library(lists)).
 :- use_module(library(pairs)).
+:- use_module(library(assoc)).
 
 jsonschema_text(Name, Rows, Text) :-
     jsonschema_document(Name, Rows, Doc),
@@ -37,6 +38,13 @@ entry_module_details(Name, Rows, ModuleId, Hash) :-
     ModuleRow = row(ModuleId, _, _, _, module, _, _, _, Hash, _, _).
 
 module_defs(ModuleId, Rows, RefPrefix, Pairs) :-
+    schema_row_indexes(Rows, Indexes),
+    setup_call_cleanup(
+        nb_setval(jsonschema_row_indexes, Indexes),
+        module_defs_indexed(ModuleId, Rows, RefPrefix, Pairs),
+        nb_delete(jsonschema_row_indexes)).
+
+module_defs_indexed(ModuleId, Rows, RefPrefix, Pairs) :-
     findall(RelRow,
             ( member(RelRow, Rows),
               RelRow = row(_, _, _, LocalName, rel, _, _, ModuleId, _, _, _),
@@ -329,10 +337,14 @@ rel_def_pair(Rows, RefPrefix, RelRow, Key-Schema) :-
 
 rel_object(Rows, RefPrefix, RelRow, Schema) :-
     RelRow = row(RelId, _, _, _, _, _, _, _, _, _, _),
-    findall(Ord-ColumnId-ColumnName-ColumnTypeId,
-            member(row(ColumnId, RelId, Ord, ColumnName, column, ColumnTypeId,
-                       _, _, _, _, _), Rows),
-            Triples0),
+    (   nb_current(jsonschema_row_indexes, indexes(_, Columns, _)),
+        get_assoc(RelId, Columns, Triples0)
+    ->  true
+    ;   findall(Ord-ColumnId-ColumnName-ColumnTypeId,
+                member(row(ColumnId, RelId, Ord, ColumnName, column, ColumnTypeId,
+                           _, _, _, _, _), Rows),
+                Triples0)
+    ),
     keysort(Triples0, Triples),
     maplist(column_property(Rows, RefPrefix), Triples, Pairs),
     pairs_keys(Pairs, Required),
@@ -350,7 +362,10 @@ column_property(Rows, RefPrefix, _Ord-ColumnId-ColumnName-ColumnTypeId,
     ).
 
 relation_id_storage(Rows, ColumnId) :-
-    member(row(_, ColumnId, _, relation_id, storage, _, _, _, _, _, _), Rows).
+    (   nb_current(jsonschema_row_indexes, indexes(_, _, Storage))
+    ->  get_assoc(ColumnId, Storage, true)
+    ;   member(row(_, ColumnId, _, relation_id, storage, _, _, _, _, _, _), Rows)
+    ).
 
 relation_id_schema(Rows, TargetId,
                    _{ type: integer, '$comment': Comment }) :-
@@ -432,8 +447,11 @@ primitive_schema(bool,   _{ type: boolean }).
 primitive_schema(json,   _{}).
 
 row_at(Rows, RelId, Row) :-
-    member(Row, Rows),
-    Row = row(RelId, _, _, _, _, _, _, _, _, _, _).
+    (   nb_current(jsonschema_row_indexes, indexes(ById, _, _))
+    ->  get_assoc(RelId, ById, Row)
+    ;   member(Row, Rows),
+        Row = row(RelId, _, _, _, _, _, _, _, _, _, _)
+    ).
 
 rel_path(Rows, RelRow, Path) :-
     RelRow = row(_, ParentId, _, Name, rel, _, _, _, _, _, _),
@@ -444,5 +462,27 @@ rel_path(Rows, RelRow, Path) :-
     ).
 
 parent_rel_row(Rows, ParentId, ParentRow) :-
-    member(ParentRow, Rows),
-    ParentRow = row(ParentId, _, _, _, rel, _, _, _, _, _, _).
+    row_at(Rows, ParentId, ParentRow),
+    ParentRow = row(_, _, _, _, rel, _, _, _, _, _, _).
+
+schema_row_indexes(Rows, indexes(ById, Columns, Storage)) :-
+    empty_assoc(Empty),
+    foldl(index_schema_row, Rows,
+          indexes(Empty, Empty, Empty),
+          indexes(ById, Columns, Storage)).
+
+index_schema_row(Row, indexes(ById0, Columns0, Storage0),
+                 indexes(ById, Columns, Storage)) :-
+    Row = row(Id, ParentId, Ord, Name, Kind, TypeId, _, _, _, _, _),
+    put_assoc(Id, ById0, Row, ById),
+    (   Kind == column
+    ->  ( get_assoc(ParentId, Columns0, Existing) -> true ; Existing = [] ),
+        put_assoc(ParentId, Columns0,
+                  [Ord-Id-Name-TypeId | Existing], Columns)
+    ;   Columns = Columns0
+    ),
+    (   Kind == storage,
+        Name == relation_id
+    ->  put_assoc(ParentId, Storage0, true, Storage)
+    ;   Storage = Storage0
+    ).

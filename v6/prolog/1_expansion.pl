@@ -89,13 +89,21 @@ expand_program_run(SurfaceProgram0, Bindings, ExpandedProgram,
             expansion_phase(Order, Name, Expander),
             UnorderedPhases),
     msort(UnorderedPhases, OrderedPhases),
+    expansion_phase_start(SurfaceProgram, Bindings, DeclsForEnumContext,
+                          OrderedPhases, PhaseProgram, RemainingPhases),
     foldl(run_phase(expansion_context(EnumContext, Bindings)),
-          OrderedPhases,
-          SurfaceProgram, PhasedProgram),
+          RemainingPhases,
+          PhaseProgram, PhasedProgram),
     drop_minted_keyed_on_derived(EnumContext, PhasedProgram, DroppedProgram),
     merge_enum_type_rows(SurfaceDecls, DroppedProgram, EnumRowedProgram),
     merge_option_type_rows(EnumRowedProgram, ExpandedProgram),
     ExpansionContext = EnumContext.
+
+expansion_phase_start(prog(_, []), [], DeclsForEnumContext,
+                      [_-option-_ | RemainingPhases],
+                      prog(DeclsForEnumContext, []), RemainingPhases) :- !.
+expansion_phase_start(SurfaceProgram, _, _, OrderedPhases,
+                      SurfaceProgram, OrderedPhases).
 
 run_phase(_, _-_-unwired, Program, Program) :- !.
 % ast takes the whole context, every other phase the enum half; without the cut

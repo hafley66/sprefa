@@ -9,6 +9,7 @@
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
+:- use_module(library(assoc)).
 :- use_module(lower, [ departure_frontier_table_name/2,
                        departure_read_sql/3, struct_type_plans/3, struct_type_plans/4,
                        program_text_intern_plan/3,
@@ -353,16 +354,26 @@ enum_variant_field(Decls, VariantName, Field, EnumName) :- member(enum_column(Va
 enum_variant_field(Decls, VariantName, Field, EnumName) :- member(enum_option_payload(_, VariantName, Field, Element), Decls), option_enum_name(Element, EnumName), !.
 enum_variant_field(_, _, _, null).
 enum_ref_columns_map(Decls, RelPlans, Map) :-
+    enum_ref_index(Decls, EnumRefs),
     findall(Name-Refs, (member(RelPlan, RelPlans), relplan_parts(RelPlan, Ref, _, Columns, _, _),
-      ref_name(Ref, Name), enum_ref_fields(Decls, Ref, Columns, Columns, Refs), member(Field, Refs), Field \== null), Pairs),
+      ref_name(Ref, Name), enum_ref_fields(EnumRefs, Ref, Columns, Columns, Refs), member(Field, Refs), Field \== null), Pairs),
     pairs_to_dict(Pairs, Map).
+
+enum_ref_index(Decls, Index) :-
+    empty_assoc(Empty),
+    foldl(index_enum_ref, Decls, Empty, Index).
+index_enum_ref(enum_column(Ref, Column, EnumName), Index0, Index) :- !,
+    put_assoc(Ref-Column, Index0, EnumName, Index).
+index_enum_ref(option_column(Ref, Column, Element), Index0, Index) :- !,
+    option_enum_name(Element, EnumName),
+    put_assoc(Ref-Column, Index0, EnumName, Index).
+index_enum_ref(_, Index, Index).
+
 enum_ref_fields(_, _, _, [], []).
-enum_ref_fields(Decls, Ref, All, [Column | Rest], [Field | Fields]) :-
-    ( ( member(enum_column(Ref, Column, EnumName), Decls)
-      ; member(option_column(Ref, Column, Element), Decls), option_enum_name(Element, EnumName)
-      )
+enum_ref_fields(Index, Ref, All, [Column | Rest], [Field | Fields]) :-
+    ( get_assoc(Ref-Column, Index, EnumName)
     -> (nth0(EndpointIndex, All, id) -> Field = enumref(EnumName, EndpointIndex) ; Field = enumref(EnumName, null))
-    ; Field = null ), enum_ref_fields(Decls, Ref, All, Rest, Fields).
+    ; Field = null ), enum_ref_fields(Index, Ref, All, Rest, Fields).
 enum_plane_lines([], _, [ 'export const ENUM_TYPES: readonly IEnumTypePlan[] = [];',
                           'export const ENUM_REF_COLUMNS: IEnumRefColumns = {};'], false) :- !.
 enum_plane_lines(Plans, RefColumns, Lines, true) :-

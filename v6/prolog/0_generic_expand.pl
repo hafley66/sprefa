@@ -20,6 +20,7 @@
           ]).
 
 :- use_module(library(apply)).
+:- use_module(library(assoc)).
 :- use_module(library(crypto)).
 :- use_module(library(lists)).
 :- use_module('0_option_expand', [expand_option_decls/2, scalar_element/1]).
@@ -734,24 +735,35 @@ normalized_member_row(Decls, member(Id, Owner, Ordinal, Name, Type)) :-
 % entries.  Keep the normalized member graph available for those programs as
 % well as for parser-produced type_decl/2 entries.
 plain_relation_specs(Decls, OwnerName, Specs) :-
-    member(col_type(OwnerName/_, _, _), Decls),
+    setof(Name,
+          Arity^Column^Type^member(col_type(Name/Arity, Column, Type), Decls),
+          OwnerNames),
+    member(OwnerName, OwnerNames),
+    \+ memberchk(type_decl(OwnerName, _), Decls),
     findall(Name-Type,
             member(col_type(OwnerName/_, Name, Type), Decls), Pairs0),
     Pairs0 \== [],
-    maplist(pair_col, Pairs0, Specs),
-    \+ member(type_decl(OwnerName, _), Decls).
+    maplist(pair_col, Pairs0, Specs).
 
 pair_col(Name-Type, col(Name, Type)).
 
 % A template and a plain rel sharing a name mint one member id twice, once per
 % clause; the template clause runs first and its row wins.
-first_member_row_per_id([], []).
-first_member_row_per_id([Row | Rest], [Row | Kept]) :-
-    Row = member(Id, _, _, _, _),
-    exclude(member_row_of_id(Id), Rest, Remaining),
-    first_member_row_per_id(Remaining, Kept).
+first_member_row_per_id(Rows, Kept) :-
+    empty_assoc(Seen),
+    first_member_row_per_id(Rows, Seen, [], Reversed),
+    reverse(Reversed, Kept).
 
-member_row_of_id(Id, member(Id, _, _, _, _)).
+first_member_row_per_id([], _, Kept, Kept).
+first_member_row_per_id([Row | Rest], Seen0, Kept0, Kept) :-
+    Row = member(Id, _, _, _, _),
+    (   get_assoc(Id, Seen0, _)
+    ->  Seen = Seen0,
+        Kept1 = Kept0
+    ;   put_assoc(Id, Seen0, true, Seen),
+        Kept1 = [Row | Kept0]
+    ),
+    first_member_row_per_id(Rest, Seen, Kept1, Kept).
 
 normalized_constraint_row(Decls, constraint(Id, ParameterId, InterfaceId)) :-
     generic_owner_parameters(Decls, OwnerName, Parameters),
@@ -843,12 +855,15 @@ normalized_application_rows(Decls, Rows) :-
     append(Nested, Rows).
 
 source_generic_application(Decls, Application) :-
-    member(rel_template(_, _, _), Decls),
+    memberchk(rel_template(_, _, _), Decls),
+    source_generic_application_(Decls, Application).
+
+source_generic_application_(Decls, Application) :-
     member(type_decl(_, Specs), Decls),
     member(col(_, Type), Specs),
     sub_term(Application, Type),
     generic_application_name(Decls, Application).
-source_generic_application(Decls, Application) :-
+source_generic_application_(Decls, Application) :-
     member(col_type(_, _, Type), Decls),
     sub_term(Application, Type),
     generic_application_name(Decls, Application).
