@@ -24,6 +24,7 @@ import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
 import { list_at_scalar_seam } from "../runtime/boundary.ts";
 import { StructPlane } from "../runtime/structPlane.ts";
+import { EnumPlane } from "../runtime/enumPlane.ts";
 import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
@@ -40,6 +41,8 @@ import type {
   IRowScalar,
   IRowValue,
   ISqlSeam,
+  IEnumRefColumns,
+  IEnumTypePlan,
   IStructRefColumns,
   IStructTypePlan,
   ITextInternPlan,
@@ -58,7 +61,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -162,6 +165,16 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
   "__gen__result_host_error_boop_response_5731b3aa340db474_ok": [null, "boop_response"],
   "__gen__result_parse_error_syntax_tree_0284bcd3105168e0_err": [null, "parse_error"],
   "__gen__result_parse_error_syntax_tree_0284bcd3105168e0_ok": [null, "syntax_tree"],
+};
+
+export const ENUM_TYPES: readonly IEnumTypePlan[] = [
+  { name: "__gen__result_host_error_boop_response_5731b3aa340db474", variants: [{ tag: "err", rel: "__gen__result_host_error_boop_response_5731b3aa340db474_err", fields: ["error"], field_types: ["ref"], field_enums: [null], select_sql: `SELECT t."id", (SELECT d."__rendered" FROM "__ref_parameterized_enum_two_instantiations_host_error_7d244379ae82" d WHERE d."__id" = t."error") AS "error" FROM "parameterized_enum_two_instantiations___gen__result_host_error_boop_response_5731b3aa340db474_err" t` }, { tag: "ok", rel: "__gen__result_host_error_boop_response_5731b3aa340db474_ok", fields: ["value"], field_types: ["ref"], field_enums: [null], select_sql: `SELECT t."id", (SELECT d."__rendered" FROM "__ref_parameterized_enum_two_instantiations_boop_response_36bfb9fa46f1" d WHERE d."__id" = t."value") AS "value" FROM "parameterized_enum_two_instantiations___gen__result_host_error_boop_response_5731b3aa340db474_ok" t` }] },
+  { name: "__gen__result_parse_error_syntax_tree_0284bcd3105168e0", variants: [{ tag: "err", rel: "__gen__result_parse_error_syntax_tree_0284bcd3105168e0_err", fields: ["error"], field_types: ["ref"], field_enums: [null], select_sql: `SELECT t."id", (SELECT d."__rendered" FROM "__ref_parameterized_enum_two_instantiations_parse_error_3c1d3c669664" d WHERE d."__id" = t."error") AS "error" FROM "parameterized_enum_two_instantiations___gen__result_parse_error_syntax_tree_0284bcd3105168e0_err" t` }, { tag: "ok", rel: "__gen__result_parse_error_syntax_tree_0284bcd3105168e0_ok", fields: ["value"], field_types: ["ref"], field_enums: [null], select_sql: `SELECT t."id", (SELECT d."__rendered" FROM "__ref_parameterized_enum_two_instantiations_syntax_tree_f847d0ada39e" d WHERE d."__id" = t."value") AS "value" FROM "parameterized_enum_two_instantiations___gen__result_parse_error_syntax_tree_0284bcd3105168e0_ok" t` }] },
+];
+
+export const ENUM_REF_COLUMNS: IEnumRefColumns = {
+  "compile": [null, { name: "__gen__result_parse_error_syntax_tree_0284bcd3105168e0", endpoint_index: 0 }],
+  "fetch": [null, { name: "__gen__result_host_error_boop_response_5731b3aa340db474", endpoint_index: 0 }],
 };
 
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
@@ -560,13 +573,16 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
+      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, rels).pipe(
+        map((decoded): ITickDeltas => ({ rels: decoded, carry_pending })),
+      )),
     )),
   );
 }
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
+  arrivals = EnumPlane.intern(ENUM_TYPES, ENUM_REF_COLUMNS, arrivals);
   return run_incremental_tick(seam, arrivals);
 }
 
@@ -580,6 +596,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "parameterized_enum_two_instantiations",
+  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,
@@ -593,6 +610,8 @@ export const program: IGenProgramWithBoot = {
   query_plans,
   subscribed_rels,
   rel_catalog,
+  enum_types: ENUM_TYPES,
+  enum_ref_columns: ENUM_REF_COLUMNS,
   unsupported_execution,
   tick: run_tick,
 };

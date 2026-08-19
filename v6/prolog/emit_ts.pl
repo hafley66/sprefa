@@ -27,6 +27,11 @@
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
 
+% ═══ IR version ══════════════════════════════════════════════════════════════
+% emit_rust.pl carries the same number under the same spelling, and both runtimes
+% refuse a program document whose value is not the one they interpret.
+ir_version(1).
+
 % ═══ small text helpers ══════════════════════════════════════════════════════
 
 lines_block(Lines, Text) :- atomic_list_concat(Lines, '\n', Text).
@@ -448,7 +453,7 @@ local_types_lines(Plan,
         '  params: readonly IRowScalar[];',
         '}',
         '',
-        'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };'
+        'type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };'
       ], Lines).
 
 plan_has_structured_host(plan(_, prog(Decls, _), _, _, _, _, _, _, _)) :-
@@ -2504,6 +2509,7 @@ retraction_guard(plan(_, prog(_, Rules), _, _, _, _, _, _, _), Guard) :-
 program_export_lines(Name, InternMode,
     [ 'export const program: IGenProgramWithBoot = {',
       NameLine,
+      IrVersionLine,
       InternModeLine,
       '  ddl,',
       '  rel_columns,',
@@ -2524,6 +2530,8 @@ program_export_lines(Name, InternMode,
       '};'
     ]) :-
     format(atom(NameLine), '  name: "~w",', [Name]),
+    ir_version(IrVersion),
+    format(atom(IrVersionLine), '  ir_version: ~w,', [IrVersion]),
     format(atom(InternModeLine), '  internMode: "~w",', [InternMode]).
 
 % A database built by one mode is unreadable by the other, so the artifact

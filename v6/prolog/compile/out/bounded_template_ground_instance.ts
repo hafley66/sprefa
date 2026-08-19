@@ -24,6 +24,7 @@ import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
 import { list_at_scalar_seam } from "../runtime/boundary.ts";
 import { StructPlane } from "../runtime/structPlane.ts";
+import { EnumPlane } from "../runtime/enumPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -39,6 +40,8 @@ import type {
   IRowScalar,
   IRowValue,
   ISqlSeam,
+  IEnumRefColumns,
+  IEnumTypePlan,
   IStructRefColumns,
   IStructTypePlan,
   ITickDeltas,
@@ -56,7 +59,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -157,6 +160,9 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
   "edge": [null, "__gen__pair_int_8b7ec0fa0e1f9d69"],
 };
 
+export const ENUM_TYPES: readonly IEnumTypePlan[] = [];
+export const ENUM_REF_COLUMNS: IEnumRefColumns = {};
+
 const ddl: readonly string[] = [
   `CREATE TABLE "bounded_template_ground_instance___gen__pair_int_8b7ec0fa0e1f9d69" ("__id" INTEGER PRIMARY KEY, "first" INTEGER NOT NULL, "second" INTEGER NOT NULL, UNIQUE ("first", "second"))`,
   `CREATE TEMP VIEW "__ref_bounded_template_ground_instance___gen__pair_int_8b7ec0fa0e1f9d69" AS SELECT t."__id", "first", "second", json_object('first', t."first", 'second', t."second") AS "__rendered" FROM "bounded_template_ground_instance___gen__pair_int_8b7ec0fa0e1f9d69" t`,
@@ -226,13 +232,13 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 14, parent_id: 7, ordinal: 0, local_name: "edge", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "a10dbfacd2661c9f", h_schema: "9abd1899b8e1697a", h_rule: "" },
   { rel_id: 15, parent_id: 14, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "ffa6d11830e482ce", h_schema: "", h_rule: "" },
   { rel_id: 16, parent_id: 14, ordinal: 2, local_name: "endpoints", kind: "column", type_id: 8, arity: 0, module_id: 7, h_id: "9dcfd49d7a29c2b5", h_schema: "", h_rule: "" },
-  { rel_id: 17, parent_id: 7, ordinal: 0, local_name: "json_encodable", kind: "interface", type_id: 0, arity: 0, module_id: 7, h_id: "", h_schema: "decl:interface:json_encodable", h_rule: "" },
-  { rel_id: 18, parent_id: 7, ordinal: 0, local_name: "pair", kind: "generic_rel", type_id: 0, arity: 0, module_id: 7, h_id: "", h_schema: "decl:relation:pair", h_rule: "" },
-  { rel_id: 19, parent_id: 18, ordinal: 1, local_name: "T", kind: "type_parameter", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:pair:param:1:T", h_rule: "" },
-  { rel_id: 20, parent_id: 19, ordinal: 1, local_name: "json_encodable", kind: "constraint", type_id: 17, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:pair:param:1:T:constraint:decl:interface:json_encodable", h_rule: "" },
-  { rel_id: 21, parent_id: 18, ordinal: 1, local_name: "first", kind: "generic_column", type_id: 19, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:pair:member:1:first", h_rule: "" },
-  { rel_id: 22, parent_id: 18, ordinal: 2, local_name: "second", kind: "generic_column", type_id: 19, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:pair:member:2:second", h_rule: "" },
-  { rel_id: 23, parent_id: 8, ordinal: 0, local_name: "__gen__pair_int_8b7ec0fa0e1f9d69", kind: "concrete_type", type_id: 18, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:__gen__pair_int_8b7ec0fa0e1f9d69", h_rule: "" },
+  { rel_id: 17, parent_id: 7, ordinal: 0, local_name: "json_encodable", kind: "interface", type_id: 0, arity: 0, module_id: 7, h_id: "", h_schema: "41065078de40276dc2a51ecbe811318a0220ca8c192503f30a6e5f1aad903ced", h_rule: "" },
+  { rel_id: 18, parent_id: 7, ordinal: 0, local_name: "pair", kind: "generic_rel", type_id: 0, arity: 0, module_id: 7, h_id: "", h_schema: "d678a0feed78aeac65d62e71c2421c455f05cd579597dd603c73c714d4b97dd3", h_rule: "" },
+  { rel_id: 19, parent_id: 18, ordinal: 1, local_name: "T", kind: "type_parameter", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "437bb62db9a9b878c33e67a39d82a70110fce2a2537ba3f29c9c52361d8b35bb", h_rule: "" },
+  { rel_id: 20, parent_id: 19, ordinal: 1, local_name: "json_encodable", kind: "constraint", type_id: 17, arity: 0, module_id: 0, h_id: "", h_schema: "13a7c7f29b8925b68adc6bed02f2a5c0d6ce6b638b0f35c1122f983455c07b09", h_rule: "" },
+  { rel_id: 21, parent_id: 18, ordinal: 1, local_name: "first", kind: "generic_column", type_id: 19, arity: 0, module_id: 0, h_id: "", h_schema: "3d3d54a580297653dfb369297c14e1bde8b102e03e386a491b1d7d0629eb8122", h_rule: "" },
+  { rel_id: 22, parent_id: 18, ordinal: 2, local_name: "second", kind: "generic_column", type_id: 19, arity: 0, module_id: 0, h_id: "", h_schema: "2d751769e985ca7989240d6dbc8bcc6481ac01fe49421e63136e9c52bfbbdaa6", h_rule: "" },
+  { rel_id: 23, parent_id: 8, ordinal: 0, local_name: "__gen__pair_int_8b7ec0fa0e1f9d69", kind: "concrete_type", type_id: 18, arity: 0, module_id: 0, h_id: "", h_schema: "b2285f085ebf8f0b56580d8f247d6c1d5a06afbf18ce2c9cf636230c501a853f", h_rule: "" },
   { rel_id: 24, parent_id: 23, ordinal: 1, local_name: "argument", kind: "type_argument", type_id: 2, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 25, parent_id: 8, ordinal: 0, local_name: "__delta_bounded_template_ground_instance___gen__pair_int_8b7ec0fa0e1f9d69", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "91b5385bad7a21c9", h_schema: "79952a18d8c705e8", h_rule: "" },
   { rel_id: 26, parent_id: 8, ordinal: 0, local_name: "__frontier_bounded_template_ground_instance___gen__pair_int_8b7ec0fa0e1f9d69", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "f149f5b3967af6de", h_schema: "e53e812abacb0bb6", h_rule: "" },
@@ -311,13 +317,16 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
+      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, rels).pipe(
+        map((decoded): ITickDeltas => ({ rels: decoded, carry_pending })),
+      )),
     )),
   );
 }
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
+  arrivals = EnumPlane.intern(ENUM_TYPES, ENUM_REF_COLUMNS, arrivals);
   return run_incremental_tick(seam, arrivals);
 }
 
@@ -331,6 +340,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "bounded_template_ground_instance",
+  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,
@@ -344,6 +354,8 @@ export const program: IGenProgramWithBoot = {
   query_plans,
   subscribed_rels,
   rel_catalog,
+  enum_types: ENUM_TYPES,
+  enum_ref_columns: ENUM_REF_COLUMNS,
   unsupported_execution,
   tick: run_tick,
 };

@@ -23,6 +23,7 @@ import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
 import { list_at_scalar_seam } from "../runtime/boundary.ts";
+import { EnumPlane } from "../runtime/enumPlane.ts";
 import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
@@ -39,6 +40,8 @@ import type {
   IRowScalar,
   IRowValue,
   ISqlSeam,
+  IEnumRefColumns,
+  IEnumTypePlan,
   ITextInternPlan,
   ITickDeltas,
   SqlStatement,
@@ -55,7 +58,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -146,6 +149,20 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
     return { ...arrival, row };
   });
 }
+
+export const ENUM_TYPES: readonly IEnumTypePlan[] = [
+  { name: "__opt___gen__list_text_df210f232c1299bd", variants: [] },
+  { name: "__opt_int", variants: [{ tag: "none", rel: "__opt_int_none", fields: [], field_types: [], field_enums: [], select_sql: `SELECT t."id" FROM "generic_expansion_end_to_end___opt_int_none" t` }, { tag: "some", rel: "__opt_int_some", fields: ["value"], field_types: ["int"], field_enums: [null], select_sql: `SELECT t."id", t."value" FROM "generic_expansion_end_to_end___opt_int_some" t` }] },
+  { name: "__opt_person", variants: [] },
+  { name: "__opt_text", variants: [{ tag: "none", rel: "__opt_text_none", fields: [], field_types: [], field_enums: [], select_sql: `SELECT t."id" FROM "generic_expansion_end_to_end___opt_text_none" t` }, { tag: "some", rel: "__opt_text_some", fields: ["value"], field_types: ["text"], field_enums: [null], select_sql: `SELECT t."id", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_generic_expansion_end_to_end___opt_text_some" t` }] },
+];
+
+export const ENUM_REF_COLUMNS: IEnumRefColumns = {
+  "metric": [null, { name: "__opt_int", endpoint_index: 0 }],
+  "metric_copy": [null, { name: "__opt_int", endpoint_index: 0 }],
+  "ticket": [null, { name: "__opt_text", endpoint_index: 0 }],
+  "ticket_copy": [null, { name: "__opt_text", endpoint_index: 0 }],
+};
 
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
   internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
@@ -864,13 +881,16 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
+      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, rels).pipe(
+        map((decoded): ITickDeltas => ({ rels: decoded, carry_pending })),
+      )),
     )),
   );
 }
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
+  arrivals = EnumPlane.intern(ENUM_TYPES, ENUM_REF_COLUMNS, arrivals);
   return run_incremental_tick(seam, arrivals);
 }
 
@@ -884,6 +904,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "generic_expansion_end_to_end",
+  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,
@@ -897,6 +918,8 @@ export const program: IGenProgramWithBoot = {
   query_plans,
   subscribed_rels,
   rel_catalog,
+  enum_types: ENUM_TYPES,
+  enum_ref_columns: ENUM_REF_COLUMNS,
   unsupported_execution,
   tick: run_tick,
 };

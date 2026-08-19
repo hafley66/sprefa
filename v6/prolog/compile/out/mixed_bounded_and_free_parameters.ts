@@ -24,6 +24,7 @@ import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
 import { list_at_scalar_seam } from "../runtime/boundary.ts";
 import { StructPlane } from "../runtime/structPlane.ts";
+import { EnumPlane } from "../runtime/enumPlane.ts";
 import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
@@ -40,6 +41,8 @@ import type {
   IRowScalar,
   IRowValue,
   ISqlSeam,
+  IEnumRefColumns,
+  IEnumTypePlan,
   IStructRefColumns,
   IStructTypePlan,
   ITextInternPlan,
@@ -58,7 +61,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -159,6 +162,9 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
   "cell": [null, "__gen__entry_text_int_a6c3f6c7e60e6b95"],
 };
 
+export const ENUM_TYPES: readonly IEnumTypePlan[] = [];
+export const ENUM_REF_COLUMNS: IEnumRefColumns = {};
+
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
   internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
   lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
@@ -239,14 +245,14 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 14, parent_id: 7, ordinal: 0, local_name: "cell", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "14d2abb9a0d9e6fd", h_schema: "4980724ab310ab6e", h_rule: "" },
   { rel_id: 15, parent_id: 14, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "83c889d7d04f620b", h_schema: "", h_rule: "" },
   { rel_id: 16, parent_id: 14, ordinal: 2, local_name: "slot", kind: "column", type_id: 8, arity: 0, module_id: 7, h_id: "6364f02bea984165", h_schema: "", h_rule: "" },
-  { rel_id: 17, parent_id: 7, ordinal: 0, local_name: "json_encodable", kind: "interface", type_id: 0, arity: 0, module_id: 7, h_id: "", h_schema: "decl:interface:json_encodable", h_rule: "" },
-  { rel_id: 18, parent_id: 7, ordinal: 0, local_name: "entry", kind: "generic_rel", type_id: 0, arity: 0, module_id: 7, h_id: "", h_schema: "decl:relation:entry", h_rule: "" },
-  { rel_id: 19, parent_id: 18, ordinal: 1, local_name: "Key", kind: "type_parameter", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:entry:param:1:Key", h_rule: "" },
-  { rel_id: 20, parent_id: 19, ordinal: 1, local_name: "json_encodable", kind: "constraint", type_id: 17, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:entry:param:1:Key:constraint:decl:interface:json_encodable", h_rule: "" },
-  { rel_id: 21, parent_id: 18, ordinal: 2, local_name: "Value", kind: "type_parameter", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:entry:param:2:Value", h_rule: "" },
-  { rel_id: 22, parent_id: 18, ordinal: 1, local_name: "key", kind: "generic_column", type_id: 19, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:entry:member:1:key", h_rule: "" },
-  { rel_id: 23, parent_id: 18, ordinal: 2, local_name: "value", kind: "generic_column", type_id: 21, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:entry:member:2:value", h_rule: "" },
-  { rel_id: 24, parent_id: 8, ordinal: 0, local_name: "__gen__entry_text_int_a6c3f6c7e60e6b95", kind: "concrete_type", type_id: 18, arity: 0, module_id: 0, h_id: "", h_schema: "decl:relation:__gen__entry_text_int_a6c3f6c7e60e6b95", h_rule: "" },
+  { rel_id: 17, parent_id: 7, ordinal: 0, local_name: "json_encodable", kind: "interface", type_id: 0, arity: 0, module_id: 7, h_id: "", h_schema: "41065078de40276dc2a51ecbe811318a0220ca8c192503f30a6e5f1aad903ced", h_rule: "" },
+  { rel_id: 18, parent_id: 7, ordinal: 0, local_name: "entry", kind: "generic_rel", type_id: 0, arity: 0, module_id: 7, h_id: "", h_schema: "35c4638ea38a5946baa684593dcb534b84f9fc46ac5d2184076a85463a3fc1c0", h_rule: "" },
+  { rel_id: 19, parent_id: 18, ordinal: 1, local_name: "Key", kind: "type_parameter", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "f2dbf73d75d997112b33ab4602c7e6081e64f07d288a52d358bb3139c6322cd0", h_rule: "" },
+  { rel_id: 20, parent_id: 19, ordinal: 1, local_name: "json_encodable", kind: "constraint", type_id: 17, arity: 0, module_id: 0, h_id: "", h_schema: "92c2ecbd9b471a54ed7688ce34a5867c86e4bb4bfa99ba31cd72b5c6db682b05", h_rule: "" },
+  { rel_id: 21, parent_id: 18, ordinal: 2, local_name: "Value", kind: "type_parameter", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "343297a139adc265b57e8c5c867752be168f814e4ac20b9de23b60bc3c35e345", h_rule: "" },
+  { rel_id: 22, parent_id: 18, ordinal: 1, local_name: "key", kind: "generic_column", type_id: 19, arity: 0, module_id: 0, h_id: "", h_schema: "702886cb43fed1c49f5ec53acc6bb6d553fb5ec53bd51467187d374fe9e39c63", h_rule: "" },
+  { rel_id: 23, parent_id: 18, ordinal: 2, local_name: "value", kind: "generic_column", type_id: 21, arity: 0, module_id: 0, h_id: "", h_schema: "217b46979745a0e9ee7c66c62f92c065623aeea38b5c8a4347d96b5175981ec1", h_rule: "" },
+  { rel_id: 24, parent_id: 8, ordinal: 0, local_name: "__gen__entry_text_int_a6c3f6c7e60e6b95", kind: "concrete_type", type_id: 18, arity: 0, module_id: 0, h_id: "", h_schema: "12a667cfe725ab73fb51222d58a7c9335d6285bb309cc51fe7b431fc1376138c", h_rule: "" },
   { rel_id: 25, parent_id: 24, ordinal: 1, local_name: "argument", kind: "type_argument", type_id: 1, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 26, parent_id: 24, ordinal: 2, local_name: "argument", kind: "type_argument", type_id: 2, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 27, parent_id: 8, ordinal: 0, local_name: "__delta_mixed_bounded_and_free_parameters___gen__entry_text_int_a6c3f6c7e60e6b95", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "d2f3ac3321f5b08f", h_schema: "d38da76c57eda832", h_rule: "" },
@@ -332,13 +338,16 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
+      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, rels).pipe(
+        map((decoded): ITickDeltas => ({ rels: decoded, carry_pending })),
+      )),
     )),
   );
 }
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
+  arrivals = EnumPlane.intern(ENUM_TYPES, ENUM_REF_COLUMNS, arrivals);
   return run_incremental_tick(seam, arrivals);
 }
 
@@ -352,6 +361,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "mixed_bounded_and_free_parameters",
+  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,
@@ -365,6 +375,8 @@ export const program: IGenProgramWithBoot = {
   query_plans,
   subscribed_rels,
   rel_catalog,
+  enum_types: ENUM_TYPES,
+  enum_ref_columns: ENUM_REF_COLUMNS,
   unsupported_execution,
   tick: run_tick,
 };

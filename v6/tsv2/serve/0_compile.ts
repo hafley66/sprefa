@@ -19,6 +19,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { Observable, concatMap, from, map } from "rxjs";
 
+import { IrVersionCheck } from "../runtime/irVersion.ts";
 import type { IProgramCompiler, IServedProgram } from "../runtime/types.ts";
 
 const COMPILE_PL = fileURLToPath(new URL("../../prolog/compile.pl", import.meta.url));
@@ -121,7 +122,7 @@ export const ProgramCompiler: IProgramCompiler = {
       compile_budget_ms(),
     ).pipe(
       concatMap(() => from(import(module_path) as Promise<{ readonly program: IServedProgram }>)),
-      map((loaded) => loaded.program),
+      map((loaded) => IrVersionCheck.check(loaded.program)),
     );
   },
 };

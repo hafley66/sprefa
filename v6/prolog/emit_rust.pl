@@ -28,6 +28,11 @@
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
 
+% ═══ IR version ══════════════════════════════════════════════════════════════
+% emit_ts.pl carries the same number under the same spelling, and both runtimes
+% refuse a program document whose value is not the one they interpret.
+ir_version(1).
+
 % ═══ helpers ═════════════════════════════════════════════════════════════════
 
 ref_name(Ref, Name) :- ( Ref = _/_ -> arg(1, Ref, Name) ; atom_string(Name, Ref) ).
@@ -559,6 +564,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
               host_plan_dict(HostPlan, HostDict) ),
             HostPlanDicts),
 
+    ir_version(IrVersion),
     ProgramDict =
     _{ name: Name,
        intern_mode: InternMode,
@@ -584,9 +590,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
        retentions: Retentions,
        uses_tick: UsesTick,
        reconcile_every_tick: ReconcileEveryTick,
-       % Constant true: no fallback tick path exists on either door; the field
-       % stays only because engine-rs program.rs deserializes it.
-       incremental_safe: true,
+       ir_version: IrVersion,
        host_plans: HostPlanDicts },
     json_write_string(ProgramDict, ProgramJson),
     raw_string_hashes(ProgramJson, RawStringHashes),
