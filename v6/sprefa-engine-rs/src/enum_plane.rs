@@ -151,23 +151,12 @@ fn decode(
         .unwrap_or_else(|| panic!("enum plan missing: {enum_name}"));
     let mut matches = Vec::new();
     for variant in &plan.variants {
-        let relation = relations
-            .iter()
-            .find(|relation| relation.rel == variant.rel)
-            .unwrap_or_else(|| panic!("enum variant relation missing: {}", variant.rel));
-        let fields = relation.columns[1..]
-            .iter()
-            .map(|field| format!("\"{}\"", field.replace('"', "\"\"")))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let fields = if fields.is_empty() {
-            "1".to_string()
-        } else {
-            fields
-        };
+        if variant.select_sql.is_empty() {
+            panic!("enum variant read missing: {}", variant.rel);
+        }
         let sql = format!(
-            "SELECT {fields} FROM \"{}\" WHERE \"id\" = ?",
-            relation.table_name.replace('"', "\"\"")
+            "SELECT * FROM ({}) AS \"__enum_payload\" WHERE \"__enum_payload\".\"id\" = ?",
+            variant.select_sql
         );
         let result = seam
             .execute(&SqlStatement {
@@ -187,7 +176,7 @@ fn decode(
     object.insert("tag".into(), serde_json::Value::String(variant.tag.clone()));
     for (index, field) in variant.fields.iter().enumerate() {
         let value = row
-            .get(index)
+            .get(index + 1)
             .cloned()
             .unwrap_or(Value::Text(String::new()));
         let value = match variant.field_enums.get(index).and_then(Option::as_deref) {
@@ -198,18 +187,28 @@ fn decode(
                 },
                 None => panic!("enum_boundary_shape_mismatch: nested_endpoint({nested})"),
             },
-            None => match value {
-                Value::Integer(value) => serde_json::json!(value),
-                Value::Real(value) => serde_json::json!(value),
-                Value::Bool(value) => serde_json::json!(value),
-                Value::Text(value) => serde_json::json!(value),
-                Value::List(value) => serde_json::Value::Array(value),
-                Value::Bytes(value) => serde_json::json!(crate::types::bytes_to_base64(&value)),
-            },
+            None => public_value(value, variant.field_types.get(index).copied()),
         };
         object.insert(field.clone(), value);
     }
     Ok(Value::Text(serde_json::Value::Object(object).to_string()))
+}
+
+/// `select_sql` reads variant payloads through the same dictionary/list views
+/// as final_select. This converts the canonical boundary cell to JSON only
+/// after the storage id has been resolved.
+fn public_value(value: Value, field_type: Option<crate::types::RowColumnType>) -> serde_json::Value {
+    match value {
+        Value::Integer(value) => serde_json::json!(value),
+        Value::Real(value) => serde_json::json!(value),
+        Value::Bool(value) => serde_json::json!(value),
+        Value::List(value) => serde_json::Value::Array(value),
+        Value::Bytes(value) => serde_json::json!(crate::types::bytes_to_base64(&value)),
+        Value::Text(value) if matches!(field_type, Some(crate::types::RowColumnType::Json | crate::types::RowColumnType::Ref | crate::types::RowColumnType::List)) => {
+            serde_json::from_str(&value).unwrap_or_else(|_| serde_json::json!(value))
+        }
+        Value::Text(value) => serde_json::json!(value),
+    }
 }
 
 pub fn decode_deltas(
@@ -304,13 +303,17 @@ mod tests {
                         tag: "ok".into(),
                         rel: "choice_ok".into(),
                         fields: vec!["value".into()],
+                        field_types: vec![crate::types::RowColumnType::Text],
                         field_enums: vec![None],
+                        select_sql: "SELECT \"id\", \"value\" FROM \"choice_ok\"".into(),
                     },
                     EnumVariantPlan {
                         tag: "err".into(),
                         rel: "choice_err".into(),
                         fields: vec!["reason".into()],
+                        field_types: vec![crate::types::RowColumnType::Text],
                         field_enums: vec![None],
+                        select_sql: "SELECT \"id\", \"reason\" FROM \"choice_err\"".into(),
                     },
                 ],
             }],
@@ -346,6 +349,26 @@ mod tests {
             vec![Value::Integer(7), Value::Text("yes".into())]
         );
         assert_eq!(rows[1].row, vec![Value::Integer(7), Value::Integer(7)]);
+    }
+
+    #[test]
+    fn tagged_delete_materializes_a_delete_variant_and_parent() {
+        let (plans, refs) = plans();
+        let mut deleted = resident(r#"{"tag":"ok","value":"yes"}"#);
+        deleted.sign = ArrivalSign::Del;
+        let rows = intern(&plans, &refs, &[deleted]).unwrap();
+        assert_eq!(rows.iter().map(|row| row.sign).collect::<Vec<_>>(), vec![ArrivalSign::Del, ArrivalSign::Del]);
+    }
+
+    #[test]
+    fn nullary_variant_decodes_from_its_endpoint() {
+        let seam = SqliteSeam::in_memory().unwrap();
+        seam.execute_multiple("CREATE TABLE choice_none (id INTEGER); INSERT INTO choice_none VALUES (7)").unwrap();
+        let plans = vec![EnumTypePlan { name: "choice".into(), variants: vec![EnumVariantPlan {
+            tag: "none".into(), rel: "choice_none".into(), fields: vec![], field_types: vec![], field_enums: vec![], select_sql: "SELECT id FROM choice_none".into(),
+        }]}];
+        let refs = HashMap::from([("resident".into(), vec![Some(EnumRefColumn { name: "choice".into(), endpoint_index: Some(0) })])]);
+        assert_eq!(decode_row(&seam, &plans, &refs, &[], "resident", &vec![Value::Integer(7)]).unwrap(), vec![Value::Text(r#"{"tag":"none"}"#.into())]);
     }
 
     #[test]
@@ -436,5 +459,60 @@ mod tests {
                 Value::Text(r#"{"tag":"ok","value":"yes"}"#.into())
             ]
         );
+    }
+
+    #[test]
+    fn payload_reads_use_public_select_and_decode_lists() {
+        let seam = SqliteSeam::in_memory().unwrap();
+        seam.execute_multiple("CREATE TABLE choice_ok (id INTEGER, tags TEXT); INSERT INTO choice_ok VALUES (7, '[1,2]')").unwrap();
+        let plans = vec![EnumTypePlan {
+            name: "choice".into(),
+            variants: vec![EnumVariantPlan {
+                tag: "ok".into(),
+                rel: "choice_ok".into(),
+                fields: vec!["tags".into()],
+                field_types: vec![crate::types::RowColumnType::List],
+                field_enums: vec![None],
+                select_sql: "SELECT id, tags FROM choice_ok".into(),
+            }],
+        }];
+        let refs = HashMap::from([(
+            "resident".into(),
+            vec![Some(EnumRefColumn { name: "choice".into(), endpoint_index: Some(0) })],
+        )]);
+        let row = decode_row(
+            &seam, &plans, &refs, &[], "resident", &vec![Value::Integer(7)],
+        ).unwrap();
+        assert_eq!(row, vec![Value::Text(r#"{"tag":"ok","tags":[1,2]}"#.into())]);
+    }
+
+    #[test]
+    fn nested_tagged_payloads_decode_as_objects() {
+        let seam = SqliteSeam::in_memory().unwrap();
+        seam.execute_multiple("CREATE TABLE outer_some (id INTEGER, value INTEGER); CREATE TABLE inner_ok (id INTEGER, value TEXT); INSERT INTO outer_some VALUES (7, 7); INSERT INTO inner_ok VALUES (7, 'yes')").unwrap();
+        let plans = vec![
+            EnumTypePlan {
+                name: "outer".into(),
+                variants: vec![EnumVariantPlan {
+                    tag: "some".into(), rel: "outer_some".into(), fields: vec!["value".into()],
+                    field_types: vec![crate::types::RowColumnType::RelationId], field_enums: vec![Some("inner".into())],
+                    select_sql: "SELECT id, value FROM outer_some".into(),
+                }],
+            },
+            EnumTypePlan {
+                name: "inner".into(),
+                variants: vec![EnumVariantPlan {
+                    tag: "ok".into(), rel: "inner_ok".into(), fields: vec!["value".into()],
+                    field_types: vec![crate::types::RowColumnType::Text], field_enums: vec![None],
+                    select_sql: "SELECT id, value FROM inner_ok".into(),
+                }],
+            },
+        ];
+        let refs = HashMap::from([(
+            "resident".into(),
+            vec![Some(EnumRefColumn { name: "outer".into(), endpoint_index: Some(0) })],
+        )]);
+        let row = decode_row(&seam, &plans, &refs, &[], "resident", &vec![Value::Integer(7)]).unwrap();
+        assert_eq!(row, vec![Value::Text(r#"{"tag":"some","value":{"tag":"ok","value":"yes"}}"#.into())]);
     }
 }

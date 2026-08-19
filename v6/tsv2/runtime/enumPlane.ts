@@ -1,7 +1,11 @@
 import { concatMap, from, map, of, toArray, type Observable } from "rxjs";
 import type { IArrivalBatch, IArrivalRow, IEnumPlane, IEnumRefColumns, IEnumTypePlan, IIncrementalRelationPlan, IRelDelta, IRow, IRowValue, ISqlSeam } from "./types.ts";
+import { row_value_from_sql } from "./rows.ts";
 
 function object(value: IRowValue, name: string): Record<string, unknown> {
+  if (value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Uint8Array)) {
+    return value as Record<string, unknown>;
+  }
   if (typeof value !== "string") throw new Error(`enum_arrival_shape_mismatch: not_an_object(${name})`);
   try {
     const parsed: unknown = JSON.parse(value);
@@ -29,7 +33,9 @@ function encode(
   variant.fields.forEach((field, index) => {
     let payload = tagged[field] as IRowValue;
     const nested = variant.field_enums?.[index];
-    if (nested !== null && nested !== undefined) payload = encode(plans, nested, endpoint, sign, JSON.stringify(payload) as string, variants);
+    if (nested !== null && nested !== undefined) payload = encode(plans, nested, endpoint, sign, payload, variants);
+    else if (Array.isArray(payload)) payload = JSON.stringify(payload);
+    else if (payload !== null && typeof payload === "object" && !(payload instanceof Uint8Array)) payload = JSON.stringify(payload);
     row.push(payload);
   });
   variants.push({ rel: variant.rel, sign, row });
@@ -57,7 +63,18 @@ export const EnumPlane: IEnumPlane = {
   },
 
   decode_deltas(seam, types, ref_columns, relations, deltas) {
-    return from(deltas).pipe(concatMap((delta) => this.decode_rows(seam, types, ref_columns, relations, delta.rel, delta.add).pipe(concatMap((add) => this.decode_rows(seam, types, ref_columns, relations, delta.rel, delta.del).pipe(map((del) => ({ ...delta, add, del }))))), toArray());
+    return from(deltas).pipe(
+      concatMap((delta) =>
+        this.decode_rows(seam, types, ref_columns, relations, delta.rel, delta.add).pipe(
+          concatMap((add) =>
+            this.decode_rows(seam, types, ref_columns, relations, delta.rel, delta.del).pipe(
+              map((del) => ({ ...delta, add, del })),
+            ),
+          ),
+        ),
+      ),
+      toArray(),
+    );
   },
 
   decode_rows(seam, types, ref_columns, relations, rel, rows) {
@@ -70,11 +87,9 @@ export const EnumPlane: IEnumPlane = {
       if (plan === undefined) throw new Error(`enum plan missing: ${name}`);
       return from(plan.variants).pipe(
         concatMap((variant) => {
-          const relation = relations.find((candidate) => candidate.rel === variant.rel);
-          if (relation === undefined) throw new Error(`enum variant relation missing: ${variant.rel}`);
-          const fields = relation.columns.slice(1);
-          const select = fields.length === 0 ? '1 AS "__exists"' : fields.map((field) => `"${field.replaceAll('"', '""')}"`).join(", ");
-          return seam.runner.execute(seam.db, { sql: `SELECT ${select} FROM "${relation.table_name.replaceAll('"', '""')}" WHERE "id" = ?`, args: [endpoint] }).pipe(map((result) => result.rows.map((row) => ({ variant, row }))));
+          if (variant.select_sql === undefined) throw new Error(`enum variant read missing: ${variant.rel}`);
+          const sql = `SELECT * FROM (${variant.select_sql}) AS "__enum_payload" WHERE "__enum_payload"."id" = ?`;
+          return seam.runner.execute(seam.db, { sql, args: [endpoint] }).pipe(map((result) => result.rows.map((row) => ({ variant, row }))));
         }),
         concatMap((matches) => from(matches)), toArray(),
         concatMap((matches) => {
@@ -82,9 +97,13 @@ export const EnumPlane: IEnumPlane = {
           const { variant, row } = matches[0]!;
           return from(variant.fields).pipe(concatMap((field, index) => {
             const nested = variant.field_enums?.[index];
-            const raw = row[field] as IRowValue;
-            return nested === null || nested === undefined ? of([field, raw] as const) : decode(nested, raw).pipe(map((value) => [field, JSON.parse(value as string)] as const));
-          }), toArray(), map((fields) => JSON.stringify({ tag: variant.tag, ...Object.fromEntries(fields) }) as IRowValue));
+            const raw = row[field];
+            const type = variant.field_types?.[index];
+            const value = row_value_from_sql(type, raw);
+            return nested === null || nested === undefined
+              ? of([field, public_value(value, type)] as const)
+              : decode(nested, value).pipe(map((nested_value) => [field, nested_value] as const));
+          }), toArray(), map((fields) => ({ tag: variant.tag, ...Object.fromEntries(fields) }) as IRowValue));
         }),
       );
     };
@@ -94,3 +113,13 @@ export const EnumPlane: IEnumPlane = {
     }), toArray())), toArray());
   },
 };
+
+/** The emitted select_sql has already resolved storage ids through dictionary
+ * and list views. JSON and ref columns retain their textual carrier until this
+ * final boundary conversion. */
+function public_value(value: IRowValue, type: string | undefined): IRowValue {
+  if ((type === "json" || type === "ref") && typeof value === "string") {
+    try { return JSON.parse(value) as IRowValue; } catch { return value; }
+  }
+  return value;
+}

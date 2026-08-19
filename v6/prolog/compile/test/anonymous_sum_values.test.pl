@@ -70,4 +70,28 @@ test(emits_tagged_runtime_schema_plan) :-
     sub_string(Ts, _, _, _, 'export const ENUM_TYPES'),
     sub_string(Ts, _, _, _, 'EnumPlane.intern').
 
+test(option_sum_emits_both_runtime_plans_without_tag_views_as_variants) :-
+    Program = prog([
+        col_type(resident/2, id, int),
+        col_type(resident/2, result,
+                 option(sum_type([variant(ok, [field(value, text)]),
+                                  variant(err, [])]))),
+        keyed(resident/2, [1])
+    ], []),
+    program_plan(fixture(anonymous_sum_option, Program, [], [], [])-[],
+                 [intern(dict)], Plan),
+    Plan = plan(_, prog(Decls, _), Types, RelPlans, _, _, _, _, Mode),
+    member(option_column(resident/2, result, InnerEnum), Decls),
+    atom_concat('__opt_', InnerEnum, OptionEnum),
+    lower_program(Plan, Lowered),
+    Lowered = lowered(_, _, _, _, Levels, _, _, _),
+    boot_statements(Mode, Decls, Types, RelPlans, [], Levels, Boot),
+    emit_program(anonymous_sum_option, Plan, Lowered, Boot, Rust),
+    emit_ts_program(anonymous_sum_option, Plan, Lowered, Boot, Ts),
+    format(string(OptionName), '"name":"~w"', [OptionEnum]),
+    sub_string(Rust, _, _, _, OptionName),
+    sub_string(Ts, _, _, _, OptionEnum),
+    sub_string(Rust, _, _, _, '"select_sql"'),
+    \+ sub_string(Rust, _, _, _, '"tag":"tag"').
+
 :- end_tests(anonymous_sum_values).

@@ -19,7 +19,7 @@ export type IRowBytes = Uint8Array;
 /** The only JSON spelling for bytes at a serialization boundary. */
 export type IEncodedBytes = { readonly $bytes: string };
 
-export type IRowValue = IRowScalar | IRowValueArray | IRowBytes;
+export type IRowValue = IRowScalar | IRowValueArray | IRowBytes | IRowObject;
 
 /** What a SQL PARAMETER, a pinned query literal and a bind literal can be. A
  *  list column's parameter is the interned entity id, an int, so the array
@@ -29,6 +29,11 @@ export type IRowScalar = string | number | boolean;
 /** A `list` column's boundary value: the ELEMENTS, parsed once at the read
  *  seam. The interned entity id never leaves storage. */
 export interface IRowValueArray extends ReadonlyArray<IRowValue> {}
+
+/** A structured value that crosses a typed boundary, including tagged sums. */
+export interface IRowObject {
+  readonly [key: string]: IRowValue;
+}
 
 /** Storage type emitted for each public relation column. Relation references
  * still cross the boundary as their canonical text value.
@@ -388,7 +393,10 @@ export interface IEnumVariantPlan {
   readonly tag: string;
   readonly rel: string;
   readonly fields: readonly string[];
+  readonly field_types?: readonly IRowColumnType[];
   readonly field_enums?: readonly (string | null)[];
+  /** Canonical public read for this variant relation, including dictionary and list decoding. */
+  readonly select_sql?: string;
 }
 
 export interface IEnumTypePlan {

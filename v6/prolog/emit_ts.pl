@@ -329,18 +329,21 @@ struct_ref_column_entries(RelPlans, Lines) :-
 column_type_ref_entry(ref(TypeName), Text) :- !, js_string(TypeName, Text).
 column_type_ref_entry(_, 'null').
 
-enum_type_plans(Decls, RelPlans, Plans) :-
+enum_type_plans(Decls, RelPlans, DeltaStatements, Plans) :-
     findall(Name, enum_runtime_name(Decls, Name), Names0),
-    sort(Names0, Names), maplist(enum_type_plan(Decls, RelPlans), Names, Plans).
+    sort(Names0, Names), maplist(enum_type_plan(Decls, RelPlans, DeltaStatements), Names, Plans).
 enum_runtime_name(Decls, Name) :- member(enum_column(_, _, Name), Decls).
+enum_runtime_name(Decls, Name) :- member(option_column(_, _, Element), Decls), option_enum_name(Element, Name).
 enum_runtime_name(Decls, Name) :- member(enum_option_payload(_, _, _, Element), Decls), option_enum_name(Element, Name).
-enum_type_plan(Decls, RelPlans, Name, enumtype(Name, Variants)) :-
-    findall(Tag-Variant, enum_variant_plan(Decls, RelPlans, Name, Tag, Variant), Pairs0),
+enum_type_plan(Decls, RelPlans, DeltaStatements, Name, enumtype(Name, Variants)) :-
+    findall(Tag-Variant, enum_variant_plan(Decls, RelPlans, DeltaStatements, Name, Tag, Variant), Pairs0),
     keysort(Pairs0, Pairs), pairs_values(Pairs, Variants).
-enum_variant_plan(Decls, RelPlans, EnumName, Tag, enumvariant(Tag, VariantName, Fields, FieldEnums)) :-
+enum_variant_plan(Decls, RelPlans, DeltaStatements, EnumName, Tag, enumvariant(Tag, VariantName, Fields, FieldTypes, FieldEnums, SelectSql)) :-
     atomic_list_concat([EnumName, '_'], Prefix), member(RelPlan, RelPlans),
-    relplan_parts(RelPlan, VariantName/_, _, [id | Fields], _, _),
-    atom_concat(Prefix, Tag, VariantName), maplist(enum_variant_field(Decls, VariantName), Fields, FieldEnums).
+    relplan_parts(RelPlan, VariantName/_, _, [id | Fields], _, [_ | FieldTypes0]),
+    atom_concat(Prefix, Tag, VariantName), atom_concat(EnumName, '_tag', TagRelation), VariantName \== TagRelation,
+    member(deltastmt(VariantName/_, SelectSql, _, _, _), DeltaStatements),
+    maplist(boundary_column_type, FieldTypes0, FieldTypes), maplist(enum_variant_field(Decls, VariantName), Fields, FieldEnums).
 enum_variant_field(Decls, VariantName, Field, EnumName) :- member(enum_column(VariantName/_, Field, EnumName), Decls), !.
 enum_variant_field(Decls, VariantName, Field, EnumName) :- member(enum_option_payload(_, VariantName, Field, Element), Decls), option_enum_name(Element, EnumName), !.
 enum_variant_field(_, _, _, null).
@@ -363,9 +366,9 @@ enum_plane_lines(Plans, RefColumns, Lines, true) :-
     append([[ 'export const ENUM_TYPES: readonly IEnumTypePlan[] = [' ], TypeLines,
       [ '];', '', 'export const ENUM_REF_COLUMNS: IEnumRefColumns = {' ], RefLines, [ '};' ]], Lines).
 enum_type_line(enumtype(Name, Variants), Line) :- js_string(Name, NameText), maplist(enum_variant_text, Variants, VariantTexts), atomic_list_concat(VariantTexts, ', ', VariantsText), format(atom(Line), '  { name: ~w, variants: [~w] },', [NameText, VariantsText]).
-enum_variant_text(enumvariant(Tag, Rel, Fields, FieldEnums), Text) :-
-    js_string(Tag, TagText), js_string(Rel, RelText), maplist(js_string, Fields, FieldTexts), atomic_list_concat(FieldTexts, ', ', FieldsText), maplist(enum_field_text, FieldEnums, EnumTexts), atomic_list_concat(EnumTexts, ', ', EnumsText),
-    format(atom(Text), '{ tag: ~w, rel: ~w, fields: [~w], field_enums: [~w] }', [TagText, RelText, FieldsText, EnumsText]).
+enum_variant_text(enumvariant(Tag, Rel, Fields, FieldTypes, FieldEnums, SelectSql), Text) :-
+    js_string(Tag, TagText), js_string(Rel, RelText), maplist(js_string, Fields, FieldTexts), atomic_list_concat(FieldTexts, ', ', FieldsText), maplist(js_string, FieldTypes, FieldTypeTexts), atomic_list_concat(FieldTypeTexts, ', ', TypesText), maplist(enum_field_text, FieldEnums, EnumTexts), atomic_list_concat(EnumTexts, ', ', EnumsText), js_template(SelectSql, SelectText),
+    format(atom(Text), '{ tag: ~w, rel: ~w, fields: [~w], field_types: [~w], field_enums: [~w], select_sql: ~w }', [TagText, RelText, FieldsText, TypesText, EnumsText, SelectText]).
 enum_field_text(null, 'null') :- !. enum_field_text(Name, Text) :- js_string(Name, Text).
 enum_ref_line(Name-Refs, Line) :- js_string(Name, NameText), maplist(enum_ref_text, Refs, Texts), atomic_list_concat(Texts, ', ', RefsText), format(atom(Line), '  ~w: [~w],', [NameText, RefsText]).
 enum_ref_text(null, 'null') :- !. enum_ref_text(enumref(Name, Index), Text) :- js_string(Name, NameText), (Index == null -> IndexText = 'null' ; format(atom(IndexText), '~w', [Index])), format(atom(Text), '{ name: ~w, endpoint_index: ~w }', [NameText, IndexText]).
@@ -2539,7 +2542,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     Plan = plan(_, prog(PlanDecls, _), LoweringTypes, _, _, _, _, _, _),
     struct_type_plans(PlanDecls, LoweringTypes, RelPlans, StructPlans),
     struct_plane_lines(StructPlans, RelPlans, StructPlaneLines, HasStructTypes),
-    enum_type_plans(PlanDecls, RelPlans, EnumPlans),
+    enum_type_plans(PlanDecls, RelPlans, DeltaStatements, EnumPlans),
     enum_ref_columns_map(PlanDecls, RelPlans, EnumRefColumns),
     enum_plane_lines(EnumPlans, EnumRefColumns, EnumPlaneLines, _HasEnumTypes),
     plan_intern_mode(Plan, InternMode),

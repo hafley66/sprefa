@@ -392,7 +392,11 @@ pub struct EnumVariantPlan {
     pub rel: String,
     pub fields: Vec<String>,
     #[serde(default)]
+    pub field_types: Vec<RowColumnType>,
+    #[serde(default)]
     pub field_enums: Vec<Option<String>>,
+    #[serde(default)]
+    pub select_sql: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
