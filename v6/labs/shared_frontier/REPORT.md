@@ -14,6 +14,13 @@ below comes from a command spelled in this document.
 7. [Q5. Where time goes](#q5-where-time-goes)
 8. [Plan claim vs measured](#plan-claim-vs-measured)
 9. [Findings](#findings)
+10. [Revalidation at 4e2c21a82](#revalidation-at-4e2c21a82)
+    1. [R1. Compile wall](#r1-compile-wall-the-number-the-speedup-was-for)
+    2. [R2. The emitted artifact is byte-identical](#r2-the-emitted-artifact-is-byte-identical)
+    3. [R3. Delta table](#r3-delta-table-every-re-measured-cell)
+    4. [R4. Algorithm audit](#r4-algorithm-audit-against-the-plan-and-against-lowerpl)
+    5. [R5. Retraction](#r5-retraction-the-top-unmeasured-claim)
+    6. [R6. Findings added or retired](#r6-findings-this-revalidation-adds-or-retires)
 
 ## Rig
 
@@ -437,3 +444,375 @@ Not measured by this lab, and named so nothing reads the tables as covering it:
 retraction and `sign=-1`, support-count writes during a tick, recursion and
 drain, the `__delta_`/`__next_frontier_`/`__pre_` families' own tick cost, and
 Rust-side execution.
+
+## Revalidation at 4e2c21a82
+
+The lab was measured at `b62ea5b9e`. `4e2c21a82` ("perf(dl6): index large schema
+compilation") landed one commit later. Every number the lab prints was rebuilt on
+that commit, in the worktree `lab/shared-frontier-reval`.
+
+| item | value |
+| --- | --- |
+| worktree HEAD | `4e2c21a82c41df12dd478dfbb89994425e75b99d` |
+| machine, node, driver, swipl | unchanged from the Rig table above |
+| commands | `bash v6/labs/shared_frontier/run.sh`, which now also runs `rig/q6_retraction.ts` |
+| arms | `rig/schema.ts` now mints either frontier key order through `armBTransientDdl/1`; `rig/q2_tick_cost.ts` and `rig/q2_explain.ts` run three arms, A, B, B' |
+
+Two full Q2 samples were taken. The first, 18:04-18:24, ran while a `vite` dev
+server held 11% of the CPU and `uptime` read 2.98 2.71 2.82; every arm-A cell and
+9 of 12 arm-B cells came in 3-11% high. The second, 18:35-18:50, is the one
+reported below and the one `out/q2.md` carries. Its arm-A and arm-B cells track
+`b62ea5b9e` inside 2% at every k >= N/8. The spread between the two samples is
+this rig's run-to-run noise band on a shared machine: read anything under about
+10% as noise, not as movement.
+
+### R1. Compile wall, the number the speedup was for
+
+```bash
+time bash v6/prolog/compile/scripts/compile_dl6.sh \
+  v6/tsv2/gen/pokeapi_gen.dl6 v6/labs/shared_frontier/out/pokeapi_gen.ts
+```
+
+```
+COMPILE-TRACE program=pokeapi_gen parse=832/3259253 plan=2019/27628807 lower=231/1413394 boot=3/35070 emit=1162/15617448 write=33/271 total=4280/47954243
+real	0m4.451s
+```
+
+| leg | b62ea5b9e ms | 4e2c21a82 ms | delta |
+| --- | ---: | ---: | --- |
+| parse | 6,528 | 832 | -87.3% |
+| plan | 517,929 | 2,019 | -99.6%, 257x |
+| lower | 238 | 231 | -2.9% |
+| boot | 2 | 3 | +1 ms |
+| emit | 1,692 | 1,162 | -31.3% |
+| write | 42 | 33 | -21.4% |
+| total | 526,431 | 4,280 | -99.2%, 123x |
+| `real` | 8m46.599s | 0m4.451s | 118x |
+
+The plan doc's Verification baseline is 4.14 s. Measured compiler time 4.28 s is
+3.4% above it; `real` 4.451 s is 7.5% above it. Finding F10's compile half and
+plan-claim row V1 are both retired: the 127x gap they recorded is gone, and the
+whole compile is now inside the 10-second law.
+
+`plans/2026-08-19-shared-sqlite-frontier.md` was read from the main working tree.
+It is not committed at `origin/main`: `git log --all --oneline -- 'plans/*shared*'`
+returns nothing.
+
+### R2. The emitted artifact is byte-identical
+
+| measure | b62ea5b9e | 4e2c21a82 |
+| --- | ---: | ---: |
+| `wc -c out/pokeapi_gen.ts` | 6,077,435 | 6,077,435 |
+| sha256 | not recorded | `5e5ee655b68cb9511419f7bd99c2cd047ecba9666f689783c77bea70c2ab2381` |
+
+Every Q1 cell is unchanged to the byte: `git diff v6/labs/shared_frontier/out/`
+reports no change to `q1.md`, `q1_sections.md`, `q1_ddl_split.md`, or
+`q1_index_owner.md`. Q1a's 780 relations / 781 durable / 2348 transient / 2348
+indexes / 1370 views / 6847 CREATE / 1,682,616 DDL bytes, Q1b's family split,
+Q1c's section byte counts, Q1d's 57.5% split, and Q1e's 1560 / 780 / 8 index
+owners all reproduce exactly. `4e2c21a82` is a compiler-speed change with no
+effect on emitted output.
+
+The three small fixture programs in Q1a were NOT recompiled: they are the
+gitignored `v6/prolog/compile/out/*.ts` a sweep wrote at `b62ea5b9e`, so their
+rows are identical by construction rather than by re-measurement.
+
+### R3. Delta table, every re-measured cell
+
+Threshold for a flag is 15% either way.
+
+#### Q2a, ms/tick
+
+| N | k | A old | A new | A delta | B old | B new | B delta | B' new | B/A old | B/A new | B'/A new |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 16 | 1 | 0.062 | 0.062 | 0.0% | 0.063 | 0.063 | 0.0% | 0.062 | 1.016 | 1.010 | 1.005 |
+| 16 | N/8 | 0.123 | 0.118 | -4.1% | 0.111 | 0.112 | +0.9% | 0.113 | 0.907 | 0.953 | 0.956 |
+| 16 | N | 0.909 | 0.906 | -0.3% | 0.783 | 0.792 | +1.1% | 0.779 | 0.861 | 0.874 | 0.860 |
+| 64 | 1 | 0.059 | 0.057 | -3.4% | 0.064 | 0.060 | -6.3% | 0.059 | 1.080 | 1.051 | 1.043 |
+| 64 | N/8 | 0.461 | 0.463 | +0.4% | 0.398 | 0.407 | +2.3% | 0.389 | 0.863 | 0.880 | 0.839 |
+| 64 | N | 3.635 | 3.619 | -0.4% | 3.079 | 3.009 | -2.3% | 2.994 | 0.847 | 0.831 | 0.827 |
+| 256 | 1 | 0.059 | 0.058 | -1.7% | 0.065 | 0.059 | -9.2% | 0.058 | 1.094 | 1.014 | 1.001 |
+| 256 | N/8 | 1.851 | 1.848 | -0.2% | 1.535 | 1.560 | +1.6% | 1.495 | 0.829 | 0.844 | 0.809 |
+| 256 | N | 14.604 | 14.862 | +1.8% | 12.290 | 12.240 | -0.4% | 12.109 | 0.842 | 0.824 | 0.815 |
+| 1024 | 1 | 0.063 | 0.064 | +1.6% | 0.061 | 0.060 | -1.6% | 0.059 | 0.968 | 0.931 | 0.921 |
+| 1024 | N/8 | 7.710 | 7.619 | -1.2% | 6.274 | 6.252 | -0.4% | 6.313 | 0.814 | 0.821 | 0.829 |
+| 1024 | N | 61.818 | 61.922 | +0.2% | 51.603 | 50.989 | -1.2% | 50.754 | 0.835 | 0.823 | 0.820 |
+
+No cell moved 15%. The largest move is -9.2%, arm B at N=256, k=1, a 0.06 ms/tick
+cell. Statements/tick are identical in every row, both arms, both samples.
+
+#### Q2b, phase split, the two cells the findings quote
+
+| N | k | arm | phase | old | new | delta |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| 1024 | N | A | insert | 25.846 | 26.261 | +1.6% |
+| 1024 | N | A | read | 22.976 | 23.083 | +0.5% |
+| 1024 | N | A | delete | 12.918 | 12.634 | -2.2% |
+| 1024 | N | B | insert | 27.508 | 27.246 | -1.0% |
+| 1024 | N | B | read | 23.723 | 23.387 | -1.4% |
+| 1024 | N | B | delete | 0.221 | 0.220 | -0.5% |
+| 256 | N/8 | A | insert | 0.790 | 0.748 | -5.3% |
+| 256 | N/8 | A | read | 0.699 | 0.704 | +0.7% |
+| 256 | N/8 | A | delete | 0.367 | 0.374 | +1.9% |
+| 256 | N/8 | B | insert | 0.787 | 0.817 | +3.8% |
+| 256 | N/8 | B | read | 0.729 | 0.722 | -1.0% |
+| 256 | N/8 | B | delete | 0.020 | 0.019 | -5.0% |
+
+F2's 58x delete ratio at N=1024, k=N re-measures at 12.634 / 0.220 = 57.4x.
+
+#### Q2d, key order
+
+| frontier PRIMARY KEY | us/read old | us/read new | delta |
+| --- | ---: | ---: | --- |
+| B (relation_id, row_id, tick, sign) | 26.9 | 26.9 | 0.0% |
+| B' (relation_id, tick, row_id, sign) | 20.9 | 21.4 | +2.4% |
+
+F9's 22% gap re-measures at 20.5%.
+
+#### Q3, boot
+
+| N | arm | boot ms old | boot ms new | delta |
+| --- | --- | ---: | ---: | --- |
+| 16 | A | 1.53 | 1.51 | -1.3% |
+| 16 | B | 0.46 | 0.46 | 0.0% |
+| 64 | A | 6.78 | 6.88 | +1.5% |
+| 64 | B | 1.79 | 1.82 | +1.7% |
+| 256 | A | 42.05 | 41.85 | -0.5% |
+| 256 | B | 9.58 | 9.38 | -2.1% |
+| 1024 | A | 388.87 | 391.05 | +0.6% |
+| 1024 | B | 70.05 | 70.49 | +0.6% |
+
+Statement counts, DDL bytes, object counts, and both `page_count` columns are
+identical in every row. F5's 5.6x is now 5.5x.
+
+#### Q4, one writer
+
+| arm | rows/s old | rows/s new | delta |
+| --- | ---: | ---: | --- |
+| A, 1 row/statement | 91,986 | 92,417 | +0.5% |
+| B, 1 row/statement | 81,715 | 81,583 | -0.2% |
+| A, chunked (cannot chunk across relations) | 92,185 | 90,618 | -1.7% |
+| B, 100 rows/statement | 678,484 | 672,769 | -0.8% |
+
+F7's 11.2% is now 11.7%; F8's 7.4x is still 7.4x.
+
+#### Q5a, arm B worst cell
+
+| phase | median ms old | median ms new | delta |
+| --- | ---: | ---: | --- |
+| insert | 1294.4 | 1302.5 | +0.6% |
+| read | 1171.1 | 1166.5 | -0.4% |
+| delete | 10.7 | 10.7 | 0.0% |
+| total | 2476.1 | 2479.7 | +0.1% |
+
+#### Q5b, CPU profile self time
+
+| frame | self ms old | self ms new | delta |
+| --- | ---: | ---: | --- |
+| prepare in index.js | 3829.1 | 3808.4 | -0.5% |
+| raw in index.js | 2406.8 | 2635.2 | +9.5% |
+| run in index.js | 2285.2 | 2147.9 | -6.0% |
+| (program) in (native) | 2234.9 | 2311.0 | +3.4% |
+| columns in index.js | 1977.5 | 1936.8 | -2.1% |
+| iterate in index.js | 461.7 | 463.7 | +0.4% |
+| (garbage collector) in (native) | 427.2 | 447.8 | +4.8% |
+| rowFromSql in sqlite3.js | 397.0 | 392.1 | -1.2% |
+| next in index.js | 372.0 | 340.6 | -8.4% |
+| executeStmt in sqlite3.js | 273.6 | 293.8 | +7.4% |
+| run in q5_profile.ts | 111.2 | 102.1 | -8.2% |
+| safeIntegers in index.js | 84.0 | 47.2 | **-43.8%** |
+| execute in sqlite3.js | 61.4 | 45.3 | **-26.2%** |
+| runMicrotasks in (native) | 47.5 | 29.9 | **-37.1%** |
+| valueFromSql / all in index.js | 20.1 | 15.1 | different frame |
+
+Three flagged cells, all in the last four rows of a 15,099 ms sample: 84.0 ms is
+0.6% of the sample and 29.9 ms is 0.2%. At that share a sampling profiler's
+bucket boundary moves the number, and the bottom frame is not even the same
+function in the two runs. F11 is unchanged: `prepare` holds 25.2% against 25.4%,
+the largest single self-time frame in both runs.
+
+### R4. Algorithm audit against the plan and against lower.pl
+
+| # | check | verdict |
+| --- | --- | --- |
+| a | arm A DDL byte-faithful to lower.pl | **deviates** |
+| b | arm B matches the plan's Storage as amended | **deviates as merged, re-measured here** |
+| c | tick loop matches the plan's Instance timeline | **deviates** |
+| d | one transaction per tick per arm, identically | **holds on symmetry, deviates from the runtime** |
+| e | EXPLAIN still SEARCH on both arms at the amended key order | **holds** |
+
+#### a. Arm A DDL against what lower.pl mints
+
+The rig's arm A is `rig/schema.ts:29-36`, three statements per relation. What
+`delta_ddl/3` mints per lowered relation is `lower.pl:6323-6362`, six statements
+plus text views. Diffed against the emitted `out/pokeapi_gen.ts`, not against a
+comment.
+
+| what | rig | lower.pl and emitted pokeapi | verdict |
+| --- | --- | --- | --- |
+| durable table | `schema.ts:21-27`, `("__id" INTEGER PRIMARY KEY, <cols>, UNIQUE (<key>))` | `lower.pl:992-999` `set_rel_table_ddl/5`; emitted `CREATE TABLE "pokeapi_gen___gen__list_ability_change_5a6fca1875ffd778" ("__id" INTEGER PRIMARY KEY, "content" INTEGER NOT NULL, UNIQUE ("content"))` | byte-faithful |
+| `__frontier_` prefix columns | `schema.ts:32`, `("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ...)` | `lower.pl:6347-6349` | byte-faithful |
+| `__frontier_` payload | one `"row_id" INTEGER NOT NULL` reference | the relation's OWN columns, `ColumnsSql` at `lower.pl:6329-6330` through `column_def/4` at `lower.pl:2860`; emitted `("_phase" ..., "_sequence" ..., "list_id" INTEGER NOT NULL, "idx" INTEGER NOT NULL, "value" INTEGER NOT NULL)` | **deviates** |
+| the tick read | `schema.ts:69-74`, `FROM "__frontier_rel_N" f JOIN "rel_N" typed ON typed."__id" = f."row_id"` | the emitted module contains `JOIN "__frontier_` **0 times**; its reads are shaped `... FROM "__frontier_<rel>" d0 WHERE d0."_phase" >= 0`, payload read straight off the frontier row, no join to the durable table | **deviates** |
+| `_phase` index | `schema.ts:33` | `lower.pl:6352-6354` | byte-faithful |
+| `__delta_<rel>` and its two indexes | absent from arm A's boot | `lower.pl:6331-6344`; 780 of them in pokeapi, Q1b | **deviates**, omitted |
+| `__next_frontier_<rel>` | absent from arm A's boot | `lower.pl:6357-6359`; 780 of them in pokeapi, Q1b | **deviates**, omitted |
+| `__support_next_` shape | `schema.ts:34`, `(<cols>, "__refcount" INTEGER NOT NULL, PRIMARY KEY (<cols>)) WITHOUT ROWID` | `lower.pl:6428-6430`; emitted `"__support_next_pokeapi_gen___opt_bool_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID` | byte-faithful |
+| `__support_next_` population | one per relation, all N | 4 of 780 in pokeapi, Q1b; minted only for a refcount head | **deviates** |
+| `<head>_zero` partial index | absent | `lower.pl:6440-6444`; 8 in pokeapi, Q1e | **deviates**, omitted |
+| TEMP or not | `CREATE TEMP TABLE` for every transient, plain `CREATE TABLE` for durable | same | byte-faithful |
+
+Bias. The payload deviation cuts both ways and its net sign is not decidable from
+this rig: real arm A writes a wider frontier row, more insert work than the rig
+charges it, then reads the payload with no join at all, less read work than the
+rig charges it. The three omissions run one direction: arm A's real boot is
+6-plus statements per relation against the rig's 3, so **Q3 understates arm A's
+boot cost by roughly 2x** and understates arm B's boot win by the same. Q1 is
+unaffected, because Q1 counts the real emitted DDL rather than the rig's.
+
+#### b. Arm B against the plan's Storage section
+
+The plan's Storage section now reads
+`PRIMARY KEY (relation_id, tick, row_id, sign)`, with a Write-uniqueness bullet
+saying tick sits second and citing this lab's `out/q2d.md`. The rig as merged
+wrote the **superseded** order, `rig/schema.ts:40` at commit `8ef2c6922`:
+`PRIMARY KEY ("relation_id", "row_id", "tick", "sign")`. Every Q2, Q3, Q4 and Q5
+number the lab published was measured against a key order the plan no longer
+specifies.
+
+Everything else in Storage is faithful: two TEMP tables, the `sign` CHECK, the
+`support_count` shape and its `(relation_id, row_id, rule_id)` PK, and frontier
+rows referencing durable rows by `(relation_id, row_id)` with no JSON or BLOB
+payload.
+
+Re-measured as arm B' in the Q2a table above. At every N the amended order lands
+within 4% of the old order, six cells faster and two slower, all inside the noise
+band: 0.809 against 0.844 at N=256 k=N/8, 0.820 against 0.823 at N=1024 k=N,
+0.829 against 0.821 at N=1024 k=N/8. The 20.5% win Q2d shows is not visible here,
+and Q6 below says why: the key order only matters when the frontier RETAINS
+ticks. A workload that clears every tick never holds more than k rows.
+
+Boot, contention and profile cells were not re-run for B': the two orders differ
+only in index column order, so their DDL byte count, statement count and page
+count are identical.
+
+#### c. Tick loop against the plan's Instance timeline
+
+Plan tick, Instance timeline: validate and intern an arrival, upsert or delete
+the durable typed row, write `(relation_id, row_id, tick, sign)` to the shared
+frontier, evaluate affected rules, update shared support counts, publish boundary
+deltas.
+
+Rig tick, `rig/q2_tick_cost.ts:49-83`: durable INSERT, frontier INSERT, one
+frontier-to-durable join per touched relation, clear.
+
+| plan step the rig skips | rig | biases |
+| --- | --- | --- |
+| validate and intern the arrival | absent | neither: identical JS-side work outside SQLite in both arms |
+| upsert or keyed replacement | plain INSERT | neither: same statement in both arms |
+| update shared support counts | the table is booted (`schema.ts:34`, `schema.ts:41`) and never written in Q2 | **arm A**: a support write is one statement into one of N tables in arm A and one statement into one shared table in arm B, so omitting it drops a place arm B pays the same dispatch against a bigger btree |
+| evaluate affected rules | one join per touched relation | neither |
+| publish boundary deltas | absent | **arm A**: the publish reads `__delta_<rel>` per relation in arm A and one table in arm B |
+| retraction, `sign = -1` | absent from Q2 | measured in Q6 below |
+| `__next_frontier_` promote | absent | **arm A, strongly**: the real per-relation tick clear is `DELETE FROM <frontier>` AND `DELETE FROM <next_frontier>` (`v6/tsv2/runtime/1_incremental.ts:254-256`), and the drain adds a three-statement promote per observed relation (`runtime/1_incremental.ts:1563-1565`). The rig charges arm A one `DELETE ... WHERE "_phase" = ?` per relation. Arm A's real clear is 2 to 5 statements per relation per tick against the rig's 1 |
+| drain and recursion | absent | neither |
+
+Every skip that has a direction favours arm A. F1, F2 and F5 are therefore
+conservative: the shared shape's measured margin is a floor on those counts.
+
+One further text deviation: the real clear carries no WHERE clause
+(`runtime/1_incremental.ts:255`), the rig's arm-A clear filters `_phase = ?`.
+
+#### d. Transactions
+
+Neither arm opens a transaction anywhere in the rig. Every statement is a bare
+`db.execute`: `q2_tick_cost.ts:41,55,57,67,75,79`, `q3_boot_cost.ts:18`,
+`q4_contention.ts:29,43`, `q5_profile.ts:29-44`, and `q6_retraction.ts`
+throughout. `grep -c 'BEGIN\|COMMIT\|batch(' rig/*.ts` is 0 for every file. The
+two arms are therefore per-statement autocommit IDENTICALLY, and no arm is faked
+by the other's bracket. That is the question this check asks, and it passes.
+
+It does not match the runtime. `SqlRunner.batch`
+(`v6/sprefa-store/js/src/engine/sqlRunner.ts:38-46`) calls
+`db.batch(statements, "write")`, one atomic write per call, and
+`SqlRunner.inTransaction` (`sqlRunner.ts:48-60`) is the `BEGIN IMMEDIATE` form.
+The per-tick frontier stage goes through `batch` as one call
+(`v6/tsv2/runtime/1_incremental.ts:266`).
+
+Direction. Under autocommit arm A pays k commits to clear a tick and arm B pays
+one. Inside a single transaction both pay one commit and the difference collapses
+to the statement count. The rig therefore **overstates arm B's delete win in
+absolute milliseconds**, while the structural k-to-1 statement ratio survives
+either way. This pulls opposite to every bias in (a) and (c).
+
+#### e. EXPLAIN QUERY PLAN at the amended key order
+
+`rig/q2_explain.ts` plans all three arms; output in `out/q2_explain.md`.
+
+| arm | `f` access | `typed` access |
+| --- | --- | --- |
+| A, no ANALYZE and after | `SEARCH f USING INDEX __frontier_rel_7_phase (_phase=?)` | `SEARCH typed USING INTEGER PRIMARY KEY (rowid=?)` |
+| B, no ANALYZE and after | `SEARCH f USING COVERING INDEX sqlite_autoindex_frontier_1 (relation_id=?)` | `SEARCH typed USING INTEGER PRIMARY KEY (rowid=?)` |
+| B', no ANALYZE and after | `SEARCH f USING COVERING INDEX sqlite_autoindex_frontier_1 (relation_id=? AND tick=?)` | `SEARCH typed USING INTEGER PRIMARY KEY (rowid=?)` |
+
+No SCAN on either side of any arm at either key order, with or without ANALYZE.
+At the amended order the frontier probe binds both predicates instead of one.
+Holds.
+
+### R5. Retraction, the top unmeasured claim
+
+Plan Storage bullet: "Retractions address the same durable row identity as
+arrivals." Report row S9 marked it unmeasured because the rig wrote `sign = 1`
+only. `rig/q6_retraction.ts` measures it.
+
+N=256, k=32, 200 ticks, 5 runs, medians. Each relation is pre-seeded with one
+durable row and one support row outside the timed window, so a retraction is
+available from tick 1. Per tick, per touched relation: one arrival (durable
+INSERT, signed +1 frontier row, support row) and one retraction of that
+relation's previous row (durable `DELETE ... WHERE "__id" = ?`, signed -1 row,
+support count decrement), then the read, then the clear.
+
+Arm A's signed carrier is `__delta_<rel>`, the table `lower.pl:6331-6333` mints
+with `"_sign" INTEGER NOT NULL`; `__frontier_<rel>` (`lower.pl:6347-6349`) carries
+`_phase` and has no sign column, so the retraction cannot ride it. Arm A
+therefore clears two tables per touched relation and arm B clears one for the
+whole tick.
+
+```bash
+node --experimental-transform-types v6/labs/shared_frontier/rig/q6_retraction.ts
+```
+
+#### Q6. Retraction, N=256, k=32, 200 ticks, median of 5
+
+| arm | ms/tick | vs A | stmts/tick | retractions/run | worst run s |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| A, per-relation `__frontier_` + `__delta_` + `__support_next_` | 3.983 | 1.000 | 288 | 6400 | 0.81 |
+| B, shared frontier `(relation_id, row_id, tick, sign)` | 3.265 | 0.820 | 225 | 6400 | 0.66 |
+| B', shared frontier `(relation_id, tick, row_id, sign)` | 3.353 | 0.842 | 225 | 6400 | 0.68 |
+
+#### Q6b. Phase split of the same medians, ms/tick
+
+| arm | arrival | retraction | read | clear |
+| --- | ---: | ---: | ---: | ---: |
+| A | 1.200 | 1.251 | 0.701 | 0.861 |
+| B | 1.283 | 1.279 | 0.682 | 0.026 |
+| B' | 1.297 | 1.300 | 0.680 | 0.026 |
+
+Every cell is under 1 second; the 10-second law is not engaged in Q6.
+
+### R6. Findings this revalidation adds or retires
+
+| # | finding | number |
+| --- | --- | --- |
+| F12 | the compile-time finding is retired | 526.4 s to 4.28 s of compiler time at `4e2c21a82`, 123x, and the plan phase alone 517.9 s to 2.019 s, 257x. F10's compile half and plan row V1 no longer hold |
+| F13 | the speedup moved no emitted byte | `out/pokeapi_gen.ts` is 6,077,435 bytes at both commits; `git diff` reports no change to any Q1 output |
+| F14 | every Q2-Q5 cell reproduced inside 15% | largest move -9.2%, arm B at N=256 k=1, a 0.06 ms cell; three flagged cells are all sub-1% frames of a CPU profile |
+| F15 | retraction does not change the verdict | N=256, k=32: arm B 0.820 of arm A, against 0.844 for the arrival-only cell at the same N and k. The retraction phase itself is a wash, 1.251 ms/tick arm A against 1.279 arm B; the clear is again the whole margin, 0.861 down to 0.026 ms/tick, 33x |
+| F16 | the amended key order needs a RETAINED frontier to pay | Q2a: B' lands within 4% of B at every N, six cells faster and two slower. Q6: B' 3.353 ms/tick against B 3.265. F9's 20.5% win comes from `out/q2d.md`, which holds 200 ticks x 256 relations = 51,200 rows; a tick-clearing workload never holds more than k. Both orders SEARCH, so the amended order is still the right call, and its price at k rows is zero |
+| F17 | the rig's arm A is not the arm A lower.pl emits | its frontier row is a `row_id` reference where lower.pl's carries the relation's own columns, and `JOIN "__frontier_` appears 0 times in the emitted pokeapi module. The rig also omits `__delta_`, `__next_frontier_`, and the `_zero` index, so arm A boots 3 statements per relation against lower.pl's 6-plus |
+| F18 | every directional gap in the rig's tick favours arm A except the transaction one | support writes, boundary publish, and the `__next_frontier_` clear are all per-relation in arm A and shared in arm B, and all three are absent; against that, per-statement autocommit inflates arm A's k-commit clear. F1/F2/F5's margins are a floor on the first three counts |
+
+The unmeasured list from the original Findings section shrinks by one: retraction
+and `sign = -1` are measured in R5. Support-count writes during a tick, recursion
+and drain, the `__delta_` / `__next_frontier_` / `__pre_` families' own tick cost,
+and Rust-side execution remain unmeasured.
