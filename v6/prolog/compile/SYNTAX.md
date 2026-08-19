@@ -133,6 +133,7 @@ Refusals: `coalesce_no_output`, `coalesce_multiple_outputs`,
 | `not/1` | `sign` | `arm(neg)` | `wrapper(body_item,lower)` | `live` |
 | `coalesce/2` | `sugar` | `refs_of_arg(1,pos,sampled)` | `wrapper(rel_atom_default,expand(coalesce))` | `live` |
 | `pre/1` | `sample` | `refs_of_arg(1,pos,sampled)` | `wrapper(rel_atom,lower)` | `live` |
+| `pre/2` | `sample` | `refs_of_arg(1,pos,sampled)` | `wrapper(rel_atom_default,lower)` | `live` |
 | `seq/1` | `sugar` | `no_refs` | `wrapper(expr,expand(seq))` | `live` |
 | `now/1` | `time` | `no_refs` | `wrapper(expr,lower)` | `live` |
 | `decode/2` | `guard` | `no_refs` | `wrapper(expr_pair,lower)` | `live` |
@@ -161,7 +162,7 @@ Refusals: `coalesce_no_output`, `coalesce_multiple_outputs`,
 | `max/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `avg/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `json_array/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
-| `json_object/2` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
+| `json_object/2` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `json_group_array/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `json_group_array/2` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `group_concat/2` | `aggregate` | `no_refs` | `head(lower)` | `live` |
