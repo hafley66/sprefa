@@ -22,6 +22,7 @@
 :- use_module('1_host_expand', [compile_host_decl/2, compile_query/2,
                                 host_plan_contract/2]).
 :- use_module('compile/registry', [bind_executor/2]).
+:- use_module('0_option_expand', [option_enum_name/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -29,6 +30,10 @@
 % ═══ small text helpers ══════════════════════════════════════════════════════
 
 lines_block(Lines, Text) :- atomic_list_concat(Lines, '\n', Text).
+
+pairs_to_dict([], _{}) :- !.
+pairs_to_dict(Pairs, Dict) :- foldl(add_pair, Pairs, _{}, Dict).
+add_pair(Name-Value, Acc, Out) :- Out = Acc.put(Name, Value).
 
 % Escape backslashes, backticks, and `${` before embedding SQL in a template
 % literal. Backslashes must be handled first.
@@ -195,6 +200,7 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
        'import { concatMap, EMPTY, expand, forkJoin, last, map, of, type Observable } from "rxjs";'
     ),
     runtime_import_line(HasOrderedProgram, HasInternWrite, RuntimeImport),
+    EnumImport = ['import { EnumPlane } from "../runtime/enumPlane.ts";'],
     ( HasStructTypes == true
     -> StructImport = ['import { StructPlane } from "../runtime/structPlane.ts";'],
        StructTypeImports = ['  IStructRefColumns,', '  IStructTypePlan,']
@@ -215,6 +221,7 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
       'import { list_at_scalar_seam } from "../runtime/boundary.ts";'
       ],
       StructImport,
+      EnumImport,
       TextImport,
       [ 'import type {',
       '  IArrivalBatch,',
@@ -233,7 +240,9 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
       '  IRowColumnType,',
       '  IRowScalar,',
       '  IRowValue,',
-      '  ISqlSeam,'
+      '  ISqlSeam,',
+      '  IEnumRefColumns,',
+      '  IEnumTypePlan,'
       ],
       StructTypeImports,
       TextTypeImports,
@@ -319,6 +328,47 @@ struct_ref_column_entries(RelPlans, Lines) :-
 
 column_type_ref_entry(ref(TypeName), Text) :- !, js_string(TypeName, Text).
 column_type_ref_entry(_, 'null').
+
+enum_type_plans(Decls, RelPlans, Plans) :-
+    findall(Name, enum_runtime_name(Decls, Name), Names0),
+    sort(Names0, Names), maplist(enum_type_plan(Decls, RelPlans), Names, Plans).
+enum_runtime_name(Decls, Name) :- member(enum_column(_, _, Name), Decls).
+enum_runtime_name(Decls, Name) :- member(enum_option_payload(_, _, _, Element), Decls), option_enum_name(Element, Name).
+enum_type_plan(Decls, RelPlans, Name, enumtype(Name, Variants)) :-
+    findall(Tag-Variant, enum_variant_plan(Decls, RelPlans, Name, Tag, Variant), Pairs0),
+    keysort(Pairs0, Pairs), pairs_values(Pairs, Variants).
+enum_variant_plan(Decls, RelPlans, EnumName, Tag, enumvariant(Tag, VariantName, Fields, FieldEnums)) :-
+    atomic_list_concat([EnumName, '_'], Prefix), member(RelPlan, RelPlans),
+    relplan_parts(RelPlan, VariantName/_, _, [id | Fields], _, _),
+    atom_concat(Prefix, Tag, VariantName), maplist(enum_variant_field(Decls, VariantName), Fields, FieldEnums).
+enum_variant_field(Decls, VariantName, Field, EnumName) :- member(enum_column(VariantName/_, Field, EnumName), Decls), !.
+enum_variant_field(Decls, VariantName, Field, EnumName) :- member(enum_option_payload(_, VariantName, Field, Element), Decls), option_enum_name(Element, EnumName), !.
+enum_variant_field(_, _, _, null).
+enum_ref_columns_map(Decls, RelPlans, Map) :-
+    findall(Name-Refs, (member(RelPlan, RelPlans), relplan_parts(RelPlan, Ref, _, Columns, _, _),
+      ref_name(Ref, Name), enum_ref_fields(Decls, Ref, Columns, Columns, Refs), member(Field, Refs), Field \== null), Pairs),
+    pairs_to_dict(Pairs, Map).
+enum_ref_fields(_, _, _, [], []).
+enum_ref_fields(Decls, Ref, All, [Column | Rest], [Field | Fields]) :-
+    ( ( member(enum_column(Ref, Column, EnumName), Decls)
+      ; member(option_column(Ref, Column, Element), Decls), option_enum_name(Element, EnumName)
+      )
+    -> (nth0(EndpointIndex, All, id) -> Field = enumref(EnumName, EndpointIndex) ; Field = enumref(EnumName, null))
+    ; Field = null ), enum_ref_fields(Decls, Ref, All, Rest, Fields).
+enum_plane_lines([], _, [ 'export const ENUM_TYPES: readonly IEnumTypePlan[] = [];',
+                          'export const ENUM_REF_COLUMNS: IEnumRefColumns = {};'], false) :- !.
+enum_plane_lines(Plans, RefColumns, Lines, true) :-
+    maplist(enum_type_line, Plans, TypeLines), dict_pairs(RefColumns, _, Pairs),
+    maplist(enum_ref_line, Pairs, RefLines),
+    append([[ 'export const ENUM_TYPES: readonly IEnumTypePlan[] = [' ], TypeLines,
+      [ '];', '', 'export const ENUM_REF_COLUMNS: IEnumRefColumns = {' ], RefLines, [ '};' ]], Lines).
+enum_type_line(enumtype(Name, Variants), Line) :- js_string(Name, NameText), maplist(enum_variant_text, Variants, VariantTexts), atomic_list_concat(VariantTexts, ', ', VariantsText), format(atom(Line), '  { name: ~w, variants: [~w] },', [NameText, VariantsText]).
+enum_variant_text(enumvariant(Tag, Rel, Fields, FieldEnums), Text) :-
+    js_string(Tag, TagText), js_string(Rel, RelText), maplist(js_string, Fields, FieldTexts), atomic_list_concat(FieldTexts, ', ', FieldsText), maplist(enum_field_text, FieldEnums, EnumTexts), atomic_list_concat(EnumTexts, ', ', EnumsText),
+    format(atom(Text), '{ tag: ~w, rel: ~w, fields: [~w], field_enums: [~w] }', [TagText, RelText, FieldsText, EnumsText]).
+enum_field_text(null, 'null') :- !. enum_field_text(Name, Text) :- js_string(Name, Text).
+enum_ref_line(Name-Refs, Line) :- js_string(Name, NameText), maplist(enum_ref_text, Refs, Texts), atomic_list_concat(Texts, ', ', RefsText), format(atom(Line), '  ~w: [~w],', [NameText, RefsText]).
+enum_ref_text(null, 'null') :- !. enum_ref_text(enumref(Name, Index), Text) :- js_string(Name, NameText), (Index == null -> IndexText = 'null' ; format(atom(IndexText), '~w', [Index])), format(atom(Text), '{ name: ~w, endpoint_index: ~w }', [NameText, IndexText]).
 
 % Relation references normalize inside each emitter mode after that mode has
 % opened its tick boundary. Target rows pass through the same arrival
@@ -2177,6 +2227,10 @@ run_ordered_tick_fn_lines(true, Name, HasRetention, UsesTick, DepartureRefs,
       ],
       RetentionLines,
       AfterReadLines,
+      [ '    concatMap((state) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, state.deltas.rels).pipe(',
+        '      map((rels) => ({ ...state, deltas: { ...state.deltas, rels } })),',
+        '    )), '
+      ],
       DepartureStageLines,
       [ '  );',
         NameCommentLine,
@@ -2386,7 +2440,9 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
       DepartureStageLines,
       [
       '    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(',
-      '      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),',
+      '      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, rels).pipe(',
+      '        map((decoded): ITickDeltas => ({ rels: decoded, carry_pending })),',
+      '      )),',
       '    )),',
       '  );',
       '}',
@@ -2398,12 +2454,14 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
 run_tick_dispatch_lines(_, HasStructTypes, true,
     [ Signature,
       '  arrivals = validate_arrivals(arrivals);',
+      '  arrivals = EnumPlane.intern(ENUM_TYPES, ENUM_REF_COLUMNS, arrivals);',
       '  return run_ordered_tick(seam, arrivals);',
       '}'
     ]) :- dispatch_signature(HasStructTypes, Signature), !.
 run_tick_dispatch_lines(_, HasStructTypes, false,
     [ Signature,
       '  arrivals = validate_arrivals(arrivals);',
+      '  arrivals = EnumPlane.intern(ENUM_TYPES, ENUM_REF_COLUMNS, arrivals);',
       '  return run_incremental_tick(seam, arrivals);',
       '}'
     ]) :- dispatch_signature(HasStructTypes, Signature).
@@ -2456,6 +2514,8 @@ program_export_lines(Name, InternMode,
       '  query_plans,',
       '  subscribed_rels,',
       '  rel_catalog,',
+      '  enum_types: ENUM_TYPES,',
+      '  enum_ref_columns: ENUM_REF_COLUMNS,',
       '  unsupported_execution,',
       '  tick: run_tick,',
       '};'
@@ -2479,6 +2539,9 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     Plan = plan(_, prog(PlanDecls, _), LoweringTypes, _, _, _, _, _, _),
     struct_type_plans(PlanDecls, LoweringTypes, RelPlans, StructPlans),
     struct_plane_lines(StructPlans, RelPlans, StructPlaneLines, HasStructTypes),
+    enum_type_plans(PlanDecls, RelPlans, EnumPlans),
+    enum_ref_columns_map(PlanDecls, RelPlans, EnumRefColumns),
+    enum_plane_lines(EnumPlans, EnumRefColumns, EnumPlaneLines, _HasEnumTypes),
     plan_intern_mode(Plan, InternMode),
     program_text_intern_plan(InternMode, RelPlans, TextInternPlan),
     text_intern_plan_lines(TextInternPlan, TextInternPlanLines, HasTextIntern),
@@ -2589,7 +2652,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     Sections0 =
     [ HeaderLines, ImportLines, LocalTypeLines, WorldPlanLines,
       BindArgsHelperLines, ArrivalValueGuardLines, TriggerOccurrencesHelperLines,
-      StructPlaneLines, TextInternPlanLines,
+      StructPlaneLines, EnumPlaneLines, TextInternPlanLines,
       DdlLines, RelColumnsLines, RelPhysicalNamesLines, RelColumnTypesLines, RelStoredColumnTypesLines, RelCatalogLines,
       RelDeclaredColumnTypesLines, ArrivalTargetsLines,
       BootLines, SnapshotTypeLines, ReadSnapshotFnLines,

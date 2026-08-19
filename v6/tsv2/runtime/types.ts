@@ -382,6 +382,39 @@ export interface IStructTypePlan {
  *  a scalar column). Only rels with at least one ref column appear. */
 export type IStructRefColumns = Readonly<Record<string, readonly (string | null)[]>>;
 
+/** Public tagged enum schema. SQLite keeps the owning relation's endpoint as
+ * an integer; generated variant relations carry the payload. */
+export interface IEnumVariantPlan {
+  readonly tag: string;
+  readonly rel: string;
+  readonly fields: readonly string[];
+  readonly field_enums?: readonly (string | null)[];
+}
+
+export interface IEnumTypePlan {
+  readonly name: string;
+  readonly variants: readonly IEnumVariantPlan[];
+}
+
+export interface IEnumRefColumn {
+  readonly name: string;
+  readonly endpoint_index: number | null;
+}
+
+export type IEnumRefColumns = Readonly<Record<string, readonly (IEnumRefColumn | null)[]>>;
+
+export interface IEnumPlane {
+  /** Replaces tagged public values with integer endpoints and prepends the
+   * generated variant arrivals that materialize their payload. */
+  intern(
+    types: readonly IEnumTypePlan[],
+    ref_columns: IEnumRefColumns,
+    arrivals: IArrivalBatch,
+  ): IArrivalBatch;
+  decode_deltas(seam: ISqlSeam, types: readonly IEnumTypePlan[], ref_columns: IEnumRefColumns, relations: readonly IIncrementalRelationPlan[], deltas: readonly IRelDelta[]): Observable<readonly IRelDelta[]>;
+  decode_rows(seam: ISqlSeam, types: readonly IEnumTypePlan[], ref_columns: IEnumRefColumns, relations: readonly IIncrementalRelationPlan[], rel: string, rows: readonly IRow[]): Observable<readonly IRow[]>;
+}
+
 export interface IStructPlane {
   /**
    * Resolves every relation-shaped reference value and returns parent rows
@@ -799,6 +832,8 @@ export interface IServedProgram extends IGenProgram {
   /** The rows the program's own `INSERT OR IGNORE INTO "__rel"` carries; the
    *  reload plan reads them against what the database already holds. */
   readonly rel_catalog: readonly IRelCatalogRow[];
+  readonly enum_types?: readonly IEnumTypePlan[];
+  readonly enum_ref_columns?: IEnumRefColumns;
 }
 
 export interface IProgramCompiler {

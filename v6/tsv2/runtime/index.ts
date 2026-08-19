@@ -7,3 +7,4 @@ export * from "./1_incremental.ts";
 export * from "./2_boot.ts";
 export * from "./3_subscribe.ts";
 export * from "./diff.ts";
+export * from "./enumPlane.ts";

@@ -53,10 +53,24 @@ fn read_snapshot(
         let result = seam
             .execute(&SqlStatement { sql, args: vec![] })
             .expect("ordered snapshot read failed");
-        snapshot.insert(
-            relation.rel.clone(),
-            result_rows(&result, &relation.columns, &relation.column_types)?,
-        );
+        let rows = result_rows(&result, &relation.columns, &relation.column_types)?;
+        let rows = if decoded {
+            rows.iter()
+                .map(|row| {
+                    crate::enum_plane::decode_row(
+                        seam,
+                        &program.enum_types,
+                        &program.enum_ref_columns,
+                        &program.relations,
+                        &relation.rel,
+                        row,
+                    )
+                })
+                .collect::<BoundaryResult<Vec<_>>>()?
+        } else {
+            rows
+        };
+        snapshot.insert(relation.rel.clone(), rows);
     }
     Ok(snapshot)
 }
@@ -644,9 +658,11 @@ pub fn run_tick(
     if program.uses_tick {
         crate::incremental::advance_tick(seam);
     }
+    let enumed =
+        crate::enum_plane::intern(&program.enum_types, &program.enum_ref_columns, arrivals)?;
     let interned = match &program.text_intern_plan {
-        Some(plan) => crate::text_plane::intern(seam, plan, arrivals)?,
-        None => arrivals.to_vec(),
+        Some(plan) => crate::text_plane::intern(seam, plan, &enumed)?,
+        None => enumed,
     };
     let normalized = crate::struct_plane::intern(
         seam,
@@ -677,7 +693,7 @@ pub fn run_tick(
     let additions = carry_additions(program, &mid, &after_stored, &stored_deltas, &written);
     let ordered_carry =
         crate::incremental::stage_ordered_frontiers(seam, &program.relations, &additions)?;
-    crate::incremental::stage_departures(seam, &program.relations, &deltas)?;
+    crate::incremental::stage_departures(seam, &program.relations, &stored_deltas)?;
     Ok(TickDeltas {
         carry_pending: base_carry_pending(program, &deltas) || ordered_carry,
         rels: deltas,

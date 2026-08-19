@@ -29,6 +29,8 @@ pub struct GenProgram {
     pub text_intern_plan: Option<crate::types::TextInternPlan>,
     pub struct_types: Vec<crate::types::StructTypePlan>,
     pub struct_ref_columns: HashMap<String, Vec<Option<String>>>,
+    pub enum_types: Vec<crate::types::EnumTypePlan>,
+    pub enum_ref_columns: crate::types::EnumRefColumns,
     pub ordered_program: bool,
     pub ordered_arms: Vec<crate::types::OrderedEdgeArm>,
     pub ordered_pre_refs: Vec<String>,
@@ -58,6 +60,8 @@ impl GenProgram {
             text_intern_plan: pj.text_intern_plan,
             struct_types: pj.struct_types,
             struct_ref_columns: pj.struct_ref_columns,
+            enum_types: pj.enum_types,
+            enum_ref_columns: pj.enum_ref_columns,
             ordered_program: pj.ordered_program,
             ordered_arms: pj.ordered_arms,
             ordered_pre_refs: pj.ordered_pre_refs,
@@ -89,9 +93,10 @@ impl GenProgram {
         if self.uses_tick {
             incremental::advance_tick(seam);
         }
+        let enumed = crate::enum_plane::intern(&self.enum_types, &self.enum_ref_columns, arrivals)?;
         let interned = match &self.text_intern_plan {
-            Some(plan) => crate::text_plane::intern(seam, plan, arrivals)?,
-            None => arrivals.to_vec(),
+            Some(plan) => crate::text_plane::intern(seam, plan, &enumed)?,
+            None => enumed,
         };
         let normalized = crate::struct_plane::intern(
             seam,
@@ -123,8 +128,15 @@ impl GenProgram {
             &self.relations,
             self.reconcile_every_tick,
         )?;
-        let rels = incremental::read_boundary(seam, &self.relations)?;
-        incremental::stage_departures(seam, &self.relations, &rels)?;
+        let physical_rels = incremental::read_boundary(seam, &self.relations)?;
+        incremental::stage_departures(seam, &self.relations, &physical_rels)?;
+        let rels = crate::enum_plane::decode_deltas(
+            seam,
+            &self.enum_types,
+            &self.enum_ref_columns,
+            &self.relations,
+            physical_rels,
+        )?;
         let carry_pending = incremental::promote_frontiers(seam, &self.relations);
         Ok(TickDeltas {
             rels,

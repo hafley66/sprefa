@@ -23,6 +23,7 @@
                          listened_departure_refs/2, program_uses_tick/2 ]).
 :- use_module('1_host_expand', [compile_host_decl/2,
                                 host_plan_contract/2]).
+:- use_module('0_option_expand', [option_enum_name/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -438,6 +439,68 @@ struct_ref_columns_map(RelPlans, Map) :-
 column_type_ref_field(ref(TypeName), TypeName) :- !.
 column_type_ref_field(_, null).
 
+% Enum values keep their endpoint INTEGER in the physical relation.  This
+% emitted schema describes only the public tagged boundary and the generated
+% variant payload relations used to materialize that endpoint.
+enum_type_plans(Decls, RelPlans, Plans) :-
+    findall(Name, enum_runtime_name(Decls, Name), Names0),
+    sort(Names0, Names),
+    maplist(enum_type_plan(Decls, RelPlans), Names, Plans).
+
+enum_runtime_name(Decls, Name) :- member(enum_column(_, _, Name), Decls).
+enum_runtime_name(Decls, Name) :-
+    member(enum_option_payload(_, _, _, Element), Decls),
+    option_enum_name(Element, Name).
+
+enum_type_plan(Decls, RelPlans, Name, enumtype(Name, Variants)) :-
+    findall(Tag-Variant,
+            enum_variant_plan(Decls, RelPlans, Name, Tag, Variant), Pairs0),
+    keysort(Pairs0, Pairs), pairs_values(Pairs, Variants).
+
+enum_variant_plan(Decls, RelPlans, EnumName, Tag,
+                  enumvariant(Tag, VariantName, Fields, FieldEnums)) :-
+    atomic_list_concat([EnumName, '_'], Prefix),
+    member(RelPlan, RelPlans),
+    relplan_parts(RelPlan, VariantName/_, _, [id | Fields], _, _),
+    atom_concat(Prefix, Tag, VariantName),
+    maplist(enum_variant_field(Decls, VariantName), Fields, FieldEnums).
+
+enum_variant_field(Decls, VariantName, Field, EnumName) :-
+    member(enum_column(VariantName/_, Field, EnumName), Decls), !.
+enum_variant_field(Decls, VariantName, Field, EnumName) :-
+    member(enum_option_payload(_, VariantName, Field, Element), Decls),
+    option_enum_name(Element, EnumName), !.
+enum_variant_field(_, _, _, null).
+
+enum_type_dict(enumtype(Name, Variants), _{name: Name, variants: VariantDicts}) :-
+    maplist(enum_variant_dict, Variants, VariantDicts).
+enum_variant_dict(enumvariant(Tag, Rel, Fields, FieldEnums),
+                  _{tag: Tag, rel: Rel, fields: Fields, field_enums: FieldEnums}).
+
+enum_ref_columns_map(Decls, RelPlans, Map) :-
+    findall(Name-Refs,
+            ( member(RelPlan, RelPlans),
+              relplan_parts(RelPlan, Ref, _, Columns, _, _),
+              ref_name(Ref, Name),
+              enum_ref_fields(Decls, Ref, Columns, Columns, Refs),
+              member(Field, Refs), Field \== null ),
+            Pairs),
+    pairs_to_dict(Pairs, Map).
+
+enum_ref_fields(_, _, _, [], []).
+enum_ref_fields(Decls, Ref, AllColumns, [Column | Rest], [Field | Fields]) :-
+    ( ( member(enum_column(Ref, Column, EnumName), Decls)
+      ; member(option_column(Ref, Column, Element), Decls),
+        option_enum_name(Element, EnumName)
+      )
+    -> ( nth0(EndpointIndex, AllColumns, id)
+       -> Field = _{name: EnumName, endpoint_index: EndpointIndex}
+       ;  Field = _{name: EnumName, endpoint_index: null}
+       )
+    ; Field = null
+    ),
+    enum_ref_fields(Decls, Ref, AllColumns, Rest, Fields).
+
 % ═══ assemble the Rust source ════════════════════════════════════════════════
 
 emit_program(Name, Plan, Lowered, BootStatements, Text) :-
@@ -475,6 +538,9 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     struct_type_plans(PlanDecls, LoweringTypes, RelPlans, StructPlans),
     maplist(struct_type_dict, StructPlans, StructTypes),
     struct_ref_columns_map(RelPlans, StructRefColumns),
+    enum_type_plans(PlanDecls, RelPlans, EnumPlans),
+    maplist(enum_type_dict, EnumPlans, EnumTypes),
+    enum_ref_columns_map(PlanDecls, RelPlans, EnumRefColumns),
     ordered_fields(EdgeStatements, RelPlans, PlanRules,
                    OrderedProgram, OrderedArms, OrderedPreRefs,
                    OrderedRecursiveLevels),
@@ -498,6 +564,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
        text_intern_plan: TextInternField,
        struct_types: StructTypes,
        struct_ref_columns: StructRefColumns,
+       enum_types: EnumTypes,
+       enum_ref_columns: EnumRefColumns,
        ordered_program: OrderedProgram,
        ordered_arms: OrderedArms,
        ordered_pre_refs: OrderedPreRefs,

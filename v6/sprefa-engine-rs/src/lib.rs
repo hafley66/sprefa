@@ -7,6 +7,7 @@
 pub mod change_facts;
 pub mod dep_resolve;
 pub mod driver;
+pub mod enum_plane;
 pub mod hosts;
 pub mod incremental;
 pub mod ordered;

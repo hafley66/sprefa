@@ -382,6 +382,33 @@ pub struct StructTypePlan {
     pub lookup_sql: String,
 }
 
+// The public tagged-value schema for an enum whose SQLite representation is an
+// INTEGER endpoint.  Variant rows retain their ordinary physical `id` plus
+// payload columns; this plan is the sole translation authority at the runtime
+// boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnumVariantPlan {
+    pub tag: String,
+    pub rel: String,
+    pub fields: Vec<String>,
+    #[serde(default)]
+    pub field_enums: Vec<Option<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnumTypePlan {
+    pub name: String,
+    pub variants: Vec<EnumVariantPlan>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnumRefColumn {
+    pub name: String,
+    pub endpoint_index: Option<usize>,
+}
+
+pub type EnumRefColumns = std::collections::HashMap<String, Vec<Option<EnumRefColumn>>>;
+
 // One IIncrementalRelationPlan: the per-relation table names and statement
 // text the tick engine stages events through.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -629,6 +656,10 @@ pub struct ProgramJson {
     pub struct_types: Vec<StructTypePlan>,
     #[serde(default)]
     pub struct_ref_columns: std::collections::HashMap<String, Vec<Option<String>>>,
+    #[serde(default)]
+    pub enum_types: Vec<EnumTypePlan>,
+    #[serde(default)]
+    pub enum_ref_columns: EnumRefColumns,
     #[serde(default)]
     pub ordered_program: bool,
     #[serde(default)]
