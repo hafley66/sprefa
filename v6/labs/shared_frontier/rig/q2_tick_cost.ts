@@ -92,7 +92,7 @@ for (const relations of RELATION_COUNTS) {
     ["N", relations],
   ];
   for (const [kLabel, k] of ks) {
-    for (const arm of ["A", "B"] as const) {
+    for (const arm of ["A", "B", "B'"] as const) {
       const runMs: number[] = [];
       const insert: number[] = [];
       const read: number[] = [];
@@ -128,16 +128,20 @@ for (const relations of RELATION_COUNTS) {
   for (const kLabel of ["1", "N/8", "N"]) {
     const a = cells.find((cell) => cell.arm === "A" && cell.relations === relations && cell.kLabel === kLabel) as ICell;
     const b = cells.find((cell) => cell.arm === "B" && cell.relations === relations && cell.kLabel === kLabel) as ICell;
+    const bPrime = cells.find((cell) => cell.arm === "B'" && cell.relations === relations && cell.kLabel === kLabel) as ICell;
     rows.push([
       String(relations),
       `${kLabel} (${a.k})`,
       round(a.msPerTick, 3).toFixed(3),
       round(b.msPerTick, 3).toFixed(3),
+      round(bPrime.msPerTick, 3).toFixed(3),
       round(b.msPerTick / a.msPerTick, 3).toFixed(3),
+      round(bPrime.msPerTick / a.msPerTick, 3).toFixed(3),
       String(a.statementsPerTick),
       String(b.statementsPerTick),
       round(Math.max(...a.runMs) / 1000, 2).toFixed(2),
       round(Math.max(...b.runMs) / 1000, 2).toFixed(2),
+      round(Math.max(...bPrime.runMs) / 1000, 2).toFixed(2),
     ]);
   }
 }
@@ -145,7 +149,7 @@ for (const relations of RELATION_COUNTS) {
 console.log("### Q2a. ms/tick, median of 5 runs of 200 ticks\n");
 console.log(
   markdownTable(
-    ["N", "k", "arm A ms/tick", "arm B ms/tick", "B/A", "arm A stmts/tick", "arm B stmts/tick", "arm A worst run s", "arm B worst run s"],
+    ["N", "k", "arm A ms/tick", "arm B ms/tick", "arm B' ms/tick", "B/A", "B'/A", "arm A stmts/tick", "arm B stmts/tick", "arm A worst run s", "arm B worst run s", "arm B' worst run s"],
     rows,
   ),
 );

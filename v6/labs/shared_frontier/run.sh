@@ -2,7 +2,7 @@
 # run.sh: every table in REPORT.md, in report order.
 #
 #   bash v6/labs/shared_frontier/run.sh            # Q1..Q5 against a compiled pokeapi
-#   COMPILE=1 bash v6/labs/shared_frontier/run.sh  # recompile pokeapi first (526 s measured)
+#   COMPILE=1 bash v6/labs/shared_frontier/run.sh  # recompile pokeapi first (4.3 s at 4e2c21a82)
 #
 # node is the repo's node (v24.15.0), TS runs through --experimental-transform-types
 # exactly as v6/tsv2/package.json runs its own scripts. The SQLite driver is
@@ -35,6 +35,7 @@ quiet "${NODE_RUN[@]}" rig/q2d_keyorder.ts   | tee out/q2d.md
 quiet "${NODE_RUN[@]}" rig/q3_boot_cost.ts   | tee out/q3.md
 quiet "${NODE_RUN[@]}" rig/q4_contention.ts  | tee out/q4.md
 quiet "${NODE_RUN[@]}" rig/q5_profile.ts     | tee out/q5.md
+quiet "${NODE_RUN[@]}" rig/q6_retraction.ts | tee out/q6.md
 
 rm -f out/prof/*.cpuprofile
 node --cpu-prof --cpu-prof-dir=out/prof --experimental-transform-types rig/q5_profile.ts >/dev/null

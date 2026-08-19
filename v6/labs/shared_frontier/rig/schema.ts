@@ -35,13 +35,18 @@ export function armATransientDdl(index: number): readonly string[] {
   ];
 }
 
-/** Arm B: two tables total, whatever N is. */
-export const ARM_B_TRANSIENT_DDL: readonly string[] = [
-  `CREATE TEMP TABLE "frontier" ("relation_id" INTEGER NOT NULL, "row_id" INTEGER NOT NULL, "tick" INTEGER NOT NULL, "sign" INTEGER NOT NULL CHECK ("sign" IN (-1, 1)), PRIMARY KEY ("relation_id", "row_id", "tick", "sign"))`,
-  `CREATE TEMP TABLE "support_count" ("relation_id" INTEGER NOT NULL, "row_id" INTEGER NOT NULL, "rule_id" INTEGER NOT NULL, "count" INTEGER NOT NULL, PRIMARY KEY ("relation_id", "row_id", "rule_id"))`,
-];
+export type Arm = "A" | "B" | "B'";
 
-export type Arm = "A" | "B";
+/** Arm B and B' differ only in the frontier PRIMARY KEY column order; two tables total, whatever N is. */
+export function armBTransientDdl(arm: Arm): readonly string[] {
+  const key = arm === "B" ? `"relation_id", "row_id", "tick", "sign"` : `"relation_id", "tick", "row_id", "sign"`;
+  return [
+    `CREATE TEMP TABLE "frontier" ("relation_id" INTEGER NOT NULL, "row_id" INTEGER NOT NULL, "tick" INTEGER NOT NULL, "sign" INTEGER NOT NULL CHECK ("sign" IN (-1, 1)), PRIMARY KEY (${key}))`,
+    `CREATE TEMP TABLE "support_count" ("relation_id" INTEGER NOT NULL, "row_id" INTEGER NOT NULL, "rule_id" INTEGER NOT NULL, "count" INTEGER NOT NULL, PRIMARY KEY ("relation_id", "row_id", "rule_id"))`,
+  ];
+}
+
+export const ARM_B_TRANSIENT_DDL: readonly string[] = armBTransientDdl("B");
 
 /** Every CREATE the arm issues for N relations, durable tables first. */
 export function bootDdl(arm: Arm, relations: number): readonly string[] {
@@ -50,7 +55,7 @@ export function bootDdl(arm: Arm, relations: number): readonly string[] {
   if (arm === "A") {
     for (let index = 0; index < relations; index += 1) statements.push(...armATransientDdl(index));
   } else {
-    statements.push(...ARM_B_TRANSIENT_DDL);
+    statements.push(...armBTransientDdl(arm));
   }
   return statements;
 }
