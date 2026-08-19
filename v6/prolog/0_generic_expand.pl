@@ -120,7 +120,7 @@ handoff_annotation_requests(Decls0, Decls) :-
     findall(Request,
             annotation_member_request(Decls0, Request),
             Requests0),
-    sort(Requests0, Requests),
+    list_to_set(Requests0, Requests),
     ( Requests == []
     -> Decls = Decls0
     ;  append(Decls0, [compiler_annotation_requests(Requests)], Decls)
@@ -128,22 +128,73 @@ handoff_annotation_requests(Decls0, Decls) :-
 
 annotation_member_request(Decls, Request) :-
     member(col_type(Ref, Name, Type), Decls),
-    annotated_member_request(Decls, Ref, Name, Type, Request).
-annotation_member_request(Decls, Request) :-
-    member(type_decl(OwnerName, Specs), Decls),
-    member(col(Name, Type), Specs),
-    annotated_member_request(Decls, OwnerName, Name, Type, Request).
-
-annotated_member_request(Decls, Ref, Name, annotated_type(Type, Applications),
-                         annotation_request(OwnerId, MemberId,
-                                            annotated_type(Type, Applications),
-                                            Steps)) :-
+    \+ anonymous_generated_ref(Decls, Ref),
+    \+ generated_list_member_ref(Ref),
     ref_name(Ref, OwnerName),
     semantic_decl_id(Decls, relation, OwnerName, OwnerId),
     member_position(Decls, OwnerName, Name, Position),
     member_id(OwnerId, Position, Name, MemberId),
+    annotation_type_request(Decls, OwnerId, MemberId, [Name], Type, Request).
+
+% Anonymous declarations are materialized type-expression children, not new
+% authored relation members.  Their types are reached from the canonical
+% col_type/3 row which caused their minting.
+anonymous_generated_ref(Decls, Ref) :-
+    ref_name(Ref, Name),
+    memberchk(anonymous_generated_decl(Name), Decls).
+
+generated_list_member_ref(Ref) :-
+    ref_name(Ref, Name),
+    sub_atom(Name, 0, _, _, '__gen__list_').
+
+annotation_type_request(Decls, OwnerId, MemberId, Site,
+                        annotated_type(Type, Applications),
+                        annotation_request(OwnerId, MemberId, Site,
+                                           annotated_type(Type, Applications),
+                                           Steps)) :-
     semantic_type_id(Decls, Type, InputTypeId),
     elaborate_annotation(InputTypeId, Applications, Steps).
+annotation_type_request(Decls, OwnerId, MemberId, Site,
+                        annotated_type(Type, _), Request) :-
+    !,
+    annotation_type_request(Decls, OwnerId, MemberId, Site, Type, Request).
+annotation_type_request(Decls, OwnerId, MemberId, Site, Type, Request) :-
+    anonymous_type_members(Decls, Type, Members),
+    !,
+    member(Segments-ChildType, Members),
+    append(Site, Segments, ChildSite),
+    annotation_type_request(Decls, OwnerId, MemberId, ChildSite,
+                            ChildType, Request).
+annotation_type_request(Decls, OwnerId, MemberId, Site, Type, Request) :-
+    compound(Type),
+    Type =.. [_ | Arguments],
+    nth1(Ordinal, Arguments, Argument),
+    append(Site, [Ordinal], ChildSite),
+    annotation_type_request(Decls, OwnerId, MemberId, ChildSite,
+                            Argument, Request).
+
+% The generated name has already replaced the product or sum at this point.
+% Recover its immediate fields while preserving the original owner/member.
+anonymous_type_members(Decls, Type, Members) :-
+    atom(Type),
+    memberchk(anonymous_generated_decl(Type), Decls),
+    (   member(type_decl(Type, Specs), Decls)
+    ->  findall([Name]-ChildType,
+                member(col(Name, ChildType), Specs), Members)
+    ;   member(enum_decl(Type, Variants), Decls),
+        findall([VariantName, Field]-ChildType,
+                anonymous_sum_member(Variants, VariantName, Field, ChildType),
+                Members)
+    ).
+
+anonymous_sum_member((Left ; Right), VariantName, Field, Type) :-
+    !,
+    ( anonymous_sum_member(Left, VariantName, Field, Type)
+    ; anonymous_sum_member(Right, VariantName, Field, Type)
+    ).
+anonymous_sum_member(Variant, VariantName, Field, Type) :-
+    Variant =.. [VariantName | Fields],
+    member(Field:Type, Fields).
 
 member_position(Decls, OwnerName, Name, Position) :-
     findall(Column, member(col_type(OwnerName/_, Column, _), Decls), Columns),
