@@ -44,7 +44,7 @@ async function plan(db: Awaited<ReturnType<typeof seed>>, arm: Arm, label: strin
 }
 
 console.log(`### Q2c. EXPLAIN QUERY PLAN, N=${RELATIONS}, ${DURABLE_ROWS} durable rows per relation, 1 frontier row per relation\n`);
-for (const arm of ["A", "B"] as const) {
+for (const arm of ["A", "B", "B'"] as const) {
   const db = await seed(arm);
   await plan(db, arm, "no ANALYZE");
   await db.execute("ANALYZE");
