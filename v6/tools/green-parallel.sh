@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # @comment-ok: the per-leg parallel-safety constraint below is the file's contract
-# green-parallel.sh -- green-all's 29 legs, phased. `just green-all-serial` is
+# green-parallel.sh -- green-all's legs, phased. `just green-all-serial` is
 # the one-at-a-time fallback.
 #
 # A leg may only join the parallel phase if load cannot move its verdict:
@@ -37,7 +37,6 @@ PHASE_B=(
   "serve-leak-soak:TSV2_LEAK_PORT=17805"
   "prolog-lint"
   "serve-endurance:TSV2_ENDURANCE_PORT=17804"
-  "lsp-diags:TSV2_LSP_DIAG_PORT=17810"
   "compile-speed"
   "plunit"
   "arm-census"

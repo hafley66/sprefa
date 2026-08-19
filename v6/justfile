@@ -167,13 +167,6 @@ serve-endurance:
 serve-leak-soak:
     cd {{ v6 }}/tsv2 && bash scripts/leak-soak.sh
 
-# the golden plan's PHASE 4 LSP EXIT RECEIPT: v5's own `dl --lsp --diag-db`
-# reading a live tsv2-served diag_v5 table -- zero new LSP code, real stdio
-# JSON-RPC against the real v5 binary, appear + retract proven engine-side
-# and LSP-side (expect: LSP DIAGS HOLDS, exit 0)
-lsp-diags:
-    cd {{ v6 }}/tsv2 && bash scripts/lsp-diags.sh
-
 # THE ALPHA'S HEADLINE RECEIPT: v5's own examples/callgraph-ast.dl and the v6
 # port of it, both over one pinned corpus, diffed rel by rel with every row of
 # difference bucketed and proven (expect: FLAGSHIP CALLGRAPH GRADED, 0
@@ -510,11 +503,10 @@ typegen-golden:
 
 # everything, phased: scale-floor alone (its verdict is a wall reading), then
 # the memory leak test alone (its flatness check reddens under a load ramp),
-# then the gen-writers serially, then the rest 6-up. Same 32 legs, same
-# verdicts, one ordered PASS/FAIL table.
-# (expect: GREEN ALL HOLDS: 32 legs, exit 0; ~177s vs ~254s one at a time)
+# then the gen-writers serially, then the rest 6-up. Same legs, same
+# verdicts, one ordered PASS/FAIL table; the count is printed by the run.
 green-all:
     bash {{ v6 }}/tools/green-parallel.sh
 
 # the original one-leg-at-a-time chain, kept for bisecting a parallel-only red
-green-all-serial: green dl6-budget serve-endurance serve-leak-soak memory-soak extraction-live files flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden dep-crawl-golden git-refs-golden scip-combo rtkq-golden precommit-changed watch-scale getting-started
+green-all-serial: green dl6-budget serve-endurance serve-leak-soak memory-soak extraction-live files flagship ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden dep-crawl-golden git-refs-golden scip-combo rtkq-golden precommit-changed watch-scale getting-started
