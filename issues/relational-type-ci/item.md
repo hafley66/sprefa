@@ -17,6 +17,8 @@ closed: 2026-08-18
 commits:
 - hash: 139d834f5
   summary: 'ci: wire relational type cross-target battery'
+- hash: 5d8fe7176
+  summary: 'ci: wire relational type cross-target battery (final)'
 ---
 
 # Wire relational type cross-target CI
