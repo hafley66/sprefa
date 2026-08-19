@@ -232,8 +232,9 @@ records the era when this leg was unwired and mail queued forever.
   rel using it as a column type compiles rc=0 and emits the variant tables and a
   discriminator. It works because an enum rel declares no `key(...)`, so it is a
   pure type declaration wearing the `rel` keyword. A named multi-variant type
-  needs NO new declaration form. Still stopped: `option(<enum>)`, at
-  `0_option_expand.pl:43`. Probe before pricing a type as impossible.
+  needs NO new declaration form. `option(<enum>)` compiles too (manifest
+  `option_scalar_enums_mint_per_element_type`, `0_option_expand.pl:40`
+  `enum_payload_option_elements`). Probe before pricing a type as impossible.
 - **Absence must be expressible.** `option(T)` spells value-or-`none` and cannot
   say "key absent" as distinct from "key present, null". The JSON VALUE plane
   makes that distinction and is conformance-tested
