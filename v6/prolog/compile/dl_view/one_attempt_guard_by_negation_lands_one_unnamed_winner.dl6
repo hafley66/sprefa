@@ -1,4 +1,4 @@
-rel dispatch_first(dispatch_id, _ack_tag) log keep(all).
+rel dispatch_first(dispatch_id, ack_tag) log keep(all).
 
 dispatch_first(DispatchId, 'acked') <+
   dispatch_ack(DispatchId),

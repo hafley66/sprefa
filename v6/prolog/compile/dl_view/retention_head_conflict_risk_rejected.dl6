@@ -1,4 +1,4 @@
-rel ping(_first_arm) log keep(all).
+rel ping(first_arm) log keep(all).
 rel journal(col1) log keep(count(1)).
 
 journal('first') <+ ping(_FirstArm).

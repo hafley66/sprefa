@@ -1,0 +1,5 @@
+rel point_pair(first: int, depth: int).
+rel mixed_pair(first: point_pair, label: text).
+rel record(id: int, nested: mixed_pair).
+
+kept(Id) <- record(Id, _Nested).

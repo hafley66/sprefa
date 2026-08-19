@@ -1,0 +1,3 @@
+shouted(Text, Out) <-
+  text(Text),
+  Out := upper(Text).

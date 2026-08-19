@@ -1,0 +1,10 @@
+rel line(name: text, body: text).
+rel line_parts(name: text, parts: list(text)).
+rel field(name: text, field: text).
+
+line_parts(Name, Parts) <-
+  line(Name, Body),
+  Parts := split(Body, ',').
+field(Name, Field) <-
+  line_parts(Name, Parts),
+  decode(Parts, [... Field]).

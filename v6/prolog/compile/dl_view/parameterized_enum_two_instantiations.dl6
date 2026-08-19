@@ -1,0 +1,7 @@
+rel result(L, R)(err(error: L) ; ok(value: R)).
+rel host_error(code: int).
+rel boop_response(body: text).
+rel parse_error(message: text).
+rel syntax_tree(root: text).
+rel fetch(id: int, outcome: result(host_error,boop_response)) key(1).
+rel compile(id: int, outcome: result(parse_error,syntax_tree)) key(1).

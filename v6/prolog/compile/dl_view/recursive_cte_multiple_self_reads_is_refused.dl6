@@ -1,0 +1,7 @@
+rel edge(from_node: int, to_node: int).
+rel reachable(from_node: int, to_node: int).
+
+reachable(FromNode, ToNode) <- edge(FromNode, ToNode).
+reachable(FromNode, ToNode) <-
+  reachable(FromNode, MiddleNode),
+  reachable(MiddleNode, ToNode).

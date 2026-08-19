@@ -1,0 +1,4 @@
+long(Text) <-
+  text(Text),
+  Len := length(Text),
+  Len > 3.

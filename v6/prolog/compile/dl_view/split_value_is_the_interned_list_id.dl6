@@ -1,0 +1,6 @@
+rel row_text(name: text, body: text).
+rel row_parts(name: text, parts: list(text)).
+
+row_parts(Name, Parts) <-
+  row_text(Name, Body),
+  Parts := split(Body, '/').

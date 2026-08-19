@@ -1,0 +1,2 @@
+rel orchard.tree(name: text, url: text).
+rel grove(id: int, members: list(list(orchard.tree))) key(1).

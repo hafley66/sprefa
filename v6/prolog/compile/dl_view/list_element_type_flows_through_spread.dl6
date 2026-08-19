@@ -1,0 +1,11 @@
+rel symbol(name: text).
+rel symbol_parts(name: text, parts: list(text)).
+rel symbol_word(name: text, word: text).
+
+symbol_parts(Name, Parts) <-
+  symbol(Name),
+  Parts := split(Name, '_').
+symbol_word(Name, Word) <-
+  symbol_parts(Name, Parts),
+  decode(Parts, [... Part]),
+  Word := initcap(Part).

@@ -1,0 +1,3 @@
+curled(Text, Out) <-
+  text(Text),
+  Out := trim(Text, 'x').
