@@ -66,6 +66,16 @@ vendor/trealla/
 v6/prolog/compile/out/text-door/
 v6/prolog/compile/scripts/out/text-door/
 
+# Sweep caches and measurements: the per-stage digest stores, the per-worker
+# fragments stage 1 folds back into manifest.json (scripts/sweep-stage1.sh),
+# and the timing ledger. Each is a fact about this machine on this pass, never
+# about the corpus. The out/*.oracle.jsonl snapshots they key on stay tracked.
+v6/prolog/compile/out/sweep.digests
+v6/prolog/compile/out/oracle.digests
+v6/prolog/compile/out/sweep.replay.digests.json
+v6/prolog/compile/out/sweep.timings.tsv
+v6/prolog/compile/out/.sweep-shards/
+
 # tsv2 served-program compile output (one emitted module per loaded .dl6)
 v6/tsv2/gen_served/
 
