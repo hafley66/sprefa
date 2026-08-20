@@ -1,32 +1,25 @@
-//! CONTROL: 17 passed, 0 failed.
+//! CONTROL: 10 passed, 0 failed.
 //!
 //! SABOTAGE 1, drop the exact-content rename pass (return an empty Vec from
-//! `take_renames`): 8 passed, 9 failed. `moved.txt` falls back into `deleted`
-//! and `elsewhere.txt` into `created`, so every kind assertion moves and
+//! `take_renames`): `moved.txt` falls back into `deleted` and
+//! `elsewhere.txt` into `created`, so every kind assertion moves and
 //! `elsewhere.txt` starts contributing a changed line it should not have.
 //!
-//! SABOTAGE 2, drop the `is_binary` guard in `changed_lines_of`: 13 passed,
-//! 4 failed. The two NUL-bearing blobs are diffed as text and `shot.bin` gains
-//! line rows in every changed_line assertion.
+//! SABOTAGE 2, drop the `is_binary` guard in `changed_lines_of`: the two
+//! NUL-bearing blobs are diffed as text and `shot.bin` gains line rows in
+//! every changed_line assertion.
 //!
-//! SABOTAGE 3, key the diff memo on `repo` alone: 16 passed, 1 failed. Only
-//! `the_diff_memo_keys_on_the_whole_triple` can see it, which is the test that
-//! exists for it.
-//!
-//! SABOTAGE 4, memoise a `WORK` pair anyway (`let memoisable = true;` in
-//! `ChangeFactExecutor::diff`): 16 passed, 1 failed. Only
-//! `work_revision_is_not_memoised` can see it: the second run reads the first
-//! edit's line 2 back out of the memo instead of the second edit's line 3.
+//! The `ChangeFactExecutor` memo and in-process-routing receipts this file
+//! once carried (SABOTAGE 3/4, the diff-memo-key and WORK-not-memoised
+//! guards) moved with the executor's deletion; PR #370 already made that
+//! executor unreachable from either host door.
 
-use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sprefa_engine_rs::change_facts::{
     parse_revision, ChangeKind, IRevisionDiffer, SoopyRevisionDiffer,
 };
-use sprefa_engine_rs::hosts::{decode_output, ChangeFactExecutor, HostLiveRunner, IHostExecutor};
-use sprefa_engine_rs::types::{HostColumnPlan, HostPlanData, RelDelta, TickDeltas, Value};
 
 // ═══ the fixture ════════════════════════════════════════════════════════════
 
@@ -54,7 +47,6 @@ const MOVED_BODY: &str = "identical content\n";
 const BINARY_BASE: &[u8] = b"\x00\x01header\nbody\n";
 const BINARY_HEAD: &[u8] = b"\x00\x01header\nbody changed\n";
 const KEEP_DIRTY: &str = "alpha\nBETA\ngamma\n";
-const KEEP_DIRTY_AGAIN: &str = "alpha\nbeta\nGAMMA\n";
 const ADDED_DIRTY: &str = "added one\nadded two\n";
 
 impl Fixture {
@@ -344,261 +336,5 @@ fn parse_revision_maps_work_and_names() {
     assert_eq!(
         parse_revision("main"),
         soopy::Revision::Named(std::sync::Arc::from("main"))
-    );
-}
-
-// ═══ the executor ═══════════════════════════════════════════════════════════
-
-fn columns(names: &[(&str, &str)]) -> Vec<HostColumnPlan> {
-    names
-        .iter()
-        .map(|(name, column_type)| HostColumnPlan {
-            name: (*name).to_string(),
-            column_type: (*column_type).to_string(),
-        })
-        .collect()
-}
-
-const CHANGE_OUTPUTS: &[(&str, &str)] = &[("change_kind", "text"), ("path", "text")];
-const RENAME_OUTPUTS: &[(&str, &str)] = &[("path_from", "text"), ("path_to", "text")];
-const CHANGED_LINE_OUTPUTS: &[(&str, &str)] = &[("path", "text"), ("line_number", "int")];
-const PAIR_INPUT: &[(&str, &str)] = &[("repo", "text"), ("rev_base", "text"), ("rev_head", "text")];
-
-fn text(value: &str) -> Value {
-    Value::Text(value.to_string())
-}
-
-fn pair_inputs(repo: &str, rev_base: &str, rev_head: &str) -> BTreeMap<String, String> {
-    BTreeMap::from([
-        ("repo".to_string(), repo.to_string()),
-        ("rev_base".to_string(), rev_base.to_string()),
-        ("rev_head".to_string(), rev_head.to_string()),
-    ])
-}
-
-fn answer(
-    executor: &dyn IHostExecutor,
-    host: &str,
-    inputs: &BTreeMap<String, String>,
-    outputs: &[(&str, &str)],
-) -> Vec<Vec<Value>> {
-    let stdout = executor
-        .run(host, "deliberately not a shell command", inputs)
-        .expect("the linked arm answers");
-    decode_output(host, &stdout, &columns(outputs)).expect("decode")
-}
-
-#[test]
-fn the_change_host_names_its_kind_in_the_row() {
-    let fixture = Fixture::build();
-    let rows = answer(
-        &ChangeFactExecutor::default(),
-        "git_change",
-        &pair_inputs(&fixture.path(), "at_base", "at_head"),
-        CHANGE_OUTPUTS,
-    );
-    assert_eq!(
-        rows,
-        vec![
-            vec![text("created"), text("fresh.txt")],
-            vec![text("deleted"), text("gone.txt")],
-            vec![text("modified"), text("edit.txt")],
-            vec![text("modified"), text("shot.bin")],
-        ]
-    );
-}
-
-#[test]
-fn the_changed_line_host_answers_integers() {
-    let fixture = Fixture::build();
-    let rows = answer(
-        &ChangeFactExecutor::default(),
-        "git_changed_line",
-        &pair_inputs(&fixture.path(), "at_base", "at_head"),
-        CHANGED_LINE_OUTPUTS,
-    );
-    assert_eq!(
-        rows,
-        vec![
-            vec![text("edit.txt"), Value::Integer(2)],
-            vec![text("edit.txt"), Value::Integer(5)],
-            vec![text("fresh.txt"), Value::Integer(1)],
-            vec![text("fresh.txt"), Value::Integer(2)],
-        ]
-    );
-}
-
-/// Three host names, one memo entry, and the key is the whole triple: a second
-/// pair in the same repository must not read the first pair's answer.
-#[test]
-fn the_diff_memo_keys_on_the_whole_triple() {
-    let fixture = Fixture::build();
-    let executor = ChangeFactExecutor::default();
-    let repo = fixture.path();
-    let first = answer(
-        &executor,
-        "git_change",
-        &pair_inputs(&repo, "at_base", "at_head"),
-        CHANGE_OUTPUTS,
-    );
-    assert_eq!(first.len(), 4);
-    let second = answer(
-        &executor,
-        "git_change",
-        &pair_inputs(&repo, "at_head", "at_pruned"),
-        CHANGE_OUTPUTS,
-    );
-    assert_eq!(
-        second,
-        vec![
-            vec![text("deleted"), text("edit.txt")],
-            vec![text("deleted"), text("elsewhere.txt")],
-            vec![text("deleted"), text("fresh.txt")],
-            vec![text("deleted"), text("shot.bin")],
-        ]
-    );
-}
-
-/// A spelling that resolves to nothing stops by name. Zero rows would read as
-/// "these two trees are identical".
-#[test]
-fn an_unresolvable_revision_is_a_named_stop() {
-    let fixture = Fixture::build();
-    let failure = ChangeFactExecutor::default()
-        .run(
-            "git_change",
-            "deliberately not a shell command",
-            &pair_inputs(&fixture.path(), "at_base", "refs/heads/not-a-branch"),
-        )
-        .expect_err("an absent revision stops");
-    assert_eq!(failure.host, "git_change");
-    assert!(
-        failure.message.contains("refs/heads/not-a-branch"),
-        "{}",
-        failure.message
-    );
-}
-
-#[test]
-fn a_missing_host_input_is_a_named_stop() {
-    let failure = ChangeFactExecutor::default()
-        .run(
-            "git_changed_line",
-            "deliberately not a shell command",
-            &BTreeMap::from([("repo".to_string(), "/does/not/matter".to_string())]),
-        )
-        .expect_err("rev_base is required");
-    assert!(
-        failure.message.contains("`rev_base`"),
-        "{}",
-        failure.message
-    );
-}
-
-/// A worktree moves under a fixed memo key, so a `WORK` pair is computed fresh
-/// and the second answer is the second edit.
-#[test]
-fn work_revision_is_not_memoised() {
-    let fixture = Fixture::build();
-    let executor = ChangeFactExecutor::default();
-    let head_sha = fixture.git(&["rev-parse", "HEAD"]);
-    let inputs = pair_inputs(&fixture.path(), &head_sha, "WORK");
-    fixture.dirty("keep.txt", KEEP_DIRTY.as_bytes());
-    let first = answer(&executor, "git_changed_line", &inputs, CHANGED_LINE_OUTPUTS);
-    assert_eq!(first, vec![vec![text("keep.txt"), Value::Integer(2)]]);
-    fixture.dirty("keep.txt", KEEP_DIRTY_AGAIN.as_bytes());
-    let second = answer(&executor, "git_changed_line", &inputs, CHANGED_LINE_OUTPUTS);
-    assert_eq!(second, vec![vec![text("keep.txt"), Value::Integer(3)]]);
-}
-
-// ═══ the arm itself ═════════════════════════════════════════════════════════
-
-/// Every template exits 3, so a row reaching a response rel proves
-/// `HostLiveRunner` routed the name in-process rather than to `ShellExecutor`.
-fn change_plan(name: &str, outputs: &[(&str, &str)]) -> HostPlanData {
-    HostPlanData {
-        name: name.to_string(),
-        inputs: columns(PAIR_INPUT),
-        outputs: columns(outputs),
-        template: format!("echo '{name} is linked in-process' >&2; exit 3"),
-        demand_rel: format!("__host_demand_{name}"),
-        response_rel: format!("__host_response_{name}"),
-        execution: "shell".to_string(),
-        request_type: None,
-        response_type: None,
-    }
-}
-
-#[test]
-fn the_three_ruled_names_reach_the_linked_arm_through_the_host_plan() {
-    let fixture = Fixture::build();
-    let repo = fixture.path();
-    let plans = vec![
-        change_plan("git_change", CHANGE_OUTPUTS),
-        change_plan("git_rename", RENAME_OUTPUTS),
-        change_plan("git_changed_line", CHANGED_LINE_OUTPUTS),
-    ];
-    let mut rel_columns: HashMap<String, Vec<String>> = HashMap::new();
-    let mut rels = Vec::new();
-    for plan in &plans {
-        let demand: Vec<String> = ["identity_digest", "witness_digest"]
-            .iter()
-            .map(|name| (*name).to_string())
-            .chain(plan.inputs.iter().map(|input| input.name.clone()))
-            .collect();
-        let response: Vec<String> = ["witness_digest", "ordinal"]
-            .iter()
-            .map(|name| (*name).to_string())
-            .chain(plan.inputs.iter().map(|input| input.name.clone()))
-            .chain(plan.outputs.iter().map(|output| output.name.clone()))
-            .collect();
-        rel_columns.insert(plan.demand_rel.clone(), demand);
-        rel_columns.insert(plan.response_rel.clone(), response);
-        rels.push(RelDelta {
-            rel: plan.demand_rel.clone(),
-            add: vec![vec![
-                text(&format!("identity|{}", plan.name)),
-                text(&format!("witness|{}", plan.name)),
-                text(&repo),
-                text("at_base"),
-                text("at_head"),
-            ]],
-            del: vec![],
-        });
-    }
-    let deltas = TickDeltas {
-        rels,
-        carry_pending: false,
-    };
-    let mut runner = HostLiveRunner::new(&plans, &rel_columns).expect("every plan has an executor");
-    let arrivals = runner.collect(&deltas).expect("the linked arm answers");
-    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
-    for arrival in &arrivals {
-        *counts.entry(arrival.rel.as_str()).or_default() += 1;
-    }
-    assert_eq!(counts.get("__host_response_git_change").copied(), Some(4));
-    assert_eq!(counts.get("__host_response_git_rename").copied(), Some(1));
-    assert_eq!(
-        counts.get("__host_response_git_changed_line").copied(),
-        Some(4)
-    );
-
-    // The response rel carries the demand's own input columns back, so a rule
-    // joining on `rev_head` reads the revision it asked about.
-    let rename = arrivals
-        .iter()
-        .find(|arrival| arrival.rel == "__host_response_git_rename")
-        .expect("the rename response arrives");
-    assert_eq!(
-        rename.row,
-        vec![
-            text("witness|git_rename"),
-            Value::Integer(0),
-            text(&repo),
-            text("at_base"),
-            text("at_head"),
-            text("moved.txt"),
-            text("elsewhere.txt"),
-        ]
     );
 }
