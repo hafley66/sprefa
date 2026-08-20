@@ -135,6 +135,9 @@ export interface IIncrementalRelationPlan {
    * text with one table name swapped.
    */
   readonly departure_frontier_table_name?: string;
+  /** Present only under frontier(shared): this rel's row in the two shared
+   *  frontier tables; frontier/next table names then name TEMP views. */
+  readonly shared_frontier?: { readonly relation_id: number };
   /** Rule readers of this rel's delta/frontier, "name/arity" each; absent
    *  means unknown-so-observed, so a pre-field module is never skipped. */
   readonly rule_observers?: readonly string[];
