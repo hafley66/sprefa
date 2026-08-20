@@ -13,6 +13,7 @@ Facts about star counts, versions, and dates are as read on that day.
 - C. Datalog compiled to SQL (SQLite as a target)
 - D. Datalog engines that merely touch SQLite
 - E. Recursive-aggregate semantics: the theory and the one engine that ships it
+- E2. Mechanism: where the keyed merge slots into lowerSql.ts
 - F. Per-language sweep (Zig, Go, TS, Rust, Python, C, C++, Clojure)
 - G. Sugar or semantics: PGQ features against ast.ts
 - H. Gaps (what nobody has)
@@ -172,6 +173,43 @@ rows     6 = sum of tier sizes    3 = one per node
 ```
 
 Fixpoint reached at round 3 in both; row count n^2/2 vs n.
+
+## E2. Mechanism: where the keyed merge slots into lowerSql.ts
+
+`RecursiveStratum` (`lowerSql.ts:343`) drives one round as seed, derive, merge, promote,
+expand. Only merge changes. Line numbers as of lab/graph-lowering e0e020fc2.
+
+| phase | code | today | with keyed merge |
+| --- | --- | --- | --- |
+| seed | `seedStatements()` :375 | copy base rules into full + delta | same |
+| derive | `deriveStatements()` :389 | `next = body with one atom swapped for delta` | same |
+| merge | `mergeStatement()` :146 `INSERT OR IGNORE INTO full SELECT * FROM next` | PK (node, label) so every new label is a new row | `INSERT ... SELECT key, min(v) ... GROUP BY key ON CONFLICT(key) DO UPDATE SET v = excluded.v WHERE excluded.v < full.v`; PK (key) |
+| promote | `promoteStatements()` :407 | delta = rows merge inserted | delta = rows merge inserted or updated (same `RETURNING` or rowsAffected path) |
+| expand | :445 `grew ? round() : EMPTY`, grew = `rowsAffected > 0` | unchanged | unchanged; SQLite counts a fired `DO UPDATE` in rowsAffected |
+| guard | `AggregateInRecursionError` :441 | throws for any `HeadAgg` in a recursive stratum | throws only for sum/count, or min/max whose head has no key columns |
+
+Trace, components on chain `1-2-3`, head `components(node, min(label))`:
+
+```
+today (PK node,label)                     keyed merge (PK node)
+step 0 seed    full={(1,1),(2,2),(3,3)}     full={1:1,2:2,3:3}
+step 1 derive  next={(2,1),(3,2)}           next={(2,1),(3,2)}
+step 2 merge   +2 rows, full=5              2: 1<2 upd, 3: 2<3 upd, rowsAffected=2, full=3
+step 3 promote delta={(2,1),(3,2)}          delta={(2,1),(3,2)}
+step 4 derive  next={(3,1)}                 next={(3,1)}
+step 5 merge   +1 row, full=6               3: 1<2 upd, rowsAffected=1, full=3
+step 6 derive  next={}                      next={}
+step 7 merge   rowsAffected=0 -> fixpoint   rowsAffected=0 -> fixpoint
+rows           6 = n(n+1)/2                 3 = n
+```
+
+Both stop at the same fixpoint (no growth); the keyed form stops with one row per key.
+DuckDB `USING KEY` performs the same overwrite inside the engine's working table; v6
+performs it in the host loop it already has, so SQLite stays the target.
+
+Soundness condition the guard must check: the aggregate is min or max, the comparison in
+the `WHERE` matches it (`<` for min, `>` for max), and every other head column is part of
+the key. sum and count stay refused (non-monotone under overwrite).
 
 ## F. Per-language sweep (Zig, Go, TS, Rust, Python, C, C++, Clojure)
 
