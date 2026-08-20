@@ -51,6 +51,17 @@ ordered_aggregate_name(group_concat).
 
 declared_kind(Decls, Ref, Kind) :- memberchk(kind(Ref, Kind), Decls).
 
+% Every clause below the first answers `set`, so a ground reference needs one
+% memberchk/2 over the declarations and not three, two of which fail and walk
+% the whole list. A non-ground reference can be BOUND by the second and third
+% scans, so it keeps them.
+relation_kind(Decls, Ref, Kind) :-
+    ground(Ref),
+    !,
+    (   declared_kind(Decls, Ref, log)
+    ->  Kind = log
+    ;   Kind = set
+    ).
 relation_kind(Decls, Ref, log) :- declared_kind(Decls, Ref, log), !.
 relation_kind(Decls, Ref, set) :- declared_kind(Decls, Ref, set), !.
 relation_kind(Decls, Ref, set) :- memberchk(keyed(Ref, _), Decls), !.
