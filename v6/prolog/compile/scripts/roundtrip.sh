@@ -9,6 +9,8 @@
 #     printed, never silently dropped. Reports Decls/Rules counts per file.
 #   G3 (no-regression sanity) - the existing conformance suite
 #     (v6/prolog/conformance/go.pl) stays green.
+# NOT FOLDABLE INTO text-door: G1 walks EVERY fixture, text_door_receipt.pl
+# only the term-door-compilable ones, so `unsupported` is reparsed here alone.
 #
 # The grading logic is written to a temporary Prolog file at runtime.
 #
