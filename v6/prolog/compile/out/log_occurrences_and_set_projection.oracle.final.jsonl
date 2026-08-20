@@ -1,0 +1,1 @@
+{"final":{"line":[[1,"a.ts","alpha"],[1,"a.ts","beta"],[1,"b.ts","gamma"],[2,"c.ts","alpha"],[2,"c.ts","beta"],[2,"d.ts","gamma"],[3,"e.ts","alpha"],[3,"e.ts","alpha"]],"seen":[["a.ts"],["b.ts"],["c.ts"],["d.ts"],["e.ts"]]}}

@@ -1,0 +1,6 @@
+{"tick":1,"deltas":{"tree_kind":{"add":[[1,"leaf"],[3,"leaf"]],"del":[]},"tree_leaf":{"add":[[1,5],[3,7]],"del":[]},"tree_tag":{"add":[[1,"leaf"],[3,"leaf"]],"del":[]}}}
+{"tick":2,"deltas":{"tree_branch":{"add":[[2,1,3]],"del":[]},"tree_kind":{"add":[[2,"branch"]],"del":[]},"tree_tag":{"add":[[2,"branch"]],"del":[]}}}
+{"tick":3,"deltas":{"tree_kind":{"add":[],"del":[[1,"leaf"]]},"tree_leaf":{"add":[],"del":[[1,5]]},"tree_tag":{"add":[],"del":[[1,"leaf"]]}}}
+{"tick":4,"deltas":{"tree_kind":{"add":[[11,"leaf"]],"del":[]},"tree_leaf":{"add":[[11,5]],"del":[]},"tree_tag":{"add":[[11,"leaf"]],"del":[]}}}
+{"tick":5,"deltas":{"tree_branch":{"add":[[19,19,11]],"del":[]},"tree_kind":{"add":[[19,"branch"]],"del":[]},"tree_tag":{"add":[[19,"branch"]],"del":[]}}}
+{"tick":6,"deltas":{"tree_branch":{"add":[[12,13,11],[13,12,11]],"del":[]},"tree_kind":{"add":[[12,"branch"],[13,"branch"]],"del":[]},"tree_tag":{"add":[[12,"branch"],[13,"branch"]],"del":[]}}}
