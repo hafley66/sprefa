@@ -1,0 +1,8 @@
+[
+  [
+    { "rel": "setting", "sign": "add", "row": ["width", 9] },
+    { "rel": "setting", "sign": "add", "row": ["depth", 1] }
+  ],
+  [{ "rel": "setting", "sign": "add", "row": ["depth", 9] }],
+  [{ "rel": "setting", "sign": "del", "row": ["depth", 1] }]
+]

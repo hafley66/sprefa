@@ -77,6 +77,7 @@ async fn external_consumer_drives_runtime_and_hosts() {
             frontier_table_name: "__frontier_node".to_string(),
             next_frontier_table_name: "__next_frontier_node".to_string(),
             departure_frontier_table_name: None,
+            shared_frontier: None,
             columns: vec!["id".to_string()],
             column_types: vec![RowColumnType::Int],
             key_indices: vec![],

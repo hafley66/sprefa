@@ -1,0 +1,7 @@
+[
+  [
+    { "rel": "city", "sign": "add", "row": ["nyc"] },
+    { "rel": "person", "sign": "add", "row": ["ann", "nyc"] }
+  ],
+  [{ "rel": "person", "sign": "add", "row": ["bob", "nyc"] }]
+]

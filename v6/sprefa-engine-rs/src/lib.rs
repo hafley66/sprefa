@@ -19,6 +19,7 @@ pub mod struct_plane;
 pub mod text_plane;
 pub mod ticklog;
 pub mod types;
+pub mod write_verbs;
 
 pub use program::GenProgram;
 pub use serve::{router, serve_on, serve_unix, ServeError, ServeState};

@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use crate::sql::{result_rows, SqlRunner, SqliteSeam};
+use crate::write_verbs::{write_verbs_for, TickBoundary};
 use crate::types::{
     Arrival, ArrivalSign, BoundaryError, BoundaryResult, IncrementalRelationPlan, RelationKind,
     Row, ScalarSeam, ScalarValue, SqlStatement, Value,
@@ -67,7 +68,7 @@ fn bind_args(values: &[Value]) -> BoundaryResult<Vec<ScalarValue>> {
         .collect()
 }
 
-fn boundary_stage_statement(
+pub(crate) fn boundary_stage_statement(
     relation: &IncrementalRelationPlan,
     events: &[DeltaEvent],
 ) -> BoundaryResult<SqlStatement> {
@@ -107,12 +108,74 @@ fn boundary_stage_statement(
     })
 }
 
-fn frontier_stage_statement(
+// Shared-mode stage: resolve each event row to its durable __id and write
+// (relation_id, phase, sequence, row_id), one batched statement per rel.
+fn shared_frontier_stage_statement(
     relation: &IncrementalRelationPlan,
     table_name: &str,
     phase: i64,
     events: &[DeltaEvent],
 ) -> BoundaryResult<SqlStatement> {
+    let relation_id = relation
+        .shared_frontier
+        .as_ref()
+        .expect("shared_frontier plan missing")
+        .relation_id;
+    let shared_table = if table_name == relation.next_frontier_table_name {
+        "__next_frontier"
+    } else {
+        "__frontier"
+    };
+    let join_terms: Vec<String> = relation
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            format!(
+                "t.{} IS json_extract(je.value, '$[{}]')",
+                quote_identifier(column),
+                index + 1
+            )
+        })
+        .collect();
+    let on_sql = if join_terms.is_empty() {
+        "1".to_string()
+    } else {
+        join_terms.join(" AND ")
+    };
+    let encoded: String = events
+        .iter()
+        .map(|event| {
+            let mut entry = vec![Value::Integer(event.sequence as i64)];
+            entry.extend(event.row.clone());
+            json_array_text(&entry)
+        })
+        .collect::<BoundaryResult<Vec<_>>>()?
+        .join(",");
+    Ok(SqlStatement {
+        sql: format!(
+            "INSERT INTO {} (\"relation_id\", \"_phase\", \"_sequence\", \"row_id\") SELECT ?, ?, json_extract(je.value, '$[0]'), t.\"__id\" FROM json_each(?) je JOIN {} t ON {}",
+            quote_identifier(shared_table),
+            quote_identifier(&relation.table_name),
+            on_sql
+        ),
+        args: vec![
+            ScalarValue::Integer(relation_id),
+            ScalarValue::Integer(phase),
+            ScalarValue::Text(format!("[{}]", encoded)),
+        ],
+    })
+}
+
+pub(crate) fn frontier_stage_statement(
+    relation: &IncrementalRelationPlan,
+    table_name: &str,
+    phase: i64,
+    events: &[DeltaEvent],
+) -> BoundaryResult<SqlStatement> {
+    if relation.shared_frontier.is_some() {
+        return shared_frontier_stage_statement(relation, table_name, phase, events);
+    }
     if relation
         .column_types
         .contains(&crate::types::RowColumnType::Bytes)
@@ -200,20 +263,13 @@ pub fn stage_events(
             .or_default()
             .push(event.clone());
     }
+    let verbs = write_verbs_for(relations);
     let mut statements = Vec::new();
     for (rel, grouped) in &events_by_rel {
         let relation = relation_by_name
             .get(rel)
             .expect("incremental delta relation missing");
-        let additions: Vec<DeltaEvent> = grouped.iter().filter(|e| e.sign == 1).cloned().collect();
-        statements.push(boundary_stage_statement(relation, grouped)?);
-        if !additions.is_empty() {
-            for (table_name, phase) in frontier_copies {
-                statements.push(frontier_stage_statement(
-                    relation, table_name, *phase, &additions,
-                )?);
-            }
-        }
+        statements.extend(verbs.stage(relation, grouped, frontier_copies)?);
     }
     seam.batch(&statements).expect("stage_events batch failed");
     Ok(())
@@ -284,7 +340,7 @@ fn keyed_arrival_rows_statement(
     })
 }
 
-fn direct_arrival_statement(
+pub(crate) fn direct_arrival_statement(
     relation: &IncrementalRelationPlan,
     sign: i8,
     rows: &[Row],
@@ -383,41 +439,16 @@ pub fn apply_arrivals(
         }
         groups.push((relation, sign, vec![entry]));
     }
+    let verbs = write_verbs_for(relations);
     for (relation, sign, entries) in groups {
-        let write_statement = if relation
-            .column_types
-            .contains(&crate::types::RowColumnType::Bytes)
-        {
-            direct_arrival_statement(
-                relation,
-                sign,
-                &entries
-                    .iter()
-                    .map(|(_, row)| row.clone())
-                    .collect::<Vec<_>>(),
-            )?
-        } else {
-            let sql = if sign == 1 {
-                relation
-                    .arrival_add_sql
-                    .clone()
-                    .expect("incremental add statement missing")
-            } else {
-                relation
-                    .arrival_del_sql
-                    .clone()
-                    .expect("incremental delete statement missing")
-            };
-            let encoded_rows: String = entries
+        let write_statement = verbs.arrive(
+            relation,
+            sign,
+            &entries
                 .iter()
-                .map(|(_, row)| json_array_text(row))
-                .collect::<BoundaryResult<Vec<_>>>()?
-                .join(",");
-            SqlStatement {
-                sql,
-                args: vec![ScalarValue::Text(format!("[{}]", encoded_rows))],
-            }
-        };
+                .map(|(_, row)| row.clone())
+                .collect::<Vec<_>>(),
+        )?;
         let key_indices = relation.key_indices.clone();
         if relation.kind == RelationKind::Set && sign == 1 && !key_indices.is_empty() {
             let before_result = seam
@@ -533,18 +564,9 @@ pub fn prepare_tick(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) {
     if relations.is_empty() {
         return;
     }
-    let mut statements = Vec::new();
-    for relation in relations {
-        statements.push(format!(
-            "DELETE FROM {}",
-            quote_identifier(&relation.delta_table_name)
-        ));
-        statements.push(format!(
-            "DELETE FROM {}",
-            quote_identifier(&relation.next_frontier_table_name)
-        ));
-    }
-    let sql = statements.join(";\n");
+    let sql = write_verbs_for(relations)
+        .clear(relations, TickBoundary::Prepare)
+        .join(";\n");
     seam.execute_multiple(&sql).expect("prepare_tick failed");
 }
 
@@ -641,10 +663,7 @@ pub fn read_boundary(
         .iter()
         .map(|relation| {
             let result = seam
-                .execute(&SqlStatement {
-                    sql: relation.boundary_sql.clone(),
-                    args: vec![],
-                })
+                .execute(&write_verbs_for(relations).publish(relation))
                 .expect("boundary read failed");
             boundary_delta(relation, &result)
         })
@@ -771,53 +790,18 @@ pub fn promote_frontiers(seam: &SqliteSeam, relations: &[IncrementalRelationPlan
     if relations.is_empty() {
         return false;
     }
-    let mut carry_terms = Vec::new();
-    for relation in relations {
-        carry_terms.push(format!(
-            "EXISTS (SELECT 1 FROM {} LIMIT 1)",
-            quote_identifier(&relation.next_frontier_table_name)
-        ));
-        if let Some(table_name) = &relation.departure_frontier_table_name {
-            carry_terms.push(format!(
-                "EXISTS (SELECT 1 FROM {} LIMIT 1)",
-                quote_identifier(table_name)
-            ));
-        }
-    }
-    let mut promote_sql = Vec::new();
-    for relation in relations {
-        let mut columns = vec!["_phase".to_string(), "_sequence".to_string()];
-        columns.extend(relation.columns.clone());
-        let columns_text: Vec<String> = columns.iter().map(|c| quote_identifier(c)).collect();
-        let joined = columns_text.join(", ");
-        promote_sql.push(format!(
-            "DELETE FROM {}",
-            quote_identifier(&relation.frontier_table_name)
-        ));
-        promote_sql.push(format!(
-            "INSERT INTO {} ({}) SELECT {} FROM {}",
-            quote_identifier(&relation.frontier_table_name),
-            joined,
-            joined,
-            quote_identifier(&relation.next_frontier_table_name)
-        ));
-        promote_sql.push(format!(
-            "DELETE FROM {}",
-            quote_identifier(&relation.next_frontier_table_name)
-        ));
-    }
+    let verbs = write_verbs_for(relations);
+    let promote_sql = verbs.clear(relations, TickBoundary::Promote).join(";\n");
     let promote = || {
-        seam.execute_multiple(&promote_sql.join(";\n"))
-            .expect("promote failed");
+        if !promote_sql.is_empty() {
+            seam.execute_multiple(&promote_sql).expect("promote failed");
+        }
     };
-    if carry_terms.is_empty() {
+    let carry_sql = verbs.read_staged(relations);
+    if carry_sql.is_empty() {
         promote();
         return false;
     }
-    let carry_sql = format!(
-        "SELECT CASE WHEN {} THEN 1 ELSE 0 END AS carry_pending",
-        carry_terms.join(" OR ")
-    );
     let carry_pending = seam.scalar(&carry_sql).expect("carry read failed") == 1;
     promote();
     carry_pending
@@ -1408,23 +1392,13 @@ pub fn merge_next_into_current(seam: &SqliteSeam, relations: &[IncrementalRelati
     if relations.is_empty() {
         return;
     }
-    let sql: Vec<String> = relations
-        .iter()
-        .map(|relation| {
-            let mut columns = vec!["_phase".to_string(), "_sequence".to_string()];
-            columns.extend(relation.columns.clone());
-            let columns_text: Vec<String> = columns.iter().map(|c| quote_identifier(c)).collect();
-            let joined = columns_text.join(", ");
-            format!(
-                "INSERT INTO {} ({}) SELECT {} FROM {}",
-                quote_identifier(&relation.frontier_table_name),
-                joined,
-                joined,
-                quote_identifier(&relation.next_frontier_table_name)
-            )
-        })
-        .collect();
-    seam.execute_multiple(&sql.join(";\n"))
+    let sql = write_verbs_for(relations)
+        .clear(relations, TickBoundary::Merge)
+        .join(";\n");
+    if sql.is_empty() {
+        return;
+    }
+    seam.execute_multiple(&sql)
         .expect("merge_next_into_current failed");
 }
 
@@ -1565,6 +1539,7 @@ fn reconcile_ref_count_statement(
         sql: insert_new.clone(),
         args: vec![],
     });
+    tail.extend(to_statements(&write_verbs_for(relations).recount(statement)));
 
     let Some(expand) = &statement.expand_sql else {
         let mut head = Vec::new();

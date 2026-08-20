@@ -149,15 +149,21 @@ relation_dict(RelPlans, ArrivalStatements, DepartureRefs,
     ( memberchk(Ref, DepartureRefs)
     -> format(atom(DepartureTable), '__departure_frontier_~w', [StorageName]), DepField = DepartureTable
     ; DepField = null ),
-    Dict = _{ rel: Name, kind: Kind, table_name: StorageName,
-              delta_table_name: DeltaTable,
-              frontier_table_name: FrontierTable,
-              next_frontier_table_name: NextFrontierTable,
-              departure_frontier_table_name: DepField,
-              columns: Columns, column_types: ColumnTypes,
-              key_indices: KeyIndices,
-              arrival_add_sql: AddText, arrival_del_sql: DelText,
-              boundary_sql: BoundarySql }.
+    Dict0 = _{ rel: Name, kind: Kind, table_name: StorageName,
+               delta_table_name: DeltaTable,
+               frontier_table_name: FrontierTable,
+               next_frontier_table_name: NextFrontierTable,
+               departure_frontier_table_name: DepField,
+               columns: Columns, column_types: ColumnTypes,
+               key_indices: KeyIndices,
+               arrival_add_sql: AddText, arrival_del_sql: DelText,
+               boundary_sql: BoundarySql },
+    % Keyed only under frontier(shared); per_rel JSON stays byte-identical.
+    (   lower:frontier_mode(shared),
+        lower:shared_frontier_relation_id(RelPlans, Ref, RelationId)
+    ->  put_dict(shared_frontier, Dict0, _{ relation_id: RelationId }, Dict)
+    ;   Dict = Dict0
+    ).
 
 relations_list(RelPlans, ArrivalStatements, DepartureRefs, DeltaStatements, Dicts) :-
     maplist(relation_dict(RelPlans, ArrivalStatements, DepartureRefs),
@@ -259,10 +265,10 @@ level_dict(RelPlans, HeadTable, CyclicHeadGroups,
     atomic_list_concat([DeleteSql | InsertSqls], ';\n', RecomputeSql),
     select_sql_text(HeadStorageName, HeadColumns, SelectSql),
     refcount_fields(RefCountSql, SupportField, ExpandField, DredField,
-                    SupportInternField),
+                    SupportInternField, SupportCountField),
     aggregate_field(AggregateSql, AggregateField),
     intern_field(DeltaInternSqls, InternField),
-    Dict = _{ head_rel: HeadName,
+    Dict0 = _{ head_rel: HeadName,
               intern_sql: InternField,
               head_table_name: HeadStorageName,
               head_delta_table_name: DeltaTable,
@@ -278,7 +284,13 @@ level_dict(RelPlans, HeadTable, CyclicHeadGroups,
               expand_sql: ExpandField,
               dred_sql: DredField,
               recursion_group: RecursionGroupField,
-              aggregate_sql: AggregateField }.
+              aggregate_sql: AggregateField },
+    % Absent under frontier(per_rel): the key itself never appears, so a
+    % per-rel program's JSON keeps its bytes.
+    (   SupportCountField == null
+    ->  Dict = Dict0
+    ;   put_dict(support_count_sql, Dict0, SupportCountField, Dict)
+    ).
 
 % The mirror of emit_ts.pl:recursion_group_field/3, spelled as the dict this
 % door serializes; `heads` is what a tripped cap names on BOTH doors.
@@ -309,13 +321,14 @@ retention_dict(retentionstmt(Ref, _Limit, DeleteSql), Dict) :-
 retentions_list(RetentionStatements, Dicts) :-
     maplist(retention_dict, RetentionStatements, Dicts).
 
-refcount_fields(none, null, null, null, null) :- !.
+refcount_fields(none, null, null, null, null, null) :- !.
 refcount_fields(refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
                             CollectZeroSql, ClearNewSql, FillNewSql,
                             StageAddSql, StageFrontierSql, StageNextFrontierSql,
                             InsertNewSql, ExpandPlan, DredPlan, _FixpointIr,
-                            SupportInternSqls),
-                SupportText, ExpandText, DredText, SupportInternText) :-
+                            SupportInternSqls, SupportCountPlan),
+                SupportText, ExpandText, DredText, SupportInternText,
+                SupportCountText) :-
     SupportText =
     [ ClearSql, SeedSql, UpdateSql, StageRetractSql, CollectZeroSql,
       ClearNewSql, FillNewSql, StageAddSql, StageFrontierSql,
@@ -323,7 +336,12 @@ refcount_fields(refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
     expand_field(ExpandPlan, ExpandText),
     dred_field(DredPlan, DredText),
     ( SupportInternSqls == [] -> SupportInternText = null
-    ; SupportInternText = SupportInternSqls ).
+    ; SupportInternText = SupportInternSqls ),
+    support_count_field(SupportCountPlan, SupportCountText).
+
+support_count_field(none, null) :- !.
+support_count_field(supportcount(ClearSql, WriteSqls),
+                    _{ clear_sql: ClearSql, write_sqls: WriteSqls }).
 
 expand_field(none, null) :- !.
 expand_field(expandplan(ClearASql, ClearBSql, SeedSqls, HopABSql, HopBASql,

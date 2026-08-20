@@ -1,0 +1,9 @@
+[
+  [
+    { "rel": "hired", "sign": "add", "row": ["ann"] },
+    { "rel": "founder", "sign": "add", "row": ["ann"] },
+    { "rel": "hired", "sign": "add", "row": ["bob"] }
+  ],
+  [{ "rel": "hired", "sign": "del", "row": ["ann"] }],
+  [{ "rel": "hired", "sign": "del", "row": ["bob"] }]
+]

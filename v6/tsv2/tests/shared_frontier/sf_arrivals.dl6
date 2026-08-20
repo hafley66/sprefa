@@ -1,0 +1,2 @@
+rel color(name: text, hex: text) key(1).
+rel tag(label: text, weight: int).

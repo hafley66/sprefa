@@ -1290,11 +1290,21 @@ incremental_relation_entry_line(RelPlans, ObserverMap, ArrivalStatements, Depart
     ),
     rel_ref_text_list(Observers, ObserverRefTexts),
     quoted_string_array_text(ObserverRefTexts, ObserversText),
+    shared_frontier_field(Ref, RelPlans, SharedField),
     format(atom(Line),
-           '  { rel: "~w", kind: "~w", table_name: "~w", delta_table_name: "~w", frontier_table_name: "~w", next_frontier_table_name: "~w", columns: ~w, column_types: ~w, key_indices: [~w], arrival_add_sql: ~w, arrival_del_sql: ~w, boundary_sql: ~w~w, rule_observers: ~w },',
+           '  { rel: "~w", kind: "~w", table_name: "~w", delta_table_name: "~w", frontier_table_name: "~w", next_frontier_table_name: "~w", columns: ~w, column_types: ~w, key_indices: [~w], arrival_add_sql: ~w, arrival_del_sql: ~w, boundary_sql: ~w~w~w, rule_observers: ~w },',
            [Name, Kind, StorageName, DeltaTable, FrontierTable, NextFrontierTable,
             ColumnsText, ColumnTypesText, KeyIndicesText, ArrivalAddTemplate, ArrivalDelTemplate,
-            BoundaryTemplate, DepartureField, ObserversText]).
+            BoundaryTemplate, DepartureField, SharedField, ObserversText]).
+
+% Emitted only under frontier(shared), so per_rel modules stay byte-identical.
+shared_frontier_field(Ref, RelPlans, SharedField) :-
+    (   lower:frontier_mode(shared),
+        lower:shared_frontier_relation_id(RelPlans, Ref, RelationId)
+    ->  format(atom(SharedField),
+               ', shared_frontier: { relation_id: ~w }', [RelationId])
+    ;   SharedField = ''
+    ).
 
 rel_ref_text_list([], []) :- !.
 rel_ref_text_list([Name/Arity | Rest], [Text | More]) :-
@@ -1386,16 +1396,28 @@ incremental_level_statement_entry_line(RelPlans, CyclicHeadGroups,
     atomic_list_concat([DeleteSql | InsertSqls], ';\n', RecomputeSql),
     js_template(RecomputeSql, RecomputeTemplate),
     ref_count_sql_text(RefCountSql, RefCountText, ExpandText, DredText,
-                       FixpointIrText, SupportInternSqls),
+                       FixpointIrText, SupportInternSqls, SupportCountPlan),
     aggregate_sql_text(AggregateSql, AggregateText),
     intern_sql_field(DeltaInternSqls, InternField),
     support_intern_sql_field(SupportInternSqls, SupportInternField),
+    support_count_sql_field(SupportCountPlan, SupportCountField),
     format(atom(Line),
-           '  { head_rel: "~w", rule_id: "~w", head_delta_table_name: "~w", head_columns: ~w, insert_sql: ~w, select_sql: ~w, recompute_sql: ~w, support_sql: ~w, expand_sql: ~w, dred_sql: ~w, fixpoint_ir: ~w, aggregate_sql: ~w~w~w~w },',
+           '  { head_rel: "~w", rule_id: "~w", head_delta_table_name: "~w", head_columns: ~w, insert_sql: ~w, select_sql: ~w, recompute_sql: ~w, support_sql: ~w, expand_sql: ~w, dred_sql: ~w, fixpoint_ir: ~w, aggregate_sql: ~w~w~w~w~w },',
            [HeadName, RuleId, DeltaTable, ColumnsText, DeltaInsertTemplate,
             SelectTemplate, RecomputeTemplate, RefCountText, ExpandText,
             DredText, FixpointIrText, AggregateText, InternField,
-            SupportInternField, RecursionGroupField]).
+            SupportInternField, SupportCountField, RecursionGroupField]).
+
+% Absent under frontier(per_rel), so the field itself never renders and a
+% per-rel module keeps its bytes.
+support_count_sql_field(none, '') :- !.
+support_count_sql_field(supportcount(ClearSql, WriteSqls), Field) :-
+    js_template(ClearSql, ClearTemplate),
+    maplist(js_template, WriteSqls, WriteTemplates),
+    atomic_list_concat(WriteTemplates, ', ', WriteJoined),
+    format(atom(Field),
+           ', support_count_sql: { clear_sql: ~w, write_sqls: [~w] }',
+           [ClearTemplate, WriteJoined]).
 
 % Absent on an acyclic head, so every module of a program with no level cycle
 % renders byte-identically to one emitted before outer rounds existed.
@@ -1433,13 +1455,15 @@ incremental_retention_statement_entry_line(
 optional_sql_template(none, null) :- !.
 optional_sql_template(Sql, Template) :- js_template(Sql, Template).
 
-ref_count_sql_text(none, null, null, null, null, []) :- !.
+ref_count_sql_text(none, null, null, null, null, [], none) :- !.
 ref_count_sql_text(refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
                                CollectZeroSql, ClearNewSql, FillNewSql,
                                StageAddSql, StageFrontierSql,
                                StageNextFrontierSql, InsertNewSql, ExpandPlan,
-                               DredPlan, FixpointIr, SupportInternSqls),
-                 Text, ExpandText, DredText, FixpointIrText, SupportInternSqls) :-
+                               DredPlan, FixpointIr, SupportInternSqls,
+                               SupportCountPlan),
+                 Text, ExpandText, DredText, FixpointIrText, SupportInternSqls,
+                 SupportCountPlan) :-
     maplist(js_template,
             [ClearSql, SeedSql, UpdateSql, StageRetractSql, CollectZeroSql,
              ClearNewSql, FillNewSql, StageAddSql, StageFrontierSql,
