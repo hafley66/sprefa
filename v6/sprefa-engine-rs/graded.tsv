@@ -79,10 +79,10 @@ ends_with_is_a_negative_substr_compare	clean	byte-clean
 enum_decl_two_variants_union_in_tag_view	clean	byte-clean
 enum_decl_variant_name_collision_is_refused	unsupported	enum_variant_name_collision(page)
 enum_decl_variant_rows_round_trip_through_tag_view	clean	byte-clean
-enum_name_is_a_column_type	clean	byte-clean
+enum_name_is_a_column_type	runtime-error	enum_arrival_shape_mismatch: not_an_object(grade)
 enum_nullary_variant_boots_and_tags	clean	byte-clean
 enum_variant_derived_by_level_rule	clean	byte-clean
-enum_variant_field_typed_as_rel_is_a_ref	clean	byte-clean
+enum_variant_field_typed_as_rel_is_a_ref	runtime-error	enum_arrival_shape_mismatch: not_an_object(grade)
 enum_variant_field_undeclared_type_still_throws	unsupported	column_type_unknown(treee)
 enum_variants_run_unchanged_under_the_origin_row_pass	clean	byte-clean
 error_is_a_named_unsupported	unsupported	lifecycle_arm(error)
@@ -110,15 +110,12 @@ flow_arg_param_hop_is_positional_and_site_pinned	clean	byte-clean
 flow_sig_owner_join_types_the_resolved_callee	clean	byte-clean
 fork_join_error_arm_is_a_value	unsupported	compound_pattern_on_arrival_rel(outcome_a/1,1,ok(_))
 fork_join_is_a_conjunctive_body	clean	byte-clean
-generic_expansion_end_to_end	clean	byte-clean
+generic_expansion_end_to_end	runtime-error	enum_arrival_shape_mismatch: not_an_object(__opt_text)
 ghcacher_host_program_term	unsupported	level_body_goal(pull_request(_,_,_,_,_),json_each(_,_))
-ghcacher_json_normalization	unsupported	level_body_goal(pull_request(_,_,_,_,_),json_each(_,_))
 group_concat_one_argument_joins_members	clean	byte-clean
 groupby_aggregate_two_bare_integer_literals	clean	byte-clean
 groupby_two_bare_integer_literals	clean	byte-clean
 guard_stage_fires_on_negation_and_comparison	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_),_>100,not(muted(_))))
-guard_stage_silent_below_threshold	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_),_>100,not(muted(_))))
-guard_stage_silent_when_muted	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_),_>100,not(muted(_))))
 head_column_int_widens_into_float	clean	byte-clean
 head_column_list_and_json_share_storage	clean	byte-clean
 head_column_type_conflict_is_refused	unsupported	head_column_type_conflict(target/1,total,int,source/1,name,text)
@@ -144,38 +141,25 @@ int_rejects_fractional_ingress	unsupported	type_arrival_shape_mismatch(measure/1
 interpolation_desugars_to_concat	clean	byte-clean
 json_absent_key_yields_no_row_under_arrivals	clean	byte-clean
 json_array_groups_and_nests	unsupported	aggregate_head(json_array(_))
-json_array_keeps_bag_duplicates	unsupported	aggregate_head(json_array(_))
 json_array_spread_fans_out_correlated_siblings	clean	byte-clean
 json_array_spread_skips_non_matching_elements	clean	byte-clean
 json_capture_type_bool_is_refused	unsupported	json_capture_type_unknown(bool)
 json_capture_type_typo_is_refused	unsupported	json_capture_type_unknown(itn)
-json_control_escapes_inside_a_document	clean	byte-clean
 json_deep_exact_key_chain_binds	clean	byte-clean
 json_descent_into_scalars_is_silent	clean	byte-clean
 json_descent_matches_at_any_depth	clean	byte-clean
+json_document_encoder_edges_round_trip	clean	byte-clean
 json_each_fans_out	unsupported	level_body_goal(repo_lang(_),json_each(_,_))
-json_empty_containers_nest	clean	byte-clean
 json_empty_object_pattern_matches_any_object	clean	byte-clean
-json_empty_string_key_round_trips	clean	byte-clean
 json_key_capture_binds_key_and_value	clean	byte-clean
 json_key_capture_nests_and_fans_out	clean	byte-clean
-json_marker_shaped_keys_are_ordinary_data	clean	byte-clean
+json_literal_keys_survive_capture	clean	byte-clean
 json_nfc_and_nfd_keys_stay_distinct	clean	byte-clean
-json_non_ascii_keys_sort_by_code_point	clean	byte-clean
-json_null_round_trips_byte_identical	clean	byte-clean
 json_object_builds_document	clean	byte-clean
 json_object_dup_key_rejected	compiled	no oracle tick log
-json_object_groups_rows_into_documents	clean	byte-clean
-json_object_orders_keys	clean	byte-clean
+json_object_groups_and_orders_keys	clean	byte-clean
 json_object_throws_on_duplicate_keys	compiled	no oracle tick log
-json_patch_fold_merges_arrival_documents	clean	byte-clean
-json_patch_fold_result_is_key_sorted	clean	byte-clean
-json_patch_merges_nested_objects_recursively	clean	byte-clean
-json_patch_non_object_patch_replaces_the_document	clean	byte-clean
-json_patch_non_object_target_becomes_empty	clean	byte-clean
-json_patch_null_value_composes	clean	byte-clean
-json_patch_null_value_sets_key	clean	byte-clean
-json_patch_replaces_arrays_wholesale	clean	byte-clean
+json_patch_fold_rfc7396_clauses	clean	byte-clean
 json_round_trip_decode_to_document	unsupported	level_body_goal(repo_lang(_,_),json_each(_,_))
 json_safe_integer_boundary_survives_both_doors	clean	byte-clean
 json_spread_and_capture_and_descent_multiply	clean	byte-clean
@@ -185,18 +169,15 @@ json_typed_capture_filters_a_wrong_typed_value	clean	byte-clean
 json_typed_capture_folds_into_a_keyed_int_total	clean	byte-clean
 json_untyped_capture_binds_without_a_type	clean	byte-clean
 keep_on_non_log_rel_rejected	unsupported	keep_on_non_log_rel(state/1)
-key_identical_write_is_silent	clean	byte-clean
-key_last_write_wins	clean	byte-clean
 key_range_reported_before_unknown_column_type	unsupported	key_position_out_of_range(finding/2,3,2)
-key_same_tick_ordered_not_conflict	clean	byte-clean
 keyed_edge_head_still_replaces	clean	byte-clean
+keyed_head_fold_across_two_rules	clean	byte-clean
 keyed_level_head_is_refused	unsupported	keyed_level_head(current_value/2)
 keyed_log_rejected	unsupported	keyed_log_rel(latest/2,[1])
 keyed_replace_departs_the_old_row	clean	byte-clean
 latest_in_level_rule_rejected	unsupported	latest_in_level_rule(source_item/1)
 length_counts_characters	clean	byte-clean
 length_result_joins_a_comparison	clean	byte-clean
-level_view_reads_set_projection_not_occurrences	clean	byte-clean
 list_bare_column_round_trips	clean	byte-clean
 list_bare_text_door	clean	byte-clean
 list_column_fans_out_through_spread	clean	byte-clean
@@ -213,8 +194,8 @@ list_mint_order_follows_content_text_not_derivation_order	clean	byte-clean
 list_of_json_documents_round_trips	clean	byte-clean
 list_of_relation_refs_still_refused	unsupported	list_of_relation_refs(span)
 live_nonzero_exit_keeps_rows	clean	byte-clean
-log_deltas_follow_arrival_order	clean	byte-clean
 log_driver_fold_needs_no_id_column	clean	byte-clean
+log_occurrences_and_set_projection	clean	byte-clean
 log_on_level_headed_rel_rejected	unsupported	log_on_level_headed_rel(derived_event/1)
 log_rel_identical_arrival_is_two_occurrences	clean	byte-clean
 log_retraction_rejected	compiled	no oracle tick log
@@ -232,7 +213,7 @@ merge_batches_per_tick	clean	byte-clean
 merge_never_retracts	clean	byte-clean
 merge_policy	clean	byte-clean
 mixed_bounded_and_free_parameters	clean	byte-clean
-module_path_and_option_column_coexist	clean	byte-clean
+module_path_and_option_column_coexist	runtime-error	enum_arrival_shape_mismatch: not_an_object(__opt_text)
 module_path_in_body_reads_the_flat_rel	clean	byte-clean
 module_path_in_coalesce_wrapper	clean	byte-clean
 module_path_in_combine_wrapper	clean	byte-clean
@@ -261,7 +242,7 @@ nested_parent_with_no_rows_yields_an_empty_child	clean	byte-clean
 nested_rel_element_list_round_trips	clean	byte-clean
 nested_three_levels_chain_the_references	clean	byte-clean
 nested_two_parent_rows_partition_the_child	clean	byte-clean
-nested_zero_column_child_is_one_row_per_parent	clean	byte-clean
+nested_zero_column_child_is_one_row_per_parent	unsupported	emitter returned false
 new_file_diag_at_hit_line_exact_rows	clean	byte-clean
 new_file_no_exceeded_diag	clean	byte-clean
 new_salt_refires_fresh_stream	clean	byte-clean
@@ -279,18 +260,17 @@ one_colliding_ref_column_beside_a_disjoint_sibling	clean	byte-clean
 one_occurrence_two_rows_still_conflicts	unsupported	edge_head_conflict_risk(latest/2,[ping/1])
 option_companion_name_collision_is_named	unsupported	option_companion_name_collision(pair_holder__before/1,pair_holder/2,before)
 option_dense_sequence_of_rel_round_trips_absent_and_present	clean	byte-clean
-option_in_key_column_is_refused	unsupported	option_in_key_column(session/2,token)
+option_in_key_column_normalizes	clean	byte-clean
 option_list_column_roundtrips_null_and_present	clean	byte-clean
 option_list_of_rel_round_trips_absent_and_present	clean	byte-clean
 option_list_of_scalar_and_of_rel_in_one_rel	clean	byte-clean
 option_list_of_unknown_name_keeps_its_stop	unsupported	column_type_unknown(fighter_summry)
-option_of_interned_set_of_rel_is_refused	unsupported	list_interned_set_relation_element(fighter_summary)
 option_of_json_list_keeps_its_stop	unsupported	option_element_type_unknown(json_list(int))
 option_of_option_of_scalar_keeps_its_stop	clean	byte-clean
 option_rel_on_a_reference_target_round_trips_absent_and_present	clean	byte-clean
 option_rel_ref_desugars_to_companion_split_rel	clean	byte-clean
-option_scalar_enums_mint_per_element_type	clean	byte-clean
-option_text_column_reads_through_tag_join	clean	byte-clean
+option_scalar_enums_mint_per_element_type	runtime-error	enum_arrival_shape_mismatch: not_an_object(__opt_text)
+option_text_column_reads_through_tag_join	runtime-error	enum_arrival_shape_mismatch: not_an_object(__opt_text)
 ordered_aggregate_retraction_rebuild	clean	byte-clean
 ordered_fragment_line_assembly	clean	byte-clean
 ordered_group_concat_explicit_comma_matches_one_argument	clean	byte-clean
@@ -313,7 +293,6 @@ pairwise_reads_state_at_the_departure_tick	clean	byte-clean
 parameterized_enum_two_instantiations	clean	byte-clean
 paren_in_literal_inside_wrapper	clean	byte-clean
 pin_to_unknown_repo_derives_repo_candidate	clean	byte-clean
-pipe_stage_costs_one_tick	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
 pr_size_decodes_files_and_rolls_up	clean	byte-clean
 pre_in_level_rule_rejected	unsupported	pre_in_level_rule(source_item/1)
 probe_output_comparison_guard	clean	byte-clean
@@ -321,8 +300,7 @@ quote_in_literal_doubles_the_escape	clean	byte-clean
 range_join_over_arithmetic	clean	byte-clean
 recursive_closure_passes_both_build_guard_arms	clean	byte-clean
 recursive_cte_multiple_self_reads_is_refused	unsupported	recursive_cte_multiple_self_reads(reachable/2,2)
-recursive_enum_acyclic_tree_round_trips	clean	byte-clean
-recursive_enum_cyclic_values_store_and_render	clean	byte-clean
+recursive_enum_tree_and_cycles_round_trip	runtime-error	enum_arrival_shape_mismatch: not_an_object(tree)
 recursive_list_arg_parent_holds_child_node_values	clean	byte-clean
 reference_target_emptied_by_option_split_is_named	unsupported	reference_target_has_no_columns(squad/0)
 regexp_non_match	clean	byte-clean
@@ -364,12 +342,11 @@ retention_prune_is_a_visible_minus	clean	byte-clean
 retention_single_arm_still_prunes	clean	byte-clean
 retraction_only_tick_retracts_level_view	clean	byte-clean
 rev_fill_not_behind_keeps_stale_pin_empty	clean	byte-clean
-reverse_reverses_characters	runtime-error	boot statement failed: SqlInputError { error: Error { code: Unknown, extended_code: 1 }, msg: "no such function: reverse", sql: "INSERT OR IGNORE INTO \"__str\" (\"content\") SELEC
+reverse_reverses_characters	clean	byte-clean
 rtrim_one_arg_strips_trailing_whitespace	clean	byte-clean
 rtrim_strips_trailing_chars	clean	byte-clean
 same_tick_error_then_fresh_chains_arms	unsupported	trigger_arg_not_var(error(_))
 scan_is_a_named_unsupported	unsupported	removed_word(scan)
-scan_is_a_named_unsupported_at_five_arguments	unsupported	removed_word(scan)
 scope_done_three_spellings	unsupported	trigger_arg_not_var(done)
 seed_and_transition_are_disjoint	unsupported	edge_body_with_negation((increment(_,_),not(pre(counter(_,_)))))
 seeded_one_arm_fold_matches_two_arms	clean	byte-clean
@@ -382,7 +359,6 @@ seq_wire_surface	clean	byte-clean
 set_dedups_log_stacks	clean	byte-clean
 set_rel_identical_arrival_is_one_occurrence	clean	byte-clean
 shared_demand_refcount	clean	byte-clean
-shuffled_arrival_reorders_log_deltas	clean	byte-clean
 split_fans_out_through_spread	clean	byte-clean
 split_initcap_and_fold_render_pascal_case	clean	byte-clean
 split_keeps_empty_parts	clean	byte-clean
@@ -405,7 +381,6 @@ struct_column_type_unknown_rejected	unsupported	column_type_unknown(spann)
 struct_decode_field_unknown_rejected	unsupported	decode_field_unknown(span,beginning)
 struct_ghcacher_stars_normalization	clean	byte-clean
 struct_host_output_schedule_answer_interned	clean	byte-clean
-struct_host_output_type_unknown_rejected	unsupported	column_type_unknown(spann)
 struct_intern_order_a	clean	byte-clean
 struct_intern_order_b	clean	byte-clean
 struct_nested_value_renders_whole_tree	clean	byte-clean
@@ -425,7 +400,6 @@ text_one_and_numeric_one_are_not_equal	unsupported	comparison_type_mismatch(_==_
 text_one_and_numeric_one_never_join	unsupported	join_column_type_mismatch('b1."value"',int,'b0."value"',text)
 text_rejects_number_ingress	unsupported	type_arrival_shape_mismatch(label/1,value,text,field_not_text(4))
 tightened_baseline_catches_regrowth	clean	byte-clean
-trigger_marker_is_what_stops_backlog_replay	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
 trim_charset_strips_both_ends	clean	byte-clean
 trim_default_strips_only_space	clean	byte-clean
 two_bounded_parameters_mint_one_instance	clean	byte-clean
@@ -435,9 +409,7 @@ typed_int_contradicts_text_witness	unsupported	type_arrival_shape_mismatch(typed
 typed_int_without_literal_witness	clean	byte-clean
 typegen_list_element_ladder	clean	byte-clean
 unknown_bound_interface_is_named	unsupported	interface_unknown(missing_capability)
-unmarked_chain_replays_to_late_subscriber	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
 unmarked_edge_replays_backlog	clean	byte-clean
-unmarked_first_stage_refires_on_late_watch	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
 unordered_program_level_fold_reaches_three_links	clean	byte-clean
 unsatisfied_bound_names_the_path	unsupported	generic_bound_unsatisfied(file,addressable,path([template(box),application(box(file)),argument(1,file)]))
 unsubscribe_is_a_named_unsupported	unsupported	lifecycle_arm(unsubscribe)
