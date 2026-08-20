@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "line": {
+      "additionalProperties":false,
+      "properties": {
+        "name": {"type":"string"},
+        "path": {"type":"string"},
+        "stream_id": {"type":"integer"}
+      },
+      "required": ["stream_id", "path", "name" ],
+      "type":"object"
+    },
+    "seen": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"}},
+      "required": ["path" ],
+      "type":"object"
+    }
+  },
+  "$id":"log_occurrences_and_set_projection#6d20405bd77705ce",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

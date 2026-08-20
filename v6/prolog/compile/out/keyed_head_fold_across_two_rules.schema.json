@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "from_poll": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"value": {"type":"string"}},
+      "required": ["key", "value" ],
+      "type":"object"
+    },
+    "from_push": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"value": {"type":"string"}},
+      "required": ["key", "value" ],
+      "type":"object"
+    },
+    "latest": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"value": {"type":"string"}},
+      "required": ["key", "value" ],
+      "type":"object"
+    }
+  },
+  "$id":"keyed_head_fold_across_two_rules#9dff6c4ea0163b7d",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

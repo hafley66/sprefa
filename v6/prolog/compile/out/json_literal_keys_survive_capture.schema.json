@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "pair": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"value": {"type":"integer"}},
+      "required": ["name", "value" ],
+      "type":"object"
+    },
+    "raw_doc": {
+      "additionalProperties":false,
+      "properties": {"body": {}},
+      "required": ["body" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_literal_keys_survive_capture#abb4d32fb9fe58c2",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
