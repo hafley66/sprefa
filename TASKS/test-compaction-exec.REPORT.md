@@ -22,6 +22,7 @@ Ranks 1, 6, 7, 8 out of scope.
 | 2 | `61f388e30` | 0 | done, leak-reason red NOT re-provable at this head |
 | 5 | `1df65a27f` | 0 | KEEP, fold impossible, receipt written into the leg |
 | 4 | `2887ebf7e` | 17 | 7 clusters merged, 30 surplus compiles left unmerged with reasons |
+| artifacts | `f7f8ad652`, `e34d7d204` | | 24 stale `dl_view/*.dl6` and 168 stale `out/*` files removed; the 7 merged names' `out/` artifacts mint on the next sweep |
 
 ### Rank 3, the 11 unsupported duplicates
 
