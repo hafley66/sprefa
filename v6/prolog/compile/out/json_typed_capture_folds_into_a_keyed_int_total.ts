@@ -545,8 +545,8 @@ function run_ordered_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<I
     concatMap(({ mid, after, written, deltas, stored_deltas }) => stage_ordered_frontiers(seam, INCREMENTAL_RELATIONS, ordered_carry_additions(mid, after.stored, stored_deltas, written)).pipe(
       map((post_write_carry): ITickDeltas => ({ rels: deltas.rels, carry_pending: deltas.carry_pending || post_write_carry })),
     )),
-    concatMap((state) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, state.deltas.rels).pipe(
-      map((rels) => ({ ...state, deltas: { ...state.deltas, rels } })),
+    concatMap((state) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, state.rels).pipe(
+      map((rels): ITickDeltas => ({ ...state, rels })),
     )), 
   );
   // json_typed_capture_folds_into_a_keyed_int_total: ordered process_occurrences with evolving pre snapshots.

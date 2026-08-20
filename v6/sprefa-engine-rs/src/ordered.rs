@@ -697,7 +697,10 @@ pub fn run_tick(
     let additions = carry_additions(program, &mid, &after_stored, &stored_deltas, &written);
     let ordered_carry =
         crate::incremental::stage_ordered_frontiers(seam, &program.relations, &additions)?;
-    crate::incremental::stage_departures(seam, &program.relations, &stored_deltas)?;
+    // Decoded rows, not stored ids: read_departures types the frontier table
+    // back through the rel's declared column types, and the TypeScript door
+    // stages the same decoded delta (emit_ts.pl snapshot_departure_stage_lines).
+    crate::incremental::stage_departures(seam, &program.relations, &deltas)?;
     Ok(TickDeltas {
         carry_pending: base_carry_pending(program, &deltas) || ordered_carry,
         rels: deltas,

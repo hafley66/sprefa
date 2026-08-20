@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"line":{"add":[[1,"a.ts","alpha"],[1,"a.ts","beta"],[1,"b.ts","gamma"]],"del":[]},"seen":{"add":[["a.ts"],["b.ts"]],"del":[]}}}
+{"tick":2,"deltas":{"line":{"add":[[2,"c.ts","alpha"],[2,"c.ts","beta"],[2,"d.ts","gamma"]],"del":[]},"seen":{"add":[["c.ts"],["d.ts"]],"del":[]}}}
+{"tick":3,"deltas":{"line":{"add":[[3,"e.ts","alpha"]],"del":[]},"seen":{"add":[["e.ts"]],"del":[]}}}
+{"tick":4,"deltas":{"line":{"add":[[3,"e.ts","alpha"]],"del":[]}}}

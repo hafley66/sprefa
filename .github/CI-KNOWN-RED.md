@@ -10,6 +10,14 @@ Each red leg carries the exact failure text seen at this measurement and the
 site the failure comes out of. Do not edit this list as a way to make CI green;
 edit it only when the underlying defect is fixed and the leg measured green.
 
+**Partial re-measurement 2026-08-20** on `fix/test-estate-green` (base
+`67951ea94`), covering groups B and D only. Receipts and the two design forks
+that hold the remainder open: `TASKS/test-estate-green.REPORT.md`. Legs whose
+numbers moved: sweep (`emitted_crash 30 -> 7`), plunit (`8 -> 7 tests failed`),
+rust-grade (exit 1 -> exit 0 locally). Legs re-run and unchanged: conformance
+(`433 PASS`, `FAILURES 1`), text-door (`compiled=336 byte_identical=331
+failures=5`), roundtrip (`432 / 434`).
+
 **Before this measurement CI never reached the gate at all.** The
 `Generate text-door corpus` job step ran `bash v6/tsv2/scripts/sweep.sh`, which
 exited 124 on `TIMEOUT sweep.sh: stage 1 compile sweep exceeded 900s`, so
@@ -50,14 +58,18 @@ from a different leg.
 
 ### B. the enum plane's arrival encoding is unfinished
 
-`EnumPlane.intern` requires a tagged object per enum-typed column; the sweep
-and grade runners feed the declared scalar, so the module throws on its first
-arrival. Eight fixtures, the same eight in both runtimes.
+Re-measured 2026-08-20 on `fix/test-estate-green` (base `67951ea94`).
+`EnumPlane.intern` requires a tagged object per enum-typed column; the corpus
+feeds the enum instance's surrogate id (`0_option_type.pl:19-22`,
+`0_enum_variants.pl:91-92`), so the module throws on its first arrival. SEVEN
+fixtures on the TypeScript door, SIX on the Rust door. The identity-vs-value
+question is a design fork for the user, written up in
+`TASKS/test-estate-green.REPORT.md` FORK 1.
 
 | leg | exact failure text | site |
 |---|---|---|
-| sweep | `RUN total=351 identical=337 wrong=0 emitted_crash=8 rejection=6 no_oracle_log=0` then `SWEEP GATE: 8 emitted module(s) crashed on a schedule the oracle completed`. Distinct messages: `enum_arrival_shape_mismatch: not_an_object(grade)` / `(tree)` / `(__opt_text)`, and `ambiguous_owner_context(user_profile, __opt_text)` / `(measurement, __opt_text)` / `(orchard__tree, __opt_text)`. | `v6/tsv2/runtime/enumPlane.ts:9,15,57` (throws), `v6/tsv2/scripts/sweep.ts:311` (verdict) |
-| rust-grade | `RUST-GRADE REGRESSION` naming the same eight plus `concat_program_queue` and `nested_zero_column_child_is_one_row_per_parent`; `RUST-GRADE graded=462 byte-clean=335`; `runtime-error 9` with the same `enum_arrival_shape_mismatch` messages, plus `1  boot statement failed: SqlInputError ... "no such function: reverse"` and `diff 1`. `concat_program_queue` is the Rust twin of the emitted-fold defect fixed for TypeScript in this PR at `emit_ts.pl:2233`; `emit_rust.pl` still carries it. | `v6/sprefa-engine-rs/grade.sh` |
+| sweep | `RUN total=335 identical=322 wrong=0 emitted_crash=7 rejection=6 no_oracle_log=0` then `SWEEP GATE: 7 emitted module(s) crashed on a schedule the oracle completed: enum_name_is_a_column_type, generic_expansion_end_to_end, option_text_column_reads_through_tag_join, option_scalar_enums_mint_per_element_type, enum_variant_field_typed_as_rel_is_a_ref, recursive_enum_tree_and_cycles_round_trip, module_path_and_option_column_coexist`. Distinct messages: `enum_arrival_shape_mismatch: not_an_object(grade)` / `(tree)` / `(__opt_text)`. | `v6/tsv2/runtime/enumPlane.ts:9,15,77` (throws), `v6/tsv2/scripts/sweep.ts:311` (verdict) |
+| rust-grade | RETIRED LOCALLY. `RUST-GRADE graded=434 byte-clean=322`, `runtime-error 7` (the six enum messages plus `nested_zero_column_child_is_one_row_per_parent`), `diff 0`, no REGRESSION and no RATCHET line, **exit 0**. Three things closed: `no such function: reverse` (`sql.rs` now installs the scalar), `concat_program_queue` (`ordered.rs` stages departures from decoded rows), and 24 phantom REGRESSION rows (`graded.tsv` re-recorded against the 434-fixture corpus #383 left it behind). The leg stays on the allowlist for group E only. | `v6/sprefa-engine-rs/grade.sh` |
 
 ### C. `golden-flex.dl6` does not compile
 
@@ -85,8 +97,9 @@ seen from a different door; the rendered message drops the column name
 |---|---|---|
 | memory-soak | `FAIL sqlite_page_count_flat: second-quarter mean 25.8, final-quarter mean 50.5, ceiling 28.3 (tolerance +10%)`, 3/3 identical; `rss_flat`, `heap_used_flat`, `dbstat_available` and `statements_per_tick_flat` all PASS. The ceiling is right and the growth is real: `page_count` climbs 8 -> 57 monotonically over 101 samples with `freelist_count` 0 at every one. The grower is `__str`, the string dictionary. `TextPlane.intern` runs `INSERT OR IGNORE INTO "__str" ...` for every distinct text value and NOTHING releases a dictionary row: no `DELETE FROM "__str"` exists anywhere in the tree, and the retention prune deletes only from the rel's own table. The soak posts a unique `tag-${tick}` per tick, so 2500 strings accumulate while every rel stays row-bounded. The file's HEALTHY baseline of 10 flat pages was recorded 2026-07-29, before `a07030ba1` landed interning and before `572811745` made `dict` the default mode, and was never re-measured. Fixing it is a dictionary-release design decision (refcount, or a sweep against every dict column), not a soak edit. | `v6/tsv2/scripts/memory-soak.ts:327` (assertion), `v6/tsv2/runtime/textPlane.ts:46-58` (the unbounded write), `v6/prolog/lower.pl:2562,2595,2599` (the emitted intern SQL, no companion delete) |
 | roundtrip | `G1 round-trip: 460 / 462 fixtures pass` then `FAIL module_path_option_element_round_trips (.../fixtures/7_module_path_element.pl): fail(not_variant)` and `FAIL mutual_recursion_matches_oracle (.../fixtures/engine_core.pl): fail(not_variant)` | `v6/prolog/compile/scripts/roundtrip.sh:132` |
-| text-door | four byte differences beside the plan failure in group A: `TEXT_DOOR_FAIL bounded_template_ground_instance byte_difference`, `two_bounded_parameters_mint_one_instance`, `nested_bounded_template_instance`, `mixed_bounded_and_free_parameters`. All four are template-bound fixtures from the interface-bound arc. | `v6/prolog/compile/scripts/text_door_receipt.sh` |
+| text-door | four byte differences beside the plan failure in group A: `TEXT_DOOR_FAIL bounded_template_ground_instance byte_difference`, `two_bounded_parameters_mint_one_instance`, `nested_bounded_template_instance`, `mixed_bounded_and_free_parameters`. All four are template-bound fixtures from the interface-bound arc. NARROWED 2026-08-20: the diff is nine lines, every one an `h_schema:` value on a TYPE-plane `__rel` row (`interface`/`generic_rel`/`type_parameter`/`constraint`/`generic_column`/`concrete_type`); every `rel` row including its `h_id` is byte-identical. On type rows that slot holds no schema hash: `annotate_catalog_row/3` overwrites it with `semantic_type_id_text/2` of `named(ModuleHash, Kind, Name)`. The two doors agree on the module hash seeding RELATION identity and disagree on the one seeding TYPE identity. | `v6/prolog/compile/scripts/text_door_receipt.sh`, `v6/prolog/lower.pl:1728`, `v6/prolog/0_type_ids.pl:19,51` |
 | plunit | the remaining four of `7 tests failed`: `catalog_plane_rail:level_plane_family_corpus_counts` and three `json_merge_patch` tests (`json_patch_lowers_with_the_null_stand_in_guard`, `merge_patch_stops_on_the_json_null_stand_in`, `merge_patch_stops_on_a_nested_json_null_stand_in`) | `v6/prolog/compile/test/plunit_tests.pl:1694,9803` |
+| cargo test (no CI leg) | `cargo test --tests --no-fail-fast` in `v6/sprefa-engine-rs`: `130 passed, 5 failed`. All five pin host-executor routing PR #370 deleted: `the_three/four/five_ruled_names_reach_the_linked_arm_through_the_host_plan`, `the_response_rows_carry_the_demanded_inputs`, `live_runner_selects_soopy_for_the_unchanged_shell_host_plan`. Message shape: `the linked arm answers: HostError { host: "git_change", message: "exited exit status: 3: git_change is linked in-process" }`. No adapter name on either door reaches `DepCrawlExecutor`, `GitRefExecutor`, `GitRevisionExecutor`, `ChangeFactExecutor` or `SoopyFilesExecutor`; the build prints five dead-code warnings naming them. Design fork, `TASKS/test-estate-green.REPORT.md` FORK 2. Nothing in `just green-all` runs this leg. | `v6/sprefa-engine-rs/tests/change_facts.rs:574`, `dep_resolve.rs:568`, `git_refs.rs:528,564`, `live_hosts.rs:640`; `src/hosts.rs:44-52` |
 | staleness-gate | `STALENESS_GATE_FAIL self-map regeneration failed, ARCH-MAP.md not verified:` followed by the whole last tick as JSON. `bash v6/tsv2/scripts/self-map.sh` alone exits 1 on `FAIL  rels did not settle in 120s`; the document it does write carries an EMPTY mermaid block for section 4, so the rel-graph derivation produces no rows. compile/out and dl_view are regenerated and committed in this PR, so this row is the self-map leg only. | `v6/tools/staleness-gate.sh:159`, `v6/tsv2/scripts/self-map.sh` |
 | scale-floor | `scale-floor: scale bench failed for s2/10000 (sample 1 of 3)` then `LibsqlError: SQLITE_ERROR: no such table: a`. `7_scale-floor.sh` compiles a fresh `s2` fixture through `compile_fixture/4` into `gen/scale_generated.ts`; the emitted boot DDL creates no table for rel `a`. | `v6/tsv2/scripts/7_scale-floor.sh:391` |
 | flagship | `FAIL  the corpus MOVED since the v5 golden was captured (golden 9b1b91ad6aa3933ecd113377e7df76c924e4d69c1d2be20a2945647c1f062828, now 39d0cf438a1e173919bcb60e1092b31ea153afb15675b5f66c3f20938039e11c). Grading v6 against a golden from a different corpus is a false green.` The script names its own regeneration command, and that command runs the v5 binary. | `v6/tsv2/scripts/flagship-callgraph.sh:178` |

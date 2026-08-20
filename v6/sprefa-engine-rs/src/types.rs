@@ -708,6 +708,10 @@ pub struct ProgramJson {
     #[serde(default)]
     pub uses_tick: bool,
     pub reconcile_every_tick: bool,
+    // Nothing reads this: emit_rust.pl writes the constant true and
+    // program.rs only copies it across. Required-on-read broke every
+    // snapshot emitted before it existed and checked nothing.
+    #[serde(default)]
     pub incremental_safe: bool,
     // Absent on an IR emitted before the field existed; 0 then fails
     // program::GenProgram::try_from_json's named check.

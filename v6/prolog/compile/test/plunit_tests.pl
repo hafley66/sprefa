@@ -7186,7 +7186,7 @@ test(a_relation_arrow_prints_the_equivalent_explicit_declaration) :-
     surface_round_trip(
         'rel Parse(source: text) -> Result(ParseError, Ast).',
         Program, RoundTripped, Text),
-    Text == 'rel Parse(source: text, return: Result(ParseError,Ast)).\n',
+    Text == 'rel Parse(source: text, return: Result(ParseError, Ast)).\n',
     Program =@= RoundTripped.
 
 test(a_relation_arrow_keeps_the_ordinary_rule_head_shape) :-

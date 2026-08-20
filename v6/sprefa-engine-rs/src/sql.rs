@@ -32,13 +32,13 @@ pub struct SqliteSeam {
 impl SqliteSeam {
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        install_regexp(&conn)?;
+        install_scalars(&conn)?;
         Ok(SqliteSeam { conn })
     }
 
     pub fn open(url: &str) -> Result<Self> {
         let conn = Connection::open(url)?;
-        install_regexp(&conn)?;
+        install_scalars(&conn)?;
         Ok(SqliteSeam { conn })
     }
 
@@ -48,6 +48,30 @@ impl SqliteSeam {
         }
         Ok(())
     }
+}
+
+// Every scalar the compile/registry.pl text_scalar rows can render that core
+// SQLite does not ship. libsql carries `reverse` for the TypeScript door;
+// rusqlite links plain SQLite, which does not.
+fn install_scalars(conn: &Connection) -> Result<()> {
+    install_reverse(conn)?;
+    install_regexp(conn)
+}
+
+// Unicode scalar values, not bytes: the conformance oracle answers
+// reverse('\u4e2d\u00e9') = '\u00e9\u4e2d'.
+fn install_reverse(conn: &Connection) -> Result<()> {
+    conn.create_scalar_function(
+        "reverse",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let Ok(text) = ctx.get_raw(0).as_str() else {
+                return Ok(None);
+            };
+            Ok(Some(text.chars().rev().collect::<String>()))
+        },
+    )
 }
 
 fn install_regexp(conn: &Connection) -> Result<()> {
