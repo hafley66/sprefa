@@ -15,11 +15,13 @@
  * fixture at a time (concatMap, one seam per fixture, never shared), so
  * neither script needed to change for the other to exist.
  *
- * Prerequisite: v6/tsv2/scripts/sweep.sh has already copied every compiled
- * fixture's emitted module into gen_emitted/<name>.ts -- dynamic import
- * resolves relative to THIS package, so a module still sitting only in
- * compile/out/ cannot be imported directly (its "../runtime/..." relative
- * imports would resolve against the wrong directory).
+ * Copies every compiled fixture's emitted module into gen_emitted/<name>.ts
+ * itself, because dynamic import resolves relative to THIS package and a
+ * module still sitting only in compile/out/ cannot be imported directly (its
+ * "../runtime/..." relative imports would resolve against the wrong
+ * directory). The copy was 335 `rm`+`cp` pairs in sweep.sh, 670 process
+ * spawns for 1.8s of the cold wall; done here it reuses the manifest read
+ * this script already does and skips a file whose bytes already match.
  *
  * Writes v6/prolog/compile/out/run-results.json (one record per compiled
  * fixture: bucket + a short diff/error detail) and prints a summary line.
@@ -42,12 +44,14 @@
  * Usage: node --experimental-transform-types scripts/sweep.ts
  */
 
+import { spawn } from "node:child_process";
+import { availableParallelism, tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { catchError, concatMap, forkJoin, from, map, of, toArray, type Observable } from "rxjs";
+import { Observable, catchError, concatMap, forkJoin, from, map, of, toArray } from "rxjs";
 
 import { BootRunner } from "../runtime/2_boot.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
@@ -365,24 +369,56 @@ function final_summary_line(results: readonly IFixtureRunResult[]): string {
   return `FINAL total=${results.length} final_identical=${count_of("final_identical")} final_wrong=${count_of("final_wrong")} no_oracle_final=${count_of("no_oracle_final")}`;
 }
 
-function main(): void {
-  const manifest = read_manifest();
-  const compiled_names = manifest.filter((entry) => entry.bucket === "compiled").map((entry) => entry.name);
-  const cache = read_replay_cache();
-  const keys = new Map(compiled_names.map((name) => [name, replay_key(name)] as const));
-  const fresh: Record<string, IReplayCacheEntry> = {};
-  const timings: (readonly [string, number])[] = [];
-  let hits = 0;
-
-  // concatMap keeps one seam alive at a time and keeps the result order the
-  // manifest's, cached or not, so run-results.json is byte-identical to the
-  // uncached pass's.
-  const graded = (name: string): Observable<IFixtureRunResult> => {
-    const cached = cache[name];
-    if (cached !== undefined && cached.key === keys.get(name)) {
-      hits += 1;
-      return of(cached.result);
+/** gen_emitted/ also holds checked-in modules that are not fixture outputs, so
+ *  only the names the manifest calls `compiled` are ever written here. A file
+ *  whose bytes already match is left alone: its mtime is what the emitted
+ *  module's own loader cache keys on. */
+function sync_emitted_modules(names: readonly string[]): void {
+  mkdirSync(GEN_EMITTED, { recursive: true });
+  for (const name of names) {
+    const source = readFileSync(join(COMPILE_OUT, `${name}.ts`));
+    const target = join(GEN_EMITTED, `${name}.ts`);
+    let same = false;
+    try {
+      same = readFileSync(target).equals(source);
+    } catch {
+      same = false;
     }
+    if (!same) writeFileSync(target, source);
+  }
+}
+
+/** Fan-out (this arc). The replay leg was one node process walking the whole
+ *  compiled set, and its per-fixture work is independent: every fixture opens
+ *  its OWN `:memory:` seam and reads only files keyed to its own name. A shard
+ *  child replays an assigned slice and hands back its results and its timings;
+ *  the parent re-orders everything into MANIFEST order before writing
+ *  anything, so run-results.json and every printed line are byte-identical to
+ *  the single-process pass whatever order the children finish in.
+ *
+ *  A child is this same file re-entered with SWEEP_REPLAY_SHARD naming its
+ *  slice file. `stdio: inherit` so a child's SWEEP_SLOW line reaches the
+ *  terminal while it is still slow. */
+interface IShardPayload {
+  readonly results: readonly IFixtureRunResult[];
+  readonly timings: readonly (readonly [string, number])[];
+}
+
+const SHARD_FILE = process.env["SWEEP_REPLAY_SHARD"];
+
+function replay_jobs(): number {
+  for (const name of ["SWEEP_REPLAY_JOBS", "SWEEP_JOBS"]) {
+    const text = process.env[name];
+    if (text === undefined) continue;
+    const count = Number.parseInt(text, 10);
+    if (Number.isInteger(count) && count > 0) return count;
+  }
+  return availableParallelism();
+}
+
+function replay_names(names: readonly string[]): Observable<IShardPayload> {
+  const timings: (readonly [string, number])[] = [];
+  const graded = (name: string): Observable<IFixtureRunResult> => {
     const started = Date.now();
     return run_fixture(name).pipe(
       map((result) => {
@@ -393,46 +429,163 @@ function main(): void {
       }),
     );
   };
-
-  from(compiled_names)
-    .pipe(concatMap((name) => graded(name)), toArray())
-    .subscribe({
-      next: (results) => {
-        for (const result of results) fresh[result.name] = { key: keys.get(result.name) ?? "", result };
-        writeFileSync(REPLAY_DIGESTS, `${JSON.stringify(fresh, null, 2)}\n`);
-        append_timings(timings);
-        report_slowest(timings);
-        process.stdout.write(`REPLAY_CACHE hit=${hits} replayed=${results.length - hits}\n`);
-        writeFileSync(join(COMPILE_OUT, "run-results.json"), `${JSON.stringify(results, null, 2)}\n`);
-        process.stdout.write(`${summary_line(results)}\n`);
-        for (const result of results) {
-          if (result.bucket !== "identical") process.stdout.write(`  ${result.bucket.toUpperCase()} ${result.name} ${result.detail}\n`);
-        }
-        process.stdout.write(`${final_summary_line(results)}\n`);
-        for (const result of results) {
-          if (result.final_bucket !== "final_identical") {
-            process.stdout.write(`  ${result.final_bucket.toUpperCase()} ${result.name} ${result.final_detail}\n`);
-          }
-        }
-        // The ratchet the split exists for. `emitted_crash` is zero today and
-        // an emitted module dying where the oracle completed the schedule is
-        // never an acceptable outcome -- the compiler owes that program a
-        // named refusal instead. Gating it here is what stops the next one
-        // reading as one more expected line in a summary nobody diffs.
-        // `wrong` stays ungated, as it has been for every earlier arc.
-        const crashes = results.filter((result) => result.bucket === "emitted_crash");
-        if (crashes.length > 0) {
-          process.stderr.write(
-            `SWEEP GATE: ${crashes.length} emitted module(s) crashed on a schedule the oracle completed: ${crashes.map((result) => result.name).join(", ")}\n`,
-          );
-          process.exitCode = 1;
-        }
-      },
-      error: (failure) => {
-        process.stderr.write(`${failure instanceof Error ? failure.stack : String(failure)}\n`);
-        process.exit(1);
-      },
-    });
+  return from(names).pipe(
+    concatMap((name) => graded(name)),
+    toArray(),
+    map((results) => ({ results, timings })),
+  );
 }
 
-main();
+/** NODE_NO_WARNINGS so the parent's one ExperimentalWarning stays one line
+ *  instead of one per child. */
+function spawn_shard_child(path: string): Observable<IShardPayload> {
+  return new Observable<IShardPayload>((subscriber) => {
+    const child = spawn(process.execPath, ["--experimental-transform-types", fileURLToPath(import.meta.url)], {
+      env: { ...process.env, SWEEP_REPLAY_SHARD: path, NODE_NO_WARNINGS: "1" },
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    child.on("error", (failure: unknown) => subscriber.error(failure));
+    child.on("exit", (code: number | null, signal: string | null) => {
+      if (code !== 0) {
+        subscriber.error(new Error(`replay shard ${path} exited code=${String(code)} signal=${String(signal)}`));
+        return;
+      }
+      try {
+        subscriber.next(JSON.parse(readFileSync(`${path}.out`, "utf8")) as IShardPayload);
+        subscriber.complete();
+      } catch (failure: unknown) {
+        subscriber.error(failure);
+      }
+    });
+    return () => child.kill("SIGKILL");
+  });
+}
+
+/** ScratchStore.open has no close (runtime/scratchStore.ts), so a replay
+ *  process holds one libsql handle per fixture it ran and a long slice can die
+ *  on a native SIGSEGV: measured once in ~20 passes at jobs=2, where a child
+ *  carried 168 fixtures. The retry re-runs THAT SLICE ONLY, in a fresh
+ *  process, and says so; a second death is reported, never swallowed. Until
+ *  the seam closes its handle this is the rail that keeps the fan-out strictly
+ *  no worse than the single-process shape, which has the same leak at 335. */
+function run_shard_child(path: string): Observable<IShardPayload> {
+  return spawn_shard_child(path).pipe(
+    catchError((failure: unknown) => {
+      process.stderr.write(`REPLAY_SHARD_RETRY ${path}: ${failure instanceof Error ? failure.message : String(failure)}\n`);
+      return spawn_shard_child(path);
+    }),
+  );
+}
+
+/** Round-robin over the corpus order. The per-fixture spread is small (mean
+ *  8ms, slowest 82ms), so the cost-aware bin-pack a wider spread would need
+ *  buys nothing measurable here. */
+function shard_slices(names: readonly string[], jobs: number): readonly (readonly string[])[] {
+  const slices: string[][] = Array.from({ length: jobs }, () => []);
+  names.forEach((name, index) => slices[index % jobs]?.push(name));
+  return slices.filter((slice) => slice.length > 0);
+}
+
+function replay_fanned_out(names: readonly string[], jobs: number): Observable<IShardPayload> {
+  const dir = mkdtempSync(join(tmpdir(), "sweep-replay-"));
+  const slices = shard_slices(names, jobs);
+  const paths = slices.map((slice, index) => {
+    const path = join(dir, `shard.${index}.json`);
+    writeFileSync(path, JSON.stringify(slice));
+    return path;
+  });
+  return forkJoin(paths.map((path) => run_shard_child(path))).pipe(
+    map((payloads) => {
+      rmSync(dir, { recursive: true, force: true });
+      const by_name = new Map<string, IFixtureRunResult>();
+      const millis = new Map<string, number>();
+      for (const payload of payloads) {
+        for (const result of payload.results) by_name.set(result.name, result);
+        for (const [name, ms] of payload.timings) millis.set(name, ms);
+      }
+      return {
+        results: names.map((name) => by_name.get(name)).filter((result): result is IFixtureRunResult => result !== undefined),
+        timings: names.map((name) => [name, millis.get(name) ?? 0] as const),
+      };
+    }),
+  );
+}
+
+function shard_main(path: string): void {
+  const names = JSON.parse(readFileSync(path, "utf8")) as readonly string[];
+  replay_names(names).subscribe({
+    next: (payload) => writeFileSync(`${path}.out`, JSON.stringify(payload)),
+    error: (failure: unknown) => {
+      process.stderr.write(`${failure instanceof Error ? failure.stack : String(failure)}\n`);
+      process.exit(1);
+    },
+  });
+}
+
+/** Below this many cache misses the fan-out costs more in child boots than the
+ *  slice saves, so the pass stays in this process. */
+const FANOUT_FLOOR = 32;
+
+function main(): void {
+  const manifest = read_manifest();
+  const compiled_names = manifest.filter((entry) => entry.bucket === "compiled").map((entry) => entry.name);
+  sync_emitted_modules(compiled_names);
+  const cache = read_replay_cache();
+  const keys = new Map(compiled_names.map((name) => [name, replay_key(name)] as const));
+  const cached = new Map<string, IFixtureRunResult>();
+  const misses: string[] = [];
+  for (const name of compiled_names) {
+    const entry = cache[name];
+    if (entry !== undefined && entry.key === keys.get(name)) cached.set(name, entry.result);
+    else misses.push(name);
+  }
+  const jobs = replay_jobs();
+  const replayed = misses.length >= FANOUT_FLOOR && jobs > 1 ? replay_fanned_out(misses, jobs) : replay_names(misses);
+
+  replayed.subscribe({
+    next: (payload) => {
+      const by_name = new Map(payload.results.map((result) => [result.name, result] as const));
+      const results = compiled_names
+        .map((name) => cached.get(name) ?? by_name.get(name))
+        .filter((result): result is IFixtureRunResult => result !== undefined);
+      const timings = payload.timings;
+      const fresh: Record<string, IReplayCacheEntry> = {};
+      for (const result of results) fresh[result.name] = { key: keys.get(result.name) ?? "", result };
+      writeFileSync(REPLAY_DIGESTS, `${JSON.stringify(fresh, null, 2)}\n`);
+      append_timings(timings);
+      report_slowest(timings);
+      process.stdout.write(`REPLAY_CACHE hit=${cached.size} replayed=${results.length - cached.size}\n`);
+      writeFileSync(join(COMPILE_OUT, "run-results.json"), `${JSON.stringify(results, null, 2)}\n`);
+      process.stdout.write(`${summary_line(results)}\n`);
+      for (const result of results) {
+        if (result.bucket !== "identical") process.stdout.write(`  ${result.bucket.toUpperCase()} ${result.name} ${result.detail}\n`);
+      }
+      process.stdout.write(`${final_summary_line(results)}\n`);
+      for (const result of results) {
+        if (result.final_bucket !== "final_identical") {
+          process.stdout.write(`  ${result.final_bucket.toUpperCase()} ${result.name} ${result.final_detail}\n`);
+        }
+      }
+      // The ratchet the split exists for. `emitted_crash` is zero today and
+      // an emitted module dying where the oracle completed the schedule is
+      // never an acceptable outcome -- the compiler owes that program a
+      // named refusal instead. Gating it here is what stops the next one
+      // reading as one more expected line in a summary nobody diffs.
+      // `wrong` stays ungated, as it has been for every earlier arc.
+      const crashes = results.filter((result) => result.bucket === "emitted_crash");
+      if (crashes.length > 0) {
+        process.stderr.write(
+          `SWEEP GATE: ${crashes.length} emitted module(s) crashed on a schedule the oracle completed: ${crashes.map((result) => result.name).join(", ")}\n`,
+        );
+        process.exitCode = 1;
+      }
+    },
+    error: (failure: unknown) => {
+      process.stderr.write(`${failure instanceof Error ? failure.stack : String(failure)}\n`);
+      process.exit(1);
+    },
+  });
+}
+
+if (SHARD_FILE !== undefined) shard_main(SHARD_FILE);
+else main();

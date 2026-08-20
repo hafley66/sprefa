@@ -8,6 +8,11 @@
 % scripts/sweep.sh truncates the file once at the head of a run; a stage run on
 % its own recreates the header and appends to it. The file is gitignored: it is
 % a measurement of this machine on this pass, not a fact about the corpus.
+%
+% One stage's whole block goes out in ONE write() against an O_APPEND fd: the
+% compile and oracle stages now run CONCURRENTLY (scripts/sweep.sh), and
+% line-at-a-time buffered writes from two processes into one file split lines
+% at the buffer boundary.
 
 :- module(sweep_timings, [ timings_path/2, append_timings/3, report_slowest/2 ]).
 
@@ -24,10 +29,18 @@ append_timings(OutDir, Stage, Entries) :-
                            format(Header, "fixture\tstage\tms~n", []),
                            close(Header))
     ),
+    findall(Line,
+            ( member(Name-Millis, Entries),
+              format(atom(Line), "~w\t~w\t~w~n", [Name, Stage, Millis]) ),
+            Lines),
+    atomic_list_concat(Lines, Block),
+    atom_length(Block, Length),
+    Size is max(Length + 1, 4096),
     setup_call_cleanup(
         open(Path, append, Stream),
-        forall(member(Name-Millis, Entries),
-               format(Stream, "~w\t~w\t~w~n", [Name, Stage, Millis])),
+        ( set_stream(Stream, buffer(full)),
+          set_stream(Stream, buffer_size(Size)),
+          write(Stream, Block) ),
         close(Stream)).
 
 % Descending on the millisecond count, so `sort/4` and not `msort/2`: the pair
