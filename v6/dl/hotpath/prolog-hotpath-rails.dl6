@@ -1,0 +1,199 @@
+# prolog-hotpath-rails.dl6 -- three shape rails over the prolog corpus, each
+# measured true-positive against the revision its defect was alive at
+# (TASKS/extract-rails.REPORT.md carries the run and the false-positive count).
+#
+#   rail_a_unguarded_list_walk   a whole-list walk as the FIRST body goal of a
+#                                predicate with four or more call sites.
+#                                b6ea091b7 parse_dl_dcg.pl mark/1, PR #393.
+#                                1 row at the parent, 0 on main.
+#   rail_c_shared_clause_store   a `dynamic` clause store that the same file
+#                                both asserts into and retracts from, in a
+#                                process that runs plunit jobs(N).
+#                                b0c319e57 parse_dl_dcg.pl:30, PR #387.
+#                                5 rows at the parent, 4 on main.
+#   rail_d_duplicated_walk       two predicates in one file with the same goal
+#                                set, both reading files: a copy-pasted corpus
+#                                walker beside its twin.
+#                                4584635a4 plunit_tests.pl, PR #390.
+#                                4 rows at the parent, 1 on main.
+#
+# A fourth candidate, a linear scan inside a recursive clause (b6ea091b7
+# use_resolve.pl merge_col/3, PR #393), is NOT here: it reads 102 rows at the
+# parent and 101 on main, so the finding it names is idiomatic Prolog and the
+# rail cannot be a gate. The report carries its numbers.
+#
+# rx lowering, per the standing law. Every host fan-out is one mergeMap over
+# rows and every rail is a delta join; nothing here has a per-file lifetime:
+#
+#   wantRows$.pipe(map(mintIdentityAndWitness), distinct(row => row.witnessDigest),
+#                  mergeMap(runFiles), mergeMap(commitEdbArrival))
+#   sourceFile$.pipe(map(mintIdentityAndWitness), distinct(row => row.witnessDigest),
+#                    mergeMap(runExtract), mergeMap(commitEdbArrival))
+#   goalSite$.pipe(withLatestFrom(clauseDef$), map(containment),
+#                  groupBy(row => row.goalStart),
+#                  mergeMap(group => group.pipe(reduce(maxOf))))   // = the max aggregate
+#
+# HOST NAMES ARE BORROWED. registry.pl host_input_contract/3 is keyed on
+# hardcoded host names and only a registered one may take the standard
+# (path, digest) shape, so `extract` reads call SITES here and `call_ref`
+# reads directive REFERENCES. Renaming them needs a registry row.
+
+rel span(start: int, end: int).
+
+sh files(glob: text) -> (path: text, digest: text) =
+  `git ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git hash-object -- "$entry")"; done`.
+
+sh call_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+sh extract(path: text, digest: text) -> (record: text, family: text, span: span, callee: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+sh call_ref(path: text, digest: text) -> (record: text, family: text, span: span, functor: text, position: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+rel want(glob: text).
+
+rel source_file(path: text, digest: text).
+source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
+
+# `node` and `specifier` rows carry the same five keys, so the record name is a
+# constant in argument position rather than a guard.
+rel clause_def(path: text, clause_start: int, clause_end: int, pred: text).
+clause_def(Path, ClauseStart, ClauseEnd, Pred) <-
+  source_file(Path, Digest),
+  call_node_at(Path, Digest, 'node', 'call', ClauseAt, 'function', Pred),
+  decode(ClauseAt, {start: ClauseStart, end: ClauseEnd}).
+
+rel goal_site(path: text, goal_start: int, goal_end: int, callee: text).
+goal_site(Path, GoalStart, GoalEnd, Callee) <-
+  source_file(Path, Digest),
+  extract(Path, Digest, 'site', 'call', GoalAt, Callee),
+  decode(GoalAt, {start: GoalStart, end: GoalEnd}).
+
+rel directive_goal(path: text, functor: text).
+directive_goal(Path, Functor) <-
+  source_file(Path, Digest),
+  call_ref(Path, Digest, 'reference', 'call', _RefAt, Functor, 'goal').
+
+# ── goal to enclosing clause ────────────────────────────────────────────────
+rel goal_clause_candidate(path: text, goal_start: int, callee: text, clause_start: int).
+goal_clause_candidate(Path, GoalStart, Callee, ClauseStart) <-
+  goal_site(Path, GoalStart, GoalEnd, Callee),
+  clause_def(Path, ClauseStart, ClauseEnd, _),
+  GoalStart >= ClauseStart,
+  GoalEnd =< ClauseEnd.
+
+rel goal_clause_start(path: text, goal_start: int, callee: text, clause_start: int).
+goal_clause_start(Path, GoalStart, Callee, max(ClauseStart)) <-
+  goal_clause_candidate(Path, GoalStart, Callee, ClauseStart).
+
+rel clause_goal(path: text, clause_start: int, goal_start: int, callee: text).
+clause_goal(Path, ClauseStart, GoalStart, Callee) <-
+  goal_clause_start(Path, GoalStart, Callee, ClauseStart).
+
+rel pred_goal(path: text, pred: text, callee: text).
+pred_goal(Path, Pred, Callee) <-
+  clause_goal(Path, ClauseStart, _, Callee),
+  clause_def(Path, ClauseStart, _, Pred).
+
+rel pred_call_count(path: text, pred: text, callers: int).
+pred_call_count(Path, Callee, count(GoalStart)) <- goal_site(Path, GoalStart, _, Callee).
+
+# ── RAIL A: an unguarded whole-list walk in the first body goal ─────────────
+rel whole_list_walk(callee: text).
+whole_list_walk('length/2').
+whole_list_walk('last/2').
+whole_list_walk('sum_list/2').
+whole_list_walk('max_list/2').
+whole_list_walk('min_list/2').
+whole_list_walk('msort/2').
+whole_list_walk('list_to_assoc/2').
+
+rel clause_first_goal_start(path: text, clause_start: int, goal_start: int).
+clause_first_goal_start(Path, ClauseStart, min(GoalStart)) <-
+  clause_goal(Path, ClauseStart, GoalStart, _).
+
+rel clause_first_goal(path: text, clause_start: int, callee: text).
+clause_first_goal(Path, ClauseStart, Callee) <-
+  clause_first_goal_start(Path, ClauseStart, GoalStart),
+  clause_goal(Path, ClauseStart, GoalStart, Callee).
+
+rel rail_a_unguarded_list_walk(path: text, pred: text, walk: text, callers: int).
+rail_a_unguarded_list_walk(Path, Pred, Callee, Callers) <-
+  clause_first_goal(Path, ClauseStart, Callee),
+  whole_list_walk(Callee),
+  clause_def(Path, ClauseStart, _, Pred),
+  pred_call_count(Path, Pred, Callers),
+  Callers >= 4.
+
+# ── RAIL C: a `dynamic` clause store read-modify-written under threads ─────
+rel clause_store_add(callee: text).
+clause_store_add('assertz/1').
+clause_store_add('asserta/1').
+clause_store_add('assert/1').
+
+rel clause_store_del(callee: text).
+clause_store_del('retract/1').
+clause_store_del('retract/2').
+clause_store_del('retractall/1').
+clause_store_del('erase/1').
+
+rel dynamic_file(path: text).
+dynamic_file(Path) <- directive_goal(Path, 'dynamic/1').
+
+rel adds_clauses(path: text).
+adds_clauses(Path) <- goal_site(Path, _, _, Callee), clause_store_add(Callee).
+
+rel deletes_clauses(path: text).
+deletes_clauses(Path) <- goal_site(Path, _, _, Callee), clause_store_del(Callee).
+
+rel rail_c_shared_clause_store(path: text).
+rail_c_shared_clause_store(Path) <-
+  dynamic_file(Path), adds_clauses(Path), deletes_clauses(Path).
+
+# ── RAIL D: a duplicated file-reading traversal beside its own twin ────────
+rel io_goal(callee: text).
+io_goal('directory_files/2').
+io_goal('open/3').
+io_goal('open/4').
+io_goal('read_term/2').
+io_goal('read_term/3').
+io_goal('close/1').
+io_goal('call_cleanup/2').
+io_goal('exists_file/1').
+io_goal('process_create/3').
+
+# A self-call is normalized so two copies under different names fingerprint the
+# same; without it every copy carries its own name and no pair ever matches.
+rel pred_goal_norm(path: text, pred: text, callee: text).
+pred_goal_norm(Path, Pred, '__self__') <- pred_goal(Path, Pred, Callee), Callee == Pred.
+pred_goal_norm(Path, Pred, Callee) <- pred_goal(Path, Pred, Callee), Callee \== Pred.
+
+rel pred_fingerprint(path: text, pred: text, fingerprint: text).
+pred_fingerprint(Path, Pred, group_concat(Callee, ',')) <- pred_goal_norm(Path, Pred, Callee).
+
+rel pred_goal_count(path: text, pred: text, goals: int).
+pred_goal_count(Path, Pred, count(Callee)) <- pred_goal_norm(Path, Pred, Callee).
+
+rel pred_reads_files(path: text, pred: text).
+pred_reads_files(Path, Pred) <- pred_goal(Path, Pred, Callee), io_goal(Callee).
+
+# Ordered comparison is number-only, so the pair is ordered by the predicates'
+# first clause offsets rather than by name.
+rel pred_anchor(path: text, pred: text, anchor: int).
+pred_anchor(Path, Pred, min(ClauseStart)) <- clause_def(Path, ClauseStart, _, Pred).
+
+rel rail_d_duplicated_walk(path: text, pred_a: text, pred_b: text).
+rail_d_duplicated_walk(Path, PredA, PredB) <-
+  pred_fingerprint(Path, PredA, Fingerprint),
+  pred_fingerprint(Path, PredB, Fingerprint),
+  pred_anchor(Path, PredA, AnchorA),
+  pred_anchor(Path, PredB, AnchorB),
+  AnchorA < AnchorB,
+  pred_reads_files(Path, PredA),
+  pred_reads_files(Path, PredB),
+  pred_goal_count(Path, PredA, Goals),
+  Goals >= 4.
+
+? rail_a_unguarded_list_walk(path, pred, walk, callers).
+? rail_c_shared_clause_store(path).
+? rail_d_duplicated_walk(path, pred_a, pred_b).
