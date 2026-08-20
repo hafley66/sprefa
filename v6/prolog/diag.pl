@@ -33,6 +33,7 @@
           ]).
 
 :- use_module(library(http/json)).
+:- use_module(compile_messages, []).
 :- use_module(library(uri), [uri_encoded/3]).
 :- use_module('0_unsupported_messages', []).
 :- use_module('compile/parse_dl_dcg',
@@ -152,11 +153,13 @@ diag_current_file('unknown').
 
 % ═══ emission ═════════════════════════════════════════════════════════════
 
+% The bytes stay JSON; compile_messages.pl's message_hook writes the record and
+% suppresses the line renderer, so the channel sits inside the message system
+% without any consumer seeing a different byte.
 emit_diag(Stream, Term) :-
     diag_uri(Term, Uri),
     diag_record(Term, Uri, Record),
-    json_write_dict(Stream, Record, [width(0)]),
-    nl(Stream).
+    print_message(error, dl6_diag(Stream, Record)).
 
 % Emit to the active (per-process) stream. This is the seam the compiler calls
 % at a unsupported construct, and the entry the diag.test.pl receipts drive.

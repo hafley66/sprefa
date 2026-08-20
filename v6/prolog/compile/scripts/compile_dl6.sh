@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # compile_dl6.sh: compile one .dl6 source file through compile:compile_dl6/2.
+#
+# DL6_DEBUG turns on library(debug) topics for the compile: a comma list of
+# topic names (parse,plan,expand,check,lower,boot,emit,write,sweep) or `all`.
+# The spelling is parsed in exactly one place, compile_messages:dl6_debug_from_env/0.
 
 set -euo pipefail
 
@@ -32,5 +36,6 @@ else
   else
     GOAL="compile_dl6('$INPUT', '$OUTPUT')"
   fi
-  swipl -q -l "$COMPILE_DIR/../compile.pl" -g "$GOAL" -g halt
+  swipl -q -l "$COMPILE_DIR/../compile.pl" \
+    -g "compile_messages:dl6_debug_from_env" -g "$GOAL" -g halt
 fi

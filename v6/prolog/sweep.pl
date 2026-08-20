@@ -18,6 +18,7 @@
 :- use_module('compile/8_emit_rust_types', [ rust_types_text/3 ]).
 :- use_module('conformance/body', [ rel_ref/2 ]).
 :- use_module('0_rel_record', [ relplan_column_types/3 ]).
+:- use_module(compile_messages, [dl6_debug/3]).
 :- use_module('0_type_plane',
               [ type_canonical_json/4,
                 canonical_json_text/2, escape_json_codes/2 ]).
@@ -107,6 +108,7 @@ sweep_file(Options, File, Results) :-
             Results).
 
 sweep_one(Options, File, Name, Term, Bindings, result(Name, File, Bucket, Reason)) :-
+    dl6_debug(sweep, "fixture ~w (~w)", [Name, File]),
     catch(
         ( program_plan(Term-Bindings, Options, Plan),
           lower_program(Plan, Lowered),
@@ -161,7 +163,8 @@ sweep_one(Options, File, Name, Term, Bindings, result(Name, File, Bucket, Reason
         ),
         Error,
         classify_error(Error, Bucket, Reason)
-    ).
+    ),
+    dl6_debug(sweep, "~w bucket=~w reason=~q", [Name, Bucket, Reason]).
 
 % unsupported_construct(What) is the compiler's own clean-unsupported construct ball
 % (analyze.pl/lower.pl/strat.pl); anything else reaching here is an
@@ -268,6 +271,8 @@ summarize(Results) :-
     include(is_bucket(crash), Results, Crashed),
     length(Results, Total), length(Compiled, CompiledCount),
     length(Unsupported, UnsupportedCount), length(Crashed, CrashedCount),
+    dl6_debug(sweep, "total=~w compiled=~w unsupported=~w crash=~w",
+              [Total, CompiledCount, UnsupportedCount, CrashedCount]),
     format("SWEEP total=~w compiled=~w unsupported=~w crash=~w~n", [Total, CompiledCount, UnsupportedCount, CrashedCount]),
     forall(member(result(Name, _, unsupported, Reason), Unsupported), format("  UNSUPPORTED ~w ~q~n", [Name, Reason])),
     forall(member(result(Name, _, crash, Reason), Crashed), format("  CRASH ~w ~q~n", [Name, Reason])).

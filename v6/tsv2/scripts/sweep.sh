@@ -44,8 +44,11 @@ echo "=== stage 1: compile sweep ==="
 # at ~2.4 GB peak. The abort itself no longer reproduces on this corpus.
 # Budget: 900s is ~12x the measured wall; a compile sweep that has not finished
 # in fifteen minutes has hit a cliff, not a corpus.
+# DL6_DEBUG (comma topic list, or `all`) turns on the compiler's library(debug)
+# topics for this stage; compile_messages:dl6_debug_from_env/0 is the one parser.
 capped "${SWEEP_COMPILE_BUDGET_S:-900}" "stage 1 compile sweep" \
-  swipl -q -l "$COMPILE_DIR/../sweep.pl" -g sweep -g halt
+  swipl -q -l "$COMPILE_DIR/../sweep.pl" \
+  -g "compile_messages:dl6_debug_from_env" -g sweep -g halt
 
 echo ""
 echo "=== stage 2: oracle dump ==="

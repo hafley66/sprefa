@@ -24,6 +24,7 @@
 :- use_module(library(lists), [memberchk/2]).
 :- use_module(library(filesex), [directory_file_path/3, make_directory_path/1]).
 :- use_module(compile, [compile_dl6/3]).
+:- use_module(compile_messages, []).
 :- use_module(emit_ts, []).
 :- use_module(emit_rust, []).
 
@@ -106,7 +107,7 @@ result_code(from_error(Error), Code) :-
 
 print_rendered_error(Prefix, Error) :-
     message_to_string(Error, Text),
-    format(user_error, "~w: ~w~n", [Prefix, Text]).
+    print_message(error, dl6_cli_error(Prefix, Text)).
 
 % Kept in step BY HAND with bop_check.pl's list of the same name;
 % compile/test/dl6c.test.pl asserts the two are set-equal.
