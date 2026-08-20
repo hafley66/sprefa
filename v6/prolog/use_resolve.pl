@@ -14,7 +14,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(assoc)).
-:- use_module(library(crypto)).
+:- use_module(library(sha)).
 :- use_module(library(filesex)).
 :- use_module('compile/parse_dl_dcg', [use_item/3, parse_dl_dcg_entry/5]).
 :- use_module('0_dot_expand', [declared_path/3]).
@@ -379,10 +379,29 @@ module_hash(BaseDir, Abs, Hash) :-
 
 % SHA-256 truncated to 16 hex characters. The compiler's one hash: module
 % identity, rel h_id and the schema/rule digests all read it.
+%
+% crypto_data_hash/3 and hash_atom/2 both render all 32 digest bytes to hex in
+% Prolog; only the first 8 bytes reach the output, and that rendering measured
+% 13.7 of the 15.2 us one crypto_data_hash/3 call costs on this machine.
 short_hash(Text, Hash) :-
-    crypto_data_hash(Text, Full, [algorithm(sha256)]),
-    sub_atom(Full, 0, 16, _, Hash),
+    sha_hash(Text, [Byte0, Byte1, Byte2, Byte3, Byte4, Byte5, Byte6, Byte7 | _],
+             [algorithm(sha256)]),
+    hex_byte(Byte0, Hex0), hex_byte(Byte1, Hex1),
+    hex_byte(Byte2, Hex2), hex_byte(Byte3, Hex3),
+    hex_byte(Byte4, Hex4), hex_byte(Byte5, Hex5),
+    hex_byte(Byte6, Hex6), hex_byte(Byte7, Hex7),
+    atomic_list_concat([Hex0, Hex1, Hex2, Hex3, Hex4, Hex5, Hex6, Hex7], Hash),
     !.
+
+% Two lowercase hex characters per byte value. Asserted rather than written out
+% because 256 clauses of one shape are the same table either way, and a
+% first-argument-indexed dynamic predicate measured identical to a static one.
+:- dynamic hex_byte/2.
+
+:- retractall(hex_byte(_, _)),
+   forall(between(0, 255, Byte),
+          ( format(atom(Pair), '~|~`0t~16r~2+', [Byte]),
+            assertz(hex_byte(Byte, Pair)) )).
 
 bump_parse_count(Path) :-
     (   retract(parse_count_fact(Path, N))
