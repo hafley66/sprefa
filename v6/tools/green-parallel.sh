@@ -24,6 +24,10 @@ PHASE_A=(conformance roundtrip text-door sweep import-gate
 
 # Each entry is "leg[:ENV=VALUE...]". Ordered longest-first: on a bounded pool
 # the makespan is set by the slowest job if it starts last.
+#
+# plunit runs its units on PLUNIT_JOBS threads and defaults to cpu_count when
+# run alone. Inside this pool it gets 2, so six concurrent legs cannot ask for
+# six times the core count between them.
 SOAK="memory-soak:TSV2_SOAK_PORT=17801"
 
 PHASE_B=(
@@ -38,7 +42,7 @@ PHASE_B=(
   "prolog-lint"
   "serve-endurance:TSV2_ENDURANCE_PORT=17804"
   "compile-speed"
-  "plunit"
+  "plunit:PLUNIT_JOBS=2"
   "rust-grade"
   "typecheck"
   "rtkq-golden:TSV2_PARITY_PORT=17813"

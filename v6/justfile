@@ -47,10 +47,15 @@ roundtrip:
 text-door:
     cd {{ v6 }}/prolog && bash compile/scripts/text_door_receipt.sh
 
-# compiler unit tests (expect: 269/269 and growing)
-# budget: measured 40.8s, default 600s (PLUNIT_BUDGET_S)
+# compiler unit tests (expect: the failing set allowlisted in
+# .github/CI-KNOWN-RED.md and nothing else). test/run_plunit.pl runs the
+# units on PLUNIT_JOBS workers (default cpu_count) and prints the slowest tests,
+# the slowest units, and one sorted `FAIL unit:name` line per failure.
+# PLUNIT_JOBS=1 is the old sequential run.
+# budget: measured 37.2-45.6s at jobs=1 / 12.3-15.8s at jobs=12 (12-core), default
+# 600s (PLUNIT_BUDGET_S)
 plunit:
-    cd {{ v6 }}/prolog/compile && {{ capped }} "${PLUNIT_BUDGET_S:-600}" swipl -q -l test/plunit_tests.pl -g run_tests -g halt
+    cd {{ v6 }}/prolog/compile && {{ capped }} "${PLUNIT_BUDGET_S:-600}" swipl -q -l test/run_plunit.pl -g plunit_run -t halt
 
 # scip + diet_scip extractor families smoke: real scip-typescript index
 # through the served engine (SCIP FAMILIES HOLD). budget: measured 9s,

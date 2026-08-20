@@ -27,8 +27,13 @@
 % literal right here, ~Codes adds a word boundary, #Codes skips ws then @Codes.
 :- op(200, fy, [#, @, ~]).
 
-:- dynamic finding_fact/1, rel_column_order_fact/2,
-           host_signature_fact/3, source_statement_fact/3.
+:- thread_local finding_fact/1, rel_column_order_fact/2,
+                host_signature_fact/3, source_statement_fact/3.
+
+% THREAD_LOCAL, not dynamic: parse_dl_source/5 retracts all four at entry and
+% reads them back at exit, so two parses running at once on shared clauses would
+% each erase the other's findings. The plunit battery runs units on parallel
+% workers, and every unit parses.
 
 % lex_token/2 rows sit beside the escape decoders they mirror, so the clauses
 % are spread across the file on purpose.
