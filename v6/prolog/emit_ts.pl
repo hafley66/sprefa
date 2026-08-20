@@ -2285,8 +2285,10 @@ run_ordered_tick_fn_lines(true, Name, HasRetention, UsesTick, DepartureRefs,
       ],
       RetentionLines,
       AfterReadLines,
-      [ '    concatMap((state) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, state.deltas.rels).pipe(',
-        '      map((rels) => ({ ...state, deltas: { ...state.deltas, rels } })),',
+      %% AfterReadLines has already mapped the chain to ITickDeltas, so the
+      %% decode reads `state.rels` and not a `deltas` field no longer there.
+      [ '    concatMap((state) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, state.rels).pipe(',
+        '      map((rels): ITickDeltas => ({ ...state, rels })),',
         '    )), '
       ],
       DepartureStageLines,
