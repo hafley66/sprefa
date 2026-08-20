@@ -170,7 +170,20 @@ settle_and_write() {
     kill -0 "$SERVER_PID" 2>/dev/null || die "server died: $(tail -30 "$WORK/server.log")"
     sleep 0.5
   done
-  [ "$settled" = 1 ] || die "rels did not settle in 120s; server log: $(tail -30 "$WORK/server.log")"
+  # A host exiting non-zero settles its witness `error` with zero rows and
+  # writes nothing to the server log (serve/1_hosts.ts settleInvocationError).
+  if [ "$settled" != 1 ]; then
+    say "  last read, rows per rel:"
+    for rel in $RELS; do
+      say "    $rel=$(jq -r --arg rel "$rel" '.[$rel].rows | length' "$WORK/rows.json" 2>/dev/null)"
+    done
+    if command -v sqlite3 >/dev/null; then
+      say "  host witnesses that are not done:"
+      sqlite3 "$WORK/self-map.sqlite" \
+        "SELECT '    ' || \"host\" || ' ' || \"state\" || ' rows=' || \"response_rows\" FROM \"__host_witness\" WHERE \"state\" <> 'done';" 2>/dev/null
+    fi
+    die "rels did not settle; server log: $(tail -30 "$WORK/server.log")"
+  fi
   SETTLED_READ="$(cksum <"$WORK/rows.json")"
 }
 
