@@ -16,6 +16,12 @@ blocked_by: ['@canonical-type-freeze']
 
 ## Description
 
+Plan: `v6/plans/2026-08-20-type-surface-gaps.md`.
+
+Expose canonical declarations, members, roles, applications, and arguments to
+authored compiler relations, then erase those projections before runtime
+planning.
+
 Plan: `v6/plans/2026-08-20-canonical-type-row-pipeline.md`.
 
 Let authored compiler relations iterate canonical declaration, member, and

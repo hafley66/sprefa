@@ -3,12 +3,13 @@ created: 2026-08-20
 updated: 2026-08-20
 type: feature
 assignee: codex
-status: testing
+status: done
 priority: high
 epic: relational-type-schema
 labels:
 - area:dl6
 - intent:type-system
+closed: 2026-08-20
 ---
 
 # Freeze canonical type rows after minting
@@ -64,3 +65,8 @@ Canonical freeze implementation: generated type/member rows merge into the exist
 ### 2026-08-20T15:28:43Z · @terra
 
 One full `just plunit` run was recorded before the latest focused corrections. Its captured output was truncated before final summary, so the issue remains in testing pending the root integration run.
+
+### 2026-08-20T17:32:13Z · @codex
+
+Rebased integration CI: just --justfile v6/justfile plunit, 997 passed, 0 failed.
+
