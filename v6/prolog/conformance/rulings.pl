@@ -780,3 +780,9 @@ ruling(toml_via_json_operator, format_polymorphic_json_op, user,
 % a named algorithm comparison. Snapshot regeneration is a reviewed diff.
 ruling(oracle_demoted_to_snapshots, snapshots_are_the_truth_between_semantic_changes, user,
        'user 2026-08-20: "idk why i have 2 impls its fine to oracle specific algorithms comparison but it feels like extremely dead weight/low gain considering how far we are on snapshots that the oracle was involved in". The oracle stays the source that MINTS an expected output (a new construct still gets its snapshot from the oracle once), and stays available for targeted algorithm comparisons; it stops re-executing all 461 programs every sweep pass. Cross-door protection is preserved: TS and Rust doors still both diff against the same frozen snapshot, and grade.sh byte-clean still pins door agreement. Mechanism = the sweep digest cache (perf/sweep-shard lane) keyed on fixture + engine digests, applied to stage 2.').
+
+% 2026-08-20: amendment to oracle_demoted_to_snapshots. The oracle stage is OFF
+% BY DEFAULT (SWEEP_ORACLE=1 opts in); default sweeps diff frozen snapshots
+% only; a fixture without a snapshot fails loudly naming the mint command.
+ruling(oracle_off_by_default, sweep_oracle_env_opt_in, user,
+       'user 2026-08-20: "literally default the prolog sweep to false bc the conformance prolog is literally not my product". The reference prolog exists to mint snapshots and settle named algorithm disputes; it is not a per-pass gate. Wiring lands via perf/oracle-grind.').
