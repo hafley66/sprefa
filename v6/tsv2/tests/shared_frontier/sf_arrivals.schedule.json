@@ -1,0 +1,11 @@
+[
+  [
+    { "rel": "color", "sign": "add", "row": ["red", "#f00"] },
+    { "rel": "tag", "sign": "add", "row": ["hot", 1] }
+  ],
+  [
+    { "rel": "color", "sign": "add", "row": ["red", "#e00"] },
+    { "rel": "tag", "sign": "del", "row": ["hot", 1] }
+  ],
+  [{ "rel": "color", "sign": "del", "row": ["red", "#e00"] }]
+]

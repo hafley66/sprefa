@@ -1,0 +1,1 @@
+rel setting(name: text, value: int) key(1).

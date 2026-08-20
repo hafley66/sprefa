@@ -1,0 +1,7 @@
+[
+  [
+    { "rel": "person", "sign": "add", "row": ["ann", 30] },
+    { "rel": "person", "sign": "add", "row": ["kid", 7] }
+  ],
+  [{ "rel": "person", "sign": "add", "row": ["bob", 44] }]
+]

@@ -1,0 +1,6 @@
+rel person(name: text, city: text) key(1).
+rel city(name: text).
+
+big_city_person(Name, City) <-
+  person(Name, City),
+  city(City).
