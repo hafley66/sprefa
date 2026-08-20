@@ -1619,6 +1619,125 @@ test(refuses_two_arities_of_one_rel_name,
 
 :- end_tests(catalog_g1).
 
+% ═══ the conformance-corpus memo ═══════════════════════════════════════════
+% Four corpus rails (the plane name rail, the plane family counts, the audit
+% rail, the interned-storage rail) walk the SAME 65 fixture files, and each one
+% used to pay its own program_plan + lower_program + catalog_all_rows per
+% fixture: six full corpus compiles per battery. plunit's jobs(N) puts each
+% unit on its own worker thread, so those six ran as six concurrent compiles of
+% one corpus. One build here, read by every rail.
+%
+% Thread safety: the store is a mutex-guarded dynamic filled exactly once per
+% process, double-checked inside the mutex (failure-modes 59: a plain dynamic
+% under jobs(N) is one clause store shared by every worker).
+%
+% Faithfulness, the two properties every consumer depends on:
+%   1. program_plan/3 is NONDETERMINISTIC -- 351 of the 434 corpus fixtures
+%      yield more than one plan -- so the memo keeps the whole solution
+%      SEQUENCE, in corpus order. A once/1 here would silently drop rows the
+%      rails walk today.
+%   2. Each rail wrapped program_plan AND its own second leg in ONE catch/3, so
+%      a throw out of the second leg cut that fixture's remaining plans.
+%      corpus_memo_leg/3 reproduces that cut per leg, which is why the lowering
+%      leg yields 1246 rows while the audit leg reads 1266 off the same plans.
+:- use_module(library(thread)).
+
+:- dynamic corpus_memo_fixtures/1.
+
+corpus_memo(Fixtures) :-
+    (   corpus_memo_fixtures(Cached)
+    ->  Fixtures = Cached
+    ;   with_mutex(sprefa_corpus_memo, corpus_memo_fill),
+        corpus_memo_fixtures(Fixtures)
+    ).
+
+corpus_memo_fill :-
+    (   corpus_memo_fixtures(_)
+    ->  true
+    ;   corpus_memo_read(Read),
+        concurrent_maplist(corpus_memo_fixture, Read, Fixtures),
+        assertz(corpus_memo_fixtures(Fixtures))
+    ).
+
+corpus_memo_fixture(Term-Bindings, corpus_fixture(Name, PlanLowerings, RowSets)) :-
+    Term = fixture(Name, _, _, _, _),
+    findall(Plan,
+            catch(program_plan(Term-Bindings, [intern(dict)], Plan), _, fail),
+            Plans),
+    corpus_memo_leg(Plans, corpus_memo_lowering, PlanLowerings),
+    corpus_memo_leg(Plans, corpus_memo_audit_rows, RowSets).
+
+corpus_memo_leg([], _, []).
+corpus_memo_leg([Plan | More], Leg, Rows) :-
+    (   catch(findall(Row, call(Leg, Plan, Row), Head), _, fail)
+    ->  corpus_memo_leg(More, Leg, Tail),
+        append(Head, Tail, Rows)
+    ;   Rows = []
+    ).
+
+corpus_memo_lowering(Plan, Plan-Lowered) :- lower_program(Plan, Lowered).
+
+% Reproduce the producer's exact inputs so the audited rows match the DDL mint.
+corpus_memo_audit_rows(Plan, AllRows) :-
+    Plan = plan(Name, prog(Decls, Rules), _, RelPlans, _, _, _, _, Mode),
+    findall(PreRef,
+            ( member((_ <+ EdgeBody), Rules),
+              level_body_pre_ref(EdgeBody, PreRef) ),
+            PreRefs0),
+    sort(PreRefs0, PreRefs),
+    listened_departure_refs(Rules, DepartureRefs),
+    type_definitions(Decls, Types),
+    lower:plan_rule_level_statements(Plan, RuleLevelStatements),
+    lower:catalog_all_rows(Mode, Name, Rules, RelPlans, DepartureRefs, PreRefs,
+                           Types, RuleLevelStatements, Decls, AllRows).
+
+% A directive term is CALLED, exactly as compile.pl:find_fixture/4 replays it.
+% The fixture files carry nothing but op/3, so the replay is idempotent; it
+% stays on the calling thread, ahead of the parallel build.
+corpus_memo_read(Fixtures) :-
+    findall(Term-Bindings,
+            ( corpus_memo_path(Path),
+              open(Path, read, Stream),
+              call_cleanup(corpus_memo_terms(Stream, Terms), close(Stream)),
+              member(Term-Bindings, Terms) ),
+            Fixtures).
+
+corpus_memo_terms(Stream, Terms) :-
+    read_term(Stream, Candidate, [variable_names(Bindings)]),
+    (   Candidate == end_of_file
+    ->  Terms = []
+    ;   Candidate = (:- Directive)
+    ->  catch(call(Directive), _, true), corpus_memo_terms(Stream, Terms)
+    ;   Candidate = fixture(_, _, _, _, _)
+    ->  Terms = [Candidate-Bindings | Rest], corpus_memo_terms(Stream, Rest)
+    ;   corpus_memo_terms(Stream, Terms)
+    ).
+
+corpus_memo_path(Path) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../conformance/fixtures'], Dir),
+    directory_files(Dir, Entries),
+    msort(Entries, Ordered),
+    member(Entry, Ordered),
+    sub_atom(Entry, _, 3, 0, '.pl'),
+    atomic_list_concat([Dir, '/', Entry], Path).
+
+% The three shapes the rails read the corpus in. File level, not unit level, so
+% every rail reads the one build; each reproduces its rail's former generator
+% solution for solution, in corpus order.
+corpus_plan_lowered(Name, Plan, Lowered) :-
+    corpus_memo(Fixtures),
+    member(corpus_fixture(Name, PlanLowerings, _), Fixtures),
+    member(Plan-Lowered, PlanLowerings).
+
+corpus_lowered(Name, Lowered) :-
+    corpus_plan_lowered(Name, _, Lowered).
+
+corpus_audit_rows(AllRows) :-
+    corpus_memo(Fixtures),
+    member(corpus_fixture(_, _, RowSets), Fixtures),
+    member(AllRows, RowSets).
+
 % ═══ the step-3 plane rail ═════════════════════════════════════════════════
 % The single highest-value artifact of the catalog backbone (plan 7.3): a
 % corpus-wide family check in the shape of the interned-storage rail, never a
@@ -1627,7 +1746,11 @@ test(refuses_two_arities_of_one_rel_name,
 % A plane row that names a table the lowering did not create -- or a table
 % with no row -- is the sixth bypass door this step exists to stop.
 
-:- begin_tests(catalog_plane_rail).
+% Two units, not one: plunit's jobs(N) schedules one UNIT per worker and runs
+% the tests inside a unit serially, so the name check and the family counts --
+% two independent corpus reads -- were a single serial 15s block. Split, they
+% land on two workers.
+:- begin_tests(catalog_plane_name_rail).
 
 test(plane_rows_name_every_emitted_plane_table) :-
     findall(Name,
@@ -1706,15 +1829,9 @@ plane_kind(departure). plane_kind(view). plane_kind(pre). plane_kind(dictionary)
 plane_kind(scope). plane_kind(refcount). plane_kind(refcount_staging).
 plane_kind(expand). plane_kind(dred). plane_kind(avg_accumulator).
 
-corpus_plan_lowered(Name, Plan, Lowered) :-
-    corpus_path(Path),
-    open(Path, read, Stream),
-    call_cleanup(rail_fixture_terms(Stream, Terms), close(Stream)),
-    member(fixture(Name, Prog, Initial, Schedule, Expectations)-Bindings, Terms),
-    catch(( program_plan(fixture(Name, Prog, Initial, Schedule,
-                                 Expectations)-Bindings, [intern(dict)], Plan),
-            lower_program(Plan, Lowered) ),
-          _, fail).
+:- end_tests(catalog_plane_name_rail).
+
+:- begin_tests(catalog_plane_rail).
 
 % Step 4's families, counted across the same corpus the name rail walks. The
 % six level-statement families must mint in step with their DDL mint sites, so
@@ -1748,26 +1865,6 @@ count_1(Kinds, Kind, Kind-Count) :-
     findall(1, member(Kind, Kinds), Ones),
     length(Ones, Count).
 
-rail_fixture_terms(Stream, Terms) :-
-    read_term(Stream, Candidate, [variable_names(Bindings)]),
-    (   Candidate == end_of_file
-    ->  Terms = []
-    ;   Candidate = (:- Directive)
-    ->  catch(call(Directive), _, true), rail_fixture_terms(Stream, Terms)
-    ;   Candidate = fixture(_, _, _, _, _)
-    ->  Terms = [Candidate-Bindings | Rest], rail_fixture_terms(Stream, Rest)
-    ;   rail_fixture_terms(Stream, Terms)
-    ).
-
-corpus_path(Path) :-
-    test_dir_fact(Here),
-    atomic_list_concat([Here, '/../../conformance/fixtures'], Dir),
-    directory_files(Dir, Entries),
-    msort(Entries, Ordered),
-    member(Entry, Ordered),
-    sub_atom(Entry, _, 3, 0, '.pl'),
-    atomic_list_concat([Dir, '/', Entry], Path).
-
 :- end_tests(catalog_plane_rail).
 
 % ── step 7: the audit, both doors (plan §8). ────────────────────────────────
@@ -1783,52 +1880,10 @@ test(no_audit_row_names_a_plane_or_table) :-
     sort(Findings, Unique),
     Unique == [].
 
-% Walk the conformance corpus the same way the name rail does, but as a local
-% walker: the sibling block's predicates are invisible from this test module.
-catalog_audit_corpus_path(Path) :-
-    test_dir_fact(Here),
-    atomic_list_concat([Here, '/../../conformance/fixtures'], Dir),
-    directory_files(Dir, Entries),
-    msort(Entries, Ordered),
-    member(Entry, Ordered),
-    sub_atom(Entry, _, 3, 0, '.pl'),
-    atomic_list_concat([Dir, '/', Entry], Path).
-
-audit_fixture_terms(Stream, Terms) :-
-    read_term(Stream, Candidate, [variable_names(Bindings)]),
-    (   Candidate == end_of_file
-    ->  Terms = []
-    ;   Candidate = (:- Directive)
-    ->  catch(call(Directive), _, true), audit_fixture_terms(Stream, Terms)
-    ;   Candidate = fixture(_, _, _, _, _)
-    ->  Terms = [Candidate-Bindings | Rest], audit_fixture_terms(Stream, Rest)
-    ;   audit_fixture_terms(Stream, Terms)
-    ).
-
-catalog_audit_corpus_rows(AllRows) :-
-    catalog_audit_corpus_path(Path),
-    open(Path, read, Stream),
-    call_cleanup(audit_fixture_terms(Stream, Terms), close(Stream)),
-    member(fixture(ModName, Prog, Initial, Schedule,
-                   Expectations)-Bindings, Terms),
-    catch(( program_plan(fixture(ModName, Prog, Initial, Schedule,
-                                 Expectations)-Bindings, [intern(dict)], Plan),
-            catalog_audit_all_rows(Plan, AllRows) ),
-          _, fail).
-
-% Reproduce the producer's exact inputs so the audited rows match the DDL mint.
-catalog_audit_all_rows(Plan, AllRows) :-
-    Plan = plan(Name, prog(Decls, Rules), _, RelPlans, _, _, _, _, Mode),
-    findall(PreRef,
-            ( member((_ <+ EdgeBody), Rules),
-              level_body_pre_ref(EdgeBody, PreRef) ),
-            PreRefs0),
-    sort(PreRefs0, PreRefs),
-    listened_departure_refs(Rules, DepartureRefs),
-    type_definitions(Decls, Types),
-    lower:plan_rule_level_statements(Plan, RuleLevelStatements),
-    lower:catalog_all_rows(Mode, Name, Rules, RelPlans, DepartureRefs, PreRefs,
-                           Types, RuleLevelStatements, Decls, AllRows).
+% The audit walks the same corpus the plane rails do, off the same memo; its
+% own cut falls elsewhere (a throw out of catalog_all_rows, not out of
+% lower_program), which is why its row leg is the memo's second one.
+catalog_audit_corpus_rows(AllRows) :- corpus_audit_rows(AllRows).
 
 audit_finding(Rows, undecoded(RelName, ColumnName)) :-
     undecoded_interned_column(Rows, RelName, ColumnName).
@@ -9622,36 +9677,8 @@ interned_storage_violation(Lowered, violation(Table, Column)) :-
     memberchk(Table-Affinities, TableAffinities),
     memberchk(Column-'INTEGER', Affinities).
 
-fixture_file_path(Path) :-
-    test_dir_fact(Here),
-    atomic_list_concat([Here, '/../../conformance/fixtures'], Dir),
-    directory_files(Dir, Entries),
-    msort(Entries, Ordered),
-    member(Entry, Ordered),
-    sub_atom(Entry, _, 3, 0, '.pl'),
-    atomic_list_concat([Dir, '/', Entry], Path).
-
-% A directive term is CALLED, exactly as compile.pl:find_fixture/4 replays it.
-fixture_terms(Stream, Terms) :-
-    read_term(Stream, Candidate, [variable_names(Bindings)]),
-    (   Candidate == end_of_file
-    ->  Terms = []
-    ;   Candidate = (:- Directive)
-    ->  catch(call(Directive), _, true), fixture_terms(Stream, Terms)
-    ;   Candidate = fixture(_, _, _, _, _)
-    ->  Terms = [Candidate-Bindings | Rest], fixture_terms(Stream, Rest)
-    ;   fixture_terms(Stream, Terms)
-    ).
-
-corpus_lowered(Name, Lowered) :-
-    fixture_file_path(Path),
-    open(Path, read, Stream),
-    call_cleanup(fixture_terms(Stream, Terms), close(Stream)),
-    member(fixture(Name, Prog, Initial, Schedule, Expectations)-Bindings, Terms),
-    catch(( program_plan(fixture(Name, Prog, Initial, Schedule,
-                                 Expectations)-Bindings, [intern(dict)], Plan),
-            lower_program(Plan, Lowered) ),
-          _, fail).
+% corpus_lowered/2 is the memo's lowering leg, at file level: the same walk the
+% plane name rail reads, compiled once for the whole battery.
 
 % FAIL-FIRST RECEIPT: red on the pre-fix catalog seed.
 %
