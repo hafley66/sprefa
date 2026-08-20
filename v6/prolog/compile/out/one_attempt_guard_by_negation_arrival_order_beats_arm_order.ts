@@ -58,7 +58,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly enum_types: readonly IEnumTypePlan[]; readonly enum_ref_columns: IEnumRefColumns; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -232,7 +232,7 @@ const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
   dispatch_seal: ["int"],
 };
 
-const rel_catalog: readonly IRelCatalogRow[] = [
+const rel_catalog: readonly IRelCatalogRow[] = new Array<IRelCatalogRow>(
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
@@ -263,7 +263,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 28, parent_id: 11, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "e58228ca4ccfad02", h_schema: "", h_rule: "" },
   { rel_id: 29, parent_id: 12, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "737ffe92b58ea26b", h_schema: "", h_rule: "" },
   { rel_id: 30, parent_id: 14, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "915bf614059779be", h_schema: "", h_rule: "" },
-];
+);
 
 const rel_declared_column_types: Record<string, readonly string[]> = {
 };
@@ -522,8 +522,8 @@ function run_ordered_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<I
     concatMap(({ mid, after, written, deltas, stored_deltas }) => stage_ordered_frontiers(seam, INCREMENTAL_RELATIONS, ordered_carry_additions(mid, after.stored, stored_deltas, written)).pipe(
       map((post_write_carry): ITickDeltas => ({ rels: deltas.rels, carry_pending: deltas.carry_pending || post_write_carry })),
     )),
-    concatMap((state) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, state.rels).pipe(
-      map((rels): ITickDeltas => ({ ...state, rels })),
+    concatMap((state) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, state.deltas.rels).pipe(
+      map((rels) => ({ ...state, deltas: { ...state.deltas, rels } })),
     )), 
   );
   // one_attempt_guard_by_negation_arrival_order_beats_arm_order: ordered process_occurrences with evolving pre snapshots.
@@ -555,7 +555,7 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, rels).pipe(
+      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, rels).pipe(
         map((decoded): ITickDeltas => ({ rels: decoded, carry_pending })),
       )),
     )),
@@ -563,9 +563,9 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 }
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validate_arrivals(arrivals);
-  arrivals = EnumPlane.intern(ENUM_TYPES, ENUM_REF_COLUMNS, arrivals);
-  return run_ordered_tick(seam, arrivals);
+  return EnumPlane.intern(seam, ENUM_TYPES, ENUM_REF_COLUMNS, arrivals).pipe(
+    concatMap((normalized) => run_ordered_tick(seam, validate_arrivals(normalized))),
+  );
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
@@ -578,7 +578,6 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "one_attempt_guard_by_negation_arrival_order_beats_arm_order",
-  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,

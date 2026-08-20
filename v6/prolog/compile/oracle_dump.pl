@@ -8,16 +8,180 @@
 % Run: swipl -q -l v6/prolog/compile/oracle_dump.pl -g dump_all -g halt
 
 :- ensure_loaded('../conformance/ticklog').
+:- use_module(library(sha)).
+:- use_module(library(readutil)).
+:- use_module('../sweep_timings', [ append_timings/3, report_slowest/2 ]).
 
 :- dynamic(oracle_dump_dir_fact/1).
 :- prolog_load_context(directory, Here), atomic_list_concat([Here, '/out'], OutDir),
    assertz(oracle_dump_dir_fact(OutDir)).
 
+:- dynamic(oracle_root_fact/1).
+:- prolog_load_context(directory, Here), file_directory_name(Here, Root),
+   assertz(oracle_root_fact(Root)).
+
 dump_all :-
     oracle_dump_dir_fact(OutDir),
     ( exists_directory(OutDir) -> true ; make_directory(OutDir) ),
+    engine_digest(EngineDigest),
+    load_oracle_digests,
     findall(Name, fixture(Name, _, _, _, _), Names),
-    forall(member(Name, Names), dump_one(OutDir, Name)).
+    findall(Entry,
+            ( member(Name, Names), dump_entry(OutDir, EngineDigest, Name, Entry) ),
+            Entries),
+    write_oracle_digests(OutDir, Entries),
+    findall(Name-Millis, member(entry(Name, _, _, miss, Millis), Entries), Timings),
+    append_timings(OutDir, oracle, Timings),
+    report_slowest(oracle, Timings),
+    include(is_oracle_hit, Entries, Hits),
+    length(Entries, Total), length(Hits, HitCount), Redumped is Total - HitCount,
+    format("ORACLE_CACHE hit=~w redumped=~w~n", [HitCount, Redumped]).
+
+is_oracle_hit(entry(_, _, _, hit, _)).
+
+% ═══ snapshot cache ═══
+% out/*.oracle.jsonl and out/*.oracle.final.jsonl are frozen snapshots
+% (conformance/rulings.pl, oracle_demoted_to_snapshots), so a fixture is
+% re-dumped only when its own program/initial/schedule changed or the engine
+% under it did. Expectations are out of the key: this stage never reads them.
+%
+% A hit is checked against the CONTENT of the snapshot files, so a hand-edited
+% snapshot is re-dumped rather than trusted, and a fixture whose oracle threw
+% (no files at all) is a hit on an empty output list.
+%
+% A miss drops the fixture's own snapshots BEFORE re-dumping. A fixture that
+% used to dump and now throws otherwise keeps a snapshot written by an engine
+% that no longer exists, and sweep.ts grades the emitted module against it:
+% the missing tick log is exactly how that script tells a `rejection` (both
+% doors refuse the schedule) from an `emitted_crash` (a defect).
+dump_entry(OutDir, EngineDigest, Name, entry(Name, Key, Outputs, Hit, Millis)) :-
+    oracle_key(EngineDigest, Name, Key),
+    (   \+ oracle_forced,
+        cached_oracle(Name, Key, Cached),
+        oracle_outputs_match(OutDir, Name, Cached)
+    ->  Outputs = Cached, Hit = hit, Millis = 0
+    ;   drop_oracle_outputs(OutDir, Name),
+        get_time(Start),
+        dump_one(OutDir, Name),
+        get_time(End),
+        Seconds is End - Start,
+        Millis is round(Seconds * 1000),
+        (   Seconds > 10
+        ->  format("SWEEP_SLOW ~w ~2f~n", [Name, Seconds])
+        ;   true
+        ),
+        capture_oracle_outputs(OutDir, Name, Outputs),
+        Hit = miss
+    ).
+
+oracle_suffix('.oracle.jsonl').
+oracle_suffix('.oracle.final.jsonl').
+
+oracle_path(OutDir, Name, Suffix, Path) :-
+    atomic_list_concat([OutDir, '/', Name, Suffix], Path).
+
+drop_oracle_outputs(OutDir, Name) :-
+    forall(( oracle_suffix(Suffix), oracle_path(OutDir, Name, Suffix, Path),
+             exists_file(Path) ),
+           delete_file(Path)).
+
+capture_oracle_outputs(OutDir, Name, Outputs) :-
+    findall(Suffix-Hash,
+            ( oracle_suffix(Suffix), oracle_path(OutDir, Name, Suffix, Path),
+              exists_file(Path), oracle_file_sha256(Path, Hash) ),
+            Outputs).
+
+oracle_outputs_match(OutDir, Name, Outputs) :-
+    findall(Suffix, ( oracle_suffix(Suffix), oracle_path(OutDir, Name, Suffix, Path),
+                      exists_file(Path) ), Present),
+    findall(Suffix, member(Suffix-_, Outputs), Expected),
+    Present == Expected,
+    forall(member(Suffix-Hash, Outputs),
+           ( oracle_path(OutDir, Name, Suffix, Path),
+             oracle_file_sha256(Path, Hash) )).
+
+% The engine half of the key is the loaded source closure minus the fixture
+% files: go.pl ensure_loads every conformance/fixtures/*.pl, and folding those
+% into one digest would re-dump the whole corpus for a one-fixture edit. The
+% per-fixture half already covers the fixture's own text.
+engine_digest(Digest) :-
+    oracle_root_fact(Root),
+    atom_length(Root, Length),
+    findall(Relative-Path,
+            ( source_file(Path),
+              sub_atom(Path, 0, Length, _, Root),
+              sub_atom(Path, Length, _, 0, Relative),
+              \+ sub_atom(Relative, _, _, _, '/conformance/fixtures/') ),
+            Pairs0),
+    msort(Pairs0, Pairs),
+    findall(Line,
+            ( member(Relative-Path, Pairs),
+              oracle_file_sha256(Path, FileHash),
+              format(atom(Line), '~w ~w', [Relative, FileHash]) ),
+            Lines),
+    atomic_list_concat(Lines, '\n', Text),
+    oracle_text_sha256(Text, Digest).
+
+oracle_key(EngineDigest, Name, Key) :-
+    once(fixture(Name, Prog, Initial, Schedule, _Expectations)),
+    copy_term(prog(Prog, Initial, Schedule), Copy),
+    numbervars(Copy, 0, _),
+    with_output_to(atom(Rendered),
+                   write_term(Copy, [quoted(true), ignore_ops(true), numbervars(true)])),
+    atomic_list_concat([EngineDigest, Name, Rendered], '\n\u0001\n', Joined),
+    oracle_text_sha256(Joined, Key).
+
+oracle_file_sha256(Path, Hex) :-
+    read_file_to_string(Path, Bytes, [encoding(octet)]),
+    sha_hash(Bytes, Hash, [algorithm(sha256), encoding(octet)]),
+    hash_atom(Hash, Hex).
+
+oracle_text_sha256(Text, Hex) :-
+    sha_hash(Text, Hash, [algorithm(sha256), encoding(utf8)]),
+    hash_atom(Hash, Hex).
+
+:- dynamic(cached_oracle/3).
+
+oracle_digest_path(OutDir, Path) :-
+    atomic_list_concat([OutDir, '/oracle.digests'], Path).
+
+% A truncated or unreadable store is a miss, never a wrong answer: every key is
+% derived from content.
+load_oracle_digests :-
+    retractall(cached_oracle(_, _, _)),
+    oracle_dump_dir_fact(OutDir),
+    oracle_digest_path(OutDir, Path),
+    (   exists_file(Path)
+    ->  catch(setup_call_cleanup(open(Path, read, Stream),
+                                 read_oracle_facts(Stream, Terms),
+                                 close(Stream)),
+              _,
+              Terms = []),
+        forall(member(oracle_digest(Name, Key, Outputs), Terms),
+               assertz(cached_oracle(Name, Key, Outputs)))
+    ;   true
+    ).
+
+write_oracle_digests(OutDir, Entries) :-
+    oracle_digest_path(OutDir, Path),
+    setup_call_cleanup(
+        open(Path, write, Stream),
+        forall(member(entry(Name, Key, Outputs, _, _), Entries),
+               ( write_term(Stream, oracle_digest(Name, Key, Outputs),
+                            [quoted(true), ignore_ops(true)]),
+                 write(Stream, '.'), nl(Stream) )),
+        close(Stream)).
+
+read_oracle_facts(Stream, Terms) :-
+    read_term(Stream, Term, []),
+    (   Term == end_of_file
+    ->  Terms = []
+    ;   Terms = [Term | Rest], read_oracle_facts(Stream, Rest)
+    ).
+
+oracle_forced :-
+    ( getenv('ORACLE_FORCE', Text) ; getenv('SWEEP_FORCE', Text) ),
+    Text \== '0', Text \== '', !.
 
 % A fixture whose oracle FAILS rather than throws used to take the whole dump
 % down with it, silently and with no name: forall/2 propagated the failure and

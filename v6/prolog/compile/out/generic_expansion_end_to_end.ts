@@ -58,7 +58,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly enum_types: readonly IEnumTypePlan[]; readonly enum_ref_columns: IEnumRefColumns; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -151,10 +151,10 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 export const ENUM_TYPES: readonly IEnumTypePlan[] = [
-  { name: "__opt___gen__list_text_df210f232c1299bd", variants: [] },
-  { name: "__opt_int", variants: [{ tag: "none", rel: "__opt_int_none", fields: [], field_types: [], field_enums: [], select_sql: `SELECT t."id" FROM "generic_expansion_end_to_end___opt_int_none" t` }, { tag: "some", rel: "__opt_int_some", fields: ["value"], field_types: ["int"], field_enums: [null], select_sql: `SELECT t."id", t."value" FROM "generic_expansion_end_to_end___opt_int_some" t` }] },
-  { name: "__opt_person", variants: [] },
-  { name: "__opt_text", variants: [{ tag: "none", rel: "__opt_text_none", fields: [], field_types: [], field_enums: [], select_sql: `SELECT t."id" FROM "generic_expansion_end_to_end___opt_text_none" t` }, { tag: "some", rel: "__opt_text_some", fields: ["value"], field_types: ["text"], field_enums: [null], select_sql: `SELECT t."id", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_generic_expansion_end_to_end___opt_text_some" t` }] },
+  { name: "__opt___gen__list_text_df210f232c1299bd", variants: [], identity: { intern_sql: `INSERT OR IGNORE INTO "__enum_identity___opt___gen__list_text_df210f232c1299bd" ("value") VALUES (?)`, lookup_sql: `SELECT "id", "value" FROM "__enum_identity___opt___gen__list_text_df210f232c1299bd" WHERE "value" = ?` } },
+  { name: "__opt_int", variants: [{ tag: "none", rel: "__opt_int_none", fields: [], field_types: [], field_enums: [], select_sql: `SELECT t."id" FROM "generic_expansion_end_to_end___opt_int_none" t` }, { tag: "some", rel: "__opt_int_some", fields: ["value"], field_types: ["int"], field_enums: [null], select_sql: `SELECT t."id", t."value" FROM "generic_expansion_end_to_end___opt_int_some" t` }], identity: { intern_sql: `INSERT OR IGNORE INTO "__enum_identity___opt_int" ("value") VALUES (?)`, lookup_sql: `SELECT "id", "value" FROM "__enum_identity___opt_int" WHERE "value" = ?` } },
+  { name: "__opt_person", variants: [], identity: { intern_sql: `INSERT OR IGNORE INTO "__enum_identity___opt_person" ("value") VALUES (?)`, lookup_sql: `SELECT "id", "value" FROM "__enum_identity___opt_person" WHERE "value" = ?` } },
+  { name: "__opt_text", variants: [{ tag: "none", rel: "__opt_text_none", fields: [], field_types: [], field_enums: [], select_sql: `SELECT t."id" FROM "generic_expansion_end_to_end___opt_text_none" t` }, { tag: "some", rel: "__opt_text_some", fields: ["value"], field_types: ["text"], field_enums: [null], select_sql: `SELECT t."id", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_generic_expansion_end_to_end___opt_text_some" t` }], identity: { intern_sql: `INSERT OR IGNORE INTO "__enum_identity___opt_text" ("value") VALUES (?)`, lookup_sql: `SELECT "id", "value" FROM "__enum_identity___opt_text" WHERE "value" = ?` } },
 ];
 
 export const ENUM_REF_COLUMNS: IEnumRefColumns = {
@@ -395,6 +395,10 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__support_next_generic_expansion_end_to_end_author_audit" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__new_generic_expansion_end_to_end_author_audit" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "generic_expansion_end_to_end_author_audit_zero" ON "generic_expansion_end_to_end_author_audit" ("__refcount") WHERE "__refcount" <= 0`,
+  `CREATE TABLE "__enum_identity___opt___gen__list_text_df210f232c1299bd" ("id" INTEGER PRIMARY KEY, "value" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "__enum_identity___opt_int" ("id" INTEGER PRIMARY KEY, "value" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "__enum_identity___opt_person" ("id" INTEGER PRIMARY KEY, "value" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "__enum_identity___opt_text" ("id" INTEGER PRIMARY KEY, "value" TEXT NOT NULL UNIQUE)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -505,7 +509,7 @@ const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
   ticket_copy: ["int", "int"],
 };
 
-const rel_catalog: readonly IRelCatalogRow[] = [
+const rel_catalog: readonly IRelCatalogRow[] = new Array<IRelCatalogRow>(
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
@@ -728,7 +732,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 220, parent_id: 70, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "731c8facf8113806", h_schema: "", h_rule: "" },
   { rel_id: 221, parent_id: 72, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "dc7d76067d0b642e", h_schema: "", h_rule: "" },
   { rel_id: 222, parent_id: 73, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "1c48bc572731a598", h_schema: "", h_rule: "" },
-];
+);
 
 const rel_declared_column_types: Record<string, readonly string[]> = {
   __gen__list_text_df210f232c1299bd: ["text"],
@@ -881,7 +885,7 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, rels).pipe(
+      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, rels).pipe(
         map((decoded): ITickDeltas => ({ rels: decoded, carry_pending })),
       )),
     )),
@@ -889,9 +893,9 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 }
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validate_arrivals(arrivals);
-  arrivals = EnumPlane.intern(ENUM_TYPES, ENUM_REF_COLUMNS, arrivals);
-  return run_incremental_tick(seam, arrivals);
+  return EnumPlane.intern(seam, ENUM_TYPES, ENUM_REF_COLUMNS, arrivals).pipe(
+    concatMap((normalized) => run_incremental_tick(seam, validate_arrivals(normalized))),
+  );
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
@@ -904,7 +908,6 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "generic_expansion_end_to_end",
-  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,

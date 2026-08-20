@@ -128,19 +128,26 @@
   {
     "name": "option_text_column_reads_through_tag_join",
     "bucket": "emitted_crash",
-    "detail": "enum_arrival_shape_mismatch: ambiguous_owner_context(user_profile, __opt_text)",
+    "detail": "enum_arrival_shape_mismatch: not_an_object(__opt_text)",
     "final_bucket": "final_wrong",
     "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "option_scalar_enums_mint_per_element_type",
     "bucket": "emitted_crash",
-    "detail": "enum_arrival_shape_mismatch: ambiguous_owner_context(measurement, __opt_text)",
+    "detail": "enum_arrival_shape_mismatch: not_an_object(__opt_text)",
     "final_bucket": "final_wrong",
     "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "option_rel_ref_desugars_to_companion_split_rel",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "option_in_key_column_normalizes",
     "bucket": "identical",
     "detail": "",
     "final_bucket": "final_identical",
@@ -1094,7 +1101,7 @@
   {
     "name": "module_path_and_option_column_coexist",
     "bucket": "emitted_crash",
-    "detail": "enum_arrival_shape_mismatch: ambiguous_owner_context(orchard__tree, __opt_text)",
+    "detail": "enum_arrival_shape_mismatch: not_an_object(__opt_text)",
     "final_bucket": "final_wrong",
     "final_detail": "run threw before the final state could be read"
   },
@@ -1268,10 +1275,10 @@
   },
   {
     "name": "json_typed_capture_folds_into_a_keyed_int_total",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "json_typed_capture_filters_a_wrong_typed_value",
@@ -1520,10 +1527,10 @@
   },
   {
     "name": "created_at_pinned_updated_at_advances",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "group_concat_one_argument_joins_members",
@@ -1842,66 +1849,66 @@
   },
   {
     "name": "json_null_round_trips_byte_identical",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "json_patch_null_value_composes",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "json_patch_fold_merges_arrival_documents",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "json_patch_fold_result_is_key_sorted",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "json_patch_merges_nested_objects_recursively",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "json_patch_replaces_arrays_wholesale",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "json_patch_non_object_patch_replaces_the_document",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "json_patch_non_object_target_becomes_empty",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "json_patch_null_value_sets_key",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "merge_batches_per_tick",
@@ -1940,87 +1947,87 @@
   },
   {
     "name": "counter_fold_matches_hand_computation",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "batched_increments_both_count",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "seeded_one_arm_fold_matches_two_arms",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "seeded_pre_reads_a_body_bound_value",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "seeded_pre_multicolumn_fee_stats_fold",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "seeded_pre_text_breadcrumb_fold",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "increment_decrement_same_tick_nets_zero",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "log_driver_fold_needs_no_id_column",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "identical_increments_stack_as_log_deltas",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "lww_fold_follows_arrival_order",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "concat_fold_follows_arrival_order",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "concat_fold_reversed_arrival_reverses_result",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "log_deltas_follow_arrival_order",
@@ -2087,17 +2094,17 @@
   },
   {
     "name": "one_attempt_guard_by_negation_lands_one_unnamed_winner",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "one_attempt_guard_by_negation_arrival_order_beats_arm_order",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "filter_map_is_a_level_rule",
@@ -2122,10 +2129,10 @@
   },
   {
     "name": "ordered_program_level_fold_reaches_three_links",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "unordered_program_level_fold_reaches_three_links",
@@ -2185,10 +2192,10 @@
   },
   {
     "name": "concat_program_queue",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "completion_propagation_lattice_tick",
@@ -2199,17 +2206,17 @@
   },
   {
     "name": "take_until_keyed_replace_negated_done",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "state_flap_nets_to_zero_scope_churn",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "fill_as_cache_update_swr",
@@ -2241,17 +2248,17 @@
   },
   {
     "name": "seq_wire_surface",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "seq_wire_hand",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "Cannot read properties of undefined (reading 'rels')",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "identical_demand_dedups",
