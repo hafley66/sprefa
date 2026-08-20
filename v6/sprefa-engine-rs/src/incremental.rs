@@ -107,12 +107,74 @@ fn boundary_stage_statement(
     })
 }
 
+// Shared-mode stage: resolve each event row to its durable __id and write
+// (relation_id, phase, sequence, row_id), one batched statement per rel.
+fn shared_frontier_stage_statement(
+    relation: &IncrementalRelationPlan,
+    table_name: &str,
+    phase: i64,
+    events: &[DeltaEvent],
+) -> BoundaryResult<SqlStatement> {
+    let relation_id = relation
+        .shared_frontier
+        .as_ref()
+        .expect("shared_frontier plan missing")
+        .relation_id;
+    let shared_table = if table_name == relation.next_frontier_table_name {
+        "__next_frontier"
+    } else {
+        "__frontier"
+    };
+    let join_terms: Vec<String> = relation
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            format!(
+                "t.{} IS json_extract(je.value, '$[{}]')",
+                quote_identifier(column),
+                index + 1
+            )
+        })
+        .collect();
+    let on_sql = if join_terms.is_empty() {
+        "1".to_string()
+    } else {
+        join_terms.join(" AND ")
+    };
+    let encoded: String = events
+        .iter()
+        .map(|event| {
+            let mut entry = vec![Value::Integer(event.sequence as i64)];
+            entry.extend(event.row.clone());
+            json_array_text(&entry)
+        })
+        .collect::<BoundaryResult<Vec<_>>>()?
+        .join(",");
+    Ok(SqlStatement {
+        sql: format!(
+            "INSERT INTO {} (\"relation_id\", \"_phase\", \"_sequence\", \"row_id\") SELECT ?, ?, json_extract(je.value, '$[0]'), t.\"__id\" FROM json_each(?) je JOIN {} t ON {}",
+            quote_identifier(shared_table),
+            quote_identifier(&relation.table_name),
+            on_sql
+        ),
+        args: vec![
+            ScalarValue::Integer(relation_id),
+            ScalarValue::Integer(phase),
+            ScalarValue::Text(format!("[{}]", encoded)),
+        ],
+    })
+}
+
 fn frontier_stage_statement(
     relation: &IncrementalRelationPlan,
     table_name: &str,
     phase: i64,
     events: &[DeltaEvent],
 ) -> BoundaryResult<SqlStatement> {
+    if relation.shared_frontier.is_some() {
+        return shared_frontier_stage_statement(relation, table_name, phase, events);
+    }
     if relation
         .column_types
         .contains(&crate::types::RowColumnType::Bytes)
@@ -533,16 +595,22 @@ pub fn prepare_tick(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) {
     if relations.is_empty() {
         return;
     }
+    let shared = relations.iter().any(|r| r.shared_frontier.is_some());
     let mut statements = Vec::new();
     for relation in relations {
         statements.push(format!(
             "DELETE FROM {}",
             quote_identifier(&relation.delta_table_name)
         ));
-        statements.push(format!(
-            "DELETE FROM {}",
-            quote_identifier(&relation.next_frontier_table_name)
-        ));
+        if !shared {
+            statements.push(format!(
+                "DELETE FROM {}",
+                quote_identifier(&relation.next_frontier_table_name)
+            ));
+        }
+    }
+    if shared {
+        statements.push("DELETE FROM \"__next_frontier\"".to_string());
     }
     let sql = statements.join(";\n");
     seam.execute_multiple(&sql).expect("prepare_tick failed");
@@ -770,6 +838,25 @@ pub fn stage_ordered_frontiers(
 pub fn promote_frontiers(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) -> bool {
     if relations.is_empty() {
         return false;
+    }
+    if relations.iter().any(|r| r.shared_frontier.is_some()) {
+        let carry = seam
+            .execute(&SqlStatement {
+                sql: "SELECT CASE WHEN EXISTS (SELECT 1 FROM \"__next_frontier\" LIMIT 1) THEN 1 ELSE 0 END AS carry_pending".to_string(),
+                args: vec![],
+            })
+            .expect("carry read failed");
+        let carry_pending = carry
+            .rows
+            .first()
+            .and_then(|row| row.first())
+            .map(|value| matches!(value, Value::Integer(1)))
+            .unwrap_or(false);
+        seam.execute_multiple(
+            "DELETE FROM \"__frontier\";\nINSERT INTO \"__frontier\" (\"relation_id\", \"_phase\", \"_sequence\", \"row_id\") SELECT \"relation_id\", \"_phase\", \"_sequence\", \"row_id\" FROM \"__next_frontier\";\nDELETE FROM \"__next_frontier\"",
+        )
+        .expect("promote failed");
+        return carry_pending;
     }
     let mut carry_terms = Vec::new();
     for relation in relations {
@@ -1406,6 +1493,13 @@ pub fn apply_edges(
 
 pub fn merge_next_into_current(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) {
     if relations.is_empty() {
+        return;
+    }
+    if relations.iter().any(|r| r.shared_frontier.is_some()) {
+        seam.execute_multiple(
+            "INSERT INTO \"__frontier\" (\"relation_id\", \"_phase\", \"_sequence\", \"row_id\") SELECT \"relation_id\", \"_phase\", \"_sequence\", \"row_id\" FROM \"__next_frontier\"",
+        )
+        .expect("merge_next_into_current failed");
         return;
     }
     let sql: Vec<String> = relations
