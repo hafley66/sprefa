@@ -162,9 +162,14 @@ prolog:message(compile_phase_failed(Phase, Program, Checkpoint)) -->
 dl6_checkpoint_line(none) -->
     !,
     [ '    last checkpoint: none reached'-[], nl ].
+% A renderer that throws turns a diagnosis into a second incident, so a format
+% that does not fit its arguments falls back to the raw format string.
 dl6_checkpoint_line(Topic-Format-Args) -->
     !,
-    { format(atom(Rendered), Format, Args) },
+    { (   catch(format(atom(Rendered), Format, Args), _, fail)
+      ->  true
+      ;   Rendered = Format
+      ) },
     [ '    last checkpoint: ~w / ~w'-[Topic, Rendered], nl ].
 dl6_checkpoint_line(Checkpoint) -->
     [ '    last checkpoint: ~w'-[Checkpoint], nl ].
