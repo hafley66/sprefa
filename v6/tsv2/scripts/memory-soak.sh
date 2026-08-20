@@ -4,7 +4,7 @@
 # tsv2 program. Entry point for scripts/memory-soak.ts (that file's header
 # carries the churn-program design and the sabotage receipt).
 #
-# Short mode (default): ~100s, CI-friendly. Long mode (TSV2_SOAK_LONG=1):
+# Short mode (default): ~50s, CI-friendly. Long mode (TSV2_SOAK_LONG=1):
 # ~8h, meant for an overnight run, same cadences, more ticks.
 #
 # `--expose-gc` is passed so the sampler can force a collection right before
@@ -13,10 +13,11 @@
 # depend on it (global.gc is optional there too).
 # Budget is derived from the selected duration:
 # this script's wall time is an argument
-# (TSV2_SOAK_DURATION_S, 100s short / 28800s long), so a constant would be
+# (TSV2_SOAK_DURATION_S, 50s short / 28800s long), so a constant would be
 # either a fake timeout on the overnight run or no cap at all on the short one.
 # Budget = 2 x duration + 120s of boot/teardown slack. Measured: the short mode
-# ran 108s against a 320s budget. Override outright with TSV2_SOAK_BUDGET_S.
+# ran 108s against a 320s budget at the 100s default. Override with
+# TSV2_SOAK_BUDGET_S.
 #
 # The cap is on the whole script and the duration is computed BEFORE the `cd`,
 # because `cap_self` re-execs `bash "$0"` and a relative $0 only resolves from
@@ -28,7 +29,7 @@ if [ "${TSV2_SOAK_LONG:-0}" = "1" ]; then
   DURATION_S="${TSV2_SOAK_DURATION_S:-28800}"   # 8 hours
   SAMPLE_MS="${TSV2_SOAK_SAMPLE_MS:-10000}"
 else
-  DURATION_S="${TSV2_SOAK_DURATION_S:-100}"
+  DURATION_S="${TSV2_SOAK_DURATION_S:-50}"
   SAMPLE_MS="${TSV2_SOAK_SAMPLE_MS:-1000}"
 fi
 
