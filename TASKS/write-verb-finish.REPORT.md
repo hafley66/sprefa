@@ -181,7 +181,9 @@ pre-commit rail armed and it passed.
 
 | item | owner |
 | --- | --- |
+| push the branch: the rebase makes it non-fast-forward against `origin/feature/write-verb-interface` (`12ffa6a5c`), and `--force-with-lease` was denied by the permission layer for this lane | coordinator |
 | open the PR, title `feat(frontier): write-verb interface, retraction parity (steps 5 + contract)`, superseding #378 | coordinator |
+| remove the baseline worktree `/private/tmp/wv-baseline-main` (`git worktree remove` denied for this lane) | coordinator |
 | decide whether `v6/tsv2/package.json:16` gains a `--test-timeout` bound | coordinator, then Chris |
 | file the ordered/`pre` enum-decode mismatch as a card and refresh `.github/CI-KNOWN-RED.md:78` from 242/239/2 to 245/240/4 | a main-tree lane |
 | the bopRun 30s-under-load row, against the 10-second law | a main-tree lane |
