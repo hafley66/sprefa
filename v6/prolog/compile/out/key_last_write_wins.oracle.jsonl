@@ -1,4 +1,0 @@
-{"tick":1,"deltas":{"from_poll":{"add":[["cli","v1"]],"del":[]},"latest":{"add":[["cli","v1"]],"del":[]}}}
-{"tick":2,"deltas":{"from_push":{"add":[["cli","v2"]],"del":[]},"latest":{"add":[["cli","v2"]],"del":[["cli","v1"]]}}}
-{"tick":3,"deltas":{"from_poll":{"add":[["cli","v3"]],"del":[]},"latest":{"add":[["cli","v3"]],"del":[["cli","v2"]]}}}
-{"tick":4,"deltas":{}}

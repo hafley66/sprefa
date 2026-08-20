@@ -1,3 +1,0 @@
-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"cpu":1,"mem":2}]],"del":[["alpha",{"cpu":1}]]},"metric_sample":{"add":[["alpha",{"mem":2}]],"del":[]}}}
-{"tick":2,"deltas":{"metric_doc":{"add":[["alpha",{"cpu":9,"mem":2}]],"del":[["alpha",{"cpu":1,"mem":2}]]},"metric_sample":{"add":[["alpha",{"cpu":9}]],"del":[]}}}
-{"tick":3,"deltas":{}}
