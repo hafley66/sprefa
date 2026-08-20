@@ -1,35 +1,9 @@
 % fixtures/2_hosts_wiring.pl: phase-1 host answers arrive in the schedule.
+% sibling folded 2026-08-20 (same throw level_body_goal/json_each):
+% ghcacher_json_normalization. See git.
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
-
-fixture(ghcacher_json_normalization,
-  prog([],
-       [ (stars(Ep, N) <-
-            (current_body(Ep, Body),
-             decode(Body, {stargazers_count: N}))),
-         (pull_request(Ep, Num, Title, State, Author) <-
-            (current_body(Ep, Body),
-             json_each(Body, Item),
-             decode(Item,
-                    {number: Num, title: Title, state: State,
-                     user: {login: Author}})))
-       ]),
-  [ current_body(repo, {full_name: cli, stargazers_count: 17}),
-    current_body(pulls,
-                 [ {number: 7, title: "seven", state: "open",
-                    user: {login: "octo"}},
-                   {number: 8, title: "eight", state: "closed",
-                    user: {login: "hub"}}
-                 ])
-  ],
-  [],
-  [ final(stars/2, [stars(repo, 17)]),
-    final(pull_request/5,
-          [ pull_request(pulls, 7, "seven", "open", "octo"),
-            pull_request(pulls, 8, "eight", "closed", "hub")
-          ])
-  ]).
 
 fixture(ghcacher_host_program_term,
   program(

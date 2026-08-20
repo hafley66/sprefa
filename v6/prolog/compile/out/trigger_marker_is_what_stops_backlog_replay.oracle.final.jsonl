@@ -1,1 +1,0 @@
-{"final":{"cache_tag":[["cli","no_tag"]],"change_log":[["cli",42,"alice"]],"demand_row":[["cli","fresh(tag_w1,body1)"]],"every_300":[["bucket1"]],"fetch":[["cli","no_tag","bucket1","fresh(tag_w1,body1)"]],"folded_row":[["cli",42]],"stars_of":[["body1",42]],"subscribed_to":[["alice","cli"],["bob","other"],["carol","cli"]],"watch":[["cli"]]}}

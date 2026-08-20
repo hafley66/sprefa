@@ -1,1 +1,0 @@
-src(Path, Rev) <- scan('repo', 'HEAD', '**/*.go', Path, Rev).

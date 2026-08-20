@@ -184,15 +184,9 @@ fixture(sum_min_max_group_by_plain_columns,
   [],
   [ final(stat/4, [ stat(cli, 14, 4, 10), stat(shell, 7, 7, 7) ]) ]).
 
-% json_array: the bag in canonical (msort) order; duplicates SURVIVE (q7).
-fixture(json_array_keeps_bag_duplicates,
-  prog([],
-       [ (star_bag(json_array(Stars)) <- repo(_, Stars)) ]),
-  [ repo(alpha, 4), repo(beta, 4), repo(gamma, 9) ],
-  [],
-  [ final(star_bag/1, [ star_bag([4, 4, 9]) ]) ]).
-
 % json_array groups by the plain columns and nests values.
+% sibling folded 2026-08-20 (same throw aggregate_head(json_array(A))):
+% json_array_keeps_bag_duplicates, the bag with duplicates surviving. See git.
 fixture(json_array_groups_and_nests,
   prog([],
        [ (repo_langs(Repo, json_array(Lang)) <- repo_lang(Repo, Lang)) ]),

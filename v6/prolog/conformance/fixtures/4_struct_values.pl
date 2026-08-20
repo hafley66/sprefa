@@ -91,6 +91,9 @@ fixture(struct_type_mutual_cycle_rejected,
 % A bare identifier in type position is a REF to a declared type. A name no
 % `type` decl introduces is a named unsupported construct, never a column that quietly holds
 % whatever arrives -- the parser cannot tell a typo from a type.
+% sibling folded 2026-08-20 (same throw column_type_unknown(spann)):
+% struct_host_output_type_unknown_rejected, which reached the same stop
+% through a decl-B host output column (sh_decl scan_span, at: spann). See git.
 fixture(struct_column_type_unknown_rejected,
   prog([ col_type(finding/2, path, text),
          col_type(finding/2, at, spann) ],
@@ -112,34 +115,6 @@ fixture(key_range_reported_before_unknown_column_type,
   [],
   [],
   [ throws(key_position_out_of_range(finding/2, 3, 2)) ]).
-
-% HOST-OUTPUT-SEAM FAIL-FIRST RECEIPT, compiler unsupported construct direction:
-% before parse_dl.pl admitted a declared type name in a decl-B host column,
-% the text door reported
-%   unsupported_surface(column_type_wrapper(scan_span,at,none))
-% for `at: span`. After acceptance, the adjacent `spann` spelling below must
-% continue through parsing and stop as column_type_unknown(spann), preserving
-% the declared-type-name boundary in both directions.
-fixture(struct_host_output_type_unknown_rejected,
-  program(
-    [ type_decl(span, [col(end, int), col(start, int)]),
-      col_type(span/2, end, int), col_type(span/2, start, int),
-      col_type(source_path/1, path, text),
-      col_type(host_span/2, path, text),
-      col_type(host_span/2, at, span),
-      sh_decl(scan_span,
-              [col(path, text)],
-              [col(at, spann)],
-              template("scan {path}"))
-    ],
-    [ (host_span(Path, At) <-
-          (source_path(Path),
-           probe(scan_span, [Path], [At], [])))
-    ],
-    []),
-  [],
-  [],
-  [ throws(column_type_unknown(spann)) ]).
 
 % SLOT-ARRIVAL-MALFORMED. A world row whose value is missing a declared field.
 fixture(struct_arrival_missing_key_rejected,
