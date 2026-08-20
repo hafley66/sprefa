@@ -25,6 +25,8 @@
 :- use_module('0_negated_guard_expand', []).
 :- use_module('0_relation_edge_expand', []).
 :- use_module('0_ast_expand', []).
+:- use_module(compile_messages,
+              [ dl6_debug/3, dl6_debugging/1, dl6_program_sizes/3 ]).
 
 % ── the order, stated once ───────────────────────────────────────────────────
 
@@ -143,13 +145,27 @@ direct_compiler_type_call(Decls, Type, Input) :-
     member(col_type(Ref, return, type), Decls),
     Ref = Name/_.
 
-run_phase(_, _-_-unwired, Program, Program) :- !.
+% The entering line runs unconditionally so a phase that WEDGES or fails names
+% itself with the topic off; the sizes cost a walk of both programs and are
+% taken only under the topic.
+run_phase(Context, Order-Name-Expander, Program, Expanded) :-
+    dl6_debug(expand, "enter ~w (order ~w)", [Name, Order]),
+    (   dl6_debugging(expand)
+    ->  dl6_program_sizes(Program, DeclsIn, RulesIn),
+        run_phase_call(Context, Order-Name-Expander, Program, Expanded),
+        dl6_program_sizes(Expanded, DeclsOut, RulesOut),
+        dl6_debug(expand, "~w decls ~d->~d rules ~d->~d",
+                  [Name, DeclsIn, DeclsOut, RulesIn, RulesOut])
+    ;   run_phase_call(Context, Order-Name-Expander, Program, Expanded)
+    ).
+
+run_phase_call(_, _-_-unwired, Program, Program) :- !.
 % ast takes the whole context, every other phase the enum half; without the cut
 % the clause below re-runs ast on the wrong argument as a second solution.
-run_phase(Context, _-ast-Expander, Program, Expanded) :- !,
+run_phase_call(Context, _-ast-Expander, Program, Expanded) :- !,
     call(Expander, Context, Program, Expanded).
-run_phase(Context, _-option-Expander, Program, Expanded) :- !,
+run_phase_call(Context, _-option-Expander, Program, Expanded) :- !,
     call(Expander, Context, Program, Expanded).
-run_phase(expansion_context(EnumContext, _), _-_-Expander,
-          Program, Expanded) :-
+run_phase_call(expansion_context(EnumContext, _), _-_-Expander,
+               Program, Expanded) :-
     call(Expander, EnumContext, Program, Expanded).

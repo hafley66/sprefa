@@ -53,6 +53,7 @@
 
 :- use_module('../../compile', [compile_program/6, throw_text_door_error/2, dl6_seeded_form/3]).
 :- use_module('../../use_resolve', [expand_uses/8]).
+:- use_module('../../compile_messages', []).
 :- use_module(library(lists)).
 
 bop_check_env :-
@@ -121,7 +122,7 @@ result_code(from_error(Error), Code) :-
 
 print_rendered_error(Prefix, Error) :-
     message_to_string(Error, Text),
-    format(user_error, "~w: ~w~n", [Prefix, Text]).
+    print_message(error, dl6_cli_error(Prefix, Text)).
 
 % Every throw shape the compile pipeline (analyze.pl / lower.pl / 1_host_expand.pl
 % / compile.pl) uses to name one specific refused construct. Kept as a flat

@@ -59,6 +59,9 @@
               [world_row_shape_violation/3, type_definitions/2]).
 :- use_module('0_rel_record', [rel_cols/4]).
 :- use_module('0_generic_expand', [generated_generic_name/1]).
+:- use_module(compile_messages,
+              [ dl6_debug/3, dl6_debugging/1, dl6_reset_checkpoint/0,
+                dl6_last_checkpoint/1, dl6_program_sizes/3 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -197,9 +200,10 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     reset_body_use_cache,
     % On the AUTHOR's text, before any expansion: `__host_demand_*` and the
     % catalog's own col_type decls are the compiler writing its own namespace.
-    check_reserved_namespace(SugaredProg),
-    preserve_compiler_type_rules(SugaredProg, Bindings, RuntimeProgram,
-                                 CompilerRules, CompilerBindings),
+    check_step(reserved_namespace, check_reserved_namespace(SugaredProg)),
+    check_step(compiler_type_rules,
+               preserve_compiler_type_rules(SugaredProg, Bindings, RuntimeProgram,
+                                            CompilerRules, CompilerBindings)),
     prepare_program_for_compiler(RuntimeProgram, HostRuntimeProgram),
     HostRuntimeProgram = prog(HostDecls, HostRules),
     append(HostRules, CompilerRules, HostRulesAndCompilerRules),
@@ -211,19 +215,20 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     materialize_reference_target_rels(ExpandedProg, ReferencedProg),
     materialize_catalog_rel(ReferencedProg, Prog),
     Prog = prog(Decls, Rules),
+    expanded_program_debug(Decls, Rules),
     % Every later plan step and every plan consumer reads this table.
     type_definitions(Decls, Types),
     % ..._expanded/1, not check_supported_subset/1: Prog is ALREADY expanded
     % here, and the sugared entry expands again. That second expansion was the
     % redundant order site rank R3 removes.
-    check_supported_subset_expanded(Prog),
-    check_clock_program(Prog),
+    check_step(supported_subset, check_supported_subset_expanded(Prog)),
+    check_step(clock, check_clock_program(Prog)),
     % STRUCT-AS-ROWS, the compiler's half of SLOT-ARRIVAL-MALFORMED. The
     % oracle refuses the same rows in engine.pl:check_world_shapes/3; here it
     % runs at PLAN time so a malformed program never reaches emission and
     % lands in the sweep's `unsupported` bucket beside every other named
     % unsupported construct, rather than compiling and then throwing mid-replay.
-    check_world_shapes(Prog, Initial, Schedule),
+    check_step(world_shapes, check_world_shapes(Prog, Initial, Schedule)),
     % Union rule-derived refs with EVERY declared ref (analyze.pl:
     % declared_refs/2's header comment) -- a kind(Ref, _) decl that no rule
     % ever mentions is still a real rel a schedule can write, and must still
@@ -234,7 +239,7 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     declared_refs(Decls, DeclaredRefs),
     seeded_refs(Initial, SeededRefs),
     append([RuleRefs, DeclaredRefs, SeededRefs], AllRefs0), sort(AllRefs0, AllRefs),
-    check_single_arity_per_name(AllRefs),
+    check_step(single_arity, check_single_arity_per_name(AllRefs)),
     derived_refs(Rules, DerivedRefs),
     % The catalog is seeded by DDL, so it is never an arrival target; leaving it
     % in would open the serve door to writes against a compiler-owned table.
@@ -271,7 +276,8 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     % PHASE C2 RULING 1 x RULING 2: this needs RelPlans (ColumnTypes), so it
     % runs here rather than inside check_supported_subset/1 above (which
     % runs before RelPlans exists).
-    check_edge_head_column_types(RelPlans, Rules),
+    check_step(edge_head_column_types,
+               check_edge_head_column_types(RelPlans, Rules)),
     sql_rule_order(Rules, RuleOrder),
     include(rule_is_edge, Rules, EdgeRules),
     % The query decls are the cone's only seeds, read from the POST-expansion
@@ -280,7 +286,35 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     subscribed_rels(Decls, Rules, Queries, SubscribedRels),
     intern_mode(Options, InternMode),
     Plan = plan(Name, Prog, Types, RelPlans, ArrivalTargets, RuleOrder,
-                EdgeRules, SubscribedRels, InternMode).
+                EdgeRules, SubscribedRels, InternMode),
+    plan_debug(RelPlans, ArrivalTargets, SubscribedRels, InternMode).
+
+:- meta_predicate check_step(+, 0).
+
+% The step is named BEFORE it runs: a wedge or a failure inside plan then
+% reports which check it stopped in rather than only the phase.
+check_step(Label, Goal) :-
+    dl6_debug(check, "~w", [Label]),
+    call(Goal).
+
+expanded_program_debug(Decls, Rules) :-
+    (   dl6_debugging(plan)
+    ->  length(Decls, DeclCount),
+        length(Rules, RuleCount),
+        dl6_debug(plan, "expanded decls=~d rules=~d", [DeclCount, RuleCount])
+    ;   true
+    ).
+
+plan_debug(RelPlans, ArrivalTargets, SubscribedRels, InternMode) :-
+    (   dl6_debugging(plan)
+    ->  length(RelPlans, RelCount),
+        length(ArrivalTargets, ArrivalCount),
+        length(SubscribedRels, SubscribedCount),
+        dl6_debug(plan,
+                  "planned rels=~d arrival targets=~d subscribed=~d intern=~w",
+                  [RelCount, ArrivalCount, SubscribedCount, InternMode])
+    ;   true
+    ).
 
 % The same test analyze.pl:seed_column_contribution/9 freezes a type on, so
 % the record's declared slot and the fixpoint's `frozen` cannot disagree.
@@ -563,11 +597,16 @@ compile_dl6(File, OutFile) :-
     compile_dl6(File, OutFile, [intern(Mode)]).
 
 compile_dl6(File, OutFile, Options) :-
+    file_base_name(File, BaseName),
+    file_name_extension(Name, _Extension, BaseName),
+    dl6_reset_checkpoint,
+    dl6_debug(parse, "source ~w", [File]),
     catch(
-        ( run_compile_phase(parse,
+        ( run_compile_phase(Name, parse,
                             expand_uses(File, [], [], _, Prog, _,
                                         Bindings, Findings),
                             ParseMeasurement),
+          parse_debug(Prog, Findings),
           ( Findings == []
           -> true
           ; throw(unsupported_construct(surface_findings(Findings)))
@@ -576,8 +615,6 @@ compile_dl6(File, OutFile, Options) :-
         ( emit_diag_file(File, ParseError),
           throw(ParseError) )
     ),
-    file_base_name(File, BaseName),
-    file_name_extension(Name, _Extension, BaseName),
     dl6_seeded_form(Prog, Initial, ProgOut),
     emitter_option(Options, Emitter),
     schedule_option(Options, Prog, Bindings, Schedule),
@@ -705,26 +742,32 @@ compile_program(Name, Term, Bindings, Initial, OutFile, Emitter, Options) :-
 
 compile_program_phases(Name, Term, Bindings, Initial, OutFile, Emitter,
                        Options, PhaseMeasurements) :-
-    run_compile_phase(plan,
+    dl6_reset_checkpoint,
+    run_compile_phase(Name, plan,
                       program_plan(Term-Bindings, Options, Plan),
                       PlanMeasurement),
-    run_compile_phase(lower,
+    run_compile_phase(Name, lower,
                       lower_program(Plan, Lowered),
                       LowerMeasurement),
     Plan = plan(_, prog(Decls, _), Types, RelPlans, _, _, _, _, Mode),
-    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    Lowered = lowered(_, _, ArrivalStatements, EdgeStatements, LevelStatements,
+                      DeltaStatements, _, _),
+    lower_debug(ArrivalStatements, EdgeStatements, LevelStatements,
+                DeltaStatements),
     run_compile_phase(
-        boot,
+        Name, boot,
         boot_statements(Mode, Decls, Types, RelPlans, Initial, LevelStatements,
                         BootStatements),
         BootMeasurement),
+    boot_debug(Initial, BootStatements),
     run_compile_phase(
-        emit,
+        Name, emit,
         with_emit_context(Initial, Term,
             call(Emitter, Name, Plan, Lowered, BootStatements, Text)),
         EmitMeasurement),
+    emit_debug(Emitter, Text),
     run_compile_phase(
-        write,
+        Name, write,
         write_compiled_output(OutFile, Text),
         WriteMeasurement),
     PhaseMeasurements = [ phase(plan, PlanMeasurement),
@@ -739,6 +782,11 @@ write_compiled_output(OutFile, Text) :-
         open(OutFile, write, Stream),
         format(Stream, "~s", [Text]),
         close(Stream)),
+    (   dl6_debugging(write)
+    ->  size_file(OutFile, Bytes),
+        dl6_debug(write, "~w bytes=~d", [OutFile, Bytes])
+    ;   true
+    ),
     format("wrote ~w~n", [OutFile]).
 
 % The dd emitter reads Initial and Schedule out of band; both are available
@@ -749,19 +797,71 @@ with_emit_context(Initial, fixture(_, _, _, Schedule, _), Goal) :-
     assertz(dd_compile_context(Initial, Schedule)),
     setup_call_cleanup(true, Goal, retractall(dd_compile_context(_, _))).
 
-:- multifile prolog:message//1.
-
-prolog:message(compile_phase_failed(Phase)) -->
-    [ 'compile phase ~w failed and threw no ball'-[Phase] ].
-
-% A phase that FAILS carries no ball, and `swipl -q -g Goal` prints nothing for
-% a failed goal, so the name of the phase is the only thing left to report.
-run_compile_phase(Phase, Goal, Measurement) :-
+% A phase that FAILS carries no ball, so the diagnosis is printed here, where
+% the checkpoint is still the one the phase reached; the thrown term keeps its
+% shape for the callers that classify it.
+run_compile_phase(Name, Phase, Goal, Measurement) :-
+    dl6_debug(Phase, "begin program=~w", [Name]),
     measure_phase(Goal, Measurement, Outcome),
     (   Outcome == failed
-    ->  throw(compile_phase_failed(Phase))
-    ;   restore_phase_outcome(Outcome)
+    ->  dl6_last_checkpoint(Checkpoint),
+        print_message(error, compile_phase_failed(Phase, Name, Checkpoint)),
+        throw(compile_phase_failed(Phase))
+    ;   phase_wall_debug(Phase, Measurement),
+        restore_phase_outcome(Outcome)
     ).
+
+phase_wall_debug(Phase, measurement(WallMs, _, Inferences, _, _, _, _, _, _, _,
+                                    _, _)) :-
+    dl6_debug(Phase, "done wall=~wms inferences=~w", [WallMs, Inferences]).
+
+% Every count below walks a list, so each one is computed only under its own
+% topic; the phase begin/done lines carry the checkpoint when they are off.
+parse_debug(Prog, Findings) :-
+    (   dl6_debugging(parse)
+    ->  dl6_program_sizes(Prog, DeclCount, RuleCount),
+        length(Findings, FindingCount),
+        dl6_debug(parse, "parsed decls=~d rules=~d findings=~d",
+                  [DeclCount, RuleCount, FindingCount])
+    ;   true
+    ).
+
+lower_debug(ArrivalStatements, EdgeStatements, LevelStatements,
+            DeltaStatements) :-
+    (   dl6_debugging(lower)
+    ->  length(ArrivalStatements, ArrivalCount),
+        length(EdgeStatements, EdgeCount),
+        length(LevelStatements, LevelCount),
+        length(DeltaStatements, DeltaCount),
+        dl6_debug(lower, "arrival=~d edge=~d level=~d delta=~d",
+                  [ArrivalCount, EdgeCount, LevelCount, DeltaCount])
+    ;   true
+    ).
+
+boot_debug(Initial, BootStatements) :-
+    (   dl6_debugging(boot)
+    ->  length(Initial, SeedCount),
+        length(BootStatements, BootCount),
+        dl6_debug(boot, "seed rows=~d boot statements=~d",
+                  [SeedCount, BootCount])
+    ;   true
+    ).
+
+emit_debug(Emitter, Text) :-
+    (   dl6_debugging(emit)
+    ->  emitted_size(Text, CharCount),
+        dl6_debug(emit, "emitter=~w characters=~d", [Emitter, CharCount])
+    ;   true
+    ).
+
+% Emitters hand back a code list or an atom; `~s` accepts both, so the size
+% probe has to as well.
+emitted_size(Text, Size) :-
+    is_list(Text),
+    !,
+    length(Text, Size).
+emitted_size(Text, Size) :-
+    atom_length(Text, Size).
 
 measure_phase(Goal, Measurement, Outcome) :-
     setup_call_cleanup(
