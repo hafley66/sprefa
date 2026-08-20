@@ -171,8 +171,11 @@ the ARCH row `pre_occurrence_loop` that already owns the ordered family.
 
 | sha | one line |
 | --- | --- |
-| PLACEHOLDER_REBASE | 13 commits replayed onto `5d1a2d881`, no conflict |
-| PLACEHOLDER_REPORT | this report, the stale PAUSED doc removed |
+| `7e8e60954` .. `565c49451` | the 13 arc commits, replayed onto `5d1a2d881` with no conflict (was `82987ad2c`) |
+| `918fba5bd` | this report; the stale PAUSED doc removed and the REPORT's regression section marked closed |
+
+The rebase alone is what closes the `-n` era: `918fba5bd` was committed with the
+pre-commit rail armed and it passed.
 
 ## What remains
 
