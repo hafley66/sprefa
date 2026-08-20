@@ -1,0 +1,1 @@
+diverging_measure_recursion([counter/1],50).

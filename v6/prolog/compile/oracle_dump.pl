@@ -249,7 +249,8 @@ dump_one_(OutDir, Name) :-
         Error,
         (   Error == time_limit_exceeded
         ->  throw(Error)
-        ;   format("ORACLE_THROW ~w ~q~n", [Name, Error])
+        ;   format("ORACLE_THROW ~w ~q~n", [Name, Error]),
+            oracle_throw_marker(OutDir, Name, Error)
         )
     ).
 
@@ -297,3 +298,9 @@ final_rel_json(Name/_Arity, Rows, Json) :-
     msort(RowJsonsRaw, RowJsons),
     atomic_list_concat(RowJsons, ',', Inner),
     format(atom(Json), '"~w":[~w]', [Name, Inner]).
+
+% The marker lets the snapshots-only sweep tell "minted, throws" from
+% "never minted" without running the engine.
+oracle_throw_marker(OutDir, Name, Error) :-
+    format(atom(File), '~w/~w.oracle.throw', [OutDir, Name]),
+    setup_call_cleanup(open(File, write, S), format(S, "~q.~n", [Error]), close(S)).

@@ -1,0 +1,1 @@
+unsupported_construct(coalesce_not_top_level(latest_commit/2)).

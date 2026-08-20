@@ -93,14 +93,30 @@ capped "${SWEEP_COMPILE_BUDGET_S:-900}" "stage 1 compile sweep" \
 
 echo ""
 echo "=== stage 2: oracle dump ==="
-# SWEEP_ORACLE=0: the reference prolog never runs; stage 3 diffs the frozen
-# snapshots on disk (rulings.pl oracle_demoted_to_snapshots).
-if [ "${SWEEP_ORACLE:-1}" = "0" ]; then
-  echo "SWEEP_ORACLE=off (snapshots as committed)"
-else
+# DEFAULT OFF (rulings.pl oracle_demoted_to_snapshots, 2026-08-20 amendment):
+# SWEEP_ORACLE=1 mints or refreshes snapshots; the default diffs frozen ones.
+if [ "${SWEEP_ORACLE:-0}" = "1" ]; then
   capped "${SWEEP_ORACLE_BUDGET_S:-900}" "stage 2 oracle dump" \
     env "SWEEP_FORCE=${SWEEP_FORCE:-0}" \
     swipl -q -l "$COMPILE_DIR/oracle_dump.pl" -g dump_all -g halt
+else
+  newest=$(ls -t "$COMPILE_DIR/out"/*.oracle.jsonl 2>/dev/null | sed -n 1p) || true
+  stamp=$(stat -c %y "$newest" 2>/dev/null || stat -f %Sm "$newest" 2>/dev/null || echo none)
+  echo "oracle=off snapshots=${stamp%% *} ($(basename "${newest:-none}"))"
+  missing=0
+  while IFS= read -r name; do
+    if [ ! -f "$COMPILE_DIR/out/$name.oracle.jsonl" ] && [ ! -f "$COMPILE_DIR/out/$name.oracle.throw" ]; then
+      echo "SNAPSHOT MISSING $name: mint it with SWEEP_ORACLE=1"
+      missing=1
+    fi
+  done < <(node -e '
+    const m = require(process.argv[1]);
+    for (const row of m) if (row.bucket === "compiled") console.log(row.name);
+  ' "$COMPILE_DIR/out/manifest.json")
+  if [ "$missing" = "1" ]; then
+    echo "stage 2 FAILED: compiled fixtures lack oracle snapshots"
+    exit 1
+  fi
 fi
 
 echo ""

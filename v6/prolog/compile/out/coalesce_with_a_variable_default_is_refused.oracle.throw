@@ -1,0 +1,1 @@
+unsupported_construct(coalesce_default_not_literal(latest_commit/2,variable)).

@@ -1,0 +1,1 @@
+type_arrival_shape_mismatch(score/1,value,float,field_not_finite_float(not_a_number)).

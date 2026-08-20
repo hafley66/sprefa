@@ -1,0 +1,1 @@
+parent_cycle(2,path([2,1,2])).

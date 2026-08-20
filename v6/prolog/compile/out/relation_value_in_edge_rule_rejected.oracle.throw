@@ -1,0 +1,1 @@
+relation_value_in_edge_rule(span/3,file,file,file(repo(acme),fpath('src/a.rs'))).

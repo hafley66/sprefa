@@ -1,0 +1,1 @@
+retract_from_log(event/1).
