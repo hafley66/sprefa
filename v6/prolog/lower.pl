@@ -295,19 +295,19 @@ table_name(Ref, Table) :-
 
 delta_table_name(Ref, DeltaTable) :-
     table_name(Ref, Table),
-    format(atom(DeltaTable), '__delta_~w', [Table]).
+    atomic_list_concat(['__delta_', Table], DeltaTable).
 
 frontier_table_name(Ref, FrontierTable) :-
     table_name(Ref, Table),
-    format(atom(FrontierTable), '__frontier_~w', [Table]).
+    atomic_list_concat(['__frontier_', Table], FrontierTable).
 
 next_frontier_table_name(Ref, NextFrontierTable) :-
     table_name(Ref, Table),
-    format(atom(NextFrontierTable), '__next_frontier_~w', [Table]).
+    atomic_list_concat(['__next_frontier_', Table], NextFrontierTable).
 
 pre_table_name(Ref, PreTable) :-
     table_name(Ref, Table),
-    format(atom(PreTable), '__pre_~w', [Table]).
+    atomic_list_concat(['__pre_', Table], PreTable).
 
 % Last tick's net -delta rows of a rel some rule binds with finalize/1
 % (engine.pl tick/7's DepartureCarry). Emitted ONLY for those rels
@@ -370,9 +370,15 @@ statement_ordinals([Ref | Rest], Seen0, [Ordinal | More]) :-
 
 ref_count_table_name(Ref, RefCountTable) :-
     table_name(Ref, Table),
-    format(atom(RefCountTable), '__support_next_~w', [Table]).
+    atomic_list_concat(['__support_next_', Table], RefCountTable).
 
-quote_ident(Name, Quoted) :- format(atom(Quoted), '"~w"', [Name]).
+% Non-atom names reach this from catalog rows, where write/1's rendering is
+% the emitted byte; atomic_list_concat/2 rejects them.
+quote_ident(Name, Quoted) :-
+    (   atom(Name)
+    ->  atomic_list_concat(['"', Name, '"'], Quoted)
+    ;   format(atom(Quoted), '"~w"', [Name])
+    ).
 
 sql_literal(Atom, Literal) :-
     atomic(Atom),
@@ -1159,7 +1165,7 @@ catalog_table_ddl([
 %! rel_h_id(+ParentHash, +LocalName, +Arity, -HashText) is det.
 %   Under the PARENT's hash: two rels in one module can share a column name.
 rel_h_id(ParentHash, LocalName, Arity, HashText) :-
-    format(atom(Key), '~w/~w/~w', [ParentHash, LocalName, Arity]),
+    atomic_list_concat([ParentHash, '/', LocalName, '/', Arity], Key),
     short_hash(Key, HashText).
 
 %! schema_hash(+Columns, +ColumnTypes, +KeyOrNone, -HashText) is det.
@@ -2716,8 +2722,8 @@ interned_literal_sql(Literal, Sql) :-
 interned_id_sql(ContentSql, Sql) :-
     string_dictionary_table(Dictionary),
     quote_ident(Dictionary, QuotedDictionary),
-    format(atom(Sql), '(SELECT s."__id" FROM ~w s WHERE s."content" = ~w)',
-           [QuotedDictionary, ContentSql]).
+    atomic_list_concat(['(SELECT s."__id" FROM ', QuotedDictionary,
+                        ' s WHERE s."content" = ', ContentSql, ')'], Sql).
 
 % A text COLUMN under `value` demand holds an id; the string functions need
 % the characters (contract §5.3, rule one).
@@ -2787,17 +2793,16 @@ text_view_name(Table, ViewName) :-
 text_decode_expr(ColumnSql, Expr) :-
     string_dictionary_table(Dictionary),
     quote_ident(Dictionary, QuotedDictionary),
-    format(atom(Expr),
-           '(SELECT s."content" FROM ~w s WHERE s."__id" = ~w)',
-           [QuotedDictionary, ColumnSql]).
+    atomic_list_concat(['(SELECT s."content" FROM ', QuotedDictionary,
+                        ' s WHERE s."__id" = ', ColumnSql, ')'], Expr).
 
 text_view_column_expr(Mode, Column, ColumnType, Expr) :-
     quote_ident(Column, QuotedColumn),
-    format(atom(ColumnSql), 't.~w', [QuotedColumn]),
+    atomic_list_concat(['t.', QuotedColumn], ColumnSql),
     (   interned_column(Mode, ColumnType)
     ->  text_decode_expr(ColumnSql, Decoded),
-        format(atom(Expr), '~w AS ~w', [Decoded, QuotedColumn])
-    ;   format(atom(Expr), '~w AS ~w', [ColumnSql, QuotedColumn])
+        atomic_list_concat([Decoded, ' AS ', QuotedColumn], Expr)
+    ;   atomic_list_concat([ColumnSql, ' AS ', QuotedColumn], Expr)
     ).
 
 % PassThroughColumns are the table's hidden columns (__id, __refcount, _sign,
@@ -2810,13 +2815,13 @@ text_view_ddl(Mode, Table, Columns, ColumnTypes, PassThroughColumns, Ddl) :-
     findall(PassExpr,
             ( member(PassColumn, PassThroughColumns),
               quote_ident(PassColumn, QuotedPassColumn),
-              format(atom(PassExpr), 't.~w AS ~w',
-                     [QuotedPassColumn, QuotedPassColumn]) ),
+              atomic_list_concat(['t.', QuotedPassColumn, ' AS ',
+                                  QuotedPassColumn], PassExpr) ),
             PassExprs),
     append(ColumnExprs, PassExprs, AllExprs),
     atomic_list_concat(AllExprs, ', ', SelectSql),
-    format(atom(Ddl), 'CREATE TEMP VIEW ~w AS SELECT ~w FROM ~w t',
-           [QuotedViewName, SelectSql, QuotedTable]).
+    atomic_list_concat(['CREATE TEMP VIEW ', QuotedViewName, ' AS SELECT ',
+                        SelectSql, ' FROM ', QuotedTable, ' t'], Ddl).
 
 % [] when nothing is interned, so a program compiled at intern(direct) emits
 % no view at all rather than an identity one.
@@ -2937,35 +2942,39 @@ rel_ddl(Mode, Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
 % so it always falls through to text here, matching the ruling's flat-punt:
 % compound-term columns stay inline-flat text, never their own storage
 % type).
-column_def(_, QuotedColumn, int, Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
+column_def(_, QuotedColumn, int, Def) :- !,
+    atomic_list_concat([QuotedColumn, ' INTEGER NOT NULL'], Def).
 column_def(_, QuotedColumn, bool, Def) :- !,
-    format(atom(Def), '~w INTEGER NOT NULL CHECK (~w IN (0,1))',
-           [QuotedColumn, QuotedColumn]).
+    atomic_list_concat([QuotedColumn, ' INTEGER NOT NULL CHECK (',
+                        QuotedColumn, ' IN (0,1))'], Def).
 column_def(_, QuotedColumn, float, Def) :- !,
-    format(atom(Def),
-           '~w REAL NOT NULL CHECK (typeof(~w) = \'real\' AND ~w BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308)',
-           [QuotedColumn, QuotedColumn, QuotedColumn]).
+    atomic_list_concat([QuotedColumn, ' REAL NOT NULL CHECK (typeof(',
+                        QuotedColumn, ') = \'real\' AND ', QuotedColumn,
+                        ' BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308)'],
+                       Def).
 column_def(_, QuotedColumn, bytes, Def) :- !,
-    format(atom(Def), '~w BLOB NOT NULL CHECK (typeof(~w) = \'blob\')',
-           [QuotedColumn, QuotedColumn]).
+    atomic_list_concat([QuotedColumn, ' BLOB NOT NULL CHECK (typeof(',
+                        QuotedColumn, ') = \'blob\')'], Def).
 % A ref column stores the dense target-row id and nothing else. No FOREIGN
 % KEY clause and no ON DELETE clause: the retraction
 % lab measured SQL cascade deleting a shared child out from under a live
 % second parent and leaving dangling refs (types-as-rels verdict finding 6,
 % plans/2026-07-28-sqlite-retraction-verdict.md fk_cascade WRONG).
-column_def(_, QuotedColumn, ref(_), Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
-column_def(_, QuotedColumn, idref(_), Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
+column_def(_, QuotedColumn, ref(_), Def) :- !,
+    atomic_list_concat([QuotedColumn, ' INTEGER NOT NULL'], Def).
+column_def(_, QuotedColumn, idref(_), Def) :- !,
+    atomic_list_concat([QuotedColumn, ' INTEGER NOT NULL'], Def).
 % A relational list column stores its minted entity's id, the ref(_) shape with
 % an ordered child set instead of one row.
 column_def(_, QuotedColumn, list(_), Def) :- !,
-    format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
+    atomic_list_concat([QuotedColumn, ' INTEGER NOT NULL'], Def).
 % A list column stores the same TEXT json carrier as a json column, and adds
 % the array-ness CHECK the storage kind now survives to emit. The ARRAY-ness
 % predicate is verified on both SQLite builds this repo runs.
 column_def(_, QuotedColumn, json_list(_), Def) :- !,
-    format(atom(Def),
-           '~w TEXT NOT NULL CHECK (json_valid(~w) AND json_type(~w) = \'array\')',
-           [QuotedColumn, QuotedColumn, QuotedColumn]).
+    atomic_list_concat([QuotedColumn, ' TEXT NOT NULL CHECK (json_valid(',
+                        QuotedColumn, ') AND json_type(', QuotedColumn,
+                        ') = \'array\')'], Def).
 % A json column stores TEXT with a json_valid CHECK, never jsonb: the two
 % SQLite builds this project runs disagree about whether jsonb exists at all
 % (system sqlite3 3.43.2 rejects it, the @libsql driver bundles 3.45.1 and
@@ -2975,15 +2984,16 @@ column_def(_, QuotedColumn, json_list(_), Def) :- !,
 % returning NULL, so validity has to be an invariant of the column, not a
 % per-read conjunct.
 column_def(_, QuotedColumn, json, Def) :- !,
-    format(atom(Def), '~w TEXT NOT NULL CHECK (json_valid(~w))',
-           [QuotedColumn, QuotedColumn]).
+    atomic_list_concat([QuotedColumn, ' TEXT NOT NULL CHECK (json_valid(',
+                        QuotedColumn, '))'], Def).
 % An interned column stores the dictionary id and nothing else; the value is
 % restored by text_view_ddl/6 at the boundary, never by a hand-written join.
 column_def(Mode, QuotedColumn, Type, Def) :-
     interned_column(Mode, Type),
     !,
-    format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
-column_def(_, QuotedColumn, text, Def) :- format(atom(Def), '~w TEXT NOT NULL', [QuotedColumn]).
+    atomic_list_concat([QuotedColumn, ' INTEGER NOT NULL'], Def).
+column_def(_, QuotedColumn, text, Def) :-
+    atomic_list_concat([QuotedColumn, ' TEXT NOT NULL'], Def).
 
 % ═══ relation reference projection ═════════════════════════════════════════
 %
@@ -3049,9 +3059,9 @@ dictionary_render_expr(TypeName, Column, Expr) :-
     dictionary_table_name(TypeName, Table),
     quote_ident(Table, QuotedTable),
     quote_ident(Column, QuotedColumn),
-    format(atom(Expr),
-           '(SELECT d."__rendered" FROM ~w d WHERE d."__id" = t.~w) AS ~w',
-           [QuotedTable, QuotedColumn, QuotedColumn]).
+    atomic_list_concat(['(SELECT d."__rendered" FROM ', QuotedTable,
+                        ' d WHERE d."__id" = t.', QuotedColumn, ') AS ',
+                        QuotedColumn], Expr).
 
 % The member rel's UNIQUE (list_id, idx) carries BOTH the grouping and the
 % element order. SQLite 3.43 (the system build) has no in-aggregate ORDER BY,
@@ -3724,7 +3734,7 @@ braces_pattern_pairs(Key: Pattern, [Key-Pattern]).
 incremental_json_select_exprs_from(0, _, []) :- !.
 incremental_json_select_exprs_from(N, Index, [Expr | More]) :-
     N > 0,
-    format(atom(Expr), 'json_extract(value, \'$[~w]\')', [Index]),
+    atomic_list_concat(['json_extract(value, \'$[', Index, ']\')'], Expr),
     NextIndex is Index + 1,
     NextN is N - 1,
     incremental_json_select_exprs_from(NextN, NextIndex, More).
@@ -3740,7 +3750,8 @@ arrival_statement(RelPlan,
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
     length(Columns, N), placeholders(N, Placeholders),
     atomic_list_concat(Placeholders, ', ', PlaceholdersSql),
-    format(atom(AddSql), 'INSERT INTO ~w (~w) VALUES (~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]),
+    atomic_list_concat(['INSERT INTO ', QuotedTable, ' (', ColumnsSql,
+                        ') VALUES (', PlaceholdersSql, ')'], AddSql),
     incremental_arrival_add_sql('INSERT INTO', '', QuotedTable, ColumnsSql, QuotedColumns,
                                 IncrementalAddSql).
 arrival_statement(RelPlan,
@@ -3752,18 +3763,21 @@ arrival_statement(RelPlan,
     length(Columns, N), placeholders(N, Placeholders),
     atomic_list_concat(Placeholders, ', ', PlaceholdersSql),
     set_arrival_sql_parts(KeyOrNone, QuotedColumns, Insert, ConflictSql),
-    format(atom(AddSql), '~w ~w (~w) VALUES (~w)~w',
-           [Insert, QuotedTable, ColumnsSql, PlaceholdersSql, ConflictSql]),
+    atomic_list_concat([Insert, ' ', QuotedTable, ' (', ColumnsSql,
+                        ') VALUES (', PlaceholdersSql, ')', ConflictSql],
+                       AddSql),
     maplist(eq_placeholder, QuotedColumns, EqParts),
     atomic_list_concat(EqParts, ' AND ', WhereSql),
-    format(atom(DelSql), 'DELETE FROM ~w WHERE ~w', [QuotedTable, WhereSql]),
+    atomic_list_concat(['DELETE FROM ', QuotedTable, ' WHERE ', WhereSql],
+                       DelSql),
     incremental_arrival_add_sql(Insert, ConflictSql, QuotedTable, ColumnsSql, QuotedColumns,
                                 IncrementalAddSql),
     incremental_json_select_exprs(QuotedColumns, 0, DeleteSelectExprs),
     atomic_list_concat(DeleteSelectExprs, ', ', DeleteSelectSql),
-    format(atom(IncrementalDelSql),
-           'DELETE FROM ~w WHERE (~w) IN (SELECT ~w FROM json_each(?)) RETURNING ~w',
-           [QuotedTable, ColumnsSql, DeleteSelectSql, ColumnsSql]).
+    atomic_list_concat(['DELETE FROM ', QuotedTable, ' WHERE (', ColumnsSql,
+                        ') IN (SELECT ', DeleteSelectSql,
+                        ' FROM json_each(?)) RETURNING ', ColumnsSql],
+                       IncrementalDelSql).
 
 set_arrival_sql_parts(none, _, 'INSERT OR IGNORE INTO', '') :- !.
 set_arrival_sql_parts(key(KeyPositions), QuotedColumns, 'INSERT INTO', ConflictSql) :-
@@ -3797,11 +3811,12 @@ incremental_arrival_add_sql(Insert, ConflictSql, QuotedTable, ColumnsSql, Quoted
 
 incremental_json_select_exprs([], _, []).
 incremental_json_select_exprs([_ | Rest], Index, [Expr | More]) :-
-    format(atom(Expr), 'json_extract(value, \'$[~w]\')', [Index]),
+    atomic_list_concat(['json_extract(value, \'$[', Index, ']\')'], Expr),
     NextIndex is Index + 1,
     incremental_json_select_exprs(Rest, NextIndex, More).
 
-eq_placeholder(QuotedColumn, Text) :- format(atom(Text), '~w = ?', [QuotedColumn]).
+eq_placeholder(QuotedColumn, Text) :-
+    atomic_list_concat([QuotedColumn, ' = ?'], Text).
 
 placeholders(0, []) :- !.
 placeholders(N, ['?' | Rest]) :- N > 0, N1 is N - 1, placeholders(N1, Rest).
@@ -4537,7 +4552,7 @@ avg_join_equalities([Column | Rest], Position, [Sql | More]) :-
 
 aggregate_scope_table_name(Ref, ScopeTable) :-
     table_name(Ref, Table),
-    format(atom(ScopeTable), '__agg_scope_~w', [Table]).
+    atomic_list_concat(['__agg_scope_', Table], ScopeTable).
 
 % The scope table's columns are the head's OWN plain (grouped) columns, so a
 % group key in the scope table and a group key in the head table compare
@@ -4825,7 +4840,7 @@ support_count_plan(_, _, _, _, _, _, _, none).
 
 arrival_scratch_table_name(Ref, NewTable) :-
     table_name(Ref, Table),
-    format(atom(NewTable), '__new_~w', [Table]).
+    atomic_list_concat(['__new_', Table], NewTable).
 
 % Shared mode stages (relation_id, phase, sequence, row_id): the durable
 % row's __id resolved by joining the head on the __new_ scratch columns.
@@ -6397,7 +6412,7 @@ delta_statement(Mode, RelPlan,
 
 qualified_outer_column(Column, Qualified) :-
     quote_ident(Column, QuotedColumn),
-    format(atom(Qualified), 't.~w', [QuotedColumn]).
+    atomic_list_concat(['t.', QuotedColumn], Qualified).
 
 retention_statement(RelPlans, keep(Ref, count(Limit)),
                     retentionstmt(Ref, Limit, DeleteSql)) :-
@@ -6469,20 +6484,19 @@ delta_ddl(Mode, RelPlan, Ddls) :-
     maplist(quote_ident, Columns, QuotedColumns),
     maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
-    format(atom(TableDdl),
-           'CREATE TEMP TABLE ~w ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
-           [QuotedDeltaTable, ColumnsSql]),
-    format(atom(IndexName), '~w_sign', [DeltaTable]),
+    atomic_list_concat(['CREATE TEMP TABLE ', QuotedDeltaTable,
+                        ' ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ',
+                        ColumnsSql, ')'], TableDdl),
+    atomic_list_concat([DeltaTable, '_sign'], IndexName),
     quote_ident(IndexName, QuotedIndexName),
-    format(atom(IndexDdl),
-           'CREATE INDEX ~w ON ~w ("_sign")',
-           [QuotedIndexName, QuotedDeltaTable]),
-    format(atom(GroupIndexName), '~w_group', [DeltaTable]),
+    atomic_list_concat(['CREATE INDEX ', QuotedIndexName, ' ON ',
+                        QuotedDeltaTable, ' ("_sign")'], IndexDdl),
+    atomic_list_concat([DeltaTable, '_group'], GroupIndexName),
     quote_ident(GroupIndexName, QuotedGroupIndexName),
     atomic_list_concat(QuotedColumns, ', ', GroupColumnsSql),
-    format(atom(GroupIndexDdl),
-           'CREATE INDEX ~w ON ~w (~w)',
-           [QuotedGroupIndexName, QuotedDeltaTable, GroupColumnsSql]),
+    atomic_list_concat(['CREATE INDEX ', QuotedGroupIndexName, ' ON ',
+                        QuotedDeltaTable, ' (', GroupColumnsSql, ')'],
+                       GroupIndexDdl),
     frontier_family_ddl(Ref, Columns, ColumnsSql, FrontierFamilyDdl),
     text_view_ddls(Mode, DeltaTable, Columns, ColumnTypes,
                    ['_sign', '_sequence'], DeltaViewDdls),
@@ -6497,19 +6511,18 @@ frontier_family_ddl(Ref, _Columns, ColumnsSql,
                     [FrontierDdl, FrontierIndexDdl, NextFrontierDdl]) :-
     frontier_table_name(Ref, FrontierTable),
     quote_ident(FrontierTable, QuotedFrontierTable),
-    format(atom(FrontierDdl),
-           'CREATE TEMP TABLE ~w ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
-           [QuotedFrontierTable, ColumnsSql]),
-    format(atom(FrontierIndexName), '~w_phase', [FrontierTable]),
+    atomic_list_concat(['CREATE TEMP TABLE ', QuotedFrontierTable,
+                        ' ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ',
+                        ColumnsSql, ')'], FrontierDdl),
+    atomic_list_concat([FrontierTable, '_phase'], FrontierIndexName),
     quote_ident(FrontierIndexName, QuotedFrontierIndexName),
-    format(atom(FrontierIndexDdl),
-           'CREATE INDEX ~w ON ~w ("_phase")',
-           [QuotedFrontierIndexName, QuotedFrontierTable]),
+    atomic_list_concat(['CREATE INDEX ', QuotedFrontierIndexName, ' ON ',
+                        QuotedFrontierTable, ' ("_phase")'], FrontierIndexDdl),
     next_frontier_table_name(Ref, NextFrontierTable),
     quote_ident(NextFrontierTable, QuotedNextFrontierTable),
-    format(atom(NextFrontierDdl),
-           'CREATE TEMP TABLE ~w ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
-           [QuotedNextFrontierTable, ColumnsSql]).
+    atomic_list_concat(['CREATE TEMP TABLE ', QuotedNextFrontierTable,
+                        ' ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ',
+                        ColumnsSql, ')'], NextFrontierDdl).
 
 % An aggregate head has no refCount table (aggsql/7 replaces the refCount
 % family entirely -- level_statement_group/3's own comment), so it gets no
@@ -6678,7 +6691,7 @@ canonical_column_expr(Column, Expr) :-
 % column names its row; bare, `list_id` is ambiguous against the joined view.
 outer_column_expr(Column, Expr) :-
     quote_ident(Column, QuotedColumn),
-    format(atom(Expr), 't.~w', [QuotedColumn]).
+    atomic_list_concat(['t.', QuotedColumn], Expr).
 
 % ═══ boot (initial seed only; round 2 drops __prev priming entirely, since
 % there is no __prev table anymore) ══════════════════════════════════════

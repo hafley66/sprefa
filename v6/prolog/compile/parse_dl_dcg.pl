@@ -28,7 +28,8 @@
 :- op(200, fy, [#, @, ~]).
 
 :- thread_local finding_fact/1, rel_column_order_fact/2,
-                host_signature_fact/3, source_statement_fact/3.
+                host_signature_fact/3, source_statement_fact/3,
+                parse_marks_on/0.
 
 % THREAD_LOCAL, not dynamic: parse_dl_source/5 retracts all four at entry and
 % reads them back at exit, so two parses running at once on shared clauses would
@@ -113,7 +114,27 @@ parse_dl(Codes, Prog, Bindings, Findings) :-
 parse_dl_source(_, Codes, _, _, _) :-
     var(Codes), !,
     throw(dl_parse_error(invalid_input, position(1, 1))).
-parse_dl_source(_, Codes, Prog, Bindings, Findings) :-
+parse_dl_source(Source, Codes, Prog, Bindings, Findings) :-
+    catch(parse_dl_pass(Source, Codes, Prog, Bindings, Findings),
+          dl_parse_error(Reason, _),
+          parse_dl_marked_failure(Source, Codes, Reason)).
+
+% mark/1 walks the whole remaining input at every token and parse_failure/1 is
+% the only reader of what it records, so the first pass runs with marks off and
+% a throwing parse is replayed once with them on.
+parse_dl_marked_failure(Source, Codes, Reason) :-
+    setup_call_cleanup(
+        assertz(parse_marks_on),
+        catch(( parse_dl_pass(Source, Codes, _, _, _) -> true ; true ),
+              Ball,
+              true),
+        retractall(parse_marks_on)),
+    (   var(Ball)
+    ->  throw(dl_parse_error(Reason, position(1, 1)))
+    ;   throw(Ball)
+    ).
+
+parse_dl_pass(_, Codes, Prog, Bindings, Findings) :-
     maplist(retractall,
             [ finding_fact(_), rel_column_order_fact(_, _),
               host_signature_fact(_, _, _), source_statement_fact(_, _, _) ]),
@@ -145,6 +166,7 @@ parse_failure(Reason) :-
 
 % mark/1 records the furthest-reached suffix; error positions derive from it
 mark(S) :-
+    parse_marks_on,
     length(S, R),
     nb_current(parse_furthest_remaining, F),
     R < F, !,

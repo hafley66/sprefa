@@ -358,7 +358,7 @@ column_name_at(Occurrences, Bindings, Position, ColumnName) :-
       member(SurfaceName = BoundVar, Bindings),
       Arg == BoundVar
     -> snake_name(SurfaceName, ColumnName)
-    ; format(atom(ColumnName), 'col~w', [Position]) ).
+    ; atomic_list_concat(['col', Position], ColumnName) ).
 
 % CamelCase Prolog variable name -> snake_case column identifier.
 snake_name(VarName, ColumnName) :-
