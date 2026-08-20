@@ -5,7 +5,8 @@
 
 :- use_module('../../0_generic_expand',
               [ schema_member_rows/2, type_relation_rows/2,
-                expand_generic_program/2, normalize_key_wrappers/2 ]).
+                expand_generic_program/2, expand_generic_program_raw/2,
+                freeze_type_rows/2, normalize_key_wrappers/2 ]).
 :- use_module('../../lower', [ catalog_type_rows/6,
                                catalog_type_relation_rows/3,
                                catalog_type_transport_rows/4,
@@ -569,5 +570,202 @@ test(real_dl6_fixture_reaches_rust_typegen) :-
     sub_string(RoundTrippedText, _, _, _, 'pub trait Convert<Input> {'),
     sub_string(RoundTrippedText, _, _, _,
                'impl Convert<Format> for Document {\n    type Output = String;').
+
+test(canonical_freeze_typespec_probe_compiles) :-
+    predicate_property(plunit_type_relation_ir:associated_scalar_rows(_),
+                       file(ThisFile)),
+    file_directory_name(ThisFile, TestDir),
+    absolute_file_name('../../../dl/fixtures/0_typespec_basic_probe.dl6',
+                       Fixture, [relative_to(TestDir), access(read)]),
+    Output = '/private/tmp/canonical-freeze-typespec-probe.ts',
+    setup_call_cleanup(
+        true,
+        compile_dl6(Fixture, Output),
+        ( exists_file(Output) -> delete_file(Output) ; true )
+    ).
+
+test(canonical_freeze_adds_concrete_generic_member_rows) :-
+    string_codes("rel Box(T)(value: T).\nrel use(box: Box(int)).\n", Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expansion:expand_program_with_bindings(Program, Bindings, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    member(declaration(ConcreteId, root, ConcreteName, relation, materialized), Rows),
+    sub_atom(ConcreteName, 0, _, _, '__gen__Box'),
+    memberchk(member(_, ConcreteId, 1, value, type_ref(primitive(int))), Rows).
+
+test(canonical_freeze_adds_anonymous_product_and_sum_member_rows) :-
+    string_codes(
+        "rel Holder(value: (a: int, b: text), choice: (Yes(code: int); No(message: text))).\n",
+        Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expansion:expand_program_with_bindings(Program, Bindings, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    member(anonymous(_, [value], product_type([field(a, int), field(b, text)])), Rows),
+    member(derived_from(ProductId,
+                        anonymous(_, [value],
+                                  product_type([field(a, int), field(b, text)]))), Rows),
+    memberchk(member(_, ProductId, 1, a, type_ref(primitive(int))), Rows),
+    memberchk(member(_, ProductId, 2, b, type_ref(primitive(text))), Rows),
+    member(anonymous(_, [choice],
+                     sum_type([variant('Yes', [field(code, int)]),
+                               variant('No', [field(message, text)])])), Rows),
+    member(derived_from(EnumId,
+                        anonymous(_, [choice],
+                                  sum_type([variant('Yes', [field(code, int)]),
+                                            variant('No', [field(message, text)])]))), Rows),
+    member(member(_, EnumId, 1, 'Yes', type_ref(declaration(YesId))), Rows),
+    memberchk(member(_, YesId, 2, code, type_ref(primitive(int))), Rows).
+
+test(canonical_freeze_retains_nested_wrapper_applications_and_arguments) :-
+    string_codes("rel Holder(value: option(list(text))).\n", Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expansion:expand_program_with_bindings(Program, Bindings, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    member(member(_, named(local, relation, 'Holder'), 1, value,
+                  type_ref(application(OptionId))), Rows),
+    memberchk(application(OptionId, named(local, relation, option)), Rows),
+    memberchk(argument(_, OptionId, 1, type_application(ListId)), Rows),
+    memberchk(application(ListId, named(local, relation, list)), Rows),
+    memberchk(argument(_, ListId, 1, type_atom(text)), Rows).
+
+test(canonical_freeze_adds_option_enum_variant_member_rows) :-
+    string_codes("rel Holder(value: option(text)).\n", Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expansion:expand_program_with_bindings(Program, Bindings, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    member(declaration(OptionId, root, '__opt_text', enum, compile_time), Rows),
+    member(derived_from(SomeId, OptionId), Rows),
+    memberchk(member(_, SomeId, 1, id, type_ref(primitive(int))), Rows),
+    memberchk(member(_, SomeId, 2, value, type_ref(primitive(text))), Rows).
+
+test(canonical_freeze_retains_named_enum_member_identity) :-
+    string_codes("rel Holder(value: Status).\nrel Status(Ready(); Failed(message: text)).\n",
+                 Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expansion:expand_program_with_bindings(Program, Bindings, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    memberchk(member(_, named(local, relation, 'Holder'), 1, value,
+                     type_ref(declaration(named(local, enum, 'Status')))), Rows).
+
+test(canonical_freeze_keeps_module_qualified_generated_member_identity) :-
+    Program = prog(
+        [ semantic_decl_module(relation, 'Box', module_a),
+          rel_template(['Box'], [type_parameter('T', [])],
+                       [column(value, 'T')]),
+          col_type(use/1, box, 'Box'(int)) ],
+        []),
+    expand_program(Program, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    member(declaration(ConcreteId, root, ConcreteName, relation, materialized), Rows),
+    ConcreteId = named(module_a, relation, ConcreteName),
+    sub_atom(ConcreteName, 0, _, _, '__gen__Box'),
+    memberchk(member(_, ConcreteId, 1, value, type_ref(primitive(int))), Rows).
+
+test(canonical_freeze_refuses_conflicting_member_identity,
+     [throws(unsupported_construct(canonical_type_row_duplicate(
+                 member(named(local, relation, holder), 1, value))))]) :-
+    Owner = named(local, relation, holder),
+    MemberId = member(Owner, 1, value),
+    freeze_type_rows(
+        [ semantic_type_rows(
+            [ member(MemberId, Owner, 1, value, type_ref(primitive(int))),
+              member(MemberId, Owner, 1, value, type_ref(primitive(text))) ]) ],
+        _).
+
+test(canonical_freeze_has_one_solution) :-
+    Decls = [ kind(reading/2, set),
+              col_type(reading/2, sensor_name, text) ],
+    findall(Frozen, freeze_type_rows(Decls, Frozen), Solutions),
+    Solutions = [_].
+
+test(canonical_freeze_compiler_and_oracle_rows_are_equal) :-
+    Program = prog(
+        [ rel_template([box], [type_parameter('T', [])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(int)) ],
+        []),
+    expand_program(Program, prog(OracleDecls, _), _),
+    memberchk(semantic_type_rows(OracleRows), OracleDecls),
+    program_plan(fixture(canonical_type_rows, Program, [], [], [])-[],
+                 plan(_, prog(CompilerDecls, _), _, _, _, _, _, _, _)),
+    memberchk(semantic_type_rows(CompilerRows), CompilerDecls),
+    CompilerRows == OracleRows.
+
+test(canonical_freeze_annotation_rows_survive_carrier_free_refreeze) :-
+    predicate_property(plunit_type_relation_ir:associated_scalar_rows(_),
+                       file(ThisFile)),
+    file_directory_name(ThisFile, TestDir),
+    absolute_file_name('../../../dl/fixtures/type-annotation-ci.dl6', Fixture,
+                       [relative_to(TestDir), access(read)]),
+    read_file_to_string(Fixture, Source, []),
+    string_codes(Source, Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expansion:expand_program_with_bindings(Program, Bindings, prog(Decls, _), _),
+    memberchk(semantic_type_rows(FrozenRows), Decls),
+    memberchk(member(_, named(local, relation, 'AnnotationCoverage'), 2,
+                     configured, type_ref(primitive(text))), FrozenRows),
+    exclude(canonical_freeze_carrier, Decls, CarrierFree),
+    freeze_type_rows(CarrierFree, Refrozen),
+    memberchk(semantic_type_rows(RefrozenRows), Refrozen),
+    RefrozenRows == FrozenRows.
+
+canonical_freeze_carrier(type_decl(_, _)).
+canonical_freeze_carrier(col_type(_, _, _)).
+canonical_freeze_carrier(keyed(_, _)).
+canonical_freeze_carrier(compiler_type_metadata(_, _)).
+canonical_freeze_carrier(compiler_type_metadata(_, _, _)).
+canonical_freeze_carrier(compiler_annotation_evidence(_)).
+
+test(canonical_freeze_json_list_application_is_closed) :-
+    string_codes("rel Holder(values: json_list(text)).\n", Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expansion:expand_program_with_bindings(Program, Bindings, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    member(member(_, named(local, relation, 'Holder'), 1, values,
+                  type_ref(application(AppId))), Rows),
+    memberchk(application(AppId, named(local, relation, json_list)), Rows),
+    memberchk(argument(_, AppId, 1, type_atom(text)), Rows).
+
+test(canonical_freeze_relation_id_application_is_closed) :-
+    string_codes(
+        "rel Revision(oid: text).\nrel Batch(revisions: list(Revision.id)).\n",
+        Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expansion:expand_program_with_bindings(Program, Bindings, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    RevisionId = named(local, relation, 'Revision'),
+    IdApp = application(named(local, relation, id), [RevisionId]),
+    ListApp = application(named(local, relation, list), [IdApp]),
+    memberchk(application(IdApp, named(local, relation, id)), Rows),
+    memberchk(argument(_, IdApp, 1, type_atom('Revision')), Rows),
+    memberchk(application(ListApp, named(local, relation, list)), Rows),
+    memberchk(argument(_, ListApp, 1, type_application(IdApp)), Rows).
+
+test(canonical_freeze_imported_generic_enum_keeps_enum_identity) :-
+    Program = prog(
+        [ semantic_decl_module(enum, 'Result', foreign),
+          rel_template_enum(['Result'], [type_parameter('E', []),
+                                         type_parameter('T', [])],
+                            (err(error: 'E') ; ok(value: 'T'))),
+          col_type(holder/1, value, 'Result'(text, int)) ],
+        []),
+    expand_program(Program, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    memberchk(application(AppId, named(foreign, enum, 'Result')), Rows),
+    memberchk(member(_, named(local, relation, holder), 1, value,
+                     type_ref(application(AppId))), Rows),
+    member(declaration(ConcreteId, root, ConcreteName, enum, compile_time), Rows),
+    ConcreteId = named(foreign, enum, ConcreteName),
+    sub_atom(ConcreteName, 0, _, _, '__gen__Result').
+
+test(canonical_freeze_type_annotation_fixture_compiles) :-
+    predicate_property(plunit_type_relation_ir:associated_scalar_rows(_),
+                       file(ThisFile)),
+    file_directory_name(ThisFile, TestDir),
+    absolute_file_name('../../../dl/fixtures/type-annotation-ci.dl6',
+                       Fixture, [relative_to(TestDir), access(read)]),
+    Output = '/private/tmp/canonical-freeze-type-annotation-ci.ts',
+    setup_call_cleanup(true, compile_dl6(Fixture, Output),
+                       ( exists_file(Output) -> delete_file(Output) ; true )).
 
 :- end_tests(type_relation_ir).

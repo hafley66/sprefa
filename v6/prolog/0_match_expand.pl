@@ -16,6 +16,7 @@
                                 merge_enum_type_rows/3,
                                 merge_option_type_rows/2,
                                 drop_minted_keyed_on_derived/3]).
+:- use_module('0_generic_expand', [freeze_type_rows/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -28,7 +29,10 @@ expand_match_program(prog(SugaredDecls, SugaredRules), ExpandedProgram) :-
                         EnumExpandedProgram),
     drop_minted_keyed_on_derived(Enums, EnumExpandedProgram, DroppedProgram),
     merge_enum_type_rows(SugaredDecls, DroppedProgram, EnumRowedProgram),
-    merge_option_type_rows(EnumRowedProgram, ExpandedProgram).
+    merge_option_type_rows(EnumRowedProgram, OptionRowedProgram),
+    OptionRowedProgram = prog(OptionDecls, OptionRules),
+    freeze_type_rows(OptionDecls, FrozenDecls),
+    ExpandedProgram = prog(FrozenDecls, OptionRules).
 
 % Driver entry: arms only, no enum pass, coverage checked against a context
 % built from the SURFACE declarations. Enum expansion has already run and
