@@ -903,7 +903,9 @@ ddl_lines(Ddl, Lines) :-
     maplist(ddl_entry_line, Ddl, EntryLines),
     append([ ['const ddl: readonly string[] = ['], EntryLines, ['];'] ], Lines).
 
-ddl_entry_line(Sql, Line) :- js_template(Sql, Template), format(atom(Line), '  ~w,', [Template]).
+ddl_entry_line(Sql, Line) :-
+    js_template(Sql, Template),
+    atomic_list_concat(['  ', Template, ','], Line).
 
 % ═══ rel_columns / arrival_targets ═════════════════════════════════════════════
 
@@ -989,10 +991,18 @@ rel_catalog_entry_line(row(RelId, ParentId, Ordinal, Name, Kind, TypeId, Arity,
     js_string(HId, HIdText),
     js_string(HSchema, HSchemaText),
     js_string(HRule, HRuleText),
-    format(atom(Line),
-           '  { rel_id: ~w, parent_id: ~w, ordinal: ~w, local_name: ~w, kind: ~w, type_id: ~w, arity: ~w, module_id: ~w, h_id: ~w, h_schema: ~w, h_rule: ~w },',
-           [RelId, ParentId, Ordinal, NameText, KindText, TypeId, Arity,
-            ModuleId, HIdText, HSchemaText, HRuleText]).
+    atomic_list_concat(['  { rel_id: ', RelId,
+                        ', parent_id: ', ParentId,
+                        ', ordinal: ', Ordinal,
+                        ', local_name: ', NameText,
+                        ', kind: ', KindText,
+                        ', type_id: ', TypeId,
+                        ', arity: ', Arity,
+                        ', module_id: ', ModuleId,
+                        ', h_id: ', HIdText,
+                        ', h_schema: ', HSchemaText,
+                        ', h_rule: ', HRuleText,
+                        ' },'], Line).
 
 % ═══ the DECLARED column types (ruling type_gate_widening) ═════════════════
 % What the program WROTE DOWN, as opposed to what analyze.pl inferred. The
