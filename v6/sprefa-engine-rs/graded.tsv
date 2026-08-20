@@ -79,10 +79,10 @@ ends_with_is_a_negative_substr_compare	clean	byte-clean
 enum_decl_two_variants_union_in_tag_view	clean	byte-clean
 enum_decl_variant_name_collision_is_refused	unsupported	enum_variant_name_collision(page)
 enum_decl_variant_rows_round_trip_through_tag_view	clean	byte-clean
-enum_name_is_a_column_type	runtime-error	enum_arrival_shape_mismatch: not_an_object(grade)
+enum_name_is_a_column_type	clean	byte-clean
 enum_nullary_variant_boots_and_tags	clean	byte-clean
 enum_variant_derived_by_level_rule	clean	byte-clean
-enum_variant_field_typed_as_rel_is_a_ref	runtime-error	enum_arrival_shape_mismatch: not_an_object(grade)
+enum_variant_field_typed_as_rel_is_a_ref	clean	byte-clean
 enum_variant_field_undeclared_type_still_throws	unsupported	column_type_unknown(treee)
 enum_variants_run_unchanged_under_the_origin_row_pass	clean	byte-clean
 error_is_a_named_unsupported	unsupported	lifecycle_arm(error)
@@ -110,7 +110,7 @@ flow_arg_param_hop_is_positional_and_site_pinned	clean	byte-clean
 flow_sig_owner_join_types_the_resolved_callee	clean	byte-clean
 fork_join_error_arm_is_a_value	unsupported	compound_pattern_on_arrival_rel(outcome_a/1,1,ok(_))
 fork_join_is_a_conjunctive_body	clean	byte-clean
-generic_expansion_end_to_end	runtime-error	enum_arrival_shape_mismatch: not_an_object(__opt_text)
+generic_expansion_end_to_end	clean	byte-clean
 ghcacher_host_program_term	unsupported	level_body_goal(pull_request(_,_,_,_,_),json_each(_,_))
 group_concat_one_argument_joins_members	clean	byte-clean
 groupby_aggregate_two_bare_integer_literals	clean	byte-clean
@@ -213,7 +213,7 @@ merge_batches_per_tick	clean	byte-clean
 merge_never_retracts	clean	byte-clean
 merge_policy	clean	byte-clean
 mixed_bounded_and_free_parameters	clean	byte-clean
-module_path_and_option_column_coexist	runtime-error	enum_arrival_shape_mismatch: not_an_object(__opt_text)
+module_path_and_option_column_coexist	clean	byte-clean
 module_path_in_body_reads_the_flat_rel	clean	byte-clean
 module_path_in_coalesce_wrapper	clean	byte-clean
 module_path_in_combine_wrapper	clean	byte-clean
@@ -269,8 +269,8 @@ option_of_json_list_keeps_its_stop	unsupported	option_element_type_unknown(json_
 option_of_option_of_scalar_keeps_its_stop	clean	byte-clean
 option_rel_on_a_reference_target_round_trips_absent_and_present	clean	byte-clean
 option_rel_ref_desugars_to_companion_split_rel	clean	byte-clean
-option_scalar_enums_mint_per_element_type	runtime-error	enum_arrival_shape_mismatch: not_an_object(__opt_text)
-option_text_column_reads_through_tag_join	runtime-error	enum_arrival_shape_mismatch: not_an_object(__opt_text)
+option_scalar_enums_mint_per_element_type	clean	byte-clean
+option_text_column_reads_through_tag_join	clean	byte-clean
 ordered_aggregate_retraction_rebuild	clean	byte-clean
 ordered_fragment_line_assembly	clean	byte-clean
 ordered_group_concat_explicit_comma_matches_one_argument	clean	byte-clean
@@ -300,7 +300,7 @@ quote_in_literal_doubles_the_escape	clean	byte-clean
 range_join_over_arithmetic	clean	byte-clean
 recursive_closure_passes_both_build_guard_arms	clean	byte-clean
 recursive_cte_multiple_self_reads_is_refused	unsupported	recursive_cte_multiple_self_reads(reachable/2,2)
-recursive_enum_tree_and_cycles_round_trip	runtime-error	enum_arrival_shape_mismatch: not_an_object(tree)
+recursive_enum_tree_and_cycles_round_trip	clean	byte-clean
 recursive_list_arg_parent_holds_child_node_values	clean	byte-clean
 reference_target_emptied_by_option_split_is_named	unsupported	reference_target_has_no_columns(squad/0)
 regexp_non_match	clean	byte-clean

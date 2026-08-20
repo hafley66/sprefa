@@ -27,7 +27,7 @@ use crate::driver::format_deltas;
 use crate::program::GenProgram;
 use crate::sql::{SqlRunner, SqliteSeam};
 use crate::types::{
-    bytes_to_base64, Arrival, ArrivalSign, EnumRefColumns, RelDelta, Row, RowColumnType,
+    bytes_to_base64, Arrival, ArrivalSign, RelDelta, Row, RowColumnType,
     SqlStatement, TickDeltas, Value,
 };
 
@@ -161,7 +161,6 @@ pub struct ServeState {
     jobs: mpsc::UnboundedSender<EngineJob>,
     rels: Arc<HashSet<String>>,
     column_types: Arc<HashMap<String, Vec<RowColumnType>>>,
-    enum_ref_columns: Arc<EnumRefColumns>,
     ring: Arc<Mutex<DeltaRing>>,
     ticked: watch::Receiver<usize>,
 }
@@ -179,7 +178,6 @@ impl ServeState {
         let name: Arc<str> = Arc::from(program.name.as_str());
         let rels: HashSet<String> = program.final_select.keys().cloned().collect();
         let column_types = program.rel_column_types.clone();
-        let enum_ref_columns = program.enum_ref_columns.clone();
         let (jobs, inbox) = mpsc::unbounded_channel();
         let ring = Arc::new(Mutex::new(DeltaRing::new(ticks_folded)));
         let (ticked_tx, ticked) = watch::channel(ticks_folded);
@@ -192,7 +190,6 @@ impl ServeState {
             jobs,
             rels: Arc::new(rels),
             column_types: Arc::new(column_types),
-            enum_ref_columns: Arc::new(enum_ref_columns),
             ring,
             ticked,
         }
@@ -213,17 +210,7 @@ impl ServeState {
         if !self.rels.contains(rel) {
             return Err(ServeError::NoSuchRel(rel.to_string()));
         }
-        let mut types = self.column_types.get(rel).cloned().unwrap_or_default();
-        if let Some(refs) = self.enum_ref_columns.get(rel) {
-            for (index, reference) in refs.iter().enumerate() {
-                if reference.is_some() {
-                    if types.len() <= index {
-                        types.resize(index + 1, RowColumnType::Text);
-                    }
-                    types[index] = RowColumnType::Json;
-                }
-            }
-        }
+        let types = self.column_types.get(rel).cloned().unwrap_or_default();
         let mut ticked = self.ticked.clone();
         let deadline = tokio::time::Instant::now() + DELTA_POLL_WAIT;
         loop {
@@ -340,55 +327,20 @@ fn read_rel(program: &GenProgram, seam: &SqliteSeam, rel: &str) -> ServeResult {
     let mut rows: Vec<serde_json::Value> = result
         .rows
         .iter()
-        .map(|row| {
-            let decoded = crate::enum_plane::decode_row(
-                seam,
-                &program.enum_types,
-                &program.enum_ref_columns,
-                &program.relations,
-                rel,
-                row,
-            )
-            .expect("enum final-select decode failed");
-            row_object(
-                &columns,
-                &types,
-                &decoded,
-                program.enum_ref_columns.get(rel),
-            )
-        })
+        .map(|row| row_object(&columns, &types, row))
         .collect();
     rows.sort_by_key(|row| row.to_string());
     Ok(json!({ "rel": rel, "columns": columns, "rows": rows }))
 }
 
-fn row_object(
-    columns: &[String],
-    types: &[RowColumnType],
-    row: &[Value],
-    enum_refs: Option<&Vec<Option<crate::types::EnumRefColumn>>>,
-) -> serde_json::Value {
+fn row_object(columns: &[String], types: &[RowColumnType], row: &[Value]) -> serde_json::Value {
     let mut object = serde_json::Map::new();
     for (index, value) in row.iter().enumerate() {
         let column = match columns.get(index) {
             Some(name) => name.clone(),
             None => format!("col{}", index + 1),
         };
-        let enum_value = enum_refs
-            .and_then(|refs| refs.get(index))
-            .and_then(Option::as_ref)
-            .is_some();
-        object.insert(
-            column,
-            if enum_value {
-                match value {
-                    Value::Text(text) => serde_json::from_str(text).unwrap_or_else(|_| json!(text)),
-                    _ => value_json(value, types.get(index).copied()),
-                }
-            } else {
-                value_json(value, types.get(index).copied())
-            },
-        );
+        object.insert(column, value_json(value, types.get(index).copied()));
     }
     serde_json::Value::Object(object)
 }

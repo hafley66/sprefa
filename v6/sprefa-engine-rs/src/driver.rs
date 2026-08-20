@@ -45,20 +45,15 @@ impl From<crate::hosts::HostError> for RunError {
     }
 }
 
+/// An enum-typed column holds a reference, so it keeps the `int` type the
+/// compiler already declares for it; the enum plane moves no boundary type.
 pub fn format_deltas(program: &GenProgram, tick: usize, deltas: &TickDeltas) -> String {
-    let mut boundary_types = program.rel_column_types.clone();
-    for (rel, refs) in &program.enum_ref_columns {
-        let types = boundary_types.entry(rel.clone()).or_default();
-        for (index, reference) in refs.iter().enumerate() {
-            if reference.is_some() {
-                if types.len() <= index {
-                    types.resize(index + 1, crate::types::RowColumnType::Text);
-                }
-                types[index] = crate::types::RowColumnType::Json;
-            }
-        }
-    }
-    tick_line(tick, deltas, &boundary_types, &boundary_types)
+    tick_line(
+        tick,
+        deltas,
+        &program.rel_column_types,
+        &program.rel_column_types,
+    )
 }
 
 pub async fn run_schedule(

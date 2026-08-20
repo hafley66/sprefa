@@ -58,18 +58,20 @@ from a different leg.
 
 ### B. the enum plane's arrival encoding is unfinished
 
-Re-measured 2026-08-20 on `fix/test-estate-green` (base `67951ea94`).
-`EnumPlane.intern` requires a tagged object per enum-typed column; the corpus
-feeds the enum instance's surrogate id (`0_option_type.pl:19-22`,
-`0_enum_variants.pl:91-92`), so the module throws on its first arrival. SEVEN
-fixtures on the TypeScript door, SIX on the Rust door. The identity-vs-value
-question is a design fork for the user, written up in
-`TASKS/test-estate-green.REPORT.md` FORK 1.
+**CLOSED 2026-08-20** on `fix/enum-column-ref` (base `57559f61f`). An
+enum-typed or rel-typed column holds a REFERENCE (user's call, same date), so
+both runtimes carry the referenced instance's integer id in and out instead of
+demanding a tagged object. Sweep reaches `emitted_crash=0` and rust-grade
+reaches `runtime-error 0`. Receipts and the per-door diff:
+`TASKS/enum-column-ref.REPORT.md`.
 
-| leg | exact failure text | site |
+| leg | measured after | site |
 |---|---|---|
-| sweep | `RUN total=335 identical=322 wrong=0 emitted_crash=7 rejection=6 no_oracle_log=0` then `SWEEP GATE: 7 emitted module(s) crashed on a schedule the oracle completed: enum_name_is_a_column_type, generic_expansion_end_to_end, option_text_column_reads_through_tag_join, option_scalar_enums_mint_per_element_type, enum_variant_field_typed_as_rel_is_a_ref, recursive_enum_tree_and_cycles_round_trip, module_path_and_option_column_coexist`. Distinct messages: `enum_arrival_shape_mismatch: not_an_object(grade)` / `(tree)` / `(__opt_text)`. | `v6/tsv2/runtime/enumPlane.ts:9,15,77` (throws), `v6/tsv2/scripts/sweep.ts:311` (verdict) |
-| rust-grade | RETIRED LOCALLY. `RUST-GRADE graded=434 byte-clean=322`, `runtime-error 7` (the six enum messages plus `nested_zero_column_child_is_one_row_per_parent`), `diff 0`, no REGRESSION and no RATCHET line, **exit 0**. Three things closed: `no such function: reverse` (`sql.rs` now installs the scalar), `concat_program_queue` (`ordered.rs` stages departures from decoded rows), and 24 phantom REGRESSION rows (`graded.tsv` re-recorded against the 434-fixture corpus #383 left it behind). The leg stays on the allowlist for group E only. | `v6/sprefa-engine-rs/grade.sh` |
+| sweep | `RUN total=335 identical=322 wrong=0 emitted_crash=7` became `identical=329 wrong=0 emitted_crash=0`, no `SWEEP GATE` line | `v6/tsv2/runtime/enumPlane.ts` |
+| rust-grade | `byte-clean=322`, `runtime-error 7` became `byte-clean=329`, no `runtime-error` line, exit 0 | `v6/sprefa-engine-rs/src/enum_plane.rs`, `src/driver.rs` |
+
+`sweep` and `rust-grade` stay on the allowlist for group A and group E, which
+this arc does not touch.
 
 ### C. `golden-flex.dl6` does not compile
 

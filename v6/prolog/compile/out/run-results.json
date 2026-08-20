@@ -29,10 +29,10 @@
   },
   {
     "name": "enum_name_is_a_column_type",
-    "bucket": "emitted_crash",
-    "detail": "enum_arrival_shape_mismatch: not_an_object(grade)",
-    "final_bucket": "final_wrong",
-    "final_detail": "run threw before the final state could be read"
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
   },
   {
     "name": "enum_variant_derived_by_level_rule",
@@ -50,10 +50,10 @@
   },
   {
     "name": "generic_expansion_end_to_end",
-    "bucket": "emitted_crash",
-    "detail": "enum_arrival_shape_mismatch: not_an_object(__opt_text)",
-    "final_bucket": "final_wrong",
-    "final_detail": "run threw before the final state could be read"
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
   },
   {
     "name": "list_entity_dense_sequence_end_to_end",
@@ -127,17 +127,17 @@
   },
   {
     "name": "option_text_column_reads_through_tag_join",
-    "bucket": "emitted_crash",
-    "detail": "enum_arrival_shape_mismatch: not_an_object(__opt_text)",
-    "final_bucket": "final_wrong",
-    "final_detail": "run threw before the final state could be read"
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
   },
   {
     "name": "option_scalar_enums_mint_per_element_type",
-    "bucket": "emitted_crash",
-    "detail": "enum_arrival_shape_mismatch: not_an_object(__opt_text)",
-    "final_bucket": "final_wrong",
-    "final_detail": "run threw before the final state could be read"
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
   },
   {
     "name": "option_rel_ref_desugars_to_companion_split_rel",
@@ -288,10 +288,10 @@
   },
   {
     "name": "enum_variant_field_typed_as_rel_is_a_ref",
-    "bucket": "emitted_crash",
-    "detail": "enum_arrival_shape_mismatch: not_an_object(grade)",
-    "final_bucket": "final_wrong",
-    "final_detail": "run threw before the final state could be read"
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
   },
   {
     "name": "substr_positive_start_is_one_based",
@@ -477,10 +477,10 @@
   },
   {
     "name": "recursive_enum_tree_and_cycles_round_trip",
-    "bucket": "emitted_crash",
-    "detail": "enum_arrival_shape_mismatch: not_an_object(tree)",
-    "final_bucket": "final_wrong",
-    "final_detail": "run threw before the final state could be read"
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
   },
   {
     "name": "recursive_list_arg_parent_holds_child_node_values",
@@ -1093,10 +1093,10 @@
   },
   {
     "name": "module_path_and_option_column_coexist",
-    "bucket": "emitted_crash",
-    "detail": "enum_arrival_shape_mismatch: not_an_object(__opt_text)",
-    "final_bucket": "final_wrong",
-    "final_detail": "run threw before the final state could be read"
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
   },
   {
     "name": "nested_child_carries_the_parent_reference",

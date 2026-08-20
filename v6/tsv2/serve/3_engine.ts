@@ -51,7 +51,6 @@ import {
 import { stmt_counter } from "sprefa-store-engine/src/engine/counter.ts";
 
 import { BootRunner } from "../runtime/2_boot.ts";
-import { EnumPlane } from "../runtime/enumPlane.ts";
 import { select_rows } from "../runtime/rows.ts";
 import { TickLogEmitter } from "../runtime/ticklog.ts";
 import type {
@@ -141,9 +140,7 @@ export class LiveEngine implements ILiveEngine {
     if (sql === undefined || columns === undefined) {
       return throwError(() => new Error(`unknown rel '${rel}' in program '${this.program.name}'`));
     }
-    return select_rows(this.seam, sql, columns, this.program.rel_column_types?.[rel]).pipe(
-      concatMap((rows) => EnumPlane.decode_rows(this.seam, this.program.enum_types ?? [], this.program.enum_ref_columns ?? {}, [], rel, rows)),
-    );
+    return select_rows(this.seam, sql, columns, this.program.rel_column_types?.[rel]);
   }
 
   /** One queued batch: its own tick, then drain ticks while the program carries
@@ -221,14 +218,11 @@ export class LiveEngine implements ILiveEngine {
   }
 }
 
+/** An enum-typed column holds a reference, so it keeps the `int` type the
+ *  compiler already declares for it; nothing about the enum plane changes a
+ *  boundary type. */
 function boundary_types(program: IServedProgram): Readonly<Record<string, readonly IRowColumnType[]>> {
-  const types: Record<string, readonly IRowColumnType[]> = { ...program.rel_column_types };
-  for (const [rel, refs] of Object.entries(program.enum_ref_columns ?? {})) {
-    const rel_types = [...(types[rel] ?? [])];
-    refs.forEach((reference, index) => { if (reference !== null) rel_types[index] = "json"; });
-    types[rel] = rel_types;
-  }
-  return types;
+  return program.rel_column_types ?? {};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

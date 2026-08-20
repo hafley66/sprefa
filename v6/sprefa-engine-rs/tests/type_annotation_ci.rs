@@ -84,11 +84,27 @@ async fn annotation_key_and_legacy_key_share_sqlite_replacement_behavior() {
     assert_eq!(rows(&program, &seam, "AnnotationKey"), expected);
 }
 
-fn option_arrival(sign: ArrivalSign, value: &str, body: &str) -> Arrival {
+/* An enum-typed (here `key(option(...))`) column holds a REFERENCE: the
+ * arrival carries the option instance's integer id and the instance arrives as
+ * its own variant row. `rel_column_types` already says `int` for that column.
+ * FAIL-PRE-FIX: this door interned a tagged object and minted variant
+ * arrivals, so the corpus spelling `KeyedOption(1, "old")` threw
+ * enum_arrival_shape_mismatch. Sabotage: restore validated_tagged_object/encode
+ * in src/enum_plane.rs and both tests below refuse the integer again. */
+
+fn keyed(rel: &str, sign: ArrivalSign, id: i64, body: &str) -> Arrival {
     Arrival {
-        rel: "KeyedOption".into(),
+        rel: rel.into(),
         sign,
-        row: vec![Value::Text(value.into()), Value::Text(body.into())],
+        row: vec![Value::Integer(id), Value::Text(body.into())],
+    }
+}
+
+fn variant(rel: &str, id: i64, payload: Value) -> Arrival {
+    Arrival {
+        rel: rel.into(),
+        sign: ArrivalSign::Add,
+        row: vec![Value::Integer(id), payload],
     }
 }
 
@@ -99,17 +115,20 @@ fn delta_rows<'a>(
     deltas.rels.iter().find(|delta| delta.rel == rel).unwrap()
 }
 
+fn parent_row(id: i64, body: &str) -> Vec<Value> {
+    vec![Value::Integer(id), Value::Text(body.into())]
+}
+
 #[tokio::test]
-async fn keyed_option_program_json_interns_public_values_and_retracts_stale_rows() {
+async fn a_keyed_option_column_carries_its_instance_reference_and_replaces_by_key() {
     let program = compile_fixture("keyed-option-runtime.dl6");
     assert_eq!(
-        program.enum_ref_columns["KeyedOption"][0]
-            .as_ref()
-            .unwrap()
-            .endpoint_index,
-        None
+        program.rel_column_types["KeyedOption"],
+        vec![
+            sprefa_engine_rs::types::RowColumnType::Int,
+            sprefa_engine_rs::types::RowColumnType::Text
+        ]
     );
-    assert!(program.enum_types[0].identity.is_some());
     let seam = SqliteSeam::in_memory().unwrap();
     seam.run_ddl(&program.ddl).unwrap();
     run_boot(&seam, &program.boot);
@@ -117,56 +136,38 @@ async fn keyed_option_program_json_interns_public_values_and_retracts_stale_rows
     let first = drive_tick(
         &program,
         &seam,
-        vec![option_arrival(
-            ArrivalSign::Add,
-            r#"{"tag":"some","value":7}"#,
-            "old",
-        )],
+        vec![
+            variant("__opt_int_some", 1, Value::Integer(7)),
+            keyed("KeyedOption", ArrivalSign::Add, 1, "old"),
+        ],
     )
     .await
     .unwrap();
     assert_eq!(
         delta_rows(&first, "KeyedOption").add,
-        vec![vec![
-            Value::Text(r#"{"tag":"some","value":7}"#.into()),
-            Value::Text("old".into()),
-        ]]
+        vec![parent_row(1, "old")]
     );
 
     let replacement = drive_tick(
         &program,
         &seam,
-        vec![option_arrival(
-            ArrivalSign::Add,
-            r#"{"value":7,"tag":"some"}"#,
-            "new",
-        )],
+        vec![keyed("KeyedOption", ArrivalSign::Add, 1, "new")],
     )
     .await
     .unwrap();
     assert_eq!(
         delta_rows(&replacement, "KeyedOption").add,
-        vec![vec![
-            Value::Text(r#"{"tag":"some","value":7}"#.into()),
-            Value::Text("new".into()),
-        ]]
+        vec![parent_row(1, "new")]
     );
     assert_eq!(
         delta_rows(&replacement, "KeyedOption").del,
-        vec![vec![
-            Value::Text(r#"{"tag":"some","value":7}"#.into()),
-            Value::Text("old".into()),
-        ]]
+        vec![parent_row(1, "old")]
     );
 
     let stale = drive_tick(
         &program,
         &seam,
-        vec![option_arrival(
-            ArrivalSign::Del,
-            r#"{"tag":"some","value":7}"#,
-            "old",
-        )],
+        vec![keyed("KeyedOption", ArrivalSign::Del, 1, "old")],
     )
     .await
     .unwrap();
@@ -176,49 +177,30 @@ async fn keyed_option_program_json_interns_public_values_and_retracts_stale_rows
     let none = drive_tick(
         &program,
         &seam,
-        vec![option_arrival(
-            ArrivalSign::Add,
-            r#"{"tag":"none"}"#,
-            "none",
-        )],
+        vec![
+            Arrival {
+                rel: "__opt_int_none".into(),
+                sign: ArrivalSign::Add,
+                row: vec![Value::Integer(2)],
+            },
+            keyed("KeyedOption", ArrivalSign::Add, 2, "none"),
+        ],
     )
     .await
     .unwrap();
     assert_eq!(
         delta_rows(&none, "KeyedOption").add,
-        vec![vec![
-            Value::Text(r#"{"tag":"none"}"#.into()),
-            Value::Text("none".into()),
-        ]]
+        vec![parent_row(2, "none")]
     );
-    let ids = seam
-        .execute(&SqlStatement {
-            sql: "SELECT \"id\" FROM \"__enum_identity___opt_int\" ORDER BY \"id\"".into(),
-            args: vec![],
-        })
-        .unwrap()
-        .rows;
-    assert_eq!(ids, vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]);
-}
-
-fn relation_option_arrival(sign: ArrivalSign, value: &str, body: &str) -> Arrival {
-    Arrival {
-        rel: "KeyedRelationOption".into(),
-        sign,
-        row: vec![Value::Text(value.into()), Value::Text(body.into())],
-    }
+    assert_eq!(
+        delta_rows(&none, "__opt_int_tag").add,
+        vec![vec![Value::Integer(2), Value::Text("none".into())]]
+    );
 }
 
 #[tokio::test]
-async fn keyed_relation_option_program_json_normalizes_and_decodes_through_sqlite() {
+async fn a_keyed_relation_option_column_carries_its_instance_reference_through_sqlite() {
     let program = compile_fixture("keyed-option-relation-runtime.dl6");
-    assert_eq!(
-        program.enum_ref_columns["KeyedRelationOption"][0]
-            .as_ref()
-            .unwrap()
-            .endpoint_index,
-        None
-    );
     assert_eq!(
         program.struct_ref_columns["__opt_Person_some"][1],
         Some("Person".into())
@@ -227,59 +209,47 @@ async fn keyed_relation_option_program_json_normalizes_and_decodes_through_sqlit
     seam.run_ddl(&program.ddl).unwrap();
     run_boot(&seam, &program.boot);
 
+    let person = |text: &str| variant("__opt_Person_some", 1, Value::Text(text.into()));
     let first = drive_tick(
         &program,
         &seam,
-        vec![relation_option_arrival(
-            ArrivalSign::Add,
-            r#"{"tag":"some","value":{"id":1,"name":"Ada"}}"#,
-            "old",
-        )],
+        vec![
+            person(r#"{"id":1,"name":"Ada"}"#),
+            keyed("KeyedRelationOption", ArrivalSign::Add, 1, "old"),
+        ],
     )
     .await
     .unwrap();
     assert_eq!(
         delta_rows(&first, "KeyedRelationOption").add,
-        vec![vec![
-            Value::Text(r#"{"tag":"some","value":{"id":1,"name":"Ada"}}"#.into()),
-            Value::Text("old".into()),
-        ]]
+        vec![parent_row(1, "old")]
     );
 
+    // The reversed-key struct canonicalizes onto the same Person row, so the
+    // option instance stays one row and only the parent body replaces.
     let replacement = drive_tick(
         &program,
         &seam,
-        vec![relation_option_arrival(
-            ArrivalSign::Add,
-            r#"{"value":{"name":"Ada","id":1},"tag":"some"}"#,
-            "new",
-        )],
+        vec![
+            person(r#"{"name":"Ada","id":1}"#),
+            keyed("KeyedRelationOption", ArrivalSign::Add, 1, "new"),
+        ],
     )
     .await
     .unwrap();
     assert_eq!(
         delta_rows(&replacement, "KeyedRelationOption").add,
-        vec![vec![
-            Value::Text(r#"{"tag":"some","value":{"id":1,"name":"Ada"}}"#.into()),
-            Value::Text("new".into()),
-        ]]
+        vec![parent_row(1, "new")]
     );
     assert_eq!(
         delta_rows(&replacement, "KeyedRelationOption").del,
-        vec![vec![
-            Value::Text(r#"{"tag":"some","value":{"id":1,"name":"Ada"}}"#.into()),
-            Value::Text("old".into()),
-        ]]
+        vec![parent_row(1, "old")]
     );
 
     let stale = drive_tick(
         &program,
         &seam,
-        vec![relation_option_arrival(
-            ArrivalSign::Del,
-            r#"{"tag":"some","value":{"id":1,"name":"Ada"}}"#,
-            "old",
-        )],
+        vec![keyed("KeyedRelationOption", ArrivalSign::Del, 1, "old")],
     )
     .await
     .unwrap();
@@ -289,19 +259,12 @@ async fn keyed_relation_option_program_json_normalizes_and_decodes_through_sqlit
     let retraction = drive_tick(
         &program,
         &seam,
-        vec![relation_option_arrival(
-            ArrivalSign::Del,
-            r#"{"tag":"some","value":{"id":1,"name":"Ada"}}"#,
-            "new",
-        )],
+        vec![keyed("KeyedRelationOption", ArrivalSign::Del, 1, "new")],
     )
     .await
     .unwrap();
     assert_eq!(
         delta_rows(&retraction, "KeyedRelationOption").del,
-        vec![vec![
-            Value::Text(r#"{"tag":"some","value":{"id":1,"name":"Ada"}}"#.into()),
-            Value::Text("new".into()),
-        ]]
+        vec![parent_row(1, "new")]
     );
 }

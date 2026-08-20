@@ -1,104 +1,48 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { firstValueFrom, of } from "rxjs";
+import { firstValueFrom } from "rxjs";
 
 import { EnumPlane } from "../runtime/enumPlane.ts";
-import { ScratchStore } from "../runtime/scratchStore.ts";
 import type { IEnumRefColumns, IEnumTypePlan, ISqlSeam } from "../runtime/types.ts";
 
+/* FAIL-PRE-FIX: this door interned a tagged object and minted variant
+ * arrivals, so `picked(101, 401)` threw
+ * `enum_arrival_shape_mismatch: not_an_object(grade)` and seven fixtures
+ * crashed. Sabotage: restore the validate_tagged/encode pair in
+ * runtime/enumPlane.ts and the first test below refuses the integer again. */
+
 const types: readonly IEnumTypePlan[] = [
-  { name: "inner", variants: [{ tag: "text", rel: "inner_text", fields: ["value"], field_types: ["text"], select_sql: "SELECT id, value FROM inner_text" }] },
-  { name: "choice", variants: [
-    { tag: "none", rel: "choice_none", fields: [], select_sql: "SELECT id FROM choice_none" },
-    { tag: "text", rel: "choice_text", fields: ["value"], field_types: ["text"], select_sql: "SELECT id, value FROM choice_text" },
-    { tag: "list", rel: "choice_list", fields: ["value"], field_types: ["list"], select_sql: "SELECT id, value FROM choice_list" },
-    { tag: "relation", rel: "choice_relation", fields: ["value"], field_types: ["ref"], select_sql: "SELECT id, value FROM choice_relation" },
-    { tag: "nested", rel: "choice_nested", fields: ["value"], field_types: ["relation_id"], field_enums: ["inner"], select_sql: "SELECT id, value FROM choice_nested" },
+  { name: "grade", variants: [
+    { tag: "ripe", rel: "grade_ripe", fields: ["sugar"], field_types: ["int"], select_sql: "SELECT id, sugar FROM grade_ripe" },
+    { tag: "green", rel: "grade_green", fields: ["days"], field_types: ["int"], select_sql: "SELECT id, days FROM grade_green" },
   ] },
 ];
 
-const refs: IEnumRefColumns = { resident: [null, { name: "choice", endpoint_index: 0 }] };
-let active = "none";
+const refs: IEnumRefColumns = { picked: [null, { name: "grade", endpoint_index: 0 }] };
 
-const seam = {
-  db: {},
-  runner: {
-    execute(_db: unknown, statement: { readonly sql: string }) {
-      const rows = statement.sql.includes(`choice_${active}`)
-        ? active === "none" ? [{ id: 7 }]
-          : active === "text" ? [{ id: 7, value: "hello" }]
-          : active === "list" ? [{ id: 7, value: "[1,2]" }]
-          : active === "relation" ? [{ id: 7, value: '{"id":9}' }]
-          : [{ id: 7, value: 7 }]
-        : statement.sql.includes("inner_text") && active === "nested" ? [{ id: 7, value: "inside" }] : [];
-      return of({ rows, columns: [], rows_affected: 0 });
-    },
-  },
-} as unknown as ISqlSeam;
+/** No statement reaches SQL on either direction, so the seam refuses to run. */
+const seam = { db: {}, runner: { execute() { throw new Error("enum plane ran a statement"); } } } as unknown as ISqlSeam;
 
-test("enum ingress preserves add and delete signs and scalar-safe list carriers", async () => {
+test("an enum column carries its referenced instance id through the arrival door", async () => {
   for (const sign of ["add", "del"] as const) {
-    const rows = await firstValueFrom(EnumPlane.intern(seam, types, refs, [{ rel: "resident", sign, row: [7, { tag: "list", value: [1, 2] }] }]));
-    assert.deepEqual(rows, [
-      { rel: "choice_list", sign, row: [7, "[1,2]"] },
-      { rel: "resident", sign, row: [7, 7] },
-    ]);
+    const rows = await firstValueFrom(EnumPlane.intern(seam, types, refs, [{ rel: "picked", sign, row: [101, 401] }]));
+    assert.deepEqual(rows, [{ rel: "picked", sign, row: [101, 401] }]);
   }
 });
 
-test("enum egress yields structured nullary text list relation and nested values", async () => {
-  for (const [tag, expected] of [
-    ["none", { tag: "none" }], ["text", { tag: "text", value: "hello" }],
-    ["list", { tag: "list", value: [1, 2] }], ["relation", { tag: "relation", value: { id: 9 } }],
-    ["nested", { tag: "nested", value: { tag: "text", value: "inside" } }],
-  ] as const) {
-    active = tag;
-    const rows = await firstValueFrom(EnumPlane.decode_rows(seam, types, refs, [], "resident", [[7, 7]]));
-    assert.deepEqual(rows, [[7, expected]], tag);
+test("a tagged value in an enum column is named, never sniffed into a variant row", () => {
+  for (const value of [{ tag: "ripe", sugar: 12 }, '{"tag":"ripe","sugar":12}', 12.5]) {
+    assert.throws(
+      () => EnumPlane.intern(seam, types, refs, [{ rel: "picked", sign: "add", row: [101, value] }]),
+      /enum_arrival_shape_mismatch: not_a_reference\(picked, grade\)/,
+    );
   }
 });
 
-test("structured enum rows survive final response serialization", async () => {
-  active = "none";
-  const rows = await firstValueFrom(EnumPlane.decode_rows(seam, types, refs, [], "resident", [[7, 7]]));
-  assert.equal(JSON.stringify({ rows }), '{"rows":[[7,{"tag":"none"}]]}');
-});
-
-test("ownerless option ingress interns canonical tagged values instead of accepting endpoints", async () => {
-  const identity_seam = ScratchStore.open(":memory:");
-  await firstValueFrom(ScratchStore.boot(identity_seam, [
-    `CREATE TABLE "enum_identity" ("id" INTEGER PRIMARY KEY, "value" TEXT NOT NULL UNIQUE)`,
-  ]));
-  const identity_types: readonly IEnumTypePlan[] = [{
-    ...types[1]!, identity: {
-      intern_sql: "INSERT OR IGNORE INTO enum_identity (value) VALUES (?)",
-      lookup_sql: "SELECT id, value FROM enum_identity WHERE value = ?",
-    },
-  }];
-  const ownerless: IEnumRefColumns = { option_key: [{ name: "choice", endpoint_index: null }] };
-  const add = await firstValueFrom(EnumPlane.intern(identity_seam, identity_types, ownerless, [{ rel: "option_key", sign: "add", row: [{ tag: "text", value: "same" }] }]));
-  const stale = await firstValueFrom(EnumPlane.intern(identity_seam, identity_types, ownerless, [{ rel: "option_key", sign: "del", row: [{ value: "same", tag: "text" }] }]));
-  assert.deepEqual(add, [
-    { rel: "choice_text", sign: "add", row: [1, "same"] },
-    { rel: "option_key", sign: "add", row: [1] },
-  ]);
-  assert.deepEqual(stale, [
-    { rel: "choice_text", sign: "add", row: [1, "same"] },
-    { rel: "option_key", sign: "del", row: [1] },
-  ]);
-  const relation = await firstValueFrom(EnumPlane.intern(identity_seam, identity_types, ownerless, [{
-    rel: "option_key", sign: "add", row: [{ tag: "relation", value: { id: 9 } }],
-  }]));
-  assert.deepEqual(relation, [
-    { rel: "choice_relation", sign: "add", row: [2, '{"id":9}'] },
-    { rel: "option_key", sign: "add", row: [2] },
-  ]);
-  const identities = await firstValueFrom(
-    identity_seam.runner.execute(identity_seam.db, `SELECT "id", "value" FROM "enum_identity" ORDER BY "id"`),
-  );
-  assert.deepEqual(identities.rows, [
-    { id: 1, value: '{"tag":"text","value":"same"}' },
-    { id: 2, value: '{"tag":"relation","value":{"id":9}}' },
-  ]);
+test("the boundary reads an enum column back as the same reference id", async () => {
+  const rows = await firstValueFrom(EnumPlane.decode_rows(seam, types, refs, [], "picked", [[101, 401]]));
+  assert.deepEqual(rows, [[101, 401]]);
+  const deltas = await firstValueFrom(EnumPlane.decode_deltas(seam, types, refs, [], [{ rel: "picked", add: [[101, 401]], del: [] }]));
+  assert.deepEqual(deltas, [{ rel: "picked", add: [[101, 401]], del: [] }]);
 });
