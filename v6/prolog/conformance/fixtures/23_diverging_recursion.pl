@@ -10,7 +10,8 @@
 % v6/prolog/lower.pl:fixpoint_round_cap/1 for the two emitted doors and
 % v6/prolog/conformance/level_eval.pl:level_round_cap/1 for this oracle; the
 % oracle counts a stratum-group pass and the doors count a wavefront hop, so
-% the term names the group's heads here and the single head at the doors.
+% the term names the group's heads here and the single head at the doors, and
+% the two caps are sized independently (50 rounds here, 1000 at the doors).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -23,7 +24,7 @@ fixture(diverging_measure_recursion_is_bounded_and_loud,
          (counter(Next) <- (counter(Value), Next := Value + 1)) ]),
   [],
   [ [ +seed_number(0) ] ],
-  [ throws(diverging_measure_recursion([counter/1], 1000)) ]).
+  [ throws(diverging_measure_recursion([counter/1], 50)) ]).
 
 % SABOTAGE-ADJACENT CONTROL: the SAME two-rule shape with a measure that
 % cannot grow past the base rows. Removing the cap leaves this one green, so

@@ -10,6 +10,7 @@
 :- ensure_loaded('../conformance/ticklog').
 :- use_module(library(sha)).
 :- use_module(library(readutil)).
+:- use_module(library(time)).
 :- use_module('../sweep_timings', [ append_timings/3, report_slowest/2 ]).
 
 :- dynamic(oracle_dump_dir_fact/1).
@@ -30,14 +31,37 @@ dump_all :-
             ( member(Name, Names), dump_entry(OutDir, EngineDigest, Name, Entry) ),
             Entries),
     write_oracle_digests(OutDir, Entries),
-    findall(Name-Millis, member(entry(Name, _, _, miss, Millis), Entries), Timings),
+    findall(Name-Millis, member(entry(Name, _, _, miss, Millis, _), Entries), Timings),
     append_timings(OutDir, oracle, Timings),
+    write_oracle_timings(OutDir, Entries),
     report_slowest(oracle, Timings),
     include(is_oracle_hit, Entries, Hits),
-    length(Entries, Total), length(Hits, HitCount), Redumped is Total - HitCount,
-    format("ORACLE_CACHE hit=~w redumped=~w~n", [HitCount, Redumped]).
+    include(is_oracle_capped, Entries, Cappeds),
+    length(Entries, Total), length(Hits, HitCount), length(Cappeds, CappedCount),
+    Redumped is Total - HitCount,
+    format("ORACLE_CACHE hit=~w redumped=~w capped=~w~n",
+           [HitCount, Redumped, CappedCount]).
 
-is_oracle_hit(entry(_, _, _, hit, _)).
+is_oracle_hit(entry(_, _, _, hit, _, _)).
+is_oracle_capped(entry(_, _, _, _, _, capped)).
+
+% Ranks this stage's own work alone; sweep.timings.tsv is the cross-stage
+% ledger and has no column for the cap.
+oracle_timings_path(OutDir, Path) :-
+    atomic_list_concat([OutDir, '/oracle.timings.tsv'], Path).
+
+write_oracle_timings(OutDir, Entries) :-
+    oracle_timings_path(OutDir, Path),
+    findall(Millis-Name-Capped,
+            member(entry(Name, _, _, miss, Millis, Capped), Entries),
+            Pairs),
+    sort(0, @>=, Pairs, Sorted),
+    setup_call_cleanup(
+        open(Path, write, Stream),
+        ( format(Stream, "fixture\tms\tcapped~n", []),
+          forall(member(Millis-Name-Capped, Sorted),
+                 format(Stream, "~w\t~w\t~w~n", [Name, Millis, Capped])) ),
+        close(Stream)).
 
 % ═══ snapshot cache ═══
 % out/*.oracle.jsonl and out/*.oracle.final.jsonl are frozen snapshots
@@ -54,15 +78,15 @@ is_oracle_hit(entry(_, _, _, hit, _)).
 % that no longer exists, and sweep.ts grades the emitted module against it:
 % the missing tick log is exactly how that script tells a `rejection` (both
 % doors refuse the schedule) from an `emitted_crash` (a defect).
-dump_entry(OutDir, EngineDigest, Name, entry(Name, Key, Outputs, Hit, Millis)) :-
+dump_entry(OutDir, EngineDigest, Name, entry(Name, Key, Outputs, Hit, Millis, Capped)) :-
     oracle_key(EngineDigest, Name, Key),
     (   \+ oracle_forced,
         cached_oracle(Name, Key, Cached),
         oracle_outputs_match(OutDir, Name, Cached)
-    ->  Outputs = Cached, Hit = hit, Millis = 0
+    ->  Outputs = Cached, Hit = hit, Millis = 0, Capped = no
     ;   drop_oracle_outputs(OutDir, Name),
         get_time(Start),
-        dump_one(OutDir, Name),
+        dump_one_capped(OutDir, Name, Capped),
         get_time(End),
         Seconds is End - Start,
         Millis is round(Seconds * 1000),
@@ -73,6 +97,27 @@ dump_entry(OutDir, EngineDigest, Name, entry(Name, Key, Outputs, Hit, Millis)) :
         capture_oracle_outputs(OutDir, Name, Outputs),
         Hit = miss
     ).
+
+% Per fixture, not per stage: one slow fixture used to run out sweep.sh's
+% whole-stage budget and take every fixture after it down with the process.
+oracle_fixture_budget(Seconds) :-
+    (   getenv('SWEEP_ORACLE_FIXTURE_BUDGET_S', Text),
+        atom_number(Text, Value),
+        number(Value),
+        Value > 0
+    ->  Seconds = Value
+    ;   Seconds = 10
+    ).
+
+% call_with_time_limit/2 raises inside the fixture's own goal, so dump_one_/2
+% re-throws time_limit_exceeded instead of reporting it as an ORACLE_THROW.
+dump_one_capped(OutDir, Name, Capped) :-
+    oracle_fixture_budget(Budget),
+    catch(( call_with_time_limit(Budget, dump_one(OutDir, Name)), Capped = no ),
+          time_limit_exceeded,
+          ( Capped = capped,
+            drop_oracle_outputs(OutDir, Name),
+            format("ORACLE_CAPPED ~w ~w~n", [Name, Budget]) )).
 
 oracle_suffix('.oracle.jsonl').
 oracle_suffix('.oracle.final.jsonl').
@@ -162,11 +207,14 @@ load_oracle_digests :-
     ;   true
     ).
 
+% A capped fixture gets no row, so the next pass retries it rather than
+% caching the truncated dump under a key that would then hit.
 write_oracle_digests(OutDir, Entries) :-
     oracle_digest_path(OutDir, Path),
     setup_call_cleanup(
         open(Path, write, Stream),
-        forall(member(entry(Name, Key, Outputs, _, _), Entries),
+        forall(( member(entry(Name, Key, Outputs, _, _, Capped), Entries),
+                 Capped \== capped ),
                ( write_term(Stream, oracle_digest(Name, Key, Outputs),
                             [quoted(true), ignore_ops(true)]),
                  write(Stream, '.'), nl(Stream) )),
@@ -199,7 +247,10 @@ dump_one_(OutDir, Name) :-
           format("ORACLE_OK ~w~n", [Name])
         ),
         Error,
-        format("ORACLE_THROW ~w ~q~n", [Name, Error])
+        (   Error == time_limit_exceeded
+        ->  throw(Error)
+        ;   format("ORACLE_THROW ~w ~q~n", [Name, Error])
+        )
     ).
 
 % ═══ final-state leg (EXPRESSION + AGGREGATE LIFT arc) ══════════════════════
