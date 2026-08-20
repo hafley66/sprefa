@@ -1,6 +1,6 @@
 # One authored cross-target annotation fixture.  The compiler-plane relations
 # below must not reach the runtime relation set.
-rel key(Target: type) -> type.
+rel key(Target: type) -> Target.
 rel configure(Target: type, Value: int, Enabled: bool, Ratio: float) -> type.
 rel first(Target: type) -> type.
 rel second(Target: type) -> type.

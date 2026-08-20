@@ -10,7 +10,7 @@
 # @parity typespec model-extends -> relational composition
 # @parity typespec model-is -> relational composition
 
-rel key(Target: type) -> type.
+rel key(Target: type) -> Target.
 
 rel Identifier(value: text).
 rel DisplayName(value: text).

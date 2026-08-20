@@ -1,4 +1,4 @@
-rel key(Target: type) -> type.
+rel key(Target: type) -> Target.
 
 rel Person(id: key(int), name: text).
 

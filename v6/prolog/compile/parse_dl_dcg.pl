@@ -526,7 +526,7 @@ rel_stmt(Decls) -->
           )
       ;   #`(`,
           args(decl_a_column, Specs), #`)`,
-          relation_arrow_output(Segs, Specs, ArrowSpecs),
+          relation_arrow_output(Segs, Specs, ArrowSpecs, ReturnAlias),
           { length(ArrowSpecs, Arity),
             module_path_name(Segs, Name),
             Ref = Name/Arity,
@@ -536,8 +536,9 @@ rel_stmt(Decls) -->
           rel_modifiers(Ref, Mods),
           is_clause(Ref, Conformance),
           { module_path_decls(Segs, Ref, PathDecls),
+            arrow_return_alias_decl(Ref, ReturnAlias, AliasDecls),
             column_less_decls(Ref, ArrowSpecs, Mods, UnitDecls),
-            append([Typed, Mods, PathDecls, UnitDecls, Conformance], Decls) },
+            append([Typed, Mods, PathDecls, AliasDecls, UnitDecls, Conformance], Decls) },
           #`.`
       )
     ; decl_b_tail(Decls)
@@ -546,7 +547,7 @@ rel_stmt(Decls) -->
 % Relation arrows are declaration-only sugar. The output is represented by
 % the same ordinary final column as the explicit spelling, so every later
 % compiler phase consumes one canonical declaration shape.
-relation_arrow_output(Segs, Specs, ArrowSpecs) -->
+relation_arrow_output(Segs, Specs, ArrowSpecs, ReturnAlias) -->
     ( ws, @`->`
     -> ws, type_expr(OutputType),
        { module_path_name(Segs, Name),
@@ -557,9 +558,18 @@ relation_arrow_output(Segs, Specs, ArrowSpecs) -->
                      arrow_return_column_collision(Name/FinalArity)))
          ;  true
          ),
-         append(Specs, [column(return, OutputType)], ArrowSpecs) }
-    ;  { ArrowSpecs = Specs }
+         relation_arrow_alias(Specs, OutputType, ReturnAlias, ReturnType),
+         append(Specs, [column(return, ReturnType)], ArrowSpecs) }
+    ;  { ArrowSpecs = Specs, ReturnAlias = none }
     ).
+
+relation_arrow_alias(Specs, OutputName, alias(Position), type) :-
+    nth1(Position, Specs, column(OutputName, type)),
+    !.
+relation_arrow_alias(_, OutputType, none, OutputType).
+
+arrow_return_alias_decl(_, none, []).
+arrow_return_alias_decl(Ref, alias(Position), [return_alias(Ref, Position)]).
 
 % Parameters only when a SECOND group follows; the peek below decides it
 % standing at the first group's closing paren.

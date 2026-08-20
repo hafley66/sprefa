@@ -329,12 +329,21 @@ decl_line(Decls, _Rules, _Bindings, Name/0, Line) :-
 decl_line(Decls, Rules, Bindings, Ref, Line) :-
     decl_ref_spelling(Decls, Ref, Name),
     rel_columns(Decls, Rules, Bindings, Ref, Columns),
-    maplist(print_decl_column(Decls, Ref), Columns, ColumnTexts),
+    relation_arrow_columns(Decls, Ref, Columns, PrintedColumns, ArrowText),
+    maplist(print_decl_column(Decls, Ref), PrintedColumns, ColumnTexts),
     atomic_list_concat(ColumnTexts, ', ', ColsText),
     decl_modifiers_text(Decls, Ref, Sep, ModifiersText),
     is_clause_text(Decls, Ref, ConformanceText),
-    format(atom(Line), "rel ~w(~w)~w~w~w.~n",
-           [Name, ColsText, Sep, ModifiersText, ConformanceText]).
+    format(atom(Line), "rel ~w(~w)~w~w~w~w.~n",
+           [Name, ColsText, ArrowText, Sep, ModifiersText, ConformanceText]).
+
+relation_arrow_columns(Decls, Ref, Columns, InputColumns, ArrowText) :-
+    memberchk(return_alias(Ref, Position), Decls),
+    nth1(Position, Columns, Alias),
+    append(InputColumns, [return], Columns),
+    !,
+    format(atom(ArrowText), " -> ~w", [Alias]).
+relation_arrow_columns(_, _, Columns, Columns, '').
 
 % Sep is '' rather than ' ' when the ref carries no modifier, so a decl line
 % with none closes straight onto the column list.

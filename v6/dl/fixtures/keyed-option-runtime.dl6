@@ -1,3 +1,3 @@
-rel key(Target: type) -> type.
+rel key(Target: type) -> Target.
 
 rel KeyedOption(id: key(option(int)), body: text).
