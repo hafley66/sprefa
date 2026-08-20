@@ -58,7 +58,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly enum_types: readonly IEnumTypePlan[]; readonly enum_ref_columns: IEnumRefColumns; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -151,8 +151,8 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 export const ENUM_TYPES: readonly IEnumTypePlan[] = [
-  { name: "__opt___gen__list_int_798e673312e7575f", variants: [] },
-  { name: "__opt___gen__list_text_df210f232c1299bd", variants: [] },
+  { name: "__opt___gen__list_int_798e673312e7575f", variants: [], identity: { intern_sql: `INSERT OR IGNORE INTO "__enum_identity___opt___gen__list_int_798e673312e7575f" ("value") VALUES (?)`, lookup_sql: `SELECT "id", "value" FROM "__enum_identity___opt___gen__list_int_798e673312e7575f" WHERE "value" = ?` } },
+  { name: "__opt___gen__list_text_df210f232c1299bd", variants: [], identity: { intern_sql: `INSERT OR IGNORE INTO "__enum_identity___opt___gen__list_text_df210f232c1299bd" ("value") VALUES (?)`, lookup_sql: `SELECT "id", "value" FROM "__enum_identity___opt___gen__list_text_df210f232c1299bd" WHERE "value" = ?` } },
 ];
 
 export const ENUM_REF_COLUMNS: IEnumRefColumns = {
@@ -248,6 +248,8 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__support_next_option_list_column_roundtrips_null_and_present_tagged" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__new_option_list_column_roundtrips_null_and_present_tagged" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "option_list_column_roundtrips_null_and_present_tagged_zero" ON "option_list_column_roundtrips_null_and_present_tagged" ("__refcount") WHERE "__refcount" <= 0`,
+  `CREATE TABLE "__enum_identity___opt___gen__list_int_798e673312e7575f" ("id" INTEGER PRIMARY KEY, "value" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "__enum_identity___opt___gen__list_text_df210f232c1299bd" ("id" INTEGER PRIMARY KEY, "value" TEXT NOT NULL UNIQUE)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -298,7 +300,7 @@ const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
   tags_holder__tags: ["int", "int"],
 };
 
-const rel_catalog: readonly IRelCatalogRow[] = [
+const rel_catalog: readonly IRelCatalogRow[] = new Array<IRelCatalogRow>(
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
@@ -389,7 +391,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 88, parent_id: 30, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "ab0d2a82fc58996c", h_schema: "", h_rule: "" },
   { rel_id: 89, parent_id: 32, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "ac92250fe087cea2", h_schema: "", h_rule: "" },
   { rel_id: 90, parent_id: 33, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "c849611285296619", h_schema: "", h_rule: "" },
-];
+);
 
 const rel_declared_column_types: Record<string, readonly string[]> = {
   __gen__list_int_798e673312e7575f: ["text"],
@@ -471,7 +473,7 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, rels).pipe(
+      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, rels).pipe(
         map((decoded): ITickDeltas => ({ rels: decoded, carry_pending })),
       )),
     )),
@@ -479,9 +481,9 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 }
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validate_arrivals(arrivals);
-  arrivals = EnumPlane.intern(ENUM_TYPES, ENUM_REF_COLUMNS, arrivals);
-  return run_incremental_tick(seam, arrivals);
+  return EnumPlane.intern(seam, ENUM_TYPES, ENUM_REF_COLUMNS, arrivals).pipe(
+    concatMap((normalized) => run_incremental_tick(seam, validate_arrivals(normalized))),
+  );
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
@@ -494,7 +496,6 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "option_list_column_roundtrips_null_and_present",
-  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,

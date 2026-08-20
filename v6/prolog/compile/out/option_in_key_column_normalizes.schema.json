@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "session": {
+      "additionalProperties":false,
+      "properties": {
+        "token": {
+          "anyOf": [
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"none"}},
+              "required": ["tag" ],
+              "type":"object"
+            },
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"some"},"value": {"type":"string"}},
+              "required": ["tag", "value" ],
+              "type":"object"
+            }
+          ]
+        },
+        "user_id": {"type":"integer"}
+      },
+      "required": ["token", "user_id" ],
+      "type":"object"
+    }
+  },
+  "$id":"option_in_key_column_normalizes#1587edf42e35e90a",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

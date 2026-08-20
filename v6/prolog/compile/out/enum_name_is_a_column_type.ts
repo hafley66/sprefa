@@ -58,7 +58,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly enum_types: readonly IEnumTypePlan[]; readonly enum_ref_columns: IEnumRefColumns; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -151,7 +151,7 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 export const ENUM_TYPES: readonly IEnumTypePlan[] = [
-  { name: "grade", variants: [{ tag: "green", rel: "grade_green", fields: ["days"], field_types: ["int"], field_enums: [null], select_sql: `SELECT t."id", t."days" FROM "enum_name_is_a_column_type_grade_green_2393efd6acf8" t` }, { tag: "ripe", rel: "grade_ripe", fields: ["sugar"], field_types: ["int"], field_enums: [null], select_sql: `SELECT t."id", t."sugar" FROM "enum_name_is_a_column_type_grade_ripe_a36515c2825f" t` }] },
+  { name: "grade", variants: [{ tag: "green", rel: "grade_green", fields: ["days"], field_types: ["int"], field_enums: [null], select_sql: `SELECT t."id", t."days" FROM "enum_name_is_a_column_type_grade_green_2393efd6acf8" t` }, { tag: "ripe", rel: "grade_ripe", fields: ["sugar"], field_types: ["int"], field_enums: [null], select_sql: `SELECT t."id", t."sugar" FROM "enum_name_is_a_column_type_grade_ripe_a36515c2825f" t` }], identity: { intern_sql: `INSERT OR IGNORE INTO "__enum_identity_grade" ("value") VALUES (?)`, lookup_sql: `SELECT "id", "value" FROM "__enum_identity_grade" WHERE "value" = ?` } },
 ];
 
 export const ENUM_REF_COLUMNS: IEnumRefColumns = {
@@ -215,6 +215,7 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__support_next_enum_name_is_a_column_type_picked_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__new_enum_name_is_a_column_type_picked_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "enum_name_is_a_column_type_picked_tag_zero" ON "enum_name_is_a_column_type_picked_tag" ("__refcount") WHERE "__refcount" <= 0`,
+  `CREATE TABLE "__enum_identity_grade" ("id" INTEGER PRIMARY KEY, "value" TEXT NOT NULL UNIQUE)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -249,7 +250,7 @@ const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
   picked_tag: ["int", "text"],
 };
 
-const rel_catalog: readonly IRelCatalogRow[] = [
+const rel_catalog: readonly IRelCatalogRow[] = new Array<IRelCatalogRow>(
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
@@ -306,7 +307,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 54, parent_id: 19, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "fc10e97ab6026af2", h_schema: "", h_rule: "" },
   { rel_id: 55, parent_id: 21, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "c2c2f477b6d6d5b3", h_schema: "", h_rule: "" },
   { rel_id: 56, parent_id: 22, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "085dbf1ea17092a8", h_schema: "", h_rule: "" },
-];
+);
 
 const rel_declared_column_types: Record<string, readonly string[]> = {
   grade_green: ["int", "int"],
@@ -378,7 +379,7 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, rels).pipe(
+      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, rels).pipe(
         map((decoded): ITickDeltas => ({ rels: decoded, carry_pending })),
       )),
     )),
@@ -386,9 +387,9 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 }
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validate_arrivals(arrivals);
-  arrivals = EnumPlane.intern(ENUM_TYPES, ENUM_REF_COLUMNS, arrivals);
-  return run_incremental_tick(seam, arrivals);
+  return EnumPlane.intern(seam, ENUM_TYPES, ENUM_REF_COLUMNS, arrivals).pipe(
+    concatMap((normalized) => run_incremental_tick(seam, validate_arrivals(normalized))),
+  );
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
@@ -401,7 +402,6 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "enum_name_is_a_column_type",
-  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,

@@ -32,7 +32,7 @@ fi
 rm -rf "$SHARDS"
 
 if [ "$JOBS" -le 1 ]; then
-  exec swipl -q -l "$PROLOG_DIR/sweep.pl" -g sweep -g halt
+  exec swipl -q -l "$PROLOG_DIR/sweep.pl" -g "compile_messages:dl6_debug_from_env" -g sweep -g halt
 fi
 
 mkdir -p "$SHARDS"
@@ -40,7 +40,7 @@ mkdir -p "$SHARDS"
 pids=()
 for ((rank = 0; rank < JOBS; rank++)); do
   SWEEP_SHARD_INDEX="$rank" SWEEP_JOBS="$JOBS" \
-    swipl -q -l "$PROLOG_DIR/sweep.pl" -g sweep_shard -g halt \
+    swipl -q -l "$PROLOG_DIR/sweep.pl" -g "compile_messages:dl6_debug_from_env" -g sweep_shard -g halt \
     > "$SHARDS/worker.$rank.log" &
   pids+=("$!")
 done
