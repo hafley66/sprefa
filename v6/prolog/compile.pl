@@ -141,6 +141,11 @@ preserve_compiler_type_rules(prog(Decls, Rules), Bindings,
                              CompilerBindings) :-
     partition_compiler_type_rules(Decls, Rules, SourceCompilerRules, RuntimeRules),
     copy_term(SourceCompilerRules-Bindings, CompilerRules-CompilerBindings).
+preserve_compiler_type_rules(program(Decls, Rules, Queries), Bindings,
+                             program(Decls, RuntimeRules, Queries), CompilerRules,
+                             CompilerBindings) :-
+    partition_compiler_type_rules(Decls, Rules, SourceCompilerRules, RuntimeRules),
+    copy_term(SourceCompilerRules-Bindings, CompilerRules-CompilerBindings).
 
 partition_compiler_type_rules(_, [], [], []).
 partition_compiler_type_rules(Decls, [Rule | Rules], [Rule | CompilerRules], RuntimeRules) :-

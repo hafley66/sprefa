@@ -11062,3 +11062,18 @@ test(relation_id_assignment_rejects_a_different_target) :-
                                source/1, value, id('Revision'))).
 
 :- end_tests(relation_id_access).
+
+:- begin_tests(plan_program3).
+
+% 65607a8d5 regression: preserve_compiler_type_rules matched only prog/2, so
+% any program carrying a ?query (program/3 surface) failed plan with no ball.
+test(a_program_with_a_query_reaches_the_plan_phase) :-
+    Text = "rel person(name: text, age: int) key(1).\n\nadult(Name) <-\n  person(Name, Age),\n  Age >= 18.\n\n?adult(Name).\n",
+    tmp_file_stream(text, File, Stream),
+    write(Stream, Text),
+    close(Stream),
+    setup_call_cleanup(true,
+        compile:compile_dl6(File, '/dev/null', []),
+        catch(delete_file(File), _, true)).
+
+:- end_tests(plan_program3).
