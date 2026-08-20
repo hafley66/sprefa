@@ -166,7 +166,9 @@ real 0m0.179s
 
 Machine context for the whole window: four other swipl processes at ~100% CPU
 each, `uptime` load average 9 to 15, three other lanes sweeping. The before-run
-stalled at the same point on the UNMODIFIED corpus, which is the control.
+stalled at the same point on the UNMODIFIED corpus, which is the control; that
+control is an mtime observation (`ls -t out/`) taken while the run was live, so
+read it as corroboration of the two receipts above rather than as their equal.
 
 What that leaves unmeasured, and what can be said without it:
 
