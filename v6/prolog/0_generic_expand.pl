@@ -1264,7 +1264,33 @@ normalized_member_row(Decls, member(Id, Owner, Ordinal, Name, Type)) :-
 % A few compiler-owned and conformance programs provide only col_type/3
 % entries.  Keep the normalized member graph available for those programs as
 % well as for parser-produced type_decl/2 entries.
+% One grouping pass over the declarations, rather than a full scan per owner
+% name. The scan form below ran findall/3 and memberchk/2 over all 1246 pokeapi
+% declarations once for each of its 212 owners and measured 17.5 ms of a 500 ms
+% compile. keysort/2 is stable, so a group keeps the declaration order the
+% findall produced, and its keys arrive in the sorted order setof/3 produced.
+% An owner name that is not an atom cannot be a group key without changing which
+% declarations the scan's unification reaches, so that case keeps the scan.
 plain_relation_specs(Decls, OwnerName, Specs) :-
+    (   plain_relation_spec_groups(Decls, Groups)
+    ->  member(OwnerName-Specs, Groups)
+    ;   plain_relation_specs_scan(Decls, OwnerName, Specs)
+    ).
+
+plain_relation_spec_groups(Decls, Groups) :-
+    findall(Name-col(Column, Type),
+            member(col_type(Name/_Arity, Column, Type), Decls),
+            Pairs),
+    forall(member(Name-_, Pairs), atom(Name)),
+    keysort(Pairs, Sorted),
+    group_pairs_by_key(Sorted, Grouped),
+    findall(Declared, member(type_decl(Declared, _), Decls), TypeDeclared),
+    exclude(owner_has_type_decl(TypeDeclared), Grouped, Groups).
+
+owner_has_type_decl(TypeDeclared, OwnerName-_) :-
+    memberchk(OwnerName, TypeDeclared).
+
+plain_relation_specs_scan(Decls, OwnerName, Specs) :-
     setof(Name,
           Arity^Column^Type^member(col_type(Name/Arity, Column, Type), Decls),
           OwnerNames),
