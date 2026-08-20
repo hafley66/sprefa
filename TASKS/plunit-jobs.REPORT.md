@@ -128,7 +128,7 @@ All four are red on `origin/main` before the change too; none moved.
 
 | sha | subject |
 |---|---|
-| cf1365251 | perf(tests): plunit jobs(N), per-test timing, greppable failing set |
+| ff2b59bfd | perf(tests): plunit jobs(N), per-test timing, greppable failing set |
 
 ## Left open
 
