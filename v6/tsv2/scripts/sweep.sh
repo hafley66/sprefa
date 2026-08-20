@@ -4,15 +4,22 @@
 #   1. v6/prolog/compile/sweep.pl: compiles every conformance/fixtures/*.pl
 #      fixture, writes v6/prolog/compile/out/manifest.json (per-fixture
 #      compiled|unsupported|crash bucket) plus, for every compiled fixture,
-#      out/<name>.ts and out/<name>.schedule.json.
+#      out/<name>.ts and out/<name>.schedule.json. Fanned out across
+#      SWEEP_JOBS worker processes by scripts/sweep-stage1.sh, and skipping
+#      any fixture whose digest is already in out/sweep.digests.
 #   2. v6/prolog/compile/oracle_dump.pl: runs conformance/ticklog.pl
 #      (unedited) over every fixture's OWN schedule, writing
 #      out/<name>.oracle.jsonl (or printing ORACLE_THROW for the handful of
-#      fixtures that test an engine rejection path).
+#      fixtures that test an engine rejection path). The jsonl files are
+#      FROZEN SNAPSHOTS (conformance/rulings.pl, oracle_demoted_to_snapshots),
+#      so a fixture is re-dumped only when its own program/initial/schedule or
+#      the oracle engine under it changed.
 #   3. copies every compiled fixture's emitted module into gen_emitted/ (so
 #      its "../runtime/..." relative imports resolve inside this package),
 #      then runs scripts/sweep.ts, which replays each schedule against the
-#      emitted module and diffs the tick log against the oracle log.
+#      emitted module and diffs the tick log against the oracle log. One node
+#      process for the whole corpus, and a fixture is replayed only when its
+#      emitted module, its schedule, either snapshot, or the runtime changed.
 #   4. scripts/manifest-reason-diff.ts: diffs the freshly written manifest's
 #      refusal REASONS against git HEAD's copy. Stages 1-3 are all bucket/count
 #      gates, so a fixture that stays `unsupported` while changing WHICH refusal
@@ -26,9 +33,24 @@
 # failure names the stage instead of the script. Measured walls are recorded
 # against each `capped` call below; every default is at least 10x the measured
 # leg and never under 300s, because a stage that takes seconds today has no
-# meaningful multiple and the honest claim is "still running after N minutes
+# meaningful multiple and the accurate claim is "still running after N minutes
 # means stuck". Override per leg with SWEEP_COMPILE_BUDGET_S,
 # SWEEP_ORACLE_BUDGET_S, SWEEP_DIFF_BUDGET_S, SWEEP_REASON_BUDGET_S.
+#
+# KNOBS (stage 1 only):
+#   SWEEP_JOBS=<n>   worker processes. Default is the machine's performance
+#                    core count. 1 runs the old single-process shape.
+#   SWEEP_FORCE=1    spend every cache: drop the compiled outputs and the
+#                    compile digest store, re-dump every oracle snapshot, and
+#                    replay every fixture. Reaches all three stages.
+# Stages 2-4 stay in one process each: stage 2 is one `dump_all` goal inside
+# compile/oracle_dump.pl and stage 3 one `node scripts/sweep.ts` run over the
+# whole corpus. Their cost is now paid per CHANGED fixture, so sharding them
+# would buy the forced pass alone.
+#
+# TIMINGS. Each stage appends `fixture<TAB>stage<TAB>ms` rows for the work it
+# actually did to out/sweep.timings.tsv (gitignored) and prints its own slowest
+# ten. A cached pass writes no rows and says so.
 set -euo pipefail
 . "$(cd "$(dirname "$0")/../.." && pwd)/tools/run-capped.sh"
 cd "$(dirname "$0")/.."
@@ -36,23 +58,43 @@ cd "$(dirname "$0")/.."
 COMPILE_DIR="../prolog/compile"
 COMPILE_OUT="$COMPILE_DIR/out"
 
-echo "=== stage 1: compile sweep ==="
+# One pass, one ledger. Truncated here and appended to by every stage, so the
+# rows are this pass's work and not an accumulation across runs.
+mkdir -p "$COMPILE_OUT"
+printf 'fixture\tstage\tms\n' > "$COMPILE_OUT/sweep.timings.tsv"
+
+# Performance cores, not logical: the sweep is compute-bound prolog and the
+# efficiency cores finish their slice long after the others. `sysctl` is the
+# macOS spelling, `getconf` the portable fallback.
+sweep_default_jobs() {
+  local count
+  count="$(sysctl -n hw.perflevel0.logicalcpu 2>/dev/null || true)"
+  [ -n "$count" ] || count="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+  [ -n "$count" ] || count=4
+  printf '%s' "$count"
+}
+SWEEP_JOBS="${SWEEP_JOBS:-$(sweep_default_jobs)}"
+
+echo "=== stage 1: compile sweep (jobs=$SWEEP_JOBS) ==="
 # GC stays ON. The corpus outgrew the `set_prolog_flag(gc,false)` workaround
 # this stage carried for the swipl 10.0.2 "Mismatch in up phase" compaction
 # abort: at 462 fixtures the collector-free heap never stops growing and the
 # stage runs past its whole 900s budget, where with GC on it completes in ~75s
 # at ~2.4 GB peak. The abort itself no longer reproduces on this corpus.
-# Budget: 900s is ~12x the measured wall; a compile sweep that has not finished
-# in fifteen minutes has hit a cliff, not a corpus.
+# Sharding cuts the peak with it: a worker only ever holds its own slice.
+# Budget: 900s is ~12x the measured single-process wall; a compile sweep that
+# has not finished in fifteen minutes has hit a cliff, not a corpus.
 # DL6_DEBUG (comma topic list, or `all`) turns on the compiler's library(debug)
-# topics for this stage; compile_messages:dl6_debug_from_env/0 is the one parser.
+# topics for this stage; compile_messages:dl6_debug_from_env/0 is the one parser
+# and sweep-stage1.sh forwards the variable to every worker.
 capped "${SWEEP_COMPILE_BUDGET_S:-900}" "stage 1 compile sweep" \
-  swipl -q -l "$COMPILE_DIR/../sweep.pl" \
-  -g "compile_messages:dl6_debug_from_env" -g sweep -g halt
+  env "SWEEP_JOBS=$SWEEP_JOBS" "SWEEP_FORCE=${SWEEP_FORCE:-0}" "DL6_DEBUG=${DL6_DEBUG:-}" \
+  bash scripts/sweep-stage1.sh "$SWEEP_JOBS"
 
 echo ""
 echo "=== stage 2: oracle dump ==="
 capped "${SWEEP_ORACLE_BUDGET_S:-900}" "stage 2 oracle dump" \
+  env "SWEEP_FORCE=${SWEEP_FORCE:-0}" \
   swipl -q -l "$COMPILE_DIR/oracle_dump.pl" -g dump_all -g halt
 
 echo ""
@@ -74,6 +116,7 @@ done <<< "$compiled_names"
 # The replay leg: 196 emitted modules each replayed against their schedule,
 # inside the 8.3s the whole sweep costs. Budget 900s.
 capped "${SWEEP_DIFF_BUDGET_S:-900}" "stage 3 emitted-vs-oracle replay" \
+  env "SWEEP_FORCE=${SWEEP_FORCE:-0}" \
   node --experimental-transform-types scripts/sweep.ts
 
 echo ""
