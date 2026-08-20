@@ -772,3 +772,11 @@ ruling(acyclic_guard_spelling, wrapper_composition_default_on, user,
 % Closes the ghcacher plan's open question 4 (plans/2026-08-04-ghcacher-plan.md).
 ruling(toml_via_json_operator, format_polymorphic_json_op, user,
        'user 2026-08-16: "toml is read by json operator im not relitigating this read v4/v5 json operator" — the v6 json op inherits v5 format polymorphism; no dasel/yj/tomlq, no awk').
+
+% 2026-08-20: the prolog oracle is demoted from per-pass executor to snapshot
+% minter. Sweeps diff emitted-door outputs against the COMMITTED oracle
+% snapshots (out/*.oracle.jsonl); the oracle re-executes only a fixture whose
+% program, schedule, or engine.pl/ticklog.pl digest changed, and on demand for
+% a named algorithm comparison. Snapshot regeneration is a reviewed diff.
+ruling(oracle_demoted_to_snapshots, snapshots_are_the_truth_between_semantic_changes, user,
+       'user 2026-08-20: "idk why i have 2 impls its fine to oracle specific algorithms comparison but it feels like extremely dead weight/low gain considering how far we are on snapshots that the oracle was involved in". The oracle stays the source that MINTS an expected output (a new construct still gets its snapshot from the oracle once), and stays available for targeted algorithm comparisons; it stops re-executing all 461 programs every sweep pass. Cross-door protection is preserved: TS and Rust doors still both diff against the same frozen snapshot, and grade.sh byte-clean still pins door agreement. Mechanism = the sweep digest cache (perf/sweep-shard lane) keyed on fixture + engine digests, applied to stage 2.').
