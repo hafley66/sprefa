@@ -416,15 +416,17 @@ check_single_arity_per_name([_ | Rest]) :-
 % is already one runtime relation before lowering, so refuse it rather than
 % inventing two SQLite tables that the runtime cannot distinguish.
 relation_storage_names(EntryStem, Decls, DerivedRefs, Shapes, Refs, Names) :-
-    maplist(relation_storage_candidate(EntryStem, Decls, DerivedRefs, Shapes),
+    rel_module_hash_index(Decls, HashIndex),
+    maplist(relation_storage_candidate(EntryStem, Decls, HashIndex, DerivedRefs,
+                                       Shapes),
             Refs, Candidates),
     keysort(Candidates, Ordered),
     allocate_storage_names(Ordered, [], Names).
 
-relation_storage_candidate(EntryStem, Decls, DerivedRefs, Shapes, Ref,
-                           Key-(Ref-Base)) :-
+relation_storage_candidate(EntryStem, Decls, HashIndex, DerivedRefs, Shapes,
+                           Ref, Key-(Ref-Base)) :-
     Ref = Name/Arity,
-    relation_declaring_module(EntryStem, Decls, Ref, ModuleStem),
+    relation_declaring_module(EntryStem, Decls, HashIndex, Ref, ModuleStem),
     storage_identifier(ModuleStem, ModulePart),
     storage_identifier(Name, RelationPart),
     storage_base_name(ModulePart, RelationPart, Prefixed),
@@ -511,10 +513,34 @@ shape_column(Name, ColumnType, column(Name, ColumnType)).
 % the text path, the fixture name on the term path.  Both paths must reach
 % the same physical spelling for the same program, which is what
 % compile/scripts/text_door_receipt.pl compares byte for byte.
-relation_declaring_module(EntryStem, Decls, Name/_Arity, ModuleStem) :-
-    findall(Hash, member(rel_module_decl(Name, Hash), Decls), Hashes0),
-    sort(Hashes0, Hashes),
+relation_declaring_module(EntryStem, Decls, HashIndex, Name/_Arity, ModuleStem) :-
+    rel_module_hashes(HashIndex, Decls, Name, Hashes),
     relation_declaring_module_stem(EntryStem, Decls, Name, Hashes, ModuleStem).
+
+% One grouping pass over the declarations rather than a findall/3 over all of
+% them per reference: pokeapi ran 224 references against 1434 declarations,
+% 20.0 ms. A non-ground relation name cannot be a group key without changing
+% which declarations member/2's unification reaches, so that case keeps the
+% scan.
+rel_module_hash_index(Decls, Index) :-
+    findall(Name-Hash, member(rel_module_decl(Name, Hash), Decls), Pairs),
+    (   forall(member(Name-_, Pairs), ground(Name))
+    ->  keysort(Pairs, Sorted),
+        group_pairs_by_key(Sorted, Grouped),
+        Index = rel_module_hashes(Grouped)
+    ;   Index = unkeyed
+    ).
+
+rel_module_hashes(rel_module_hashes(Grouped), _Decls, Name, Hashes) :-
+    ground(Name),
+    !,
+    (   memberchk(Name-Unsorted, Grouped)
+    ->  sort(Unsorted, Hashes)
+    ;   Hashes = []
+    ).
+rel_module_hashes(_Index, Decls, Name, Hashes) :-
+    findall(Hash, member(rel_module_decl(Name, Hash), Decls), Unsorted),
+    sort(Unsorted, Hashes).
 
 relation_declaring_module_stem(_EntryStem, Decls, _Name, [Hash], ModuleStem) :-
     !,
