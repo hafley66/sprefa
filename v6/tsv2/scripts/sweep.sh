@@ -14,12 +14,12 @@
 #      FROZEN SNAPSHOTS (conformance/rulings.pl, oracle_demoted_to_snapshots),
 #      so a fixture is re-dumped only when its own program/initial/schedule or
 #      the oracle engine under it changed.
-#   3. copies every compiled fixture's emitted module into gen_emitted/ (so
-#      its "../runtime/..." relative imports resolve inside this package),
-#      then runs scripts/sweep.ts, which replays each schedule against the
-#      emitted module and diffs the tick log against the oracle log. One node
-#      process for the whole corpus, and a fixture is replayed only when its
-#      emitted module, its schedule, either snapshot, or the runtime changed.
+#   3. scripts/sweep.ts: copies every compiled fixture's emitted module into
+#      gen_emitted/ (so its "../runtime/..." relative imports resolve inside
+#      this package), then replays each schedule against the emitted module
+#      and diffs the tick log against the oracle log. One node process for the
+#      whole corpus, and a fixture is replayed only when its emitted module,
+#      its schedule, either snapshot, or the runtime changed.
 #   4. scripts/manifest-reason-diff.ts: diffs the freshly written manifest's
 #      refusal REASONS against git HEAD's copy. Stages 1-3 are all bucket/count
 #      gates, so a fixture that stays `unsupported` while changing WHICH refusal
@@ -43,10 +43,12 @@
 #   SWEEP_FORCE=1    spend every cache: drop the compiled outputs and the
 #                    compile digest store, re-dump every oracle snapshot, and
 #                    replay every fixture. Reaches all three stages.
-# Stages 2-4 stay in one process each: stage 2 is one `dump_all` goal inside
-# compile/oracle_dump.pl and stage 3 one `node scripts/sweep.ts` run over the
-# whole corpus. Their cost is now paid per CHANGED fixture, so sharding them
-# would buy the forced pass alone.
+# Stage 3 fans out too: sweep.ts splits its cache MISSES round-robin across
+# SWEEP_JOBS child processes and re-orders every result into manifest order
+# before printing, so the fan-out cannot move a line. Stage 2 stays one
+# `dump_all` goal inside compile/oracle_dump.pl, but it now runs CONCURRENTLY
+# with stage 1 and its output is replayed under its own header, so the printed
+# order is the one it has always had.
 #
 # TIMINGS. Each stage appends `fixture<TAB>stage<TAB>ms` rows for the work it
 # actually did to out/sweep.timings.tsv (gitignored) and prints its own slowest
@@ -75,6 +77,32 @@ sweep_default_jobs() {
 }
 SWEEP_JOBS="${SWEEP_JOBS:-$(sweep_default_jobs)}"
 
+# Stage 2 is started HERE, alongside stage 1, and its output is replayed under
+# its own header below. The two stages share no file: stage 1 writes
+# out/<name>.{ts,schedule.json,schema.json,types.*}, manifest.json and
+# sweep.digests; stage 2 writes out/<name>.oracle*.jsonl, oracle.digests and
+# oracle.timings.tsv, and reads neither the manifest nor an emitted module.
+# Only out/sweep.timings.tsv is written by both, and sweep_timings.pl puts a
+# stage's whole block out in one write() for exactly that reason.
+oracle_log=""
+oracle_pid=""
+if [ "${SWEEP_ORACLE:-1}" != "0" ]; then
+  oracle_log="$(mktemp "${TMPDIR:-/tmp}/sweep-oracle.XXXXXX")"
+  capped "${SWEEP_ORACLE_BUDGET_S:-900}" "stage 2 oracle dump" \
+    env "SWEEP_FORCE=${SWEEP_FORCE:-0}" \
+    swipl -q -l "$COMPILE_DIR/oracle_dump.pl" -g dump_all -g halt \
+    > "$oracle_log" 2>&1 &
+  oracle_pid="$!"
+fi
+
+# A stage-1 failure must not leave the oracle worker running behind the exit.
+stop_oracle_worker() {
+  [ -n "$oracle_pid" ] || return 0
+  kill "$oracle_pid" 2>/dev/null || true
+  wait "$oracle_pid" 2>/dev/null || true
+  oracle_pid=""
+}
+
 echo "=== stage 1: compile sweep (jobs=$SWEEP_JOBS) ==="
 # GC stays ON. The corpus outgrew the `set_prolog_flag(gc,false)` workaround
 # this stage carried for the swipl 10.0.2 "Mismatch in up phase" compaction
@@ -87,42 +115,41 @@ echo "=== stage 1: compile sweep (jobs=$SWEEP_JOBS) ==="
 # DL6_DEBUG (comma topic list, or `all`) turns on the compiler's library(debug)
 # topics for this stage; compile_messages:dl6_debug_from_env/0 is the one parser
 # and sweep-stage1.sh forwards the variable to every worker.
+compile_status=0
 capped "${SWEEP_COMPILE_BUDGET_S:-900}" "stage 1 compile sweep" \
   env "SWEEP_JOBS=$SWEEP_JOBS" "SWEEP_FORCE=${SWEEP_FORCE:-0}" "DL6_DEBUG=${DL6_DEBUG:-}" \
-  bash scripts/sweep-stage1.sh "$SWEEP_JOBS"
+  bash scripts/sweep-stage1.sh "$SWEEP_JOBS" || compile_status=$?
+if [ "$compile_status" -ne 0 ]; then
+  stop_oracle_worker
+  exit "$compile_status"
+fi
 
 echo ""
 echo "=== stage 2: oracle dump ==="
 # SWEEP_ORACLE=0: the reference prolog never runs; stage 3 diffs the frozen
 # snapshots on disk (rulings.pl oracle_demoted_to_snapshots).
-if [ "${SWEEP_ORACLE:-1}" = "0" ]; then
+if [ -z "$oracle_pid" ]; then
   echo "SWEEP_ORACLE=off (snapshots as committed)"
 else
-  capped "${SWEEP_ORACLE_BUDGET_S:-900}" "stage 2 oracle dump" \
-    env "SWEEP_FORCE=${SWEEP_FORCE:-0}" \
-    swipl -q -l "$COMPILE_DIR/oracle_dump.pl" -g dump_all -g halt
+  oracle_status=0
+  wait "$oracle_pid" || oracle_status=$?
+  oracle_pid=""
+  cat "$oracle_log"
+  rm -f "$oracle_log"
+  [ "$oracle_status" -eq 0 ] || exit "$oracle_status"
 fi
 
 echo ""
-echo "=== stage 3: copy compiled modules into gen_emitted/, run the diff ==="
-mkdir -p gen_emitted
-compiled_names=$(capped "${SWEEP_MANIFEST_BUDGET_S:-300}" "stage 3 manifest read" node -e '
-  const fs = require("node:fs");
-  const manifest = JSON.parse(fs.readFileSync("'"$COMPILE_OUT"'/manifest.json", "utf8"));
-  for (const entry of manifest) if (entry.bucket === "compiled") console.log(entry.name);
-')
-# gen_emitted/ can also contain checked-in modules that are not fixture
-# outputs. Remove only the fixture module immediately before rewriting it.
-while IFS= read -r name; do
-  [ -z "$name" ] && continue
-  rm -f "gen_emitted/$name.ts"
-  cp -f "$COMPILE_OUT/$name.ts" "gen_emitted/$name.ts"
-done <<< "$compiled_names"
+echo "=== stage 3: emitted-vs-oracle replay ==="
+# The gen_emitted/ copy lives in sweep.ts (sync_emitted_modules): it already
+# reads the manifest this leg used to re-read in a second node process, and
+# `rm`+`cp` per fixture was 670 process spawns.
 
-# The replay leg: 196 emitted modules each replayed against their schedule,
-# inside the 8.3s the whole sweep costs. Budget 900s.
+# The replay leg: every emitted module replayed against its own schedule,
+# fanned out across SWEEP_JOBS child processes by sweep.ts (SWEEP_REPLAY_JOBS
+# overrides for this stage alone). Budget 900s.
 capped "${SWEEP_DIFF_BUDGET_S:-900}" "stage 3 emitted-vs-oracle replay" \
-  env "SWEEP_FORCE=${SWEEP_FORCE:-0}" \
+  env "SWEEP_FORCE=${SWEEP_FORCE:-0}" "SWEEP_JOBS=$SWEEP_JOBS" \
   node --experimental-transform-types scripts/sweep.ts
 
 echo ""
