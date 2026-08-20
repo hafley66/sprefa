@@ -152,12 +152,41 @@ function boundary_stage_statement(
   };
 }
 
+/** Shared-mode stage: resolve each event row to its durable __id and write
+ *  (relation_id, phase, sequence, row_id), one batched statement per rel. */
+function shared_frontier_stage_statement(
+  relation: IIncrementalRelationPlan,
+  table_name: string,
+  phase: number,
+  events: readonly DeltaEvent[],
+): SqlStatement {
+  const shared_table =
+    table_name === relation.next_frontier_table_name ? "__next_frontier" : "__frontier";
+  const join_terms = relation.columns.map(
+    (column, index) =>
+      `t.${quote_identifier(column)} IS json_extract(je.value, '$[${index + 1}]')`,
+  );
+  const on_sql = join_terms.length === 0 ? "1" : join_terms.join(" AND ");
+  const encoded_events = events.map((event) => [event.sequence, ...event.row]);
+  return {
+    sql: `INSERT INTO ${quote_identifier(shared_table)} ("relation_id", "_phase", "_sequence", "row_id") SELECT ?, ?, json_extract(je.value, '$[0]'), t."__id" FROM json_each(?) je JOIN ${quote_identifier(relation.table_name)} t ON ${on_sql}`,
+    args: [
+      relation.shared_frontier!.relation_id,
+      phase,
+      JSON.stringify(encoded_events),
+    ],
+  };
+}
+
 function frontier_stage_statement(
   relation: IIncrementalRelationPlan,
   table_name: string,
   phase: number,
   events: readonly DeltaEvent[],
 ): SqlStatement {
+  if (relation.shared_frontier !== undefined) {
+    return shared_frontier_stage_statement(relation, table_name, phase, events);
+  }
   if (relation.column_types?.includes("bytes") === true) {
     return direct_stage_statement(relation, table_name, "frontier", phase, events);
   }
@@ -1085,11 +1114,13 @@ export const IncrementalRuntime: IIncrementalRuntime = {
   ): Observable<void> {
     skipped_carry.delete(seam);
     if (relations.length === 0) return of(undefined);
+    const shared = relations.some((relation) => relation.shared_frontier !== undefined);
     const sql = observed_rels(relations, seam)
       .flatMap((relation) => [
         `DELETE FROM ${quote_identifier(relation.delta_table_name)}`,
-        `DELETE FROM ${quote_identifier(relation.next_frontier_table_name)}`,
+        ...(shared ? [] : [`DELETE FROM ${quote_identifier(relation.next_frontier_table_name)}`]),
       ])
+      .concat(shared ? ['DELETE FROM "__next_frontier"'] : [])
       .join(";\n");
     if (sql === "") return of(undefined);
     return seam.runner.executeMultiple(seam.db, sql);
@@ -1333,6 +1364,12 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<void> {
     if (relations.length === 0) return of(undefined);
+    if (relations.some((relation) => relation.shared_frontier !== undefined)) {
+      return seam.runner.executeMultiple(
+        seam.db,
+        'INSERT INTO "__frontier" ("relation_id", "_phase", "_sequence", "row_id") SELECT "relation_id", "_phase", "_sequence", "row_id" FROM "__next_frontier"',
+      );
+    }
     const sql = observed_rels(relations, seam)
       .map((relation) => {
         const columns = ["_phase", "_sequence", ...relation.columns]
@@ -1542,6 +1579,25 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     // Read-and-clear: a skipped rel's `__next_frontier_` stayed empty, so the
     // fill counts collected during the tick are its only carry evidence.
     const skipped_carried = skipped_carry.delete(seam);
+    if (relations.some((relation) => relation.shared_frontier !== undefined)) {
+      const promote_shared = (): Observable<void> =>
+        seam.runner.executeMultiple(
+          seam.db,
+          [
+            'DELETE FROM "__frontier"',
+            'INSERT INTO "__frontier" ("relation_id", "_phase", "_sequence", "row_id") SELECT "relation_id", "_phase", "_sequence", "row_id" FROM "__next_frontier"',
+            'DELETE FROM "__next_frontier"',
+          ].join(";\n"),
+        );
+      const carry_sql =
+        'SELECT CASE WHEN EXISTS (SELECT 1 FROM "__next_frontier" LIMIT 1) THEN 1 ELSE 0 END AS carry_pending';
+      return seam.runner.execute(seam.db, carry_sql).pipe(
+        concatMap((result: QueryResult) => {
+          const carry_pending = Number(result.rows[0]?.carry_pending ?? 0) === 1;
+          return promote_shared().pipe(map(() => carry_pending || skipped_carried));
+        }),
+      );
+    }
     const observed = observed_rels(relations, seam);
     const carry_terms = observed.flatMap((relation) => [
       `EXISTS (SELECT 1 FROM ${quote_identifier(relation.next_frontier_table_name)} LIMIT 1)`,
