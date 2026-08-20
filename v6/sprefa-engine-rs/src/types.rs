@@ -421,6 +421,13 @@ pub struct EnumRefColumn {
 
 pub type EnumRefColumns = std::collections::HashMap<String, Vec<Option<EnumRefColumn>>>;
 
+// Present only under frontier(shared): this rel's row in the two shared
+// frontier tables; frontier/next table names then name TEMP views.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedFrontierPlan {
+    pub relation_id: i64,
+}
+
 // One IIncrementalRelationPlan: the per-relation table names and statement
 // text the tick engine stages events through.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -432,6 +439,8 @@ pub struct IncrementalRelationPlan {
     pub frontier_table_name: String,
     pub next_frontier_table_name: String,
     pub departure_frontier_table_name: Option<String>,
+    #[serde(default)]
+    pub shared_frontier: Option<SharedFrontierPlan>,
     pub columns: Vec<String>,
     pub column_types: Vec<RowColumnType>,
     pub key_indices: Vec<usize>,
