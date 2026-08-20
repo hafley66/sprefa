@@ -471,6 +471,12 @@ perf-report:
 # were set against the measured wall on the dev machine when perf-all landed;
 # each is deliberately loose (this batch costs minutes, so a tight multiple
 # would be measuring machine load rather than the work).
+
+# graph_lowering lab: graph algorithms as ast.ts programs through evalProgramSql,
+# oracle-checked, rows/statements/ms per fixture into labs/graph_lowering/STANDINGS.md
+graph-lowering-bench:
+	cd {{ v6 }}/sprefa-store/js && GRAPH_LOWERING_BENCH=1 node --test --experimental-transform-types tests/labs/graph_lowering.test.ts
+
 perf-all:
 	@echo "=== ATLAS: every leg below is documented at v6/labs/BENCHMARKS.md ==="
 	@echo "=== shootout: in-RAM rust engines, fixpoint derived rows/sec ==="
@@ -483,6 +489,8 @@ perf-all:
 	@{ start=$(date +%s); if {{ capped }} "${PERF_BUDGET_S:-3600}" just --justfile {{ v6 }}/justfile dl6-budget; then st=0; else st=$?; fi; end=$(date +%s); echo "==> dl6-budget wall $((end-start))s (exit $st)"; }
 	@echo "=== store-rig: hermetic engines, retract (small scale; perf-all-deep = full ladder) ==="
 	@{ start=$(date +%s); if [ "${RIG_SCALES:-small}" = "full" ]; then {{ capped }} "${PERF_RIG_S:-7200}" just --justfile {{ v6 }}/justfile bench; else {{ capped }} "${PERF_RIG_S:-3600}" env SCALES="2x200" TSV2_SCALES="1x1000" V1_SCALES="1x1000" just --justfile {{ v6 }}/justfile bench; fi; st=$?; end=$(date +%s); echo "==> store-rig wall $((end-start))s (exit $st)"; }
+	@echo "=== graph-lowering-bench: graph algorithms as datalog over SQLite, set-encoding row counts ==="
+	@{ start=$(date +%s); if {{ capped }} "${PERF_GRAPH_LOWERING_S:-600}" just --justfile {{ v6 }}/justfile graph-lowering-bench; then st=0; else st=$?; fi; end=$(date +%s); echo "==> graph-lowering-bench wall $((end-start))s (exit $st)"; }
 	@echo "=== profile_dred: single cycle-safe retract, per-phase flame numbers ==="
 	@{ start=$(date +%s); if {{ capped }} "${PERF_PROFILE_S:-3600}" bash -c 'cd {{ v6 }}/sprefa-store && cargo run --quiet --release --example profile_dred'; then st=0; else st=$?; fi; end=$(date +%s); echo "==> profile_dred wall $((end-start))s (exit $st)"; }
 	@echo "=== sqlite_baseline: pure-SQLite closure build, grid_10000 naive (the emitter's ratchet floor) ==="

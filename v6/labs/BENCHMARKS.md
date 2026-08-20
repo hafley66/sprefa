@@ -23,7 +23,8 @@ history, and the bank each bench writes its numbers to.
 8. [dred profile](#dred-profile---single-retract-flame)
 9. [dl6 budget cell](#dl6-budget-cell---the-regression-gate)
 10. [sqlite build baseline](#sqlite-build-baseline---landing)
-11. [Open items](#open-items)
+11. [graph lowering lab](#graph-lowering-lab---graph-algorithms-as-datalog-over-sqlite)
+12. [Open items](#open-items)
 
 ## The truth stack
 
@@ -323,6 +324,19 @@ Its numbers are banked in `labs/exec_shootout/dl6/BASELINE.md`.
 build dominates, a few seconds warm.
 
 ---
+
+## graph lowering lab - graph algorithms as datalog over SQLite
+
+One line: `just graph-lowering-bench`. Purpose: which graph algorithms lower to the
+existing `ast.ts` (rels, rules, `cmp(var, literal)`, post-recursion aggregates) through
+`evalProgramSql`, and what each costs in materialised rows, statements, and ms. Programs:
+reach, tiers (succ table + post-recursion max), components (label set + min), distance
+(hop set + min), triangles (three-way join + count). Oracles are spelled-out TypeScript in
+the test file. Bank: `labs/graph_lowering/STANDINGS.md`. Contract:
+`labs/graph_lowering/CONTRACT.md`. The number to watch: components materialises
+nodes x component-size rows because `min` is forbidden inside the recursion
+(`lowerSql.ts:440 AggregateInRecursionError`); chain-1000 is 1,000,000 rows and 44 s,
+a 10-second-law defect the lab exists to size.
 
 ## Open items
 
