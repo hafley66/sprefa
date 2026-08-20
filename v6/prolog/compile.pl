@@ -740,8 +740,26 @@ compile_program(Name, Term, Bindings, Initial, OutFile, Emitter, Options) :-
     write_compile_trace(
         Name, [phase(parse, EmptyMeasurement) | PhaseMeasurements]).
 
+% frontier(shared) consolidates transient frontier state; absent = per_rel,
+% byte-identical output (plans/2026-08-19-shared-sqlite-frontier.md).
+frontier_option(Options, Mode) :-
+    (   memberchk(frontier(Mode0), Options)
+    ->  ( memberchk(Mode0, [per_rel, shared])
+        -> Mode = Mode0
+        ;  throw(unsupported_construct(bad_frontier_option(Mode0)))
+        )
+    ;   Mode = per_rel
+    ).
+
 compile_program_phases(Name, Term, Bindings, Initial, OutFile, Emitter,
                        Options, PhaseMeasurements) :-
+    frontier_option(Options, FrontierMode),
+    with_frontier_mode(FrontierMode,
+        compile_program_phases_moded(Name, Term, Bindings, Initial, OutFile,
+                                     Emitter, Options, PhaseMeasurements)).
+
+compile_program_phases_moded(Name, Term, Bindings, Initial, OutFile, Emitter,
+                             Options, PhaseMeasurements) :-
     dl6_reset_checkpoint,
     run_compile_phase(Name, plan,
                       program_plan(Term-Bindings, Options, Plan),
