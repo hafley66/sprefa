@@ -140,6 +140,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 :- ensure_loaded('annotation_surface.test.pl').
 :- ensure_loaded('anonymous_product_values.test.pl').
 :- ensure_loaded('anonymous_sum_values.test.pl').
+:- ensure_loaded('shared_frontier.test.pl').
 :- ensure_loaded('../../conformance/fixtures/0_generic_expand.pl').
 
 % Resolved relative to this file's own load-time directory (mirrors
