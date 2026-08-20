@@ -17,7 +17,7 @@
                                 merge_enum_type_rows/3,
                                 merge_option_type_rows/2,
                                 drop_minted_keyed_on_derived/3]).
-:- use_module('0_generic_expand', [expand_generic_program/2]).
+:- use_module('0_generic_expand', [expand_generic_program/2, freeze_type_rows/2]).
 :- use_module('0_match_expand', []).
 :- use_module('0_seq_expand', []).
 :- use_module('0_coalesce_expand', []).
@@ -102,7 +102,10 @@ expand_program_run(SurfaceProgram0, Bindings, ExpandedProgram,
           PhaseProgram, PhasedProgram),
     drop_minted_keyed_on_derived(EnumContext, PhasedProgram, DroppedProgram),
     merge_enum_type_rows(SurfaceDecls, DroppedProgram, EnumRowedProgram),
-    merge_option_type_rows(EnumRowedProgram, ExpandedProgram),
+    merge_option_type_rows(EnumRowedProgram, OptionRowedProgram),
+    OptionRowedProgram = prog(OptionDecls, OptionRules),
+    freeze_type_rows(OptionDecls, FrozenDecls),
+    ExpandedProgram = prog(FrozenDecls, OptionRules),
     ExpansionContext = EnumContext.
 
 expansion_phase_start(prog(SurfaceDecls, []), Bindings,

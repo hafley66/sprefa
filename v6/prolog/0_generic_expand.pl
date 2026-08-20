@@ -12,6 +12,7 @@
             generic_artifact_order/3,
             generated_generic_name/1,
             generic_type_ir/2,
+            freeze_type_rows/2,
             normalize_key_wrappers/2,
             schema_member_rows/2,
             type_relation_rows/2,
@@ -39,6 +40,7 @@
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
 :- discontiguous replace_generic_type/3.
+:- discontiguous generated_decl_module/4.
 
 expand_generic_in_context(expansion_context(_, Bindings), Program, Expanded) :-
     !,
@@ -67,7 +69,8 @@ expand_generic_program_with_bindings(prog(Decls0, Rules0), Bindings,
     merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
     expand_option_decls(FlavorRowedDecls, OptionDecls),
     retarget_type_decl_mirrors(OptionDecls, ExpandedDecls),
-    elaborate_and_erase_compiler_relations(ExpandedDecls, ExpandedRules,
+    freeze_type_rows(ExpandedDecls, FrozenExpandedDecls),
+    elaborate_and_erase_compiler_relations(FrozenExpandedDecls, ExpandedRules,
                                            Bindings, Decls, Rules).
 
 % Executable comparison arm, written as a second path so the template and
@@ -89,7 +92,8 @@ expand_generic_program_raw(prog(Decls0, Rules0), prog(Decls, Rules)) :-
     merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
     expand_option_decls(FlavorRowedDecls, OptionDecls),
     retarget_type_decl_mirrors(OptionDecls, ExpandedDecls),
-    elaborate_and_erase_compiler_relations(ExpandedDecls, ExpandedRules, [],
+    freeze_type_rows(ExpandedDecls, FrozenExpandedDecls),
+    elaborate_and_erase_compiler_relations(FrozenExpandedDecls, ExpandedRules, [],
                                            Decls, Rules).
 
 % Anonymous sums materialize after the source enum row pass has already been
@@ -174,7 +178,25 @@ evaluate_annotation_requests_with_relations(Decls0, Bindings, Requests,
                                          Evidence, Results),
         rewrite_annotation_declarations(Decls0, Results, Rewritten),
         bridge_key_annotation_evidence(Rewritten, Evidence, Bridged),
-        append(Bridged, [compiler_annotation_evidence(Evidence)], Decls).
+        rewrite_annotation_semantic_rows(Bridged, Results, Canonicalized),
+        append(Canonicalized, [compiler_annotation_evidence(Evidence)], Decls).
+
+rewrite_annotation_semantic_rows(Decls0, Results, Decls) :-
+    maplist(rewrite_annotation_semantic_decl(Results), Decls0, Decls).
+
+rewrite_annotation_semantic_decl(Results, semantic_type_rows(Rows0),
+                                 semantic_type_rows(Rows)) :-
+    !,
+    maplist(rewrite_annotation_semantic_row(Results), Rows0, Rows).
+rewrite_annotation_semantic_decl(_, Decl, Decl).
+
+rewrite_annotation_semantic_row(Results,
+                                member(MemberId, Owner, Position, Name, _),
+                                member(MemberId, Owner, Position, Name,
+                                       type_ref(TypeId))) :-
+    member(annotation_result(Owner, MemberId, [Name], TypeId), Results),
+    !.
+rewrite_annotation_semantic_row(_, Row, Row).
 
 annotation_identity_seed_rows(Decls, Requests, Rows) :-
     findall(Row,
@@ -831,11 +853,16 @@ expand_user_enum_templates(Decls0, Instances, Decls) :-
         sort(Found, Instances),
         maplist(instantiate_enum_template(Templates), Instances, MintedEnums),
         enum_payload_type_mirrors(MintedEnums, Decls0, PayloadMirrors),
-        enum_template_type_rows(MintedEnums, EnumRows),
+        enum_template_module_rows(Decls0, Instances, ModuleRows),
+        append(Decls0, ModuleRows, EnumContext),
+        enum_template_type_rows(EnumContext, MintedEnums, EnumRows0),
+        enum_template_derived_rows(Decls0, Instances, MintedEnums,
+                                    EnumDerivedRows),
+        append(EnumRows0, EnumDerivedRows, EnumRows),
         exclude(is_rel_template_enum, Decls0, Kept0),
         maplist(rewrite_user_template_decl(Instances), Kept0, Kept1),
         merge_enum_template_rows(EnumRows, Kept1, Kept2),
-        append([Kept2, PayloadMirrors, MintedEnums], Flat0),
+        append([Kept2, ModuleRows, PayloadMirrors, MintedEnums], Flat0),
         append(Flat0, [], Decls)
     ).
 
@@ -912,11 +939,34 @@ instantiate_enum_template(Templates, Application, enum_decl(ConcreteName, Varian
     canonical_type_name(Application, ConcreteName),
     substitute_template_type(Bindings, Variants0, Variants).
 
-enum_template_type_rows(MintedEnums, Rows) :-
+enum_template_type_rows(Decls, MintedEnums, Rows) :-
     findall(Row,
             ( member(enum_decl(ConcreteName, Variants), MintedEnums),
-              enum_type_rows([enum_decl(ConcreteName, Variants)], EnumRows),
+              append(Decls, [enum_decl(ConcreteName, Variants)], Context),
+              enum_type_rows(Context, EnumRows),
               member(Row, EnumRows) ),
+            Found),
+    sort(Found, Rows).
+
+enum_template_module_rows(Decls, Instances, Rows) :-
+    findall(semantic_decl_module(enum, ConcreteName, ModuleHash),
+            ( member(Application, Instances),
+              canonical_type_name(Application, ConcreteName),
+              Application =.. [Constructor | _],
+              member(semantic_decl_module(enum, Constructor, ModuleHash), Decls) ),
+            Found),
+    sort(Found, Rows).
+
+enum_template_derived_rows(Decls, Instances, MintedEnums, Rows) :-
+    findall(derived_from(ConcreteId, ApplicationId),
+            ( member(Application, Instances),
+              canonical_type_name(Application, ConcreteName),
+              member(enum_decl(ConcreteName, _), MintedEnums),
+              semantic_decl_id(Decls, enum, ConcreteName, ConcreteId),
+              Application =.. [ConstructorName | Arguments],
+              semantic_type_constructor_id(Decls, ConstructorName, ConstructorId),
+              semantic_application_id(Decls, ConstructorId, Arguments,
+                                      ApplicationId) ),
             Found),
     sort(Found, Rows).
 
@@ -946,11 +996,11 @@ generic_type_ir(Decls, Rows) :-
 % ordinary type artifacts remain byte-stable while catalog/typegen consumers
 % can request the richer role-bearing schema.
 schema_member_rows(Decls, Rows) :-
-    normalized_member_rows(Decls, MemberRows),
+    canonical_member_rows(Decls, MemberRows),
     findall(Row,
             ( member(member(MemberId, OwnerId, Position, Name, TypeRef),
                      MemberRows),
-              authored_member_type(Decls, OwnerId, Position, AuthoredType),
+              canonical_member_type_term(Decls, TypeRef, AuthoredType),
               schema_value_type_id(Decls, TypeRef, ValueTypeId),
               schema_member_roles(Decls, OwnerId, Position, Name, TypeRef,
                                   Roles),
@@ -958,6 +1008,22 @@ schema_member_rows(Decls, Rows) :-
                                   AuthoredType, ValueTypeId, Roles) ),
             Unsorted),
     sort(Unsorted, Rows).
+
+canonical_member_rows(Decls, Rows) :-
+    member(semantic_type_rows(SemanticRows), Decls),
+    !,
+    findall(member(MemberId, OwnerId, Position, Name, TypeRef),
+            member(member(MemberId, OwnerId, Position, Name, TypeRef),
+                   SemanticRows),
+            Rows).
+canonical_member_rows(Decls, Rows) :-
+    normalized_member_rows(Decls, Rows).
+
+canonical_member_type_term(_, type_ref(parameter(ParameterId)), ParameterId) :- !.
+canonical_member_type_term(_, type_ref(primitive(Type)), Type) :- !.
+canonical_member_type_term(_, type_ref(named(Type)), Type) :- !.
+canonical_member_type_term(Decls, type_ref(TypeId), Type) :-
+    semantic_type_term(Decls, TypeId, Type).
 
 %! type_relation_rows(+Decls, -Rows) is det.
 %  Rows is the concatenation of normalized schema_member/7 and
@@ -975,12 +1041,12 @@ type_relation_rows(Decls, Rows) :-
 compiler_metadata_rows(Decls, Rows) :-
     member(compiler_type_metadata(MetadataRows, ClosureRows, _), Decls),
     compiler_evidence_rows(Decls, MetadataRows, ClosureRows, EvidenceRows),
-    append(MetadataRows, EvidenceRows, Rows),
+    Rows = EvidenceRows,
     !.
 compiler_metadata_rows(Decls, Rows) :-
     member(compiler_type_metadata(MetadataRows, ClosureRows), Decls),
     compiler_evidence_rows(Decls, MetadataRows, ClosureRows, EvidenceRows),
-    append(MetadataRows, EvidenceRows, Rows),
+    Rows = EvidenceRows,
     !.
 compiler_metadata_rows(_, []).
 
@@ -1116,7 +1182,27 @@ schema_value_type_id(Decls, type_ref(named(Type)), TypeId) :-
 schema_value_type_id(Decls, Type, TypeId) :-
     semantic_type_id(Decls, Type, TypeId).
 
+normalized_member_role_row(Decls, member_role(MemberId, Role)) :-
+    normalized_member_row(Decls,
+                          member(MemberId, OwnerId, Position, Name, TypeRef)),
+    schema_member_roles_from_carriers(Decls, OwnerId, Position, Name, TypeRef,
+                                      Roles),
+    member(Role, Roles).
+
 schema_member_roles(Decls, OwnerId, Position, Name, TypeRef, Roles) :-
+    MemberId = member(OwnerId, Position, Name),
+    (   member(semantic_type_rows(SemanticRows), Decls),
+        findall(Role,
+                member(member_role(MemberId, Role), SemanticRows),
+                CanonicalRoles),
+        CanonicalRoles \== []
+    ->  sort(CanonicalRoles, Roles)
+    ;   schema_member_roles_from_carriers(Decls, OwnerId, Position, Name,
+                                          TypeRef, Roles)
+    ).
+
+schema_member_roles_from_carriers(Decls, OwnerId, Position, Name, TypeRef,
+                                  Roles) :-
     ( Name == 'Self' -> SelfRoles = [self_subject] ; SelfRoles = [] ),
     ( owner_key_position(Decls, OwnerId, Position)
     -> KeyRoles = [key]
@@ -1205,13 +1291,174 @@ normalized_type_rows_cached(Decls, Rows) :-
     findall(Row, normalized_parameter_row(Decls, Row), ParameterRows),
     findall(Row, normalized_member_row(Decls, Row), MemberRows0),
     first_member_row_per_id(MemberRows0, MemberRows),
+    findall(Row, normalized_member_role_row(Decls, Row), MemberRoleRows),
     findall(Row, normalized_constraint_row(Decls, Row), ConstraintRows),
     normalized_application_rows(Decls, ApplicationRows),
     findall(Row, normalized_implementation_row(Decls, Row), ImplementationRows),
     normalized_derivation_rows(Decls, ApplicationRows, DerivationRows),
-    append([DeclarationRows, ParameterRows, MemberRows, ConstraintRows,
+    append([DeclarationRows, ParameterRows, MemberRows, MemberRoleRows,
+            ConstraintRows,
             ApplicationRows, ImplementationRows, DerivationRows], Unsorted),
     sort(Unsorted, Rows).
+
+%! freeze_type_rows(+ExpandedDecls, -FrozenDecls) is det.
+% Merge generated carriers into the existing semantic identity graph without
+% replacing source-level wrapper members by physical storage endpoints.
+freeze_type_rows(Decls0, Decls) :-
+    semantic_rows_in_decls(Decls0, ExistingRows0),
+    ExistingRows = ExistingRows0,
+    normalized_type_rows(Decls0, RebuiltRows),
+    validate_type_row_identities(ExistingRows),
+    validate_type_row_identities(RebuiltRows),
+    merge_frozen_type_rows(ExistingRows, RebuiltRows, Rows),
+    validate_type_application_closure(Rows),
+    replace_semantic_type_rows(Decls0, Rows, Decls).
+
+semantic_rows_in_decls(Decls, Rows) :-
+    findall(TheseRows, member(semantic_type_rows(TheseRows), Decls), Nested),
+    append(Nested, Rows).
+
+replace_semantic_type_rows(Decls0, Rows, Decls) :-
+    replace_semantic_type_rows(Decls0, Rows, false, Decls1, Seen),
+    (   Seen == true
+    ->  Decls = Decls1
+    ;   Rows == []
+    ->  Decls = Decls1
+    ;   append(Decls1, [semantic_type_rows(Rows)], Decls)
+    ).
+
+replace_semantic_type_rows([], _, Seen, [], Seen).
+replace_semantic_type_rows([semantic_type_rows(_) | Rest], Rows, false,
+                           [semantic_type_rows(Rows) | More], Seen) :-
+    !,
+    replace_semantic_type_rows(Rest, Rows, true, More, Seen).
+replace_semantic_type_rows([semantic_type_rows(_) | Rest], Rows, true,
+                           More, Seen) :-
+    !,
+    replace_semantic_type_rows(Rest, Rows, true, More, Seen).
+replace_semantic_type_rows([Decl | Rest], Rows, Seen0, [Decl | More], Seen) :-
+    replace_semantic_type_rows(Rest, Rows, Seen0, More, Seen).
+
+merge_frozen_type_rows(ExistingRows, RebuiltRows, Rows) :-
+    include(row_missing_from_existing(ExistingRows), RebuiltRows, MissingRows),
+    append(ExistingRows, MissingRows, Unsorted),
+    sort(Unsorted, Rows),
+    validate_type_row_identities(Rows).
+
+row_missing_from_existing(ExistingRows, Row) :-
+    canonical_type_row_identity(Row, Identity),
+    \+ ( member(Existing, ExistingRows),
+         canonical_type_row_identity(Existing, Identity) ).
+
+validate_type_row_identities(Rows) :-
+    findall(Identity-Row,
+            ( member(Row, Rows), canonical_type_row_identity(Row, Identity) ),
+            Pairs),
+    keysort(Pairs, Ordered),
+    validate_type_row_identity_runs(Ordered).
+
+validate_type_row_identity_runs([]).
+validate_type_row_identity_runs([Identity-Row | Rest]) :-
+    take_type_row_identity_run(Rest, Identity, [Row], Run, Remaining),
+    validate_type_row_identity_run(Identity, Run),
+    validate_type_row_identity_runs(Remaining).
+
+take_type_row_identity_run([Identity-Row | Rest], Identity, Acc, Run, Remaining) :-
+    !,
+    take_type_row_identity_run(Rest, Identity, [Row | Acc], Run, Remaining).
+take_type_row_identity_run(Remaining, _, Run, Run, Remaining).
+
+validate_type_row_identity_run(_, [_]) :- !.
+validate_type_row_identity_run(_, [Row | Rest]) :-
+    forall(member(Other, Rest), Row == Other),
+    !.
+validate_type_row_identity_run(Identity, _) :-
+    duplicate_type_row_subject(Identity, Subject),
+    throw(unsupported_construct(canonical_type_row_duplicate(Subject))).
+
+duplicate_type_row_subject(member(MemberId), MemberId) :- !.
+duplicate_type_row_subject(Identity, Identity).
+
+canonical_type_row_identity(declaration(Id, _, _, _, _), declaration(Id)) :- !.
+canonical_type_row_identity(parameter(Id, _, _, _), parameter(Id)) :- !.
+canonical_type_row_identity(member(Id, _, _, _, _), member(Id)) :- !.
+canonical_type_row_identity(member_role(Id, Role), member_role(Id, Role)) :- !.
+canonical_type_row_identity(application(Id, _), application(Id)) :- !.
+canonical_type_row_identity(argument(Id, _, _, _), argument(Id)) :- !.
+canonical_type_row_identity(constraint(Id, _, _), constraint(Id)) :- !.
+canonical_type_row_identity(constraint(Id, _, _, _), constraint(Id)) :- !.
+canonical_type_row_identity(implementation(Id, _, _), implementation(Id)) :- !.
+canonical_type_row_identity(derived_from(Id, Source), derived_from(Id, Source)) :- !.
+canonical_type_row_identity(origin(Id, Source), origin(Id, Source)) :- !.
+canonical_type_row_identity(anonymous(Owner, Path, _), anonymous(Owner, Path)) :- !.
+canonical_type_row_identity(Row, Row).
+
+validate_type_application_closure(Rows) :-
+    forall(member(member(MemberId, _, _, _, type_ref(application(AppId))), Rows),
+           ( member(application(AppId, ConstructorId), Rows)
+           -> application_constructor_resolves(ConstructorId, Rows)
+           ;  throw(unsupported_construct(
+                         canonical_type_application_missing(MemberId, AppId)))
+           )),
+    forall(member(application(AppId, ConstructorId), Rows),
+           validate_type_application_arguments(AppId, ConstructorId, Rows)).
+
+application_constructor_resolves(ConstructorId, Rows) :-
+    ConstructorId = named(_, relation, Name),
+    ( member(declaration(ConstructorId, _, Name, relation, _), Rows)
+    ; builtin_type_constructor(Name)
+    ), !.
+application_constructor_resolves(ConstructorId, Rows) :-
+    ConstructorId = named(_, enum, Name),
+    member(declaration(ConstructorId, _, Name, enum, _), Rows), !.
+application_constructor_resolves(ConstructorId, _) :-
+    throw(unsupported_construct(
+              canonical_type_application_unknown_constructor(ConstructorId))).
+
+builtin_type_constructor(option).
+builtin_type_constructor(list).
+builtin_type_constructor(json_list).
+builtin_type_constructor(id).
+builtin_type_constructor(list_entity_dense_sequence).
+builtin_type_constructor(list_interned_set).
+builtin_type_constructor(list_entity_linked_sequence).
+
+validate_type_application_arguments(AppId, ConstructorId, Rows) :-
+    AppId = application(_, ExpectedArgs),
+    length(ExpectedArgs, ExpectedArity),
+    findall(Ordinal-ArgumentType,
+            member(argument(_, application(ConstructorId, ExpectedArgs), Ordinal,
+                            ArgumentType), Rows),
+            Found0),
+    sort(Found0, Found),
+    findall(Ordinal-ExpectedId,
+            nth1(Ordinal, ExpectedArgs, ExpectedId),
+            Expected),
+    ( length(Found, ExpectedArity),
+      application_argument_rows_match(Expected, Found)
+    -> true
+    ;  throw(unsupported_construct(
+                 canonical_type_application_arguments(AppId,
+                                                      expected(Expected),
+                                                      found(Found))))
+    ).
+
+application_argument_rows_match([], []).
+application_argument_rows_match([Ordinal-Expected | ExpectedRows],
+                                [Ordinal-Found | FoundRows]) :-
+    application_argument_row_matches(Expected, Found),
+    application_argument_rows_match(ExpectedRows, FoundRows).
+
+application_argument_row_matches(primitive(Name), type_atom(Name)) :- !.
+application_argument_row_matches(named(_, _, Name), type_atom(Name)) :- !.
+application_argument_row_matches(Id, type_declaration(Id)) :-
+    Id = named(_, _, _), !.
+application_argument_row_matches(Id, type_application(Id)) :-
+    Id = application(_, _), !.
+application_argument_row_matches(parameter(_, _, Name), type_atom(Name)) :- !.
+application_argument_row_matches(anonymous_placeholder(Shape),
+                                 type_named(Shape)) :- !.
+application_argument_row_matches(any_pattern, any_pattern).
 
 normalized_declaration_row(Decls, declaration(Id, root, Name, relation, materialized)) :-
     member(type_decl(Name, _), Decls),
@@ -1223,10 +1470,20 @@ normalized_declaration_row(Decls, declaration(Id, root, Name, relation, compile_
 normalized_declaration_row(Decls, declaration(Id, root, Name, interface, compile_time)) :-
     member(interface_decl(Name, _), Decls),
     semantic_decl_id(Decls, interface, Name, Id).
+normalized_declaration_row(Decls, declaration(Id, root, Name, enum, compile_time)) :-
+    member(enum_decl(Name, _), Decls),
+    semantic_decl_id(Decls, enum, Name, Id).
+normalized_declaration_row(Decls, declaration(Id, root, Name, enum, compile_time)) :-
+    member(rel_template_enum(Segments, _, _), Decls),
+    atomic_list_concat(Segments, '__', Name),
+    semantic_decl_id(Decls, enum, Name, Id).
 normalized_declaration_row(Decls, declaration(Id, root, ConcreteName, relation, materialized)) :-
     source_generic_application(Decls, Application),
     canonical_type_name(Application, ConcreteName),
     semantic_decl_id(Decls, relation, ConcreteName, Id).
+normalized_declaration_row(Decls, declaration(Id, root, OwnerName, relation, materialized)) :-
+    plain_relation_specs(Decls, OwnerName, _),
+    semantic_decl_id(Decls, relation, OwnerName, Id).
 
 normalized_parameter_row(Decls, parameter(Id, Owner, Ordinal, Name)) :-
     generic_owner_parameters(Decls, OwnerName, Parameters),
@@ -1303,8 +1560,9 @@ plain_relation_specs_scan(Decls, OwnerName, Specs) :-
 
 pair_col(Name-Type, col(Name, Type)).
 
-% A template and a plain rel sharing a name mint one member id twice, once per
-% clause; the template clause runs first and its row wins.
+% Two syntactic routes can reach the same member identity. Exact duplicate
+% rows collapse. Divergent descriptions are rejected at the semantic boundary
+% rather than depending on clause order to select one.
 first_member_row_per_id(Rows, Kept) :-
     empty_assoc(Seen),
     first_member_row_per_id(Rows, Seen, [], Reversed),
@@ -1313,10 +1571,13 @@ first_member_row_per_id(Rows, Kept) :-
 first_member_row_per_id([], _, Kept, Kept).
 first_member_row_per_id([Row | Rest], Seen0, Kept0, Kept) :-
     Row = member(Id, _, _, _, _),
-    (   get_assoc(Id, Seen0, _)
-    ->  Seen = Seen0,
-        Kept1 = Kept0
-    ;   put_assoc(Id, Seen0, true, Seen),
+    (   get_assoc(Id, Seen0, Existing)
+    ->  ( Existing == Row
+        -> Seen = Seen0,
+           Kept1 = Kept0
+        ;  throw(unsupported_construct(canonical_type_row_duplicate(Id)) )
+        )
+    ;   put_assoc(Id, Seen0, Row, Seen),
         Kept1 = [Row | Kept0]
     ),
     first_member_row_per_id(Rest, Seen, Kept1, Kept).
@@ -1405,10 +1666,49 @@ member_implementation_row(Rows, Id, Subject, InterfaceId, Arguments) :-
                           interface_application(InterfaceId, Arguments)), Rows).
 
 normalized_application_rows(Decls, Rows) :-
-    findall(Application, source_generic_application(Decls, Application), Found),
+    findall(Application, semantic_application_source(Decls, Application), Found),
     sort(Found, Applications),
     maplist(normalized_application_row(Decls), Applications, Nested),
     append(Nested, Rows).
+
+semantic_application_source(Decls, Application) :-
+    source_type_application(Decls, Application),
+    semantic_application_constructor(Decls, Application).
+
+source_type_application(Decls, Application) :-
+    member(type_decl(_, Specs), Decls),
+    member(col(_, Type), Specs),
+    sub_term(Application, Type),
+    compound(Application).
+source_type_application(Decls, Application) :-
+    member(rel_template(_, _, Specs), Decls),
+    member(column(_, Type), Specs),
+    sub_term(Application, Type),
+    compound(Application).
+source_type_application(Decls, Application) :-
+    member(rel_template_enum(_, _, Variants), Decls),
+    enum_payload_type(Variants, Type),
+    sub_term(Application, Type),
+    compound(Application).
+source_type_application(Decls, Application) :-
+    member(col_type(_, _, Type), Decls),
+    sub_term(Application, Type),
+    compound(Application).
+
+semantic_application_constructor(Decls, Application) :-
+    generic_application_name(Decls, Application),
+    !.
+semantic_application_constructor(_, Application) :-
+    Application =.. [Name | Arguments],
+    builtin_type_application(Name, Arguments).
+
+builtin_type_application(option, [_]).
+builtin_type_application(list, [_]).
+builtin_type_application(json_list, [_]).
+builtin_type_application(id, [_]).
+builtin_type_application(list_entity_dense_sequence, [_]).
+builtin_type_application(list_interned_set, [_]).
+builtin_type_application(list_entity_linked_sequence, [_]).
 
 source_generic_application(Decls, Application) :-
     memberchk(rel_template(_, _, _), Decls),
@@ -1430,10 +1730,16 @@ generic_application_name(Decls, Application) :-
     member(rel_template(Segments, Parameters, _), Decls),
     atomic_list_concat(Segments, '__', Name),
     length(Parameters, Arity).
+generic_application_name(Decls, Application) :-
+    compound(Application),
+    functor(Application, Name, Arity),
+    member(rel_template_enum(Segments, Parameters, _), Decls),
+    atomic_list_concat(Segments, '__', Name),
+    length(Parameters, Arity).
 
 normalized_application_row(Decls, Application, Rows) :-
     Application =.. [Name | Arguments],
-    semantic_decl_id(Decls, relation, Name, Constructor),
+    semantic_type_constructor_id(Decls, Name, Constructor),
     semantic_application_id(Decls, Constructor, Arguments, Id),
     ApplicationRow = application(Id, Constructor),
     findall(Row,
@@ -1493,6 +1799,8 @@ normalized_type(_, Owner, Parameters, Type0, type_ref(Type)) :-
 normalized_type(_, _, _, Type, type_ref(primitive(Type))) :-
     atom(Type), scalar_element(Type), !.
 normalized_type(Decls, _, _, Type, type_ref(declaration(Id))) :-
+    atom(Type), semantic_enum_type_id(Decls, Type, Id), !.
+normalized_type(Decls, _, _, Type, type_ref(declaration(Id))) :-
     atom(Type), semantic_decl_id(Decls, relation, Type, Id),
     member(type_decl(Type, _), Decls), !.
 normalized_type(_, _, _, Type, type_ref(named(Type))) :-
@@ -1500,9 +1808,35 @@ normalized_type(_, _, _, Type, type_ref(named(Type))) :-
     !.
 normalized_type(Decls, _, _, Type, type_ref(application(Id))) :-
     compound(Type), Type =.. [Name | Args],
-    semantic_decl_id(Decls, relation, Name, Constructor),
+    semantic_type_constructor_id(Decls, Name, Constructor),
     semantic_application_id(Decls, Constructor, Args, Id), !.
 normalized_type(_, _, _, Type, type_ref(named(Type))).
+
+semantic_enum_type_id(Decls, Name, Id) :-
+    member(enum_decl(Name, _), Decls),
+    !,
+    semantic_decl_id(Decls, enum, Name, Id).
+semantic_enum_type_id(Decls, Name, Id) :-
+    member(semantic_type_rows(Rows), Decls),
+    member(declaration(Id, root, Name, enum, _), Rows).
+
+semantic_type_constructor_id(Decls, Name, Id) :-
+    generic_enum_constructor_name(Decls, Name),
+    !,
+    semantic_decl_id(Decls, enum, Name, Id).
+semantic_type_constructor_id(Decls, Name, Id) :-
+    ( generic_relation_constructor_name(Decls, Name)
+    ; builtin_type_constructor(Name)
+    ),
+    semantic_decl_id(Decls, relation, Name, Id).
+
+generic_relation_constructor_name(Decls, Name) :-
+    member(rel_template(Segments, _, _), Decls),
+    atomic_list_concat(Segments, '__', Name).
+
+generic_enum_constructor_name(Decls, Name) :-
+    member(rel_template_enum(Segments, _, _), Decls),
+    atomic_list_concat(Segments, '__', Name).
 
 type_row_templates(Decls, Rows, Templates) :-
     findall(template(Name, Parameters, Specs),
@@ -1841,11 +2175,17 @@ semantic_decl_id(Decls, Kind, Name, Id) :-
 semantic_decl_id_uncached(Decls, Kind, Name, Id) :-
     (   member(semantic_decl_module(Kind, Name, ModuleHash), Decls)
     ->  true
+    ;   semantic_row_decl_module(Decls, Kind, Name, ModuleHash)
+    ->  true
     ;   generated_decl_module(Decls, Kind, Name, ModuleHash)
     ->  true
     ;   ModuleHash = local
     ),
     decl_id(ModuleHash, Kind, Name, Id).
+
+semantic_row_decl_module(Decls, Kind, Name, ModuleHash) :-
+    member(semantic_type_rows(Rows), Decls),
+    member(declaration(named(ModuleHash, Kind, Name), _, Name, Kind, _), Rows).
 
 generated_decl_module(Decls, relation, Name, ModuleHash) :-
     source_generic_application(Decls, Application),
@@ -1853,6 +2193,17 @@ generated_decl_module(Decls, relation, Name, ModuleHash) :-
     Application =.. [Constructor | _],
     member(semantic_decl_module(relation, Constructor, ModuleHash), Decls),
     !.
+generated_decl_module(Decls, enum, Name, ModuleHash) :-
+    enum_template_application(Decls, Application),
+    canonical_type_name(Application, Name),
+    Application =.. [Constructor | _],
+    member(semantic_decl_module(enum, Constructor, ModuleHash), Decls),
+    !.
+
+enum_template_application(Decls, Application) :-
+    source_type_application(Decls, Application),
+    generic_enum_constructor_name(Decls, Name),
+    functor(Application, Name, _).
 generated_decl_module(Decls, relation, Name, ModuleHash) :-
     source_generic_application(Decls, Application),
     list_flavor_suffix(Application, Suffix),
@@ -1885,7 +2236,7 @@ semantic_type_id(Decls, Type, Id) :-
     semantic_named_type_id(Decls, Type, Id).
 semantic_type_id(Decls, Type, Id) :-
     Type =.. [Name | Arguments],
-    semantic_decl_id(Decls, relation, Name, Constructor),
+    semantic_type_constructor_id(Decls, Name, Constructor),
     semantic_application_id(Decls, Constructor, Arguments, Id).
 
 semantic_primitive(Type) :- scalar_element(Type).
@@ -1893,6 +2244,8 @@ semantic_primitive(bytes).
 
 anonymous_type_term(product_type(_)).
 anonymous_type_term(sum_type(_)).
+anonymous_type_term(anonymous_product(_, _)).
+anonymous_type_term(anonymous_sum(_, _)).
 
 semantic_named_type_id(Decls, Name, Id) :-
     member(semantic_decl_module(enum, Name, ModuleHash), Decls),
