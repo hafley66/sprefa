@@ -1,0 +1,45 @@
+# @parity typespec model -> rel declaration
+# @parity typespec optional-property -> option(T) or T?
+# @parity typespec array -> list(T)
+# @parity typespec template-model -> generic rel application
+# @parity typespec union -> sum rel
+# @parity typespec operation-return -> rel arrow return column
+# @parity typespec decorator -> compile-time type relation application
+# @parity typespec namespace -> use-as mount plus qualified path
+# @parity typespec model-spread -> relational composition
+# @parity typespec model-extends -> relational composition
+# @parity typespec model-is -> relational composition
+
+rel key(Target: type) -> type.
+
+rel Identifier(value: text).
+rel DisplayName(value: text).
+
+rel Page(T)(
+  items: list(T),
+  next: option(text)
+).
+
+rel Status(active(); archived(reason: text)).
+rel PetIdentity(
+  id: key(int),
+  name: DisplayName
+).
+rel PetStatus(id: key(int), status: Status).
+rel PetView(id: int, name: DisplayName, status: Status).
+PetView(Id, Name, Status) <-
+  PetIdentity(Id, Name),
+  PetStatus(Id, Status).
+
+rel Pet(
+  id: key(int),
+  name: DisplayName,
+  status: Status,
+  tags: list(text),
+  owner: option(Identifier)
+).
+
+rel ApiError(code: int, message: text).
+rel Result(E, T)(err(error: E); ok(value: T)).
+rel get_pet(id: int) -> Result(ApiError, Pet).
+rel list_pets(limit: option(int)) -> Page(Pet).

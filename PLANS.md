@@ -152,6 +152,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:630 — Add owner-scoped anonymous product and sum type literals.
 - `feature` plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:631 — Represent type-valued capability and functional-output relations over semantic type IDs.
 - `feature` plans/2026-08-18-typescript-shaped-interface-bounds.md:202 — Implement TypeScript-shaped interface bounds with `any` argument patterns.
+- `feature` plans/2026-08-19-applicative-type-annotations.md:149 — Parse and print direct compiler-relation type applications, update the CST, and elaborate nested calls.
+- `feature` plans/2026-08-19-applicative-type-annotations.md:150 — Execute typed annotator relations, retain site evidence, and feed key evidence into existing key normalization.
+- `feature` plans/2026-08-19-applicative-type-annotations.md:151 — Prove annotation composition and key parity through the authored DL6, TS, Rust, JSON Schema, and ProgramJson CI paths.
+- `feature` plans/2026-08-19-applicative-type-annotations.md:152 — Define explicit mixed-stage relation parameters and comptime-elision rules after annotation composition establishes the first compile-time invocation model.
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:189 — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:190 — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
@@ -175,6 +179,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `perf` plans/2026-07-20-typed-template-bootstrap-lab.md:707 — Record fresh-process allocation and wall-time measurements for every required scale case before selecting interning and matcher-cache policies.
 - `perf` plans/2026-07-25-analysis-engine-bakeoff-labs.md:117 — RAM budget per lab declared BEFORE its first C2 run — exceeding = fail (30GB lesson)
 - `perf` plans/2026-08-12-uniform-surrogate-id.md:116 — public set-rel tables moved off WITHOUT ROWID; fixpoint 10-18% slower (grid/layered/chain), RSS up to ~20% higher. Bench numbers banked in plans/2026-08-12-uniform-surrogate-id.md.
+- `perf` plans/2026-08-19-shared-sqlite-frontier.md:187 — Replace relation-specific transient SQLite plans with shared frontier and support state while preserving one typed durable table per materialized relation.
 - `triage` plans/2026-07-11-cross-harness-agent-tooling.md:147 — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
 - `triage` plans/2026-07-11-docs-and-dogfood-audit.md:40 — re-enable hooks (timeout+advisory) — relights the dark event arm; Chris flips
 - `triage` plans/2026-07-11-engine-mod-split.md:72 — SG_LANG_TABLE final home (src/sg.rs vs engine/lang_tables.rs) when the lang_tables cluster moves
@@ -357,6 +362,11 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:631 `feature` — Represent type-valued capability and functional-output relations over semantic type IDs.
 - plans/2026-08-18-typescript-shaped-interface-bounds.md:202 `feature` — Implement TypeScript-shaped interface bounds with `any` argument patterns.
 - plans/2026-08-18-typescript-shaped-interface-bounds.md:203 `docs` — Document interface applications, exact arguments, and wildcard arguments in the DL6 syntax reference.
+- plans/2026-08-19-applicative-type-annotations.md:149 `feature` — Parse and print direct compiler-relation type applications, update the CST, and elaborate nested calls.
+- plans/2026-08-19-applicative-type-annotations.md:150 `feature` — Execute typed annotator relations, retain site evidence, and feed key evidence into existing key normalization.
+- plans/2026-08-19-applicative-type-annotations.md:151 `feature` — Prove annotation composition and key parity through the authored DL6, TS, Rust, JSON Schema, and ProgramJson CI paths.
+- plans/2026-08-19-applicative-type-annotations.md:152 `feature` — Define explicit mixed-stage relation parameters and comptime-elision rules after annotation composition establishes the first compile-time invocation model.
+- plans/2026-08-19-shared-sqlite-frontier.md:187 `perf` — Replace relation-specific transient SQLite plans with shared frontier and support state while preserving one typed durable table per materialized relation.
 <!-- END: plans-by-plan -->
 
 ## By code file
