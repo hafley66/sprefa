@@ -25,4 +25,8 @@ export const ScratchStore: IScratchStore = {
     // executeMultiple resolves void at the store seam.
     return seam.runner.executeMultiple(seam.db, ddl.join(";\n"));
   },
+
+  close(seam: ISqlSeam): void {
+    seam.db.close();
+  },
 };

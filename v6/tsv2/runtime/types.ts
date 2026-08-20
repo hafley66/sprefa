@@ -698,6 +698,12 @@ export interface IScratchStore {
   open(url: string): ISqlSeam;
   /** Run every statement in `ddl`, in order, once. */
   boot(seam: ISqlSeam, ddl: readonly string[]): Observable<void>;
+  /** Release the connection's native handle. Sync: `Client.close()` is sync at
+   *  the driver, and a resource release has nothing to await. Idempotent, so a
+   *  `finalize` that fires on both the complete and the error leg is safe. A
+   *  caller that opens per fixture MUST call this: a process that ran 335
+   *  fixtures without it held 335 live handles and died on a native SIGSEGV. */
+  close(seam: ISqlSeam): void;
 }
 
 /** One line of the shared oracle/tsv2 log envelope (both sides agree on
