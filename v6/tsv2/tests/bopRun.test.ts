@@ -11,6 +11,13 @@
  *     fires on the real wall clock (this is `run`, not a test-scheduler
  *     receipt), so `--ticks 1` is the deterministic stop and the test bounds
  *     its own wait accordingly.
+ *
+ * BUDGET. Both tests carry an explicit 30s `timeout`, the only two in the
+ * battery over the package's 10s `--test-timeout` floor. Each spawns a
+ * subprocess whose swipl compile is the cost: 728ms isolated, 30s measured
+ * under `--test-concurrency=6` on 2026-08-20, which is load contention and not
+ * this test's own work. The option is per test on purpose, so the floor stays
+ * 10s for everything else.
  */
 
 import assert from "node:assert/strict";
@@ -22,26 +29,26 @@ const BOP = fileURLToPath(new URL("../cli/bop.ts", import.meta.url));
 const EMPTY_DL6 = fileURLToPath(new URL("../../dl/fixtures/door-handwritten.dl6", import.meta.url));
 const CLOCK_DL6 = fileURLToPath(new URL("../../dl/fixtures/served-host-clock.dl6", import.meta.url));
 
-test("run: a program with no binds/hosts quiesces at zero ticks and exits 0", () => {
+test("run: a program with no binds/hosts quiesces at zero ticks and exits 0", { timeout: 30_000 }, () => {
   const result = spawnSync("node", ["--experimental-transform-types", BOP, "run", EMPTY_DL6], {
     encoding: "utf8",
     env: { ...process.env, BOP_RUN_IDLE_MS: "300" },
-    // 30s not 10s: the in-process swipl compile grew ~30-50% inferences across
-    // the 2026-07-30 landings and under full-suite parallel load the boot
-    // crossed 10s (3 sightings that day; 3/3 pass isolated at ~2s).
+    // Matches the test's own budget above: the runner must never be the thing
+    // that reports the timeout, or the failure names the battery instead of
+    // the subprocess that wedged.
     timeout: 30_000,
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), "", `expected zero tick lines, got: ${result.stdout}`);
 });
 
-test("run --ticks 1: a live interval bind produces exactly one tick line, then a clean exit", () => {
+test("run --ticks 1: a live interval bind produces exactly one tick line, then a clean exit", { timeout: 30_000 }, () => {
   const result = spawnSync("node", ["--experimental-transform-types", BOP, "run", CLOCK_DL6, "--ticks", "1"], {
     encoding: "utf8",
     env: { ...process.env, BOP_RUN_IDLE_MS: "5000" },
-    // 30s not 10s: the in-process swipl compile grew ~30-50% inferences across
-    // the 2026-07-30 landings and under full-suite parallel load the boot
-    // crossed 10s (3 sightings that day; 3/3 pass isolated at ~2s).
+    // Matches the test's own budget above: the runner must never be the thing
+    // that reports the timeout, or the failure names the battery instead of
+    // the subprocess that wedged.
     timeout: 30_000,
   });
   assert.equal(result.status, 0, result.stderr);

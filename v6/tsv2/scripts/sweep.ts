@@ -51,7 +51,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readd
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Observable, catchError, concatMap, forkJoin, from, map, of, toArray } from "rxjs";
+import { Observable, catchError, concatMap, finalize, forkJoin, from, map, of, toArray } from "rxjs";
 
 import { BootRunner } from "../runtime/2_boot.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
@@ -338,6 +338,10 @@ function run_fixture(name: string): Observable<IFixtureRunResult> {
         concatMap(() => BootRunner.run(seam, program.boot)),
         concatMap(() => TickFold.run(program, seam, schedule).pipe(toArray())),
         concatMap((lines) => read_final_state(seam, program).pipe(map((final_line) => ({ lines, final_line })))),
+        // One handle per fixture, released on the complete AND the error leg
+        // (the outer catchError reads no seam). Without it a shard child that
+        // ran its whole slice held one live libsql handle per fixture.
+        finalize(() => ScratchStore.close(seam)),
       );
     }),
     map(({ lines, final_line }) => grade_against_oracle(name, lines, grade_final_state(name, final_line))),
@@ -461,13 +465,12 @@ function spawn_shard_child(path: string): Observable<IShardPayload> {
   });
 }
 
-/** ScratchStore.open has no close (runtime/scratchStore.ts), so a replay
- *  process holds one libsql handle per fixture it ran and a long slice can die
- *  on a native SIGSEGV: measured once in ~20 passes at jobs=2, where a child
- *  carried 168 fixtures. The retry re-runs THAT SLICE ONLY, in a fresh
- *  process, and says so; a second death is reported, never swallowed. Until
- *  the seam closes its handle this is the rail that keeps the fan-out strictly
- *  no worse than the single-process shape, which has the same leak at 335. */
+/** A replay child used to hold one libsql handle per fixture it ran (open with
+ *  no close) and a long slice could die on a native SIGSEGV: measured once in
+ *  ~20 passes at jobs=2, where a child carried 168 fixtures. run_fixture now
+ *  closes per fixture; the retry stays as the rail for any other native death,
+ *  re-running THAT SLICE ONLY, in a fresh process, and saying so. A second
+ *  death is reported, never swallowed. */
 function run_shard_child(path: string): Observable<IShardPayload> {
   return spawn_shard_child(path).pipe(
     catchError((failure: unknown) => {

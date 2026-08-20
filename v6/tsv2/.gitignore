@@ -14,5 +14,9 @@ gen_emitted/golden-flex.ts
 # the same reason the compile-speed gate never rewrites its own baseline. The
 # gated numbers live in scripts/scale-floor-reference.json, which IS tracked.
 goldens/scale-floor-history.jsonl
-gen_emitted/
+# The whole directory is generated, EXCEPT the Spotlight exclusion marker:
+# every sweep rewrites 355 modules here and mds/mdworker re-index each one, so
+# the marker is tracked and the generated modules stay ignored.
+gen_emitted/*
+!gen_emitted/.metadata_never_index
 gen/pe_emit/

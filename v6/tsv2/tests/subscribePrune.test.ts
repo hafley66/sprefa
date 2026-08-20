@@ -17,7 +17,7 @@
  *     audited/audit_trail derived and off cone, so nothing the host edge does
  *     can widen this cone, and the flag has to delete both derivations while
  *     `reading` still ingests.
- *   level_view_reads_set_projection_not_occurrences (occurrence_identity.pl:199)
+ *   log_occurrences_and_set_projection (occurrence_identity.pl:182)
  *     no query decl at all, so under ruling zero_query_semantics its cone is
  *     empty and the flag must leave it evaluating NOTHING while `line` still
  *     ingests both arrivals.
@@ -68,9 +68,9 @@ import type {
 
 const QUERY_BEARING = "native_ts_query_term";
 const HOST_FREE = "host_free_query_leaves_a_derived_rel_unsubscribed";
-const ZERO_QUERY = "level_view_reads_set_projection_not_occurrences";
+const ZERO_QUERY = "log_occurrences_and_set_projection";
 
-/** The fixture's own schedule (occurrence_identity.pl:202-203): the same log
+/** The fixture's own schedule (occurrence_identity.pl:186-189): the same log
  *  row twice, which is what makes `seen` a one-row set view over two
  *  occurrences. */
 const ZERO_QUERY_SCHEDULE: readonly IArrivalBatch[] = [

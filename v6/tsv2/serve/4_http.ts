@@ -170,7 +170,7 @@ function load_program$(exchange: Exchange): Observable<ProgramLoad | null> {
 }
 
 function dispose_program(state: ServerState): void {
-  state.seam?.db.close();
+  if (state.seam !== null) ScratchStore.close(state.seam);
   state.seam = null;
   state.engine = null;
   state.program = null;
