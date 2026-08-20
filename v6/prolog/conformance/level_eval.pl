@@ -186,8 +186,10 @@ relax_strata(Constraints, Cap, Strata0, Strata) :-
 
 % A head whose measure grows every round (`Next := Value + 1`) has no finite
 % least model, so `Merged == Known0` never holds. Mirrors engine.pl's
-% drain_cap/1: bounded, loud, never a truncated answer.
-level_round_cap(1000).
+% drain_cap/1: bounded, loud, never a truncated answer. The round is a full
+% re-derive over the whole known set, so the wall is quadratic in the cap and
+% the cap buys nothing above the deepest converging level in the corpus.
+level_round_cap(50).
 
 plain_fixpoint(Plane, PlainLevel, Base, Tick, Known0, Level) :-
     rows_index(Base, BaseIndex),
