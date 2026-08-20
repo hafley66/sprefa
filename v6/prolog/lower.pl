@@ -138,7 +138,7 @@
             % plans/2026-08-19-shared-sqlite-frontier.md.
             frontier_mode/1, with_frontier_mode/2,
             shared_frontier_relation_id/2, shared_frontier_relation_id/3,
-            lowered_program_data/2,
+            lowered_program_data/2, lowered_program_data/3, write_verb/1,
             % STRUCT-AS-ROWS: the storage plane's own names, exported so the
             % emitter can render the intern plan and the plunit units can pin
             % the exact SQL text.
@@ -263,8 +263,11 @@ shared_frontier_ddl(
     [ 'CREATE TEMP TABLE "__frontier" ("relation_id" INTEGER NOT NULL, "_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "row_id" INTEGER NOT NULL)',
       'CREATE INDEX "__frontier_rel_phase" ON "__frontier" ("relation_id", "_phase")',
       'CREATE TEMP TABLE "__next_frontier" ("relation_id" INTEGER NOT NULL, "_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "row_id" INTEGER NOT NULL)',
-      'CREATE INDEX "__next_frontier_rel" ON "__next_frontier" ("relation_id")'
+      'CREATE INDEX "__next_frontier_rel" ON "__next_frontier" ("relation_id")',
+      'CREATE TEMP TABLE "__support_count" ("relation_id" INTEGER NOT NULL, "row_id" INTEGER NOT NULL, "rule_id" INTEGER NOT NULL, "count" INTEGER NOT NULL, PRIMARY KEY ("relation_id", "row_id", "rule_id")) WITHOUT ROWID'
     ]).
+
+shared_support_table('__support_count').
 
 shared_frontier_view_ddl(Ref, Columns, [FrontierView, NextFrontierView]) :-
     shared_frontier_relation_id(Ref, RelationId),
@@ -1500,7 +1503,7 @@ catalog_one_level_stmt_planes(HeadRef, RelId, RelHId, ModuleId, Columns,
         arrival_scratch_table_name(HeadRef, NewTable),
         RefPairs = [refcount-RefCountTable, refcount_staging-NewTable],
         (   RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _,
-                                      ExpandPlan, DredPlan, _, _),
+                                      ExpandPlan, DredPlan, _, _, _),
             ExpandPlan = expandplan(_, _, _, _, _, _, _, _)
         ->  expand_table_name(HeadRef, a, TableA),
             expand_table_name(HeadRef, b, TableB),
@@ -4709,7 +4712,8 @@ level_ref_count_sql(Mode, RelPlans, HeadRef, Rules,
                              CollectZeroSql, ClearNewSql, FillNewSql,
                              StageAddSql, StageFrontierSql,
                              StageNextFrontierSql, InsertNewSql, ExpandPlan,
-                             DredPlan, FixpointIr, SupportInternSqls)) :-
+                             DredPlan, FixpointIr, SupportInternSqls,
+                             SupportCountPlan)) :-
     table_name(HeadRef, HeadTable),
     quote_ident(HeadTable, QuotedHeadTable),
     ref_count_table_name(HeadRef, RefCountTable),
@@ -4778,7 +4782,46 @@ level_ref_count_sql(Mode, RelPlans, HeadRef, Rules,
     % so the fill reads the support table straight through with no antijoin.
     format(atom(InsertNewSql),
            'INSERT OR IGNORE INTO ~w (~w, "__refcount") SELECT ~w, n."__refcount" FROM ~w n',
-           [QuotedHeadTable, HeadColumnsSql, NewColumnsSql, QuotedRefCountTable]).
+           [QuotedHeadTable, HeadColumnsSql, NewColumnsSql, QuotedRefCountTable]),
+    support_count_plan(Mode, RelPlans, HeadRef, Rules, QuotedRefCountTable,
+                       QuotedHeadTable, HeadColumns, SupportCountPlan).
+
+% frontier(shared): the recount verb's shared arm publishes this rel's
+% per-rule support to the shared ledger, keyed by the durable row id, after
+% the head insert so every resident row carries its counts. rule_id is the
+% arm's 0-based ordinal among the head's lowered rules, the same ordering
+% statement_rule_ids/3 numbers. A single-arm head reads the staging table it
+% already filled; two or more re-read their own arm, since the staging sum
+% cannot be split back apart.
+support_count_plan(Mode, RelPlans, HeadRef, Rules, QuotedRefCountTable,
+                   QuotedHeadTable, HeadColumns,
+                   supportcount(ClearSql, WriteSqls)) :-
+    frontier_mode(shared),
+    !,
+    shared_frontier_relation_id(HeadRef, RelationId),
+    format(atom(ClearSql),
+           'DELETE FROM "__support_count" WHERE "relation_id" = ~w',
+           [RelationId]),
+    (   Rules = [_]
+    ->  qualified_equalities(HeadColumns, n, h, StagingEqualities),
+        atomic_list_concat(StagingEqualities, ' AND ', StagingEqualitySql),
+        format(atom(WriteSql),
+               'INSERT INTO "__support_count" ("relation_id", "row_id", "rule_id", "count") SELECT ~w, h."__id", 0, n."__refcount" FROM ~w n JOIN ~w h ON ~w',
+               [RelationId, QuotedRefCountTable, QuotedHeadTable,
+                StagingEqualitySql]),
+        WriteSqls = [WriteSql]
+    ;   qualified_equalities(HeadColumns, a, h, ArmEqualities),
+        atomic_list_concat(ArmEqualities, ' AND ', ArmEqualitySql),
+        findall(ArmWriteSql,
+                ( nth0(RuleId, Rules, Rule),
+                  level_ref_count_arm(Mode, RelPlans, Rule, Arm, _),
+                  format(atom(ArmWriteSql),
+                         'INSERT INTO "__support_count" ("relation_id", "row_id", "rule_id", "count") SELECT ~w, h."__id", ~w, a."__refcount" FROM (~w) a JOIN ~w h ON ~w',
+                         [RelationId, RuleId, Arm, QuotedHeadTable,
+                          ArmEqualitySql]) ),
+                WriteSqls)
+    ).
+support_count_plan(_, _, _, _, _, _, _, none).
 
 arrival_scratch_table_name(Ref, NewTable) :-
     table_name(Ref, Table),
@@ -6474,7 +6517,7 @@ frontier_family_ddl(Ref, _Columns, ColumnsSql,
 ref_count_ddl(_, _, levelstmt(_, _, _, _, none, _, _), []) :- !.
 ref_count_ddl(Mode, RelPlans, levelstmt(HeadRef, _, _, _, RefCountSql, _, _), DdlList) :-
     ref_count_head_ddl(Mode, RelPlans, HeadRef, [Ddl, NewDdl, ZeroIndexDdl]),
-    ( RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, DredPlan, _, _),
+    ( RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, DredPlan, _, _, _),
       ExpandPlan = expandplan(_, _, _, _, _, _, _, _)
     -> expand_wave_ddl(Mode, RelPlans, HeadRef, WaveDdl),
        dred_wave_ddl(Mode, RelPlans, HeadRef, DredPlan, DredDdl),
@@ -6874,7 +6917,7 @@ shared_frontier_todo(_, lowered(_, _, _, _, LevelStatements, _, _, _),
 shared_frontier_todo(_, lowered(_, _, _, _, LevelStatements, _, _, _),
                      recursion) :-
     member(levelstmt(_, _, _, _, RefCountSql, _, _), LevelStatements),
-    RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, _, _, _),
+    RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, _, _, _, _),
     ExpandPlan \== none.
 shared_frontier_todo(plan(_, prog(_, Rules), _, _, _, _, _, _, _), _,
                      departure) :-
@@ -6896,22 +6939,100 @@ shared_frontier_todo(plan(_, prog(Decls, _), _, _, _, _, _, _, _), _, host) :-
     member(Decl, Decls),
     functor(Decl, sh_decl, _).
 
-lowered_program_data(Plan, program_data(Relations, Rules, [], [], [])) :-
+% ═══ the six write verbs ════════════════════════════════════════════════
+% Every transient write a tick makes is one of six verbs. A relation row
+% carries five of them, a rule row carries recount. arrive and publish name
+% the durable and boundary SQL the compiler already specializes; stage and
+% read_staged name the frontier a strategy owns, which is the ONE place
+% per_rel and shared differ in text; clear names the tables a tick boundary
+% empties. The rule join stays compiler-produced
+% (plans/2026-08-19-shared-sqlite-frontier.md, Decisions), so recount carries
+% its seed SQL rather than a rebuild recipe.
+write_verb(arrive).
+write_verb(stage).
+write_verb(read_staged).
+write_verb(recount).
+write_verb(publish).
+write_verb(clear).
+
+lowered_program_data(Plan, Data) :-
+    lower_program(Plan, Lowered),
+    lowered_program_data(Plan, Lowered, Data).
+
+lowered_program_data(Plan, Lowered,
+                     program_data(Relations, Rules, [], [], [])) :-
     Plan = plan(_, _, _, RelPlans, _, RuleOrder, _, _, _),
-    findall(relation_data(Id, Ref, Table, Columns, KeyOrNone, materialized),
+    Lowered = lowered(_, _, ArrivalStatements, _, LevelStatements,
+                      DeltaStatements, _, _),
+    findall(relation_data(Id, Ref, Table, Columns, KeyOrNone, materialized,
+                          Verbs),
             ( nth0(Id, RelPlans, RelPlan),
               relplan_parts(RelPlan, Ref, _, Columns, KeyOrNone, _),
-              relplan_storage_name(RelPlan, Table) ),
+              relplan_storage_name(RelPlan, Table),
+              relation_write_verbs(RelPlans, Ref, Columns, ArrivalStatements,
+                                   DeltaStatements, Verbs) ),
             Relations),
-    findall(rule_data(RuleId, HeadId, InputIds, pending),
+    findall(rule_data(RuleId, HeadId, InputIds, Verbs),
             ( nth0(RuleId, RuleOrder, Rule),
               rule_head_ref(Rule, HeadRef),
               relation_ref_index(RelPlans, HeadRef, HeadId),
               findall(InputId,
                       ( rule_body_ref(Rule, BodyRef),
                         relation_ref_index(RelPlans, BodyRef, InputId) ),
-                      InputIds) ),
+                      InputIds),
+              rule_write_verbs(HeadRef, LevelStatements, Verbs) ),
             Rules).
+
+relation_write_verbs(RelPlans, Ref, Columns, ArrivalStatements,
+                     DeltaStatements,
+                     [ verb(arrive, ArriveText),
+                       verb(stage, StageTarget),
+                       verb(read_staged, sql(ReadStagedSql)),
+                       verb(publish, PublishText),
+                       verb(clear, tables(ClearTables)) ]) :-
+    (   memberchk(arrivalstmt(Ref, _, AddSql, _, _, _), ArrivalStatements)
+    ->  ArriveText = sql(AddSql)
+    ;   ArriveText = derived
+    ),
+    (   memberchk(deltastmt(Ref, _, _, BoundarySql, _), DeltaStatements)
+    ->  PublishText = sql(BoundarySql)
+    ;   PublishText = unobserved
+    ),
+    frontier_table_name(Ref, FrontierName),
+    next_frontier_table_name(Ref, NextFrontierName),
+    delta_table_name(Ref, DeltaTable),
+    (   frontier_mode(shared)
+    ->  shared_frontier_relation_id(RelPlans, Ref, RelationId),
+        StageTarget = shared_frontier(RelationId),
+        shared_frontier_table(SharedFrontier),
+        shared_next_frontier_table(SharedNextFrontier),
+        shared_support_table(SharedSupport),
+        ClearTables = [DeltaTable, SharedNextFrontier, SharedFrontier,
+                       SharedSupport]
+    ;   StageTarget = frontier(FrontierName, NextFrontierName),
+        ClearTables = [DeltaTable, NextFrontierName, FrontierName]
+    ),
+    % Identical text in both modes: under shared the name resolves to a TEMP
+    % view over the shared table, which is what keeps every compiled read
+    % byte-identical.
+    maplist(quote_ident, Columns, QuotedColumns),
+    atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
+    quote_ident(FrontierName, QuotedFrontierName),
+    format(atom(ReadStagedSql),
+           'SELECT "_phase", "_sequence", ~w FROM ~w',
+           [ColumnsSql, QuotedFrontierName]).
+
+rule_write_verbs(HeadRef, LevelStatements,
+                 [verb(recount, recount(SeedSql, SupportCount))]) :-
+    memberchk(levelstmt(HeadRef, _, _, _, RefCountSql, _, _), LevelStatements),
+    RefCountSql = refcountsql(_, SeedSql, _, _, _, _, _, _, _, _, _, _, _, _,
+                              _, SupportCountPlan),
+    !,
+    (   SupportCountPlan = supportcount(ClearSql, WriteSqls)
+    ->  SupportCount = support_count(ClearSql, WriteSqls)
+    ;   SupportCount = none
+    ).
+rule_write_verbs(_, _, [verb(recount, recount(none, none))]).
 
 relation_ref_index(RelPlans, Ref, Index) :-
     nth0(Index, RelPlans, RelPlan),
