@@ -1,0 +1,5 @@
+rel person(name: text, age: int) key(1).
+
+adult(Name) <-
+  person(Name, Age),
+  Age >= 18.
