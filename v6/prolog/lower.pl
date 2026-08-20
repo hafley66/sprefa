@@ -134,6 +134,11 @@
             % The rule naming every emitter renders into its statement plan,
             % defined once so a second emitter reads it instead of guessing.
             statement_rule_ids/3,
+            % frontier(shared): shared frontier tables behind per-rel views,
+            % plans/2026-08-19-shared-sqlite-frontier.md.
+            frontier_mode/1, with_frontier_mode/2,
+            shared_frontier_relation_id/2, shared_frontier_relation_id/3,
+            lowered_program_data/2,
             % STRUCT-AS-ROWS: the storage plane's own names, exported so the
             % emitter can render the intern plan and the plunit units can pin
             % the exact SQL text.
@@ -209,6 +214,78 @@ with_storage_context(RelPlans, Goal) :-
 
 assert_storage_name(Ref-StorageName) :- assertz(physical_storage_name(Ref, StorageName)).
 retract_storage_name(Ref-StorageName) :- retractall(physical_storage_name(Ref, StorageName)).
+
+:- thread_local frontier_mode_option/1.
+:- thread_local shared_frontier_relation_id_fact/2.
+
+:- meta_predicate with_frontier_mode(+, 0).
+:- meta_predicate with_shared_frontier_ids(+, 0).
+
+frontier_mode(Mode) :-
+    ( frontier_mode_option(Chosen) -> Mode = Chosen ; Mode = per_rel ).
+
+with_frontier_mode(per_rel, Goal) :- !, call(Goal).
+with_frontier_mode(shared, Goal) :-
+    setup_call_cleanup(
+        assertz(frontier_mode_option(shared)),
+        Goal,
+        retractall(frontier_mode_option(_))).
+
+% Relation ids are RelPlans order; every door numbers the same way.
+shared_frontier_relation_id(Ref, RelationId) :-
+    shared_frontier_relation_id_fact(Ref, RelationId).
+
+shared_frontier_relation_id(RelPlans, Ref, RelationId) :-
+    nth0(RelationId, RelPlans, RelPlan),
+    relplan_parts(RelPlan, Ref, _, _, _, _),
+    !.
+
+with_shared_frontier_ids(RelPlans, Goal) :-
+    ( frontier_mode(shared)
+    -> findall(Ref-Id,
+               ( nth0(Id, RelPlans, RelPlan),
+                 relplan_parts(RelPlan, Ref, _, _, _, _) ),
+               Pairs),
+       setup_call_cleanup(
+           forall(member(Ref-Id, Pairs),
+                  assertz(shared_frontier_relation_id_fact(Ref, Id))),
+           Goal,
+           retractall(shared_frontier_relation_id_fact(_, _)))
+    ;  call(Goal)
+    ).
+
+shared_frontier_table('__frontier').
+shared_next_frontier_table('__next_frontier').
+
+% Plain heaps plus one (relation_id, _phase) index, the shape the per-rel
+% tables had; row identity is the durable row's __id.
+shared_frontier_ddl(
+    [ 'CREATE TEMP TABLE "__frontier" ("relation_id" INTEGER NOT NULL, "_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "row_id" INTEGER NOT NULL)',
+      'CREATE INDEX "__frontier_rel_phase" ON "__frontier" ("relation_id", "_phase")',
+      'CREATE TEMP TABLE "__next_frontier" ("relation_id" INTEGER NOT NULL, "_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "row_id" INTEGER NOT NULL)',
+      'CREATE INDEX "__next_frontier_rel" ON "__next_frontier" ("relation_id")'
+    ]).
+
+shared_frontier_view_ddl(Ref, Columns, [FrontierView, NextFrontierView]) :-
+    shared_frontier_relation_id(Ref, RelationId),
+    table_name(Ref, Table),
+    quote_ident(Table, QuotedTable),
+    frontier_table_name(Ref, FrontierName),
+    quote_ident(FrontierName, QuotedFrontierName),
+    next_frontier_table_name(Ref, NextName),
+    quote_ident(NextName, QuotedNextName),
+    findall(Part,
+            ( member(Column, Columns),
+              quote_ident(Column, QuotedColumn),
+              format(atom(Part), 't.~w AS ~w', [QuotedColumn, QuotedColumn]) ),
+            Parts),
+    atomic_list_concat(Parts, ', ', PayloadSql),
+    format(atom(FrontierView),
+           'CREATE TEMP VIEW ~w AS SELECT f."_phase" AS "_phase", f."_sequence" AS "_sequence", ~w FROM "__frontier" f JOIN ~w t ON t."__id" = f."row_id" WHERE f."relation_id" = ~w',
+           [QuotedFrontierName, PayloadSql, QuotedTable, RelationId]),
+    format(atom(NextFrontierView),
+           'CREATE TEMP VIEW ~w AS SELECT f."_phase" AS "_phase", f."_sequence" AS "_sequence", ~w FROM "__next_frontier" f JOIN ~w t ON t."__id" = f."row_id" WHERE f."relation_id" = ~w',
+           [QuotedNextName, PayloadSql, QuotedTable, RelationId]).
 
 table_name(Ref, Table) :-
     ( physical_storage_name(Ref, Table) -> true ; Ref = Table/_ ).
@@ -4694,12 +4771,9 @@ level_ref_count_sql(Mode, RelPlans, HeadRef, Rules,
     format(atom(StageAddSql),
            'INSERT INTO ~w ("_sign", "_sequence", ~w) SELECT 1, "rowid" - 1, ~w FROM ~w',
            [QuotedDeltaTable, HeadColumnsSql, HeadColumnsSql, QuotedNewTable]),
-    format(atom(StageFrontierSql),
-           'INSERT INTO ~w ("_phase", "_sequence", ~w) SELECT ?, "rowid" - 1, ~w FROM ~w',
-           [QuotedFrontierTable, HeadColumnsSql, HeadColumnsSql, QuotedNewTable]),
-    format(atom(StageNextFrontierSql),
-           'INSERT INTO ~w ("_phase", "_sequence", ~w) SELECT ?, "rowid" - 1, ~w FROM ~w',
-           [QuotedNextFrontierTable, HeadColumnsSql, HeadColumnsSql, QuotedNewTable]),
+    stage_frontier_sqls(HeadRef, QuotedFrontierTable, QuotedNextFrontierTable,
+                        QuotedHeadTable, QuotedNewTable, HeadColumnsSql,
+                        EqualitySql, StageFrontierSql, StageNextFrontierSql),
     % OR IGNORE lets the head's own primary key reject the rows already there,
     % so the fill reads the support table straight through with no antijoin.
     format(atom(InsertNewSql),
@@ -4709,6 +4783,30 @@ level_ref_count_sql(Mode, RelPlans, HeadRef, Rules,
 arrival_scratch_table_name(Ref, NewTable) :-
     table_name(Ref, Table),
     format(atom(NewTable), '__new_~w', [Table]).
+
+% Shared mode stages (relation_id, phase, sequence, row_id): the durable
+% row's __id resolved by joining the head on the __new_ scratch columns.
+stage_frontier_sqls(HeadRef, _QuotedFrontierTable, _QuotedNextFrontierTable,
+                    QuotedHeadTable, QuotedNewTable, _HeadColumnsSql,
+                    EqualitySql, StageFrontierSql, StageNextFrontierSql) :-
+    frontier_mode(shared),
+    !,
+    shared_frontier_relation_id(HeadRef, RelationId),
+    format(atom(StageFrontierSql),
+           'INSERT INTO "__frontier" ("relation_id", "_phase", "_sequence", "row_id") SELECT ~w, ?, n."rowid" - 1, h."__id" FROM ~w n JOIN ~w h ON ~w',
+           [RelationId, QuotedNewTable, QuotedHeadTable, EqualitySql]),
+    format(atom(StageNextFrontierSql),
+           'INSERT INTO "__next_frontier" ("relation_id", "_phase", "_sequence", "row_id") SELECT ~w, ?, n."rowid" - 1, h."__id" FROM ~w n JOIN ~w h ON ~w',
+           [RelationId, QuotedNewTable, QuotedHeadTable, EqualitySql]).
+stage_frontier_sqls(_HeadRef, QuotedFrontierTable, QuotedNextFrontierTable,
+                    _QuotedHeadTable, QuotedNewTable, HeadColumnsSql,
+                    _EqualitySql, StageFrontierSql, StageNextFrontierSql) :-
+    format(atom(StageFrontierSql),
+           'INSERT INTO ~w ("_phase", "_sequence", ~w) SELECT ?, "rowid" - 1, ~w FROM ~w',
+           [QuotedFrontierTable, HeadColumnsSql, HeadColumnsSql, QuotedNewTable]),
+    format(atom(StageNextFrontierSql),
+           'INSERT INTO ~w ("_phase", "_sequence", ~w) SELECT ?, "rowid" - 1, ~w FROM ~w',
+           [QuotedNextFrontierTable, HeadColumnsSql, HeadColumnsSql, QuotedNewTable]).
 
 qualified_column_list(Columns, Alias, Sql) :-
     findall(Part,
@@ -6342,6 +6440,18 @@ delta_ddl(Mode, RelPlan, Ddls) :-
     format(atom(GroupIndexDdl),
            'CREATE INDEX ~w ON ~w (~w)',
            [QuotedGroupIndexName, QuotedDeltaTable, GroupColumnsSql]),
+    frontier_family_ddl(Ref, Columns, ColumnsSql, FrontierFamilyDdl),
+    text_view_ddls(Mode, DeltaTable, Columns, ColumnTypes,
+                   ['_sign', '_sequence'], DeltaViewDdls),
+    append([[TableDdl, IndexDdl, GroupIndexDdl], FrontierFamilyDdl,
+            DeltaViewDdls], Ddls).
+
+frontier_family_ddl(Ref, Columns, _ColumnsSql, ViewDdls) :-
+    frontier_mode(shared),
+    !,
+    shared_frontier_view_ddl(Ref, Columns, ViewDdls).
+frontier_family_ddl(Ref, _Columns, ColumnsSql,
+                    [FrontierDdl, FrontierIndexDdl, NextFrontierDdl]) :-
     frontier_table_name(Ref, FrontierTable),
     quote_ident(FrontierTable, QuotedFrontierTable),
     format(atom(FrontierDdl),
@@ -6356,11 +6466,7 @@ delta_ddl(Mode, RelPlan, Ddls) :-
     quote_ident(NextFrontierTable, QuotedNextFrontierTable),
     format(atom(NextFrontierDdl),
            'CREATE TEMP TABLE ~w ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
-           [QuotedNextFrontierTable, ColumnsSql]),
-    text_view_ddls(Mode, DeltaTable, Columns, ColumnTypes,
-                   ['_sign', '_sequence'], DeltaViewDdls),
-    append([[TableDdl, IndexDdl, GroupIndexDdl, FrontierDdl, FrontierIndexDdl,
-             NextFrontierDdl], DeltaViewDdls], Ddls).
+           [QuotedNextFrontierTable, ColumnsSql]).
 
 % An aggregate head has no refCount table (aggsql/7 replaces the refCount
 % family entirely -- level_statement_group/3's own comment), so it gets no
@@ -6656,7 +6762,10 @@ struct_intern_statements(Mode, Decls, Types, TypeName, Value, LookupSlot, Lookup
 
 lower_program(Plan, Lowered) :-
     Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
-    with_storage_context(RelPlans, lower_program_in_context(Plan, Lowered)).
+    with_storage_context(RelPlans,
+        with_shared_frontier_ids(RelPlans,
+            lower_program_in_context(Plan, Lowered))),
+    shared_frontier_guard(Plan, Lowered).
 
 lower_program_in_context(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans, ArrivalTargets, RuleOrder, EdgeRules, _SubscribedRels, Mode),
               lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, ArrivalTargets)) :-
@@ -6737,11 +6846,87 @@ lower_program_in_context(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans,
                      seeded(BodyDdl, ArrivalStatements, EdgeStatements,
                             LevelStatements, DeltaStatements),
                      SeedDdl),
-    append([InternDdl, SeedDdl, BodyDdl], Ddl).
+    ( frontier_mode(shared) -> shared_frontier_ddl(SharedDdl) ; SharedDdl = [] ),
+    append([InternDdl, SeedDdl, SharedDdl, BodyDdl], Ddl).
 
 arrival_target_relplan(ArrivalTargets, RelPlan) :-
     relplan_parts(RelPlan, Ref, _, _, _, _),
     memberchk(Ref, ArrivalTargets).
+
+% Constructs outside plan steps 1-4 refuse loudly under frontier(shared);
+% each reason is a TODO site, never a language limit.
+shared_frontier_guard(Plan, Lowered) :-
+    (   frontier_mode(shared),
+        shared_frontier_todo(Plan, Lowered, Reason)
+    ->  throw(unsupported_construct(frontier_shared_todo(Reason)))
+    ;   true
+    ).
+
+shared_frontier_todo(_, lowered(_, _, _, EdgeStatements, _, _, _, _),
+                     edge_rules) :-
+    EdgeStatements \== [].
+shared_frontier_todo(_, lowered(_, _, _, _, LevelStatements, _, _, _),
+                     retention) :-
+    member(retentionstmt(_, _, _), LevelStatements).
+shared_frontier_todo(_, lowered(_, _, _, _, LevelStatements, _, _, _),
+                     aggregate_head) :-
+    member(levelstmt(_, _, _, _, none, _, _), LevelStatements).
+shared_frontier_todo(_, lowered(_, _, _, _, LevelStatements, _, _, _),
+                     recursion) :-
+    member(levelstmt(_, _, _, _, RefCountSql, _, _), LevelStatements),
+    RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, _, _, _),
+    ExpandPlan \== none.
+shared_frontier_todo(plan(_, prog(_, Rules), _, _, _, _, _, _, _), _,
+                     departure) :-
+    listened_departure_refs(Rules, DepartureRefs),
+    DepartureRefs \== [].
+shared_frontier_todo(plan(_, _, _, RelPlans, _, _, _, _, _), _,
+                     non_set_rel(Ref)) :-
+    member(RelPlan, RelPlans),
+    relplan_parts(RelPlan, Ref, Kind, _, _, _),
+    Kind \== set.
+shared_frontier_todo(plan(_, _, _, RelPlans, _, _, _, _, _), _,
+                     bytes_column(Ref)) :-
+    member(RelPlan, RelPlans),
+    relplan_parts(RelPlan, Ref, _, _, _, ColumnTypes),
+    memberchk(bytes, ColumnTypes).
+shared_frontier_todo(plan(_, Prog, _, _, _, _, _, _, _), _, tick) :-
+    program_uses_tick(Prog, true).
+shared_frontier_todo(plan(_, prog(Decls, _), _, _, _, _, _, _, _), _, host) :-
+    member(Decl, Decls),
+    functor(Decl, sh_decl, _).
+
+lowered_program_data(Plan, program_data(Relations, Rules, [], [], [])) :-
+    Plan = plan(_, _, _, RelPlans, _, RuleOrder, _, _, _),
+    findall(relation_data(Id, Ref, Table, Columns, KeyOrNone, materialized),
+            ( nth0(Id, RelPlans, RelPlan),
+              relplan_parts(RelPlan, Ref, _, Columns, KeyOrNone, _),
+              relplan_storage_name(RelPlan, Table) ),
+            Relations),
+    findall(rule_data(RuleId, HeadId, InputIds, pending),
+            ( nth0(RuleId, RuleOrder, Rule),
+              rule_head_ref(Rule, HeadRef),
+              relation_ref_index(RelPlans, HeadRef, HeadId),
+              findall(InputId,
+                      ( rule_body_ref(Rule, BodyRef),
+                        relation_ref_index(RelPlans, BodyRef, InputId) ),
+                      InputIds) ),
+            Rules).
+
+relation_ref_index(RelPlans, Ref, Index) :-
+    nth0(Index, RelPlans, RelPlan),
+    relplan_parts(RelPlan, Ref, _, _, _, _),
+    !.
+
+rule_body_ref(Rule, Ref) :-
+    rule_body_of(Rule, Body),
+    conjunction_goals(Body, Goals),
+    member(Goal, Goals),
+    Goal \= (\+ _),
+    callable(Goal),
+    functor(Goal, Name, Arity),
+    Arity > 0,
+    Ref = Name/Arity.
 
 % Boot statements, computed on demand (needs Initial, which plan/6 does not
 % carry -- compile.pl calls this directly with the fixture's Initial list).

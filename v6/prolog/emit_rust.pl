@@ -144,15 +144,21 @@ relation_dict(RelPlans, ArrivalStatements, DepartureRefs,
     ( memberchk(Ref, DepartureRefs)
     -> format(atom(DepartureTable), '__departure_frontier_~w', [StorageName]), DepField = DepartureTable
     ; DepField = null ),
-    Dict = _{ rel: Name, kind: Kind, table_name: StorageName,
-              delta_table_name: DeltaTable,
-              frontier_table_name: FrontierTable,
-              next_frontier_table_name: NextFrontierTable,
-              departure_frontier_table_name: DepField,
-              columns: Columns, column_types: ColumnTypes,
-              key_indices: KeyIndices,
-              arrival_add_sql: AddText, arrival_del_sql: DelText,
-              boundary_sql: BoundarySql }.
+    Dict0 = _{ rel: Name, kind: Kind, table_name: StorageName,
+               delta_table_name: DeltaTable,
+               frontier_table_name: FrontierTable,
+               next_frontier_table_name: NextFrontierTable,
+               departure_frontier_table_name: DepField,
+               columns: Columns, column_types: ColumnTypes,
+               key_indices: KeyIndices,
+               arrival_add_sql: AddText, arrival_del_sql: DelText,
+               boundary_sql: BoundarySql },
+    % Keyed only under frontier(shared); per_rel JSON stays byte-identical.
+    (   lower:frontier_mode(shared),
+        lower:shared_frontier_relation_id(RelPlans, Ref, RelationId)
+    ->  put_dict(shared_frontier, Dict0, _{ relation_id: RelationId }, Dict)
+    ;   Dict = Dict0
+    ).
 
 relations_list(RelPlans, ArrivalStatements, DepartureRefs, DeltaStatements, Dicts) :-
     maplist(relation_dict(RelPlans, ArrivalStatements, DepartureRefs),

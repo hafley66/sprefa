@@ -1285,11 +1285,21 @@ incremental_relation_entry_line(RelPlans, ObserverMap, ArrivalStatements, Depart
     ),
     rel_ref_text_list(Observers, ObserverRefTexts),
     quoted_string_array_text(ObserverRefTexts, ObserversText),
+    shared_frontier_field(Ref, RelPlans, SharedField),
     format(atom(Line),
-           '  { rel: "~w", kind: "~w", table_name: "~w", delta_table_name: "~w", frontier_table_name: "~w", next_frontier_table_name: "~w", columns: ~w, column_types: ~w, key_indices: [~w], arrival_add_sql: ~w, arrival_del_sql: ~w, boundary_sql: ~w~w, rule_observers: ~w },',
+           '  { rel: "~w", kind: "~w", table_name: "~w", delta_table_name: "~w", frontier_table_name: "~w", next_frontier_table_name: "~w", columns: ~w, column_types: ~w, key_indices: [~w], arrival_add_sql: ~w, arrival_del_sql: ~w, boundary_sql: ~w~w~w, rule_observers: ~w },',
            [Name, Kind, StorageName, DeltaTable, FrontierTable, NextFrontierTable,
             ColumnsText, ColumnTypesText, KeyIndicesText, ArrivalAddTemplate, ArrivalDelTemplate,
-            BoundaryTemplate, DepartureField, ObserversText]).
+            BoundaryTemplate, DepartureField, SharedField, ObserversText]).
+
+% Emitted only under frontier(shared), so per_rel modules stay byte-identical.
+shared_frontier_field(Ref, RelPlans, SharedField) :-
+    (   lower:frontier_mode(shared),
+        lower:shared_frontier_relation_id(RelPlans, Ref, RelationId)
+    ->  format(atom(SharedField),
+               ', shared_frontier: { relation_id: ~w }', [RelationId])
+    ;   SharedField = ''
+    ).
 
 rel_ref_text_list([], []) :- !.
 rel_ref_text_list([Name/Arity | Rest], [Text | More]) :-
