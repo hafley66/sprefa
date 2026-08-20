@@ -13,6 +13,10 @@
 :- use_module('../../print_dl', [ print_dl_program/3 ]).
 :- use_module('../../1_expansion', [ expand_program_with_bindings/4 ]).
 :- use_module('../../0_anonymous_expand', [ expand_anonymous_decls/2 ]).
+:- use_module('../typegen_export', [ dump_dl6_rows/3 ]).
+:- use_module('../7_emit_ts_types', [ ts_types_text/3 ]).
+:- use_module('../8_emit_rust_types', [ rust_types_text/3 ]).
+:- use_module('../4_emit_jsonschema', [ jsonschema_text/3 ]).
 
 :- op(1150, xfx, <-).
 
@@ -113,6 +117,50 @@ test(inline_arrow_mints_an_ordinary_return_member_role) :-
     ReturnMember = member(GeneratedId, 2, return),
     member(member(ReturnMember, GeneratedId, 2, return, _), Rows),
     member(member_role(ReturnMember, return), Rows).
+
+test(inline_arrow_and_named_relation_have_equal_member_role_graphs) :-
+    parse_text(
+        "rel Pet(name: text).\nrel Named(id: int, return: Pet).\nrel Inline(get: ((id: int) -> Pet)).",
+        Program, Bindings),
+    expand_program_with_bindings(Program, Bindings, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    member(declaration(NamedId, root, 'Named', relation, _), Rows),
+    member(anonymous(_, [get], arrow_type(_, _)), Rows),
+    member(declaration(InlineId, root, _, relation, materialized), Rows),
+    member(member(_, InlineId, 2, return, _), Rows),
+    member_role_graph(Rows, NamedId, NamedGraph),
+    member_role_graph(Rows, InlineId, InlineGraph),
+    NamedGraph == InlineGraph.
+
+member_role_graph(Rows, OwnerId, Graph) :-
+    findall(Position-Name-ValueType-Roles,
+            ( member(member(MemberId, OwnerId, Position, Name, ValueType), Rows),
+              findall(Role, member(member_role(MemberId, Role), Rows), Roles0),
+              sort(Roles0, Roles) ),
+            Graph0),
+    sort(Graph0, Graph).
+
+test(inline_arrow_typegen_artifacts_expose_minted_relation) :-
+    predicate_property(plunit_anonymous_type_syntax:parse_text(_, _, _),
+                       file(ThisFile)),
+    file_directory_name(ThisFile, TestDir),
+    absolute_file_name('../../../dl/fixtures/0_inline-arrow-types.dl6', Fixture,
+                       [relative_to(TestDir), access(read)]),
+    tmp_file_stream(text, Jsonl, Stream),
+    close(Stream),
+    setup_call_cleanup(
+        true,
+        ( dump_dl6_rows(Fixture, '0_inline-arrow-types', Jsonl),
+          typegen_export:read_row_lines(Jsonl, Rows),
+          ts_types_text(inline_arrow, Rows, TypeScript),
+          rust_types_text(inline_arrow, Rows, Rust),
+          jsonschema_text('0_inline-arrow-types', Rows, JsonSchema),
+          sub_string(TypeScript, _, _, _, 'export interface Pets'),
+          sub_string(TypeScript, _, _, _, 'return: string;'),
+          sub_string(Rust, _, _, _, 'pub struct Pets'),
+          sub_string(Rust, _, _, _, 'pub r#return: String,'),
+          sub_string(JsonSchema, _, _, _, '"return"') ),
+        delete_file(Jsonl)).
 
 test(empty_product_or_sum_is_named,
      [throws(unsupported_construct(anonymous_type_empty))]) :-

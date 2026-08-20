@@ -3,13 +3,14 @@ created: 2026-08-20
 updated: 2026-08-20
 type: feature
 assignee: codex
-status: open
+status: done
 priority: high
 epic: type-surface-gaps
 labels:
 - area:dl6
 - intent:syntax
 blocked_by: ['@canonical-type-reflection']
+closed: 2026-08-20
 ---
 
 # Accept inline arrow type expressions
@@ -22,16 +23,19 @@ Plan: `v6/plans/2026-08-20-type-surface-gaps.md`.
 
 ## Acceptance Criteria
 
-- [ ] `type_expr` accepts `((inputs) -> Output)` recursively.
-- [ ] Field, wrapper, generic argument, product, and sum sites compile.
-- [ ] The minted anonymous relation has one ordinary `return` member role.
-- [ ] Equivalent named and inline relations produce equal canonical graphs.
-- [ ] Prolog printer and Tree-sitter parse-print coverage pass.
-- [ ] TypeScript, Rust, and JSON Schema artifacts expose the inline type.
+- [x] `type_expr` accepts `((inputs) -> Output)` recursively.
+- [x] Field, wrapper, generic argument, product, and sum sites compile.
+- [x] The minted anonymous relation has one ordinary `return` member role.
+- [x] Equivalent named and inline relations produce equal canonical graphs.
+- [x] Prolog printer and Tree-sitter parse-print coverage pass.
+- [x] TypeScript, Rust, and JSON Schema artifacts expose the inline type.
 
 ## Tests Run
 
-Pending.
+2026-08-20: `anonymous_type_syntax` 25/25. The fixture covers recursive
+field, wrapper, generic argument, product, and sum sites; focused assertions
+also compare named and inline member-role graphs and render TS, Rust, and JSON
+Schema from the real `.dl6` fixture.
 
 ## Implementation Notes
 
