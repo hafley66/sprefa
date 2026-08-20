@@ -77,7 +77,10 @@ reporting anything as broken or as green.
   defect.
 - **The 10-second law.** Any single operation over 10s is a defect to
   investigate now, never a budget to normalize. Named exception: SCIP indexing.
-  A multi-fixture battery is not a single operation.
+  A multi-fixture battery is not a single operation. WAITING POSTURE (user
+  2026-08-20): no agent foreground-waits more than 10s on one operation.
+  Batteries run in background with a 10s per-test cap; anything that exceeds
+  its cap is killed and investigated, never waited out.
 - **Failure ledger.** Every incident that bites gets a `docs/failure-modes.md`
   entry: incident, RCA, fail-pre-fix test, rail, entry. No incident closes
   without one.
