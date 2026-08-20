@@ -1,6 +1,0 @@
-rel from_poll(key, value) log keep(all).
-rel from_push(key, value) log keep(all).
-rel latest(key, value) key(1).
-
-latest(Key, Value) <+ from_poll(Key, Value).
-latest(Key, Value) <+ from_push(Key, Value).
