@@ -1,7 +1,7 @@
 # write-verb-interface REPORT
 
 Plan steps 5 and the write-verb contract, on top of PR #378's steps 1-4.
-Branch `feature/write-verb-interface`, rebased onto origin/main `3993e44aa`.
+Branch `feature/write-verb-interface`, rebased onto origin/main `5d1a2d881`.
 
 ## TOC
 
@@ -9,7 +9,7 @@ Branch `feature/write-verb-interface`, rebased onto origin/main `3993e44aa`.
 2. [Commits](#commits)
 3. [Gates](#gates)
 4. [Statement counts](#statement-counts)
-5. [Main-branch regression found](#main-branch-regression-found)
+5. [Main-branch regression found, since closed by `5d1a2d881`](#main-branch-regression-found-since-closed-by-5d1a2d881)
 6. [Not done](#not-done)
 
 ## Shape
@@ -160,12 +160,17 @@ origin/main `3993e44aa`, same four targets sampled: `diverging_recursion`
 
 ### node tests (v6/tsv2, npm test)
 
-NOT RUN TO COMPLETION. The suite was started twice and killed twice: the
-first run had this worktree checked out to origin/main under it (the plunit
-baseline measurement), the second was stopped when the lane was paused for
-perf work. `gen_emitted/` is populated (352 modules copied from the sweep
-outputs), so the next run needs no sweep in front of it:
-`cd v6/tsv2 && npm test`.
+```
+ℹ tests 245
+ℹ pass 240
+ℹ fail 4
+ℹ skipped 1
+real	0m9.298s
+```
+
+Same four names as origin/main `5d1a2d881`, measured three runs a side.
+Receipts and the two load-dependent flakes:
+`TASKS/write-verb-finish.REPORT.md`.
 
 ## Statement counts
 
@@ -187,7 +192,7 @@ The shared arm pays 2 extra statements per recount round (the ledger clear plus
 one write per rule) and is still cheaper on every retraction case, because the
 per-rel arm spends a DELETE and an INSERT per relation at each tick boundary.
 
-## Main-branch regression found
+## Main-branch regression found, since closed by `5d1a2d881`
 
 `65607a8d5` ("feat(dl6): complete relational type applications") reverted PR
 #372's IR-version work without replacing it:
@@ -210,9 +215,11 @@ Two consequences measured on a CLEAN tree at origin/main:
 2. Three Rust test targets do not compile and ten more fail at
    deserialization.
 
-Not fixed here: restoring the stamp changes the bytes of every emitted program,
-which would make this branch's byte-identity claim against origin/main false.
-It wants its own card and its own PR.
+`5d1a2d881` (PR #385) restored the stamp on main and this branch is rebased
+onto it. Both consequences above are gone: the comment rail answers 200, no
+commit needs `-n`, and `consumer_integration`, `dl6_build` and `skeleton`
+compile and pass. The checked-in `tests/fixtures/*.program.rs` still miss
+`incremental_safe`, identically on both sides.
 
 ## Not done
 
