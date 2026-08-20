@@ -124,6 +124,9 @@ fixture(nested_rel_element_list_round_trips,
 
 % The interned-set value dictionary keys on scalar content; a rel element is
 % already interned by its own rel row.  Named by generic expansion.
+% sibling folded 2026-08-20 (same throw list_interned_set_relation_element):
+% option_of_interned_set_of_rel_is_refused, 14_option_wrapper_walk.pl, which
+% spelled the element as option(list_interned_set(fighter_summary)). See git.
 fixture(list_interned_set_relation_element_refused,
   prog([ type_decl(fighter_summary, [col(name, text), col(url, text)]),
          col_type(fighter_summary/2, name, text),

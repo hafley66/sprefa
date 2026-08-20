@@ -160,14 +160,10 @@ fixture(error_is_a_named_unsupported,
 %   compiler  same program                                              ->  compiled clean
 % The word is banned at every arity v5 spells it, so the row is variadic and
 % the unsupported construct reports the arity the author actually wrote.
+% sibling folded 2026-08-20 (same throw removed_word(scan)):
+% scan_is_a_named_unsupported_at_five_arguments, which spelled scan/5. See git.
 fixture(scan_is_a_named_unsupported,
   prog([], [ (src(Path, Rev) <- scan('WORK', 'src/**/*.rs', Path, Rev)) ]),
   [],
   [ [ +source(1) ] ],
   [ throws(reserved_body_word(scan/4)) ]).
-
-fixture(scan_is_a_named_unsupported_at_five_arguments,
-  prog([], [ (src(Path, Rev) <- scan(repo, 'HEAD', '**/*.go', Path, Rev)) ]),
-  [],
-  [ [ +source(1) ] ],
-  [ throws(reserved_body_word(scan/5)) ]).

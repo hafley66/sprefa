@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "echoed": {
+      "additionalProperties":false,
+      "properties": {"body": {}},
+      "required": ["body" ],
+      "type":"object"
+    },
+    "raw_doc": {
+      "additionalProperties":false,
+      "properties": {"body": {}},
+      "required": ["body" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_document_encoder_edges_round_trip#16a073b4b7650dcf",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

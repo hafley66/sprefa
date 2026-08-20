@@ -1,0 +1,54 @@
+{
+  "$defs": {
+    "tree": {
+      "oneOf": [
+        {
+          "additionalProperties":false,
+          "properties": {"tag": {"const":"leaf"},"value": {"type":"integer"}},
+          "required": ["tag", "value" ],
+          "type":"object"
+        },
+        {
+          "additionalProperties":false,
+          "properties": {
+            "left": {"$ref":"#/$defs/tree"},
+            "right": {"$ref":"#/$defs/tree"},
+            "tag": {"const":"branch"}
+          },
+          "required": ["tag", "left", "right" ],
+          "type":"object"
+        }
+      ]
+    },
+    "tree_branch": {
+      "additionalProperties":false,
+      "properties": {
+        "id": {"type":"integer"},
+        "left": {"$ref":"#/$defs/tree"},
+        "right": {"$ref":"#/$defs/tree"}
+      },
+      "required": ["id", "left", "right" ],
+      "type":"object"
+    },
+    "tree_kind": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"kind": {"type":"string"}},
+      "required": ["id", "kind" ],
+      "type":"object"
+    },
+    "tree_leaf": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"value": {"type":"integer"}},
+      "required": ["id", "value" ],
+      "type":"object"
+    },
+    "tree_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    }
+  },
+  "$id":"recursive_enum_tree_and_cycles_round_trip#e09ce823db98d47e",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

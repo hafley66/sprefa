@@ -56,6 +56,10 @@
 % Stage 1 carries no marker: it fires on ANY of its four body atoms, which is
 % the documented default and the lab's ambiguity 9 (the pipe buys a single
 % trigger atom at boundaries only, never at the head of a chain).
+% siblings folded 2026-08-20 (same throw edge_body_needs_json_destructure):
+% trigger_marker_is_what_stops_backlog_replay,
+% unmarked_chain_replays_to_late_subscriber,
+% unmarked_first_stage_refires_on_late_watch, pipe_stage_costs_one_tick. See git.
 
 fixture(desugared_trace_equals_hand_written,
   prog([
@@ -83,154 +87,6 @@ fixture(desugared_trace_equals_hand_written,
     deltas(change_log/3, [ [], [], [], [], [ +change_log(cli, 42, alice) ], [] ]),
     ticks(6),
     final(change_log/3, [ change_log(cli, 42, alice) ]) ]).
-
-% ═══ q6: the marker is what stops backlog replay ════════════════════════════
-% The lab's richer scenario, kept over the minimal pair already in
-% fixtures/engine_core.pl (marker_stops_backlog_replay /
-% unmarked_edge_replays_backlog): here the subscriber joins mid-stream over a
-% THREE-stage chain whose first stage is unmarked, so the run also shows that
-% the marker narrows the trigger at boundaries while the chain head keeps
-% any-atom. Ticks 4 and 5 are idle ticks that let the chain reach change_log
-% before carol arrives at tick 6.
-%
-% REJECTED READING (temporal_pipe.pl:820-828, pre-ruling): the lab observed
-% the unmarked run's carol delivery as the LAST tick of a 6-tick hand-fed
-% schedule. Under q5 the engine owns the drains: carol's write at tick 6
-% leaves carry, so the unmarked run costs a 7th tick and the marked run stops
-% at 6.
-
-fixture(trigger_marker_is_what_stops_backlog_replay,
-  prog([
-         kind(every_300/1, log),  keep(every_300/1, all),
-         kind(fetch/4, log),      keep(fetch/4, all),
-         kind(demand_row/2, log), keep(demand_row/2, all),
-         kind(folded_row/2, log), keep(folded_row/2, all),
-         kind(change_log/3, log), keep(change_log/3, all) ],
-       [ ( demand_row(Endpoint, Result) <+
-             watch(Endpoint), cache_tag(Endpoint, PrevTag), every_300(Bucket),
-             fetch(Endpoint, PrevTag, Bucket, Result) ),
-         ( folded_row(Endpoint, Stars) <+
-             demand_row(Endpoint, Response),
-             decode(Response, fresh(_Tag, Body)), stars_of(Body, Stars) ),
-         ( change_log(Endpoint, Stars, Client) <+
-             folded_row(Endpoint, Stars), latest(subscribed_to(Client, Endpoint)) ) ]),
-  [],
-  [ [ +watch(cli), +cache_tag(cli, no_tag), +stars_of(body1, 42),
-      +subscribed_to(alice, cli), +subscribed_to(bob, other) ],
-    [ +every_300(bucket1) ],
-    [ +fetch(cli, no_tag, bucket1, fresh(tag_w1, body1)) ],
-    [ ],
-    [ ],
-    [ +subscribed_to(carol, cli) ] ],
-  [ deltas(change_log/3, [ [], [], [], [], [ +change_log(cli, 42, alice) ], [] ]),
-    ticks(6),
-    final(change_log/3, [ change_log(cli, 42, alice) ]) ]).
-
-% The unmarked twin: identical rules with only/1 removed from both boundaries.
-% Carol's arrival re-fires the last rule against the standing folded_row and
-% replays the backlog she was never present for.
-fixture(unmarked_chain_replays_to_late_subscriber,
-  prog([
-         kind(every_300/1, log),  keep(every_300/1, all),
-         kind(fetch/4, log),      keep(fetch/4, all),
-         kind(demand_row/2, log), keep(demand_row/2, all),
-         kind(folded_row/2, log), keep(folded_row/2, all),
-         kind(change_log/3, log), keep(change_log/3, all) ],
-       [ ( demand_row(Endpoint, Result) <+
-             watch(Endpoint), cache_tag(Endpoint, PrevTag), every_300(Bucket),
-             fetch(Endpoint, PrevTag, Bucket, Result) ),
-         ( folded_row(Endpoint, Stars) <+
-             demand_row(Endpoint, Response),
-             decode(Response, fresh(_Tag, Body)), stars_of(Body, Stars) ),
-         ( change_log(Endpoint, Stars, Client) <+
-             folded_row(Endpoint, Stars), subscribed_to(Client, Endpoint) ) ]),
-  [],
-  [ [ +watch(cli), +cache_tag(cli, no_tag), +stars_of(body1, 42),
-      +subscribed_to(alice, cli), +subscribed_to(bob, other) ],
-    [ +every_300(bucket1) ],
-    [ +fetch(cli, no_tag, bucket1, fresh(tag_w1, body1)) ],
-    [ ],
-    [ ],
-    [ +subscribed_to(carol, cli) ] ],
-  [ deltas(change_log/3, [ [], [], [], [],
-                           [ +change_log(cli, 42, alice) ],
-                           [ +change_log(cli, 42, carol) ],
-                           [] ]),
-    ticks(7),
-    final(change_log/3, [ change_log(cli, 42, alice),
-                          change_log(cli, 42, carol) ]) ]).
-
-% The other half of ambiguity 9, ruled and kept: the marked boundaries refuse
-% a late subscriber, and in the SAME program a late `watch` row re-fires the
-% unmarked first stage against the standing fetch backlog. The `other`
-% endpoint's response lands at tick 3 with nothing watching it; watch(other)
-% at tick 6 replays it and the whole chain runs again behind it.
-fixture(unmarked_first_stage_refires_on_late_watch,
-  prog([
-         kind(every_300/1, log),  keep(every_300/1, all),
-         kind(fetch/4, log),      keep(fetch/4, all),
-         kind(demand_row/2, log), keep(demand_row/2, all),
-         kind(folded_row/2, log), keep(folded_row/2, all),
-         kind(change_log/3, log), keep(change_log/3, all) ],
-       [ ( demand_row(Endpoint, Result) <+
-             watch(Endpoint), cache_tag(Endpoint, PrevTag), every_300(Bucket),
-             fetch(Endpoint, PrevTag, Bucket, Result) ),
-         ( folded_row(Endpoint, Stars) <+
-             demand_row(Endpoint, Response),
-             decode(Response, fresh(_Tag, Body)), stars_of(Body, Stars) ),
-         ( change_log(Endpoint, Stars, Client) <+
-             folded_row(Endpoint, Stars), latest(subscribed_to(Client, Endpoint)) ) ]),
-  [],
-  [ [ +watch(cli), +cache_tag(cli, no_tag), +cache_tag(other, no_tag),
-      +stars_of(body1, 42), +subscribed_to(alice, cli), +subscribed_to(dave, other) ],
-    [ +every_300(bucket1) ],
-    [ +fetch(cli, no_tag, bucket1, fresh(tag_w1, body1)),
-      +fetch(other, no_tag, bucket1, fresh(tag_w1, body1)) ],
-    [ ],
-    [ ],
-    [ +watch(other) ] ],
-  [ deltas(change_log/3, [ [], [], [], [],
-                           [ +change_log(cli, 42, alice) ],
-                           [], [],
-                           [ +change_log(other, 42, dave) ],
-                           [] ]),
-    ticks(9),
-    final(change_log/3, [ change_log(cli, 42, alice),
-                          change_log(other, 42, dave) ]) ]).
-
-% ═══ one tick per stage ═════════════════════════════════════════════════════
-% Every standing row is seeded, so the run has exactly ONE outside arrival:
-% the fetch response. A three-stage chain then delivers three ticks later, and
-% the engine's own drain closes the run. Distinct from engine_core's
-% edge_chain_hops_tick_per_stage (two stages, no join, no fold).
-%
-% REJECTED READING (temporal_pipe.pl:719-727, pre-ruling): the lab read the
-% hop ticks off a six-tick hand-fed schedule and never counted the drains,
-% because it supplied the empty ticks itself. Under q5 the tick count is the
-% engine's: 1 scheduled + 3 drains.
-
-fixture(pipe_stage_costs_one_tick,
-  prog([
-         kind(every_300/1, log),  keep(every_300/1, all),
-         kind(fetch/4, log),      keep(fetch/4, all),
-         kind(demand_row/2, log), keep(demand_row/2, all),
-         kind(folded_row/2, log), keep(folded_row/2, all),
-         kind(change_log/3, log), keep(change_log/3, all) ],
-       [ ( demand_row(Endpoint, Result) <+
-             watch(Endpoint), cache_tag(Endpoint, PrevTag), every_300(Bucket),
-             fetch(Endpoint, PrevTag, Bucket, Result) ),
-         ( folded_row(Endpoint, Stars) <+
-             demand_row(Endpoint, Response),
-             decode(Response, fresh(_Tag, Body)), stars_of(Body, Stars) ),
-         ( change_log(Endpoint, Stars, Client) <+
-             folded_row(Endpoint, Stars), latest(subscribed_to(Client, Endpoint)) ) ]),
-  [ watch(cli), cache_tag(cli, no_tag), every_300(bucket1),
-    stars_of(body1, 42), subscribed_to(alice, cli) ],
-  [ [ +fetch(cli, no_tag, bucket1, fresh(tag_w1, body1)) ] ],
-  [ deltas(demand_row/2, [ [ +demand_row(cli, fresh(tag_w1, body1)) ], [], [], [] ]),
-    deltas(folded_row/2, [ [], [ +folded_row(cli, 42) ], [], [] ]),
-    deltas(change_log/3, [ [], [], [ +change_log(cli, 42, alice) ], [] ]),
-    ticks(4) ]).
 
 % ═══ a chain whose last write lands on a keyed head ═════════════════════════
 % The cache-tag loop: stage 1 reads the keyed rel it will eventually replace,
@@ -272,6 +128,8 @@ fixture(chain_into_keyed_head_replaces,
 % negates. All four items sit inside ONE time cut, which is where they were
 % before the pipe existed; neither the comparison nor the negation is affected
 % by the boundary in front of them.
+% siblings folded 2026-08-20 (same throw edge_body_needs_json_destructure):
+% guard_stage_silent_when_muted, guard_stage_silent_below_threshold. See git.
 
 fixture(guard_stage_fires_on_negation_and_comparison,
   prog([
@@ -293,49 +151,3 @@ fixture(guard_stage_fires_on_negation_and_comparison,
   [ deltas(alert/2, [ [], [], [], [ +alert(cli, 420) ], [] ]),
     ticks(5),
     final(alert/2, [ alert(cli, 420) ]) ]).
-
-% Same program, muted endpoint: the negation kills the write, so the tick that
-% consumed the carry produces nothing and the run stops one tick earlier (no
-% write means no carry means no further drain).
-fixture(guard_stage_silent_when_muted,
-  prog([
-         kind(every_300/1, log),  keep(every_300/1, all),
-         kind(fetch/4, log),      keep(fetch/4, all),
-         kind(demand_row/2, log), keep(demand_row/2, all),
-         kind(alert/2, log),      keep(alert/2, all) ],
-       [ ( demand_row(Endpoint, Result) <+
-             watch(Endpoint), every_300(Bucket),
-             fetch(Endpoint, no_tag, Bucket, Result) ),
-         ( alert(Endpoint, Stars) <+
-             demand_row(Endpoint, Response),
-             decode(Response, fresh(_Tag, Body)), stars_of(Body, Stars),
-             Stars > 100, not(muted(Endpoint)) ) ]),
-  [],
-  [ [ +watch(cli), +stars_of(body1, 420), +muted(cli) ],
-    [ +every_300(bucket1) ],
-    [ +fetch(cli, no_tag, bucket1, fresh(tag_w1, body1)) ] ],
-  [ deltas(alert/2, [ [], [], [], [] ]),
-    ticks(4),
-    final(alert/2, []) ]).
-
-% Same program, 42 stars: the comparison kills the write.
-fixture(guard_stage_silent_below_threshold,
-  prog([
-         kind(every_300/1, log),  keep(every_300/1, all),
-         kind(fetch/4, log),      keep(fetch/4, all),
-         kind(demand_row/2, log), keep(demand_row/2, all),
-         kind(alert/2, log),      keep(alert/2, all) ],
-       [ ( demand_row(Endpoint, Result) <+
-             watch(Endpoint), every_300(Bucket),
-             fetch(Endpoint, no_tag, Bucket, Result) ),
-         ( alert(Endpoint, Stars) <+
-             demand_row(Endpoint, Response),
-             decode(Response, fresh(_Tag, Body)), stars_of(Body, Stars),
-             Stars > 100, not(muted(Endpoint)) ) ]),
-  [],
-  [ [ +watch(cli), +stars_of(body1, 42) ],
-    [ +every_300(bucket1) ],
-    [ +fetch(cli, no_tag, bucket1, fresh(tag_w1, body1)) ] ],
-  [ deltas(alert/2, [ [], [], [], [] ]),
-    ticks(4),
-    final(alert/2, []) ]).

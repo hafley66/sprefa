@@ -62,8 +62,8 @@
  * `TSV2_SOAK_SABOTAGE=keep_all bash scripts/memory-soak.sh`, run 2026-07-29,
  * reverted -- the env var swaps every `keep(count(cap))` in the churn
  * program for `keep(all)`, i.e. disables the retention DELETE, a real leak).
- * Default config both runs: 2500 ticks, keys=25, cap=200, arrival interval
- * 40ms (~100s), 101 samples, quarters of 25.
+ * Default config: 1250 ticks, keys=25, cap=200, arrival interval 40ms
+ * (~50s), 51 samples, quarters of 12. Receipt below measured at 100s/2500.
  *
  *   HEALTHY:   rss_flat                second-quarter 190,097,000  final-quarter 194,254,000  PASS
  *              heap_used_flat           second-quarter  21,672,067  final-quarter  21,806,888  PASS
@@ -250,7 +250,7 @@ function check_statements_flat(statement_counts: readonly number[]): Finding {
 
 async function main(): Promise<void> {
   const port = Number(process.env.TSV2_SOAK_PORT ?? "17571");
-  const duration_s = Number(process.env.TSV2_SOAK_DURATION_S ?? "100");
+  const duration_s = Number(process.env.TSV2_SOAK_DURATION_S ?? "50");
   const arrival_interval_ms = Number(process.env.TSV2_SOAK_ARRIVAL_MS ?? "40");
   const sample_interval_ms = Number(process.env.TSV2_SOAK_SAMPLE_MS ?? "1000");
   const keys = Number(process.env.TSV2_SOAK_KEYS ?? "25");

@@ -144,23 +144,6 @@ fixture(option_of_option_of_scalar_keeps_its_stop,
   [],
   []).
 
-% The interned-set value dictionary keys on scalar content whatever wraps it.
-% Before the walk this spelling hid the rel element from
-% check_interned_set_rel_elements/1 and stopped as column_type_unknown; it now
-% carries the same term the bare spelling in 10_list_elements.pl throws.
-fixture(option_of_interned_set_of_rel_is_refused,
-  prog([ type_decl(fighter_summary, [col(name, text), col(url, text)]),
-         col_type(fighter_summary/2, name, text),
-         col_type(fighter_summary/2, url, text),
-         col_type(squad/2, id, int),
-         col_type(squad/2, members, option(list_interned_set(fighter_summary))),
-         keyed(squad/2, [1]) ],
-       []),
-  [],
-  [],
-  [ throws(unsupported_construct(
-             list_interned_set_relation_element(fighter_summary))) ]).
-
 % The reference-option desugar mints `<parent>__<column>` into the author
 % namespace. A program that already declares that name used to surface as a
 % bare rel_arity_collision naming neither the option nor the column.

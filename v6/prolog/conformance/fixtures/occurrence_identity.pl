@@ -167,27 +167,45 @@ fixture(concat_fold_reversed_arrival_reverses_result,
 % same term for both arrival orders. Under the ruling the two orders give two
 % different delta sequences, while seen/1 stays identical.
 
-fixture(log_deltas_follow_arrival_order,
+% One program, three stream ids, one level view over a Log. Each stream's paths
+% are its own, so a tick range is the scenario the folded fixture ran alone.
+%   stream 1  tick 1: Log deltas arrive in ARRIVAL order; the set projection
+%             seen/1 dedups a.ts and reports in set order.
+%   stream 2  tick 2: the same multiset shuffled. Log delta order follows the
+%             shuffle, seen/1's order does not (r7 multiset_on_log_set_on_set).
+%   stream 3  ticks 3-4: the identical row twice. Log keeps both occurrences,
+%             the level view reads the set projection and stays silent on the
+%             second.
+% folded 2026-08-20 from log_deltas_follow_arrival_order,
+% shuffled_arrival_reorders_log_deltas,
+% level_view_reads_set_projection_not_occurrences.
+fixture(log_occurrences_and_set_projection,
   prog([ kind(line/3, log), keep(line/3, all) ],
        [ (seen(Path) <- line(_StreamId, Path, _Name)) ]),
   [],
-  [ [ +line(1, 'a.ts', alpha), +line(1, 'a.ts', beta), +line(1, 'b.ts', gamma) ] ],
+  [ [ +line(1, 'a.ts', alpha), +line(1, 'a.ts', beta), +line(1, 'b.ts', gamma) ],
+    [ +line(2, 'd.ts', gamma), +line(2, 'c.ts', beta), +line(2, 'c.ts', alpha) ],
+    [ +line(3, 'e.ts', alpha) ],
+    [ +line(3, 'e.ts', alpha) ] ],
   [ deltas(line/3, [ [ +line(1, 'a.ts', alpha),
                        +line(1, 'a.ts', beta),
-                       +line(1, 'b.ts', gamma) ] ]),
-    deltas(seen/1, [ [ +seen('a.ts'), +seen('b.ts') ] ]),
-    ticks(1) ]).
+                       +line(1, 'b.ts', gamma) ],
+                     [ +line(2, 'd.ts', gamma),
+                       +line(2, 'c.ts', beta),
+                       +line(2, 'c.ts', alpha) ],
+                     [ +line(3, 'e.ts', alpha) ],
+                     [ +line(3, 'e.ts', alpha) ] ]),
+    deltas(seen/1, [ [ +seen('a.ts'), +seen('b.ts') ],
+                     [ +seen('c.ts'), +seen('d.ts') ],
+                     [ +seen('e.ts') ],
+                     [] ]),
+    final(line/3, [ line(1, 'a.ts', alpha), line(1, 'a.ts', beta),
+                    line(1, 'b.ts', gamma),
+                    line(2, 'c.ts', alpha), line(2, 'c.ts', beta),
+                    line(2, 'd.ts', gamma),
+                    line(3, 'e.ts', alpha), line(3, 'e.ts', alpha) ]),
+    ticks(4) ]).
 
-fixture(shuffled_arrival_reorders_log_deltas,
-  prog([ kind(line/3, log), keep(line/3, all) ],
-       [ (seen(Path) <- line(_StreamId, Path, _Name)) ]),
-  [],
-  [ [ +line(1, 'b.ts', gamma), +line(1, 'a.ts', beta), +line(1, 'a.ts', alpha) ] ],
-  [ deltas(line/3, [ [ +line(1, 'b.ts', gamma),
-                       +line(1, 'a.ts', beta),
-                       +line(1, 'a.ts', alpha) ] ]),
-    deltas(seen/1, [ [ +seen('a.ts'), +seen('b.ts') ] ]),
-    ticks(1) ]).
 
 % ═══ level views read the set projection, not the occurrences ══════════════
 % Promotes level_view_sees_set_projection_not_occurrences (the ruled run) and
@@ -196,16 +214,6 @@ fixture(shuffled_arrival_reorders_log_deltas,
 % level view. A level view that saw stamps would emit -seen/+seen on every
 % repeat and mint bogus history, which is the failure r7 names.
 
-fixture(level_view_reads_set_projection_not_occurrences,
-  prog([ kind(line/3, log), keep(line/3, all) ],
-       [ (seen(Path) <- line(_StreamId, Path, _Name)) ]),
-  [],
-  [ [ +line(1, 'a.ts', alpha) ],
-    [ +line(1, 'a.ts', alpha) ] ],
-  [ deltas(seen/1, [ [ +seen('a.ts') ], [] ]),
-    deltas(line/3, [ [ +line(1, 'a.ts', alpha) ], [ +line(1, 'a.ts', alpha) ] ]),
-    final(line/3, [ line(1, 'a.ts', alpha), line(1, 'a.ts', alpha) ]),
-    ticks(2) ]).
 
 % ═══ membership firing keeps demand dedup ═══════════════════════════════════
 % Promotes membership_firing_keeps_demand_dedup, positively. The lab's negative
