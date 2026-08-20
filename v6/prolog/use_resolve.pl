@@ -23,7 +23,7 @@
 :- op(1150, xfx, <+).
 :- op(700,  xfx, :=).
 
-:- dynamic(parse_count_fact/2).
+:- thread_local(parse_count_fact/2).
 
 parse_source(Source, Codes, Program, Bindings, Findings) :-
     parse_dl_dcg_entry(Source, Codes, Program, Bindings, Findings).
