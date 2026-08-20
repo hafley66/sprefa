@@ -13,6 +13,7 @@
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
+:- use_module(library(assoc)).
 :- use_module(library(crypto)).
 :- use_module(library(filesex)).
 :- use_module('compile/parse_dl_dcg', [use_item/3, parse_dl_dcg_entry/5]).
@@ -308,18 +309,45 @@ files_field(Position, [File | Rest], List) :-
     files_field(Position, Rest, More),
     append(Here, More, List).
 
-merge_col([], Accum, Decls) :-
+merge_col(Pairs, Accum, Decls) :-
+    empty_assoc(Index),
+    merge_col(Pairs, Accum, Index, Decls).
+
+% Accum holds at most one col_type per Ref-Column, so Index is that same set
+% keyed for lookup instead of scanned. A col_type whose Ref or Column is not
+% ground has no key, and member/2's unification can bind it, so storing one
+% turns the index off and the scan takes the rest of the merge.
+merge_col([], Accum, _, Decls) :-
     strip_paths(Accum, DeclsRev),
     reverse(DeclsRev, Decls).
-merge_col([Path-Decl | Rest], Accum, Decls) :-
+merge_col([Path-Decl | Rest], Accum, Index, Decls) :-
     (   Decl = col_type(Ref, Column, Type),
-        member(Path2-col_type(Ref, Column, Type2), Accum)
+        col_type_seen(Index, Accum, Ref, Column, Path2, Type2)
     ->  (   Type == Type2
-        ->  merge_col(Rest, Accum, Decls)
+        ->  merge_col(Rest, Accum, Index, Decls)
         ;   throw(rel_col_conflict(Ref, Path2, Path))
         )
-    ;   merge_col(Rest, [Path-Decl | Accum], Decls)
+    ;   col_type_indexed(Path-Decl, Index, Index1),
+        merge_col(Rest, [Path-Decl | Accum], Index1, Decls)
     ).
+
+col_type_seen(unkeyed, Accum, Ref, Column, Path2, Type2) :-
+    !,
+    member(Path2-col_type(Ref, Column, Type2), Accum).
+col_type_seen(Index, Accum, Ref, Column, Path2, Type2) :-
+    (   ground(Ref-Column)
+    ->  get_assoc(Ref-Column, Index, Path2-Type2)
+    ;   member(Path2-col_type(Ref, Column, Type2), Accum)
+    ).
+
+col_type_indexed(_, unkeyed, unkeyed) :- !.
+col_type_indexed(Path-col_type(Ref, Column, Type), Index, Index1) :-
+    !,
+    (   ground(Ref-Column)
+    ->  put_assoc(Ref-Column, Index, Path-Type, Index1)
+    ;   Index1 = unkeyed
+    ).
+col_type_indexed(_, Index, Index).
 
 strip_paths([], []).
 strip_paths([_-Term | Rest], [Term | More]) :- strip_paths(Rest, More).

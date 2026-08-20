@@ -47,11 +47,21 @@ add_pair(Name-Value, Acc, Out) :- Out = Acc.put(Name, Value).
 % The backslash clause goes FIRST, or it would double the backslashes this
 % predicate itself introduces for the other two.
 js_template(SqlText, JsLiteral) :-
-    atom_string(SqlText, SqlString),
-    string_codes(SqlString, Codes),
-    js_template_codes(Codes, Escaped),
-    atom_codes(Body, Escaped),
-    format(atom(JsLiteral), '`~w`', [Body]).
+    (   js_template_needs_no_escape(SqlText)
+    ->  atomic_list_concat(['`', SqlText, '`'], JsLiteral)
+    ;   atom_string(SqlText, SqlString),
+        string_codes(SqlString, Codes),
+        js_template_codes(Codes, Escaped),
+        atom_codes(Body, Escaped),
+        atomic_list_concat(['`', Body, '`'], JsLiteral)
+    ).
+
+% `$` stands in for the `${` clause: a lone `$` costs one slow pass and never a
+% wrong byte, where splitting on two characters at once is not expressible.
+js_template_needs_no_escape(SqlText) :-
+    atomic(SqlText),
+    SqlText \== [],
+    split_string(SqlText, "\\`$", "", [_]).
 
 js_template_codes([], []).
 js_template_codes([0'\\ | Rest], [0'\\, 0'\\ | More]) :-
@@ -83,10 +93,20 @@ js_identifier_part(Code) :-
     ( js_identifier_start(Code) ; Code >= 0'0, Code =< 0'9 ), !.
 
 js_string(Value, JsLiteral) :-
-    ( atom(Value) -> atom_codes(Value, Codes) ; string_codes(Value, Codes) ),
-    js_string_codes(Codes, Escaped),
-    atom_codes(Body, Escaped),
-    format(atom(JsLiteral), '"~w"', [Body]).
+    (   js_string_needs_no_escape(Value)
+    ->  atomic_list_concat(['"', Value, '"'], JsLiteral)
+    ;   ( atom(Value) -> atom_codes(Value, Codes) ; string_codes(Value, Codes) ),
+        js_string_codes(Codes, Escaped),
+        atom_codes(Body, Escaped),
+        atomic_list_concat(['"', Body, '"'], JsLiteral)
+    ).
+
+% The separator set is js_string_codes/2's escaping clauses; split_string/4
+% finds one in C where the clause walk builds a second code list to find none.
+js_string_needs_no_escape(Value) :-
+    atomic(Value),
+    Value \== [],
+    split_string(Value, "\"\\\n\r\t", "", [_]).
 
 js_string_codes([], []).
 js_string_codes([0'" | Rest], [0'\\, 0'" | More]) :-
@@ -134,12 +154,12 @@ param_text(Param, Text) :- js_string(Param, Text).
 params_array_text(Params, Text) :-
     maplist(param_text, Params, ParamTexts),
     atomic_list_concat(ParamTexts, ', ', Joined),
-    format(atom(Text), '[~w]', [Joined]).
+    atomic_list_concat(['[', Joined, ']'], Text).
 
 quoted_string_array_text(Atoms, Text) :-
     maplist(js_string, Atoms, Quoted),
     atomic_list_concat(Quoted, ', ', Joined),
-    format(atom(Text), '[~w]', [Joined]).
+    atomic_list_concat(['[', Joined, ']'], Text).
 
 % Flattens a list of line-groups into one line list, one blank line between
 % groups (never trailing).
