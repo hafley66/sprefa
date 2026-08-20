@@ -918,7 +918,7 @@ rel_columns_entry_line(RelPlan, Line) :-
     ref_name(Ref, Name),
     quoted_string_array_text(Columns, ColumnsSql),
     js_object_key(Name, NameKey),
-    format(atom(Line), '  ~w: ~w,', [NameKey, ColumnsSql]).
+    atomic_list_concat(['  ', NameKey, ': ', ColumnsSql, ','], Line).
 
 % The reload plan discards a table by NAME, and a rel's physical name moves
 % with its shape digest, so the semantic-to-physical map ships with the program.
@@ -933,7 +933,7 @@ rel_physical_names_entry_line(RelPlan, Line) :-
     relplan_storage_name(RelPlan, StorageName),
     js_string(StorageName, StorageText),
     js_object_key(Name, NameKey),
-    format(atom(Line), '  ~w: ~w,', [NameKey, StorageText]).
+    atomic_list_concat(['  ', NameKey, ': ', StorageText, ','], Line).
 
 rel_column_types_lines(RelPlans, Lines) :-
     maplist(rel_column_types_entry_line, RelPlans, EntryLines),
@@ -946,7 +946,7 @@ rel_column_types_entry_line(RelPlan, Line) :-
     maplist(boundary_column_type, ColumnTypes, BoundaryTypes),
     quoted_string_array_text(BoundaryTypes, TypesText),
     js_object_key(Name, NameKey),
-    format(atom(Line), '  ~w: ~w,', [NameKey, TypesText]).
+    atomic_list_concat(['  ', NameKey, ': ', TypesText, ','], Line).
 
 % ═══ the raw-storage column types (read_stored_snapshot's own view) ═════════
 % read_snapshot decodes the boundary/final plane: a list column reads the
@@ -967,7 +967,7 @@ rel_stored_column_types_entry_line(RelPlan, Line) :-
     maplist(stored_column_type, ColumnTypes, StoredTypes),
     quoted_string_array_text(StoredTypes, TypesText),
     js_object_key(Name, NameKey),
-    format(atom(Line), '  ~w: ~w,', [NameKey, TypesText]).
+    atomic_list_concat(['  ', NameKey, ': ', TypesText, ','], Line).
 
 % ═══ the catalog rows, the same list the INSERT renders ════════════════════
 % Emitted even for a program that never queries `__rel`, so a reload compares.
@@ -1026,7 +1026,7 @@ rel_declared_types_entry_line(Ref, DeclaredTypes, Line) :-
     ref_name(Ref, Name),
     maplist(gate_column_type, DeclaredTypes, GateTypes),
     quoted_string_array_text(GateTypes, TypesText),
-    format(atom(Line), '  ~w: ~w,', [Name, TypesText]).
+    atomic_list_concat(['  ', Name, ': ', TypesText, ','], Line).
 
 % The five words the emitted guard switches on. Anything else -- a struct
 % type name, or a future column type -- renders as `other` and is left
@@ -1210,7 +1210,7 @@ final_select_entry_line(deltastmt(Ref, SelectSql, _DeltaTable, _BoundarySql, _St
     ref_name(Ref, Name),
     js_template(SelectSql, Template),
     js_object_key(Name, NameKey),
-    format(atom(Line), '  ~w: ~w,', [NameKey, Template]).
+    atomic_list_concat(['  ', NameKey, ': ', Template, ','], Line).
 
 % ═══ arrivals ════════════════════════════════════════════════════════════════
 
@@ -1299,16 +1299,17 @@ incremental_relation_entry_line(RelPlans, ObserverMap, ArrivalStatements, Depart
     ; ArrivalDelTemplate = null
     ),
     js_template(BoundarySql, BoundaryTemplate),
-    format(atom(FrontierTable), '__frontier_~w', [StorageName]),
-    format(atom(NextFrontierTable), '__next_frontier_~w', [StorageName]),
+    atomic_list_concat(['__frontier_', StorageName], FrontierTable),
+    atomic_list_concat(['__next_frontier_', StorageName], NextFrontierTable),
     % departure_frontier_table_name is OPTIONAL on IIncrementalRelationPlan and
     % emitted only for a rel some rule binds with finalize/1, so a program
     % with no departure arm renders the entry it always rendered, character
     % for character.
     (   memberchk(Ref, DepartureRefs)
-    ->  format(atom(DepartureTable), '__departure_frontier_~w', [StorageName]),
-        format(atom(DepartureField), ', departure_frontier_table_name: "~w"',
-               [DepartureTable])
+    ->  atomic_list_concat(['__departure_frontier_', StorageName],
+                           DepartureTable),
+        atomic_list_concat([', departure_frontier_table_name: "',
+                            DepartureTable, '"'], DepartureField)
     ;   DepartureField = ''
     ),
     % rule_observers is emitted on EVERY relation entry, empty array when no
@@ -1321,11 +1322,21 @@ incremental_relation_entry_line(RelPlans, ObserverMap, ArrivalStatements, Depart
     rel_ref_text_list(Observers, ObserverRefTexts),
     quoted_string_array_text(ObserverRefTexts, ObserversText),
     shared_frontier_field(Ref, RelPlans, SharedField),
-    format(atom(Line),
-           '  { rel: "~w", kind: "~w", table_name: "~w", delta_table_name: "~w", frontier_table_name: "~w", next_frontier_table_name: "~w", columns: ~w, column_types: ~w, key_indices: [~w], arrival_add_sql: ~w, arrival_del_sql: ~w, boundary_sql: ~w~w~w, rule_observers: ~w },',
-           [Name, Kind, StorageName, DeltaTable, FrontierTable, NextFrontierTable,
-            ColumnsText, ColumnTypesText, KeyIndicesText, ArrivalAddTemplate, ArrivalDelTemplate,
-            BoundaryTemplate, DepartureField, SharedField, ObserversText]).
+    atomic_list_concat(['  { rel: "', Name,
+                        '", kind: "', Kind,
+                        '", table_name: "', StorageName,
+                        '", delta_table_name: "', DeltaTable,
+                        '", frontier_table_name: "', FrontierTable,
+                        '", next_frontier_table_name: "', NextFrontierTable,
+                        '", columns: ', ColumnsText,
+                        ', column_types: ', ColumnTypesText,
+                        ', key_indices: [', KeyIndicesText,
+                        '], arrival_add_sql: ', ArrivalAddTemplate,
+                        ', arrival_del_sql: ', ArrivalDelTemplate,
+                        ', boundary_sql: ', BoundaryTemplate,
+                        DepartureField, SharedField,
+                        ', rule_observers: ', ObserversText,
+                        ' },'], Line).
 
 % Emitted only under frontier(shared), so per_rel modules stay byte-identical.
 shared_frontier_field(Ref, RelPlans, SharedField) :-
