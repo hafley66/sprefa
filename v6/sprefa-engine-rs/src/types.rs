@@ -535,12 +535,24 @@ pub struct IncrementalLevelStatement {
     pub recompute_sql: String,
     pub support_sql: Option<Vec<String>>,
     pub support_intern_sql: Option<Vec<String>>,
+    // frontier(shared) only: the recount verb's shared arm, publishing this
+    // head's per-rule support to the shared ledger after the head insert.
+    #[serde(default)]
+    pub support_count_sql: Option<WriteSupportCountPlan>,
     pub expand_sql: Option<ExpandPlan>,
     pub dred_sql: Option<DredPlan>,
     // None on an acyclic head, and on every module emitted before outer rounds.
     #[serde(default)]
     pub recursion_group: Option<RecursionGroupPlan>,
     pub aggregate_sql: Option<AggregateLevelPlan>,
+}
+
+// lower.pl:support_count_plan/8. clear_sql empties this rel's rows in the
+// shared ledger, write_sqls refill them, one statement per rule.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriteSupportCountPlan {
+    pub clear_sql: String,
+    pub write_sqls: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
