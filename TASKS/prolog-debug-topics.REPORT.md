@@ -146,7 +146,8 @@ Measured here on both trees, same machine, sequentially:
 
 | | base `942cf1443` (scratch worktree) | branch `1460e0589` |
 |---|---|---|
-| stage 1 outcome | wedged, killed at the 900s budget | wedged, killed at the 900s budget |
+| stage 1 outcome | wedged, killed at 900s | wedged, killed at 900s |
+| exact receipt | `timeout -s KILL 900 swipl -q -l ../prolog/sweep.pl -g sweep -g halt` -> `Killed: 9`, `rc=137`, `real 15m0.010s` | `bash scripts/sweep.sh` -> `TIMEOUT sweep.sh: stage 1 compile sweep exceeded 900s`, `rc=124`, `real 15m0.035s` |
 | `out/*.ts` written before the wedge | 135 | 135 |
 | last artifact written | `recursive_enum_acyclic_tree_round_trips.ts` + `.schedule.json` | same |
 | next artifact, never written | `recursive_enum_acyclic_tree_round_trips.schema.json` | same |
