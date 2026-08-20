@@ -427,6 +427,12 @@ print_column_type(annotated_type(Type, Applications), Text) :-
 print_column_type(named(Name, Value), Text) :-
     !,
     print_annotation_argument(named(Name, Value), Text).
+print_column_type(arrow_type(Inputs, Output), Text) :-
+    !,
+    maplist(print_product_field, Inputs, InputTexts),
+    atomic_list_concat(InputTexts, ', ', InputsText),
+    print_column_type(Output, OutputText),
+    format(atom(Text), "((~w) -> ~w)", [InputsText, OutputText]).
 print_column_type(product_type(Fields), Text) :-
     !,
     maplist(print_product_field, Fields, FieldTexts),

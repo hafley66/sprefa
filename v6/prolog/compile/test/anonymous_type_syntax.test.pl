@@ -69,6 +69,51 @@ test(arrow_return_position_round_trips) :-
     parse_dl(Printed, RoundTripped, _, []),
     Prog =@= RoundTripped.
 
+test(inline_arrow_parses_prints_and_reparses) :-
+    parse_text("rel Pet(name: text).\nrel Pets(get: ((id: int) -> Pet)).",
+               Prog, Bindings),
+    Prog = prog(Decls, []),
+    memberchk(col_type('Pets'/1, get,
+                       arrow_type([field(id, int)], 'Pet')), Decls),
+    print_dl_program(Prog, Bindings, Text),
+    assertion(sub_string(Text, _, _, _, "get: ((id: int) -> Pet)")),
+    atom_codes(Text, Printed),
+    parse_dl(Printed, RoundTripped, _, []),
+    Prog =@= RoundTripped.
+
+test(inline_arrow_is_recursive_in_every_type_expression_site) :-
+    parse_text(
+        "rel Pet(name: text).\nrel Box(T)(value: T).\nrel Sites(field: ((id: int) -> Pet), wrapped: list(((id: int) -> Pet)), generic: Box(((id: int) -> Pet)), product: (op: ((id: int) -> Pet)), sum: (One(op: ((id: int) -> Pet)); Empty())).",
+        Prog, Bindings),
+    print_dl_program(Prog, Bindings, Text),
+    atom_codes(Text, Printed),
+    parse_dl(Printed, RoundTripped, _, []),
+    Prog =@= RoundTripped,
+    expand_program_with_bindings(Prog, Bindings, prog(Expanded, _), _),
+    member(semantic_type_rows(Rows), Expanded),
+    findall(Path-Inputs-Output,
+            member(anonymous(named(local, relation, 'Sites'), Path,
+                             arrow_type(Inputs, Output)), Rows),
+            Sites),
+    member(_-Inputs-Output, Sites),
+    append(Inputs, [field(return, Output)], Fields),
+    member(field(return, 'Pet'), Fields),
+    findall(Path, member(Path-_-_, Sites), Paths),
+    Paths \== [].
+
+test(inline_arrow_mints_an_ordinary_return_member_role) :-
+    parse_text("rel Pet(name: text).\nrel Pets(get: ((id: int) -> Pet)).",
+               Prog, Bindings),
+    expand_program_with_bindings(Prog, Bindings, prog(Decls, _), _),
+    member(col_type('Pets'/1, get, Generated), Decls),
+    member(type_decl(Generated, [col(id, int), col(return, 'Pet')]), Decls),
+    member(semantic_type_rows(Rows), Decls),
+    member(declaration(GeneratedId, root, Generated, relation, materialized),
+           Rows),
+    ReturnMember = member(GeneratedId, 2, return),
+    member(member(ReturnMember, GeneratedId, 2, return, _), Rows),
+    member(member_role(ReturnMember, return), Rows).
+
 test(empty_product_or_sum_is_named,
      [throws(unsupported_construct(anonymous_type_empty))]) :-
     parse_text("rel r(a: ()).", _, _).

@@ -123,23 +123,15 @@ mint_type_decl_specs_(Decls, Owner, [col(Column, Type0) | Rest],
 anonymous_mint(Decls, Owner, Path, product_type(Fields0), Type,
                ExtraDecls, Rows) :-
     !,
-    check_anonymous_cycle(Owner, Path, product_type(Fields0)),
-    mint_fields(Decls, Owner, Path, Fields0, Fields, FieldDecls, FieldRows),
-    anonymous_type_name(Owner, Path, product_type(Fields0), GeneratedName),
-    cols_from_fields(Fields, Specs),
-    semantic_decl_id_anon(Owner, GeneratedName, relation, GeneratedId),
-    owner_module_hash(Owner, ModuleHash),
-    Id = anonymous(Owner, Path, product_type(Fields0)),
-    ExtraDecls = [ type_decl(GeneratedName, Specs),
-                   semantic_decl_module(relation, GeneratedName, ModuleHash),
-                   anonymous_generated_decl(GeneratedName)
-                 | FieldDecls ],
-    Rows = [ anonymous(Owner, Path, product_type(Fields0)),
-             declaration(GeneratedId, root, GeneratedName, relation,
-                         materialized),
-             derived_from(GeneratedId, Id)
-           | FieldRows ],
-    Type = GeneratedName.
+    anonymous_mint_product(Decls, Owner, Path, product_type(Fields0), Fields0,
+                           Type, ExtraDecls, Rows).
+anonymous_mint(Decls, Owner, Path, arrow_type(Inputs, Output), Type,
+               ExtraDecls, Rows) :-
+    !,
+    append(Inputs, [field(return, Output)], Fields),
+    anonymous_mint_product(Decls, Owner, Path, arrow_type(Inputs, Output),
+                           Fields, Type, ExtraDecls, Rows).
+
 anonymous_mint(Decls, Owner, Path, sum_type(Variants0), Type,
                ExtraDecls, Rows) :-
     !,
@@ -178,6 +170,30 @@ anonymous_mint(Decls, Owner, Path, Type0, Type, ExtraDecls, Rows) :-
       Rows = ArgRows
     ).
 anonymous_mint(_, _, _, Type, Type, [], []).
+
+anonymous_mint_product(Decls, Owner, Path, IdentityShape, Fields0, Type,
+                       ExtraDecls, Rows) :-
+    check_anonymous_cycle(Owner, Path, product_type(Fields0)),
+    mint_fields(Decls, Owner, Path, Fields0, Fields, FieldDecls, FieldRows),
+    anonymous_type_name(Owner, Path, IdentityShape, GeneratedName),
+    cols_from_fields(Fields, Specs),
+    length(Specs, Arity),
+    findall(col_type(GeneratedName/Arity, Column, ColumnType),
+            member(col(Column, ColumnType), Specs),
+            ColumnDecls),
+    semantic_decl_id_anon(Owner, GeneratedName, relation, GeneratedId),
+    owner_module_hash(Owner, ModuleHash),
+    Id = anonymous(Owner, Path, IdentityShape),
+    append([ type_decl(GeneratedName, Specs),
+             semantic_decl_module(relation, GeneratedName, ModuleHash),
+             anonymous_generated_decl(GeneratedName)
+           | ColumnDecls ], FieldDecls, ExtraDecls),
+    Rows = [ anonymous(Owner, Path, IdentityShape),
+             declaration(GeneratedId, root, GeneratedName, relation,
+                         materialized),
+             derived_from(GeneratedId, Id)
+           | FieldRows ],
+    Type = GeneratedName.
 
 mint_arguments(_, _, _, _, [], [], [], []).
 mint_arguments(Decls, Owner, Path, Ordinal, [Arg0 | Rest],
@@ -260,6 +276,7 @@ path_component_stem(A, A).
 
 type_contains_anonymous(product_type(_)) :- !.
 type_contains_anonymous(sum_type(_)) :- !.
+type_contains_anonymous(arrow_type(_, _)) :- !.
 type_contains_anonymous(annotated_type(Type, _)) :-
     !,
     type_contains_anonymous(Type).
@@ -375,6 +392,7 @@ rewrite_anonymous_semantic_term(Decls, Term0, Term) :-
 
 anonymous_type_shape(product_type(_)).
 anonymous_type_shape(sum_type(_)).
+anonymous_type_shape(arrow_type(_, _)).
 
 anonymous_generated_id(Decls, Shape, GeneratedId) :-
     setof(Id,

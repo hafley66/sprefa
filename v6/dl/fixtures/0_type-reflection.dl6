@@ -1,0 +1,39 @@
+rel Box(T)(Value: list(T)).
+
+rel Host(
+  CamelCase: list(Box(int)),
+  MaybeValue: option(text),
+  KeyedList: key(list(int)),
+  Inline: (InnerValue: text, ExactCase: list(int))
+).
+
+rel reflected(
+  Owner: type,
+  Position: int,
+  Name: text,
+  Value: type,
+  Member: type
+) -> type.
+
+reflected(Owner, Position, Name, Value, Member, Owner) <-
+  type_member(Member, Owner, Position, Name, Value).
+
+rel reflected_role(Member: type, Role: text, Argument: text) -> type.
+
+reflected_role(Member, Role, Argument, Member) <-
+  type_member_role(Member, Role, Argument).
+
+rel reflected_application(Application: type, Constructor: type) -> type.
+
+reflected_application(Application, Constructor, Application) <-
+  type_application(Application, Constructor).
+
+rel reflected_argument(
+  Argument: type,
+  Application: type,
+  Position: int,
+  Value: type
+) -> type.
+
+reflected_argument(Argument, Application, Position, Value, Application) <-
+  type_argument(Argument, Application, Position, Value).

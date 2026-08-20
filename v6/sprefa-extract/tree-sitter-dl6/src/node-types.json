@@ -1,5 +1,35 @@
 [
   {
+    "type": "arrow_type",
+    "named": true,
+    "fields": {
+      "inputs": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": ",",
+            "named": false
+          },
+          {
+            "type": "field",
+            "named": true
+          }
+        ]
+      },
+      "output": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "atom",
     "named": true,
     "fields": {
@@ -988,6 +1018,10 @@
       "multiple": false,
       "required": false,
       "types": [
+        {
+          "type": "arrow_type",
+          "named": true
+        },
         {
           "type": "product_type",
           "named": true

@@ -358,7 +358,20 @@ program_violation(column_type_unknown, prog(Decls, _), Name) :-
     \+ Name = json_list(_),
     \+ Name = list(_),
     \+ Name = id(_),
+    \+ anonymous_column_type(Name),
+    \+ declared_template_application(Decls, Name),
     \+ declared_type_name(Types, Name).
+
+anonymous_column_type(product_type(_)).
+anonymous_column_type(sum_type(_)).
+anonymous_column_type(arrow_type(_, _)).
+
+declared_template_application(Decls, Application) :-
+    compound(Application),
+    functor(Application, Name, Arity),
+    member(rel_template(Segments, Parameters, _), Decls),
+    atomic_list_concat(Segments, '__', Name),
+    length(Parameters, Arity).
 
 % An argument sitting in a ref-typed column that is not a relation value of
 % that column's type. `span(file(Repo, At), Start, End)` is a relation value;

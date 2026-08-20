@@ -1,0 +1,9 @@
+rel Box(T)(value: T).
+
+rel Pets(
+  get: ((id: int) -> text),
+  list: list(((limit: option(int)) -> list(text))),
+  boxed: Box(((id: int) -> text))
+).
+
+? Pets(get: Get, list: List, boxed: Boxed).

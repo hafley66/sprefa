@@ -37,10 +37,13 @@ module.exports = grammar({
     column: $ => seq(field("name", $.identifier), ":", field("type", $.type)),
 
     type: $ => choice(
+      $.arrow_type,
       $.product_type,
       $.sum_type,
       seq(field("name", $.identifier), optional(seq("(", field("arguments", optional(seq($.type_argument, repeat(seq(",", $.type_argument))))), ")")), field("optional", optional("?"))),
     ),
+
+    arrow_type: $ => seq("(", "(", field("inputs", optional(commaSep1($.field))), ")", "->", field("output", $.type), ")"),
 
     type_argument: $ => choice($.type, $.type_named_argument),
     type_named_argument: $ => seq(field("name", choice($.identifier, $.variable)), ":", field("value", $.expression)),

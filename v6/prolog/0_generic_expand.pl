@@ -15,6 +15,7 @@
             freeze_type_rows/2,
             normalize_key_wrappers/2,
             schema_member_rows/2,
+            compiler_type_source_rows/3,
             type_relation_rows/2,
             schema_member_transport_rows/3,
             expand_generic_program_with_bindings/3
@@ -707,8 +708,10 @@ elaborate_and_erase_compiler_relations(Decls0, Rules0, Bindings, Decls, Rules) :
     ;  type_relation_rows(Decls0, MetadataRows),
        elaborate_compiler_rules(Decls0, Bindings, CompilerRules0,
                                 CompilerRules, SeedRows),
+       compiler_type_source_rows(Decls0, Relations, TypeSourceRows),
+       append(SeedRows, TypeSourceRows, CompilerSeedRows),
        evaluate_compiler_relations(compiler_relations(Relations, CompilerRules),
-                                   SeedRows, ClosureRows),
+                                   CompilerSeedRows, ClosureRows),
        erase_annotation_transport(RuntimeDecls, RuntimeDecls1, AnnotationEvidence),
        ( AnnotationEvidence == []
        -> Metadata = compiler_type_metadata(MetadataRows, ClosureRows)
@@ -732,7 +735,7 @@ annotation_transport_decl(compiler_annotation_evidence(_)).
 elaborate_compiler_rules(Decls, Bindings, Rules0, Rules, SeedRows) :-
     findall(Row,
             ( member(Rule, Rules0), compiler_fact_rule(Rule, Head),
-              elaborate_compiler_atom(Decls, Bindings, Head, Row) ),
+              elaborate_compiler_fact_atom(Decls, Bindings, Head, Row) ),
             SeedRows0),
     sort(SeedRows0, SeedRows),
     findall(Rule,
@@ -764,16 +767,64 @@ elaborate_compiler_body(Decls, Bindings, Atom0, Atom) :-
 
 elaborate_compiler_atom(Decls, Bindings, Atom0, Atom) :-
     Atom0 =.. [Name | Arguments0],
-    annotation_relation_ref(Decls, Name, Ref),
-    findall(Type, member(col_type(Ref, _, Type), Decls), Types),
+    length(Arguments0, Arity),
+    compiler_relation_signature(Decls, Name/Arity, Types),
     maplist(elaborate_compiler_argument(Decls, Bindings), Types, Arguments0, Arguments),
     Atom =.. [Name | Arguments].
+
+% Fact variables may be source type names captured by the parser bindings.
+% Rule variables remain evaluator joins and are preserved by
+% elaborate_compiler_argument/5.
+elaborate_compiler_fact_atom(Decls, Bindings, Atom0, Atom) :-
+    Atom0 =.. [Name | Arguments0],
+    length(Arguments0, Arity),
+    compiler_relation_signature(Decls, Name/Arity, Types),
+    maplist(elaborate_compiler_fact_argument(Decls, Bindings), Types,
+            Arguments0, Arguments),
+    Atom =.. [Name | Arguments].
+
+elaborate_compiler_fact_argument(Decls, Bindings, Domain0, Argument,
+                                 Elaborated) :-
+    compiler_argument_domain(Domain0, Domain),
+    Domain \== Domain0,
+    !,
+    elaborate_compiler_fact_argument(Decls, Bindings, Domain, Argument,
+                                     Elaborated).
+elaborate_compiler_fact_argument(Decls, Bindings, type, Argument, Elaborated) :-
+    compiler_type_source_term(Decls, Bindings, Argument, Type),
+    compiler_declared_type_term(Decls, Type),
+    !,
+    semantic_type_id(Decls, Type, Elaborated).
+elaborate_compiler_fact_argument(_, _, type, Argument, _) :-
+    throw(unsupported_construct(compiler_relation_type_unknown(Argument))).
+elaborate_compiler_fact_argument(Decls, Bindings, Domain, Argument,
+                                 Elaborated) :-
+    elaborate_compiler_argument(Decls, Bindings, Domain, Argument, Elaborated).
+
+compiler_relation_signature(_, Ref, Types) :-
+    compiler_type_source_signature(Ref, Types), !.
+compiler_relation_signature(Decls, Ref, Types) :-
+    Ref = Name/_,
+    annotation_relation_ref(Decls, Name, Ref),
+    findall(Type, member(col_type(Ref, _, Type), Decls), Types).
+
+compiler_type_source_signature(type_decl/4,
+                               [semantic, text, text, text]).
+compiler_type_source_signature(type_member/5,
+                               [semantic, semantic, int, text, semantic]).
+compiler_type_source_signature(type_member_role/3,
+                               [semantic, text, text]).
+compiler_type_source_signature(type_application/2,
+                               [semantic, semantic]).
+compiler_type_source_signature(type_argument/4,
+                               [semantic, semantic, int, semantic]).
 
 elaborate_compiler_argument(Decls, Bindings, Domain0, Argument, Elaborated) :-
     compiler_argument_domain(Domain0, Domain),
     Domain \== Domain0,
     !,
     elaborate_compiler_argument(Decls, Bindings, Domain, Argument, Elaborated).
+elaborate_compiler_argument(_, _, _, Argument, Argument) :- var(Argument), !.
 elaborate_compiler_argument(Decls, Bindings, type, Argument, Elaborated) :-
     compiler_type_source_term(Decls, Bindings, Argument, Type),
     compiler_declared_type_term(Decls, Type),
@@ -789,6 +840,7 @@ elaborate_compiler_argument(_, _, bool, bool_lit(Argument), Argument) :-
     memberchk(Argument, [true, false]), !.
 elaborate_compiler_argument(_, _, float, Argument, Argument) :- float(Argument), !.
 elaborate_compiler_argument(_, _, float, float_lit(Argument), Argument) :- float(Argument), !.
+elaborate_compiler_argument(_, _, semantic, Argument, Argument) :- ground(Argument), !.
 elaborate_compiler_argument(_, _, Type, Argument, _) :-
     throw(unsupported_construct(compiler_relation_argument_type(Type, Argument))).
 
@@ -796,6 +848,41 @@ elaborate_compiler_argument(_, _, Type, Argument, _) :-
 % compiler relation receives the same semantic type value as an unwrapped
 % type column; the key role remains in schema/type-relation metadata.
 compiler_argument_domain(key(type), type).
+
+%! compiler_type_source_rows(+Decls, +Relations, -Rows) is det.
+%  Project only referenced compiler-source views from the frozen canonical
+%  graph. These rows enter the compiler evaluator as seeds and never enter
+%  runtime declarations or storage.
+compiler_type_source_rows(Decls, Relations, Rows) :-
+    ( member(semantic_type_rows(SemanticRows), Decls) -> true
+    ; generic_type_ir(Decls, SemanticRows) ),
+    findall(Row,
+            ( member(compiler_relation(Ref, _, _), Relations),
+              compiler_type_source_row(SemanticRows, Ref, Row) ),
+            Rows0),
+    sort(Rows0, Rows).
+
+compiler_type_source_row(Rows, type_decl/4,
+                         type_decl(Id, Name, Kind, Phase)) :-
+    member(declaration(Id, _, Name, Kind, Phase), Rows).
+compiler_type_source_row(Rows, type_member/5, Row) :-
+    member(Row0, Rows),
+    Row0 = member(MemberId, OwnerId, Position, Name, TypeRef),
+    Row = type_member(MemberId, OwnerId, Position, Name, TypeRef).
+compiler_type_source_row(Rows, type_member_role/3,
+                         type_member_role(MemberId, Role, Argument)) :-
+    member(member_role(MemberId, RoleTerm), Rows),
+    compiler_member_role_parts(RoleTerm, Role, Argument).
+compiler_type_source_row(Rows, type_application/2,
+                         type_application(ApplicationId, ConstructorId)) :-
+    member(application(ApplicationId, ConstructorId), Rows).
+compiler_type_source_row(Rows, type_argument/4,
+                         type_argument(ArgumentId, ApplicationId, Position,
+                                       TypeRef)) :-
+    member(argument(ArgumentId, ApplicationId, Position, TypeRef), Rows).
+
+compiler_member_role_parts(anonymous_owner(Path), anonymous_owner, Path) :- !.
+compiler_member_role_parts(Role, Role, '').
 
 compiler_type_source_term(Decls, Bindings, Variable, Type) :-
     var(Variable),
@@ -2244,6 +2331,7 @@ semantic_primitive(bytes).
 
 anonymous_type_term(product_type(_)).
 anonymous_type_term(sum_type(_)).
+anonymous_type_term(arrow_type(_, _)).
 anonymous_type_term(anonymous_product(_, _)).
 anonymous_type_term(anonymous_sum(_, _)).
 

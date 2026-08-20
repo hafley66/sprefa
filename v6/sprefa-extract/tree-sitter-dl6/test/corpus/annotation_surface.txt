@@ -38,3 +38,27 @@ rel annotation(empty: int, configured: configure(int, Value: 1), composed: secon
               (type_argument
                 (type
                   (identifier))))))))))
+
+==================
+inline arrow type
+==================
+
+rel pets(get: ((id: int) -> pet)).
+
+---
+
+(source_file
+  (statement
+    (relation_declaration
+      name: (path
+        (identifier))
+      columns: (declaration_parameter
+        name: (identifier)
+        type: (type
+          (arrow_type
+            inputs: (field
+              name: (identifier)
+              type: (type
+                name: (identifier)))
+            output: (type
+              name: (identifier))))))))

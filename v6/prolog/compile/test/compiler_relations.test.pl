@@ -10,6 +10,7 @@
 :- use_module('../../compile', [program_plan/2, compile_dl6/2]).
 :- use_module('../../lower', [lower_program/2]).
 :- use_module('../parse_dl_dcg', [parse_dl/4]).
+:- use_module('../../use_resolve', [expand_uses/8]).
 :- use_module(library(process)).
 :- use_module(library(readutil)).
 
@@ -135,6 +136,77 @@ test(real_dl6_fixture_reaches_compiler_erasure) :-
         ( compile_dl6(Fixture, Out),
           read_file_to_string(Out, Text, []),
           \+ sub_string(Text, _, _, _, 'Capability') ),
+        ( exists_file(Out) -> delete_file(Out) ; true )).
+
+test(authored_rules_query_the_frozen_canonical_type_graph) :-
+    predicate_property(plunit_compiler_relations:compiler_decls(_),
+                       file(ThisFile)),
+    file_directory_name(ThisFile, TestDir),
+    absolute_file_name('../../../dl/fixtures/0_type-reflection.dl6', Fixture,
+                       [relative_to(TestDir), access(read)]),
+    expand_uses(Fixture, [], [], _, Program, _, Bindings, Findings),
+    Findings == [],
+    expand_generic_program_with_bindings(Program, Bindings, prog(Decls, Rules)),
+    Rules == [],
+    member(compiler_type_metadata(_, Closure), Decls),
+    Host = named(_, relation, 'Host'),
+    member(reflected(Host, 1, 'CamelCase', _, CamelMember, Host), Closure),
+    CamelMember = member(Host, 1, 'CamelCase'),
+    member(reflected(Host, 2, 'MaybeValue', _, _, Host), Closure),
+    member(reflected(Host, 3, 'KeyedList', _, KeyedMember, Host), Closure),
+    member(reflected_role(KeyedMember, key, '', KeyedMember), Closure),
+    member(reflected(Host, 4, 'Inline', type_ref(declaration(Inline)), _, Host),
+           Closure),
+    member(reflected(Inline, 1, 'InnerValue', _, _, Inline), Closure),
+    member(reflected(Inline, 2, 'ExactCase', _, _, Inline), Closure),
+    member(reflected_application(Application, Constructor, Application), Closure),
+    member(reflected_argument(_, Application, 1, _, Application), Closure),
+    Application = application(Constructor, [_]),
+    \+ member(col_type(reflected/6, _, _), Decls),
+    \+ member(col_type(reflected_role/4, _, _), Decls),
+    \+ member(col_type(type_member/5, _, _), Decls).
+
+test(authored_type_reflection_has_compiler_oracle_parity) :-
+    predicate_property(plunit_compiler_relations:compiler_decls(_),
+                       file(ThisFile)),
+    file_directory_name(ThisFile, TestDir),
+    absolute_file_name('../../../dl/fixtures/0_type-reflection.dl6', Fixture,
+                       [relative_to(TestDir), access(read)]),
+    expand_uses(Fixture, [], [], _, Program, _, Bindings, []),
+    expand_generic_program_with_bindings(Program, Bindings,
+                                         prog(OracleDecls, [])),
+    member(compiler_type_metadata(_, OracleClosure), OracleDecls),
+    program_plan(fixture(type_reflection, Program, [], [], [])-Bindings,
+                 plan(_, prog(CompilerDecls, _), _, _, _, _, _, _, _)),
+    member(compiler_type_metadata(_, CompilerClosure), CompilerDecls),
+    CompilerClosure == OracleClosure.
+
+test(authored_relation_cannot_shadow_a_type_reflection_source,
+     [throws(unsupported_construct(
+                 compiler_relation_builtin_collision(type_member/5)))]) :-
+    partition_compiler_program(
+        [ col_type(type_member/5, a, type),
+          col_type(type_member/5, b, type),
+          col_type(type_member/5, c, type),
+          col_type(type_member/5, d, type),
+          col_type(type_member/5, e, type),
+          col_type(project/2, source, type),
+          col_type(project/2, return, type) ],
+        [project(Owner, Owner) <- type_member(_, Owner, _, _, _)], _, _, _).
+
+test(type_reflection_sources_are_absent_from_emitted_runtime) :-
+    predicate_property(plunit_compiler_relations:compiler_decls(_),
+                       file(ThisFile)),
+    file_directory_name(ThisFile, TestDir),
+    absolute_file_name('../../../dl/fixtures/0_type-reflection.dl6', Fixture,
+                       [relative_to(TestDir), access(read)]),
+    Out = '/private/tmp/type-reflection.ts',
+    setup_call_cleanup(
+        true,
+        ( compile_dl6(Fixture, Out),
+          read_file_to_string(Out, Text, []),
+          \+ sub_string(Text, _, _, _, 'type_member'),
+          \+ sub_string(Text, _, _, _, 'reflected_application') ),
         ( exists_file(Out) -> delete_file(Out) ; true )).
 
 test(direct_calls_compose_and_bind_typed_values) :-

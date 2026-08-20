@@ -73,9 +73,49 @@ declaration_ref(rel_path_decl(Ref, _), Ref).
 % boundary in either direction has no runtime representation.
 partition_compiler_program(Decls, Rules, compiler_relations(Relations, CompilerRules),
                            RuntimeDecls, RuntimeRules) :-
-    partition_compiler_relations(Decls, compiler_relations(Relations, _), RuntimeDecls),
+    partition_compiler_relations(Decls,
+                                 compiler_relations(DeclaredRelations, _),
+                                 RuntimeDecls),
+    compiler_builtin_relations(Rules, BuiltinRelations),
+    compiler_builtin_declaration_collisions(Decls, BuiltinRelations),
+    append(DeclaredRelations, BuiltinRelations, Relations),
     relation_refs(Relations, CompilerRefs),
     partition_rules(Rules, CompilerRefs, CompilerRules, RuntimeRules).
+
+compiler_builtin_relations(Rules, Relations) :-
+    findall(compiler_relation(Ref, Arity, []),
+            ( compiler_builtin_ref(Ref),
+              Ref = _/Arity,
+              rule_contains_ref(Rules, Ref) ),
+            Relations).
+
+compiler_builtin_ref(type_decl/4).
+compiler_builtin_ref(type_member/5).
+compiler_builtin_ref(type_member_role/3).
+compiler_builtin_ref(type_application/2).
+compiler_builtin_ref(type_argument/4).
+
+compiler_builtin_declaration_collisions(_, []) :- !.
+compiler_builtin_declaration_collisions(Decls,
+                                        [compiler_relation(Ref, _, _) | Rest]) :-
+    ( member(col_type(Ref, _, _), Decls)
+    -> throw(unsupported_construct(compiler_relation_builtin_collision(Ref)))
+    ; true
+    ),
+    compiler_builtin_declaration_collisions(Decls, Rest).
+
+rule_contains_ref(Rules, Ref) :-
+    member(Rule, Rules),
+    rule_contains_ref_term(Rule, Ref),
+    !.
+
+rule_contains_ref_term(Term, Ref) :-
+    nonvar(Term),
+    ( atom_ref(Term, Ref)
+    ; compound(Term),
+      compound_name_arguments(Term, _, Arguments),
+      member(Argument, Arguments),
+      rule_contains_ref_term(Argument, Ref) ).
 
 relation_refs([], []).
 relation_refs([compiler_relation(Ref, _, _) | Rest], [Ref | Refs]) :-
@@ -84,7 +124,9 @@ relation_refs([compiler_relation(Ref, _, _) | Rest], [Ref | Refs]) :-
 partition_rules([], _, [], []).
 partition_rules([Rule | Rest], CompilerRefs, CompilerRules, RuntimeRules) :-
     rule_head_ref(Rule, HeadRef),
-    ( memberchk(HeadRef, CompilerRefs)
+    ( compiler_builtin_ref(HeadRef)
+    -> throw(unsupported_construct(compiler_relation_builtin_head(HeadRef)))
+    ; memberchk(HeadRef, CompilerRefs)
     -> validate_compiler_rule_refs(Rule, CompilerRefs),
        CompilerRules = [Rule | MoreCompiler],
        partition_rules(Rest, CompilerRefs, MoreCompiler, RuntimeRules)

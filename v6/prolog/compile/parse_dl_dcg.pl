@@ -717,7 +717,12 @@ type_base(Type) -->
 % first item names the shape: `ident :` opens a product, `ident (` opens a sum.
 % An empty group `()` receives a named refusal in the first slice.
 type_base(Type) -->
-    @`(`, ws, anonymous_type(Type), #`)`.
+    @`(`, ws,
+    ( @`(`, ws, args(anonymous_field, Inputs), #`)`, ws, @`->`, ws,
+      type_expr(Output), #`)`,
+      { Type = arrow_type(Inputs, Output) }
+    ; anonymous_type(Type), #`)`
+    ).
 
 anonymous_type(Type) -->
     ( peek(0'))
