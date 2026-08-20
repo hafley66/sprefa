@@ -93,9 +93,15 @@ capped "${SWEEP_COMPILE_BUDGET_S:-900}" "stage 1 compile sweep" \
 
 echo ""
 echo "=== stage 2: oracle dump ==="
-capped "${SWEEP_ORACLE_BUDGET_S:-900}" "stage 2 oracle dump" \
-  env "SWEEP_FORCE=${SWEEP_FORCE:-0}" \
-  swipl -q -l "$COMPILE_DIR/oracle_dump.pl" -g dump_all -g halt
+# SWEEP_ORACLE=0: the reference prolog never runs; stage 3 diffs the frozen
+# snapshots on disk (rulings.pl oracle_demoted_to_snapshots).
+if [ "${SWEEP_ORACLE:-1}" = "0" ]; then
+  echo "SWEEP_ORACLE=off (snapshots as committed)"
+else
+  capped "${SWEEP_ORACLE_BUDGET_S:-900}" "stage 2 oracle dump" \
+    env "SWEEP_FORCE=${SWEEP_FORCE:-0}" \
+    swipl -q -l "$COMPILE_DIR/oracle_dump.pl" -g dump_all -g halt
+fi
 
 echo ""
 echo "=== stage 3: copy compiled modules into gen_emitted/, run the diff ==="
