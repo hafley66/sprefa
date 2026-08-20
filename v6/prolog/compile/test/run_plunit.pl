@@ -1,13 +1,16 @@
 % run_plunit.pl -- the entry the `just plunit` recipe runs.
 %
 % plunit_tests.pl declares the units; this file is the only thing that decides
-% HOW they run. Two knobs, both env:
+% HOW they run. Three knobs, all env:
 %
 %   PLUNIT_JOBS      worker threads (default: cpu_count; 1 = the old
 %                    sequential run, byte-for-byte the same test order inside
 %                    each unit)
 %   PLUNIT_SLOWEST   rows in the slowest-test and slowest-unit tables
 %                    (default 15; 0 suppresses both tables)
+%   PLUNIT_JUNIT     path to write a junit-schema XML report; unset, no XML
+%                    is written and stdout is byte-identical to before this
+%                    knob existed.
 %
 % plunit's jobs(N) schedules one UNIT per worker: tests inside a unit stay
 % sequential and in file order, units interleave. Two units that touch the same
@@ -22,6 +25,7 @@
 :- use_module(library(lists)).
 :- use_module(library(pairs)).
 :- use_module(library(aggregate)).
+:- use_module(library(sgml)).
 
 :- ensure_loaded('plunit_tests.pl').
 
@@ -117,7 +121,146 @@ plunit_run :-
     % forall(...) test contributes one row per generated case, so results >= declared.
     format("PLUNIT jobs=~d declared=~d results=~d passed=~d failed=~d timeout=~d wall=~2fs~n",
            [Jobs, Declared, Results, Passed, Failed, TimedOut, Wall]),
+    plunit_junit_maybe_write,
     (   Failed + TimedOut =:= 0
     ->  halt(0)
     ;   halt(1)
     ).
+
+                 /*******************************
+                 *          JUNIT XML          *
+                 *******************************/
+%
+% PLUNIT_JUNIT unset: none of this runs, stdout is unchanged.
+%
+% BUILD-VS-BUY: no SWI pack emits junit (`pack_list('junit')` against the
+% default server returns nothing at time of writing) and the base install
+% carries no junit writer; library(sgml) supplies only generic XML
+% attribute/cdata quoting (xml_quote_attribute/2, xml_quote_cdata/2), reused
+% below instead of hand-escaping. The fixed 3-level junit schema
+% (testsuites > testsuite > testcase) is small enough that a bespoke writer
+% beats pulling in a general XML-tree builder for it.
+%
+% Failure text is rendered through plunit's own failure//1 grammar (the same
+% one plunit's terminal report uses) rather than re-deriving a message from
+% the raw failure term, so the XML text matches what a human already reads
+% on a red run.
+
+plunit_junit_path(Path) :-
+    getenv('PLUNIT_JUNIT', Path0),
+    Path0 \== '',
+    !,
+    Path = Path0.
+
+plunit_junit_maybe_write :-
+    (   plunit_junit_path(Path)
+    ->  plunit_junit_write(Path)
+    ;   true
+    ).
+
+% One row per generated outcome; a forall(...) test contributes one row per
+% case under the same Unit:Name, folded into a single testcase below.
+plunit_junit_row(Unit, Name, Line, Wall, passed, none) :-
+    plunit:passed(Unit, Name, Line, _Det, Time),
+    Wall = Time.wall.
+plunit_junit_row(Unit, Name, Line, Wall, failed, E) :-
+    plunit:failed(Unit, Name, Line, E, Time),
+    Wall = Time.wall.
+plunit_junit_row(Unit, Name, Line, Wall, timeout, timeout(Limit)) :-
+    plunit:timeout(Unit, Name, Line, Limit, Time),
+    Wall = Time.wall.
+
+% Fold every row for one Unit:Name into one testcase: failed/timeout beats
+% passed, time is the sum of all generated cases' wall times, failure text
+% comes from the first non-passing row.
+plunit_junit_case(Unit-Name, case(Unit, Name, Line, Time, Status, Detail)) :-
+    findall(L-W-S-D, plunit_junit_row(Unit, Name, L, W, S, D), Rows),
+    Rows = [L0-_-_-_|_],
+    Line = L0,
+    aggregate_all(sum(W), member(_-W-_-_, Rows), Time),
+    (   member(_-_-failed-D0, Rows)
+    ->  Status = failed, Detail = D0
+    ;   member(_-_-timeout-D0, Rows)
+    ->  Status = timeout, Detail = D0
+    ;   Status = passed, Detail = none
+    ).
+
+plunit_junit_cases(Cases) :-
+    findall(Unit-Name, plunit_junit_row(Unit, Name, _, _, _, _), Pairs0),
+    sort(Pairs0, Pairs),
+    findall(Case, ( member(Key, Pairs), plunit_junit_case(Key, Case) ), Cases).
+
+plunit_junit_group_by_unit(Cases, ByUnit) :-
+    findall(Unit-Case, ( member(Case, Cases), Case = case(Unit,_,_,_,_,_) ), Pairs),
+    keysort(Pairs, Sorted),
+    group_pairs_by_key(Sorted, ByUnit).
+
+% Collapse a possibly multi-line rendered failure to one line for the
+% attribute value; the CDATA body below carries the full text.
+plunit_junit_oneline(Text, OneLine) :-
+    split_string(Text, "\n", "", Lines),
+    exclude(==(""), Lines, NonEmpty),
+    (   NonEmpty == []
+    ->  OneLine = ""
+    ;   atomics_to_string(NonEmpty, " | ", OneLine)
+    ).
+
+plunit_junit_failure_text(none, "") :- !.
+plunit_junit_failure_text(timeout(Limit), Text) :-
+    !,
+    format(string(Text), "test exceeded its ~w second time limit", [Limit]).
+plunit_junit_failure_text(E, Text) :-
+    phrase(plunit:failure(E), Tokens),
+    with_output_to(string(Text), print_message_lines(current_output, "", Tokens)).
+
+plunit_junit_write(Path) :-
+    plunit_junit_cases(Cases),
+    plunit_junit_group_by_unit(Cases, ByUnit),
+    setup_call_cleanup(
+        open(Path, write, Stream, [encoding(utf8)]),
+        plunit_junit_write_stream(Stream, ByUnit),
+        close(Stream)).
+
+plunit_junit_write_stream(Stream, ByUnit) :-
+    format(Stream, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>~n", []),
+    format(Stream, "<testsuites>~n", []),
+    forall(member(Unit-Cases, ByUnit),
+           plunit_junit_write_suite(Stream, Unit, Cases)),
+    format(Stream, "</testsuites>~n", []).
+
+plunit_junit_write_suite(Stream, Unit, Cases) :-
+    length(Cases, Total),
+    aggregate_all(count, member(case(_,_,_,_,failed,_), Cases), Failures),
+    aggregate_all(count, member(case(_,_,_,_,timeout,_), Cases), Timeouts),
+    aggregate_all(sum(T), member(case(_,_,_,T,_,_), Cases), SuiteTime),
+    xml_quote_attribute(Unit, QUnit),
+    format(Stream,
+           "  <testsuite name=\"~w\" tests=\"~d\" failures=\"~d\" errors=\"~d\" time=\"~3f\">~n",
+           [QUnit, Total, Failures, Timeouts, SuiteTime]),
+    forall(member(Case, Cases), plunit_junit_write_case(Stream, Case)),
+    format(Stream, "  </testsuite>~n", []).
+
+plunit_junit_write_case(Stream, case(Unit, Name, _Line, Time, Status, Detail)) :-
+    xml_quote_attribute(Unit, QUnit),
+    xml_quote_attribute(Name, QName),
+    format(Stream, "    <testcase classname=\"~w\" name=\"~w\" time=\"~3f\">~n",
+           [QUnit, QName, Time]),
+    plunit_junit_write_body(Stream, Status, Detail),
+    format(Stream, "    </testcase>~n", []).
+
+plunit_junit_write_body(_Stream, passed, _) :- !.
+plunit_junit_write_body(Stream, timeout, Detail) :-
+    !,
+    plunit_junit_failure_text(Detail, Text),
+    plunit_junit_oneline(Text, OneLine),
+    xml_quote_attribute(OneLine, QAttr),
+    xml_quote_cdata(Text, QCdata),
+    format(Stream, "      <failure message=\"~w\" type=\"timeout\">~w</failure>~n",
+           [QAttr, QCdata]).
+plunit_junit_write_body(Stream, failed, Detail) :-
+    plunit_junit_failure_text(Detail, Text),
+    plunit_junit_oneline(Text, OneLine),
+    xml_quote_attribute(OneLine, QAttr),
+    xml_quote_cdata(Text, QCdata),
+    format(Stream, "      <failure message=\"~w\" type=\"failed\">~w</failure>~n",
+           [QAttr, QCdata]).
