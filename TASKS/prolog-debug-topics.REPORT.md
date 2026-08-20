@@ -120,9 +120,9 @@ Not moved, and named here rather than silently left: the arrival-shape rejection
 |---|---|---|
 | conformance | `cd v6/prolog/conformance && swipl -q -g go -t halt go.pl` | `461` PASS, `FAILURES  1`. The one red is `fail  nested_zero_column_child_is_one_row_per_parent`, the known red. Matches the stated 461 / 1. |
 | plunit | `cd v6 && just plunit` | `ERROR: [Thread main] 7 tests failed`. Same seven names as base `942cf1443`, measured on a scratch worktree of that sha: `subscribe_cone:golden_flex_cone_invariants`, `catalog_plane_rail:level_plane_family_corpus_counts`, `module_path_decls:a_zero_column_childs_name_used_as_a_value_is_not_rewritten`, `rel_zero_arity:a_root_rel_zero_still_has_no_storage`, and three `json_merge_patch` rows. |
-| sweep, stage 1 only | `cd v6/tsv2 && bash scripts/sweep.sh` (stage 1, `swipl -l v6/prolog/sweep.pl -g sweep`) | SWEEP_RESULT |
-| `out/` byte-diff vs base | `git diff --stat -- v6/prolog/compile/out/` after the sweep rewrote it | OUT_DIFF |
-| `manifest.json` vs base | `git diff -- v6/prolog/compile/out/manifest.json` | MANIFEST_DIFF |
+| sweep, stage 1 only | `cd v6/tsv2 && bash scripts/sweep.sh` | `TIMEOUT sweep.sh: stage 1 compile sweep exceeded 900s`, `rc=124`, `real 15m0.035s`. **The same run at base `942cf1443` in a scratch worktree wedges at the identical fixture with the identical output count.** See [stage 1 does not complete, at base either](#stage-1-does-not-complete-at-base-either). |
+| `out/` byte-diff vs base | `diff -rq <base>/v6/prolog/compile/out /branch/v6/prolog/compile/out` after both stage-1 runs | **0 differing files across 1400 entries.** `git diff --diff-filter=M -- v6/prolog/compile/out/` is `0` files in BOTH trees; the only working-tree change either run makes is `1134` deletions from the sweep's own `clear_stale_compiled_outputs/1`, identical in both. |
+| `manifest.json` vs base | `git diff --name-only -- v6/prolog/compile/out/manifest.json` | `0` files, in both trees. Stage 1 writes the manifest after the last fixture, so a wedged stage 1 never reaches it, at base or on this branch. |
 | byte-diff, 3 emitted programs | `compile_dl6.sh` on `pokeapi_shape.dl6`, `door-handwritten.dl6`, `flagship-callgraph.dl6`, before vs after | `POKEAPI_IDENTICAL`, `door-handwritten IDENTICAL`, `flagship-callgraph IDENTICAL` (1696572, 48682, 190945 bytes) |
 | byte-diff, stderr JSON on forced error | parse error (`dl_parse_error/2`) and unsupported construct (`head_column_type_conflict/6`), before vs after | `forced_error STDERR BYTE IDENTICAL`, `forced_unsup STDERR BYTE IDENTICAL`; `dl6c` path also `DL6C_STDERR_BYTE_IDENTICAL` |
 | perf, topics off | `time compile_dl6.sh pokeapi_shape.dl6`, base worktree at 942cf1443 vs branch, 5 alternating runs each | base wall 0.98/0.99/1.01/1.02/1.05, branch 0.99/1.00/1.01/1.02/1.08. Median 1.01 vs 1.01. `COMPILE-TRACE total` over 3 more alternating runs: base 855/865/867, branch 846/878/882. Median +1.5%, inside 5%. Emitted output `POKEAPI_AB_IDENTICAL`. |
@@ -135,6 +135,34 @@ of `v6/prolog/compile/out/` and `manifest.json` against the committed base. Stag
 (oracle dump, node replay, reason diff) execute emitted programs and replay ticks; this arc
 changes only what the compiler WRITES to stderr, and the stage 1 byte-diff already covers every
 emitted byte, so those stages prove nothing extra here.
+
+### stage 1 does not complete, at base either
+
+Pre-existing, and already the top entry in the known-red file. `.github/CI-KNOWN-RED.md:13-19`,
+written 2026-08-19: CI's `Generate text-door corpus` step "ran `bash v6/tsv2/scripts/sweep.sh`,
+which exited 124 on `TIMEOUT sweep.sh: stage 1 compile sweep exceeded 900s`".
+
+Measured here on both trees, same machine, sequentially:
+
+| | base `942cf1443` (scratch worktree) | branch `1460e0589` |
+|---|---|---|
+| stage 1 outcome | wedged, killed at the 900s budget | wedged, killed at the 900s budget |
+| `out/*.ts` written before the wedge | 135 | 135 |
+| last artifact written | `recursive_enum_acyclic_tree_round_trips.ts` + `.schedule.json` | same |
+| next artifact, never written | `recursive_enum_acyclic_tree_round_trips.schema.json` | same |
+| `diff -rq` of the two `out/` trees | 0 differing files, 1400 entries | |
+
+The wedge sits in step 3 of `sweep.pl:sweep_one/6`, the schema emission
+(`catalog_decl_rows/6` then `option_rows/3` then `jsonschema_text/3`), on the SELF-REFERENTIAL
+enum `enum_decl(tree, (leaf(value: int) ; branch(left: tree, right: tree)))`
+(`v6/prolog/conformance/fixtures/17_recursive_enum.pl:10`). A `sample` of the wedged process
+shows every cycle in `growLocalSpace` / `growStacks`: local-stack growth, the signature of a
+non-terminating recursion, not slow work. Isolated to one fixture and run in both trees, that
+step hangs in both.
+
+Named, not fixed: outside this arc, and the arc's own byte-diff shows every artifact the sweep
+DOES reach is unchanged. The fixture's `schema.json` is committed from `28ec02ef8`, so the
+recursion terminated when it landed and stopped terminating later.
 
 ## DL6_DEBUG=all, one compile
 
