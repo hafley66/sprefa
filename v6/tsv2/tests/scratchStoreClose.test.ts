@@ -25,6 +25,14 @@
  * runtime/scratchStore.ts and `releases_every_handle` fails at +64 descriptors,
  * which is what a replay process carried at 335 fixtures and a shard child at
  * 168.
+ *
+ * THE SOAK IS OUT OF THE DEFAULT BATTERY, same gate as serveLeak.test.ts's
+ * receipt (c). 335 connections opened back to back saturate the machine for
+ * long enough that a sibling worker's spawned swipl compile misses its own 30s
+ * cap: measured 2 of 3 full-battery runs with the soak in, 0 of 4 with it out,
+ * against a 726-1033ms isolated wall for the test it wedged. Nothing seizes the
+ * machine, so it runs under scripts/leak-soak.sh where it has the tree to
+ * itself.
  */
 
 import assert from "node:assert/strict";
@@ -42,6 +50,7 @@ import type { ISqlSeam } from "../runtime/types.ts";
 const SEAM_COUNT = 64;
 const CONTROL_COUNT = 32;
 const SOAK_ROUNDS = 335;
+const SOAK_ENABLED = process.env.DL_PERF_LOG !== undefined;
 /** Descriptors the measurement itself churns (the temp directory, the runner's
  *  own reads). Measured at 6 over baseline on a clean pass; a missed close is
  *  +64 and a missed control is +32, so the two are nowhere near each other. */
@@ -137,21 +146,25 @@ test("close is idempotent, so a finalize firing on the complete and the error le
   ScratchStore.close(seam);
 });
 
-test(`soak: ${SOAK_ROUNDS} open/boot/close rounds, the corpus one replay process carries`, async () => {
-  await reclaim();
-  const baseline = open_descriptors();
-  const rss_before = process.memoryUsage().rss;
-  for (let index = 0; index < SOAK_ROUNDS; index += 1) {
-    const seam = ScratchStore.open(":memory:");
-    await firstValueFrom(ScratchStore.boot(seam, DDL));
-    ScratchStore.close(seam);
-  }
-  await reclaim();
-  const after = open_descriptors();
-  const rss_after = process.memoryUsage().rss;
-  process.stdout.write(
-    `SCRATCH_SOAK rounds=${SOAK_ROUNDS} fd_baseline=${baseline} fd_after=${after} ` +
-      `rss_before_mb=${(rss_before / 1048576).toFixed(1)} rss_after_mb=${(rss_after / 1048576).toFixed(1)}\n`,
-  );
-  assert.ok(after - baseline <= SLACK, `descriptors must not grow across ${SOAK_ROUNDS} rounds: ${baseline} -> ${after}`);
-});
+test(
+  `soak: ${SOAK_ROUNDS} open/boot/close rounds, the corpus one replay process carries`,
+  { skip: SOAK_ENABLED ? false : "set DL_PERF_LOG (scripts/leak-soak.sh)" },
+  async () => {
+    await reclaim();
+    const baseline = open_descriptors();
+    const rss_before = process.memoryUsage().rss;
+    for (let index = 0; index < SOAK_ROUNDS; index += 1) {
+      const seam = ScratchStore.open(":memory:");
+      await firstValueFrom(ScratchStore.boot(seam, DDL));
+      ScratchStore.close(seam);
+    }
+    await reclaim();
+    const after = open_descriptors();
+    const rss_after = process.memoryUsage().rss;
+    process.stdout.write(
+      `SCRATCH_SOAK rounds=${SOAK_ROUNDS} fd_baseline=${baseline} fd_after=${after} ` +
+        `rss_before_mb=${(rss_before / 1048576).toFixed(1)} rss_after_mb=${(rss_after / 1048576).toFixed(1)}\n`,
+    );
+    assert.ok(after - baseline <= SLACK, `descriptors must not grow across ${SOAK_ROUNDS} rounds: ${baseline} -> ${after}`);
+  },
+);

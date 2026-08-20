@@ -16,7 +16,7 @@ Branch `fix/tsv2-hygiene`, base `e5fcdf55a`, worktree
 
 | # | defect | commit | fixed | fail-first receipt |
 |---|---|---|---|---|
-| 1 | ScratchStore leaks a libsql handle per fixture | `afb2baf0c` | yes | descriptors 85 -> 21 across 64 seams |
+| 1 | ScratchStore leaks a libsql handle per fixture | `afb2baf0c` + the soak-gating commit | yes | descriptors 85 -> 21 across 64 seams |
 | 2 | `npm test` has no timeout floor | `bf58c7be8` | yes | wedge test: outer kill (rc=124) -> `timed out after 10000ms` |
 | 3 | Spotlight indexes `compile/out` | `6b8190d75` | **no, the prescribed marker is inert on this OS** | probe file still indexed with the marker in place |
 
@@ -71,14 +71,32 @@ With the body restored the same line reads `baseline=15 open=85 closed=21`
 The other open sites open exactly one seam per process (`run-emitted.ts`,
 `golden-run.ts`, `scale-bench.ts`, the per-test seams), so they were left alone.
 
-The soak prints its numbers on every battery run:
-
-```
-SCRATCH_SOAK rounds=335 fd_baseline=21 fd_after=21 rss_before_mb=158.9 rss_after_mb=182.8
-```
-
 `holds_every_handle` is the unclosed control, kept as a live test so
 `releases_every_handle` cannot pass vacuously.
+
+### The soak wedged the battery, and now runs under leak-soak.sh
+
+The receipt file first landed with its 335-round soak inside `npm test`, and
+that wedged a sibling worker: `run: a program with no binds/hosts quiesces at
+zero ticks` hit its own 30s `spawnSync` cap in 2 of 3 full-battery runs,
+against 726-1033ms isolated. 335 libsql connections opened back to back
+saturate the machine long enough that another worker's spawned swipl compile
+never finishes.
+
+| battery shape | runs | wedged |
+|---|---|---|
+| receipt file removed entirely | 2 | 0 |
+| receipt file in, soak test deleted | 2 | 0 |
+| receipt file in, soak test in | 3 | 2 |
+
+The soak is the whole cost, so it took the gate `serveLeak.test.ts`'s receipt
+(c) already uses: skipped unless `DL_PERF_LOG` is set, and
+`scripts/leak-soak.sh` now runs this file alongside `serveLeak.test.ts`. Under
+that script it prints
+
+```
+SCRATCH_SOAK rounds=335 fd_baseline=21 fd_after=21 rss_before_mb=141.9 rss_after_mb=160.8
+```
 
 ## Defect 2: npm test had no timeout floor
 
@@ -141,9 +159,10 @@ Run in the worktree, which needed `pnpm install` in `v6/sprefa-store/js` and
 | | tests | pass | fail | skip | wall |
 |---|---|---|---|---|---|
 | base (`e5fcdf55a`) | 245 | 238 | 6 | 1 | 11.48s |
-| after | 249 | 242 | 6 | 1 | 8.93s |
+| after, three consecutive runs | 249 | 241 | 6 | 2 | 8.60s / 8.64s / 8.57s |
 
-`+4` tests is `scratchStoreClose.test.ts`. Same 6 failing names on both sides:
+`+4` tests and `+1` skip are `scratchStoreClose.test.ts`, whose soak is gated.
+Same 6 failing names on both sides:
 
 | # | name | why |
 |---|---|---|
@@ -158,12 +177,10 @@ Rows 1 and 2 are not repairable in a clean tree: `scripts/golden-flex.sh` fails
 on `e5fcdf55a` before it writes the module, at `bop check` with
 `unsupported_construct: compiler refused rule 'column_type_unknown'`.
 
-One earlier post-change run reported 8 failures. Both extras were load flakes
-under a machine still busy with the descriptor probes (`run: a program with no
-binds/hosts quiesces at zero ticks` at 30007ms, its own `spawnSync` cap, and
-`sabotage: editing fixture in temp dir modifies only the changed row`). The
-clean re-run above reproduces the baseline 6 exactly. Measured three times, per
-the repo's rule about single-run gate numbers.
+Two earlier post-change runs reported 8 failures, and that was not flake: it
+was the soak seizing the machine, diagnosed and fixed in the soak-gating commit above. The
+three runs in the table are after that fix, and every one of them reproduces
+the baseline 6 exactly.
 
 ### `bash scripts/sweep.sh`
 
@@ -180,12 +197,26 @@ The brief expected `wrong=30`; on `e5fcdf55a` those 30 land in `emitted_crash`
 30 names, and `final_wrong=30`. The sweep exits non-zero on that gate on both
 sides.
 
+### `bash scripts/leak-soak.sh`
+
+Not run end to end: it wants port 17551 and a 900s budget. The file it now
+also runs was exercised directly with `DL_PERF_LOG` set, 4 pass 0 fail,
+`SCRATCH_SOAK` line above.
+
 ### typecheck
 
 `npm run typecheck` is red on `e5fcdf55a` with 383 errors, all in
 `gen_emitted/**` (`enum_types` not on `IGenProgramWithBoot`),
 `scripts/shared-frontier-gate.ts`, and the missing `golden-flex.ts`. Zero of
-them are in the five files this branch touches.
+them are in the files this branch touches.
+
+### Fences
+
+`git diff --name-only e5fcdf55a..HEAD` touches no `emit_*.pl`, no
+`sprefa-engine-rs/**`, no `runtime/writeVerbs.ts`, no `scripts/sweep.sh`, no
+`run_plunit.pl`. `origin/main` moved to `0bf43e111` (#389, #390) during the
+run; this branch stays based on `e5fcdf55a`, which is where every number above
+was measured.
 
 ## Two things found on the way that are not this arc
 

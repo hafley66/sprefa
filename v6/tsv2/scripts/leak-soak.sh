@@ -32,5 +32,8 @@ if [ "$ITERATIONS" -lt 20 ]; then
   exit 1
 fi
 
+# scratchStoreClose's 335-round soak is gated on DL_PERF_LOG for the same reason
+# serveLeak's receipt (c) is: 335 connections back to back saturate the machine,
+# and in the default battery that wedged a sibling worker's spawned compile.
 TSV2_LEAK_PORT="$PORT" TSV2_LEAK_ITERATIONS="$ITERATIONS" DL_PERF_LOG="$LOG_PATH" \
-  node --test --experimental-transform-types tests/serveLeak.test.ts
+  node --test --experimental-transform-types tests/serveLeak.test.ts tests/scratchStoreClose.test.ts
