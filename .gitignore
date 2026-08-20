@@ -74,6 +74,7 @@ v6/prolog/compile/out/sweep.digests
 v6/prolog/compile/out/oracle.digests
 v6/prolog/compile/out/sweep.replay.digests.json
 v6/prolog/compile/out/sweep.timings.tsv
+v6/prolog/compile/out/oracle.timings.tsv
 v6/prolog/compile/out/.sweep-shards/
 
 # tsv2 served-program compile output (one emitted module per loaded .dl6)
