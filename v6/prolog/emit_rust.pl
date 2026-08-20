@@ -28,11 +28,6 @@
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
 
-% ═══ IR version ══════════════════════════════════════════════════════════════
-% emit_ts.pl carries the same number under the same spelling, and both runtimes
-% refuse a program document whose value is not the one they interpret.
-ir_version(1).
-
 % ═══ helpers ═════════════════════════════════════════════════════════════════
 
 ref_name(Ref, Name) :- ( Ref = _/_ -> arg(1, Ref, Name) ; atom_string(Name, Ref) ).
@@ -460,10 +455,12 @@ enum_runtime_name(Decls, Name) :-
     member(enum_option_payload(_, _, _, Element), Decls),
     option_enum_name(Element, Name).
 
-enum_type_plan(Decls, RelPlans, DeltaStatements, Name, enumtype(Name, Variants)) :-
+enum_type_plan(Decls, RelPlans, DeltaStatements, Name,
+               enumtype(Name, Variants, Identity)) :-
     findall(Tag-Variant,
             enum_variant_plan(Decls, RelPlans, DeltaStatements, Name, Tag, Variant), Pairs0),
-    keysort(Pairs0, Pairs), pairs_values(Pairs, Variants).
+    keysort(Pairs0, Pairs), pairs_values(Pairs, Variants),
+    enum_identity_plan(Name, Identity).
 
 enum_variant_plan(Decls, RelPlans, DeltaStatements, EnumName, Tag,
                   enumvariant(Tag, VariantName, Fields, FieldTypes, FieldEnums, SelectSql)) :-
@@ -484,7 +481,8 @@ enum_variant_field(Decls, VariantName, Field, EnumName) :-
     option_enum_name(Element, EnumName), !.
 enum_variant_field(_, _, _, null).
 
-enum_type_dict(enumtype(Name, Variants), _{name: Name, variants: VariantDicts}) :-
+enum_type_dict(enumtype(Name, Variants, Identity),
+               _{name: Name, variants: VariantDicts, identity: Identity}) :-
     maplist(enum_variant_dict, Variants, VariantDicts).
 enum_variant_dict(enumvariant(Tag, Rel, Fields, FieldTypes, FieldEnums, SelectSql),
                   _{tag: Tag, rel: Rel, fields: Fields, field_types: FieldTypes,
@@ -506,13 +504,40 @@ enum_ref_fields(Decls, Ref, AllColumns, [Column | Rest], [Field | Fields]) :-
       ; member(option_column(Ref, Column, Element), Decls),
         option_enum_name(Element, EnumName)
       )
-    -> ( nth0(EndpointIndex, AllColumns, id)
+    -> ( nth0(EndpointIndex, AllColumns, id),
+         nth0(CurrentIndex, AllColumns, Column), EndpointIndex =\= CurrentIndex
        -> Field = _{name: EnumName, endpoint_index: EndpointIndex}
        ;  Field = _{name: EnumName, endpoint_index: null}
        )
     ; Field = null
     ),
     enum_ref_fields(Decls, Ref, AllColumns, Rest, Fields).
+
+% Enum endpoints owned by an ordinary row keep using that row's id. A keyed
+% enum-only row has no such owner, so its tagged public value is interned in a
+% durable enum identity table before the generated variant arrival is staged.
+% The table key is canonical tagged JSON, making none and each some payload
+% ordinary, non-NULL values with stable equality across ticks and restarts.
+enum_identity_plan(Name, _{intern_sql: InternSql, lookup_sql: LookupSql}) :-
+    enum_identity_table(Name, Table),
+    quote_ident_local(Table, QuotedTable),
+    format(atom(InternSql),
+           'INSERT OR IGNORE INTO ~w ("value") VALUES (?)', [QuotedTable]),
+    format(atom(LookupSql),
+           'SELECT "id", "value" FROM ~w WHERE "value" = ?', [QuotedTable]).
+
+enum_identity_table(Name, Table) :-
+    atomic_list_concat(['__enum_identity_', Name], Table).
+
+enum_identity_ddls(Decls, Ddls) :-
+    findall(Ddl,
+            ( enum_runtime_name(Decls, Name),
+              enum_identity_table(Name, Table), quote_ident_local(Table, QuotedTable),
+              format(atom(Ddl),
+                     'CREATE TABLE ~w ("id" INTEGER PRIMARY KEY, "value" TEXT NOT NULL UNIQUE)',
+                     [QuotedTable]) ),
+            Ddls0),
+    sort(Ddls0, Ddls).
 
 % ═══ assemble the Rust source ════════════════════════════════════════════════
 
@@ -564,11 +589,13 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
               host_plan_dict(HostPlan, HostDict) ),
             HostPlanDicts),
 
-    ir_version(IrVersion),
+    enum_identity_ddls(PlanDecls, EnumIdentityDdls),
+    append(Ddl, EnumIdentityDdls, FullDdl),
+
     ProgramDict =
     _{ name: Name,
        intern_mode: InternMode,
-       ddl: Ddl,
+       ddl: FullDdl,
        rel_columns: RelColumns,
        rel_column_types: RelColumnTypes,
        arrival_targets: ArrivalTargetNames,
@@ -590,7 +617,9 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
        retentions: Retentions,
        uses_tick: UsesTick,
        reconcile_every_tick: ReconcileEveryTick,
-       ir_version: IrVersion,
+       % Constant true: no fallback tick path exists on either door; the field
+       % stays only because engine-rs program.rs deserializes it.
+       incremental_safe: true,
        host_plans: HostPlanDicts },
     json_write_string(ProgramDict, ProgramJson),
     raw_string_hashes(ProgramJson, RawStringHashes),

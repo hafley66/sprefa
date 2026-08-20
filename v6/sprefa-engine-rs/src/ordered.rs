@@ -658,8 +658,12 @@ pub fn run_tick(
     if program.uses_tick {
         crate::incremental::advance_tick(seam);
     }
-    let enumed =
-        crate::enum_plane::intern(&program.enum_types, &program.enum_ref_columns, arrivals)?;
+    let enumed = crate::enum_plane::intern(
+        seam,
+        &program.enum_types,
+        &program.enum_ref_columns,
+        arrivals,
+    )?;
     let interned = match &program.text_intern_plan {
         Some(plan) => crate::text_plane::intern(seam, plan, &enumed)?,
         None => enumed,

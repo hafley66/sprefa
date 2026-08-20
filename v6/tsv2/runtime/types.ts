@@ -402,6 +402,14 @@ export interface IEnumVariantPlan {
 export interface IEnumTypePlan {
   readonly name: string;
   readonly variants: readonly IEnumVariantPlan[];
+  /** Durable canonical tagged-value -> endpoint mapping for enum columns that
+   * have no sibling owner id, including key(option(T)). */
+  readonly identity?: IEnumIdentityPlan;
+}
+
+export interface IEnumIdentityPlan {
+  readonly intern_sql: string;
+  readonly lookup_sql: string;
 }
 
 export interface IEnumRefColumn {
@@ -415,12 +423,13 @@ export interface IEnumPlane {
   /** Replaces tagged public values with integer endpoints and prepends the
    * generated variant arrivals that materialize their payload. */
   intern(
+    seam: ISqlSeam,
     types: readonly IEnumTypePlan[],
     ref_columns: IEnumRefColumns,
     arrivals: IArrivalBatch,
-  ): IArrivalBatch;
-  decode_deltas(seam: ISqlSeam, types: readonly IEnumTypePlan[], ref_columns: IEnumRefColumns, deltas: readonly IRelDelta[]): Observable<readonly IRelDelta[]>;
-  decode_rows(seam: ISqlSeam, types: readonly IEnumTypePlan[], ref_columns: IEnumRefColumns, rel: string, rows: readonly IRow[]): Observable<readonly IRow[]>;
+  ): Observable<IArrivalBatch>;
+  decode_deltas(seam: ISqlSeam, types: readonly IEnumTypePlan[], ref_columns: IEnumRefColumns, relations: readonly IIncrementalRelationPlan[], deltas: readonly IRelDelta[]): Observable<readonly IRelDelta[]>;
+  decode_rows(seam: ISqlSeam, types: readonly IEnumTypePlan[], ref_columns: IEnumRefColumns, relations: readonly IIncrementalRelationPlan[], rel: string, rows: readonly IRow[]): Observable<readonly IRow[]>;
 }
 
 export interface IStructPlane {
@@ -448,43 +457,47 @@ export interface IStructPlane {
 /** A `column` row is a child of its rel (parent_id = the rel's rel_id, ordinal =
  *  1-based argument position); a `rel` row carries both as 0. The plane kinds
  *  (delta, frontier, view, ...) land in the emitted const too (F1=A). */
+export type IRelCatalogKind =
+  | "primitive"
+  | "list"
+  | "relation_id_list"
+  | "json_list"
+  | "module"
+  | "use"
+  | "mount"
+  | "rel"
+  | "column"
+  | "delta"
+  | "frontier"
+  | "next_frontier"
+  | "departure"
+  | "pre"
+  | "view"
+  | "dictionary"
+  | "refcount"
+  | "refcount_staging"
+  | "expand"
+  | "dred"
+  | "scope"
+  | "avg_accumulator"
+  | "port"
+  | "port_response"
+  | "storage"
+  | "interface"
+  | "generic_rel"
+  | "generic_column"
+  | "type_parameter"
+  | "constraint"
+  | "implementation"
+  | "concrete_type"
+  | "type_argument";
+
 export interface IRelCatalogRow {
   readonly rel_id: number;
   readonly parent_id: number;
   readonly ordinal: number;
   readonly local_name: string;
-  readonly kind:
-    | "primitive"
-    | "list"
-    | "json_list"
-    | "module"
-    | "use"
-    | "mount"
-    | "rel"
-    | "column"
-    | "delta"
-    | "frontier"
-    | "next_frontier"
-    | "departure"
-    | "pre"
-    | "view"
-    | "dictionary"
-    | "refcount"
-    | "refcount_staging"
-    | "expand"
-    | "dred"
-    | "scope"
-    | "avg_accumulator"
-    | "port"
-    | "port_response"
-    | "storage"
-    | "interface"
-    | "generic_rel"
-    | "generic_column"
-    | "type_parameter"
-    | "constraint"
-    | "concrete_type"
-    | "type_argument";
+  readonly kind: IRelCatalogKind;
   readonly type_id: number;
   readonly arity: number;
   readonly module_id: number;

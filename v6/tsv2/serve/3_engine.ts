@@ -142,7 +142,7 @@ export class LiveEngine implements ILiveEngine {
       return throwError(() => new Error(`unknown rel '${rel}' in program '${this.program.name}'`));
     }
     return select_rows(this.seam, sql, columns, this.program.rel_column_types?.[rel]).pipe(
-      concatMap((rows) => EnumPlane.decode_rows(this.seam, this.program.enum_types ?? [], this.program.enum_ref_columns ?? {}, rel, rows)),
+      concatMap((rows) => EnumPlane.decode_rows(this.seam, this.program.enum_types ?? [], this.program.enum_ref_columns ?? {}, [], rel, rows)),
     );
   }
 

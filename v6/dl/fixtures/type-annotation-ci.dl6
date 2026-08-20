@@ -1,0 +1,26 @@
+# One authored cross-target annotation fixture.  The compiler-plane relations
+# below must not reach the runtime relation set.
+rel key(Target: type) -> type.
+rel configure(Target: type, Value: int, Enabled: bool, Ratio: float) -> type.
+rel first(Target: type) -> type.
+rel second(Target: type) -> type.
+rel optional(Target: type) -> type.
+
+configure(int, 7, true, 1.5, text).
+first(int, list(int)).
+second(list(int), list(int)).
+optional(int, option(text)).
+
+# Existing key spelling and the direct type call have identical stored
+# shapes and keyed replacement behavior.
+rel LegacyKey(id: int, body: text) key(1).
+rel AnnotationKey(id: key(int), body: text).
+
+rel AnnotationCoverage(
+  empty: int,
+  configured: configure(int, Value: 7, Enabled: true, Ratio: 1.5),
+  composed: second(first(int)),
+  annotated_optional: optional(int),
+  listed: list(int),
+  optional: option(text)
+).

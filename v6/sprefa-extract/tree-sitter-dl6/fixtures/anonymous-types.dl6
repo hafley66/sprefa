@@ -5,3 +5,4 @@
 rel resident(result: (a: int, b: text)).
 rel verdict(result: (ok(value: int); err(message: text))).
 rel nested(bundle: (x: int, y: (p: text, q: float))).
+rel annotated(id: int, configured: configure(int, Value: 1)).

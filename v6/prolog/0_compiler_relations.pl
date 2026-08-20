@@ -34,15 +34,24 @@ declared_relation_refs(Decls, Refs) :-
 
 classify_relation(Decls, Ref, Ref-compiler_relation(Ref, Arity, Keys)) :-
     Ref = _/Arity,
-    findall(Type, member(col_type(Ref, _, Type), Decls), Types),
-    memberchk(type, Types),
+    findall(Column-Type, member(col_type(Ref, Column, Type), Decls), Columns),
+    compiler_relation_columns(Ref, Columns),
     !,
-    ( forall(member(Type, Types), Type == type)
-    -> true
-    ;  throw(unsupported_construct(compiler_relation_mixed_domain(Ref)))
-    ),
     ( memberchk(keyed(Ref, Keys0), Decls) -> Keys = Keys0 ; Keys = [] ).
 classify_relation(_, Ref, Ref-runtime).
+
+% The original type-only relations remain compiler relations.  An arrow
+% result `return: type` additionally admits ordinary compile-time inputs such
+% as `Value: int`; annotation signature validation owns their meaning.
+compiler_relation_columns(_, Columns) :-
+    memberchk(return-type, Columns),
+    !.
+compiler_relation_columns(_, Columns) :-
+    member(_-type, Columns),
+    forall(member(_-Type, Columns), Type == type).
+compiler_relation_columns(Ref, Columns) :-
+    member(_-type, Columns),
+    throw(unsupported_construct(compiler_relation_mixed_domain(Ref))).
 
 compiler_classification(_-compiler_relation(_, _, _)).
 

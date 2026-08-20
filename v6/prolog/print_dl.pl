@@ -418,6 +418,15 @@ print_column_type(list_entity_linked_sequence(Element), Text) :-
 print_column_type(id(Name), Text) :-
     !,
     format(atom(Text), "~w.id", [Name]).
+print_column_type(annotated_type(Type, Applications), Text) :-
+    !,
+    print_column_type(Type, TypeText),
+    maplist(print_annotation_application, Applications, ApplicationTexts),
+    atomic_list_concat(ApplicationTexts, ', ', ApplicationsText),
+    format(atom(Text), "@(~w, [~w])", [TypeText, ApplicationsText]).
+print_column_type(named(Name, Value), Text) :-
+    !,
+    print_annotation_argument(named(Name, Value), Text).
 print_column_type(product_type(Fields), Text) :-
     !,
     maplist(print_product_field, Fields, FieldTexts),
@@ -432,7 +441,35 @@ print_column_type(type_path(Segments), Text) :-
     !,
     atomic_list_concat(Segments, '.', Text).
 print_column_type(Type, Text) :-
+    compound(Type),
+    Type =.. [Name | Arguments],
+    maplist(print_type_argument, Arguments, ArgumentTexts),
+    atomic_list_concat(ArgumentTexts, ', ', ArgumentsText),
+    format(atom(Text), "~w(~w)", [Name, ArgumentsText]), !.
+print_column_type(Type, Text) :-
     format(atom(Text), "~w", [Type]).
+
+print_type_argument(named(Name, Value), Text) :-
+    !,
+    print_type_value(Value, ValueText),
+    format(atom(Text), "~w: ~w", [Name, ValueText]).
+print_type_argument(Value, Text) :-
+    print_type_value(Value, Text).
+
+print_type_value(bool_lit(Value), Text) :- !, format(atom(Text), "~w", [Value]).
+print_type_value(Value, Text) :- print_column_type(Value, Text).
+
+print_annotation_application(Application, Text) :-
+    Application =.. [Name | Arguments],
+    maplist(print_annotation_argument, Arguments, ArgumentTexts),
+    atomic_list_concat(ArgumentTexts, ', ', ArgumentsText),
+    format(atom(Text), "~w(~w)", [Name, ArgumentsText]).
+
+print_annotation_argument(named(Name, Value), Text) :-
+    print_term(Value, [], 0, top, ValueText),
+    format(atom(Text), "~w: ~w", [Name, ValueText]).
+print_annotation_argument(pos(Value), Text) :-
+    print_term(Value, [], 0, top, Text).
 
 quote_template(Template, Text) :-
     string_codes(Template, Codes),

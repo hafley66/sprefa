@@ -72,10 +72,22 @@ test(key_wrapper_legacy_conflict_is_named,
                             col_type(user/2, name, text),
                             keyed(user/2, [2])], _).
 
-test(key_wrapper_option_uses_existing_refusal,
-     [throws(unsupported_construct(option_in_key_column(user/1, id)))]) :-
+test(key_wrapper_option_normalizes_to_existing_option_enum_key) :-
     expand_generic_program(
-        prog([col_type(user/1, id, key(option(int)))], []), _).
+        prog([col_type(user/1, id, key(option(int)))], []), prog(Decls, [])),
+    memberchk(col_type(user/1, id, '__opt_int'), Decls),
+    memberchk(keyed(user/1, [1]), Decls),
+    memberchk(option_column(user/1, id, int), Decls).
+
+test(key_wrapper_relation_option_stays_in_the_owner_key) :-
+    expand_generic_program(
+        prog([col_type(person/1, name, text),
+              col_type(user/1, parent, key(option(person)))], []),
+        prog(Decls, [])),
+    memberchk(col_type(user/1, parent, '__opt_person'), Decls),
+    memberchk(keyed(user/1, [1]), Decls),
+    memberchk(option_column(user/1, parent, person), Decls),
+    \+ member(col_type(user__parent/2, _, _), Decls).
 
 test(key_wrapper_print_reparse_canonicalizes_to_legacy_key) :-
     string_codes("rel user(id: key(int), name: text).\n", Codes),

@@ -16,10 +16,9 @@ function object(value: IRowValue, name: string): Record<string, unknown> {
   }
 }
 
-function encode(
-  plans: ReadonlyMap<string, IEnumTypePlan>, name: string, endpoint: number,
-  sign: "add" | "del", value: IRowValue, variants: IArrivalRow[],
-): number {
+function validate_tagged(
+  plans: ReadonlyMap<string, IEnumTypePlan>, name: string, value: IRowValue,
+): Record<string, unknown> {
   const plan = plans.get(name);
   if (plan === undefined) throw new Error(`enum plan missing: ${name}`);
   const tagged = object(value, name);
@@ -29,6 +28,31 @@ function encode(
   if (variant === undefined) throw new Error(`enum_arrival_shape_mismatch: unknown_tag(${name}, ${tag})`);
   for (const field of variant.fields) if (!(field in tagged)) throw new Error(`enum_arrival_shape_mismatch: missing_key(${name}, ${field})`);
   for (const field of Object.keys(tagged)) if (field !== "tag" && !variant.fields.includes(field)) throw new Error(`enum_arrival_shape_mismatch: unknown_key(${name}, ${field})`);
+  return tagged;
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value as Record<string, unknown>).sort().map((key) => [key, canonicalize((value as Record<string, unknown>)[key])]));
+  }
+  return value;
+}
+
+function canonical_tagged_text(
+  plans: ReadonlyMap<string, IEnumTypePlan>, name: string, value: IRowValue,
+): string {
+  return JSON.stringify(canonicalize(validate_tagged(plans, name, value)));
+}
+
+function encode(
+  plans: ReadonlyMap<string, IEnumTypePlan>, name: string, endpoint: number,
+  sign: "add" | "del", value: IRowValue, variants: IArrivalRow[],
+): number {
+  const plan = plans.get(name)!;
+  const tagged = validate_tagged(plans, name, value);
+  const tag = tagged.tag;
+  const variant = plan.variants.find((candidate) => candidate.tag === tag)!;
   const row: IRowValue[] = [endpoint];
   variant.fields.forEach((field, index) => {
     let payload = tagged[field] as IRowValue;
@@ -43,31 +67,43 @@ function encode(
 }
 
 export const EnumPlane: IEnumPlane = {
-  intern(types, ref_columns, arrivals) {
-    if (types.length === 0 || arrivals.length === 0) return arrivals;
+  intern(seam, types, ref_columns, arrivals) {
+    if (types.length === 0 || arrivals.length === 0) return of(arrivals);
     const plans = new Map(types.map((plan) => [plan.name, plan]));
     const variants: IArrivalRow[] = [];
-    const parents = arrivals.map((arrival): IArrivalRow => {
+    const endpoint = (name: string, owner: number | null, value: IRowValue): Observable<number> => {
+      if (owner !== null) return of(owner);
+      const identity = plans.get(name)?.identity;
+      if (identity === undefined) throw new Error(`enum_arrival_shape_mismatch: ambiguous_owner_context(identity_missing, ${name})`);
+      const canonical = canonical_tagged_text(plans, name, value);
+      return seam.runner.execute(seam.db, { sql: identity.intern_sql, args: [canonical] }).pipe(
+        concatMap(() => seam.runner.execute(seam.db, { sql: identity.lookup_sql, args: [canonical] })),
+        map((result) => {
+          const id = result.rows[0]?.["id"];
+          if (typeof id !== "number" || !Number.isInteger(id)) throw new Error(`enum_arrival_shape_mismatch: identity_lookup(${name})`);
+          return id;
+        }),
+      );
+    };
+    return from(arrivals).pipe(concatMap((arrival) => {
       const refs = ref_columns[arrival.rel];
-      if (refs === undefined) return arrival;
-      const row = [...arrival.row];
-      refs.forEach((reference, index) => {
-        if (reference === null || reference === undefined) return;
-        const endpoint = reference.endpoint_index === null ? undefined : row[reference.endpoint_index];
-        if (typeof endpoint !== "number" || !Number.isInteger(endpoint)) throw new Error(`enum_arrival_shape_mismatch: ambiguous_owner_context(${arrival.rel}, ${reference.name})`);
-        row[index] = encode(plans, reference.name, endpoint, arrival.sign, arrival.row[index]!, variants);
-      });
-      return { ...arrival, row };
-    });
-    return [...variants, ...parents];
+      if (refs === undefined) return of(arrival);
+      return from(refs).pipe(concatMap((reference, index) => {
+        if (reference === null || reference === undefined) return of(arrival.row[index]!);
+        const owner = reference.endpoint_index === null ? null : arrival.row[reference.endpoint_index];
+        if (owner !== null && (typeof owner !== "number" || !Number.isInteger(owner))) throw new Error(`enum_arrival_shape_mismatch: ambiguous_owner_context(${arrival.rel}, ${reference.name})`);
+        const variant_sign = reference.endpoint_index === null ? "add" : arrival.sign;
+        return endpoint(reference.name, owner, arrival.row[index]!).pipe(map((id) => encode(plans, reference.name, id, variant_sign, arrival.row[index]!, variants)));
+      }), toArray(), map((row) => ({ ...arrival, row })));
+    }), toArray(), map((parents) => [...variants, ...parents]));
   },
 
-  decode_deltas(seam, types, ref_columns, deltas) {
+  decode_deltas(seam, types, ref_columns, relations, deltas) {
     return from(deltas).pipe(
       concatMap((delta) =>
-        this.decode_rows(seam, types, ref_columns, delta.rel, delta.add).pipe(
+        this.decode_rows(seam, types, ref_columns, relations, delta.rel, delta.add).pipe(
           concatMap((add) =>
-            this.decode_rows(seam, types, ref_columns, delta.rel, delta.del).pipe(
+            this.decode_rows(seam, types, ref_columns, relations, delta.rel, delta.del).pipe(
               map((del) => ({ ...delta, add, del })),
             ),
           ),
@@ -77,7 +113,7 @@ export const EnumPlane: IEnumPlane = {
     );
   },
 
-  decode_rows(seam, types, ref_columns, rel, rows) {
+  decode_rows(seam, types, ref_columns, relations, rel, rows) {
     const refs = ref_columns[rel];
     if (refs === undefined || types.length === 0) return of(rows);
     const plans = new Map(types.map((plan) => [plan.name, plan]));

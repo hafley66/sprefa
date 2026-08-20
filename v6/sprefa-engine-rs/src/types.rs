@@ -403,6 +403,14 @@ pub struct EnumVariantPlan {
 pub struct EnumTypePlan {
     pub name: String,
     pub variants: Vec<EnumVariantPlan>,
+    #[serde(default)]
+    pub identity: Option<EnumIdentityPlan>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnumIdentityPlan {
+    pub intern_sql: String,
+    pub lookup_sql: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -679,10 +687,7 @@ pub struct ProgramJson {
     #[serde(default)]
     pub uses_tick: bool,
     pub reconcile_every_tick: bool,
-    // Absent on an IR emitted before the field existed; 0 then fails
-    // program::GenProgram::try_from_json's named check.
-    #[serde(default)]
-    pub ir_version: u32,
+    pub incremental_safe: bool,
     #[serde(default)]
     pub host_plans: Vec<HostPlanData>,
 }

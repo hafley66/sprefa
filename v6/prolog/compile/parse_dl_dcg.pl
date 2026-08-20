@@ -33,6 +33,7 @@
 % lex_token/2 rows sit beside the escape decoders they mirror, so the clauses
 % are spread across the file on purpose.
 :- discontiguous lex_token/2.
+:- discontiguous type_base/3.
 
 % Editor CST boundaries this parser erases: Nonterminal -> Node-FieldNames,
 % bare = shape from clauses, ref = name only, repeat = item only, '-' = unnamed.
@@ -51,6 +52,10 @@ cst_shape(interface_stmt/1, interface_declaration-[]).
 cst_shape(sh_decl_stmt/1,   shell_declaration-[]).
 cst_shape(typed_col/2,      ref(column)-[]).
 cst_shape(type_expr/1,      type-[]).
+cst_shape(annotation_type/1, type_annotation-[type, applications]).
+cst_shape(annotation_application/1, annotation_application-[name]).
+cst_shape(annotation_list/1, annotation_list-[]).
+cst_shape(annotation_argument/1-named, annotation_named_argument-[name, value]).
 cst_shape(enum_variant/1,   ref(enum_variant)-[]).
 cst_shape(rule_stmt/1,      rule-[head, arrow, body]).
 cst_shape(query_stmt/1,     ref(query)-[]).
@@ -538,35 +543,43 @@ generic_parameter_group_ahead([0'( | Rest]) :-
     balanced_group_tail(Rest, 1, After),
     whitespace_tail(After, [0'( | _]).
 
-balanced_group_tail([0'( | Rest], Depth0, After) :- !,
+balanced_group_tail([0'( | Rest], Depth0, After) :-
+    !,
     Depth is Depth0 + 1,
     balanced_group_tail(Rest, Depth, After).
 balanced_group_tail([0') | Rest], 1, Rest) :- !.
-balanced_group_tail([0') | Rest], Depth0, After) :- !,
+balanced_group_tail([0') | Rest], Depth0, After) :-
+    !,
     Depth is Depth0 - 1,
     balanced_group_tail(Rest, Depth, After).
 balanced_group_tail([Quote | Rest], Depth, After) :-
-    memberchk(Quote, [0'\', 0'"]), !,
+    memberchk(Quote, [0'\', 0'"]),
+    !,
     balanced_quoted_tail(Quote, Rest, QuotedAfter),
     balanced_group_tail(QuotedAfter, Depth, After).
-balanced_group_tail([0'# | Rest], Depth, After) :- !,
+balanced_group_tail([0'# | Rest], Depth, After) :-
+    !,
     skip_to_eol(Rest, CommentAfter),
     balanced_group_tail(CommentAfter, Depth, After).
 balanced_group_tail([_ | Rest], Depth, After) :-
     balanced_group_tail(Rest, Depth, After).
 
-balanced_quoted_tail(Quote, [Quote, Quote | Rest], After) :- !,
+balanced_quoted_tail(Quote, [Quote, Quote | Rest], After) :-
+    !,
     balanced_quoted_tail(Quote, Rest, After).
 balanced_quoted_tail(Quote, [Quote | Rest], Rest) :- !.
-balanced_quoted_tail(Quote, [0'\\, _ | Rest], After) :- !,
+balanced_quoted_tail(Quote, [0'\\, _ | Rest], After) :-
+    !,
     balanced_quoted_tail(Quote, Rest, After).
 balanced_quoted_tail(Quote, [_ | Rest], After) :-
     balanced_quoted_tail(Quote, Rest, After).
 
 whitespace_tail([C | Rest], After) :-
-    code_type(C, space), !,
+    code_type(C, space),
+    !,
     whitespace_tail(Rest, After).
-whitespace_tail([0'# | Rest], After) :- !,
+whitespace_tail([0'# | Rest], After) :-
+    !,
     skip_to_eol(Rest, CommentAfter),
     whitespace_tail(CommentAfter, After).
 whitespace_tail(After, After).
@@ -648,6 +661,16 @@ type_expr(Type) -->
     type_base(Base),
     ( @`?` -> { Type = option(Base) } ; { Type = Base } ).
 
+type_base(_) -->
+    @`@`, !,
+    { throw(unsupported_construct(annotation_surface_removed)) }.
+
+type_argument(named(Name, Value)) -->
+    ident(Name), ws,
+    here([0':, Next | _]), { Next \== 0'=, Next \== 0': }, !,
+    @`:`, ws, expr(Value).
+type_argument(Value) --> type_expr(Value).
+
 type_base(T) --> { scalar_column_type(T) }, kw(T), !.
 type_base(T) -->
     { type_wrapper(W, _) ; W = json_list },
@@ -658,7 +681,7 @@ type_base(Type) -->
     dotted_path(Segs), ws,
     ( @`(`
     -> { Segs = [Name] },
-       ws, sep(type_expr, Arguments), #`)`,
+       ws, sep(type_argument, Arguments), #`)`,
        { Type =.. [Name | Arguments] }
     ;  { type_path_name(Segs, Type) }
     ).
@@ -883,7 +906,10 @@ relation_schema(Decls, Name, Ref, Specs) :-
 
 declared_column_type_name(Decls, Name) :-
     ( member(col_type(_, _, Type), Decls),
-      ( Name = Type ; column_element_type_name(Type, Name) )
+      ( Name = Type
+      ; column_element_type_name(Type, Name)
+      ; key_option_relation_type_name(Type, Name)
+      )
     ; ( member(sh_decl(_, Ins, Outs, _), Decls), append(Ins, Outs, Cols)
       ; member(bind_decl(_, Cols), Decls)
       ),
@@ -896,6 +922,15 @@ declared_column_type_name(Decls, Name) :-
     \+ scalar_column_type(Name).
 
 scalar_column_type(T) :- member(T, [int, text, json, bool, float, bytes]).
+
+% key(option(Relation)) needs the relation mirror before option expansion.
+% Descend only through key and nested option wrappers.
+key_option_relation_type_name(key(Inner), Name) :- !,
+    option_relation_type_name(Inner, Name).
+
+option_relation_type_name(option(Inner), Name) :- !,
+    option_relation_type_name(Inner, Name).
+option_relation_type_name(Name, Name) :- atom(Name).
 
 
 bind_decl_stmt(bind_decl(Name, Cols)) -->

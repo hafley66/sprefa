@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::sql::{SqlRunner, SqliteSeam};
 use crate::types::{
     Arrival, BoundaryResult, EnumRefColumns, EnumTypePlan, IncrementalRelationPlan, RelDelta, Row,
-    SqlStatement, Value,
+    ScalarValue, SqlStatement, Value,
 };
 
 fn plans_by_name(plans: &[EnumTypePlan]) -> HashMap<&str, &EnumTypePlan> {
@@ -23,6 +23,91 @@ fn tagged_object(value: &Value, enum_name: &str) -> serde_json::Map<String, serd
         .ok()
         .and_then(|value| value.as_object().cloned())
         .unwrap_or_else(|| panic!("enum_arrival_shape_mismatch: not_an_object({enum_name})"))
+}
+
+fn validated_tagged_object(
+    plans: &HashMap<&str, &EnumTypePlan>,
+    enum_name: &str,
+    value: &Value,
+) -> serde_json::Map<String, serde_json::Value> {
+    let plan = plans
+        .get(enum_name)
+        .unwrap_or_else(|| panic!("enum plan missing: {enum_name}"));
+    let object = tagged_object(value, enum_name);
+    let tag = object
+        .get("tag")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("enum_arrival_shape_mismatch: missing_tag({enum_name})"));
+    let variant = plan
+        .variants
+        .iter()
+        .find(|variant| variant.tag == tag)
+        .unwrap_or_else(|| panic!("enum_arrival_shape_mismatch: unknown_tag({enum_name}, {tag})"));
+    for field in &variant.fields {
+        if !object.contains_key(field) {
+            panic!("enum_arrival_shape_mismatch: missing_key({enum_name}, {field})");
+        }
+    }
+    for field in object.keys() {
+        if field != "tag" && !variant.fields.contains(field) {
+            panic!("enum_arrival_shape_mismatch: unknown_key({enum_name}, {field})");
+        }
+    }
+    object
+}
+
+fn canonical_json(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.iter().map(canonical_json).collect())
+        }
+        serde_json::Value::Object(object) => {
+            let mut keys: Vec<_> = object.keys().collect();
+            keys.sort();
+            let mut sorted = serde_json::Map::new();
+            for key in keys {
+                sorted.insert(key.clone(), canonical_json(&object[key]));
+            }
+            serde_json::Value::Object(sorted)
+        }
+        _ => value.clone(),
+    }
+}
+
+fn intern_identity(
+    seam: &SqliteSeam,
+    plans: &HashMap<&str, &EnumTypePlan>,
+    enum_name: &str,
+    value: &Value,
+) -> i64 {
+    let plan = plans
+        .get(enum_name)
+        .unwrap_or_else(|| panic!("enum plan missing: {enum_name}"));
+    let identity = plan.identity.as_ref().unwrap_or_else(|| {
+        panic!(
+            "enum_arrival_shape_mismatch: ambiguous_owner_context(identity_missing, {enum_name})"
+        )
+    });
+    let object = validated_tagged_object(plans, enum_name, value);
+    let canonical = serde_json::to_string(&canonical_json(&serde_json::Value::Object(object)))
+        .expect("enum canonical value serialization failed");
+    seam.execute(&SqlStatement {
+        sql: identity.intern_sql.clone(),
+        args: vec![ScalarValue::Text(canonical.clone())],
+    })
+    .expect("enum identity insert failed");
+    let lookup = seam
+        .execute(&SqlStatement {
+            sql: identity.lookup_sql.clone(),
+            args: vec![ScalarValue::Text(canonical)],
+        })
+        .expect("enum identity lookup failed");
+    lookup
+        .rows
+        .first()
+        .and_then(|row| row.first())
+        .and_then(Value::as_i64)
+        .unwrap_or_else(|| panic!("enum_arrival_shape_mismatch: identity_lookup({enum_name})"))
 }
 
 fn json_value(value: &serde_json::Value) -> Value {
@@ -52,7 +137,7 @@ fn encode(
     let plan = plans
         .get(enum_name)
         .unwrap_or_else(|| panic!("enum plan missing: {enum_name}"));
-    let object = tagged_object(value, enum_name);
+    let object = validated_tagged_object(plans, enum_name, value);
     let tag = object
         .get("tag")
         .and_then(serde_json::Value::as_str)
@@ -62,16 +147,6 @@ fn encode(
         .iter()
         .find(|variant| variant.tag == tag)
         .unwrap_or_else(|| panic!("enum_arrival_shape_mismatch: unknown_tag({enum_name}, {tag})"));
-    for field in &variant.fields {
-        if !object.contains_key(field) {
-            panic!("enum_arrival_shape_mismatch: missing_key({enum_name}, {field})");
-        }
-    }
-    for field in object.keys() {
-        if field != "tag" && !variant.fields.contains(field) {
-            panic!("enum_arrival_shape_mismatch: unknown_key({enum_name}, {field})");
-        }
-    }
     let mut row = vec![Value::Integer(endpoint)];
     for (index, field) in variant.fields.iter().enumerate() {
         let mut payload = json_value(&object[field]);
@@ -92,6 +167,7 @@ fn encode(
 /// generated variant arrivals. The endpoint comes from the owner column named
 /// by the emitted schema, never from the tagged payload.
 pub fn intern(
+    seam: &SqliteSeam,
     enum_types: &[EnumTypePlan],
     ref_columns: &EnumRefColumns,
     arrivals: &[Arrival],
@@ -110,21 +186,32 @@ pub fn intern(
         let mut row = arrival.row.clone();
         for (index, reference) in refs.iter().enumerate() {
             let Some(reference) = reference else { continue };
-            let endpoint = arrival
-                .row
-                .get(reference.endpoint_index.unwrap_or(usize::MAX))
-                .and_then(Value::as_i64)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "enum_arrival_shape_mismatch: ambiguous_owner_context({}, {})",
-                        arrival.rel, reference.name
-                    )
-                });
+            let endpoint = match reference.endpoint_index {
+                Some(endpoint_index) => arrival
+                    .row
+                    .get(endpoint_index)
+                    .and_then(Value::as_i64)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "enum_arrival_shape_mismatch: ambiguous_owner_context({}, {})",
+                            arrival.rel, reference.name
+                        )
+                    }),
+                None => intern_identity(seam, &plans, &reference.name, &arrival.row[index]),
+            };
+            // Canonical endpoints are shared by equal public values. Variant
+            // rows therefore persist with the identity map; retracting one
+            // owner must not remove payload needed by another owner.
+            let variant_sign = if reference.endpoint_index.is_none() {
+                crate::types::ArrivalSign::Add
+            } else {
+                arrival.sign
+            };
             row[index] = encode(
                 &plans,
                 &reference.name,
                 endpoint,
-                arrival.sign,
+                variant_sign,
                 &arrival.row[index],
                 &mut variants,
             );
@@ -197,14 +284,26 @@ fn decode(
 /// `select_sql` reads variant payloads through the same dictionary/list views
 /// as final_select. This converts the canonical boundary cell to JSON only
 /// after the storage id has been resolved.
-fn public_value(value: Value, field_type: Option<crate::types::RowColumnType>) -> serde_json::Value {
+fn public_value(
+    value: Value,
+    field_type: Option<crate::types::RowColumnType>,
+) -> serde_json::Value {
     match value {
         Value::Integer(value) => serde_json::json!(value),
         Value::Real(value) => serde_json::json!(value),
         Value::Bool(value) => serde_json::json!(value),
         Value::List(value) => serde_json::Value::Array(value),
         Value::Bytes(value) => serde_json::json!(crate::types::bytes_to_base64(&value)),
-        Value::Text(value) if matches!(field_type, Some(crate::types::RowColumnType::Json | crate::types::RowColumnType::Ref | crate::types::RowColumnType::List)) => {
+        Value::Text(value)
+            if matches!(
+                field_type,
+                Some(
+                    crate::types::RowColumnType::Json
+                        | crate::types::RowColumnType::Ref
+                        | crate::types::RowColumnType::List
+                )
+            ) =>
+        {
             serde_json::from_str(&value).unwrap_or_else(|_| serde_json::json!(value))
         }
         Value::Text(value) => serde_json::json!(value),
@@ -298,6 +397,7 @@ mod tests {
         (
             vec![EnumTypePlan {
                 name: "choice".into(),
+                identity: None,
                 variants: vec![
                     EnumVariantPlan {
                         tag: "ok".into(),
@@ -340,8 +440,15 @@ mod tests {
 
     #[test]
     fn tagged_payload_materializes_variant_then_integer_parent_endpoint() {
+        let seam = SqliteSeam::in_memory().unwrap();
         let (plans, refs) = plans();
-        let rows = intern(&plans, &refs, &[resident(r#"{"tag":"ok","value":"yes"}"#)]).unwrap();
+        let rows = intern(
+            &seam,
+            &plans,
+            &refs,
+            &[resident(r#"{"tag":"ok","value":"yes"}"#)],
+        )
+        .unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].rel, "choice_ok");
         assert_eq!(
@@ -353,40 +460,76 @@ mod tests {
 
     #[test]
     fn tagged_delete_materializes_a_delete_variant_and_parent() {
+        let seam = SqliteSeam::in_memory().unwrap();
         let (plans, refs) = plans();
         let mut deleted = resident(r#"{"tag":"ok","value":"yes"}"#);
         deleted.sign = ArrivalSign::Del;
-        let rows = intern(&plans, &refs, &[deleted]).unwrap();
-        assert_eq!(rows.iter().map(|row| row.sign).collect::<Vec<_>>(), vec![ArrivalSign::Del, ArrivalSign::Del]);
+        let rows = intern(&seam, &plans, &refs, &[deleted]).unwrap();
+        assert_eq!(
+            rows.iter().map(|row| row.sign).collect::<Vec<_>>(),
+            vec![ArrivalSign::Del, ArrivalSign::Del]
+        );
     }
 
     #[test]
     fn nullary_variant_decodes_from_its_endpoint() {
         let seam = SqliteSeam::in_memory().unwrap();
-        seam.execute_multiple("CREATE TABLE choice_none (id INTEGER); INSERT INTO choice_none VALUES (7)").unwrap();
-        let plans = vec![EnumTypePlan { name: "choice".into(), variants: vec![EnumVariantPlan {
-            tag: "none".into(), rel: "choice_none".into(), fields: vec![], field_types: vec![], field_enums: vec![], select_sql: "SELECT id FROM choice_none".into(),
-        }]}];
-        let refs = HashMap::from([("resident".into(), vec![Some(EnumRefColumn { name: "choice".into(), endpoint_index: Some(0) })])]);
-        assert_eq!(decode_row(&seam, &plans, &refs, &[], "resident", &vec![Value::Integer(7)]).unwrap(), vec![Value::Text(r#"{"tag":"none"}"#.into())]);
+        seam.execute_multiple(
+            "CREATE TABLE choice_none (id INTEGER); INSERT INTO choice_none VALUES (7)",
+        )
+        .unwrap();
+        let plans = vec![EnumTypePlan {
+            name: "choice".into(),
+            identity: None,
+            variants: vec![EnumVariantPlan {
+                tag: "none".into(),
+                rel: "choice_none".into(),
+                fields: vec![],
+                field_types: vec![],
+                field_enums: vec![],
+                select_sql: "SELECT id FROM choice_none".into(),
+            }],
+        }];
+        let refs = HashMap::from([(
+            "resident".into(),
+            vec![Some(EnumRefColumn {
+                name: "choice".into(),
+                endpoint_index: Some(0),
+            })],
+        )]);
+        assert_eq!(
+            decode_row(
+                &seam,
+                &plans,
+                &refs,
+                &[],
+                "resident",
+                &vec![Value::Integer(7)]
+            )
+            .unwrap(),
+            vec![Value::Text(r#"{"tag":"none"}"#.into())]
+        );
     }
 
     #[test]
     fn tagged_shape_failures_are_named() {
+        let seam = SqliteSeam::in_memory().unwrap();
         let (plans, refs) = plans();
         for value in [
             r#"{"tag":"nope"}"#,
             r#"{"tag":"ok"}"#,
             r#"{"tag":"ok","value":"yes","extra":1}"#,
         ] {
-            assert!(
-                std::panic::catch_unwind(|| intern(&plans, &refs, &[resident(value)])).is_err()
-            );
+            assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                intern(&seam, &plans, &refs, &[resident(value)])
+            }))
+            .is_err());
         }
     }
 
     #[test]
     fn missing_owner_endpoint_is_named() {
+        let seam = SqliteSeam::in_memory().unwrap();
         let (plans, mut refs) = plans();
         refs.insert(
             "resident".into(),
@@ -398,12 +541,69 @@ mod tests {
                 }),
             ],
         );
-        assert!(std::panic::catch_unwind(|| intern(
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| intern(
+                &seam,
+                &plans,
+                &refs,
+                &[resident(r#"{"tag":"ok","value":"yes"}"#)]
+            )))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn ownerless_option_endpoint_is_interned_from_tagged_content() {
+        let seam = SqliteSeam::in_memory().unwrap();
+        seam.execute_multiple(
+            "CREATE TABLE enum_identity (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE)",
+        )
+        .unwrap();
+        let mut plans = plans().0;
+        plans[0].identity = Some(crate::types::EnumIdentityPlan {
+            intern_sql: "INSERT OR IGNORE INTO enum_identity (value) VALUES (?)".into(),
+            lookup_sql: "SELECT id, value FROM enum_identity WHERE value = ?".into(),
+        });
+        let refs = HashMap::from([(
+            "option_key".into(),
+            vec![Some(EnumRefColumn {
+                name: "choice".into(),
+                endpoint_index: None,
+            })],
+        )]);
+        let arrival = |value: &str, sign| Arrival {
+            rel: "option_key".into(),
+            sign,
+            row: vec![Value::Text(value.into())],
+        };
+        let none = intern(
+            &seam,
             &plans,
             &refs,
-            &[resident(r#"{"tag":"ok","value":"yes"}"#)]
-        ))
-        .is_err());
+            &[arrival(
+                r#"{"tag":"err","reason":"none"}"#,
+                ArrivalSign::Add,
+            )],
+        )
+        .unwrap();
+        let first_some = intern(
+            &seam,
+            &plans,
+            &refs,
+            &[arrival(r#"{"tag":"ok","value":"same"}"#, ArrivalSign::Add)],
+        )
+        .unwrap();
+        let repeated_some = intern(
+            &seam,
+            &plans,
+            &refs,
+            &[arrival(r#"{"value":"same","tag":"ok"}"#, ArrivalSign::Del)],
+        )
+        .unwrap();
+        assert_ne!(none[1].row[0], first_some[1].row[0]);
+        assert_eq!(first_some[1].row[0], repeated_some[1].row[0]);
+        assert_eq!(repeated_some[0].sign, ArrivalSign::Add);
+        assert_eq!(repeated_some[1].sign, ArrivalSign::Del);
     }
 
     #[test]
@@ -467,6 +667,7 @@ mod tests {
         seam.execute_multiple("CREATE TABLE choice_ok (id INTEGER, tags TEXT); INSERT INTO choice_ok VALUES (7, '[1,2]')").unwrap();
         let plans = vec![EnumTypePlan {
             name: "choice".into(),
+            identity: None,
             variants: vec![EnumVariantPlan {
                 tag: "ok".into(),
                 rel: "choice_ok".into(),
@@ -478,12 +679,24 @@ mod tests {
         }];
         let refs = HashMap::from([(
             "resident".into(),
-            vec![Some(EnumRefColumn { name: "choice".into(), endpoint_index: Some(0) })],
+            vec![Some(EnumRefColumn {
+                name: "choice".into(),
+                endpoint_index: Some(0),
+            })],
         )]);
         let row = decode_row(
-            &seam, &plans, &refs, &[], "resident", &vec![Value::Integer(7)],
-        ).unwrap();
-        assert_eq!(row, vec![Value::Text(r#"{"tag":"ok","tags":[1,2]}"#.into())]);
+            &seam,
+            &plans,
+            &refs,
+            &[],
+            "resident",
+            &vec![Value::Integer(7)],
+        )
+        .unwrap();
+        assert_eq!(
+            row,
+            vec![Value::Text(r#"{"tag":"ok","tags":[1,2]}"#.into())]
+        );
     }
 
     #[test]
@@ -493,26 +706,50 @@ mod tests {
         let plans = vec![
             EnumTypePlan {
                 name: "outer".into(),
+                identity: None,
                 variants: vec![EnumVariantPlan {
-                    tag: "some".into(), rel: "outer_some".into(), fields: vec!["value".into()],
-                    field_types: vec![crate::types::RowColumnType::RelationId], field_enums: vec![Some("inner".into())],
+                    tag: "some".into(),
+                    rel: "outer_some".into(),
+                    fields: vec!["value".into()],
+                    field_types: vec![crate::types::RowColumnType::RelationId],
+                    field_enums: vec![Some("inner".into())],
                     select_sql: "SELECT id, value FROM outer_some".into(),
                 }],
             },
             EnumTypePlan {
                 name: "inner".into(),
+                identity: None,
                 variants: vec![EnumVariantPlan {
-                    tag: "ok".into(), rel: "inner_ok".into(), fields: vec!["value".into()],
-                    field_types: vec![crate::types::RowColumnType::Text], field_enums: vec![None],
+                    tag: "ok".into(),
+                    rel: "inner_ok".into(),
+                    fields: vec!["value".into()],
+                    field_types: vec![crate::types::RowColumnType::Text],
+                    field_enums: vec![None],
                     select_sql: "SELECT id, value FROM inner_ok".into(),
                 }],
             },
         ];
         let refs = HashMap::from([(
             "resident".into(),
-            vec![Some(EnumRefColumn { name: "outer".into(), endpoint_index: Some(0) })],
+            vec![Some(EnumRefColumn {
+                name: "outer".into(),
+                endpoint_index: Some(0),
+            })],
         )]);
-        let row = decode_row(&seam, &plans, &refs, &[], "resident", &vec![Value::Integer(7)]).unwrap();
-        assert_eq!(row, vec![Value::Text(r#"{"tag":"some","value":{"tag":"ok","value":"yes"}}"#.into())]);
+        let row = decode_row(
+            &seam,
+            &plans,
+            &refs,
+            &[],
+            "resident",
+            &vec![Value::Integer(7)],
+        )
+        .unwrap();
+        assert_eq!(
+            row,
+            vec![Value::Text(
+                r#"{"tag":"some","value":{"tag":"ok","value":"yes"}}"#.into()
+            )]
+        );
     }
 }

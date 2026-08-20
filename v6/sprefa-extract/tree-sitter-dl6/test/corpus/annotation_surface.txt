@@ -1,0 +1,40 @@
+==================
+direct compiler relation calls in type position
+==================
+
+rel annotation(empty: int, configured: configure(int, Value: 1), composed: second(first(int))).
+
+---
+
+(source_file
+  (statement
+    (relation_declaration
+      (path
+        (identifier))
+      (declaration_parameter
+        (identifier)
+        (type
+          (identifier)))
+      (declaration_parameter
+        (identifier)
+        (type
+          (identifier)
+          (type_argument
+            (type
+              (identifier)))
+          (type_argument
+            (type_named_argument
+              (variable)
+              (expression
+                (literal
+                  (integer)))))))
+      (declaration_parameter
+        (identifier)
+        (type
+          (identifier)
+          (type_argument
+            (type
+              (identifier)
+              (type_argument
+                (type
+                  (identifier))))))))))

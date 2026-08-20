@@ -949,12 +949,16 @@
     "type": "type",
     "named": true,
     "fields": {
-      "element": {
-        "multiple": false,
+      "arguments": {
+        "multiple": true,
         "required": false,
         "types": [
           {
-            "type": "type",
+            "type": ",",
+            "named": false
+          },
+          {
+            "type": "type_argument",
             "named": true
           }
         ]
@@ -993,6 +997,55 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "type_argument",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "type",
+          "named": true
+        },
+        {
+          "type": "type_named_argument",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "type_named_argument",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "variable",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {

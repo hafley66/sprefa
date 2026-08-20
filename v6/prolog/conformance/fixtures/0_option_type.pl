@@ -91,8 +91,9 @@ fixture(option_rel_ref_desugars_to_companion_split_rel,
         ticks(4)
     ]).
 
-% Design ban: identity with optional parts reopens null-in-PK; named refusal.
-fixture(option_in_key_column_is_refused,
+% Option enum ids are ordinary non-NULL key values: none and some(value)
+% participate in the owner's keyed replacement path.
+fixture(option_in_key_column_normalizes,
     prog(
         [col_type(session/2, token, option(text)),
          col_type(session/2, user_id, int),
@@ -100,6 +101,4 @@ fixture(option_in_key_column_is_refused,
         []),
     [],
     [],
-    [
-        throws(unsupported_construct(option_in_key_column(session/2, token)))
-    ]).
+    [ticks(0)]).

@@ -39,8 +39,11 @@ module.exports = grammar({
     type: $ => choice(
       $.product_type,
       $.sum_type,
-      seq(field("name", $.identifier), optional(seq("(", field("element", $.type), ")")), field("optional", optional("?"))),
+      seq(field("name", $.identifier), optional(seq("(", field("arguments", optional(seq($.type_argument, repeat(seq(",", $.type_argument))))), ")")), field("optional", optional("?"))),
     ),
+
+    type_argument: $ => choice($.type, $.type_named_argument),
+    type_named_argument: $ => seq(field("name", choice($.identifier, $.variable)), ":", field("value", $.expression)),
 
     product_type: $ => seq("(", field("fields", commaSep1($.field)), ")"),
     sum_type: $ => seq("(", $.sum_variant, repeat(seq(";", $.sum_variant)), ")"),
@@ -120,4 +123,3 @@ module.exports = grammar({
 function commaSep1(rule) {
   return seq(rule, repeat(seq(",", rule)));
 }
-

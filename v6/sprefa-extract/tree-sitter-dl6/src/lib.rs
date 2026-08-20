@@ -76,4 +76,20 @@ path(X, Y) <- edge(X, Y).
             result.err()
         );
     }
+
+    #[test]
+    fn parses_direct_type_relation_calls() {
+        let src = r#"
+rel annotated(id: key(int), configured: configure(int, Value: 1), composed: second(first(int))).
+"#;
+        let result = parse_check(src);
+        assert!(result.is_ok(), "type-call error: {:?}", result.err());
+        let mut parser = Parser::new();
+        let lang = tree_sitter::Language::new(LANGUAGE);
+        parser.set_language(&lang).unwrap();
+        let tree = parser.parse(src, None).unwrap();
+        let sexp = tree.root_node().to_sexp();
+        assert!(sexp.contains("type_argument"));
+        assert!(sexp.contains("type_named_argument"));
+    }
 }

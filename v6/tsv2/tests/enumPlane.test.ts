@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { firstValueFrom, of } from "rxjs";
 
 import { EnumPlane } from "../runtime/enumPlane.ts";
+import { ScratchStore } from "../runtime/scratchStore.ts";
 import type { IEnumRefColumns, IEnumTypePlan, ISqlSeam } from "../runtime/types.ts";
 
 const types: readonly IEnumTypePlan[] = [
@@ -36,9 +37,9 @@ const seam = {
   },
 } as unknown as ISqlSeam;
 
-test("enum ingress preserves add and delete signs and scalar-safe list carriers", () => {
+test("enum ingress preserves add and delete signs and scalar-safe list carriers", async () => {
   for (const sign of ["add", "del"] as const) {
-    const rows = EnumPlane.intern(types, refs, [{ rel: "resident", sign, row: [7, { tag: "list", value: [1, 2] }] }]);
+    const rows = await firstValueFrom(EnumPlane.intern(seam, types, refs, [{ rel: "resident", sign, row: [7, { tag: "list", value: [1, 2] }] }]));
     assert.deepEqual(rows, [
       { rel: "choice_list", sign, row: [7, "[1,2]"] },
       { rel: "resident", sign, row: [7, 7] },
@@ -53,13 +54,51 @@ test("enum egress yields structured nullary text list relation and nested values
     ["nested", { tag: "nested", value: { tag: "text", value: "inside" } }],
   ] as const) {
     active = tag;
-    const rows = await firstValueFrom(EnumPlane.decode_rows(seam, types, refs, "resident", [[7, 7]]));
+    const rows = await firstValueFrom(EnumPlane.decode_rows(seam, types, refs, [], "resident", [[7, 7]]));
     assert.deepEqual(rows, [[7, expected]], tag);
   }
 });
 
 test("structured enum rows survive final response serialization", async () => {
   active = "none";
-  const rows = await firstValueFrom(EnumPlane.decode_rows(seam, types, refs, "resident", [[7, 7]]));
+  const rows = await firstValueFrom(EnumPlane.decode_rows(seam, types, refs, [], "resident", [[7, 7]]));
   assert.equal(JSON.stringify({ rows }), '{"rows":[[7,{"tag":"none"}]]}');
+});
+
+test("ownerless option ingress interns canonical tagged values instead of accepting endpoints", async () => {
+  const identity_seam = ScratchStore.open(":memory:");
+  await firstValueFrom(ScratchStore.boot(identity_seam, [
+    `CREATE TABLE "enum_identity" ("id" INTEGER PRIMARY KEY, "value" TEXT NOT NULL UNIQUE)`,
+  ]));
+  const identity_types: readonly IEnumTypePlan[] = [{
+    ...types[1]!, identity: {
+      intern_sql: "INSERT OR IGNORE INTO enum_identity (value) VALUES (?)",
+      lookup_sql: "SELECT id, value FROM enum_identity WHERE value = ?",
+    },
+  }];
+  const ownerless: IEnumRefColumns = { option_key: [{ name: "choice", endpoint_index: null }] };
+  const add = await firstValueFrom(EnumPlane.intern(identity_seam, identity_types, ownerless, [{ rel: "option_key", sign: "add", row: [{ tag: "text", value: "same" }] }]));
+  const stale = await firstValueFrom(EnumPlane.intern(identity_seam, identity_types, ownerless, [{ rel: "option_key", sign: "del", row: [{ value: "same", tag: "text" }] }]));
+  assert.deepEqual(add, [
+    { rel: "choice_text", sign: "add", row: [1, "same"] },
+    { rel: "option_key", sign: "add", row: [1] },
+  ]);
+  assert.deepEqual(stale, [
+    { rel: "choice_text", sign: "add", row: [1, "same"] },
+    { rel: "option_key", sign: "del", row: [1] },
+  ]);
+  const relation = await firstValueFrom(EnumPlane.intern(identity_seam, identity_types, ownerless, [{
+    rel: "option_key", sign: "add", row: [{ tag: "relation", value: { id: 9 } }],
+  }]));
+  assert.deepEqual(relation, [
+    { rel: "choice_relation", sign: "add", row: [2, '{"id":9}'] },
+    { rel: "option_key", sign: "add", row: [2] },
+  ]);
+  const identities = await firstValueFrom(
+    identity_seam.runner.execute(identity_seam.db, `SELECT "id", "value" FROM "enum_identity" ORDER BY "id"`),
+  );
+  assert.deepEqual(identities.rows, [
+    { id: 1, value: '{"tag":"text","value":"same"}' },
+    { id: 2, value: '{"tag":"relation","value":{"id":9}}' },
+  ]);
 });

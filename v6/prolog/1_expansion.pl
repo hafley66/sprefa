@@ -82,15 +82,19 @@ expand_program_run(SurfaceProgram0, Bindings, ExpandedProgram,
     dot_expand:resolve_qualified_types(SurfaceProgram0, SurfaceProgram),
     SurfaceProgram = prog(SurfaceDecls, _),
     % The context includes enums option expansion mints.  Generic expansion is
-    % deterministic and idempotent for its rewritten declaration form.
-    expand_generic_program(prog(SurfaceDecls, []), prog(DeclsForEnumContext, _)),
+    % deterministic and idempotent for its rewritten declaration form.  This
+    % prepass has no rule facts or source bindings, so annotation applications
+    % belong exclusively to phase 5's bound program expansion below.
+    annotation_context_decls(SurfaceDecls, ContextDecls),
+    expand_generic_program(prog(ContextDecls, []), prog(DeclsForEnumContext, _)),
     enum_context(DeclsForEnumContext, EnumContext),
     findall(Order-Name-Expander,
             expansion_phase(Order, Name, Expander),
             UnorderedPhases),
     msort(UnorderedPhases, OrderedPhases),
-    expansion_phase_start(SurfaceProgram, Bindings, DeclsForEnumContext,
-                          OrderedPhases, PhaseProgram, RemainingPhases),
+    expansion_phase_start(SurfaceProgram, Bindings, SurfaceDecls, ContextDecls,
+                          DeclsForEnumContext, OrderedPhases,
+                          PhaseProgram, RemainingPhases),
     foldl(run_phase(expansion_context(EnumContext, Bindings)),
           RemainingPhases,
           PhaseProgram, PhasedProgram),
@@ -99,11 +103,45 @@ expand_program_run(SurfaceProgram0, Bindings, ExpandedProgram,
     merge_option_type_rows(EnumRowedProgram, ExpandedProgram),
     ExpansionContext = EnumContext.
 
-expansion_phase_start(prog(_, []), [], DeclsForEnumContext,
+expansion_phase_start(prog(SurfaceDecls, []), Bindings,
+                      SurfaceDecls, ContextDecls, DeclsForEnumContext,
                       [_-option-_ | RemainingPhases],
-                      prog(DeclsForEnumContext, []), RemainingPhases) :- !.
-expansion_phase_start(SurfaceProgram, _, _, OrderedPhases,
+                      prog(DeclsForEnumContext, []), RemainingPhases) :-
+    Bindings == [],
+    ContextDecls == SurfaceDecls,
+    !.
+expansion_phase_start(SurfaceProgram, _, _, _, _, OrderedPhases,
                       SurfaceProgram, OrderedPhases).
+
+annotation_context_decls(Decls0, Decls) :-
+    maplist(annotation_context_decl(Decls0), Decls0, Decls).
+
+annotation_context_decl(Decls, col_type(Ref, Column, Type0),
+                        col_type(Ref, Column, Type)) :-
+    !,
+    annotation_context_type(Decls, Type0, Type).
+annotation_context_decl(_, Decl, Decl).
+
+annotation_context_type(Decls, annotated_type(Type0, _), Type) :-
+    !,
+    annotation_context_type(Decls, Type0, Type).
+annotation_context_type(Decls, Type0, Type) :-
+    direct_compiler_type_call(Decls, Type0, Input),
+    !,
+    annotation_context_type(Decls, Input, Type).
+annotation_context_type(Decls, Type0, Type) :-
+    compound(Type0),
+    !,
+    Type0 =.. [Name | Arguments0],
+    maplist(annotation_context_type(Decls), Arguments0, Arguments),
+    Type =.. [Name | Arguments].
+annotation_context_type(_, Type, Type).
+
+direct_compiler_type_call(Decls, Type, Input) :-
+    compound(Type),
+    Type =.. [Name, Input | _],
+    member(col_type(Ref, return, type), Decls),
+    Ref = Name/_.
 
 run_phase(_, _-_-unwired, Program, Program) :- !.
 % ast takes the whole context, every other phase the enum half; without the cut

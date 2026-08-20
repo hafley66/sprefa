@@ -1,0 +1,5 @@
+rel key(Target: type) -> type.
+
+rel Person(id: key(int), name: text).
+
+rel KeyedRelationOption(id: key(option(Person)), body: text).

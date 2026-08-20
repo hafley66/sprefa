@@ -28,11 +28,6 @@
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
 
-% ═══ IR version ══════════════════════════════════════════════════════════════
-% emit_rust.pl carries the same number under the same spelling, and both runtimes
-% refuse a program document whose value is not the one they interpret.
-ir_version(1).
-
 % ═══ small text helpers ══════════════════════════════════════════════════════
 
 lines_block(Lines, Text) :- atomic_list_concat(Lines, '\n', Text).
@@ -341,9 +336,11 @@ enum_type_plans(Decls, RelPlans, DeltaStatements, Plans) :-
 enum_runtime_name(Decls, Name) :- member(enum_column(_, _, Name), Decls).
 enum_runtime_name(Decls, Name) :- member(option_column(_, _, Element), Decls), option_enum_name(Element, Name).
 enum_runtime_name(Decls, Name) :- member(enum_option_payload(_, _, _, Element), Decls), option_enum_name(Element, Name).
-enum_type_plan(Decls, RelPlans, DeltaStatements, Name, enumtype(Name, Variants)) :-
+enum_type_plan(Decls, RelPlans, DeltaStatements, Name,
+               enumtype(Name, Variants, Identity)) :-
     findall(Tag-Variant, enum_variant_plan(Decls, RelPlans, DeltaStatements, Name, Tag, Variant), Pairs0),
-    keysort(Pairs0, Pairs), pairs_values(Pairs, Variants).
+    keysort(Pairs0, Pairs), pairs_values(Pairs, Variants),
+    enum_identity_plan(Name, Identity).
 enum_variant_plan(Decls, RelPlans, DeltaStatements, EnumName, Tag, enumvariant(Tag, VariantName, Fields, FieldTypes, FieldEnums, SelectSql)) :-
     atomic_list_concat([EnumName, '_'], Prefix), member(RelPlan, RelPlans),
     relplan_parts(RelPlan, VariantName/_, _, [id | Fields], _, [_ | FieldTypes0]),
@@ -362,6 +359,7 @@ enum_ref_columns_map(Decls, RelPlans, Map) :-
 enum_ref_index(Decls, Index) :-
     empty_assoc(Empty),
     foldl(index_enum_ref, Decls, Empty, Index).
+
 index_enum_ref(enum_column(Ref, Column, EnumName), Index0, Index) :- !,
     put_assoc(Ref-Column, Index0, EnumName, Index).
 index_enum_ref(option_column(Ref, Column, Element), Index0, Index) :- !,
@@ -372,8 +370,20 @@ index_enum_ref(_, Index, Index).
 enum_ref_fields(_, _, _, [], []).
 enum_ref_fields(Index, Ref, All, [Column | Rest], [Field | Fields]) :-
     ( get_assoc(Ref-Column, Index, EnumName)
-    -> (nth0(EndpointIndex, All, id) -> Field = enumref(EnumName, EndpointIndex) ; Field = enumref(EnumName, null))
+    -> ( nth0(EndpointIndex, All, id), nth0(CurrentIndex, All, Column), EndpointIndex =\= CurrentIndex
+       -> Field = enumref(EnumName, EndpointIndex)
+       ;  Field = enumref(EnumName, null)
+       )
     ; Field = null ), enum_ref_fields(Index, Ref, All, Rest, Fields).
+enum_identity_plan(Name, enumidentity(InternSql, LookupSql)) :-
+    enum_identity_table(Name, Table), quote_ident_local(Table, QuotedTable),
+    format(atom(InternSql), 'INSERT OR IGNORE INTO ~w ("value") VALUES (?)', [QuotedTable]),
+    format(atom(LookupSql), 'SELECT "id", "value" FROM ~w WHERE "value" = ?', [QuotedTable]).
+enum_identity_table(Name, Table) :- atomic_list_concat(['__enum_identity_', Name], Table).
+enum_identity_ddls(Decls, Ddls) :-
+    findall(Ddl, (enum_runtime_name(Decls, Name), enum_identity_table(Name, Table), quote_ident_local(Table, QuotedTable),
+                  format(atom(Ddl), 'CREATE TABLE ~w ("id" INTEGER PRIMARY KEY, "value" TEXT NOT NULL UNIQUE)', [QuotedTable])), Ddls0),
+    sort(Ddls0, Ddls).
 enum_plane_lines([], _, [ 'export const ENUM_TYPES: readonly IEnumTypePlan[] = [];',
                           'export const ENUM_REF_COLUMNS: IEnumRefColumns = {};'], false) :- !.
 enum_plane_lines(Plans, RefColumns, Lines, true) :-
@@ -381,7 +391,7 @@ enum_plane_lines(Plans, RefColumns, Lines, true) :-
     maplist(enum_ref_line, Pairs, RefLines),
     append([[ 'export const ENUM_TYPES: readonly IEnumTypePlan[] = [' ], TypeLines,
       [ '];', '', 'export const ENUM_REF_COLUMNS: IEnumRefColumns = {' ], RefLines, [ '};' ]], Lines).
-enum_type_line(enumtype(Name, Variants), Line) :- js_string(Name, NameText), maplist(enum_variant_text, Variants, VariantTexts), atomic_list_concat(VariantTexts, ', ', VariantsText), format(atom(Line), '  { name: ~w, variants: [~w] },', [NameText, VariantsText]).
+enum_type_line(enumtype(Name, Variants, enumidentity(InternSql, LookupSql)), Line) :- js_string(Name, NameText), maplist(enum_variant_text, Variants, VariantTexts), atomic_list_concat(VariantTexts, ', ', VariantsText), js_template(InternSql, InternText), js_template(LookupSql, LookupText), format(atom(Line), '  { name: ~w, variants: [~w], identity: { intern_sql: ~w, lookup_sql: ~w } },', [NameText, VariantsText, InternText, LookupText]).
 enum_variant_text(enumvariant(Tag, Rel, Fields, FieldTypes, FieldEnums, SelectSql), Text) :-
     js_string(Tag, TagText), js_string(Rel, RelText), maplist(js_string, Fields, FieldTexts), atomic_list_concat(FieldTexts, ', ', FieldsText), maplist(js_string, FieldTypes, FieldTypeTexts), atomic_list_concat(FieldTypeTexts, ', ', TypesText), maplist(enum_field_text, FieldEnums, EnumTexts), atomic_list_concat(EnumTexts, ', ', EnumsText), js_template(SelectSql, SelectText),
     format(atom(Text), '{ tag: ~w, rel: ~w, fields: [~w], field_types: [~w], field_enums: [~w], select_sql: ~w }', [TagText, RelText, FieldsText, TypesText, EnumsText, SelectText]).
@@ -464,7 +474,7 @@ local_types_lines(Plan,
         '  params: readonly IRowScalar[];',
         '}',
         '',
-        'type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly enum_types: readonly IEnumTypePlan[]; readonly enum_ref_columns: IEnumRefColumns; readonly unsupported_execution: readonly string[] };'
+        'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };'
       ], Lines).
 
 plan_has_structured_host(plan(_, prog(Decls, _), _, _, _, _, _, _, _)) :-
@@ -944,8 +954,8 @@ program_catalog_rows(Mode, Name, Decls, Rules, RelPlans, DepartureRefs, PreRefs,
 rel_catalog_lines([], []) :- !.
 rel_catalog_lines(Rows, Lines) :-
     maplist(rel_catalog_entry_line, Rows, EntryLines),
-    append([ ['const rel_catalog: readonly IRelCatalogRow[] = ['],
-             EntryLines, ['];'] ], Lines).
+    append([ ['const rel_catalog: readonly IRelCatalogRow[] = new Array<IRelCatalogRow>('],
+             EntryLines, [');'] ], Lines).
 
 rel_catalog_entry_line(row(RelId, ParentId, Ordinal, Name, Kind, TypeId, Arity,
                            ModuleId, HId, HSchema, HRule), Line) :-
@@ -2246,10 +2256,8 @@ run_ordered_tick_fn_lines(true, Name, HasRetention, UsesTick, DepartureRefs,
       ],
       RetentionLines,
       AfterReadLines,
-      %% AfterReadLines has already mapped the chain to ITickDeltas, so the
-      %% decode reads `state.rels` and not a `deltas` field no longer there.
-      [ '    concatMap((state) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, state.rels).pipe(',
-        '      map((rels): ITickDeltas => ({ ...state, rels })),',
+      [ '    concatMap((state) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, state.deltas.rels).pipe(',
+        '      map((rels) => ({ ...state, deltas: { ...state.deltas, rels } })),',
         '    )), '
       ],
       DepartureStageLines,
@@ -2461,7 +2469,7 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
       DepartureStageLines,
       [
       '    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(',
-      '      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, rels).pipe(',
+      '      concatMap((carry_pending) => EnumPlane.decode_deltas(seam, ENUM_TYPES, ENUM_REF_COLUMNS, SUBSCRIBED_RELATIONS, rels).pipe(',
       '        map((decoded): ITickDeltas => ({ rels: decoded, carry_pending })),',
       '      )),',
       '    )),',
@@ -2474,16 +2482,16 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
 
 run_tick_dispatch_lines(_, HasStructTypes, true,
     [ Signature,
-      '  arrivals = validate_arrivals(arrivals);',
-      '  arrivals = EnumPlane.intern(ENUM_TYPES, ENUM_REF_COLUMNS, arrivals);',
-      '  return run_ordered_tick(seam, arrivals);',
+      '  return EnumPlane.intern(seam, ENUM_TYPES, ENUM_REF_COLUMNS, arrivals).pipe(',
+      '    concatMap((normalized) => run_ordered_tick(seam, validate_arrivals(normalized))),',
+      '  );',
       '}'
     ]) :- dispatch_signature(HasStructTypes, Signature), !.
 run_tick_dispatch_lines(_, HasStructTypes, false,
     [ Signature,
-      '  arrivals = validate_arrivals(arrivals);',
-      '  arrivals = EnumPlane.intern(ENUM_TYPES, ENUM_REF_COLUMNS, arrivals);',
-      '  return run_incremental_tick(seam, arrivals);',
+      '  return EnumPlane.intern(seam, ENUM_TYPES, ENUM_REF_COLUMNS, arrivals).pipe(',
+      '    concatMap((normalized) => run_incremental_tick(seam, validate_arrivals(normalized))),',
+      '  );',
       '}'
     ]) :- dispatch_signature(HasStructTypes, Signature).
 
@@ -2522,7 +2530,6 @@ retraction_guard(plan(_, prog(_, Rules), _, _, _, _, _, _, _), Guard) :-
 program_export_lines(Name, InternMode,
     [ 'export const program: IGenProgramWithBoot = {',
       NameLine,
-      IrVersionLine,
       InternModeLine,
       '  ddl,',
       '  rel_columns,',
@@ -2543,8 +2550,6 @@ program_export_lines(Name, InternMode,
       '};'
     ]) :-
     format(atom(NameLine), '  name: "~w",', [Name]),
-    ir_version(IrVersion),
-    format(atom(IrVersionLine), '  ir_version: ~w,', [IrVersion]),
     format(atom(InternModeLine), '  internMode: "~w",', [InternMode]).
 
 % A database built by one mode is unreadable by the other, so the artifact
@@ -2599,7 +2604,9 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
               LevelRef = LevelName/LevelArity ),
             LevelRefs0),
     sort(LevelRefs0, LevelHeadedRefs),
-    ddl_lines(Ddl, DdlLines),
+    enum_identity_ddls(PlanDecls, EnumIdentityDdls),
+    append(Ddl, EnumIdentityDdls, FullDdl),
+    ddl_lines(FullDdl, DdlLines),
     rel_columns_lines(RelPlans, RelColumnsLines),
     rel_physical_names_lines(RelPlans, RelPhysicalNamesLines),
     rel_column_types_lines(RelPlans, RelColumnTypesLines),

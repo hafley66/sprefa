@@ -136,6 +136,24 @@ throw_as_compiler_unsupported(unsupported_construct(Reason)) :-
 throw_as_compiler_unsupported(Refusal) :-
     throw(unsupported_construct(Refusal)).
 
+preserve_compiler_type_rules(prog(Decls, Rules), Bindings,
+                             prog(Decls, RuntimeRules), CompilerRules,
+                             CompilerBindings) :-
+    partition_compiler_type_rules(Decls, Rules, SourceCompilerRules, RuntimeRules),
+    copy_term(SourceCompilerRules-Bindings, CompilerRules-CompilerBindings).
+
+partition_compiler_type_rules(_, [], [], []).
+partition_compiler_type_rules(Decls, [Rule | Rules], [Rule | CompilerRules], RuntimeRules) :-
+    compiler_type_rule(Decls, Rule),
+    !,
+    partition_compiler_type_rules(Decls, Rules, CompilerRules, RuntimeRules).
+partition_compiler_type_rules(Decls, [Rule | Rules], CompilerRules, [Rule | RuntimeRules]) :-
+    partition_compiler_type_rules(Decls, Rules, CompilerRules, RuntimeRules).
+
+compiler_type_rule(Decls, (Head <- _)) :-
+    compound(Head), functor(Head, Name, Arity),
+    memberchk(col_type(Name/Arity, return, type), Decls).
+
 materialize_reference_target_rels(prog(Decls0, Rules), prog(Decls, Rules)) :-
     findall(col_type(Name/Arity, Column, Type),
             ( member(type_decl(Name, Specs), Decls0),
@@ -175,10 +193,16 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     % On the AUTHOR's text, before any expansion: `__host_demand_*` and the
     % catalog's own col_type decls are the compiler writing its own namespace.
     check_reserved_namespace(SugaredProg),
-    prepare_program_for_compiler(SugaredProg, HostProg),
+    preserve_compiler_type_rules(SugaredProg, Bindings, RuntimeProgram,
+                                 CompilerRules, CompilerBindings),
+    prepare_program_for_compiler(RuntimeProgram, HostRuntimeProgram),
+    HostRuntimeProgram = prog(HostDecls, HostRules),
+    append(HostRules, CompilerRules, HostRulesAndCompilerRules),
+    HostProg = prog(HostDecls, HostRulesAndCompilerRules),
     % Host preparation stays a PRE-PASS (see engine.pl); the sugar phases run
     % in the order 1_expansion.pl declares.
-    expand_program_with_bindings(HostProg, Bindings, ExpandedProg, _),
+    append(Bindings, CompilerBindings, ExpansionBindings),
+    expand_program_with_bindings(HostProg, ExpansionBindings, ExpandedProg, _),
     materialize_reference_target_rels(ExpandedProg, ReferencedProg),
     materialize_catalog_rel(ReferencedProg, Prog),
     Prog = prog(Decls, Rules),
@@ -607,22 +631,28 @@ arrival_term(Prog, Bindings, Arrival, Term) :-
 dl6_seeded_form(Prog, Initial, ProgOut) :-
     Prog = prog(Decls, Rules),
     !,
-    partition_dl6_facts(Rules, Initial, RealRules),
+    partition_dl6_facts(Decls, Rules, Initial, RealRules),
     ProgOut = prog(Decls, RealRules).
 dl6_seeded_form(Prog, Initial, ProgOut) :-
     Prog = program(Decls, Rules, Queries),
     !,
-    partition_dl6_facts(Rules, Initial, RealRules),
+    partition_dl6_facts(Decls, Rules, Initial, RealRules),
     ProgOut = program(Decls, RealRules, Queries).
 dl6_seeded_form(Prog, [], Prog).
 
-partition_dl6_facts([], [], []).
-partition_dl6_facts([Rule | Rules], [Fact | Facts], Rest) :-
+partition_dl6_facts(_, [], [], []).
+partition_dl6_facts(Decls, [Rule | Rules], [Fact | Facts], Rest) :-
     dl6_fact(Rule, Fact),
+    \+ compiler_type_fact(Decls, Fact),
     !,
-    partition_dl6_facts(Rules, Facts, Rest).
-partition_dl6_facts([Rule | Rules], Facts, [Rule | Rest]) :-
-    partition_dl6_facts(Rules, Facts, Rest).
+    partition_dl6_facts(Decls, Rules, Facts, Rest).
+partition_dl6_facts(Decls, [Rule | Rules], Facts, [Rule | Rest]) :-
+    partition_dl6_facts(Decls, Rules, Facts, Rest).
+
+compiler_type_fact(Decls, Fact) :-
+    compound(Fact),
+    functor(Fact, Name, Arity),
+    memberchk(col_type(Name/Arity, return, type), Decls).
 
 % Structured-term arguments (e.g. a ts_query value) are not seed-row shaped;
 % they keep the rule path their fixtures already compile through.

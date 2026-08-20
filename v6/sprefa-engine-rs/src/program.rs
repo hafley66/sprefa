@@ -41,56 +41,12 @@ pub struct GenProgram {
     pub retentions: Vec<IncrementalRetentionStatement>,
     pub uses_tick: bool,
     pub reconcile_every_tick: bool,
-    pub ir_version: u32,
+    pub incremental_safe: bool,
     pub host_plans: Vec<crate::types::HostPlanData>,
 }
 
-// The IR shape this runtime interprets. Bumped whenever a field's meaning
-// moves; emit_rust.pl and emit_ts.pl carry the same number as `ir_version/1`.
-pub const IR_VERSION: u32 = 1;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IrVersionMismatch {
-    pub program: String,
-    pub found: u32,
-    pub expected: u32,
-}
-
-impl std::fmt::Display for IrVersionMismatch {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "ir_version_mismatch: program {} was emitted at ir_version {} and this runtime interprets {}",
-            self.program, self.found, self.expected
-        )
-    }
-}
-
-impl std::error::Error for IrVersionMismatch {}
-
 impl GenProgram {
-    // The checked door. `from_json` is the panicking wrapper every in-tree
-    // harness already calls; a binary that boots an IR it did not build reads
-    // the mismatch as a value.
-    pub fn try_from_json(pj: ProgramJson) -> Result<Self, IrVersionMismatch> {
-        if pj.ir_version != IR_VERSION {
-            return Err(IrVersionMismatch {
-                program: pj.name,
-                found: pj.ir_version,
-                expected: IR_VERSION,
-            });
-        }
-        Ok(GenProgram::from_checked_json(pj))
-    }
-
     pub fn from_json(pj: ProgramJson) -> Self {
-        match GenProgram::try_from_json(pj) {
-            Ok(program) => program,
-            Err(mismatch) => panic!("{mismatch}"),
-        }
-    }
-
-    fn from_checked_json(pj: ProgramJson) -> Self {
         GenProgram {
             name: pj.name,
             intern_mode: pj.intern_mode,
@@ -116,7 +72,7 @@ impl GenProgram {
             retentions: pj.retentions,
             uses_tick: pj.uses_tick,
             reconcile_every_tick: pj.reconcile_every_tick,
-            ir_version: pj.ir_version,
+            incremental_safe: pj.incremental_safe,
             host_plans: pj.host_plans,
         }
     }
@@ -137,7 +93,8 @@ impl GenProgram {
         if self.uses_tick {
             incremental::advance_tick(seam);
         }
-        let enumed = crate::enum_plane::intern(&self.enum_types, &self.enum_ref_columns, arrivals)?;
+        let enumed =
+            crate::enum_plane::intern(seam, &self.enum_types, &self.enum_ref_columns, arrivals)?;
         let interned = match &self.text_intern_plan {
             Some(plan) => crate::text_plane::intern(seam, plan, &enumed)?,
             None => enumed,

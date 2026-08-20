@@ -1,14 +1,16 @@
 ---
 created: 2026-08-18
-updated: 2026-08-18
+updated: 2026-08-19
 type: task
 assignee: luna
-status: open
+status: done
+closed: 2026-08-19
 priority: normal
 epic: relational-type-schema
 labels:
 - area:dl6
 - intent:storage
+- codex
 lane: storage
 lane_seq: 1
 collision: [storage-lowering, option-lowering]
@@ -23,15 +25,24 @@ Replace the temporary option_in_key_column refusal with one canonical key identi
 
 ## Acceptance Criteria
 
-- [ ] Define one portable `Key<option(T)>` representation for `none` and `some(ValueKey)`.
-- [ ] Preserve distinct `none`, `some(null-like)`, and `some(value)` states where the element type permits them.
-- [ ] Scalar/enum-backed and relation-companion option storage implement the same key equality.
-- [ ] TypeScript, Rust, SQLite, compiler oracle, and both runtime engines agree on normalization.
-- [ ] Composite keys containing options replace and retract deterministically across restart.
-- [ ] Remove `option_in_key_column` and its unsupported fixture only after the positive runtime cases pass.
+- [x] Define one portable `Key<option(T)>` representation for `none` and `some(ValueKey)`.
+- [x] Preserve distinct `none`, nested `some(none)`, and `some(value)` states where the element type permits them.
+- [x] Scalar, enum, and relation option storage implement the same content-interned key equality.
+- [x] TypeScript, Rust, SQLite, compiler oracle, and both runtime engines agree on normalization.
+- [x] Composite keys containing options replace and retract deterministically across restart.
+- [x] Remove `option_in_key_column` and its unsupported fixture.
 
 ## Tests Run
 
 ## Implementation Notes
 
-This is an implementation-deferred refusal. The current parent-column key path requires a directly stored value, while relation options encode `none` as absence of a companion row. Do not select SQLite `NULL` implicitly. Specify the portable key and then project each storage representation onto it.
+Keyed options remain in the owner row as a canonical enum endpoint. The durable
+enum identity table maps canonical tagged JSON to a dense integer. SQLite sees
+only that integer and never receives SQL `NULL`. Equal `none` or `some(value)`
+values therefore share key identity across ticks and restarts.
+
+## Comments
+
+### 2026-08-19T13:01:47Z · @codex
+
+Runtime audit found the required primitive: EnumPlane derives enum endpoint identity from a sibling owner id column. A key(option(T)) column may be the only column, so structured TS/Rust ingress currently throws ambiguous_owner_context even though raw integer schedules pass. Completion requires content-interned enum identity shared across variants, then option keys can store that integer. Provisional refusal removal was reverted.
