@@ -1,5 +1,5 @@
 interface json_encodable.
 rel entry(Key: json_encodable, Value)(key: Key, value: Value).
-rel cell(id: int, slot: entry(text,int)) key(1).
+rel cell(id: int, slot: entry(text, int)) key(1).
 
 carry(Id, Slot) <- cell(Id, Slot).
