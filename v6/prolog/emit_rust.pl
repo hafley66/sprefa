@@ -28,6 +28,11 @@
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
 
+% ═══ IR version ══════════════════════════════════════════════════════════════
+% emit_ts.pl carries the same number under the same spelling, and both runtimes
+% refuse a program document whose value is not the one they interpret.
+ir_version(1).
+
 % ═══ helpers ═════════════════════════════════════════════════════════════════
 
 ref_name(Ref, Name) :- ( Ref = _/_ -> arg(1, Ref, Name) ; atom_string(Name, Ref) ).
@@ -592,8 +597,10 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     enum_identity_ddls(PlanDecls, EnumIdentityDdls),
     append(Ddl, EnumIdentityDdls, FullDdl),
 
+    ir_version(IrVersion),
     ProgramDict =
     _{ name: Name,
+       ir_version: IrVersion,
        intern_mode: InternMode,
        ddl: FullDdl,
        rel_columns: RelColumns,

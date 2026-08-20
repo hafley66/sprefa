@@ -58,7 +58,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -313,6 +313,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_typed_capture_filters_a_wrong_typed_value",
+  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,

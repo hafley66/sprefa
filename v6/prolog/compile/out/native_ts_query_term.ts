@@ -58,7 +58,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [{ name: "tree_sitter", inputs: [{ name: "file_digest", type: "text" }, { name: "query", type: "text" }], outputs: [{ name: "capture", type: "text" }], template: "tree-sitter {file_digest} $query", demand_rel: "__host_demand_tree_sitter", response_rel: "__host_response_tree_sitter", execution: "shell" }];
 export const bind_plans: readonly IBindPlanData[] = [{ name: "interval", columns: [{ name: "period", type: "int" }, { name: "bucket", type: "int" }], literals: [], execution: "live_interval" }];
@@ -487,6 +487,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "native_ts_query_term",
+  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,

@@ -58,7 +58,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [{ name: "sg", inputs: [{ name: "file_digest", type: "text" }, { name: "query_digest", type: "text" }], outputs: [{ name: "caller", type: "text" }, { name: "callee", type: "text" }, { name: "start_byte", type: "int" }, { name: "end_byte", type: "int" }], template: "sg {file_digest} $query_digest", demand_rel: "__host_demand_sg", response_rel: "__host_response_sg", execution: "shell" }];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -475,6 +475,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "extraction_fork_callgraph",
+  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,

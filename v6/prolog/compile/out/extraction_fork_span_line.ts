@@ -58,7 +58,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [{ name: "span_scan", inputs: [{ name: "file_digest", type: "text" }, { name: "query_digest", type: "text" }], outputs: [{ name: "line", type: "int" }, { name: "text", type: "text" }], template: "span {file_digest} $query_digest", demand_rel: "__host_demand_span_scan", response_rel: "__host_response_span_scan", execution: "shell" }];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -426,6 +426,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "extraction_fork_span_line",
+  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,

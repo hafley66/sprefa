@@ -688,6 +688,10 @@ pub struct ProgramJson {
     pub uses_tick: bool,
     pub reconcile_every_tick: bool,
     pub incremental_safe: bool,
+    // Absent on an IR emitted before the field existed; 0 then fails
+    // program::GenProgram::try_from_json's named check.
+    #[serde(default)]
+    pub ir_version: u32,
     #[serde(default)]
     pub host_plans: Vec<HostPlanData>,
 }
