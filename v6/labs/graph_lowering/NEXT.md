@@ -30,7 +30,7 @@ review's output.
 
 | id | move | files | size | unblocks |
 | --- | --- | --- | --- | --- |
-| M1 | diagonal fixture: grid with right, down, and diagonal edges so nodes have several path lengths | `tests/labs/graph_lowering.test.ts` fixtures | ~40 lines | shows tiers and distance blow up the same way components does; sizes M2 for all three programs instead of one |
+| M1 | diagonal fixture `gridDiag(w,h)` in TS beside the existing fixtures; shootout generator reuse deferred (see Move 1) | `tests/labs/graph_lowering.test.ts:97-116, :279` | ~12 lines | shows tiers and distance blow up the same way components does; sizes M2 for all three programs instead of one |
 | M2 | keyed merge in `RecursiveStratum.mergeStatement` + narrow `AggregateInRecursionError` (RESEARCH.md E2) | `src/lower/lowerSql.ts:146,:407,:441`; `src/lower/lower.ts:108,:158`; tests in `tests/lower/lowerSql.test.ts` | ~120 lines + COUNT tests | components, tiers, distance one row per key; weighted shortest path once arithmetic exists; closes exit criterion 3 |
 | M3 | bench in background with per-test cap (`PERF_GRAPH_LOWERING_S`, justfile :477) | `v6/justfile`, test `{ skip }` arm | ~15 lines | 10-second law compliance; STANDINGS refresh after M2 |
 | M4 | open the PR | none | 0 lines + rebase onto origin/main (3 commits behind) | review; restores the PR-per-arc rule |
@@ -80,10 +80,38 @@ Caption: M1 gates M2; M2 and M3 gate the STANDINGS refresh; M5 is a soft gate on
 
 ## Move 1 in detail: diagonal fixture
 
-Fixture `grid-diag-16x16`: 256 nodes, edges right, down, and down-right (3 x 15 x 15 + 2 x 15
-= 705 edges). From node (0,0) a node (r,c) is reachable by paths of length max(r,c) through
-r+c, so `tiers` and `distance` each materialise roughly sum over nodes of (min(r,c)+1) rows
-instead of 256.
+Decision (user, 2026-08-20): keep the lab's TS fixtures; add `gridDiag(w, h)` beside
+`chain`, `grid`, `twoGridsWithTriangle` in `tests/labs/graph_lowering.test.ts:97-116`.
+The shootout generator stays separate; reasons in the table.
+
+| `v6/labs/exec_shootout` has | lab needs | verdict |
+| --- | --- | --- |
+| `harness/src/gen.rs:77` families chain, layered, grid (right/down), cycle; `.in` format `p nodes edges` + `from to` lines (`main.rs:69`) | edge lists + roots | format reusable; no diagonal family |
+| scales 10k / 100k / 1M edges, tuned to 1M..20M derived rows (`tuner.rs`) | 200..1000 nodes | 10x to 1000x too large for the TS evaluator today (components chain-1000 = 44 s) |
+| one program, `reachable` | five programs | 1 of 5 |
+| `sqlite_baseline` CASES with expected_edges / derived / checksum | oracles | cross-check for reach only |
+| cargo build + `/tmp/sprefa-shootout/*.in` (dl6/bench.sh:35) | `node --test`, libsql :memory: | adds a Rust build to a TS test |
+
+Revisit once M2 lands and the TS evaluator reaches 10k edges inside the 10-second law:
+then a `.in` reader (~20 lines) plus `Family::GridDiag` in `gen.rs` shares fixtures and
+lets `sqlite_baseline` cross-check reach.
+
+Fixture `grid-diag-16x16`: 256 nodes; edges right, down, down-right; 15x16 + 16x15 + 15x15
+= 705 edges. From (0,0) a node (r,c) is reachable by paths of length max(r,c) through r+c,
+so `tiers` and `distance` materialise about sum over nodes of (min(r,c)+1) rows.
+
+```ts
+function gridDiag(w: number, h: number): Fixture {
+  const edges: Edge[] = [];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const n = y * w + x;
+    if (x + 1 < w) edges.push([n, n + 1]);
+    if (y + 1 < h) edges.push([n, n + w]);
+    if (x + 1 < w && y + 1 < h) edges.push([n, n + w + 1]);
+  }
+  return { name: `grid-diag-${w}x${h}`, nodeCount: w * h, edges, roots: [0] };
+}
+```
 
 | program | rows on grid-16x16 today | expected rows on grid-diag-16x16 | expected after M2 |
 | --- | --- | --- | --- |
@@ -91,8 +119,9 @@ instead of 256.
 | distance | 256 | ~1,500 to 2,200 | 256 |
 | components | 65,536 | 65,536 | 256 |
 
-Oracle changes: none; BFS depth and longest-path oracles already handle multiple path
-lengths. Receipt: STANDINGS rows for the new fixture with tiers and distance above 256.
+Oracle changes: none; BFS depth and longest-path oracles already handle several path
+lengths per node. Receipt: STANDINGS rows for the new fixture with tiers and distance
+above 256.
 
 ## Move 2 in detail: keyed merge
 
