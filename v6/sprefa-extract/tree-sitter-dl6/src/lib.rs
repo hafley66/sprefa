@@ -92,4 +92,21 @@ rel annotated(id: key(int), configured: configure(int, Value: 1), composed: seco
         assert!(sexp.contains("type_argument"));
         assert!(sexp.contains("type_named_argument"));
     }
+
+    #[test]
+    fn parses_native_json_literals() {
+        let src = r#"
+doc(Value) <- seed(Id), Value := {"z": [true, null, 3.5, {}, []], "a": "text"}.
+"#;
+        let result = parse_check(src);
+        assert!(result.is_ok(), "native JSON error: {:?}", result.err());
+        let mut parser = Parser::new();
+        let lang = tree_sitter::Language::new(LANGUAGE);
+        parser.set_language(&lang).unwrap();
+        let tree = parser.parse(src, None).unwrap();
+        let sexp = tree.root_node().to_sexp();
+        assert!(sexp.contains("json_object"));
+        assert!(sexp.contains("json_array"));
+        assert!(sexp.contains("json_pair"));
+    }
 }

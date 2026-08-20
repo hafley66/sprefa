@@ -822,6 +822,9 @@ expression_type(_, _, text).
 json_document_expression(Expr) :- compound(Expr), Expr = {}(_), !.
 json_document_expression(Expr) :- is_list(Expr), Expr \== [], !.
 json_document_expression(Expr) :- compound(Expr), Expr = [_ | _].
+json_document_expression(json_object(_)) :- !.
+json_document_expression(json_array(_)) :- !.
+json_document_expression(json_null) :- !.
 
 json_scalar_expression(Expr) :-
     compound(Expr), functor(Expr, Functor, Arity),

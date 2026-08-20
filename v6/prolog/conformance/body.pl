@@ -84,6 +84,9 @@ eval_expr(Term, Out) :-
 eval_expr('{}', Canon) :- !, json_canon('{}', Canon).
 eval_expr(Braces, Canon) :- Braces = {}(_), !, json_canon(Braces, Canon).
 eval_expr([Head | Tail], Canon) :- !, json_canon([Head | Tail], Canon).
+eval_expr(json_object(Pairs), Canon) :- !, json_canon(json_object(Pairs), Canon).
+eval_expr(json_array(Values), Canon) :- !, json_canon(json_array(Values), Canon).
+eval_expr(json_null, none) :- !.
 eval_expr(Value, Value).
 
 % V5 `sprf_norm`, and the exact set the emitted SQL keeps: ASCII digits,
@@ -328,6 +331,14 @@ json_canon(Braces, obj(Sorted)) :- nonvar(Braces), Braces = {}(Fields), !,
     pairs_keys(Sorted, Keys),
     ( sort(Keys, Distinct), length(Keys, N), length(Distinct, N)
     -> true ; throw(json_dup_key(Keys)) ).
+json_canon(json_object(Pairs), obj(Sorted)) :- !,
+    findall(Key-Value, ( member(Key-Raw, Pairs), json_canon(Raw, Value) ), Canon),
+    keysort(Canon, Sorted),
+    pairs_keys(Sorted, Keys),
+    ( sort(Keys, Distinct), length(Keys, N), length(Distinct, N)
+    -> true ; throw(json_dup_key(Keys)) ).
+json_canon(json_array(Values), Canon) :- !, maplist(json_canon, Values, Canon).
+json_canon(json_null, none) :- !.
 json_canon(List, Canon) :- is_list(List), !, maplist(json_canon, List, Canon).
 json_canon(obj(Pairs), obj(Canon)) :- !,
     findall(Key-Value, ( member(Key-Raw, Pairs), json_canon(Raw, Value) ), Canon0),

@@ -724,6 +724,12 @@ print_term(Term, Bindings, ParentPrec, Side, Text) :-
     -> finite_float_text(Term, Text)
     ; string(Term)
     -> quote_value(Term, 0'", Text)
+    ; Term = json_null
+    -> Text = null
+    ; Term = json_object(Pairs)
+    -> print_json_object(Pairs, Bindings, Text)
+    ; Term = json_array(Values)
+    -> print_json_array(Values, Bindings, Text)
     ; Term == '{}'
     -> Text = '{}'
     ; is_list(Term)
@@ -807,6 +813,22 @@ print_var(Var, Bindings, Text) :-
 print_list([], _Bindings, "[]") :- !.
 print_list(List, Bindings, Text) :-
     maplist(print_arg(Bindings), List, ItemTexts),
+    atomic_list_concat(ItemTexts, ', ', Inner),
+    format(atom(Text), "[~w]", [Inner]).
+
+print_json_object([], _Bindings, "{}") :- !.
+print_json_object(Pairs, Bindings, Text) :-
+    maplist(print_json_pair(Bindings), Pairs, PairTexts),
+    atomic_list_concat(PairTexts, ', ', Inner),
+    format(atom(Text), "{~w}", [Inner]).
+
+print_json_pair(Bindings, Key-Value, Text) :-
+    quote_value(Key, 0'", KeyText),
+    print_term(Value, Bindings, 0, top, ValueText),
+    format(atom(Text), "~w: ~w", [KeyText, ValueText]).
+
+print_json_array(Values, Bindings, Text) :-
+    maplist(print_arg(Bindings), Values, ItemTexts),
     atomic_list_concat(ItemTexts, ', ', Inner),
     format(atom(Text), "[~w]", [Inner]).
 

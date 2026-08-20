@@ -69,6 +69,9 @@ cst_shape(body/1,           ref(goal_list)-[]).
 cst_shape(expr/1,           ref(expression)-[]).
 cst_shape(head_atom/1,      atom-[name]).
 cst_shape(brace_pair/1,     object_pair-[key, value, type]).
+cst_shape(json_object/1,    json_object-[]).
+cst_shape(json_array/1,     json_array-[]).
+cst_shape(json_pair/1,      json_pair-[key, value]).
 cst_shape(list_term/1,      list-[]).
 cst_shape(int_lit/1,        ref(integer)-[]).
 cst_shape(float_lit/1,      ref(float)-[]).
@@ -1408,11 +1411,54 @@ factor(E) -->
     ; atom_lit(E) -> []
     ; string_lit(E) -> []
     ; dollar_var(E)
+    ; json_literal(E) -> []
     ; braces_term(E)
     ; list_term(E)
     ; wildcard_var(E) -> []
     ; compound_or_var(E)
     ).
+
+% Native JSON keeps a separate AST from object patterns and relation-value
+% braces. A JSON object is selected by its required double-quoted key; bare,
+% capture, descent, and typed brace pairs continue through braces_term//1.
+json_literal(json_object(Pairs)) -->
+    @`{`, ws, string_lit(KeyText), #`:`, ws, json_value(Value),
+    { atom_string(Key, KeyText) },
+    json_object_pairs(Key-Value, Pairs), #`}`.
+json_literal(json_array(Values)) -->
+    @`[`, ws, json_value(First), json_array_rest(First, Values), #`]`.
+
+json_object_pairs(First, Pairs) -->
+    ws,
+    ( @`,` -> ws, string_lit(KeyText), #`:`, ws, json_value(Value),
+       { atom_string(Key, KeyText) }, json_object_pairs(Key-Value, Rest),
+       { Pairs = [First | Rest] }
+    ; { Pairs = [First] }
+    ).
+
+json_array_rest(First, Values) -->
+    ws,
+    ( @`,` -> ws, json_value(Value), json_array_rest(Value, Rest),
+       { Values = [First | Rest] }
+    ; { Values = [First] }
+    ).
+
+json_value(json_object(Pairs)) -->
+    @`{`, ws,
+    ( peek(0'}) -> { Pairs = [] }
+    ; string_lit(KeyText), #`:`, ws, json_value(Value),
+      { atom_string(Key, KeyText) }, json_object_pairs(Key-Value, Pairs)
+    ), #`}`.
+json_value(json_array(Values)) -->
+    @`[`, ws,
+    ( peek(0']) -> { Values = [] }
+    ; json_value(First), json_array_rest(First, Values)
+    ), #`]`.
+json_value(json_null) --> ~`null`.
+json_value(Value) --> bool_lit(Value).
+json_value(Value) --> float_lit(Value).
+json_value(Value) --> int_lit(Value).
+json_value(Value) --> string_lit(Value).
 
 no_tagged_brace(S) :-
     ( ident(Name, S, [0'{ | _])
