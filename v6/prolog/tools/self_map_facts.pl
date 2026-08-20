@@ -185,7 +185,7 @@ emit_task_facts :-
 % own precedence and is a shape the keyed_level_head unsupported construct already narrows.
 
 emit_program_facts(Path) :-
-    source_path('../compile/parse_dl.pl', ParsePath),
+    source_path('../compile/parse_dl_dcg.pl', ParsePath),
     source_path('../analyze.pl', AnalyzePath),
     source_path('../1_expansion.pl', ExpansionPath),
     source_path('../1_host_expand.pl', HostExpandPath),
@@ -253,7 +253,7 @@ ref_origin(Ref, _, LevelRefs, level) :- memberchk(Ref, LevelRefs), !.
 ref_origin(_, _, _, world).
 
 % Matched by FUNCTOR NAME rather than by writing `(_ <- Body)`: `<-` and `<+`
-% are operators the fixture files and parse_dl.pl declare for themselves, and
+% are operators the fixture files and parse_dl_dcg.pl declare for themselves, and
 % this module deliberately declares none -- an `:- op/3` here would be a second
 % place the arrow spellings live.
 rule_body(Rule, Body) :-

@@ -18,6 +18,16 @@ rust-grade (exit 1 -> exit 0 locally). Legs re-run and unchanged: conformance
 (`433 PASS`, `FAILURES 1`), text-door (`compiled=336 byte_identical=331
 failures=5`), roundtrip (`432 / 434`).
 
+**staleness-gate closed 2026-08-20** on `fix/self-map-settle` (base `06c9c5f63`).
+Its row read a self-map settle timeout; the cause was `self_map_facts.pl`
+loading `compile/parse_dl.pl`, deleted at `81e1cf1bf` on 2026-08-12, so the
+`sh` host answering the fourth source exited 2 and `program_rel`/`program_edge`
+held zero rows forever. Receipts in `TASKS/self-map-settle.REPORT.md`:
+`bash v6/tools/staleness-gate.sh` prints `STALENESS_GATE_OK` in 7.3s and
+`just self-map` reads `SELF MAP HOLDS diagrams=4 lines=692` 3/3 at 7.57s,
+7.76s, 7.72s with byte-identical output. The row and its `allow:` line are
+gone; a red staleness-gate is now a real finding.
+
 **Before this measurement CI never reached the gate at all.** The
 `Generate text-door corpus` job step ran `bash v6/tsv2/scripts/sweep.sh`, which
 exited 124 on `TIMEOUT sweep.sh: stage 1 compile sweep exceeded 900s`, so
@@ -101,7 +111,6 @@ seen from a different door; the rendered message drops the column name
 | roundtrip | `G1 round-trip: 460 / 462 fixtures pass` then `FAIL module_path_option_element_round_trips (.../fixtures/7_module_path_element.pl): fail(not_variant)` and `FAIL mutual_recursion_matches_oracle (.../fixtures/engine_core.pl): fail(not_variant)` | `v6/prolog/compile/scripts/roundtrip.sh:132` |
 | text-door | four byte differences beside the plan failure in group A: `TEXT_DOOR_FAIL bounded_template_ground_instance byte_difference`, `two_bounded_parameters_mint_one_instance`, `nested_bounded_template_instance`, `mixed_bounded_and_free_parameters`. All four are template-bound fixtures from the interface-bound arc. NARROWED 2026-08-20: the diff is nine lines, every one an `h_schema:` value on a TYPE-plane `__rel` row (`interface`/`generic_rel`/`type_parameter`/`constraint`/`generic_column`/`concrete_type`); every `rel` row including its `h_id` is byte-identical. On type rows that slot holds no schema hash: `annotate_catalog_row/3` overwrites it with `semantic_type_id_text/2` of `named(ModuleHash, Kind, Name)`. The two doors agree on the module hash seeding RELATION identity and disagree on the one seeding TYPE identity. | `v6/prolog/compile/scripts/text_door_receipt.sh`, `v6/prolog/lower.pl:1728`, `v6/prolog/0_type_ids.pl:19,51` |
 | plunit | the remaining four of `7 tests failed`: `catalog_plane_rail:level_plane_family_corpus_counts` and three `json_merge_patch` tests (`json_patch_lowers_with_the_null_stand_in_guard`, `merge_patch_stops_on_the_json_null_stand_in`, `merge_patch_stops_on_a_nested_json_null_stand_in`) | `v6/prolog/compile/test/plunit_tests.pl:1694,9803` |
-| staleness-gate | `STALENESS_GATE_FAIL self-map regeneration failed, ARCH-MAP.md not verified:` followed by the whole last tick as JSON. `bash v6/tsv2/scripts/self-map.sh` alone exits 1 on `FAIL  rels did not settle in 120s`; the document it does write carries an EMPTY mermaid block for section 4, so the rel-graph derivation produces no rows. compile/out and dl_view are regenerated and committed in this PR, so this row is the self-map leg only. | `v6/tools/staleness-gate.sh:159`, `v6/tsv2/scripts/self-map.sh` |
 | scale-floor | `scale-floor: scale bench failed for s2/10000 (sample 1 of 3)` then `LibsqlError: SQLITE_ERROR: no such table: a`. `7_scale-floor.sh` compiles a fresh `s2` fixture through `compile_fixture/4` into `gen/scale_generated.ts`; the emitted boot DDL creates no table for rel `a`. | `v6/tsv2/scripts/7_scale-floor.sh:391` |
 | flagship | `FAIL  the corpus MOVED since the v5 golden was captured (golden 9b1b91ad6aa3933ecd113377e7df76c924e4d69c1d2be20a2945647c1f062828, now 39d0cf438a1e173919bcb60e1092b31ea153afb15675b5f66c3f20938039e11c). Grading v6 against a golden from a different corpus is a false green.` The script names its own regeneration command, and that command runs the v5 binary. | `v6/tsv2/scripts/flagship-callgraph.sh:178` |
 | dd-grade | `DD-GRADE arm=--dd-diet-rust-sqlite graded=250 byte-clean=1 peak_rss_mb=4 (4544 kB, clean_state_gate_and_exit_zero) ceiling=8`, with the ratchet naming ~240 fixtures that were byte-clean and are not. None of grade.sh's four inputs (`6_isolated_compiler_dd.pl`, `sweep_plans.pl`, `sweep_oracle.pl`, `ticklog.pl`) is touched by this branch. | `v6/dd-runner/grade.sh:73` |
@@ -143,7 +152,6 @@ allow: roundtrip
 allow: rust-grade
 allow: scale-floor
 allow: serve-leak-soak
-allow: staleness-gate
 allow: sweep
 allow: text-door
 allow: tsv2-test
