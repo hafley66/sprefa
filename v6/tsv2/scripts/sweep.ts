@@ -42,7 +42,8 @@
  * Usage: node --experimental-transform-types scripts/sweep.ts
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -57,6 +58,10 @@ import type { IArrivalBatch, IBootStatement, IRowColumnType, IRowValue, ISqlSeam
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMPILE_OUT = join(HERE, "..", "..", "prolog", "compile", "out");
+const RUNTIME_DIR = join(HERE, "..", "runtime");
+const GEN_EMITTED = join(HERE, "..", "gen_emitted");
+const REPLAY_DIGESTS = join(COMPILE_OUT, "sweep.replay.digests.json");
+const TIMINGS = join(COMPILE_OUT, "sweep.timings.tsv");
 
 interface IManifestEntry {
   readonly name: string;
@@ -241,6 +246,85 @@ function grade_against_oracle(
   return with_final("wrong", `first diff at line ${excerpt_index + 1}: actual=${actual_excerpt} oracle=${oracle_excerpt}`);
 }
 
+/** The replay cache (issues/sweep-timings-report, rulings.pl
+ *  oracle_demoted_to_snapshots). A fixture is replayed only when something it
+ *  reads changed: its emitted module, its schedule, either oracle snapshot, or
+ *  the runtime the module runs on. The runtime term is what makes the cache
+ *  answerable -- an emitted module unchanged over a changed tickLoop.ts grades
+ *  differently, and a key over the fixture's own files alone would hand back
+ *  the previous runtime's verdict. */
+interface IReplayCacheEntry {
+  readonly key: string;
+  readonly result: IFixtureRunResult;
+}
+
+function file_digest(path: string): string {
+  try {
+    return createHash("sha256").update(readFileSync(path)).digest("hex");
+  } catch {
+    return "absent";
+  }
+}
+
+function tree_digest(dir: string): string {
+  const hash = createHash("sha256");
+  const walk = (here: string): void => {
+    for (const entry of readdirSync(here, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const path = join(here, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else hash.update(path.slice(dir.length)).update("\u0000").update(file_digest(path)).update("\u0000");
+    }
+  };
+  walk(dir);
+  return hash.digest("hex");
+}
+
+const RUNNER_DIGEST = ((): string => {
+  const hash = createHash("sha256");
+  hash.update(tree_digest(RUNTIME_DIR)).update("\u0000");
+  hash.update(file_digest(fileURLToPath(import.meta.url)));
+  return hash.digest("hex");
+})();
+
+function replay_key(name: string): string {
+  const hash = createHash("sha256");
+  hash.update(RUNNER_DIGEST).update("\u0000");
+  for (const path of [
+    join(GEN_EMITTED, `${name}.ts`),
+    join(COMPILE_OUT, `${name}.schedule.json`),
+    join(COMPILE_OUT, `${name}.oracle.jsonl`),
+    join(COMPILE_OUT, `${name}.oracle.final.jsonl`),
+  ]) {
+    hash.update(file_digest(path)).update("\u0000");
+  }
+  return hash.digest("hex");
+}
+
+function read_replay_cache(): Record<string, IReplayCacheEntry> {
+  if (process.env["SWEEP_FORCE"] !== undefined && process.env["SWEEP_FORCE"] !== "0") return {};
+  try {
+    return JSON.parse(readFileSync(REPLAY_DIGESTS, "utf8")) as Record<string, IReplayCacheEntry>;
+  } catch {
+    return {};
+  }
+}
+
+function append_timings(entries: readonly (readonly [string, number])[]): void {
+  if (!existsSync(TIMINGS)) writeFileSync(TIMINGS, "fixture\tstage\tms\n");
+  if (entries.length === 0) return;
+  appendFileSync(TIMINGS, entries.map(([name, ms]) => `${name}\treplay\t${ms}\n`).join(""));
+}
+
+function report_slowest(entries: readonly (readonly [string, number])[]): void {
+  if (entries.length === 0) {
+    process.stdout.write("SWEEP_TIMINGS replay: nothing to do this pass\n");
+    return;
+  }
+  const ranked = [...entries].sort((left, right) => right[1] - left[1]).slice(0, 10);
+  process.stdout.write(`SWEEP_TIMINGS replay slowest ${ranked.length} of ${entries.length}\n`);
+  for (const [name, ms] of ranked) process.stdout.write(`  ${name} ${ms}ms\n`);
+}
+
 function run_fixture(name: string): Observable<IFixtureRunResult> {
   return from(load_emitted(name)).pipe(
     concatMap((program) => {
@@ -284,10 +368,41 @@ function final_summary_line(results: readonly IFixtureRunResult[]): string {
 function main(): void {
   const manifest = read_manifest();
   const compiled_names = manifest.filter((entry) => entry.bucket === "compiled").map((entry) => entry.name);
+  const cache = read_replay_cache();
+  const keys = new Map(compiled_names.map((name) => [name, replay_key(name)] as const));
+  const fresh: Record<string, IReplayCacheEntry> = {};
+  const timings: (readonly [string, number])[] = [];
+  let hits = 0;
+
+  // concatMap keeps one seam alive at a time and keeps the result order the
+  // manifest's, cached or not, so run-results.json is byte-identical to the
+  // uncached pass's.
+  const graded = (name: string): Observable<IFixtureRunResult> => {
+    const cached = cache[name];
+    if (cached !== undefined && cached.key === keys.get(name)) {
+      hits += 1;
+      return of(cached.result);
+    }
+    const started = Date.now();
+    return run_fixture(name).pipe(
+      map((result) => {
+        const elapsed = Date.now() - started;
+        timings.push([name, elapsed]);
+        if (elapsed > 10_000) process.stdout.write(`SWEEP_SLOW ${name} ${(elapsed / 1000).toFixed(2)}\n`);
+        return result;
+      }),
+    );
+  };
+
   from(compiled_names)
-    .pipe(concatMap((name) => run_fixture(name)), toArray())
+    .pipe(concatMap((name) => graded(name)), toArray())
     .subscribe({
       next: (results) => {
+        for (const result of results) fresh[result.name] = { key: keys.get(result.name) ?? "", result };
+        writeFileSync(REPLAY_DIGESTS, `${JSON.stringify(fresh, null, 2)}\n`);
+        append_timings(timings);
+        report_slowest(timings);
+        process.stdout.write(`REPLAY_CACHE hit=${hits} replayed=${results.length - hits}\n`);
         writeFileSync(join(COMPILE_OUT, "run-results.json"), `${JSON.stringify(results, null, 2)}\n`);
         process.stdout.write(`${summary_line(results)}\n`);
         for (const result of results) {
