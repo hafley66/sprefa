@@ -185,6 +185,13 @@ export interface IAggregateLevelPlan {
   readonly delta_maintained?: boolean;
 }
 
+/** lower.pl:support_count_plan/8. `clear_sql` empties this rel's rows in the
+ *  shared ledger, `write_sqls` refill them, one statement per rule. */
+export interface IWriteSupportCountPlan {
+  readonly clear_sql: string;
+  readonly write_sqls: readonly string[];
+}
+
 export interface IIncrementalLevelStatement {
   readonly head_rel: string;
   /** "<program>:<name>/<arity>#<ordinal>", lower.pl:statement_rule_ids/3. */
@@ -213,6 +220,10 @@ export interface IIncrementalLevelStatement {
     stage_next_frontier: string,
     insert_new: string,
   ] | null;
+  /** frontier(shared) only: the recount verb's shared arm, publishing this
+   *  head's per-rule support to the shared ledger after the head insert.
+   *  Absent under per_rel, so a per-rel module keeps its bytes. */
+  readonly support_count_sql?: IWriteSupportCountPlan | null;
   /** rx `expand` spelling of support_sql[1] for a RECURSIVE head; optional so
    *  pre-expand emitted modules (gen_served) stay loadable. */
   readonly expand_sql?: IExpandSeedPlan | null;
@@ -301,6 +312,70 @@ export interface IIncrementalProgramPlan {
   readonly edges: readonly IIncrementalEdgeStatement[];
   readonly levels: readonly IIncrementalLevelStatement[];
   readonly retention?: readonly IIncrementalRetentionStatement[];
+}
+
+/** Which transient storage the six write verbs run against. `per_rel` gives
+ *  every rel its own frontier/delta tables; `shared` consolidates the two
+ *  frontiers and the support ledger into one table each, keyed by relation id
+ *  (plans/2026-08-19-shared-sqlite-frontier.md). */
+export type WriteVerbStrategy = "per_rel" | "shared";
+
+/** One staged occurrence: the row a rel gained or lost this tick, in the
+ *  order the tick saw it. */
+export interface IDeltaEvent {
+  readonly rel: string;
+  readonly sign: 1 | -1;
+  readonly sequence: number;
+  readonly row: IRow;
+}
+
+/** One frontier copy a stage writes: which table of the rel, at which phase.
+ *  A mid-tick correction writes the current frontier, a post-edge pass the
+ *  next one. */
+export interface IFrontierCopy {
+  readonly table_name: (relation: IIncrementalRelationPlan) => string;
+  readonly phase: number;
+}
+
+/** Where a tick stands when it calls `clear`: emptying this tick's transient
+ *  state, folding next into current mid-tick, or promoting at the end. */
+export type TickBoundary = "prepare" | "merge" | "promote";
+
+/**
+ * The six write verbs a tick makes. One object per program, chosen once at
+ * load from the plan metadata (`write_verbs_for`), so no statement inside a
+ * tick loop asks which storage strategy it is running under.
+ *
+ * Every verb is a SQL builder: sync in, sync out. The rx plumbing that runs
+ * them stays in `IIncrementalRuntime`.
+ */
+export interface IWriteVerbs {
+  readonly strategy: WriteVerbStrategy;
+  /** rel + rows + sign -> the durable typed write. */
+  arrive(
+    relation: IIncrementalRelationPlan,
+    sign: 1 | -1,
+    rows: readonly IRow[],
+  ): SqlStatement;
+  /** rel + rows -> the boundary delta write, plus one frontier write per copy
+   *  when the batch carries additions. */
+  stage(
+    relation: IIncrementalRelationPlan,
+    events: readonly IDeltaEvent[],
+    copies: readonly IFrontierCopy[],
+  ): readonly SqlStatement[];
+  /** The staged-row read a tick boundary asks for carry: does anything sit in
+   *  the next frontier. */
+  read_staged(relations: readonly IIncrementalRelationPlan[]): string;
+  /** rule -> the statements closing a recount round after the head insert. */
+  recount(statement: IIncrementalLevelStatement): readonly string[];
+  /** rel -> the boundary delta read. */
+  publish(relation: IIncrementalRelationPlan): SqlStatement;
+  /** tick boundary -> the transient state it empties or moves. */
+  clear(
+    relations: readonly IIncrementalRelationPlan[],
+    boundary: TickBoundary,
+  ): readonly string[];
 }
 
 export interface IIncrementalRuntime {

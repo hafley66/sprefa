@@ -3,7 +3,9 @@ import { concatMap, EMPTY, expand, forkJoin, last, map, of, type Observable } fr
 import type {
   IAggregateLevelPlan,
   IArrivalBatch,
+  IDeltaEvent,
   IDredPlan,
+  IFrontierCopy,
   IIncrementalEdgeStatement,
   IIncrementalLevelStatement,
   IIncrementalRelationPlan,
@@ -18,15 +20,16 @@ import type {
   QueryResult,
   SqlStatement,
 } from "./types.ts";
-import { list_at_scalar_seam } from "./boundary.ts";
 import { RuntimeTrace } from "./trace.ts";
+import {
+  bind_args,
+  has_bytes,
+  quote_identifier,
+  values_sql,
+  write_verbs_for,
+} from "./writeVerbs.ts";
 
-type DeltaEvent = {
-  readonly rel: string;
-  readonly sign: 1 | -1;
-  readonly sequence: number;
-  readonly row: IRow;
-};
+type DeltaEvent = IDeltaEvent;
 
 /** Carry a skipped rel can no longer report from `__next_frontier_`: the row
  *  count of the fill its copies read stands in for the EXISTS. */
@@ -68,20 +71,6 @@ function observed_rels(
   return relations.filter((relation) => !is_unobserved(relation, seam));
 }
 
-function quote_identifier(identifier: string): string {
-  return `"${identifier.replaceAll('"', '""')}"`;
-}
-
-function bind_args(values: readonly IRowValue[]): (string | number | bigint | Uint8Array)[] {
-  return values.map((value) => {
-    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
-    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
-    if (typeof value === "string") return value;
-    if (value instanceof Uint8Array) return value;
-    throw list_at_scalar_seam("sql_parameter");
-  });
-}
-
 function result_rows(result: QueryResult, columns: readonly string[], types: readonly IRowColumnType[] = []): readonly IRow[] {
   return result.rows.map((row) =>
     columns.map((column, index) => {
@@ -106,11 +95,6 @@ function normalize_integer_value(value: unknown): IRowValue {
   return value as IRowValue;
 }
 
-function values_sql(row_count: number, column_count: number): string {
-  const row = `(${Array.from({ length: column_count }, () => "?").join(", ")})`;
-  return Array.from({ length: row_count }, () => row).join(", ");
-}
-
 function keyed_arrival_rows_statement(
   relation: IIncrementalRelationPlan,
   entries: readonly { readonly row: IRow }[],
@@ -130,82 +114,9 @@ function keyed_arrival_rows_statement(
   };
 }
 
-function boundary_stage_statement(
-  relation: IIncrementalRelationPlan,
-  events: readonly DeltaEvent[],
-): SqlStatement {
-  if (relation.column_types?.includes("bytes") === true) {
-    return direct_stage_statement(relation, relation.delta_table_name, "delta", 0, events);
-  }
-  const columns = ["_sign", "_sequence", ...relation.columns].map(quote_identifier);
-  const value_expressions = columns.map(
-    (_column, index) => `json_extract(value, '$[${index}]')`,
-  );
-  const encoded_events = events.map((event) => [
-    event.sign,
-    event.sequence,
-    ...event.row,
-  ]);
-  return {
-    sql: `INSERT INTO ${quote_identifier(relation.delta_table_name)} (${columns.join(", ")}) SELECT ${value_expressions.join(", ")} FROM json_each(?)`,
-    args: [JSON.stringify(encoded_events)],
-  };
-}
-
-/** Shared-mode stage: resolve each event row to its durable __id and write
- *  (relation_id, phase, sequence, row_id), one batched statement per rel. */
-function shared_frontier_stage_statement(
-  relation: IIncrementalRelationPlan,
-  table_name: string,
-  phase: number,
-  events: readonly DeltaEvent[],
-): SqlStatement {
-  const shared_table =
-    table_name === relation.next_frontier_table_name ? "__next_frontier" : "__frontier";
-  const join_terms = relation.columns.map(
-    (column, index) =>
-      `t.${quote_identifier(column)} IS json_extract(je.value, '$[${index + 1}]')`,
-  );
-  const on_sql = join_terms.length === 0 ? "1" : join_terms.join(" AND ");
-  const encoded_events = events.map((event) => [event.sequence, ...event.row]);
-  return {
-    sql: `INSERT INTO ${quote_identifier(shared_table)} ("relation_id", "_phase", "_sequence", "row_id") SELECT ?, ?, json_extract(je.value, '$[0]'), t."__id" FROM json_each(?) je JOIN ${quote_identifier(relation.table_name)} t ON ${on_sql}`,
-    args: [
-      relation.shared_frontier!.relation_id,
-      phase,
-      JSON.stringify(encoded_events),
-    ],
-  };
-}
-
-function frontier_stage_statement(
-  relation: IIncrementalRelationPlan,
-  table_name: string,
-  phase: number,
-  events: readonly DeltaEvent[],
-): SqlStatement {
-  if (relation.shared_frontier !== undefined) {
-    return shared_frontier_stage_statement(relation, table_name, phase, events);
-  }
-  if (relation.column_types?.includes("bytes") === true) {
-    return direct_stage_statement(relation, table_name, "frontier", phase, events);
-  }
-  const columns = ["_phase", "_sequence", ...relation.columns].map(quote_identifier);
-  const value_expressions = columns.map(
-    (_column, index) => `json_extract(value, '$[${index}]')`,
-  );
-  const encoded_events = events.map((event) => [phase, event.sequence, ...event.row]);
-  return {
-    sql: `INSERT INTO ${quote_identifier(table_name)} (${columns.join(", ")}) SELECT ${value_expressions.join(", ")} FROM json_each(?)`,
-    args: [JSON.stringify(encoded_events)],
-  };
-}
-
 function stages_next_frontier(
   relation: IIncrementalRelationPlan,
-  frontier_copies: readonly {
-    readonly table_name: (relation: IIncrementalRelationPlan) => string;
-  }[],
+  frontier_copies: readonly IFrontierCopy[],
 ): boolean {
   return frontier_copies.some(
     (copy) => copy.table_name(relation) === relation.next_frontier_table_name,
@@ -216,10 +127,7 @@ function stage_events(
   seam: ISqlSeam,
   relations: readonly IIncrementalRelationPlan[],
   events: readonly DeltaEvent[],
-  frontier_copies: readonly {
-    readonly table_name: (relation: IIncrementalRelationPlan) => string;
-    readonly phase: number;
-  }[],
+  frontier_copies: readonly IFrontierCopy[],
 ): Observable<void> {
   const relation_by_name = new Map(relations.map((relation) => [relation.rel, relation]));
   const events_by_rel = new Map<string, DeltaEvent[]>();
@@ -228,29 +136,18 @@ function stage_events(
     if (grouped === undefined) events_by_rel.set(event.rel, [event]);
     else grouped.push(event);
   }
+  const verbs = write_verbs_for(relations);
   const statements = [...events_by_rel].flatMap(([rel, grouped]) => {
     const relation = relation_by_name.get(rel);
     if (relation === undefined) throw new Error(`incremental delta relation missing: ${rel}`);
-    const additions = grouped.filter((event) => event.sign === 1);
     if (is_unobserved(relation, seam)) {
+      const additions = grouped.filter((event) => event.sign === 1);
       if (additions.length > 0 && stages_next_frontier(relation, frontier_copies)) {
         skipped_carry.add(seam);
       }
       return [];
     }
-    const boundary = boundary_stage_statement(relation, grouped);
-    if (additions.length === 0) return [boundary];
-    return [
-      boundary,
-      ...frontier_copies.map((copy) =>
-        frontier_stage_statement(
-          relation,
-          copy.table_name(relation),
-          copy.phase,
-          additions,
-        )
-      ),
-    ];
+    return verbs.stage(relation, grouped, frontier_copies);
   });
   if (statements.length === 0) return of(undefined);
   return seam.runner.batch(seam.db, statements).pipe(map(() => undefined));
@@ -278,6 +175,7 @@ export const stage_ordered_frontiers: IStageOrderedFrontiers = (
     }
   }
   const statements: SqlStatement[] = [];
+  const verbs = write_verbs_for(relations);
   let carry_pending = false;
   for (const relation of relations) {
     statements.push(
@@ -287,8 +185,15 @@ export const stage_ordered_frontiers: IStageOrderedFrontiers = (
     const events = events_by_rel.get(relation.rel) ?? [];
     if (events.length === 0) continue;
     carry_pending = true;
+    // `stage` returns the boundary delta write first and the frontier copies
+    // after it; this path writes no delta rows, so it takes the copy alone.
+    // The two DELETEs above name the rel's own tables, which an
+    // ordered-occurrence program always has: frontier(shared) refuses one
+    // (lower.pl:shared_frontier_todo, tick).
     statements.push(
-      frontier_stage_statement(relation, relation.frontier_table_name, 0, events),
+      ...verbs.stage(relation, events, [
+        { table_name: (plan) => plan.frontier_table_name, phase: 0 },
+      ]).slice(1),
     );
   }
   if (statements.length === 0) return of(carry_pending);
@@ -318,47 +223,6 @@ function storage_row(relation: IIncrementalRelationPlan, row: IRow): IRow {
       ? (value ? 1 : 0)
       : value,
   );
-}
-
-function has_bytes(relation: IIncrementalRelationPlan): boolean {
-  return relation.column_types?.includes("bytes") === true;
-}
-
-function direct_arrival_statement(
-  relation: IIncrementalRelationPlan,
-  sign: 1 | -1,
-  rows: readonly IRow[],
-): SqlStatement {
-  const columns = relation.columns.map(quote_identifier);
-  if (sign === -1) {
-    return {
-      sql: `DELETE FROM ${quote_identifier(relation.table_name)} WHERE (${columns.join(", ")}) IN (${values_sql(rows.length, columns.length)}) RETURNING ${columns.join(", ")}`,
-      args: rows.flatMap(bind_args),
-    };
-  }
-  const key_indices = relation.key_indices ?? [];
-  const conflict = key_indices.length === 0 ? " OR IGNORE" : key_indices.length > 0
-    ? ` ON CONFLICT(${key_indices.map((index) => columns[index]!).join(", ")}) DO ${key_indices.length === columns.length ? "NOTHING" : `UPDATE SET ${columns.filter((_column, index) => !key_indices.includes(index)).map((column) => `${column} = excluded.${column}`).join(", ")}`}`
-    : "";
-  return {
-    sql: `INSERT${conflict.startsWith(" OR") ? conflict : ""} INTO ${quote_identifier(relation.table_name)} (${columns.join(", ")}) VALUES ${values_sql(rows.length, columns.length)}${conflict.startsWith(" ON") ? conflict : ""} RETURNING ${columns.join(", ")}`,
-    args: rows.flatMap(bind_args),
-  };
-}
-
-function direct_stage_statement(
-  relation: IIncrementalRelationPlan,
-  table_name: string,
-  mode: "delta" | "frontier",
-  phase: number,
-  events: readonly DeltaEvent[],
-): SqlStatement {
-  const columns = (mode === "delta" ? ["_sign", "_sequence", ...relation.columns] : ["_phase", "_sequence", ...relation.columns]).map(quote_identifier);
-  const rows = events.map((event) => [mode === "delta" ? event.sign : phase, event.sequence, ...event.row]);
-  return {
-    sql: `INSERT INTO ${quote_identifier(table_name)} (${columns.join(", ")}) VALUES ${values_sql(rows.length, columns.length)}`,
-    args: rows.flatMap(bind_args),
-  };
 }
 
 function keyed_write_statement(
@@ -757,6 +621,7 @@ function reconcile_ref_count_statement(
     ...to_statements(tail_texts),
     ...frontier_stages,
     { sql: insert_new!, args: [] },
+    ...to_statements(write_verbs_for(relations).recount(statement)),
   ];
   const expand_plan = statement.expand_sql ?? null;
   const support_interns = statement.support_intern_sql ?? [];
@@ -1114,13 +979,8 @@ export const IncrementalRuntime: IIncrementalRuntime = {
   ): Observable<void> {
     skipped_carry.delete(seam);
     if (relations.length === 0) return of(undefined);
-    const shared = relations.some((relation) => relation.shared_frontier !== undefined);
-    const sql = observed_rels(relations, seam)
-      .flatMap((relation) => [
-        `DELETE FROM ${quote_identifier(relation.delta_table_name)}`,
-        ...(shared ? [] : [`DELETE FROM ${quote_identifier(relation.next_frontier_table_name)}`]),
-      ])
-      .concat(shared ? ['DELETE FROM "__next_frontier"'] : [])
+    const sql = write_verbs_for(relations)
+      .clear(observed_rels(relations, seam), "prepare")
       .join(";\n");
     if (sql === "") return of(undefined);
     return seam.runner.executeMultiple(seam.db, sql);
@@ -1166,11 +1026,13 @@ export const IncrementalRuntime: IIncrementalRuntime = {
         grouped_arrivals.push({ relation, sign, entries: [entry] });
       }
     }
+    const verbs = write_verbs_for(relations);
     return sequence_work(grouped_arrivals, ({ relation, sign, entries }) => {
-      const sql = (sign === 1 ? relation.arrival_add_sql : relation.arrival_del_sql)!;
-      const write_statement: SqlStatement = has_bytes(relation)
-        ? direct_arrival_statement(relation, sign, entries.map((entry) => entry.row))
-        : { sql, args: [JSON.stringify(entries.map((entry) => entry.row))] };
+      const write_statement = verbs.arrive(
+        relation,
+        sign,
+        entries.map((entry) => entry.row),
+      );
       const key_indices = relation.key_indices ?? [];
       if (relation.kind === "set" && sign === 1 && key_indices.length > 0) {
         return seam.runner
@@ -1364,19 +1226,8 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<void> {
     if (relations.length === 0) return of(undefined);
-    if (relations.some((relation) => relation.shared_frontier !== undefined)) {
-      return seam.runner.executeMultiple(
-        seam.db,
-        'INSERT INTO "__frontier" ("relation_id", "_phase", "_sequence", "row_id") SELECT "relation_id", "_phase", "_sequence", "row_id" FROM "__next_frontier"',
-      );
-    }
-    const sql = observed_rels(relations, seam)
-      .map((relation) => {
-        const columns = ["_phase", "_sequence", ...relation.columns]
-          .map(quote_identifier)
-          .join(", ");
-        return `INSERT INTO ${quote_identifier(relation.frontier_table_name)} (${columns}) SELECT ${columns} FROM ${quote_identifier(relation.next_frontier_table_name)}`;
-      })
+    const sql = write_verbs_for(relations)
+      .clear(observed_rels(relations, seam), "merge")
       .join(";\n");
     if (sql === "") return of(undefined);
     return seam.runner.executeMultiple(seam.db, sql);
@@ -1506,7 +1357,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
       relations.map((relation) =>
         seam.unobserved_rels?.has(relation.rel) === true
           ? of({ rel: relation.rel, add: [], del: [] } satisfies IRelDelta)
-          : seam.runner.execute(seam.db, relation.boundary_sql).pipe(
+          : seam.runner.execute(seam.db, write_verbs_for(relations).publish(relation)).pipe(
               map((result) => boundary_delta(relation, result)),
             ),
       ),
@@ -1579,55 +1430,15 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     // Read-and-clear: a skipped rel's `__next_frontier_` stayed empty, so the
     // fill counts collected during the tick are its only carry evidence.
     const skipped_carried = skipped_carry.delete(seam);
-    if (relations.some((relation) => relation.shared_frontier !== undefined)) {
-      const promote_shared = (): Observable<void> =>
-        seam.runner.executeMultiple(
-          seam.db,
-          [
-            'DELETE FROM "__frontier"',
-            'INSERT INTO "__frontier" ("relation_id", "_phase", "_sequence", "row_id") SELECT "relation_id", "_phase", "_sequence", "row_id" FROM "__next_frontier"',
-            'DELETE FROM "__next_frontier"',
-          ].join(";\n"),
-        );
-      const carry_sql =
-        'SELECT CASE WHEN EXISTS (SELECT 1 FROM "__next_frontier" LIMIT 1) THEN 1 ELSE 0 END AS carry_pending';
-      return seam.runner.execute(seam.db, carry_sql).pipe(
-        concatMap((result: QueryResult) => {
-          const carry_pending = Number(result.rows[0]?.carry_pending ?? 0) === 1;
-          return promote_shared().pipe(map(() => carry_pending || skipped_carried));
-        }),
-      );
-    }
+    const verbs = write_verbs_for(relations);
     const observed = observed_rels(relations, seam);
-    const carry_terms = observed.flatMap((relation) => [
-      `EXISTS (SELECT 1 FROM ${quote_identifier(relation.next_frontier_table_name)} LIMIT 1)`,
-      // A staged departure is carry exactly the way a staged addition is:
-      // engine.pl appends DepartureCarry to ArrivalCarry in one CarryOut list,
-      // and a non-empty CarryOut is what mints the drain tick. Leaving it out
-      // makes the drain boundary lie -- the arm would be waiting on a tick
-      // that never runs.
-      ...(relation.departure_frontier_table_name === undefined
-        ? []
-        : [`EXISTS (SELECT 1 FROM ${quote_identifier(relation.departure_frontier_table_name)} LIMIT 1)`]),
-    ]);
-    const promote_sql = observed
-      .flatMap((relation) => {
-        const columns = ["_phase", "_sequence", ...relation.columns]
-          .map(quote_identifier)
-          .join(", ");
-        return [
-          `DELETE FROM ${quote_identifier(relation.frontier_table_name)}`,
-          `INSERT INTO ${quote_identifier(relation.frontier_table_name)} (${columns}) SELECT ${columns} FROM ${quote_identifier(relation.next_frontier_table_name)}`,
-          `DELETE FROM ${quote_identifier(relation.next_frontier_table_name)}`,
-        ];
-      })
-      .join(";\n");
+    const promote_sql = verbs.clear(observed, "promote").join(";\n");
     const promote = (): Observable<void> =>
       promote_sql === "" ? of(undefined) : seam.runner.executeMultiple(seam.db, promote_sql);
-    if (carry_terms.length === 0) return promote().pipe(map(() => skipped_carried));
-    const carry_sql = `SELECT CASE WHEN ${carry_terms.join(" OR ")} THEN 1 ELSE 0 END AS carry_pending`;
+    const carry_sql = verbs.read_staged(observed);
+    if (carry_sql === "") return promote().pipe(map(() => skipped_carried));
     return seam.runner.execute(seam.db, carry_sql).pipe(
-      concatMap((result) => {
+      concatMap((result: QueryResult) => {
         const carry_pending = Number(result.rows[0]?.carry_pending ?? 0) === 1;
         return promote().pipe(map(() => carry_pending || skipped_carried));
       }),
