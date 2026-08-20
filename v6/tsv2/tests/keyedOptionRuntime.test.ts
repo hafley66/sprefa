@@ -10,7 +10,7 @@ import { concatMap, firstValueFrom, toArray } from "rxjs";
 import { BootRunner } from "../runtime/2_boot.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
-import type { IArrivalBatch, IRowValue, IServedProgram } from "../runtime/types.ts";
+import type { IArrivalRow, IRowValue, IServedProgram } from "../runtime/types.ts";
 
 type Module = { readonly program: IServedProgram };
 const TSV2 = fileURLToPath(new URL("..", import.meta.url));
@@ -27,31 +27,35 @@ async function load(): Promise<Module> {
   finally { rmSync(file, { force: true }); }
 }
 
-function keyed(sign: "add" | "del", value: Record<string, IRowValue>, body: string): IArrivalBatch {
-  return [{ rel: "KeyedRelationOption", sign, row: [{ tag: "some", value }, body] }];
+/** `id: key(option(Person))` declares a REFERENCE column: the arrival carries
+ *  the `__opt_Person` instance id, and the instance itself arrives as its own
+ *  variant row. `rel_column_types` says `int` for that column, which is the
+ *  receipt that the compiler already spells it as a reference. */
+function option_instance(sign: "add" | "del", id: number, person: Record<string, IRowValue>): IArrivalRow {
+  return { rel: "__opt_Person_some", sign, row: [id, person] };
 }
 
-test("generated keyed relation options normalize before validation and preserve public retractions", async () => {
+function keyed(sign: "add" | "del", id: number, body: string): IArrivalRow {
+  return { rel: "KeyedRelationOption", sign, row: [id, body] };
+}
+
+test("a keyed option column carries the instance reference and keeps its keyed replacement", async () => {
   const { program } = await load();
-  assert.equal(program.enum_ref_columns?.KeyedRelationOption?.[0]?.endpoint_index, null);
+  assert.deepEqual(program.rel_column_types?.KeyedRelationOption, ["int", "text"]);
   const seam = ScratchStore.open(":memory:");
   await firstValueFrom(ScratchStore.boot(seam, program.ddl).pipe(concatMap(() => BootRunner.run(seam, program.boot))));
   const lines = await firstValueFrom(TickFold.run(program, seam, [
-    keyed("add", { id: 1, name: "Ada" }, "old"),
-    keyed("add", { name: "Ada", id: 1 }, "new"),
-    keyed("del", { id: 1, name: "Ada" }, "old"),
-    keyed("del", { id: 1, name: "Ada" }, "new"),
+    [option_instance("add", 1, { id: 1, name: "Ada" }), keyed("add", 1, "old")],
+    [option_instance("add", 1, { name: "Ada", id: 1 }), keyed("add", 1, "new")],
+    [keyed("del", 1, "old")],
+    [keyed("del", 1, "new")],
   ]).pipe(toArray()));
   const ticks = lines.map((line) => JSON.parse(line) as { deltas: Record<string, { add: unknown[][]; del: unknown[][] }> });
-  assert.deepEqual(ticks[0]?.deltas.KeyedRelationOption, {
-    add: [[{ tag: "some", value: { id: 1, name: "Ada" } }, "old"]], del: [],
-  });
-  assert.deepEqual(ticks[1]?.deltas.KeyedRelationOption, {
-    add: [[{ tag: "some", value: { id: 1, name: "Ada" } }, "new"]],
-    del: [[{ tag: "some", value: { id: 1, name: "Ada" } }, "old"]],
-  });
+  assert.deepEqual(ticks[0]?.deltas.KeyedRelationOption, { add: [[1, "old"]], del: [] });
+  // The reversed-key struct is the same Person row, so the option instance
+  // stays one row and only the parent body replaces.
+  assert.deepEqual(ticks[1]?.deltas.__opt_Person_some, undefined);
+  assert.deepEqual(ticks[1]?.deltas.KeyedRelationOption, { add: [[1, "new"]], del: [[1, "old"]] });
   assert.equal(ticks[2]?.deltas.KeyedRelationOption, undefined);
-  assert.deepEqual(ticks[3]?.deltas.KeyedRelationOption, {
-    add: [], del: [[{ tag: "some", value: { id: 1, name: "Ada" } }, "new"]],
-  });
+  assert.deepEqual(ticks[3]?.deltas.KeyedRelationOption, { add: [], del: [[1, "new"]] });
 });
