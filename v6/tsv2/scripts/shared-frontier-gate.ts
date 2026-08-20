@@ -1,5 +1,12 @@
 /** Per-arm parity gate for frontier(shared): identical ticks and finals plus
- *  pinned statement counts and a SEARCH plan; run via shared-frontier-gate.sh. */
+ *  pinned statement counts and a SEARCH plan; run via shared-frontier-gate.sh.
+ *
+ *  The retraction cases add three legs the arrival cases cannot reach: the
+ *  ORACLE tick log (conformance/ticklog.pl over the same fixture term), the
+ *  shared support ledger's row-by-row agreement with the head refcounts it
+ *  feeds, and a RESTART (the same schedule replayed on a fresh database). */
+
+import { readFileSync } from "node:fs";
 
 import { concatMap, firstValueFrom, map, of, toArray } from "rxjs";
 import type { Observable } from "rxjs";
@@ -11,6 +18,7 @@ import type {
   IArrivalBatch,
   IBootStatement,
   IGenProgram,
+  IIncrementalRelationPlan,
   ISqlSeam,
   QueryResult,
   SqliteDb,
@@ -24,11 +32,24 @@ type EmittedProgram = IGenProgram & {
   readonly final_select: Record<string, string>;
 };
 
+/** The emitted module's plan export, the one place the relation ids the
+ *  shared ledger keys on are readable from a test. */
+type EmittedPlan = { readonly relations: readonly IIncrementalRelationPlan[] };
+
 interface IFixtureCase {
   readonly name: string;
-  readonly schedule: readonly IArrivalBatch[];
+  /** Absent for a fixture-term case: the schedule then comes from the
+   *  `<name>.schedule.json` the oracle arm reads too. */
+  readonly schedule?: readonly IArrivalBatch[];
   /** Pinned statements per arm over the whole run; a drift is a defect. */
   readonly expected_statements: { readonly per_rel: number; readonly shared: number };
+  /** Diff both arms against `gen_emitted/<name>.oracle.jsonl`. */
+  readonly oracle?: boolean;
+  /** Every head row's ledger sum equals its `__refcount`, and the ledger
+   *  lookup is a SEARCH. */
+  readonly ledger?: boolean;
+  /** Replay the whole schedule on a fresh database; finals must match. */
+  readonly restart?: boolean;
 }
 
 const CASES: readonly IFixtureCase[] = [
@@ -81,7 +102,49 @@ const CASES: readonly IFixtureCase[] = [
     ],
     expected_statements: { per_rel: 46, shared: 38 },
   },
+  {
+    name: "sf_retract_current",
+    expected_statements: { per_rel: 96, shared: 74 },
+    oracle: true,
+    ledger: true,
+    restart: true,
+  },
+  {
+    name: "sf_retract_stale",
+    expected_statements: { per_rel: 73, shared: 63 },
+    oracle: true,
+    ledger: true,
+    restart: true,
+  },
+  {
+    name: "sf_negation_support",
+    expected_statements: { per_rel: 142, shared: 118 },
+    oracle: true,
+    ledger: true,
+    restart: true,
+  },
+  {
+    name: "sf_two_rule_support",
+    expected_statements: { per_rel: 105, shared: 87 },
+    oracle: true,
+    ledger: true,
+    restart: true,
+  },
 ];
+
+function case_schedule(fixture_case: IFixtureCase): readonly IArrivalBatch[] {
+  if (fixture_case.schedule !== undefined) return fixture_case.schedule;
+  const path = new URL(
+    `../tests/shared_frontier/${fixture_case.name}.schedule.json`,
+    import.meta.url,
+  );
+  return JSON.parse(readFileSync(path, "utf8")) as readonly IArrivalBatch[];
+}
+
+function oracle_lines(name: string): readonly string[] {
+  const path = new URL(`../gen_emitted/${name}.oracle.jsonl`, import.meta.url);
+  return readFileSync(path, "utf8").split("\n").filter((line) => line !== "");
+}
 
 /** Counts single statements; executeMultiple counts one per `;`-joined leg. */
 function counting_runner(inner: ISqlRunner, counter: { count: number }): ISqlRunner {
@@ -153,11 +216,60 @@ async function explain_search(seam: ISqlSeam, view_name: string): Promise<string
   return result.rows.map((row) => Object.values(row).join(" ")).join("\n");
 }
 
+interface ILedgerVerdict {
+  readonly agrees: boolean;
+  readonly searched: boolean;
+  readonly rows: number;
+  readonly detail: string;
+}
+
+/** Every row the shared ledger counts for is a head row whose `__refcount`
+ *  is that count summed over its rules, and the lookup reads the ledger's
+ *  primary key rather than scanning it. */
+async function ledger_verdict(
+  seam: ISqlSeam,
+  plan: EmittedPlan,
+): Promise<ILedgerVerdict> {
+  const relations = plan.relations;
+  const read = async (sql: string): Promise<QueryResult> =>
+    await firstValueFrom(seam.runner.execute(seam.db, { sql, args: [] }));
+  const ledger_plan = await read(
+    'EXPLAIN QUERY PLAN SELECT "count" FROM "__support_count" WHERE "relation_id" = 0 AND "row_id" = 1',
+  );
+  const plan_text = ledger_plan.rows.map((row) => Object.values(row).join(" ")).join("\n");
+  const searched = plan_text.includes("SEARCH") && !plan_text.includes("SCAN");
+  let rows = 0;
+  const disagreements: string[] = [];
+  for (const relation of relations) {
+    const shared = relation.shared_frontier;
+    if (shared === undefined) continue;
+    const columns = await read(`PRAGMA table_info("${relation.table_name}")`);
+    const has_refcount = columns.rows.some((row) => row["name"] === "__refcount");
+    if (!has_refcount) continue;
+    const counted = await read(
+      `SELECT count(*) AS bad FROM "${relation.table_name}" h LEFT JOIN (SELECT "row_id", sum("count") AS ledger FROM "__support_count" WHERE "relation_id" = ${shared.relation_id} GROUP BY "row_id") s ON s."row_id" = h."__id" WHERE COALESCE(s.ledger, 0) <> h."__refcount"`,
+    );
+    const present = await read(
+      `SELECT count(*) AS held FROM "__support_count" WHERE "relation_id" = ${shared.relation_id}`,
+    );
+    rows += Number(present.rows[0]?.held ?? 0);
+    const bad = Number(counted.rows[0]?.bad ?? 0);
+    if (bad !== 0) disagreements.push(`${relation.table_name} rows=${bad}`);
+  }
+  return {
+    agrees: disagreements.length === 0,
+    searched,
+    rows,
+    detail: disagreements.join(" "),
+  };
+}
+
 async function main(): Promise<void> {
   let failed = false;
   for (const fixture_case of CASES) {
-    const per_rel = await run_arm(`${fixture_case.name}_per`, fixture_case.schedule);
-    const shared = await run_arm(`${fixture_case.name}_shared`, fixture_case.schedule);
+    const schedule = case_schedule(fixture_case);
+    const per_rel = await run_arm(`${fixture_case.name}_per`, schedule);
+    const shared = await run_arm(`${fixture_case.name}_shared`, schedule);
     const tick_equal =
       per_rel.lines.length === shared.lines.length &&
       per_rel.lines.every((line, index) => line === shared.lines[index]);
@@ -173,10 +285,43 @@ async function main(): Promise<void> {
       fixture_case.expected_statements.per_rel === 0 ||
       (per_rel.statements === fixture_case.expected_statements.per_rel &&
         shared.statements === fixture_case.expected_statements.shared);
-    const verdict = tick_equal && final_equal && searched && counts_pinned ? "PASS" : "FAIL";
-    if (verdict === "FAIL") failed = true;
+    const legs = [`ticks=${tick_equal}`, `final=${final_equal}`, `search=${searched}`];
+    let ok = tick_equal && final_equal && searched && counts_pinned;
+
+    if (fixture_case.oracle === true) {
+      const oracle = oracle_lines(fixture_case.name);
+      const oracle_equal =
+        oracle.length === shared.lines.length &&
+        oracle.every((line, index) => line === shared.lines[index]);
+      legs.push(`oracle=${oracle_equal}`);
+      ok = ok && oracle_equal;
+      if (!oracle_equal) {
+        console.log(`  oracle lines:\n${oracle.join("\n")}\n  shared lines:\n${shared.lines.join("\n")}`);
+      }
+    }
+
+    if (fixture_case.ledger === true) {
+      const shared_plan = (await import(`../gen_emitted/${fixture_case.name}_shared.ts`))
+        .incremental_plan as EmittedPlan;
+      const ledger = await ledger_verdict(shared.seam, shared_plan);
+      legs.push(`ledger=${ledger.agrees}`, `ledger_rows=${ledger.rows}`, `ledger_search=${ledger.searched}`);
+      ok = ok && ledger.agrees && ledger.searched && ledger.rows > 0;
+      if (!ledger.agrees) console.log(`  ledger disagrees: ${ledger.detail}`);
+    }
+
+    if (fixture_case.restart === true) {
+      const replay = await run_arm(`${fixture_case.name}_shared`, schedule);
+      const restart_equal = replay.final === shared.final &&
+        replay.lines.every((line, index) => line === shared.lines[index]);
+      legs.push(`restart=${restart_equal}`);
+      ok = ok && restart_equal;
+      if (!restart_equal) console.log(`  restart final=${replay.final} first=${replay.final}`);
+    }
+
+    const verdict = ok ? "PASS" : "FAIL";
+    if (!ok) failed = true;
     console.log(
-      `${verdict} ${fixture_case.name} ticks=${tick_equal} final=${final_equal} search=${searched} statements per_rel=${per_rel.statements} shared=${shared.statements} pinned=${counts_pinned}`,
+      `${verdict} ${fixture_case.name} ${legs.join(" ")} statements per_rel=${per_rel.statements} shared=${shared.statements} pinned=${counts_pinned}`,
     );
     if (!tick_equal) {
       const first = per_rel.lines.findIndex((line, index) => line !== shared.lines[index]);

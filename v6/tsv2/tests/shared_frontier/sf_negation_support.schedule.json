@@ -1,0 +1,12 @@
+[
+  [
+    { "rel": "item", "sign": "add", "row": ["hat"] },
+    { "rel": "item", "sign": "add", "row": ["mug"] }
+  ],
+  [{ "rel": "sold", "sign": "add", "row": ["hat"] }],
+  [
+    { "rel": "sold", "sign": "del", "row": ["hat"] },
+    { "rel": "sold", "sign": "add", "row": ["mug"] }
+  ],
+  [{ "rel": "sold", "sign": "del", "row": ["mug"] }]
+]

@@ -1014,7 +1014,7 @@ test(acyclic_ref_count_statements_are_emitted) :-
     memberchk(levelstmt(effect_call/1, _, _, _,
                         refcountsql(ClearSql, SeedSql, UpdateSql, _,
                                    CollectZeroSql, _, _, _, _, _,
-                                   InsertNewSql, none, none, none, _),
+                                   InsertNewSql, none, none, none, _, _),
                         none, _),
               LevelStatements),
     ClearSql == 'DELETE FROM "__support_next_shared_demand_refcount_effect_call"',
@@ -1036,7 +1036,7 @@ test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
     level_ref_count_sql(direct,
         RelPlans, path/1, Rules,
         refcountsql(_, SeedSql, _, _, _, _, _, _, _, _, _, ExpandPlan,
-                    DredPlan, _, _)),
+                    DredPlan, _, _, _)),
     once(sub_atom(
         SeedSql, _, _, _,
         'WITH RECURSIVE "path" ("node") AS')),
@@ -1094,7 +1094,7 @@ test(negated_body_refuses_the_in_place_plan) :-
     level_ref_count_sql(direct,
         RelPlans, path/1, Rules,
         refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, none,
-                    FixpointIr, _)),
+                    FixpointIr, _, _)),
     ExpandPlan = expandplan(_, _, _, _, _, _, _, _),
     % The IR is fenced by the SAME predicate: no in-place plan, no IR.
     FixpointIr == none.
@@ -1107,7 +1107,7 @@ test(fixpoint_ir_spells_the_reachability_walks_without_sql) :-
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     memberchk(levelstmt(flow_reach/4, _, _, _,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
-                                    FixpointIr, _),
+                                    FixpointIr, _, _),
                         _, _),
               LevelStatements),
     FixpointIr = fixpointir(Storage, Assert, Dred, Revive, Expand),
@@ -1261,7 +1261,7 @@ fixpoint_ir_share_walk(LegsType, FixpointIr) :-
     ],
     level_ref_count_sql(direct, RelPlans, share/2, Rules,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
-                                    FixpointIr, _)),
+                                    FixpointIr, _, _)),
     FixpointIr \== none.
 
 fixpoint_ir_first_arith(fixpointir(_, fixplan(_, _, _, _, Hops, _, _), _, _, _),
@@ -1287,7 +1287,7 @@ test(fixpoint_ir_storage_separates_class_from_declared_type) :-
     ],
     level_ref_count_sql(direct, RelPlans, walk/1, Rules,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
-                                    FixpointIr, _)),
+                                    FixpointIr, _, _)),
     FixpointIr = fixpointir(Storage, _, _, _, _),
     memberchk(relstorage(ref(edge_row, 5), ColumnClasses), Storage),
     ColumnClasses == [
@@ -7945,7 +7945,7 @@ interning_walk_ir(Mode, FixpointIr) :-
     interning_walk_rules(Rules),
     level_ref_count_sql(Mode, RelPlans, walk/1, Rules,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
-                                    FixpointIr, _)).
+                                    FixpointIr, _, _)).
 
 test(fixpoint_ir_text_column_encodes_dict) :-
     interning_walk_ir(dict, fixpointir(Storage, _, _, _, _)),
@@ -7989,11 +7989,11 @@ test(text_literal_filter_fences_the_ir_at_dict) :-
     ],
     level_ref_count_sql(direct, RelPlans, walk/1, LiteralRules,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
-                                    DirectIr, _)),
+                                    DirectIr, _, _)),
     DirectIr \== none,
     level_ref_count_sql(dict, RelPlans, walk/1, LiteralRules,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
-                                    DictIr, _)),
+                                    DictIr, _, _)),
     DictIr == none.
 
 % ── text literals in the id space (contract §5.3 rule two, lane I-C) ────────
@@ -8009,7 +8009,7 @@ interning_literal_seed_sql(Mode, Rules, SeedSql) :-
     interning_literal_relplans(RelPlans),
     level_ref_count_sql(Mode, RelPlans, tagged/2, Rules,
                         refcountsql(_, SeedSql, _, _, _, _, _, _, _, _, _, _,
-                                    _, _, _)).
+                                    _, _, _, _)).
 
 interning_read_rules([ (tagged(Parent, done) <-
                             edge_row(Parent, _, _, _, rust)) ]).
@@ -8239,7 +8239,7 @@ test(ref_count_seed_interns_before_it_groups) :-
                               interpolation_desugars_to_concat, message,
                               levelstmt(_, _, _, _, RefCountSql, _, _)),
     RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _, _,
-                              [InternSql]),
+                              [InternSql], _),
     sub_atom(InternSql, 0, _, _,
              'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT'),
     sub_atom(InternSql, _, _, _, 'FROM "interpolation_desugars_to_concat_eprintln_hit_83ebe90615c9" b0').
@@ -8248,7 +8248,7 @@ test(ref_count_seed_interns_nothing_at_direct) :-
     interning_level_statement(direct, 'expressions.pl',
                               interpolation_desugars_to_concat, message,
                               levelstmt(_, _, _, _, RefCountSql, _, _)),
-    RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _, _, []).
+    RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _, _, [], _).
 
 % The edge path projects in TypeScript and binds the row back, so its intern
 % statement runs per arrival with the SAME placeholders the projection uses.
