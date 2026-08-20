@@ -1840,8 +1840,8 @@ plane_kind(expand). plane_kind(dred). plane_kind(avg_accumulator).
 % 41/309/309), so every move is a new fixture and never a lowering that grew.
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-47, refcount-394, refcount_staging-394,
-              expand-14, dred-21, avg_accumulator-2].
+    Counts = [scope-192, refcount-1620, refcount_staging-1620,
+              expand-56, dred-84, avg_accumulator-8].
 
 corpus_plane_kind_counts(Counts) :-
     findall(Kind,
@@ -7056,25 +7056,20 @@ test(a_column_less_nested_rel_prints_at_its_path) :-
     once(sub_atom(Text, _, _, _, 'rel orchard.flag().')),
     Program =@= RoundTripped.
 
-% GAP PINNED, NOT FIXED. A ROOT rel/0 parses, prints and round-trips, then has
-% no storage: analyze.pl:rel_columns/4 opens with numlist(1, Arity, _), which
-% FAILS at arity 0, so no relplan is built for the ref and lower_program/2
-% fails silently -- no DDL, no refusal, no output. The numlist guard alone is
-% not the fix: SQLite has no zero-column table, so a true rel/0 needs a
-% unit-row storage decision (one sentinel column holding 0 or 1 rows) threaded
-% through every level-statement family. A NESTED rel/0 is unaffected, since
-% the implicit parent ref makes it arity 1 with ordinary storage.
+% A root rel/0 now reaches analysis and receives its unit-row table plan. The
+% remaining runtime SQL work is pinned at the lowering boundary: delta and
+% frontier statements still need their zero-payload spellings.
 % rx: a rel/0 is a proposition, so its stream carries the unit tuple and reads
 % as isEmpty()/defaultIfEmpty() rather than as a row set.
-test(a_root_rel_zero_still_has_no_storage) :-
+test(a_root_rel_zero_reaches_its_unit_storage_plan) :-
     parsed_zero_arity_program(
         'rel foo().\nrel seed(n: int).\nfoo() <- seed(1).', Decls, Rules),
     memberchk(kind(foo/0, set), Decls),
     once(program_plan(fixture(root_rel_zero, prog(Decls, Rules), [], [], [])-[],
                       [intern(dict)], Plan)),
     Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
-    \+ relplan_of(RelPlans, foo/0, _),
-    \+ analyze:rel_columns(Rules, [], foo/0, _),
+    relplan_of(RelPlans, foo/0, rel(foo/0, _, set, [], none)),
+    analyze:rel_columns(Rules, [], foo/0, []),
     \+ lower_program(Plan, _).
 
 :- end_tests(rel_zero_arity).
@@ -9855,9 +9850,8 @@ test(partial_list_value_keeps_its_unsupported,
 % emitter wrapped the same call in the json1 tagged-term encoding. All seven
 % json_patch_fold.pl fixtures were `fail` under swipl conformance.
 
-% The null guard renders BEFORE the patch call and reads the patch operand
-% only: a target's own null is data RFC 7396 never touches.
-test(json_patch_lowers_with_the_null_stand_in_guard) :-
+% JSON null is the `none` value and composes through SQLite json_patch/2.
+test(json_patch_lowers_without_a_three_valued_guard) :-
     Term = fixture(json_patch_sql,
                    prog([ col_type(sample/2, session, text),
                           col_type(sample/2, patch, json),
@@ -9873,7 +9867,9 @@ test(json_patch_lowers_with_the_null_stand_in_guard) :-
     program_plan(Term-[], [intern(direct)], Plan),
     plan_rule_level_statements(Plan, Statements),
     memberchk(levelstmt(snapshot_doc/2, _, [InsertSql], _, _, _, _), Statements),
-    InsertSql == 'INSERT OR IGNORE INTO "snapshot_doc" ("session", "doc") SELECT b0."session", CASE WHEN EXISTS (SELECT 1 FROM json_tree(json(b0."patch")) WHERE "type" = \'null\' OR "atom" = \'none\') THEN json(\'json_patch_null_unruled\') ELSE json_patch(json(b1."prior"), json(b0."patch")) END FROM "sample" b0, "prior_doc" b1 WHERE b1."session" = b0."session"'.
+    sub_atom(InsertSql, _, _, _,
+             'json_patch(json(b1."prior"), json(b0."patch"))'),
+    \+ sub_atom(InsertSql, _, _, _, 'CASE WHEN').
 
 % A text operand is a named stop, not a silent parse of whatever the text
 % happens to be: the tagged-term encoding lives in text columns.
@@ -9911,14 +9907,14 @@ test(merge_patch_result_keys_are_sorted) :-
     json_scalar_value(json_patch, [obj([zeta-1]), obj([alpha_key-2])], Out),
     Out == obj([alpha_key-2, zeta-1]).
 
-% The delete clause has no surface spelling on this plane, so it stops.
-test(merge_patch_stops_on_the_json_null_stand_in,
-     [throws(json_patch_null_unruled)]) :-
-    json_scalar_value(json_patch, [obj([cpu-1]), obj([cpu-none])], _).
+test(merge_patch_null_removes_the_key) :-
+    json_scalar_value(json_patch, [obj([cpu-1]), obj([cpu-none])], Out),
+    Out == obj([]).
 
-test(merge_patch_stops_on_a_nested_json_null_stand_in,
-     [throws(json_patch_null_unruled)]) :-
-    json_scalar_value(json_patch, [obj([cpu-1]), obj([cpu-obj([user-none])])], _).
+test(merge_patch_nested_null_removes_the_nested_key) :-
+    json_scalar_value(json_patch,
+                      [obj([cpu-1]), obj([cpu-obj([user-none])])], Out),
+    Out == obj([cpu-obj([])]).
 
 :- end_tests(json_merge_patch).
 

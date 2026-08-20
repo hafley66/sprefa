@@ -103,6 +103,8 @@ rule_head_ref(Head, Ref) :- atom_ref(Head, Ref).
 atom_ref(Atom, Name/Arity) :-
     compound(Atom),
     functor(Atom, Name, Arity).
+atom_ref(Name, Name/0) :-
+    atom(Name).
 
 rule_contains_compiler_ref(Rule, CompilerRefs, Ref) :-
     rule_body(Rule, Body),

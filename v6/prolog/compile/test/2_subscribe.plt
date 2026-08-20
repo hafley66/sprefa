@@ -163,7 +163,7 @@ test(registry_decides_what_a_read_is) :-
 test(golden_flex_cone_invariants) :-
     cone_test_dir(Here),
     atomic_list_concat([Here, '/../../../dl/fixtures/golden-flex.dl6'], File),
-    parse_dl_file(File, Program, Bindings, []),
+    expand_uses(File, [], [], _, Program, _, Bindings, []),
     program_plan(fixture(golden_flex_cone_invariants, Program, [], [], [])
                  -Bindings, Plan),
     Plan = plan(_, prog(_, Rules), _, RelPlans, _, _, _, Cone, _),
