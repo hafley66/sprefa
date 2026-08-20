@@ -1,3 +1,5 @@
+use "0_type-reflection-imported.dl6" as imported.
+
 rel Box(T)(Value: list(T)).
 
 rel Host(
@@ -6,6 +8,16 @@ rel Host(
   KeyedList: key(list(int)),
   Inline: (InnerValue: text, ExactCase: list(int))
 ).
+
+rel reflected_decl(
+  Id: type,
+  Name: text,
+  Kind: text,
+  Phase: text
+) -> type.
+
+reflected_decl(Id, Name, Kind, Phase, Id) <-
+  type_decl(Id, Name, Kind, Phase).
 
 rel reflected(
   Owner: type,
