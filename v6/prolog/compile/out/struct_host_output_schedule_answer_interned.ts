@@ -63,7 +63,7 @@ interface IBootStatement {
   params: readonly IRowScalar[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly ir_version: number; readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly rel_physical_names: Record<string, string>; readonly unsupported_execution: readonly string[] };
 
 export const host_plans: readonly IHostPlanData[] = [{ name: "scan_span", inputs: [{ name: "path", type: "text" }], outputs: [{ name: "at", type: "span" }], template: "scan {path}", demand_rel: "__host_demand_scan_span", response_rel: "__host_response_scan_span", execution: "shell", request_type: { ref: "__host_demand_scan_span/1", fields: [{ name: "path", type: "text" }] }, response_type: { ref: "__host_response_scan_span/1", fields: [{ name: "at", type: "span" }] } }];
 export const bind_plans: readonly IBindPlanData[] = [];
@@ -468,6 +468,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "struct_host_output_schedule_answer_interned",
+  ir_version: 1,
   internMode: "dict",
   ddl,
   rel_columns,

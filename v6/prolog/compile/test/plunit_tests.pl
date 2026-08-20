@@ -16,6 +16,7 @@
 :- use_module(library(plunit)).
 :- use_module(library(apply)).
 :- use_module(library(process)).
+:- use_module(library(time)).
 :- use_module(library(readutil)).
 :- use_module('../../compile',
               [ read_fixture_term/4, program_plan/2, program_plan/3,
@@ -1203,6 +1204,33 @@ test(both_doors_emit_the_one_fixpoint_round_cap) :-
     emit_rust_program(flagship_flow_reach_over_resolved_edges, Plan,
                       Lowered, Boot, RustText),
     once(sub_atom(RustText, _, _, _, '"round_cap":1000')).
+
+% FAIL-FIRST RECEIPT (base 3993e44aa): both stamp assertions failed. 65607a8d5
+% dropped `ir_version/1` and its emission sites from both emitters, so every
+% module compiled at HEAD carried no version field and runtime/irVersion.ts
+% refused it by name (`ir_version_mismatch ... emitted at ir_version none`).
+% irVersion.test.ts pins the CHECKER; this pins the STAMP, the half that went
+% missing.
+test(both_doors_stamp_the_ir_version_the_runtimes_interpret) :-
+    once(( fixture_file('4_flagship_flow.pl', File),
+           read_fixture_term(File, flagship_flow_reach_over_resolved_edges,
+                             Term, Bindings),
+           program_plan(Term-Bindings, [intern(direct)], Plan),
+           lower_program(Plan, Lowered) )),
+    Term = fixture(_, _, Initial, _, _),
+    Plan = plan(_, prog(Decls, _), Types, RelPlans, _, _, _, _, Mode),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    boot_statements(Mode, Decls, Types, RelPlans, Initial, LevelStatements, Boot),
+    emit_ts:ir_version(Version),
+    emit_rust:ir_version(Version),
+    emit_program(flagship_flow_reach_over_resolved_edges, Plan, Lowered, Boot,
+                 TsText),
+    format(atom(TsStamp), '  ir_version: ~w,', [Version]),
+    once(sub_atom(TsText, _, _, _, TsStamp)),
+    emit_rust_program(flagship_flow_reach_over_resolved_edges, Plan,
+                      Lowered, Boot, RustText),
+    format(atom(RustStamp), '"ir_version":~w', [Version]),
+    once(sub_atom(RustText, _, _, _, RustStamp)).
 
 % SABOTAGE RECEIPT: with arith/3 carrying no result type (the shape before this
 % test), both walks below emit the SAME `{ kind: "arith", op: "/" }` while the
@@ -9923,6 +9951,35 @@ test(nested_option_json_schema_has_distinct_outer_and_inner_tags) :-
     length(NoneTags, 2),
     length(SomeTags, 2),
     sub_string(Schema, _, _, _, '"value": {\n                  "anyOf"').
+
+% FAIL-FIRST RECEIPT (base 3993e44aa): this test did not return. A recursive
+% enum's variant field types the enum again and the emitter inlined the union at
+% every occurrence, so both recursive-enum fixtures lost their out/*.schema.json
+% under sweep's 10s emit alarm. The time limit keeps a regression red instead of
+% stalling the battery.
+test(recursive_enum_column_renders_a_named_ref_and_terminates) :-
+    Program = prog([enum_decl(tree, (leaf(value: int)
+                                    ; branch(left: tree, right: tree))),
+                    col_type(tree_kind/2, id, int),
+                    col_type(tree_kind/2, kind, text)],
+                   [(tree_kind(Id, Kind) <- tree_tag(Id, Kind))]),
+    wrapper_composition_rows(Program, Rows),
+    call_with_time_limit(5, jsonschema_text(wrapper_composition, Rows, Schema)),
+    sub_string(Schema, _, _, _, '"left": {"$ref":"#/$defs/tree"}'),
+    sub_string(Schema, _, _, _, '"right": {"$ref":"#/$defs/tree"}'),
+    sub_string(Schema, _, _, _, '"tree": {'),
+    sub_string(Schema, _, _, _, '"const":"branch"').
+
+% A bottoming-out enum keeps the inline union: only a cycle needs the name.
+test(non_recursive_enum_column_stays_inline) :-
+    Program = prog([enum_decl(grade, (ripe(sugar: int) ; green(days: int))),
+                    col_type(picked/2, id, int),
+                    col_type(picked/2, g, grade),
+                    keyed(picked/2, [1])], []),
+    wrapper_composition_rows(Program, Rows),
+    call_with_time_limit(5, jsonschema_text(wrapper_composition, Rows, Schema)),
+    sub_string(Schema, _, _, _, '"oneOf"'),
+    \+ sub_string(Schema, _, _, _, '"$ref":"#/$defs/grade"').
 
 test(target_type_depth_is_named_before_served_renderer_omits_a_layer) :-
     DepthSix = option(option(option(option(option(option(int)))))),

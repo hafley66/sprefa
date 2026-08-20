@@ -89,6 +89,7 @@ async fn external_consumer_drives_runtime_and_hosts() {
         retentions: vec![],
         uses_tick: false,
         reconcile_every_tick: false,
+        incremental_safe: true,
         enum_types: vec![],
         enum_ref_columns: Default::default(),
         ir_version: sprefa_engine_rs::program::IR_VERSION,

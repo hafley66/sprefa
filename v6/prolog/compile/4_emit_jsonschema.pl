@@ -52,7 +52,9 @@ module_defs_indexed(ModuleId, Rows, RefPrefix, Pairs) :-
             RelRows),
     referenced_helper_rows(Rows, RelRows, HelperRows),
     append(RelRows, HelperRows, DefRows),
-    maplist(rel_def_pair(Rows, RefPrefix), DefRows, Pairs).
+    maplist(rel_def_pair(Rows, RefPrefix), DefRows, RelPairs),
+    recursive_enum_def_pairs(Rows, RefPrefix, EnumPairs),
+    append(RelPairs, EnumPairs, Pairs).
 
 % A minted rel an author rel points at still receives a `$ref`, so the `__`
 % filter alone leaves that pointer without a target.
@@ -401,13 +403,61 @@ kind_schema(Rows, Prefix, _Target, _Name, option, ElementTypeId, Schema) :-
            properties: _{ tag: _{ const: some }, value: Inner },
            required: [tag, value], additionalProperties: false }
     ] }.
-kind_schema(Rows, Prefix, TargetRow, _Name, enum, _ElementTypeId, Schema) :-
-    enum_schema(Rows, Prefix, TargetRow, Schema).
+% An enum whose own variant field types it again has no finite inline
+% rendering: every expansion opens the same variant. The name in `$defs` and a
+% `$ref` at each occurrence is the finite one, and it is the shape the TS and
+% Rust type emitters already give the same catalog rows.
+kind_schema(Rows, Prefix, TargetRow, Name, enum, _ElementTypeId, Schema) :-
+    (   recursive_enum_row(Rows, TargetRow)
+    ->  atomic_list_concat([Prefix, Name], Ref),
+        Schema = _{ '$ref': Ref }
+    ;   enum_schema(Rows, Prefix, TargetRow, Schema)
+    ).
 kind_schema(Rows, RefPrefix, TargetRow, _Name, rel, _Element, Schema) :-
     rel_path(Rows, TargetRow, Path),
     atomic_list_concat(Path, '.', Pointer),
     atomic_list_concat([RefPrefix, Pointer], Ref),
     Schema = _{ '$ref': Ref }.
+
+% Only a recursive enum earns a `$defs` entry of its own. An enum that bottoms
+% out still renders inline at its use site, so no other fixture's schema moves.
+recursive_enum_def_pairs(Rows, Prefix, Pairs) :-
+    findall(Name-Schema,
+            ( member(EnumRow, Rows),
+              EnumRow = row(_, _, _, Name, enum, _, _, _, _, _, _),
+              recursive_enum_row(Rows, EnumRow),
+              enum_schema(Rows, Prefix, EnumRow, Schema) ),
+            Pairs).
+
+recursive_enum_row(Rows, row(EnumId, _, _, _, enum, _, _, _, _, _, _)) :-
+    enum_successor_ids(Rows, EnumId, Successors),
+    enum_reaches(Rows, Successors, Successors, EnumId).
+
+enum_reaches(_Rows, [EnumId | _], _Seen, EnumId) :- !.
+enum_reaches(Rows, [Other | Queue0], Seen0, EnumId) :-
+    enum_successor_ids(Rows, Other, Successors),
+    subtract(Successors, Seen0, Fresh),
+    append(Seen0, Fresh, Seen),
+    append(Queue0, Fresh, Queue),
+    enum_reaches(Rows, Queue, Seen, EnumId).
+
+enum_successor_ids(Rows, EnumId, Ids) :-
+    findall(TargetId, enum_successor_id(Rows, EnumId, TargetId), Found),
+    sort(Found, Ids).
+
+enum_successor_id(Rows, EnumId, TargetId) :-
+    member(row(_, EnumId, _, _, enum_variant, VariantRelId, _, _, _, _, _), Rows),
+    member(row(_, VariantRelId, _, _, column, ColumnTypeId, _, _, _, _, _), Rows),
+    enum_type_id(Rows, ColumnTypeId, TargetId).
+
+enum_type_id(Rows, TypeId, EnumId) :-
+    once(row_at(Rows, TypeId, TypeRow)),
+    TypeRow = row(_, _, _, _, Kind, ElementTypeId, _, _, _, _, _),
+    (   Kind == enum
+    ->  EnumId = TypeId
+    ;   wrapper_kind(Kind),
+        enum_type_id(Rows, ElementTypeId, EnumId)
+    ).
 
 enum_schema(Rows, Prefix, EnumRow, _{ oneOf: Variants }) :-
     EnumRow = row(EnumId, _, _, _, enum, _, _, _, _, _, _),
