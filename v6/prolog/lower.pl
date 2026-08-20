@@ -170,6 +170,7 @@
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
+:- use_module(library(pairs)).
 :- use_module(analyze).
 :- use_module(use_resolve, [short_hash/2]).
 :- use_module('0_rel_record').
@@ -2035,17 +2036,35 @@ module_rel_columns(Decls, ModuleRelColumns) :-
 module_rel_columns([], _ModuleDecls, []).
 module_rel_columns([module_decl(_, _) | Rest], ModuleDecls, ModuleRelColumns) :-
     !,
-    take_module_rel_decls(Rest, ModuleDecls, ThisModuleRows, More),
+    reverse(ModuleDecls, OrderedModuleDecls),
+    module_column_source(OrderedModuleDecls, ColumnSource),
+    take_module_rel_decls(Rest, ColumnSource, ThisModuleRows, More),
     module_rel_columns(More, [], MoreModuleRows),
     append(ThisModuleRows, MoreModuleRows, ModuleRelColumns).
 module_rel_columns([Decl | Rest], ModuleDecls0, ModuleRelColumns) :-
     module_rel_columns(Rest, [Decl | ModuleDecls0], ModuleRelColumns).
 
-take_module_rel_decls([rel_module_decl(Name, Hash) | Rest], ModuleDecls,
-                     [module_rel(Name, Hash, ModuleDecls) | MoreRows], More) :-
+% One reverse and one grouping pass per module. Every rel plan reaching
+% module_rel_declared_columns/3 used to reverse and re-walk the same
+% declaration list: pokeapi walked an 848-term list twice for each of 224 rel
+% plans, 20.9 ms. A non-ground column reference cannot be a group key without
+% changing which declarations member/2's unification reaches, so a module
+% carrying one keeps the walk.
+module_column_source(OrderedModuleDecls, cols(Groups, OrderedModuleDecls)) :-
+    findall(Ref-(Column-Type),
+            member(col_type(Ref, Column, Type), OrderedModuleDecls),
+            Pairs),
+    (   forall(member(GroupRef-_, Pairs), ground(GroupRef))
+    ->  keysort(Pairs, Sorted),
+        group_pairs_by_key(Sorted, Groups)
+    ;   Groups = unkeyed
+    ).
+
+take_module_rel_decls([rel_module_decl(Name, Hash) | Rest], ColumnSource,
+                     [module_rel(Name, Hash, ColumnSource) | MoreRows], More) :-
     !,
-    take_module_rel_decls(Rest, ModuleDecls, MoreRows, More).
-take_module_rel_decls(Rest, _ModuleDecls, [], Rest).
+    take_module_rel_decls(Rest, ColumnSource, MoreRows, More).
+take_module_rel_decls(Rest, _ColumnSource, [], Rest).
 
 catalog_rel_plan(ModuleRelColumns, RelPlan, CatalogPlans, CatalogModules) :-
     relplan_parts(RelPlan, Name/Arity, Kind, _Columns, KeyOrNone, _ColumnTypes),
@@ -2059,11 +2078,14 @@ catalog_rel_plan(ModuleRelColumns, RelPlan, CatalogPlans, CatalogModules) :-
     ; CatalogPlans = [RelPlan], CatalogModules = [none]
     ).
 
-module_rel_declared_columns(ModuleDecls, Ref, Columns) :-
-    reverse(ModuleDecls, OrderedModuleDecls),
-    findall(Column-Type,
-            member(col_type(Ref, Column, Type), OrderedModuleDecls),
-            Columns),
+module_rel_declared_columns(cols(Groups, OrderedModuleDecls), Ref, Columns) :-
+    (   Groups \== unkeyed,
+        ground(Ref)
+    ->  ( memberchk(Ref-Columns, Groups) -> true ; Columns = [] )
+    ;   findall(Column-Type,
+                member(col_type(Ref, Column, Type), OrderedModuleDecls),
+                Columns)
+    ),
     Columns \== [].
 
 catalog_module_rel_plan(Ref, Kind, KeyOrNone, Hash-ColumnTypes,
