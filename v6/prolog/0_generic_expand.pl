@@ -177,7 +177,8 @@ evaluate_annotation_requests_with_relations(Decls0, Bindings, Requests,
             compiler_relations(Relations, CompilerRules), SeedRows, Closure),
         evaluate_annotation_request_rows(Decls0, Relations, Closure, Requests,
                                          Evidence, Results),
-        rewrite_annotation_declarations(Decls0, Results, Rewritten),
+        rewrite_annotation_declarations(Decls0, Results, Rewritten0),
+        ensure_annotation_relation_mirrors(Rewritten0, Results, Rewritten),
         bridge_key_annotation_evidence(Rewritten, Evidence, Bridged),
         rewrite_annotation_semantic_rows(Bridged, Results, Canonicalized),
         append(Canonicalized, [compiler_annotation_evidence(Evidence)], Decls).
@@ -240,10 +241,12 @@ evaluate_annotation_steps(Decls, Relations, Closure, Owner, Member, Site,
     bind_annotation_arguments(Decls, Columns, Types, Input, Arguments0, Arguments),
     annotation_output(Closure, Ref, Columns, Arguments, Output),
     annotation_resolved_application(Name, Arguments0, Input, Application),
+    annotation_row_arguments(Columns, Arguments, Output, RowArguments),
+    AnnotationRow =.. [Name | RowArguments],
     evaluate_annotation_steps_with_input(Decls, Relations, Closure, Owner, Member,
                                          Site, Rest, Output, MoreEvidence, Final),
     Evidence = [annotation_evidence(Member, Site, Ordinal, Input,
-                                    Application, Output) | MoreEvidence].
+                                    Application, Output, AnnotationRow) | MoreEvidence].
 
 evaluate_annotation_steps_with_input(_, _, _, _, _, _, [], Input, [], Input).
 evaluate_annotation_steps_with_input(Decls, Relations, Closure, Owner, Member,
@@ -258,12 +261,14 @@ evaluate_annotation_steps_with_input(Decls, Relations, Closure, Owner, Member,
     bind_annotation_arguments(Decls, Columns, Types, Input, Arguments0, Arguments),
     annotation_output(Closure, Ref, Columns, Arguments, Output),
     annotation_resolved_application(Name, Arguments0, Input, Application),
+    annotation_row_arguments(Columns, Arguments, Output, RowArguments),
+    AnnotationRow =.. [Name | RowArguments],
     evaluate_annotation_steps_with_input(Decls, Relations, Closure, Owner, Member,
                                          Site, Rest, Output, MoreEvidence, Final),
     Evidence = [annotation_evidence(Member, Site, Ordinal, Input,
-                                    Application, Output) | MoreEvidence].
+                                    Application, Output, AnnotationRow) | MoreEvidence].
 
-resolve_annotation_input(annotation_result(_), [annotation_evidence(_, _, _, _, _, Output) | _], Output) :- !.
+resolve_annotation_input(annotation_result(_), [annotation_evidence(_, _, _, _, _, Output, _) | _], Output) :- !.
 resolve_annotation_input(Input, _, Input).
 
 annotation_application_parts(Application, Name, Arguments) :-
@@ -275,6 +280,23 @@ annotation_resolved_application(Name, Arguments0, Input, Application) :-
     Application =.. [Name, named('Target', Input) | ExplicitArguments].
 
 annotation_target_argument(named(Name, _)) :- downcase_atom(Name, target).
+
+annotation_row_arguments(Columns, Arguments, Output, RowArguments) :-
+    nth1(ReturnPosition, Columns, return),
+    same_length(Arguments, RowArguments),
+    annotation_row_arguments_(Arguments, ReturnPosition, Output, 1,
+                              RowArguments).
+
+annotation_row_arguments_([], _, _, _, []).
+annotation_row_arguments_([_ | Rest], ReturnPosition, Output, ReturnPosition,
+                          [Output | RowRest]) :-
+    !,
+    Position is ReturnPosition + 1,
+    annotation_row_arguments_(Rest, ReturnPosition, Output, Position, RowRest).
+annotation_row_arguments_([Argument | Rest], ReturnPosition, Output, Position,
+                          [Argument | RowRest]) :-
+    Next is Position + 1,
+    annotation_row_arguments_(Rest, ReturnPosition, Output, Next, RowRest).
 
 annotation_relation_ref(Decls, Name, Ref) :-
     member(col_type(Ref, _, _), Decls), Ref = Name/_, !.
@@ -433,7 +455,23 @@ rewrite_annotation_declaration(Decls, Results, col_type(Ref, Column, Type0),
     member_position(Decls, OwnerName, Column, Position),
     member_id(Owner, Position, Column, Member),
     rewrite_annotation_type(Decls, Results, Owner, Member, [Column], Type0, Type).
+rewrite_annotation_declaration(Decls, Results, type_decl(OwnerName, Specs0),
+                               type_decl(OwnerName, Specs)) :-
+    !,
+    semantic_decl_id(Decls, relation, OwnerName, Owner),
+    rewrite_annotation_type_specs(Decls, Results, Owner, Specs0, 1, Specs).
 rewrite_annotation_declaration(_, _, Decl, Decl).
+
+rewrite_annotation_type_specs(_, _, _, [], _, []).
+rewrite_annotation_type_specs(Decls, Results, Owner,
+                              [col(Column, Type0) | Rest], Position,
+                              [col(Column, Type) | Rewritten]) :-
+    member_id(Owner, Position, Column, Member),
+    rewrite_annotation_type(Decls, Results, Owner, Member, [Column], Type0,
+                            Type),
+    Next is Position + 1,
+    rewrite_annotation_type_specs(Decls, Results, Owner, Rest, Next,
+                                  Rewritten).
 
 rewrite_annotation_type(Decls, Results, Owner, Member, Site,
                         annotated_type(_, _), Type) :-
@@ -450,6 +488,23 @@ rewrite_annotation_type(Decls, Results, Owner, Member, Site, Type0, Type) :-
                                  Arguments0, 1, Arguments),
     Type =.. [Name | Arguments].
 rewrite_annotation_type(_, _, _, _, _, Type, Type).
+
+ensure_annotation_relation_mirrors(Decls0, Results, Decls) :-
+    findall(Name,
+            ( member(annotation_result(_, _, _, named(_, relation, Name)),
+                     Results),
+              member(col_type(Name/_, _, _), Decls0) ),
+            Names0),
+    sort(Names0, Names),
+    foldl(ensure_annotation_relation_mirror, Names, Decls0, Decls).
+
+ensure_annotation_relation_mirror(Name, Decls0, Decls) :-
+    ( memberchk(type_decl(Name, _), Decls0)
+    -> Decls = Decls0
+    ; findall(col(Column, Type),
+              member(col_type(Name/_, Column, Type), Decls0), Specs),
+      append(Decls0, [type_decl(Name, Specs)], Decls)
+    ).
 
 rewrite_annotation_arguments(_, _, _, _, _, [], _, []).
 rewrite_annotation_arguments(Decls, Results, Owner, Member, Site,
@@ -485,7 +540,7 @@ bridge_key_annotation_evidence(Decls0, Evidence, Decls) :-
     maplist(bridge_key_annotation_declaration(Evidence), Decls0, Decls).
 
 reject_nested_key_annotation(Evidence) :-
-    member(annotation_evidence(Member, Site, _, _, Application, _), Evidence),
+    member(annotation_evidence(Member, Site, _, _, Application, _, _), Evidence),
     annotation_application_parts(Application, key, _),
     Site = [_ | Tail], Tail \== [],
     !,
@@ -500,7 +555,7 @@ bridge_key_annotation_declaration(_, Decl, Decl).
 annotation_key_site(Evidence, Ref, Column) :-
     ref_name(Ref, OwnerName),
     member(annotation_evidence(member(named(_, relation, OwnerName), _, Column),
-                               [Column], _, _, Application, _), Evidence),
+                               [Column], _, _, Application, _, _), Evidence),
     annotation_application_parts(Application, key, _), !.
 
 annotation_member_request(Decls, Request) :-
@@ -709,7 +764,8 @@ elaborate_and_erase_compiler_relations(Decls0, Rules0, Bindings, Decls, Rules) :
        elaborate_compiler_rules(Decls0, Bindings, CompilerRules0,
                                 CompilerRules, SeedRows),
        compiler_type_source_rows(Decls0, Relations, TypeSourceRows),
-       append(SeedRows, TypeSourceRows, CompilerSeedRows),
+       compiler_annotation_site_rows(Decls0, Relations, SiteRows),
+       append([SeedRows, TypeSourceRows, SiteRows], CompilerSeedRows),
        evaluate_compiler_relations(compiler_relations(Relations, CompilerRules),
                                    CompilerSeedRows, ClosureRows),
        erase_annotation_transport(RuntimeDecls, RuntimeDecls1, AnnotationEvidence),
@@ -818,6 +874,8 @@ compiler_type_source_signature(type_application/2,
                                [semantic, semantic]).
 compiler_type_source_signature(type_argument/4,
                                [semantic, semantic, int, semantic]).
+compiler_type_source_signature(type_application_site/4,
+                               [relation_value, semantic, semantic, int]).
 
 elaborate_compiler_argument(Decls, Bindings, Domain0, Argument, Elaborated) :-
     compiler_argument_domain(Domain0, Domain),
@@ -841,8 +899,23 @@ elaborate_compiler_argument(_, _, bool, bool_lit(Argument), Argument) :-
 elaborate_compiler_argument(_, _, float, Argument, Argument) :- float(Argument), !.
 elaborate_compiler_argument(_, _, float, float_lit(Argument), Argument) :- float(Argument), !.
 elaborate_compiler_argument(_, _, semantic, Argument, Argument) :- ground(Argument), !.
+elaborate_compiler_argument(Decls, Bindings, relation_value, Argument,
+                            Elaborated) :-
+    compiler_relation_value(Decls, Bindings, Argument, Elaborated),
+    !.
 elaborate_compiler_argument(_, _, Type, Argument, _) :-
     throw(unsupported_construct(compiler_relation_argument_type(Type, Argument))).
+
+compiler_relation_value(Decls, Bindings, Value0, Value) :-
+    compound(Value0),
+    Value0 =.. [Name | Arguments0],
+    length(Arguments0, Arity),
+    Ref = Name/Arity,
+    findall(Type, member(col_type(Ref, _, Type), Decls), Types),
+    Types \== [],
+    maplist(elaborate_compiler_argument(Decls, Bindings), Types,
+            Arguments0, Arguments),
+    Value =.. [Name | Arguments].
 
 % key(type) carries relation-key role metadata on the declaration plane. A
 % compiler relation receives the same semantic type value as an unwrapped
@@ -880,6 +953,18 @@ compiler_type_source_row(Rows, type_argument/4,
                          type_argument(ArgumentId, ApplicationId, Position,
                                        TypeRef)) :-
     member(argument(ArgumentId, ApplicationId, Position, TypeRef), Rows).
+
+compiler_annotation_site_rows(Decls, Relations, Rows) :-
+    ( memberchk(compiler_relation(type_application_site/4, _, _), Relations),
+      memberchk(compiler_annotation_evidence(Evidence), Decls)
+    -> findall(type_application_site(Application, Owner, Member, Ordinal),
+               ( member(annotation_evidence(Member, _, Ordinal, _, _, _,
+                                            Application), Evidence),
+                 Member = member(Owner, _, _) ),
+               Rows0),
+       sort(Rows0, Rows)
+    ;  Rows = []
+    ).
 
 compiler_member_role_parts(anonymous_owner(Path), anonymous_owner, Path) :- !.
 compiler_member_role_parts(Role, Role, '').

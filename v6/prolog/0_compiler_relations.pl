@@ -94,6 +94,7 @@ compiler_builtin_ref(type_member/5).
 compiler_builtin_ref(type_member_role/3).
 compiler_builtin_ref(type_application/2).
 compiler_builtin_ref(type_argument/4).
+compiler_builtin_ref(type_application_site/4).
 
 compiler_builtin_declaration_collisions(_, []) :- !.
 compiler_builtin_declaration_collisions(Decls,

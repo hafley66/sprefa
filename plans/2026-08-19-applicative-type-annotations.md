@@ -85,6 +85,22 @@ rewrite column type to the outer returned type
 consume recognized site evidence in later normalization phases
 ```
 
+Authored compiler rules read that evidence through one storage-free builtin:
+
+```dl6
+type_application_site(
+  operation(Input, Method, Path, Output),
+  Owner,
+  Member,
+  Position
+).
+```
+
+The first argument is the annotation relation value with its declared column
+types. `Owner` and `Member` are canonical semantic type identities. `Position`
+orders composed applications at one member. These rows are erased before
+runtime planning.
+
 ## Instance timeline
 
 1. Parse retains the ordinary nested type application without evaluating it.

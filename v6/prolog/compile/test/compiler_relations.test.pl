@@ -98,6 +98,25 @@ test(real_dl6_type_terms_elaborate_and_erase_before_runtime) :-
     type_relation_rows(Decls, Rows),
     member(type_relation(named(local, relation, capability), _, _, none, []), Rows).
 
+test(annotation_application_sites_are_typed_relation_values) :-
+    predicate_property(plunit_compiler_relations:compiler_decls(_),
+                       file(ThisFile)),
+    file_directory_name(ThisFile, TestDir),
+    absolute_file_name('../../../dl/fixtures/1_openapi-userland.dl6', Fixture,
+                       [relative_to(TestDir), access(read)]),
+    Out = '/private/tmp/1_openapi-userland.ts',
+    setup_call_cleanup(true, compile_dl6(Fixture, Out),
+                       ( exists_file(Out) -> delete_file(Out) ; true )),
+    string_codes("rel operation(Target: type, Method: text) -> type.\nrel Pet(id: int).\noperation(Pet, 'GET', Pet).\nrel route(return: operation(Pet, Method: 'GET')).\nrel seen(Owner: type, Member: type, Method: text, Input: type, Output: type) -> type.\nseen(Owner, Member, Method, Input, Output, Owner) <- type_application_site(operation(Input, Method, Output), Owner, Member, _Position).\n", Source),
+    parse_dl(Source, Program, Bindings, []),
+    expand_generic_program_with_bindings(Program, Bindings, prog(Decls, Rules)),
+    Rules == [],
+    member(compiler_type_metadata(_, Closure, _), Decls),
+    member(seen(Owner, Member, 'GET', Pet, Pet, Owner), Closure),
+    Pet = named(local, relation, 'Pet'),
+    Member = member(named(local, relation, route), 1, return),
+    \+ member(type_application_site(_, _, _, _), Decls).
+
 test(compiler_and_oracle_expansion_share_compiler_closure) :-
     Program = prog(
         [ col_type(document/1, id, int),

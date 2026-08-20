@@ -1,0 +1,31 @@
+rel operation(
+  Target: type,
+  Method: text,
+  Path: text
+) -> type.
+
+rel pet(id: key(int), name: text).
+
+operation(pet, 'GET', '/pets/{id}', pet).
+
+rel get_pet(
+  id: int,
+  return: operation(pet, Method: 'GET', Path: '/pets/{id}')
+).
+
+rel http_operation(
+  Owner: type,
+  Member: type,
+  Method: text,
+  Path: text,
+  Input: type,
+  Output: type
+) -> type.
+
+http_operation(Owner, Member, Method, Path, Input, Output, Owner) <-
+  type_application_site(
+    operation(Input, Method, Path, Output),
+    Owner,
+    Member,
+    _Position
+  ).
