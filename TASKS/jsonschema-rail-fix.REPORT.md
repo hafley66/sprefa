@@ -136,7 +136,28 @@ comment-budget rail: program load returned 400
 | plunit | `918` tests at base / `921` on this branch, `8 tests failed` both, THE SAME EIGHT names |
 | `cargo check --all-targets` (sprefa-engine-rs) | `Finished`, clean (it did not compile at base) |
 | rail, empty index | `git commit --allow-empty` rc=0 with the hook on; rail says `2262 ms, graded files 0` |
-| rail, real violation | see below |
+| rail, real violation | `RAIL_RC=2`, `graded files 1`, `v6/tsv2/runtime/probeViolation.ts:1-4 (4 comment lines)` |
+
+Rail probes, verbatim:
+
+```
+$ git commit --allow-empty -m "probe: rail on an empty index"
+[fix/jsonschema-loop-and-rail fe8098517] probe: rail on an empty index
+PROBE_RC=0
+comment-budget rail (dl6): 2262 ms, graded files 0
+```
+
+```
+$ printf '// probe line one\n... four lines ...\n' > v6/tsv2/runtime/probeViolation.ts
+$ git add v6/tsv2/runtime/probeViolation.ts && bash v6/tsv2/scripts/comment-budget-rail.sh
+COMMENT BUDGET VIOLATION (max 2 consecutive comment lines in new code):
+v6/tsv2/runtime/probeViolation.ts:1-4 (4 comment lines)
+comment-budget rail (dl6): 1595 ms, graded files 1
+RAIL_RC_VIOLATION=2
+```
+
+Both probe artifacts are gone: the empty commit was dropped and the probe file
+deleted; `git status` is clean at `484f8fb7f`.
 
 The two enum fixtures' RUN legs stay red (both are in the `emitted_crash=39`
 list, known-red group B, the enum-plane arrival encoding). This branch fixes
