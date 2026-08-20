@@ -1,16 +1,21 @@
 % run_plunit.pl -- the entry the `just plunit` recipe runs.
 %
 % plunit_tests.pl declares the units; this file is the only thing that decides
-% HOW they run. Three knobs, all env:
+% HOW they run. Knobs, all env:
 %
 %   PLUNIT_JOBS      worker threads (default: cpu_count; 1 = the old
 %                    sequential run, byte-for-byte the same test order inside
 %                    each unit)
 %   PLUNIT_SLOWEST   rows in the slowest-test and slowest-unit tables
 %                    (default 15; 0 suppresses both tables)
-%   PLUNIT_JUNIT     path to write a junit-schema XML report; unset, no XML
-%                    is written and stdout is byte-identical to before this
-%                    knob existed.
+%   PLUNIT_JSON      path to write one JSON document; unset, nothing is
+%                    written and stdout is unchanged.
+%   PLUNIT_TAP       path to write a TAP version 13 stream, or `-` for
+%                    stdout; unset, nothing is written.
+%   PLUNIT_JUNIT     path to write junit-schema XML, converted from the same
+%                    TAP stream through the `tap-junit` npm package; unset,
+%                    nothing is written and stdout is byte-identical to
+%                    before any of these knobs existed.
 %
 % plunit's jobs(N) schedules one UNIT per worker: tests inside a unit stay
 % sequential and in file order, units interleave. Two units that touch the same
@@ -25,9 +30,15 @@
 :- use_module(library(lists)).
 :- use_module(library(pairs)).
 :- use_module(library(aggregate)).
-:- use_module(library(sgml)).
+:- use_module(library(http/json)).
+:- use_module(library(process)).
 
 :- ensure_loaded('plunit_tests.pl').
+
+% Captured at load time so the tap-junit binary resolves regardless of the
+% caller's working directory (`just plunit` cd's into v6/prolog/compile).
+:- prolog_load_context(directory, HereDir),
+   asserta(plunit_here_dir(HereDir)).
 
 plunit_jobs_count(Jobs) :-
     (   getenv('PLUNIT_JOBS', Text),
@@ -121,60 +132,38 @@ plunit_run :-
     % forall(...) test contributes one row per generated case, so results >= declared.
     format("PLUNIT jobs=~d declared=~d results=~d passed=~d failed=~d timeout=~d wall=~2fs~n",
            [Jobs, Declared, Results, Passed, Failed, TimedOut, Wall]),
-    plunit_junit_maybe_write,
+    RunInfo = run_info(Jobs, Declared, Results, Passed, Failed, TimedOut, Wall, Start),
+    plunit_reports_maybe_write(RunInfo),
     (   Failed + TimedOut =:= 0
     ->  halt(0)
     ;   halt(1)
     ).
 
                  /*******************************
-                 *          JUNIT XML          *
+                 *      SHARED CASE TABLE       *
                  *******************************/
 %
-% PLUNIT_JUNIT unset: none of this runs, stdout is unchanged.
-%
-% BUILD-VS-BUY: no SWI pack emits junit (`pack_list('junit')` against the
-% default server returns nothing at time of writing) and the base install
-% carries no junit writer; library(sgml) supplies only generic XML
-% attribute/cdata quoting (xml_quote_attribute/2, xml_quote_cdata/2), reused
-% below instead of hand-escaping. The fixed 3-level junit schema
-% (testsuites > testsuite > testcase) is small enough that a bespoke writer
-% beats pulling in a general XML-tree builder for it.
-%
-% Failure text is rendered through plunit's own failure//1 grammar (the same
-% one plunit's terminal report uses) rather than re-deriving a message from
-% the raw failure term, so the XML text matches what a human already reads
-% on a red run.
-
-plunit_junit_path(Path) :-
-    getenv('PLUNIT_JUNIT', Path0),
-    Path0 \== '',
-    !,
-    Path = Path0.
-
-plunit_junit_maybe_write :-
-    (   plunit_junit_path(Path)
-    ->  plunit_junit_write(Path)
-    ;   true
-    ).
-
 % One row per generated outcome; a forall(...) test contributes one row per
-% case under the same Unit:Name, folded into a single testcase below.
-plunit_junit_row(Unit, Name, Line, Wall, passed, none) :-
+% case under the same Unit:Name. JSON, TAP and (through TAP) JUNIT all read
+% the same case(Unit, Name, Line, Time, Status, Detail) list built here, so
+% there is exactly one place that folds plunit's raw passed/5, failed/5,
+% timeout/5 facts into one row per DECLARED test.
+
+plunit_case_row(Unit, Name, Line, Wall, passed, none) :-
     plunit:passed(Unit, Name, Line, _Det, Time),
     Wall = Time.wall.
-plunit_junit_row(Unit, Name, Line, Wall, failed, E) :-
+plunit_case_row(Unit, Name, Line, Wall, failed, E) :-
     plunit:failed(Unit, Name, Line, E, Time),
     Wall = Time.wall.
-plunit_junit_row(Unit, Name, Line, Wall, timeout, timeout(Limit)) :-
+plunit_case_row(Unit, Name, Line, Wall, timeout, timeout(Limit)) :-
     plunit:timeout(Unit, Name, Line, Limit, Time),
     Wall = Time.wall.
 
-% Fold every row for one Unit:Name into one testcase: failed/timeout beats
-% passed, time is the sum of all generated cases' wall times, failure text
-% comes from the first non-passing row.
-plunit_junit_case(Unit-Name, case(Unit, Name, Line, Time, Status, Detail)) :-
-    findall(L-W-S-D, plunit_junit_row(Unit, Name, L, W, S, D), Rows),
+% Fold every row for one Unit:Name into one case: failed/timeout beats passed,
+% time is the sum of all generated cases' wall times, failure text comes from
+% the first non-passing row.
+plunit_case(Unit-Name, case(Unit, Name, Line, Time, Status, Detail)) :-
+    findall(L-W-S-D, plunit_case_row(Unit, Name, L, W, S, D), Rows),
     Rows = [L0-_-_-_|_],
     Line = L0,
     aggregate_all(sum(W), member(_-W-_-_, Rows), Time),
@@ -185,19 +174,40 @@ plunit_junit_case(Unit-Name, case(Unit, Name, Line, Time, Status, Detail)) :-
     ;   Status = passed, Detail = none
     ).
 
-plunit_junit_cases(Cases) :-
-    findall(Unit-Name, plunit_junit_row(Unit, Name, _, _, _, _), Pairs0),
+% Sorted by Unit-Name: one deterministic order shared by the JSON tests array
+% and the TAP case numbering, so a JSON/TAP diff of the same run lines up.
+plunit_cases(Cases) :-
+    findall(Unit-Name, plunit_case_row(Unit, Name, _, _, _, _), Pairs0),
     sort(Pairs0, Pairs),
-    findall(Case, ( member(Key, Pairs), plunit_junit_case(Key, Case) ), Cases).
+    findall(Case, ( member(Key, Pairs), plunit_case(Key, Case) ), Cases).
 
-plunit_junit_group_by_unit(Cases, ByUnit) :-
-    findall(Unit-Case, ( member(Case, Cases), Case = case(Unit,_,_,_,_,_) ), Pairs),
-    keysort(Pairs, Sorted),
-    group_pairs_by_key(Sorted, ByUnit).
+% plunit's own passed/5, failed/5, timeout/5 facts carry no file, only the
+% clause's source Line; the file is exposed separately by plunit:unit_file/2.
+plunit_case_file(Unit, File) :-
+    (   catch(plunit:unit_file(Unit, Abs), _, fail)
+    ->  working_directory(Cwd, Cwd),
+        (   relative_file_name(Abs, Cwd, Rel)
+        ->  File = Rel
+        ;   File = Abs
+        )
+    ;   File = null
+    ).
 
-% Collapse a possibly multi-line rendered failure to one line for the
-% attribute value; the CDATA body below carries the full text.
-plunit_junit_oneline(Text, OneLine) :-
+% Failure text rendered through plunit's own failure//1 grammar (the same one
+% plunit's terminal report uses) rather than re-deriving a message from the
+% raw failure term, so reported text matches what a human already reads on a
+% red run.
+plunit_failure_text(none, "") :- !.
+plunit_failure_text(timeout(Limit), Text) :-
+    !,
+    format(string(Text), "test exceeded its ~w second time limit", [Limit]).
+plunit_failure_text(E, Text) :-
+    phrase(plunit:failure(E), Tokens),
+    with_output_to(string(Text), print_message_lines(current_output, "", Tokens)).
+
+% Collapse a possibly multi-line rendered failure to one line, for contexts
+% (TAP YAML message, XML attribute values) that cannot carry raw newlines.
+plunit_failure_oneline(Text, OneLine) :-
     split_string(Text, "\n", "", Lines),
     exclude(==(""), Lines, NonEmpty),
     (   NonEmpty == []
@@ -205,62 +215,187 @@ plunit_junit_oneline(Text, OneLine) :-
     ;   atomics_to_string(NonEmpty, " | ", OneLine)
     ).
 
-plunit_junit_failure_text(none, "") :- !.
-plunit_junit_failure_text(timeout(Limit), Text) :-
-    !,
-    format(string(Text), "test exceeded its ~w second time limit", [Limit]).
-plunit_junit_failure_text(E, Text) :-
-    phrase(plunit:failure(E), Tokens),
-    with_output_to(string(Text), print_message_lines(current_output, "", Tokens)).
+plunit_reports_maybe_write(RunInfo) :-
+    plunit_cases(Cases),
+    plunit_json_maybe_write(RunInfo, Cases),
+    plunit_tap_string(Cases, TapText),
+    plunit_tap_maybe_write(TapText),
+    plunit_junit_maybe_write(TapText).
 
-plunit_junit_write(Path) :-
-    plunit_junit_cases(Cases),
-    plunit_junit_group_by_unit(Cases, ByUnit),
+                 /*******************************
+                 *             JSON             *
+                 *******************************/
+%
+% PLUNIT_JSON unset: none of this runs, stdout is unchanged.
+%
+% One document: a `run` object (the same counters the PLUNIT summary line
+% prints) and a `tests` array, one flat dict per DECLARED test -- no nesting
+% inside a test entry -- so `jq` and SQLite's `json_each` read it without a
+% schema. `null` (bare atom) is library(json)'s dict-mode JSON null, not
+% `@(null)` (that spelling is for the non-dict json(Pairs) term reader).
+
+plunit_json_path(Path) :-
+    getenv('PLUNIT_JSON', Path0),
+    Path0 \== '',
+    !,
+    Path = Path0.
+
+plunit_json_maybe_write(RunInfo, Cases) :-
+    (   plunit_json_path(Path)
+    ->  plunit_json_write(Path, RunInfo, Cases)
+    ;   true
+    ).
+
+plunit_json_run_dict(run_info(Jobs, Declared, Results, Passed, Failed, TimedOut, Wall, Start),
+                     _{ jobs: Jobs, declared: Declared, results: Results,
+                        passed: Passed, failed: Failed, timeout: TimedOut,
+                        wall_seconds: Wall, started_ts: Start }).
+
+plunit_json_test(case(Unit, Name, Line, Time, Status, Detail),
+                 _{ unit: Unit, name: Name, status: Status,
+                    time_seconds: Time, file: File, line: Line,
+                    failure: Failure }) :-
+    plunit_case_file(Unit, File),
+    plunit_json_failure(Status, Detail, Failure).
+
+plunit_json_failure(passed, _, null) :- !.
+plunit_json_failure(_, Detail, Text) :-
+    plunit_failure_text(Detail, Text).
+
+plunit_json_write(Path, RunInfo, Cases) :-
+    plunit_json_run_dict(RunInfo, RunDict),
+    maplist(plunit_json_test, Cases, Tests),
+    Doc = _{ run: RunDict, tests: Tests },
     setup_call_cleanup(
         open(Path, write, Stream, [encoding(utf8)]),
-        plunit_junit_write_stream(Stream, ByUnit),
+        json_write_dict(Stream, Doc, [width(78), step(2), tab(200)]),
         close(Stream)).
 
-plunit_junit_write_stream(Stream, ByUnit) :-
-    format(Stream, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>~n", []),
-    format(Stream, "<testsuites>~n", []),
-    forall(member(Unit-Cases, ByUnit),
-           plunit_junit_write_suite(Stream, Unit, Cases)),
-    format(Stream, "</testsuites>~n", []).
+                 /*******************************
+                 *             TAP              *
+                 *******************************/
+%
+% TAP version 13 (https://testanything.org/tap-version-13-specification.html):
+% a plan line, one `ok`/`not ok` per DECLARED test in plunit_cases/1's order,
+% failure detail as an indented YAML block on the `not ok` rows. This is also
+% the source JUNIT converts from below, so it is always built, whether or not
+% PLUNIT_TAP itself is set.
 
-plunit_junit_write_suite(Stream, Unit, Cases) :-
-    length(Cases, Total),
-    aggregate_all(count, member(case(_,_,_,_,failed,_), Cases), Failures),
-    aggregate_all(count, member(case(_,_,_,_,timeout,_), Cases), Timeouts),
-    aggregate_all(sum(T), member(case(_,_,_,T,_,_), Cases), SuiteTime),
-    xml_quote_attribute(Unit, QUnit),
-    format(Stream,
-           "  <testsuite name=\"~w\" tests=\"~d\" failures=\"~d\" errors=\"~d\" time=\"~3f\">~n",
-           [QUnit, Total, Failures, Timeouts, SuiteTime]),
-    forall(member(Case, Cases), plunit_junit_write_case(Stream, Case)),
-    format(Stream, "  </testsuite>~n", []).
+plunit_tap_string(Cases, TapText) :-
+    with_output_to(string(TapText), plunit_tap_write_stream(current_output, Cases)).
 
-plunit_junit_write_case(Stream, case(Unit, Name, _Line, Time, Status, Detail)) :-
-    xml_quote_attribute(Unit, QUnit),
-    xml_quote_attribute(Name, QName),
-    format(Stream, "    <testcase classname=\"~w\" name=\"~w\" time=\"~3f\">~n",
-           [QUnit, QName, Time]),
-    plunit_junit_write_body(Stream, Status, Detail),
-    format(Stream, "    </testcase>~n", []).
+plunit_tap_write_stream(Stream, Cases) :-
+    length(Cases, N),
+    format(Stream, "TAP version 13~n", []),
+    format(Stream, "1..~d~n", [N]),
+    plunit_tap_write_cases(Stream, Cases, 1).
 
-plunit_junit_write_body(_Stream, passed, _) :- !.
-plunit_junit_write_body(Stream, timeout, Detail) :-
+plunit_tap_write_cases(_Stream, [], _N).
+plunit_tap_write_cases(Stream, [Case|Rest], N) :-
+    plunit_tap_write_case(Stream, Case, N),
+    N1 is N + 1,
+    plunit_tap_write_cases(Stream, Rest, N1).
+
+plunit_tap_write_case(Stream, case(Unit, Name, _Line, _Time, passed, _Detail), N) :-
     !,
-    plunit_junit_failure_text(Detail, Text),
-    plunit_junit_oneline(Text, OneLine),
-    xml_quote_attribute(OneLine, QAttr),
-    xml_quote_cdata(Text, QCdata),
-    format(Stream, "      <failure message=\"~w\" type=\"timeout\">~w</failure>~n",
-           [QAttr, QCdata]).
-plunit_junit_write_body(Stream, failed, Detail) :-
-    plunit_junit_failure_text(Detail, Text),
-    plunit_junit_oneline(Text, OneLine),
-    xml_quote_attribute(OneLine, QAttr),
-    xml_quote_cdata(Text, QCdata),
-    format(Stream, "      <failure message=\"~w\" type=\"failed\">~w</failure>~n",
-           [QAttr, QCdata]).
+    format(Stream, "ok ~d - ~w:~w~n", [N, Unit, Name]).
+plunit_tap_write_case(Stream, case(Unit, Name, _Line, _Time, Status, Detail), N) :-
+    format(Stream, "not ok ~d - ~w:~w~n", [N, Unit, Name]),
+    plunit_tap_write_yaml(Stream, Status, Detail).
+
+plunit_tap_write_yaml(Stream, Status, Detail) :-
+    plunit_failure_text(Detail, Text),
+    plunit_failure_oneline(Text, OneLine),
+    plunit_yaml_dquote(OneLine, Quoted),
+    format(Stream, "  ---~n", []),
+    format(Stream, "  message: ~w~n", [Quoted]),
+    format(Stream, "  severity: fail~n", []),
+    format(Stream, "  status: ~w~n", [Status]),
+    format(Stream, "  ...~n", []).
+
+% YAML double-quoted scalar escaping: backslash first, then the quote, so the
+% backslash introduced by quote-escaping is never itself re-escaped.
+plunit_yaml_dquote(Text, Quoted) :-
+    split_string(Text, "\\", "", Parts1),
+    atomics_to_string(Parts1, "\\\\", Text1),
+    split_string(Text1, "\"", "", Parts2),
+    atomics_to_string(Parts2, "\\\"", Text2),
+    format(string(Quoted), "\"~s\"", [Text2]).
+
+plunit_tap_path(Path) :-
+    getenv('PLUNIT_TAP', Path0),
+    Path0 \== '',
+    !,
+    Path = Path0.
+
+plunit_tap_maybe_write(TapText) :-
+    (   plunit_tap_path(Path)
+    ->  plunit_tap_write(Path, TapText)
+    ;   true
+    ).
+
+plunit_tap_write('-', TapText) :-
+    !,
+    write(user_output, TapText).
+plunit_tap_write(Path, TapText) :-
+    setup_call_cleanup(
+        open(Path, write, Stream, [encoding(utf8)]),
+        write(Stream, TapText),
+        close(Stream)).
+
+                 /*******************************
+                 *          JUNIT XML           *
+                 *******************************/
+%
+% PLUNIT_JUNIT unset: none of this runs, stdout is unchanged.
+%
+% BUILD-VS-BUY: an earlier pass here hand-wrote the junit XML; that was the
+% wrong call (`pack_list(junit)` alone is a thin check -- no SWI pack renders
+% junit AND no SWI pack replaces TAP, but TAP itself is a real, tiny,
+% already-built target: this file only has to emit it). JUNIT XML is bought:
+% the TAP stream above is piped through the `tap-junit` npm package
+% (v6/tsv2/package.json devDependency, so `pnpm install` pins it offline;
+% no bare `npx` fetch at test time). `tap-junit` was picked over `tap-xunit`
+% because `tap-xunit` prefixes every testcase name with its own `#N `
+% ordinal (`#1 acyclic_guard:...`), mangling the `unit:name` spelling the
+% JSON/TAP names carry; `tap-junit` keeps the TAP test description verbatim
+% as the testcase name. Measured with a 3-case, 1-failure sample TAP file,
+% both converters piped from the same input.
+
+plunit_tap_junit_bin(Bin) :-
+    plunit_here_dir(Dir),
+    atomic_list_concat([Dir, '/../../../tsv2/node_modules/.bin/tap-junit'], Bin0),
+    absolute_file_name(Bin0, Bin, [access(execute)]).
+
+plunit_junit_path(Path) :-
+    getenv('PLUNIT_JUNIT', Path0),
+    Path0 \== '',
+    !,
+    Path = Path0.
+
+plunit_junit_maybe_write(TapText) :-
+    (   plunit_junit_path(Path)
+    ->  plunit_junit_write(Path, TapText)
+    ;   true
+    ).
+
+plunit_junit_write(Path, TapText) :-
+    plunit_tap_junit_bin(Bin),
+    process_create(Bin, [],
+                    [ stdin(pipe(In)), stdout(pipe(Out)), stderr(pipe(Err)),
+                      process(PID) ]),
+    thread_create((write(In, TapText), close(In)), Writer, []),
+    read_string(Out, _, XmlText),
+    read_string(Err, _, ErrText),
+    thread_join(Writer, _),
+    process_wait(PID, exit(Code)),
+    close(Out),
+    close(Err),
+    (   Code =:= 0
+    ->  true
+    ;   throw(error(plunit_junit_convert_failed(Code, ErrText), _))
+    ),
+    setup_call_cleanup(
+        open(Path, write, Stream, [encoding(utf8)]),
+        write(Stream, XmlText),
+        close(Stream)).
