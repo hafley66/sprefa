@@ -76,20 +76,23 @@ fixture(ordered_json_group_array_nested_json,
   [ final(nested/2,
           [ nested(north, [obj([a-2, z-1]), obj([a-3, z-4])]) ]) ]).
 
-fixture(json_object_groups_rows_into_documents,
+% One program, three groups, one json_object aggregate. Grouping is by the
+% plain column, so each group is the scenario its folded fixture ran alone.
+%   north/south  rows group into one document per group.
+%   east         the keys of a document land in sorted order whatever order
+%                the rows arrived in.
+% folded 2026-08-20 from json_object_groups_rows_into_documents,
+% json_object_orders_keys.
+fixture(json_object_groups_and_orders_keys,
   prog([], [ (metadata(Group, json_object(Key, Value)) <- item(Group, Key, Value)) ]),
-  [ item(north, name, pear), item(north, count, 2), item(south, name, apple) ],
+  [ item(north, name, pear), item(north, count, 2), item(south, name, apple),
+    item(east, zebra, 1), item(east, apple, 2), item(east, middle, 3) ],
   [],
   [ final(metadata/2,
-          [ metadata(north, obj([count-2, name-pear])),
+          [ metadata(east, obj([apple-2, middle-3, zebra-1])),
+            metadata(north, obj([count-2, name-pear])),
             metadata(south, obj([name-apple])) ]) ]).
 
-fixture(json_object_orders_keys,
-  prog([], [ (metadata(Group, json_object(Key, Value)) <- item(Group, Key, Value)) ]),
-  [ item(north, zebra, 1), item(north, apple, 2), item(north, middle, 3) ],
-  [],
-  [ final(metadata/2,
-          [ metadata(north, obj([apple-2, middle-3, zebra-1])) ]) ]).
 
 fixture(json_object_throws_on_duplicate_keys,
   prog([], [ (metadata(json_object(Key, Value)) <- item(Key, Value)) ]),

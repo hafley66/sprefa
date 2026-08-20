@@ -40,47 +40,41 @@ fixture(merge_never_retracts,
 
 % ═══ mergeByKey: keyed head, last writer wins ═══════════════════════════════
 
-fixture(key_last_write_wins,
+% One program, three keys, one keyed head fed by two rules. The keys are
+% independent (latest/2 is keyed on column 1) so each key's tick range is the
+% scenario the folded fixture used to run alone.
+%   cli  ticks 1-3, last write wins across both rules.
+%   hub  ticks 4-5, equal-row keyed write = no-op (r_equal_row_write): tick 5
+%        is silent.
+%   api  tick 6, two same-tick writes to one key from two rules.
+%        REJECTED READING (merge lab, pre-ruling): this threw
+%        keyed_conflict(latest/2, [api], [latest(api,v1), latest(api,v2)]).
+%        Under q1 stamps the two arrivals are ORDERED occurrences; the later
+%        write is a fold step and arrival order decides deterministically.
+%        Prevention of true conflicts is the STATIC pairwise-disjointness
+%        check, not a runtime throw.
+% folded 2026-08-20 from key_last_write_wins, key_identical_write_is_silent,
+% key_same_tick_ordered_not_conflict.
+fixture(keyed_head_fold_across_two_rules,
   prog([ kind(from_poll/2, log), keep(from_poll/2, all),
          kind(from_push/2, log), keep(from_push/2, all),
          keyed(latest/2, [1]) ],
        [ (latest(Key, Value) <+ from_poll(Key, Value)),
          (latest(Key, Value) <+ from_push(Key, Value)) ]),
   [],
-  [ [ +from_poll(cli, v1) ], [ +from_push(cli, v2) ], [ +from_poll(cli, v3) ] ],
+  [ [ +from_poll(cli, v1) ], [ +from_push(cli, v2) ], [ +from_poll(cli, v3) ],
+    [ +from_poll(hub, v1) ], [ +from_push(hub, v1) ],
+    [ +from_poll(api, v1), +from_push(api, v2) ] ],
   [ deltas(latest/2, [ [ +latest(cli, v1) ],
                        [ -latest(cli, v1), +latest(cli, v2) ],
                        [ -latest(cli, v2), +latest(cli, v3) ],
+                       [ +latest(hub, v1) ],
+                       [],
+                       [ +latest(api, v2) ],
                        [] ]),
-    final(latest/2, [ latest(cli, v3) ]) ]).
+    final(latest/2, [ latest(api, v2), latest(cli, v3), latest(hub, v1) ]) ]).
 
-% equal-row keyed write = no-op (r_equal_row_write): the tick is silent.
-fixture(key_identical_write_is_silent,
-  prog([ kind(from_poll/2, log), keep(from_poll/2, all),
-         kind(from_push/2, log), keep(from_push/2, all),
-         keyed(latest/2, [1]) ],
-       [ (latest(Key, Value) <+ from_poll(Key, Value)),
-         (latest(Key, Value) <+ from_push(Key, Value)) ]),
-  [],
-  [ [ +from_poll(cli, v1) ], [ +from_push(cli, v1) ] ],
-  [ deltas(latest/2, [ [ +latest(cli, v1) ], [] ]),
-    final(latest/2, [ latest(cli, v1) ]) ]).
 
-% REJECTED READING (merge lab, pre-ruling): same-tick writes to one key from
-% two rules threw keyed_conflict(latest/2, [cli], [latest(cli,v1), latest(cli,v2)]).
-% Under q1 stamps the two arrivals are ORDERED occurrences; the later write is
-% a fold step and arrival order decides deterministically. Prevention of true
-% conflicts is the STATIC pairwise-disjointness check, not a runtime throw.
-fixture(key_same_tick_ordered_not_conflict,
-  prog([ kind(from_poll/2, log), keep(from_poll/2, all),
-         kind(from_push/2, log), keep(from_push/2, all),
-         keyed(latest/2, [1]) ],
-       [ (latest(Key, Value) <+ from_poll(Key, Value)),
-         (latest(Key, Value) <+ from_push(Key, Value)) ]),
-  [],
-  [ [ +from_poll(cli, v1), +from_push(cli, v2) ] ],
-  [ deltas(latest/2, [ [ +latest(cli, v2) ], [] ]),
-    final(latest/2, [ latest(cli, v2) ]) ]).
 
 % ═══ mergeByKeyScan: keyed head + pre, the fold ═════════════════════════════
 

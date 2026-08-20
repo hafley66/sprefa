@@ -47,34 +47,40 @@ fixture(json_string_control_escapes_are_valid_json,
                     seen('tab\there'), seen('unit\x1\sep') ]),
     ticks(1) ]).
 
-% The same characters INSIDE a json document rather than as a whole column
-% value: the escape rule has to hold under the object encoder too, where the
-% text passes through json_string_text/2 rather than through the top-level
-% value_json/2 clause.
-fixture(json_control_escapes_inside_a_document,
+% One program, three documents, one echo. Each seed row is a separate encoder
+% edge and the rows are independent: `echoed(Body) <- raw_doc(Body)` copies the
+% value, so the final set is the three canonicalized documents.
+%   escapes    control characters INSIDE a document, where the text passes
+%              through json_string_text/2 rather than the top-level
+%              value_json/2 clause.
+%   collation  non-ASCII keys and the SORT they land in. The cross-target
+%              contract the canonical_json_text ruling fixed: prolog `keysort`
+%              on atoms is code-POINT order, JS sort is UTF-16 code-UNIT order,
+%              and the two agree everywhere except the astral plane. The BMP
+%              half is pinned here; the astral half is the slot_key_collation
+%              card, because no shipped program can produce an astral key.
+%   containers empty object as a value, empty array as a value, both nested.
+%              `{}` is the ATOM on both doors and `[]` is the empty list, the
+%              pair most likely to fall through an encoder clause onto the
+%              string path.
+% folded 2026-08-20 from json_control_escapes_inside_a_document,
+% json_non_ascii_keys_sort_by_code_point, json_empty_containers_nest.
+fixture(json_document_encoder_edges_round_trip,
   prog([col_type(raw_doc/1, body, json), col_type(echoed/1, body, json)],
        [ (echoed(Body) <- raw_doc(Body)) ]),
-  [ raw_doc({tab: 'a\tb', formfeed: 'a\fb', quote: 'a"b', solidus: 'a/b'}) ],
+  [ raw_doc({tab: 'a\tb', formfeed: 'a\fb', quote: 'a"b', solidus: 'a/b'}),
+    raw_doc({'z': 1, 'é': 2, 'a': 3, 'Z': 4}),
+    raw_doc({obj: {}, arr: [], nested: [{}, []], deep: {inner: {}}}) ],
   [],
-  [ final(echoed/1, [ echoed(obj([ formfeed-'a\fb', quote-'a"b',
-                                   solidus-'a/b', tab-'a\tb' ])) ]) ]).
+  [ final(echoed/1,
+          [ echoed(obj([ 'Z'-4, 'a'-3, 'z'-1, 'é'-2 ])),
+            echoed(obj([ arr-[], deep-obj([inner-obj([])]),
+                         nested-[obj([]), []], obj-obj([]) ])),
+            echoed(obj([ formfeed-'a\fb', quote-'a"b',
+                         solidus-'a/b', tab-'a\tb' ])) ]) ]).
 
 % ═══ Q3 KEYS ════════════════════════════════════════════════════════════════
 
-% Non-ASCII keys, and the SORT they land in. This is the cross-target contract
-% the canonical_json_text ruling fixed and nothing pinned: prolog `keysort` on
-% atoms is code-POINT order, JS `Array.prototype.sort` on strings is UTF-16
-% code-UNIT order, and the two agree everywhere except the astral plane. This
-% fixture pins the BMP half, which both doors get right; the astral half is a
-% named card in the verdict (slot_key_collation) because no shipped program
-% can produce an astral key today and closing it is a contract decision, not a
-% bug fix.
-fixture(json_non_ascii_keys_sort_by_code_point,
-  prog([col_type(raw_doc/1, body, json), col_type(echoed/1, body, json)],
-       [ (echoed(Body) <- raw_doc(Body)) ]),
-  [ raw_doc({'z': 1, 'é': 2, 'a': 3, 'Z': 4}) ],
-  [],
-  [ final(echoed/1, [ echoed(obj([ 'Z'-4, 'a'-3, 'z'-1, 'é'-2 ])) ]) ]).
 
 % NFC and NFD are DIFFERENT keys. Neither door normalizes, json1 does not
 % normalize, and JSONTestSuite's own transform corpus
@@ -95,29 +101,28 @@ fixture(json_nfc_and_nfd_keys_stay_distinct,
   % (`e` = U+0065 at position 3) sorts before the composed one (U+00E9).
   [ final(key_seen/1, [ key_seen('cafe\x301\'), key_seen('caf\xe9\') ]) ]).
 
-% The empty-string key. Legal JSON, legal here, and it survives key capture:
-% the one key spelling that cannot be written as a bare identifier.
-fixture(json_empty_string_key_round_trips,
+% One program, two documents, one key capture. The rows are independent: each
+% raw_doc contributes its own pairs, so the final set is their union.
+%   empty key   legal JSON, legal here, and it survives key capture: the one
+%               key spelling that cannot be written as a bare identifier.
+%   marker keys a key that IS the `$` hole marker's spelling and a key that is
+%               the `**` descent marker's spelling. Both are ordinary data on
+%               the VALUE plane; the marker meaning lives only in a PATTERN.
+%               The other half of that measurement is a named card: on the
+%               pattern plane the two markers are unconditional, so a literal
+%               `$k` or `**` key can never be matched by an exact-key pattern.
+% folded 2026-08-20 from json_empty_string_key_round_trips,
+% json_marker_shaped_keys_are_ordinary_data.
+fixture(json_literal_keys_survive_capture,
   prog([col_type(raw_doc/1, body, json), col_type(pair/2, name, text),
         col_type(pair/2, value, int)],
        [ (pair(Key, Value) <- raw_doc(Body), decode(Body, {$Key: Value})) ]),
-  [ raw_doc({'': 7, a: 8}) ],
+  [ raw_doc({'': 7, a: 8}),
+    raw_doc({'$ref': 1, '**': 2, plain: 3}) ],
   [],
-  [ final(pair/2, [ pair('', 7), pair(a, 8) ]) ]).
+  [ final(pair/2, [ pair('', 7), pair('$ref', 1), pair('**', 2),
+                    pair(a, 8), pair(plain, 3) ]) ]).
 
-% A document whose key IS the `$` hole marker's spelling, and a document whose
-% key is the `**` descent marker's spelling. Both are ordinary data on the
-% VALUE plane; the marker meaning lives only in a PATTERN. The verdict records
-% the other half of this measurement as a named card: on the pattern plane the
-% two markers are unconditional, so a literal `$k` or `**` key can never be
-% matched by an exact-key pattern.
-fixture(json_marker_shaped_keys_are_ordinary_data,
-  prog([col_type(raw_doc/1, body, json), col_type(pair/2, name, text),
-        col_type(pair/2, value, int)],
-       [ (pair(Key, Value) <- raw_doc(Body), decode(Body, {$Key: Value})) ]),
-  [ raw_doc({'$ref': 1, '**': 2, plain: 3}) ],
-  [],
-  [ final(pair/2, [ pair('$ref', 1), pair('**', 2), pair(plain, 3) ]) ]).
 
 % ═══ Q1 NUMBERS ═════════════════════════════════════════════════════════════
 
@@ -162,18 +167,6 @@ fixture(json_safe_integer_boundary_survives_both_doors,
 
 % ═══ Q1 CONTAINERS ══════════════════════════════════════════════════════════
 
-% Empty containers at every position: an empty object as a value, an empty
-% array as a value, and both nested. `{}` is the ATOM on both doors and `[]`
-% is the empty list, so this is the pair most likely to fall through an
-% encoder clause onto the string path.
-fixture(json_empty_containers_nest,
-  prog([col_type(raw_doc/1, body, json), col_type(echoed/1, body, json)],
-       [ (echoed(Body) <- raw_doc(Body)) ]),
-  [ raw_doc({obj: {}, arr: [], nested: [{}, []], deep: {inner: {}}}) ],
-  [],
-  [ final(echoed/1, [ echoed(obj([ arr-[], deep-obj([inner-obj([])]),
-                                   nested-[obj([]), []],
-                                   obj-obj([]) ])) ]) ]).
 
 % Deep nesting through decode. json1's own parser caps document depth
 % (measured: json_valid accepts 1000 and refuses 2000 on both builds), so this
