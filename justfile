@@ -213,10 +213,13 @@ boop-start:
       echo "boop-start: extractor built and cached as $digest"
     fi
     for dir in v6/tsv2 v6/sprefa-store/js; do
-      if [ -d "$dir/node_modules" ]; then
-        echo "boop-start: $dir node_modules present"
+      lock=$(shasum "$dir/pnpm-lock.yaml" 2>/dev/null | cut -c1-16 || echo nolock)
+      stamp="$dir/node_modules/.boop-start-lock"
+      if [ -d "$dir/node_modules" ] && [ "$(cat "$stamp" 2>/dev/null)" = "$lock" ]; then
+        echo "boop-start: $dir node_modules current"
       else
         (cd "$dir" && pnpm install --silent)
+        echo "$lock" > "$stamp"
         echo "boop-start: $dir installed"
       fi
     done
