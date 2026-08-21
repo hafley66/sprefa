@@ -2138,6 +2138,7 @@ dependencies = [
  "async-stream",
  "axum",
  "basic-toml",
+ "blake3",
  "cargo_metadata",
  "clap",
  "futures",
