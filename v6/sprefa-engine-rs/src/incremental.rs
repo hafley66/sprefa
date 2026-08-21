@@ -426,9 +426,9 @@ pub(crate) fn direct_arrival_statement(
 
 // Port of IncrementalRuntime.apply_arrivals. Groups consecutive same-rel/sign
 // arrivals and writes them through the relation's arrival_add/arrival_del SQL.
-/// SQLite's SQLITE_MAX_VARIABLE_NUMBER is 32766 from 3.32; the margin covers
-/// the handful of non-row placeholders a statement can also carry.
-const SQLITE_VARIABLE_BUDGET: usize = 30_000;
+/// The margin covers the handful of non-row placeholders a statement can carry
+/// beyond its rows.
+const VARIABLE_BUDGET_MARGIN: usize = 2_766;
 
 pub fn apply_arrivals(
     seam: &SqliteSeam,
@@ -475,6 +475,10 @@ pub fn apply_arrivals(
     // former run-based grouping never hit it only because interleaved arrivals
     // happened to keep every run small.
     let verbs = write_verbs_for(relations);
+    let variable_budget = seam
+        .variable_limit()
+        .saturating_sub(VARIABLE_BUDGET_MARGIN)
+        .max(1);
     // Groups are one per (rel, sign), chunked to the variable budget. The ratio
     // to arrivals.len() is the thing to read.
     let span = tracing::info_span!(
@@ -492,7 +496,7 @@ pub fn apply_arrivals(
             .len()
             .max(relation.key_indices.len())
             .max(1);
-        let rows_per_statement = (SQLITE_VARIABLE_BUDGET / widest).max(1);
+        let rows_per_statement = (variable_budget / widest).max(1);
         let mut pieces = Vec::new();
         let mut rest = entries;
         while rest.len() > rows_per_statement {
@@ -1603,7 +1607,15 @@ pub fn recompute_levels_before_edges(
         return reconcile(seam);
     }
     let guard = retraction_guard_sql(relations);
-    if seam.scalar(&guard).expect("retraction guard read failed") == 1 {
+    let has_retraction = {
+        let _scope = crate::trace::Scope::verb(
+            "retraction_guard",
+            "-",
+            crate::write_verbs::strategy_name(relations),
+        );
+        seam.scalar(&guard).expect("retraction guard read failed") == 1
+    };
+    if has_retraction {
         return reconcile(seam);
     }
     Ok(())
@@ -1837,7 +1849,13 @@ pub fn recompute_levels_after_edges(
         return Ok(());
     }
     let guard = retraction_guard_sql(relations);
+    let _scope = crate::trace::Scope::verb(
+        "retraction_guard",
+        "-",
+        crate::write_verbs::strategy_name(relations),
+    );
     let has_retraction = seam.scalar(&guard).expect("retraction guard read failed") == 1;
+    drop(_scope);
     if has_retraction {
         return reconcile(seam);
     }

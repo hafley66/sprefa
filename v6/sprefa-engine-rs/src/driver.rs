@@ -63,6 +63,7 @@ pub async fn run_schedule(
     drain_cap: usize,
 ) -> BoundaryResult<TickFold> {
     crate::trace::arm();
+    seam.size_statement_cache(program.stable_sql_count() + 64);
     seam.run_ddl(&program.ddl).expect("DDL execution failed");
     run_boot(seam, &program.boot);
     let mut lines = Vec::new();
@@ -112,6 +113,7 @@ pub async fn run_schedule_live(
     drain_cap: usize,
 ) -> Result<TickFold, RunError> {
     crate::trace::arm();
+    seam.size_statement_cache(program.stable_sql_count() + 64);
     seam.run_ddl(&program.ddl).expect("DDL execution failed");
     run_boot(seam, &program.boot);
     let adapter_rows =

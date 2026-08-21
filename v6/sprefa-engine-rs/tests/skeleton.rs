@@ -130,6 +130,7 @@ fn fixture_program() -> GenProgram {
         enum_ref_columns: Default::default(),
         ir_version: sprefa_engine_rs::program::IR_VERSION,
         host_plans: vec![],
+        queries: vec![],
     }
 }
 

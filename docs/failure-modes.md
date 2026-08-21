@@ -2056,6 +2056,42 @@ sites but not against new code. **missing** = nothing.
   Unit rail: `tests/30_rust_mod_scope_owner.rs`
   `rust_test_only_callees_leave_out_every_shipped_name`.
 
+## 56. A runtime with no per-verb clock, and three optimizations aimed at the wrong 12%
+
+- WHAT IT LOOKS LIKE: a fold is slow, the engine writes SQL, so the SQL gets
+  tuned. Batching, grouping and memoizing all land, all are measured, and all
+  three come back neutral or worse. Nobody can say what fraction of the wall
+  clock SQLite even holds, so the next guess aims at the same place.
+- HOW IT BIT US: 2026-08-21. `sprefa-engine-rs` had two spans in the whole
+  crate and one aggregate seam tally. Three consecutive changes were measured
+  and rejected on the sf_join 54k-row fold: a per-tick BEGIN/COMMIT, one arrival
+  group per (rel, sign) instead of consecutive runs, and a per-(content, mask)
+  extraction memo. The first per (verb, relation) table printed after the spans
+  landed said SQLite was 11.9% of that fold. The other 88% was five Rust loops
+  that deduplicated rows by scanning what they had already collected
+  (`boundary_delta`, the arrival stage set, the arrival key probe, the keyed
+  edge resolve, `text_plane::collect_values`). Indexing those five: 5441 -> 1009
+  ms, byte-identical tick log.
+- WHY IT HID: the seam tally counted statements and their microseconds, which
+  says how much SQLite cost and never what share of the run that was. A quadratic
+  loop between two statements is invisible to any counter that only wakes up
+  inside the seam, and every one of the five sat between statements the tally
+  did count.
+- THE LAW: a measurement that cannot name the remainder is not a measurement.
+  Wall clock minus instrumented time is a number the report has to print, and
+  the label a statement carries comes from the IR (relation, verb), never from
+  parsing the SQL text back into a guess about its purpose.
+- THE RAIL: `DL_TRACE_SUMMARY=1` prints one table per fold, per (verb, relation)
+  sqlite/rust/calls/rows plus the unscoped remainder, and
+  `RUST_LOG=sprefa_engine_rs=trace` opens the same tree as spans.
+  Fail-pre-fix receipt: `v6/sprefa-engine-rs/tests/trace_summary.rs`
+  `boundary_delta_probes_once_per_row` reads 20000 probes for 20000 rows where
+  the scan read 199,990,000 comparisons, and
+  `summary_names_the_ir_verbs_and_the_seam_compiles_each_text_once` pins that
+  every relation in the table is one the IR declares.
+  Bench: `v6/sprefa-engine-rs/bench/profile.sh`, `bench/ab.sh`,
+  `bench/rail-profile.sh`, `bench/file-db.sh`.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |

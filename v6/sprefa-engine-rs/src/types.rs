@@ -719,4 +719,8 @@ pub struct ProgramJson {
     pub ir_version: u32,
     #[serde(default)]
     pub host_plans: Vec<HostPlanData>,
+    /// The `?` query names in declared order. Empty on every IR emitted before
+    /// the emitter wrote them.
+    #[serde(default)]
+    pub queries: Vec<String>,
 }

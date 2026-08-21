@@ -14,6 +14,10 @@ use std::sync::Arc;
 
 use crate::types::{BoundaryError, BoundaryResult, QueryResult, ScalarValue, SqlStatement, Value};
 
+/// rusqlite's own default is 16, which a program with more statements than
+/// that would evict on every tick.
+const DEFAULT_STATEMENT_CACHE: usize = 256;
+
 pub type Error = rusqlite::Error;
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -35,6 +39,7 @@ pub struct SqliteSeam {
     prepared: RefCell<HashSet<String>>,
     counting: Cell<bool>,
     dispatches: Cell<u64>,
+    cache_capacity: Cell<usize>,
 }
 
 impl SqliteSeam {
@@ -54,17 +59,45 @@ impl SqliteSeam {
 
     fn wrap(conn: Connection) -> Result<Self> {
         install_scalars(&conn)?;
+        apply_pragmas(&conn)?;
         Ok(SqliteSeam {
             conn,
             prepared: RefCell::new(HashSet::new()),
             counting: Cell::new(false),
             dispatches: Cell::new(0),
+            cache_capacity: Cell::new(DEFAULT_STATEMENT_CACHE),
         })
     }
 
     /// Arms the prepare counters for a COUNT test; off on the fold path.
     pub fn count_prepares(&self) {
         self.counting.set(true);
+    }
+
+    /// The statement cache holds every text the IR fixes ahead of the fold, so
+    /// no reusable statement is ever evicted and recompiled.
+    pub fn size_statement_cache(&self, capacity: usize) {
+        self.cache_capacity.set(capacity);
+        self.conn.set_prepared_statement_cache_capacity(capacity);
+    }
+
+    pub fn statement_cache_capacity(&self) -> usize {
+        self.cache_capacity.get()
+    }
+
+    /// A file-backed connection is the only one a durability pragma can move;
+    /// `:memory:` has no journal to write.
+    pub fn file_backed(&self) -> bool {
+        is_file_backed(&self.conn)
+    }
+
+    /// The binding ceiling this build of SQLite enforces, read from the
+    /// connection rather than assumed from a version note.
+    pub fn variable_limit(&self) -> usize {
+        self.conn
+            .limit(rusqlite::limits::Limit::SQLITE_LIMIT_VARIABLE_NUMBER)
+            .unwrap_or(0)
+            .max(0) as usize
     }
 
     pub fn distinct_sql_texts(&self) -> usize {
@@ -128,6 +161,28 @@ fn install_regexp(conn: &Connection) -> Result<()> {
     )
 }
 
+/// page_size is the one pragma the measured constants say moves anything on
+/// `:memory:`, and it has to precede the first table. The file-backed door adds
+/// the durability pragmas, which are no-ops in memory.
+fn apply_pragmas(conn: &Connection) -> Result<()> {
+    if std::env::var("DL_SEAM_PRAGMAS").as_deref() == Ok("0") {
+        return Ok(());
+    }
+    conn.execute_batch("PRAGMA page_size=16384; PRAGMA temp_store=MEMORY;")?;
+    if is_file_backed(conn) {
+        conn.execute_batch(
+            "PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA cache_size=-262144; PRAGMA mmap_size=1073741824;",
+        )?;
+    }
+    Ok(())
+}
+
+fn is_file_backed(conn: &Connection) -> bool {
+    conn.path()
+        .map(|path| !path.is_empty() && path != ":memory:")
+        .unwrap_or(false)
+}
+
 fn to_param(value: &ScalarValue) -> rusqlite::types::Value {
     match value {
         ScalarValue::Integer(v) => rusqlite::types::Value::Integer(*v),
@@ -175,6 +230,13 @@ pub struct SeamTally {
 /// when DL_SEAM_SHAPES is set, so an ordinary fold pays one env read.
 pub static INERT_SHAPES: std::sync::LazyLock<Mutex<BTreeMap<String, (u64, u64)>>> =
     std::sync::LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+/// The A/B door for the statement cache, measured on both workloads before the
+/// default was set.
+pub fn statement_cache_wanted() -> bool {
+    static WANTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *WANTED.get_or_init(|| std::env::var("DL_SEAM_STMT_CACHE").as_deref() != Ok("0"))
+}
 
 pub fn seam_shapes_wanted() -> bool {
     static WANTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -252,7 +314,15 @@ impl SqlRunner for SqliteSeam {
                 self.prepared.borrow_mut().insert(statement.sql.clone());
             }
         }
-        let mut stmt = self.conn.prepare(&statement.sql)?;
+        let mut cached;
+        let mut fresh;
+        let stmt: &mut rusqlite::Statement = if statement_cache_wanted() {
+            cached = self.conn.prepare_cached(&statement.sql)?;
+            &mut cached
+        } else {
+            fresh = self.conn.prepare(&statement.sql)?;
+            &mut fresh
+        };
         let prepare_nanos = started.elapsed().as_nanos() as u64;
         let column_count = stmt.column_count();
         let columns: Vec<String> = (0..column_count)

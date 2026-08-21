@@ -95,6 +95,7 @@ async fn external_consumer_drives_runtime_and_hosts() {
         enum_ref_columns: Default::default(),
         ir_version: sprefa_engine_rs::program::IR_VERSION,
         host_plans: vec![],
+        queries: vec![],
     };
 
     let arrivals = vec![Arrival {

@@ -51,6 +51,32 @@ head_shape/ (2026-08-08, the head-shape A/B on the post-intern flagship).
   the ladder above is the insert alone; the fixpoint holds the same band.
 - Recursive CTE vs statement loop: loop wins wide frontiers ~1.3x, loses on
   deep-thin chains; shape-dependent, both banked.
+- MEASURE THE SEAM'S SHARE FIRST. On the v6 Rust engine
+  (`sprefa-engine-rs`), SQLite was 11.9% of the wall on the sf_join 54k-row /
+  6-tick fold; 88% was Rust, in five dedup loops that scanned what they had
+  already collected. `DL_TRACE_SUMMARY=1` prints the per (verb, relation) split;
+  read it before proposing any SQL change. Same fold after the Rust fix:
+  5441 -> 1009 ms, and only then is the seam 68% of the wall.
+- `prepare_cached` + `set_prepared_statement_cache_capacity(IR statement count)`
+  on that seam: sf_join 996/984 ms cached vs 1004/1062/1005 uncached; dead-module
+  rail 1283/1240/1218 vs 1270/1226/1236. 2-5% on one workload, a wash on the
+  other. KEPT, and it confirms rather than overturns "dispatch is free": the
+  compile is not where the time is.
+- Pragmas on `:memory:` again, this time on the engine's own fold:
+  `page_size=16384` + `temp_store=MEMORY` measured 988/966 ms against
+  991/987/1003 without. No change outside noise.
+- FILE-backed (`DL_DB_URL`) sf_join, `journal_mode=OFF` + `synchronous=OFF` +
+  `cache_size=-262144` + `mmap_size=1G`: 992/972 ms against 1014/1015/1012
+  without. ~2%, and the file-backed fold is otherwise indistinguishable from
+  `:memory:` (byte-identical tick log, 4 MB database).
+- One transaction per TICK on the FILE-backed path: 992/972 ms with, 984/993/998
+  without. A wash, so REJECTED on the file path too, not only in memory. With
+  `journal_mode=OFF` there is no journal for a transaction to amortize.
+- `SQLITE_LIMIT_VARIABLE_NUMBER` read from the connection on the bundled build is
+  32766, so the hand-written 30000-placeholder arrival budget was already the
+  right number and nothing moved when the code started asking. Do not set
+  `SQLITE_MAX_VARIABLE_NUMBER` in build env: bigger IN-lists measured SLOWER
+  (the run-grouping row above).
 
 ## Where a keyed insert's time goes (mechanism)
 Binary-search the btree path (every compare on TEXT walks the keys' shared

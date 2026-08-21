@@ -44,6 +44,7 @@ pub struct GenProgram {
     pub incremental_safe: bool,
     pub ir_version: u32,
     pub host_plans: Vec<crate::types::HostPlanData>,
+    pub queries: Vec<String>,
 }
 
 // The IR shape this runtime interprets. Bumped whenever a field's meaning
@@ -120,7 +121,46 @@ impl GenProgram {
             incremental_safe: pj.incremental_safe,
             ir_version: pj.ir_version,
             host_plans: pj.host_plans,
+            queries: pj.queries,
         }
+    }
+
+    /// The statement texts the IR fixes ahead of the fold. A row-count-shaped
+    /// text (a VALUES list) is not among them, so this is the cache size that
+    /// holds every reusable statement with nothing evicted.
+    pub fn stable_sql_count(&self) -> usize {
+        let mut count = self.ddl.len() + self.boot.len() + self.final_select.len();
+        for relation in &self.relations {
+            count += 1 + usize::from(relation.arrival_add_sql.is_some())
+                + usize::from(relation.arrival_del_sql.is_some());
+        }
+        for edge in &self.edges {
+            count += 1 + edge.intern_sql.as_ref().map(|sqls| sqls.len()).unwrap_or(0);
+        }
+        for level in &self.levels {
+            count += 3 + level.recompute_insert_sqls.len();
+            count += level.intern_sql.as_ref().map(|sqls| sqls.len()).unwrap_or(0);
+            count += level.support_sql.as_ref().map(|sqls| sqls.len()).unwrap_or(0);
+            count += level
+                .support_intern_sql
+                .as_ref()
+                .map(|sqls| sqls.len())
+                .unwrap_or(0);
+            if let Some(plan) = &level.support_count_sql {
+                count += 1 + plan.write_sqls.len();
+            }
+            if let Some(expand) = &level.expand_sql {
+                count += 7 + expand.seed_sqls.len();
+            }
+            if let Some(aggregate) = &level.aggregate_sql {
+                count += 2
+                    + aggregate.scope_seed_sql.len()
+                    + aggregate.insert_scoped_sql.len()
+                    + aggregate.intern_sql.as_ref().map(|sqls| sqls.len()).unwrap_or(0);
+            }
+        }
+        count += self.retentions.len();
+        count
     }
 
     pub fn tick<'a>(
