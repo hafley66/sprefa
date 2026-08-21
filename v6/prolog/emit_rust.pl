@@ -113,6 +113,11 @@ boot_param(Param, Text) :- atom_string(Param, Text).
 
 final_select_entry(deltastmt(Ref, Sql, _, _, _), Name-Sql) :- ref_name(Ref, Name).
 
+query_names(PlanDecls, Names) :-
+    findall(Name,
+            ( member(query(Atom), PlanDecls), functor(Atom, Name, _Arity) ),
+            Names).
+
 final_select_map(DeltaStatements, Map) :-
     maplist(final_select_entry, DeltaStatements, Pairs),
     pairs_to_dict(Pairs, Map).
@@ -587,6 +592,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     maplist(ref_name, ArrivalTargets, ArrivalTargetNames),
     maplist(boot_dict, BootStatements, BootDicts),
     final_select_map(DeltaStatements, FinalSelect),
+    query_names(PlanDecls, QueryNames),
     arrival_templates_map(ArrivalStatements, ArrivalTemplates),
     relations_list(RelPlans, ArrivalStatements, DepartureRefs, DeltaStatements,
                    Relations),
@@ -626,6 +632,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
        arrival_targets: ArrivalTargetNames,
        boot: BootDicts,
        final_select: FinalSelect,
+       queries: QueryNames,
        arrival_templates: ArrivalTemplates,
        text_intern_plan: TextInternField,
        struct_types: StructTypes,
