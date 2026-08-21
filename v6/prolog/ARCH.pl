@@ -403,7 +403,7 @@ construct(wildcard,             t0, kept).
 construct(snapshot_ask,         t0, kept).
 
 construct(from_world_modifier,  t1, new).    % unbundled from the killed `source` keyword
-construct(bind_decl,            t1, kept).
+construct(bind_decl,            t1, killed).  % 2026-08-21 sh_bind_surface_removed: bind rows are plain arrival rels
 construct(quoted_region,        t1, kept).
 construct(grammar_import,       t1, kept).
 
@@ -430,12 +430,14 @@ construct(struct_type_decl,     t5, new).   % ruling compound_storage; `type nam
 %   construct is real and graded; its spelling is open.
 construct(decode_join,          t5, new).   % decode/2 = dictionary join, same ruling
 construct(match_block,          t5, new).   % ruling match_block_word; arms expand to rules
-construct(host_decl,            t5, new).   % sh_decl/4, EXPLICIT input->output split
+construct(host_decl,            t5, respecified).   % sh_decl/4 is the TERM; the `sh` keyword died 2026-08-21
+construct(arrival_rel_decl,     t5, new).   % `rel n(ins) -> (outs) key(P..)`, ruling arrival_arrow_spelling; desugars to sh_decl/4 + arrival_identity/2
 construct(query_form,           t5, new).   % query/1 and query/2, `? rel(args)` with an optional `order by col [asc|desc], ...` tail that lowers onto final_select alone (top-level only; RHS probe + @ salt riders REMOVED by v6.2 host-surface locks)
 construct(ts_query_value,       t5, new).   % ts_query/1 compiles to exact query text
 construct(latest_sample,        t5, new).   % replacement spelling for the killed only()
 
 construct_status(kept).
+construct_status(killed).
 construct_status(respecified).
 construct_status(new).
 
@@ -587,7 +589,8 @@ covers('1_match_block',           match_block).        % match/2 x3
 covers(match_block_word,          match_block).
 covers('2_hosts_wiring',          host_decl).          % sh_decl/4 x4
 covers(host_residency,            host_decl).
-covers('2_hosts_wiring',          query_form).         % query/1 + bind_decl/2 x7
+covers('2_hosts_wiring',          query_form).         % query/1; arrival rels feed the schedules
+covers('2_hosts_wiring',          arrival_rel_decl).   % the batching/identity/stop fixtures
 covers('2_hosts_wiring',          ts_query_value).     % ts_query/1 x1
 covers(merge_family,              latest_sample).      % latest/1 x18
 covers(engine_core,               latest_sample).      % latest/1 x5
