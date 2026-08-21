@@ -256,7 +256,10 @@ fn statement_shape(sql: &str) -> String {
             .nth(1),
         _ => words.next(),
     };
-    format!("{verb} {}", table.unwrap_or("?").trim_matches(|c| c == '"' || c == '(' ))
+    format!(
+        "{verb} {}",
+        table.unwrap_or("?").trim_matches(|c| c == '"' || c == '(')
+    )
 }
 
 pub static SEAM_TALLY: SeamTally = SeamTally {
@@ -275,7 +278,11 @@ pub fn report_seam_tally() {
     tracing::info!(
         statements,
         inert,
-        inert_pct = if statements == 0 { 0 } else { inert * 100 / statements },
+        inert_pct = if statements == 0 {
+            0
+        } else {
+            inert * 100 / statements
+        },
         rows_out = SEAM_TALLY.rows_out.load(Relaxed),
         rows_changed = SEAM_TALLY.rows_changed.load(Relaxed),
         ms = SEAM_TALLY.nanos.load(Relaxed) / 1_000_000,
@@ -357,8 +364,12 @@ impl SqlRunner for SqliteSeam {
         {
             use std::sync::atomic::Ordering::Relaxed;
             SEAM_TALLY.statements.fetch_add(1, Relaxed);
-            SEAM_TALLY.rows_out.fetch_add(out_rows.len() as u64, Relaxed);
-            SEAM_TALLY.rows_changed.fetch_add(rows_affected.max(0) as u64, Relaxed);
+            SEAM_TALLY
+                .rows_out
+                .fetch_add(out_rows.len() as u64, Relaxed);
+            SEAM_TALLY
+                .rows_changed
+                .fetch_add(rows_affected.max(0) as u64, Relaxed);
             SEAM_TALLY
                 .nanos
                 .fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
@@ -366,7 +377,9 @@ impl SqlRunner for SqliteSeam {
                 SEAM_TALLY.inert.fetch_add(1, Relaxed);
                 if seam_shapes_wanted() {
                     let mut shapes = INERT_SHAPES.lock().expect("inert shapes");
-                    let entry = shapes.entry(statement_shape(&statement.sql)).or_insert((0, 0));
+                    let entry = shapes
+                        .entry(statement_shape(&statement.sql))
+                        .or_insert((0, 0));
                     entry.0 += 1;
                     entry.1 += started.elapsed().as_micros() as u64;
                 }

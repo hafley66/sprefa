@@ -235,8 +235,7 @@ fn build(args: BuildArgs) -> Result<()> {
     let out = args.out.unwrap_or_else(|| crate_dir.join(&name));
     let step = Step::start();
     if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create {}", parent.display()))?;
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     // rm before cp: overwriting in place leaves the old macOS signature on new
     // bytes and the next run dies "Killed: 9" (docs/failure-modes.md:56).

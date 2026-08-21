@@ -70,14 +70,20 @@ fn scalar_template_fill_quotes_every_argument() {
 #[test]
 fn ast_rule_executor_runs_the_typed_request_in_process() {
     let directory = tempfile::tempdir().expect("temporary source directory");
+    git_run(directory.path(), &["init", "-q"]);
     let path = directory.path().join("sample.rs");
     std::fs::write(&path, "fn main() { println!(\"ok\"); }").expect("write source");
+    git_run(directory.path(), &["add", "."]);
+    git_run(directory.path(), &["commit", "-qm", "initial"]);
+    let digest = git_run(directory.path(), &["rev-parse", "HEAD:sample.rs"]);
     let output = AstRuleExecutor
         .run(
             "ast_rule",
             "$SPREFA_AST_RULE_HOST",
             &BTreeMap::from([
                 ("path".into(), path.display().to_string()),
+                ("repo".into(), directory.path().display().to_string()),
+                ("digest".into(), digest),
                 (
                     "request".into(),
                     "id: print\nrule:\n  pattern: println!($MESSAGE)\n".into(),
@@ -89,6 +95,136 @@ fn ast_rule_executor_runs_the_typed_request_in_process() {
     assert_eq!(row["record"], "ast_rule");
     assert_eq!(row["query"], "print");
     assert_eq!(row["captures"][0]["name"], "MESSAGE");
+}
+
+#[test]
+fn ast_rule_digest_selects_pinned_blob_and_rejects_changed_worktree_identity() {
+    let directory = tempfile::tempdir().expect("temporary source directory");
+    git_run(directory.path(), &["init", "-q"]);
+    let path = directory.path().join("sample.rs");
+    std::fs::write(&path, "fn old() { println!(\"old\"); }\n").expect("old source");
+    git_run(directory.path(), &["add", "."]);
+    git_run(directory.path(), &["commit", "-qm", "initial"]);
+    let old = git_run(directory.path(), &["rev-parse", "HEAD:sample.rs"]);
+    std::fs::write(&path, "fn current() { println!(\"current\"); }\n").expect("current source");
+    let current = git_run(directory.path(), &["hash-object", "sample.rs"]);
+    let env = |digest: String| {
+        BTreeMap::from([
+            ("path".into(), path.display().to_string()),
+            ("repo".into(), directory.path().display().to_string()),
+            ("digest".into(), digest),
+            (
+                "request".into(),
+                "id: print\nrule:\n  pattern: println!($MESSAGE)\n".into(),
+            ),
+        ])
+    };
+    let pinned = AstRuleExecutor
+        .run("ast_rule", "ignored", &env(old.clone()))
+        .expect("pinned old blob");
+    assert!(pinned.contains("old"));
+    assert!(!pinned.contains("current"));
+    let changed = AstRuleExecutor.run(
+        "ast_rule",
+        "ignored",
+        &env("0000000000000000000000000000000000000000".into()),
+    );
+    assert!(changed.unwrap_err().message.contains("hashes to"));
+    let matching = AstRuleExecutor
+        .run("ast_rule", "ignored", &env(current))
+        .expect("matching current worktree blob");
+    assert!(matching.contains("current"));
+}
+
+#[tokio::test]
+async fn scalar_shell_adapter_preserves_legacy_command_arguments() {
+    let plan = HostPlanData {
+        name: "scalar_args".to_string(),
+        inputs: vec![
+            HostColumnPlan {
+                name: "path".to_string(),
+                column_type: "text".to_string(),
+            },
+            HostColumnPlan {
+                name: "count".to_string(),
+                column_type: "int".to_string(),
+            },
+        ],
+        outputs: vec![HostColumnPlan {
+            name: "arg".to_string(),
+            column_type: "text".to_string(),
+        }],
+        template: "printf '%s\\n' {path} {count}".to_string(),
+        demand_rel: "__host_demand_scalar_args".to_string(),
+        response_rel: "__host_response_scalar_args".to_string(),
+        execution: "shell".to_string(),
+        request_type: None,
+        response_type: None,
+    };
+    let filled = sprefa_engine_rs::hosts::fill_template(
+        &plan.template,
+        &BTreeMap::from([
+            (
+                "path".to_string(),
+                sprefa_engine_rs::types::ScalarValue::Text("path with spaces".to_string()),
+            ),
+            (
+                "count".to_string(),
+                sprefa_engine_rs::types::ScalarValue::Integer(7),
+            ),
+        ]),
+    );
+    assert_eq!(filled, "printf '%s\\n' 'path with spaces' '7'");
+    assert_eq!(
+        ShellExecutor
+            .run("scalar_args", &filled, &BTreeMap::new())
+            .expect("run scalar command"),
+        "path with spaces\n7\n"
+    );
+    let rel_columns = std::collections::HashMap::from([
+        (
+            "__host_demand_scalar_args".to_string(),
+            vec![
+                "path".to_string(),
+                "count".to_string(),
+                "witness_digest".to_string(),
+            ],
+        ),
+        (
+            "__host_response_scalar_args".to_string(),
+            vec![
+                "witness_digest".to_string(),
+                "ordinal".to_string(),
+                "arg".to_string(),
+            ],
+        ),
+    ]);
+    let mut runner = HostLiveRunner::new(std::slice::from_ref(&plan), &rel_columns)
+        .expect("scalar shell plan is accepted");
+    let arrivals = runner
+        .collect(&TickDeltas {
+            rels: vec![RelDelta {
+                rel: "__host_demand_scalar_args".to_string(),
+                add: vec![vec![
+                    text("path with spaces"),
+                    Value::Integer(7),
+                    text("witness-scalar"),
+                ]],
+                del: vec![],
+            }],
+            carry_pending: false,
+        })
+        .expect("scalar shell invocation");
+    assert_eq!(
+        arrivals
+            .iter()
+            .map(|arrival| arrival.row.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            vec![text("witness-scalar"), Value::Integer(0), text("path"),],
+            vec![text("witness-scalar"), Value::Integer(1), text("7")],
+        ]
+    );
 }
 
 /// An `sh` declaration whose adapter sidecar routes it nowhere is named at

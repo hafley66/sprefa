@@ -7,11 +7,11 @@
 use std::collections::HashMap;
 
 use crate::sql::{result_rows, SqlRunner, SqliteSeam};
-use crate::write_verbs::{write_verbs_for, TickBoundary};
 use crate::types::{
     Arrival, ArrivalSign, BoundaryError, BoundaryResult, IncrementalRelationPlan, RelationKind,
     Row, ScalarSeam, ScalarValue, SqlStatement, Value,
 };
+use crate::write_verbs::{write_verbs_for, TickBoundary};
 
 #[derive(Clone)]
 pub struct DeltaEvent {
@@ -1703,7 +1703,9 @@ fn reconcile_ref_count_statement(
         sql: insert_new.clone(),
         args: vec![],
     });
-    tail.extend(to_statements(&write_verbs_for(relations).recount(statement)));
+    tail.extend(to_statements(
+        &write_verbs_for(relations).recount(statement),
+    ));
 
     let Some(expand) = &statement.expand_sql else {
         let mut head = Vec::new();

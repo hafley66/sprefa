@@ -85,7 +85,9 @@ fn write_file(path: &Path, text: &str) {
 }
 
 fn stdout_of(command: &mut Command, what: &str) -> String {
-    let output = command.output().unwrap_or_else(|error| panic!("{what}: {error}"));
+    let output = command
+        .output()
+        .unwrap_or_else(|error| panic!("{what}: {error}"));
     assert!(
         output.status.success(),
         "{what} exited {}: {}{}",
@@ -288,10 +290,9 @@ fn both_emitters_and_the_runtime_agree_on_ir_version() {
 // return Ok.
 #[test]
 fn a_program_at_another_ir_version_is_refused_by_name() {
-    let module = std::fs::read_to_string(
-        engine_dir().join("tests/fixtures/resident-coroutine.program.rs"),
-    )
-    .expect("read the snapshot");
+    let module =
+        std::fs::read_to_string(engine_dir().join("tests/fixtures/resident-coroutine.program.rs"))
+            .expect("read the snapshot");
     let start = module.find("r#\"").expect("raw string open") + 3;
     let end = module[start..].find("\"#;").expect("raw string close") + start;
     let mut document: Value =

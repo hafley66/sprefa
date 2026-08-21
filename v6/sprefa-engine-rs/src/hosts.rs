@@ -98,18 +98,25 @@ impl IHostExecutor for AstRuleExecutor {
         env: &BTreeMap<String, String>,
     ) -> Result<String, HostError> {
         let path = source_mutation_input(host, env, "path")?;
+        let digest = source_mutation_input(host, env, "digest")?;
         let request_yaml = source_mutation_input(host, env, "request")?;
         let request =
             sprefa_extract::decode_ast_rule_yaml(&request_yaml).map_err(|error| HostError {
                 host: host.to_string(),
                 message: format!("decode ast_rule request: {error}"),
             })?;
-        let bytes = std::fs::read(&path).map_err(|error| HostError {
-            host: host.to_string(),
-            message: format!("read ast_rule source {path}: {error}"),
-        })?;
-        let rows =
-            sprefa_extract::query_ast_rule(&path, &bytes, &request).map_err(|error| HostError {
+        let repo_root = env
+            .get("repo")
+            .map(PathBuf::from)
+            .or_else(|| EXTRACT.repository_root(&path))
+            .ok_or_else(|| HostError {
+                host: host.to_string(),
+                message: format!("no repository root for digest read of {path}"),
+            })?;
+        let bytes = EXTRACT.read_blob(host, &repo_root, &digest, &path)?;
+        let content = soopy::ContentId::GitBlob(soopy::ObjectId(Arc::from(digest)));
+        let rows = sprefa_extract::query_ast_rule_with_content(&path, &bytes, &request, content)
+            .map_err(|error| HostError {
                 host: host.to_string(),
                 message: format!("execute ast_rule request: {error}"),
             })?;

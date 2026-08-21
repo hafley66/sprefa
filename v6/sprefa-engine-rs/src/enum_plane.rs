@@ -19,7 +19,9 @@ use crate::types::{
 fn check_reference(rel: &str, refs: &[Option<crate::types::EnumRefColumn>], row: &Row) {
     for (index, reference) in refs.iter().enumerate() {
         let Some(reference) = reference else { continue };
-        let Some(value) = row.get(index) else { continue };
+        let Some(value) = row.get(index) else {
+            continue;
+        };
         if value.as_i64().is_none() {
             panic!(
                 "enum_arrival_shape_mismatch: not_a_reference({rel}, {})",
@@ -102,13 +104,17 @@ mod tests {
     #[test]
     fn a_tagged_value_in_a_reference_column_is_named() {
         let seam = SqliteSeam::in_memory().unwrap();
-        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| intern(
-            &seam,
-            &[],
-            &refs(),
-            &[resident(Value::Text(r#"{"tag":"ok","value":"yes"}"#.into()))]
-        )))
-        .is_err());
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| intern(
+                &seam,
+                &[],
+                &refs(),
+                &[resident(Value::Text(
+                    r#"{"tag":"ok","value":"yes"}"#.into()
+                ))]
+            )))
+            .is_err()
+        );
     }
 
     #[test]
