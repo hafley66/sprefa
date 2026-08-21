@@ -188,7 +188,7 @@ blockers is counted under each, so the column sums past 110.
 
 | blocker | files | why the door stops | issue |
 |---|---|---|---|
-| `call_edge` | 30 | needs `--resolve`; `sh scip.call` answers `caller_path`, not v5's symbol | `@dl6-scip-facts-door` |
+| `call_edge` | 30 | needs `--resolve`; `sh /scip/call` answers `caller_path`, not v5's symbol | `@dl6-scip-facts-door` |
 | `gen` | 25 | dl6 cannot write files | `@fs-effects-door` (open) |
 | `type_edge` | 16 | needs `--resolve` | `@dl6-scip-facts-door` |
 | `ast` | 11 | `ts_query/1` compiles to a `tree_sitter` host demand; `executor_for` has no arm | `@dl6-ts-query-executor` |

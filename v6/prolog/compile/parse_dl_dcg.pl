@@ -1594,9 +1594,23 @@ compound_or_var(E) -->
       back(S1), dot_chain(Rec, E)
     ).
 
-dotted_path([Segment | Rest]) -->
+% Executor paths are slash-rooted `/soopy/files`, module paths dotted `a.b`
+% (ruling executor_path_slashes); both reach module_path_name/2's `__` join.
+dotted_path(Segments) -->
+    ( peek(0'/) -> slash_path(Segments) ; dotted_path_segments(Segments) ).
+
+dotted_path_segments([Segment | Rest]) -->
     ident(Segment),
-    ( dot_then_ident -> dotted_path(Rest) ; { Rest = [] } ).
+    ( dot_then_ident -> dotted_path_segments(Rest) ; { Rest = [] } ).
+
+slash_path([Segment | Rest]) -->
+    slash_then_ident, ident(Segment),
+    ( peek(0'/) -> slash_path(Rest) ; { Rest = [] } ).
+
+slash_then_ident([0'/ | S], S) :-
+    S = [C | _],
+    ( code_type(C, alpha) ; C == 0'_ ),
+    !.
 
 dot_chain(Rec, Final) -->
     ( dot_then_ident

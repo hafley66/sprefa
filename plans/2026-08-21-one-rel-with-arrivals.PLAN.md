@@ -502,7 +502,7 @@ Probe, measured:
 
 ```
 rel scip__call(a: text).
-sh scip.call(repo: text, path: text, digest: text) -> (...) = `x {repo} {path}`.
+sh /scip/call(repo: text, path: text, digest: text) -> (...) = `x {repo} {path}`.
 ? scip__call(a).
 ```
 

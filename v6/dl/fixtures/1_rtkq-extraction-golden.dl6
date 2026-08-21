@@ -14,7 +14,7 @@
 
 rel watch(glob: text, path: text, digest: text).
 
-rel extract.records(
+rel /extract/records(
   path: text,
   digest: text,
   families: text
@@ -44,7 +44,7 @@ rel ast_capture(
 ).
 ast_capture(path, query, capture, text, start, end, match_start, match_end) <-
   file(path, digest),
-  extract.records(path, digest, "call", 'capture', query, capture, text, start, end, match_start, match_end).
+  /extract/records(path, digest, "call", 'capture', query, capture, text, start, end, match_start, match_end).
 
 # createApi and injectEndpoints are separate syntax shapes whose results share
 # one relation. Only their whole-match spans are retained.

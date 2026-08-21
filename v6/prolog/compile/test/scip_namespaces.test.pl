@@ -1,4 +1,4 @@
-% FAIL-FIRST: sh_head//2 read a bare ident, so `sh scip.diet.call(...)` did not
+% FAIL-FIRST: sh_head//2 read a bare ident, so `sh /scip/diet/call(...)` did not
 % parse at all and dotted_host_name_parses_to_the_module_path_atom threw
 % dl_parse_error before reaching an assertion.
 :- module(scip_namespaces_tests, []).
@@ -15,12 +15,12 @@
 :- begin_tests(scip_namespaces).
 
 scip_source(Source) :-
-    Source = "rel scip.diet.call(repo: text, path: text, digest: text)\c
+    Source = "rel /scip/diet/call(repo: text, path: text, digest: text)\c
 \n  -> (record: text, family: text, caller_path: text, callee_path: text,\c
 \n      callee: text, kind: text) key(1, 2).\c
 \nrel edge(callee: text).\c
 \nedge(Callee) <-\c
-\n  scip.diet.call('.', 'a.rs', 'd', 'resolved_edge', 'call',\c
+\n  /scip/diet/call('.', 'a.rs', 'd', 'resolved_edge', 'call',\c
 \n                 _Caller, _Callee, Callee, _Kind).\n".
 
 % The dl6 spelling is dotted; the atom every phase below the parser carries is
@@ -58,7 +58,7 @@ test(every_scip_namespace_carries_the_repo_extract_contract) :-
              Roles == [identity, identity, freshness] )).
 
 % THE INTERFACING TYPE: one `<x>`, one column list, whichever evidence answers.
-% A program swaps scip.diet.call for scip.call by changing the host name alone.
+% A program swaps /scip/diet/call for /scip/call by changing the host name alone.
 test(both_namespaces_of_one_interface_declare_equal_columns) :-
     forall(member(Interface, [call, type]),
            ( scip_namespace_host(Diet, Interface, diet),

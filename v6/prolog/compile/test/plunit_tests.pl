@@ -9412,7 +9412,7 @@ test(source_mutations_fixture_keeps_one_document_boundary_and_exact_approval_joi
           once(read_file_to_string(OutFile, Text, [])),
           sub_string(Text, _, _, _, 'name: "soopy__stage"'),
           sub_string(Text, _, _, _, 'name: "soopy__commit"'),
-          sub_string(Text, _, _, _, 'execution: "soopy.stage"'),
+          sub_string(Text, _, _, _, 'execution: "/soopy/stage"'),
           sub_string(Text, _, _, _, 'source_proposal_candidate'),
           sub_string(Text, _, _, _, 'source_dependency'),
           sub_string(Text, _, _, _, 'source_ownership'),

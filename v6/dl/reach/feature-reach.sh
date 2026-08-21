@@ -8,7 +8,7 @@
 #   bash v6/dl/reach/feature-reach.sh --check
 # In a git pathspec `*` crosses `/` but `**` demands a directory level, so
 # `crates/*/src/*.rs` matches 83 files where `crates/*/src/**/*.rs` matches 17.
-# `scip.call` is OFF unless FEATURE_REACH_SCIP=1. Over a real corpus the index
+# `/scip/call` is OFF unless FEATURE_REACH_SCIP=1. Over a real corpus the index
 # resolve does not finish: failure-modes.md entry 59, `site_occurrence` walk.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

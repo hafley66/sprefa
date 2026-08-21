@@ -65,7 +65,7 @@ current_bucket(Period, Bucket) <+ bucket_event(Period, Bucket).
 #
 # `grep -i '^etag:'` is anchored because Access-Control-Expose-Headers lists
 # both ETag and X-RateLimit-Remaining by name in its value.
-rel gh.rest_cond(endpoint_path: text, prev_etag: text, bucket: int)
+rel /gh/rest_cond(endpoint_path: text, prev_etag: text, bucket: int)
   -> (status_code: int, next_etag: text, body_json: text, rest_remaining: int) key(1, 2).
 
 # ── the etag latch ──────────────────────────────────────────────────────────
@@ -113,7 +113,7 @@ rel rest_call(endpoint_path: text, bucket: int, status_code: int,
               next_etag: text, body_json: text, rest_remaining: int).
 rest_call(EndpointPath, Bucket, StatusCode, NextEtag, BodyJson, RestRemaining) <-
   poll(EndpointPath, PrevEtag, Bucket),
-  gh.rest_cond(EndpointPath, PrevEtag, Bucket, StatusCode, NextEtag, BodyJson, RestRemaining).
+  /gh/rest_cond(EndpointPath, PrevEtag, Bucket, StatusCode, NextEtag, BodyJson, RestRemaining).
 
 # ── what a 200 buys ─────────────────────────────────────────────────────────
 # rx: restCall$.pipe(filter(row => row.statusCode === 200), map(toEtagPair))

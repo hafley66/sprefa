@@ -36,18 +36,18 @@ pub trait IHostExecutor: Sync {
     ) -> Result<Vec<HostRow>, HostError>;
 }
 
-/// The SAME dotted names as registry.pl's arrival_executor/2 rows (ruling
+/// The SAME slash paths as registry.pl's arrival_executor/2 rows (ruling
 /// executor_namespacing), pinned equal by executor_roster_matches_registry.
-pub const LINKED_EXECUTORS: &str = "soopy.files, soopy.stage, soopy.commit, \
-     soopy.refs, soopy.history, soopy.repo_at, soopy.checkout, \
-     soopy.mirror_pr_heads, soopy.dep_crawl, extract.records, \
-     extract.repo_records, extract.call_node, extract.call_node_at, \
-     extract.call_ref, extract.cfg_at, extract.specifier_at, \
-     extract.type_node_at, extract.sig_at, extract.df_node_at, \
-     extract.df_edge_at, extract.df_param_at, extract.df_arg_at, \
-     extract.data_doc_at, extract.comment_fact, extract.ast_rule, scip.call, \
-     scip.type, scip.diet.call, scip.diet.type, cargo.targets, http.fetch, \
-     gh.repos, gh.rest_cond, env.var, toml.json";
+pub const LINKED_EXECUTORS: &str = "/soopy/files, /soopy/stage, /soopy/commit, \
+     /soopy/refs, /soopy/history, /soopy/repo_at, /soopy/checkout, \
+     /soopy/mirror_pr_heads, /soopy/dep_crawl, /extract/records, \
+     /extract/repo_records, /extract/call_node, /extract/call_node_at, \
+     /extract/call_ref, /extract/cfg_at, /extract/specifier_at, \
+     /extract/type_node_at, /extract/sig_at, /extract/df_node_at, \
+     /extract/df_edge_at, /extract/df_param_at, /extract/df_arg_at, \
+     /extract/data_doc_at, /extract/comment_fact, /extract/ast_rule, /scip/call, \
+     /scip/type, /scip/diet/call, /scip/diet/type, /cargo/targets, /http/fetch, \
+     /gh/repos, /gh/rest_cond, /env/var, /toml/json";
 
 static GIT_REFS: LazyLock<crate::executors::git_refs::GitRefsExecutor> =
     LazyLock::new(crate::executors::git_refs::GitRefsExecutor::new);
@@ -62,40 +62,40 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
     match execution {
         // The extract.* questions share the in-process extractor; each rel
         // selects its own rows out of the one stream by column presence.
-        "extract.records" | "extract.repo_records" | "extract.call_node"
-        | "extract.call_node_at" | "extract.call_ref" | "extract.cfg_at"
-        | "extract.specifier_at" | "extract.type_node_at" | "extract.sig_at"
-        | "extract.df_node_at" | "extract.df_edge_at" | "extract.df_param_at"
-        | "extract.df_arg_at" | "extract.data_doc_at"
-        | "extract.comment_fact" => Some(&*EXTRACT),
-        "extract.ast_rule" => Some(&AstRuleExecutor),
-        "soopy.files" => Some(&SoopyFilesExecutor),
-        "soopy.stage" | "soopy.commit" => Some(&SoopyMutationExecutor),
-        "http.fetch" | "gh.rest_cond" => Some(&crate::executors::HttpFetchExecutor),
-        "env.var" => Some(&crate::executors::EnvExecutor),
-        "gh.repos" => Some(&crate::executors::GhReposExecutor),
-        "soopy.checkout" | "soopy.mirror_pr_heads" => {
+        "/extract/records" | "/extract/repo_records" | "/extract/call_node"
+        | "/extract/call_node_at" | "/extract/call_ref" | "/extract/cfg_at"
+        | "/extract/specifier_at" | "/extract/type_node_at" | "/extract/sig_at"
+        | "/extract/df_node_at" | "/extract/df_edge_at" | "/extract/df_param_at"
+        | "/extract/df_arg_at" | "/extract/data_doc_at"
+        | "/extract/comment_fact" => Some(&*EXTRACT),
+        "/extract/ast_rule" => Some(&AstRuleExecutor),
+        "/soopy/files" => Some(&SoopyFilesExecutor),
+        "/soopy/stage" | "/soopy/commit" => Some(&SoopyMutationExecutor),
+        "/http/fetch" | "/gh/rest_cond" => Some(&crate::executors::HttpFetchExecutor),
+        "/env/var" => Some(&crate::executors::EnvExecutor),
+        "/gh/repos" => Some(&crate::executors::GhReposExecutor),
+        "/soopy/checkout" | "/soopy/mirror_pr_heads" => {
             Some(&crate::executors::SoopyCheckoutExecutor)
         }
-        "toml.json" => Some(&crate::executors::TomlJsonExecutor),
+        "/toml/json" => Some(&crate::executors::TomlJsonExecutor),
         // The cross-repository families. Each memoises on its demand inputs, so
         // the sibling host names riding one pass settle in one soopy call.
-        "soopy.refs" => Some(&*GIT_REFS),
-        "soopy.history" => Some(&*GIT_HISTORY),
-        "soopy.repo_at" => Some(&*REPO_AT),
-        "soopy.dep_crawl" => Some(&*DEP_CRAWL),
+        "/soopy/refs" => Some(&*GIT_REFS),
+        "/soopy/history" => Some(&*GIT_HISTORY),
+        "/soopy/repo_at" => Some(&*REPO_AT),
+        "/soopy/dep_crawl" => Some(&*DEP_CRAWL),
         // The two scip namespaces, both in-process: no child spawn for the
         // diet side, one budgeted indexer run for the index side.
-        "scip.call" | "scip.type" | "scip.diet.call" | "scip.diet.type" => Some(&*SCIP),
-        "cargo.targets" => Some(&CargoMetadataExecutor),
+        "/scip/call" | "/scip/type" | "/scip/diet/call" | "/scip/diet/type" => Some(&*SCIP),
+        "/cargo/targets" => Some(&CargoMetadataExecutor),
         _ => None,
     }
 }
 
-/// The applicative fold scope: every extract.* question folds with its
+/// The applicative fold scope: every /extract/* question folds with its
 /// siblings on equal ordered inputs; anything else folds only with itself.
 fn fold_scope(execution: &str) -> &str {
-    if execution.starts_with("extract.") && execution != "extract.ast_rule" {
+    if execution.starts_with("/extract/") && execution != "/extract/ast_rule" {
         "extract"
     } else {
         execution
@@ -123,8 +123,8 @@ fn executor_for_plan(
 }
 
 fn is_applicative(execution: &str) -> bool {
-    (execution.starts_with("extract.") && execution != "extract.ast_rule")
-        || execution.starts_with("scip.")
+    (execution.starts_with("/extract/") && execution != "/extract/ast_rule")
+        || execution.starts_with("/scip/")
 }
 
 /// Typed ast-grep rule execution. The request arrives as the DL6 `text`
@@ -646,7 +646,7 @@ enum ScipInterface {
     Type,
 }
 
-/// The `__` join is what the parser's dotted host name lowers to, so this is
+/// The `__` join is what the parser's host path lowers to, so this is
 /// the whole namespace roster the registry declares.
 fn scip_namespace(host: &str) -> Option<(ScipInterface, ScipEvidence)> {
     match host {
@@ -668,7 +668,7 @@ struct ScipFold {
     skips: Vec<HostRow>,
 }
 
-/// `scip.<x>` and `scip.diet.<x>`, both answered in this process.
+/// `/scip/<x>` and `/scip/diet/<x>`, both answered in this process.
 ///
 /// A DEMAND ARRIVES PER FILE AND AN INDEX IS PER REPOSITORY, so the runner's
 /// applicative grouping cannot collapse these into one call: its key is the
@@ -884,8 +884,8 @@ impl IHostExecutor for ScipNamespaceExecutor {
         };
         let Some((interface, evidence)) = scip_namespace(host) else {
             return Err(named(
-                "not a scip namespace; the roster is scip.call, scip.diet.call, \
-                 scip.type and scip.diet.type"
+                "not a scip namespace; the roster is /scip/call, /scip/diet/call, \
+                 /scip/type and /scip/diet/type"
                     .to_string(),
             ));
         };
@@ -1526,7 +1526,7 @@ impl<'p> HostLiveRunner<'p> {
         // applicative key (which carries `path`) can never collapse them.
         let mut scip_demands: Vec<(PathBuf, String, String)> = Vec::new();
         for demand in &claimed {
-            if !self.execution_for(demand.plan).starts_with("scip.") {
+            if !self.execution_for(demand.plan).starts_with("/scip/") {
                 continue;
             }
             let text = |name: &str| demand.inputs.get(name).map(shell_text).unwrap_or_default();

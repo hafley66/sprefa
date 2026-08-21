@@ -46,7 +46,7 @@ watch("repos/cli/cli").
 # Same shell body as v5 (examples/gh-cache.dl:75-80). The host declaration
 # separates request inputs from response outputs, and the template references every
 # declared input and no output.
-rel http.fetch(ep: text, prev: text) -> (status: int, tag: text, body: text).
+rel /http/fetch(ep: text, prev: text) -> (status: int, tag: text, body: text).
 
 # etag: bootstrap fact UNION resp-derived value (gap #2 above). Deliberately NOT
 # `rel(1)`: retention markers only govern EDB-style commit() writes (applyRelWrite,
@@ -68,7 +68,7 @@ poll(ep, prev) <- watch(ep), etag(ep, prev).
 # template always emits status/tag/body, matching v5's raw `resp` (examples/gh-cache.dl:
 # 89-90) before its 200-only filter.
 rel resp(ep: text, status: int, tag: text, body: text).
-resp(ep, status, tag, body) <- poll(ep, prev), http.fetch(ep, prev, status, tag, body).
+resp(ep, status, tag, body) <- poll(ep, prev), /http/fetch(ep, prev, status, tag, body).
 
 # --- normalize: entities from 200 bodies ----------------------------------------
 # v5 uses term-form `jsonp`/`json` (examples/gh-cache.dl:110,113,121-124) to extract

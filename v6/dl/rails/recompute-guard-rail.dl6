@@ -29,25 +29,20 @@
 
 rel span(start: int, end: int).
 
-# `files` routes to SoopyFilesExecutor, so the template never runs as a shell.
-sh files(glob: text) -> (path: text, digest: text) =
-  `git ls-files -- '{glob}' | git hash-object --stdin-paths`.
+rel /soopy/files(glob: text) -> (path: text, digest: text).
 
 # @comment-ok: the projection law; a declared column IS the record filter.
 # Three named projections over ONE extractor stream. A line that does not carry
 # every declared column contributes no row, so `name: text` is itself what drops
 # anonymous callables (a rust closure is `kind=lambda` with a null name).
-sh call_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text, name: text) =
-  `"$DL_EXTRACT_BIN" --family call,type {path}`.
-sh extract(path: text, digest: text) -> (record: text, family: text, span: span, callee: text) =
-  `"$DL_EXTRACT_BIN" --family call,type {path}`.
-sh type_node_at(path: text, digest: text) -> (record: text, family: text, owner: span, text: text) =
-  `"$DL_EXTRACT_BIN" --family call,type {path}`.
+rel /extract/call_node_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, kind: text, name: text) key(1, 3).
+rel /extract/records(path: text, digest: text, families: text) -> (record: text, family: text, span: span, callee: text) key(1, 3).
+rel /extract/type_node_at(path: text, digest: text, families: text) -> (record: text, family: text, owner: span, text: text) key(1, 3).
 
 rel want(glob: text).
 
 rel source_file(path: text, digest: text).
-source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
+source_file(Path, Digest) <- want(Glob), /soopy/files(Glob, Path, Digest).
 
 # The marker names are a fact table, so a second heavy primitive is one row.
 rel recompute_call(name: text).
@@ -59,13 +54,13 @@ guard_call('load_rel_digest').
 rel proc_def(path: text, proc_start: int, proc_end: int, proc_name: text).
 proc_def(Path, ProcStart, ProcEnd, ProcName) <-
   source_file(Path, Digest),
-  call_node_at(Path, Digest, 'node', 'call', ProcAt, _ProcKind, ProcName),
+  /extract/call_node_at(Path, Digest, "call,type", 'node', 'call', ProcAt, _ProcKind, ProcName),
   decode(ProcAt, {start: ProcStart, end: ProcEnd}).
 
 rel call_at(path: text, site_start: int, site_end: int, callee: text).
 call_at(Path, SiteStart, SiteEnd, Callee) <-
   source_file(Path, Digest),
-  extract(Path, Digest, 'site', 'call', SiteAt, Callee),
+  /extract/records(Path, Digest, "call,type", 'site', 'call', SiteAt, Callee),
   decode(SiteAt, {start: SiteStart, end: SiteEnd}).
 
 # `doc`'s owner is the TYPE-family node span, the declared identifier, which
@@ -73,7 +68,7 @@ call_at(Path, SiteStart, SiteEnd, Callee) <-
 rel doc_note(path: text, owner_start: int, owner_end: int, note: text).
 doc_note(Path, OwnerStart, OwnerEnd, Note) <-
   source_file(Path, Digest),
-  type_node_at(Path, Digest, 'doc', 'type', OwnerAt, Note),
+  /extract/type_node_at(Path, Digest, "call,type", 'doc', 'type', OwnerAt, Note),
   decode(OwnerAt, {start: OwnerStart, end: OwnerEnd}).
 
 # `_in_proc` minus `_has_closer` is v5's `_above` minus `_closer`, over

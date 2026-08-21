@@ -393,7 +393,7 @@ fn stage_and_commit_responses_reenter_the_generic_host_runner_on_later_ticks() {
     ]);
     let stage_plans = [stage_plan];
     let stage_rows = [HostAdapterRow {
-        adapter: "soopy.stage".to_string(),
+        adapter: "/soopy/stage".to_string(),
         demand_rel: "stage_demand".to_string(),
         response_rel: "stage_response".to_string(),
     }];
@@ -458,7 +458,7 @@ fn stage_and_commit_responses_reenter_the_generic_host_runner_on_later_ticks() {
     );
     let commit_plans = [commit_plan];
     let commit_rows = [HostAdapterRow {
-        adapter: "soopy.commit".to_string(),
+        adapter: "/soopy/commit".to_string(),
         demand_rel: "commit_demand".to_string(),
         response_rel: "commit_response".to_string(),
     }];

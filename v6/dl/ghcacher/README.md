@@ -58,19 +58,19 @@ any of these.
 
 | host | executor name | file | crate |
 |---|---|---|---|
-| `http.fetch` | `http_fetch` | `executors/fetch.rs` | `ureq` |
-| `env.var` | `env` | `executors/env.rs` | std |
-| `gh.repos` | `gh_repos` | `executors/repos.rs` | `ureq` |
-| `soopy.checkout` | `soopy_checkout` | `executors/checkout.rs` | `soopy` |
-| `toml.json` | `toml_json` | `executors/toml.rs` | `basic-toml` |
+| `/http/fetch` | `http_fetch` | `executors/fetch.rs` | `ureq` |
+| `/env/var` | `env` | `executors/env.rs` | std |
+| `/gh/repos` | `gh_repos` | `executors/repos.rs` | `ureq` |
+| `/soopy/checkout` | `soopy_checkout` | `executors/checkout.rs` | `soopy` |
+| `/toml/json` | `toml_json` | `executors/toml.rs` | `basic-toml` |
 
 The gate itself is scripted, so it reads no adapter row; `DL_ADAPTERS_DIR` only
 matters for the live smoke below, and even there it is a fallback, never
 consulted for a rostered dotted name.
 
-`ghcacher_config_golden` spells its path-existence probe as the `gh.repos`
+`ghcacher_config_golden` spells its path-existence probe as the `/gh/repos`
 host and its config read as `answer` (its own header explains the deviation).
-`gh.repos` IS now a rostered, executor-linked name, but the LIVE `gh_repos`
+`/gh/repos` IS now a rostered, executor-linked name, but the LIVE `gh_repos`
 executor answers a different question (a real GitHub repos lookup) than this
 fixture's file-exists probe -- the mismatch is a naming collision, not a
 missing binding. `ghcacher_config_golden.adapters.json` stays empty because

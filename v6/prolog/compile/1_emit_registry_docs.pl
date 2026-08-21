@@ -77,6 +77,7 @@ dl6_grammar(Text) :-
         { "include": "#rule-arrow" },
         { "include": "#semicolon" },
         { "include": "#enum-shape" },
+        { "include": "#executor-path" },
         { "include": "#decl-words" },
         { "include": "#live-keywords" },
         { "include": "#reserved-keywords" },
@@ -129,9 +130,13 @@ dl6_grammar(Text) :-
       "name": "storage.type.enum.dl6",
       "match": "\\\\brel\\\\b(?=\\\\s+[a-z_]\\\\w*\\\\s*\\\\([^\\\\n]*;)"
     },
+    "executor-path": {
+      "name": "entity.name.function.dl6",
+      "match": "/[a-z_]\\\\w*(?:/[a-z_]\\\\w*)*(?=\\\\s*\\\\()"
+    },
     "decl-words": {
       "name": "storage.type.declaration.dl6",
-      "match": "\\\\b(rel|sh|bind|log|keep|key|int|float|bool|text|json|bytes|salt)\\\\b"
+      "match": "\\\\b(rel|log|keep|key|int|float|bool|text|json|bytes|salt)\\\\b"
     },
     "live-keywords": {
       "name": "keyword.control.dl6",

@@ -20,7 +20,7 @@ rel points_budget(bucket: int, calls_this_tick: int).
 
 rel interval(period: int, bucket: int).
 
-rel http.fetch(repo_slug: text, bucket: int) ->
+rel /http/fetch(repo_slug: text, bucket: int) ->
   (status: int, full_name: text) key(1).
 
 rel poll(repo_slug: text, bucket: int).
@@ -66,7 +66,7 @@ poll(RepoSlug, Bucket) <-
 
 resp(RepoSlug, Bucket, Status, FullName) <-
   poll(RepoSlug, Bucket),
-  http.fetch(RepoSlug, Bucket, Status, FullName).
+  /http/fetch(RepoSlug, Bucket, Status, FullName).
 
 ? batch_query(Bucket, BatchIndex, SlugList).
 ? points_budget(Bucket, CallsThisTick).

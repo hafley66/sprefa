@@ -80,7 +80,7 @@ rel repos(org: text, bucket: int) -> (root: text) key(1).
 # It is a distinct NAME rather than a mode column on `repos` for the same reason
 # repo_files is distinct from files: a host is name-keyed, and "which backend"
 # is not a value this language can carry as a null or a default.
-rel gh.repos(org: text, bucket: int) -> (slug: text) key(1).
+rel /gh/repos(org: text, bucket: int) -> (slug: text) key(1).
 
 rel want_org(org: text).
 
@@ -102,16 +102,16 @@ repo_file(root, path, digest) <-
 
 # ── extraction, repo-scoped ─────────────────────────────────────────────────
 #
-# `repo` is what makes this a DIFFERENT EXECUTOR from the unscoped `extract.records`
-# host (registry.pl arrival_executor(extract__repo_records, 'extract.repo_records')).
+# `repo` is what makes this a DIFFERENT EXECUTOR from the unscoped `/extract/records`
+# host (registry.pl arrival_executor(extract__repo_records, '/extract/repo_records')).
 #
 # `digest` is freshness -- unchanged blob oids are a cache hit per file, and the
 # extractor does not run at all.
-rel extract.repo_records(repo: text, path: text, digest: text, families: text) -> (callee: text) key(1, 2, 4).
+rel /extract/repo_records(repo: text, path: text, digest: text, families: text) -> (callee: text) key(1, 2, 4).
 
 rel repo_call(repo: text, path: text, callee: text).
 repo_call(root, path, callee) <-
-  repo_file(root, path, digest), extract.repo_records(root, path, digest, "call", callee).
+  repo_file(root, path, digest), /extract/repo_records(root, path, digest, "call", callee).
 
 # ── the finding ─────────────────────────────────────────────────────────────
 # One rail over the whole org, written once, with no idea how many repositories

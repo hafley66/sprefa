@@ -821,7 +821,7 @@ ruling(arrival_identity_spelling, key_positions_are_demand_identity_on_arrival_r
 % string and validate_template/4 guards on the non-empty templates the term
 % door may still carry.
 ruling(sh_bind_surface_removed, arrival_rel_is_the_only_spelling, user,
-       'user 2026-08-21 verbatim: "all the old bind and sh and host shit is now just arrival and ticks". bind interval/watch included; clock.tick and soopy.watch are arrival rels answered by continuing executors, and a continuing executor''s re-answer is a tick.').
+       'user 2026-08-21 verbatim: "all the old bind and sh and host shit is now just arrival and ticks". bind interval/watch included; /clock/tick and /soopy/watch are arrival rels answered by continuing executors, and a continuing executor''s re-answer is a tick.').
 
 % Fork 4, the fixture executor. A fixture answer is rows arriving from
 % outside, so it travels the arrival paths that already exist (--arrive and
@@ -831,8 +831,8 @@ ruling(fixture_answers_are_arrivals, schedule_and_arrive_replace_fixture_executo
        'arrivals-and-ticks brief 2026-08-21: a rel whose rows arrive from outside is still just a rel; a canned answer is an arrival batch, not an executor.').
 
 % Executor namespacing, same brief: every rel that reaches an executor is
-% spelled <executor>.<question> dotted (soopy.files, http.fetch, gh.repos,
-% clock.tick, soopy.watch), as scip.diet.call already is. The registry''s
+% spelled <executor>.<question> dotted (/soopy/files, /http/fetch, /gh/repos,
+% /clock/tick, /soopy/watch), as /scip/diet/call already is. The registry''s
 % arrival_executor/2 rows are the one roster; LINKED_EXECUTORS in
 % sprefa-engine-rs/src/hosts.rs lists the same names and a test pins the two
 % equal. An arrival rel no executor links (a replay-only fixture feeder) keeps
@@ -849,7 +849,7 @@ ruling(key_column_annotation_over_suffix, annotation_preferred, user,
 
 % 2026-08-21, amendment to executor_namespacing: the executor path is spelled
 % with SLASHES, not dots. `rel /soopy/files(glob: key(text)) -> (path: text,
-% digest: text).` scip.diet.call becomes /scip/diet/call. The dotted spelling
+% digest: text).` /scip/diet/call becomes /scip/diet/call. The dotted spelling
 % never reaches a user's eye; the internal __ atom join (module_path_name/2)
 % is unchanged.
 ruling(executor_path_slashes, slash_separated_executor_paths, user,

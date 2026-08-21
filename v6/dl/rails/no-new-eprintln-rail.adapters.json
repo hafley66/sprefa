@@ -1,7 +1,0 @@
-[
- {
-  "adapter": "soopy_files",
-  "demand_rel": "__host_demand_files",
-  "response_rel": "__host_response_files"
- }
-]
