@@ -839,3 +839,18 @@ ruling(fixture_answers_are_arrivals, schedule_and_arrive_replace_fixture_executo
 % a plain name; it reaches no executor, so the namespace rule does not bind it.
 ruling(executor_namespacing, dotted_executor_question_names_registry_is_roster, user,
        'arrivals-and-ticks brief 2026-08-21: "non confusing named and well namespaced"; no bare files, no bare fetch. The __ atom join (module_path_name/2) stays the internal spelling.').
+% Key is a column annotation: `rel files(glob: key(text)) -> (path, digest)`.
+% `key(int)` is the type relation `rel key(Target: type) -> Target`
+% (compile/test/annotation_surface.test.pl:26, dl/fixtures/0_typespec_basic_probe.dl6:25).
+% The suffix form `) key(1)` (parse_dl_dcg.pl:863 key_clause) is deprecated:
+% no new program writes it, the one-rel collapse rewrites what it touches.
+ruling(key_column_annotation_over_suffix, annotation_preferred, user,
+       'chat 2026-08-21: "key is annotation generic now, key at suffix special position is defunct"').
+
+% 2026-08-21, amendment to executor_namespacing: the executor path is spelled
+% with SLASHES, not dots. `rel /soopy/files(glob: key(text)) -> (path: text,
+% digest: text).` scip.diet.call becomes /scip/diet/call. The dotted spelling
+% never reaches a user's eye; the internal __ atom join (module_path_name/2)
+% is unchanged.
+ruling(executor_path_slashes, slash_separated_executor_paths, user,
+       'user 2026-08-21: "the executor path is spelled with slashes". Applies across parser (parse_dl_dcg.pl), registry roster, LINKED_EXECUTORS (sprefa-engine-rs/src/hosts.rs), every .dl6 and test string, tmLanguage and docs.').
