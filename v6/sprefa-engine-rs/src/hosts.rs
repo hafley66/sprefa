@@ -450,11 +450,40 @@ fn source_commit_response(host: &str, env: &BTreeMap<String, String>) -> Result<
 #[derive(Default)]
 pub struct SprefaExtractExecutor {
     batches: Mutex<BTreeMap<String, soopy::GitBatch>>,
+    // Repository roots by containing directory. `soopy::discover` walks the
+    // filesystem upward for `.git` and measured 28ms, so asking it once per
+    // FILE re-derives the same root 82 times for one crate and cost 2.29s of a
+    // 3.55s run. Keyed on the directory rather than the file so siblings share
+    // one answer, and only ever grown, since a checkout root does not move
+    // under a running fold.
+    roots: Mutex<HashMap<PathBuf, PathBuf>>,
 }
 
 static EXTRACT: LazyLock<SprefaExtractExecutor> = LazyLock::new(SprefaExtractExecutor::default);
 
 impl SprefaExtractExecutor {
+    /// The checkout root containing `path`, derived once per directory.
+    fn repository_root(&self, path: &str) -> Option<PathBuf> {
+        let file = PathBuf::from(path);
+        let directory = file.parent().unwrap_or(Path::new(".")).to_path_buf();
+        if let Some(root) = self
+            .roots
+            .lock()
+            .expect("repository root memo")
+            .get(&directory)
+        {
+            return Some(root.clone());
+        }
+        let span = tracing::info_span!("discover", dir = %directory.display());
+        let _entered = span.enter();
+        let root = soopy::discover(file).ok().map(|repository| repository.root)?;
+        self.roots
+            .lock()
+            .expect("repository root memo")
+            .insert(directory, root.clone());
+        Some(root)
+    }
+
     // One batch process per repository root, never one per blob. An oid the
     // object database has never seen is not a stop on its own: `git hash-object`
     // over a worktree file yields a real content address for content that was
@@ -563,11 +592,7 @@ impl IHostExecutor for SprefaExtractExecutor {
                 let repo_root = env
                     .get("repo")
                     .map(std::path::PathBuf::from)
-                    .or_else(|| {
-                        soopy::discover(std::path::PathBuf::from(&path))
-                            .ok()
-                            .map(|repository| repository.root)
-                    })
+                    .or_else(|| self.repository_root(&path))
                     .ok_or_else(|| {
                         named(format!("no repository root for digest read of {path}"))
                     })?;
