@@ -111,3 +111,4 @@ node_modules
 /REPORT.md
 .boop-worktrees/
 .issuectl/write.lock
+!.cargo/config.toml
