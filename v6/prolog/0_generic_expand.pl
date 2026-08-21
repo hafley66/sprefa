@@ -1359,7 +1359,7 @@ carrier_member_type(pairs, Position, Pairs, Type) :-
 
 % Keyed by owner, not by member. Same cache scope as semantic_decl_id/4, which
 % is what makes one Decls list per scope safe to assume.
-owner_member_carrier(Decls, OwnerName, Carrier) :-
+owner_member_carrier(_Decls, OwnerName, Carrier) :-
     atom(OwnerName),
     nb_current(generic_semantic_id_cache, cache(_, _, OwnerIndex)),
     OwnerIndex \== none,
