@@ -28,7 +28,8 @@
 :- op(200, fy, [#, @, ~]).
 
 :- thread_local finding_fact/1, rel_column_order_fact/2,
-                host_signature_fact/3, source_statement_fact/3,
+                host_signature_fact/3, host_path_fact/2,
+                source_statement_fact/3,
                 parse_marks_on/0.
 
 % THREAD_LOCAL, not dynamic: parse_dl_source/5 retracts all four at entry and
@@ -102,6 +103,9 @@ lookup_column_order(Name, Cols) :- rel_column_order_fact(Name, Cols).
 record_host_signature(Name, Ins, Outs) :-
     retractall(host_signature_fact(Name, _, _)),
     assertz(host_signature_fact(Name, Ins, Outs)).
+record_host_path(Name, Segments) :-
+    retractall(host_path_fact(Name, _)),
+    assertz(host_path_fact(Name, Segments)).
 
 
 parse_dl_file(File, Prog, Bindings, Findings) :-
@@ -140,7 +144,8 @@ parse_dl_marked_failure(Source, Codes, Reason) :-
 parse_dl_pass(_, Codes, Prog, Bindings, Findings) :-
     maplist(retractall,
             [ finding_fact(_), rel_column_order_fact(_, _),
-              host_signature_fact(_, _, _), source_statement_fact(_, _, _) ]),
+              host_signature_fact(_, _, _), host_path_fact(_, _),
+              source_statement_fact(_, _, _) ]),
     length(Codes, Len),
     nb_setval(parse_input_length, Len),
     nb_setval(parse_furthest_remaining, Len),
@@ -150,7 +155,8 @@ parse_dl_pass(_, Codes, Prog, Bindings, Findings) :-
     ( Left == [] -> true ; mark(Left), parse_failure(trailing_input) ),
     resolve_module_path_collisions(Decls0, Decls1),
     normalize_relation_value_decls(Decls1, Decls),
-    normalize_host_calls(Decls, Rules0, Rules),
+    flatten_host_paths(Decls, Rules0, Rules1),
+    normalize_host_calls(Decls, Rules1, Rules),
     b_getval(dl_vars, VarsFinal),
     maplist([Name-Var, Name=Var]>>true, VarsFinal, BindingsRev),
     reverse(BindingsRev, Bindings),
@@ -267,6 +273,31 @@ declaration_source_ref(sh_decl(Name, Ins, Outs, _), Name/Arity) :-
     append(Ins, Outs, Cols),
     length(Cols, Arity).
 
+
+% A dotted host goal is a NAME with segments, never a nested rel, so it
+% flattens to its module-path atom here rather than reaching the dot-expansion
+% phase: normalize_host_leaf/3 below reads the goal's FUNCTOR against the sh
+% declarations, and rel_path/2's functor is `rel_path`.
+flatten_host_paths(Decls, Rules, Out) :-
+    (   member(sh_decl(_, _, _, _), Decls)
+    ->  maplist(flatten_host_path_rule(Decls), Rules, Out)
+    ;   Out = Rules
+    ).
+
+flatten_host_path_rule(Decls, Rule0, Rule) :-
+    Rule0 =.. [Op, Head, Body], memberchk(Op, [<-, <+]), !,
+    map_tree(',', flatten_host_path_leaf(Decls), Body, Flattened),
+    Rule =.. [Op, Head, Flattened].
+flatten_host_path_rule(Decls, match(Source, Arms), match(Source, Flattened)) :- !,
+    map_tree(';', flatten_host_path_rule(Decls), Arms, Flattened).
+flatten_host_path_rule(_, Rule, Rule).
+
+flatten_host_path_leaf(Decls, rel_path(Segments, Args), Atom) :-
+    module_path_name(Segments, Name),
+    member(sh_decl(Name, _, _, _), Decls),
+    !,
+    Atom =.. [Name | Args].
+flatten_host_path_leaf(_, Item, Item).
 
 normalize_host_calls(Decls, Rules, Out) :-
     maplist(normalize_host_rule(Decls), Rules, Out).
@@ -987,9 +1018,16 @@ bind_decl_stmt(bind_decl(Name, Cols)) -->
 
 % sh_head//2 is called separately by each clause, never shared across them:
 % clause 2 must reparse the columns so column_type_wrapper is recorded twice.
+%
+% The name is a DOTTED PATH, so `scip.call` and `scip.diet.call` are two host
+% namespaces answering the same question with different evidence. The atom every
+% later phase carries is module_path_name/2's `__` join, which is already this
+% compiler's spelling for a dotted name and is a legal SQL and Rust identifier;
+% the dotted form survives only in the author's text and in print_dl's output.
 sh_head(Name, Specs) -->
-    ~`sh`, ws, ident(Name), #`(`,
-    decl_b_columns(Name, Specs), #`)`, ws.
+    ~`sh`, ws, dotted_path(Segments), { module_path_name(Segments, Name) }, #`(`,
+    decl_b_columns(Name, Specs), #`)`, ws,
+    { record_host_path(Name, Segments) }.
 
 sh_decl_stmt(sh_decl(Name, Ins, Outs, template(Template))) -->
     sh_head(Name, InSpecs),

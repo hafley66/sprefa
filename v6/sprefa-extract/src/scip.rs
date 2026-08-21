@@ -318,7 +318,7 @@ fn build_indexer(spec: &IndexerSpec, root: &Path) -> Result<PathBuf, ScipError> 
     let work = match spec.staging {
         Staging::InPlace => root.to_path_buf(),
         Staging::Always { exts, extra_names } => {
-            let work = stage.join("work");
+            let work = persistent_stage(spec.bin, root)?;
             copy_sources(root, &work, exts, extra_names)?;
             work
         }
@@ -330,7 +330,7 @@ fn build_indexer(spec: &IndexerSpec, root: &Path) -> Result<PathBuf, ScipError> 
             if root.join(marker).is_file() {
                 root.to_path_buf()
             } else {
-                let work = stage.join("work");
+                let work = persistent_stage(spec.bin, root)?;
                 copy_sources(root, &work, exts, extra_names)?;
                 work
             }
@@ -366,6 +366,22 @@ fn build_indexer(spec: &IndexerSpec, root: &Path) -> Result<PathBuf, ScipError> 
     }
 }
 
+/// The SAME staging dir every run for one (root, indexer). A fresh dir each
+/// time hands the indexer no `target/`, so every run recompiles every build
+/// script and proc-macro cold; on hafley-rs that turned a 12s in-place index
+/// into a 25-minute one.
+///
+/// Under the OS temp dir keyed by the root's path digest, NEVER under the root:
+/// the corpus is committed fixture trees in this crate's own tests and the seam
+/// law is that reading a corpus never writes to it.
+fn persistent_stage(bin: &str, root: &Path) -> Result<PathBuf, ScipError> {
+    let key = crate::scip_ensure::root_key(root);
+    let work = std::env::temp_dir().join(format!("sprefa-scip-stage-{bin}-{key}"));
+    std::fs::create_dir_all(&work)
+        .map_err(|e| ScipError::IndexerFailed(format!("stage {}: {e}", work.display())))?;
+    Ok(work)
+}
+
 /// A fresh uniquely-named temp dir (no tempfile dep): base + pid + nanos.
 fn fresh_temp_dir(prefix: &str) -> Result<PathBuf, ScipError> {
     let nanos = std::time::SystemTime::now()
@@ -380,15 +396,20 @@ fn fresh_temp_dir(prefix: &str) -> Result<PathBuf, ScipError> {
 
 /// Copy the sources under `src_root` to `dst_root`, preserving relative
 /// structure: files whose extension is in `exts` plus files whose bare name is
-/// in `extra_names` (rust's Cargo.toml manifests). node_modules/.git/dist/out/
-/// target and friends are not sources. Used only when the build stages (see
-/// each impl's `build`).
-fn copy_sources(
+/// in `extra_names` (rust's Cargo.toml manifests).
+///
+/// A CHILD DIRECTORY CARRYING ITS OWN `.git` IS A DIFFERENT CHECKOUT and is
+/// never staged: a nested worktree or submodule is not part of this workspace,
+/// and copying one hands the indexer a second copy of every crate. Measured on
+/// hafley-rs, whose `.boop-worktrees/**` holds lane checkouts: 2320 `.rs` staged
+/// before this rule, 129 after.
+pub fn copy_sources(
     src_root: &Path,
     dst_root: &Path,
     exts: &[&str],
     extra_names: &[&str],
 ) -> Result<(), ScipError> {
+    let mut staged: Vec<PathBuf> = Vec::new();
     let mut stack = vec![src_root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let entries = std::fs::read_dir(&dir)
@@ -398,10 +419,11 @@ fn copy_sources(
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if path.is_dir() {
-                if !matches!(
+                let is_build_output = matches!(
                     name.as_ref(),
                     "node_modules" | ".git" | "dist" | "out" | "target"
-                ) {
+                );
+                if !is_build_output && !path.join(".git").exists() {
                     stack.push(path);
                 }
                 continue;
@@ -418,6 +440,44 @@ fn copy_sources(
             }
             std::fs::copy(&path, &dst)
                 .map_err(|e| ScipError::IndexerFailed(format!("copy: {e}")))?;
+            staged.push(dst);
+        }
+    }
+    prune_unstaged(dst_root, &staged, exts, extra_names)
+}
+
+/// A persistent stage keeps whatever a previous run left, so a source deleted
+/// from the corpus would still be indexed. Only source files are pruned; the
+/// indexer's own `target/` is what the stage exists to keep warm.
+fn prune_unstaged(
+    dst_root: &Path,
+    staged: &[PathBuf],
+    exts: &[&str],
+    extra_names: &[&str],
+) -> Result<(), ScipError> {
+    let keep: std::collections::HashSet<&Path> = staged.iter().map(PathBuf::as_path).collect();
+    let mut stack = vec![dst_root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if path.is_dir() {
+                if name.as_ref() != "target" {
+                    stack.push(path);
+                }
+                continue;
+            }
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if !exts.contains(&ext) && !extra_names.contains(&name.as_ref()) {
+                continue;
+            }
+            if !keep.contains(path.as_path()) {
+                let _ = std::fs::remove_file(&path);
+            }
         }
     }
     Ok(())

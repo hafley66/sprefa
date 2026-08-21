@@ -609,11 +609,52 @@ fn load_scip(
     let Some(root) = request.project_root else {
         return Err(ProjectError::ScipNeedsRoot);
     };
-    let index_path = source.build(root).map_err(ProjectError::Scip)?;
+    // `build` alone staged the index into a temp dir and dropped it, so every
+    // ask paid a whole index build again; `ensure_index_for_set` places it in
+    // the cache dir with its set sidecar and reuses it while the set holds.
+    let set = index_set_of(inputs);
+    // OUTSIDE the root, keyed by it: `--scip-build` resolves an arbitrary path
+    // list and its roots include this crate's own committed fixture trees, which
+    // reading must never write to. `--family scip ROOT` and the engine's scip
+    // hosts are the callers that mean "index this repository" and they keep
+    // `default_cache_dir`.
+    let cache = crate::scip_ensure::external_cache_dir(root);
+    let report = crate::scip_ensure::ensure_index_for_set(
+        root,
+        &cache,
+        IndexBudget::from_env(),
+        Some(&set),
+    );
+    let index_path = report.index.ok_or_else(|| {
+        ProjectError::ScipIndexerUnavailable(
+            report
+                .skips
+                .iter()
+                .map(|skip| format!("{}: {}", skip.lang, skip.reason.detail()))
+                .collect::<Vec<_>>()
+                .join("; "),
+        )
+    })?;
     source
         .load(&index_path)
         .map(Some)
         .map_err(ProjectError::Scip)
+}
+
+/// The freshness set for one resolve: the supplied paths and their content ids.
+pub(crate) fn index_set_of(inputs: &[ProjectInput]) -> crate::scip_ensure::IndexSet {
+    crate::scip_ensure::IndexSet::new(
+        inputs
+            .iter()
+            .map(|input| (input.path.clone(), content_id_text(&input.blob))),
+    )
+}
+
+fn content_id_text(blob: &ContentId) -> String {
+    match blob {
+        ContentId::GitBlob(oid) => oid.0.to_string(),
+        ContentId::Blake3(bytes) => bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
+    }
 }
 
 /// The indexer for the supplied file set. One index means one indexer, so a

@@ -1,0 +1,68 @@
+# @comment-ok: the file header states which evidence each namespace carries,
+# which is the whole reason the two names exist and is not visible in the code.
+#
+#   scip.diet.call   this crate's tree-sitter front-ends, resolved by name match
+#   scip.call        a real SCIP index, resolved by the language's own indexer
+#
+# Same question, same output columns, one host name apart. Where they disagree
+# is the point: a name several files define is unresolvable to a name match and
+# resolved through the import by an index, which is the evidence
+# rail_unproven_module in dead-module-rail.dl6 has no way to get.
+#
+# rx: fileSet$.pipe(mergeMap(runScip), groupBy(row => row.callee)).
+
+rel want(glob: text).
+
+# One `git hash-object` process for the whole set, routed to the linked
+# `soopy_files` adapter by the sidecar; the template is the readable spelling.
+sh files(glob: text) -> (path: text, digest: text) =
+  `git ls-files -- '{glob}' | git hash-object --stdin-paths`.
+
+rel source_file(path: text, digest: text).
+source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
+
+# THE INTERFACING TYPE: registry.pl scip_interface_columns/2 is the one list
+# both are checked against (compile/test/scip_namespaces.test.pl).
+sh scip.diet.call(repo: text, path: text, digest: text)
+  -> (record: text, family: text, caller_path: text, callee_path: text,
+      callee: text, kind: text) =
+  `cd {repo} && "$DL_EXTRACT_BIN" --family diet_scip {path}`.
+sh scip.call(repo: text, path: text, digest: text)
+  -> (record: text, family: text, caller_path: text, callee_path: text,
+      callee: text, kind: text) =
+  `cd {repo} && "$DL_EXTRACT_BIN" --resolve --project-root . --scip-build {path}`.
+
+# ONE rel for both, so the column list is written once and a namespace is a
+# column value rather than a second shape.
+rel receiver_edge(source: text, callee: text, caller_path: text,
+                  callee_path: text, kind: text).
+receiver_edge('scip.diet', Callee, CallerPath, CalleePath, Kind) <-
+  source_file(Path, Digest),
+  scip.diet.call('.', Path, Digest, 'resolved_edge', 'call',
+                 CallerPath, CalleePath, Callee, Kind).
+receiver_edge('scip', Callee, CallerPath, CalleePath, Kind) <-
+  source_file(Path, Digest),
+  scip.call('.', Path, Digest, 'resolved_edge', 'call',
+            CallerPath, CalleePath, Callee, Kind).
+
+# A cross-file edge is the one a name match cannot prove: the caller and the
+# definition it reached are different files.
+rel cross_file_edge(source: text, callee: text, caller_path: text,
+                    callee_path: text, kind: text).
+cross_file_edge(Source, Callee, CallerPath, CalleePath, Kind) <-
+  receiver_edge(Source, Callee, CallerPath, CalleePath, Kind),
+  CallerPath != CalleePath.
+
+rel snapshot_edge(source: text, caller_path: text, callee_path: text, kind: text).
+snapshot_edge(Source, CallerPath, CalleePath, Kind) <-
+  receiver_edge(Source, 'snapshot', CallerPath, CalleePath, Kind).
+
+rel edge_count(source: text, edges: int).
+edge_count(Source, count(Callee)) <- receiver_edge(Source, Callee, _C, _D, _K).
+
+rel cross_file_count(source: text, edges: int).
+cross_file_count(Source, count(Callee)) <- cross_file_edge(Source, Callee, _C, _D, _K).
+
+? snapshot_edge(source, caller_path, callee_path, kind).
+? edge_count(source, edges).
+? cross_file_count(source, edges).

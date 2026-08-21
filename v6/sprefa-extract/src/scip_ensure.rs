@@ -10,7 +10,8 @@
 //!   4. a root with markers and no installed toolchain is a LOUD NAMED SKIP,
 //!      never a failure — a missing indexer skips the root, it never kills the
 //!      caller.
-//! No freshness check, exactly as v5: a stale index is the user's to rebuild.
+//! Freshness is digest-of-set, never mtime (user decision 2026-08-21); the
+//! `SPREFA_SCIP_INDEX` override is exempt from it and wins untouched.
 //!
 //! WHAT CHANGED, and why.
 //!
@@ -185,6 +186,101 @@ pub struct IndexerSkip {
     pub reason: SkipReason,
 }
 
+/// The file set an index was built from: sorted, deduplicated (path, digest)
+/// pairs plus the digest of that list, which is the freshness coordinate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IndexSet {
+    entries: Vec<(String, String)>,
+    digest: String,
+}
+
+impl IndexSet {
+    /// Sorted and deduplicated at construction, so one corpus arriving in two
+    /// orders is one set and one digest.
+    pub fn new<I>(pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (String, String)>,
+    {
+        let mut entries: Vec<(String, String)> = pairs.into_iter().collect();
+        entries.sort();
+        entries.dedup();
+        let joined: String = entries
+            .iter()
+            .map(|(path, digest)| format!("{path} {digest}\n"))
+            .collect();
+        let digest = match crate::shape::ContentId::blake3(joined.as_bytes()) {
+            crate::shape::ContentId::Blake3(bytes) => hex_of(&bytes),
+            crate::shape::ContentId::GitBlob(oid) => oid.0.to_string(),
+        };
+        Self { entries, digest }
+    }
+
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+
+    pub fn paths(&self) -> impl Iterator<Item = &str> {
+        self.entries.iter().map(|(path, _)| path.as_str())
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    fn lines(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .map(|(path, digest)| format!("{path} {digest}"))
+            .collect()
+    }
+}
+
+fn hex_of(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct IndexSetSidecar {
+    digest: String,
+    files: Vec<String>,
+}
+
+/// The sidecar sits at the index path plus a suffix, so the two are found,
+/// moved and deleted together and no second directory is invented.
+fn sidecar_path(index: &Path) -> PathBuf {
+    let mut name = index.as_os_str().to_os_string();
+    name.push(".set.json");
+    PathBuf::from(name)
+}
+
+fn recorded_digest(index: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(sidecar_path(index)).ok()?;
+    serde_json::from_str::<IndexSetSidecar>(&text)
+        .ok()
+        .map(|sidecar| sidecar.digest)
+}
+
+/// Stamp `index` with the set it was built from, which is what later makes it
+/// reusable. Best effort: an unwritable dir costs the next run its reuse only.
+pub fn record_index_set(index: &Path, set: &IndexSet) {
+    let sidecar = IndexSetSidecar {
+        digest: set.digest().to_string(),
+        files: set.lines(),
+    };
+    if let Ok(text) = serde_json::to_string(&sidecar) {
+        let _ = std::fs::write(sidecar_path(index), text);
+    }
+}
+
 /// What `ensure_index` found or made. `index` is None only when no index could
 /// be produced, and then `skips` says why for every detected indexer; an empty
 /// `skips` with no index means the root carries no marker file at all.
@@ -208,7 +304,19 @@ pub struct EnsureReport {
 /// index this function itself placed there (the reuse path goes through
 /// `index_path`, which knows all three v5 locations).
 pub fn ensure_index(root: &Path, cache_dir: &Path, budget: IndexBudget) -> EnsureReport {
-    if let Some(path) = index_path(root, cache_dir) {
+    ensure_index_for_set(root, cache_dir, budget, None)
+}
+
+/// `ensure_index` with a freshness ask. `Some(set)` reuses an index only when
+/// its recorded set digest equals this one; `None` is the unconditional v5 form.
+pub fn ensure_index_for_set(
+    root: &Path,
+    cache_dir: &Path,
+    budget: IndexBudget,
+    set: Option<&IndexSet>,
+) -> EnsureReport {
+    let want = set.map(IndexSet::digest);
+    if let Some(path) = index_path_for_set(root, cache_dir, want) {
         return EnsureReport {
             index: Some(path),
             reused: true,
@@ -264,7 +372,7 @@ pub fn ensure_index(root: &Path, cache_dir: &Path, budget: IndexBudget) -> Ensur
             skips,
         };
     }
-    match place(&parts, cache_dir) {
+    match place(&parts, cache_dir, set) {
         Ok(path) => EnsureReport {
             index: Some(path),
             reused: false,
@@ -292,7 +400,11 @@ pub fn ensure_index(root: &Path, cache_dir: &Path, budget: IndexBudget) -> Ensur
 /// Place the built parts at the cache path: a single part moves, several merge.
 /// The merge is a document union (v5 `scip_import::merge_files`), which is sound
 /// because every indexer namespaces its symbols by tool and package.
-fn place(parts: &[(&'static str, PathBuf)], cache_dir: &Path) -> Result<PathBuf, ScipError> {
+fn place(
+    parts: &[(&'static str, PathBuf)],
+    cache_dir: &Path,
+    set: Option<&IndexSet>,
+) -> Result<PathBuf, ScipError> {
     std::fs::create_dir_all(cache_dir)
         .map_err(|e| ScipError::Parse(format!("mkdir {}: {e}", cache_dir.display())))?;
     let out = cache_dir.join("index.scip");
@@ -305,6 +417,9 @@ fn place(parts: &[(&'static str, PathBuf)], cache_dir: &Path) -> Result<PathBuf,
         crate::scip_decode::merge_indexes(&sources, &out)?;
     }
     gitignore_state(cache_dir);
+    if let Some(set) = set {
+        record_index_set(&out, set);
+    }
     Ok(out)
 }
 
@@ -564,6 +679,12 @@ pub fn which(bin: &str) -> Option<PathBuf> {
 /// order silently shadowed a fresh re-index at a lower-priority path for two
 /// days. Whichever tool wrote an index most recently is the one the user means.
 pub fn index_path(root: &Path, cache_dir: &Path) -> Option<PathBuf> {
+    index_path_for_set(root, cache_dir, None)
+}
+
+/// `index_path` with the freshness ask. `Some(digest)` keeps only candidates
+/// whose recorded set digest equals it; mtime then breaks the remaining tie.
+pub fn index_path_for_set(root: &Path, cache_dir: &Path, want: Option<&str>) -> Option<PathBuf> {
     if let Some(explicit) = std::env::var_os("SPREFA_SCIP_INDEX") {
         let explicit = PathBuf::from(explicit);
         if explicit.is_file() {
@@ -577,6 +698,10 @@ pub fn index_path(root: &Path, cache_dir: &Path) -> Option<PathBuf> {
     ]
     .into_iter()
     .filter(|candidate| candidate.is_file())
+    .filter(|candidate| match want {
+        None => true,
+        Some(want) => recorded_digest(candidate).as_deref() == Some(want),
+    })
     .max_by_key(|candidate| {
         std::fs::metadata(candidate)
             .and_then(|meta| meta.modified())
@@ -587,4 +712,19 @@ pub fn index_path(root: &Path, cache_dir: &Path) -> Option<PathBuf> {
 /// The v5 cache location for a root: `<root>/.dl/.state`.
 pub fn default_cache_dir(root: &Path) -> PathBuf {
     root.join(".dl").join(".state")
+}
+
+/// A cache location for a root that is OUTSIDE it, keyed by the root path so it
+/// is the same directory every run. For callers that read a corpus they do not
+/// own: a committed fixture tree must not gain a `.dl/` from being resolved.
+pub fn external_cache_dir(root: &Path) -> PathBuf {
+    std::env::temp_dir().join(format!("sprefa-scip-cache-{}", root_key(root)))
+}
+
+/// The first eight bytes of the root path's digest, hex.
+pub fn root_key(root: &Path) -> String {
+    match crate::shape::ContentId::blake3(root.as_os_str().as_encoded_bytes()) {
+        crate::shape::ContentId::Blake3(bytes) => hex_of(&bytes[..8]),
+        crate::shape::ContentId::GitBlob(oid) => oid.0.to_string(),
+    }
 }

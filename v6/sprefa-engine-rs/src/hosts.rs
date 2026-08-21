@@ -39,6 +39,9 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
         // The linked twin: sprefa-extract runs in this process, no child spawn.
         "sprefa_extract" => Some(&*EXTRACT),
         "soopy_files" => Some(&SoopyFilesExecutor),
+        // The two scip namespaces, both in-process: no child spawn for the
+        // diet side, one budgeted indexer run for the index side.
+        "sprefa_scip" => Some(&*SCIP),
         _ => None,
     }
 }
@@ -62,7 +65,7 @@ fn executor_for_plan(
 }
 
 fn is_applicative(execution: &str) -> bool {
-    execution == "sprefa_extract"
+    matches!(execution, "sprefa_extract" | "sprefa_scip")
 }
 
 /// Linked executor for the tracked-file surface: a pathspec in, one
@@ -460,6 +463,305 @@ pub struct SprefaExtractExecutor {
 }
 
 static EXTRACT: LazyLock<SprefaExtractExecutor> = LazyLock::new(SprefaExtractExecutor::default);
+
+// ═══ the scip namespaces ════════════════════════════════════════════════════
+
+/// Which evidence a `scip.*` host answers from.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum ScipEvidence {
+    /// A real SCIP index, built by the language's own indexer under the budget.
+    Index,
+    /// The tree-sitter front-ends resolved by name match over the file set.
+    Diet,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum ScipInterface {
+    Call,
+    Type,
+}
+
+/// The `__` join is what the parser's dotted host name lowers to, so this is
+/// the whole namespace roster the registry declares.
+fn scip_namespace(host: &str) -> Option<(ScipInterface, ScipEvidence)> {
+    match host {
+        "scip__call" => Some((ScipInterface::Call, ScipEvidence::Index)),
+        "scip__diet__call" => Some((ScipInterface::Call, ScipEvidence::Diet)),
+        "scip__type" => Some((ScipInterface::Type, ScipEvidence::Index)),
+        "scip__diet__type" => Some((ScipInterface::Type, ScipEvidence::Diet)),
+        _ => None,
+    }
+}
+
+/// One resolve over one file set, indexed by the file that owns each row.
+#[derive(Default)]
+struct ScipFold {
+    call: HashMap<String, Vec<serde_json::Value>>,
+    types: HashMap<String, Vec<serde_json::Value>>,
+    /// Named skips ride every file's answer: a root with no installed indexer
+    /// says so on the wire and exits 0, it never stops the fold.
+    skips: Vec<serde_json::Value>,
+}
+
+/// `scip.<x>` and `scip.diet.<x>`, both answered in this process.
+///
+/// A DEMAND ARRIVES PER FILE AND AN INDEX IS PER REPOSITORY, so the runner's
+/// applicative grouping cannot collapse these into one call: its key is the
+/// whole ordered input list and `path` is in it, so every file is its own
+/// group. `prime` is the smallest change that closes the gap. `collect` sees a
+/// tick's whole claimed demand list before it runs any group, so it hands the
+/// set here first and each file's answer then comes out of one fold.
+#[derive(Default)]
+pub struct ScipNamespaceExecutor {
+    /// Per repository root, the (path, digest) pairs demanded in this process.
+    /// Unioned across ticks: a set that grows is a new set and a new fold.
+    sets: Mutex<HashMap<PathBuf, std::collections::BTreeSet<(String, String)>>>,
+    /// One fold per (root, set digest, evidence).
+    folds: Mutex<HashMap<String, Arc<ScipFold>>>,
+}
+
+static SCIP: LazyLock<ScipNamespaceExecutor> = LazyLock::new(ScipNamespaceExecutor::default);
+
+impl ScipNamespaceExecutor {
+    /// The whole tick's file set, before any group runs.
+    fn prime(&self, entries: &[(PathBuf, String, String)]) {
+        let mut sets = self.sets.lock().expect("scip demand set");
+        for (root, path, digest) in entries {
+            sets.entry(root.clone())
+                .or_default()
+                .insert((path.clone(), digest.clone()));
+        }
+    }
+
+    fn set_for(&self, root: &Path, path: &str, digest: &str) -> sprefa_extract::IndexSet {
+        let sets = self.sets.lock().expect("scip demand set");
+        match sets.get(root) {
+            Some(entries) if !entries.is_empty() => {
+                sprefa_extract::IndexSet::new(entries.iter().cloned())
+            }
+            // An unprimed demand is its own set: one file asked on its own is a
+            // one-file corpus, never a silent whole-repository read.
+            _ => sprefa_extract::IndexSet::new([(path.to_string(), digest.to_string())]),
+        }
+    }
+
+    fn fold(
+        &self,
+        host: &str,
+        root: &Path,
+        set: &sprefa_extract::IndexSet,
+        evidence: ScipEvidence,
+        interface: ScipInterface,
+    ) -> Result<Arc<ScipFold>, HostError> {
+        let key = format!(
+            "{}|{}|{evidence:?}|{interface:?}",
+            root.display(),
+            set.digest()
+        );
+        if let Some(found) = self.folds.lock().expect("scip fold memo").get(&key) {
+            return Ok(found.clone());
+        }
+        let built = Arc::new(build_scip_fold(host, root, set, evidence, interface)?);
+        self.folds
+            .lock()
+            .expect("scip fold memo")
+            .insert(key, built.clone());
+        Ok(built)
+    }
+}
+
+/// The one place a scip fold is computed: an index build plus a resolve, or the
+/// name-match resolve alone.
+fn build_scip_fold(
+    host: &str,
+    root: &Path,
+    set: &sprefa_extract::IndexSet,
+    evidence: ScipEvidence,
+    interface: ScipInterface,
+) -> Result<ScipFold, HostError> {
+    let named = |message: String| HostError {
+        host: host.to_string(),
+        message,
+    };
+    let paths: Vec<PathBuf> = set.paths().map(PathBuf::from).collect();
+    // ONE arm, the one this namespace answers. Running the other is a second
+    // whole-project resolve for rows nobody declared.
+    let arms = sprefa_extract::ResolveArms {
+        call: interface == ScipInterface::Call,
+        types: interface == ScipInterface::Type,
+        flow: false,
+    };
+    let mut fold = ScipFold::default();
+    let facts = match evidence {
+        ScipEvidence::Diet => {
+            let span = tracing::info_span!("scip_diet", files = paths.len());
+            let _entered = span.enter();
+            sprefa_extract::resolve_project(&sprefa_extract::ResolveRequest {
+                paths: &paths,
+                arms,
+                scip: sprefa_extract::ScipMode::Off,
+                project_root: Some(root),
+                scip_records: sprefa_extract::ScipRecords::all(),
+                occurrence_text: false,
+            })
+            .map_err(|error| named(format!("diet resolve: {error}")))?
+        }
+        ScipEvidence::Index => {
+            let cache = sprefa_extract::default_cache_dir(root);
+            let span = tracing::info_span!(
+                "scip_index",
+                repo = %root.display(),
+                files = set.len(),
+                fresh = tracing::field::Empty
+            );
+            let entered = span.enter();
+            let report = sprefa_extract::ensure_index_for_set(
+                root,
+                &cache,
+                sprefa_extract::IndexBudget::from_env(),
+                Some(set),
+            );
+            span.record("fresh", report.reused);
+            drop(entered);
+            for skip in &report.skips {
+                fold.skips.push(serde_json::json!({
+                    "record": "scip_skip",
+                    "lang": skip.lang,
+                    "bin": skip.bin,
+                    "reason": skip.reason.slug(),
+                    "detail": skip.reason.detail(),
+                }));
+            }
+            // A root with no installed indexer answers its named skips and
+            // exits 0. An empty stream reads as "this project has no calls".
+            let Some(index) = report.index else {
+                return Ok(fold);
+            };
+            let span = tracing::info_span!("scip_resolve", files = paths.len());
+            let _entered = span.enter();
+            sprefa_extract::resolve_project(&sprefa_extract::ResolveRequest {
+                paths: &paths,
+                arms,
+                scip: sprefa_extract::ScipMode::Load(&index),
+                project_root: Some(root),
+                scip_records: sprefa_extract::ScipRecords::all(),
+                occurrence_text: false,
+            })
+            .map_err(|error| named(format!("index resolve: {error}")))?
+        }
+    };
+    for fact in &facts {
+        let value = serde_json::to_value(fact).map_err(|error| named(error.to_string()))?;
+        let Some(object) = value.as_object() else {
+            continue;
+        };
+        match object.get("record").and_then(serde_json::Value::as_str) {
+            Some("resolved_edge") => {
+                let (Some(caller), Some(callee_path), Some(callee)) = (
+                    string_field(object, "caller_path"),
+                    string_field(object, "callee_path"),
+                    string_field(object, "callee_name"),
+                ) else {
+                    continue;
+                };
+                fold.call
+                    .entry(caller.clone())
+                    .or_default()
+                    .push(serde_json::json!({
+                        "record": "resolved_edge",
+                        "family": "call",
+                        "caller_path": caller,
+                        "callee_path": callee_path,
+                        "callee": callee,
+                        "kind": string_field(object, "kind").unwrap_or_default(),
+                    }));
+            }
+            Some("resolved_type_edge") => {
+                let (Some(owner), Some(target_path), Some(target)) = (
+                    string_field(object, "owner_path"),
+                    string_field(object, "target_path"),
+                    string_field(object, "target_name"),
+                ) else {
+                    continue;
+                };
+                fold.types
+                    .entry(owner.clone())
+                    .or_default()
+                    .push(serde_json::json!({
+                        "record": "resolved_type_edge",
+                        "family": "type",
+                        "owner_path": owner,
+                        "target_path": target_path,
+                        "target": target,
+                        "kind": string_field(object, "kind").unwrap_or_default(),
+                    }));
+            }
+            _ => {}
+        }
+    }
+    Ok(fold)
+}
+
+fn string_field(object: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
+    object.get(key)?.as_str().map(str::to_string)
+}
+
+impl IHostExecutor for ScipNamespaceExecutor {
+    fn run(
+        &self,
+        host: &str,
+        _command_line: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, HostError> {
+        let named = |message: String| HostError {
+            host: host.to_string(),
+            message,
+        };
+        let Some((interface, evidence)) = scip_namespace(host) else {
+            return Err(named(
+                "not a scip namespace; the roster is scip.call, scip.diet.call, \
+                 scip.type and scip.diet.type"
+                    .to_string(),
+            ));
+        };
+        let path = source_mutation_input(host, env, "path")?;
+        let digest = env.get("digest").cloned().unwrap_or_default();
+        let root = scip_root(host, env)?;
+        let set = self.set_for(&root, &path, &digest);
+        let fold = self.fold(host, &root, &set, evidence, interface)?;
+        let rows = match interface {
+            ScipInterface::Call => fold.call.get(&path),
+            ScipInterface::Type => fold.types.get(&path),
+        };
+        let span = tracing::info_span!(
+            "scip_answer",
+            host,
+            path = %path,
+            rows = rows.map_or(0, Vec::len)
+        );
+        let _entered = span.enter();
+        let mut lines: Vec<String> = fold
+            .skips
+            .iter()
+            .chain(rows.into_iter().flatten())
+            .map(serde_json::Value::to_string)
+            .collect();
+        lines.sort();
+        Ok(lines.join("\n"))
+    }
+}
+
+/// The repository root the demand's `repo` column names, absolute: a relative
+/// spelling resolves against the process cwd, the tree the harness ran in.
+fn scip_root(host: &str, env: &BTreeMap<String, String>) -> Result<PathBuf, HostError> {
+    let repo = source_mutation_input(host, env, "repo")?;
+    let candidate = PathBuf::from(&repo);
+    std::fs::canonicalize(&candidate).map_err(|failure| HostError {
+        host: host.to_string(),
+        message: format!("repo `{repo}` is not a readable directory: {failure}"),
+    })
+}
+
 
 impl SprefaExtractExecutor {
     /// The checkout root containing `path`, derived once per directory.
@@ -1225,6 +1527,30 @@ impl<'p> HostLiveRunner<'p> {
                 self.claim_once(&name, &witness)
             })
             .collect();
+        // The whole tick's scip file set reaches the executor BEFORE any group
+        // runs: an index is per repository and a demand is per file, so the
+        // applicative key (which carries `path`) can never collapse them.
+        let mut scip_demands: Vec<(PathBuf, String, String)> = Vec::new();
+        for demand in &claimed {
+            if self.execution_for(demand.plan) != "sprefa_scip" {
+                continue;
+            }
+            let text = |name: &str| {
+                demand
+                    .inputs
+                    .get(name)
+                    .map(shell_text)
+                    .unwrap_or_default()
+            };
+            let repo = text("repo");
+            if let Ok(root) = std::fs::canonicalize(PathBuf::from(&repo)) {
+                scip_demands.push((root, text("path"), text("digest")));
+            }
+        }
+        if !scip_demands.is_empty() {
+            SCIP.prime(&scip_demands);
+        }
+
         let mut arrivals = Vec::new();
         let mut group_index: HashMap<String, usize> = HashMap::new();
         let mut groups: Vec<Vec<&HostDemand<'p>>> = Vec::new();

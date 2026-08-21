@@ -2055,6 +2055,72 @@ sites but not against new code. **missing** = nothing.
   `test_only_calls` (`v6/sprefa-extract/src/lang/rust.rs`) reports it dead.
   Unit rail: `tests/30_rust_mod_scope_owner.rs`
   `rust_test_only_callees_leave_out_every_shipped_name`.
+## 56. An index that was never checked for freshness and never kept
+
+- WHAT IT LOOKS LIKE: a resolve answers instantly and answers wrong, or answers
+  correctly and costs a full index build every single time. Both come from the
+  same missing coordinate, so a reader who sees one has no reason to look for
+  the other.
+- HOW IT BIT US: 2026-08-21. `scip_ensure::index_path` picked the newest-mtime
+  index among three known locations and nothing compared it to the file set the
+  caller was asking about, exactly as v5 did and with the same header saying so.
+  A corpus that moved kept answering out of whatever index happened to be on
+  disk. The other half is the mirror image: `ScipMode::Build` called
+  `ScipSource::build` directly, which stages into a fresh temp dir and returns
+  that path, so a 25-minute index over `~/projects/hafley-rs` left nothing
+  behind (`find -maxdepth 3 -name '*.scip'` empty afterwards) and the next ask
+  paid it again.
+- WHY IT HID: mtime reads like freshness. It is not: a newer index over a
+  different file set is the wrong answer, and an older index over the identical
+  set is the right one. Nothing on the wire named the set an index came from,
+  so no consumer could tell the two apart even in principle.
+- THE LAW: freshness is digest-of-set (user decision 2026-08-21). An index is
+  current when the set of (path, content digest) it was built from equals the
+  set the program is asking about, and never because of a timestamp. An index
+  that was built is kept where the next ask will find it.
+- THE RAIL: `IndexSet` is the set and its digest; `record_index_set` writes
+  `<index>.set.json` beside the index; `index_path_for_set` returns a candidate
+  only when the recorded digest equals the asked one, and `SPREFA_SCIP_INDEX`
+  is the one exemption because an explicitly named index is the caller
+  overriding the search rather than joining it. Fail-pre-fix receipts in
+  `v6/sprefa-extract/tests/scip_freshness.rs`:
+  `stale_set_rebuilds_and_the_original_set_still_hits` asserts `None` for a set
+  with one changed digest and a hit for the original, and
+  `a_stale_index_makes_ensure_rebuild_rather_than_reuse` asserts the rebuild is
+  attempted rather than the stale index reused.
+
+## 57. A hermetic staging copy that indexed six repositories instead of one
+
+- WHAT IT LOOKS LIKE: an indexer run that everyone accepts as slow because
+  indexing is the one named exception to the 10-second law. The exception is
+  what stops anyone from asking why the number is what it is.
+- HOW IT BIT US: 2026-08-21. `extract --resolve --scip-build` over
+  `~/projects/hafley-rs` ran 25m37s. The same indexer over the same workspace in
+  place ran 11.8s: 130x, none of it the indexer. Two causes, both in the staging
+  copy. `copy_sources` skipped only build-output directory NAMES, so every lane
+  checkout under `.boop-worktrees/**` was copied whole: 2320 `.rs` staged where
+  the workspace holds 129, and 99 `Cargo.toml` where it holds 8. Then
+  `Staging::Always` staged into a FRESH temp dir every run, so rust-analyzer's
+  cargo resolution found no `target/` and recompiled every build script and
+  proc-macro cold each time.
+- WHY IT HID: the budget did not fire. `run_capped` capped the indexer at its
+  600s default and the indexer itself stayed inside it; the extra minutes were
+  the copy and the cold cargo resolution, which are the caller's own work and
+  carry no cap. A budget on the child process alone measures the wrong thing
+  when most of the wall is spent getting the child ready to run.
+- THE LAW: a directory carrying its own `.git` is a different checkout and is
+  never part of this workspace. A staging dir that is thrown away is a staging
+  dir that pays for its own build cache every run.
+- THE RAIL: `copy_sources` skips any child directory holding a `.git` file or
+  directory, and `persistent_stage` keys one stage dir per (root, indexer) under
+  the OS temp dir, so its `target/` warms across runs while the corpus itself is
+  never written to. `prune_unstaged` deletes staged sources the corpus dropped,
+  leaving `target/` alone. Fail-pre-fix receipts in
+  `v6/sprefa-extract/tests/scip_freshness.rs`:
+  `a_nested_checkout_is_never_staged` builds a fixture holding both a worktree
+  (`.git` file) and a submodule (`.git` dir) and asserts neither is staged;
+  `a_persistent_stage_drops_a_source_the_corpus_deleted` asserts the prune and
+  asserts `target/` survives it.
 
 ## 56. A runtime with no per-verb clock, and three optimizations aimed at the wrong 12%
 

@@ -19,6 +19,8 @@
             host_execution/3,
             host_input_contract/3,
             host_input_roles/3,
+            host_output_contract/3,
+            scip_namespace_host/3,
             http_route/3,
             expression/5,
             expression_for_term/5,
@@ -325,6 +327,10 @@ bind_definition(watch,    [col(glob, text), col(path, text), col(digest, text)])
 bind_executor(interval, live_interval).
 bind_executor(watch,    live_watch).
 
+% One clause set is spread across two blocks: the scip rows sit with the rest
+% of the scip namespace rather than in name order.
+:- discontiguous host_input_contract/3.
+
 % `sh` is shorthand for a shell-executed host and nothing else.
 host_execution(_, _, shell).
 
@@ -470,6 +476,51 @@ host_input_contract(git_toplevel,
 host_input_contract(toml_json,
                     [col(config_path, text), col(bucket, int)],
                     [identity, freshness]).
+
+% ═══ scip ═══════════════════════════════════════════════════════════════════
+%
+% TWO NAMESPACES, ONE QUESTION. `scip.<x>` answers from a real SCIP index built
+% by the language's own indexer, `scip.diet.<x>` from this crate's tree-sitter
+% front-ends resolved by name match across the supplied file set. Both spell the
+% same `<x>` and both carry the SAME output columns, so a program swaps one for
+% the other by changing the host name and nothing else. Where they disagree is
+% the whole reason the two names exist: a name several files define is
+% unresolvable to a name match and resolved through the import by an index.
+%
+% The dl6 spelling is dotted (`sh scip.diet.call(...)`); the atom every phase
+% below the parser carries is module_path_name/2's `__` join, which is what the
+% demand and response rel names, the emitted SQL identifiers, and the adapters
+% sidecar all use.
+%
+% The input contract is repo_extract's, shared by ONE clause over the four
+% names rather than four hand-copied lists: `repo` and `path` are identity and
+% return on the response row, `digest` is freshness so an unchanged file
+% re-asked is a cache hit.
+scip_namespace_host(scip__call,       call, index).
+scip_namespace_host(scip__diet__call, call, diet).
+scip_namespace_host(scip__type,       type, index).
+scip_namespace_host(scip__diet__type, type, diet).
+
+host_input_contract(Name,
+                    [col(repo, text), col(path, text), col(digest, text)],
+                    [identity, identity, freshness]) :-
+    scip_namespace_host(Name, _, _).
+
+% The INTERFACING TYPE, keyed on `<x>` alone so the two namespaces cannot drift:
+% one clause per interface, read through scip_namespace_host/3. `record` is the
+% wire tag, `family` the resolve arm, `kind` the edge kind the arm named.
+host_output_contract(Name, Interface, Columns) :-
+    scip_namespace_host(Name, Interface, _),
+    scip_interface_columns(Interface, Columns).
+
+scip_interface_columns(call,
+                       [col(record, text), col(family, text),
+                        col(caller_path, text), col(callee_path, text),
+                        col(callee, text), col(kind, text)]).
+scip_interface_columns(type,
+                       [col(record, text), col(family, text),
+                        col(owner_path, text), col(target_path, text),
+                        col(target, text), col(kind, text)]).
 
 host_input_roles(Name, Inputs, Roles) :-
     ( host_input_contract(Name, Inputs, ContractRoles)
