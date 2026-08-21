@@ -395,7 +395,7 @@ fn one_touched_file_produces_exactly_one_extra_tick() {
 ///   - dropping the `stays_resident` arm from dl6.rs::run makes this exit at
 ///     tick 0 and reds the tick-count assertion with 1 bucket.
 #[test]
-fn a_resident_run_measures_itself_and_its_memory_stays_flat() {
+fn a_resident_run_measures_itself_and_a_storeless_program_stays_flat() {
     let scratch = Scratch::new();
     let mut child = scratch
         .dl6()
@@ -452,8 +452,10 @@ fn a_resident_run_measures_itself_and_its_memory_stays_flat() {
     let low = *resident.iter().min().expect("a low reading");
     let high = *resident.iter().max().expect("a high reading");
     assert!(low > 0, "the resident set is a real reading, got {resident:?}");
-    // A resident fold that leaked a tick's rows would climb without bound; 25%
-    // over the whole series is slack for allocator behaviour, not for a leak.
+    // SCOPE: this program stores five rows a tick, so a climb here is the LOOP
+    // leaking, never stored history. A program with a real `keep(all)` log grows
+    // by design and is not pinned by this number (v6/dl/prwatch measured
+    // 46 MB to 100 MB over six ticks; PR #407 body carries the series).
     assert!(
         high * 4 <= low * 5,
         "rss climbed from {low} kB to {high} kB across {} ticks: {resident:?}",
