@@ -1,0 +1,28 @@
+# Typed ast-grep rule host. `request` is the documented AstRuleRequest YAML
+# schema owned by sprefa-extract: id, rule, optional utils, optional fix.
+# The host plan carries `execution: "ast_rule"`; Rust dispatches it in-process.
+
+bind watch(glob: text, path: text, digest: text).
+
+sh ast_rule(path: text, digest: text, request: text) ->
+  (record: text, query: text, source_path: text, content: json, span: json,
+   captures: json, proposal: json) =
+  `"$SPREFA_AST_RULE_HOST" "{path}" "{request}"`.
+
+rel file(path: text, digest: text).
+file(Path, Digest) <- watch('**/*.rs', Path, Digest).
+
+rel rule_request(id: text, request: text).
+
+# `proposal` is the typed AstRuleMutationProposal JSON. The extractor exposes
+# proposal.stage_request(root, action_source, producer) as the Soopy bridge.
+# DL6 currently has no relation-to-JSON-array aggregate for forming one
+# StageRequest from several proposal rows; source-mutations.dl6 owns that
+# aggregate boundary.
+rel ast_rule_match(path: text, query: text, content: json, span: json,
+                   captures: json, proposal: json).
+ast_rule_match(Path, Query, Content, Span, Captures, Proposal) <-
+  file(Path, Digest),
+  rule_request(_, Request),
+  ast_rule(Path, Digest, Request, 'ast_rule', Query, _, Content, Span,
+           Captures, Proposal).

@@ -30,7 +30,7 @@ pub use soopy::ContentId;
 // ════════════════════════════════════════════════════════════════════════════
 
 /// THE one coordinate. Byte offsets into the file; line/col derived, never stored.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct Span {
     pub start: u32,
     pub len: u32,

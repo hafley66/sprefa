@@ -7,6 +7,8 @@
 //! type/call/df via oxc); anything else with an ast-grep grammar falls to
 //! `AstgrepSource` (cst-only).
 
+#[path = "1_ast_rule.rs"]
+pub mod ast_rule;
 pub mod astgrep;
 pub mod data;
 pub mod dl6;
@@ -18,6 +20,10 @@ pub mod python;
 pub mod rust;
 pub mod ts;
 
+pub use ast_rule::{
+    decode_ast_rule_yaml, query_ast_rule, AstRule, AstRuleCapture, AstRuleError, AstRuleMatch,
+    AstRuleMutationProposal, AstRuleRequest, NamedAstRule, StopBy,
+};
 pub use astgrep::{
     query_patterns, AstCaptureFact, AstGrepParser, AstPatternQuery, AstgrepSource, CstProjector,
     SgRoot,

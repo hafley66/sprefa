@@ -24,6 +24,7 @@
                          listened_departure_refs/2, program_uses_tick/2 ]).
 :- use_module('1_host_expand', [compile_host_decl/2, query_decl/3,
                                 host_plan_contract/2]).
+:- use_module('compile/registry', [host_execution/3]).
 :- use_module('0_option_expand', [option_enum_name/2]).
 
 :- op(1150, xfx, <-).
@@ -426,7 +427,7 @@ host_plan_dict(host_plan(Name, Inputs, Outputs, template(Template),
                Dict) :-
     maplist(host_column_dict, Inputs, InputDicts),
     maplist(host_column_dict, Outputs, OutputDicts),
-    Executor = shell,
+    host_execution(Name, Template, Executor),
     Base = _{ name: Name, inputs: InputDicts, outputs: OutputDicts,
               template: Template, demand_rel: DemandName,
               response_rel: ResponseName, execution: Executor },

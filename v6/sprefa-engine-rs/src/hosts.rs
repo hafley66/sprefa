@@ -43,6 +43,7 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
         "soopy" => Some(&SoopyMutationExecutor),
         // The linked twin: sprefa-extract runs in this process, no child spawn.
         "sprefa_extract" => Some(&*EXTRACT),
+        "ast_rule" => Some(&AstRuleExecutor),
         "soopy_files" => Some(&SoopyFilesExecutor),
         // The ghcacher four, all linked: HTTP, the process env table, the
         // GitHub REST walk, an existing checkout, and a TOML document.
@@ -82,6 +83,46 @@ fn executor_for_plan(
 
 fn is_applicative(execution: &str) -> bool {
     matches!(execution, "sprefa_extract" | "sprefa_scip")
+}
+
+/// Typed ast-grep rule execution. The request arrives as the DL6 `text`
+/// transport for the documented `AstRuleRequest` YAML schema; parsing and rule
+/// matching happen through the linked extractor library, never through `sg`.
+pub struct AstRuleExecutor;
+
+impl IHostExecutor for AstRuleExecutor {
+    fn run(
+        &self,
+        host: &str,
+        _command_line: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, HostError> {
+        let path = source_mutation_input(host, env, "path")?;
+        let request_yaml = source_mutation_input(host, env, "request")?;
+        let request =
+            sprefa_extract::decode_ast_rule_yaml(&request_yaml).map_err(|error| HostError {
+                host: host.to_string(),
+                message: format!("decode ast_rule request: {error}"),
+            })?;
+        let bytes = std::fs::read(&path).map_err(|error| HostError {
+            host: host.to_string(),
+            message: format!("read ast_rule source {path}: {error}"),
+        })?;
+        let rows =
+            sprefa_extract::query_ast_rule(&path, &bytes, &request).map_err(|error| HostError {
+                host: host.to_string(),
+                message: format!("execute ast_rule request: {error}"),
+            })?;
+        rows.into_iter()
+            .map(|row| {
+                serde_json::to_string(&row).map_err(|error| HostError {
+                    host: host.to_string(),
+                    message: format!("serialize ast_rule row: {error}"),
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(|rows| rows.join("\n"))
+    }
 }
 
 /// Linked executor for the tracked-file surface: a pathspec in, one
@@ -806,7 +847,9 @@ impl SprefaExtractExecutor {
         }
         let span = tracing::info_span!("discover", dir = %directory.display());
         let _entered = span.enter();
-        let root = soopy::discover(file).ok().map(|repository| repository.root)?;
+        let root = soopy::discover(file)
+            .ok()
+            .map(|repository| repository.root)?;
         self.roots
             .lock()
             .expect("repository root memo")
@@ -854,9 +897,14 @@ impl SprefaExtractExecutor {
                 "read blob {digest} in {key}: {odb_error}; worktree {path} unreadable too: {failure}"
             ))
         })?;
-        let worktree_digest = soopy::hash_object(&soopy::discover(PathBuf::from(path)).map_err(
-            |error| named(format!("no repository for the worktree read of {path}: {error}")),
-        )?, &bytes)
+        let worktree_digest = soopy::hash_object(
+            &soopy::discover(PathBuf::from(path)).map_err(|error| {
+                named(format!(
+                    "no repository for the worktree read of {path}: {error}"
+                ))
+            })?,
+            &bytes,
+        )
         .map_err(|error| named(format!("hash the worktree {path}: {error}")))?;
         if worktree_digest.0.as_ref() != digest {
             return Err(named(format!(
