@@ -1,39 +1,22 @@
-# dead-module-rail.dl6 -- a module every other module has stopped calling.
-#
-# When a new door lands beside an old one, the old one keeps compiling and
-# keeps its tests, so nothing goes red. What goes quiet is its NAME: no file
-# outside it calls anything it defines.
-#
-#   ? rail_dead_module(path, defs).           one hop: nothing outside calls in
-#   ? rail_unreachable_module(path, defs).    the CRAWL: unreached from any
-#                                             declared root, however many dead
-#                                             neighbours call it
-#   ? module_reach(path, defs, used, ambiguous).   the readable table
-#
-# Name matching is the rule sprefa-extract's own `--resolve` uses for Rust
-# (`call_name_match`, CallEdgeKind::NameResolve), so a finding here is one the
-# extractor would make.
-#
-# rx lowering, per the standing law. Every host fan-out is one mergeMap over
-# rows; the crawl needs no recursion operator because the fixpoint IS the tick:
-#
-#   sourceFile$.pipe(map(mintIdentityAndWitness), distinct(row => row.witnessDigest),
-#                    mergeMap(runExtract), mergeMap(commitEdbArrival))
-#   defSite$.pipe(groupBy(row => row.path),
-#                 mergeMap(group => group.pipe(reduce(countOf))))    // = count
-#   liveFile$.pipe(mergeMap(callsOf), mergeMap(defFileOf), distinct())
+# rx: sourceFile$.pipe(distinct(row => row.witnessDigest), mergeMap(runExtract));
+# liveFile$.pipe(mergeMap(callsOf), mergeMap(defFileOf), distinct()).
 
 rel span(start: int, end: int).
 
 sh files(glob: text) -> (path: text, digest: text) =
   `git ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git hash-object -- "$entry")"; done`.
 
-# HOST NAMES ARE REGISTERED. registry.pl host_input_contract/3 is keyed on
-# hardcoded names, so only `call_node_at` may take the (path, digest) shape and
-# yield (record, family, span, kind, name); `extract` reads call SITES.
+# Host names are fixed by registry.pl host_input_contract/3; the declared OUTPUT
+# columns are what select records out of the one stream (hosts.rs:776 drops nulls).
 sh call_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text, name: text) =
   `"$DL_EXTRACT_BIN" --family call {path}`.
 sh extract(path: text, digest: text) -> (record: text, family: text, span: span, callee: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+sh call_ref(path: text, digest: text) -> (record: text, family: text, span: span, callee: text, callee_path: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+sh call_node(path: text, digest: text) -> (record: text, family: text, owner: span, self_type: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+sh sig_at(path: text, digest: text) -> (record: text, family: text, owner: span, trait: text) =
   `"$DL_EXTRACT_BIN" --family call {path}`.
 
 rel want(glob: text).
@@ -42,27 +25,50 @@ rel root_file(path: text).
 rel source_file(path: text, digest: text).
 source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
 
-# Rust puts free functions under `function` and methods under `method`; both
-# are callable by name, so both are definitions.
-rel def_site(path: text, name: text).
-def_site(Path, Name) <-
+# ── the def plane ───────────────────────────────────────────────────────────
+rel def_site(path: text, name: text, at: span).
+def_site(Path, Name, At) <-
   source_file(Path, Digest),
-  call_node_at(Path, Digest, 'node', 'call', _DefAt, 'function', Name).
-def_site(Path, Name) <-
+  call_node_at(Path, Digest, 'node', 'call', At, 'function', Name).
+def_site(Path, Name, At) <-
   source_file(Path, Digest),
-  call_node_at(Path, Digest, 'node', 'call', _DefAt, 'method', Name).
+  call_node_at(Path, Digest, 'node', 'call', At, 'method', Name).
 
+rel owner_self(path: text, at: span, self_type: text).
+owner_self(Path, At, SelfType) <-
+  source_file(Path, Digest),
+  call_node(Path, Digest, 'method_owner', 'call', At, SelfType).
+
+rel owner_trait(path: text, at: span, trait_name: text).
+owner_trait(Path, At, TraitName) <-
+  source_file(Path, Digest),
+  sig_at(Path, Digest, 'method_owner', 'call', At, TraitName).
+
+rel free_def(path: text, name: text).
+free_def(Path, Name) <-
+  def_site(Path, Name, At), not(owner_self(Path, At, _)), not(owner_trait(Path, At, _)).
+
+rel inherent_def(path: text, name: text, self_type: text).
+inherent_def(Path, Name, SelfType) <-
+  def_site(Path, Name, At), owner_self(Path, At, SelfType), not(owner_trait(Path, At, _)).
+
+rel trait_def(path: text, name: text, trait_name: text).
+trait_def(Path, Name, TraitName) <- def_site(Path, Name, At), owner_trait(Path, At, TraitName).
+
+# ── the call plane ──────────────────────────────────────────────────────────
 rel call_from(path: text, callee: text).
 call_from(Path, Callee) <-
   source_file(Path, Digest),
   extract(Path, Digest, 'site', 'call', _GoalAt, Callee).
 
-# A name defined in more than one file is a TRAIT METHOD SHAPE: every impl of
-# one trait spells `open`, `close`, `start_turn`. A call to that name names no
-# file, because the CST carries `impl_item` with no trait name on it, so two
-# impls are indistinguishable. Such a name is discounted rather than counted.
+rel qualified_call(path: text, callee: text, callee_path: text).
+qualified_call(Path, Callee, CalleePath) <-
+  source_file(Path, Digest),
+  call_ref(Path, Digest, 'site', 'call', _GoalAt, Callee, CalleePath).
+
+# ── ambiguity, for the readable table only ──────────────────────────────────
 rel name_def_files(name: text, files: int).
-name_def_files(Name, count(Path)) <- def_site(Path, Name).
+name_def_files(Name, count(Path)) <- def_site(Path, Name, _At).
 
 rel unique_name(name: text).
 unique_name(Name) <- name_def_files(Name, Files), Files == 1.
@@ -71,59 +77,82 @@ rel ambiguous_name(name: text).
 ambiguous_name(Name) <- name_def_files(Name, Files), Files > 1.
 
 rel def_ambiguous(path: text, name: text).
-def_ambiguous(Path, Name) <- def_site(Path, Name), ambiguous_name(Name).
+def_ambiguous(Path, Name) <- def_site(Path, Name, _At), ambiguous_name(Name).
 
 rel file_ambiguous(path: text, ambiguous: int).
 file_ambiguous(Path, count(Name)) <- def_ambiguous(Path, Name).
 
-rel used_across(name: text).
-used_across(Name) <-
-  def_site(DefPath, Name),
+# ── used-across, per class ──────────────────────────────────────────────────
+rel def_used_across(path: text, name: text).
+def_used_across(DefPath, Name) <-
+  free_def(DefPath, Name), unique_name(Name), call_from(CallPath, Name), DefPath \== CallPath.
+def_used_across(DefPath, Name) <-
+  inherent_def(DefPath, Name, _SelfType),
   unique_name(Name),
+  call_from(CallPath, Name),
+  DefPath \== CallPath.
+def_used_across(DefPath, Name) <-
+  inherent_def(DefPath, Name, SelfType),
+  qualified_call(CallPath, Name, CalleePath),
+  DefPath \== CallPath,
+  instr(CalleePath, SelfType) > 0.
+def_used_across(DefPath, Name) <-
+  trait_def(DefPath, Name, TraitName),
+  trait_def(_OtherPath, _OtherName, TraitName),
   call_from(CallPath, Name),
   DefPath \== CallPath.
 
 rel file_defs(path: text, defs: int).
-file_defs(Path, count(Name)) <- def_site(Path, Name).
-
-# An aggregate's body is one rel: the group key has to be delta-local, so the
-# join that decides membership lands in its own rel first.
-rel def_used_across(path: text, name: text).
-def_used_across(Path, Name) <- def_site(Path, Name), used_across(Name).
+file_defs(Path, count(Name)) <- def_site(Path, Name, _At).
 
 rel file_used(path: text, used: int).
 file_used(Path, count(Name)) <- def_used_across(Path, Name).
 
+# Every file with defs gets a used row and an ambiguous row, so the readable
+# table never drops a file for having a zero in one column.
+rel used_or_zero(path: text, used: int).
+used_or_zero(Path, Used) <- file_used(Path, Used).
+used_or_zero(Path, 0) <- file_defs(Path, _Defs), not(file_used(Path, _Used)).
+
+rel ambiguous_or_zero(path: text, ambiguous: int).
+ambiguous_or_zero(Path, Ambiguous) <- file_ambiguous(Path, Ambiguous).
+ambiguous_or_zero(Path, 0) <- file_defs(Path, _Defs), not(file_ambiguous(Path, _Amb)).
+
 rel module_reach(path: text, defs: int, used: int, ambiguous: int).
 module_reach(Path, Defs, Used, Ambiguous) <-
-  file_defs(Path, Defs), file_used(Path, Used), file_ambiguous(Path, Ambiguous).
+  file_defs(Path, Defs), used_or_zero(Path, Used), ambiguous_or_zero(Path, Ambiguous).
 
 # ── ONE HOP ─────────────────────────────────────────────────────────────────
-# The floor is 5 so a one-helper file does not read as an island.
 rel rail_dead_module(path: text, defs: int).
-rail_dead_module(Path, Defs) <-
-  file_defs(Path, Defs),
-  Defs >= 5,
-  not(file_used(Path, _)).
+rail_dead_module(Path, Defs) <- file_defs(Path, Defs), Defs >= 5, not(file_used(Path, _Used)).
 
 # ── THE CRAWL ───────────────────────────────────────────────────────────────
-# A one-hop rail calls a file live when ANY other file calls into it, even a
-# file that is itself dead. The crawl starts at declared roots and expands
-# until the frontier stops moving.
 rel live_file(path: text).
 live_file(Path) <- root_file(Path).
 live_file(Target) <-
-  live_file(Source),
-  call_from(Source, Callee),
-  unique_name(Callee),
-  def_site(Target, Callee).
+  live_file(Source), call_from(Source, Callee), unique_name(Callee), free_def(Target, Callee).
+live_file(Target) <-
+  live_file(Source), call_from(Source, Callee),
+  unique_name(Callee), inherent_def(Target, Callee, _SelfType).
+live_file(Target) <-
+  live_file(Source), qualified_call(Source, Callee, CalleePath),
+  inherent_def(Target, Callee, SelfType), instr(CalleePath, SelfType) > 0.
+
+# Dynamic dispatch: a live call on a trait method name reaches EVERY impl of
+# that trait, because the call site names no impl.
+rel trait_called(trait_name: text).
+trait_called(TraitName) <-
+  live_file(Source), call_from(Source, Callee), trait_def(_DefPath, Callee, TraitName).
+live_file(Target) <- trait_called(TraitName), trait_def(Target, _Name, TraitName).
 
 rel rail_unreachable_module(path: text, defs: int).
-rail_unreachable_module(Path, Defs) <-
-  file_defs(Path, Defs),
-  Defs >= 5,
-  not(live_file(Path)).
+rail_unreachable_module(Path, Defs) <- file_defs(Path, Defs), Defs >= 5, not(live_file(Path)).
 
+# A root outside the glob seeds nothing and every file then reads as unreachable.
+rel rail_root_not_a_source(path: text).
+rail_root_not_a_source(Path) <- root_file(Path), not(source_file(Path, _Digest)).
+
+? rail_root_not_a_source(path).
 ? rail_dead_module(path, defs).
 ? rail_unreachable_module(path, defs).
 ? module_reach(path, defs, used, ambiguous).

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # dead-module-rail.sh -- compile the rail through the rust door and print its
 # findings. Argument 1 is the tree to read, argument 2 the glob to seed.
-#   bash v6/dl/deadcode/dead-module-rail.sh ~/projects/hafley-rs 'crates/boop-acp/src/**/*.rs'
+# Argument 3 is a comma-separated root list; with none the crawl reaches nothing
+# and every file reads as unreachable.
+#   bash v6/dl/deadcode/dead-module-rail.sh ~/projects/hafley-rs 'crates/*/src/*.rs' 'crates/boop/src/main.rs'
+# In a git pathspec `*` crosses `/` but `**` demands a directory level, so
+# `crates/*/src/*.rs` matches 82 files where `crates/*/src/**/*.rs` matches 17.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V6="$(cd "$HERE/../.." && pwd)"
@@ -39,10 +43,12 @@ rows={}
 for line in open(sys.argv[1]):
     if not line.strip(): continue
     for rel,delta in json.loads(line)["deltas"].items():
-        if rel not in ("rail_dead_module","rail_unreachable_module","module_reach"): continue
+        if rel not in ("rail_dead_module","rail_unreachable_module","module_reach","rail_root_not_a_source"): continue
         live=rows.setdefault(rel,{})
         for r in delta.get("add",[]): live[json.dumps(r,sort_keys=True)]=r
         for r in delta.get("del",[]): live.pop(json.dumps(r,sort_keys=True),None)
+bad=sorted(rows.get("rail_root_not_a_source",{}).values())
+for r in bad: print(f"WARN root not in the glob: {r[0]}")
 dead=sorted(rows.get("rail_dead_module",{}).values(), key=lambda r:-int(r[1]))
 unre=sorted(rows.get("rail_unreachable_module",{}).values(), key=lambda r:-int(r[1]))
 reach=sorted(rows.get("module_reach",{}).values(), key=lambda r:-int(r[1]))
