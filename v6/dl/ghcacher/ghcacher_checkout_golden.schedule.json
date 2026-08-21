@@ -8,10 +8,10 @@
   ],
   [
     {
-      "rel":"__host_response_repo_checkout",
+      "rel":"__host_response_soopy__checkout",
       "sign":"add",
       "row":[
-        "witness|repo_checkout|repo_slug:text=cli/cli|dest_root:text=/clones|want_sha=sha-a1",
+        "witness|soopy__checkout|repo_slug:text=cli/cli|dest_root:text=/clones|want_sha=sha-a1",
         0,
         "cli/cli",
         "/clones",
@@ -20,10 +20,10 @@
       ]
     },
     {
-      "rel":"__host_response_repo_checkout",
+      "rel":"__host_response_soopy__checkout",
       "sign":"add",
       "row":[
-        "witness|repo_checkout|repo_slug:text=gh/gh|dest_root:text=/clones|want_sha=sha-b1",
+        "witness|soopy__checkout|repo_slug:text=gh/gh|dest_root:text=/clones|want_sha=sha-b1",
         0,
         "gh/gh",
         "/clones",
@@ -44,10 +44,10 @@
   ],
   [
     {
-      "rel":"__host_response_repo_checkout",
+      "rel":"__host_response_soopy__checkout",
       "sign":"add",
       "row":[
-        "witness|repo_checkout|repo_slug:text=cli/cli|dest_root:text=/clones|want_sha=sha-a2",
+        "witness|soopy__checkout|repo_slug:text=cli/cli|dest_root:text=/clones|want_sha=sha-a2",
         0,
         "cli/cli",
         "/clones",

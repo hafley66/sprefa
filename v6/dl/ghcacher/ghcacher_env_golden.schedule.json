@@ -4,10 +4,10 @@
     {"rel":"env_lookup","sign":"add","row":["GHCACHE_CONFIG"]}
   ],
   [
-    {"rel":"__host_response_env_var","sign":"add","row":["witness|env_var|name:text=GHCACHE_CONFIG|bucket=1",0,"GHCACHE_CONFIG","/env/config.toml"]}
+    {"rel":"__host_response_env__var","sign":"add","row":["witness|env__var|name:text=GHCACHE_CONFIG|bucket=1",0,"GHCACHE_CONFIG","/env/config.toml"]}
   ],
   [
-    {"rel":"__host_response_toml_json","sign":"add","row":["witness|toml_json|config_path:text=/env/config.toml|bucket=1",0,"/env/config.toml","{\"global\":{\"db_path\":\"/env/db.sqlite\"}}"]}
+    {"rel":"__host_response_toml__json","sign":"add","row":["witness|toml__json|config_path:text=/env/config.toml|bucket=1",0,"/env/config.toml","{\"global\":{\"db_path\":\"/env/db.sqlite\"}}"]}
   ],
   [
     {"rel":"interval","sign":"add","row":[3600,2]},
@@ -15,6 +15,6 @@
     {"rel":"config_candidate","sign":"add","row":[2,"~/user.toml"]}
   ],
   [
-    {"rel":"__host_response_toml_json","sign":"add","row":["witness|toml_json|config_path:text=flag.toml|bucket=2",0,"flag.toml","{\"global\":{\"db_path\":\"/repo/db.sqlite\"}}"]}
+    {"rel":"__host_response_toml__json","sign":"add","row":["witness|toml__json|config_path:text=flag.toml|bucket=2",0,"flag.toml","{\"global\":{\"db_path\":\"/repo/db.sqlite\"}}"]}
   ]
 ]
