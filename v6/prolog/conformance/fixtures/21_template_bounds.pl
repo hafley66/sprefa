@@ -114,3 +114,36 @@ fixture(unknown_bound_interface_is_named,
   [[+holder(1, obj([value-"a"]))]],
   [ throws(unsupported_construct(
                interface_unknown(missing_capability))) ]).
+
+% Relation-arrow sugar on templates (parse_dl_dcg.pl rel_stmt generic arm)
+% folds into an ordinary trailing `return` column before rel_template/3 is
+% minted, so a template's Specs already carries it here. These two fixtures
+% do not exercise the parser (fixture/5 is a pre-parsed AST, engine.pl:711);
+% they pin that 0_generic_expand.pl and engine.pl treat that trailing column
+% like any other, which is the contract the arrow fold depends on.
+fixture(unbounded_template_arrow_return_column,
+  prog([ rel_template([counter], [type_parameter('Node', [])],
+                      [column(node, 'Node'), column(return, int)]),
+         col_type(cursor/2, id, int),
+         col_type(cursor/2, pos, counter(text)),
+         keyed(cursor/2, [1]) ],
+       [ (carry(Id, Pos) <- cursor(Id, Pos)) ]),
+  [],
+  [[+cursor(1, obj([node-"a", return-7]))],
+   [-cursor(1, obj([node-"a", return-7]))]],
+  [ final(cursor/2, []), ticks(2) ]).
+
+fixture(bounded_template_arrow_return_column,
+  prog([ interface_decl(json_encodable, []),
+         rel_template([mapper],
+                      [type_parameter('In', [json_encodable]),
+                       type_parameter('Out', [json_encodable])],
+                      [column(input, 'In'), column(return, 'Out')]),
+         col_type(conversion/2, id, int),
+         col_type(conversion/2, applied, mapper(int, text)),
+         keyed(conversion/2, [1]) ],
+       [ (carry(Id, Applied) <- conversion(Id, Applied)) ]),
+  [],
+  [[+conversion(1, obj([input-5, return-"ok"]))],
+   [-conversion(1, obj([input-5, return-"ok"]))]],
+  [ final(conversion/2, []), ticks(2) ]).
