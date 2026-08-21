@@ -338,7 +338,7 @@ fn one_touched_file_produces_exactly_one_extra_tick() {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .expect("spawn dl6 watch");
+        .expect("spawn the resident file watch");
 
     // The first fold has to land before the touch, or the enumeration already
     // carries the new bytes and there is no second tick to count.
@@ -347,7 +347,7 @@ fn one_touched_file_produces_exactly_one_extra_tick() {
     std::fs::write(root.join("src/one.ts"), "export const one = 11;\n").expect("touch one.ts");
     std::thread::sleep(Duration::from_millis(3500));
     let _ = child.kill();
-    let output = child.wait_with_output().expect("collect dl6 watch");
+    let output = child.wait_with_output().expect("collect the resident file watch");
     let elapsed = started.elapsed();
     println!("dl6_run: watch one touch {:.2}s", elapsed.as_secs_f64());
     assert!(
@@ -384,5 +384,79 @@ fn one_touched_file_produces_exactly_one_extra_tick() {
     assert_ne!(
         lines[2], lines[0],
         "the add carries the new digest, so the change is a real freshness delta"
+    );
+}
+
+/// @comment-ok: TEST header carrying the fail-first receipts.
+/// Sabotage receipts:
+///   - returning `stat` rather than `subtract(&stat, &previous)` in cost.rs
+///     reds the flat-memory assertion, because `wall_ms` and `calls` climb
+///     without bound and the series stops describing one tick;
+///   - dropping the `stays_resident` arm from dl6.rs::run makes this exit at
+///     tick 0 and reds the tick-count assertion with 1 bucket.
+#[test]
+fn a_resident_run_measures_itself_and_its_memory_stays_flat() {
+    let scratch = Scratch::new();
+    let mut child = scratch
+        .dl6()
+        .env("RUST_LOG", "sprefa_engine_rs=info")
+        .arg("run")
+        .arg(fixture("tick_cost_beat.dl6"))
+        .args(["--final-tsv", "--final-only", "--final-rels", "tick_cost"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn the resident run");
+
+    let started = Instant::now();
+    std::thread::sleep(Duration::from_millis(8_000));
+    let _ = child.kill();
+    let output = child.wait_with_output().expect("collect the resident run");
+    let elapsed = started.elapsed();
+    println!("dl6_run: resident self-measurement {:.2}s", elapsed.as_secs_f64());
+    assert!(
+        elapsed < TEN_SECOND_LAW,
+        "the resident test took {elapsed:?}, over its 10-second cap"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let rows: Vec<Vec<&str>> = stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix("+tick_cost\t"))
+        .map(|line| line.split('\t').collect())
+        .collect();
+    assert!(
+        rows.len() >= 4,
+        "one tick a second for eight seconds is several cost rows, got {}: {stdout}{stderr}",
+        rows.len()
+    );
+
+    let buckets: std::collections::BTreeSet<&str> =
+        rows.iter().map(|row| row[0]).collect();
+    assert!(
+        buckets.len() >= 4,
+        "the cadence turned {} times in eight seconds: {stderr}",
+        buckets.len()
+    );
+
+    let resident: Vec<i64> = rows
+        .iter()
+        .filter(|row| row[1] == "wall")
+        .filter_map(|row| row[3].parse::<i64>().ok())
+        .collect();
+    assert!(
+        resident.len() >= 4,
+        "every tick answers one `wall` row: {stdout}"
+    );
+    let low = *resident.iter().min().expect("a low reading");
+    let high = *resident.iter().max().expect("a high reading");
+    assert!(low > 0, "the resident set is a real reading, got {resident:?}");
+    // A resident fold that leaked a tick's rows would climb without bound; 25%
+    // over the whole series is slack for allocator behaviour, not for a leak.
+    assert!(
+        high * 4 <= low * 5,
+        "rss climbed from {low} kB to {high} kB across {} ticks: {resident:?}",
+        buckets.len()
     );
 }

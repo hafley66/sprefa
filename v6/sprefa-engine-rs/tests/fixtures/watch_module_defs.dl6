@@ -1,4 +1,4 @@
-# The `bind watch` rail: `dl6 watch` feeds this rel from soopy's file watcher,
+# The `bind watch` rail: a resident `dl6 run` feeds this rel from soopy's watcher,
 # one coalesced burst per tick, and the `?` re-prints as `+`/`-` TSV deltas.
 #
 # The digest is what makes the bind a FRESHNESS source rather than a

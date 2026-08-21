@@ -78,7 +78,7 @@ enum Verb {
     },
 }
 
-/// The same option table `dl6 run` and `dl6 watch` carry, so a program built
+/// The same option table `dl6 run` carries, so a program built
 /// into a binary is driven with the flags it was driven with unbuilt.
 #[derive(Args)]
 struct ProgramArgs {

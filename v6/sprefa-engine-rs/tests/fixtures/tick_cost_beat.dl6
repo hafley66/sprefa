@@ -1,0 +1,22 @@
+# @comment-ok: the fixture's contract, the one doc site for what it pins.
+# The self-measurement rail at one tick a second: every turn of the cadence
+# asks `dl_tick_cost` what the previous one cost and stores the answer, so a
+# resident run's own memory and wall series are rows the same fold folded.
+
+bind interval(period: int, bucket: int).
+
+sh cost(bucket: int) ->
+  (executor: text, wall_ms: int, rss_kb: int) =
+  `dl_tick_cost {bucket}`.
+
+rel measured(bucket: int, executor: text, wall_ms: int, rss_kb: int).
+measured(Bucket, Executor, WallMs, RssKb) <-
+  interval(1, Bucket),
+  cost(Bucket, Executor, WallMs, RssKb).
+
+rel tick_cost(bucket: int, executor: text, wall_ms: int, rss_kb: int)
+  log keep(all).
+tick_cost(Bucket, Executor, WallMs, RssKb) <+
+  measured(Bucket, Executor, WallMs, RssKb).
+
+? tick_cost(bucket, executor, wall_ms, rss_kb).

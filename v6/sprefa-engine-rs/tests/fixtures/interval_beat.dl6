@@ -1,4 +1,4 @@
-# The `bind interval` rail: `dl6 watch` turns each turn of the cadence into one
+# The `bind interval` rail: a resident `dl6 run` turns each turn of the cadence into one
 # tick. The bucket is floor(epoch_secs / period), which is restart-stable, so a
 # restarted watch re-derives the same row rather than minting a fresh identity.
 #

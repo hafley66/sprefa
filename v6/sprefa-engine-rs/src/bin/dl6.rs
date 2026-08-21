@@ -1,17 +1,17 @@
 // @comment-ok: the binary's usage contract, the one doc site for its flags.
 // dl6 build <prog>.dl6 [--out <path>] [--adapters <file>]
 // dl6 run   <prog>.dl6 [--arrive <rel>=<v>[,<v>]]... [--final-tsv] [--db <file>]
-// dl6 watch <prog>.dl6 [same flags] [--root <dir>]
 //
 // `build` compiles the program for the Rust target, writes a cargo bin crate
 // from src/build_template/ under <engine>/target/dl6-build/<prog>/, builds it
 // release, and copies the binary to --out. Wall time per step on stdout.
 //
-// @comment-ok: the run/watch contract, continued.
-// `run` and `watch` skip cargo: the compiled program is a text the engine loads,
-// cached under $XDG_CACHE_HOME/sprefa/dl6 by the blake3 of the source and the
-// compiler tree, so a second run spawns no swipl. `run` folds once and exits;
-// `watch` stays up and turns each `bind` push into one tick.
+// @comment-ok: the run contract, continued.
+// `run` skips cargo: the compiled program is a text the engine loads, cached
+// under $XDG_CACHE_HOME/sprefa/dl6 by the blake3 of the source and the compiler
+// tree, so a second run spawns no swipl. The program's own declarations decide
+// whether it folds once and exits or stays up turning each `bind` push into
+// one tick; `--once` takes the first branch either way.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

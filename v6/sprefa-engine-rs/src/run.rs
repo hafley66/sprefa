@@ -1,9 +1,10 @@
-// @comment-ok: the shared contract behind `dl6 run`, `dl6 watch`, the built
-// binary's verbs and emit_rust_harness; the one doc site for their shape.
+// @comment-ok: the shared contract behind `dl6 run`, the built binary's verbs
+// and emit_rust_harness; the one doc site for their shape.
 //
 // `run_once` folds a program over a schedule and reads its `?` rows, which is
 // what every one-shot rail script used to spell by hand. `watch` keeps the same
-// seam resident and feeds it from the program's OWN `bind` sources: a
+// seam resident and feeds it from the program's OWN `bind` sources, which is
+// what `stays_resident` reads to decide the verb's shape for it: a
 // `bind watch(glob, ...)` rel from soopy's file watcher, a
 // `bind interval(period, ...)` rel from a monotonic clock. One external batch
 // is one tick, and the finals re-print as `+`/`-` prefixed TSV deltas.

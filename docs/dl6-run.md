@@ -1,12 +1,13 @@
-# `dl6 run` and `dl6 watch`
+# `dl6 run`
 
-One command folds a `.dl6` program once and prints its `?` rows. The same
-command with `watch` keeps the program resident and re-prints the rows that
-changed, one tick per push from the program's own `bind` sources.
+One verb folds a `.dl6` program. The FILE decides whether the process stays: a
+program that routes a rel to a continuing source keeps running and re-prints the
+rows that changed, one tick per push; a program with no such source folds once,
+prints its `?` rows and exits.
 
 ## Contents
 
-- [The two commands](#the-two-commands)
+- [The one verb](#the-one-verb)
 - [Flags](#flags)
 - [The compile cache](#the-compile-cache)
 - [Example 1: a one-shot report](#example-1-a-one-shot-report)
@@ -15,11 +16,11 @@ changed, one tick per push from the program's own `bind` sources.
 - [The database is the receipt](#the-database-is-the-receipt)
 - [What a built binary adds](#what-a-built-binary-adds)
 
-## The two commands
+## The one verb
 
 ```
-dl6 run   prog.dl6 [--arrive rel=v,v ...] [--final-tsv] [--fail-on q] [--db f]
-dl6 watch prog.dl6 [same flags] [--root dir]
+dl6 run prog.dl6 [--arrive rel=v,v ...] [--final-tsv] [--fail-on q] [--db f]
+                 [--root dir] [--once]
 ```
 
 ```mermaid
@@ -34,32 +35,40 @@ flowchart LR
   finals --> out[stdout: tick log, ? rows]
   fold --> db[(--db SQLite file)]
   binds[bind watch / bind interval] --> fold
+  fold --> stay{a continuing source?}
+  stay -- no --> exit[exit after the fold]
+  stay -- yes --> park[park on the sources]
+  park --> fold
 ```
 
-`run` exits after the fold. `watch` folds, prints, then parks on its sources:
-each coalesced burst of filesystem events, and each turn of each declared
-cadence, becomes one arrival batch and therefore one tick. What re-prints is a
-delta of the `?` rows, `+` for a row the tick added and `-` for one it retired.
+`run::stays_resident` asks the loaded program whether any rel is routed to
+`live_watch` or `live_interval`. With none, the fold ends and the process exits.
+With one, the process parks on its sources: each coalesced burst of filesystem
+events, and each turn of each declared cadence, becomes one arrival batch and
+therefore one tick. What re-prints is a delta of the `?` rows, `+` for a row the
+tick added and `-` for one it retired. `--once` folds tick 0 of a resident
+program and exits, for a snapshot.
 
-Neither verb runs cargo. The compiled program is a text the engine loads, so a
+The verb runs no cargo. The compiled program is a text the engine loads, so a
 run costs one compile (cached) plus the fold. `dl6 build` is still the way to
 get one standalone binary out of one program.
 
 ## Flags
 
-| flag | `run` | `watch` | what it does |
-| --- | --- | --- | --- |
-| `--arrive <rel>=<v>[,<v>...]` | yes | yes | Seed one arrival row into tick 0. Repeat for more. The declared column type decides how a cell reads; an `int` column that cannot read its cell is a stop, never a `0`. |
-| `--schedule <file>` | yes | yes | An arrival schedule, the shape `emit_rust_harness` reads. The `--arrive` rows join its first batch. |
-| `--final` | yes | yes | Print each `?` rel as one JSON document, `{rel, columns, rows}`. |
-| `--final-only` | yes | yes | Drop the tick log; print only the `?` rows. |
-| `--final-tsv` | yes | yes | Print `rel<TAB>col...`, so no shell parses JSON. A tab or newline inside a value is a stop, never a forged column. |
-| `--final-rels <rel>[,<rel>...]` | yes | yes | Name and order the rels. Without it every rel in `final_select` prints, sorted. |
-| `--fail-on <query>` | yes | no | Exit 1 when the named `?` query answers any row. A name the program does not answer is a stop that lists the ones it does. |
-| `--db <file>` | yes | yes | Fold into a plain SQLite file a cold `sqlite3` reads afterwards. See below. |
-| `--root <dir>` | yes | yes | The tree the hosts read and a `bind watch` glob resolves against. Defaults to `.`. |
-| `--adapters <file>` | yes | yes | The `.adapters.json` sidecar. Defaults to the one beside the source. |
-| `--no-live-hosts` | yes | yes | Fold `sh` decls from a scripted schedule instead of running them live. Both verbs run hosts live by default. |
+| flag | what it does |
+| --- | --- |
+| `--arrive <rel>=<v>[,<v>...]` | Seed one arrival row into tick 0. Repeat for more. The declared column type decides how a cell reads; an `int` column that cannot read its cell is a stop, never a `0`. |
+| `--schedule <file>` | An arrival schedule, the shape `emit_rust_harness` reads. The `--arrive` rows join its first batch. |
+| `--final` | Print each `?` rel as one JSON document, `{rel, columns, rows}`. |
+| `--final-only` | Drop the tick log; print only the `?` rows. |
+| `--final-tsv` | Print `rel<TAB>col...`, so no shell parses JSON. A tab or newline inside a value is a stop, never a forged column. |
+| `--final-rels <rel>[,<rel>...]` | Name and order the rels. Without it every rel in `final_select` prints, sorted. |
+| `--fail-on <query>` | Exit 1 when the named `?` query answers any row. A name the program does not answer is a stop that lists the ones it does. |
+| `--db <file>` | Fold into a plain SQLite file a cold `sqlite3` reads afterwards. See below. |
+| `--root <dir>` | The tree the hosts read and a `bind watch` glob resolves against. Defaults to `.`. |
+| `--adapters <file>` | The `.adapters.json` sidecar. Defaults to the one beside the source. |
+| `--no-live-hosts` | Fold `sh` decls from a scripted schedule instead of running them live. Hosts run live by default. |
+| `--once` | Fold tick 0 of a resident program and exit, rather than staying up. |
 
 A `?` query whose declaration carries an `order by` tail prints in the cursor's
 own order; every other rel sorts, so a run is reproducible either way.
@@ -121,7 +130,7 @@ source_file(Path, Digest) <- watch('crates/*/src/*.rs', Path, Digest).
 ```
 
 Column 1 is the configuration column for every bind: the glob the program's own
-rules name there is the file set `dl6 watch` opens a soopy watcher on. A bind
+rules name there is the file set a resident `dl6 run` opens a soopy watcher on. A bind
 whose rules read no literal gets no live source at all, never a default.
 
 ```
