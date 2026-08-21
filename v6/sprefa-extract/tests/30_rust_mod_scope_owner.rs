@@ -10,7 +10,7 @@
 //!   rust_type_entities_reach_inline_mod_bodies
 //!     left: {"ROOT_CONST", "helper_a", "top_level"}
 //!     right: {"Inner", "MOD_CONST", "Nested", "ROOT_CONST", "deep_fn",
-//!             "helper_a", "inner_method", "nested_fn", "top_level"}
+//!             "helper_a", "inner_method", "nested_fn", "setup", "top_level"}
 //!   rust_df_reaches_inline_mod_bodies
 //!     the `let closure = ..` bind inside inner::deeper::deep_fn is lifted: {}
 //!   rust_method_defs_carry_their_owner
@@ -88,6 +88,7 @@ fn rust_type_entities_reach_inline_mod_bodies() {
             "helper_a",
             "inner_method",
             "nested_fn",
+            "setup",
             "top_level",
         ])
     );

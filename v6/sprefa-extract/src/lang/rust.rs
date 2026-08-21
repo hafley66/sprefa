@@ -128,7 +128,16 @@ fn doc_facts(
     strings: &mut Strings,
     sink: &mut FamilyBundle<TypeF>,
 ) {
-    for item in &parsed.items {
+    doc_facts_in_items(&parsed.items, line_starts, strings, sink);
+}
+
+fn doc_facts_in_items(
+    items: &[syn::Item],
+    line_starts: &[u32],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    for item in items {
         match item {
             syn::Item::Struct(s) => {
                 push_doc(sink, strings, line_starts, s.ident.span(), &s.attrs, None)
@@ -163,6 +172,11 @@ fn doc_facts(
                             owner.as_deref(),
                         );
                     }
+                }
+            }
+            syn::Item::Mod(m) => {
+                if let Some((_, inner)) = &m.content {
+                    doc_facts_in_items(inner, line_starts, strings, sink);
                 }
             }
             _ => {}
@@ -303,6 +317,13 @@ fn item_entity(
                     let span = syn_span(line_starts, m.sig.ident.span());
                     push_entity_raw(sink, strings, span, &name, TypeEntityKind::Method);
                     fn_sigs(sink, strings, span, &m.sig);
+                }
+            }
+        }
+        syn::Item::Mod(m) => {
+            if let Some((_, inner)) = &m.content {
+                for nested in inner {
+                    item_entity(nested, line_starts, strings, sink);
                 }
             }
         }
@@ -522,16 +543,30 @@ fn is_noise_type(name: &str) -> bool {
 
 // ── const facet: Const entities + ConstValue rows ───────────────────────────
 
-/// Top-level `const X: &str = "...";` string values. Port of v5
-/// `rust_const_values_from`. Non-goals (kept identical to v5): consts inside
-/// `impl`/`mod`/fn bodies, non-string consts (no entity, no row).
+/// Item-level `const X: &str = "...";` string values, inline `mod` bodies
+/// included. Non-goals: consts inside `impl` or fn bodies, non-string consts.
 fn const_values(
     parsed: &syn::File,
     line_starts: &[u32],
     strings: &mut Strings,
     sink: &mut FamilyBundle<TypeF>,
 ) {
-    for item in &parsed.items {
+    const_values_in_items(&parsed.items, line_starts, strings, sink);
+}
+
+fn const_values_in_items(
+    items: &[syn::Item],
+    line_starts: &[u32],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    for item in items {
+        if let syn::Item::Mod(m) = item {
+            if let Some((_, inner)) = &m.content {
+                const_values_in_items(inner, line_starts, strings, sink);
+            }
+            continue;
+        }
         let syn::Item::Const(c) = item else { continue };
         let syn::Expr::Lit(syn::ExprLit {
             lit: syn::Lit::Str(s),
@@ -641,6 +676,13 @@ fn item_edge_candidates(
             if let Some((_, path, _)) = &i.trait_ {
                 if let Some(to) = path_name(path) {
                     push_candidate(sink, strings, owner, &to, TypeEdgeKind::Impl);
+                }
+            }
+        }
+        syn::Item::Mod(m) => {
+            if let Some((_, inner)) = &m.content {
+                for nested in inner {
+                    item_edge_candidates(nested, line_starts, strings, sink);
                 }
             }
         }
@@ -993,35 +1035,22 @@ fn def_span(line_starts: &[u32], start: proc_macro2::Span, end: proc_macro2::Spa
     }
 }
 
-/// Project the CallF family: one def node per callable (Free / Method / Lambda)
-/// + one site per call expression. Port of v5 `rust_call_defs_from` +
-/// `rust_call_sites_from`.
-fn project_call(
-    parsed: &syn::File,
-    line_starts: &[u32],
-    strings: &mut Strings,
-    sink: &mut FamilyBundle<CallF>,
-) {
-    // Defs: the top-level driver emits Free (Item::Fn) + Method (impl/trait)
-    // defs and walks each body; the visitor collects nested named fns (Free) and
-    // closures (Lambda) reached inside a body. Port of v5's driver + RustCallDefs.
-    let mut defs = RustCallDefs {
-        line_starts,
-        out: Vec::new(),
-    };
-    for item in &parsed.items {
+/// Descends inline `mod name { .. }`: the SITE half walks the whole file, so a
+/// callable declared in one needs a def or the file reports uses without them.
+fn call_defs_in_items(items: &[syn::Item], line_starts: &[u32], defs: &mut RustCallDefs) {
+    for item in items {
         match item {
             syn::Item::Fn(f) => {
                 let span = def_span(line_starts, f.sig.ident.span(), f.block.span());
                 defs.push(span, Some(f.sig.ident.to_string()), CallKind::Free);
-                syn::visit::visit_block(&mut defs, &f.block);
+                syn::visit::visit_block(defs, &f.block);
             }
             syn::Item::Impl(i) => {
                 for ii in &i.items {
                     if let syn::ImplItem::Fn(m) = ii {
                         let span = def_span(line_starts, m.sig.ident.span(), m.block.span());
                         defs.push(span, Some(m.sig.ident.to_string()), CallKind::Method);
-                        syn::visit::visit_block(&mut defs, &m.block);
+                        syn::visit::visit_block(defs, &m.block);
                     }
                 }
             }
@@ -1037,14 +1066,34 @@ fn project_call(
                         };
                         defs.push(span, Some(name), CallKind::Method);
                         if let Some(block) = &m.default {
-                            syn::visit::visit_block(&mut defs, block);
+                            syn::visit::visit_block(defs, block);
                         }
                     }
+                }
+            }
+            syn::Item::Mod(m) => {
+                if let Some((_, inner)) = &m.content {
+                    call_defs_in_items(inner, line_starts, defs);
                 }
             }
             _ => {}
         }
     }
+}
+
+/// Project the CallF family: one def node per callable (Free / Method / Lambda)
+/// + one site per call expression. Port of v5 `rust_call_{defs,sites}_from`.
+fn project_call(
+    parsed: &syn::File,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let mut defs = RustCallDefs {
+        line_starts,
+        out: Vec::new(),
+    };
+    call_defs_in_items(&parsed.items, line_starts, &mut defs);
     for def in defs.out {
         let mut node = Node::new(def.span, def.kind);
         if let Some(name) = def.name {
@@ -1411,10 +1460,27 @@ fn project_df(
     strings: &mut Strings,
     sink: &mut FamilyBundle<DfF>,
 ) {
-    for item in &parsed.items {
+    df_items(&parsed.items, "", file, line_starts, strings, sink);
+    for (index, start, end) in std::mem::take(&mut sink.aux.loop_collection_spans) {
+        sink.aux.loops[index].collection =
+            src.get(start as usize..end as usize).map(str::to_string);
+    }
+}
+
+/// `mod_path` is the enclosing inline-`mod` chain (`""` at the file root,
+/// `inner::deeper::` two mods down), so sibling mods mint distinct fn syms.
+fn df_items(
+    items: &[syn::Item],
+    mod_path: &str,
+    file: &str,
+    line_starts: &[u32],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    for item in items {
         match item {
             syn::Item::Fn(f) => {
-                let fn_sym = format!("{file}::function::{}", f.sig.ident);
+                let fn_sym = format!("{file}::function::{mod_path}{}", f.sig.ident);
                 let mut scope = Scope::new();
                 let mut loop_breaks = LoopBreaks::new();
                 flow_fn_body(
@@ -1438,8 +1504,8 @@ fn project_df(
                 for ii in &i.items {
                     if let syn::ImplItem::Fn(m) = ii {
                         let fn_sym = match &owner {
-                            Some(o) => format!("{file}::method::{o}.{}", m.sig.ident),
-                            None => format!("{file}::function::{}", m.sig.ident),
+                            Some(o) => format!("{file}::method::{mod_path}{o}.{}", m.sig.ident),
+                            None => format!("{file}::function::{mod_path}{}", m.sig.ident),
                         };
                         let mut scope = Scope::new();
                         let mut loop_breaks = LoopBreaks::new();
@@ -1461,12 +1527,14 @@ fn project_df(
                     }
                 }
             }
+            syn::Item::Mod(m) => {
+                if let Some((_, inner)) = &m.content {
+                    let nested = format!("{mod_path}{}::", m.ident);
+                    df_items(inner, &nested, file, line_starts, strings, sink);
+                }
+            }
             _ => {}
         }
-    }
-    for (index, start, end) in std::mem::take(&mut sink.aux.loop_collection_spans) {
-        sink.aux.loops[index].collection =
-            src.get(start as usize..end as usize).map(str::to_string);
     }
     sink.aux.nests = crate::types::compute_nests(&sink.nodes, &sink.aux.loops);
 }
