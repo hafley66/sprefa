@@ -582,6 +582,21 @@ relation_atom_of_arity_zero(Term) :-
 query_line(Bindings, query(Atom), Line) :-
     print_term(Atom, Bindings, 0, top, AtomText),
     format(atom(Line), "? ~w.~n", [AtomText]).
+query_line(Bindings, query(Atom, order(OrderCols)), Line) :-
+    print_term(Atom, Bindings, 0, top, AtomText),
+    maplist(order_col_text(Atom, Bindings), OrderCols, ColTexts),
+    atomic_list_concat(ColTexts, ', ', OrderText),
+    format(atom(Line), "? ~w order by ~w.~n", [AtomText, OrderText]).
+
+% The tail names the argument AS PRINTED, so re-parsing resolves the same
+% position whatever spelling the binding gave that argument.
+order_col_text(Atom, Bindings, order_col(Position, Direction), Text) :-
+    arg(Position, Atom, Value),
+    print_term(Value, Bindings, 0, top, ColumnText),
+    (   Direction == desc
+    ->  atomic_list_concat([ColumnText, ' desc'], Text)
+    ;   Text = ColumnText
+    ).
 
 match_arm_terms((Left ; Right), Arms) :-
     !,

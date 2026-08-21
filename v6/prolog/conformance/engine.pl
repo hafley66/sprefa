@@ -78,7 +78,7 @@
               ]).
 :- use_module('../0_relation_pattern', [expand_relation_values/2]).
 :- use_module('../0_option_expand', [acyclic_companion/5]).
-:- use_module('../1_host_expand', [prepare_program/5]).
+:- use_module('../1_host_expand', [prepare_program/5, query_decl/3]).
 :- use_module(rulings).
 :- use_module(body).
 :- use_module(level_eval).
@@ -645,7 +645,9 @@ run_program(SugaredProg, Initial0, Schedule0, FinalAll, DeltaTicks) :-
     % on the same post-expansion program. The oracle asserts nothing with it
     % yet; computing it here is what makes a later parity check a diff of two
     % numbers rather than a new analysis on one side.
-    findall(QueryAtom, member(query(QueryAtom), ProgDecls), Queries),
+    findall(QueryAtom,
+            ( member(QueryDecl, ProgDecls), query_decl(QueryDecl, QueryAtom, _) ),
+            Queries),
     subscribed_rels(ProgDecls, Rules, Queries, _SubscribedRels),
     split_rules(Rules, AggRules, PlainLevel, _),
     store_rows(Store0, BaseRows),

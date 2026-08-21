@@ -257,6 +257,7 @@ construct inventory.
 | host call | `name(inputs..., outputs...)` when `name` resolves to an `sh` signature | `probe(Name, IdentityInputs, Outputs, FreshnessSalts)`; RX-H2; registered positional metadata selects freshness inputs; an unresolved name remains an ordinary relation atom |
 | bind declaration | `bind name(column: type, ...).` | `bind_decl(Name, Columns)`; RX-B1 |
 | query | `? name(args).` | `query(RelAtom)`; RX-Q1 |
+| ordered query | `? name(args) order by col [asc\|desc], ... .` | `query(RelAtom, order([order_col(Position, Direction), ...]))`; RX-Q2; `asc` is the unwritten direction; a column the query's args do not name is `dl_parse_error(order_column_unknown(Name, Column), _)` |
 | mutation | `rel!(args)` | `unsupported_surface(mutation(Name/Arity))` |
 | `true` / `false` as values | unavailable | bare identifiers remain variables in argument position |
 | `null` | unavailable | no term-form mapping |
@@ -348,6 +349,7 @@ the compiler does not treat the resulting declaration as writable surface.
 | `probe(Name, Inputs, Outputs, Salts)` | RX-H2: mint identity from host plus identity inputs, mint witness from identity plus compiler-registered freshness inputs, deduplicate by witness, then demand the host | lowers to `__host_demand_Name` SQL and a join with keyed EDB relation `__host_response_Name`; `Salts` is internal IR with no DL6 spelling |
 | `bind_decl(interval, Columns)` | RX-B1: subscribe to the registered interval source while the program is active and commit each row as EDB | emitted as a `bindPlans` data row carrying `periods` (the integer literals the program's own rules read in the bind atom's first column) and `execution: "live_interval"`; schedule arrivals still grade phase 1, and the served runtime (`v6/tsv2/serve/2_binds.ts`) spins one rx `interval` per declared period |
 | `query(RelAtom)` | RX-Q1: scan the current SQLite query plan and stream its rows | emitted as a `queryPlans` data row |
+| `query(RelAtom, order(OrderCols))` | RX-Q2: RX-Q1 then `sortBy` the named columns, each with its direction | the same `queryPlans` row plus an `ORDER BY` clause on the rel's `final_select` cursor, and nowhere else; an order index rides the rel's DDL only when the ordered read hits the base table |
 | `ts_query(Patterns)` | RX-TS1: group file demand by content and query identity, run the compiled tree-sitter query, then commit EDB rows | value compiles to query text; phase-2 host execution is named `unsupported_host_execution_phase_2(tree_sitter_query)` |
 | `sg_pattern(language(Language), source(Text), captures(Names))` | RX-SG1: group file demand by content and pattern identity, run ast-grep, then commit EDB rows | retained as a separate pattern family; current compiler refusal is `unmapped_feature(slot_sg_metavariable_semantics, Term)` |
 

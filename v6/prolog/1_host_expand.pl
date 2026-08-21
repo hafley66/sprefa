@@ -20,6 +20,7 @@
             compile_host_decl/2,
             host_plan_contract/2,
             compile_query/2,
+            query_decl/3,
             compile_ts_query/2,
             body_goals/2,
             host_relation_refs/3,
@@ -422,8 +423,14 @@ rule_head_ref((Head <- _), Name/Arity) :-
 rule_head_ref((Head <+ _), Name/Arity) :-
     functor(Head, Name, Arity).
 
-compile_query(query(Atom),
+% The ONE reader of both `?` decl shapes; order rides the final cursor alone,
+% so a query plan is the same term with or without a tail.
+query_decl(query(Atom), Atom, []).
+query_decl(query(Atom, order(OrderCols)), Atom, OrderCols).
+
+compile_query(Query,
               query_plan(Name/Arity, columns(Args), snapshot(current))) :-
+    query_decl(Query, Atom, _),
     compound(Atom),
     Atom =.. [Name | Args],
     atom(Name),

@@ -42,7 +42,7 @@
 :- use_module('0_unsupported_messages', []).
 :- use_module('1_expansion',
               [ expand_program/3, expand_program_with_bindings/4 ]).
-:- use_module('1_host_expand', [prepare_program/5]).
+:- use_module('1_host_expand', [prepare_program/5, query_decl/3]).
 :- use_module(analyze).
 :- use_module('3_clock_check', [check_clock_program/1]).
 :- use_module('2_subscribe', [subscribed_rels/4]).
@@ -304,7 +304,9 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
                      include(rule_is_edge, Rules, EdgeRules), _),
     % The query decls are the cone's only seeds, read from the POST-expansion
     % Decls for the same reason emit_ts.pl:world_plan_lines/2 reads them there.
-    findall(QueryAtom, member(query(QueryAtom), Decls), Queries),
+    findall(QueryAtom,
+            ( member(QueryDecl, Decls), query_decl(QueryDecl, QueryAtom, _) ),
+            Queries),
     run_compile_step(plan, subscribed_rels,
                      subscribed_rels(Decls, Rules, Queries, SubscribedRels), _),
     intern_mode(Options, InternMode),

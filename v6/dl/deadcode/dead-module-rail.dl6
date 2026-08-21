@@ -363,9 +363,11 @@ rail_unreachable_module(Path, Defs) <- file_defs(Path, Defs), Defs >= 5, not(liv
 rel rail_root_not_a_source(path: text).
 rail_root_not_a_source(Path) <- entry_file(Path), not(source_file(Path, _Digest)).
 
+# rx: rows$.pipe(map(rows => sortBy(rows, [desc('defs'), 'path'])))
+# The Rust door lowers the tail; the paused TypeScript door leaves it unordered.
 ? cargo_root_count(roots).
 ? rail_root_not_a_source(path).
-? rail_dead_module(path, defs).
-? rail_unproven_module(path, defs).
-? rail_unreachable_module(path, defs).
-? module_reach(path, defs, used, ambiguous).
+? rail_dead_module(path, defs) order by defs desc, path.
+? rail_unproven_module(path, defs) order by defs desc, path.
+? rail_unreachable_module(path, defs) order by defs desc, path.
+? module_reach(path, defs, used, ambiguous) order by defs desc, path.

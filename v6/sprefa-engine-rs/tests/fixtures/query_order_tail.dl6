@@ -1,0 +1,12 @@
+# Two ordered reads, one shape each. `score` is all-int, so its final cursor
+# reads the BASE table and earns an order index; `module_defs` carries a text
+# column, so its cursor reads the `__txt_` intern view and earns none.
+#
+# rx: score$.pipe(map(rows => sortBy(rows, [desc('points'), 'player'])))
+# rx: module_defs$.pipe(map(rows => sortBy(rows, [desc('defs'), 'path'])))
+
+rel score(player: int, points: int).
+rel module_defs(path: text, defs: int).
+
+? score(player, points) order by points desc, player.
+? module_defs(path, defs) order by defs desc, path.

@@ -57,11 +57,11 @@ rows_of rail_root_not_a_source | while IFS="$TAB" read -r root_path; do
   printf 'WARN root not in the glob: %s\n' "$root_path"
 done
 
-# No `?` query carries an ORDER (v6/prolog/compile/parse_dl_dcg.pl:1035), so the
-# defs-descending read the tables want is a `sort -k` on the harness's TSV.
+# The `?` reads carry `order by defs desc, path`, so the rows arrive ordered
+# and nothing here sorts.
 defs_table() {
   printf '== %s ==\n' "$2"
-  rows_of "$1" | sort -t"$TAB" -k2,2nr -k1,1 | while IFS="$TAB" read -r module_path defs; do
+  rows_of "$1" | while IFS="$TAB" read -r module_path defs; do
     printf '  %4s defs  %s\n' "$defs" "$module_path"
   done
 }
@@ -70,7 +70,7 @@ defs_table rail_unreachable_module 'rail_unreachable_module (the crawl, from dec
 defs_table rail_unproven_module    'rail_unproven_module (reached only through ambiguous names)'
 
 printf '== module_reach (defs / used-across) ==\n'
-rows_of module_reach | sort -t"$TAB" -k2,2nr -k1,1 \
+rows_of module_reach \
   | while IFS="$TAB" read -r module_path defs used ambiguous; do
       printf '  %4s / %-4s amb=%-4s %s\n' "$defs" "$used" "$ambiguous" "$module_path"
     done

@@ -20,6 +20,7 @@ bool_literals_round_trip	clean	byte-clean
 bool_rejects_text_ingress	unsupported	type_arrival_shape_mismatch(flag/1,value,bool,field_not_bool(true))
 bool_relation_negation_is_two_valued	clean	byte-clean
 bounded_measure_recursion_still_closes	clean	byte-clean
+bounded_template_arrow_return_column	clean	byte-clean
 bounded_template_ground_instance	clean	byte-clean
 braces_in_head_position	clean	byte-clean
 braces_literal_canonicalizes	clean	byte-clean
@@ -242,7 +243,7 @@ nested_parent_with_no_rows_yields_an_empty_child	clean	byte-clean
 nested_rel_element_list_round_trips	clean	byte-clean
 nested_three_levels_chain_the_references	clean	byte-clean
 nested_two_parent_rows_partition_the_child	clean	byte-clean
-nested_zero_column_child_is_one_row_per_parent	unsupported	emitter returned false
+nested_zero_column_child_is_one_row_per_parent	clean	byte-clean
 new_file_diag_at_hit_line_exact_rows	clean	byte-clean
 new_file_no_exceeded_diag	clean	byte-clean
 new_salt_refires_fresh_stream	clean	byte-clean
@@ -271,6 +272,8 @@ option_rel_on_a_reference_target_round_trips_absent_and_present	clean	byte-clean
 option_rel_ref_desugars_to_companion_split_rel	clean	byte-clean
 option_scalar_enums_mint_per_element_type	clean	byte-clean
 option_text_column_reads_through_tag_join	clean	byte-clean
+order_by_desc_with_a_tie_break	clean	byte-clean
+order_by_int_columns_read_the_base_table	clean	byte-clean
 ordered_aggregate_retraction_rebuild	clean	byte-clean
 ordered_fragment_line_assembly	clean	byte-clean
 ordered_group_concat_explicit_comma_matches_one_argument	clean	byte-clean
@@ -296,6 +299,7 @@ pin_to_unknown_repo_derives_repo_candidate	clean	byte-clean
 pr_size_decodes_files_and_rolls_up	clean	byte-clean
 pre_in_level_rule_rejected	unsupported	pre_in_level_rule(source_item/1)
 probe_output_comparison_guard	clean	byte-clean
+query_without_an_order_tail_is_unmoved	clean	byte-clean
 quote_in_literal_doubles_the_escape	clean	byte-clean
 range_join_over_arithmetic	clean	byte-clean
 recursive_closure_passes_both_build_guard_arms	clean	byte-clean
@@ -408,6 +412,7 @@ two_producers_share_one_interned_list_id	clean	byte-clean
 typed_int_contradicts_text_witness	unsupported	type_arrival_shape_mismatch(typed_conflict/1,value,int,field_not_int(text_value))
 typed_int_without_literal_witness	clean	byte-clean
 typegen_list_element_ladder	clean	byte-clean
+unbounded_template_arrow_return_column	clean	byte-clean
 unknown_bound_interface_is_named	unsupported	interface_unknown(missing_capability)
 unmarked_edge_replays_backlog	clean	byte-clean
 unordered_program_level_fold_reaches_three_links	clean	byte-clean

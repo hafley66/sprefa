@@ -1070,11 +1070,44 @@ template_codes([0'\\ | Cs]) --> [0'\\, 0'\\], !, template_codes(Cs).
 template_codes([C | Cs]) --> [C], template_codes(Cs).
 
 
-query_stmt(query(Atom)) -->
+% A tail-free `?` keeps the query/1 term, so its emitted bytes cannot move.
+query_stmt(Query) -->
     @`?`, ws, ident(Name), #`(`,
-    head_args(Args), #`)`, #`.`,
+    head_args(Args), #`)`,
+    order_tail(Name, Args, OrderCols), #`.`,
     { resolve_named_args(head, Name, Args, Pos),
-      Atom =.. [Name | Pos] }.
+      Atom =.. [Name | Pos],
+      ( OrderCols == [] -> Query = query(Atom)
+      ; Query = query(Atom, order(OrderCols)) ) }.
+
+% `order by defs desc, path` -- SQL words, `asc` when a direction is unwritten.
+order_tail(Name, Args, OrderCols) -->
+    ws, ~`order`, ws, ~`by`, !, ws,
+    sep(order_col(Name, Args), OrderCols).
+order_tail(_, _, []) --> [].
+
+% The position resolves here against the QUERY's argument names, so it indexes
+% the rel's own column list and no emitter repeats the lookup.
+order_col(Name, Args, order_col(Position, Direction)) -->
+    ident(Column), ws,
+    ( ~`desc` -> { Direction = desc }
+    ; ~`asc` -> { Direction = asc }
+    ; { Direction = asc }
+    ),
+    { ( query_arg_position(Args, Column, Position)
+      -> true
+      ;  parse_failure(order_column_unknown(Name, Column))
+      ) }.
+
+query_arg_position(Args, Column, Position) :-
+    nth1(Position, Args, Arg),
+    query_arg_name(Arg, Column),
+    !.
+
+query_arg_name(named(Column, _), Column).
+query_arg_name(pos(Value), Column) :-
+    var(Value),
+    variable_source_name(Value, Column).
 
 
 match_stmt(match(Source, Arms)) -->

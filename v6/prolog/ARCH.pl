@@ -431,7 +431,7 @@ construct(struct_type_decl,     t5, new).   % ruling compound_storage; `type nam
 construct(decode_join,          t5, new).   % decode/2 = dictionary join, same ruling
 construct(match_block,          t5, new).   % ruling match_block_word; arms expand to rules
 construct(host_decl,            t5, new).   % sh_decl/4, EXPLICIT input->output split
-construct(query_form,           t5, new).   % query/1, `? rel(args)` (top-level only; RHS probe + @ salt riders REMOVED by v6.2 host-surface locks)
+construct(query_form,           t5, new).   % query/1 and query/2, `? rel(args)` with an optional `order by col [asc|desc], ...` tail that lowers onto final_select alone (top-level only; RHS probe + @ salt riders REMOVED by v6.2 host-surface locks)
 construct(ts_query_value,       t5, new).   % ts_query/1 compiles to exact query text
 construct(latest_sample,        t5, new).   % replacement spelling for the killed only()
 

@@ -16,12 +16,13 @@
 :- use_module(library(pcre)).
 :- use_module(lower, [ departure_frontier_table_name/2,
                        program_text_intern_plan/3,
-                       struct_type_plans/3, struct_type_plans/4, fixpoint_round_cap/1 ]).
+                       struct_type_plans/3, struct_type_plans/4, fixpoint_round_cap/1,
+                       query_order_by_map/3 ]).
 :- use_module(strat, [cyclic_head_groups/2]).
 :- use_module('0_rel_record').
 :- use_module(analyze, [ body_ref_uses/2, level_body_pre_ref/2, rule_head_ref/2,
                          listened_departure_refs/2, program_uses_tick/2 ]).
-:- use_module('1_host_expand', [compile_host_decl/2,
+:- use_module('1_host_expand', [compile_host_decl/2, query_decl/3,
                                 host_plan_contract/2]).
 :- use_module('0_option_expand', [option_enum_name/2]).
 
@@ -111,15 +112,21 @@ boot_param(bool_lit(Boolean), Boolean) :- !.
 boot_param(Param, Param) :- number(Param), !.
 boot_param(Param, Text) :- atom_string(Param, Text).
 
-final_select_entry(deltastmt(Ref, Sql, _, _, _), Name-Sql) :- ref_name(Ref, Name).
+final_select_entry(OrderByMap, deltastmt(Ref, Sql, _, _, _), Name-Ordered) :-
+    ref_name(Ref, Name),
+    (   memberchk(Name-OrderBySql, OrderByMap)
+    ->  atom_concat(Sql, OrderBySql, Ordered)
+    ;   Ordered = Sql
+    ).
 
 query_names(PlanDecls, Names) :-
     findall(Name,
-            ( member(query(Atom), PlanDecls), functor(Atom, Name, _Arity) ),
+            ( member(QueryDecl, PlanDecls), query_decl(QueryDecl, Atom, _),
+              functor(Atom, Name, _Arity) ),
             Names).
 
-final_select_map(DeltaStatements, Map) :-
-    maplist(final_select_entry, DeltaStatements, Pairs),
+final_select_map(OrderByMap, DeltaStatements, Map) :-
+    maplist(final_select_entry(OrderByMap), DeltaStatements, Pairs),
     pairs_to_dict(Pairs, Map).
 
 arrival_tpl(Ref, ArrivalStatements, Tpl) :-
@@ -591,7 +598,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     map_from(RelPlans, rel_column_types_of, RelColumnTypes),
     maplist(ref_name, ArrivalTargets, ArrivalTargetNames),
     maplist(boot_dict, BootStatements, BootDicts),
-    final_select_map(DeltaStatements, FinalSelect),
+    query_order_by_map(PlanDecls, RelPlans, OrderByMap),
+    final_select_map(OrderByMap, DeltaStatements, FinalSelect),
     query_names(PlanDecls, QueryNames),
     arrival_templates_map(ArrivalStatements, ArrivalTemplates),
     relations_list(RelPlans, ArrivalStatements, DepartureRefs, DeltaStatements,

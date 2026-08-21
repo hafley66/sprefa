@@ -12,7 +12,8 @@
 // --arrive seeds the first tick from the command line; repeat it for more rows.
 //   The schedule file becomes optional once one --arrive is given, and with both
 //   the --arrive rows join the schedule's first batch.
-// --final reads each rel through the IR's own final_select after the fold.
+// --final reads each rel through the IR's own final_select after the fold. A
+//   rel whose `?` carries an `order by` tail prints in the cursor's own order.
 //   --final-only drops the tick lines, --final-tsv prints rel<TAB>col... rows so
 //   a shell reads columns with `read` and never parses JSON. --final-rels names
 //   and orders the rels; without it every rel in final_select prints, sorted.
@@ -202,16 +203,19 @@ fn print_final(program: &GenProgram, seam: &SqliteSeam, request: &FinalRequest) 
         };
         let columns = program.rel_columns.get(&rel).cloned().unwrap_or_default();
         let types = program.rel_column_types.get(&rel).cloned().unwrap_or_default();
+        let cursor_orders = select.contains(" ORDER BY ");
         let result = seam
             .execute(&SqlStatement {
                 sql: select,
                 args: vec![],
             })
             .unwrap_or_else(|failure| panic!("final read of {rel}: {failure}"));
-        // No `?` query carries an ORDER (parse_dl_dcg.pl:1035), so the rows are
-        // sorted here to make the line reproducible and a caller sorts for meaning.
+        // A `?` order tail rides final_select's own ORDER BY, so those rows are
+        // already in the order asked for; the rest sort to stay reproducible.
         let mut rows = result.rows.clone();
-        rows.sort_by_key(|row| row.iter().map(cell_text).collect::<Vec<_>>());
+        if !cursor_orders {
+            rows.sort_by_key(|row| row.iter().map(cell_text).collect::<Vec<_>>());
+        }
         if request.tsv {
             for row in &rows {
                 let cells: Vec<String> = row.iter().map(|value| tsv_cell(&rel, value)).collect();

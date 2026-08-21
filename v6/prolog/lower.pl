@@ -166,7 +166,10 @@
             plan_rule_level_statements/2,
             % One number for every fixpoint walk on either door: the wavefront
             % hop cap AND the stratum-group outer-round cap.
-            fixpoint_round_cap/1 ]).
+            fixpoint_round_cap/1,
+            % The `?` order tail's SQL, read by both emitters so the clause
+            % they append to final_select has one definition.
+            query_order_by_map/3 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -179,6 +182,7 @@
                                    schema_member_transport_rows/3]).
 :- use_module('0_type_ids', [id_kind_name/3, semantic_type_id_text/2]).
 :- use_module('0_option_expand', [acyclic_companion/5]).
+:- use_module('1_host_expand', [query_decl/3]).
 :- use_module('compile/registry', [expression/5, surface/5, body_surface_for_term/6]).
 :- use_module('0_type_plane',
               [ type_definition/4, column_storage/3,
@@ -6467,6 +6471,93 @@ qualified_outer_column(Column, Qualified) :-
     quote_ident(Column, QuotedColumn),
     atomic_list_concat(['t.', QuotedColumn], Qualified).
 
+% ═══ `?` order tails (the final cursor, and nowhere else) ══════════════════
+
+% deltastmt's SelectSql is ALSO the tick path's snapshot read, so each emitter
+% appends this onto final_select alone and SelectSql stays byte-identical.
+query_order_by_map(Decls, RelPlans, Pairs) :-
+    findall(Name-Sql,
+            ( member(QueryDecl, Decls),
+              query_decl(QueryDecl, Atom, OrderCols),
+              OrderCols \== [],
+              functor(Atom, Name, Arity),
+              relplan_shape(RelPlans, Name/Arity, _, Columns, _, _),
+              order_by_sql(OrderCols, Columns, Sql) ),
+            Pairs0),
+    sort(Pairs0, Pairs).
+
+order_by_sql(OrderCols, Columns, Sql) :-
+    order_terms_sql(OrderCols, Columns, TermsSql),
+    atomic_list_concat([' ORDER BY ', TermsSql], Sql).
+
+order_terms_sql(OrderCols, Columns, TermsSql) :-
+    maplist(order_term_sql(Columns), OrderCols, Terms),
+    atomic_list_concat(Terms, ', ', TermsSql).
+
+order_term_sql(Columns, order_col(Position, Direction), Term) :-
+    nth1(Position, Columns, Column),
+    quote_ident(Column, QuotedColumn),
+    order_direction_sql(Direction, DirectionSql),
+    atomic_list_concat([QuotedColumn, ' ', DirectionSql], Term).
+
+order_direction_sql(asc, 'ASC').
+order_direction_sql(desc, 'DESC').
+
+% An index is a full copy of its key, so one is minted only where the ordered
+% read reaches it: the BASE table, no UNIQUE already standing in that order.
+query_order_index_ddls(Mode, Decls, RelPlans, EdgeHeadedRefs, ArrivalTargets,
+                       Ddls) :-
+    findall(Ref-OrderCols,
+            ( member(QueryDecl, Decls),
+              query_decl(QueryDecl, Atom, OrderCols),
+              OrderCols \== [],
+              functor(Atom, Name, Arity),
+              Ref = Name/Arity ),
+            Wanted0),
+    sort(Wanted0, Wanted),
+    group_pairs_by_key(Wanted, Grouped),
+    findall(Ddl,
+            ( member(Ref-OrderColsList, Grouped),
+              relplan_shape(RelPlans, Ref, Kind, Columns, KeyOrNone,
+                            ColumnTypes),
+              nth1(Ordinal, OrderColsList, OrderCols),
+              order_index_earns_its_write(Mode, Ref, Kind, Columns, KeyOrNone,
+                                          ColumnTypes, EdgeHeadedRefs,
+                                          ArrivalTargets, OrderCols),
+              order_index_ddl(Ref, Ordinal, Columns, OrderCols, Ddl) ),
+            Ddls).
+
+% A rel with an interned or list column reads through a VIEW that decodes the
+% value, so no index on the base table can order the characters it hands back.
+order_index_earns_its_write(Mode, Ref, Kind, Columns, KeyOrNone, ColumnTypes,
+                            EdgeHeadedRefs, ArrivalTargets, OrderCols) :-
+    \+ any_interned_column(Mode, ColumnTypes),
+    \+ ( member(ColumnType, ColumnTypes), ColumnType = list(_) ),
+    \+ existing_unique_orders(Ref, Kind, Columns, KeyOrNone, EdgeHeadedRefs,
+                              ArrivalTargets, OrderCols).
+
+% A set rel's UNIQUE is a usable index; SQLite reads it forwards for an all-ASC
+% prefix and backwards for an all-DESC one. A log rel is a plain rowid table.
+existing_unique_orders(Ref, set, Columns, KeyOrNone, EdgeHeadedRefs,
+                       ArrivalTargets, OrderCols) :-
+    set_rel_key_positions(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargets,
+                          Columns, KeyPositions),
+    findall(Position, member(order_col(Position, _), OrderCols),
+            OrderPositions),
+    append(OrderPositions, _, KeyPositions),
+    findall(Direction, member(order_col(_, Direction), OrderCols),
+            Directions),
+    sort(Directions, [_]).
+
+order_index_ddl(Ref, Ordinal, Columns, OrderCols, Ddl) :-
+    table_name(Ref, Table),
+    quote_ident(Table, QuotedTable),
+    format(atom(IndexName), '~w__order_~w', [Table, Ordinal]),
+    quote_ident(IndexName, QuotedIndexName),
+    order_terms_sql(OrderCols, Columns, TermsSql),
+    format(atom(Ddl), 'CREATE INDEX ~w ON ~w (~w)',
+           [QuotedIndexName, QuotedTable, TermsSql]).
+
 retention_statement(RelPlans, keep(Ref, count(Limit)),
                     retentionstmt(Ref, Limit, DeleteSql)) :-
     integer(Limit),
@@ -6969,8 +7060,12 @@ lower_program_in_context(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans,
         maplist(delta_statement(Mode), RelPlans, DeltaStatements), _),
     run_compile_step(lower, acyclic_guard_ddl,
         acyclic_guard_ddl(Decls, RelPlans, AcyclicDdl), _),
-    append([RelationDdl, AcyclicDdl, DeltaDdl, RefCountDdl, AggregateScopeDdl,
-            PreDdl, TickDdl, CatalogTableDdl, CatalogRowDdl], BodyDdl),
+    run_compile_step(lower, query_order_index_ddls,
+        query_order_index_ddls(Mode, Decls, RelPlans, EdgeHeadedRefs,
+                               ArrivalTargets, OrderIndexDdl), _),
+    append([RelationDdl, OrderIndexDdl, AcyclicDdl, DeltaDdl, RefCountDdl,
+            AggregateScopeDdl, PreDdl, TickDdl, CatalogTableDdl, CatalogRowDdl],
+           BodyDdl),
     run_compile_step(lower, literal_seed_ddl,
         literal_seed_ddl(Mode,
                          seeded(BodyDdl, ArrivalStatements, EdgeStatements,

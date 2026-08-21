@@ -21,7 +21,7 @@
                 level_body_pre_ref/2, rel_rule_observers_map/2 ]).
 :- use_module(strat, [recursive_stratum_groups/2, cyclic_head_groups/2]).
 :- use_module('1_host_expand', [compile_host_decl/2, compile_query/2,
-                                host_plan_contract/2]).
+                                query_decl/3, host_plan_contract/2]).
 :- use_module('compile/registry', [bind_executor/2]).
 :- use_module('0_option_expand', [option_enum_name/2]).
 
@@ -530,7 +530,7 @@ world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _, _, SubscribedRels, _), 
     % again cannot introduce a unsupported construct this door did not already raise.
     findall(QueryPlan,
             ( member(Query, Decls),
-              Query = query(_),
+              query_decl(Query, _, _),
               compile_query(Query, QueryPlan)
             ),
             QueryPlans),
