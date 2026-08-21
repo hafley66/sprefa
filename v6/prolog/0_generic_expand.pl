@@ -1586,15 +1586,25 @@ replace_semantic_type_rows([Decl | Rest], Rows, Seen0, [Decl | More], Seen) :-
     replace_semantic_type_rows(Rest, Rows, Seen0, More, Seen).
 
 merge_frozen_type_rows(ExistingRows, RebuiltRows, Rows) :-
-    include(row_missing_from_existing(ExistingRows), RebuiltRows, MissingRows),
+    existing_row_identities(ExistingRows, Identities),
+    include(row_missing_from_identities(Identities), RebuiltRows, MissingRows),
     append(ExistingRows, MissingRows, Unsorted),
     sort(Unsorted, Rows),
     validate_type_row_identities(Rows).
 
-row_missing_from_existing(ExistingRows, Row) :-
+% One identity pass over the existing rows: the scan this replaces recomputed
+% every existing row's identity once per rebuilt row.
+existing_row_identities(ExistingRows, Identities) :-
+    findall(Identity,
+            ( member(Row, ExistingRows),
+              canonical_type_row_identity(Row, Identity) ),
+            Unsorted),
+    sort(Unsorted, Identities).
+
+% \+/1 undoes memberchk/2's bindings, so the probe stays a unification test.
+row_missing_from_identities(Identities, Row) :-
     canonical_type_row_identity(Row, Identity),
-    \+ ( member(Existing, ExistingRows),
-         canonical_type_row_identity(Existing, Identity) ).
+    \+ memberchk(Identity, Identities).
 
 validate_type_row_identities(Rows) :-
     findall(Identity-Row,
