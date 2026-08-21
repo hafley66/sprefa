@@ -1,4 +1,4 @@
-sh look(path: text) -> (line: text) = `head -1 {path}`.
-sh look(repo: text, path: text) -> (line: text) = `head -1 {repo}/{path}`.
+rel look(path: text) -> (line: text).
+rel look(repo: text, path: text) -> (line: text).
 
 first(Path, Line) <- look(Path, Line).

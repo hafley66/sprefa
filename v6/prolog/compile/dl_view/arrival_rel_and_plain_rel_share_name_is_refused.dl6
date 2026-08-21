@@ -1,0 +1,4 @@
+rel files(glob: text, path: text, digest: text).
+rel files(glob: text) -> (path: text, digest: text).
+
+seen(Path) <- files('g', Path, _Digest).

@@ -1,6 +1,6 @@
 rel input(path: text).
 rel accepted(path: text, score: int).
-sh score(path: text) -> (score: int) = `score {path}`.
+rel score(path: text) -> (score: int).
 
 accepted(Path, Score) <-
   input(Path),

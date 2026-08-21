@@ -1,0 +1,5 @@
+interface json_encodable.
+rel mapper(In: json_encodable, Out: json_encodable)(input: In, return: Out).
+rel conversion(id: int, applied: mapper(int, text)) key(1).
+
+carry(Id, Applied) <- conversion(Id, Applied).

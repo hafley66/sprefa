@@ -1,5 +1,5 @@
-sh tree_sitter(file_digest: text, query: text) -> (capture: text) = `tree-sitter {file_digest} $query`.
-bind interval(period: int, bucket: int).
+rel tree_sitter(file_digest: text, query: text) -> (capture: text).
+rel interval(period: int, bucket: int).
 
 query_value(ts_query([group(node('call_expression', [field('function', capture('callee', node('identifier', []))), field('arguments', node('arguments', [quant('one_or_more', alternative([capture('arg', 'named_wildcard'), anonymous(",")]))]))]), [predicate('eq', capture_ref('callee'), string("fetch")), predicate('match', capture_ref('arg'), string("^[a-z]+$"))]), quant('optional', node('comment', [])), quant('zero_or_more', 'wildcard')])) <- query_source('unit').
 captured(Capture) <-

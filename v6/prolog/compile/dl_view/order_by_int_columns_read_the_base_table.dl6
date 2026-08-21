@@ -1,0 +1,3 @@
+rel score(player: int, points: int).
+
+? score(_Player, _Points) order by _Points desc, _Player.

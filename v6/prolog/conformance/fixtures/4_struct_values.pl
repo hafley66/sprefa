@@ -398,7 +398,7 @@ fixture(struct_host_output_schedule_answer_interned,
       sh_decl(scan_span,
               [col(path, text)],
               [col(at, span)],
-              template("scan {path}"))
+              template(""))
     ],
     [ (host_span(Path, At) <-
           (source_path(Path),

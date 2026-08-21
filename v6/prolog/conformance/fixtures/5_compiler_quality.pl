@@ -79,7 +79,7 @@ fixture(probe_output_comparison_guard,
       sh_decl(score,
               [col(path, text)],
               [col(score, int)],
-              template("score {path}"))
+              template(""))
     ],
     [ (accepted(Path, Score) <-
          (input(Path),

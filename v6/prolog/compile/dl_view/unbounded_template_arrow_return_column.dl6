@@ -1,0 +1,4 @@
+rel counter(Node)(node: Node, return: int).
+rel cursor(id: int, pos: counter(text)) key(1).
+
+carry(Id, Pos) <- cursor(Id, Pos).

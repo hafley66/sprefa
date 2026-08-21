@@ -1,4 +1,4 @@
-sh span_scan(file_digest: text, query_digest: text) -> (line: int, text: text) = `span {file_digest} $query_digest`.
+rel span_scan(file_digest: text, query_digest: text) -> (line: int, text: text).
 
 span_line(File, Line, Text) <-
   file(File, FileDigest),
