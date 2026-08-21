@@ -402,6 +402,14 @@ host_input_contract(fetch,
                     [col(ep, text), col(prev, text), col(bucket, int)],
                     [identity, identity, freshness]).
 
+% ═══ selfdoc hosts ══════════════════════════════════════════════════════════
+
+% The `--family data` twin of the extract names above. A separate NAME, never a
+% mode column: one declaration carries one output column list (ARCH.pl D1).
+host_input_contract(data_doc_at,
+                    [col(path, text), col(digest, text)],
+                    [identity, freshness]).
+
 % ═══ ghcacher hosts ═════════════════════════════════════════════════════════
 
 % @comment-ok: user banner verbatim, ruling design_debt_mode = utility_over_pedantry.

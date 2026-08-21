@@ -1,0 +1,411 @@
+# The compiler and sprefa-extract, read by sprefa-extract and drawn by dl6.
+# In a git pathspec `*` crosses `/`, so one glob per tree reaches every depth.
+
+# rx: want$.pipe(mergeMap(runFiles), distinct(r => r.digest), mergeMap(runExtract)).
+
+rel span(start: int, end: int).
+
+sh files(glob: text) -> (path: text, digest: text) =
+  `git ls-files -- '{glob}' | git hash-object --stdin-paths`.
+
+# Host names are fixed by registry.pl host_input_contract/3; the declared OUTPUT
+# columns select records out of the one stream (hosts.rs:776 drops nulls).
+sh call_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+# The span IS read, by the containment join below. Measured over this corpus:
+# 31054 sites, 30936 inside exactly one definition, 0 inside two, 118 inside none.
+sh extract(path: text, digest: text) -> (record: text, family: text, span: span, callee: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+# NO `module`: an export list and a `use_module` import differ by KIND, and the
+# module name splits one export into no extra answer.
+sh specifier_at(path: text, digest: text) -> (record: text, family: text, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+# NO `span` and NO `position`: the rule reads the SET of functors a file mentions,
+# and either column makes every occurrence its own row.
+sh call_ref(path: text, digest: text) -> (record: text, family: text, functor: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+# One json document per sidecar, fanned out by the value plane. Registered under
+# its own name in registry.pl `% selfdoc hosts`.
+sh data_doc_at(path: text, digest: text) -> (record: text, family: text, doc: json) =
+  `"$DL_EXTRACT_BIN" --family data {path}`.
+
+rel want(glob: text).
+
+rel source_file(path: text, digest: text).
+source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
+
+# ── the language plane ──────────────────────────────────────────────────────
+
+rel lang_ext(ext: text, lang: text).
+lang_ext('.pl', 'prolog').  lang_ext('.rs', 'rust').  lang_ext('.dl6', 'dl6').
+
+rel source_lang(path: text, lang: text).
+source_lang(Path, Lang) <-
+  source_file(Path, _Digest),
+  lang_ext(Ext, Lang),
+  substr(Path, length(Path) - length(Ext) + 1) == Ext.
+
+# The demand narrowing: a sidecar is a source_file and never an indexed_file, so
+# the call family is never asked for a `.json` nor the data family for a `.pl`.
+rel indexed_file(path: text, digest: text).
+indexed_file(Path, Digest) <- source_file(Path, Digest), source_lang(Path, _Lang).
+
+rel source_base(path: text, base: text).
+source_base(Path, Base) <-
+  source_file(Path, _Digest),
+  instr(reverse(Path), '/') > 0,
+  Base := substr(Path, length(Path) - instr(reverse(Path), '/') + 2).
+
+rel source_stem(path: text, stem: text).
+source_stem(Path, Stem) <-
+  source_base(Path, Base),
+  source_lang(Path, Lang),
+  lang_ext(Ext, Lang),
+  Stem := substr(Base, 1, length(Base) - length(Ext)).
+
+# ── the definition plane ────────────────────────────────────────────────────
+
+# A prolog `node` is one CLAUSE named `functor/arity`; a rust `node` is one fn
+# or method named bare. A `lambda` carries a null name and the host drops it.
+rel def_span(path: text, name: text, start: int, end: int).
+def_span(Path, Name, Start, End) <-
+  indexed_file(Path, Digest),
+  call_node_at(Path, Digest, 'node', 'call', span(Start, End), 'function', Name).
+def_span(Path, Name, Start, End) <-
+  indexed_file(Path, Digest),
+  call_node_at(Path, Digest, 'node', 'call', span(Start, End), 'method', Name).
+
+# One row per definition NAME, so a predicate with 40 clauses counts once.
+rel def_name(path: text, name: text).
+def_name(Path, Name) <- def_span(Path, Name, _Start, _End).
+
+rel call_site(path: text, callee: text, start: int, end: int).
+call_site(Path, Callee, Start, End) <-
+  indexed_file(Path, Digest),
+  extract(Path, Digest, 'site', 'call', span(Start, End), Callee).
+
+rel call_from(path: text, callee: text).
+call_from(Path, Callee) <- call_site(Path, Callee, _Start, _End).
+
+# A prolog module's export list and a rust `pub use` both land as `reexport`;
+# a `use_module` import and a rust `use` land as `named`.
+rel exported(path: text, name: text).
+exported(Path, Name) <-
+  indexed_file(Path, Digest),
+  specifier_at(Path, Digest, 'specifier', 'call', 'reexport', Name).
+
+# ── the call graph ──────────────────────────────────────────────────────────
+
+# rx: defSpan$.pipe(mergeMap(def => callSite$.pipe(filter(s => s.path === def.path
+#   && s.start >= def.start && s.end <= def.end), map(s => [def.name, s.callee])))).
+rel calls(from_path: text, from_name: text, to_name: text).
+calls(FromPath, FromName, ToName) <-
+  def_span(FromPath, FromName, DefStart, DefEnd),
+  call_site(FromPath, ToName, SiteStart, SiteEnd),
+  SiteStart >= DefStart,
+  SiteEnd <= DefEnd.
+
+# A callee names a NAME and never a file, so a name several files define
+# resolves to all of them: a map over-links rather than drop a real edge.
+rel resolved_call(from_path: text, to_path: text, to_name: text).
+resolved_call(FromPath, ToPath, ToName) <-
+  call_from(FromPath, ToName),
+  def_name(ToPath, ToName),
+  FromPath \== ToPath.
+
+# The join is its own rel because an aggregate groups over ONE body atom
+# (lower.pl:4667, aggregate_group_not_delta_local).
+rel module_edge(from_path: text, to_path: text, weight: int).
+module_edge(FromPath, ToPath, count(ToName)) <- resolved_call(FromPath, ToPath, ToName).
+
+# ── the phase plane ─────────────────────────────────────────────────────────
+
+# THE RULE: every file makes one or more ranked phase CLAIMS and the lowest rank
+# wins. Ranks 1-6 prolog, 11-15 rust, 21 dl6; a path carries one language.
+
+# The modules compile.pl hands to run_compile_phase/4 plus the two parse reaches
+# through expand_uses/8: compile.pl:657, :819, :822, :836.
+rel phase_driver(stem: text, phase: text).
+phase_driver('use_resolve',    'parse').   phase_driver('parse_dl_dcg',  'parse').
+phase_driver('1_expansion',    'parse').   phase_driver('print_dl',      'parse').
+phase_driver('analyze',        'plan').    phase_driver('strat',         'plan').
+phase_driver('0_program_check','plan').    phase_driver('1_host_expand', 'plan').
+phase_driver('lower',          'lower').
+phase_driver('emit_ts',        'emit').    phase_driver('emit_rust',     'emit').
+phase_driver('compile',        'driver').  phase_driver('dl6c',          'driver').
+phase_driver('kernel',         'driver').  phase_driver('registry',      'driver').
+
+# `0_` and `1_` load before the plan reads the program; `2_` and up run after it.
+rel digit_phase(digit: text, phase: text).
+digit_phase('0', 'parse').  digit_phase('1', 'parse').
+digit_phase('2', 'plan').   digit_phase('3', 'plan').
+digit_phase('4', 'plan').   digit_phase('5', 'plan').
+digit_phase('6', 'plan').   digit_phase('7', 'plan').
+digit_phase('8', 'plan').   digit_phase('9', 'plan').
+
+rel board_prefix(prefix: text, board: text).
+board_prefix('v6/sprefa-extract/src/bin/',  'cli').
+board_prefix('v6/sprefa-extract/src/lang/', 'families').
+
+rel resolve_stem(stem: text).
+resolve_stem('project').  resolve_stem('deps').  resolve_stem('manifests').
+
+rel phase_claim(path: text, rank: int, phase: text).
+phase_claim(Path, 1, 'fixture') <-
+  source_lang(Path, 'prolog'),
+  substr(Path, 1, 22) == 'v6/prolog/conformance/'.
+phase_claim(Path, 2, 'harness') <-
+  source_stem(Path, Stem),
+  source_lang(Path, 'prolog'),
+  substr(Stem, length(Stem) - 4) == '.test'.
+phase_claim(Path, 3, Phase) <-
+  source_stem(Path, Stem),
+  source_lang(Path, 'prolog'),
+  phase_driver(Stem, Phase).
+phase_claim(Path, 4, 'emit') <-
+  source_stem(Path, Stem),
+  source_lang(Path, 'prolog'),
+  instr(Stem, 'emit') > 0.
+phase_claim(Path, 5, Phase) <-
+  source_stem(Path, Stem),
+  source_lang(Path, 'prolog'),
+  substr(Stem, 2, 1) == '_',
+  Digit := substr(Stem, 1, 1),
+  digit_phase(Digit, Phase).
+phase_claim(Path, 6, 'unphased') <- source_lang(Path, 'prolog').
+
+phase_claim(Path, 11, Board) <-
+  source_lang(Path, 'rust'),
+  board_prefix(Prefix, Board),
+  substr(Path, 1, length(Prefix)) == Prefix.
+phase_claim(Path, 12, 'scip') <-
+  source_base(Path, Base),
+  source_lang(Path, 'rust'),
+  instr(Base, 'scip') > 0.
+phase_claim(Path, 13, 'resolve') <-
+  source_stem(Path, Stem),
+  source_lang(Path, 'rust'),
+  resolve_stem(Stem).
+phase_claim(Path, 15, 'dispatch') <- source_lang(Path, 'rust').
+
+phase_claim(Path, 21, 'rail') <- source_lang(Path, 'dl6').
+
+rel phase_rank(path: text, rank: int).
+phase_rank(Path, min(Rank)) <- phase_claim(Path, Rank, _Phase).
+
+rel module_phase(path: text, phase: text).
+module_phase(Path, Phase) <- phase_rank(Path, Rank), phase_claim(Path, Rank, Phase).
+
+# ── prolog predicates and rust functions ────────────────────────────────────
+
+# `arity` stays TEXT: substr answers text, the expression registry carries no
+# cast, and an untyped comparison is banned.
+rel predicate(path: text, name: text, arity: text).
+predicate(Path, Name, Arity) <-
+  def_name(Path, Qualified),
+  source_lang(Path, 'prolog'),
+  instr(reverse(Qualified), '/') > 0,
+  Name := substr(Qualified, 1, length(Qualified) - instr(reverse(Qualified), '/')),
+  Arity := substr(Qualified, length(Qualified) - instr(reverse(Qualified), '/') + 2).
+
+rel function(path: text, name: text).
+function(Path, Name) <- def_name(Path, Name), source_lang(Path, 'rust').
+
+# ── the module table ────────────────────────────────────────────────────────
+
+rel module_defs(path: text, defs: int).
+module_defs(Path, count(Name)) <- def_name(Path, Name).
+
+rel module_sites(path: text, sites: int).
+module_sites(Path, count(Callee)) <- call_from(Path, Callee).
+
+# A file with no definitions still gets a row, so no board loses a module for
+# holding a zero.
+rel defs_or_zero(path: text, defs: int).
+defs_or_zero(Path, Defs) <- module_defs(Path, Defs).
+defs_or_zero(Path, 0) <- source_lang(Path, _Lang), not(module_defs(Path, _Defs)).
+
+rel sites_or_zero(path: text, sites: int).
+sites_or_zero(Path, Sites) <- module_sites(Path, Sites).
+sites_or_zero(Path, 0) <- source_lang(Path, _Lang), not(module_sites(Path, _Sites)).
+
+rel selfdoc_module(path: text, lang: text, phase: text, defs: int, sites: int).
+selfdoc_module(Path, Lang, Phase, Defs, Sites) <-
+  source_lang(Path, Lang),
+  module_phase(Path, Phase),
+  defs_or_zero(Path, Defs),
+  sites_or_zero(Path, Sites).
+
+rel selfdoc_module_edge(from_path: text, to_path: text, weight: int).
+selfdoc_module_edge(FromPath, ToPath, Weight) <- module_edge(FromPath, ToPath, Weight).
+
+rel phase_edge_pair(from_phase: text, to_phase: text, to_path: text).
+phase_edge_pair(FromPhase, ToPhase, ToPath) <-
+  module_edge(FromPath, ToPath, _Weight),
+  module_phase(FromPath, FromPhase),
+  module_phase(ToPath, ToPhase).
+
+# The weight counts distinct TARGET modules, not edges: a pair is not countable.
+rel selfdoc_phase_edge(from_phase: text, to_phase: text, weight: int).
+selfdoc_phase_edge(FromPhase, ToPhase, count(ToPath)) <-
+  phase_edge_pair(FromPhase, ToPhase, ToPath).
+
+# ── hubs ────────────────────────────────────────────────────────────────────
+
+rel hub_fan_in(path: text, fan_in: int).
+hub_fan_in(ToPath, count(FromPath)) <- module_edge(FromPath, ToPath, _Weight).
+
+rel hub_fan_out(path: text, fan_out: int).
+hub_fan_out(FromPath, count(ToPath)) <- module_edge(FromPath, ToPath, _Weight).
+
+rel fan_in_or_zero(path: text, fan_in: int).
+fan_in_or_zero(Path, FanIn) <- hub_fan_in(Path, FanIn).
+fan_in_or_zero(Path, 0) <- source_lang(Path, _Lang), not(hub_fan_in(Path, _FanIn)).
+
+rel fan_out_or_zero(path: text, fan_out: int).
+fan_out_or_zero(Path, FanOut) <- hub_fan_out(Path, FanOut).
+fan_out_or_zero(Path, 0) <- source_lang(Path, _Lang), not(hub_fan_out(Path, _FanOut)).
+
+rel selfdoc_hot_hub(path: text, fan_in: int, fan_out: int).
+selfdoc_hot_hub(Path, FanIn, FanOut) <-
+  fan_in_or_zero(Path, FanIn),
+  fan_out_or_zero(Path, FanOut).
+
+# ── per-symbol reach, the oracle-check plane ────────────────────────────────
+
+# fan_out: distinct callee NAMES this definition's clauses name. fan_in: the
+# distinct CALLING DEFINITIONS, one per (file, name) pair whose clauses name it.
+rel symbol_fan_out(path: text, name: text, fan_out: int).
+symbol_fan_out(Path, Name, count(ToName)) <- calls(Path, Name, ToName).
+
+rel symbol_fan_in(name: text, fan_in: int).
+symbol_fan_in(ToName, count(FromPath)) <- calls(FromPath, _FromName, ToName).
+
+rel symbol_fan_in_or_zero(name: text, fan_in: int).
+symbol_fan_in_or_zero(Name, FanIn) <- symbol_fan_in(Name, FanIn).
+symbol_fan_in_or_zero(Name, 0) <- def_name(_Path, Name), not(symbol_fan_in(Name, _FanIn)).
+
+rel symbol_fan_out_or_zero(path: text, name: text, fan_out: int).
+symbol_fan_out_or_zero(Path, Name, FanOut) <- symbol_fan_out(Path, Name, FanOut).
+symbol_fan_out_or_zero(Path, Name, 0) <-
+  def_name(Path, Name), not(symbol_fan_out(Path, Name, _FanOut)).
+
+rel selfdoc_symbol(path: text, name: text, fan_in: int, fan_out: int).
+selfdoc_symbol(Path, Name, FanIn, FanOut) <-
+  def_name(Path, Name),
+  symbol_fan_in_or_zero(Name, FanIn),
+  symbol_fan_out_or_zero(Path, Name, FanOut).
+
+# ── orphan predicates ───────────────────────────────────────────────────────
+
+# Export is the `reexport` specifier: the prolog front-end emits one per name in
+# a `:- module(M, [...])` list. A `:- initialization(main)` entry reads as orphan.
+rel called_name(name: text).
+called_name(ToName) <- calls(_FromPath, _FromName, ToName).
+
+# `maplist(merge_one_anonymous_type_rows(Rows), ...)` writes the closure at ITS
+# arity, and as a TERM argument, so no `site` row ever names the definition.
+rel term_reference(path: text, functor: text).
+term_reference(Path, Functor) <-
+  indexed_file(Path, Digest),
+  call_ref(Path, Digest, 'reference', 'call', Functor).
+
+rel called_bare(name: text).
+called_bare(Name) <-
+  call_from(_Path, Callee),
+  instr(reverse(Callee), '/') > 0,
+  Name := substr(Callee, 1, length(Callee) - instr(reverse(Callee), '/')).
+called_bare(Name) <-
+  term_reference(_Path, Functor),
+  instr(reverse(Functor), '/') > 0,
+  Name := substr(Functor, 1, length(Functor) - instr(reverse(Functor), '/')).
+
+# OVER-reports in one shape: `maplist(bare_atom, ...)` passes an arity-0 ATOM and
+# the call family emits no record for an atom argument. Request in the PR body.
+rel selfdoc_orphan_predicate(path: text, name: text, arity: text).
+selfdoc_orphan_predicate(Path, Name, Arity) <-
+  predicate(Path, Name, Arity),
+  module_phase(Path, Phase),
+  Phase \== 'fixture',
+  Qualified := concat([Name, '/', Arity]),
+  not(called_name(Qualified)),
+  not(called_bare(Name)),
+  not(exported(Path, Qualified)).
+
+# ── the host roster ─────────────────────────────────────────────────────────
+
+# The sidecar is the only readable roster: the prolog family emits no ATOM
+# argument, so registry.pl's host NAME never leaves the file (see docs/selfdoc).
+
+# rx: sidecar$.pipe(mergeMap(readJsonDoc), mergeMap(rows => rows),
+#     map(r => ({host: r.demand_rel.slice(14), executor: r.adapter}))).
+
+rel adapters_file(path: text).
+adapters_file(Path) <-
+  source_file(Path, _Digest),
+  substr(Path, length(Path) - 13) == '.adapters.json'.
+
+rel adapters_doc(path: text, doc: json).
+adapters_doc(Path, Doc) <-
+  source_file(Path, Digest),
+  adapters_file(Path),
+  data_doc_at(Path, Digest, 'data_doc', 'data', Doc).
+
+rel adapter_binding(sidecar: text, executor: text, demand_rel: text).
+adapter_binding(Sidecar, Executor, DemandRel) <-
+  adapters_doc(Sidecar, Doc),
+  decode(Doc, [... {adapter: Executor: text, demand_rel: DemandRel: text}]).
+
+# `__host_demand_` is 14 characters and `.adapters.json` is 14 as well.
+rel adapter_host(sidecar: text, program: text, host: text, executor: text).
+adapter_host(Sidecar, Program, Host, Executor) <-
+  adapter_binding(Sidecar, Executor, DemandRel),
+  substr(DemandRel, 1, 14) == '__host_demand_',
+  Host := substr(DemandRel, 15),
+  Program := concat([substr(Sidecar, 1, length(Sidecar) - 14), '.dl6']).
+
+# The site SPAN is what separates two demands of one host from one read twice.
+rel host_demand_sites(program: text, host: text, demands: int).
+host_demand_sites(Program, Host, count(Start)) <-
+  call_site(Program, Host, Start, _End).
+
+rel selfdoc_host(program: text, host: text, executor: text, demands: int).
+selfdoc_host(Program, Host, Executor, Demands) <-
+  adapter_host(_Sidecar, Program, Host, Executor),
+  host_demand_sites(Program, Host, Demands).
+# A binding whose program never names the host is a stale sidecar row.
+selfdoc_host(Program, Host, Executor, 0) <-
+  adapter_host(_Sidecar, Program, Host, Executor),
+  not(host_demand_sites(Program, Host, _Demands)).
+
+# ── the rendered boards ─────────────────────────────────────────────────────
+
+# The join the renderer would otherwise do in shell: one row per drawn module,
+# already ordered, so the script greps a phase and reads columns.
+rel selfdoc_board(phase: text, path: text, stem: text, defs: int, sites: int, fan_in: int, fan_out: int).
+selfdoc_board(Phase, Path, Stem, Defs, Sites, FanIn, FanOut) <-
+  selfdoc_module(Path, _Lang, Phase, Defs, Sites),
+  source_stem(Path, Stem),
+  selfdoc_hot_hub(Path, FanIn, FanOut).
+
+# An edge whose two ends share a phase; a crossing edge is the phase board's.
+rel selfdoc_board_edge(phase: text, from_path: text, to_path: text, weight: int).
+selfdoc_board_edge(Phase, FromPath, ToPath, Weight) <-
+  module_edge(FromPath, ToPath, Weight),
+  module_phase(FromPath, Phase),
+  module_phase(ToPath, Phase).
+
+# rx: rows$.pipe(map(rows => sortBy(rows, [...keys])))
+? selfdoc_board(phase, path, stem, defs, sites, fan_in, fan_out) order by phase, fan_in desc, defs desc, path.
+? selfdoc_board_edge(phase, from_path, to_path, weight) order by phase, weight desc, from_path, to_path.
+? selfdoc_module(path, lang, phase, defs, sites) order by phase, defs desc, path.
+? selfdoc_module_edge(from_path, to_path, weight) order by from_path, weight desc, to_path.
+? selfdoc_phase_edge(from_phase, to_phase, weight) order by from_phase, weight desc, to_phase.
+? selfdoc_hot_hub(path, fan_in, fan_out) order by fan_in desc, fan_out desc, path.
+? selfdoc_host(program, host, executor, demands) order by program, host.
+? selfdoc_orphan_predicate(path, name, arity) order by path, name, arity.
+? selfdoc_symbol(path, name, fan_in, fan_out) order by fan_in desc, fan_out desc, path, name.
