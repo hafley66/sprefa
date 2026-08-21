@@ -90,21 +90,17 @@
 # run concurrently inside one tick and a shared path would race. `DL_STATE_DIR`
 # points into the same scratch directory, so the real daemon state home under
 # ~/.local/state is neither read nor written.
-sh v5_ops(query: text) -> (op: text, kind: text, syntax: text) =
-  `printf '%s\n' '{query}' > "$PARITY_TMP/ops.dl" && DL_STATE_DIR="$PARITY_TMP/state" "$PARITY_DL" "$PARITY_TMP/ops.dl" --db "$PARITY_TMP/ops.sqlite" --format json 2>/dev/null`.
+rel v5_ops(query: text) -> (op: text, kind: text, syntax: text).
 
-sh v5_fns(query: text) -> (name: text, arity: int, group: text) =
-  `printf '%s\n' '{query}' > "$PARITY_TMP/fns.dl" && DL_STATE_DIR="$PARITY_TMP/state" "$PARITY_DL" "$PARITY_TMP/fns.dl" --db "$PARITY_TMP/fns.sqlite" --format json 2>/dev/null`.
+rel v5_fns(query: text) -> (name: text, arity: int, group: text).
 
-sh v5_rels(query: text) -> (name: text, group: text, cols: text) =
-  `printf '%s\n' '{query}' > "$PARITY_TMP/rels.dl" && DL_STATE_DIR="$PARITY_TMP/state" "$PARITY_DL" "$PARITY_TMP/rels.dl" --db "$PARITY_TMP/rels.sqlite" --format json 2>/dev/null`.
+rel v5_rels(query: text) -> (name: text, group: text, cols: text).
 
 # ── L2/L3/L4/L5: one generic line-regex host over git-tracked files ─────────
 # `rev` is `WORK` here throughout (this program grades the working tree). The
 # rev column exists because the git-diags rail shares this host and needs a
 # per-commit witness; see v5-git-diags.dl6.
-sh grep_at(rev: text, glob: text, pattern: text) -> (path: text, line: int, g1: text, g2: text, g3: text) =
-  `"$PARITY_GREP" '{rev}' '{glob}' '{pattern}'`.
+rel grep_at(rev: text, glob: text, pattern: text) -> (path: text, line: int, g1: text, g2: text, g3: text).
 
 # ── the start row, the only thing the receipt posts ─────────────────────────
 # Every query text and every regex stays in THIS FILE. The receipt posts one
@@ -262,6 +258,8 @@ v6_surface(signature, axis, status) <-
                  "^surface[(]([^,]+)[ ]*,[ ]*([a-z_]+)[ ]*,.*,[ ]*([a-z]+)[)][.][ ]*$",
                  _, _, signature, axis, status).
 
+# STALE PATTERN: `sh`/`bind` died from the surface (arrivals rewrite); this
+# regex now matches zero rows and needs the `rel ... -> (...)` shape instead.
 rel v6_world(kind: text, name: text).
 v6_world(kind, name) <-
   go(_), grep_at('WORK', 'v6/dl/fixtures/*.dl6',

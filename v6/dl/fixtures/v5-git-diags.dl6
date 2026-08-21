@@ -109,18 +109,15 @@
 # declarations differing only in output encoding, compared end to end at the
 # two cardinalities that discriminate (2 and 3). History in
 # plans/2026-07-30-v5-parity-spelunk.md.
-sh files_at(rev: text, glob: text) -> (path: text, digest: text) =
-  `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse --verify --quiet '{rev}':"$entry")"; if [ -n "$oid" ]; then printf '{"path":"%s","digest":"%s"}\n' "$entry" "$oid"; fi; done`.
+rel files_at(rev: text, glob: text) -> (path: text, digest: text).
 
 # The shipped whitespace spelling, verbatim from fixtures/files-hosts.dl6.
 # It exists ONLY as the decode regression guard; `ws_file` below is read by the
 # receipt and by nothing else in the rail.
-sh files_at_ws(rev: text, glob: text) -> (path: text, digest: text) =
-  `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse --verify --quiet '{rev}':"$entry")"; if [ -n "$oid" ]; then printf '%s %s\n' "$entry" "$oid"; fi; done`.
+rel files_at_ws(rev: text, glob: text) -> (path: text, digest: text).
 
 # ── file CONTENT at a revision, the shared line-regex host ──────────────────
-sh grep_at(rev: text, glob: text, pattern: text) -> (path: text, line: int, g1: text, g2: text, g3: text) =
-  `"$PARITY_GREP" '{rev}' '{glob}' '{pattern}'`.
+rel grep_at(rev: text, glob: text, pattern: text) -> (path: text, line: int, g1: text, g2: text, g3: text).
 
 # ── the three world inputs, posted as ordinary EDB arrivals ────────────────
 # `want_at` advances on every commit; `base_at` is the comparison point and

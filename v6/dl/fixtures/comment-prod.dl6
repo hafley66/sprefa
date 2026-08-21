@@ -4,15 +4,12 @@
 # plumbing + file lines); no python flags, no host-side glob, no marker grep.
 #
 
-sh staged_file_list(index_digest: text)
-  -> (file_path: text, blob_digest: text, exempt_flag: int) =
-  `: {index_digest}; "$DL_COMMENT_BUDGET_FEED" staged`.
+rel staged_file_list(index_digest: text)
+  -> (file_path: text, blob_digest: text, exempt_flag: int).
 
-sh added_line_span(path: text, digest: text) -> (line: int) =
-  `: {digest}; "$DL_COMMENT_BUDGET_FEED" added {path}`.
+rel added_line_span(path: text, digest: text) -> (line: int) key(1).
 
-sh raw_line(path: text, digest: text) -> (line: int, line_text: text) =
-  `: {digest}; "$DL_COMMENT_BUDGET_FEED" raw-lines {path} {digest}`.
+rel raw_line(path: text, digest: text) -> (line: int, line_text: text) key(1).
 
 rel max_run(limit_lines: int).
 max_run(2).

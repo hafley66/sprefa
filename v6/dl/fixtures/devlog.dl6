@@ -17,15 +17,14 @@
 # fact_arg rows. group_concat/3 is the document fold; it is live in the current
 # surface and orders by the explicit ordinal column.
 
-bind watch(glob: text, path: text, digest: text).
+rel watch(glob: text, path: text, digest: text).
 
 rel source(path: text, digest: text).
 source(path, digest) <- watch('chat_log/*.pl', path, digest).
 source(path, digest) <- watch('v6/prolog/ARCH.pl', path, digest).
 
-sh ledger(path: text, digest: text)
-  -> (day: text, session: text, session_order: int, fact_order: int, record: text, args: json) =
-  `: {digest}; swipl -q -g 'use_module(library(http/json)), current_prolog_flag(argv,[Path|_]), absolute_file_name(Path,Abs), consult(Abs), module_property(M,file(Abs)), ( M:session(id,Session) -> sub_atom(Session,0,8,_,Day), sub_atom(Session,9,_,0,SeqText), atom_number(Day,DayNumber), atom_number(SeqText,SeqNumber), SessionOrder is DayNumber * 1000 + SeqNumber, json_write_dict(current_output, _{day:Day,session:Session,session_order:SessionOrder,fact_order:0,record:session,args:[]}, [width(0)]), nl, findall(Name/Arity-Fact, (member(Name/Arity,[lane_landed/3,in_flight/3,finding/3,answered/2,directive/2]), functor(Fact,Name,Arity), catch(M:Fact,_,fail)), Facts), forall(nth1(FactOrder,Facts,Name/Arity-Fact), (Fact=..[_|RawArgs], findall(_{position:Position, value:Value}, (nth1(Position,RawArgs,RawArg), term_string(RawArg,Value,[quoted(false),portray(false)])), Args), json_write_dict(current_output, _{day:Day,session:Session,session_order:SessionOrder,fact_order:FactOrder,record:Name,args:Args}, [width(0)]), nl)) ; Session = ARCH, Day = 00000000, SessionOrder = 0, findall(task/3-Fact, (functor(Fact,task,3), catch(M:Fact,_,fail)), Tasks), forall(nth1(FactOrder,Tasks,task/3-Fact), (Fact=..[_|RawArgs], findall(_{position:Position, value:Value}, (nth1(Position,RawArgs,RawArg), term_string(RawArg,Value,[quoted(false),portray(false)])), Args), json_write_dict(current_output, _{day:Day,session:Session,session_order:SessionOrder,fact_order:FactOrder,record:task,args:Args}, [width(0)]), nl)))' -t halt -- {path}`.
+rel ledger(path: text, digest: text)
+  -> (day: text, session: text, session_order: int, fact_order: int, record: text, args: json) key(1).
 
 rel ledger_row(
   day: text,
@@ -195,8 +194,7 @@ devlog_line(ordinal, line) <-
 rel devlog(document: text).
 devlog(group_concat(line, '\n', ordinal)) <- devlog_line(ordinal, line).
 
-sh write_devlog(document: text) -> (written: text) =
-  `printf '%s\n' "{document}" > DEVLOG.md; printf '%s' DEVLOG.md`.
+rel write_devlog(document: text) -> (written: text).
 
 rel write_receipt(document: text, written: text).
 write_receipt(document, written) <- devlog(document), write_devlog(document, written).
