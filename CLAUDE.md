@@ -112,8 +112,8 @@ moved to `hafley66/hafley-rs`, nothing under `v6/boop` exists anymore).
 used before.
 
 **Lane models (user-set 2026-08-21, supersedes every earlier rotation for
-sprefa dispatch):** every delegated task runs on **sonnet** with max effort
-(`--model sonnet`, `model@effort` suffix `high` where the harness takes one).
+sprefa dispatch):** every delegated task runs on **sonnet at high effort**
+(`--model sonnet@high` through boop; Agent tool `model: sonnet`).
 Briefs carry extreme detail: every file, every receipt, every command, every
 style law inline, so sonnet makes no judgment call. The coordinator ALWAYS
 grades sonnet's tree itself (git log, git status, the full gate) before taking
