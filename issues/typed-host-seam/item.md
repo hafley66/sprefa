@@ -4,10 +4,15 @@ updated: 2026-08-21
 type: task
 reporter: chris
 assignee: chris
-status: in-progress
+status: done
 priority: normal
 epic: cheap-fast-analysis
 labels: [engine, perf, lane-a]
+closed: 2026-08-21
+closed_by: chris
+commits:
+- hash: d011ddc77
+  summary: landed via lane A
 ---
 
 # Typed host seam: executors return rows, never JSON text
