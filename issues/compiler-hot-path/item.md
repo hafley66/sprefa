@@ -4,10 +4,15 @@ updated: 2026-08-21
 type: improvement
 reporter: chris
 assignee: chris
-status: in-progress
+status: done
 priority: normal
 epic: cheap-fast-analysis
 labels: [prolog, perf, lane-c]
+closed: 2026-08-21
+closed_by: chris
+commits:
+- hash: 1c1e6171e
+  summary: saved-state dl6c, plan 108 to 70ms, byte-identical
 ---
 
 # Compiler hot path: load time and expand_program_with_bindings

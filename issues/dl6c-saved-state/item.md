@@ -2,11 +2,16 @@
 created: 2026-08-19
 updated: 2026-08-21
 type: task
-status: in-progress
+status: done
 priority: high
 epic: productionize-rust-door
 size: S
 related: ['@cheap-fast-analysis']
+closed: 2026-08-21
+closed_by: chris
+commits:
+- hash: 1c1e6171e
+  summary: dl6c.sh saved state, load 195 to 44ms
 ---
 
 # dl6c: the compiler as one executable (SWI qsave_program stand_alone)

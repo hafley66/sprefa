@@ -4,10 +4,15 @@ updated: 2026-08-21
 type: feature
 reporter: chris
 assignee: chris
-status: in-progress
+status: done
 priority: normal
 epic: cheap-fast-analysis
 labels: [dl6, reach, lane-e]
+closed: 2026-08-21
+closed_by: chris
+commits:
+- hash: e72d1088c
+  summary: feature-reach.dl6, hafley-rs and sprefa matrices, reachcrate fixture
 ---
 
 # feature-reach.dl6: entry point x feature matrix from extract output
