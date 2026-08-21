@@ -41,7 +41,7 @@ pub trait IHostExecutor: Sync {
 pub const LINKED_EXECUTORS: &str =
     "soopy, soopy_files, soopy_refs, soopy_history, soopy_repo_at, dep_crawl, \
      sprefa_extract, sprefa_scip, cargo_metadata, fixture, http_fetch, env, gh_repos, \
-     soopy_checkout, toml_json";
+     gh_pulls, dl_tick_cost, soopy_checkout, toml_json";
 
 static GIT_REFS: LazyLock<crate::executors::git_refs::GitRefsExecutor> =
     LazyLock::new(crate::executors::git_refs::GitRefsExecutor::new);
@@ -64,6 +64,10 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
         "http_fetch" => Some(&crate::executors::HttpFetchExecutor),
         "env" => Some(&crate::executors::EnvExecutor),
         "gh_repos" => Some(&crate::executors::GhReposExecutor),
+        "gh_pulls" => Some(&crate::executors::GhPullsExecutor),
+        // The engine measuring itself: the trace table and the resident set, as
+        // rows the same fold folds.
+        "dl_tick_cost" => Some(&crate::executors::TickCostExecutor),
         "soopy_checkout" => Some(&crate::executors::SoopyCheckoutExecutor),
         "toml_json" => Some(&crate::executors::TomlJsonExecutor),
         // The cross-repository families. Each memoises on its demand inputs, so

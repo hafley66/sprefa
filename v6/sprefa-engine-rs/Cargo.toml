@@ -44,6 +44,12 @@ cargo_metadata = "0.23"
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
 # Already in this lock through sprefa-extract's manifest arm.
 basic-toml = "0.1"
+# The compile cache key, already in the lock through soopy and sprefa-store, so
+# `dl6 run` adds no new dependency to reach a content-addressed cache.
+blake3 = "1"
+# The resident-set reading behind `tick_cost`, already in the lock through soopy.
+# Rejected: memory-stats, a new lock entry for one number; hand mach/procfs FFI.
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 
 [features]
 default = ["harness"]
