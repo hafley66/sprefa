@@ -1,6 +1,6 @@
-% FAIL-FIRST: sh_head//2 read a bare ident, so `sh /scip/diet/call(...)` did not
-% parse at all and dotted_host_name_parses_to_the_module_path_atom threw
-% dl_parse_error before reaching an assertion.
+% FAIL-FIRST: sh_head//2 read a bare ident, so a multi-segment executor path
+% did not parse at all and the first test below threw dl_parse_error before
+% reaching an assertion.
 :- module(scip_namespaces_tests, []).
 
 :- use_module(library(plunit)).
@@ -23,9 +23,9 @@ scip_source(Source) :-
 \n  /scip/diet/call('.', 'a.rs', 'd', 'resolved_edge', 'call',\c
 \n                 _Caller, _Callee, Callee, _Kind).\n".
 
-% The dl6 spelling is dotted; the atom every phase below the parser carries is
-% module_path_name/2's `__` join, which is a legal SQL and Rust identifier.
-test(dotted_host_name_parses_to_the_module_path_atom) :-
+% The dl6 spelling is slash-rooted; the atom every phase below the parser
+% carries is module_path_name/2's `__` join, a legal SQL and Rust identifier.
+test(slash_executor_path_parses_to_the_module_path_atom) :-
     scip_source(Source),
     string_codes(Source, Codes),
     parse_dl_dcg_entry(scip_test, Codes, Prog, _Bindings, Findings),
@@ -37,9 +37,9 @@ test(dotted_host_name_parses_to_the_module_path_atom) :-
     Outputs == [col(record, text), col(family, text), col(caller_path, text),
                 col(callee_path, text), col(callee, text), col(kind, text)].
 
-% A dotted host GOAL is a name with segments, never a nested rel: it flattens to
-% the same atom before host normalization reads the goal's functor.
-test(dotted_host_goal_becomes_a_probe_on_the_flat_name) :-
+% An executor path GOAL is a name with segments, never a nested rel: it
+% flattens to the same atom before host normalization reads the goal's functor.
+test(slash_executor_goal_becomes_a_probe_on_the_flat_name) :-
     scip_source(Source),
     string_codes(Source, Codes),
     parse_dl_dcg_entry(scip_test, Codes, program(_Decls, Rules, _Queries),
@@ -50,6 +50,17 @@ test(dotted_host_goal_becomes_a_probe_on_the_flat_name) :-
     Ins == ['.', 'a.rs'],
     Salts == [salt(digest, d)],
     length(Outs, 6).
+
+% Ruling executor_path_slashes: one segment list, two spellings. The dotted
+% module path stays legal, so a program written before the call still parses.
+test(a_slash_path_and_a_dotted_path_reach_one_atom) :-
+    forall(member(Spelling-Expected,
+                  ["/scip/diet/call"-scip__diet__call,
+                   "scip.diet.call"-scip__diet__call,
+                   "/soopy/files"-soopy__files]),
+           ( string_codes(Spelling, PathCodes),
+             once(phrase(parse_dl_dcg:dotted_path(Segments), PathCodes)),
+             atomic_list_concat(Segments, '__', Expected) )).
 
 test(every_scip_namespace_carries_the_repo_extract_contract) :-
     forall(scip_namespace_host(Name, _Interface, _Evidence),
@@ -77,9 +88,9 @@ test(the_call_interface_is_the_receiver_shape) :-
     Columns == [col(record, text), col(family, text), col(caller_path, text),
                 col(callee_path, text), col(callee, text), col(kind, text)].
 
-% The emitted demand and response rel names are SQL identifiers, so the dotted
-% spelling may not reach them; `__` is the join the rest of the compiler uses.
-test(dotted_host_emits_sql_safe_relation_names) :-
+% The emitted demand and response rel names are SQL identifiers, so no path
+% separator may reach them; `__` is the join the rest of the compiler uses.
+test(executor_path_emits_sql_safe_relation_names) :-
     compile_host_decl(
       sh_decl(scip__diet__call,
               [col(repo, text), col(path, text), col(digest, text)],

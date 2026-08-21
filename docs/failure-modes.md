@@ -2391,6 +2391,44 @@ the incident cost one uncommitted file, not the arc.
 
 ENTRY: this row.
 
+## 70. A surface removed on one branch, and two new programs written in it on the other
+
+INCIDENT (2026-08-21, arrivals-and-ticks landing). The branch deleted `sh` and
+`bind` from the parser and moved every `.dl6` it owned to the arrival form.
+`origin/main` meanwhile gained two brand-new rails,
+`v6/dl/rails/{no-new-eprintln,recompute-guard}-rail.dl6`, both written in the
+`sh` surface with `.adapters.json` sidecars naming `soopy_files` and
+`sprefa_extract`, adapter names the new roster no longer answers to. `git
+merge` reported zero conflicts: neither branch touched a line the other
+touched. `just v5-rails` went red on the first run after the merge, with a
+compile stop from the rule index rather than from the parser.
+
+RCA. A surface removal is a change to the LANGUAGE, and a merge only compares
+FILES. Nothing in the tree relates "the parser stopped accepting `sh`" to "a
+file spelling `sh` was added". The corpus sweep does not read `v6/dl/rails/**`,
+and `just v5-rails` is not part of `just green-all`'s default legs, so the only
+signal was a leg run by hand.
+
+FAIL-PRE-FIX PROBE. `git merge origin/main` on the collapse branch, then
+`cd v6 && just v5-rails`: the recompute rail stops with
+`unsupported_construct: compiler refused rule 'surface_findings'`, and no gate
+between the merge and that command says anything.
+
+RAIL. A surface-removal arc greps the LIVE corpus for the removed keyword after
+every merge from main, not only before the first commit:
+
+    git grep -nE '^\s*(sh|bind) [a-z_]' -- 'v6/dl/**/*.dl6'
+
+The two rails here are now in the arrival form and their sidecars are deleted.
+Two hits remain and are NOT this arc's: `v6/dl/fixtures/{sg-rail,pr-size}.dl6`
+are byte-identical to origin/main, absent from
+`v6/prolog/compile/out/manifest.json`, named by no recipe, and already fail to
+parse on main at their `?`-demand lines (15:5 and 23:6), not at `sh`. They are
+tsv2-era dead corpus whose conversion needs `/clock/tick`, which the
+wip/dl6-run-watch-salvage lane owns. Anything else the grep reports is live.
+
+ENTRY: this row.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
