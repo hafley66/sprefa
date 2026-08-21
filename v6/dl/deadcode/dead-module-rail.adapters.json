@@ -18,5 +18,10 @@
   "adapter": "sprefa_extract",
   "demand_rel": "__host_demand_cfg_at",
   "response_rel": "__host_response_cfg_at"
+ },
+ {
+  "adapter": "sprefa_extract",
+  "demand_rel": "__host_demand_specifier_at",
+  "response_rel": "__host_response_specifier_at"
  }
 ]

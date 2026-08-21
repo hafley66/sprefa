@@ -4,7 +4,13 @@
 #   rail_dead_module       no call site anywhere names any definition here
 #   rail_unproven_module   reached only through a name several files define
 #   rail_unreachable_module  the crawl from the declared roots never arrives
-#
+
+# The buckets do NOT read one graph. Dead and unproven are call-only, so a file
+# imported and never called is dead: knip's blind spot, and the whole point.
+
+# The crawl is BOTH calls and resolved import edges, because an entry point
+# reaches a file either way and a star re-export writes no callee at all.
+
 # The middle bucket is the point. Demanding a unique name reports live code as
 # dead; ignoring ambiguity reports dead code as live. Neither is a good default
 # for a tool whose false positives get code deleted, so the ambiguity is named
@@ -38,6 +44,10 @@ sh cfg_at(path: text, digest: text) -> (record: text, family: text, span: span, 
 # is not a wasted field, it is a 6x row multiplier: dropping it took tick-2
 # arrivals from 21194 to 3501 and the run from 4.8s to 3.55s.
 sh extract(path: text, digest: text) -> (record: text, family: text, callee: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+# NO `name`, `kind` or `span`: they would make `import {one, two} from './m'`
+# two rows where the rules read one module text. `module` selects the record.
+sh specifier_at(path: text, digest: text) -> (record: text, family: text, module: text) =
   `"$DL_EXTRACT_BIN" --family call {path}`.
 
 rel want(glob: text).
@@ -76,6 +86,125 @@ rel call_from(path: text, callee: text).
 call_from(Path, Callee) <-
   source_file(Path, Digest),
   extract(Path, Digest, 'site', 'call', Callee).
+
+# ── the import plane ────────────────────────────────────────────────────────
+
+# Every rung of the ladder below is TypeScript's, so the demand is narrowed to
+# the files it answers for: a 4th parse of 82 Rust files cost 0.5s for 0 edges.
+rel module_extension(ext: text).
+module_extension('.ts').  module_extension('.tsx'). module_extension('.mts').
+module_extension('.cts'). module_extension('.js').  module_extension('.jsx').
+module_extension('.mjs'). module_extension('.cjs').
+
+rel module_source(path: text).
+module_source(Path) <-
+  source_file(Path, _Digest),
+  module_extension(Ext),
+  substr(Path, length(Path) - length(Ext) + 1) == Ext.
+
+rel import_specifier(path: text, module: text).
+import_specifier(Path, Module) <-
+  source_file(Path, Digest),
+  module_source(Path),
+  specifier_at(Path, Digest, 'specifier', 'call', Module).
+
+rel source_dir(path: text, dir: text).
+source_dir(Path, Dir) <-
+  source_file(Path, _Digest),
+  instr(reverse(Path), '/') > 0,
+  Dir := substr(Path, 1, length(Path) - instr(reverse(Path), '/')).
+
+# The basename as written, which is the join key the bare arm below matches on.
+rel file_key(path: text, key: text).
+file_key(Path, Key) <-
+  source_dir(Path, Dir),
+  Key := substr(Path, length(Dir) + 2).
+
+# One rel per `../` level, never one recursive rel: a recursive arm may mint no
+# interned text (lower.pl:5677), and every climb builds a new directory string.
+rel dir_up_one(path: text, dir: text).
+dir_up_one(Path, Parent) <-
+  source_dir(Path, Dir),
+  instr(reverse(Dir), '/') > 0,
+  Parent := substr(Dir, 1, length(Dir) - instr(reverse(Dir), '/')).
+
+rel dir_up_two(path: text, dir: text).
+dir_up_two(Path, Parent) <-
+  dir_up_one(Path, Dir),
+  instr(reverse(Dir), '/') > 0,
+  Parent := substr(Dir, 1, length(Dir) - instr(reverse(Dir), '/')).
+
+rel dir_up_three(path: text, dir: text).
+dir_up_three(Path, Parent) <-
+  dir_up_two(Path, Dir),
+  instr(reverse(Dir), '/') > 0,
+  Parent := substr(Dir, 1, length(Dir) - instr(reverse(Dir), '/')).
+
+# The ceiling is three `../`, which is where the unrolled rels stop. A deeper
+# specifier resolves to nothing and its target reads as unreached, never as dead.
+rel relative_specifier(path: text, base: text, tail: text).
+relative_specifier(Path, Base, Tail) <-
+  import_specifier(Path, Module),
+  source_dir(Path, Base),
+  substr(Module, 1, 2) == './',
+  Tail := substr(Module, 3).
+relative_specifier(Path, Base, Tail) <-
+  import_specifier(Path, Module),
+  dir_up_one(Path, Base),
+  substr(Module, 1, 3) == '../',
+  substr(Module, 4, 3) \== '../',
+  Tail := substr(Module, 4).
+relative_specifier(Path, Base, Tail) <-
+  import_specifier(Path, Module),
+  dir_up_two(Path, Base),
+  substr(Module, 1, 6) == '../../',
+  substr(Module, 7, 3) \== '../',
+  Tail := substr(Module, 7).
+relative_specifier(Path, Base, Tail) <-
+  import_specifier(Path, Module),
+  dir_up_three(Path, Base),
+  substr(Module, 1, 9) == '../../../',
+  substr(Module, 10, 3) \== '../',
+  Tail := substr(Module, 10).
+
+# TypeScript's own candidate ladder, as a fact table so the ladder is one rule.
+# The empty suffix is the specifier that already names a file exactly.
+rel module_suffix(suffix: text).
+module_suffix('').        module_suffix('.ts').       module_suffix('.tsx').
+module_suffix('.d.ts').   module_suffix('.mts').      module_suffix('.cts').
+module_suffix('.js').     module_suffix('.jsx').      module_suffix('.mjs').
+module_suffix('.cjs').    module_suffix('/index.ts'). module_suffix('/index.tsx').
+module_suffix('/index.js').
+
+rel import_candidate(path: text, target: text).
+import_candidate(Path, Candidate) <-
+  relative_specifier(Path, Base, Tail),
+  module_suffix(Suffix),
+  Candidate := concat([Base, '/', Tail, Suffix]).
+# A NodeNext specifier names the file the compiler EMITS, so `./x.js` is `x.ts`.
+import_candidate(Path, Candidate) <-
+  relative_specifier(Path, Base, Tail),
+  substr(Tail, length(Tail) - 2) == '.js',
+  Candidate := concat([Base, '/', substr(Tail, 1, length(Tail) - 3), '.ts']).
+
+# A tsconfig `paths` alias rewrites a prefix this rail cannot read, so the LAST
+# SEGMENT matches instead: over-links, never under-links. No `/` = no arm.
+rel bare_specifier(path: text, key: text).
+bare_specifier(Path, Key) <-
+  import_specifier(Path, Module),
+  substr(Module, 1, 1) \== '.',
+  instr(Module, '/') > 0,
+  Key := substr(Module, length(Module) - instr(reverse(Module), '/') + 2).
+
+rel imports(source: text, target: text).
+imports(SourcePath, TargetPath) <-
+  import_candidate(SourcePath, TargetPath),
+  source_file(TargetPath, _Digest),
+  SourcePath \== TargetPath.
+imports(SourcePath, TargetPath) <-
+  bare_specifier(SourcePath, Key),
+  file_key(TargetPath, Key),
+  SourcePath \== TargetPath.
 
 # ── ambiguity, for the readable table only ──────────────────────────────────
 rel name_def_files(name: text, files: int).
@@ -166,6 +295,7 @@ rel live_file(path: text).
 live_file(Path) <- root_file(Path).
 live_file(Target) <-
   live_file(Source), call_from(Source, Callee), def_site(Target, Callee, _At).
+live_file(Target) <- live_file(Source), imports(Source, Target).
 
 rel rail_unreachable_module(path: text, defs: int).
 rail_unreachable_module(Path, Defs) <- file_defs(Path, Defs), Defs >= 5, not(live_file(Path)).
