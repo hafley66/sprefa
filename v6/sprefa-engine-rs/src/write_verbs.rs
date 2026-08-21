@@ -68,6 +68,29 @@ pub trait WriteVerbs: Sync {
     fn clear(&self, relations: &[IncrementalRelationPlan], boundary: TickBoundary) -> Vec<String>;
 }
 
+impl WriteVerbStrategy {
+    pub fn name(self) -> &'static str {
+        match self {
+            WriteVerbStrategy::PerRel => "per_rel",
+            WriteVerbStrategy::Shared => "shared",
+        }
+    }
+}
+
+/// The strategy name a span carries, read off plan metadata like the verbs
+/// themselves.
+pub fn strategy_name(relations: &[IncrementalRelationPlan]) -> &'static str {
+    write_verbs_for(relations).strategy().name()
+}
+
+pub fn relation_strategy(relation: &IncrementalRelationPlan) -> &'static str {
+    if relation.shared_frontier.is_some() {
+        WriteVerbStrategy::Shared.name()
+    } else {
+        WriteVerbStrategy::PerRel.name()
+    }
+}
+
 pub struct PerRelWriteVerbs;
 pub struct SharedWriteVerbs;
 

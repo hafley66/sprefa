@@ -3,7 +3,8 @@
 // rusqlite inward; none awaits inside a single statement, so a statement's
 // effects are visible to the next statement in the same ordered batch.
 
-use std::collections::{BTreeMap, HashMap};
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Mutex;
 
 use regex::Regex;
@@ -28,24 +29,56 @@ pub trait SqlRunner {
 
 pub struct SqliteSeam {
     conn: Connection,
+    /// Distinct SQL texts this connection has compiled, counted only when a
+    /// caller asks; hashing every statement's text on the fold path is work no
+    /// ordinary run needs.
+    prepared: RefCell<HashSet<String>>,
+    counting: Cell<bool>,
+    dispatches: Cell<u64>,
 }
 
 impl SqliteSeam {
     pub fn in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory()?;
-        install_scalars(&conn)?;
-        Ok(SqliteSeam { conn })
+        // DL_DB_URL is the file-backed measurement door: the pragmas that are
+        // no-ops on `:memory:` only have an effect on a real file.
+        let conn = match std::env::var("DL_DB_URL") {
+            Ok(url) if !url.is_empty() => Connection::open(url)?,
+            _ => Connection::open_in_memory()?,
+        };
+        SqliteSeam::wrap(conn)
     }
 
     pub fn open(url: &str) -> Result<Self> {
-        let conn = Connection::open(url)?;
+        SqliteSeam::wrap(Connection::open(url)?)
+    }
+
+    fn wrap(conn: Connection) -> Result<Self> {
         install_scalars(&conn)?;
-        Ok(SqliteSeam { conn })
+        Ok(SqliteSeam {
+            conn,
+            prepared: RefCell::new(HashSet::new()),
+            counting: Cell::new(false),
+            dispatches: Cell::new(0),
+        })
+    }
+
+    /// Arms the prepare counters for a COUNT test; off on the fold path.
+    pub fn count_prepares(&self) {
+        self.counting.set(true);
+    }
+
+    pub fn distinct_sql_texts(&self) -> usize {
+        self.prepared.borrow().len()
+    }
+
+    pub fn dispatches(&self) -> u64 {
+        self.dispatches.get()
     }
 
     pub fn run_ddl(&self, ddl: &[String]) -> Result<()> {
+        let _scope = crate::trace::Scope::phase("ddl");
         for statement in ddl {
-            self.conn.execute_batch(statement)?;
+            SqlRunner::execute_multiple(self, statement)?;
         }
         Ok(())
     }
@@ -201,7 +234,26 @@ pub fn report_seam_tally() {
 impl SqlRunner for SqliteSeam {
     fn execute(&self, statement: &SqlStatement) -> Result<QueryResult> {
         let started = std::time::Instant::now();
+        let label = crate::trace::current_label();
+        let span = tracing::trace_span!(
+            "sql",
+            relation = %label.relation,
+            verb = label.verb,
+            shape = tracing::field::Empty,
+            rows_out = tracing::field::Empty,
+            rows_changed = tracing::field::Empty,
+            prepare_us = tracing::field::Empty,
+            step_us = tracing::field::Empty
+        );
+        let _entered = span.enter();
+        if self.counting.get() {
+            self.dispatches.set(self.dispatches.get() + 1);
+            if !self.prepared.borrow().contains(&statement.sql) {
+                self.prepared.borrow_mut().insert(statement.sql.clone());
+            }
+        }
         let mut stmt = self.conn.prepare(&statement.sql)?;
+        let prepare_nanos = started.elapsed().as_nanos() as u64;
         let column_count = stmt.column_count();
         let columns: Vec<String> = (0..column_count)
             .map(|index| stmt.column_name(index).unwrap_or_default().to_string())
@@ -220,6 +272,20 @@ impl SqlRunner for SqliteSeam {
             out_rows.push(row_to_values(row, &columns));
         }
         let rows_affected = self.conn.changes() as i64;
+        let elapsed_nanos = started.elapsed().as_nanos() as u64;
+        crate::trace::record(
+            label,
+            elapsed_nanos,
+            out_rows.len() as u64,
+            rows_affected.max(0) as u64,
+        );
+        if !span.is_disabled() {
+            span.record("shape", statement_shape(&statement.sql).as_str());
+            span.record("rows_out", out_rows.len() as u64);
+            span.record("rows_changed", rows_affected);
+            span.record("prepare_us", prepare_nanos / 1_000);
+            span.record("step_us", elapsed_nanos.saturating_sub(prepare_nanos) / 1_000);
+        }
         {
             use std::sync::atomic::Ordering::Relaxed;
             SEAM_TALLY.statements.fetch_add(1, Relaxed);
@@ -260,12 +326,22 @@ impl SqlRunner for SqliteSeam {
     }
 
     fn execute_multiple(&self, sql: &str) -> Result<()> {
+        let started = std::time::Instant::now();
+        let label = crate::trace::current_label();
+        let span = tracing::trace_span!("sql_batch", relation = %label.relation, verb = label.verb);
+        let _entered = span.enter();
         self.conn.execute_batch(sql)?;
+        crate::trace::record(label, started.elapsed().as_nanos() as u64, 0, 0);
         Ok(())
     }
 
     fn scalar(&self, sql: &str) -> Result<i64> {
+        let started = std::time::Instant::now();
+        let label = crate::trace::current_label();
+        let span = tracing::trace_span!("sql_scalar", relation = %label.relation, verb = label.verb);
+        let _entered = span.enter();
         let value = self.conn.query_row(sql, [], |row| row.get(0)).optional()?;
+        crate::trace::record(label, started.elapsed().as_nanos() as u64, 1, 0);
         Ok(value.unwrap_or(0))
     }
 }

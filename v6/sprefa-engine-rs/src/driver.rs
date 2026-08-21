@@ -62,6 +62,7 @@ pub async fn run_schedule(
     schedule: &[Vec<Arrival>],
     drain_cap: usize,
 ) -> BoundaryResult<TickFold> {
+    crate::trace::arm();
     seam.run_ddl(&program.ddl).expect("DDL execution failed");
     run_boot(seam, &program.boot);
     let mut lines = Vec::new();
@@ -81,14 +82,24 @@ pub async fn run_schedule(
                 program.name, drain_cap
             );
         }
-        let deltas = drive_tick(program, seam, arrivals).await?;
+        let deltas = {
+            let span =
+                tracing::info_span!("tick", tick = tick_number, arrivals = arrivals.len());
+            let _entered = span.enter();
+            drive_tick(program, seam, arrivals).await?
+        };
         tick_number += 1;
         if drains {
             drains_used += 1;
         }
         carry_pending = deltas.carry_pending;
-        lines.push(format_deltas(program, tick_number, &deltas));
+        {
+            let _scope = crate::trace::Scope::phase("ticklog");
+            lines.push(format_deltas(program, tick_number, &deltas));
+        }
     }
+    crate::sql::report_seam_tally();
+    crate::trace::report();
     Ok(TickFold { lines })
 }
 
@@ -100,6 +111,7 @@ pub async fn run_schedule_live(
     schedule: &[Vec<Arrival>],
     drain_cap: usize,
 ) -> Result<TickFold, RunError> {
+    crate::trace::arm();
     seam.run_ddl(&program.ddl).expect("DDL execution failed");
     run_boot(seam, &program.boot);
     let adapter_rows =
@@ -143,14 +155,18 @@ pub async fn run_schedule_live(
         }
         let arrival_rows = arrivals.len();
         let deltas = {
-            let span = tracing::info_span!("drive_tick", tick = tick_number, arrivals = arrival_rows);
+            let span = tracing::info_span!("tick", tick = tick_number, arrivals = arrival_rows);
             let _entered = span.enter();
             drive_tick(program, seam, arrivals).await?
         };
         tick_number += 1;
         carry_pending = deltas.carry_pending;
-        lines.push(format_deltas(program, tick_number, &deltas));
+        {
+            let _scope = crate::trace::Scope::phase("ticklog");
+            lines.push(format_deltas(program, tick_number, &deltas));
+        }
         let responses = {
+            let _scope = crate::trace::Scope::phase("host_collect");
             let span = tracing::info_span!("host_collect", tick = tick_number);
             let _entered = span.enter();
             runner.collect(&deltas)?
@@ -160,6 +176,7 @@ pub async fn run_schedule_live(
         }
     }
     crate::sql::report_seam_tally();
+    crate::trace::report();
     Ok(TickFold { lines })
 }
 

@@ -86,6 +86,7 @@ fn content_of(value: &Value) -> BoundaryResult<String> {
 
 fn collect_values(plan: &TextInternPlan, arrivals: &[Arrival]) -> BoundaryResult<Vec<String>> {
     let mut values: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for arrival in arrivals {
         let Some(flags) = plan.rel_columns.get(&arrival.rel) else {
             continue;
@@ -95,7 +96,7 @@ fn collect_values(plan: &TextInternPlan, arrivals: &[Arrival]) -> BoundaryResult
                 continue;
             }
             let content = content_of(value)?;
-            if !values.contains(&content) {
+            if seen.insert(content.clone()) {
                 values.push(content);
             }
         }

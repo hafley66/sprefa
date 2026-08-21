@@ -139,20 +139,27 @@ impl GenProgram {
         if self.uses_tick {
             incremental::advance_tick(seam);
         }
-        let enumed =
-            crate::enum_plane::intern(seam, &self.enum_types, &self.enum_ref_columns, arrivals)?;
-        let interned = match &self.text_intern_plan {
-            Some(plan) => crate::text_plane::intern(seam, plan, &enumed)?,
-            None => enumed,
+        let normalized = {
+            let _scope = crate::trace::Scope::phase("intern");
+            let enumed = crate::enum_plane::intern(
+                seam,
+                &self.enum_types,
+                &self.enum_ref_columns,
+                arrivals,
+            )?;
+            let interned = match &self.text_intern_plan {
+                Some(plan) => crate::text_plane::intern(seam, plan, &enumed)?,
+                None => enumed,
+            };
+            crate::struct_plane::intern(
+                seam,
+                &self.struct_types,
+                &self.struct_ref_columns,
+                &interned,
+                &self.relations,
+                self.text_intern_plan.as_ref(),
+            )?
         };
-        let normalized = crate::struct_plane::intern(
-            seam,
-            &self.struct_types,
-            &self.struct_ref_columns,
-            &interned,
-            &self.relations,
-            self.text_intern_plan.as_ref(),
-        )?;
         let arrivals = normalized.as_slice();
         incremental::apply_arrivals(seam, arrivals, &self.relations)?;
         incremental::apply_levels_before_edges(seam, &self.levels, &self.relations)?;
@@ -177,13 +184,16 @@ impl GenProgram {
         )?;
         let physical_rels = incremental::read_boundary(seam, &self.relations)?;
         incremental::stage_departures(seam, &self.relations, &physical_rels)?;
-        let rels = crate::enum_plane::decode_deltas(
-            seam,
-            &self.enum_types,
-            &self.enum_ref_columns,
-            &self.relations,
-            physical_rels,
-        )?;
+        let rels = {
+            let _scope = crate::trace::Scope::phase("decode");
+            crate::enum_plane::decode_deltas(
+                seam,
+                &self.enum_types,
+                &self.enum_ref_columns,
+                &self.relations,
+                physical_rels,
+            )?
+        };
         let carry_pending = incremental::promote_frontiers(seam, &self.relations);
         Ok(TickDeltas {
             rels,
@@ -196,6 +206,7 @@ impl GenProgram {
 // fold. Statements with params bind through the seam; bare statements run as
 // possibly multi-statement text.
 pub fn run_boot(seam: &SqliteSeam, statements: &[BootStatement]) {
+    let _scope = crate::trace::Scope::phase("boot");
     for statement in statements {
         if statement.params.is_empty() {
             seam.execute_multiple(&statement.sql)

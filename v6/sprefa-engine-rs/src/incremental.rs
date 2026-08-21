@@ -21,6 +21,21 @@ pub struct DeltaEvent {
     pub row: Row,
 }
 
+/// Rows dedup by an index, never by scanning what is already collected. The
+/// counter is what a COUNT test reads: one probe per row, never one per pair.
+static DEDUP_PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn dedup_probes() -> u64 {
+    DEDUP_PROBES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Equal rows render equal text because every float reaching here has been
+/// normalized (-0.0 folded to 0.0) and validated finite.
+pub fn dedup_key(row: &[Value]) -> String {
+    DEDUP_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{row:?}")
+}
+
 pub fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
@@ -264,14 +279,16 @@ pub fn stage_events(
             .push(event.clone());
     }
     let verbs = write_verbs_for(relations);
-    let mut statements = Vec::new();
+    let strategy = crate::write_verbs::strategy_name(relations);
     for (rel, grouped) in &events_by_rel {
         let relation = relation_by_name
             .get(rel)
             .expect("incremental delta relation missing");
-        statements.extend(verbs.stage(relation, grouped, frontier_copies)?);
+        let mut scope = crate::trace::Scope::verb("stage", &relation.rel, strategy);
+        scope.rows(grouped.len());
+        let statements = verbs.stage(relation, grouped, frontier_copies)?;
+        seam.batch(&statements).expect("stage_events batch failed");
     }
-    seam.batch(&statements).expect("stage_events batch failed");
     Ok(())
 }
 
@@ -315,12 +332,13 @@ fn keyed_arrival_rows_statement(
         .map(|index| columns_text[*index].clone())
         .collect();
     let mut distinct_keys: Vec<Row> = Vec::new();
+    let mut seen_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (_, row) in entries {
         let key: Row = key_indices
             .iter()
             .map(|index| row[*index].clone())
             .collect();
-        if !distinct_keys.contains(&key) {
+        if seen_keys.insert(dedup_key(&key)) {
             distinct_keys.push(key);
         }
     }
@@ -485,15 +503,21 @@ pub fn apply_arrivals(
         pieces.push((relation, sign, rest));
         pieces
     });
+    let strategy = crate::write_verbs::strategy_name(relations);
     for (relation, sign, entries) in chunked {
-        let write_statement = verbs.arrive(
-            relation,
-            sign,
-            &entries
-                .iter()
-                .map(|(_, row)| row.clone())
-                .collect::<Vec<_>>(),
-        )?;
+        let mut scope = crate::trace::Scope::verb("arrive", &relation.rel, strategy);
+        scope.rows(entries.len());
+        let write_statement = {
+            let _encode = crate::trace::Scope::phase("arrive_encode");
+            verbs.arrive(
+                relation,
+                sign,
+                &entries
+                    .iter()
+                    .map(|(_, row)| row.clone())
+                    .collect::<Vec<_>>(),
+            )?
+        };
         let key_indices = relation.key_indices.clone();
         if relation.kind == RelationKind::Set && sign == 1 && !key_indices.is_empty() {
             let before_result = seam
@@ -503,6 +527,7 @@ pub fn apply_arrivals(
                     &key_indices,
                 )?)
                 .expect("keyed arrival rows lookup failed");
+            let _diff = crate::trace::Scope::phase("arrive_diff");
             let before_rows =
                 result_rows(&before_result, &relation.columns, &relation.column_types)?;
             let mut current_by_key: HashMap<String, Row> = HashMap::new();
@@ -533,6 +558,7 @@ pub fn apply_arrivals(
                 });
                 current_by_key.insert(key, row.clone());
             }
+            drop(_diff);
             let result = seam
                 .execute(&write_statement)
                 .expect("arrival write failed");
@@ -566,18 +592,18 @@ pub fn apply_arrivals(
             )?;
             continue;
         }
+        let _diff = crate::trace::Scope::phase("arrive_diff");
         let changed_rows = result_rows(&result, &relation.columns, &relation.column_types)?;
-        let mut staged_rows: Vec<String> = Vec::new();
+        let mut staged_rows: std::collections::HashSet<String> = std::collections::HashSet::new();
         for (index, (sequence, _)) in entries.iter().enumerate() {
             let stored_row = changed_rows.get(index);
             let Some(stored_row) = stored_row else {
                 continue;
             };
             let row_text = json_array_text(stored_row)?;
-            if staged_rows.contains(&row_text) {
+            if !staged_rows.insert(row_text) {
                 continue;
             }
-            staged_rows.push(row_text);
             events.push(DeltaEvent {
                 rel: relation.rel.clone(),
                 sign,
@@ -585,6 +611,7 @@ pub fn apply_arrivals(
                 row: stored_row.clone(),
             });
         }
+        drop(_diff);
         stage_events(
             seam,
             relations,
@@ -601,6 +628,7 @@ fn rows_equal(left: &Row, right: &Row) -> bool {
 
 // One statement per tick: the clock the oracle fixes for the whole tick.
 pub fn advance_tick(seam: &SqliteSeam) {
+    let _scope = crate::trace::Scope::phase("advance_tick");
     seam.execute_multiple("UPDATE \"__tick\" SET \"n\" = \"n\" + 1")
         .expect("advance_tick failed");
 }
@@ -609,6 +637,11 @@ pub fn prepare_tick(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) {
     if relations.is_empty() {
         return;
     }
+    let _scope = crate::trace::Scope::verb(
+        "clear",
+        "prepare",
+        crate::write_verbs::strategy_name(relations),
+    );
     let sql = write_verbs_for(relations)
         .clear(relations, TickBoundary::Prepare)
         .join(";\n");
@@ -624,6 +657,7 @@ pub fn boundary_delta(
     let sign_index = result.columns.iter().position(|c| c == "__sign");
     let count_index = result.columns.iter().position(|c| c == "__count");
     let mut weights: Vec<(Row, i64)> = Vec::new();
+    let mut weight_index: HashMap<String, usize> = HashMap::new();
     for row in &result.rows {
         let mut values = Vec::new();
         for (index, _column) in relation.columns.iter().enumerate() {
@@ -645,13 +679,12 @@ pub fn boundary_delta(
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
         let weight = sign * count;
-        if let Some(existing) = weights
-            .iter_mut()
-            .find(|(existing_row, _)| existing_row == &values)
-        {
-            existing.1 += weight;
-        } else {
-            weights.push((values, weight));
+        match weight_index.get(&dedup_key(&values)) {
+            Some(index) => weights[*index].1 += weight,
+            None => {
+                weight_index.insert(dedup_key(&values), weights.len());
+                weights.push((values, weight));
+            }
         }
     }
     let mut add = Vec::new();
@@ -707,9 +740,15 @@ pub fn read_boundary(
     relations
         .iter()
         .map(|relation| {
+            let mut scope = crate::trace::Scope::verb(
+                "publish",
+                &relation.rel,
+                crate::write_verbs::strategy_name(relations),
+            );
             let result = seam
                 .execute(&write_verbs_for(relations).publish(relation))
                 .expect("boundary read failed");
+            scope.rows(result.rows.len());
             boundary_delta(relation, &result)
         })
         .collect()
@@ -769,6 +808,11 @@ pub fn stage_departures(
         });
     }
     if !statements.is_empty() {
+        let _scope = crate::trace::Scope::verb(
+            "stage_departures",
+            "-",
+            crate::write_verbs::strategy_name(relations),
+        );
         seam.batch(&statements).expect("departure staging failed");
     }
     Ok(())
@@ -836,8 +880,10 @@ pub fn promote_frontiers(seam: &SqliteSeam, relations: &[IncrementalRelationPlan
         return false;
     }
     let verbs = write_verbs_for(relations);
+    let strategy = crate::write_verbs::strategy_name(relations);
     let promote_sql = verbs.clear(relations, TickBoundary::Promote).join(";\n");
     let promote = || {
+        let _scope = crate::trace::Scope::verb("clear", "promote", strategy);
         if !promote_sql.is_empty() {
             seam.execute_multiple(&promote_sql).expect("promote failed");
         }
@@ -847,7 +893,10 @@ pub fn promote_frontiers(seam: &SqliteSeam, relations: &[IncrementalRelationPlan
         promote();
         return false;
     }
-    let carry_pending = seam.scalar(&carry_sql).expect("carry read failed") == 1;
+    let carry_pending = {
+        let _scope = crate::trace::Scope::verb("read_staged", "-", strategy);
+        seam.scalar(&carry_sql).expect("carry read failed") == 1
+    };
     promote();
     carry_pending
 }
@@ -977,10 +1026,13 @@ fn sequence_level_rounds(
             continue;
         };
         for round in 0..plan.round_cap {
+            let round_span = crate::trace::round_span(round as u64);
+            let _entered = round_span.enter();
             let mut moved = 0usize;
             for statement in group {
                 moved += run(statement)?;
             }
+            round_span.record("delta_rows", moved);
             if moved == 0 {
                 break;
             }
@@ -1023,6 +1075,11 @@ fn apply_level_statement(
         .insert_sql
         .as_ref()
         .expect("level statement has no insert_sql");
+    let mut scope = crate::trace::Scope::verb(
+        "level_insert",
+        &statement.head_rel,
+        crate::write_verbs::strategy_name(relations),
+    );
     let result = intern_then_execute(
         seam,
         statement.intern_sql.as_ref(),
@@ -1036,6 +1093,8 @@ fn apply_level_statement(
         &statement.head_columns,
         &statement.head_column_types,
     )?;
+    scope.rows(rows.len());
+    drop(scope);
     if rows.is_empty() {
         return Ok(0);
     }
@@ -1065,6 +1124,11 @@ fn apply_aggregate_level_statement(
 ) -> BoundaryResult<()> {
     // The intern arm reads the scope table, so it follows the seed inside the
     // same ordered batch and precedes the insert that looks its ids back up.
+    let mut scope = crate::trace::Scope::verb(
+        "aggregate",
+        &statement.head_rel,
+        crate::write_verbs::relation_strategy(relation),
+    );
     let mut scope_texts = vec![aggregate.scope_clear_sql.clone()];
     scope_texts.extend(aggregate.scope_seed_sql.clone());
     scope_texts.extend(aggregate.intern_sql.clone().unwrap_or_default());
@@ -1107,6 +1171,8 @@ fn apply_aggregate_level_statement(
             });
         }
     }
+    scope.rows(events.len());
+    drop(scope);
     if events.is_empty() {
         return Ok(());
     }
@@ -1125,6 +1191,11 @@ pub fn apply_retention(
             .iter()
             .find(|r| r.rel == statement.rel)
             .expect("incremental retention relation missing");
+        let mut scope = crate::trace::Scope::verb(
+            "retention",
+            &statement.rel,
+            crate::write_verbs::strategy_name(relations),
+        );
         let result = seam
             .execute(&SqlStatement {
                 sql: statement.delete_sql.clone(),
@@ -1132,6 +1203,8 @@ pub fn apply_retention(
             })
             .expect("retention delete failed");
         let rows = result_rows(&result, &relation.columns, &relation.column_types)?;
+        scope.rows(rows.len());
+        drop(scope);
         if rows.is_empty() {
             continue;
         }
@@ -1316,8 +1389,16 @@ fn apply_log_edge(
             row: row.clone(),
         })
         .collect();
-    seam.execute(&edge_log_write_statement(statement, rows)?)
-        .expect("edge log write failed");
+    {
+        let mut scope = crate::trace::Scope::verb(
+            "edge_write",
+            &statement.head_rel,
+            crate::write_verbs::relation_strategy(relation),
+        );
+        scope.rows(rows.len());
+        seam.execute(&edge_log_write_statement(statement, rows)?)
+            .expect("edge log write failed");
+    }
     stage_events(
         seam,
         std::slice::from_ref(relation),
@@ -1332,15 +1413,19 @@ fn apply_keyed_edge(
     relation: &IncrementalRelationPlan,
     projected_rows: &[Row],
 ) -> BoundaryResult<()> {
-    let mut resolved: Vec<(String, Row)> = Vec::new();
+    let mut resolved: Vec<Row> = Vec::new();
+    let mut resolved_index: HashMap<String, usize> = HashMap::new();
     for row in projected_rows {
         let key = row_key(row, &statement.key_indices)?;
-        match resolved.iter_mut().find(|(existing, _)| existing == &key) {
-            Some(entry) => entry.1 = row.clone(),
-            None => resolved.push((key, row.clone())),
+        match resolved_index.get(&key) {
+            Some(index) => resolved[*index] = row.clone(),
+            None => {
+                resolved_index.insert(key, resolved.len());
+                resolved.push(row.clone());
+            }
         }
     }
-    let rows: Vec<Row> = resolved.into_iter().map(|(_, row)| row).collect();
+    let rows: Vec<Row> = resolved;
     if rows.is_empty() {
         return Ok(());
     }
@@ -1353,12 +1438,16 @@ fn apply_keyed_edge(
             .collect();
         key_args.extend(bind_args(&key)?);
     }
-    let before_result = seam
-        .execute(&SqlStatement {
+    let strategy = crate::write_verbs::relation_strategy(relation);
+    let before_result = {
+        let mut scope = crate::trace::Scope::verb("edge_lookup", &statement.head_rel, strategy);
+        scope.rows(rows.len());
+        seam.execute(&SqlStatement {
             sql: edge_keyed_rows_sql(statement, rows.len()),
             args: key_args,
         })
-        .expect("edge keyed rows lookup failed");
+        .expect("edge keyed rows lookup failed")
+    };
     let head_types = relation.column_types.clone();
     let before_rows = result_rows(&before_result, &statement.head_columns, &head_types)?;
     let mut before_by_key: HashMap<String, Row> = HashMap::new();
@@ -1396,8 +1485,12 @@ fn apply_keyed_edge(
             row: row.clone(),
         });
     }
-    seam.execute(&edge_keyed_write_statement(statement, &changed_rows)?)
-        .expect("edge keyed write failed");
+    {
+        let mut scope = crate::trace::Scope::verb("edge_write", &statement.head_rel, strategy);
+        scope.rows(changed_rows.len());
+        seam.execute(&edge_keyed_write_statement(statement, &changed_rows)?)
+            .expect("edge keyed write failed");
+    }
     stage_events(
         seam,
         std::slice::from_ref(relation),
@@ -1416,6 +1509,8 @@ pub fn apply_edges(
             .iter()
             .find(|r| r.rel == statement.head_rel)
             .expect("incremental edge head relation missing");
+        let strategy = crate::write_verbs::strategy_name(relations);
+        let mut scope = crate::trace::Scope::verb("edge_project", &statement.head_rel, strategy);
         let result = intern_then_execute(
             seam,
             statement.intern_sql.as_ref(),
@@ -1425,6 +1520,8 @@ pub fn apply_edges(
             },
         );
         let rows = result_rows(&result, &statement.head_columns, &relation.column_types)?;
+        scope.rows(rows.len());
+        drop(scope);
         match statement.head_kind {
             RelationKind::Log => apply_log_edge(seam, statement, relation, &rows)?,
             RelationKind::Set => apply_keyed_edge(seam, statement, relation, &rows)?,
@@ -1437,6 +1534,11 @@ pub fn merge_next_into_current(seam: &SqliteSeam, relations: &[IncrementalRelati
     if relations.is_empty() {
         return;
     }
+    let _scope = crate::trace::Scope::verb(
+        "clear",
+        "merge",
+        crate::write_verbs::strategy_name(relations),
+    );
     let sql = write_verbs_for(relations)
         .clear(relations, TickBoundary::Merge)
         .join(";\n");
@@ -1544,6 +1646,11 @@ fn reconcile_ref_count_statement(
         .iter()
         .find(|r| r.rel == statement.head_rel)
         .expect("incremental level head relation missing");
+    let mut scope = crate::trace::Scope::verb(
+        "recount",
+        &statement.head_rel,
+        crate::write_verbs::strategy_name(relations),
+    );
     let clear = &support_sql[0];
     let update = &support_sql[2];
     let stage_retract = &support_sql[3];
@@ -1600,8 +1707,10 @@ fn reconcile_ref_count_statement(
         head.extend(tail);
         let results = seam.batch(&head).expect("reconcile batch failed");
         let offset = 2 + support_interns.len();
-        return Ok(moved_rows(&results, offset + fill_new_index)
-            + moved_rows(&results, offset + collect_zero_index));
+        let moved = moved_rows(&results, offset + fill_new_index)
+            + moved_rows(&results, offset + collect_zero_index);
+        scope.rows(moved);
+        return Ok(moved);
     };
     // Port of the rx expand wavefront (1_incremental.ts:610). The CTE seed
     // reaches the same fixpoint inside SQLite, where no round is countable.
@@ -1645,7 +1754,11 @@ fn reconcile_ref_count_statement(
     };
     let mut fills_b = true;
     for index in 0..expand.round_cap {
-        if round(fills_b) == 0 {
+        let round_span = crate::trace::round_span(index);
+        let _entered = round_span.enter();
+        let moved = round(fills_b);
+        round_span.record("delta_rows", moved);
+        if moved == 0 {
             break;
         }
         if index + 1 >= expand.round_cap {
@@ -1662,7 +1775,9 @@ fn reconcile_ref_count_statement(
         args: vec![],
     });
     let results = seam.batch(&close).expect("expand close batch failed");
-    Ok(moved_rows(&results, fill_new_index) + moved_rows(&results, collect_zero_index))
+    let moved = moved_rows(&results, fill_new_index) + moved_rows(&results, collect_zero_index);
+    scope.rows(moved);
+    Ok(moved)
 }
 
 fn moved_rows(results: &[crate::types::QueryResult], index: usize) -> usize {
