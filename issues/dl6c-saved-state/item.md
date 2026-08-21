@@ -1,11 +1,12 @@
 ---
 created: 2026-08-19
-updated: 2026-08-19
+updated: 2026-08-21
 type: task
-status: open
+status: in-progress
 priority: high
 epic: productionize-rust-door
 size: S
+related: ['@cheap-fast-analysis']
 ---
 
 # dl6c: the compiler as one executable (SWI qsave_program stand_alone)
