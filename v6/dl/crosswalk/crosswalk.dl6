@@ -1,0 +1,256 @@
+# @comment-ok: the program's contract, its two blind spots, and its rx lowering.
+# crosswalk.dl6 -- cross-repository logic, flows and paths at a pinned rev.
+#
+# THE USER DECLARES THE ENTRY POINTS. `entry_point(repo, rev, path, name)` is a
+# plain fact and this program never guesses one: which wiring was an entry at
+# rev X is a fact about that release, not something a heuristic recovers.
+# `repo_rev` and `repo_scope` are facts for the same reason, so one fixture file
+# is the whole description of what to read.
+#
+# THE MATCHING RULE ACROSS A DEP EDGE, and what it cannot see. Within one
+# repository the call graph comes from `scip.diet.call`, which RESOLVES a site
+# to the file that defines it. Across repositories it cannot: an index is per
+# repository (`hosts.rs`, ScipNamespaceExecutor keys its file set on the
+# checkout root), so a site in A naming a symbol defined in B resolves to
+# nothing at all. `cross_path` therefore matches on the CALLEE NAME, gated by a
+# real `dep_edge` read out of A's own go.mod. It OVER-LINKS on a name several
+# repositories define, and it cannot see which import a site resolved through.
+# Both are named here rather than left as a silent approximation.
+#
+# HOPS ARE BOUNDED AT THREE, unrolled into `reach_hop_one/two/three`. A
+# hop-counted recursive rel does not terminate on a call cycle: every trip round
+# mints a new hop number and therefore a new row. `reached` is the unbounded
+# closure, carries no hop column, and is what `entry_unreached` reads.
+#
+# PATHS ARE ABSOLUTE AT THE EXTRACTOR SEAM and repository-relative in every
+# read. One process cannot hold a different cwd per repository, so a demand
+# keyed on a relative path would resolve against the harness's own tree.
+#
+# TWO EXTRACT NAMES, ONE PASS. `call_node_at` and `extract` fill the same
+# command, so the runner's applicative grouping folds them into one extract run
+# and each selects its own columns. One name carrying every column would drop
+# every row: a definition record has no `callee`, a site record has no `name`.
+# Both are the REGISTERED (path, digest) contract, so `digest` is freshness and
+# neither template mentions it; a name registry.pl has never heard of gets
+# all-identity roles, and the digest in one template would split the two runs.
+#
+# EVERY HOST TEMPLATE ENDS IN `exit 3`. A runtime without the linked arm must
+# stop by name rather than answer zero rows out of a shell.
+#
+# ── THE RX LOWERING ─────────────────────────────────────────────────────────
+#   repoRev$.pipe(                                       // source_file
+#     mergeMap(scopesOf), map(mintIdentityAndWitness),
+#     distinct(demand => demand.witnessDigest),
+#     mergeMap(listAtRev), mergeMap(commitEdbArrival))
+#
+#   sourceFile$.pipe(                                    // call_edge, def_site
+#     groupBy(row => row.root),                          // one resolve per repo
+#     mergeMap(group => group.pipe(toArray(), mergeMap(resolveSet))))
+#
+#   entryFile$.pipe(                                     // reach_hop_*
+#     expand(file => callEdge$.pipe(filter(e => e.from === file)), 3))
+#
+#   depPin$.pipe(                                        // dep_edge
+#     withLatestFrom(repoRev$),
+#     filter(([pin, repo]) => pin.module.startsWith(repo.module)))
+#
+#   combineLatest([reachSite$, depEdge$, defSite$]).pipe( // cross_path
+#     filter(([site, edge, def]) => site.callee === def.name &&
+#                                   edge.toRepo === def.repo))
+
+# ── the hosts ───────────────────────────────────────────────────────────────
+sh repo_files_at(root: text, rev: text, glob: text)
+   -> (path: text, digest: text) =
+  `echo 'repo_files_at {root} {rev} {glob} is linked in-process' >&2; exit 3`.
+
+sh repo_grep_at(root: text, rev: text, glob: text, pattern: text)
+   -> (path: text, line: int, g1: text, g2: text, g3: text) =
+  `echo 'repo_grep_at {root} {rev} {glob} {pattern} is linked in-process' >&2; exit 3`.
+
+sh call_node_at(path: text, digest: text)
+   -> (record: text, family: text, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+sh extract(path: text, digest: text)
+   -> (record: text, family: text, callee: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+sh scip.diet.call(repo: text, path: text, digest: text)
+   -> (record: text, family: text, caller_path: text, callee_path: text,
+       callee: text, kind: text) =
+  `cd {repo} && "$DL_EXTRACT_BIN" --family diet_scip {path}`.
+
+# ── what the fixture declares ───────────────────────────────────────────────
+# `module` is the coordinate another repository's go.mod names this one by.
+rel repo_rev(repo: text, root: text, rev: text, module: text).
+
+# Several rows per repository union. `*` crosses `/` in a git pathspec.
+rel repo_scope(repo: text, glob: text).
+
+rel entry_point(repo: text, rev: text, path: text, name: text).
+
+# THE ONE ARRIVAL. `repo_rev` and `repo_scope` are boot facts and a boot fact is
+# a static table, never a tick delta, so nothing joining only facts ever fires;
+# one posted row is what starts the fold, and re-posting it is what re-ticks it.
+rel crosswalk_run(fixture: text).
+
+# ── the file plane, at the pinned rev ───────────────────────────────────────
+rel source_file(repo: text, root: text, rev: text, rel_path: text,
+                path: text, digest: text).
+source_file(Repo, Root, Rev, RelPath, Path, Digest) <-
+  crosswalk_run(_Fixture),
+  repo_rev(Repo, Root, Rev, _Module),
+  repo_scope(Repo, Glob),
+  repo_files_at(Root, Rev, Glob, RelPath, Digest),
+  Path := concat([Root, '/', RelPath]).
+
+# ── the definition plane ────────────────────────────────────────────────────
+# A call site names a FUNCTION and never a file, so both kinds are one fact.
+rel def_site(repo: text, path: text, name: text).
+def_site(Repo, Path, Name) <-
+  source_file(Repo, _Root, _Rev, _RelPath, Path, Digest),
+  call_node_at(Path, Digest, 'node', 'call', 'function', Name).
+def_site(Repo, Path, Name) <-
+  source_file(Repo, _Root, _Rev, _RelPath, Path, Digest),
+  call_node_at(Path, Digest, 'node', 'call', 'method', Name).
+
+# ── the call-site plane, resolved or not ────────────────────────────────────
+# This is what crosses a dep edge; a resolved edge can never carry it.
+rel call_site(repo: text, path: text, callee: text).
+call_site(Repo, Path, Callee) <-
+  source_file(Repo, _Root, _Rev, _RelPath, Path, Digest),
+  extract(Path, Digest, 'site', 'call', Callee).
+
+# ── the resolved call graph, within one repository ──────────────────────────
+rel call_edge(repo: text, from_path: text, to_path: text, callee: text).
+call_edge(Repo, CallerPath, CalleePath, Callee) <-
+  source_file(Repo, Root, _Rev, _RelPath, Path, Digest),
+  scip.diet.call(Root, Path, Digest, 'resolved_edge', 'call',
+                 CallerPath, CalleePath, Callee, _Kind).
+
+# ── the dependency plane, out of each repository's own go.mod ───────────────
+# A require block indents with a TAB; the class covers both separators.
+rel dep_pin(repo: text, module: text, ver: text).
+dep_pin(Repo, Module, Ver) <-
+  crosswalk_run(_Fixture),
+  repo_rev(Repo, Root, Rev, _Module),
+  repo_grep_at(Root, Rev, 'go.mod',
+               '([a-zA-Z0-9._-]+/[a-zA-Z0-9._/-]+)[ 	]+(v[0-9][a-zA-Z0-9._+-]*)',
+               _Path, _Line, Module, Ver, _G3).
+
+# An edge is a pin whose module sits UNDER another checkout's own module path:
+# `github.com/grafana/loki/pkg/push` is published by `github.com/grafana/loki`.
+rel dep_edge(from_repo: text, to_repo: text, module: text, version: text).
+dep_edge(FromRepo, ToRepo, Module, Ver) <-
+  dep_pin(FromRepo, Module, Ver),
+  repo_rev(ToRepo, _Root, _Rev, ToModule),
+  FromRepo != ToRepo,
+  substr(Module, 1, length(ToModule)) == ToModule.
+
+# A pin no checkout in this corpus answers for: the boundary, as a relation.
+rel dep_gap(from_repo: text, module: text, version: text).
+dep_gap(FromRepo, Module, Ver) <-
+  dep_pin(FromRepo, Module, Ver),
+  not(dep_edge(FromRepo, _ToRepo, Module, Ver)).
+
+# ── version skew: two WITNESSES, never oldest/newest ────────────────────────
+# Each pair arrives in BOTH orders: `RepoA < RepoB` stops at
+# comparison_operand_not_number, the same missing text compare as `dep_ver`.
+rel skew(module: text, repo_a: text, version_a: text,
+         repo_b: text, version_b: text).
+skew(Module, RepoA, VersionA, RepoB, VersionB) <-
+  dep_pin(RepoA, Module, VersionA),
+  dep_pin(RepoB, Module, VersionB),
+  VersionA != VersionB,
+  RepoA != RepoB.
+
+# ── reach, within one repository, bounded at three hops ─────────────────────
+rel entry_file(repo: text, entry: text, path: text).
+entry_file(Repo, Name, Path) <-
+  entry_point(Repo, Rev, RelPath, Name),
+  source_file(Repo, _Root, Rev, RelPath, Path, _Digest).
+
+rel reach_hop_one(repo: text, entry: text, path: text).
+reach_hop_one(Repo, Entry, ToPath) <-
+  entry_file(Repo, Entry, FromPath),
+  call_edge(Repo, FromPath, ToPath, _Callee).
+
+rel reach_hop_two(repo: text, entry: text, path: text).
+reach_hop_two(Repo, Entry, ToPath) <-
+  reach_hop_one(Repo, Entry, FromPath),
+  call_edge(Repo, FromPath, ToPath, _Callee).
+
+rel reach_hop_three(repo: text, entry: text, path: text).
+reach_hop_three(Repo, Entry, ToPath) <-
+  reach_hop_two(Repo, Entry, FromPath),
+  call_edge(Repo, FromPath, ToPath, _Callee).
+
+# Four rules into one rel is the split-and-union shape: the entry file is hop 0,
+# and `order by hops` shows the shortest way in first.
+rel reach(repo: text, rev: text, entry: text, path: text, name: text, hops: int).
+reach(Repo, Rev, Entry, RelPath, Name, 0) <-
+  entry_file(Repo, Entry, Path),
+  source_file(Repo, _Root, Rev, RelPath, Path, _Digest),
+  call_site(Repo, Path, Name).
+reach(Repo, Rev, Entry, RelPath, Name, 1) <-
+  reach_hop_one(Repo, Entry, Path),
+  source_file(Repo, _Root, Rev, RelPath, Path, _Digest),
+  call_site(Repo, Path, Name).
+reach(Repo, Rev, Entry, RelPath, Name, 2) <-
+  reach_hop_two(Repo, Entry, Path),
+  source_file(Repo, _Root, Rev, RelPath, Path, _Digest),
+  call_site(Repo, Path, Name).
+reach(Repo, Rev, Entry, RelPath, Name, 3) <-
+  reach_hop_three(Repo, Entry, Path),
+  source_file(Repo, _Root, Rev, RelPath, Path, _Digest),
+  call_site(Repo, Path, Name).
+
+# The unbounded closure: a call cycle is a fixpoint, never an infinite hop count.
+rel reached(repo: text, entry: text, path: text).
+reached(Repo, Entry, Path) <- entry_file(Repo, Entry, Path).
+reached(Repo, Entry, ToPath) <-
+  reached(Repo, Entry, FromPath),
+  call_edge(Repo, FromPath, ToPath, _Callee).
+
+# ── crossing the dep edge ───────────────────────────────────────────────────
+rel cross_reach(from_repo: text, entry: text, to_repo: text,
+                path: text, name: text).
+cross_reach(FromRepo, Entry, ToRepo, RelPath, Name) <-
+  reached(FromRepo, Entry, FromPath),
+  call_site(FromRepo, FromPath, Name),
+  dep_edge(FromRepo, ToRepo, _Module, _Version),
+  def_site(ToRepo, ToPath, Name),
+  source_file(ToRepo, _Root, _Rev, RelPath, ToPath, _Digest).
+
+# How far in the app walks before it leaves the repository, as a number.
+rel cross_path(from_repo: text, entry: text, to_repo: text,
+               to_name: text, hops: int).
+cross_path(FromRepo, Entry, ToRepo, Name, Hops) <-
+  reach(FromRepo, _Rev, Entry, _RelPath, Name, Hops),
+  dep_edge(FromRepo, ToRepo, _Module, _Version),
+  def_site(ToRepo, _ToPath, Name).
+
+# ── an entry point that resolves no call at all ─────────────────────────────
+# Either the declaration is stale at this rev, or the scope misses its file.
+rel entry_unreached(repo: text, rev: text, entry: text).
+entry_unreached(Repo, Rev, Entry) <-
+  entry_point(Repo, Rev, _Path, Entry),
+  not(reach(Repo, Rev, Entry, _RelPath, _Name, _Hops)).
+
+# ── the readable totals ─────────────────────────────────────────────────────
+rel repo_file_count(repo: text, files: int).
+repo_file_count(Repo, count(Path)) <- source_file(Repo, _R, _V, _RelPath, Path, _D).
+
+rel cross_edge_count(from_repo: text, to_repo: text, names: int).
+cross_edge_count(FromRepo, ToRepo, count(Name)) <-
+  cross_reach(FromRepo, _Entry, ToRepo, _Path, Name).
+
+# rx: rows$.pipe(map(rows => sortBy(rows, ['hops', 'to_name'])))
+? cross_path(from_repo, entry, to_repo, to_name, hops) order by hops, to_name.
+? cross_reach(from_repo, entry, to_repo, path, name) order by from_repo, to_repo, name.
+? cross_edge_count(from_repo, to_repo, names).
+? skew(module, repo_a, version_a, repo_b, version_b) order by module, repo_a.
+? dep_edge(from_repo, to_repo, module, version) order by from_repo, module.
+? dep_gap(from_repo, module, version) order by from_repo, module.
+? entry_unreached(repo, rev, entry).
+? repo_file_count(repo, files).
