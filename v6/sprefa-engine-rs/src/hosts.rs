@@ -38,6 +38,7 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
         "soopy" => Some(&SoopyMutationExecutor),
         // The linked twin: sprefa-extract runs in this process, no child spawn.
         "sprefa_extract" => Some(&*EXTRACT),
+        "soopy_files" => Some(&SoopyFilesExecutor),
         _ => None,
     }
 }
@@ -64,6 +65,65 @@ fn is_applicative(execution: &str) -> bool {
     execution == "sprefa_extract"
 }
 
+/// Linked executor for the tracked-file surface: a pathspec in, one
+/// `{path, digest}` row per tracked file out.
+///
+/// Shelling this out costs a `sh -c`, a `mktemp`, a `paste`, and a second
+/// `git ls-files` to line the two streams up. Soopy already enumerates a
+/// pathspec and batch-hashes the worktree through one
+/// `git hash-object --stdin-paths`, which is the same work without the shell
+/// and without a temp file to leak.
+pub struct SoopyFilesExecutor;
+
+impl IHostExecutor for SoopyFilesExecutor {
+    fn run(
+        &self,
+        host: &str,
+        _command_line: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, HostError> {
+        let named = |message: String| HostError {
+            host: host.to_string(),
+            message,
+        };
+        let span = tracing::info_span!("soopy_files", host);
+        let _entered = span.enter();
+        let glob = source_mutation_input(host, env, "glob")?;
+        let root = env
+            .get("repo")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let repository = soopy::discover(root.clone())
+            .map_err(|error| named(format!("open a repository at {}: {error}", root.display())))?;
+        let query = soopy::GitFilesQuery {
+            revision: soopy::Revision::Worktree,
+            pathspecs: vec![glob.clone()],
+        };
+        let entries = soopy::enumerate(&repository, &query)
+            .map_err(|error| named(format!("enumerate `{glob}`: {error}")))?;
+        let mut lines = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let digest = match &entry.content {
+                soopy::ContentId::GitBlob(oid) => oid.0.to_string(),
+                // Only the worktree and commit revisions are reachable here and
+                // both yield a blob oid; anything else has no address the
+                // extract executor's blob reader could resolve.
+                other => {
+                    return Err(named(format!(
+                        "tracked file {} carries {other:?}, not a git blob",
+                        entry.source.path.0
+                    )))
+                }
+            };
+            lines.push(
+                serde_json::json!({ "path": entry.source.path.0.as_ref(), "digest": digest })
+                    .to_string(),
+            );
+        }
+        Ok(lines.join("\n"))
+    }
+}
+
 pub struct ShellExecutor;
 
 impl IHostExecutor for ShellExecutor {
@@ -73,6 +133,10 @@ impl IHostExecutor for ShellExecutor {
         command_line: &str,
         env: &BTreeMap<String, String>,
     ) -> Result<String, HostError> {
+        // Every spawn is visible: a host that silently fell back to `sh` is a
+        // 100x cliff that reads as ordinary slowness in a whole-run timing.
+        let span = tracing::warn_span!("sh_spawn", host, bytes = command_line.len());
+        let _entered = span.enter();
         let output = std::process::Command::new("sh")
             .arg("-c")
             .arg(command_line)
@@ -358,6 +422,10 @@ fn source_commit_response(host: &str, env: &BTreeMap<String, String>) -> Result<
 
 // One long-lived `git cat-file --batch` per repository root, so a digest-
 // carrying demand is one blob read and never one process per blob.
+// Deduplicating extractions belongs to the runner's applicative grouping, not
+// here: demands sharing one command over one file already collapse to a single
+// `run`, so a response memo at this layer measured 5.48s against 5.33s without
+// it, never hit once, and copied every response into an Arc for nothing.
 #[derive(Default)]
 pub struct SprefaExtractExecutor {
     batches: Mutex<BTreeMap<String, soopy::GitBatch>>,
@@ -383,6 +451,8 @@ impl SprefaExtractExecutor {
             host: host.to_string(),
             message,
         };
+        let span = tracing::info_span!("read_blob", digest = %digest);
+        let _entered = span.enter();
         let key = repo_root.to_string_lossy().into_owned();
         let mut batches = self.batches.lock().expect("extract batch memo");
         if !batches.contains_key(&key) {
@@ -514,6 +584,8 @@ impl IHostExecutor for SprefaExtractExecutor {
                 mask
             }
         };
+        let span = tracing::info_span!("extract", host, path = %path);
+        let _entered = span.enter();
         let mut lines: Vec<String> = Vec::new();
         if want_file_fact {
             let fact = sprefa_extract::file_fact(&path, &content);
@@ -1044,6 +1116,8 @@ impl<'p> HostLiveRunner<'p> {
         stdout: &str,
         rel_columns: &HashMap<String, Vec<String>>,
     ) -> Result<Vec<Arrival>, HostError> {
+        let span = tracing::info_span!("project", host = %demand.plan.name, bytes = stdout.len());
+        let _entered = span.enter();
         let output_rows = decode_output(&demand.plan.name, stdout, &demand.plan.outputs)?;
         let response_columns = rel_columns
             .get(&demand.plan.response_rel)
@@ -1139,13 +1213,19 @@ impl<'p> HostLiveRunner<'p> {
                 }
             }
         }
+        let run_span = tracing::info_span!("run_groups", groups = groups.len());
+        let _run_entered = run_span.enter();
         for group in groups {
             let first = group[0];
             let executor = executor_for_plan(first.plan, &self.adapter_rows)
                 .expect("validated at construction");
             let command_line = fill_template(&first.plan.template, &first.inputs);
             let env = env_for_inputs(&first.inputs);
-            let stdout = executor.run(&first.plan.name, &command_line, &env)?;
+            let stdout = {
+                let span = tracing::info_span!("host_run", host = %first.plan.name);
+                let _entered = span.enter();
+                executor.run(&first.plan.name, &command_line, &env)?
+            };
             for demand in group {
                 arrivals.extend(Self::project(demand, &stdout, self.rel_columns)?);
             }

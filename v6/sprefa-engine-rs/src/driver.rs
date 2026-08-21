@@ -141,11 +141,20 @@ pub async fn run_schedule_live(
                 );
             }
         }
-        let deltas = drive_tick(program, seam, arrivals).await?;
+        let arrival_rows = arrivals.len();
+        let deltas = {
+            let span = tracing::info_span!("drive_tick", tick = tick_number, arrivals = arrival_rows);
+            let _entered = span.enter();
+            drive_tick(program, seam, arrivals).await?
+        };
         tick_number += 1;
         carry_pending = deltas.carry_pending;
         lines.push(format_deltas(program, tick_number, &deltas));
-        let responses = runner.collect(&deltas)?;
+        let responses = {
+            let span = tracing::info_span!("host_collect", tick = tick_number);
+            let _entered = span.enter();
+            runner.collect(&deltas)?
+        };
         if !responses.is_empty() {
             pending.push_back(responses);
         }

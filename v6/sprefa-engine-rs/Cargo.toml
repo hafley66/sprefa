@@ -29,6 +29,12 @@ soopy = { path = "../../../hafley-rs/crates/soopy" }
 # The line diff behind `changed_line`. Measured against `git diff -U0` over 1200
 # generated file pairs: see the commit body's candidate table.
 imara-diff = "0.2"
+# The one measurement path, matching sprefa-store: spans say which code ran and
+# for how long, read through RUST_LOG. An engine with no spans cannot answer
+# "where did the wall clock go", which is how a 5-host rail read as an
+# extraction cost for a whole session when it was never that.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
 default = ["harness"]

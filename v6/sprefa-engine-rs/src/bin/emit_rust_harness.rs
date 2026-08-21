@@ -40,6 +40,17 @@ fn socket_argument(args: &mut Vec<String>) -> Option<String> {
 }
 
 fn main() {
+    // stdout is the tick log and is byte-diffed against the oracle, so every
+    // span goes to stderr. Silent unless RUST_LOG asks:
+    //   RUST_LOG=sprefa_engine_rs=info emit_rust_harness ...
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("off")),
+        )
+        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
+        .init();
     let mut args: Vec<String> = env::args().collect();
     let live_hosts = args.iter().any(|arg| arg == "--live-hosts");
     args.retain(|arg| arg != "--live-hosts");
