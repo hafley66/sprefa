@@ -305,29 +305,24 @@ pub fn reject_scripted_responses(schedule: &[Vec<Arrival>]) -> Result<()> {
     Ok(())
 }
 
-/// A `--db` path opens a file seam; without one the fold stays in memory. The
-/// DDL carries no `IF NOT EXISTS`, so an existing file is replaced, never patched.
+/// A db path opens a file seam; without one the fold stays in memory, which is
+/// what every golden uses. The file is SHARED by every program (CLAUDE.md, one
+/// server one db), so it is opened and never replaced: `reset_program_objects`
+/// clears this program's own tables at boot instead.
 pub fn open_seam(db: Option<&Path>) -> Result<SqliteSeam> {
     let Some(path) = db else {
         return SqliteSeam::in_memory().context("open the in-memory seam");
     };
-    if path.exists() {
-        tracing::warn!(
-            db = %path.display(),
-            "the engine has no restart path, so the run starts fresh and replaces this file"
-        );
-        std::fs::remove_file(path)
-            .with_context(|| format!("replace {}", path.display()))?;
-    }
     if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create {}", parent.display()))?;
     }
     let url = path
         .to_str()
-        .ok_or_else(|| anyhow!("--db path is not utf-8: {}", path.display()))?;
+        .ok_or_else(|| anyhow!("the db path is not utf-8: {}", path.display()))?;
     SqliteSeam::open(url).with_context(|| format!("open {url}"))
 }
+
 
 // ═══ reading the `?` rows ════════════════════════════════════════════════════
 
@@ -622,7 +617,8 @@ impl<'p> LiveLoop<'p> {
     fn boot(&self, seam: &SqliteSeam) -> Result<()> {
         crate::trace::arm();
         seam.size_statement_cache(self.program.stable_sql_count() + 64);
-        seam.run_ddl(&self.program.ddl).context("run the DDL")?;
+        seam.run_program_ddl(&self.program.ddl, &self.program.queries)
+            .context("run the DDL")?;
         run_boot(seam, &self.program.boot);
         Ok(())
     }

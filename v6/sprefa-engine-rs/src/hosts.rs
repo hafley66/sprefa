@@ -62,6 +62,7 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
         // The ghcacher four, all linked: HTTP, the process env table, the
         // GitHub REST walk, an existing checkout, and a TOML document.
         "http_fetch" => Some(&crate::executors::HttpFetchExecutor),
+        "gh_pr_batch" => Some(&crate::executors::GhPrBatchExecutor),
         "env" => Some(&crate::executors::EnvExecutor),
         "gh_repos" => Some(&crate::executors::GhReposExecutor),
         "gh_pulls" => Some(&crate::executors::GhPullsExecutor),

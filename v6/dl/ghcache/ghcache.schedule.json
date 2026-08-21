@@ -1,0 +1,15 @@
+[
+  [
+    {"rel":"config_candidate","sign":"add","row":[1,"ghcache.toml"]},
+    {"rel":"config_candidate","sign":"add","row":[2,"~/.config/ghcache/config.toml"]},
+    {"rel":"gh_username","sign":"add","row":["hafley66"]},
+    {"rel":"interval","sign":"add","row":[3600,0]},
+    {"rel":"interval","sign":"add","row":[60,0]}
+  ],
+  [
+    {"rel":"interval","sign":"add","row":[60,60]}
+  ],
+  [
+    {"rel":"interval","sign":"add","row":[60,120]}
+  ]
+]

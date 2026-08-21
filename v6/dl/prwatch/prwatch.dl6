@@ -2,14 +2,21 @@
 # prwatch.dl6 -- pull requests watched live, their state tracked over time, and
 # the cost of watching them measured in the same fold.
 #
-# `dl6 run v6/dl/prwatch/prwatch.dl6 --db ~/.agent/prwatch.db` stays resident
-# because `bind interval` is a continuing source; nothing on the command line
-# says so. The `sh` bodies are inert: prwatch.adapters.json routes both hosts to
-# linked executors, so no shell runs.
+# `dl6 run v6/dl/prwatch/prwatch.dl6` stays resident because `bind interval` is
+# a continuing source; nothing on the command line says so, and there is no
+# per-program db flag (CLAUDE.md, one server one db). The `sh` bodies are inert:
+# prwatch.adapters.json routes both hosts to linked executors, so no shell runs.
+#
+# THE POLL IS CONDITIONAL AND THE ETAG IS DURABLE. `poll_state_etag` is a keyed
+# rel, so the tag survives a restart in the one db; `gh_rest_cond` sends it as
+# `If-None-Match` and a 304 moves zero body bytes. The endpoint pins ONE page
+# sorted by update time: the previous spelling declared no `state` column, so
+# `pulls.rs:41-44` defaulted to `state=all` over five pages and re-read the
+# repository's whole pull history every 60s (README.md carries the measurement).
 #
 # rx: timer(0, 60_000).pipe(
 #       map(() => Math.floor(Date.now()/1000/60)),
-#       concatMap(bucket => forkJoin(pulls(repo, bucket), cost(bucket))),
+#       concatMap(bucket => forkJoin(conditionalGet(ep, etag, bucket), cost(bucket))),
 #       scan((held, seen) => upsertByNumber(held, seen)))
 
 bind interval(period: int, bucket: int).
@@ -24,30 +31,123 @@ lane_prefix("feature/").
 lane_prefix("fix/").
 lane_prefix("plan/").
 
-# `{bucket}` salts the demand digest so a new cadence turn is a new witness and
-# the host re-asks; the executor ignores the column.
-sh pulls(repo_slug: text, bucket: int) ->
-  (number: int, title: text, head_ref: text, head_sha: text, state: text,
-   merged_at: text, merged_sha: text, updated_at: text, mergeable: text,
-   review_decision: text) =
-  `gh_pulls {repo_slug} at {bucket}`.
+rel current_clock(period: int, bucket: int) key(1).
+current_clock(Period, Bucket) <+ interval(Period, Bucket).
+
+# `bucket` is the registered FRESHNESS input (registry.pl:456-461): it salts the
+# witness so a new turn re-asks, and it stays out of the template.
+sh gh_rest_cond(endpoint_path: text, prev_etag: text, bucket: int)
+  -> (status: int, etag: text, last_modified: text, poll_interval: int,
+      rate_remaining: int, rate_reset: int, bytes: int, pages: int,
+      body: json) =
+  `GET {endpoint_path} if-none-match {prev_etag}`.
 
 sh cost(bucket: int) ->
   (executor: text, wall_ms: int, sqlite_ms: int, calls: int, rows_out: int,
    bytes: int, rss_kb: int) =
   `dl_tick_cost {bucket}`.
 
-rel poll(slug: text, bucket: int).
-poll(Slug, Bucket) <- repo(Slug), interval(60, Bucket).
+# ── the endpoint, the etag, the poll ────────────────────────────────────────
+
+rel watched_endpoint(endpoint_path: text, slug: text).
+rel poll_state_etag(endpoint_path: text, etag: text) key(1).
+rel poll(endpoint_path: text, prev_etag: text, bucket: int).
+rel rest_response(endpoint_path: text, bucket: int, status: int, etag: text,
+                  rate_remaining: int, rate_reset: int, bytes: int, body: json).
+
+# ONE page, sorted by update time. A merged lane pull reaches the top the moment
+# it merges, so `lane_proof` still sees it without reading the whole history.
+watched_endpoint(EndpointPath, Slug) <-
+  repo(Slug),
+  EndpointPath := concat(["repos/", Slug,
+                          "/pulls?state=all&per_page=100&page=1",
+                          "&sort=updated&direction=desc"]).
+
+# coalesce is the TOTAL read: the first tick carries the empty tag and polls
+# unconditionally, every later tick carries the stored one.
+poll(EndpointPath, PrevEtag, Bucket) <-
+  watched_endpoint(EndpointPath, _Slug),
+  current_clock(60, Bucket),
+  coalesce(poll_state_etag(EndpointPath, PrevEtag), "").
+
+rest_response(EndpointPath, Bucket, Status, Etag, RateRemaining, RateReset,
+              Bytes, Body) <-
+  poll(EndpointPath, PrevEtag, Bucket),
+  gh_rest_cond(EndpointPath, PrevEtag, Bucket, Status, Etag, _LastModified,
+               _PollInterval, RateRemaining, RateReset, Bytes, _Pages, Body).
+
+# ── the call log, the rate receipt, and the etag carry ──────────────────────
+#
+# The etag rides the call log rather than the response because the feedback
+# cycle poll -> rest_response -> etag -> poll must WEIGH SOMETHING. An edge rule
+# triggered by a level rel grades +0 and a zero-weight cycle is
+# `unconstructive_clock_cycle`; `call_log` is edge-written, so the second hop
+# grades +1 (TICK-MODEL.md section 3) and the tag applies from the NEXT tick,
+# which is when the next poll happens anyway.
+
+rel call_log(bucket: int, endpoint_path: text, status: int, etag: text,
+             rate_remaining: int, rate_reset: int, bytes: int,
+             cache_hit: int) log keep(all).
+
+call_log(Bucket, EndpointPath, Status, Etag, RateRemaining, RateReset,
+         Bytes, 1) <+
+  rest_response(EndpointPath, Bucket, Status, Etag, RateRemaining, RateReset,
+                Bytes, _Body),
+  Status == 304.
+
+call_log(Bucket, EndpointPath, Status, Etag, RateRemaining, RateReset,
+         Bytes, 0) <+
+  rest_response(EndpointPath, Bucket, Status, Etag, RateRemaining, RateReset,
+                Bytes, _Body),
+  Status != 304.
+
+poll_state_etag(EndpointPath, Etag) <+
+  call_log(_Bucket, EndpointPath, _Status, Etag, _RR, _RS, _B, _Ch),
+  Etag != "".
+
+# ── the pulls themselves ────────────────────────────────────────────────────
 
 rel observed(bucket: int, number: int, title: text, head_ref: text,
              head_sha: text, state: text, merged_at: text, merged_sha: text,
              updated_at: text, mergeable: text, review_decision: text).
-observed(Bucket, Number, Title, HeadRef, HeadSha, State, MergedAt, MergedSha,
-         UpdatedAt, Mergeable, ReviewDecision) <-
-  poll(Slug, Bucket),
-  pulls(Slug, Bucket, Number, Title, HeadRef, HeadSha, State, MergedAt,
-        MergedSha, UpdatedAt, Mergeable, ReviewDecision).
+rel raw_pull(bucket: int, number: int, title: text, head_ref: text,
+             head_sha: text, rest_state: text, merged_at: text,
+             merged_sha: text, updated_at: text, draft: int).
+
+# A 304 decodes nothing, which is why an unchanged tick derives no `observed`
+# row and the folds below stay silent.
+raw_pull(Bucket, Number, Title, HeadRef, HeadSha, RestState, MergedAt,
+         MergedSha, UpdatedAt, Draft) <-
+  rest_response(_EndpointPath, Bucket, 200, _E, _RR, _RS, _B, Body),
+  decode(Body, [... {number: Number: int, title: Title: text,
+                     state: RestState: text,
+                     merged_at: MergedAt: text,
+                     merge_commit_sha: MergedSha: text,
+                     updated_at: UpdatedAt: text,
+                     draft: Draft: int,
+                     head: {ref: HeadRef: text, sha: HeadSha: text}}]).
+
+# pulls.rs:118-124's three-word vocabulary, as three rules: a closed pull
+# carrying a merge time is MERGED, and REST answers only open or closed.
+observed(Bucket, Number, Title, HeadRef, HeadSha, "MERGED", MergedAt,
+         MergedSha, UpdatedAt, "unknown", "unknown") <-
+  raw_pull(Bucket, Number, Title, HeadRef, HeadSha, _RestState, MergedAt,
+           MergedSha, UpdatedAt, _Draft),
+  MergedAt != "".
+
+observed(Bucket, Number, Title, HeadRef, HeadSha, "OPEN", MergedAt, MergedSha,
+         UpdatedAt, "unknown", "unknown") <-
+  raw_pull(Bucket, Number, Title, HeadRef, HeadSha, RestState, MergedAt,
+           MergedSha, UpdatedAt, _Draft),
+  MergedAt == "",
+  RestState == "open".
+
+observed(Bucket, Number, Title, HeadRef, HeadSha, "CLOSED", MergedAt,
+         MergedSha, UpdatedAt, "unknown", "unknown") <-
+  raw_pull(Bucket, Number, Title, HeadRef, HeadSha, RestState, MergedAt,
+           MergedSha, UpdatedAt, _Draft),
+  MergedAt == "",
+  RestState == "closed".
 
 # Every state this watcher ever saw, one row per (pull, tick).
 rel pr_event(bucket: int, number: int, state: text, head_ref: text,
@@ -100,3 +200,4 @@ tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <+
 ? pr_transition(number, from_state, to_state, at_bucket).
 ? tick_cost(bucket, executor, wall_ms, sqlite_ms, calls, rows_out, bytes, rss_kb).
 ? pr_state(number, state, head_ref, head_sha, merged_sha, title, updated_at).
+? call_log(bucket, endpoint_path, status, etag, rate_remaining, rate_reset, bytes, cache_hit).

@@ -1,6 +1,6 @@
 //! `dl6 run` end to end: a program folds once and prints its ordered `?` rows,
 //! `--fail-on` decides the exit code, the compile cache spawns swipl once for
-//! two runs of one source, `--db` leaves a file a cold `sqlite3` reads, and one
+//! two runs of one source, the one db leaves a file a cold `sqlite3` reads, and one
 //! touched file under a program whose OWN `bind watch` decl makes it resident
 //! produces one extra tick from the same verb.
 //!
@@ -47,7 +47,14 @@ impl Scratch {
     fn dl6(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_dl6"));
         command.env("XDG_CACHE_HOME", self.home.path());
+        // ONE SERVER, ONE DB: there is no per-program flag, so a test moves the
+        // one db with `DL6_DB` rather than naming a second file.
+        command.env("DL6_DB", self.db());
         command
+    }
+
+    fn db(&self) -> std::path::PathBuf {
+        self.home.path().join("dl6.db")
     }
 }
 
@@ -257,16 +264,14 @@ fn the_second_run_of_one_source_spawns_no_swipl() {
 #[test]
 fn a_db_run_leaves_a_cold_reader_its_views() {
     let scratch = Scratch::new();
-    let workspace = tempfile::tempdir().expect("temporary db directory");
-    let db = workspace.path().join("order.db");
+    let db = scratch.db();
     let mut command = scratch.dl6();
     command
         .arg("run")
         .arg(fixture("query_order_tail.dl6"))
-        .args(["--final-only", "--db"])
-        .arg(&db);
+        .arg("--final-only");
     score_seeds(&mut command);
-    ok(&finish(&mut command, "run --db"), "run --db");
+    ok(&finish(&mut command, "run"), "run");
     assert!(db.is_file(), "{} is a file", db.display());
 
     // The process is gone: a TEMP view would have gone with it.
@@ -287,7 +292,7 @@ fn a_db_run_leaves_a_cold_reader_its_views() {
     assert_ne!(
         decoded.trim(),
         "0",
-        "the decoded-text views are persistent under --db"
+        "the decoded-text views are persistent in the one db"
     );
 }
 
@@ -460,5 +465,76 @@ fn a_resident_run_measures_itself_and_a_storeless_program_stays_flat() {
         high * 4 <= low * 5,
         "rss climbed from {low} kB to {high} kB across {} ticks: {resident:?}",
         buckets.len()
+    );
+}
+
+/// TEST: ONE SERVER, ONE DB (CLAUDE.md 2026-08-21). Two programs folded into
+/// one file keep their own tables, and the second run does not replace the file
+/// under the first. Sabotage receipt: restoring `open_seam`'s `remove_file`
+/// turns the `v_score` read after the second program red.
+#[test]
+fn two_programs_share_one_db_without_clobbering_each_other() {
+    let scratch = Scratch::new();
+    let db = scratch.db();
+
+    let mut first = scratch.dl6();
+    first
+        .arg("run")
+        .arg(fixture("query_order_tail.dl6"))
+        .arg("--final-only");
+    score_seeds(&mut first);
+    ok(&finish(&mut first, "first program"), "first program");
+    let scores = sqlite(&db, "SELECT player, points FROM v_score");
+    assert_eq!(scores, "2|30\n1|10\n");
+
+    let mut second = scratch.dl6();
+    second
+        .arg("run")
+        .arg(fixture("one_shot_pair.dl6"))
+        .arg("--final-only")
+        .args(["--arrive", "note=heavy,4"])
+        .args(["--arrive", "note=light,1"]);
+    ok(&finish(&mut second, "second program"), "second program");
+
+    // The first program's view and rows are still there.
+    assert_eq!(
+        sqlite(&db, "SELECT player, points FROM v_score"),
+        "2|30\n1|10\n",
+        "the second program must not replace the file under the first"
+    );
+    // Both programs have a __meta row, and __str was never dropped.
+    let programs = sqlite(&db, "SELECT DISTINCT program FROM __meta ORDER BY program");
+    assert!(
+        programs.contains("query_order_tail") && programs.contains("one_shot_pair"),
+        "__meta names both programs: {programs}"
+    );
+    let interned = sqlite(&db, "SELECT count(*) > 0 FROM __str");
+    assert_eq!(interned.trim(), "1", "the shared intern table survives");
+}
+
+/// TEST: a re-run of ONE program replaces its own tables rather than failing on
+/// `table already exists`, which is what the shared file made possible.
+#[test]
+fn re_running_one_program_replaces_only_its_own_tables() {
+    let scratch = Scratch::new();
+    let db = scratch.db();
+    for pass in 1..=2 {
+        let mut command = scratch.dl6();
+        command
+            .arg("run")
+            .arg(fixture("query_order_tail.dl6"))
+            .arg("--final-only");
+        score_seeds(&mut command);
+        ok(&finish(&mut command, "pass"), &format!("pass {pass}"));
+    }
+    assert_eq!(
+        sqlite(&db, "SELECT player, points FROM v_score"),
+        "2|30\n1|10\n",
+        "the second pass re-created the view rather than doubling its rows"
+    );
+    assert_eq!(
+        sqlite(&db, "SELECT count(*) FROM __meta WHERE program='query_order_tail'").trim(),
+        "2",
+        "__meta appends one row per run"
     );
 }

@@ -1,0 +1,889 @@
+# @comment-ok: the rate-budget contract, the one doc site; README.md carries the
+# ghcacher file:line map and every design argument. Three properties hold
+# structurally rather than by convention, and a reader has to know them before
+# editing any rule below. (1) A poll that is not due derives NO ROW in `due`,
+# so `gh_rest_cond` is never demanded and no request leaves the process. (2)
+# `over_budget` anti-joins into `due`, so below the stop threshold the poll
+# plane is empty until the reset bucket passes. (3) `endpoint_period` is a max
+# over candidates, so X-Poll-Interval and the warn stretch can only SLOW a
+# poll; no rule can shorten a period below the configured floor.
+
+rel repo(owner: text, name: text).
+
+rel config_candidate(search_rank: int, config_path: text).
+rel config_doc(config_path: text, doc: json).
+rel config_present(search_rank: int, config_path: text).
+rel best_config_rank(search_rank: int).
+rel chosen_config(config_path: text, doc: json) key(1).
+
+rel global_setting(poll_period: int, org_discovery_period: int,
+                   rate_warn_threshold: int, rate_stop_threshold: int,
+                   warn_stretch: int, heartbeat_ttl: int,
+                   sync_notifications: int, staging_folder: text) key(1).
+rel global_setting_seen(poll_period: int, org_discovery_period: int,
+                        rate_warn_threshold: int, rate_stop_threshold: int,
+                        warn_stretch: int, heartbeat_ttl: int,
+                        sync_notifications: int, staging_folder: text).
+
+rel org_config(owner: text, fs_alias: text, sync_prs: int, sync_events: int,
+               sync_notifications: int, checkout_on_sync: int,
+               checkout_pr_branches: int) key(1).
+rel org_config_seen(owner: text, fs_alias: text, sync_prs: int,
+                    sync_events: int, sync_notifications: int,
+                    checkout_on_sync: int, checkout_pr_branches: int).
+rel repo_config(owner: text, name: text, default_branch: text, sync_prs: int,
+                sync_events: int, sync_notifications: int, sync_branches: text,
+                checkout_on_sync: int, checkout_pr_branches: int) key(1, 2).
+rel repo_config_seen(owner: text, name: text, default_branch: text,
+                     sync_prs: int, sync_events: int, sync_notifications: int,
+                     sync_branches: text, checkout_on_sync: int,
+                     checkout_pr_branches: int).
+rel org_exclude(owner: text, name: text).
+
+rel current_clock(period: int, bucket: int) key(1).
+
+bind interval(period: int, bucket: int).
+
+current_clock(Period, Bucket) <+ interval(Period, Bucket).
+
+# Every identity input must appear in the template (1_host_expand.pl:313) and
+# the freshness input must not, which is why `bucket` is absent from all five.
+
+sh toml_json(config_path: text, bucket: int) -> (doc: json) =
+  `read toml at {config_path}`.
+
+sh gh_rest_cond(endpoint_path: text, prev_etag: text, bucket: int)
+  -> (status: int, etag: text, last_modified: text, poll_interval: int,
+      rate_remaining: int, rate_reset: int, bytes: int, pages: int,
+      body: json) =
+  `GET {endpoint_path} if-none-match {prev_etag}`.
+
+sh gh_pr_batch(batch_key: text, slug_list: text, bucket: int)
+  -> (status: int, rate_remaining: int, rate_reset: int, gql_cost: int,
+      bytes: int, data: json) =
+  `graphql {batch_key} over {slug_list}`.
+
+sh repo_checkout(repo_slug: text, dest_root: text, want_sha: text)
+  -> (checkout_path: text, head_sha: text) =
+  `checkout {repo_slug} under {dest_root}`.
+
+sh repo_mirror_pr_heads(repo_slug: text, dest_root: text, want_sha: text)
+  -> (checkout_path: text, pr_head_count: int) =
+  `mirror pr heads of {repo_slug} under {dest_root}`.
+
+# ── config resolution ───────────────────────────────────────────────────────
+
+config_doc(ConfigPath, Doc) <-
+  config_candidate(_SearchRank, ConfigPath),
+  current_clock(3600, Bucket),
+  toml_json(ConfigPath, Bucket, Doc).
+
+config_present(SearchRank, ConfigPath) <-
+  config_candidate(SearchRank, ConfigPath),
+  config_doc(ConfigPath, _Doc).
+
+best_config_rank(min(SearchRank)) <- config_present(SearchRank, _ConfigPath).
+
+chosen_config(ConfigPath, Doc) <+
+  best_config_rank(SearchRank),
+  config_present(SearchRank, ConfigPath),
+  config_doc(ConfigPath, Doc).
+
+# decode is refused in an edge body (edge_body_needs_json_destructure), so each
+# config shape lands in a level rel first and the keyed fold reads variables.
+global_setting_seen(PollPeriod, OrgDiscoveryPeriod, RateWarnThreshold,
+                    RateStopThreshold, WarnStretch, HeartbeatTtl,
+                    SyncNotifications, StagingFolder) <-
+  chosen_config(_ConfigPath, Doc),
+  decode(Doc, {global: {poll_interval_seconds: PollPeriod: int,
+                        org_repo_discovery_interval_seconds: OrgDiscoveryPeriod: int,
+                        rate_warn_threshold: RateWarnThreshold: int,
+                        rate_stop_threshold: RateStopThreshold: int,
+                        warn_stretch_multiplier: WarnStretch: int,
+                        heartbeat_ttl_seconds: HeartbeatTtl: int,
+                        sync_notifications: SyncNotifications: int,
+                        staging_folder: StagingFolder: text}}).
+
+global_setting(PollPeriod, OrgDiscoveryPeriod, RateWarnThreshold,
+               RateStopThreshold, WarnStretch, HeartbeatTtl,
+               SyncNotifications, StagingFolder) <+
+  global_setting_seen(PollPeriod, OrgDiscoveryPeriod, RateWarnThreshold,
+                      RateStopThreshold, WarnStretch, HeartbeatTtl,
+                      SyncNotifications, StagingFolder).
+
+org_config_seen(Owner, FsAlias, SyncPrs, SyncEvents, SyncNotifications,
+                CheckoutOnSync, CheckoutPrBranches) <-
+  chosen_config(_ConfigPath, Doc),
+  decode(Doc, {org: [... {owner: Owner: text,
+                          fs_alias: FsAlias: text,
+                          sync_prs: SyncPrs: int,
+                          sync_events: SyncEvents: int,
+                          sync_notifications: SyncNotifications: int,
+                          checkout_on_sync: CheckoutOnSync: int,
+                          checkout_pr_branches: CheckoutPrBranches: int}]}).
+
+org_config(Owner, FsAlias, SyncPrs, SyncEvents, SyncNotifications,
+           CheckoutOnSync, CheckoutPrBranches) <+
+  org_config_seen(Owner, FsAlias, SyncPrs, SyncEvents, SyncNotifications,
+                  CheckoutOnSync, CheckoutPrBranches).
+
+repo_config_seen(Owner, Name, DefaultBranch, SyncPrs, SyncEvents,
+                 SyncNotifications, SyncBranches, CheckoutOnSync,
+                 CheckoutPrBranches) <-
+  chosen_config(_ConfigPath, Doc),
+  decode(Doc, {repo: [... {owner: Owner: text,
+                           name: Name: text,
+                           default_branch: DefaultBranch: text,
+                           sync_prs: SyncPrs: int,
+                           sync_events: SyncEvents: int,
+                           sync_notifications: SyncNotifications: int,
+                           sync_branches: SyncBranches: text,
+                           checkout_on_sync: CheckoutOnSync: int,
+                           checkout_pr_branches: CheckoutPrBranches: int}]}).
+
+repo_config(Owner, Name, DefaultBranch, SyncPrs, SyncEvents, SyncNotifications,
+            SyncBranches, CheckoutOnSync, CheckoutPrBranches) <+
+  repo_config_seen(Owner, Name, DefaultBranch, SyncPrs, SyncEvents,
+                   SyncNotifications, SyncBranches, CheckoutOnSync,
+                   CheckoutPrBranches).
+
+# ── the rate budget ─────────────────────────────────────────────────────────
+
+rel api_tier(api_type: text, warn_threshold: int, stop_threshold: int).
+rel rate_state(api_type: text, remaining: int, reset_at: int) key(1).
+rel rate_warm(api_type: text).
+rel over_budget(api_type: text, bucket: int).
+
+api_tier('rest', WarnThreshold, StopThreshold) <-
+  global_setting(_P, _O, WarnThreshold, StopThreshold, _W, _H, _S, _F).
+api_tier('graphql', WarnThreshold, StopThreshold) <-
+  global_setting(_P, _O, WarnThreshold, StopThreshold, _W, _H, _S, _F).
+
+# A rel keyed on api_type IS gh.rs:147-154's ORDER BY id DESC LIMIT 1: the last
+# write for a key is the row.
+rate_state(ApiType, Remaining, ResetAt) <+
+  call_log(_AtTick, ApiType, _EndpointPath, _Status, Remaining, ResetAt,
+           _Bytes, _CacheHit),
+  Remaining >= 0.
+
+rate_warm(ApiType) <-
+  rate_state(ApiType, Remaining, _ResetAt),
+  api_tier(ApiType, WarnThreshold, StopThreshold),
+  Remaining =< WarnThreshold,
+  Remaining > StopThreshold.
+
+over_budget(ApiType, Bucket) <-
+  current_clock(60, Bucket),
+  rate_state(ApiType, Remaining, ResetAt),
+  api_tier(ApiType, _WarnThreshold, StopThreshold),
+  Remaining =< StopThreshold,
+  Bucket < ResetAt.
+
+# ── the endpoint plane ──────────────────────────────────────────────────────
+
+rel watched_endpoint(endpoint_path: text, api_type: text, endpoint_kind: text,
+                     repo_ref: repo).
+rel watched_global(endpoint_path: text, api_type: text, endpoint_kind: text).
+rel watched_repo(repo_ref: repo, owner: text, name: text, default_branch: text,
+                 sync_prs: int, sync_events: int, sync_branches: text,
+                 checkout_on_sync: int, checkout_pr_branches: int,
+                 fs_alias: text) key(1).
+rel watched_repo_seen(repo_ref: repo, owner: text, name: text,
+                      default_branch: text, sync_prs: int, sync_events: int,
+                      sync_branches: text, checkout_on_sync: int,
+                      checkout_pr_branches: int, fs_alias: text).
+rel org_owner(owner: text, fs_alias: text).
+rel gh_username(login: text) key(1).
+rel not_an_org(owner: text).
+rel discovered_repo(owner: text, name: text, default_branch: text).
+
+org_owner(Owner, FsAlias) <-
+  org_config(Owner, FsAlias, _SP, _SE, _SN, _CS, _CP).
+
+repo(Owner, Name) <- repo_config(Owner, Name, _DB, _SP, _SE, _SN, _SB, _CS, _CP).
+repo(Owner, Name) <- discovered_repo(Owner, Name, _DefaultBranch).
+
+# A relation value may not appear anywhere in an edge rule (0_program_check.pl:
+# 555-563), so every `repo(...)` is minted in a level rule and folded by variable.
+watched_repo_seen(repo(Owner, Name), Owner, Name, DefaultBranch, SyncPrs,
+                  SyncEvents, SyncBranches, CheckoutOnSync, CheckoutPrBranches,
+                  Owner) <-
+  repo_config(Owner, Name, DefaultBranch, SyncPrs, SyncEvents, _SyncNotifs,
+              SyncBranches, CheckoutOnSync, CheckoutPrBranches).
+
+watched_repo_seen(repo(Owner, Name), Owner, Name, DefaultBranch, SyncPrs,
+                  SyncEvents, "", CheckoutOnSync, CheckoutPrBranches,
+                  FsAlias) <-
+  discovered_repo(Owner, Name, DefaultBranch),
+  org_config(Owner, FsAlias, SyncPrs, SyncEvents, _SyncNotifs, CheckoutOnSync,
+             CheckoutPrBranches),
+  not(org_exclude(Owner, Name)).
+
+watched_repo(RepoRef, Owner, Name, DefaultBranch, SyncPrs, SyncEvents,
+             SyncBranches, CheckoutOnSync, CheckoutPrBranches, FsAlias) <+
+  watched_repo_seen(RepoRef, Owner, Name, DefaultBranch, SyncPrs, SyncEvents,
+                    SyncBranches, CheckoutOnSync, CheckoutPrBranches, FsAlias).
+
+watched_global(EndpointPath, 'rest', 'org_repos') <-
+  org_owner(Owner, _FsAlias),
+  EndpointPath := concat(["orgs/", Owner, "/repos?per_page=100"]).
+
+watched_global(EndpointPath, 'rest', 'user_repos') <-
+  org_owner(Owner, _FsAlias),
+  not_an_org(Owner),
+  EndpointPath := concat(["users/", Owner, "/repos?per_page=100"]).
+
+watched_endpoint(EndpointPath, 'rest', 'repo_events', RepoRef) <-
+  watched_repo(RepoRef, Owner, Name, _DB, _SP, SyncEvents, _SB, _CS, _CP, _FA),
+  SyncEvents == 1,
+  EndpointPath := concat(["repos/", Owner, "/", Name, "/events"]).
+
+watched_endpoint(EndpointPath, 'rest', 'branches', RepoRef) <-
+  watched_repo(RepoRef, Owner, Name, _DB, _SP, _SE, SyncBranches, _CS, _CP, _FA),
+  SyncBranches != "",
+  EndpointPath := concat(["repos/", Owner, "/", Name, "/branches?per_page=100"]).
+
+watched_global(EndpointPath, 'rest', 'org_events') <-
+  org_config(Owner, _FA, _SP, SyncEvents, _SN, _CS, _CP),
+  SyncEvents == 1,
+  gh_username(Username),
+  EndpointPath := concat(["users/", Username, "/events/orgs/", Owner]).
+
+watched_global("notifications", 'rest', 'notifications') <-
+  global_setting(_P, _O, _W, _S, _WS, _H, SyncNotifications, _F),
+  SyncNotifications == 1.
+
+# ── the throttle, as rules ──────────────────────────────────────────────────
+
+rel period_candidate(endpoint_path: text, period_ticks: int).
+rel endpoint_period(endpoint_path: text, period_ticks: int).
+rel poll_endpoint(endpoint_path: text, api_type: text, endpoint_kind: text).
+
+poll_endpoint(EndpointPath, ApiType, EndpointKind) <-
+  watched_endpoint(EndpointPath, ApiType, EndpointKind, _RepoRef).
+poll_endpoint(EndpointPath, ApiType, EndpointKind) <-
+  watched_global(EndpointPath, ApiType, EndpointKind).
+
+period_candidate(EndpointPath, PollPeriod) <-
+  poll_endpoint(EndpointPath, _ApiType, EndpointKind),
+  EndpointKind != 'org_repos',
+  EndpointKind != 'user_repos',
+  global_setting(PollPeriod, _O, _W, _S, _WS, _H, _SN, _F).
+
+period_candidate(EndpointPath, OrgDiscoveryPeriod) <-
+  poll_endpoint(EndpointPath, _ApiType, 'org_repos'),
+  global_setting(_P, OrgDiscoveryPeriod, _W, _S, _WS, _H, _SN, _F).
+period_candidate(EndpointPath, OrgDiscoveryPeriod) <-
+  poll_endpoint(EndpointPath, _ApiType, 'user_repos'),
+  global_setting(_P, OrgDiscoveryPeriod, _W, _S, _WS, _H, _SN, _F).
+
+period_candidate(EndpointPath, ServerPeriod) <-
+  poll_state_period(EndpointPath, ServerPeriod),
+  ServerPeriod > 0.
+
+period_candidate(EndpointPath, StretchPeriod) <-
+  poll_endpoint(EndpointPath, ApiType, _EndpointKind),
+  rate_warm(ApiType),
+  global_setting(PollPeriod, _O, _W, _S, WarnStretch, _H, _SN, _F),
+  StretchPeriod := PollPeriod * WarnStretch.
+
+endpoint_period(EndpointPath, max(PeriodTicks)) <-
+  period_candidate(EndpointPath, PeriodTicks).
+
+# ── the poll ────────────────────────────────────────────────────────────────
+
+rel due(endpoint_path: text, bucket: int, api_type: text).
+rel poll_state(endpoint_path: text, etag: text, last_modified: text,
+               poll_interval: int, last_polled_bucket: int,
+               last_changed_bucket: int).
+rel poll_state_etag(endpoint_path: text, etag: text) key(1).
+rel poll_state_modified(endpoint_path: text, last_modified: text) key(1).
+rel poll_state_period(endpoint_path: text, server_period: int) key(1).
+rel poll_state_polled(endpoint_path: text, last_polled_bucket: int) key(1).
+rel poll_state_changed(endpoint_path: text, last_changed_bucket: int) key(1).
+rel poll(endpoint_path: text, prev_etag: text, bucket: int).
+rel rest_response(endpoint_path: text, bucket: int, status: int, etag: text,
+                  last_modified: text, poll_interval: int, rate_remaining: int,
+                  rate_reset: int, bytes: int, pages: int, body: json).
+
+due(EndpointPath, Bucket, ApiType) <-
+  current_clock(60, Bucket),
+  poll_endpoint(EndpointPath, ApiType, _EndpointKind),
+  endpoint_period(EndpointPath, PeriodTicks),
+  not(over_budget(ApiType, Bucket)),
+  PhaseSlot := Bucket mod PeriodTicks,
+  PhaseSlot == 0.
+
+# coalesce is the TOTAL read: a never-polled endpoint carries the empty tag and
+# still polls exactly once.
+poll(EndpointPath, PrevEtag, Bucket) <-
+  due(EndpointPath, Bucket, _ApiType),
+  coalesce(poll_state_etag(EndpointPath, PrevEtag), "").
+
+rest_response(EndpointPath, Bucket, Status, Etag, LastModified, PollInterval,
+              RateRemaining, RateReset, Bytes, Pages, Body) <-
+  poll(EndpointPath, PrevEtag, Bucket),
+  gh_rest_cond(EndpointPath, PrevEtag, Bucket, Status, Etag, LastModified,
+               PollInterval, RateRemaining, RateReset, Bytes, Pages, Body).
+
+# Written direct from the response so every path back into the host demand
+# carries ONE tick offset (3_clock_check.pl:336); not writing is db.rs:173's COALESCE.
+poll_state_etag(EndpointPath, Etag) <+
+  rest_response(EndpointPath, _Bucket, _Status, Etag, _L, _P, _RR, _RS, _B,
+                _Pg, _Body),
+  Etag != "".
+
+poll_state_modified(EndpointPath, LastModified) <+
+  rest_response(EndpointPath, _Bucket, _Status, _E, LastModified, _P, _RR, _RS,
+                _B, _Pg, _Body),
+  LastModified != "".
+
+poll_state_period(EndpointPath, ServerPeriod) <+
+  rest_response(EndpointPath, _Bucket, _Status, _E, _L, ServerPeriod, _RR, _RS,
+                _B, _Pg, _Body),
+  ServerPeriod > 0.
+
+poll_state_polled(EndpointPath, Bucket) <+
+  rest_response(EndpointPath, Bucket, _Status, _E, _L, _P, _RR, _RS, _B, _Pg,
+                _Body).
+
+poll_state_changed(EndpointPath, Bucket) <+
+  rest_response(EndpointPath, Bucket, 200, _E, _L, _P, _RR, _RS, _B, _Pg,
+                _Body).
+
+poll_state(EndpointPath, Etag, LastModified, ServerPeriod, LastPolled,
+           LastChanged) <-
+  poll_state_polled(EndpointPath, LastPolled),
+  coalesce(poll_state_etag(EndpointPath, Etag), ""),
+  coalesce(poll_state_modified(EndpointPath, LastModified), ""),
+  coalesce(poll_state_period(EndpointPath, ServerPeriod), 0),
+  coalesce(poll_state_changed(EndpointPath, LastChanged), 0).
+
+# ── the call log ────────────────────────────────────────────────────────────
+
+rel call_log(at_tick: int, api_type: text, endpoint_path: text, status: int,
+             rate_remaining: int, rate_reset: int, bytes: int,
+             cache_hit: int) log keep(all).
+
+call_log(AtTick, 'rest', EndpointPath, Status, RateRemaining, RateReset, Bytes,
+         1) <+
+  rest_response(EndpointPath, _Bucket, Status, _E, _L, _P, RateRemaining,
+                RateReset, Bytes, _Pg, _Body),
+  Status == 304,
+  now(AtTick).
+
+call_log(AtTick, 'rest', EndpointPath, Status, RateRemaining, RateReset, Bytes,
+         0) <+
+  rest_response(EndpointPath, _Bucket, Status, _E, _L, _P, RateRemaining,
+                RateReset, Bytes, _Pg, _Body),
+  Status != 304,
+  now(AtTick).
+
+call_log(AtTick, 'graphql', BatchKey, Status, RateRemaining, RateReset, Bytes,
+         0) <+
+  pr_batch_response(BatchKey, _Bucket, Status, RateRemaining, RateReset,
+                    _GqlCost, Bytes, _Data),
+  now(AtTick).
+
+# ── org discovery ───────────────────────────────────────────────────────────
+
+discovered_repo(Owner, Name, DefaultBranch) <-
+  watched_global(EndpointPath, _ApiType, 'org_repos'),
+  org_owner(Owner, _FsAlias),
+  rest_response(EndpointPath, _Bucket, 200, _E, _L, _P, _RR, _RS, _B, _Pg,
+                Body),
+  decode(Body, [... {name: Name: text, default_branch: DefaultBranch: text}]).
+
+discovered_repo(Owner, Name, DefaultBranch) <-
+  watched_global(EndpointPath, _ApiType, 'user_repos'),
+  org_owner(Owner, _FsAlias),
+  rest_response(EndpointPath, _Bucket, 200, _E, _L, _P, _RR, _RS, _B, _Pg,
+                Body),
+  decode(Body, [... {name: Name: text, default_branch: DefaultBranch: text}]).
+
+# A 404 on /orgs marks the owner a user; the fallback endpoint appears in
+# `watched_global` on the next tick (sync/mod.rs:78-79).
+not_an_org(Owner) <+
+  watched_global(EndpointPath, _ApiType, 'org_repos'),
+  org_owner(Owner, _FsAlias),
+  rest_response(EndpointPath, _Bucket, 404, _E, _L, _P, _RR, _RS, _B, _Pg,
+                _Body).
+
+# ── repo events ─────────────────────────────────────────────────────────────
+
+rel repo_event(repo_ref: repo, gh_id: text, event_type: text, actor: text,
+               payload: json, created_at: text) key(1, 2).
+rel repo_event_seen(repo_ref: repo, gh_id: text, event_type: text, actor: text,
+                    payload: json, created_at: text).
+rel dirty_pr(repo_ref: repo, number: int).
+rel dirty_repo(repo_ref: repo).
+
+# The keyed fold IS sync/events.rs:67's INSERT OR IGNORE: an already-stored
+# event writes an identical row, and an identical write is a zero delta.
+repo_event_seen(RepoRef, GhId, EventType, Actor, Payload, CreatedAt) <-
+  watched_endpoint(EndpointPath, _ApiType, 'repo_events', RepoRef),
+  rest_response(EndpointPath, _Bucket, 200, _E, _L, _P, _RR, _RS, _B, _Pg,
+                Body),
+  decode(Body, [... {id: GhId: text, type: EventType: text,
+                     actor: {login: Actor: text}, payload: Payload,
+                     created_at: CreatedAt: text}]).
+
+repo_event(RepoRef, GhId, EventType, Actor, Payload, CreatedAt) <+
+  repo_event_seen(RepoRef, GhId, EventType, Actor, Payload, CreatedAt).
+
+dirty_pr(RepoRef, Number) <-
+  repo_event_seen(RepoRef, _GhId, 'PullRequestEvent', _Actor, Payload, _At),
+  decode(Payload, {number: Number: int}).
+
+dirty_pr(RepoRef, Number) <-
+  repo_event_seen(RepoRef, _GhId, 'PullRequestReviewEvent', _Actor, Payload,
+                  _At),
+  decode(Payload, {pull_request: {number: Number: int}}).
+
+# A PushEvent carries a ref, not a number; the join against the stored open PR
+# set is the whole of sync/events.rs:250-259 pr_numbers_from_branch.
+dirty_pr(RepoRef, Number) <-
+  repo_event_seen(RepoRef, _GhId, 'PushEvent', _Actor, Payload, _At),
+  decode(Payload, {ref: PushRef: text}),
+  HeadRef := substr(PushRef, 12),
+  open_pr_head(RepoRef, Number, HeadRef, _HeadSha).
+
+dirty_pr(RepoRef, Number) <-
+  repo_event_seen(RepoRef, _GhId, 'StatusEvent', _Actor, Payload, _At),
+  decode(Payload, {sha: HeadSha: text}),
+  open_pr_head(RepoRef, Number, _HeadRef, HeadSha).
+
+dirty_pr(RepoRef, Number) <-
+  repo_event_seen(RepoRef, _GhId, 'CheckRunEvent', _Actor, Payload, _At),
+  decode(Payload, {check_run: {head_sha: HeadSha: text}}),
+  open_pr_head(RepoRef, Number, _HeadRef, HeadSha).
+
+dirty_pr(RepoRef, Number) <-
+  repo_event_seen(RepoRef, _GhId, 'CheckSuiteEvent', _Actor, Payload, _At),
+  decode(Payload, {check_suite: {head_sha: HeadSha: text}}),
+  open_pr_head(RepoRef, Number, _HeadRef, HeadSha).
+
+rel open_pr_head(repo_ref: repo, number: int, head_ref: text, head_sha: text).
+open_pr_head(RepoRef, Number, HeadRef, HeadSha) <-
+  pull_request(RepoRef, Number, _G, 'open', _T, _A, HeadRef, HeadSha, _BR, _M,
+               _D, _Ad, _De, _CF, _C, _U, _Me, _Cl, _B).
+
+dirty_repo(RepoRef) <- repo_event_seen(RepoRef, _G, _T, _A, _P, _C).
+dirty_repo(RepoRef) <- branch_seen(RepoRef, _Name, _Sha, _UpdatedAt).
+
+# ── branches ────────────────────────────────────────────────────────────────
+
+rel branch(repo_ref: repo, name: text, sha: text, updated_at: text) key(1, 2).
+rel branch_seen(repo_ref: repo, name: text, sha: text, updated_at: text).
+rel branch_pattern(repo_ref: repo, pattern: text).
+rel branch_pattern_list(repo_ref: repo, patterns: list(text)).
+rel candidate_branch(repo_ref: repo, branch_name: text, sha: text).
+rel matched_branch(repo_ref: repo, branch_name: text, sha: text).
+
+# split answers an interned list id, so the elements reach the row plane through
+# a `list(text)` column and a spread (registry.pl:290-295).
+branch_pattern_list(RepoRef, Patterns) <-
+  watched_repo(RepoRef, _Owner, _Name, _DB, _SP, _SE, SyncBranches, _CS, _CP,
+               _FA),
+  SyncBranches != "",
+  Patterns := split(SyncBranches, ',').
+
+branch_pattern(RepoRef, Pattern) <-
+  branch_pattern_list(RepoRef, Patterns),
+  decode(Patterns, [... Pattern]).
+
+candidate_branch(RepoRef, BranchName, Sha) <-
+  watched_endpoint(EndpointPath, _ApiType, 'branches', RepoRef),
+  rest_response(EndpointPath, _Bucket, 200, _E, _L, _P, _RR, _RS, _B, _Pg,
+                Body),
+  decode(Body, [... {name: BranchName: text, commit: {sha: Sha: text}}]).
+
+# sync/branches.rs:90-95 matches_glob: a trailing `*` is a prefix test, anything
+# else is exact.
+matched_branch(RepoRef, BranchName, Sha) <-
+  candidate_branch(RepoRef, BranchName, Sha),
+  branch_pattern(RepoRef, Pattern),
+  Pattern == BranchName.
+
+matched_branch(RepoRef, BranchName, Sha) <-
+  candidate_branch(RepoRef, BranchName, Sha),
+  branch_pattern(RepoRef, Pattern),
+  PatternLength := length(Pattern),
+  Star := substr(Pattern, PatternLength, 1),
+  Star == "*",
+  PrefixLength := PatternLength - 1,
+  Prefix := substr(Pattern, 1, PrefixLength),
+  Head := substr(BranchName, 1, PrefixLength),
+  Head == Prefix.
+
+branch_seen(RepoRef, BranchName, Sha, UpdatedAt) <-
+  matched_branch(RepoRef, BranchName, Sha),
+  current_clock(60, Bucket),
+  UpdatedAt := concat(["bucket:", Bucket]).
+
+branch(RepoRef, BranchName, Sha, UpdatedAt) <+
+  branch_seen(RepoRef, BranchName, Sha, UpdatedAt).
+
+# ── pull requests, through the batched GraphQL call ─────────────────────────
+
+rel batch_size(rows_per_call: int) key(1).
+rel repo_ordinal(repo_ref: repo, ordinal: int) key(1).
+rel pr_batch_member(bucket: int, batch_index: int, repo_slug: text).
+rel pr_batch(bucket: int, batch_index: int, batch_key: text, slug_list: text).
+rel pr_batch_response(batch_key: text, bucket: int, status: int,
+                      rate_remaining: int, rate_reset: int, gql_cost: int,
+                      bytes: int, data: json).
+rel pr_due(repo_ref: repo, bucket: int).
+rel pr_ever_synced(repo_ref: repo) key(1).
+
+batch_size(20).
+
+repo_ordinal(RepoRef, Ordinal) <+
+  watched_repo(RepoRef, _Owner, _Name, _DB, _SP, _SE, _SB, _CS, _CP, _FA),
+  Ordinal := seq('repo').
+
+# The dirty set IS the targeting: sync/mod.rs:242-248 asks for every repo on a
+# full sweep and only event-touched repos afterwards.
+pr_due(RepoRef, Bucket) <-
+  current_clock(60, Bucket),
+  dirty_repo(RepoRef).
+
+pr_due(RepoRef, Bucket) <-
+  current_clock(60, Bucket),
+  watched_repo(RepoRef, _O, _N, _DB, SyncPrs, _SE, _SB, _CS, _CP, _FA),
+  SyncPrs == 1,
+  not(pr_ever_synced(RepoRef)).
+
+pr_ever_synced(RepoRef) <+
+  pull_request_seen(RepoRef, _N, _G, _S, _T, _A, _HR, _HS, _BR, _M, _D, _Ad,
+                    _De, _CF, _C, _U, _Me, _Cl, _B).
+
+pr_batch_member(Bucket, BatchIndex, RepoSlug) <-
+  pr_due(RepoRef, Bucket),
+  watched_repo(RepoRef, Owner, Name, _DB, SyncPrs, _SE, _SB, _CS, _CP, _FA),
+  SyncPrs == 1,
+  not(over_budget('graphql', Bucket)),
+  repo_ordinal(RepoRef, Ordinal),
+  batch_size(RowsPerCall),
+  BatchIndex := Ordinal / RowsPerCall,
+  RepoSlug := concat([Owner, "/", Name]).
+
+# The aliased-query slug list is built by a SQL aggregate, never string code.
+pr_batch(Bucket, BatchIndex, BatchKey, group_concat(RepoSlug, " ")) <-
+  pr_batch_member(Bucket, BatchIndex, RepoSlug),
+  BatchKey := concat(["graphql:prs:batch/", BatchIndex]).
+
+pr_batch_response(BatchKey, Bucket, Status, RateRemaining, RateReset, GqlCost,
+                  Bytes, Data) <-
+  pr_batch(Bucket, _BatchIndex, BatchKey, SlugList),
+  gh_pr_batch(BatchKey, SlugList, Bucket, Status, RateRemaining, RateReset,
+              GqlCost, Bytes, Data).
+
+rel pull_request(repo_ref: repo, number: int, gh_node_id: text, state: text,
+                 title: text, author: text, head_ref: text, head_sha: text,
+                 base_ref: text, mergeable: text, draft: int, additions: int,
+                 deletions: int, changed_files: int, created_at: text,
+                 updated_at: text, merged_at: text, closed_at: text,
+                 body: text) key(1, 2).
+rel pull_request_seen(repo_ref: repo, number: int, gh_node_id: text,
+                      state: text, title: text, author: text, head_ref: text,
+                      head_sha: text, base_ref: text, mergeable: text,
+                      draft: int, additions: int, deletions: int,
+                      changed_files: int, created_at: text, updated_at: text,
+                      merged_at: text, closed_at: text, body: text).
+
+pull_request_seen(repo(Owner, Name), Number, GhNodeId, State, Title, Author,
+                  HeadRef, HeadSha, BaseRef, Mergeable, Draft, Additions,
+                  Deletions, ChangedFiles, CreatedAt, UpdatedAt, MergedAt,
+                  ClosedAt, PrBody) <-
+  pr_batch_response(_BatchKey, _Bucket, 200, _RR, _RS, _GC, _B, Data),
+  decode(Data, {pulls: [... {owner: Owner: text, name: Name: text,
+                             number: Number: int, node_id: GhNodeId: text,
+                             state: State: text, title: Title: text,
+                             author: Author: text, head_ref: HeadRef: text,
+                             head_sha: HeadSha: text, base_ref: BaseRef: text,
+                             mergeable: Mergeable: text, draft: Draft: int,
+                             additions: Additions: int,
+                             deletions: Deletions: int,
+                             changed_files: ChangedFiles: int,
+                             created_at: CreatedAt: text,
+                             updated_at: UpdatedAt: text,
+                             merged_at: MergedAt: text,
+                             closed_at: ClosedAt: text,
+                             body: PrBody: text}]}).
+
+pull_request(RepoRef, Number, GhNodeId, State, Title, Author, HeadRef, HeadSha,
+             BaseRef, Mergeable, Draft, Additions, Deletions, ChangedFiles,
+             CreatedAt, UpdatedAt, MergedAt, ClosedAt, PrBody) <+
+  pull_request_seen(RepoRef, Number, GhNodeId, State, Title, Author, HeadRef,
+                    HeadSha, BaseRef, Mergeable, Draft, Additions, Deletions,
+                    ChangedFiles, CreatedAt, UpdatedAt, MergedAt, ClosedAt,
+                    PrBody).
+
+rel pr_review(repo_ref: repo, number: int, gh_id: int, author: text,
+              state: text, body: text, submitted_at: text) key(1, 2, 3).
+rel pr_review_seen(repo_ref: repo, number: int, gh_id: int, author: text,
+                   state: text, body: text, submitted_at: text).
+
+pr_review_seen(repo(Owner, Name), Number, GhId, Author, State, ReviewBody,
+               SubmittedAt) <-
+  pr_batch_response(_BatchKey, _Bucket, 200, _RR, _RS, _GC, _B, Data),
+  decode(Data, {reviews: [... {owner: Owner: text, name: Name: text,
+                               number: Number: int, gh_id: GhId: int,
+                               author: Author: text, state: State: text,
+                               body: ReviewBody: text,
+                               submitted_at: SubmittedAt: text}]}).
+
+pr_review(RepoRef, Number, GhId, Author, State, ReviewBody, SubmittedAt) <+
+  pr_review_seen(RepoRef, Number, GhId, Author, State, ReviewBody,
+                 SubmittedAt).
+
+rel pr_comment(repo_ref: repo, number: int, gh_id: int, author: text,
+               body: text, path: text, line: int, in_reply_to_id: int,
+               created_at: text, updated_at: text) key(1, 2, 3).
+rel pr_comment_seen(repo_ref: repo, number: int, gh_id: int, author: text,
+                    body: text, path: text, line: int, in_reply_to_id: int,
+                    created_at: text, updated_at: text).
+
+pr_comment_seen(repo(Owner, Name), Number, GhId, Author, CommentBody, Path,
+                Line, InReplyToId, CreatedAt, UpdatedAt) <-
+  pr_batch_response(_BatchKey, _Bucket, 200, _RR, _RS, _GC, _B, Data),
+  decode(Data, {comments: [... {owner: Owner: text, name: Name: text,
+                                number: Number: int, gh_id: GhId: int,
+                                author: Author: text, body: CommentBody: text,
+                                path: Path: text, line: Line: int,
+                                in_reply_to_id: InReplyToId: int,
+                                created_at: CreatedAt: text,
+                                updated_at: UpdatedAt: text}]}).
+
+pr_comment(RepoRef, Number, GhId, Author, CommentBody, Path, Line,
+           InReplyToId, CreatedAt, UpdatedAt) <+
+  pr_comment_seen(RepoRef, Number, GhId, Author, CommentBody, Path, Line,
+                  InReplyToId, CreatedAt, UpdatedAt).
+
+rel pr_status_check(repo_ref: repo, number: int, context: text, state: text,
+                    target_url: text, description: text, updated_at: text)
+                    key(1, 2, 3).
+rel pr_status_check_seen(repo_ref: repo, number: int, context: text,
+                         state: text, target_url: text, description: text,
+                         updated_at: text).
+
+pr_status_check_seen(repo(Owner, Name), Number, Context, State, TargetUrl,
+                     Description, UpdatedAt) <-
+  pr_batch_response(_BatchKey, _Bucket, 200, _RR, _RS, _GC, _B, Data),
+  decode(Data, {status_checks: [... {owner: Owner: text, name: Name: text,
+                                     number: Number: int,
+                                     context: Context: text,
+                                     state: State: text,
+                                     target_url: TargetUrl: text,
+                                     description: Description: text,
+                                     updated_at: UpdatedAt: text}]}).
+
+pr_status_check(RepoRef, Number, Context, State, TargetUrl, Description,
+                UpdatedAt) <+
+  pr_status_check_seen(RepoRef, Number, Context, State, TargetUrl, Description,
+                       UpdatedAt).
+
+rel pr_label(repo_ref: repo, number: int, label: text, color: text)
+             key(1, 2, 3).
+rel pr_label_seen(repo_ref: repo, number: int, label: text, color: text).
+
+pr_label_seen(repo(Owner, Name), Number, Label, Color) <-
+  pr_batch_response(_BatchKey, _Bucket, 200, _RR, _RS, _GC, _B, Data),
+  decode(Data, {labels: [... {owner: Owner: text, name: Name: text,
+                              number: Number: int, label: Label: text,
+                              color: Color: text}]}).
+
+pr_label(RepoRef, Number, Label, Color) <+
+  pr_label_seen(RepoRef, Number, Label, Color).
+
+rel pr_requested_reviewer(repo_ref: repo, number: int, reviewer: text)
+                          key(1, 2, 3).
+rel pr_requested_reviewer_seen(repo_ref: repo, number: int, reviewer: text).
+
+pr_requested_reviewer_seen(repo(Owner, Name), Number, Reviewer) <-
+  pr_batch_response(_BatchKey, _Bucket, 200, _RR, _RS, _GC, _B, Data),
+  decode(Data, {requested_reviewers: [... {owner: Owner: text,
+                                           name: Name: text,
+                                           number: Number: int,
+                                           reviewer: Reviewer: text}]}).
+
+pr_requested_reviewer(RepoRef, Number, Reviewer) <+
+  pr_requested_reviewer_seen(RepoRef, Number, Reviewer).
+
+# ── notifications ───────────────────────────────────────────────────────────
+
+rel notification(gh_id: text, repo_ref: repo, subject_type: text,
+                 subject_title: text, subject_url: text, subject_number: int,
+                 html_url: text, reason: text, unread: int, updated_at: text,
+                 last_read_at: text) key(1).
+rel notification_seen(gh_id: text, repo_ref: repo, subject_type: text,
+                      subject_title: text, subject_url: text,
+                      subject_number: int, html_url: text, reason: text,
+                      unread: int, updated_at: text, last_read_at: text).
+
+# `html_url` and `subject_number` are notifications.rs:77-99 parse_subject_url,
+# answered by the executor beside the thread it belongs to.
+notification_seen(GhId, repo(Owner, Name), SubjectType, SubjectTitle,
+                  SubjectUrl, SubjectNumber, HtmlUrl, Reason, Unread,
+                  UpdatedAt, LastReadAt) <-
+  watched_global(EndpointPath, _ApiType, 'notifications'),
+  rest_response(EndpointPath, _Bucket, 200, _E, _L, _P, _RR, _RS, _B, _Pg,
+                Body),
+  decode(Body, [... {id: GhId: text,
+                     repository: {owner: {login: Owner: text},
+                                  name: Name: text},
+                     subject: {type: SubjectType: text,
+                               title: SubjectTitle: text,
+                               url: SubjectUrl: text,
+                               html_url: HtmlUrl: text,
+                               number: SubjectNumber: int},
+                     reason: Reason: text,
+                     unread: Unread: int,
+                     updated_at: UpdatedAt: text,
+                     last_read_at: LastReadAt: text}]).
+
+notification(GhId, RepoRef, SubjectType, SubjectTitle, SubjectUrl,
+             SubjectNumber, HtmlUrl, Reason, Unread, UpdatedAt, LastReadAt) <+
+  notification_seen(GhId, RepoRef, SubjectType, SubjectTitle, SubjectUrl,
+                    SubjectNumber, HtmlUrl, Reason, Unread, UpdatedAt,
+                    LastReadAt).
+
+# ── checkout and PR head mirroring ──────────────────────────────────────────
+
+rel checkout_task(repo_slug: text, dest_root: text, want_sha: text,
+                  fetch_pr_branches: int).
+rel checkout(repo_ref: repo, branch: text, local_path: text, sha: text,
+             checked_out_bucket: int) key(1, 2).
+rel checkout_answer(repo_slug: text, checkout_path: text, head_sha: text).
+rel pr_head_mirror(repo_slug: text, checkout_path: text, pr_head_count: int).
+
+# `want_sha` carries the FRESHNESS role (registry.pl:429-439), so a branch that
+# has not moved re-asks on a witness the host already answered: zero git work.
+checkout_task(RepoSlug, DestRoot, WantSha, CheckoutPrBranches) <-
+  watched_repo(RepoRef, Owner, Name, DefaultBranch, _SP, _SE, _SB,
+               CheckoutOnSync, CheckoutPrBranches, FsAlias),
+  CheckoutOnSync == 1,
+  branch(RepoRef, DefaultBranch, WantSha, _UpdatedAt),
+  global_setting(_P, _O, _W, _S, _WS, _H, _SN, StagingFolder),
+  RepoSlug := concat([Owner, "/", Name]),
+  DestRoot := concat([StagingFolder, "/", FsAlias]).
+
+checkout_answer(RepoSlug, CheckoutPath, HeadSha) <-
+  checkout_task(RepoSlug, DestRoot, WantSha, _FetchPrBranches),
+  repo_checkout(RepoSlug, DestRoot, WantSha, CheckoutPath, HeadSha).
+
+pr_head_mirror(RepoSlug, CheckoutPath, PrHeadCount) <-
+  checkout_task(RepoSlug, DestRoot, WantSha, 1),
+  repo_mirror_pr_heads(RepoSlug, DestRoot, WantSha, CheckoutPath,
+                       PrHeadCount).
+
+checkout(RepoRef, DefaultBranch, CheckoutPath, HeadSha, Bucket) <+
+  checkout_answer(RepoSlug, CheckoutPath, HeadSha),
+  current_clock(60, Bucket),
+  watched_repo(RepoRef, Owner, Name, DefaultBranch, _SP, _SE, _SB, _CS, _CP,
+               _FA),
+  RepoSlug == concat([Owner, "/", Name]).
+
+# ── change_log, the delta rel ───────────────────────────────────────────────
+
+rel change_log(at_tick: int, entity_type: text, entity_key: text,
+               repo_slug: text) log keep(all).
+rel change_candidate(entity_type: text, entity_key: text, repo_slug: text).
+
+# change_candidate is a LEVEL rel, so the edge rule below fires on its POSITIVE
+# DELTA only: a tick that re-derives an identical row logs nothing.
+change_candidate('pull_request', EntityKey, RepoSlug) <-
+  pull_request_seen(repo(Owner, Name), Number, _G, _S, _T, _A, _HR, _HS, _BR,
+                    _M, _D, _Ad, _De, _CF, _C, _U, _Me, _Cl, _B),
+  RepoSlug := concat([Owner, "/", Name]),
+  EntityKey := concat([RepoSlug, "#", Number]).
+
+change_candidate('repo_event', GhId, RepoSlug) <-
+  repo_event_seen(repo(Owner, Name), GhId, _T, _A, _P, _C),
+  RepoSlug := concat([Owner, "/", Name]).
+
+change_candidate('branch', EntityKey, RepoSlug) <-
+  branch_seen(repo(Owner, Name), BranchName, _Sha, _UpdatedAt),
+  RepoSlug := concat([Owner, "/", Name]),
+  EntityKey := concat([RepoSlug, "@", BranchName]).
+
+change_candidate('notification', GhId, RepoSlug) <-
+  notification_seen(GhId, repo(Owner, Name), _ST, _T, _U, _N, _H, _R, _Un, _Ua,
+                    _Lr),
+  RepoSlug := concat([Owner, "/", Name]).
+
+change_candidate('checkout', RepoSlug, RepoSlug) <-
+  checkout_answer(RepoSlug, _CheckoutPath, _HeadSha).
+
+change_log(AtTick, EntityType, EntityKey, RepoSlug) <+
+  change_candidate(EntityType, EntityKey, RepoSlug),
+  now(AtTick).
+
+# ── the reader views (schema.sql:195-245) ───────────────────────────────────
+
+rel open_pr(repo_slug: text, number: int, title: text, author: text,
+            head_ref: text, draft: int, mergeable: text, additions: int,
+            deletions: int, created_at: text, updated_at: text).
+rel pr_approvals(repo_ref: repo, number: int, approvals: int).
+rel pr_changes_requested(repo_ref: repo, number: int, changes_requested: int).
+rel pr_comment_count(repo_ref: repo, number: int, comment_count: int).
+rel unread_notification(gh_id: text, subject_type: text, subject_title: text,
+                        subject_number: int, html_url: text, reason: text,
+                        updated_at: text, repo_slug: text).
+rel recent_event(repo_slug: text, event_type: text, actor: text,
+                 created_at: text, action: text).
+rel rate_pool(api_type: text, remaining: int, reset_at: int, calls: int).
+
+open_pr(RepoSlug, Number, Title, Author, HeadRef, Draft, Mergeable, Additions,
+        Deletions, CreatedAt, UpdatedAt) <-
+  pull_request(repo(Owner, Name), Number, _G, 'open', Title, Author, HeadRef,
+               _HS, _BR, Mergeable, Draft, Additions, Deletions, _CF,
+               CreatedAt, UpdatedAt, _Me, _Cl, _B),
+  RepoSlug := concat([Owner, "/", Name]).
+
+pr_approvals(RepoRef, Number, count(GhId)) <-
+  pr_review(RepoRef, Number, GhId, _Author, 'APPROVED', _Body, _SubmittedAt).
+
+pr_changes_requested(RepoRef, Number, count(GhId)) <-
+  pr_review(RepoRef, Number, GhId, _Author, 'CHANGES_REQUESTED', _Body, _Sa).
+
+pr_comment_count(RepoRef, Number, count(GhId)) <-
+  pr_comment(RepoRef, Number, GhId, _A, _B, _P, _L, _I, _C, _U).
+
+unread_notification(GhId, SubjectType, SubjectTitle, SubjectNumber, HtmlUrl,
+                    Reason, UpdatedAt, RepoSlug) <-
+  notification(GhId, repo(Owner, Name), SubjectType, SubjectTitle, _SubjectUrl,
+               SubjectNumber, HtmlUrl, Reason, 1, UpdatedAt, _LastReadAt),
+  RepoSlug := concat([Owner, "/", Name]).
+
+recent_event(RepoSlug, EventType, Actor, CreatedAt, Action) <-
+  repo_event(repo(Owner, Name), _GhId, EventType, Actor, Payload, CreatedAt),
+  decode(Payload, {action: Action: text}),
+  RepoSlug := concat([Owner, "/", Name]).
+
+rate_pool(ApiType, Remaining, ResetAt, count(AtTick)) <-
+  rate_state(ApiType, Remaining, ResetAt),
+  call_log(AtTick, ApiType, _Ep, _St, _RR, _RS, _By, _Ch).
+
+# ── queries ─────────────────────────────────────────────────────────────────
+
+? open_pr(RepoSlug, Number, Title, Author, HeadRef, Draft, Mergeable,
+          Additions, Deletions, CreatedAt, UpdatedAt)
+  order by RepoSlug, Number.
+? unread_notification(GhId, SubjectType, SubjectTitle, SubjectNumber, HtmlUrl,
+                      Reason, UpdatedAt, RepoSlug)
+  order by UpdatedAt desc.
+? recent_event(RepoSlug, EventType, Actor, CreatedAt, Action)
+  order by CreatedAt desc.
+? call_log(AtTick, ApiType, EndpointPath, Status, RateRemaining, RateReset,
+           Bytes, CacheHit)
+  order by AtTick desc.
+? change_log(AtTick, EntityType, EntityKey, RepoSlug) order by AtTick desc.
+? rate_pool(ApiType, Remaining, ResetAt, Calls).
+? due(EndpointPath, Bucket, ApiType).
+? over_budget(ApiType, Bucket).
+? poll_state(EndpointPath, Etag, LastModified, PollInterval, LastPolledBucket,
+             LastChangedBucket).
+? branch(RepoRef, BranchName, Sha, UpdatedAt).
+? checkout(RepoRef, BranchName, LocalPath, Sha, CheckedOutBucket).

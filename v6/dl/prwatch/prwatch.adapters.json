@@ -1,8 +1,8 @@
 [
   {
-    "adapter": "gh_pulls",
-    "demand_rel": "__host_demand_pulls",
-    "response_rel": "__host_response_pulls"
+    "adapter": "http_fetch",
+    "demand_rel": "__host_demand_gh_rest_cond",
+    "response_rel": "__host_response_gh_rest_cond"
   },
   {
     "adapter": "dl_tick_cost",
