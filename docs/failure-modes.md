@@ -2220,7 +2220,7 @@ sites but not against new code. **missing** = nothing.
   `diet` and `scip` planes run against a temp-dir copy that IS its own
   repository, which is exactly the shape that cannot detect this.
 
-## 56. A runtime with no per-verb clock, and three optimizations aimed at the wrong 12%
+## 64. A runtime with no per-verb clock, and three optimizations aimed at the wrong 12%
 
 - WHAT IT LOOKS LIKE: a fold is slow, the engine writes SQL, so the SQL gets
   tuned. Batching, grouping and memoizing all land, all are measured, and all
@@ -2256,7 +2256,7 @@ sites but not against new code. **missing** = nothing.
   Bench: `v6/sprefa-engine-rs/bench/profile.sh`, `bench/ab.sh`,
   `bench/rail-profile.sh`, `bench/file-db.sh`.
 
-## 60. Program metadata recomputed once per tick
+## 65. Program metadata recomputed once per tick
 
 - WHAT IT LOOKS LIKE: a fold that costs the same whether the tick moved one row
   or ten thousand. The per-verb table shows the cost nowhere, because the work
@@ -2279,7 +2279,7 @@ sites but not against new code. **missing** = nothing.
 - WHAT IT DID NOT FIX: this class is cheap in absolute terms (schema-sized, not
   row-sized). The row-sized cost was entry 61.
 
-## 61. Three full copies of an arrival batch before it reached the seam
+## 66. Three full copies of an arrival batch before it reached the seam
 
 - WHAT IT LOOKS LIKE: an `intern` phase costing 448ms of Rust against 25ms of
   SQL, on 6482 rows. The trace attributes it correctly and it still reads as a
@@ -2304,7 +2304,7 @@ sites but not against new code. **missing** = nothing.
   __host_response_extract` 205359 -> 22878, `stage __host_response_extract`
   142211 -> 11607, TOTAL rust in scopes 3093662 -> 736591. RUST-GRADE stayed
   439/335 byte-clean across every step.
-## 62. A program driven only by boot facts, answering silence that reads as a finding
+## 67. A program driven only by boot facts, answering silence that reads as a finding
 
 - WHAT IT LOOKS LIKE: every seed is a plain fact in the source, the program
   compiles clean, the harness exits 0, and the reads come back empty except for
@@ -2332,7 +2332,7 @@ sites but not against new code. **missing** = nothing.
   a compiler-lane request on the crosswalk PR rather than fixed here, because
   `v6/prolog/**` is another lane's tree.
 
-## 63. Two hosts meant to share one pass, split by a name the registry never heard of
+## 68. Two hosts meant to share one pass, split by a name the registry never heard of
 
 - WHAT IT LOOKS LIKE: two `sh` declarations carry the same template on purpose,
   so the runner's applicative grouping folds them into one process and each
@@ -2360,6 +2360,36 @@ sites but not against new code. **missing** = nothing.
   count: two hosts declared with one template must produce one `host_run` span
   per file, and `DL_TRACE_SUMMARY=1` already prints the call count that would
   catch a second pass.
+
+## 69. A resumed agent whose worktree was gone, and a reset that landed in the coordinator's tree
+
+INCIDENT (2026-08-21, arrivals-and-ticks lane). A subagent's isolated worktree
+was cut from the wrong base and the agent stopped correctly. Its worktree was
+auto-cleaned the moment it stopped. The coordinator resumed it with "run
+`git reset --hard <sha>` in your worktree" - but the resumed agent no longer
+HAD a worktree, its cwd had fallen back to the coordinator's own working tree,
+and the reset executed there, wiping the coordinator's uncommitted work (one
+file rewrite; recovered from the transcript and recommitted).
+
+RCA. Two facts composed: (1) an isolation worktree is deleted when the agent
+first completes, so a RESUMED agent silently inherits some other cwd; (2) the
+instruction named an action ("reset --hard") relative to a location ("your
+worktree") that no longer existed, and nothing checked the location before the
+destructive command ran.
+
+FAIL-PRE-FIX PROBE. Resume any completed worktree agent and have it print
+`git rev-parse --show-toplevel`: it answers the COORDINATOR's tree, not an
+agent worktree.
+
+RAIL. Standing instruction, both directions: an agent asked to run any
+destructive git command MUST first print `git rev-parse --show-toplevel` and
+STOP unless the answer is the tree the coordinator named in the same message;
+a coordinator resuming a completed isolation agent MUST re-state the absolute
+tree path and MUST NOT name reset/checkout/clean/stash in a resume message.
+Committing early and often on the coordinator branch bounds the blast radius:
+the incident cost one uncommitted file, not the arc.
+
+ENTRY: this row.
 
 ## Rail gap table
 
