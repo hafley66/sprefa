@@ -211,6 +211,17 @@ records the era when this leg was unwired and mail queued forever.
   `("__id" INTEGER PRIMARY KEY, <cols>, UNIQUE (<cols>))`, zero columns
   collapsing to `("__id" INTEGER PRIMARY KEY)`. The
   `PRIMARY KEY (<cols>) WITHOUT ROWID` branch was the outlier.
+- **"pause work on tsv2, im done trying to support both."** (2026-08-21) The
+  TypeScript door (`v6/tsv2`, `emit_ts.pl`) takes no new features, no new
+  tests, no sweep runs. New language and runtime work lands on the Rust door
+  only; `emit_ts.pl` output for unchanged programs stays byte-identical.
+- **Zero shell in the engine.** (2026-08-21) `ShellExecutor` is deleted from
+  `sprefa-engine-rs`; every `sh` host links a Rust executor (soopy, extract,
+  scip, cargo_metadata, fixture) or is a named stop at construction. Scripts
+  never push arrivals into or pull rows out of a named rel; the program owns
+  its seeds and its `?` output.
+- **The words "ground truth" are banned** in every spelling and root form, in
+  file names, recipes, identifiers, comments and reports. The word is "oracle".
 - **"I DO NOT WANT TO RUN V5 ANYTHING ANYMORE."** No design may end in "keep the
   v5 binary running". Cost is one feature: diagnostics is the only v6 editor
   feature that reaches an editor through v5, and hover never worked
