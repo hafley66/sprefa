@@ -37,7 +37,7 @@ pub trait IHostExecutor: Sync {
 /// The roster a construction stop names. Every entry runs in this process or
 /// spawns one known binary; none of them reaches a shell.
 pub const LINKED_EXECUTORS: &str =
-    "soopy, soopy_files, sprefa_extract, sprefa_scip, cargo_metadata";
+    "soopy, soopy_files, sprefa_extract, sprefa_scip, cargo_metadata, fixture";
 
 pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
     match execution {
@@ -49,6 +49,7 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
         // diet side, one budgeted indexer run for the index side.
         "sprefa_scip" => Some(&*SCIP),
         "cargo_metadata" => Some(&CargoMetadataExecutor),
+        "fixture" => Some(&FixtureExecutor),
         _ => None,
     }
 }
@@ -131,6 +132,60 @@ impl IHostExecutor for SoopyFilesExecutor {
         }
         Ok(rows)
     }
+}
+
+/// A fixture host whose template is a constant: `printf '<json>'` answers that
+/// json and nothing else, so a conformance program folds with no process.
+pub struct FixtureExecutor;
+
+impl IHostExecutor for FixtureExecutor {
+    fn run(
+        &self,
+        host: &str,
+        command_line: &str,
+        _env: &BTreeMap<String, String>,
+    ) -> Result<Vec<HostRow>, HostError> {
+        let named = |message: String| HostError {
+            host: host.to_string(),
+            message,
+        };
+        let words = template_words(command_line)
+            .map_err(|message| named(format!("unparseable template: {message}")))?;
+        let (verb, payload) = match words.split_first() {
+            Some((verb, rest)) if verb == "printf" => (verb, rest.first()),
+            _ => return Err(named(format!("only `printf` is a fixture answer: `{command_line}`"))),
+        };
+        let payload = payload.ok_or_else(|| named(format!("`{verb}` carries no answer")))?;
+        fixture_rows(payload).ok_or_else(|| {
+            named(format!("fixture answer is not json rows: `{payload}`"))
+        })
+    }
+}
+
+/// One object, a json array of objects, or one object per line.
+fn fixture_rows(payload: &str) -> Option<Vec<HostRow>> {
+    let of = |value: serde_json::Value| match value {
+        serde_json::Value::Object(row) => Some(vec![row]),
+        serde_json::Value::Array(items) => items
+            .into_iter()
+            .map(|item| match item {
+                serde_json::Value::Object(row) => Some(row),
+                _ => None,
+            })
+            .collect::<Option<Vec<HostRow>>>(),
+        _ => None,
+    };
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(payload.trim()) {
+        return of(value);
+    }
+    payload
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(serde_json::Value::Object(row)) => Some(row),
+            _ => None,
+        })
+        .collect()
 }
 
 /// `MetadataCommand` spawns the `cargo` binary itself, so nothing between this

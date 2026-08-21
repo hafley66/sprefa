@@ -168,18 +168,43 @@ fn table_rows(program: &GenProgram, seam: &SqliteSeam, rel: &str) -> Vec<Vec<Val
     result.rows
 }
 
-/// The whole live fold stops on the unrouted host, before any tick runs.
+/// The fixture executor answers a constant template with no process at all,
+/// so a fixture host still folds demand -> answer -> response.
 #[tokio::test]
-async fn a_live_fold_stops_on_an_unrouted_host() {
+async fn a_constant_template_answers_through_the_fixture_executor() {
     let program = fixture_program("live_shell_probe");
     let seam = SqliteSeam::in_memory().expect("seam");
     let schedule = vec![vec![add("source_file", vec![text("a.rs")])]];
-    let failure = run_schedule_live(&program, &seam, &schedule, 100)
+    let fold = run_schedule_live(&program, &seam, &schedule, 100)
         .await
-        .err()
-        .expect("an unrouted host stops the fold");
-    let message = failure.to_string();
-    assert!(message.contains("no executor links host 'look'"), "{message}");
+        .expect("live run");
+    assert_eq!(
+        table_rows(&program, &seam, "spanned"),
+        vec![vec![text("a.rs"), Value::Integer(3), Value::Integer(9)]],
+        "the template's literal span must land through demand -> answer -> response"
+    );
+    assert_eq!(
+        fold.lines.len(),
+        2,
+        "one scheduled arrival tick, then exactly one host-response tick"
+    );
+}
+
+/// SABOTAGE. The same program with the literal forced to a wrong span lands the
+/// wrong bytes, so the exact-row assert above is a real detector.
+#[tokio::test]
+async fn a_sabotaged_fixture_literal_lands_the_wrong_span() {
+    let mut program = fixture_program("live_shell_probe");
+    program.host_plans[0].template = "printf '{\"start\":4,\"end\":9}' # {path}".to_string();
+    let seam = SqliteSeam::in_memory().expect("seam");
+    let schedule = vec![vec![add("source_file", vec![text("a.rs")])]];
+    run_schedule_live(&program, &seam, &schedule, 100)
+        .await
+        .expect("live run");
+    assert_eq!(
+        table_rows(&program, &seam, "spanned"),
+        vec![vec![text("a.rs"), Value::Integer(4), Value::Integer(9)]],
+    );
 }
 
 /// The linked twin: DL_EXTRACT_BIN is absent from the environment, so a
