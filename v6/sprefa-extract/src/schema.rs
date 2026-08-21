@@ -31,6 +31,7 @@ RECORD SHAPES
   record=df_nest   family=df               call={start,end}   loop={start,end}   depth=<u32>  collection=<string|null>
   record=df_allocates  family=df           owner={start,end}
   record=site   family=call                span={start,end}   callee=<name>  callee_path=<string|null>
+  record=method_owner  family=call         owner={start,end}  self_type=<string|null>  trait=<string|null>
   record=reference  family=call            span={start,end}   functor=<name/arity>  position=<goal|head_arg|term_arg>
   record=const  family=type                owner={start,end}  field=<string|null>  text=<string>  kind=<lit|template>
   record=doc    family=type                owner={start,end}  parent=<string|null>  text=<string>
@@ -89,6 +90,10 @@ FIELDS
   position     where a Prolog term-occurrence sits: goal (executed as a body
                goal), head_arg (inside a clause head's arguments), term_arg
                (inside another term's arguments, data).
+  self_type    the impl self type a method def belongs to (null for a trait's
+               own items).
+  trait        the trait a method def implements or is declared in (null for an
+               inherent impl).
   field        dotted path into an object const, or an enum member (else null).
   text         the resolved string value of a const.
   query        caller-supplied identity for one batched ast-grep pattern.

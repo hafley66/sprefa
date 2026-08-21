@@ -453,6 +453,17 @@ pub struct CallSite {
     pub callee_path: Option<NameId>,
 }
 
+/// A `Method` def's declaration, keyed by the def node's span. Two seats, never
+/// one: `impl Draw for A` and `impl Erase for A` differ only in `trait_name`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MethodOwner {
+    pub span: Span,
+    /// The impl's primary self type; `None` for a trait declaration's own items.
+    pub self_type: Option<NameId>,
+    /// The implemented or declaring trait; `None` for an inherent impl.
+    pub trait_name: Option<NameId>,
+}
+
 /// A Prolog term-occurrence reference: a compound constructed or destructured in
 /// argument position. The only family that emits these is the Prolog front-end;
 /// the field rides the shared `CallFAux` so the wire needs no per-lang slot.
@@ -587,6 +598,9 @@ pub struct CallFAux {
     /// Prolog term-occurrence references. Only the Prolog front-end populates
     /// this; other languages leave it empty.
     pub refs: Vec<Reference>,
+    /// One row per `Method` def whose declaration names an owner, joined to the
+    /// def node by span. Rust populates it; other languages leave it empty.
+    pub method_owners: Vec<MethodOwner>,
 }
 
 impl Family for CallF {
@@ -2075,6 +2089,16 @@ pub enum FlatFact {
         /// The source module's own name for the binding when it differs from
         /// `name`; null when they agree. v5's `module_binding` imported seat.
         imported: Option<String>,
+    },
+    /// CallF method owner: the declaration a `method` def node belongs to,
+    /// joined to it by `owner`. v6-ONLY, no v5 oracle facet.
+    #[serde(rename = "method_owner")]
+    MethodOwnerOut {
+        family: FamilyTag,
+        owner: SpanOut,
+        self_type: Option<String>,
+        #[serde(rename = "trait")]
+        trait_name: Option<String>,
     },
     /// A Prolog term-occurrence reference: a compound in argument position,
     /// tagged goal | head_arg | term_arg. Deliberately exceeds the LSP/SCIP

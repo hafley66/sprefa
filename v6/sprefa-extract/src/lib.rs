@@ -53,13 +53,13 @@ pub use dispatch::dispatch;
 pub use family::{
     flow_edges, CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfArg, DfEdgeKind, DfF,
     DfFAux, DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, Family, FlowEdge, FlowEdgeKind,
-    FlowF, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind,
-    TypeEntityKind, TypeF, TypeFAux, TypeSig,
+    FlowF, MethodOwner, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
+    TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };
 pub use lang::{
-    query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource, DataSource,
-    DlSource,
-    GoSource, KotlinSource, MarkdownSource, PrologSource, PythonSource, RustSource, TsSource,
+    query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource,
+    DataSource, DlSource, GoSource, KotlinSource, MarkdownSource, PrologSource, PythonSource,
+    RustSource, TsSource,
 };
 pub use manifests::{
     fold_package_edges, package_edges, package_edges_jsonl, Manifest, ManifestKind,
