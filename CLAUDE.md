@@ -222,6 +222,10 @@ records the era when this leg was unwired and mail queued forever.
   scip, cargo_metadata, fixture) or is a named stop at construction. Scripts
   never push arrivals into or pull rows out of a named rel; the program owns
   its seeds and its `?` output.
+- **hafley66 is an ORG, watched whole.** (2026-08-21) The GitHub watcher runs
+  over the org `hafley66`, never one repo: `instant`, `sprefa`, `hafley-rs`,
+  `hafley-rxjs` are the required set, org discovery adds the rest. A program
+  seeded with a single `repo(...)` fact is a defect.
 - **One server, one db.** (2026-08-21) The resident `dl6` runtime is the one
   server; every program it runs writes into ONE SQLite file,
   `~/.agent/dl6.db`, tables prefixed by program name (the `__txt_<program>_*`
