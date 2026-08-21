@@ -34,8 +34,8 @@ use syn::{
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
-    DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier,
-    SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
+    DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, MethodOwner, ProjectEdge, SigSlot,
+    Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
@@ -1037,7 +1037,12 @@ fn def_span(line_starts: &[u32], start: proc_macro2::Span, end: proc_macro2::Spa
 
 /// Descends inline `mod name { .. }`: the SITE half walks the whole file, so a
 /// callable declared in one needs a def or the file reports uses without them.
-fn call_defs_in_items(items: &[syn::Item], line_starts: &[u32], defs: &mut RustCallDefs) {
+fn call_defs_in_items(
+    items: &[syn::Item],
+    line_starts: &[u32],
+    defs: &mut RustCallDefs,
+    owners: &mut Vec<CollectedOwner>,
+) {
     for item in items {
         match item {
             syn::Item::Fn(f) => {
@@ -1046,10 +1051,17 @@ fn call_defs_in_items(items: &[syn::Item], line_starts: &[u32], defs: &mut RustC
                 syn::visit::visit_block(defs, &f.block);
             }
             syn::Item::Impl(i) => {
+                let self_type = primary_type(&i.self_ty);
+                let trait_name = i.trait_.as_ref().map(|(_, path, _)| path_string(path));
                 for ii in &i.items {
                     if let syn::ImplItem::Fn(m) = ii {
                         let span = def_span(line_starts, m.sig.ident.span(), m.block.span());
                         defs.push(span, Some(m.sig.ident.to_string()), CallKind::Method);
+                        owners.push(CollectedOwner {
+                            span,
+                            self_type: self_type.clone(),
+                            trait_name: trait_name.clone(),
+                        });
                         syn::visit::visit_block(defs, &m.block);
                     }
                 }
@@ -1065,6 +1077,11 @@ fn call_defs_in_items(items: &[syn::Item], line_starts: &[u32], defs: &mut RustC
                             None => def_span(line_starts, m.sig.ident.span(), m.sig.span()),
                         };
                         defs.push(span, Some(name), CallKind::Method);
+                        owners.push(CollectedOwner {
+                            span,
+                            self_type: None,
+                            trait_name: Some(t.ident.to_string()),
+                        });
                         if let Some(block) = &m.default {
                             syn::visit::visit_block(defs, block);
                         }
@@ -1073,12 +1090,20 @@ fn call_defs_in_items(items: &[syn::Item], line_starts: &[u32], defs: &mut RustC
             }
             syn::Item::Mod(m) => {
                 if let Some((_, inner)) = &m.content {
-                    call_defs_in_items(inner, line_starts, defs);
+                    call_defs_in_items(inner, line_starts, defs, owners);
                 }
             }
             _ => {}
         }
     }
+}
+
+/// One method's declaration before it is interned into the aux. `self_type` is
+/// `None` for a trait's own items; `trait_name` is `None` for an inherent impl.
+struct CollectedOwner {
+    span: Span,
+    self_type: Option<String>,
+    trait_name: Option<String>,
 }
 
 /// Project the CallF family: one def node per callable (Free / Method / Lambda)
@@ -1093,13 +1118,21 @@ fn project_call(
         line_starts,
         out: Vec::new(),
     };
-    call_defs_in_items(&parsed.items, line_starts, &mut defs);
+    let mut owners = Vec::new();
+    call_defs_in_items(&parsed.items, line_starts, &mut defs, &mut owners);
     for def in defs.out {
         let mut node = Node::new(def.span, def.kind);
         if let Some(name) = def.name {
             node = node.with_name(strings.intern(&name));
         }
         sink.nodes.push(node);
+    }
+    for owner in owners {
+        sink.aux.method_owners.push(MethodOwner {
+            span: owner.span,
+            self_type: owner.self_type.map(|name| strings.intern(&name)),
+            trait_name: owner.trait_name.map(|name| strings.intern(&name)),
+        });
     }
 
     // Sites: one walk over the whole file for every call/method-call/struct-literal
