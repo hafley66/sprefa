@@ -85,8 +85,8 @@ blocked row.
 
 D1 and D3 are wiring: the records exist, are tested, and reach the CLI. D1's
 `--ast-pattern` arm is three lines in `SprefaExtractExecutor::run`
-(`v6/sprefa-engine-rs/src/hosts.rs:896-914`). D3's `cfg` arm is one match arm
-(`hosts.rs:942-957`). D2 needs a host name and an input contract.
+(`v6/sprefa-engine-rs/src/hosts.rs:1060-1078`). D3's `cfg` arm is one match arm
+(`hosts.rs:1106-1121`). D2 needs a host name and an input contract.
 
 Only `ast_yaml` needs a language-design call (`sg_pattern/3` is
 `refuse(slot_sg_metavariable_semantics)`, `registry.pl:199`), and that is

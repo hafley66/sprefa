@@ -19,7 +19,7 @@ in-process executor, so a `.dl6` program cannot ask for a control-flow graph.
 | the CLI accepts it | `v6/sprefa-extract/src/bin/extract.rs:530` `"cfg" => mask.cst = true` |
 | the CLI emits it | `extract.rs:21-22` `cfg_bundle`, `flatten_cfg`; `:366-373` |
 | the plane is fully tested | `v6/sprefa-extract/tests/17_cfg_first_plane.rs`, the whole edge set of one function per language asserted exactly |
-| the in-process executor refuses it | `v6/sprefa-engine-rs/src/hosts.rs:953-957` "family `cfg` is not a known family; in-process families are cst, type, call, df, data" |
+| the in-process executor refuses it | `v6/sprefa-engine-rs/src/hosts.rs:1117-1121` "family `cfg` is not a known family; in-process families are cst, type, call, df, data" |
 | `FamilyMask` has no `cfg` field | `v6/sprefa-extract/src/types.rs:1886-1892` |
 
 Probed 2026-08-21:

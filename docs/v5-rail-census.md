@@ -171,7 +171,7 @@ The dl6 spellings these need, all live:
 
 | v5 construct | dl6 spelling | site |
 |---|---|---|
-| `scan(rev, glob, path, rev_out)` | `sh files(glob) -> (path, digest)` | `v6/sprefa-engine-rs/src/hosts.rs:92` |
+| `scan(rev, glob, path, rev_out)` | `sh files(glob) -> (path, digest)` | `v6/sprefa-engine-rs/src/hosts.rs:251` |
 | `closure(edge)` | a recursive rule head | `v6/dl/deadcode/dead-module-rail.dl6:353-357` |
 | `json` / `jsonp` | `--family data` + `decode/2` | `v6/sprefa-extract/src/schema.rs:43`, `registry.pl:85` |
 | `diag(...)` sink | an ordinary rel a rail heads | `v6/dl/fixtures/diag-rail.dl6` |
