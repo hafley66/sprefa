@@ -2453,3 +2453,11 @@ The observed standard, in order — no step is optional:
    numbers rides the ledger: 4.7GB → 111MB, 72.9s → 8.5s cpu (CLAUDE.md:53).
    Then — and only then — the class moves from this doc's gap table to its
    enforced list.
+
+## 64. A symlink older than the crate it names
+
+- **Incident** (2026-08-21): grading PR #410 in `~/projects/sprefa-worktrees/grade-410` failed with `cannot find function hash_object in crate soopy`. `soopy = { path = "../../../hafley-rs/crates/soopy" }` (`v6/sprefa-engine-rs/Cargo.toml:29`) resolved through `sprefa-worktrees/hafley-rs`, a symlink made 2026-08-17 to a hafley-rs worktree four days stale. Twenty minutes on a phantom API break.
+- **RCA**: a relative path dep means every tree location needs its own sibling `hafley-rs`, and nothing checked that the sibling was the live checkout.
+- **Fail-pre-fix**: `bash v6/tools/doctor-deps.sh` with the old symlink prints `DEPS STALE` and exits 1.
+- **Rail**: `v6/tools/doctor-deps.sh` canonicalizes every hafley-rs path dep and requires it under `~/projects/hafley-rs` (`HAFLEY_RS` overrides); `grade.sh` runs it first, `just doctor-deps` runs it alone, and every lane brief's first action includes it.
+- **Entry**: the symlink now points at `~/projects/hafley-rs`.

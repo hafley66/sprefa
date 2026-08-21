@@ -1,6 +1,6 @@
 # Brief: the clock checker stops enumerating paths
 
-Base sha: the spawner prints it. FIRST ACTION `git merge --ff-only <sha>`; failure = stop and
+Base sha: the spawner prints it. FIRST ACTION `git merge --ff-only <sha>` then `bash v6/tools/doctor-deps.sh` (must print DEPS OK); failure = stop and
 report. Never spawn subagents. Commit every green step. PR against `main`. `timeout` on
 every command; `export CARGO_BUILD_JOBS=3 RUST_TEST_THREADS=4`.
 
