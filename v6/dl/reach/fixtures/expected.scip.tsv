@@ -1,0 +1,21 @@
+cargo_root_count	2
+feature	src/alpha.rs	run_alpha
+feature	src/beta.rs	execute
+feature	src/plumbing.rs	execute
+feature	src/plumbing.rs	usage
+feature_reach	src/lib.rs::library_entry	src/alpha.rs::run_alpha	1	1	both
+feature_reach	src/lib.rs::library_entry	src/beta.rs::execute	0	0	none
+feature_reach	src/lib.rs::library_entry	src/plumbing.rs::execute	0	0	none
+feature_reach	src/lib.rs::library_entry	src/plumbing.rs::usage	0	0	none
+feature_reach	src/main.rs::main	src/alpha.rs::run_alpha	1	1	both
+feature_reach	src/main.rs::main	src/beta.rs::execute	0	0	none
+feature_reach	src/main.rs::main	src/plumbing.rs::execute	1	1	scip
+feature_reach	src/main.rs::main	src/plumbing.rs::usage	1	1	both
+unreachable_feature	src/main.rs::main	src/beta.rs::execute
+entry_reach_summary	src/main.rs::main	3	4
+entry_reach_summary	src/lib.rs::library_entry	1	2
+value_reach	src/lib.rs::library_entry	src/alpha.rs::run_alpha	1
+value_reach	src/main.rs::main	src/alpha.rs::run_alpha	1
+value_reach	src/main.rs::main	src/beta.rs::execute	1
+value_reach	src/main.rs::main	src/plumbing.rs::execute	1
+value_reach	src/main.rs::main	src/plumbing.rs::usage	1

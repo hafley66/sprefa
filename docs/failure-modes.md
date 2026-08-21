@@ -2180,6 +2180,37 @@ sites but not against new code. **missing** = nothing.
   not finish in 90s. The fix is a per-document line-offset table, not another
   memo, and it is unbuilt.
 
+## 60. A pathspec rooted at the repository and a manifest rooted at the workspace
+
+- WHAT IT LOOKS LIKE: a rail that reads a cargo crate is right on the first
+  target and silently empty on the second. The first target IS its own git
+  repository, so its workspace root and its repository root are the same string
+  and every path plane lines up by accident.
+- HOW IT BIT US: 2026-08-21, `v6/dl/reach/feature-reach.dl6`. `soopy_files`
+  enumerates `git ls-files` from the REPOSITORY root, so `files` answers
+  repository-relative paths, while `cargo metadata` answers absolute
+  `src_path`s whose only prefix in that document is `workspace_root`. The first
+  draft stripped `workspace_root`, so a crate at `v6/sprefa-extract` derived
+  the root `src/bin/extract.rs` against a file set carrying
+  `v6/sprefa-extract/src/bin/extract.rs`: zero entry points, zero features,
+  every cell unreachable, exit 0. The run that exposed it stopped earlier for
+  the same reason wearing a different hat: with cwd set to the crate rather
+  than the repository, `call_node_at` was handed the repository-relative
+  `src/cli/check_deadline.rs` and stopped on "no repository root for digest
+  read".
+- THE LAW: one root per program. Pathspec, extractor read, scip project root
+  and derived cargo root all key on the REPOSITORY root; a workspace root is a
+  second root that gets converted, never assumed equal. The fold runs from
+  `git rev-parse --show-toplevel` and the program strips a seeded `repo_root`.
+- THE RAIL: `bash v6/dl/reach/feature-reach.sh --check` third plane, `nested`:
+  the same fixture crate read where it lives inside sprefa, glob
+  `v6/dl/reach/fixtures/reachcrate/src/*.rs`, diffed against
+  `fixtures/expected.nested.tsv`. Pre-fix that plane cannot even reach a diff:
+  the fold stops on the digest read above. Post-fix it carries the same 8
+  matrix cells as `expected.diet.tsv` under the repository-relative prefix. The
+  `diet` and `scip` planes run against a temp-dir copy that IS its own
+  repository, which is exactly the shape that cannot detect this.
+
 ## 56. A runtime with no per-verb clock, and three optimizations aimed at the wrong 12%
 
 - WHAT IT LOOKS LIKE: a fold is slow, the engine writes SQL, so the SQL gets

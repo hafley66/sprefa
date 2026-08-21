@@ -1,0 +1,411 @@
+# @comment-ok: the header states which evidence each plane carries and why the
+# owner join exists at all, neither of which is visible in any single rule.
+#
+#   entry_point    a `fn main` in a cargo BIN root, or a top-level fn in a LIB root
+#   feature        a free fn a `fn main` body names directly and some file defines
+#   feature_reach  the matrix cell: reachable, min hops, and WHICH plane proved it
+#
+# TWO PLANES, ONE GRAPH. `scip.diet.call` resolves a call by name match over the
+# supplied file set; `scip.call` resolves it through a real SCIP index. Both
+# answer (caller_path, callee_path, callee) and NEITHER answers a caller name,
+# so function granularity on the caller side comes from the call family's own
+# site spans: the innermost named def containing a site IS the caller.
+#
+# ROW-VOLUME. A declared output column selects records out of one stream
+# (hosts.rs:776 drops nulls), so an unread column is a row multiplier.
+# `extract` carries `span` here and the dead-module rail drops it, because the
+# caller's identity IS that span's owner; paid for by cutting the site side to
+# callees a resolved plane already named. `df_arg_at` is demanded for ENTRY
+# FILES ONLY. `df_edge_at` is not declared: 735 edge rows for one 1815-line
+# file, 55249 over the 83-file hafley-rs corpus, and the matrix reads none of
+# them, because an entry's ARGUMENTS are `arg` records and the edge closure
+# only relates spans inside one file.
+#
+# rx: fileSet$.pipe(mergeMap(runExtract), groupBy(callerFn)) joined with
+# fileSet$.pipe(mergeMap(runResolve), groupBy(callerPath)), then
+# entry$.pipe(expand(fn => calleesOf(fn)), scan(minHops), distinct()).
+
+rel span(start: int, end: int).
+
+# One `git hash-object` for the whole set, routed to the linked `soopy_files`
+# adapter by the sidecar; the template is the readable spelling of that work.
+sh files(glob: text) -> (path: text, digest: text) =
+  `git ls-files -- '{glob}' | git hash-object --stdin-paths`.
+
+# Hand-typing one crate's main.rs makes every other crate's entry read as absent.
+sh cargo_targets(manifest_dir: text) -> (workspace_root: text, packages: json) =
+  `cd {manifest_dir} && cargo metadata --format-version 1 --no-deps`.
+
+# Four projections of ONE `--family call` run: the applicative fold collapses
+# demands sharing one command over one file into a single extraction.
+sh call_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+sh cfg_at(path: text, digest: text) -> (record: text, family: text, span: span, cfg: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+sh extract(path: text, digest: text) -> (record: text, family: text, span: span, callee: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+sh call_ref(path: text, digest: text) -> (record: text, family: text, callee: text, cfg: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+# The `arg` record's `call` span is the WHOLE call expression for a free fn and
+# the method IDENT for a method (rust.rs:1979 against rust.rs:2028).
+sh df_arg_at(path: text, digest: text) -> (record: text, family: text, call: span, pos: int, arg: span) =
+  `"$DL_EXTRACT_BIN" --family df {path}`.
+
+# THE INTERFACING TYPE: registry.pl scip_interface_columns/2 is the one list
+# both namespaces are checked against. Same columns, one host name apart.
+sh scip.diet.call(repo: text, path: text, digest: text)
+  -> (record: text, family: text, caller_path: text, callee_path: text,
+      callee: text, kind: text) =
+  `cd {repo} && "$DL_EXTRACT_BIN" --family diet_scip {path}`.
+sh scip.call(repo: text, path: text, digest: text)
+  -> (record: text, family: text, caller_path: text, callee_path: text,
+      callee: text, kind: text) =
+  `cd {repo} && "$DL_EXTRACT_BIN" --resolve --project-root . --scip-build {path}`.
+
+rel want(glob: text).
+rel root_file(path: text).
+rel cargo_manifest(dir: text).
+rel repo_root(dir: text).
+
+# An index build is the ONE named exception to the 10-second law, so the plane
+# that needs one is seeded rather than assumed: no seed, no index demand.
+rel want_scip(enabled: int).
+
+rel source_file(path: text, digest: text).
+source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
+
+# ── the entry plane ─────────────────────────────────────────────────────────
+
+rel cargo_metadata_doc(workspace_root: text, packages: json).
+cargo_metadata_doc(WorkspaceRoot, Packages) <-
+  cargo_manifest(Dir), cargo_targets(Dir, WorkspaceRoot, Packages).
+
+# `kind` is a json ARRAY per target, so the spread over it IS the membership test.
+rel cargo_target_source(workspace_root: text, kind: text, src_path: text).
+cargo_target_source(WorkspaceRoot, Kind, SrcPath) <-
+  cargo_metadata_doc(WorkspaceRoot, Packages),
+  decode(Packages, [... {targets: [... {kind: [... Kind], src_path: SrcPath: text}]}]).
+
+rel root_kind(kind: text).
+root_kind('bin').        root_kind('lib').   root_kind('proc-macro').
+root_kind('cdylib').     root_kind('rlib').
+
+# A pathspec is relative to the REPOSITORY root and cargo's workspace root is a
+# second, different root: a nested crate lines up on the first one only.
+rel derived_root(kind: text, path: text).
+derived_root(Kind, Path) <-
+  cargo_target_source(_WorkspaceRoot, Kind, SrcPath),
+  root_kind(Kind),
+  repo_root(RepoRoot),
+  substr(SrcPath, 1, length(RepoRoot)) == RepoRoot,
+  Path := substr(SrcPath, length(RepoRoot) + 2).
+
+# A `bin` root is where a `fn main` counts; every other root kind is a library
+# surface whose top-level fns are its callers' entry points.
+rel bin_root(path: text).
+bin_root(Path) <- derived_root('bin', Path).
+bin_root(Path) <- root_file(Path).
+
+rel lib_root(path: text).
+lib_root(Path) <- derived_root(Kind, Path), Kind \== 'bin'.
+
+rel cargo_root_count(roots: int).
+cargo_root_count(count(Path)) <- derived_root(_Kind, Path).
+
+# ── the def plane ───────────────────────────────────────────────────────────
+
+# A def the compiler only builds for tests is not part of the shipped program:
+# counting it lets a test helper carry a feature into the matrix.
+rel cfg_def(path: text, at: span).
+cfg_def(Path, At) <-
+  source_file(Path, Digest),
+  cfg_at(Path, Digest, 'cfg_scope', 'call', At, _Predicate).
+
+rel def_at(path: text, def_start: int, def_end: int, kind: text, name: text).
+def_at(Path, DefStart, DefEnd, Kind, Name) <-
+  source_file(Path, Digest),
+  call_node_at(Path, Digest, 'node', 'call', At, Kind, Name),
+  not(cfg_def(Path, At)),
+  decode(At, {start: DefStart, end: DefEnd}).
+
+# A lambda has a null name and a null column contributes no row, so anonymous
+# bodies are not graph nodes and the innermost NAMED def owns their call sites.
+rel def_name(path: text, name: text).
+def_name(Path, Name) <- def_at(Path, _DefStart, _DefEnd, _Kind, Name).
+
+rel def_fn(path: text, name: text).
+def_fn(Path, Name) <- def_at(Path, _DefStart, _DefEnd, 'function', Name).
+
+rel entry_point(path: text, name: text).
+entry_point(Path, 'main') <- bin_root(Path), def_fn(Path, 'main').
+entry_point(Path, Name) <- lib_root(Path), def_fn(Path, Name).
+
+rel entry_source(path: text, digest: text).
+entry_source(Path, Digest) <- source_file(Path, Digest), entry_point(Path, _Name).
+
+rel entry_label(path: text, name: text, entry: text).
+entry_label(Path, Name, Entry) <-
+  entry_point(Path, Name), Entry := concat([Path, '::', Name]).
+
+# A declared root outside the glob seeds nothing and every feature then reads as
+# unreachable, so the miss is named rather than left as a silent zero.
+rel reach_root_not_a_source(path: text).
+reach_root_not_a_source(Path) <- bin_root(Path), not(source_file(Path, _Digest)).
+reach_root_not_a_source(Path) <- lib_root(Path), not(source_file(Path, _Digest)).
+
+# ── the call-site plane ─────────────────────────────────────────────────────
+
+# The record is emitted only for a callee EVERY site in the file names under a
+# cfg predicate naming `test`, so subtracting the name is still a per-site cut.
+rel test_only_call(path: text, callee: text).
+test_only_call(Path, Callee) <-
+  source_file(Path, Digest),
+  call_ref(Path, Digest, 'test_only_call', 'call', Callee, _Predicate).
+
+# The test-only cut sits on the two SMALL consumers below and not here: a
+# negation on the 18077-row site plane recounts it on every tick.
+rel call_site(path: text, site_start: int, callee: text).
+call_site(Path, SiteStart, Callee) <-
+  source_file(Path, Digest),
+  extract(Path, Digest, 'site', 'call', At, Callee),
+  decode(At, {start: SiteStart, end: _SiteEnd}).
+
+# ── the resolved plane ──────────────────────────────────────────────────────
+
+rel edge_source(source: text).
+edge_source('diet').  edge_source('scip').
+
+rel scip_source_file(path: text, digest: text).
+scip_source_file(Path, Digest) <- source_file(Path, Digest), want_scip(1).
+
+rel resolved_edge(source: text, caller_path: text, callee_path: text, callee: text).
+resolved_edge('diet', CallerPath, CalleePath, Callee) <-
+  source_file(Path, Digest),
+  scip.diet.call('.', Path, Digest, 'resolved_edge', 'call',
+                 CallerPath, CalleePath, Callee, _Kind).
+resolved_edge('scip', CallerPath, CalleePath, Callee) <-
+  scip_source_file(Path, Digest),
+  scip.call('.', Path, Digest, 'resolved_edge', 'call',
+            CallerPath, CalleePath, Callee, _Kind).
+
+# The owner join is quadratic in (sites x defs) per file, so the site side is cut
+# to callees a resolved plane already named: an unresolved name carries no edge.
+rel edge_callee(caller_path: text, callee: text).
+edge_callee(CallerPath, Callee) <-
+  resolved_edge(_Source, CallerPath, _CalleePath, Callee).
+
+rel resolved_site(path: text, site_start: int, callee: text).
+resolved_site(Path, SiteStart, Callee) <-
+  call_site(Path, SiteStart, Callee),
+  edge_callee(Path, Callee),
+  not(test_only_call(Path, Callee)).
+
+# An aggregate's group columns must be bound by EACH positive body atom's own
+# delta (lower.pl:4312), so the containment join feeds a materialized rel first.
+
+# The callee is determined by (path, site_start), so it stays OUT of the
+# aggregate's group key and rejoins after.
+rel resolved_site_at(path: text, site_start: int).
+resolved_site_at(Path, SiteStart) <- resolved_site(Path, SiteStart, _Callee).
+
+rel site_owner_candidate(path: text, site_start: int, def_start: int).
+site_owner_candidate(Path, SiteStart, DefStart) <-
+  resolved_site_at(Path, SiteStart),
+  def_at(Path, DefStart, DefEnd, _Kind, _Name),
+  SiteStart >= DefStart,
+  SiteStart < DefEnd.
+
+# The INNERMOST containing def is the one with the greatest start.
+rel site_owner_start(path: text, site_start: int, def_start: int).
+site_owner_start(Path, SiteStart, max(DefStart)) <-
+  site_owner_candidate(Path, SiteStart, DefStart).
+
+# Three columns and not def_at's five: the rejoin below reads only the name.
+rel def_start_name(path: text, def_start: int, name: text).
+def_start_name(Path, DefStart, Name) <- def_at(Path, DefStart, _DefEnd, _Kind, Name).
+
+rel caller_callee(caller_path: text, caller_name: text, callee: text).
+caller_callee(Path, CallerName, Callee) <-
+  resolved_site(Path, SiteStart, Callee),
+  site_owner_start(Path, SiteStart, DefStart),
+  def_start_name(Path, DefStart, CallerName).
+
+# The site plane says WHICH function names the callee, the resolved plane says
+# which FILE that name reached.
+rel call_edge(source: text, caller_path: text, caller_name: text,
+              callee_path: text, callee_name: text).
+call_edge(Source, CallerPath, CallerName, CalleePath, Callee) <-
+  caller_callee(CallerPath, CallerName, Callee),
+  resolved_edge(Source, CallerPath, CalleePath, Callee),
+  def_name(CalleePath, Callee).
+
+# ── the feature plane ───────────────────────────────────────────────────────
+
+# A feature is named from the SITE plane and reached over the RESOLVED plane,
+# and the gap is the point: an unresolvable handler is declared and unreached.
+rel entry_site(path: text, name: text, site_start: int, callee: text).
+entry_site(Path, Name, SiteStart, Callee) <-
+  entry_point(Path, Name),
+  call_site(Path, SiteStart, Callee),
+  not(test_only_call(Path, Callee)),
+  def_at(Path, DefStart, DefEnd, _Kind, Name),
+  SiteStart >= DefStart,
+  SiteStart < DefEnd.
+
+rel entry_call(path: text, name: text, callee: text).
+entry_call(Path, Name, Callee) <- entry_site(Path, Name, _SiteStart, Callee).
+
+# One hop from a `fn main`. `def_name` and not `def_fn`: a subcommand dispatched
+# through a trait object names a METHOD and that arm is still a feature.
+rel feature(path: text, name: text).
+feature(FeaturePath, Callee) <-
+  entry_call(EntryPath, 'main', Callee),
+  bin_root(EntryPath),
+  def_name(FeaturePath, Callee),
+  not(entry_point(FeaturePath, Callee)).
+
+rel feature_label(path: text, name: text, feature: text).
+feature_label(Path, Name, Feature) <-
+  feature(Path, Name), Feature := concat([Path, '::', Name]).
+
+rel feature_declared_by(entry: text, feature: text).
+feature_declared_by(Entry, Feature) <-
+  entry_call(EntryPath, 'main', Callee),
+  bin_root(EntryPath),
+  entry_label(EntryPath, 'main', Entry),
+  feature_label(_FeaturePath, Callee, Feature).
+
+# ── the crawl ───────────────────────────────────────────────────────────────
+
+# Level rides IN the recursion because min-hops is the answer, and the ceiling is
+# what makes the fixpoint finite over a cyclic call graph.
+rel hop_ceiling(hops: int).
+hop_ceiling(8).
+
+rel reach_level(source: text, entry: text, path: text, name: text, level: int).
+rel reach_step(source: text, entry: text, path: text, name: text, level: int).
+
+reach_level(Source, Entry, Path, Name, 0) <-
+  entry_label(Path, Name, Entry), edge_source(Source).
+reach_level(Source, Entry, Path, Name, Level) <-
+  reach_step(Source, Entry, Path, Name, Level).
+reach_step(Source, Entry, CalleePath, CalleeName, NextLevel) <-
+  reach_level(Source, Entry, CallerPath, CallerName, Level),
+  hop_ceiling(Ceiling),
+  Level < Ceiling,
+  call_edge(Source, CallerPath, CallerName, CalleePath, CalleeName),
+  NextLevel := Level + 1.
+
+rel reach_hops(source: text, entry: text, path: text, name: text, hops: int).
+reach_hops(Source, Entry, Path, Name, min(Level)) <-
+  reach_level(Source, Entry, Path, Name, Level).
+
+rel reach(entry: text, path: text, name: text, hops: int).
+reach(Entry, Path, Name, min(Hops)) <-
+  reach_hops(_Source, Entry, Path, Name, Hops).
+
+# ── the matrix ──────────────────────────────────────────────────────────────
+
+rel cell_hops(entry: text, feature: text, hops: int).
+cell_hops(Entry, Feature, Hops) <-
+  reach(Entry, Path, Name, Hops), feature_label(Path, Name, Feature).
+
+rel cell_source(entry: text, feature: text, source: text).
+cell_source(Entry, Feature, Source) <-
+  reach_hops(Source, Entry, Path, Name, _Hops), feature_label(Path, Name, Feature).
+
+rel cell_via(entry: text, feature: text, via: text).
+cell_via(Entry, Feature, 'both') <-
+  cell_source(Entry, Feature, 'scip'), cell_source(Entry, Feature, 'diet').
+cell_via(Entry, Feature, 'scip') <-
+  cell_source(Entry, Feature, 'scip'), not(cell_source(Entry, Feature, 'diet')).
+cell_via(Entry, Feature, 'diet') <-
+  cell_source(Entry, Feature, 'diet'), not(cell_source(Entry, Feature, 'scip')).
+
+# A cell is a row whether or not it is reachable: an absent row would read as an
+# absent feature, and which entries do NOT reach one is the whole question.
+rel feature_reach(entry: text, feature: text, reachable: int, min_hops: int, via: text).
+feature_reach(Entry, Feature, 1, Hops, Via) <-
+  cell_hops(Entry, Feature, Hops), cell_via(Entry, Feature, Via).
+feature_reach(Entry, Feature, 0, 0, 'none') <-
+  entry_label(_EntryPath, _EntryName, Entry),
+  feature_label(_FeaturePath, _FeatureName, Feature),
+  not(cell_hops(Entry, Feature, _Hops)).
+
+rel feature_any_reach(feature: text).
+feature_any_reach(Feature) <- cell_hops(_Entry, Feature, _Hops).
+
+# The row that gets code deleted: a handler a `fn main` body names and no entry
+# reaches over either plane.
+rel unreachable_feature(entry: text, feature: text).
+unreachable_feature(Entry, Feature) <-
+  feature_declared_by(Entry, Feature), not(feature_any_reach(Feature)).
+
+rel entry_features_reached(entry: text, features: int).
+entry_features_reached(Entry, count(Feature)) <- cell_hops(Entry, Feature, _Hops).
+
+rel entry_defs_reached(entry: text, defs: int).
+entry_defs_reached(Entry, count(Name)) <- reach(Entry, _Path, Name, _Hops).
+
+# Every entry gets a summary row, so the table never drops one for a zero.
+rel features_or_zero(entry: text, features: int).
+features_or_zero(Entry, Features) <- entry_features_reached(Entry, Features).
+features_or_zero(Entry, 0) <-
+  entry_label(_Path, _Name, Entry), not(entry_features_reached(Entry, _Features)).
+
+rel defs_or_zero(entry: text, defs: int).
+defs_or_zero(Entry, Defs) <- entry_defs_reached(Entry, Defs).
+defs_or_zero(Entry, 0) <-
+  entry_label(_Path, _Name, Entry), not(entry_defs_reached(Entry, _Defs)).
+
+rel entry_reach_summary(entry: text, features_reached: int, defs_reached: int).
+entry_reach_summary(Entry, Features, Defs) <-
+  features_or_zero(Entry, Features), defs_or_zero(Entry, Defs).
+
+# ── the value plane, second and narrow ──────────────────────────────────────
+
+# What the call plane cannot say: how many of the entry's own values it hands to
+# the feature. `arg` rows are demanded for ENTRY FILES ONLY.
+rel arg_at(path: text, call_start: int, call_end: int, arg_start: int).
+arg_at(Path, CallStart, CallEnd, ArgStart) <-
+  entry_source(Path, Digest),
+  df_arg_at(Path, Digest, 'arg', 'df', CallAt, _Pos, ArgAt),
+  decode(CallAt, {start: CallStart, end: CallEnd}),
+  decode(ArgAt, {start: ArgStart, end: _ArgEnd}).
+
+rel feature_site(entry: text, feature: text, path: text, site_start: int).
+feature_site(Entry, Feature, Path, SiteStart) <-
+  entry_site(Path, Name, SiteStart, Callee),
+  entry_label(Path, Name, Entry),
+  feature_label(_FeaturePath, Callee, Feature).
+
+rel feature_call_candidate(entry: text, feature: text, path: text, site_start: int,
+                           call_start: int).
+feature_call_candidate(Entry, Feature, Path, SiteStart, CallStart) <-
+  feature_site(Entry, Feature, Path, SiteStart),
+  arg_at(Path, CallStart, CallEnd, _ArgStart),
+  SiteStart >= CallStart,
+  SiteStart < CallEnd.
+
+rel feature_call_start(entry: text, feature: text, path: text, site_start: int,
+                       call_start: int).
+feature_call_start(Entry, Feature, Path, SiteStart, max(CallStart)) <-
+  feature_call_candidate(Entry, Feature, Path, SiteStart, CallStart).
+
+rel feature_arg(entry: text, feature: text, arg_start: int).
+feature_arg(Entry, Feature, ArgStart) <-
+  feature_call_start(Entry, Feature, Path, _SiteStart, CallStart),
+  arg_at(Path, CallStart, _CallEnd, ArgStart).
+
+rel value_reach(entry: text, feature: text, values: int).
+value_reach(Entry, Feature, count(ArgStart)) <- feature_arg(Entry, Feature, ArgStart).
+
+# rx: rows$.pipe(map(rows => sortBy(rows, ['entry', 'feature'])))
+? cargo_root_count(roots).
+? reach_root_not_a_source(path).
+? feature(path, name) order by path, name.
+? feature_reach(entry, feature, reachable, min_hops, via) order by entry, feature.
+? unreachable_feature(entry, feature) order by entry, feature.
+? entry_reach_summary(entry, features_reached, defs_reached) order by defs_reached desc, entry.
+? value_reach(entry, feature, values) order by entry, feature.

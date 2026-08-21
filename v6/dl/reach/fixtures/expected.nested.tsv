@@ -1,0 +1,22 @@
+cargo_root_count	2
+feature	v6/dl/reach/fixtures/reachcrate/src/alpha.rs	run_alpha
+feature	v6/dl/reach/fixtures/reachcrate/src/beta.rs	execute
+feature	v6/dl/reach/fixtures/reachcrate/src/plumbing.rs	execute
+feature	v6/dl/reach/fixtures/reachcrate/src/plumbing.rs	usage
+feature_reach	v6/dl/reach/fixtures/reachcrate/src/lib.rs::library_entry	v6/dl/reach/fixtures/reachcrate/src/alpha.rs::run_alpha	1	1	diet
+feature_reach	v6/dl/reach/fixtures/reachcrate/src/lib.rs::library_entry	v6/dl/reach/fixtures/reachcrate/src/beta.rs::execute	0	0	none
+feature_reach	v6/dl/reach/fixtures/reachcrate/src/lib.rs::library_entry	v6/dl/reach/fixtures/reachcrate/src/plumbing.rs::execute	0	0	none
+feature_reach	v6/dl/reach/fixtures/reachcrate/src/lib.rs::library_entry	v6/dl/reach/fixtures/reachcrate/src/plumbing.rs::usage	0	0	none
+feature_reach	v6/dl/reach/fixtures/reachcrate/src/main.rs::main	v6/dl/reach/fixtures/reachcrate/src/alpha.rs::run_alpha	1	1	diet
+feature_reach	v6/dl/reach/fixtures/reachcrate/src/main.rs::main	v6/dl/reach/fixtures/reachcrate/src/beta.rs::execute	0	0	none
+feature_reach	v6/dl/reach/fixtures/reachcrate/src/main.rs::main	v6/dl/reach/fixtures/reachcrate/src/plumbing.rs::execute	0	0	none
+feature_reach	v6/dl/reach/fixtures/reachcrate/src/main.rs::main	v6/dl/reach/fixtures/reachcrate/src/plumbing.rs::usage	1	1	diet
+unreachable_feature	v6/dl/reach/fixtures/reachcrate/src/main.rs::main	v6/dl/reach/fixtures/reachcrate/src/beta.rs::execute
+unreachable_feature	v6/dl/reach/fixtures/reachcrate/src/main.rs::main	v6/dl/reach/fixtures/reachcrate/src/plumbing.rs::execute
+entry_reach_summary	v6/dl/reach/fixtures/reachcrate/src/main.rs::main	2	3
+entry_reach_summary	v6/dl/reach/fixtures/reachcrate/src/lib.rs::library_entry	1	2
+value_reach	v6/dl/reach/fixtures/reachcrate/src/lib.rs::library_entry	v6/dl/reach/fixtures/reachcrate/src/alpha.rs::run_alpha	1
+value_reach	v6/dl/reach/fixtures/reachcrate/src/main.rs::main	v6/dl/reach/fixtures/reachcrate/src/alpha.rs::run_alpha	1
+value_reach	v6/dl/reach/fixtures/reachcrate/src/main.rs::main	v6/dl/reach/fixtures/reachcrate/src/beta.rs::execute	1
+value_reach	v6/dl/reach/fixtures/reachcrate/src/main.rs::main	v6/dl/reach/fixtures/reachcrate/src/plumbing.rs::execute	1
+value_reach	v6/dl/reach/fixtures/reachcrate/src/main.rs::main	v6/dl/reach/fixtures/reachcrate/src/plumbing.rs::usage	1

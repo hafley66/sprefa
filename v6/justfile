@@ -540,3 +540,8 @@ green-all-serial: green dl6-budget serve-endurance serve-leak-soak memory-soak e
 # budget: measured 1.9-3.0s warm, default 600s (GHCACHER_RUST_BUDGET_S)
 ghcacher-rust:
     {{ capped }} "${GHCACHER_RUST_BUDGET_S:-600}" bash {{ v6 }}/dl/ghcacher/gate.sh
+
+# The entry-point x feature matrix over its own extraction, checked against the
+# reachcrate fixture on both resolved planes. budget: measured 3s diet-only.
+feature-reach:
+    {{ capped }} "${FEATURE_REACH_BUDGET_S:-600}" bash {{ v6 }}/dl/reach/feature-reach.sh --check
