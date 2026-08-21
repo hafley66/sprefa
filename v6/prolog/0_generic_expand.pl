@@ -1345,15 +1345,44 @@ normalized_member_rows(Decls, Rows) :-
 
 authored_member_type(Decls, OwnerId, Position, Type) :-
     id_kind_name(OwnerId, relation, OwnerName),
-    (   member(rel_template(Segments, _, Specs), Decls),
-        atomic_list_concat(Segments, '__', OwnerName)
-    ->  nth1(Position, Specs, column(_, Type))
-    ;   member(type_decl(OwnerName, Specs), Decls)
-    ->  nth1(Position, Specs, col(_, Type))
-    ;   findall(Name-Type0,
-                member(col_type(OwnerName/_, Name, Type0), Decls), Pairs),
-        nth1(Position, Pairs, _-Type)
+    owner_member_carrier(Decls, OwnerName, carrier(Kind, Specs, _)),
+    carrier_member_type(Kind, Position, Specs, Type).
+
+carrier_member_type(template, Position, Specs, Type) :-
+    nth1(Position, Specs, column(_, Type)).
+carrier_member_type(type_decl, Position, Specs, Type) :-
+    nth1(Position, Specs, col(_, Type)).
+carrier_member_type(pairs, Position, Pairs, Type) :-
+    nth1(Position, Pairs, _-Type).
+
+% Keyed by owner, not by member. Same cache scope as semantic_decl_id/4, which
+% is what makes one Decls list per scope safe to assume.
+owner_member_carrier(Decls, OwnerName, Carrier) :-
+    nb_current(generic_semantic_id_cache,
+               cache(DeclCache, TypeCache, OwnerCache0)),
+    !,
+    (   get_assoc(OwnerName, OwnerCache0, Carrier)
+    ->  true
+    ;   owner_member_carrier_uncached(Decls, OwnerName, Carrier),
+        put_assoc(OwnerName, OwnerCache0, Carrier, OwnerCache),
+        nb_setval(generic_semantic_id_cache,
+                  cache(DeclCache, TypeCache, OwnerCache))
     ).
+owner_member_carrier(Decls, OwnerName, Carrier) :-
+    owner_member_carrier_uncached(Decls, OwnerName, Carrier).
+
+owner_member_carrier_uncached(Decls, OwnerName, carrier(Kind, Specs, Keyed)) :-
+    (   member(rel_template(Segments, _, TemplateSpecs), Decls),
+        atomic_list_concat(Segments, '__', OwnerName)
+    ->  Kind = template, Specs = TemplateSpecs
+    ;   member(type_decl(OwnerName, DeclSpecs), Decls)
+    ->  Kind = type_decl, Specs = DeclSpecs
+    ;   Kind = pairs,
+        findall(ColumnName-ColumnType,
+                member(col_type(OwnerName/_, ColumnName, ColumnType), Decls),
+                Specs)
+    ),
+    findall(Positions, member(keyed(OwnerName/_, Positions), Decls), Keyed).
 
 schema_value_type_id(_Decls, type_ref(parameter(ParameterId)), ParameterId) :-
     !.
@@ -1420,7 +1449,8 @@ anonymous_owner_source_path(anonymous(Path, _), Path) :- !.
 
 owner_key_position(Decls, OwnerId, Position) :-
     id_kind_name(OwnerId, relation, OwnerName),
-    member(keyed(OwnerName/_, Positions), Decls),
+    owner_member_carrier(Decls, OwnerName, carrier(_, _, KeyedPositions)),
+    member(Positions, KeyedPositions),
     memberchk(Position, Positions).
 
 anonymous_owner_path(anonymous_product(Path, _), Path) :- !.
@@ -1474,7 +1504,7 @@ key_member_ids(MemberRows, OwnerId, KeyMemberIds) :-
 
 normalized_type_rows(Decls, Rows) :-
     setup_call_cleanup(
-        nb_setval(generic_semantic_id_cache, cache(t, t)),
+        nb_setval(generic_semantic_id_cache, cache(t, t, t)),
         normalized_type_rows_cached(Decls, Rows),
         nb_delete(generic_semantic_id_cache)).
 
@@ -2353,13 +2383,15 @@ ref_name(Name/_, Name) :- !.
 ref_name(Name, Name).
 
 semantic_decl_id(Decls, Kind, Name, Id) :-
-    nb_current(generic_semantic_id_cache, cache(DeclCache0, TypeCache)),
+    nb_current(generic_semantic_id_cache,
+               cache(DeclCache0, TypeCache, OwnerCache)),
     !,
     (   get_assoc(Kind-Name, DeclCache0, Id)
     ->  true
     ;   semantic_decl_id_uncached(Decls, Kind, Name, Id),
         put_assoc(Kind-Name, DeclCache0, Id, DeclCache),
-        nb_setval(generic_semantic_id_cache, cache(DeclCache, TypeCache))
+        nb_setval(generic_semantic_id_cache,
+                  cache(DeclCache, TypeCache, OwnerCache))
     ).
 semantic_decl_id(Decls, Kind, Name, Id) :-
     semantic_decl_id_uncached(Decls, Kind, Name, Id).
