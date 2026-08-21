@@ -34,4 +34,22 @@ test(return_alias_prints_and_reparses) :-
     parse_text(Text, Reparsed, _),
     Program =@= Reparsed.
 
+% go.pl's fixture/5 battery hands the reference interpreter a pre-parsed AST
+% (engine.pl:711) and never reaches parse_dl_dcg.pl, so an arrow on a
+% parameterized rel can only be pinned from the text door. Fail-first: all
+% three throw dl_parse_error at the arrow before parse_dl_dcg.pl:522.
+test(unbounded_generic_template_takes_an_arrow) :-
+    parse_text("rel edge_of(Node)(node: Node) -> list(Node).", prog(Decls, _), _),
+    member(rel_template([edge_of], _, Specs), Decls),
+    Specs == [column(node, 'Node'), column(return, list('Node'))].
+
+test(bounded_generic_template_takes_an_arrow) :-
+    parse_text("interface json_encodable. rel mapper(In: json_encodable, Out: json_encodable)(input: In) -> Out.", prog(Decls, _), _),
+    member(rel_template([mapper], _, Specs), Decls),
+    Specs == [column(input, 'In'), column(return, 'Out')].
+
+test(generic_template_arrow_collides_with_an_explicit_return,
+     [throws(unsupported_construct(arrow_return_column_collision(edge_of/3)))]) :-
+    parse_text("rel edge_of(Node)(node: Node, return: int) -> list(Node).", _, _).
+
 :- end_tests(annotation_surface).
