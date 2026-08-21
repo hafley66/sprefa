@@ -4,10 +4,15 @@ updated: 2026-08-21
 type: bug
 reporter: chris
 assignee: chris
-status: open
+status: fixed
 priority: normal
 epic: cheap-fast-analysis
 labels: [extract, perf, lane-a]
+closed: 2026-08-21
+closed_by: chris
+commits:
+- hash: b3a3cd7e8
+  summary: LineTable per document; 65 files 4.7s
 ---
 
 # join_documents runs once per file: resolve over 82 files never finishes
