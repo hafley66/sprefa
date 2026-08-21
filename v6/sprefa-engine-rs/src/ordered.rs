@@ -314,14 +314,18 @@ fn read_carry(program: &GenProgram, seam: &SqliteSeam) -> Vec<Occurrence> {
             })
             .expect("ordered carry read failed");
         let sequence_index = column_index(&result, "__sequence").expect("carry sequence missing");
+        let column_indices: Vec<usize> = relation
+            .columns
+            .iter()
+            .map(|column| {
+                DIFF_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                column_index(&result, column).expect("carry column missing")
+            })
+            .collect();
         for row in &result.rows {
-            let values = relation
-                .columns
+            let values = column_indices
                 .iter()
-                .map(|column| {
-                    let index = column_index(&result, column).expect("carry column missing");
-                    row[index].clone()
-                })
+                .map(|index| row[*index].clone())
                 .collect();
             occurrences.push(Occurrence {
                 rel: name.clone(),
@@ -381,33 +385,46 @@ fn outside_occurrences(
     arrivals: &[Arrival],
 ) -> Vec<Occurrence> {
     let trigger_names = trigger_relations(program, OrderedTriggerKind::Arrival);
-    let mut seen_by_rel: HashMap<&str, Vec<Row>> = HashMap::new();
-    for name in &trigger_names {
-        let relation = program
-            .relations
-            .iter()
-            .find(|relation| relation.rel == *name)
-            .expect("ordered trigger relation missing");
+    let triggers: HashMap<&str, &crate::types::IncrementalRelationPlan> = trigger_names
+        .iter()
+        .map(|name| {
+            let relation = program
+                .relations
+                .iter()
+                .find(|relation| relation.rel == *name)
+                .expect("ordered trigger relation missing");
+            (name.as_str(), relation)
+        })
+        .collect();
+    let mut seen_by_rel: HashMap<&str, std::collections::HashSet<String>> = HashMap::new();
+    for (name, relation) in &triggers {
         if relation.kind == RelationKind::Set {
-            seen_by_rel.insert(name, before.get(name).cloned().unwrap_or_default());
+            seen_by_rel.insert(
+                name,
+                before
+                    .get(*name)
+                    .map(|rows| {
+                        rows.iter()
+                            .map(|row| crate::incremental::dedup_key(row))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            );
         }
     }
     let mut occurrences = Vec::new();
     for arrival in arrivals {
-        if arrival.sign != ArrivalSign::Add || !trigger_names.contains(&arrival.rel) {
+        if arrival.sign != ArrivalSign::Add {
             continue;
         }
-        let relation = program
-            .relations
-            .iter()
-            .find(|relation| relation.rel == arrival.rel)
-            .expect("ordered trigger relation missing");
+        let Some(relation) = triggers.get(arrival.rel.as_str()) else {
+            continue;
+        };
         if relation.kind == RelationKind::Set {
             let seen = seen_by_rel.entry(&arrival.rel).or_default();
-            if seen.contains(&arrival.row) {
+            if !seen.insert(crate::incremental::dedup_key(&arrival.row)) {
                 continue;
             }
-            seen.push(arrival.row.clone());
         }
         occurrences.push(Occurrence {
             rel: arrival.rel.clone(),
@@ -532,25 +549,30 @@ fn apply_occurrence(
                 args: trigger_args.clone(),
             })
             .expect("ordered projection failed");
+        let column_indices: Vec<usize> = arm
+            .head_columns
+            .iter()
+            .map(|column| column_index(&result, column).expect("ordered head column missing"))
+            .collect();
         for result_row in &result.rows {
-            let row = arm
-                .head_columns
+            let row = column_indices
                 .iter()
-                .map(|column| {
-                    let index = column_index(&result, column).expect("ordered head column missing");
-                    result_row[index].clone()
-                })
+                .map(|index| result_row[*index].clone())
                 .collect::<Row>();
             projected.push(OrderedWrite { arm_index, row });
         }
     }
     let mut writes: Vec<OrderedWrite> = Vec::new();
-    let mut keyed: Vec<(String, Row)> = Vec::new();
+    let mut written_keys: std::collections::HashSet<(&str, String)> =
+        std::collections::HashSet::new();
+    let mut keyed: HashMap<String, Row> = HashMap::new();
     for write in projected {
         let arm = &program.ordered_arms[write.arm_index];
-        if writes.iter().any(|prior| {
-            program.ordered_arms[prior.arm_index].head_rel == arm.head_rel && prior.row == write.row
-        }) {
+        DIFF_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if !written_keys.insert((
+            arm.head_rel.as_str(),
+            crate::incremental::dedup_key(&write.row),
+        )) {
             continue;
         }
         if arm.head_kind == RelationKind::Set {
@@ -564,12 +586,15 @@ fn apply_occurrence(
                         .collect::<Vec<_>>()
                 )?
             );
-            if let Some((_, prior)) = keyed.iter().find(|(prior_key, _)| prior_key == &key) {
-                if prior != &write.row {
-                    panic!("keyed conflict in ordered occurrence for {}", arm.head_rel);
+            match keyed.get(&key) {
+                Some(prior) => {
+                    if prior != &write.row {
+                        panic!("keyed conflict in ordered occurrence for {}", arm.head_rel);
+                    }
                 }
-            } else {
-                keyed.push((key, write.row.clone()));
+                None => {
+                    keyed.insert(key, write.row.clone());
+                }
             }
         }
         writes.push(write);
@@ -600,19 +625,31 @@ fn carry_additions(
     boundary: &[RelDelta],
     written: &[OrderedWrite],
 ) -> Vec<RelDelta> {
+    let visible_adds: HashMap<&str, std::collections::HashSet<String>> = boundary
+        .iter()
+        .map(|delta| {
+            (
+                delta.rel.as_str(),
+                delta
+                    .add
+                    .iter()
+                    .map(|row| crate::incremental::dedup_key(row))
+                    .collect(),
+            )
+        })
+        .collect();
     let mut additions = Vec::new();
-    let mut seen: Vec<(String, Row)> = Vec::new();
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
     for write in written {
         let arm = &program.ordered_arms[write.arm_index];
-        let visible = boundary
-            .iter()
-            .find(|delta| delta.rel == arm.head_rel)
-            .map(|delta| delta.add.contains(&write.row))
+        let key = crate::incremental::dedup_key(&write.row);
+        let visible = visible_adds
+            .get(arm.head_rel.as_str())
+            .map(|adds| adds.contains(&key))
             .unwrap_or(false);
-        if !visible || seen.contains(&(arm.head_rel.clone(), write.row.clone())) {
+        if !visible || !seen.insert((arm.head_rel.clone(), key)) {
             continue;
         }
-        seen.push((arm.head_rel.clone(), write.row.clone()));
         additions.push(RelDelta {
             rel: arm.head_rel.clone(),
             add: vec![write.row.clone()],
@@ -632,15 +669,14 @@ fn carry_additions(
             after.get(&name).map(Vec::as_slice).unwrap_or(&[]),
         );
         for row in add {
-            let visible = boundary
-                .iter()
-                .find(|delta| delta.rel == name)
-                .map(|delta| delta.add.contains(&row))
+            let key = crate::incremental::dedup_key(&row);
+            let visible = visible_adds
+                .get(name.as_str())
+                .map(|adds| adds.contains(&key))
                 .unwrap_or(false);
-            if !visible || seen.contains(&(name.clone(), row.clone())) {
+            if !visible || !seen.insert((name.clone(), key)) {
                 continue;
             }
-            seen.push((name.clone(), row.clone()));
             additions.push(RelDelta {
                 rel: name.clone(),
                 add: vec![row],
@@ -684,17 +720,17 @@ pub fn run_tick(
         seam,
         &program.enum_types,
         &program.enum_ref_columns,
-        arrivals,
+        std::borrow::Cow::Borrowed(arrivals),
     )?;
     let interned = match &program.text_intern_plan {
-        Some(plan) => crate::text_plane::intern(seam, plan, &enumed)?,
+        Some(plan) => crate::text_plane::intern(seam, plan, enumed)?,
         None => enumed,
     };
     let normalized = crate::struct_plane::intern(
         seam,
         &program.struct_types,
         &program.struct_ref_columns,
-        &interned,
+        interned,
         &program.relations,
         program.text_intern_plan.as_ref(),
     )?;

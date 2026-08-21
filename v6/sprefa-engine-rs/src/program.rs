@@ -189,22 +189,22 @@ impl GenProgram {
                 seam,
                 &self.enum_types,
                 &self.enum_ref_columns,
-                arrivals,
+                std::borrow::Cow::Borrowed(arrivals),
             )?;
             let interned = match &self.text_intern_plan {
-                Some(plan) => crate::text_plane::intern(seam, plan, &enumed)?,
+                Some(plan) => crate::text_plane::intern(seam, plan, enumed)?,
                 None => enumed,
             };
             crate::struct_plane::intern(
                 seam,
                 &self.struct_types,
                 &self.struct_ref_columns,
-                &interned,
+                interned,
                 &self.relations,
                 self.text_intern_plan.as_ref(),
             )?
         };
-        let arrivals = normalized.as_slice();
+        let arrivals = normalized.as_ref();
         incremental::apply_arrivals(seam, arrivals, &self.relations)?;
         incremental::apply_levels_before_edges(
             seam,

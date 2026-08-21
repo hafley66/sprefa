@@ -98,6 +98,7 @@ async fn external_consumer_drives_runtime_and_hosts() {
         ir_version: sprefa_engine_rs::program::IR_VERSION,
         host_plans: vec![],
         queries: vec![],
+        recursive_level_heads: vec![],
     };
 
     let arrivals = vec![Arrival {

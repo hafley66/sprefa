@@ -96,12 +96,30 @@ fn collect_values(plan: &TextInternPlan, arrivals: &[Arrival]) -> BoundaryResult
                 continue;
             }
             let content = content_of(value)?;
-            if seen.insert(content.clone()) {
+            // One copy per DISTINCT value: a repeated value hashes and drops
+            // rather than cloning a second time.
+            if !seen.contains(&content) {
+                seen.insert(content.clone());
                 values.push(content);
             }
         }
     }
     Ok(values)
+}
+
+/// The intern payload straight off the borrowed strings, with no Vec<Value>
+/// staged between them and the JSON text.
+fn encoded_values(values: &[String]) -> String {
+    let mut out = String::with_capacity(values.iter().map(|v| v.len() + 3).sum::<usize>() + 2);
+    out.push('[');
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push_str(&crate::ticklog::json_string(value));
+    }
+    out.push(']');
+    out
 }
 
 fn rewrite_row(row: &Row, flags: &[bool], ids: &HashMap<String, i64>) -> BoundaryResult<Row> {
@@ -120,24 +138,19 @@ fn rewrite_row(row: &Row, flags: &[bool], ids: &HashMap<String, i64>) -> Boundar
         .collect()
 }
 
-pub fn intern(
+pub fn intern<'a>(
     seam: &SqliteSeam,
     plan: &TextInternPlan,
-    arrivals: &[Arrival],
-) -> BoundaryResult<Vec<Arrival>> {
+    arrivals: std::borrow::Cow<'a, [Arrival]>,
+) -> BoundaryResult<std::borrow::Cow<'a, [Arrival]>> {
     if arrivals.is_empty() {
-        return Ok(arrivals.to_vec());
+        return Ok(arrivals);
     }
-    let values = collect_values(plan, arrivals)?;
+    let values = collect_values(plan, &arrivals)?;
     if values.is_empty() {
-        return Ok(arrivals.to_vec());
+        return Ok(arrivals);
     }
-    let encoded = ScalarValue::Text(crate::incremental::json_array_text(
-        &values
-            .iter()
-            .map(|content| Value::Text(content.clone()))
-            .collect::<Vec<_>>(),
-    )?);
+    let encoded = ScalarValue::Text(encoded_values(&values));
     seam.execute(&SqlStatement {
         sql: plan.intern_sql.clone(),
         args: vec![encoded.clone()],
@@ -160,7 +173,7 @@ pub fn intern(
             ids.insert(content_of(content)?, id.as_i64().unwrap_or_default());
         }
     }
-    arrivals
+    let rewritten: Vec<Arrival> = arrivals
         .iter()
         .map(|arrival| match plan.rel_columns.get(&arrival.rel) {
             None => Ok(arrival.clone()),
@@ -170,7 +183,8 @@ pub fn intern(
                 row: rewrite_row(&arrival.row, flags, &ids)?,
             }),
         })
-        .collect()
+        .collect::<BoundaryResult<Vec<_>>>()?;
+    Ok(std::borrow::Cow::Owned(rewritten))
 }
 
 #[cfg(test)]

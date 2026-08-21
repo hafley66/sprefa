@@ -31,18 +31,18 @@ fn check_reference(rel: &str, refs: &[Option<crate::types::EnumRefColumn>], row:
     }
 }
 
-pub fn intern(
+pub fn intern<'a>(
     _seam: &SqliteSeam,
     _enum_types: &[EnumTypePlan],
     ref_columns: &EnumRefColumns,
-    arrivals: &[Arrival],
-) -> BoundaryResult<Vec<Arrival>> {
-    for arrival in arrivals {
+    arrivals: std::borrow::Cow<'a, [Arrival]>,
+) -> BoundaryResult<std::borrow::Cow<'a, [Arrival]>> {
+    for arrival in arrivals.iter() {
         if let Some(refs) = ref_columns.get(&arrival.rel) {
             check_reference(&arrival.rel, refs, &arrival.row);
         }
     }
-    Ok(arrivals.to_vec())
+    Ok(arrivals)
 }
 
 pub fn decode_deltas(
@@ -96,7 +96,13 @@ mod tests {
     #[test]
     fn a_reference_column_carries_its_endpoint_id_unchanged() {
         let seam = SqliteSeam::in_memory().unwrap();
-        let rows = intern(&seam, &[], &refs(), &[resident(Value::Integer(401))]).unwrap();
+        let rows = intern(
+            &seam,
+            &[],
+            &refs(),
+            std::borrow::Cow::Owned(vec![resident(Value::Integer(401))]),
+        )
+        .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].row, vec![Value::Integer(7), Value::Integer(401)]);
     }
@@ -104,17 +110,15 @@ mod tests {
     #[test]
     fn a_tagged_value_in_a_reference_column_is_named() {
         let seam = SqliteSeam::in_memory().unwrap();
-        assert!(
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| intern(
-                &seam,
-                &[],
-                &refs(),
-                &[resident(Value::Text(
-                    r#"{"tag":"ok","value":"yes"}"#.into()
-                ))]
-            )))
-            .is_err()
-        );
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| intern(
+            &seam,
+            &[],
+            &refs(),
+            std::borrow::Cow::Owned(vec![resident(Value::Text(
+                r#"{"tag":"ok","value":"yes"}"#.into()
+            ))])
+        )))
+        .is_err());
     }
 
     #[test]

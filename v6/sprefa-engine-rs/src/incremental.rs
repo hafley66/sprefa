@@ -111,9 +111,34 @@ fn bind_args(values: &[Value]) -> BoundaryResult<Vec<ScalarValue>> {
         .collect()
 }
 
+/// The staged JSON straight off the borrowed rows: no Vec<Value> is built per
+/// event to carry the two leading integers.
+fn staged_json(prefix: [i64; 2], events: &[&DeltaEvent], sequence_only: bool) -> BoundaryResult<String> {
+    let mut out = String::new();
+    out.push('[');
+    for (index, event) in events.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push('[');
+        if !sequence_only {
+            out.push_str(&format!("{},", prefix[0]));
+        }
+        out.push_str(&format!("{}", event.sequence as i64));
+        for value in &event.row {
+            out.push(',');
+            out.push_str(&value_to_json(value)?);
+        }
+        out.push(']');
+    }
+    out.push(']');
+    let _ = prefix[1];
+    Ok(out)
+}
+
 pub(crate) fn boundary_stage_statement(
     relation: &IncrementalRelationPlan,
-    events: &[DeltaEvent],
+    events: &[&DeltaEvent],
 ) -> BoundaryResult<SqlStatement> {
     if relation
         .column_types
@@ -129,17 +154,20 @@ pub(crate) fn boundary_stage_statement(
         .enumerate()
         .map(|(index, _)| format!("json_extract(value, '$[{}]')", index))
         .collect();
-    let encoded: String = events
-        .iter()
-        .map(|event| {
-            let mut entry = Vec::new();
-            entry.push(Value::Integer(event.sign as i64));
-            entry.push(Value::Integer(event.sequence as i64));
-            entry.extend(event.row.clone());
-            json_array_text(&entry)
-        })
-        .collect::<BoundaryResult<Vec<_>>>()?
-        .join(",");
+    let mut encoded = String::new();
+    encoded.push('[');
+    for (index, event) in events.iter().enumerate() {
+        if index > 0 {
+            encoded.push(',');
+        }
+        encoded.push_str(&format!("[{},{}", event.sign as i64, event.sequence as i64));
+        for value in &event.row {
+            encoded.push(',');
+            encoded.push_str(&value_to_json(value)?);
+        }
+        encoded.push(']');
+    }
+    encoded.push(']');
     Ok(SqlStatement {
         sql: format!(
             "INSERT INTO {} ({}) SELECT {} FROM json_each(?)",
@@ -147,7 +175,7 @@ pub(crate) fn boundary_stage_statement(
             columns_text.join(", "),
             value_expressions.join(", ")
         ),
-        args: vec![ScalarValue::Text(format!("[{}]", encoded))],
+        args: vec![ScalarValue::Text(encoded)],
     })
 }
 
@@ -157,7 +185,7 @@ fn shared_frontier_stage_statement(
     relation: &IncrementalRelationPlan,
     table_name: &str,
     phase: i64,
-    events: &[DeltaEvent],
+    events: &[&DeltaEvent],
 ) -> BoundaryResult<SqlStatement> {
     let relation_id = relation
         .shared_frontier
@@ -186,15 +214,7 @@ fn shared_frontier_stage_statement(
     } else {
         join_terms.join(" AND ")
     };
-    let encoded: String = events
-        .iter()
-        .map(|event| {
-            let mut entry = vec![Value::Integer(event.sequence as i64)];
-            entry.extend(event.row.clone());
-            json_array_text(&entry)
-        })
-        .collect::<BoundaryResult<Vec<_>>>()?
-        .join(",");
+    let encoded = staged_json([0, 0], events, true)?;
     Ok(SqlStatement {
         sql: format!(
             "INSERT INTO {} (\"relation_id\", \"_phase\", \"_sequence\", \"row_id\") SELECT ?, ?, json_extract(je.value, '$[0]'), t.\"__id\" FROM json_each(?) je JOIN {} t ON {}",
@@ -205,7 +225,7 @@ fn shared_frontier_stage_statement(
         args: vec![
             ScalarValue::Integer(relation_id),
             ScalarValue::Integer(phase),
-            ScalarValue::Text(format!("[{}]", encoded)),
+            ScalarValue::Text(encoded),
         ],
     })
 }
@@ -214,7 +234,7 @@ pub(crate) fn frontier_stage_statement(
     relation: &IncrementalRelationPlan,
     table_name: &str,
     phase: i64,
-    events: &[DeltaEvent],
+    events: &[&DeltaEvent],
 ) -> BoundaryResult<SqlStatement> {
     if relation.shared_frontier.is_some() {
         return shared_frontier_stage_statement(relation, table_name, phase, events);
@@ -233,15 +253,7 @@ pub(crate) fn frontier_stage_statement(
         .enumerate()
         .map(|(index, _)| format!("json_extract(value, '$[{}]')", index))
         .collect();
-    let encoded: String = events
-        .iter()
-        .map(|event| {
-            let mut entry = vec![Value::Integer(phase), Value::Integer(event.sequence as i64)];
-            entry.extend(event.row.clone());
-            json_array_text(&entry)
-        })
-        .collect::<BoundaryResult<Vec<_>>>()?
-        .join(",");
+    let encoded = staged_json([phase, 0], events, false)?;
     Ok(SqlStatement {
         sql: format!(
             "INSERT INTO {} ({}) SELECT {} FROM json_each(?)",
@@ -249,7 +261,7 @@ pub(crate) fn frontier_stage_statement(
             columns_text.join(", "),
             value_expressions.join(", ")
         ),
-        args: vec![ScalarValue::Text(format!("[{}]", encoded))],
+        args: vec![ScalarValue::Text(encoded)],
     })
 }
 
@@ -258,7 +270,7 @@ fn direct_stage_statement(
     table_name: &str,
     frontier: bool,
     phase: i64,
-    events: &[DeltaEvent],
+    events: &[&DeltaEvent],
 ) -> BoundaryResult<SqlStatement> {
     let mut columns = if frontier {
         vec!["_phase".to_string(), "_sequence".to_string()]
@@ -299,12 +311,12 @@ pub fn stage_events(
     }
     let relation_by_name: HashMap<&str, &IncrementalRelationPlan> =
         relations.iter().map(|r| (r.rel.as_str(), r)).collect();
-    let mut events_by_rel: HashMap<&str, Vec<DeltaEvent>> = HashMap::new();
+    let mut events_by_rel: HashMap<&str, Vec<&DeltaEvent>> = HashMap::new();
     for event in events {
         events_by_rel
             .entry(event.rel.as_str())
             .or_default()
-            .push(event.clone());
+            .push(event);
     }
     let verbs = write_verbs_for(relations);
     let strategy = crate::write_verbs::strategy_name(relations);
@@ -389,7 +401,7 @@ fn keyed_arrival_rows_statement(
 pub(crate) fn direct_arrival_statement(
     relation: &IncrementalRelationPlan,
     sign: i8,
-    rows: &[Row],
+    rows: &[&Row],
 ) -> BoundaryResult<SqlStatement> {
     let columns: Vec<String> = relation
         .columns
@@ -544,10 +556,7 @@ pub fn apply_arrivals(
             verbs.arrive(
                 relation,
                 sign,
-                &entries
-                    .iter()
-                    .map(|(_, row)| row.clone())
-                    .collect::<Vec<_>>(),
+                &entries.iter().map(|(_, row)| row).collect::<Vec<&Row>>(),
             )?
         };
         let key_indices = relation.key_indices.clone();
@@ -597,7 +606,7 @@ pub fn apply_arrivals(
             let _ = result.rows_affected;
             stage_events(
                 seam,
-                relations,
+                std::slice::from_ref(relation),
                 &events,
                 &[(relation.frontier_table_name.clone(), 1)],
             )?;
@@ -618,7 +627,7 @@ pub fn apply_arrivals(
             }
             stage_events(
                 seam,
-                relations,
+                std::slice::from_ref(relation),
                 &events,
                 &[(relation.frontier_table_name.clone(), 1)],
             )?;
@@ -646,7 +655,7 @@ pub fn apply_arrivals(
         drop(_diff);
         stage_events(
             seam,
-            relations,
+            std::slice::from_ref(relation),
             &events,
             &[(relation.frontier_table_name.clone(), 1)],
         )?;
@@ -901,11 +910,12 @@ pub fn stage_ordered_frontiers(
             continue;
         };
         carry_pending = true;
+        let borrowed: Vec<&DeltaEvent> = events.iter().collect();
         statements.push(frontier_stage_statement(
             relation,
             &relation.frontier_table_name,
             0,
-            events,
+            &borrowed,
         )?);
     }
     if !statements.is_empty() {
@@ -1403,10 +1413,10 @@ fn edge_keyed_write_statement(
     })
 }
 
-fn flat_bind_args(rows: &[Row]) -> BoundaryResult<Vec<ScalarValue>> {
+fn flat_bind_args<R: AsRef<[Value]>>(rows: &[R]) -> BoundaryResult<Vec<ScalarValue>> {
     let mut args = Vec::new();
     for row in rows {
-        args.extend(bind_args(row)?);
+        args.extend(bind_args(row.as_ref())?);
     }
     Ok(args)
 }

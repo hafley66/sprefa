@@ -34,31 +34,23 @@ pub fn tick_line(
     format!("{{\"tick\":{},\"deltas\":{{{}}}}}", tick, rels_text)
 }
 
-fn rel_types_for(
-    column_types: &std::collections::HashMap<String, Vec<RowColumnType>>,
-    declared: &std::collections::HashMap<String, Vec<RowColumnType>>,
+fn rel_types_for<'a>(
+    column_types: &'a std::collections::HashMap<String, Vec<RowColumnType>>,
+    declared: &'a std::collections::HashMap<String, Vec<RowColumnType>>,
     rel: &str,
-) -> Vec<RowColumnType> {
+) -> &'a [RowColumnType] {
     if let Some(types) = column_types.get(rel) {
-        types.clone()
+        types
     } else if let Some(types) = declared.get(rel) {
-        types.clone()
+        types
     } else {
-        Vec::new()
+        &[]
     }
 }
 
-fn encode_rel(delta: &RelDelta, types: Vec<RowColumnType>) -> String {
-    let mut add: Vec<String> = delta
-        .add
-        .iter()
-        .map(|row| encode_row(row, &types))
-        .collect();
-    let mut del: Vec<String> = delta
-        .del
-        .iter()
-        .map(|row| encode_row(row, &types))
-        .collect();
+fn encode_rel(delta: &RelDelta, types: &[RowColumnType]) -> String {
+    let mut add: Vec<String> = delta.add.iter().map(|row| encode_row(row, types)).collect();
+    let mut del: Vec<String> = delta.del.iter().map(|row| encode_row(row, types)).collect();
     add.sort();
     del.sort();
     format!(
@@ -69,12 +61,32 @@ fn encode_rel(delta: &RelDelta, types: Vec<RowColumnType>) -> String {
     )
 }
 
+/// One buffer per row, not one String per column plus a join.
 fn encode_row(row: &Row, types: &[RowColumnType]) -> String {
-    let mut parts = Vec::with_capacity(row.len());
+    let mut out = String::with_capacity(row.len() * 12 + 2);
+    out.push('[');
     for (index, value) in row.iter().enumerate() {
-        parts.push(encode_value(value, types.get(index).copied()));
+        if index > 0 {
+            out.push(',');
+        }
+        push_value(&mut out, value, types.get(index).copied());
     }
-    format!("[{}]", parts.join(","))
+    out.push(']');
+    out
+}
+
+fn push_value(out: &mut String, value: &Value, ty: Option<RowColumnType>) {
+    match value {
+        Value::Integer(v) => {
+            use std::fmt::Write;
+            let _ = write!(out, "{}", v);
+        }
+        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Value::Text(text) if ty != Some(RowColumnType::Json) && ty != Some(RowColumnType::Ref) => {
+            push_json_string(out, text)
+        }
+        other => out.push_str(&encode_value(other, ty)),
+    }
 }
 
 fn encode_value(value: &Value, ty: Option<RowColumnType>) -> String {
@@ -276,6 +288,12 @@ fn normalize_fixed_float_atom(raw: &str) -> String {
 // values and object keys.
 pub fn json_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
+    push_json_string(&mut out, value);
+    out
+}
+
+fn push_json_string(out: &mut String, value: &str) {
+    out.reserve(value.len() + 2);
     out.push('"');
     for ch in value.chars() {
         match ch {
@@ -293,5 +311,4 @@ pub fn json_string(value: &str) -> String {
         }
     }
     out.push('"');
-    out
 }

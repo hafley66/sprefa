@@ -2171,14 +2171,23 @@ sites but not against new code. **missing** = nothing.
   counts its calls, 3 files, a 5-document index. Fail-pre-fix `reads = 15`,
   after `reads = 5`. The count, not the edge set, is what detects a regression
   here: the edges were always correct.
-- STILL OPEN, a SECOND whole-corpus walk the join was hiding: `site_occurrence`
+- THE SECOND WHOLE-CORPUS WALK THE JOIN WAS HIDING, now closed: `site_occurrence`
   tries every occurrence of a document against one call site and `byte_range`
-  rescans the document bytes from offset 0 for each, so a file the index knows
-  costs sites x occurrences x bytes. `sample` over a live resolve of hafley-rs
-  puts 2477 of 2484 stacks in `site_occurrence` -> `byte_range`. 5 files (none
-  of them in the index, every edge `name_resolve`) finish in 2.04s; 10 files do
-  not finish in 90s. The fix is a per-document line-offset table, not another
-  memo, and it is unbuilt.
+  rescanned the document bytes from offset 0 for each, twice per range (start and
+  end), so a file the index knows cost sites x occurrences x bytes. `sample` over
+  a live resolve of hafley-rs put 2477 of 2484 stacks in `site_occurrence` ->
+  `byte_range`. 5 files finished in 2.04s; 10 files did not finish in 90s.
+- THE FIX: `scip::LineTable`, one memchr pass per document giving the byte offset
+  of every line start plus an end sentinel. `byte_range_at` indexes it;
+  `byte_range` keeps its signature and builds a table per call, so no language arm
+  changed. `site_occurrence` and `scip_rows::flatten_scip_records` build one table
+  per document and one per signature text.
+- THE RAIL: `v6/sprefa-extract/tests/n_plus_one.rs`, `scip::line_reads()` counting
+  document bytes read. Fail-pre-fix over 4000 occurrences in a 100000-byte
+  document: `400000000` reads against a `116000` bound; after, it passes. Signature
+  occurrences: `52000000` -> bound `34000`. End to end, hafley-rs
+  `crates/*/src/*.rs`: 10 files 90s+ -> 2.2s, 65 files 150s+ -> 4.9s, 3804 rows,
+  byte-identical to the pre-fix binary on the 8-file resolve both could finish.
 
 ## 60. A pathspec rooted at the repository and a manifest rooted at the workspace
 
@@ -2246,6 +2255,55 @@ sites but not against new code. **missing** = nothing.
   every relation in the table is one the IR declares.
   Bench: `v6/sprefa-engine-rs/bench/profile.sh`, `bench/ab.sh`,
   `bench/rail-profile.sh`, `bench/file-db.sh`.
+
+## 60. Program metadata recomputed once per tick
+
+- WHAT IT LOOKS LIKE: a fold that costs the same whether the tick moved one row
+  or ten thousand. The per-verb table shows the cost nowhere, because the work
+  sits between the statements and belongs to no relation.
+- HOW IT BIT US: 2026-08-21. Six fold paths asked a question whose answer is
+  fixed for the life of a program, and asked it inside a loop. `recursive_heads`
+  ran a substring pass over every level insert text against every relation's
+  frontier name, once per tick: 44 levels x 57 rels on the dead-module rail.
+  Five more walked the relations slice to find a statement's head plan, once per
+  statement per round. `stage_departures` walked the whole boundary delta list
+  once per relation.
+- THE LAW: the shape of a program is decided when the program is built. A
+  question whose answer cannot change between ticks belongs to `GenProgram`, and
+  a lookup by rel name belongs to an index built at a phase entry, never inside
+  the statement loop.
+- THE RAIL: `v6/sprefa-engine-rs/tests/n_plus_one.rs` with
+  `incremental::plan_probes()` and `incremental::frontier_probes()`.
+  Fail-pre-fix over 1200 rels and 40 statements: stage_departures `720600` vs a
+  `2400` bound, frontier scan `144000` vs `48000`, plan lookup `2460` vs `240`.
+- WHAT IT DID NOT FIX: this class is cheap in absolute terms (schema-sized, not
+  row-sized). The row-sized cost was entry 61.
+
+## 61. Three full copies of an arrival batch before it reached the seam
+
+- WHAT IT LOOKS LIKE: an `intern` phase costing 448ms of Rust against 25ms of
+  SQL, on 6482 rows. The trace attributes it correctly and it still reads as a
+  mystery, because no single line is slow.
+- HOW IT BIT US: 2026-08-21. `enum_plane::intern`, `text_plane::intern` and
+  `struct_plane::intern` each took `&[Arrival]` and returned `Vec<Arrival>`, so
+  every tick copied the whole batch three times even when no plane changed a
+  value: the enum plane is a check-only pass and returned `arrivals.to_vec()`
+  unconditionally. Downstream, `stage_events` cloned every event into a per-rel
+  bucket, `staged_statements` cloned the additions again, and the JSON encoders
+  built a throwaway `Vec<Value>` per row to carry two leading integers.
+  `boundary_delta` rendered each row's dedup key twice, once to probe and once
+  to insert.
+- THE LAW: a plane that may not change anything hands back what it was given.
+  `Cow<'a, [Arrival]>` BY VALUE chains the planes with no lifetime knot and one
+  `Owned` only where a rewrite happened. Grouping borrows; only the seam's own
+  argument vector owns.
+- THE RAIL: `the_boundary_read_renders_each_row_key_once` in
+  `v6/sprefa-engine-rs/tests/n_plus_one.rs`, `40000` renders for `20000` rows
+  pre-fix. The rest is the per-verb table, which is what the class needs:
+  `bench/rail-profile.sh` `intern` rust 447838us -> 26440us, `publish
+  __host_response_extract` 205359 -> 22878, `stage __host_response_extract`
+  142211 -> 11607, TOTAL rust in scopes 3093662 -> 736591. RUST-GRADE stayed
+  439/335 byte-clean across every step.
 
 ## Rail gap table
 

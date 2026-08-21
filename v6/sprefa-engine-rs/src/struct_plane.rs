@@ -49,11 +49,13 @@ fn json_scalar(value: &JsonValue) -> Value {
     }
 }
 
+type CollectedBucket = (Vec<Collected>, HashMap<String, usize>);
+
 fn collect(
     plan: &StructTypePlan,
     by_name: &HashMap<&str, &StructTypePlan>,
     value: &JsonValue,
-    per_type: &mut HashMap<String, Vec<Collected>>,
+    per_type: &mut HashMap<String, CollectedBucket>,
 ) -> String {
     let object = value
         .as_object()
@@ -98,12 +100,13 @@ fn collect(
         semantic: semantic.clone(),
         fields,
     };
-    match bucket.iter().position(|entry| {
-        COLLECT_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        entry.semantic == semantic
-    }) {
-        Some(index) => bucket[index] = collected,
-        None => bucket.push(collected),
+    COLLECT_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    match bucket.1.get(&semantic) {
+        Some(index) => bucket.0[*index] = collected,
+        None => {
+            bucket.1.insert(semantic.clone(), bucket.0.len());
+            bucket.0.push(collected);
+        }
     }
     semantic
 }
@@ -159,8 +162,10 @@ fn intern_type(
         })
         .collect();
     let staged = match text_plan {
-        Some(text_plan) => crate::text_plane::intern(seam, text_plan, &arrivals)?,
-        None => arrivals,
+        Some(text_plan) => {
+            crate::text_plane::intern(seam, text_plan, std::borrow::Cow::Owned(arrivals))?
+        }
+        None => std::borrow::Cow::Owned(arrivals),
     };
     let staged_rows: Vec<Row> = staged.iter().map(|arrival| arrival.row.clone()).collect();
     let encoded = encoded_rows(&staged_rows)?;
@@ -222,23 +227,23 @@ fn rewrite_row(row: &Row, refs: &[Option<String>], ids: &HashMap<String, i64>) -
         .collect()
 }
 
-pub fn intern(
+pub fn intern<'a>(
     seam: &SqliteSeam,
     types: &[StructTypePlan],
     ref_columns: &HashMap<String, Vec<Option<String>>>,
-    arrivals: &[Arrival],
+    arrivals: std::borrow::Cow<'a, [Arrival]>,
     relations: &[IncrementalRelationPlan],
     text_plan: Option<&TextInternPlan>,
-) -> BoundaryResult<Vec<Arrival>> {
+) -> BoundaryResult<std::borrow::Cow<'a, [Arrival]>> {
     if types.is_empty() || arrivals.is_empty() {
-        return Ok(arrivals.to_vec());
+        return Ok(arrivals);
     }
     let by_name: HashMap<&str, &StructTypePlan> = types
         .iter()
         .map(|plan| (plan.name.as_str(), plan))
         .collect();
-    let mut per_type: HashMap<String, Vec<Collected>> = HashMap::new();
-    for arrival in arrivals {
+    let mut per_type: HashMap<String, CollectedBucket> = HashMap::new();
+    for arrival in arrivals.iter() {
         let Some(refs) = ref_columns.get(&arrival.rel) else {
             continue;
         };
@@ -254,15 +259,15 @@ pub fn intern(
         }
     }
     if per_type.is_empty() {
-        return Ok(arrivals.to_vec());
+        return Ok(arrivals);
     }
     let mut ids = HashMap::new();
     for plan in types {
         if let Some(collected) = per_type.get(&plan.name) {
-            intern_type(seam, plan, collected, &mut ids, relations, text_plan)?;
+            intern_type(seam, plan, &collected.0, &mut ids, relations, text_plan)?;
         }
     }
-    Ok(arrivals
+    let rewritten: Vec<Arrival> = arrivals
         .iter()
         .map(|arrival| match ref_columns.get(&arrival.rel) {
             None => arrival.clone(),
@@ -272,5 +277,6 @@ pub fn intern(
                 row: rewrite_row(&arrival.row, refs, &ids),
             },
         })
-        .collect())
+        .collect();
+    Ok(std::borrow::Cow::Owned(rewritten))
 }

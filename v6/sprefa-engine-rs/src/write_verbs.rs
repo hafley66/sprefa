@@ -47,14 +47,14 @@ pub trait WriteVerbs: Sync {
         &self,
         relation: &IncrementalRelationPlan,
         sign: i8,
-        rows: &[Row],
+        rows: &[&Row],
     ) -> BoundaryResult<SqlStatement>;
     /// rel + rows -> the boundary delta write, plus one frontier write per
     /// copy when the batch carries additions.
     fn stage(
         &self,
         relation: &IncrementalRelationPlan,
-        events: &[DeltaEvent],
+        events: &[&DeltaEvent],
         copies: &[(String, i64)],
     ) -> BoundaryResult<Vec<SqlStatement>>;
     /// The staged-row read a tick boundary asks for carry. Empty text when
@@ -112,7 +112,7 @@ pub fn write_verbs_for(relations: &[IncrementalRelationPlan]) -> &'static dyn Wr
 fn durable_arrive(
     relation: &IncrementalRelationPlan,
     sign: i8,
-    rows: &[Row],
+    rows: &[&Row],
 ) -> BoundaryResult<SqlStatement> {
     if relation
         .column_types
@@ -131,17 +131,18 @@ fn durable_arrive(
             .clone()
             .expect("incremental delete statement missing")
     };
-    let encoded_rows: String = rows
-        .iter()
-        .map(|row| crate::incremental::json_array_text(row))
-        .collect::<BoundaryResult<Vec<_>>>()?
-        .join(",");
+    let mut encoded = String::new();
+    encoded.push('[');
+    for (index, row) in rows.iter().enumerate() {
+        if index > 0 {
+            encoded.push(',');
+        }
+        encoded.push_str(&crate::incremental::json_array_text(row)?);
+    }
+    encoded.push(']');
     Ok(SqlStatement {
         sql,
-        args: vec![crate::types::ScalarValue::Text(format!(
-            "[{}]",
-            encoded_rows
-        ))],
+        args: vec![crate::types::ScalarValue::Text(encoded)],
     })
 }
 
@@ -154,11 +155,11 @@ fn durable_publish(relation: &IncrementalRelationPlan) -> SqlStatement {
 
 fn staged_statements(
     relation: &IncrementalRelationPlan,
-    events: &[DeltaEvent],
+    events: &[&DeltaEvent],
     copies: &[(String, i64)],
 ) -> BoundaryResult<Vec<SqlStatement>> {
     let mut statements = vec![boundary_stage_statement(relation, events)?];
-    let additions: Vec<DeltaEvent> = events.iter().filter(|e| e.sign == 1).cloned().collect();
+    let additions: Vec<&DeltaEvent> = events.iter().filter(|e| e.sign == 1).copied().collect();
     if additions.is_empty() {
         return Ok(statements);
     }
@@ -210,7 +211,7 @@ impl WriteVerbs for PerRelWriteVerbs {
         &self,
         relation: &IncrementalRelationPlan,
         sign: i8,
-        rows: &[Row],
+        rows: &[&Row],
     ) -> BoundaryResult<SqlStatement> {
         durable_arrive(relation, sign, rows)
     }
@@ -218,7 +219,7 @@ impl WriteVerbs for PerRelWriteVerbs {
     fn stage(
         &self,
         relation: &IncrementalRelationPlan,
-        events: &[DeltaEvent],
+        events: &[&DeltaEvent],
         copies: &[(String, i64)],
     ) -> BoundaryResult<Vec<SqlStatement>> {
         staged_statements(relation, events, copies)
@@ -301,7 +302,7 @@ impl WriteVerbs for SharedWriteVerbs {
         &self,
         relation: &IncrementalRelationPlan,
         sign: i8,
-        rows: &[Row],
+        rows: &[&Row],
     ) -> BoundaryResult<SqlStatement> {
         durable_arrive(relation, sign, rows)
     }
@@ -309,7 +310,7 @@ impl WriteVerbs for SharedWriteVerbs {
     fn stage(
         &self,
         relation: &IncrementalRelationPlan,
-        events: &[DeltaEvent],
+        events: &[&DeltaEvent],
         copies: &[(String, i64)],
     ) -> BoundaryResult<Vec<SqlStatement>> {
         staged_statements(relation, events, copies)
