@@ -35,10 +35,9 @@ struct Cli {
 enum Verb {
     /// Build one `.dl6` program into one binary.
     Build(BuildArgs),
-    /// Fold one `.dl6` program once and print its `?` rows.
+    /// Fold one `.dl6` program. The FILE decides whether the process stays: a
+    /// rel routed to a continuing source keeps it resident, `--once` never does.
     Run(ProgramArgs),
-    /// Fold one `.dl6` program, then stay up on its `bind` sources.
-    Watch(ProgramArgs),
 }
 
 #[derive(Args)]
@@ -54,8 +53,8 @@ struct BuildArgs {
     adapters: Option<PathBuf>,
 }
 
-/// One option table for both verbs, so a program watched and a program run once
-/// are spelled identically and only the verb decides whether the process stays.
+/// One option table, because there is one verb: the program's own declarations
+/// decide whether it stays resident, and nothing on this line has to say so.
 #[derive(Args)]
 struct ProgramArgs {
     /// The program source.
@@ -93,6 +92,10 @@ struct ProgramArgs {
     /// Fold `sh` decls from a scripted schedule instead of running them live.
     #[arg(long)]
     no_live_hosts: bool,
+    /// Fold a resident program's tick 0 and exit, for a snapshot of one that
+    /// would otherwise stay up.
+    #[arg(long)]
+    once: bool,
 }
 
 impl ProgramArgs {
@@ -475,6 +478,11 @@ fn prepare(args: &ProgramArgs) -> Result<(run::LoadedProgram, Vec<sprefa_engine_
     std::env::set_var("DL6_SOURCE_DIGEST", key.source.to_hex().as_str());
     std::env::set_var("DL6_COMPILER_DIGEST", key.compiler.to_hex().as_str());
     point_at_adapters(args)?;
+    // The trace table is what `tick_cost` reads, and it only records when armed
+    // before the first fold.
+    if adapters_text(&source, args.adapters.as_deref())?.contains("dl_tick_cost") {
+        sprefa_engine_rs::trace::force_summary();
+    }
     let db = match &args.db {
         Some(path) => Some(absolute_db_path(path)?),
         None => None,
@@ -516,8 +524,23 @@ fn absolute_db_path(path: &Path) -> Result<PathBuf> {
 
 fn run(args: ProgramArgs) -> Result<()> {
     let finals = args.finals();
+    let root = args
+        .root
+        .canonicalize()
+        .with_context(|| format!("read {}", args.root.display()))?;
     let (loaded, mut seeds, options) = prepare(&args)?;
-    // A one-shot run over a `bind watch` program still reads the watched set: the
+    if !args.once && run::stays_resident(&loaded.binds) {
+        let (stop, listen) = tokio::sync::watch::channel(false);
+        // SIGINT is the one way a resident run ends, and the handler only flips
+        // the flag: the loop finishes the tick it is in rather than dying mid-fold.
+        ctrlc_flag(stop)?;
+        let options = WatchOptions::new(options, loaded.binds.clone(), root);
+        if run::watch(&loaded.program, seeds, options, listen)? {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+    // A one-shot fold of a resident program still reads its world: the
     // enumeration is tick 0's rows with no watcher armed behind it.
     seeds.extend(run::bind_seeds(&loaded.binds, Path::new("."))?);
     let outcome = run::run_once(&loaded.program, seeds, options)?;
@@ -526,20 +549,6 @@ fn run(args: ProgramArgs) -> Result<()> {
         std::process::exit(1);
     }
     Ok(())
-}
-
-fn watch(args: ProgramArgs) -> Result<()> {
-    let root = args
-        .root
-        .canonicalize()
-        .with_context(|| format!("read {}", args.root.display()))?;
-    let (loaded, seeds, options) = prepare(&args)?;
-    let (stop, listen) = tokio::sync::watch::channel(false);
-    // SIGINT is the one way a watch ends, and the handler only flips the flag:
-    // the loop finishes the tick it is in rather than dying mid-fold.
-    ctrlc_flag(stop)?;
-    let options = WatchOptions::new(options, loaded.binds.clone(), root);
-    run::watch(&loaded.program, seeds, options, listen)
 }
 
 fn ctrlc_flag(stop: tokio::sync::watch::Sender<bool>) -> Result<()> {
@@ -570,6 +579,5 @@ fn main() -> Result<()> {
     match Cli::parse().verb {
         Verb::Build(args) => build(args),
         Verb::Run(args) => run(args),
-        Verb::Watch(args) => watch(args),
     }
 }

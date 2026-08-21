@@ -228,7 +228,10 @@ fn watch(args: ProgramArgs) -> Result<()> {
             });
         })
         .context("spawn the signal thread")?;
-    run::watch(&program, seeds, WatchOptions::new(options, binds, root), listen)
+    if run::watch(&program, seeds, WatchOptions::new(options, binds, root), listen)? {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 fn serve(socket: &Path, adapters_dir: Option<&Path>) -> Result<()> {

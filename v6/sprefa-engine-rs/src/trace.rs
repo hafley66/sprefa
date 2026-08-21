@@ -12,6 +12,7 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
@@ -67,11 +68,27 @@ fn summary() -> &'static Mutex<BTreeMap<Label, Stat>> {
     SUMMARY.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
+/// Armed before the first fold by a runner whose program reads its own cost, so
+/// the table records without the caller having to spell the env var.
+static FORCED: AtomicBool = AtomicBool::new(false);
+
+pub fn force_summary() {
+    FORCED.store(true, Ordering::Relaxed);
+}
+
 /// One env read per process; a fold that does not ask pays a bool load per
-/// statement.
+/// statement. `force_summary` only counts before the first record.
 pub fn summary_wanted() -> bool {
     static WANTED: OnceLock<bool> = OnceLock::new();
-    *WANTED.get_or_init(|| std::env::var_os("DL_TRACE_SUMMARY").is_some())
+    *WANTED.get_or_init(|| {
+        std::env::var_os("DL_TRACE_SUMMARY").is_some() || FORCED.load(Ordering::Relaxed)
+    })
+}
+
+/// The printed table is the env var's door alone: a program reading `tick_cost`
+/// relationally must not also dump a block of text to stderr.
+fn printing_wanted() -> bool {
+    summary_wanted() && std::env::var_os("DL_TRACE_SUMMARY").is_some()
 }
 
 /// Pins the wall clock the Rust remainder is measured against; the driver arms
@@ -118,7 +135,7 @@ pub fn reset() {
 /// The one line that answers "SQLite or Rust": everything the seam spent,
 /// against the wall clock the driver armed.
 pub fn report() {
-    if !summary_wanted() {
+    if !printing_wanted() {
         return;
     }
     let rows = summary_rows();

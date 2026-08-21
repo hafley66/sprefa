@@ -1,9 +1,10 @@
-//! `dl6 run` and `dl6 watch` end to end: a program folds once and prints its
-//! ordered `?` rows, `--fail-on` decides the exit code, the compile cache spawns
-//! swipl once for two runs of one source, `--db` leaves a file a cold `sqlite3`
-//! reads, and one touched file in a watched worktree produces one extra tick.
+//! `dl6 run` end to end: a program folds once and prints its ordered `?` rows,
+//! `--fail-on` decides the exit code, the compile cache spawns swipl once for
+//! two runs of one source, `--db` leaves a file a cold `sqlite3` reads, and one
+//! touched file under a program whose OWN `bind watch` decl makes it resident
+//! produces one extra tick from the same verb.
 //!
-//! Every test is held to the 10-second law; the watch test caps its own wait.
+//! Every test is held to the 10-second law; the resident test caps its own wait.
 //!
 //! @comment-ok: the sabotage receipts this file's assertions were red against.
 //! Sabotage receipts:
@@ -329,7 +330,7 @@ fn one_touched_file_produces_exactly_one_extra_tick() {
     let mut child = scratch
         .dl6()
         .env("RUST_LOG", "sprefa_engine_rs=info")
-        .arg("watch")
+        .arg("run")
         .arg(engine_dir().join("../dl/fixtures/served-watch-rail.dl6"))
         .arg("--root")
         .arg(root)

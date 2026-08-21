@@ -558,10 +558,7 @@ fn install_db_views(
          \"tick\" INTEGER NOT NULL, \"finished_at\" TEXT NOT NULL)"
     ))
     .context("create the __meta table")?;
-    let finished_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|since| since.as_secs())
-        .unwrap_or(0);
+    let finished_at = unix_seconds();
     seam.execute(&SqlStatement {
         sql: format!(
             "INSERT INTO \"{META_TABLE}\" (\"program\", \"source_digest\", \
@@ -703,6 +700,14 @@ impl WatchOptions {
 const WATCH_EXECUTOR: &str = "live_watch";
 const INTERVAL_EXECUTOR: &str = "live_interval";
 
+/// The one question `dl6 run` asks the file: a rel routed to a continuing
+/// source is what makes the process stay, so the verb never has to.
+pub fn stays_resident(binds: &[BindPlanData]) -> bool {
+    [WATCH_EXECUTOR, INTERVAL_EXECUTOR]
+        .iter()
+        .any(|executor| bind_rel(binds, executor).is_some())
+}
+
 /// How often the loop wakes to notice a stop request while nothing else moves.
 const STOP_POLL: Duration = Duration::from_millis(250);
 
@@ -730,12 +735,13 @@ pub fn bind_seeds(binds: &[BindPlanData], root: &Path) -> Result<Vec<Arrival>> {
 
 /// Fold, print the finals, then stay up: one `bind` push is one tick and the
 /// finals re-print as `+`/`-` TSV deltas. Returns on `stop` or on every close.
+/// `true` means `--fail-on` answered rows, so the caller exits 1.
 pub fn watch(
     program: &GenProgram,
     seeds: Vec<Arrival>,
     options: WatchOptions,
     mut stop: tokio::sync::watch::Receiver<bool>,
-) -> Result<()> {
+) -> Result<bool> {
     let seam = open_seam(options.run.db.as_deref())?;
     let runtime = current_thread_runtime()?;
     let mut live = LiveLoop::open(program, options.run.live_hosts, options.run.drain_cap)?;
@@ -765,6 +771,12 @@ pub fn watch(
     for line in snapshot.plus_lines()? {
         println!("{line}");
     }
+    // The views go in after the first fold, not at the end: a cold `sqlite3`
+    // has to read a resident program WHILE it runs, which is the whole point.
+    if let Some(path) = &options.run.db {
+        install_db_views(program, &seam, live.tick, path)?;
+    }
+    let mut failed = fail_on_rows(program, &seam, &options.run.fail_on)?;
     tracing::info!(
         tick = live.tick,
         ticks = lines.len(),
@@ -833,6 +845,10 @@ pub fn watch(
             println!("{line}");
         }
         snapshot = next;
+        if options.run.db.is_some() {
+            stamp_meta_tick(&seam, live.tick)?;
+        }
+        failed |= fail_on_rows(program, &seam, &options.run.fail_on)?;
         tracing::info!(
             tick = live.tick,
             arrivals,
@@ -840,7 +856,35 @@ pub fn watch(
             "watch: tick"
         );
     }
+    Ok(failed)
+}
+
+fn fail_on_rows(program: &GenProgram, seam: &SqliteSeam, query: &Option<String>) -> Result<bool> {
+    match query {
+        Some(named) => Ok(count_query(program, seam, named)? > 0),
+        None => Ok(false),
+    }
+}
+
+/// One row, updated in place: a resident fold that inserted per tick would grow
+/// `__meta` without bound over a run measured in days.
+fn stamp_meta_tick(seam: &SqliteSeam, ticks: usize) -> Result<()> {
+    seam.execute(&SqlStatement {
+        sql: format!("UPDATE \"{META_TABLE}\" SET \"tick\" = ?, \"finished_at\" = ?"),
+        args: vec![
+            crate::types::ScalarValue::Integer(ticks as i64),
+            crate::types::ScalarValue::Text(unix_seconds().to_string()),
+        ],
+    })
+    .context("stamp the tick into __meta")?;
     Ok(())
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|since| since.as_secs())
+        .unwrap_or(0)
 }
 
 fn bind_rel(binds: &[BindPlanData], executor: &str) -> Option<String> {
