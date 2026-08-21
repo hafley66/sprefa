@@ -130,8 +130,8 @@ pub fn take_renames(
     let arrived = group(created, head);
     let departed = group(deleted, base);
     let mut renames = Vec::new();
-    let mut paired_from: Vec<String> = Vec::new();
-    let mut paired_to: Vec<String> = Vec::new();
+    let mut paired_from: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut paired_to: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for (content, from_paths) in &departed {
         let Some(to_paths) = arrived.get(content) else {
             continue;
@@ -141,17 +141,17 @@ pub fn take_renames(
                 path_from: from.clone(),
                 path_to: to.clone(),
             });
-            paired_from.push(from.clone());
-            paired_to.push(to.clone());
+            paired_from.insert(from.as_str());
+            paired_to.insert(to.as_str());
         }
     }
     created.retain(|path| {
-        RENAME_PROBES.fetch_add(paired_to.len() as u64, std::sync::atomic::Ordering::Relaxed);
-        !paired_to.contains(path)
+        RENAME_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        !paired_to.contains(path.as_str())
     });
     deleted.retain(|path| {
-        RENAME_PROBES.fetch_add(paired_from.len() as u64, std::sync::atomic::Ordering::Relaxed);
-        !paired_from.contains(path)
+        RENAME_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        !paired_from.contains(path.as_str())
     });
     renames.sort();
     renames

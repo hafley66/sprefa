@@ -45,6 +45,9 @@ pub struct GenProgram {
     pub ir_version: u32,
     pub host_plans: Vec<crate::types::HostPlanData>,
     pub queries: Vec<String>,
+    /// Which level heads feed another round, decided once here because the
+    /// answer is a substring pass over every insert text.
+    pub recursive_level_heads: Vec<String>,
 }
 
 // The IR shape this runtime interprets. Bumped whenever a field's meaning
@@ -93,6 +96,7 @@ impl GenProgram {
     }
 
     fn from_checked_json(pj: ProgramJson) -> Self {
+        let recursive_level_heads = incremental::recursive_heads(&pj.levels, &pj.relations);
         GenProgram {
             name: pj.name,
             intern_mode: pj.intern_mode,
@@ -122,6 +126,7 @@ impl GenProgram {
             ir_version: pj.ir_version,
             host_plans: pj.host_plans,
             queries: pj.queries,
+            recursive_level_heads,
         }
     }
 
@@ -201,7 +206,12 @@ impl GenProgram {
         };
         let arrivals = normalized.as_slice();
         incremental::apply_arrivals(seam, arrivals, &self.relations)?;
-        incremental::apply_levels_before_edges(seam, &self.levels, &self.relations)?;
+        incremental::apply_levels_before_edges(
+            seam,
+            &self.levels,
+            &self.relations,
+            &self.recursive_level_heads,
+        )?;
         if !self.edges.is_empty() {
             incremental::recompute_levels_before_edges(
                 seam,
