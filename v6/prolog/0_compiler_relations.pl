@@ -64,6 +64,7 @@ declaration_ref(kind(Ref, _), Ref).
 declaration_ref(keyed(Ref, _), Ref).
 declaration_ref(keep(Ref, _), Ref).
 declaration_ref(rel_path_decl(Ref, _), Ref).
+declaration_ref(return_alias(Ref, _), Ref).
 
 %! partition_compiler_program(+Decls, +Rules, -CompilerDecls,
 %!                            -RuntimeDecls, -RuntimeRules) is det.

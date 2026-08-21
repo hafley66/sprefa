@@ -138,11 +138,19 @@ json_value_term('{}') :- !.
 json_value_term(Value) :- Value = {}(_), !.
 json_value_term(Value) :- is_list(Value), !.
 json_value_term(obj(Pairs)) :- is_list(Pairs).
+json_value_term(Value) :- nonvar(Value), Value = json_object(Pairs), is_list(Pairs).
+json_value_term(Value) :- nonvar(Value), Value = json_array(Values), is_list(Values).
+json_value_term(Value) :- Value == json_null.
 
 json_value_json('{}', '{}') :- !.
 json_value_json({}(Fields), Json) :- !,
     json_canon({}(Fields), Canon),
     json_value_json(Canon, Json).
+json_value_json(Value, Json) :- nonvar(Value), Value = json_object(Pairs), !,
+    json_canon(json_object(Pairs), Canon), json_value_json(Canon, Json).
+json_value_json(Value, Json) :- nonvar(Value), Value = json_array(Values), !,
+    json_value_json(Values, Json).
+json_value_json(Value, null) :- Value == json_null, !.
 json_value_json(List, Json) :- is_list(List), !,
     maplist(json_document_value, List, Values),
     atomic_list_concat(Values, ',', Inner),

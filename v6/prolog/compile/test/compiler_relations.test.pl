@@ -99,23 +99,18 @@ test(real_dl6_type_terms_elaborate_and_erase_before_runtime) :-
     member(type_relation(named(local, relation, capability), _, _, none, []), Rows).
 
 test(annotation_application_sites_are_typed_relation_values) :-
-    predicate_property(plunit_compiler_relations:compiler_decls(_),
-                       file(ThisFile)),
-    file_directory_name(ThisFile, TestDir),
-    absolute_file_name('../../../dl/fixtures/1_openapi-userland.dl6', Fixture,
-                       [relative_to(TestDir), access(read)]),
-    Out = '/private/tmp/1_openapi-userland.ts',
-    setup_call_cleanup(true, compile_dl6(Fixture, Out),
-                       ( exists_file(Out) -> delete_file(Out) ; true )),
-    string_codes("rel operation(Target: type, Method: text) -> type.\nrel Pet(id: int).\noperation(Pet, 'GET', Pet).\nrel route(return: operation(Pet, Method: 'GET')).\nrel seen(Owner: type, Member: type, Method: text, Input: type, Output: type) -> type.\nseen(Owner, Member, Method, Input, Output, Owner) <- type_application_site(operation(Input, Method, Output), Owner, Member, _Position).\n", Source),
+    string_codes("rel operation(Target: type, Method: text) -> Target.\nrel Pet(id: int).\nrel route(first: operation(Pet, Method: 'GET'), second: operation(Pet, Method: 'GET')).\nrel seen(Owner: type, Member: type, Method: text, Input: type, Output: type, Position: semantic) -> Owner.\nseen(Owner, Member, Method, Input, Output, Position, Owner) <- type_application_site(operation(Input, Method, Output), Owner, Member, Position).\n", Source),
     parse_dl(Source, Program, Bindings, []),
     expand_generic_program_with_bindings(Program, Bindings, prog(Decls, Rules)),
     Rules == [],
     member(compiler_type_metadata(_, Closure, _), Decls),
-    member(seen(Owner, Member, 'GET', Pet, Pet, Owner), Closure),
+    member(seen(Owner, First, 'GET', Pet, Pet, site([first], 1), Owner), Closure),
+    member(seen(Owner, Second, 'GET', Pet, Pet, site([second], 1), Owner), Closure),
     Pet = named(local, relation, 'Pet'),
-    Member = member(named(local, relation, route), 1, return),
-    \+ member(type_application_site(_, _, _, _), Decls).
+    First = member(named(local, relation, route), 1, first),
+    Second = member(named(local, relation, route), 2, second),
+    \+ member(type_application_site(_, _, _, _), Decls),
+    \+ member(compiler_annotation_evidence(_), Decls).
 
 test(compiler_and_oracle_expansion_share_compiler_closure) :-
     Program = prog(
@@ -169,6 +164,11 @@ test(authored_rules_query_the_frozen_canonical_type_graph) :-
     Rules == [],
     member(compiler_type_metadata(_, Closure), Decls),
     Host = named(_, relation, 'Host'),
+    member(reflected_decl(Host, 'Host', relation, _, Host), Closure),
+    member(reflected_decl(Imported, 'Imported', relation, _, Imported), Closure),
+    Imported = named(ImportedModule, relation, 'Imported'),
+    ImportedModule \== local,
+    member(reflected(Imported, 1, 'ImportedCase', _, _, Imported), Closure),
     member(reflected(Host, 1, 'CamelCase', _, CamelMember, Host), Closure),
     CamelMember = member(Host, 1, 'CamelCase'),
     member(reflected(Host, 2, 'MaybeValue', _, _, Host), Closure),
@@ -248,7 +248,7 @@ test(direct_type_calls_survive_the_text_door_fact_split) :-
 
 test(direct_key_uses_existing_sqlite_keyed_replace_lowering) :-
     string_codes(
-        "rel key(Target: type) -> type.\nrel Revision(id: key(int), body: text).\n",
+        "rel key(Target: type) -> Target.\nrel Revision(id: key(int), body: text).\n",
         Codes),
     parse_dl(Codes, Program, Bindings, []),
     program_plan(fixture(annotation_key, Program, [], [], [])-Bindings,

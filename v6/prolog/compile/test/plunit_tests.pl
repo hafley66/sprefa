@@ -124,7 +124,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
               [ goal_rel_refs/3, split_rules/4 ]).
 :- use_module('../../conformance/body',
               [ body_atoms/2, comparison_goal/1, json_capture_type/2,
-                json_scalar_value/3 ]).
+                json_scalar_value/3, eval_expr/2, json_canon/2 ]).
 :- use_module('../../1_host_expand', [ body_goals/2 ]).
 :- use_module('../../3_clock_check', [clock_boundary/2]).
 :- ensure_loaded('3_clock_check.test.pl').
@@ -6333,6 +6333,43 @@ test(oracle_capture_types_match_their_json_type_answer) :-
     \+ json_capture_type(text, none),
     json_capture_type(float, 1.5),
     \+ json_capture_type(float, 1).
+
+native_json_source(
+    'doc(Value) <- seed(Id), Value := {"z": [true, null, 3.5, {}, []], "a": "text"}.').
+
+test(native_json_uses_a_distinct_ast_and_preserves_brace_patterns) :-
+    native_json_source(Source), atom_codes(Source, Codes),
+    once(parse_dl(Codes, prog(_, [(doc(Value) <- (_, Value := Json))]), _, [])),
+    Json = json_object([z-json_array([bool_lit(true), json_null, 3.5,
+                                      json_object([]), json_array([])]),
+                        a-"text"]),
+    parsed_pattern('{name: value}', Pattern),
+    Pattern = '{}'(name:_).
+
+test(native_json_parse_print_fixpoint) :-
+    native_json_source(Source), atom_codes(Source, Codes),
+    once(parse_dl(Codes, Program, Bindings, [])),
+    print_dl_program(Program, Bindings, Printed),
+    atom_codes(Printed, PrintedCodes),
+    once(parse_dl(PrintedCodes, Reparsed, _, [])),
+    Program =@= Reparsed,
+    sub_atom(Printed, _, _, _, '{"z": [true, null, 3.5, {}, []], "a": "text"}').
+
+test(native_json_canonicalizes_objects_and_preserves_arrays) :-
+    Json = json_object([z-json_array([bool_lit(true), json_null, 3.5,
+                                      json_object([]), json_array([])]),
+                        a-"text"]),
+    eval_expr(Json, Value),
+    Value = obj([a-"text", z-[bool_lit(true), none, 3.5, obj([]), []]]),
+    json_canon(Json, Value).
+
+test(native_json_ground_value_lowers_to_canonical_json) :-
+    native_json_source(Source), atom_codes(Source, Codes),
+    once(parse_dl(Codes, Program, Bindings, [])),
+    program_plan(fixture(native_json_literal, Program, [seed(1)], [], [])-Bindings, Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(doc/1, _, [InsertSql], _, _, _, _), Statements),
+    sub_atom(InsertSql, _, _, _, 'json(\'{"a":"text","z":[true,null,3.5,{},[]]}\')').
 
 :- end_tests(json_grammar).
 

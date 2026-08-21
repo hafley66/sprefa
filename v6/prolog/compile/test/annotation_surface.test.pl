@@ -23,8 +23,15 @@ test(annotation_surface_has_named_refusal,
     parse_text("rel Revision(id: @(int, [])).", _, _).
 
 test(direct_call_handoff_retains_the_member_site) :-
-    parse_text("rel key(Target: type) -> type. rel Revision(id: key(int)).", Program, _),
+    parse_text("rel key(Target: type) -> Target. rel Revision(id: key(int)).", Program, _),
     expand_generic_program(Program, prog(Decls, _)),
     member(keyed('Revision'/1, [1]), Decls).
+
+test(return_alias_prints_and_reparses) :-
+    parse_text("rel key(Target: type) -> Target.", Program, Bindings),
+    print_dl_program(Program, Bindings, Text),
+    Text == 'rel key(Target: type) -> Target.\n',
+    parse_text(Text, Reparsed, _),
+    Program =@= Reparsed.
 
 :- end_tests(annotation_surface).

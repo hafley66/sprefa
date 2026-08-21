@@ -871,6 +871,9 @@ json_scalar_rendering(json_patch, [TargetSql, PatchSql], Sql) :-
 json_value_expr(Expr) :- compound(Expr), Expr = {}(_), !.
 json_value_expr(Expr) :- is_list(Expr), Expr \== [], !.
 json_value_expr(Expr) :- compound(Expr), Expr = [_ | _].
+json_value_expr(Expr) :- nonvar(Expr), Expr = json_object(_), !.
+json_value_expr(Expr) :- nonvar(Expr), Expr = json_array(_), !.
+json_value_expr(Expr) :- Expr == json_null, !.
 
 % Keys sort at COMPILE time: json1 keeps argument order and the log contract
 % is sorted keys. A GROUND subtree uses the oracle's own canonicalizer.
@@ -884,6 +887,12 @@ compile_json_document(Mode, Expr, Bound, Sql) :-
         maplist(compile_json_entry(Mode, Bound), Sorted, EntrySqls),
         atomic_list_concat(EntrySqls, ', ', Inner),
         format(atom(Sql), 'json_object(~w)', [Inner])
+    ;   Expr = json_array(Values)
+    ->  maplist(compile_json_element(Mode, Bound), Values, ElementSqls),
+        atomic_list_concat(ElementSqls, ', ', Inner),
+        format(atom(Sql), 'json_array(~w)', [Inner])
+    ;   Expr == json_null
+    ->  Sql = 'json(\'null\')'
     ;   is_list(Expr)
     ->  maplist(compile_json_element(Mode, Bound), Expr, ElementSqls),
         atomic_list_concat(ElementSqls, ', ', Inner),
@@ -905,7 +914,7 @@ compile_json_element(Mode, Bound, Value, Sql) :-
     ->  compile_json_operand(Mode, Value, Bound, Sql)
     ;   compound(Value), bound_lookup(Bound, Value, _)
     ->  compile_json_operand(Mode, Value, Bound, Sql)
-    ;   ( Value = {}(_) ; Value = [_ | _] )
+    ;   ( Value = {}(_) ; Value = [_ | _] ; Value = json_object(_) ; Value = json_array(_) ; Value == json_null )
     ->  compile_json_document(Mode, Value, Bound, Sql)
     ;   ground(Value)
     ->  canonical_json_text(Value, Text), json_document_text_sql(Text, Sql)
@@ -941,6 +950,23 @@ json_document_dup_key(Expr) :-
     ),
     !.
 json_document_dup_key(Expr) :-
+    nonvar(Expr),
+    Expr = json_object(Pairs),
+    (   pairs_keys(Pairs, Keys),
+        sort(Keys, Distinct),
+        length(Keys, KeyCount), length(Distinct, DistinctCount),
+        KeyCount =\= DistinctCount
+    ->  true
+    ;   member(_-Raw, Pairs), json_document_dup_key(Raw)
+    ),
+    !.
+json_document_dup_key(Expr) :-
+    nonvar(Expr),
+    Expr = json_array(Values),
+    member(Element, Values),
+    json_document_dup_key(Element),
+    !.
+json_document_dup_key(Expr) :-
     is_list(Expr),
     member(Element, Expr),
     json_document_dup_key(Element),
@@ -949,6 +975,8 @@ json_document_dup_key(Expr) :-
 json_document_pairs(Expr, Pairs) :-
     nonvar(Expr), Expr = {}(Fields),
     json_document_field_pairs(Fields, Pairs).
+json_document_pairs(Expr, Pairs) :-
+    nonvar(Expr), Expr = json_object(Pairs).
 
 json_document_field_pairs(Fields, _) :- var(Fields), !, fail.
 json_document_field_pairs((Left, Right), Pairs) :- !,

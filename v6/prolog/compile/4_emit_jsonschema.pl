@@ -536,3 +536,7 @@ index_schema_row(Row, indexes(ById0, Columns0, Storage0),
     ->  put_assoc(ParentId, Storage0, true, Storage)
     ;   Storage = Storage0
     ).
+% Typegen transport also carries type_relation and schema-member rows.  They
+% have no catalog row id or column shape, so JSON Schema indexes only row/11
+% entries and leaves the other target metadata available to its consumers.
+index_schema_row(_, Indexes, Indexes).

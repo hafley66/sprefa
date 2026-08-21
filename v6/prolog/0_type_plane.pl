@@ -809,7 +809,22 @@ type_field_json(_, _, ChildValue, Text) :- canonical_json_text(ChildValue, Text)
 canonical_json_text(Value, Text) :- integer(Value), !, format(atom(Text), '~w', [Value]).
 canonical_json_text(bool_lit(Boolean), Text) :- !, format(atom(Text), '~w', [Boolean]).
 canonical_json_text(none, null) :- !.
+canonical_json_text(Value, null) :- Value == json_null, !.
 canonical_json_text(Value, Text) :- float(Value), !, finite_float_json(Value, Text).
+canonical_json_text(Value, Text) :- nonvar(Value), Value = json_object(Pairs), !,
+    keysort(Pairs, Sorted),
+    findall(Entry,
+            ( member(Key-Raw, Sorted),
+              json_string_text(Key, KeyText),
+              canonical_json_text(Raw, RawText),
+              atomic_list_concat([KeyText, ':', RawText], Entry) ),
+            Entries),
+    atomic_list_concat(Entries, ',', Inner),
+    atomic_list_concat(['{', Inner, '}'], Text).
+canonical_json_text(Value, Text) :- nonvar(Value), Value = json_array(Values), !,
+    maplist(canonical_json_text, Values, ElementTexts),
+    atomic_list_concat(ElementTexts, ',', Inner),
+    atomic_list_concat(['[', Inner, ']'], Text).
 canonical_json_text(Value, Text) :- json_object_value(Value, Pairs), !,
     findall(Entry,
             ( member(Key-Raw, Pairs),

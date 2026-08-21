@@ -46,6 +46,7 @@ PINNED=(
   "anonymous-type-syntax:$V6_DIR/dl/fixtures/anonymous-type-syntax.dl6"
   "rust-associated-outputs:$V6_DIR/dl/fixtures/rust-associated-outputs.dl6"
   "type-annotation-ci:$V6_DIR/dl/fixtures/type-annotation-ci.dl6"
+  "type-reflection:$V6_DIR/dl/fixtures/0_type-reflection.dl6"
 )
 
 # Constructs the current type-plane door mints for no fixture; rows checked in

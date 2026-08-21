@@ -2,11 +2,9 @@ rel operation(
   Target: type,
   Method: text,
   Path: text
-) -> type.
+) -> Target.
 
 rel pet(id: key(int), name: text).
-
-operation(pet, 'GET', '/pets/{id}', pet).
 
 rel get_pet(
   id: int,

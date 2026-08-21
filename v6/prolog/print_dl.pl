@@ -329,12 +329,21 @@ decl_line(Decls, _Rules, _Bindings, Name/0, Line) :-
 decl_line(Decls, Rules, Bindings, Ref, Line) :-
     decl_ref_spelling(Decls, Ref, Name),
     rel_columns(Decls, Rules, Bindings, Ref, Columns),
-    maplist(print_decl_column(Decls, Ref), Columns, ColumnTexts),
+    relation_arrow_columns(Decls, Ref, Columns, PrintedColumns, ArrowText),
+    maplist(print_decl_column(Decls, Ref), PrintedColumns, ColumnTexts),
     atomic_list_concat(ColumnTexts, ', ', ColsText),
     decl_modifiers_text(Decls, Ref, Sep, ModifiersText),
     is_clause_text(Decls, Ref, ConformanceText),
-    format(atom(Line), "rel ~w(~w)~w~w~w.~n",
-           [Name, ColsText, Sep, ModifiersText, ConformanceText]).
+    format(atom(Line), "rel ~w(~w)~w~w~w~w.~n",
+           [Name, ColsText, ArrowText, Sep, ModifiersText, ConformanceText]).
+
+relation_arrow_columns(Decls, Ref, Columns, InputColumns, ArrowText) :-
+    memberchk(return_alias(Ref, Position), Decls),
+    nth1(Position, Columns, Alias),
+    append(InputColumns, [return], Columns),
+    !,
+    format(atom(ArrowText), " -> ~w", [Alias]).
+relation_arrow_columns(_, _, Columns, Columns, '').
 
 % Sep is '' rather than ' ' when the ref carries no modifier, so a decl line
 % with none closes straight onto the column list.
@@ -724,6 +733,12 @@ print_term(Term, Bindings, ParentPrec, Side, Text) :-
     -> finite_float_text(Term, Text)
     ; string(Term)
     -> quote_value(Term, 0'", Text)
+    ; Term = json_null
+    -> Text = null
+    ; Term = json_object(Pairs)
+    -> print_json_object(Pairs, Bindings, Text)
+    ; Term = json_array(Values)
+    -> print_json_array(Values, Bindings, Text)
     ; Term == '{}'
     -> Text = '{}'
     ; is_list(Term)
@@ -807,6 +822,22 @@ print_var(Var, Bindings, Text) :-
 print_list([], _Bindings, "[]") :- !.
 print_list(List, Bindings, Text) :-
     maplist(print_arg(Bindings), List, ItemTexts),
+    atomic_list_concat(ItemTexts, ', ', Inner),
+    format(atom(Text), "[~w]", [Inner]).
+
+print_json_object([], _Bindings, "{}") :- !.
+print_json_object(Pairs, Bindings, Text) :-
+    maplist(print_json_pair(Bindings), Pairs, PairTexts),
+    atomic_list_concat(PairTexts, ', ', Inner),
+    format(atom(Text), "{~w}", [Inner]).
+
+print_json_pair(Bindings, Key-Value, Text) :-
+    quote_value(Key, 0'", KeyText),
+    print_term(Value, Bindings, 0, top, ValueText),
+    format(atom(Text), "~w: ~w", [KeyText, ValueText]).
+
+print_json_array(Values, Bindings, Text) :-
+    maplist(print_arg(Bindings), Values, ItemTexts),
     atomic_list_concat(ItemTexts, ', ', Inner),
     format(atom(Text), "[~w]", [Inner]).
 
