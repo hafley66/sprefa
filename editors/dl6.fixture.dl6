@@ -1,0 +1,27 @@
+# every token class the chroma lexer paints, in one file
+import "grafana.spec".
+
+rel /soopy/files(glob: key(text)) -> (path: text, digest: text).
+rel /clock/tick(every: key(int)) -> (bucket: int).
+
+rel pr_seen(repo: text, number: int, state: text, bucket: int) log keep(all).
+rel sample(ratio: float, payload: json, blob: bytes, ok: bool) keep(count(64)).
+rel tagged(name: option(text), hops: list(int)).
+
+sh legacy(glob: text) -> (path: text) = `$SPREFA_FILES $glob`.
+
+pr_moved(Repo, Number, From, To, Bucket) <-
+  pr_seen(Repo, Number, To, Bucket),
+  pr_seen(Repo, Number, From, Earlier),
+  Earlier < Bucket,
+  From != To,
+  not scan(Repo).
+
+hot(Repo, Count) <+
+  pr_moved(Repo, _, _, _, _),
+  Count is count(Repo),
+  Count >= 3.14.
+
+kind(Repo, 'merged') <- pr_seen(Repo, _, "MERGED", _).
+
+? pr_moved(Repo, Number, From, To, Bucket).
