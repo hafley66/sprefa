@@ -112,3 +112,4 @@ node_modules
 .boop-worktrees/
 .issuectl/write.lock
 !.cargo/config.toml
+*.qlf
