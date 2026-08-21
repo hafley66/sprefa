@@ -1,0 +1,108 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: down
+
+classes: {
+  code: { style.fill: "#f6f8fa"; style.stroke: "#d0d7de"; style.font-color: "#1f2328" }
+  merged: { style.fill: "#dafbe1"; style.stroke: "#1a7f37"; style.font-color: "#1f2328" }
+  open: { style.fill: "#fff8c5"; style.stroke: "#9a6700"; style.font-color: "#1f2328" }
+  pending: { style.fill: "#ffebe9"; style.stroke: "#cf222e"; style.font-color: "#1f2328" }
+}
+
+pr404: "1. #404 crosswalk, MERGED 2dba4df75" {
+  class: merged
+  after: |`dl6
+    # 4 soopy executors, no shell, 3 grafana repos
+    rel dep_edge(repo, dep, ver)
+    cross_path(Repo, Callee, Dep, Name, Hops) <-
+      reach_hops(Repo, Callee, Hops),
+      dep_edge(Repo, Dep, _), def_at(Dep, Name, _)
+    ? cross_path(R, C, D, N, H).
+    # gate 10/10 byte-identical, grafana 2.09s 80MB
+  `| { class: code }
+}
+
+pr403: "2. #403 v5 census, MERGED 443a0c623" {
+  class: merged
+  after: |`dl6
+    # same rail, dl6, rust door, ast_rule executor
+    rel eprintln_baseline(path: text, allowed: int).
+    rail_eprintln_new(Path, Line) <-
+      eprintln_site(Path, Line), not waived(Path, Line),
+      not eprintln_baseline(Path, _).
+    # NO-NEW-EPRINTLN OK findings=4; parity matrix 4/0
+  `| { class: code }
+}
+
+pr406: "3. #406 files_at, MERGED 6c3f4147c" {
+  class: merged
+  before: |`rust
+    // hosts.rs:292, every demand read the worktree
+    let query = soopy::GitFilesQuery {
+        revision: soopy::Revision::Worktree, // literal
+        ..
+    };
+  `| { class: code }
+  after: |`rust
+    // files(glob) = worktree, files_at(rev, glob) = blob
+    // rulings.pl:544 files_unmarked_worktree_marked_rev
+    let revision = match host {
+        "files"    => Revision::Worktree,
+        "files_at" => parse_revision(input("rev")?),
+    };
+    // engine 151/0, crosswalk 10/10, feature-reach 3/3
+  `| { class: code }
+  before -> after
+}
+
+arr: "4. arrivals-and-ticks, landing lane live, no PR yet" {
+  class: pending
+  before: |`dl6
+    # four words, a template, a registry row, a sidecar
+    sh files(glob: text) -> (path: text, digest: text)
+      = "$SPREFA_FILES $glob"
+    bind interval(period: int, bucket: int).
+    bind watch(glob, path, digest).
+    # + files.adapters.json + host_input_contract(files,..)
+  `| { class: code }
+  after: |`dl6
+    # one word; key() on the column; canned rows ride --arrive
+    rel /soopy/files(glob: key(text))
+      -> (path: text, digest: text).
+    rel /clock/tick(every: key(int)) -> (bucket: int).
+    rel /soopy/watch(glob: key(text))
+      -> (path: text, digest: text).
+    # conformance 440, plunit 1041/0, grade 440/335
+    # engine 114/4: four stale tests in live_hosts.rs
+  `| { class: code }
+  before -> after
+}
+
+pr407: "5. #407 prwatch, OPEN, receipts pending" {
+  class: open
+  before: |`sh
+    # nothing: no PR poll, no clock, no resident process
+    gh pr view 404 --json state   # by hand, every time
+  `| { class: code }
+  after: |`dl6
+    rel /clock/tick(every: key(int)) -> (bucket: int).
+    rel /gh/pulls(repo: key(text), bucket: int)
+      -> (number: int, head_ref: text, state: text).
+    rel pr_seen(repo, number, state, bucket) log keep(all).
+    pr_moved(R, N, From, To, B) <-
+      pr_seen(R, N, To, B), pr_seen(R, N, From, E),
+      E < B, From != To.
+    ? pr_moved(R, N, From, To, B) order by B desc.
+    # dl6 run prwatch.dl6 --db prwatch.db, resident over UDS
+    # receipt owed: v_lane_proof, v_tick_cost, RSS over 10 min
+  `| { class: code }
+  before -> after
+}
+
+pr404 -> pr406: "rev explicit"
+arr -> pr407: "re-spell when landed"
