@@ -366,9 +366,19 @@ pub struct SprefaExtractExecutor {
 static EXTRACT: LazyLock<SprefaExtractExecutor> = LazyLock::new(SprefaExtractExecutor::default);
 
 impl SprefaExtractExecutor {
-    // An oid missing from the object database is a named stop; one batch
-    // process per repository root, never one per blob.
-    fn read_blob(&self, host: &str, repo_root: &Path, digest: &str) -> Result<Vec<u8>, HostError> {
+    // One batch process per repository root, never one per blob. An oid the
+    // object database has never seen is not a stop on its own: `git hash-object`
+    // over a worktree file yields a real content address for content that was
+    // never staged, and a rail that hashes what it reads hands us exactly that.
+    // The worktree fall-back is only sound because it re-hashes and compares, so
+    // the bytes served are always the bytes the digest names.
+    fn read_blob(
+        &self,
+        host: &str,
+        repo_root: &Path,
+        digest: &str,
+        path: &str,
+    ) -> Result<Vec<u8>, HostError> {
         let named = |message: String| HostError {
             host: host.to_string(),
             message,
@@ -381,10 +391,30 @@ impl SprefaExtractExecutor {
             batches.insert(key.clone(), batch);
         }
         let batch = batches.get_mut(&key).expect("just inserted the batch");
-        batch
+        let from_odb = batch
             .read(&soopy::ObjectId(Arc::from(digest)))
-            .map(|bytes| bytes.to_vec())
-            .map_err(|error| named(format!("read blob {digest} in {key}: {error}")))
+            .map(|bytes| bytes.to_vec());
+        let odb_error = match from_odb {
+            Ok(bytes) => return Ok(bytes),
+            Err(error) => error,
+        };
+        drop(batches);
+        let bytes = std::fs::read(path).map_err(|failure| {
+            named(format!(
+                "read blob {digest} in {key}: {odb_error}; worktree {path} unreadable too: {failure}"
+            ))
+        })?;
+        let worktree_digest = soopy::hash_object(&soopy::discover(PathBuf::from(path)).map_err(
+            |error| named(format!("no repository for the worktree read of {path}: {error}")),
+        )?, &bytes)
+        .map_err(|error| named(format!("hash the worktree {path}: {error}")))?;
+        if worktree_digest.0.as_ref() != digest {
+            return Err(named(format!(
+                "read blob {digest} in {key}: {odb_error}; worktree {path} hashes to {} instead",
+                worktree_digest.0
+            )));
+        }
+        Ok(bytes)
     }
 }
 
@@ -450,7 +480,7 @@ impl IHostExecutor for SprefaExtractExecutor {
                     .ok_or_else(|| {
                         named(format!("no repository root for digest read of {path}"))
                     })?;
-                self.read_blob(host, &repo_root, digest)?
+                self.read_blob(host, &repo_root, digest, &path)?
             }
             // The no-digest branch: a demand that never names a revision reads
             // the worktree bytes off disk, unchanged.
