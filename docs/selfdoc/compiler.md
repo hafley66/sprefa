@@ -81,34 +81,33 @@ flowchart LR
   n2["parse_dl_dcg  in15/out4"]
   n3["0_generic_expand  in14/out11"]
   n4["0_compiler_relations  in11/out6"]
-  n5["0_dot_expand  in9/out7"]
-  n6["0_rel_record  in9/out0"]
-  n7["0_body_walk  in9/out1"]
-  n8["use_resolve  in8/out2"]
+  n5["0_rel_record  in9/out0"]
+  n6["0_body_walk  in9/out1"]
+  n7["0_dot_expand  in8/out7"]
+  n8["use_resolve  in8/out3"]
   n9["0_coalesce_expand  in8/out6"]
   n10["0_seq_expand  in8/out5"]
-  n11["1_expansion  in8/out4"]
+  n11["1_expansion  in8/out3"]
   n12["0_negated_guard_expand  in7/out6"]
-  n5 -->|5| n1
-  n9 -->|3| n5
-  n5 -->|3| n9
+  n7 -->|5| n1
+  n9 -->|3| n7
+  n7 -->|3| n9
   n9 -->|2| n12
   n9 -->|2| n10
-  n5 -->|2| n12
-  n5 -->|2| n10
+  n7 -->|2| n12
+  n7 -->|2| n10
   n3 -->|2| n4
   n12 -->|2| n9
-  n12 -->|2| n5
+  n12 -->|2| n7
   n12 -->|2| n10
   n10 -->|2| n9
-  n10 -->|2| n5
+  n10 -->|2| n7
   n10 -->|2| n12
-  n11 -->|2| n3
   n4 -->|1| n10
   n3 -->|1| n1
-  n11 -->|1| n5
+  n11 -->|1| n3
   n2 -->|1| n1
-  n8 -->|1| n5
+  n8 -->|1| n7
   n8 -->|1| n2
 ```
 
@@ -118,25 +117,25 @@ flowchart LR
 |---|---:|---:|---:|---:|
 | `v6/prolog/0_type_plane.pl` | 75 | 112 | 16 | 2 |
 | `v6/prolog/compile/parse_dl_dcg.pl` | 211 | 274 | 15 | 4 |
-| `v6/prolog/0_generic_expand.pl` | 312 | 304 | 14 | 11 |
+| `v6/prolog/0_generic_expand.pl` | 320 | 316 | 14 | 11 |
 | `v6/prolog/0_compiler_relations.pl` | 38 | 56 | 11 | 6 |
-| `v6/prolog/0_dot_expand.pl` | 71 | 93 | 9 | 7 |
 | `v6/prolog/0_rel_record.pl` | 18 | 13 | 9 | 0 |
 | `v6/prolog/0_body_walk.pl` | 14 | 23 | 9 | 1 |
-| `v6/prolog/use_resolve.pl` | 44 | 82 | 8 | 2 |
+| `v6/prolog/0_dot_expand.pl` | 71 | 93 | 8 | 7 |
+| `v6/prolog/use_resolve.pl` | 44 | 76 | 8 | 3 |
 | `v6/prolog/0_coalesce_expand.pl` | 22 | 40 | 8 | 6 |
 | `v6/prolog/0_seq_expand.pl` | 16 | 41 | 8 | 5 |
-| `v6/prolog/1_expansion.pl` | 11 | 27 | 8 | 4 |
+| `v6/prolog/1_expansion.pl` | 12 | 21 | 8 | 3 |
 | `v6/prolog/0_negated_guard_expand.pl` | 8 | 14 | 7 | 6 |
 | `v6/prolog/0_option_expand.pl` | 34 | 49 | 6 | 0 |
 | `v6/prolog/0_type_ids.pl` | 16 | 19 | 6 | 0 |
 | `v6/prolog/print_dl.pl` | 74 | 99 | 5 | 3 |
 | `v6/prolog/0_cst_query.pl` | 37 | 53 | 5 | 1 |
 | `v6/prolog/0_anonymous_expand.pl` | 36 | 58 | 5 | 5 |
-| `v6/prolog/0_enum_expand.pl` | 35 | 50 | 5 | 5 |
+| `v6/prolog/compile/0_trace.pl` | 19 | 41 | 5 | 0 |
+| `v6/prolog/0_enum_expand.pl` | 35 | 50 | 4 | 5 |
 | `v6/prolog/0_ast_expand.pl` | 26 | 41 | 4 | 4 |
 | `v6/prolog/compile/scripts/0_json_arrival.pl` | 14 | 45 | 4 | 0 |
-| `v6/prolog/compile/0_trace.pl` | 18 | 39 | 3 | 0 |
 | `v6/prolog/0_graph.pl` | 17 | 25 | 2 | 0 |
 | `v6/prolog/0_unsupported_messages.pl` | 21 | 40 | 1 | 2 |
 | `v6/prolog/0_match_expand.pl` | 13 | 29 | 1 | 2 |
@@ -466,6 +465,15 @@ in the owning program that name the host.
 | `v6/dl/hotpath/prolog-hotpath-rails.dl6` | `call_node_at` | sprefa_extract | 1 |
 | `v6/dl/hotpath/prolog-hotpath-rails.dl6` | `call_ref` | sprefa_extract | 1 |
 | `v6/dl/hotpath/prolog-hotpath-rails.dl6` | `extract` | sprefa_extract | 1 |
+| `v6/dl/reach/feature-reach.dl6` | `call_node_at` | sprefa_extract | 1 |
+| `v6/dl/reach/feature-reach.dl6` | `call_ref` | sprefa_extract | 1 |
+| `v6/dl/reach/feature-reach.dl6` | `cargo_targets` | cargo_metadata | 1 |
+| `v6/dl/reach/feature-reach.dl6` | `cfg_at` | sprefa_extract | 1 |
+| `v6/dl/reach/feature-reach.dl6` | `df_arg_at` | sprefa_extract | 1 |
+| `v6/dl/reach/feature-reach.dl6` | `extract` | sprefa_extract | 1 |
+| `v6/dl/reach/feature-reach.dl6` | `files` | soopy_files | 1 |
+| `v6/dl/reach/feature-reach.dl6` | `scip__call` | sprefa_scip | 0 |
+| `v6/dl/reach/feature-reach.dl6` | `scip__diet__call` | sprefa_scip | 0 |
 | `v6/dl/selfdoc/selfdoc.dl6` | `call_node_at` | sprefa_extract | 2 |
 | `v6/dl/selfdoc/selfdoc.dl6` | `call_ref` | sprefa_extract | 1 |
 | `v6/dl/selfdoc/selfdoc.dl6` | `data_doc_at` | sprefa_extract | 1 |
@@ -481,7 +489,7 @@ the closure as an arity-0 ATOM, and the call family emits no record for an
 atom argument, so `path_component_stem/2` reads as an orphan against a live
 call at `0_anonymous_expand.pl:266`. Read every row before deleting one.
 
-Total: 285.
+Total: 286.
 
 | module | predicate | arity |
 |---|---|---:|
@@ -504,6 +512,7 @@ Total: 285.
 | `v6/prolog/0_generic_expand.pl` | `is_rel_template` | 1 |
 | `v6/prolog/0_generic_expand.pl` | `is_rel_template_enum` | 1 |
 | `v6/prolog/0_generic_expand.pl` | `minted_decl` | 1 |
+| `v6/prolog/0_generic_expand.pl` | `owner_carrier_entry` | 2 |
 | `v6/prolog/0_generic_expand.pl` | `pair_col` | 2 |
 | `v6/prolog/0_generic_expand.pl` | `template_artifacts` | 2 |
 | `v6/prolog/0_generic_expand.pl` | `template_parameter_name` | 2 |
@@ -524,9 +533,8 @@ Total: 285.
 | `v6/prolog/1_host_expand.pl` | `host_field` | 2 |
 | `v6/prolog/1_host_expand.pl` | `normalize_rule` | 2 |
 | `v6/prolog/1_host_expand.pl` | `salt_matches_column` | 2 |
-| `v6/prolog/3_clock_check.pl` | `delaying_edge` | 1 |
 
-The first 40 of 285, by module. Run `just selfdoc` for the whole set.
+The first 40 of 286, by module. Run `just selfdoc` for the whole set.
 
 ## The twenty hottest symbols
 
