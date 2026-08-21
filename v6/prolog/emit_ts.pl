@@ -574,7 +574,7 @@ host_plan_json(HostPlan, Json) :-
     js_string(Template, TemplateJson),
     js_string(DemandName, DemandJson),
     js_string(ResponseName, ResponseRelJson),
-    Executor = shell,
+    host_execution(Name, Template, Executor),
     format(atom(BaseJson),
            '{ name: ~w, inputs: ~w, outputs: ~w, template: ~w, demand_rel: ~w, response_rel: ~w, execution: "~w"',
            [NameJson, InputsJson, OutputsJson, TemplateJson,

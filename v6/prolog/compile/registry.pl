@@ -325,7 +325,11 @@ bind_definition(watch,    [col(glob, text), col(path, text), col(digest, text)])
 bind_executor(interval, live_interval).
 bind_executor(watch,    live_watch).
 
-% `sh` is shorthand for a shell-executed host and nothing else.
+% The named in-process ast-grep rule executor has a fixed authored boundary.
+% All other `sh` declarations retain the generic shell executor.
+host_execution(ast_rule, Template, ast_rule) :-
+    sub_string(Template, _, _, _, '$SPREFA_AST_RULE_HOST'),
+    !.
 host_execution(_, _, shell).
 
 % Ordinary `sh` inputs can serve two existing internal host roles. Identity
@@ -336,6 +340,9 @@ host_execution(_, _, shell).
 host_input_contract(extract,
                     [col(path, text), col(digest, text)],
                     [identity, freshness]).
+host_input_contract(ast_rule,
+                    [col(path, text), col(digest, text), col(request, text)],
+                    [identity, freshness, identity]).
 % The repo-scoped twin. `repo` is identity for the same reason `path` is: it is
 % part of what the answer is about and it returns on the response row. `digest`
 % stays freshness, so the same content under two repositories is still two

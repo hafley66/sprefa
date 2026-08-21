@@ -29,6 +29,7 @@ features = ["cli"]
 # Ported verbatim, not relitigated.
 ast-grep-core = "0.38"
 ast-grep-language = "0.38"
+ast-grep-config = "0.38"
 # oxc arena AST front-end for TS/JS (v5 carried these; src/graph/typegraph/ts).
 # The Program<'a> borrows the Allocator + source text, so parse ties content to
 # 'a (the GAT seam). Commit 2b: TypeF entities; commit 2c: the arrow-type sigs
@@ -95,6 +96,7 @@ tree-sitter-html = "0.23"
 # seam + the parity-golden normalize + the stdout JSONL all read this one shape.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 # basic-toml reads Cargo.toml for the package_edge arm. Candidates measured into
 # THIS lock: basic-toml +1 crate (serde only, already here), toml 1.1 +4
 # (toml_datetime/toml_parser/toml_writer/serde_spanned), cargo-manifest +14.

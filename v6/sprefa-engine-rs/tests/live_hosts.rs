@@ -6,7 +6,9 @@
 use std::collections::BTreeMap;
 
 use sprefa_engine_rs::driver::{run_schedule, run_schedule_live};
-use sprefa_engine_rs::hosts::{HostLiveRunner, IHostExecutor, ShellExecutor, SprefaExtractExecutor};
+use sprefa_engine_rs::hosts::{
+    AstRuleExecutor, HostLiveRunner, IHostExecutor, ShellExecutor, SprefaExtractExecutor,
+};
 use sprefa_engine_rs::sql::{SqlRunner, SqliteSeam};
 use sprefa_engine_rs::types::{
     Arrival, ArrivalSign, HostColumnPlan, HostPlanData, HostTypeDescriptor, HostTypeField,
@@ -37,6 +39,30 @@ fn add(rel: &str, row: Vec<Value>) -> Arrival {
 
 fn text(value: &str) -> Value {
     Value::Text(value.to_string())
+}
+
+#[test]
+fn ast_rule_executor_runs_the_typed_request_in_process() {
+    let directory = tempfile::tempdir().expect("temporary source directory");
+    let path = directory.path().join("sample.rs");
+    std::fs::write(&path, "fn main() { println!(\"ok\"); }").expect("write source");
+    let output = AstRuleExecutor
+        .run(
+            "ast_rule",
+            "$SPREFA_AST_RULE_HOST",
+            &BTreeMap::from([
+                ("path".into(), path.display().to_string()),
+                (
+                    "request".into(),
+                    "id: print\nrule:\n  pattern: println!($MESSAGE)\n".into(),
+                ),
+            ]),
+        )
+        .expect("in-process ast-rule execution");
+    let row: serde_json::Value = serde_json::from_str(&output).expect("ast-rule JSONL row");
+    assert_eq!(row["record"], "ast_rule");
+    assert_eq!(row["query"], "print");
+    assert_eq!(row["captures"][0]["name"], "MESSAGE");
 }
 
 #[tokio::test]
