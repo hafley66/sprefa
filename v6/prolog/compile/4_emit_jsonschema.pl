@@ -327,10 +327,17 @@ option_column_element(Decls, Rows0, RelId, ColumnName, Element) :-
 
 entry_module_row(Rows, Name, Row) :-
     member(Row, Rows),
-    Row = row(_, _, _, Name, module, _, _, _, _, _, _).
+    Row = row(ModuleId, _, _, Name, module, _, _, _, _, _, _),
+    module_public_relation(Rows, ModuleId).
 entry_module_row(Rows, _Name, Row) :-
     member(Row, Rows),
-    Row = row(_, 0, _, _, module, _, _, _, _, _, _).
+    Row = row(ModuleId, 0, _, _, module, _, _, _, _, _, _),
+    module_public_relation(Rows, ModuleId).
+
+module_public_relation(Rows, ModuleId) :-
+    member(row(_, _, _, LocalName, rel, _, _, ModuleId, _, _, _), Rows),
+    \+ compiler_helper_rel(LocalName),
+    !.
 
 rel_def_pair(Rows, RefPrefix, RelRow, Key-Schema) :-
     rel_path(Rows, RelRow, Path),

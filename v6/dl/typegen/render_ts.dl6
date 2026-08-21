@@ -36,8 +36,17 @@ rel type_relation_rust_name(owner_type_id: text, name: text).
 rel first_option(id: int).
 first_option(min(Id)) <- type_row(Id, kind: 'option').
 
-# PascalCase = replace(initcap(Name), '_', ''), matching the prolog emitter.
-# Inline, because an assignment-only rule has no positive body to group on.
+rel pascal_type_name(name: text, type_name: text).
+pascal_type_name(Name, TypeName) <-
+  type_row(name: Name),
+  Position := instr(Name, '_'),
+  Position > 0,
+  TypeName := replace(initcap(Name), '_', '').
+pascal_type_name(Name, TypeName) <-
+  type_row(name: Name),
+  Position := instr(Name, '_'),
+  Position < 1,
+  TypeName := concat([upper(substr(Name, 1, 1)), substr(Name, 2)]).
 
 # A leaf type is a primitive or a reference to another relation. Rel references
 # render as the referenced rel's own PascalCase name.
@@ -50,7 +59,7 @@ leaf_type(Id, 'unknown') <- type_row(Id, name: 'json', kind: 'primitive').
 leaf_type(Id, TypeName) <- emitted_type_name(Id, TypeName).
 leaf_type(Id, TypeName) <-
   type_row(id: Id, name: EnumName, kind: 'enum'),
-  TypeName := replace(initcap(EnumName), '_', '').
+  pascal_type_name(EnumName, TypeName).
 
 # A type parameter stands for itself inside its generic's body, uncased.
 leaf_type(Id, ParameterName) <-
@@ -81,12 +90,12 @@ rel renderable_rel(rel_id: int, bare_type: text, module_id: int).
 renderable_rel(RelId, BareType, ModuleId) <-
   type_row(id: RelId, name: RelName, kind: 'rel', module_id: ModuleId),
   not(minted_rel(RelName)),
-  BareType := replace(initcap(RelName), '_', '').
+  pascal_type_name(RelName, BareType).
 renderable_rel(RelId, BareType, ModuleId) <-
   type_row(id: RelId, name: RelName, kind: 'rel', module_id: ModuleId),
   minted_rel(RelName),
   concrete_rel(RelId),
-  BareType := replace(initcap(RelName), '_', '').
+  pascal_type_name(RelName, BareType).
 
 # Two rels asking for one name collide; the id inequality names each pair once.
 rel colliding_type_name(bare_type: text).
@@ -442,12 +451,12 @@ rel generic_head(generic_id: int, type_name: text, head_text: text).
 generic_head(GenericId, TypeName, HeadText) <-
   type_row(id: GenericId, name: GenericName, kind: 'generic_rel'),
   parameters_text(GenericId, Parameters),
-  TypeName := replace(initcap(GenericName), '_', ''),
+  pascal_type_name(GenericName, TypeName),
   HeadText := concat([TypeName, '<', Parameters, '>']).
 generic_head(GenericId, TypeName, TypeName) <-
   type_row(id: GenericId, name: GenericName, kind: 'generic_rel'),
   not(parameterized_generic(GenericId)),
-  TypeName := replace(initcap(GenericName), '_', '').
+  pascal_type_name(GenericName, TypeName).
 
 rel generic_field_line(generic_id: int, ordinal: int, line_text: text).
 generic_field_line(GenericId, Ordinal, LineText) <-
@@ -467,7 +476,3 @@ rendered_type(TypeName, 1, GenericId, FileText) <-
   generic_head(GenericId, TypeName, HeadText),
   generic_body(GenericId, Body),
   FileText := concat(['export interface ', HeadText, ' {\n', Body, '\n}\n']).
-rendered_type(TypeName, 1, GenericId, FileText) <-
-  generic_head(GenericId, TypeName, HeadText),
-  not(columned_generic(GenericId)),
-  FileText := concat(['export interface ', HeadText, ' {\n}\n']).

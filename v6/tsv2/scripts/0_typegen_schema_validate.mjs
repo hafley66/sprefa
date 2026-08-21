@@ -46,6 +46,7 @@ const representative = (node, seen = new Set()) => {
   seen.add(node);
   if (node.const !== undefined) return node.const;
   if (node.oneOf !== undefined) return representative(node.oneOf[0], seen);
+  if (node.anyOf !== undefined) return representative(node.anyOf[0], seen);
   if (node.type === "object") {
     return Object.fromEntries((node.required ?? []).map((name) => {
       const property = node.properties?.[name];
