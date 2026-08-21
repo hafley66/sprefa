@@ -24,6 +24,7 @@
 
 :- use_module(library(apply)).
 :- use_module(library(assoc)).
+:- use_module(library(pairs), [group_pairs_by_key/2]).
 :- use_module(library(crypto)).
 :- use_module(library(lists)).
 :- use_module('compile/0_trace', [run_compile_step/4]).
@@ -1359,19 +1360,56 @@ carrier_member_type(pairs, Position, Pairs, Type) :-
 % Keyed by owner, not by member. Same cache scope as semantic_decl_id/4, which
 % is what makes one Decls list per scope safe to assume.
 owner_member_carrier(Decls, OwnerName, Carrier) :-
-    nb_current(generic_semantic_id_cache,
-               cache(DeclCache, TypeCache, OwnerCache0)),
+    atom(OwnerName),
+    nb_current(generic_semantic_id_cache, cache(_, _, OwnerIndex)),
+    OwnerIndex \== none,
     !,
-    (   get_assoc(OwnerName, OwnerCache0, Carrier)
+    (   get_assoc(OwnerName, OwnerIndex, Carrier)
     ->  true
-    ;   owner_member_carrier_uncached(Decls, OwnerName, Carrier),
-        put_assoc(OwnerName, OwnerCache0, Carrier, OwnerCache),
-        nb_setval(generic_semantic_id_cache,
-                  cache(DeclCache, TypeCache, OwnerCache))
+    ;   Carrier = carrier(pairs, [], [])
     ).
 owner_member_carrier(Decls, OwnerName, Carrier) :-
     owner_member_carrier_uncached(Decls, OwnerName, Carrier).
 
+%! owner_carrier_index(+Decls, -Index) is det.
+% Four Decls passes for the whole program, where the per-owner form below is
+% four passes per owner. `none` when a declaration names its owner with an
+% unbound term, which get_assoc/3 cannot answer the way member/2 does.
+owner_carrier_index(Decls, Index) :-
+    findall(Name-template(Specs),
+            ( member(rel_template(Segments, _, Specs), Decls),
+              atomic_list_concat(Segments, '__', Name) ),
+            TemplateRows),
+    findall(Name-type_decl(Specs),
+            member(type_decl(Name, Specs), Decls),
+            TypeDeclRows),
+    findall(Name-column(ColumnName, ColumnType),
+            member(col_type(Name/_, ColumnName, ColumnType), Decls),
+            ColumnRows),
+    findall(Name-key_positions(Positions),
+            member(keyed(Name/_, Positions), Decls),
+            KeyedRows),
+    append([TemplateRows, TypeDeclRows, ColumnRows, KeyedRows], Rows),
+    (   forall(member(Name0-_, Rows), atom(Name0))
+    ->  keysort(Rows, Sorted),
+        group_pairs_by_key(Sorted, Grouped),
+        maplist(owner_carrier_entry, Grouped, Entries),
+        list_to_assoc(Entries, Index)
+    ;   Index = none
+    ).
+
+% keysort/2 is stable, so each owner's items keep the order the scans they
+% replace read them in, and the first template or type_decl still wins.
+owner_carrier_entry(Name-Items, Name-carrier(Kind, Specs, Keyed)) :-
+    (   memberchk(template(TemplateSpecs), Items)
+    ->  Kind = template, Specs = TemplateSpecs
+    ;   memberchk(type_decl(DeclSpecs), Items)
+    ->  Kind = type_decl, Specs = DeclSpecs
+    ;   Kind = pairs,
+        findall(ColumnName-ColumnType,
+                member(column(ColumnName, ColumnType), Items), Specs)
+    ),
+    findall(Positions, member(key_positions(Positions), Items), Keyed).
 
 owner_member_carrier_uncached(Decls, OwnerName, carrier(Kind, Specs, Keyed)) :-
     (   member(rel_template(Segments, _, TemplateSpecs), Decls),
@@ -1527,8 +1565,9 @@ normalized_type_rows(Decls, Rows) :-
     ).
 
 normalized_type_rows_rebuilt(Decls, Rows) :-
+    owner_carrier_index(Decls, OwnerIndex),
     setup_call_cleanup(
-        nb_setval(generic_semantic_id_cache, cache(t, t, t)),
+        nb_setval(generic_semantic_id_cache, cache(t, t, OwnerIndex)),
         normalized_type_rows_cached(Decls, Rows),
         nb_delete(generic_semantic_id_cache)).
 
