@@ -38,7 +38,19 @@ pub trait IHostExecutor: Sync {
 
 /// The roster a construction stop names. Every entry runs in this process or
 /// spawns one known binary; none of them reaches a shell.
-pub const LINKED_EXECUTORS: &str = "soopy, soopy_files, sprefa_extract, sprefa_scip, cargo_metadata, fixture, http_fetch, env, gh_repos, soopy_checkout, toml_json";
+pub const LINKED_EXECUTORS: &str =
+    "soopy, soopy_files, soopy_refs, soopy_history, soopy_repo_at, dep_crawl, \
+     sprefa_extract, sprefa_scip, cargo_metadata, fixture, http_fetch, env, gh_repos, \
+     soopy_checkout, toml_json";
+
+static GIT_REFS: LazyLock<crate::executors::git_refs::GitRefsExecutor> =
+    LazyLock::new(crate::executors::git_refs::GitRefsExecutor::new);
+static GIT_HISTORY: LazyLock<crate::executors::git_history::GitHistoryExecutor> =
+    LazyLock::new(crate::executors::git_history::GitHistoryExecutor::new);
+static REPO_AT: LazyLock<crate::executors::repo_at::RepoAtExecutor> =
+    LazyLock::new(crate::executors::repo_at::RepoAtExecutor::new);
+static DEP_CRAWL: LazyLock<crate::executors::dep_crawl::DepCrawlExecutor> =
+    LazyLock::new(crate::executors::dep_crawl::DepCrawlExecutor::new);
 
 pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
     match execution {
@@ -54,6 +66,12 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
         "gh_repos" => Some(&crate::executors::GhReposExecutor),
         "soopy_checkout" => Some(&crate::executors::SoopyCheckoutExecutor),
         "toml_json" => Some(&crate::executors::TomlJsonExecutor),
+        // The cross-repository families. Each memoises on its demand inputs, so
+        // the sibling host names riding one pass settle in one soopy call.
+        "soopy_refs" => Some(&*GIT_REFS),
+        "soopy_history" => Some(&*GIT_HISTORY),
+        "soopy_repo_at" => Some(&*REPO_AT),
+        "dep_crawl" => Some(&*DEP_CRAWL),
         // The two scip namespaces, both in-process: no child spawn for the
         // diet side, one budgeted indexer run for the index side.
         "sprefa_scip" => Some(&*SCIP),
@@ -422,14 +440,14 @@ impl IHostExecutor for SoopyMutationExecutor {
 }
 
 /// One answered row from named column/value pairs.
-fn host_row<const N: usize>(columns: [(&str, serde_json::Value); N]) -> HostRow {
+pub(crate) fn host_row<const N: usize>(columns: [(&str, serde_json::Value); N]) -> HostRow {
     columns
         .into_iter()
         .map(|(name, value)| (name.to_string(), value))
         .collect()
 }
 
-fn required_input(
+pub(crate) fn required_input(
     host: &str,
     env: &BTreeMap<String, String>,
     name: &str,

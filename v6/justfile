@@ -569,3 +569,7 @@ selfdoc-check:
     done
     [ "$fail" -eq 0 ] && printf 'SELFDOC HOLDS compiler.md extract.md\n'
     exit "$fail"
+# The four multirepo_crawl golden programs on the Rust door: soopy answers the
+# ref store, the commit DAG, the rev-pinned file surface and the crawl frontier.
+crosswalk-gate:
+	bash {{ v6 }}/dl/crosswalk/gate.sh

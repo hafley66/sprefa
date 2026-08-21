@@ -1,0 +1,29 @@
+# The real org fixture: three public grafana repositories, each pinned at one
+# rev, chosen so the corpus carries a TWO-HOP dependency chain rather than three
+# unrelated checkouts:
+#
+#     alloy ── requires ──> dskit ── requires ──> gomemcache
+#
+# SIZES are the GitHub `size` field (full history, MiB), measured before any
+# clone. The brief's ceiling is 200 MB each:
+#
+#     grafana/alloy                    157.4  kept
+#     grafana/dskit                     14.9  kept
+#     grafana/gomemcache                 0.2  kept
+#     grafana/grafana-plugin-sdk-go      9.3  DROPPED, no repo in the trio
+#                                             requires it: zero dep edges
+#     grafana/tempo                    207.2  over the ceiling
+#     grafana/pyroscope                246.3  over the ceiling
+#     grafana/loki                     500.6  over the ceiling; alloy requires
+#                                             it, so it lands as corpus_boundary
+#
+# REV KIND. `tag` is a released tag. `commit` is the sha the DEPENDING
+# repository's own go.mod pins, used where a repository publishes no tags at
+# all: `grafana/dskit` has zero tags, and `grafana/gomemcache` is pinned by
+# dskit the same way. Pinning the required sha is what makes the dep edge a
+# fact about this corpus rather than about whatever HEAD happens to be.
+#
+# slug	rev	rev_kind	module	glob
+grafana/alloy	a435563ff073d5355952c1a8d1821110b1392691	tag:v1.18.0	github.com/grafana/alloy	internal/component/discovery/*.go
+grafana/dskit	8d1c6d34bb5a42b04caa982d68403c5a643bb742	commit	github.com/grafana/dskit	kv/*.go
+grafana/gomemcache	9448343bd654bb8a62764fa9d2465dad4d5386a7	commit	github.com/grafana/gomemcache	memcache/*.go

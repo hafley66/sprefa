@@ -2304,6 +2304,62 @@ sites but not against new code. **missing** = nothing.
   __host_response_extract` 205359 -> 22878, `stage __host_response_extract`
   142211 -> 11607, TOTAL rust in scopes 3093662 -> 736591. RUST-GRADE stayed
   439/335 byte-clean across every step.
+## 62. A program driven only by boot facts, answering silence that reads as a finding
+
+- WHAT IT LOOKS LIKE: every seed is a plain fact in the source, the program
+  compiles clean, the harness exits 0, and the reads come back empty except for
+  one negated rel, which comes back FULL. The empty rels look like "nothing
+  matched" and the full one looks like a real finding.
+- HOW IT BIT US: 2026-08-21, `v6/dl/crosswalk/crosswalk.dl6`. `repo_rev`,
+  `repo_scope` and `entry_point` were written as facts, per the brief. The fold
+  answered zero `source_file`, zero `dep_edge`, zero `repo_file_count`, and
+  three `entry_unreached` rows naming every declared entry point. Read at face
+  value that says "the entry points are stale at this rev". What it actually
+  says is that no host ever ran: a boot fact is a static table and never a tick
+  delta, so a rule whose body is facts and a host demand never fires, while
+  `not(reach(...))` over an empty `reach` is satisfied for every entry.
+- WHY IT HID: the negation inverted the silence. Every rel that should have had
+  rows had none, and the one rel whose emptiness would have been the honest
+  signal was the one the negation filled. `--final-tsv` prints what a rel holds
+  and never whether its host was ever demanded.
+- THE LAW: a fact table is a JOIN PARTNER, never a driver. Every program that
+  reads the world names one arrival rel and puts it in the body of the rule that
+  raises the first host demand. `crosswalk.dl6` spells that `crosswalk_run` and
+  the runner posts one row.
+- THE RAIL: not built. The shape a rail would take: `analyze.pl` already walks
+  each rule's body, so a host-demand rule whose body joins only boot-fact rels
+  and no arrival target is statically decidable, and it can never fire. Filed as
+  a compiler-lane request on the crosswalk PR rather than fixed here, because
+  `v6/prolog/**` is another lane's tree.
+
+## 63. Two hosts meant to share one pass, split by a name the registry never heard of
+
+- WHAT IT LOOKS LIKE: two `sh` declarations carry the same template on purpose,
+  so the runner's applicative grouping folds them into one process and each
+  selects its own columns. One of the two names is new. The compile stops at
+  `template_mismatch(unreferenced_input(digest))`, adding `{digest}` to that
+  template makes it compile, and the two hosts now fill DIFFERENT commands and
+  run the extractor twice over every file.
+- HOW IT BIT US: 2026-08-21. `crosswalk.dl6` declared `repo_extract` (registered)
+  and `repo_call_site` (new) over the same `(repo, path, digest)` inputs.
+  `registry.pl:525` `host_input_roles/3` falls back to all-identity for a name
+  with no `host_input_contract` row, and `1_host_expand.pl:311` requires every
+  IDENTITY input to appear in the template. `repo_extract`'s registered contract
+  makes `digest` freshness and exempt; the new name's does not.
+- WHY IT HID: the failure is a compile stop and not a wrong answer, so it is
+  loud — but the OBVIOUS fix (mention the column) is the one that silently
+  doubles the work, and nothing measures that. This is ARCH.pl's already-filed
+  `cold_author_defects` D1 ("host_input_contract keyed on hardcoded host NAMES")
+  reaching a second caller.
+- THE LAW: a host that must share a pass with another host shares its input
+  contract, which today means sharing a registered NAME. `crosswalk.dl6` uses
+  the registered `call_node_at` and `extract` over absolute paths rather than
+  minting a repo-scoped twin.
+- THE RAIL: not built. A `host_input_contract` row for the repo-scoped site
+  shape is a registry request on the crosswalk PR. The measurable rail is a
+  count: two hosts declared with one template must produce one `host_run` span
+  per file, and `DL_TRACE_SUMMARY=1` already prints the call count that would
+  catch a second pass.
 
 ## Rail gap table
 

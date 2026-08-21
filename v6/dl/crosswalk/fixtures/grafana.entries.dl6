@@ -1,0 +1,41 @@
+# @comment-ok: the hand-declared half of the fixture, and why each row is here.
+# grafana.entries.dl6 -- the facts a human writes, concatenated onto
+# crosswalk.dl6 by run.sh. `{CHECKOUT_ROOT}` is substituted with the fixture
+# cache root, because a checkout path is a machine fact and a pinned rev is not.
+#
+# THE CHAIN THESE ROWS DESCRIBE:
+#   alloy ── requires github.com/grafana/dskit ──> dskit
+#   dskit ── requires github.com/grafana/gomemcache ──> gomemcache
+#
+# THE SCOPES ARE NARROW ON PURPOSE. alloy carries 2065 tracked `.go` files at
+# this rev and reading all of them is not what a cross-repo question asks: the
+# scopes name the packages that actually sit on the chain, and dskit's scope
+# names the four packages alloy's own imports reach plus the one that reaches
+# gomemcache.
+#
+# THE ENTRY POINTS ARE THE APP'S WIRING AT THIS REV, typed by hand. Nothing in
+# this program recovers them, and a stale one shows up in `entry_unreached`
+# rather than silently reading as reached.
+
+repo_rev('alloy', '{CHECKOUT_ROOT}/grafana/alloy',
+         'a435563ff073d5355952c1a8d1821110b1392691', 'github.com/grafana/alloy').
+repo_rev('dskit', '{CHECKOUT_ROOT}/grafana/dskit',
+         '8d1c6d34bb5a42b04caa982d68403c5a643bb742', 'github.com/grafana/dskit').
+repo_rev('gomemcache', '{CHECKOUT_ROOT}/grafana/gomemcache',
+         '9448343bd654bb8a62764fa9d2465dad4d5386a7', 'github.com/grafana/gomemcache').
+
+repo_scope('alloy', 'internal/loki/client/*.go').
+repo_scope('alloy', 'internal/usagestats/*.go').
+repo_scope('dskit', 'backoff/*.go').
+repo_scope('dskit', 'instrument/*.go').
+repo_scope('dskit', 'multierror/*.go').
+repo_scope('dskit', 'user/*.go').
+repo_scope('dskit', 'cache/*.go').
+repo_scope('gomemcache', 'memcache/*.go').
+
+entry_point('alloy', 'a435563ff073d5355952c1a8d1821110b1392691',
+            'internal/loki/client/client.go', 'New').
+entry_point('alloy', 'a435563ff073d5355952c1a8d1821110b1392691',
+            'internal/usagestats/reporter.go', 'NewReporter').
+entry_point('alloy', 'a435563ff073d5355952c1a8d1821110b1392691',
+            'internal/usagestats/reporter.go', 'nextReport').
