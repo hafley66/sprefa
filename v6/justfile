@@ -545,3 +545,27 @@ ghcacher-rust:
 # reachcrate fixture on both resolved planes. budget: measured 3s diet-only.
 feature-reach:
     {{ capped }} "${FEATURE_REACH_BUDGET_S:-600}" bash {{ v6 }}/dl/reach/feature-reach.sh --check
+
+# The compiler and sprefa-extract documented by extract + dl6: one .dl6 program
+# reads both trees through the call family and renders docs/selfdoc/*.md.
+# budget: measured 8.5-12s, default 120s (SELFDOC_BUDGET_S)
+selfdoc:
+    {{ capped }} "${SELFDOC_BUDGET_S:-120}" bash {{ v6 }}/dl/selfdoc/selfdoc.sh
+
+# The same render into a temp dir, diffed against what is committed. Nonzero on
+# drift; wired into no other recipe.
+selfdoc-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work="$(mktemp -d "${TMPDIR:-/tmp}/selfdoc-check.XXXXXX")"
+    trap 'rm -rf "$work"' EXIT
+    {{ capped }} "${SELFDOC_BUDGET_S:-120}" bash {{ v6 }}/dl/selfdoc/selfdoc.sh "$work" >/dev/null
+    fail=0
+    for name in compiler.md extract.md; do
+      if ! diff -u "{{ v6 }}/../docs/selfdoc/$name" "$work/$name"; then
+        printf 'SELFDOC_DRIFT docs/selfdoc/%s -- run `just selfdoc`\n' "$name" >&2
+        fail=1
+      fi
+    done
+    [ "$fail" -eq 0 ] && printf 'SELFDOC HOLDS compiler.md extract.md\n'
+    exit "$fail"
