@@ -270,6 +270,54 @@ fn the_boundary_read_renders_each_row_key_once() {
     );
 }
 
+// TEST: the struct plane dedups collected values through an index. Pre-fix it
+// scanned the bucket it had already filled, comparing the whole canonical
+// rendering each time, so 3000 distinct values cost 4.5 million string
+// comparisons and this assertion read 3000 vs 4501500.
+#[test]
+fn the_struct_plane_dedups_collected_values_through_an_index() {
+    let values = 3_000usize;
+    let types = vec![sprefa_engine_rs::types::StructTypePlan {
+        name: "point".to_string(),
+        columns: vec!["x".to_string(), "y".to_string()],
+        refs: vec![None, None],
+        key_indices: vec![0],
+        conflict_sql: String::new(),
+        intern_sql: String::new(),
+        lookup_sql: String::new(),
+    }];
+    let ref_columns = std::collections::HashMap::from([(
+        "placed".to_string(),
+        vec![None, Some("point".to_string())],
+    )]);
+    let arrivals: Vec<sprefa_engine_rs::types::Arrival> = (0..values)
+        .map(|index| sprefa_engine_rs::types::Arrival {
+            rel: "placed".to_string(),
+            sign: sprefa_engine_rs::types::ArrivalSign::Add,
+            row: vec![
+                Value::Integer(index as i64),
+                Value::Text(format!("{{\"x\":{index},\"y\":{index}}}")),
+            ],
+        })
+        .collect();
+    let _serial = PROBE_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+    let before = sprefa_engine_rs::struct_plane::collect_probes();
+    let started = std::time::Instant::now();
+    let distinct =
+        sprefa_engine_rs::struct_plane::distinct_struct_values(&types, &ref_columns, &arrivals);
+    let probes = sprefa_engine_rs::struct_plane::collect_probes() - before;
+    assert_eq!(distinct, values);
+    assert!(
+        probes <= 2 * values as u64,
+        "{probes} probes for {values} values is a scan"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "quadratic timing: {:?}",
+        started.elapsed()
+    );
+}
+
 // TEST: the rev-pair change plane drops paired paths through a set. Pre-fix each
 // surviving path was checked against the whole paired list, so 2000 renames plus
 // 2000 creations cost 4 million comparisons and this assertion read 4000 vs

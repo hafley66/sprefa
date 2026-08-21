@@ -227,6 +227,47 @@ fn rewrite_row(row: &Row, refs: &[Option<String>], ids: &HashMap<String, i64>) -
         .collect()
 }
 
+/// The distinct struct values one batch names, per type name. Public so a
+/// COUNT test can read `collect_probes` over it without a seam.
+pub fn distinct_struct_values(
+    types: &[StructTypePlan],
+    ref_columns: &HashMap<String, Vec<Option<String>>>,
+    arrivals: &[Arrival],
+) -> usize {
+    let by_name: HashMap<&str, &StructTypePlan> = types
+        .iter()
+        .map(|plan| (plan.name.as_str(), plan))
+        .collect();
+    collect_arrivals(&by_name, ref_columns, arrivals)
+        .values()
+        .map(|bucket| bucket.0.len())
+        .sum()
+}
+
+fn collect_arrivals(
+    by_name: &HashMap<&str, &StructTypePlan>,
+    ref_columns: &HashMap<String, Vec<Option<String>>>,
+    arrivals: &[Arrival],
+) -> HashMap<String, CollectedBucket> {
+    let mut per_type: HashMap<String, CollectedBucket> = HashMap::new();
+    for arrival in arrivals.iter() {
+        let Some(refs) = ref_columns.get(&arrival.rel) else {
+            continue;
+        };
+        for (index, value) in arrival.row.iter().enumerate() {
+            let Some(type_name) = refs.get(index).and_then(Option::as_deref) else {
+                continue;
+            };
+            let plan = by_name
+                .get(type_name)
+                .unwrap_or_else(|| panic!("struct type plan missing: {type_name}"));
+            let decoded = parse_struct(value);
+            collect(plan, by_name, &decoded, &mut per_type);
+        }
+    }
+    per_type
+}
+
 pub fn intern<'a>(
     seam: &SqliteSeam,
     types: &[StructTypePlan],
@@ -242,22 +283,7 @@ pub fn intern<'a>(
         .iter()
         .map(|plan| (plan.name.as_str(), plan))
         .collect();
-    let mut per_type: HashMap<String, CollectedBucket> = HashMap::new();
-    for arrival in arrivals.iter() {
-        let Some(refs) = ref_columns.get(&arrival.rel) else {
-            continue;
-        };
-        for (index, value) in arrival.row.iter().enumerate() {
-            let Some(type_name) = refs.get(index).and_then(Option::as_deref) else {
-                continue;
-            };
-            let plan = by_name
-                .get(type_name)
-                .unwrap_or_else(|| panic!("struct type plan missing: {type_name}"));
-            let decoded = parse_struct(value);
-            collect(plan, &by_name, &decoded, &mut per_type);
-        }
-    }
+    let per_type = collect_arrivals(&by_name, ref_columns, &arrivals);
     if per_type.is_empty() {
         return Ok(arrivals);
     }
