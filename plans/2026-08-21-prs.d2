@@ -1,0 +1,119 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    dark-theme-id: 0
+    pad: 20
+  }
+}
+direction: down
+
+classes: {
+  code: { style.fill: "#f6f8fa"; style.stroke: "#d0d7de"; style.font-color: "#1f2328" }
+  note: { style.fill: "#ffffff"; style.stroke: "#d0d7de"; style.font-color: "#1f2328" }
+  merged: { style.fill: "#dafbe1"; style.stroke: "#1a7f37"; style.font-color: "#1f2328" }
+  open: { style.fill: "#fff8c5"; style.stroke: "#9a6700"; style.font-color: "#1f2328" }
+  pending: { style.fill: "#ffebe9"; style.stroke: "#cf222e"; style.font-color: "#1f2328" }
+}
+
+pr404: "1. #404 crosswalk, MERGED 2dba4df75" {
+  class: merged
+  what: |||md
+    **Cross-repo reach over three pinned grafana repos.**
+    - four soopy executors: refs, history, repo_at, dep_crawl
+    - v5 MANIFEST.tsv reproduced without python or shelled git
+    - gate 10/10 byte-identical, grafana run 2.09s, 80MB
+  ||| { class: note; shape: rectangle }
+  code: |`dl6
+    cross_path(Repo, Callee, Dep, Name, Hops) <-
+      reach_hops(Repo, Callee, Hops),
+      dep_edge(Repo, Dep, _),
+      def_at(Dep, Name, _).
+    ? cross_path(R, C, D, N, H).
+  `| { class: code }
+  what -> code
+}
+
+pr403: "2. #403 v5 census, MERGED 443a0c623" {
+  class: merged
+  what: |||md
+    **Every v5 builtin mapped to a v6 record or a child issue.**
+    - 163-rail census, retirement plan names the day src/ stops building
+    - no-new-eprintln and recompute-guard ported to dl6 on the rust door
+    - `just v5-rails` OK, parity matrix test 4/0
+  ||| { class: note; shape: rectangle }
+  code: |`dl6
+    rail_eprintln_new(Path, Line) <-
+      eprintln_site(Path, Line),
+      not waived(Path, Line),
+      not eprintln_baseline(Path, _).
+  `| { class: code }
+  what -> code
+}
+
+pr406: "3. #406 files_at, MERGED 6c3f4147c" {
+  class: merged
+  what: |||md
+    **The revision is in the host name, never a column.**
+    - `files(glob)` reads the worktree, `files_at(rev, glob)` reads the blob
+    - rulings.pl:544 already said so; the engine had no files_at arm
+    - grafana.sh builds soopy instead of falling back to git cat-file
+    - engine 151/0, crosswalk 10/10, feature-reach 3/3
+  ||| { class: note; shape: rectangle }
+  code: |`rust
+    let revision = match host {
+        "files"    => Revision::Worktree,
+        "files_at" => parse_revision(input("rev")?),
+    };
+  `| { class: code }
+  what -> code
+}
+
+arr: "4. arrivals-and-ticks, landing lane live, no PR yet" {
+  class: pending
+  what: |||md
+    **sh, bind and host collapse into one rel form.**
+    - `key()` on the column says what identifies an answer
+    - canned golden rows ride `--arrive`; adapters.json and registry host rows go
+    - executor path spelled `/soopy/files` per your call; lane applying it now
+    - conformance 440, plunit 1041/0, grade 440/335
+    - engine 114 pass / 4 fail: stale tests in live_hosts.rs, lane fixing
+  ||| { class: note; shape: rectangle }
+  before: |`dl6
+    sh files(glob: text) -> (path: text, digest: text)
+      = "$SPREFA_FILES $glob"
+    bind interval(period: int, bucket: int).
+    bind watch(glob, path, digest).
+  `| { class: code }
+  after: |`dl6
+    rel /soopy/files(glob: key(text))
+      -> (path: text, digest: text).
+    rel /clock/tick(every: key(int)) -> (bucket: int).
+    rel /soopy/watch(glob: key(text))
+      -> (path: text, digest: text).
+  `| { class: code }
+  what -> before -> after
+}
+
+pr407: "5. #407 prwatch, OPEN, receipts pending" {
+  class: open
+  what: |||md
+    **PRs polled by a resident dl6 program, state logged per tick.**
+    - `dl6 run prwatch.dl6 --db prwatch.db`, one process over a UDS socket
+    - clock ticks every 60s, GitHub answers 304 with 0 bytes when unchanged
+    - the db also holds the program's own tick cost and RSS
+    - owed: v_lane_proof and v_tick_cost pastes from a 10-minute run
+  ||| { class: note; shape: rectangle }
+  code: |`dl6
+    rel pr_seen(repo, number, state, bucket) log keep(all).
+    pr_moved(R, N, From, To, B) <-
+      pr_seen(R, N, To, B),
+      pr_seen(R, N, From, E),
+      E < B, From != To.
+    ? pr_moved(R, N, From, To, B) order by B desc.
+  `| { class: code }
+  what -> code
+}
+
+pr404 -> pr406: "rev explicit"
+arr -> pr407: "re-spell when landed"
