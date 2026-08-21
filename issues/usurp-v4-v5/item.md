@@ -51,3 +51,9 @@ Filed against this epic, one per door-level gap:
   CLI-only; v5's module/crate edge rels have no dl6 spelling.
 - `@v5-rail-eprintln-blocked` — the `no-new-eprintln` rail port, blocked on the
   first child.
+- `@v6-eprintln-ratchet-five` — the five unwaived `eprintln!` sites that rail
+  would have found, measured by script instead.
+- `@v5-retire-multirepo-golden-pin` — the one live green gate still running the
+  v5 binary, and the day v5 stops building.
+- `@scip-freshness-env-race` — found while running this lane's gates: three
+  tests read `SPREFA_SCIP_INDEX` without the environment lock.
