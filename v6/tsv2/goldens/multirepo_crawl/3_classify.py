@@ -97,7 +97,7 @@ def main():
     unclassified = 0
 
     print("CLASSIFY multirepo crawl")
-    print(f"  corpus ground truth: {len(pins)} (repo, module, version) pins read from go.mod bytes")
+    print(f"  corpus oracle: {len(pins)} (repo, module, version) pins read from go.mod bytes")
 
     # ── dep_pin: extraction. Prove every differing row against corpus bytes ──
     v5_pin = read_tsv(f"{work}/v5.dep_pin.tsv")
@@ -128,7 +128,7 @@ def main():
                    (v5_pin ^ ground))
             unclassified += len(v5_pin ^ ground)
         else:
-            print("        and both match the corpus ground truth exactly")
+            print("        and both match the corpus oracle exactly")
 
     # ── derived rels: rule fidelity, each engine against its OWN inputs ─────
     def pin_tuples(rows):
