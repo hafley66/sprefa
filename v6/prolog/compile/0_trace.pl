@@ -139,15 +139,24 @@ trace_dict(Name, PhaseMeasurements, Steps, Dict) :-
               GcMsF is float(GcMs)
             ),
             PhaseDicts),
-    findall(_{phase: Phase, step: Step, wall: WallF, inf: Inferences,
+    findall(_{phase: Phase, step: StepName, wall: WallF, inf: Inferences,
               gc_ms: GcMsF, tables: Tables},
             ( member(step(Phase, Step, Wall, Inferences, GcMs, Tables), Steps),
+              step_json_name(Step, StepName),
               WallF is float(Wall),
               GcMsF is float(GcMs)
             ),
             StepDicts),
     get_time(Now),
     Dict = _{program: Name, at: Now, phases: PhaseDicts, steps: StepDicts}.
+
+% A namespaced step (expansion:option) is a compound, and json has no syntax
+% for one; an atom step crosses unchanged.
+step_json_name(Step, Name) :-
+    (   atom(Step)
+    ->  Name = Step
+    ;   format(atom(Name), '~w', [Step])
+    ).
 
 % ONE step of a phase, timed and recorded when the trace is on. It lives here
 % rather than in compile.pl so lower.pl can wrap its own steps: compile.pl
