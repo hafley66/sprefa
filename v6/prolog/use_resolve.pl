@@ -18,6 +18,7 @@
 :- use_module(library(filesex)).
 :- use_module('compile/parse_dl_dcg', [use_item/3, parse_dl_dcg_entry/5]).
 :- use_module('0_dot_expand', [declared_path/3]).
+:- use_module('compile/0_trace', [run_compile_step/4]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -57,9 +58,11 @@ expand_uses(EntryPath, OnStack, Loaded0, Loaded, ProgOut, ModuleTable) :-
 expand_uses(EntryPath, OnStack, Loaded0, Loaded, ProgOut, ModuleTable,
             Bindings, Findings) :-
     entry_base_dir(EntryPath, BaseDir),
-    collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files,
-                ModuleTable, _Paths),
-    merge_files(Files, ProgOut, Bindings, Findings).
+    run_compile_step(parse, collect_all,
+                     collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded,
+                                 Files, ModuleTable, _Paths), _),
+    run_compile_step(parse, merge_files,
+                     merge_files(Files, ProgOut, Bindings, Findings), _).
 
 % relative_file_name/3 reads a slashless second argument as a FILE and drops
 % its last segment, so the base always carries its trailing slash.
@@ -130,7 +133,8 @@ collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files, Tables,
         )
     ;   true
     ),
-    strip_entry(EntryPath, EntryAbs, UseSpecs, CoreCodes),
+    run_compile_step(parse, strip_entry,
+                     strip_entry(EntryPath, EntryAbs, UseSpecs, CoreCodes), _),
     include_roots(EntryPath, Roots),
     module_name(EntryAbs, EntryName),
     module_hash(BaseDir, EntryAbs, EntryHash),
@@ -138,11 +142,17 @@ collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files, Tables,
     collect_children(UseSpecs, Roots, BaseDir, [loaded(EntryAbs, []) | OnStack],
                      EntryName, EntryHash, Loaded0, Loaded1, ChildFiles,
                      ChildTables, EdgeDecls),
-    parse_source(EntryPath, CoreCodes, OwnProg, OwnBindings, OwnFindings),
+    run_compile_step(parse, parse_source,
+                     parse_source(EntryPath, CoreCodes, OwnProg, OwnBindings,
+                                  OwnFindings), _),
     prog_parts(OwnProg, OwnDecls0, OwnRules, OwnQueries),
-    check_use_local_name_collisions(OwnDecls0, EdgeDecls),
-    rel_module_decls(OwnDecls0, EntryHash, RelModuleDecls),
-    semantic_decl_modules(OwnDecls0, EntryHash, SemanticDeclModules),
+    run_compile_step(parse, check_use_local_name_collisions,
+                     check_use_local_name_collisions(OwnDecls0, EdgeDecls), _),
+    run_compile_step(parse, rel_module_decls,
+                     rel_module_decls(OwnDecls0, EntryHash, RelModuleDecls), _),
+    run_compile_step(parse, semantic_decl_modules,
+                     semantic_decl_modules(OwnDecls0, EntryHash,
+                                           SemanticDeclModules), _),
     entry_module_decls(OnStack, EntryHash, EntryModuleDecls),
     append([OwnDecls0, [module_storage_decl(EntryHash, EntryStem),
                         module_decl(EntryName, EntryHash)], RelModuleDecls,

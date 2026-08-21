@@ -27,6 +27,7 @@
 :- use_module('0_ast_expand', []).
 :- use_module(compile_messages,
               [ dl6_debug/3, dl6_debugging/1, dl6_program_sizes/3 ]).
+:- use_module('compile/0_trace', [run_compile_step/4]).
 
 % ── the order, stated once ───────────────────────────────────────────────────
 
@@ -81,15 +82,21 @@ expand_program_run(SurfaceProgram0, Bindings, ExpandedProgram,
                    ExpansionContext) :-
     % BEFORE phase 5. `list(orchard.tree)` mints its artifact name from the
     % element, and a path is not a name until the decl tree resolves it.
-    dot_expand:resolve_qualified_types(SurfaceProgram0, SurfaceProgram),
+    run_compile_step(plan, expansion:resolve_qualified_types,
+                     dot_expand:resolve_qualified_types(SurfaceProgram0,
+                                                        SurfaceProgram), _),
     SurfaceProgram = prog(SurfaceDecls, _),
     % The context includes enums option expansion mints.  Generic expansion is
     % deterministic and idempotent for its rewritten declaration form.  This
     % prepass has no rule facts or source bindings, so annotation applications
     % belong exclusively to phase 5's bound program expansion below.
-    annotation_context_decls(SurfaceDecls, ContextDecls),
-    expand_generic_program(prog(ContextDecls, []), prog(DeclsForEnumContext, _)),
-    enum_context(DeclsForEnumContext, EnumContext),
+    run_compile_step(plan, expansion:annotation_context_decls,
+                     annotation_context_decls(SurfaceDecls, ContextDecls), _),
+    run_compile_step(plan, expansion:context_generic_expand,
+                     expand_generic_program(prog(ContextDecls, []),
+                                            prog(DeclsForEnumContext, _)), _),
+    run_compile_step(plan, expansion:enum_context,
+                     enum_context(DeclsForEnumContext, EnumContext), _),
     findall(Order-Name-Expander,
             expansion_phase(Order, Name, Expander),
             UnorderedPhases),
@@ -100,11 +107,18 @@ expand_program_run(SurfaceProgram0, Bindings, ExpandedProgram,
     foldl(run_phase(expansion_context(EnumContext, Bindings)),
           RemainingPhases,
           PhaseProgram, PhasedProgram),
-    drop_minted_keyed_on_derived(EnumContext, PhasedProgram, DroppedProgram),
-    merge_enum_type_rows(SurfaceDecls, DroppedProgram, EnumRowedProgram),
-    merge_option_type_rows(EnumRowedProgram, OptionRowedProgram),
+    run_compile_step(plan, expansion:drop_minted_keyed_on_derived,
+                     drop_minted_keyed_on_derived(EnumContext, PhasedProgram,
+                                                  DroppedProgram), _),
+    run_compile_step(plan, expansion:merge_enum_type_rows,
+                     merge_enum_type_rows(SurfaceDecls, DroppedProgram,
+                                          EnumRowedProgram), _),
+    run_compile_step(plan, expansion:merge_option_type_rows,
+                     merge_option_type_rows(EnumRowedProgram,
+                                            OptionRowedProgram), _),
     OptionRowedProgram = prog(OptionDecls, OptionRules),
-    freeze_type_rows(OptionDecls, FrozenDecls),
+    run_compile_step(plan, expansion:freeze_type_rows,
+                     freeze_type_rows(OptionDecls, FrozenDecls), _),
     ExpandedProgram = prog(FrozenDecls, OptionRules),
     ExpansionContext = EnumContext.
 
@@ -155,12 +169,17 @@ run_phase(Context, Order-Name-Expander, Program, Expanded) :-
     dl6_debug(expand, "enter ~w (order ~w)", [Name, Order]),
     (   dl6_debugging(expand)
     ->  dl6_program_sizes(Program, DeclsIn, RulesIn),
-        run_phase_call(Context, Order-Name-Expander, Program, Expanded),
+        run_phase_step(Context, Order-Name-Expander, Program, Expanded),
         dl6_program_sizes(Expanded, DeclsOut, RulesOut),
         dl6_debug(expand, "~w decls ~d->~d rules ~d->~d",
                   [Name, DeclsIn, DeclsOut, RulesIn, RulesOut])
-    ;   run_phase_call(Context, Order-Name-Expander, Program, Expanded)
+    ;   run_phase_step(Context, Order-Name-Expander, Program, Expanded)
     ).
+
+run_phase_step(Context, Order-Name-Expander, Program, Expanded) :-
+    run_compile_step(plan, expansion:Name,
+                     run_phase_call(Context, Order-Name-Expander,
+                                    Program, Expanded), _).
 
 run_phase_call(_, _-_-unwired, Program, Program) :- !.
 % ast takes the whole context, every other phase the enum half; without the cut

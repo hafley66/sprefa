@@ -25,6 +25,7 @@
 :- use_module(library(assoc)).
 :- use_module(library(crypto)).
 :- use_module(library(lists)).
+:- use_module('compile/0_trace', [run_compile_step/4]).
 :- use_module('0_option_expand', [expand_option_decls/2, scalar_element/1]).
 :- use_module('0_enum_expand', [enum_type_rows/2]).
 :- use_module('0_type_plane', [unwrapped_column_type/2]).
@@ -54,25 +55,45 @@ expand_generic_program(Program, Expanded) :-
 
 expand_generic_program_with_bindings(prog(Decls0, Rules0), Bindings,
                                      prog(Decls, Rules)) :-
-    expand_user_templates(Decls0, Rules0, _UserInstances, UserDecls),
-    expand_user_enum_templates(UserDecls, _EnumInstances, WithEnumDecls),
-    generic_fixpoint(WithEnumDecls, Instances, WithMintedDecls),
-    validate_generated_name_collisions(UserDecls, Rules0, Instances),
-    expand_list_decodes(WithMintedDecls, Rules0, ExpandedRules),
-    replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
-    expand_anonymous_decls(RewrittenDecls, AnonymousDecls),
-    handoff_annotation_requests(AnonymousDecls, AnnotationHandedOffDecls),
-    merge_anonymous_enum_type_rows(AnnotationHandedOffDecls, AnonymousEnumRowedDecls),
-    evaluate_annotation_requests(AnonymousEnumRowedDecls, ExpandedRules, Bindings,
-                                 AnnotationEvaluatedDecls),
-    normalize_key_wrappers(AnnotationEvaluatedDecls, KeyNormalizedDecls),
-    generic_artifact_order(Instances, KeyNormalizedDecls, CanonicalDecls),
-    merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
-    expand_option_decls(FlavorRowedDecls, OptionDecls),
-    retarget_type_decl_mirrors(OptionDecls, ExpandedDecls),
-    freeze_type_rows(ExpandedDecls, FrozenExpandedDecls),
-    elaborate_and_erase_compiler_relations(FrozenExpandedDecls, ExpandedRules,
-                                           Bindings, Decls, Rules).
+    Step = run_compile_step(plan),
+    call(Step, generic:expand_user_templates,
+         expand_user_templates(Decls0, Rules0, _UserInstances, UserDecls), _),
+    call(Step, generic:expand_user_enum_templates,
+         expand_user_enum_templates(UserDecls, _EnumInstances, WithEnumDecls), _),
+    call(Step, generic:generic_fixpoint,
+         generic_fixpoint(WithEnumDecls, Instances, WithMintedDecls), _),
+    call(Step, generic:validate_generated_name_collisions,
+         validate_generated_name_collisions(UserDecls, Rules0, Instances), _),
+    call(Step, generic:expand_list_decodes,
+         expand_list_decodes(WithMintedDecls, Rules0, ExpandedRules), _),
+    call(Step, generic:replace_generic_types,
+         replace_generic_types(WithMintedDecls, Instances, RewrittenDecls), _),
+    call(Step, generic:expand_anonymous_decls,
+         expand_anonymous_decls(RewrittenDecls, AnonymousDecls), _),
+    call(Step, generic:handoff_annotation_requests,
+         handoff_annotation_requests(AnonymousDecls, AnnotationHandedOffDecls), _),
+    call(Step, generic:merge_anonymous_enum_type_rows,
+         merge_anonymous_enum_type_rows(AnnotationHandedOffDecls,
+                                        AnonymousEnumRowedDecls), _),
+    call(Step, generic:evaluate_annotation_requests,
+         evaluate_annotation_requests(AnonymousEnumRowedDecls, ExpandedRules,
+                                      Bindings, AnnotationEvaluatedDecls), _),
+    call(Step, generic:normalize_key_wrappers,
+         normalize_key_wrappers(AnnotationEvaluatedDecls, KeyNormalizedDecls), _),
+    call(Step, generic:generic_artifact_order,
+         generic_artifact_order(Instances, KeyNormalizedDecls, CanonicalDecls), _),
+    call(Step, generic:merge_flavor_type_rows,
+         merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls), _),
+    call(Step, generic:expand_option_decls,
+         expand_option_decls(FlavorRowedDecls, OptionDecls), _),
+    call(Step, generic:retarget_type_decl_mirrors,
+         retarget_type_decl_mirrors(OptionDecls, ExpandedDecls), _),
+    call(Step, generic:freeze_type_rows,
+         freeze_type_rows(ExpandedDecls, FrozenExpandedDecls), _),
+    call(Step, generic:elaborate_and_erase_compiler_relations,
+         elaborate_and_erase_compiler_relations(FrozenExpandedDecls,
+                                                ExpandedRules, Bindings,
+                                                Decls, Rules), _).
 
 % Executable comparison arm, written as a second path so the template and
 % replacement logic cannot drift apart from the wired entry above.
