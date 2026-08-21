@@ -125,9 +125,8 @@ impl GenProgram {
         }
     }
 
-    /// The statement texts the IR fixes ahead of the fold. A row-count-shaped
-    /// text (a VALUES list) is not among them, so this is the cache size that
-    /// holds every reusable statement with nothing evicted.
+    /// The statement texts the IR fixes ahead of the fold; a row-count-shaped
+    /// VALUES list is not among them. The cache size that evicts nothing.
     pub fn stable_sql_count(&self) -> usize {
         let mut count = self.ddl.len() + self.boot.len() + self.final_select.len();
         for relation in &self.relations {

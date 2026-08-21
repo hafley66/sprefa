@@ -33,9 +33,8 @@ pub trait SqlRunner {
 
 pub struct SqliteSeam {
     conn: Connection,
-    /// Distinct SQL texts this connection has compiled, counted only when a
-    /// caller asks; hashing every statement's text on the fold path is work no
-    /// ordinary run needs.
+    /// Distinct SQL texts compiled here, counted only when a caller asks:
+    /// hashing every statement's text buys an ordinary fold nothing.
     prepared: RefCell<HashSet<String>>,
     counting: Cell<bool>,
     dispatches: Cell<u64>,
@@ -161,9 +160,8 @@ fn install_regexp(conn: &Connection) -> Result<()> {
     )
 }
 
-/// page_size is the one pragma the measured constants say moves anything on
-/// `:memory:`, and it has to precede the first table. The file-backed door adds
-/// the durability pragmas, which are no-ops in memory.
+/// page_size is the one pragma measured to move anything on `:memory:`, and it
+/// has to precede the first table. The durability pragmas are file-only.
 fn apply_pragmas(conn: &Connection) -> Result<()> {
     if std::env::var("DL_SEAM_PRAGMAS").as_deref() == Ok("0") {
         return Ok(());
