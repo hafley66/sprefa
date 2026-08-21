@@ -130,20 +130,38 @@ impl IHostExecutor for HttpFetchExecutor {
         _command_line: &str,
         env: &BTreeMap<String, String>,
     ) -> Result<Vec<HostRow>, HostError> {
-        let endpoint = required_input(host, env, &["ep", "endpoint_path", "url"])?;
-        let url = absolute_url(endpoint);
-        // A program that carries the tag relationally wins; one that does not
-        // still re-asks conditionally, from this process's own store.
-        let prev = match first_input(env, &["prev", "prev_etag", "tag"]) {
-            Some(tag) if !tag.is_empty() => tag.to_string(),
-            _ => cached_entry(&url).map(|(tag, _)| tag).unwrap_or_default(),
-        };
-        let fetched = conditional_get(host, &url, &prev)?;
-        if fetched.status != 304 {
-            remember(&url, &fetched.tag, &fetched.body);
+        // The batching seam: an `eps` input carrying a JSON array of endpoint
+        // texts (json_group_array in the language) is ONE demand, one run.
+        if let Some(batch) = first_input(env, &["eps"]).filter(|eps| !eps.is_empty()) {
+            let endpoints: Vec<String> = serde_json::from_str(batch).map_err(|error| {
+                host_error(host, format!("`eps` is not a JSON array of texts: {error}"))
+            })?;
+            let mut rows = Vec::with_capacity(endpoints.len());
+            for endpoint in &endpoints {
+                let mut row = fetch_one(host, endpoint, first_input(env, &["prev", "prev_etag", "tag"]))?;
+                row.insert("ep".to_string(), serde_json::json!(endpoint));
+                rows.push(row);
+            }
+            return Ok(rows);
         }
-        Ok(vec![answer_row(&fetched)])
+        let endpoint = required_input(host, env, &["ep", "endpoint_path", "url"])?;
+        fetch_one(host, &endpoint, first_input(env, &["prev", "prev_etag", "tag"])).map(|row| vec![row])
     }
+}
+
+fn fetch_one(host: &str, endpoint: &str, prev_input: Option<&str>) -> Result<HostRow, HostError> {
+    let url = absolute_url(endpoint);
+    // A program that carries the tag relationally wins; one that does not
+    // still re-asks conditionally, from this process's own store.
+    let prev = match prev_input {
+        Some(tag) if !tag.is_empty() => tag.to_string(),
+        _ => cached_entry(&url).map(|(tag, _)| tag).unwrap_or_default(),
+    };
+    let fetched = conditional_get(host, &url, &prev)?;
+    if fetched.status != 304 {
+        remember(&url, &fetched.tag, &fetched.body);
+    }
+    Ok(answer_row(&fetched))
 }
 
 /// The declared columns decide which keys survive: `carries_every_column`

@@ -319,3 +319,4 @@ fixture(arrival_rel_and_plain_rel_share_name_is_refused,
   [],
   [],
   [ throws(host_and_rel_share_name(files)) ]).
+

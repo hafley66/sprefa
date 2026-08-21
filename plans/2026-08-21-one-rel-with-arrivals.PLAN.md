@@ -649,3 +649,32 @@ conformance fixture proving one interval tick mints one bucket row.
 
 Not blocking: everything in sections 6 through 12 that does not depend on the
 answer to question 1 is specified and dispatchable as written.
+
+## 14. The batching seam, measured (arrivals-and-ticks lane, 2026-08-21)
+
+The brief asked whether an input column typed `list(text)` can reach an
+executor as one demand. Measured answer: NO, twice over, with a working
+alternative already in the language.
+
+| leg | result | site |
+|---|---|---|
+| `list(text)` host input, compile | named stop `refused_host_decl` | `1_host_expand.pl:261` (`atom(Type)` in `validate_columns/2`) throwing at `:230` |
+| list value at the host seam, runtime | `BoundaryError::ListAtScalarSeam` | `types.rs:273`, reached from `hosts.rs` `demand_of` |
+| `json` host input carrying `json_group_array(ep)`, oracle | `non_display_in_concat` | `conformance/body.pl:303-304` `text_piece/2`: the demand digest concat cannot render a compound json value |
+| `json` host input, SQL door | expected to work (a json column stores canonical text, `||` concatenates it; `lower.pl:1036` comment states the contract) | unmeasured end to end, blocked on the oracle leg above |
+| executor side, 6 endpoints in one `eps` JSON array | ONE `HttpFetchExecutor::run` call answers 6 rows, each echoing its `ep` | `executors/fetch.rs`; COUNT receipt `tests/executors.rs` `http_fetch_batches_six_endpoints_in_one_executor_call` |
+
+So the language-native batching spelling is `json_group_array` folding the
+endpoint set into ONE `json` demand input, and the executor half is built and
+count-tested. What blocks landing it end to end is ONE gap: the reference
+engine's digest concat refuses compound json values while the SQL door would
+concatenate the stored canonical text. Closing it means giving `text_piece/2`
+the canonical json rendering (the same bytes `ticklog.pl` `json_value_json/2`
+writes) and proving both doors mint identical witness digests for a json
+input.
+
+USER DECISION WANTED: is a json value legal in a witness digest (its
+canonical text participates, oracle taught to render it), or must a host
+input stay scalar and the batch travel as an ordinary `text` column the
+program builds with `group_concat`? The first is one oracle predicate; the
+second needs no engine change but spells the batch as text, not json.

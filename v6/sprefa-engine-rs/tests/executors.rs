@@ -236,3 +236,30 @@ fn executor_roster_matches_registry() {
         );
     }
 }
+
+// COUNT RECEIPT for the batching seam: six endpoints ride ONE `eps` JSON
+// array (json_group_array in the language), so one executor call answers six
+// rows. The serve() rounds argument is the network-side count.
+#[test]
+fn http_fetch_batches_six_endpoints_in_one_executor_call() {
+    let _hold = serialized();
+    sprefa_engine_rs::executors::fetch::forget_all();
+    let body = r#"{"kind":"row"}"#.to_string();
+    let (base, handle) = serve(body, "\"tag-b\"", 6);
+    std::env::set_var("DL_GITHUB_API_BASE", &base);
+    let eps: Vec<String> = (1..=6).map(|n| format!("repos/org/r{n}")).collect();
+    let eps_json = serde_json::to_string(&eps).expect("eps array");
+
+    let rows = HttpFetchExecutor
+        .run("gh_pr_poll", "", &inputs(&[("eps", &eps_json), ("prev", "")]))
+        .expect("one batched executor call");
+    std::env::remove_var("DL_GITHUB_API_BASE");
+    handle.join().expect("listener served all six");
+
+    assert_eq!(rows.len(), 6, "six endpoints, one call, six rows");
+    for (row, ep) in rows.iter().zip(&eps) {
+        assert_eq!(row["status"], 200);
+        assert_eq!(row["ep"], ep.as_str(), "each row names its endpoint");
+        assert_eq!(row["kind"], "row", "body fields splice in per endpoint");
+    }
+}
