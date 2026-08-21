@@ -1,0 +1,7 @@
+[
+ {
+  "adapter": "sprefa_extract",
+  "demand_rel": "__host_demand_call_node_at",
+  "response_rel": "__host_response_call_node_at"
+ }
+]
