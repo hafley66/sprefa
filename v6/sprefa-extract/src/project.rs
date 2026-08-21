@@ -780,6 +780,14 @@ fn resolve_type_edges(
     resolve(output, cx)
 }
 
+/// One comparison per edge under an index, one per (edge, input) pair under a
+/// scan. Same counter for the node-by-span lookup a resolved edge names.
+static RESOLVE_PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn resolve_probes() -> u64 {
+    RESOLVE_PROBES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn call_facts(
     input: &ProjectInput,
     inputs: &[ProjectInput],
@@ -791,7 +799,10 @@ fn call_facts(
     edges
         .iter()
         .filter_map(|edge| {
-            let target = inputs.iter().find(|other| other.blob == edge.dst_blob)?;
+            let target = inputs.iter().find(|other| {
+                RESOLVE_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                other.blob == edge.dst_blob
+            })?;
             Some(FlatFact::ResolvedEdge {
                 caller_path: input.path.clone(),
                 caller_name: Some(caller_name(call, &input.output, edge.src)),
@@ -816,7 +827,10 @@ fn type_facts(input: &ProjectInput, inputs: &[ProjectInput], cx: &ProjectCx) -> 
     resolve_type_edges(&input.path, &input.output, cx)
         .iter()
         .filter_map(|edge| {
-            let target = inputs.iter().find(|other| other.blob == edge.dst_blob)?;
+            let target = inputs.iter().find(|other| {
+                RESOLVE_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                other.blob == edge.dst_blob
+            })?;
             let owner = types.node(edge.src).span;
             Some(FlatFact::ResolvedTypeEdge {
                 owner_path: input.path.clone(),
@@ -860,7 +874,10 @@ fn node_name<F: crate::family::Family>(
     bundle
         .nodes
         .iter()
-        .find(|node| node.span == span)
+        .find(|node| {
+            RESOLVE_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            node.span == span
+        })
         .and_then(|node| node.name)
         .map(|name| output.strings.lookup(name).to_string())
 }

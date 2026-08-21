@@ -75,12 +75,22 @@ fn read_snapshot(
     Ok(snapshot)
 }
 
+/// One comparison per row under an index, one per pair under a scan.
+static DIFF_PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn diff_probes() -> u64 {
+    DIFF_PROBES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn row_counts(rows: &[Row]) -> Vec<(Row, usize)> {
     let mut counts = Vec::new();
     for row in rows {
         match counts
             .iter_mut()
-            .find(|(existing, _): &&mut (Row, usize)| existing == row)
+            .find(|(existing, _): &&mut (Row, usize)| {
+                DIFF_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                existing == row
+            })
         {
             Some((_, count)) => *count += 1,
             None => counts.push((row.clone(), 1)),
@@ -89,14 +99,17 @@ fn row_counts(rows: &[Row]) -> Vec<(Row, usize)> {
     counts
 }
 
-fn multiset_diff(before: &[Row], after: &[Row]) -> (Vec<Row>, Vec<Row>) {
+pub fn multiset_diff(before: &[Row], after: &[Row]) -> (Vec<Row>, Vec<Row>) {
     let before_counts = row_counts(before);
     let after_counts = row_counts(after);
     let mut add = Vec::new();
     for (row, count) in &after_counts {
         let prior = before_counts
             .iter()
-            .find(|(candidate, _)| candidate == row)
+            .find(|(candidate, _)| {
+                DIFF_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                candidate == row
+            })
             .map(|(_, count)| *count)
             .unwrap_or(0);
         for _ in prior..*count {
@@ -107,7 +120,10 @@ fn multiset_diff(before: &[Row], after: &[Row]) -> (Vec<Row>, Vec<Row>) {
     for (row, count) in &before_counts {
         let next = after_counts
             .iter()
-            .find(|(candidate, _)| candidate == row)
+            .find(|(candidate, _)| {
+                DIFF_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                candidate == row
+            })
             .map(|(_, count)| *count)
             .unwrap_or(0);
         for _ in next..*count {

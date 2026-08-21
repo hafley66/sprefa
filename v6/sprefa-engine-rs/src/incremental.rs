@@ -36,6 +36,34 @@ pub fn dedup_key(row: &[Value]) -> String {
     format!("{row:?}")
 }
 
+/// One comparison per probe under the index, one per (statement, relation)
+/// pair under a scan.
+static PLAN_PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn plan_probes() -> u64 {
+    PLAN_PROBES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn plan_index(relations: &[IncrementalRelationPlan]) -> HashMap<&str, &IncrementalRelationPlan> {
+    relations.iter().map(|r| (r.rel.as_str(), r)).collect()
+}
+
+fn plan_for<'a>(
+    index: &HashMap<&str, &'a IncrementalRelationPlan>,
+    rel: &str,
+    missing: &str,
+) -> &'a IncrementalRelationPlan {
+    PLAN_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    index.get(rel).copied().unwrap_or_else(|| panic!("{missing}"))
+}
+
+/// One substring search per (statement, relation) pair the frontier scan walks.
+static FRONTIER_PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn frontier_probes() -> u64 {
+    FRONTIER_PROBES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
@@ -774,7 +802,10 @@ pub fn stage_departures(
         });
         let departed = deltas
             .iter()
-            .find(|delta| delta.rel == relation.rel)
+            .find(|delta| {
+                PLAN_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                delta.rel == relation.rel
+            })
             .map(|delta| delta.del.as_slice())
             .unwrap_or_default();
         if departed.is_empty() {
@@ -947,6 +978,7 @@ fn recursive_heads(
     for statement in statements {
         let mut sources = Vec::new();
         for relation in relations {
+            FRONTIER_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let frontier = quote_identifier(&relation.frontier_table_name);
             if let Some(insert_sql) = &statement.insert_sql {
                 if insert_sql.contains(&frontier) {
@@ -1062,7 +1094,7 @@ fn apply_level_statement(
 ) -> BoundaryResult<usize> {
     let relation = relations
         .iter()
-        .find(|r| r.rel == statement.head_rel)
+        .find(|r| { PLAN_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed); r.rel == statement.head_rel })
         .expect("incremental level head relation missing");
     if let Some(aggregate) = &statement.aggregate_sql {
         apply_aggregate_level_statement(
@@ -1193,7 +1225,7 @@ pub fn apply_retention(
     for statement in statements {
         let relation = relations
             .iter()
-            .find(|r| r.rel == statement.rel)
+            .find(|r| { PLAN_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed); r.rel == statement.rel })
             .expect("incremental retention relation missing");
         let mut scope = crate::trace::Scope::verb(
             "retention",
@@ -1511,7 +1543,7 @@ pub fn apply_edges(
     for statement in statements {
         let relation = relations
             .iter()
-            .find(|r| r.rel == statement.head_rel)
+            .find(|r| { PLAN_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed); r.rel == statement.head_rel })
             .expect("incremental edge head relation missing");
         let strategy = crate::write_verbs::strategy_name(relations);
         let mut scope = crate::trace::Scope::verb("edge_project", &statement.head_rel, strategy);
@@ -1593,7 +1625,7 @@ pub fn recompute_levels_before_edges(
         sequence_level_rounds(&ref_count_statements, |statement| {
             let relation = relations
                 .iter()
-                .find(|r| r.rel == statement.head_rel)
+                .find(|r| { PLAN_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed); r.rel == statement.head_rel })
                 .expect("incremental level head relation missing");
             reconcile_ref_count_statement(
                 seam,
@@ -1656,7 +1688,7 @@ fn reconcile_ref_count_statement(
         .expect("level statement has no support_sql");
     let relation = relations
         .iter()
-        .find(|r| r.rel == statement.head_rel)
+        .find(|r| { PLAN_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed); r.rel == statement.head_rel })
         .expect("incremental level head relation missing");
     let mut scope = crate::trace::Scope::verb(
         "recount",
@@ -1825,7 +1857,7 @@ pub fn recompute_levels_after_edges(
         sequence_level_rounds(&ordered, |statement| {
             let relation = relations
                 .iter()
-                .find(|r| r.rel == statement.head_rel)
+                .find(|r| { PLAN_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed); r.rel == statement.head_rel })
                 .expect("incremental level head relation missing");
             if let Some(aggregate) = &statement.aggregate_sql {
                 if aggregate.delta_maintained {

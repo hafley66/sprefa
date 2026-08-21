@@ -98,11 +98,21 @@ fn collect(
         semantic: semantic.clone(),
         fields,
     };
-    match bucket.iter().position(|entry| entry.semantic == semantic) {
+    match bucket.iter().position(|entry| {
+        COLLECT_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        entry.semantic == semantic
+    }) {
         Some(index) => bucket[index] = collected,
         None => bucket.push(collected),
     }
     semantic
+}
+
+/// One comparison per collected value under an index, one per pair under a scan.
+static COLLECT_PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn collect_probes() -> u64 {
+    COLLECT_PROBES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 fn resolve_fields(collected: &Collected, ids: &HashMap<String, i64>) -> Row {

@@ -100,9 +100,16 @@ fn listing_at(tree: &mut soopy::SourceTree, revision: &soopy::Revision) -> Resul
     Ok(listing)
 }
 
+/// One membership check per unpaired path under a set, one per pair under a scan.
+static RENAME_PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn rename_probes() -> u64 {
+    RENAME_PROBES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Exact-content renames only, the `git diff --name-status -M100%` spelling.
 /// Surplus arrivals of one blob stay creations, so order cannot move the answer.
-fn take_renames(
+pub fn take_renames(
     created: &mut Vec<String>,
     deleted: &mut Vec<String>,
     base: &Listing,
@@ -138,8 +145,14 @@ fn take_renames(
             paired_to.push(to.clone());
         }
     }
-    created.retain(|path| !paired_to.contains(path));
-    deleted.retain(|path| !paired_from.contains(path));
+    created.retain(|path| {
+        RENAME_PROBES.fetch_add(paired_to.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        !paired_to.contains(path)
+    });
+    deleted.retain(|path| {
+        RENAME_PROBES.fetch_add(paired_from.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        !paired_from.contains(path)
+    });
     renames.sort();
     renames
 }
