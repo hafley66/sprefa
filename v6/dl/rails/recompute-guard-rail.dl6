@@ -1,0 +1,141 @@
+# @comment-ok: the rail contract, the single doc site for what this rail means.
+# A function that re-derives a relation FROM SCRATCH must early-out when its
+# input is unchanged, or say in writing why it does not. An unguarded recompute
+# on a reactive rule re-embeds on every re-tick, under the lock.
+#
+#   recompute marker   a call to `embed_graph`
+#   guard marker       a call to `load_rel_digest`
+#   waiver             `@recompute unguarded: <reason>` in the function's own
+#                      doc comment
+#
+# TWO DIFFERENCES FROM THE v5 TWIN (examples/recompute-guard.dl), both forced.
+#
+# 1  ENCLOSING FUNCTION IS SPAN CONTAINMENT. v5 had only (file, line), so its
+#    model was "the nearest fn decl at or above the marker". A closure between a
+#    guard and a recompute inside ONE function resolved them to two different
+#    enclosing decls and the rail fired on guarded code
+#    (examples/recompute-guard.dl:36-46). Containment cannot make that mistake.
+#
+# 2  THE WAIVER IS A DOC COMMENT. A `//` comment reaches the v6 wire as a cst
+#    node carrying a span and a NULL name, so a program cannot read its text; a
+#    `///` comment reaches it as `record=doc family=type` with the text intact.
+#
+# WIDENING, NAMED: a doc comment on a nested named function waives its enclosing
+# function too. A rail whose findings get code rewritten under-reports.
+#
+# rx: files$.pipe(mergeMap(runExtract), partition(byRecord),
+#     ([procs, sites, docs]) => sites.filter(isRecompute)
+#       .map(innermost(procs)).filter(noGuard(sites)).filter(noWaiver(docs)))
+
+rel span(start: int, end: int).
+
+# `files` routes to SoopyFilesExecutor, so the template never runs as a shell.
+sh files(glob: text) -> (path: text, digest: text) =
+  `git ls-files -- '{glob}' | git hash-object --stdin-paths`.
+
+# @comment-ok: the projection law; a declared column IS the record filter.
+# Three named projections over ONE extractor stream. A line that does not carry
+# every declared column contributes no row, so `name: text` is itself what drops
+# anonymous callables (a rust closure is `kind=lambda` with a null name).
+sh call_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family call,type {path}`.
+sh extract(path: text, digest: text) -> (record: text, family: text, span: span, callee: text) =
+  `"$DL_EXTRACT_BIN" --family call,type {path}`.
+sh type_node_at(path: text, digest: text) -> (record: text, family: text, owner: span, text: text) =
+  `"$DL_EXTRACT_BIN" --family call,type {path}`.
+
+rel want(glob: text).
+
+rel source_file(path: text, digest: text).
+source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
+
+# The marker names are a fact table, so a second heavy primitive is one row.
+rel recompute_call(name: text).
+recompute_call('embed_graph').
+
+rel guard_call(name: text).
+guard_call('load_rel_digest').
+
+rel proc_def(path: text, proc_start: int, proc_end: int, proc_name: text).
+proc_def(Path, ProcStart, ProcEnd, ProcName) <-
+  source_file(Path, Digest),
+  call_node_at(Path, Digest, 'node', 'call', ProcAt, _ProcKind, ProcName),
+  decode(ProcAt, {start: ProcStart, end: ProcEnd}).
+
+rel call_at(path: text, site_start: int, site_end: int, callee: text).
+call_at(Path, SiteStart, SiteEnd, Callee) <-
+  source_file(Path, Digest),
+  extract(Path, Digest, 'site', 'call', SiteAt, Callee),
+  decode(SiteAt, {start: SiteStart, end: SiteEnd}).
+
+# `doc`'s owner is the TYPE-family node span, the declared identifier, which
+# sits inside the call-family span; that is why the join below crosses families.
+rel doc_note(path: text, owner_start: int, owner_end: int, note: text).
+doc_note(Path, OwnerStart, OwnerEnd, Note) <-
+  source_file(Path, Digest),
+  type_node_at(Path, Digest, 'doc', 'type', OwnerAt, Note),
+  decode(OwnerAt, {start: OwnerStart, end: OwnerEnd}).
+
+# `_in_proc` minus `_has_closer` is v5's `_above` minus `_closer`, over
+# containment instead of line order, so it lands on the innermost definition.
+rel site_in_proc(path: text, site_start: int, proc_start: int, proc_end: int).
+site_in_proc(Path, SiteStart, ProcStart, ProcEnd) <-
+  call_at(Path, SiteStart, SiteEnd, _Callee),
+  proc_def(Path, ProcStart, ProcEnd, _ProcName),
+  ProcStart =< SiteStart,
+  SiteEnd =< ProcEnd.
+
+rel site_has_closer(path: text, site_start: int, proc_start: int, proc_end: int).
+site_has_closer(Path, SiteStart, ProcStart, ProcEnd) <-
+  site_in_proc(Path, SiteStart, ProcStart, ProcEnd),
+  site_in_proc(Path, SiteStart, MidStart, MidEnd),
+  ProcStart < MidStart,
+  MidEnd =< ProcEnd.
+
+rel enclosing_proc(path: text, site_start: int, proc_start: int, proc_end: int).
+enclosing_proc(Path, SiteStart, ProcStart, ProcEnd) <-
+  site_in_proc(Path, SiteStart, ProcStart, ProcEnd),
+  not(site_has_closer(Path, SiteStart, ProcStart, ProcEnd)).
+
+rel recompute_site(path: text, proc_start: int, proc_end: int, site_start: int).
+recompute_site(Path, ProcStart, ProcEnd, SiteStart) <-
+  call_at(Path, SiteStart, _SiteEnd, Callee),
+  recompute_call(Callee),
+  enclosing_proc(Path, SiteStart, ProcStart, ProcEnd).
+
+rel guarded_proc(path: text, proc_start: int, proc_end: int).
+guarded_proc(Path, ProcStart, ProcEnd) <-
+  call_at(Path, SiteStart, _SiteEnd, Callee),
+  guard_call(Callee),
+  enclosing_proc(Path, SiteStart, ProcStart, ProcEnd).
+
+rel waived_proc(path: text, proc_start: int, proc_end: int).
+waived_proc(Path, ProcStart, ProcEnd) <-
+  doc_note(Path, OwnerStart, OwnerEnd, Note),
+  regexp(Note, "@recompute unguarded"),
+  proc_def(Path, ProcStart, ProcEnd, _ProcName),
+  ProcStart =< OwnerStart,
+  OwnerEnd =< ProcEnd.
+
+rel rail_unguarded_recompute(path: text, proc_name: text, site_start: int).
+rail_unguarded_recompute(Path, ProcName, SiteStart) <-
+  recompute_site(Path, ProcStart, ProcEnd, SiteStart),
+  proc_def(Path, ProcStart, ProcEnd, ProcName),
+  not(guarded_proc(Path, ProcStart, ProcEnd)),
+  not(waived_proc(Path, ProcStart, ProcEnd)).
+
+# The cleared buckets are read too: a rail that found nothing because the
+# extractor answered nothing must not pass as a rail over a clean tree.
+rel rail_recompute_count(sites: int).
+rail_recompute_count(count(SiteStart)) <- recompute_site(_Path, _S, _E, SiteStart).
+
+rel rail_guarded_count(procs: int).
+rail_guarded_count(count(ProcStart)) <- guarded_proc(_Path, ProcStart, _ProcEnd).
+
+rel rail_waived_count(procs: int).
+rail_waived_count(count(ProcStart)) <- waived_proc(_Path, ProcStart, _ProcEnd).
+
+? rail_unguarded_recompute(path, proc_name, site_start) order by path, site_start.
+? rail_recompute_count(sites).
+? rail_guarded_count(procs).
+? rail_waived_count(procs).
