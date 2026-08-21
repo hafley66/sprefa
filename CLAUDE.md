@@ -220,6 +220,11 @@ records the era when this leg was unwired and mail queued forever.
   scip, cargo_metadata, fixture) or is a named stop at construction. Scripts
   never push arrivals into or pull rows out of a named rel; the program owns
   its seeds and its `?` output.
+- **One server, one db.** (2026-08-21) The resident `dl6` runtime is the one
+  server; every program it runs writes into ONE SQLite file,
+  `~/.agent/dl6.db`, tables prefixed by program name (the `__txt_<program>_*`
+  shape). `--db <file>` per program is gone; no program, lane or gate mints a
+  second db. Goldens use an in-memory db.
 - **The words "ground truth" are banned** in every spelling and root form, in
   file names, recipes, identifiers, comments and reports. The word is "oracle".
 - **"I DO NOT WANT TO RUN V5 ANYTHING ANYMORE."** No design may end in "keep the
