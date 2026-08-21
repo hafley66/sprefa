@@ -245,7 +245,7 @@ flowchart TB
    facts project OUT (joinable, ratchet-eligible), foreign indexers project IN.
    Round-trippable for the 3 resolution families ONLY.
 5. **The ratchet.** `merge` = per-fact best-producer-wins over N producers
-   (`Ast`/`Scip(&indexer)`/`Ghcacher`). SCIP ground-truth for call/type/module is
+   (`Ast`/`Scip(&indexer)`/`Ghcacher`). SCIP oracle for call/type/module is
    ONE rule, not the whole policy. `Producer` rides the bundle.
 6. **Sync only.** The `_6_facade` async shell is CUT. Pure CPU + rayon; nothing
    awaits. The engine (or the RxJS prototype) wraps our sync `dispatch`. SCIP build

@@ -31,7 +31,7 @@ One frame for reading every number in this file, the exact hierarchy the bench
 divisions encode:
 
 - **dd-in-rust is the true ceiling.** The resident differential-dataflow oracle
-  (`src/oracle.rs`, `dd_reach`) is the correctness ground truth and the
+  (`src/oracle.rs`, `dd_reach`) is the correctness oracle and the
   resident-RAM speed yardstick; nothing on disk is expected to beat it.
 - **Hand-rolled in-RAM rust engines are the physics reference.** The
   shootout's interp/rxgraph/mono engines bound what a bespoke in-memory

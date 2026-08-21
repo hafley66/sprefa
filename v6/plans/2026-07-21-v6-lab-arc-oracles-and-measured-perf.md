@@ -54,7 +54,7 @@ checkpoints away. Single binary, zero new runtime deps for the core.
 The point the user pressed: a system cannot grade its own homework. Each claim above was
 checked against a mechanism that does not share the code under test:
 
-- **differential oracle** (rows 3,4): ground truth is a from-scratch `derive_family_batch`
+- **differential oracle** (rows 3,4): oracle is a from-scratch `derive_family_batch`
   recompute — a separate, dead-simple implementation. The incremental engine must equal it
   after *every* edit in a random stream. It caught the naive delta at seed 0 step 11
   without any hand-crafted case → the oracle has teeth, so passing means something.

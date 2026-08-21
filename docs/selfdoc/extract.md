@@ -70,10 +70,10 @@ One file plus a mask to a family output, then the JSONL wire.
 
 ```mermaid
 flowchart LR
-  n1["types  in39/out10"]
-  n2["cfg  in27/out21"]
-  n3["trace  in24/out17"]
-  n4["cache  in24/out14"]
+  n1["types  in40/out10"]
+  n2["cfg  in28/out21"]
+  n3["trace  in25/out17"]
+  n4["cache  in25/out14"]
   n5["wire  in7/out9"]
   n6["0_query  in2/out19"]
   n7["dispatch  in2/out18"]
@@ -116,10 +116,10 @@ flowchart LR
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
-| `v6/sprefa-extract/src/types.rs` | 40 | 50 | 39 | 10 |
-| `v6/sprefa-extract/src/cfg.rs` | 19 | 58 | 27 | 21 |
-| `v6/sprefa-extract/src/trace.rs` | 18 | 43 | 24 | 17 |
-| `v6/sprefa-extract/src/cache.rs` | 7 | 28 | 24 | 14 |
+| `v6/sprefa-extract/src/types.rs` | 40 | 50 | 40 | 10 |
+| `v6/sprefa-extract/src/cfg.rs` | 19 | 58 | 28 | 21 |
+| `v6/sprefa-extract/src/trace.rs` | 18 | 43 | 25 | 17 |
+| `v6/sprefa-extract/src/cache.rs` | 7 | 28 | 25 | 14 |
 | `v6/sprefa-extract/src/wire.rs` | 11 | 58 | 7 | 9 |
 | `v6/sprefa-extract/src/0_query.rs` | 13 | 69 | 2 | 19 |
 | `v6/sprefa-extract/src/dispatch.rs` | 1 | 8 | 2 | 18 |
@@ -142,8 +142,8 @@ One module per language front-end. Each projects a tree-sitter parse into the sh
 flowchart LR
   n1["rust  in35/out23"]
   n2["ts  in30/out22"]
-  n3["_0_source  in29/out18"]
-  n4["_0_source  in29/out18"]
+  n3["_0_source  in30/out18"]
+  n4["_0_source  in30/out18"]
   n5["_0_source  in29/out15"]
   n6["_0_source  in28/out19"]
   n7["astgrep  in28/out18"]
@@ -151,7 +151,7 @@ flowchart LR
   n9["kotlin  in25/out22"]
   n10["_0_source  in22/out19"]
   n11["mod  in4/out11"]
-  n12["mod  in0/out0"]
+  n12["1_ast_rule  in0/out12"]
   n1 -->|16| n2
   n8 -->|15| n1
   n8 -->|14| n9
@@ -221,6 +221,8 @@ flowchart LR
   n10 -->|2| n6
   n1 -->|2| n5
   n2 -->|2| n5
+  n12 -->|1| n4
+  n12 -->|1| n3
   n7 -->|1| n8
   n7 -->|1| n9
   n7 -->|1| n10
@@ -251,14 +253,14 @@ flowchart LR
   n2 -->|1| n6
 ```
 
-12 of 16 modules are drawn, ranked by fan-in; every one is in the table.
+12 of 17 modules are drawn, ranked by fan-in; every one is in the table.
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
 | `v6/sprefa-extract/src/lang/rust.rs` | 70 | 192 | 35 | 23 |
 | `v6/sprefa-extract/src/lang/ts.rs` | 92 | 207 | 30 | 22 |
-| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | 37 | 98 | 29 | 18 |
-| `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | 22 | 76 | 29 | 18 |
+| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | 37 | 98 | 30 | 18 |
+| `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | 22 | 76 | 30 | 18 |
 | `v6/sprefa-extract/src/lang/markdown/_0_source.rs` | 12 | 54 | 29 | 15 |
 | `v6/sprefa-extract/src/lang/data/_0_source.rs` | 28 | 102 | 28 | 19 |
 | `v6/sprefa-extract/src/lang/astgrep.rs` | 7 | 52 | 28 | 18 |
@@ -266,6 +268,7 @@ flowchart LR
 | `v6/sprefa-extract/src/lang/kotlin.rs` | 43 | 141 | 25 | 22 |
 | `v6/sprefa-extract/src/lang/python/_0_source.rs` | 23 | 65 | 22 | 19 |
 | `v6/sprefa-extract/src/lang/mod.rs` | 2 | 5 | 4 | 11 |
+| `v6/sprefa-extract/src/lang/1_ast_rule.rs` | 18 | 91 | 0 | 12 |
 | `v6/sprefa-extract/src/lang/data/mod.rs` | 0 | 0 | 0 | 0 |
 | `v6/sprefa-extract/src/lang/dl6/mod.rs` | 0 | 0 | 0 | 0 |
 | `v6/sprefa-extract/src/lang/markdown/mod.rs` | 0 | 0 | 0 | 0 |
@@ -278,8 +281,8 @@ Phase 2: names to files, across a supplied project.
 
 ```mermaid
 flowchart LR
-  n1["project  in26/out21"]
-  n2["deps  in22/out15"]
+  n1["project  in27/out21"]
+  n2["deps  in23/out15"]
   n3["manifests  in2/out16"]
   n2 -->|3| n1
   n3 -->|3| n2
@@ -289,8 +292,8 @@ flowchart LR
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
-| `v6/sprefa-extract/src/project.rs` | 47 | 147 | 26 | 21 |
-| `v6/sprefa-extract/src/deps.rs` | 16 | 81 | 22 | 15 |
+| `v6/sprefa-extract/src/project.rs` | 50 | 156 | 27 | 21 |
+| `v6/sprefa-extract/src/deps.rs` | 16 | 81 | 23 | 15 |
 | `v6/sprefa-extract/src/manifests.rs` | 12 | 44 | 2 | 16 |
 
 ## scip
@@ -299,9 +302,9 @@ A SCIP index in, raw rows out. The one plane a compiler resolved.
 
 ```mermaid
 flowchart LR
-  n1["scip_ensure  in26/out18"]
-  n2["scip_v5_rels  in24/out8"]
-  n3["scip_rows  in20/out11"]
+  n1["scip_ensure  in27/out18"]
+  n2["scip_v5_rels  in25/out8"]
+  n3["scip_rows  in21/out11"]
   n4["scip  in6/out11"]
   n5["scip_decode  in2/out4"]
   n6["scip_proto  in0/out0"]
@@ -309,22 +312,22 @@ flowchart LR
   n3 -->|3| n1
   n2 -->|3| n1
   n1 -->|2| n3
+  n3 -->|2| n4
   n4 -->|1| n5
   n4 -->|1| n2
   n5 -->|1| n1
   n1 -->|1| n4
   n1 -->|1| n5
   n1 -->|1| n2
-  n3 -->|1| n4
   n3 -->|1| n2
 ```
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
-| `v6/sprefa-extract/src/scip_ensure.rs` | 32 | 123 | 26 | 18 |
-| `v6/sprefa-extract/src/scip_v5_rels.rs` | 12 | 68 | 24 | 8 |
-| `v6/sprefa-extract/src/scip_rows.rs` | 10 | 55 | 20 | 11 |
-| `v6/sprefa-extract/src/scip.rs` | 13 | 84 | 6 | 11 |
+| `v6/sprefa-extract/src/scip_ensure.rs` | 32 | 123 | 27 | 18 |
+| `v6/sprefa-extract/src/scip_v5_rels.rs` | 12 | 68 | 25 | 8 |
+| `v6/sprefa-extract/src/scip_rows.rs` | 10 | 56 | 21 | 11 |
+| `v6/sprefa-extract/src/scip.rs` | 16 | 91 | 6 | 11 |
 | `v6/sprefa-extract/src/scip_decode.rs` | 7 | 32 | 2 | 4 |
 | `v6/sprefa-extract/src/scip/scip_proto.rs` | 2 | 1 | 0 | 0 |
 
@@ -335,16 +338,16 @@ whose clauses name it. `fan_out` counts the distinct callees of its own.
 
 | module | symbol | fan-in | fan-out |
 |---|---|---:|---:|
-| `v6/sprefa-extract/src/cfg.rs` | `new` | 192 | 15 |
-| `v6/sprefa-extract/src/scip_ensure.rs` | `new` | 192 | 11 |
-| `v6/sprefa-extract/src/scip_v5_rels.rs` | `new` | 192 | 7 |
-| `v6/sprefa-extract/src/trace.rs` | `new` | 192 | 3 |
-| `v6/sprefa-extract/src/project.rs` | `new` | 192 | 2 |
-| `v6/sprefa-extract/src/types.rs` | `new` | 192 | 2 |
-| `v6/sprefa-extract/src/cache.rs` | `new` | 192 | 1 |
-| `v6/sprefa-extract/src/lang/rust.rs` | `push` | 169 | 2 |
-| `v6/sprefa-extract/src/scip_ensure.rs` | `len` | 78 | 1 |
-| `v6/sprefa-extract/src/types.rs` | `len` | 78 | 1 |
+| `v6/sprefa-extract/src/cfg.rs` | `new` | 201 | 15 |
+| `v6/sprefa-extract/src/scip_ensure.rs` | `new` | 201 | 11 |
+| `v6/sprefa-extract/src/scip_v5_rels.rs` | `new` | 201 | 7 |
+| `v6/sprefa-extract/src/trace.rs` | `new` | 201 | 3 |
+| `v6/sprefa-extract/src/project.rs` | `new` | 201 | 2 |
+| `v6/sprefa-extract/src/types.rs` | `new` | 201 | 2 |
+| `v6/sprefa-extract/src/cache.rs` | `new` | 201 | 1 |
+| `v6/sprefa-extract/src/lang/rust.rs` | `push` | 170 | 2 |
+| `v6/sprefa-extract/src/scip_ensure.rs` | `len` | 82 | 1 |
+| `v6/sprefa-extract/src/types.rs` | `len` | 82 | 1 |
 | `v6/sprefa-extract/src/lang/data/_0_source.rs` | `walk` | 70 | 19 |
 | `v6/sprefa-extract/src/types.rs` | `intern` | 62 | 6 |
 | `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | `span` | 46 | 3 |
@@ -353,6 +356,6 @@ whose clauses name it. `fan_out` counts the distinct callees of its own.
 | `v6/sprefa-extract/src/cfg.rs` | `span` | 46 | 0 |
 | `v6/sprefa-extract/src/scip_ensure.rs` | `is_empty` | 44 | 1 |
 | `v6/sprefa-extract/src/types.rs` | `is_empty` | 44 | 1 |
-| `v6/sprefa-extract/src/deps.rs` | `as_str` | 32 | 0 |
-| `v6/sprefa-extract/src/types.rs` | `as_str` | 32 | 0 |
+| `v6/sprefa-extract/src/deps.rs` | `as_str` | 33 | 0 |
+| `v6/sprefa-extract/src/types.rs` | `as_str` | 33 | 0 |
 

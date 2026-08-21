@@ -27,13 +27,13 @@ contract forces.
 
 11 shapes (empty, single_node, chain, self_loop, mutual_pair, three_cycle,
 diamond, two_cycles_joined, cycle_with_tail, flagship_shaped, disconnected) x 10
-predicates against SWI ground truth captured from `0_graph.pl`. All 110 cells
+predicates against SWI oracle captured from `0_graph.pl`. All 110 cells
 PASS. Ordering matches SWI: components are each sorted and the list is sorted,
 so they come out ordered by smallest member (e.g. two_cycles_joined -> [[a,b],
 [c,d]]). Grader output verbatim (`cabal run graph-grader`, exit 0, 0.06 s):
 
 ```
-== differential grader: Haskell vs SWI ground truth ==
+== differential grader: Haskell vs SWI oracle ==
 PASS empty/graphFromEdges
 PASS empty/graphFromEdgesWithVertices
 PASS empty/graphNodes

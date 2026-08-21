@@ -199,7 +199,7 @@ Lowered SQL to a host language: the two doors plus the type and schema artifact 
 ```mermaid
 flowchart LR
   n1["emit_ts  in9/out12"]
-  n2["emit_rust  in9/out12"]
+  n2["emit_rust  in9/out13"]
   n3["4_emit_jsonschema  in9/out2"]
   n4["8_emit_rust_types  in7/out2"]
   n5["7_emit_ts_types  in7/out2"]
@@ -212,21 +212,21 @@ flowchart LR
   n1 -->|19| n2
   n5 -->|13| n4
   n4 -->|13| n5
+  n3 -->|2| n5
+  n3 -->|2| n4
   n6 -->|2| n3
   n5 -->|2| n3
   n4 -->|2| n3
   n10 -->|2| n3
-  n3 -->|1| n5
-  n3 -->|1| n4
   n10 -->|1| n5
   n10 -->|1| n4
 ```
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
-| `v6/prolog/emit_ts.pl` | 215 | 218 | 9 | 12 |
-| `v6/prolog/emit_rust.pl` | 74 | 89 | 9 | 12 |
-| `v6/prolog/compile/4_emit_jsonschema.pl` | 65 | 86 | 9 | 2 |
+| `v6/prolog/emit_ts.pl` | 215 | 219 | 9 | 12 |
+| `v6/prolog/emit_rust.pl` | 74 | 90 | 9 | 13 |
+| `v6/prolog/compile/4_emit_jsonschema.pl` | 66 | 88 | 9 | 2 |
 | `v6/prolog/compile/8_emit_rust_types.pl` | 86 | 96 | 7 | 2 |
 | `v6/prolog/compile/7_emit_ts_types.pl` | 44 | 50 | 7 | 2 |
 | `v6/prolog/compile/5_emit_openapi.pl` | 12 | 17 | 1 | 1 |
@@ -241,7 +241,7 @@ The entry points and the tables everything reads.
 
 ```mermaid
 flowchart LR
-  n1["registry  in17/out0"]
+  n1["registry  in18/out0"]
   n2["compile  in16/out10"]
   n3["dl6c  in2/out1"]
   n4["kernel  in1/out0"]
@@ -249,7 +249,7 @@ flowchart LR
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
-| `v6/prolog/compile/registry.pl` | 20 | 11 | 17 | 0 |
+| `v6/prolog/compile/registry.pl` | 20 | 13 | 18 | 0 |
 | `v6/prolog/compile.pl` | 81 | 125 | 16 | 10 |
 | `v6/prolog/dl6c.pl` | 15 | 31 | 2 | 1 |
 | `v6/prolog/src/kernel.pl` | 4 | 3 | 1 | 0 |

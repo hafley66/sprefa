@@ -7,7 +7,7 @@ files under `dl_view/`. Each construct row shows the `.dl6` spelling and the
 count of files that use it, measured with `grep -rl <pattern> .` run from
 `dl_view/`. "files" means the 397-file corpus.
 
-## Corpus ground truth
+## Corpus oracle
 
 | item | value | evidence |
 |---|---|---|

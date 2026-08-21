@@ -75,7 +75,7 @@ tests, including a differential Warshall oracle. Use the SAME shapes:
 
 Procedure:
 
-1. Run the SWI side and capture its answers as ground truth. From `v6/prolog`:
+1. Run the SWI side and capture its answers as oracle. From `v6/prolog`:
    `swipl -q -g 'run_tests' -t halt compile/test/0_graph.test.pl` for the pass
    count, and a small `-g` script that prints each predicate's answer per shape
    for the actual values.

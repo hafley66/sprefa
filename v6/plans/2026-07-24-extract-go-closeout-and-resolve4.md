@@ -214,7 +214,7 @@ Allowlist: new `lang/scip.rs` (or per 4a), `seams.rs` registration,
 `lang/ts.rs`, fixtures. Implement the spec's `ScipSource` (build = subprocess,
 load = protobuf parse) for scip-typescript; emit
 `CallEdgeKind{NameResolve, ScipOverride}` (types.rs:316-323). The ratchet:
-occurrence/resolution parity vs SCIP as ground truth — NOT a raw symbol diff
+occurrence/resolution parity vs SCIP as oracle — NOT a raw symbol diff
 (`_7_tasks.rs` ORACLE entry, lines 215-219).
 
 ### 4d — rust + go resolve arms

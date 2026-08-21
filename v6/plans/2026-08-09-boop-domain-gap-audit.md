@@ -227,7 +227,7 @@ verb = "write"
 
 `agent_fetch` records native fetch and search tools. URL-bearing shell commands remain outside
 that table. The measured sample contained 119 such Bash commands across 120 transcripts.
-Preserve `agent_cmd` as ground truth and derive shell-network claims in DL6:
+Preserve `agent_cmd` as oracle and derive shell-network claims in DL6:
 
 ```prolog
 shell_network(Session, Turn, Program, Target) <-
