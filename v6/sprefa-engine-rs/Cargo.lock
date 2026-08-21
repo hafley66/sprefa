@@ -1901,6 +1901,7 @@ dependencies = [
  "serde_json",
  "soopy",
  "syn 2.0.119",
+ "tracing",
  "tree-sitter",
  "tree-sitter-dl6",
  "tree-sitter-go",
