@@ -6,7 +6,6 @@ here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../../.." && pwd)"
 engine="$root/v6/sprefa-engine-rs"
 harness="$engine/target/debug/emit_rust_harness"
-goldens="$root/v6/tsv2/goldens"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT INT TERM
 
@@ -26,15 +25,6 @@ names=(
   ghcacher_checkout_golden
   ghcacher_tier_golden
 )
-declare -A source_program=(
-  [ghcacher_tick_golden]=0_ghcacher_clock_golden.dl6
-  [ghcacher_304_golden]=0_ghcacher_304_golden.dl6
-  [ghcacher_config_golden]=0_ghcacher_config_golden.dl6
-  [ghcacher_env_golden]=0_ghcacher_env_golden.dl6
-  [ghcacher_checkout_golden]=0_ghcacher_checkout_golden.dl6
-  [ghcacher_tier_golden]=0_ghcacher_tier_golden.dl6
-)
-
 failed=0
 
 # One swipl process for all six: six startups cost more than the whole fold.
@@ -63,13 +53,8 @@ for name in "${names[@]}"; do
   expected_final="$here/$name.expected.final.jsonl"
   emitted="$scratch/$name.rs"
 
-  # One copy of the truth: a drifted copy is a failure, never a silent pass.
-  origin="$goldens/$name/${source_program[$name]}"
-  if [ -f "$origin" ] && ! diff -q "$origin" "$program" >/dev/null; then
-    echo "FAIL $name program drifted from $origin"
-    failed=1
-    continue
-  fi
+  # tsv2 door paused (user 2026-08-21): the arrival respelling diverges from
+  # v6/tsv2/goldens on purpose, so the origin-diff step is gone.
 
   started=$(date +%s.%N)
   RUST_LOG=sprefa_engine_rs=info "$harness" "$emitted" "$schedule" --final \

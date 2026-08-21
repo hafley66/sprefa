@@ -7,10 +7,10 @@
     {"rel":"config_candidate","sign":"add","row":[4,"user.toml"]}
   ],
   [
-    {"rel":"__host_response_repos","sign":"add","row":["witness|repos|org:text=flag.toml|bucket=1",0,"flag.toml",1]},
-    {"rel":"__host_response_repos","sign":"add","row":["witness|repos|org:text=env.toml|bucket=1",0,"env.toml",1]},
-    {"rel":"__host_response_repos","sign":"add","row":["witness|repos|org:text=cwd.toml|bucket=1",0,"cwd.toml",1]},
-    {"rel":"__host_response_repos","sign":"add","row":["witness|repos|org:text=user.toml|bucket=1",0,"user.toml",1]}
+    {"rel":"__host_response_gh__repos","sign":"add","row":["witness|gh__repos|org:text=flag.toml|bucket=1",0,"flag.toml",1]},
+    {"rel":"__host_response_gh__repos","sign":"add","row":["witness|gh__repos|org:text=env.toml|bucket=1",0,"env.toml",1]},
+    {"rel":"__host_response_gh__repos","sign":"add","row":["witness|gh__repos|org:text=cwd.toml|bucket=1",0,"cwd.toml",1]},
+    {"rel":"__host_response_gh__repos","sign":"add","row":["witness|gh__repos|org:text=user.toml|bucket=1",0,"user.toml",1]}
   ],
   [
     {"rel":"__host_response_answer","sign":"add","row":["witness|answer|name:text=flag.toml|bucket=1",0,"flag.toml","acme","acme",1,0,3600]}
@@ -19,10 +19,10 @@
     {"rel":"interval","sign":"add","row":[3600,2]}
   ],
   [
-    {"rel":"__host_response_repos","sign":"add","row":["witness|repos|org:text=flag.toml|bucket=2",0,"flag.toml",0]},
-    {"rel":"__host_response_repos","sign":"add","row":["witness|repos|org:text=env.toml|bucket=2",0,"env.toml",1]},
-    {"rel":"__host_response_repos","sign":"add","row":["witness|repos|org:text=cwd.toml|bucket=2",0,"cwd.toml",1]},
-    {"rel":"__host_response_repos","sign":"add","row":["witness|repos|org:text=user.toml|bucket=2",0,"user.toml",1]}
+    {"rel":"__host_response_gh__repos","sign":"add","row":["witness|gh__repos|org:text=flag.toml|bucket=2",0,"flag.toml",0]},
+    {"rel":"__host_response_gh__repos","sign":"add","row":["witness|gh__repos|org:text=env.toml|bucket=2",0,"env.toml",1]},
+    {"rel":"__host_response_gh__repos","sign":"add","row":["witness|gh__repos|org:text=cwd.toml|bucket=2",0,"cwd.toml",1]},
+    {"rel":"__host_response_gh__repos","sign":"add","row":["witness|gh__repos|org:text=user.toml|bucket=2",0,"user.toml",1]}
   ],
   [
     {"rel":"__host_response_answer","sign":"add","row":["witness|answer|name:text=env.toml|bucket=2",0,"env.toml","acme","acme",1,0,3600]}
@@ -31,9 +31,9 @@
     {"rel":"interval","sign":"add","row":[3600,3]}
   ],
   [
-    {"rel":"__host_response_repos","sign":"add","row":["witness|repos|org:text=flag.toml|bucket=3",0,"flag.toml",0]},
-    {"rel":"__host_response_repos","sign":"add","row":["witness|repos|org:text=env.toml|bucket=3",0,"env.toml",0]},
-    {"rel":"__host_response_repos","sign":"add","row":["witness|repos|org:text=cwd.toml|bucket=3",0,"cwd.toml",0]},
-    {"rel":"__host_response_repos","sign":"add","row":["witness|repos|org:text=user.toml|bucket=3",0,"user.toml",0]}
+    {"rel":"__host_response_gh__repos","sign":"add","row":["witness|gh__repos|org:text=flag.toml|bucket=3",0,"flag.toml",0]},
+    {"rel":"__host_response_gh__repos","sign":"add","row":["witness|gh__repos|org:text=env.toml|bucket=3",0,"env.toml",0]},
+    {"rel":"__host_response_gh__repos","sign":"add","row":["witness|gh__repos|org:text=cwd.toml|bucket=3",0,"cwd.toml",0]},
+    {"rel":"__host_response_gh__repos","sign":"add","row":["witness|gh__repos|org:text=user.toml|bucket=3",0,"user.toml",0]}
   ]
 ]
