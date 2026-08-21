@@ -16,6 +16,7 @@
 :- use_module(library(assoc)).
 :- use_module(library(sha)).
 :- use_module(library(filesex)).
+:- use_module(library(readutil), [read_file_to_string/3]).
 :- use_module('compile/parse_dl_dcg', [use_item/3, parse_dl_dcg_entry/5]).
 :- use_module('0_dot_expand', [declared_path/3]).
 :- use_module('compile/0_trace', [run_compile_step/4]).
@@ -248,16 +249,17 @@ subtree_paths(Files, SubtreePaths) :-
 % The parse counter is what a re-parsing loader trips; end-state equality on a
 % diamond looks identical whether the shared file was read once or twice.
 strip_entry(EntryPath, EntryAbs, UseSpecs, CoreCodes) :-
-    read_file_to_codes(EntryPath, Codes, []),
+    read_file_to_string(EntryPath, Text, []),
     bump_parse_count(EntryAbs),
-    split_codes_lines(Codes, Lines),
+    split_text_lines(Text, Lines),
     strip_use_lines(Lines, UseSpecs, CoreLines),
-    flatten(CoreLines, CoreCodes).
+    % Every element is a flat code list, so append/2 is flatten/2 without the
+    % is_list/1 test per code.
+    append(CoreLines, CoreCodes).
 
-%! split_codes_lines(+Codes, -Lines) is det.
-%  Every line keeps its own newline, so flatten/2 rebuilds the original bytes.
-split_codes_lines(Codes, Lines) :-
-    string_codes(Text, Codes),
+%! split_text_lines(+Text, -Lines) is det.
+%  Every line keeps its own newline, so append/2 rebuilds the original bytes.
+split_text_lines(Text, Lines) :-
     split_string(Text, "\n", "", Parts),
     parts_to_lines(Parts, Lines).
 
