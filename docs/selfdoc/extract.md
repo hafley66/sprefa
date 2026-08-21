@@ -70,8 +70,8 @@ One file plus a mask to a family output, then the JSONL wire.
 
 ```mermaid
 flowchart LR
-  n1["types  in37/out10"]
-  n2["cfg  in26/out21"]
+  n1["types  in38/out10"]
+  n2["cfg  in27/out21"]
   n3["trace  in24/out17"]
   n4["cache  in24/out14"]
   n5["wire  in7/out9"]
@@ -116,8 +116,8 @@ flowchart LR
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
-| `v6/sprefa-extract/src/types.rs` | 40 | 50 | 37 | 10 |
-| `v6/sprefa-extract/src/cfg.rs` | 19 | 58 | 26 | 21 |
+| `v6/sprefa-extract/src/types.rs` | 40 | 50 | 38 | 10 |
+| `v6/sprefa-extract/src/cfg.rs` | 19 | 58 | 27 | 21 |
 | `v6/sprefa-extract/src/trace.rs` | 18 | 43 | 24 | 17 |
 | `v6/sprefa-extract/src/cache.rs` | 7 | 28 | 24 | 14 |
 | `v6/sprefa-extract/src/wire.rs` | 11 | 58 | 7 | 9 |
@@ -140,16 +140,16 @@ One module per language front-end. Each projects a tree-sitter parse into the sh
 
 ```mermaid
 flowchart LR
-  n1["rust  in33/out22"]
-  n2["ts  in28/out22"]
-  n3["_0_source  in27/out18"]
-  n4["_0_source  in27/out18"]
-  n5["_0_source  in27/out15"]
-  n6["_0_source  in26/out19"]
-  n7["astgrep  in26/out18"]
-  n8["go  in23/out23"]
-  n9["kotlin  in23/out21"]
-  n10["_0_source  in20/out18"]
+  n1["rust  in34/out23"]
+  n2["ts  in29/out22"]
+  n3["_0_source  in28/out18"]
+  n4["_0_source  in28/out18"]
+  n5["_0_source  in28/out15"]
+  n6["_0_source  in27/out19"]
+  n7["astgrep  in27/out18"]
+  n8["go  in24/out24"]
+  n9["kotlin  in24/out22"]
+  n10["_0_source  in21/out19"]
   n11["mod  in4/out11"]
   n12["mod  in0/out0"]
   n1 -->|16| n2
@@ -255,16 +255,16 @@ flowchart LR
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
-| `v6/sprefa-extract/src/lang/rust.rs` | 70 | 191 | 33 | 22 |
-| `v6/sprefa-extract/src/lang/ts.rs` | 92 | 206 | 28 | 22 |
-| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | 37 | 98 | 27 | 18 |
-| `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | 22 | 76 | 27 | 18 |
-| `v6/sprefa-extract/src/lang/markdown/_0_source.rs` | 12 | 54 | 27 | 15 |
-| `v6/sprefa-extract/src/lang/data/_0_source.rs` | 28 | 102 | 26 | 19 |
-| `v6/sprefa-extract/src/lang/astgrep.rs` | 7 | 52 | 26 | 18 |
-| `v6/sprefa-extract/src/lang/go.rs` | 47 | 149 | 23 | 23 |
-| `v6/sprefa-extract/src/lang/kotlin.rs` | 43 | 141 | 23 | 21 |
-| `v6/sprefa-extract/src/lang/python/_0_source.rs` | 23 | 65 | 20 | 18 |
+| `v6/sprefa-extract/src/lang/rust.rs` | 70 | 192 | 34 | 23 |
+| `v6/sprefa-extract/src/lang/ts.rs` | 92 | 207 | 29 | 22 |
+| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | 37 | 98 | 28 | 18 |
+| `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | 22 | 76 | 28 | 18 |
+| `v6/sprefa-extract/src/lang/markdown/_0_source.rs` | 12 | 54 | 28 | 15 |
+| `v6/sprefa-extract/src/lang/data/_0_source.rs` | 28 | 102 | 27 | 19 |
+| `v6/sprefa-extract/src/lang/astgrep.rs` | 7 | 52 | 27 | 18 |
+| `v6/sprefa-extract/src/lang/go.rs` | 47 | 150 | 24 | 24 |
+| `v6/sprefa-extract/src/lang/kotlin.rs` | 43 | 141 | 24 | 22 |
+| `v6/sprefa-extract/src/lang/python/_0_source.rs` | 23 | 65 | 21 | 19 |
 | `v6/sprefa-extract/src/lang/mod.rs` | 2 | 5 | 4 | 11 |
 | `v6/sprefa-extract/src/lang/data/mod.rs` | 0 | 0 | 0 | 0 |
 | `v6/sprefa-extract/src/lang/dl6/mod.rs` | 0 | 0 | 0 | 0 |
@@ -347,12 +347,12 @@ whose clauses name it. `fan_out` counts the distinct callees of its own.
 | `v6/sprefa-extract/src/types.rs` | `len` | 78 | 1 |
 | `v6/sprefa-extract/src/lang/data/_0_source.rs` | `walk` | 70 | 19 |
 | `v6/sprefa-extract/src/types.rs` | `intern` | 62 | 6 |
-| `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | `span` | 44 | 3 |
-| `v6/sprefa-extract/src/lang/markdown/_0_source.rs` | `span` | 44 | 3 |
-| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | `span` | 44 | 3 |
+| `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | `span` | 46 | 3 |
+| `v6/sprefa-extract/src/lang/markdown/_0_source.rs` | `span` | 46 | 3 |
+| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | `span` | 46 | 3 |
+| `v6/sprefa-extract/src/cfg.rs` | `span` | 46 | 0 |
 | `v6/sprefa-extract/src/scip_ensure.rs` | `is_empty` | 44 | 1 |
 | `v6/sprefa-extract/src/types.rs` | `is_empty` | 44 | 1 |
-| `v6/sprefa-extract/src/cfg.rs` | `span` | 44 | 0 |
 | `v6/sprefa-extract/src/deps.rs` | `as_str` | 32 | 0 |
 | `v6/sprefa-extract/src/types.rs` | `as_str` | 32 | 0 |
 

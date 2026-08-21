@@ -428,6 +428,7 @@ in the owning program that name the host.
 | program | host | executor | demands |
 |---|---|---|---:|
 | `v6/dl/deadcode/dead-module-rail.dl6` | `call_node_at` | sprefa_extract | 2 |
+| `v6/dl/deadcode/dead-module-rail.dl6` | `cargo_targets` | cargo_metadata | 1 |
 | `v6/dl/deadcode/dead-module-rail.dl6` | `cfg_at` | sprefa_extract | 1 |
 | `v6/dl/deadcode/dead-module-rail.dl6` | `extract` | sprefa_extract | 2 |
 | `v6/dl/deadcode/dead-module-rail.dl6` | `files` | soopy_files | 1 |
@@ -451,12 +452,26 @@ in the owning program that name the host.
 | `v6/dl/fixtures/flagship-flow.dl6` | `sig_at` | sprefa_extract | 1 |
 | `v6/dl/fixtures/flagship-flow.dl6` | `type_node_at` | sprefa_extract | 1 |
 | `v6/dl/fixtures/live_extract_calls.dl6` | `extract` | sprefa_extract | 0 |
+| `v6/dl/fixtures/live_shell_probe.dl6` | `look` | fixture | 0 |
 | `v6/dl/fixtures/openapi-data-family.dl6` | `extract` | sprefa_extract | 1 |
 | `v6/dl/fixtures/source-mutations.dl6` | `source_commit` | soopy | 1 |
 | `v6/dl/fixtures/source-mutations.dl6` | `source_stage` | soopy | 1 |
+| `v6/dl/ghcacher/ghcacher_304_golden.dl6` | `fetch` | http_fetch | 1 |
+| `v6/dl/ghcacher/ghcacher_checkout_golden.dl6` | `repo_checkout` | soopy_checkout | 1 |
+| `v6/dl/ghcacher/ghcacher_env_golden.dl6` | `env_var` | env | 1 |
+| `v6/dl/ghcacher/ghcacher_env_golden.dl6` | `toml_json` | toml_json | 1 |
+| `v6/dl/ghcacher/ghcacher_smoke.dl6` | `fetch` | http_fetch | 1 |
+| `v6/dl/ghcacher/ghcacher_tick_golden.dl6` | `fetch` | http_fetch | 1 |
+| `v6/dl/ghcacher/ghcacher_tier_golden.dl6` | `fetch` | http_fetch | 1 |
 | `v6/dl/hotpath/prolog-hotpath-rails.dl6` | `call_node_at` | sprefa_extract | 1 |
 | `v6/dl/hotpath/prolog-hotpath-rails.dl6` | `call_ref` | sprefa_extract | 1 |
 | `v6/dl/hotpath/prolog-hotpath-rails.dl6` | `extract` | sprefa_extract | 1 |
+| `v6/dl/selfdoc/selfdoc.dl6` | `call_node_at` | sprefa_extract | 2 |
+| `v6/dl/selfdoc/selfdoc.dl6` | `call_ref` | sprefa_extract | 1 |
+| `v6/dl/selfdoc/selfdoc.dl6` | `data_doc_at` | sprefa_extract | 1 |
+| `v6/dl/selfdoc/selfdoc.dl6` | `extract` | sprefa_extract | 1 |
+| `v6/dl/selfdoc/selfdoc.dl6` | `files` | soopy_files | 1 |
+| `v6/dl/selfdoc/selfdoc.dl6` | `specifier_at` | sprefa_extract | 1 |
 
 ## Orphan predicates
 
