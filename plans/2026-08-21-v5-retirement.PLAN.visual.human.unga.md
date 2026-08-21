@@ -150,13 +150,16 @@ blocked by the doorway. Two gaps account for almost all of them:
 
 ```mermaid
 flowchart TD
-    G1[a program cannot read<br/>the text at a location] --> R1[68 rails]
-    G2[a program cannot ask for<br/>cross-file resolved links] --> R2[66 rails]
-    G3[a program cannot ask for<br/>import graphs or control flow] --> R3[27 rails]
-    R1 --> W[all three are wiring:<br/>the facts already exist<br/>and are already tested]
+    G1[a program cannot read<br/>the text at a location] --> R1[87 rails want it<br/>40 need nothing else]
+    G2[a program cannot ask for<br/>cross-file resolved links] --> R2[66 rails want it]
+    G3[a program cannot ask for<br/>import graphs or control flow] --> R3[15 rails want it]
+    R1 --> W[fix all three and 96 rails<br/>go green; the facts already<br/>exist and are already tested]
     R2 --> W
     R3 --> W
 ```
+
+The first gap is the one to buy: it frees 40 rails on its own, and two of its
+three pieces are wiring rather than a design question.
 
 The extractor knows every one of these things. Its command-line tool will print
 them for you today. The engine just does not know how to ask.

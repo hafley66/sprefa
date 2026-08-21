@@ -67,11 +67,15 @@ The three gaps in `docs/v5-extraction-parity.md`. None of them keeps v5 alive;
 they decide whether the 144 blocked `.dl` rails are ever REWRITTEN or simply
 archived as reference text.
 
-| # | gap | rails it unblocks | issue |
-|---|---|---|---|
-| D1 | no text plane and no ast-grep pattern door from dl6 | 68 | `@dl6-no-text-extraction-door` |
-| D2 | the resolve arm (`--resolve`) unreachable from dl6 | 66 | `@dl6-scip-facts-door` |
-| D3 | `--deps` / `--package-deps` / `--family cfg` / `--scip-facts` unreachable from dl6 | 27 | `@dl6-deps-package-door`, `@dl6-cfg-family-unlinked` |
+"Touches" counts blocked rails naming the construct; "frees" counts the ones
+that go green when that gap alone closes.
+
+| # | gap | touches | frees alone | issue |
+|---|---|---|---|---|
+| D1 | no text plane and no ast-grep pattern door from dl6 | 87 | 40 | `@dl6-no-text-extraction-door` |
+| D2 | the resolve arm and the scip fact rows unreachable from dl6 | 66 | 0 | `@dl6-scip-facts-door` |
+| D3 | `--deps` / `--package-deps` / `--family cfg` unreachable from dl6 | 15 | 0 | `@dl6-deps-package-door`, `@dl6-cfg-family-unlinked` |
+| — | all three shipped together | — | 96 | — |
 
 D1 and D3 are wiring: the records exist, are tested, and reach the CLI. D1's
 `--ast-pattern` arm is three lines in `SprefaExtractExecutor::run`

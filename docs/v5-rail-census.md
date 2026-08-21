@@ -139,52 +139,64 @@ The dl6 spellings these need, all live:
 
 ## 3. Blocked
 
-144 files. Grouped by the construct that stops each one; a file with two
-blockers is counted under each, so the column sums past 144.
+148 files carry at least one blocker; 4 of them are the ported twins in section
+1, so 144 are blocked and unported. The table below counts over all 148. A file
+with two blockers is counted under each, so the column sums past 148.
 
 | blocker | files | why the door stops | issue |
 |---|---|---|---|
-| `match_line` (line regex) | 34 | no v6 text plane at all; the cst plane's `name` is null | `@dl6-no-text-extraction-door` |
+| `match_line` (line regex) | 32 | no v6 text plane at all; the cst plane's `name` is null | `@dl6-no-text-extraction-door` |
 | `call_edge` (resolved calls) | 30 | needs `--resolve`; only `sh scip.call` / `sh scip.diet.call` reach a resolved edge, and they answer `caller_path`, not v5's `caller` symbol | `@dl6-scip-facts-door` |
-| `comment` op / `comment_node` | 26 | the comment SPAN is a cst node, the TEXT is not on the wire | `@dl6-no-text-extraction-door` |
+| `comment` op | 26 | the comment SPAN is a cst node, the TEXT is not on the wire | `@dl6-no-text-extraction-door` |
 | `gen` (codegen sink) | 25 | dl6 cannot write files | `@fs-effects-door` (open) |
 | `match_ast` | 20 | `hosts.rs:901` rejects `--ast-pattern` | `@dl6-no-text-extraction-door` |
-| `type_edge` | 16 | needs `--resolve` | `@dl6-scip-facts-door` |
-| `ast` (tree-sitter query) | 13 | `ts_query/1` compiles to a `tree_sitter` host demand; `executor_for` has no arm for it (`hosts.rs:42-54`) | `@dl6-no-text-extraction-door` |
-| `module_edge` | 10 | needs `--deps` / `--scip-deps` | `@dl6-deps-package-door` |
-| `scc` | 9 | no dl6 spelling for strongly-connected-component condensation | `@dl6-no-text-extraction-door` (filed with the op gaps) |
-| `scip_*` (the ten rels) | 8 max per rel | `--family scip` / `--scip-facts` not linked in-process (`hosts.rs:941`) | `@dl6-scip-facts-door` |
-| `sg` (deprecated `match_ast`) | 8 | same as `match_ast` | `@dl6-no-text-extraction-door` |
-| `type_link` | 7 | needs `--resolve --scip-index` | `@dl6-scip-facts-door` |
-| `match` (deprecated `match_line`) | 7 | same as `match_line` | `@dl6-no-text-extraction-door` |
-| `diag_stage` | 6 | v5 daemon staging; no v6 twin, none planned | delete |
-| `rel_catalog` / `rel_col` / `fn_catalog` / `op_catalog` / `verb_catalog` | 6 / 3 / 3 / 3 / 1 | v5 describing v5; v6's equivalent is compile-time | delete |
+| `type_edge` (+`_rev` 2) | 16 | needs `--resolve` | `@dl6-scip-facts-door` |
+| `ast` (tree-sitter query) | 12 | `ts_query/1` compiles to a `tree_sitter` host demand; `executor_for` has no arm for it (`hosts.rs:42-54`) | `@dl6-no-text-extraction-door` |
+| `module_edge` (+`_rev` 3) | 10 | needs `--deps` / `--scip-deps` | `@dl6-deps-package-door` |
+| `comment_node` | 9 | its `text` column is not on the wire | `@dl6-no-text-extraction-door` |
+| `scc` | 9 | no dl6 spelling for strongly-connected-component condensation | `@dl6-no-text-extraction-door` |
+| `scip_def` / `scip_name` / `scip_edge` | 8 / 8 / 8 | `--family scip` not linked in-process (`hosts.rs:941`) | `@dl6-scip-facts-door` |
+| `type_link` (+`_rev` 4) | 7 | needs `--resolve --scip-index` | `@dl6-scip-facts-door` |
+| `scip_fn_edge` | 7 | same as the other scip rows | `@dl6-scip-facts-door` |
+| `sg` (deprecated `match_ast`) | 7 | same as `match_ast` | `@dl6-no-text-extraction-door` |
+| `rel_catalog` / `rel_col` / `fn_catalog` / `op_catalog` / `verb_catalog` | 6 / 2 / 3 / 3 / 1 | v5 describing v5; v6's equivalent is compile-time | delete |
 | `ast_yaml` | 5 | `sg_pattern/3` is `refuse(slot_sg_metavariable_semantics)`, `registry.pl:199` | `@dl6-no-text-extraction-door` (needs a LANG DESIGN call) |
+| `diag_stage` / `diag_mute` | 5 / 1 | v5 daemon staging; no v6 twin, none planned | delete |
 | `agent_touch` / `agent_edit` / `skill_loaded` | 5 / 2 / 2 | boop owns the harness trail now | delete |
+| `scip_occurrence` / `scip_local` / `scip_ref` / `scip_impl` / `scip_callee_type` / `scip_binding` / `scip_want` | 5 / 4 / 3 / 2 / 2 / 1 / 1 | `--scip-facts` not linked in-process | `@dl6-scip-facts-door` |
 | `hook_event` | 4 | v5 harness hooks | delete |
-| `module_unresolved` | 4 | needs `--deps` | `@dl6-deps-package-door` |
+| `module_unresolved` (+`_rev` 1) | 4 | needs `--deps` | `@dl6-deps-package-door` |
+| `match` (deprecated `match_line`) | 3 | same as `match_line` | `@dl6-no-text-extraction-door` |
 | `crate_edge` | 3 | needs `--package-deps` | `@dl6-deps-package-door` |
-| `rel_count` / `stmt_ms` / `query_log` | 3 / 3 / 1 | v6 emits `tracing` spans | delete |
-| `created` | 3 | no v6 first-author host | delete (zero live consumers) |
-| `doc_ref` | 3 | needs `--resolve` | `@dl6-scip-facts-door` |
-| `hover_note` | 3 | no v6 LSP | `plans/2026-08-12-v6-native-lsp.PLAN.md` |
+| `rel_count` / `stmt_ms` / `query_log` / `dl_diag` | 3 / 3 / 1 / 3 | v6 emits `tracing` spans and compile-time diagnostics | delete |
+| `hover_note` / `def_target` | 3 / 2 | no v6 LSP | `plans/2026-08-12-v6-native-lsp.PLAN.md` |
 | `type_shape` / `type_lgg` | 3 / 2 | no anti-unification plane in v6 | delete |
 | `effect_cmd` / `effect_log` | 3 / 2 | the host demand/response pair IS the effect log | delete |
 | `graph_node` / `graph_edge` | 2 / 2 | no v6 flow panel | delete |
-| `node2vec` / `similar` | 2 / 1 | no embedding plane in v6 | delete |
+| `created` | 2 | no v6 first-author host | delete (zero live consumers) |
+| `doc_ref` | 2 | needs `--resolve` | `@dl6-scip-facts-door` |
+| `module_binding_resolved` (+`_rev` 1) | 2 | needs `--deps` | `@dl6-deps-package-door` |
 | `propose_clone` / `propose_extract` | 2 / 1 | no refactor-proposal plane in v6 | delete |
+| `node2vec` / `similar` | 2 / 1 | no embedding plane in v6 | delete |
+| `template_parts` | 1 | its `text` column is not on the wire | `@dl6-no-text-extraction-door` |
 | `cmd` | 1 | zero shell in the engine, by decision 2026-08-21 | delete |
-| `def_target` | 2 | no v6 LSP | `plans/2026-08-12-v6-native-lsp.PLAN.md` |
-| `diag_mute` | 1 | v5 daemon | delete |
 
-**One gap unblocks 68 of the 144.** `match_line` (34) + `match_ast` (20) + `sg`
-(8) + `match` (7) all want the same thing: text at a span, or a pattern match
-that returns text. Filed as `@dl6-no-text-extraction-door`, and it is the
-highest-value single row in this census.
+### Which gap buys the most
 
-**A second gap unblocks 66.** The resolve arm behind `--resolve`: `call_edge`
-(30), `type_edge` (16), `module_edge` (10), `type_link` (7), `doc_ref` (3). The
-records all exist and are tested; only the door is missing.
+"Touches" is how many blocked files name the construct at all; "is the only
+blocker" is how many go green the moment that one gap closes.
+
+| gap | touches | is the only blocker |
+|---|---|---|
+| the text door (`match_line`, `match`, `match_ast`, `sg`, `ast`, `comment`, `comment_node`) | 78 | 40 |
+| the same plus `ast_yaml` and `scc` | 87 | 40 |
+| the resolve and scip doors (`call_edge`, `type_edge`, `type_link`, `module_edge`, `doc_ref`, every `scip_*`) | 66 | — |
+| the codegen sink (`gen`) | 25 | 4 |
+| all three doors shipped together | — | 96 |
+
+The text door is the single highest-value row: it alone frees 40 rails, it is
+the largest overlap group, and two of its three arms are wiring rather than
+design.
 
 ## 4. Dead
 
