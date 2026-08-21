@@ -331,7 +331,7 @@ rel rail_dead_module(path: text, defs: int).
 rail_dead_module(Path, Defs) <-
   file_defs(Path, Defs), Defs >= 5, not(file_used(Path, _Used)), not(entry_file(Path)).
 
-# The third bucket, and the honest one. A file reached ONLY through names that
+# The third bucket, and the plain one. A file reached ONLY through names that
 # several files define is neither proven live nor proven dead: the call sites
 # exist, but nothing in the call family says which definition they meant.
 # crates/boop/src/chat.rs lands here because it defines `snapshot`, a name 48
