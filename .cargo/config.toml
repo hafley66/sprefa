@@ -1,17 +1,9 @@
 [build]
-# Local Codex sandbox cannot execute the global sccache rustc-wrapper.
-# Keep repo cargo commands deterministic without requiring RUSTC_WRAPPER=.
-rustc-wrapper = ""
-# Eight lanes build at once on a 12-core machine; the per-process budget is
-# what keeps the sum under the core count (load 54 measured with jobs
-# unbounded and threads=8). Raise only after measuring the lane count.
+# Eight lanes build at once on a 12-core machine; the per-process budget keeps
+# the sum under the core count (load 54 measured with jobs unbounded). Raise
+# only after measuring the lane count. Nightly-only flags (-Z threads, lld)
+# stay out: CI builds on stable.
 jobs = 3
-# Parallel frontend: rustc splits type/borrow checking across threads.
-# Requires nightly toolchain (set via `rustup override set nightly`).
-# -fuse-ld=lld: link with LLVM lld (ld64.lld flavor on mach-o) instead of Apple
-# ld. Big win on the 54MB test/dist binaries; lld is at /opt/homebrew/bin.
-# If a sandbox lacks lld on PATH this errors loudly , drop the link-arg there.
-rustflags = ["-Z", "threads=2", "-C", "link-arg=-fuse-ld=lld"]
 
 [env]
 RUST_TEST_THREADS = "4"
