@@ -650,6 +650,10 @@ pub struct HostAdapterRow {
     pub response_rel: String,
 }
 
+/// One answered row at the host seam, keyed by declared column name. A linked
+/// executor builds these; a host answer never crosses this seam as text.
+pub type HostRow = serde_json::Map<String, serde_json::Value>;
+
 pub fn load_host_adapter_rows(
     path: impl AsRef<std::path::Path>,
 ) -> std::io::Result<Vec<HostAdapterRow>> {

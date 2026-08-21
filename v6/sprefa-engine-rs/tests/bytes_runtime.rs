@@ -144,7 +144,7 @@ fn byte_host_transport_refuses_before_executor_process() {
         template: format!("touch {} # {{payload}}", marker.display()),
         demand_rel: "__host_demand_bytes".to_string(),
         response_rel: "__host_response_bytes".to_string(),
-        execution: "shell".to_string(),
+        execution: "sprefa_extract".to_string(),
         request_type: None,
         response_type: None,
     };
@@ -153,7 +153,7 @@ fn byte_host_transport_refuses_before_executor_process() {
         vec!["payload".to_string(), "witness_digest".to_string()],
     )]);
     let plans = [plan];
-    let mut runner = HostLiveRunner::new(&plans, &rel_columns).expect("shell plan");
+    let mut runner = HostLiveRunner::new(&plans, &rel_columns).expect("linked plan");
     let failure = runner
         .collect(&TickDeltas {
             rels: vec![RelDelta {
@@ -163,11 +163,11 @@ fn byte_host_transport_refuses_before_executor_process() {
             }],
             carry_pending: false,
         })
-        .expect_err("byte shell transport must stop before execution");
+        .expect_err("byte host transport must stop before execution");
     assert_eq!(failure.host, "bytes_host");
     assert_eq!(failure.message, "bytes_host_transport_unsupported");
     assert!(
         !marker.exists(),
-        "shell executor must not receive byte input"
+        "no executor may receive byte input"
     );
 }

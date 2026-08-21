@@ -67,12 +67,13 @@ fn run(host: &str, values: &[(&str, String)]) -> serde_json::Value {
         .iter()
         .map(|(name, value)| ((*name).to_string(), value.clone()))
         .collect::<BTreeMap<_, _>>();
-    serde_json::from_str(
-        &SoopyMutationExecutor
-            .run(host, "unused", &env)
-            .expect("source mutation host response"),
-    )
-    .expect("source mutation response JSON")
+    let rows = SoopyMutationExecutor
+        .run(host, "unused", &env)
+        .expect("source mutation host response");
+    let [row] = rows.as_slice() else {
+        panic!("a source-mutation host answers exactly one row, got {rows:?}");
+    };
+    serde_json::Value::Object(row.clone())
 }
 
 fn directory_id(root: &std::path::Path) -> soopy::SourceRootId {

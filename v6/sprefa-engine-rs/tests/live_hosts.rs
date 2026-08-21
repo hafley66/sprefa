@@ -1,15 +1,17 @@
-//! Live host execution receipts. FAIL-FIRST: before driver::run_schedule_live
-//! existed, the happy-path test below failed with "no rows in spanned" because
-//! nothing executed the `look` template; the runtime treated hosts as
-//! schedule-replay only (the network-replay gap this arc closes).
+//! Live host execution receipts. Every host answers through a LINKED Rust
+//! executor; an `sh` declaration no adapter row routes is a named stop at
+//! runner construction, so no template ever reaches a process.
+//!
+//! FAIL-FIRST: before driver::run_schedule_live existed, the extract happy path
+//! below failed with "no rows in call_site" because nothing executed the host.
 
 use std::collections::BTreeMap;
 
 use sprefa_engine_rs::driver::{run_schedule, run_schedule_live};
-use sprefa_engine_rs::hosts::{HostLiveRunner, IHostExecutor, ShellExecutor, SprefaExtractExecutor};
+use sprefa_engine_rs::hosts::{HostLiveRunner, IHostExecutor, SprefaExtractExecutor};
 use sprefa_engine_rs::sql::{SqlRunner, SqliteSeam};
 use sprefa_engine_rs::types::{
-    Arrival, ArrivalSign, HostColumnPlan, HostPlanData, HostTypeDescriptor, HostTypeField,
+    Arrival, ArrivalSign, HostColumnPlan, HostPlanData, HostRow, HostTypeDescriptor, HostTypeField,
     ProgramJson, RelDelta, SqlStatement, TickDeltas, Value,
 };
 use sprefa_engine_rs::GenProgram;
@@ -39,33 +41,16 @@ fn text(value: &str) -> Value {
     Value::Text(value.to_string())
 }
 
-#[tokio::test]
-async fn scalar_shell_adapter_preserves_legacy_command_arguments() {
-    let plan = HostPlanData {
-        name: "scalar_args".to_string(),
-        inputs: vec![
-            HostColumnPlan {
-                name: "path".to_string(),
-                column_type: "text".to_string(),
-            },
-            HostColumnPlan {
-                name: "count".to_string(),
-                column_type: "int".to_string(),
-            },
-        ],
-        outputs: vec![HostColumnPlan {
-            name: "arg".to_string(),
-            column_type: "text".to_string(),
-        }],
-        template: "printf '%s\\n' {path} {count}".to_string(),
-        demand_rel: "__host_demand_scalar_args".to_string(),
-        response_rel: "__host_response_scalar_args".to_string(),
-        execution: "shell".to_string(),
-        request_type: None,
-        response_type: None,
-    };
+fn rows_text(rows: &[HostRow]) -> String {
+    serde_json::to_string(rows).expect("host rows serialize")
+}
+
+/// The scalar template still fills, and its filled bytes are what the linked
+/// executors parse their arguments out of.
+#[test]
+fn scalar_template_fill_quotes_every_argument() {
     let filled = sprefa_engine_rs::hosts::fill_template(
-        &plan.template,
+        "printf '%s\\n' {path} {count}",
         &BTreeMap::from([
             (
                 "path".to_string(),
@@ -78,62 +63,15 @@ async fn scalar_shell_adapter_preserves_legacy_command_arguments() {
         ]),
     );
     assert_eq!(filled, "printf '%s\\n' 'path with spaces' '7'");
-    assert_eq!(
-        ShellExecutor
-            .run("scalar_args", &filled, &BTreeMap::new())
-            .expect("run scalar command"),
-        "path with spaces\n7\n"
-    );
-    let rel_columns = std::collections::HashMap::from([
-        (
-            "__host_demand_scalar_args".to_string(),
-            vec![
-                "path".to_string(),
-                "count".to_string(),
-                "witness_digest".to_string(),
-            ],
-        ),
-        (
-            "__host_response_scalar_args".to_string(),
-            vec![
-                "witness_digest".to_string(),
-                "ordinal".to_string(),
-                "arg".to_string(),
-            ],
-        ),
-    ]);
-    let mut runner = HostLiveRunner::new(std::slice::from_ref(&plan), &rel_columns)
-        .expect("scalar shell plan is accepted");
-    let arrivals = runner
-        .collect(&TickDeltas {
-            rels: vec![RelDelta {
-                rel: "__host_demand_scalar_args".to_string(),
-                add: vec![vec![
-                    text("path with spaces"),
-                    Value::Integer(7),
-                    text("witness-scalar"),
-                ]],
-                del: vec![],
-            }],
-            carry_pending: false,
-        })
-        .expect("scalar shell invocation");
-    assert_eq!(
-        arrivals
-            .iter()
-            .map(|arrival| arrival.row.clone())
-            .collect::<Vec<_>>(),
-        vec![
-            vec![text("witness-scalar"), Value::Integer(0), text("path"),],
-            vec![text("witness-scalar"), Value::Integer(1), text("7")],
-        ]
-    );
 }
 
+/// An `sh` declaration whose adapter sidecar routes it nowhere is named at
+/// construction. FAIL-PRE-FIX: this plan used to reach `sh -c` and run the
+/// template; the marker below proves no process starts now.
 #[test]
-fn structured_shell_input_refuses_before_process_invocation() {
+fn an_unrouted_sh_declaration_is_a_named_stop_at_construction() {
     let marker =
-        std::env::temp_dir().join(format!("sprefa-typed-shell-refusal-{}", std::process::id()));
+        std::env::temp_dir().join(format!("sprefa-unrouted-host-{}", std::process::id()));
     let _ = std::fs::remove_file(&marker);
     let plan = HostPlanData {
         name: "structured_shell".to_string(),
@@ -159,31 +97,20 @@ fn structured_shell_input_refuses_before_process_invocation() {
         "__host_demand_structured_shell".to_string(),
         vec!["request".to_string(), "witness_digest".to_string()],
     )]);
-    let mut runner = HostLiveRunner::new(std::slice::from_ref(&plan), &rel_columns)
-        .expect("structured shell plan is known");
-    let failure = runner
-        .collect(&TickDeltas {
-            rels: vec![RelDelta {
-                rel: "__host_demand_structured_shell".to_string(),
-                // Struct references are integers after the struct plane. The
-                // declared type, rather than the storage representation,
-                // controls shell eligibility.
-                add: vec![vec![Value::Integer(41), text("witness-structured")]],
-                del: vec![],
-            }],
-            carry_pending: false,
-        })
-        .expect_err("structured shell input must be refused");
+    let failure = HostLiveRunner::new(std::slice::from_ref(&plan), &rel_columns)
+        .err()
+        .expect("an unrouted host must stop at construction");
     assert_eq!(failure.host, "structured_shell");
-    assert_eq!(
-        failure.message,
-        "typed_host_transport_unsupported for input column 'request' of type 'stage_request'"
+    assert!(
+        failure.message.contains("no executor links host"),
+        "{failure}"
     );
-    assert!(!marker.exists(), "the shell command must not be spawned");
+    assert!(failure.message.contains("sprefa_extract"), "{failure}");
+    assert!(!marker.exists(), "no template may reach a process");
 }
 
 #[test]
-fn native_structured_input_does_not_enter_the_shell_adapter() {
+fn native_structured_input_does_not_enter_a_scalar_transport_check() {
     let plan = HostPlanData {
         name: "native_structured".to_string(),
         inputs: vec![HostColumnPlan {
@@ -241,41 +168,18 @@ fn table_rows(program: &GenProgram, seam: &SqliteSeam, rel: &str) -> Vec<Vec<Val
     result.rows
 }
 
+/// The whole live fold stops on the unrouted host, before any tick runs.
 #[tokio::test]
-async fn live_shell_probe_answers_without_a_scripted_response() {
+async fn a_live_fold_stops_on_an_unrouted_host() {
     let program = fixture_program("live_shell_probe");
     let seam = SqliteSeam::in_memory().expect("seam");
     let schedule = vec![vec![add("source_file", vec![text("a.rs")])]];
-    let fold = run_schedule_live(&program, &seam, &schedule, 100)
+    let failure = run_schedule_live(&program, &seam, &schedule, 100)
         .await
-        .expect("live run");
-    assert_eq!(
-        table_rows(&program, &seam, "spanned"),
-        vec![vec![text("a.rs"), Value::Integer(3), Value::Integer(9)]],
-        "the printf template's span must land through demand -> execute -> response"
-    );
-    assert_eq!(
-        fold.lines.len(),
-        2,
-        "one scheduled arrival tick, then exactly one host-response tick"
-    );
-}
-
-/// SABOTAGE. The same program with the template forced to answer a wrong span
-/// lands the wrong bytes, so the happy path's exact-row assert is a real detector.
-#[tokio::test]
-async fn live_shell_probe_sabotaged_template_lands_the_wrong_span() {
-    let mut program = fixture_program("live_shell_probe");
-    program.host_plans[0].template = "printf '{\"start\":4,\"end\":9}' # {path}".to_string();
-    let seam = SqliteSeam::in_memory().expect("seam");
-    let schedule = vec![vec![add("source_file", vec![text("a.rs")])]];
-    run_schedule_live(&program, &seam, &schedule, 100)
-        .await
-        .expect("live run");
-    assert_eq!(
-        table_rows(&program, &seam, "spanned"),
-        vec![vec![text("a.rs"), Value::Integer(4), Value::Integer(9)]],
-    );
+        .err()
+        .expect("an unrouted host stops the fold");
+    let message = failure.to_string();
+    assert!(message.contains("no executor links host 'look'"), "{message}");
 }
 
 /// The linked twin: DL_EXTRACT_BIN is absent from the environment, so a
@@ -451,9 +355,10 @@ fn digest_carrying_demand_reads_the_blob_not_the_worktree() {
         "$DL_EXTRACT_BIN --family call {}/src/file.ts",
         root.display()
     );
-    let output = SprefaExtractExecutor::default()
+    let answered = SprefaExtractExecutor::default()
         .run("extract", &command_line, &env)
         .expect("extract the committed blob");
+    let output = rows_text(&answered);
     assert!(
         output.contains("committed_fn"),
         "committed function missing: {output}"

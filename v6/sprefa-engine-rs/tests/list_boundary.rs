@@ -366,7 +366,7 @@ fn a_list_wired_into_a_host_input_is_a_named_host_error() {
         template: "printf '{\"start\":1}' # {path}".to_string(),
         demand_rel: "__host_demand_look".to_string(),
         response_rel: "__host_response_look".to_string(),
-        execution: "shell".to_string(),
+        execution: "sprefa_extract".to_string(),
         request_type: None,
         response_type: None,
     }];
@@ -375,7 +375,7 @@ fn a_list_wired_into_a_host_input_is_a_named_host_error() {
         "__host_demand_look".to_string(),
         vec!["path".to_string(), "witness_digest".to_string()],
     );
-    let mut runner = HostLiveRunner::new(&plans, &rel_columns).expect("shell executor is known");
+    let mut runner = HostLiveRunner::new(&plans, &rel_columns).expect("linked executor is known");
     let deltas = TickDeltas {
         rels: vec![RelDelta {
             rel: "__host_demand_look".to_string(),

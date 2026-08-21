@@ -7,8 +7,8 @@ use std::str::FromStr;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::types::{
-    Arrival, ArrivalSign, BoundaryError, HostAdapterRow, HostColumnPlan, HostPlanData, ScalarSeam,
-    ScalarValue, TickDeltas, Value,
+    Arrival, ArrivalSign, BoundaryError, HostAdapterRow, HostColumnPlan, HostPlanData, HostRow,
+    ScalarSeam, ScalarValue, TickDeltas, Value,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,22 +19,28 @@ pub struct HostError {
 
 impl std::fmt::Display for HostError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "sh host '{}': {}", self.host, self.message)
+        write!(f, "host '{}': {}", self.host, self.message)
     }
 }
 
+/// A host answer is a row set, never a byte stream: the executor names its own
+/// columns and the runner projects them, so nothing between the two parses text.
 pub trait IHostExecutor: Sync {
     fn run(
         &self,
         host: &str,
         command_line: &str,
         env: &BTreeMap<String, String>,
-    ) -> Result<String, HostError>;
+    ) -> Result<Vec<HostRow>, HostError>;
 }
+
+/// The roster a construction stop names. Every entry runs in this process or
+/// spawns one known binary; none of them reaches a shell.
+pub const LINKED_EXECUTORS: &str =
+    "soopy, soopy_files, sprefa_extract, sprefa_scip, cargo_metadata";
 
 pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
     match execution {
-        "shell" => Some(&ShellExecutor),
         "soopy" => Some(&SoopyMutationExecutor),
         // The linked twin: sprefa-extract runs in this process, no child spawn.
         "sprefa_extract" => Some(&*EXTRACT),
@@ -42,10 +48,13 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
         // The two scip namespaces, both in-process: no child spawn for the
         // diet side, one budgeted indexer run for the index side.
         "sprefa_scip" => Some(&*SCIP),
+        "cargo_metadata" => Some(&CargoMetadataExecutor),
         _ => None,
     }
 }
 
+// The compiler still spells every `sh` declaration `execution: "shell"`. That
+// name is the sidecar's lookup key now; no executor answers to it.
 fn execution_for_plan(plan: &HostPlanData, adapter_rows: &[HostAdapterRow]) -> String {
     if plan.execution != "shell" {
         return plan.execution.clone();
@@ -71,11 +80,8 @@ fn is_applicative(execution: &str) -> bool {
 /// Linked executor for the tracked-file surface: a pathspec in, one
 /// `{path, digest}` row per tracked file out.
 ///
-/// Shelling this out costs a `sh -c`, a `mktemp`, a `paste`, and a second
-/// `git ls-files` to line the two streams up. Soopy already enumerates a
-/// pathspec and batch-hashes the worktree through one
-/// `git hash-object --stdin-paths`, which is the same work without the shell
-/// and without a temp file to leak.
+/// Soopy enumerates a pathspec and batch-hashes the worktree through one
+/// `git hash-object --stdin-paths`, so no temp file lines the two streams up.
 pub struct SoopyFilesExecutor;
 
 impl IHostExecutor for SoopyFilesExecutor {
@@ -84,14 +90,14 @@ impl IHostExecutor for SoopyFilesExecutor {
         host: &str,
         _command_line: &str,
         env: &BTreeMap<String, String>,
-    ) -> Result<String, HostError> {
+    ) -> Result<Vec<HostRow>, HostError> {
         let named = |message: String| HostError {
             host: host.to_string(),
             message,
         };
         let span = tracing::info_span!("soopy_files", host);
         let _entered = span.enter();
-        let glob = source_mutation_input(host, env, "glob")?;
+        let glob = required_input(host, env, "glob")?;
         let root = env
             .get("repo")
             .map(PathBuf::from)
@@ -104,7 +110,7 @@ impl IHostExecutor for SoopyFilesExecutor {
         };
         let entries = soopy::enumerate(&repository, &query)
             .map_err(|error| named(format!("enumerate `{glob}`: {error}")))?;
-        let mut lines = Vec::with_capacity(entries.len());
+        let mut rows = Vec::with_capacity(entries.len());
         for entry in entries {
             let digest = match &entry.content {
                 soopy::ContentId::GitBlob(oid) => oid.0.to_string(),
@@ -118,104 +124,47 @@ impl IHostExecutor for SoopyFilesExecutor {
                     )))
                 }
             };
-            lines.push(
-                serde_json::json!({ "path": entry.source.path.0.as_ref(), "digest": digest })
-                    .to_string(),
-            );
+            rows.push(host_row([
+                ("path", serde_json::json!(entry.source.path.0.as_ref())),
+                ("digest", serde_json::json!(digest)),
+            ]));
         }
-        Ok(lines.join("\n"))
+        Ok(rows)
     }
 }
 
-// The command shapes a linked executor already answers. Matched on the first
-// shell token only, so a pipeline that merely mentions one is not accused.
-fn linked_twin_for(command_line: &str) -> Option<&'static str> {
-    let first = command_line.split_whitespace().next()?.trim_matches('"');
-    if first == "$DL_EXTRACT_BIN" || first.ends_with("/extract") || first == "extract" {
-        return Some("sprefa_extract");
-    }
-    None
-}
+/// `MetadataCommand` spawns the `cargo` binary itself, so nothing between this
+/// engine and the workspace document is a shell.
+pub struct CargoMetadataExecutor;
 
-pub struct ShellExecutor;
-
-impl IHostExecutor for ShellExecutor {
+impl IHostExecutor for CargoMetadataExecutor {
     fn run(
         &self,
         host: &str,
-        command_line: &str,
+        _command_line: &str,
         env: &BTreeMap<String, String>,
-    ) -> Result<String, HostError> {
-        // Every spawn is visible: a host that silently fell back to `sh` is a
-        // 100x cliff that reads as ordinary slowness in a whole-run timing.
-        let span = tracing::warn_span!("sh_spawn", host, bytes = command_line.len());
-        let _entered = span.enter();
-        // Shelling `git` or a one-off is ordinary. Shelling a command a linked
-        // executor already answers means an adapter row is missing, which is
-        // never intended and costs a process per demand.
-        if let Some(twin) = linked_twin_for(command_line) {
-            tracing::warn!(
-                host,
-                twin,
-                "host shells a command the linked `{twin}` executor answers in-process; \
-                 its adapter row is missing from the program's .adapters.json"
-            );
-        }
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(command_line)
-            .envs(env)
-            .output()
-            .map_err(|failure| HostError {
-                host: host.to_string(),
-                message: format!("spawn failed for `{command_line}`: {failure}"),
-            })?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(HostError {
-                host: host.to_string(),
-                message: format!("exited {}: {}", output.status, stderr.trim()),
-            });
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    }
-}
-
-/// The shell target is a compatibility adapter for the typed host boundary.
-///
-/// A legacy `sh` declaration can interpolate only scalar columns.  The
-/// compiler still emits its original `HostPlanData` shape, including the
-/// original `execution: "shell"` and template bytes.  This adapter is the
-/// runtime seam that checks the declared type before converting the row value
-/// to the shell's string transport.  Keeping the check beside the conversion
-/// prevents a structured value represented by an integer relation reference
-/// from being mistaken for an ordinary integer argument.
-pub struct ShellHostAdapter;
-
-impl ShellHostAdapter {
-    fn input(host: &str, column: &HostColumnPlan, value: &Value) -> Result<ScalarValue, HostError> {
-        if column.column_type == "bytes" {
-            return Err(HostError {
-                host: host.to_string(),
-                message: "bytes_host_transport_unsupported".to_string(),
-            });
-        }
-        if !matches!(
-            column.column_type.as_str(),
-            "text" | "int" | "float" | "bool"
-        ) {
-            return Err(HostError {
-                host: host.to_string(),
-                message: format!(
-                    "typed_host_transport_unsupported for input column '{}' of type '{}'",
-                    column.name, column.column_type
-                ),
-            });
-        }
-        ScalarValue::at_seam(value, ScalarSeam::HostTemplateArgument).map_err(|error| HostError {
+    ) -> Result<Vec<HostRow>, HostError> {
+        let named = |message: String| HostError {
             host: host.to_string(),
-            message: error.to_string(),
-        })
+            message,
+        };
+        let manifest_dir = required_input(host, env, "manifest_dir")?;
+        let span = tracing::info_span!("cargo_metadata", host, dir = %manifest_dir);
+        let _entered = span.enter();
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .current_dir(&manifest_dir)
+            .no_deps()
+            .exec()
+            .map_err(|error| named(format!("read the workspace at {manifest_dir}: {error}")))?;
+        let packages = serde_json::to_value(&metadata.packages)
+            .map_err(|error| named(format!("serialize packages: {error}")))?;
+        Ok(vec![host_row([
+            (
+                "workspace_root",
+                serde_json::json!(metadata.workspace_root.as_str()),
+            ),
+            ("packages", packages),
+        ])])
     }
 }
 
@@ -235,7 +184,7 @@ impl IHostExecutor for SoopyMutationExecutor {
         host: &str,
         _command_line: &str,
         env: &BTreeMap<String, String>,
-    ) -> Result<String, HostError> {
+    ) -> Result<Vec<HostRow>, HostError> {
         match host {
             "source_stage" => source_stage_response(host, env),
             "source_commit" => source_commit_response(host, env),
@@ -247,7 +196,15 @@ impl IHostExecutor for SoopyMutationExecutor {
     }
 }
 
-fn source_mutation_input(
+/// One answered row from named column/value pairs.
+fn host_row<const N: usize>(columns: [(&str, serde_json::Value); N]) -> HostRow {
+    columns
+        .into_iter()
+        .map(|(name, value)| (name.to_string(), value))
+        .collect()
+}
+
+fn required_input(
     host: &str,
     env: &BTreeMap<String, String>,
     name: &str,
@@ -263,17 +220,13 @@ fn mutation_row(
     outcome: &str,
     detail: String,
     document: serde_json::Value,
-) -> Result<String, HostError> {
-    serde_json::to_string(&serde_json::json!({
-        "stage_id": stage_id,
-        "outcome": outcome,
-        "detail": detail,
-        "document": document,
-    }))
-    .map_err(|error| HostError {
-        host: "soopy_mutation".to_string(),
-        message: format!("serialize source-mutation response: {error}"),
-    })
+) -> Result<Vec<HostRow>, HostError> {
+    Ok(vec![host_row([
+        ("stage_id", serde_json::json!(stage_id)),
+        ("outcome", serde_json::json!(outcome)),
+        ("detail", serde_json::json!(detail)),
+        ("document", document),
+    ])])
 }
 
 fn mutation_root(
@@ -315,10 +268,13 @@ fn mutation_state_root(target_root: &Path, state_root: &Path) -> Result<PathBuf,
     Ok(state_root)
 }
 
-fn source_stage_response(host: &str, env: &BTreeMap<String, String>) -> Result<String, HostError> {
-    let target_root = PathBuf::from(source_mutation_input(host, env, "root")?);
-    let state_root = PathBuf::from(source_mutation_input(host, env, "state")?);
-    let request_json = source_mutation_input(host, env, "request")?;
+fn source_stage_response(
+    host: &str,
+    env: &BTreeMap<String, String>,
+) -> Result<Vec<HostRow>, HostError> {
+    let target_root = PathBuf::from(required_input(host, env, "root")?);
+    let state_root = PathBuf::from(required_input(host, env, "state")?);
+    let request_json = required_input(host, env, "request")?;
     let request: soopy::StageRequest = match serde_json::from_str(&request_json) {
         Ok(request) => request,
         Err(error) => {
@@ -363,10 +319,13 @@ fn source_stage_response(host: &str, env: &BTreeMap<String, String>) -> Result<S
     }
 }
 
-fn source_commit_response(host: &str, env: &BTreeMap<String, String>) -> Result<String, HostError> {
-    let target_root = PathBuf::from(source_mutation_input(host, env, "root")?);
-    let state_root = PathBuf::from(source_mutation_input(host, env, "state")?);
-    let stage_id_text = source_mutation_input(host, env, "stage_id")?;
+fn source_commit_response(
+    host: &str,
+    env: &BTreeMap<String, String>,
+) -> Result<Vec<HostRow>, HostError> {
+    let target_root = PathBuf::from(required_input(host, env, "root")?);
+    let state_root = PathBuf::from(required_input(host, env, "state")?);
+    let stage_id_text = required_input(host, env, "stage_id")?;
     let stage_id = match soopy::StageId::from_str(&stage_id_text) {
         Ok(id) => id,
         Err(error) => {
@@ -496,11 +455,11 @@ fn scip_namespace(host: &str) -> Option<(ScipInterface, ScipEvidence)> {
 /// One resolve over one file set, indexed by the file that owns each row.
 #[derive(Default)]
 struct ScipFold {
-    call: HashMap<String, Vec<serde_json::Value>>,
-    types: HashMap<String, Vec<serde_json::Value>>,
+    call: HashMap<String, Vec<HostRow>>,
+    types: HashMap<String, Vec<HostRow>>,
     /// Named skips ride every file's answer: a root with no installed indexer
     /// says so on the wire and exits 0, it never stops the fold.
-    skips: Vec<serde_json::Value>,
+    skips: Vec<HostRow>,
 }
 
 /// `scip.<x>` and `scip.diet.<x>`, both answered in this process.
@@ -624,13 +583,13 @@ fn build_scip_fold(
             span.record("fresh", report.reused);
             drop(entered);
             for skip in &report.skips {
-                fold.skips.push(serde_json::json!({
-                    "record": "scip_skip",
-                    "lang": skip.lang,
-                    "bin": skip.bin,
-                    "reason": skip.reason.slug(),
-                    "detail": skip.reason.detail(),
-                }));
+                fold.skips.push(host_row([
+                    ("record", serde_json::json!("scip_skip")),
+                    ("lang", serde_json::json!(skip.lang)),
+                    ("bin", serde_json::json!(skip.bin)),
+                    ("reason", serde_json::json!(skip.reason.slug())),
+                    ("detail", serde_json::json!(skip.reason.detail())),
+                ]));
             }
             // A root with no installed indexer answers its named skips and
             // exits 0. An empty stream reads as "this project has no calls".
@@ -667,14 +626,17 @@ fn build_scip_fold(
                 fold.call
                     .entry(caller.clone())
                     .or_default()
-                    .push(serde_json::json!({
-                        "record": "resolved_edge",
-                        "family": "call",
-                        "caller_path": caller,
-                        "callee_path": callee_path,
-                        "callee": callee,
-                        "kind": string_field(object, "kind").unwrap_or_default(),
-                    }));
+                    .push(host_row([
+                        ("record", serde_json::json!("resolved_edge")),
+                        ("family", serde_json::json!("call")),
+                        ("caller_path", serde_json::json!(caller)),
+                        ("callee_path", serde_json::json!(callee_path)),
+                        ("callee", serde_json::json!(callee)),
+                        (
+                            "kind",
+                            serde_json::json!(string_field(object, "kind").unwrap_or_default()),
+                        ),
+                    ]));
             }
             Some("resolved_type_edge") => {
                 let (Some(owner), Some(target_path), Some(target)) = (
@@ -687,14 +649,17 @@ fn build_scip_fold(
                 fold.types
                     .entry(owner.clone())
                     .or_default()
-                    .push(serde_json::json!({
-                        "record": "resolved_type_edge",
-                        "family": "type",
-                        "owner_path": owner,
-                        "target_path": target_path,
-                        "target": target,
-                        "kind": string_field(object, "kind").unwrap_or_default(),
-                    }));
+                    .push(host_row([
+                        ("record", serde_json::json!("resolved_type_edge")),
+                        ("family", serde_json::json!("type")),
+                        ("owner_path", serde_json::json!(owner)),
+                        ("target_path", serde_json::json!(target_path)),
+                        ("target", serde_json::json!(target)),
+                        (
+                            "kind",
+                            serde_json::json!(string_field(object, "kind").unwrap_or_default()),
+                        ),
+                    ]));
             }
             _ => {}
         }
@@ -712,7 +677,7 @@ impl IHostExecutor for ScipNamespaceExecutor {
         host: &str,
         _command_line: &str,
         env: &BTreeMap<String, String>,
-    ) -> Result<String, HostError> {
+    ) -> Result<Vec<HostRow>, HostError> {
         let named = |message: String| HostError {
             host: host.to_string(),
             message,
@@ -724,7 +689,7 @@ impl IHostExecutor for ScipNamespaceExecutor {
                     .to_string(),
             ));
         };
-        let path = source_mutation_input(host, env, "path")?;
+        let path = required_input(host, env, "path")?;
         let digest = env.get("digest").cloned().unwrap_or_default();
         let root = scip_root(host, env)?;
         let set = self.set_for(&root, &path, &digest);
@@ -740,21 +705,23 @@ impl IHostExecutor for ScipNamespaceExecutor {
             rows = rows.map_or(0, Vec::len)
         );
         let _entered = span.enter();
-        let mut lines: Vec<String> = fold
+        let mut answered: Vec<HostRow> = fold
             .skips
             .iter()
             .chain(rows.into_iter().flatten())
-            .map(serde_json::Value::to_string)
+            .cloned()
             .collect();
-        lines.sort();
-        Ok(lines.join("\n"))
+        // One ordinal per row, so the order a file's answer lands in is the
+        // program's, not the resolve's.
+        answered.sort_by_cached_key(|row| serde_json::to_string(row).unwrap_or_default());
+        Ok(answered)
     }
 }
 
 /// The repository root the demand's `repo` column names, absolute: a relative
 /// spelling resolves against the process cwd, the tree the harness ran in.
 fn scip_root(host: &str, env: &BTreeMap<String, String>) -> Result<PathBuf, HostError> {
-    let repo = source_mutation_input(host, env, "repo")?;
+    let repo = required_input(host, env, "repo")?;
     let candidate = PathBuf::from(&repo);
     std::fs::canonicalize(&candidate).map_err(|failure| HostError {
         host: host.to_string(),
@@ -846,12 +813,12 @@ impl IHostExecutor for SprefaExtractExecutor {
         host: &str,
         command_line: &str,
         env: &BTreeMap<String, String>,
-    ) -> Result<String, HostError> {
+    ) -> Result<Vec<HostRow>, HostError> {
         let named = |message: String| HostError {
             host: host.to_string(),
             message,
         };
-        let tokens = shell_tokens(command_line)
+        let tokens = template_words(command_line)
             .map_err(|message| named(format!("unparseable command `{command_line}`: {message}")))?;
         let mut rest = tokens.iter();
         match rest.next() {
@@ -934,23 +901,37 @@ impl IHostExecutor for SprefaExtractExecutor {
         };
         let span = tracing::info_span!("extract", host, path = %path);
         let _entered = span.enter();
-        let mut lines: Vec<String> = Vec::new();
+        let mut rows: Vec<HostRow> = Vec::new();
         if want_file_fact {
             let fact = sprefa_extract::file_fact(&path, &content);
-            lines.push(serde_json::to_string(&fact).expect("file fact serializes"));
+            rows.push(fact_row(&named, &fact)?);
         }
         if let Some(out) = sprefa_extract::dispatch(&path, &content, mask) {
             for fact in sprefa_extract::flatten(&out) {
-                lines.push(serde_json::to_string(&fact).expect("flat fact serializes"));
+                rows.push(fact_row(&named, &fact)?);
             }
         }
-        Ok(lines.join("\n"))
+        Ok(rows)
+    }
+}
+
+/// A fact becomes named columns directly; nothing between the extractor and
+/// the projection is text.
+fn fact_row<F, T>(named: &F, fact: &T) -> Result<HostRow, HostError>
+where
+    F: Fn(String) -> HostError,
+    T: serde::Serialize,
+{
+    match serde_json::to_value(fact) {
+        Ok(serde_json::Value::Object(row)) => Ok(row),
+        Ok(other) => Err(named(format!("fact is not a row: {other}"))),
+        Err(error) => Err(named(format!("convert a fact to a row: {error}"))),
     }
 }
 
 // Minimal POSIX-style word split for a filled template: single quotes are
 // literal, double quotes keep `\` escapes, bare backslash escapes one char.
-fn shell_tokens(command_line: &str) -> Result<Vec<String>, String> {
+fn template_words(command_line: &str) -> Result<Vec<String>, String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut in_word = false;
@@ -1201,139 +1182,37 @@ fn text_of(raw: &serde_json::Value) -> String {
     }
 }
 
-fn parse_json_items(text: &str) -> Option<Vec<serde_json::Value>> {
-    if let Ok(serde_json::Value::Array(items)) = serde_json::from_str(text) {
-        return Some(items);
-    }
-    let lines: Vec<&str> = text
-        .split('\n')
-        .filter(|line| !line.trim().is_empty())
-        .collect();
-    if lines.is_empty() {
-        return None;
-    }
-    let mut items = Vec::with_capacity(lines.len());
-    for line in lines {
-        match serde_json::from_str(line) {
-            Ok(item) => items.push(item),
-            Err(_) => return None,
-        }
-    }
-    Some(items)
-}
-
-fn carries_every_column(
-    item: &serde_json::Map<String, serde_json::Value>,
-    outputs: &[HostColumnPlan],
-) -> bool {
+fn carries_every_column(row: &HostRow, outputs: &[HostColumnPlan]) -> bool {
     outputs
         .iter()
-        .all(|column| matches!(item.get(&column.name), Some(value) if !value.is_null()))
+        .all(|column| matches!(row.get(&column.name), Some(value) if !value.is_null()))
 }
 
-fn decode_object_items(
+// A declaring host selects its own columns out of a shared answer by column
+// presence, so three hosts folded into one run each keep their own rows.
+fn select_columns(
     host: &str,
-    items: &[serde_json::Value],
+    rows: &[HostRow],
     outputs: &[HostColumnPlan],
 ) -> Result<Vec<Vec<Value>>, HostError> {
-    let objects: Vec<&serde_json::Map<String, serde_json::Value>> =
-        items.iter().filter_map(|item| item.as_object()).collect();
-    if objects.len() != items.len() {
-        // Mixed or non-object JSON keeps the positional reading.
-        return items
-            .iter()
-            .map(|item| {
-                outputs
-                    .iter()
-                    .enumerate()
-                    .map(|(index, column)| {
-                        let raw = match item {
-                            serde_json::Value::Array(fields) => fields
-                                .get(index)
-                                .cloned()
-                                .unwrap_or(serde_json::Value::Null),
-                            other => other.clone(),
-                        };
-                        coerce(host, column, &raw)
-                    })
-                    .collect()
-            })
-            .collect();
+    if outputs.is_empty() {
+        return Ok(Vec::new());
     }
-    objects
-        .iter()
-        .filter(|item| carries_every_column(item, outputs))
-        .map(|item| {
+    rows.iter()
+        .filter(|row| carries_every_column(row, outputs))
+        .map(|row| {
             outputs
                 .iter()
                 .map(|column| {
                     coerce(
                         host,
                         column,
-                        item.get(&column.name).unwrap_or(&serde_json::Value::Null),
+                        row.get(&column.name).unwrap_or(&serde_json::Value::Null),
                     )
                 })
                 .collect()
         })
         .collect()
-}
-
-// GRID before PER-COLUMN, and grid only when every line splits into exactly
-// the declared column count (bug host_grid_answer_folded).
-fn parse_whitespace(
-    host: &str,
-    text: &str,
-    outputs: &[HostColumnPlan],
-) -> Result<Vec<Vec<Value>>, HostError> {
-    let lines: Vec<&str> = text
-        .split('\n')
-        .map(|line| line.trim())
-        .filter(|line| !line.is_empty())
-        .collect();
-    let fields_per_line: Vec<Vec<&str>> = lines
-        .iter()
-        .map(|line| line.split_whitespace().collect())
-        .collect();
-    let is_grid = fields_per_line
-        .iter()
-        .all(|fields| fields.len() == outputs.len());
-    let text_value =
-        |field: Option<&str>| serde_json::Value::String(field.unwrap_or("").to_string());
-    if !is_grid && outputs.len() > 1 && lines.len() == outputs.len() {
-        let row: Result<Vec<Value>, HostError> = outputs
-            .iter()
-            .enumerate()
-            .map(|(index, column)| coerce(host, column, &text_value(lines.get(index).copied())))
-            .collect();
-        return Ok(vec![row?]);
-    }
-    fields_per_line
-        .iter()
-        .map(|fields| {
-            outputs
-                .iter()
-                .enumerate()
-                .map(|(index, column)| {
-                    coerce(host, column, &text_value(fields.get(index).copied()))
-                })
-                .collect()
-        })
-        .collect()
-}
-
-pub fn decode_output(
-    host: &str,
-    stdout: &str,
-    outputs: &[HostColumnPlan],
-) -> Result<Vec<Vec<Value>>, HostError> {
-    let trimmed = stdout.trim();
-    if trimmed.is_empty() || outputs.is_empty() {
-        return Ok(Vec::new());
-    }
-    match parse_json_items(trimmed) {
-        Some(items) => decode_object_items(host, &items, outputs),
-        None => parse_whitespace(host, trimmed, outputs),
-    }
 }
 
 // ═══ the live runner ═════════════════════════════════════════════════════════
@@ -1371,7 +1250,11 @@ impl<'p> HostLiveRunner<'p> {
             if executor_for_plan(plan, adapter_rows).is_none() {
                 return Err(HostError {
                     host: plan.name.clone(),
-                    message: format!("unknown process adapter '{execution}'"),
+                    message: format!(
+                        "no executor links host '{}' (adapter '{execution}'); \
+                         linked executors: {LINKED_EXECUTORS}",
+                        plan.name
+                    ),
                 });
             }
         }
@@ -1414,20 +1297,12 @@ impl<'p> HostLiveRunner<'p> {
                 .position(|column| *column == input.name)
                 .and_then(|index| row.get(index).cloned())
                 .unwrap_or(Value::Text(String::new()));
-            let scalar = if self.execution_for(plan) == "shell" {
-                ShellHostAdapter::input(&plan.name, input, &value)?
-            } else {
-                // Native executors own their typed decode seam.  The current
-                // demand ABI still carries scalar values for those executors,
-                // but must not route them through the shell adapter or its
-                // HostTemplateArgument boundary.  SqlParameter retains the
-                // pre-adapter bytes behavior until the native decoder lands.
-                ScalarValue::at_seam(&value, ScalarSeam::SqlParameter).map_err(|error| {
-                    HostError {
-                        host: plan.name.clone(),
-                        message: error.to_string(),
-                    }
-                })?
+            // Bytes cross this seam and are named by the binary-transport stop
+            // in `collect`; a list has no host spelling at all.
+            let scalar = match &value {
+                Value::Bytes(bytes) => ScalarValue::Bytes(bytes.clone()),
+                other => ScalarValue::at_seam(other, ScalarSeam::HostTemplateArgument)
+                    .map_err(named)?,
             };
             inputs.insert(input.name.clone(), scalar);
         }
@@ -1461,12 +1336,13 @@ impl<'p> HostLiveRunner<'p> {
 
     fn project(
         demand: &HostDemand<'p>,
-        stdout: &str,
+        answered: &[HostRow],
         rel_columns: &HashMap<String, Vec<String>>,
     ) -> Result<Vec<Arrival>, HostError> {
-        let span = tracing::info_span!("project", host = %demand.plan.name, bytes = stdout.len());
+        let span =
+            tracing::info_span!("project", host = %demand.plan.name, rows = answered.len());
         let _entered = span.enter();
-        let output_rows = decode_output(&demand.plan.name, stdout, &demand.plan.outputs)?;
+        let output_rows = select_columns(&demand.plan.name, answered, &demand.plan.outputs)?;
         let response_columns = rel_columns
             .get(&demand.plan.response_rel)
             .map(|columns| columns.as_slice())
@@ -1599,13 +1475,13 @@ impl<'p> HostLiveRunner<'p> {
                 .expect("validated at construction");
             let command_line = fill_template(&first.plan.template, &first.inputs);
             let env = env_for_inputs(&first.inputs);
-            let stdout = {
+            let answered = {
                 let span = tracing::info_span!("host_run", host = %first.plan.name);
                 let _entered = span.enter();
                 executor.run(&first.plan.name, &command_line, &env)?
             };
             for demand in group {
-                arrivals.extend(Self::project(demand, &stdout, self.rel_columns)?);
+                arrivals.extend(Self::project(demand, &answered, self.rel_columns)?);
             }
         }
         Ok(arrivals)

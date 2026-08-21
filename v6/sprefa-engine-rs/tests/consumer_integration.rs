@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use sprefa_engine_rs::driver::{drive_tick, run_schedule};
-use sprefa_engine_rs::hosts::{executor_for, HostLiveRunner};
+use sprefa_engine_rs::hosts::{executor_for, HostLiveRunner, LINKED_EXECUTORS};
 use sprefa_engine_rs::program::run_boot;
 use sprefa_engine_rs::sql::SqliteSeam;
 use sprefa_engine_rs::types::{
@@ -16,13 +16,15 @@ use sprefa_engine_rs::GenProgram;
 
 #[tokio::test]
 async fn external_consumer_drives_runtime_and_hosts() {
-    // 1. Host executor registry surface
-    let shell_exec = executor_for("shell").expect("shell executor registered");
-    let env = std::collections::BTreeMap::new();
-    let out = shell_exec
-        .run("echo_test", "echo 'hello lib'", &env)
-        .expect("run shell");
-    assert_eq!(out.trim(), "hello lib");
+    // 1. Host executor registry surface. Every name in the roster links a Rust
+    // executor; `shell` is not one of them and never resolves.
+    for linked in LINKED_EXECUTORS.split(", ") {
+        assert!(
+            executor_for(linked).is_some(),
+            "the roster names {linked}, which no executor answers"
+        );
+    }
+    assert!(executor_for("shell").is_none(), "no host reaches a shell");
 
     // HostLiveRunner construction surface
     let empty_rel_cols = HashMap::new();
