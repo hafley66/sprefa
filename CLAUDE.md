@@ -257,10 +257,11 @@ records the era when this leg was unwired and mail queued forever.
   plane cannot. `4_emit_jsonschema.pl:121-146` renders option columns
   required-and-nullable (`anyOf` with null): present-null is spellable, key-absent
   is not (verified in docs/generics-wrapper-inspection.md, stale claim 2).
-- **Interprocedural dataflow is BUILT, CLI dispatch pending.** `FlowF` landed
-  (PR #313): `flow_edges` + `flatten_flow` are working tested code, but
-  `parse_mask` has no `flow` name and `resolve_project` never dispatches the
-  join — card `extract-flow-cli-dispatch`. `ModuleF` is collapsed at
+- **Interprocedural dataflow is BUILT and dispatched.** `extract --resolve
+  --family flow` (`src/bin/extract.rs:505`, PR #330) emits `flow_edge` rows.
+  Path closure over them as a dl6 program is not built:
+  `v6/dl/dataflow/report_extract.dl6` is intra-procedural and its wrapper
+  names host `files` with no linked executor. `ModuleF` is collapsed at
   `types.rs` (grep `ModuleF`), deferred by user 2026-08-16.
 - **`sprefa-extract` has no markdown extractor.** `.dl6` landed (PR #241:
   `tree-sitter-dl6` crate + `src/lang/dl6/`), but `source_for` still returns
