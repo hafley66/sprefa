@@ -1,0 +1,8 @@
+# A second one-shot program, so a test can fold TWO programs into the one db and
+# read both back. No bind, so the run ends on its own.
+rel note(tag: text, weight: int).
+rel heavy(tag: text, weight: int).
+
+heavy(Tag, Weight) <- note(Tag, Weight), Weight > 1.
+
+? heavy(Tag, Weight) order by Weight desc.

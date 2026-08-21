@@ -179,7 +179,13 @@ impl IHostExecutor for HttpFetchExecutor {
             _ => cached_entry(&url).map(|(tag, _)| tag).unwrap_or_default(),
         };
         let mut fetched = conditional_get(host, &url, &prev)?;
-        if fetched.status != 304 {
+        if fetched.status == 304 {
+            // The 304 arm `repos.rs` and `pulls.rs` take: the previous body IS
+            // the answer, and `bytes` stays 0 because none crossed the wire.
+            if let Some((_, body)) = cached_entry(&url) {
+                fetched.body = body;
+            }
+        } else {
             remember(&url, &fetched.tag, &fetched.body);
         }
         let pages = follow_link_next(host, &mut fetched)?;

@@ -70,9 +70,10 @@ so nothing here works around it. `gate.sh` names the blocker and exits 1.
 
 ## How to run it
 
-`dl6 run` is PR #407's lane and is not on `origin/main` at this base sha, so the
-program is driven with `emit_rust_harness` exactly as `v6/dl/ghcacher/gate.sh`
-does:
+`dl6 run` landed with PR #407 and folds into the ONE db, `~/.agent/dl6.db`,
+tables carrying the program's own name (CLAUDE.md 2026-08-21). There is no
+per-program db flag. The program is driven through `emit_rust_harness` here
+because it does not compile yet:
 
 ```bash
 swipl -q -l v6/prolog/compile.pl -l v6/prolog/emit_rust.pl \

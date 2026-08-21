@@ -107,6 +107,25 @@ impl SqliteSeam {
         self.dispatches.get()
     }
 
+    /// ONE SERVER, ONE DB: the file is shared, so a program's own objects are
+    /// dropped and re-created while the shared globals are left standing.
+    pub fn run_program_ddl(&self, ddl: &[String], queries: &[String]) -> Result<()> {
+        for statement in ddl {
+            let Some((kind, name)) = created_object(statement) else {
+                continue;
+            };
+            if SHARED_GLOBALS.contains(&name) {
+                continue;
+            }
+            self.execute_multiple(&format!("DROP {kind} IF EXISTS \"{name}\""))?;
+        }
+        for query in queries {
+            self.execute_multiple(&format!("DROP VIEW IF EXISTS \"v_{query}\""))?;
+        }
+        let owned: Vec<String> = ddl.iter().map(|statement| shared_idempotent(statement)).collect();
+        self.run_ddl(&owned)
+    }
+
     pub fn run_ddl(&self, ddl: &[String]) -> Result<()> {
         let _scope = crate::trace::Scope::phase("ddl");
         for statement in ddl {
@@ -498,4 +517,42 @@ pub struct RawCols {
 
 pub fn column_index(result: &QueryResult, name: &str) -> Option<usize> {
     result.columns.iter().position(|column| column == name)
+}
+
+/// The objects every program in the one db shares. `__str` is the global text
+/// intern table other programs' INTEGER columns point into, so dropping it would
+/// dangle their rows; `__meta` already carries a `program` column.
+pub const SHARED_GLOBALS: &[&str] = &["__str", "__meta"];
+
+/// The kind and name a `CREATE ...` statement makes, or None for anything else.
+fn created_object(statement: &str) -> Option<(&'static str, &str)> {
+    for (prefix, kind) in [
+        ("CREATE TABLE ", "TABLE"),
+        ("CREATE TEMP VIEW ", "VIEW"),
+        ("CREATE VIEW ", "VIEW"),
+        ("CREATE UNIQUE INDEX ", "INDEX"),
+        ("CREATE INDEX ", "INDEX"),
+    ] {
+        let Some(tail) = statement.strip_prefix(prefix) else {
+            continue;
+        };
+        let tail = tail.strip_prefix("IF NOT EXISTS ").unwrap_or(tail);
+        let quoted = tail.strip_prefix('"')?;
+        let end = quoted.find('"')?;
+        return Some((kind, &quoted[..end]));
+    }
+    None
+}
+
+/// A shared global's CREATE has to be idempotent: the second program to open the
+/// one db finds `__str` already standing.
+fn shared_idempotent(statement: &str) -> String {
+    match created_object(statement) {
+        Some((_, name))
+            if SHARED_GLOBALS.contains(&name) && !statement.contains("IF NOT EXISTS") =>
+        {
+            statement.replacen("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)
+        }
+        _ => statement.to_string(),
+    }
 }
