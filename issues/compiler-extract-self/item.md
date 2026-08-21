@@ -4,7 +4,7 @@ updated: 2026-08-21
 type: feature
 reporter: chris
 assignee: chris
-status: open
+status: in-progress
 priority: normal
 epic: cheap-fast-analysis
 labels: [dl6, docs]
