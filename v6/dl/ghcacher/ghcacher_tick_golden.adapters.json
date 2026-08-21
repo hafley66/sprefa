@@ -1,0 +1,7 @@
+[
+  {
+    "adapter": "http_fetch",
+    "demand_rel": "__host_demand_fetch",
+    "response_rel": "__host_response_fetch"
+  }
+]

@@ -1,0 +1,10 @@
+[
+  [
+    {"rel":"watch","sign":"add","row":["repos/cli/cli"]},
+    {"rel":"etag_event","sign":"add","row":["repos/cli/cli",""]},
+    {"rel":"interval","sign":"add","row":[300,1]}
+  ],
+  [
+    {"rel":"interval","sign":"add","row":[300,2]}
+  ]
+]

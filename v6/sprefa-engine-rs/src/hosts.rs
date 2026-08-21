@@ -36,8 +36,7 @@ pub trait IHostExecutor: Sync {
 
 /// The roster a construction stop names. Every entry runs in this process or
 /// spawns one known binary; none of them reaches a shell.
-pub const LINKED_EXECUTORS: &str =
-    "soopy, soopy_files, sprefa_extract, sprefa_scip, cargo_metadata, fixture";
+pub const LINKED_EXECUTORS: &str = "soopy, soopy_files, sprefa_extract, sprefa_scip, cargo_metadata, fixture, http_fetch, env, gh_repos, soopy_checkout, toml_json";
 
 pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
     match execution {
@@ -45,6 +44,13 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
         // The linked twin: sprefa-extract runs in this process, no child spawn.
         "sprefa_extract" => Some(&*EXTRACT),
         "soopy_files" => Some(&SoopyFilesExecutor),
+        // The ghcacher four, all linked: HTTP, the process env table, the
+        // GitHub REST walk, an existing checkout, and a TOML document.
+        "http_fetch" => Some(&crate::executors::HttpFetchExecutor),
+        "env" => Some(&crate::executors::EnvExecutor),
+        "gh_repos" => Some(&crate::executors::GhReposExecutor),
+        "soopy_checkout" => Some(&crate::executors::SoopyCheckoutExecutor),
+        "toml_json" => Some(&crate::executors::TomlJsonExecutor),
         // The two scip namespaces, both in-process: no child spawn for the
         // diet side, one budgeted indexer run for the index side.
         "sprefa_scip" => Some(&*SCIP),

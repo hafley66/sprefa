@@ -1,0 +1,48 @@
+# Deterministic ghcacher clone/checkout golden over the current v6 text surface.
+#
+# The interval rows, the branch-sha answers, and the host response rows are
+# schedule-fed by the lab gate. No git, network, shell, or wall clock
+# participates in the grade.
+#
+# want_sha carries the freshness role in registry.pl, so it salts the witness
+# digest and stays out of the identity digest. That one word is the whole sha
+# gate: the clone directory is a pure function of (repo_slug, dest_root), and a
+# branch that has not moved re-asks on a witness the host already answered.
+
+rel repo(repo_slug: text, dest_root: text).
+rel branch_sha_event(repo_slug: text, bucket: int, want_sha: text).
+rel branch_sha(repo_slug: text, want_sha: text) key(1).
+rel current_clock(period: int, bucket: int) key(1).
+
+bind interval(period: int, bucket: int).
+
+sh repo_checkout(repo_slug: text, dest_root: text, want_sha: text)
+  -> (checkout_path: text, head_sha: text) =
+  `checkout {repo_slug} under {dest_root}`.
+
+rel checkout_answer(repo_slug: text, dest_root: text, checkout_path: text, head_sha: text).
+rel checkout(repo_slug: text, checkout_path: text, head_sha: text) key(1).
+rel checkout_fresh(repo_slug: text, checkout_path: text, head_sha: text).
+rel checkout_stale(repo_slug: text, want_sha: text, head_sha: text).
+
+current_clock(Period, Bucket) <+ interval(Period, Bucket).
+branch_sha(RepoSlug, WantSha) <+ branch_sha_event(RepoSlug, _Bucket, WantSha).
+
+checkout_answer(RepoSlug, DestRoot, CheckoutPath, HeadSha) <-
+  repo(RepoSlug, DestRoot),
+  branch_sha(RepoSlug, WantSha),
+  repo_checkout(RepoSlug, DestRoot, WantSha, CheckoutPath, HeadSha).
+
+checkout(RepoSlug, CheckoutPath, HeadSha) <+
+  checkout_answer(RepoSlug, _DestRoot, CheckoutPath, HeadSha).
+
+checkout_fresh(RepoSlug, CheckoutPath, HeadSha) <-
+  branch_sha(RepoSlug, HeadSha),
+  checkout(RepoSlug, CheckoutPath, HeadSha).
+
+checkout_stale(RepoSlug, WantSha, HeadSha) <-
+  branch_sha(RepoSlug, WantSha),
+  checkout(RepoSlug, _CheckoutPath, HeadSha),
+  WantSha != HeadSha.
+
+? checkout_fresh(RepoSlug, CheckoutPath, HeadSha).

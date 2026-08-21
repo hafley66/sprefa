@@ -1,0 +1,202 @@
+// TEST: one case per linked ghcacher executor, every one against a local
+// fixture. Sabotage receipt: deleting the `If-None-Match` header in
+// `fetch::conditional_get` turns `answers_200_then_304` red on the second GET.
+
+use std::collections::BTreeMap;
+use std::io::{BufRead, BufReader, Write};
+use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
+
+use sprefa_engine_rs::executors::{
+    EnvExecutor, GhReposExecutor, HttpFetchExecutor, SoopyCheckoutExecutor, TomlJsonExecutor,
+};
+use sprefa_engine_rs::hosts::IHostExecutor;
+
+/// `std::env::set_var` mutates one process table, so the two cases that touch
+/// it never run beside each other.
+static ENVIRONMENT: Mutex<()> = Mutex::new(());
+
+fn serialized() -> MutexGuard<'static, ()> {
+    ENVIRONMENT.lock().unwrap_or_else(|poison| poison.into_inner())
+}
+
+fn inputs(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+    pairs
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect()
+}
+
+/// One request, one response, `Connection: close` so the next GET is a new
+/// accept and the listener never has to multiplex.
+fn answer_once(stream: &mut TcpStream, body: &str, etag: &str) -> bool {
+    let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+    let mut conditional = false;
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+            break;
+        }
+        if line.to_ascii_lowercase().starts_with("if-none-match:") && line.contains(etag) {
+            conditional = true;
+        }
+        if line == "\r\n" || line == "\n" {
+            break;
+        }
+    }
+    let response = if conditional {
+        format!("HTTP/1.1 304 Not Modified\r\nETag: {etag}\r\nConnection: close\r\n\r\n")
+    } else {
+        format!(
+            "HTTP/1.1 200 OK\r\nETag: {etag}\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    };
+    stream.write_all(response.as_bytes()).expect("write response");
+    stream.flush().expect("flush response");
+    conditional
+}
+
+fn serve(body: String, etag: &'static str, rounds: usize) -> (String, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let port = listener.local_addr().expect("local addr").port();
+    let handle = std::thread::spawn(move || {
+        for _ in 0..rounds {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            answer_once(&mut stream, &body, etag);
+        }
+    });
+    (format!("http://127.0.0.1:{port}"), handle)
+}
+
+#[test]
+fn http_fetch_answers_200_then_304() {
+    sprefa_engine_rs::executors::fetch::forget_all();
+    let body = r#"{"full_name":"cli/cli","stargazers_count":7}"#.to_string();
+    let (base, handle) = serve(body, "\"tag-v1\"", 2);
+    let url = format!("{base}/repos/cli/cli");
+
+    let first = HttpFetchExecutor
+        .run("fetch", "", &inputs(&[("ep", &url), ("prev", "")]))
+        .expect("first GET");
+    assert_eq!(first.len(), 1);
+    let first = &first[0];
+    assert_eq!(first["status"], 200);
+    assert_eq!(first["tag"], "\"tag-v1\"");
+    assert_eq!(first["full_name"], "cli/cli", "body fields splice in");
+    assert_eq!(first["stargazers_count"], 7);
+
+    let second = HttpFetchExecutor
+        .run("fetch", "", &inputs(&[("ep", &url), ("prev", "\"tag-v1\"")]))
+        .expect("conditional GET");
+    let second = &second[0];
+    assert_eq!(second["status"], 304);
+    assert_eq!(second["body"], "", "a 304 carries no body bytes");
+    handle.join().expect("listener thread");
+}
+
+#[test]
+fn gh_repos_walks_one_page_and_stops() {
+    let _guard = serialized();
+    sprefa_engine_rs::executors::fetch::forget_all();
+    let body = r#"[{"full_name":"acme/one","stargazers_count":3,"default_branch":"main"},
+                   {"full_name":"acme/two","stargazers_count":5,"default_branch":"trunk"}]"#
+        .to_string();
+    let (base, handle) = serve(body, "\"org-v1\"", 1);
+    std::env::set_var("DL_GITHUB_API_BASE", &base);
+
+    let rows = GhReposExecutor
+        .run("gh_repos", "", &inputs(&[("org", "acme"), ("bucket", "1")]))
+        .expect("org walk");
+    std::env::remove_var("DL_GITHUB_API_BASE");
+    assert_eq!(rows.len(), 2, "a short page ends the walk");
+    assert_eq!(rows[0]["repo_slug"], "acme/one");
+    assert_eq!(rows[0]["exists_flag"], 1);
+    assert_eq!(rows[1]["stars"], 5);
+    handle.join().expect("listener thread");
+}
+
+#[test]
+fn env_var_absent_answers_zero_rows() {
+    let _guard = serialized();
+    std::env::set_var("DL_GHCACHER_TEST_VAR", "/env/config.toml");
+    let present = EnvExecutor
+        .run("env_var", "", &inputs(&[("name", "DL_GHCACHER_TEST_VAR")]))
+        .expect("present var");
+    std::env::remove_var("DL_GHCACHER_TEST_VAR");
+    assert_eq!(present[0]["value"], "/env/config.toml");
+
+    let absent = EnvExecutor
+        .run("env_var", "", &inputs(&[("name", "DL_GHCACHER_NEVER_SET")]))
+        .expect("absent var");
+    assert!(absent.is_empty(), "an unset variable is zero rows, never an empty row");
+}
+
+#[test]
+fn toml_json_decodes_a_document() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let path = home.path().join("config.toml");
+    std::fs::write(&path, "[global]\ndb_path = \"/repo/db.sqlite\"\n").expect("write toml");
+    let spelled = path.to_string_lossy().to_string();
+
+    let decoded = TomlJsonExecutor
+        .run("toml_json", "", &inputs(&[("config_path", &spelled)]))
+        .expect("decode");
+    assert_eq!(decoded[0]["doc"]["global"]["db_path"], "/repo/db.sqlite");
+
+    let missing = home.path().join("absent.toml").to_string_lossy().to_string();
+    let empty = TomlJsonExecutor
+        .run("toml_json", "", &inputs(&[("config_path", &missing)]))
+        .expect("absent file");
+    assert!(empty.is_empty(), "a missing config is zero rows");
+}
+
+#[test]
+fn soopy_checkout_reads_head_and_names_the_clone_gap() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("repository root");
+    let dest_root = root.parent().expect("parent of root").to_string_lossy().to_string();
+    let repo_slug = root
+        .file_name()
+        .expect("root directory name")
+        .to_string_lossy()
+        .to_string();
+
+    let stdout = SoopyCheckoutExecutor
+        .run(
+            "repo_checkout",
+            "",
+            &inputs(&[
+                ("repo_slug", &repo_slug),
+                ("dest_root", &dest_root),
+                ("want_sha", ""),
+            ]),
+        )
+        .expect("observe this checkout");
+    let head = stdout[0]["head_sha"].as_str().expect("head_sha text");
+    assert_eq!(head.len(), 40, "a resolved HEAD is a full object id");
+    assert!(head.chars().all(|c| c.is_ascii_hexdigit()));
+
+    let failure = SoopyCheckoutExecutor
+        .run(
+            "repo_checkout",
+            "",
+            &inputs(&[
+                ("repo_slug", "never/cloned"),
+                ("dest_root", &dest_root),
+                ("want_sha", "sha-a1"),
+            ]),
+        )
+        .expect_err("an absent checkout is a named stop");
+    assert!(
+        failure.message.contains("soopy_clone_missing"),
+        "{}",
+        failure.message
+    );
+}

@@ -38,6 +38,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # The workspace reader every cargo subcommand uses. Its MetadataCommand spawns
 # the `cargo` binary itself, which is why the `cargo_targets` host needs no shell.
 cargo_metadata = "0.23"
+# Blocking sockets with their own pool: the host seam is sync, and a
+# reqwest-blocking call inside the runtime's `block_on` panics.
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+# Already in this lock through sprefa-extract's manifest arm.
+basic-toml = "0.1"
 
 [features]
 default = ["harness"]

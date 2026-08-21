@@ -1,0 +1,41 @@
+# The `sh` body is inert: ghcacher_smoke.adapters.json routes this host to the
+# linked http_fetch executor, so no shell runs.
+
+rel watch(ep: text).
+rel etag_event(ep: text, tag: text) log keep(all).
+rel current_etag(ep: text, tag: text) key(1).
+rel current_clock(period: int, bucket: int) key(1).
+
+bind interval(period: int, bucket: int).
+
+sh fetch(ep: text, prev: text, bucket: int) ->
+  (status: int, tag: text, body: text) =
+  `http_fetch {ep} with $prev`.
+
+rel poll(ep: text, prev: text, bucket: int).
+rel resp(ep: text, bucket: int, status: int, tag: text, body: text).
+rel fresh_hit(ep: text, tag: text).
+rel not_modified(ep: text, bucket: int).
+
+current_etag(Ep, Tag) <+ etag_event(Ep, Tag).
+current_clock(Period, Bucket) <+ interval(Period, Bucket).
+
+poll(Ep, Prev, Bucket) <-
+  watch(Ep),
+  current_etag(Ep, Prev),
+  current_clock(300, Bucket).
+
+resp(Ep, Bucket, Status, Tag, Body) <-
+  poll(Ep, Prev, Bucket),
+  fetch(Ep, Prev, Bucket, Status, Tag, Body).
+
+fresh_hit(Ep, Tag) <-
+  resp(Ep, _Bucket, Status, Tag, _Body),
+  Status == 200.
+
+not_modified(Ep, Bucket) <-
+  resp(Ep, Bucket, Status, _Tag, _Body),
+  Status == 304.
+
+? fresh_hit(Ep, Tag).
+? not_modified(Ep, Bucket).

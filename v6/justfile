@@ -534,3 +534,9 @@ optional: arm-census
 
 # the original one-leg-at-a-time chain, kept for bisecting a parallel-only red
 green-all-serial: green dl6-budget serve-endurance serve-leak-soak memory-soak extraction-live files flagship ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden dep-crawl-golden git-refs-golden scip-combo rtkq-golden precommit-changed watch-scale getting-started
+
+# The six ghcacher goldens on the RUST door: one emit_rust compile of all six,
+# each folded against its scripted schedule, tick log and finals byte-diffed.
+# budget: measured 1.9-3.0s warm, default 600s (GHCACHER_RUST_BUDGET_S)
+ghcacher-rust:
+    {{ capped }} "${GHCACHER_RUST_BUDGET_S:-600}" bash {{ v6 }}/dl/ghcacher/gate.sh
