@@ -36,6 +36,7 @@ pub mod scip_v5_rels;
 pub mod seams;
 pub mod shape;
 pub mod source;
+pub mod trace;
 pub mod types;
 pub mod wire;
 

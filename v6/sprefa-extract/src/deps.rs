@@ -450,6 +450,9 @@ pub fn fold_unresolved(
         }
         stops.insert((row.from_path, row.module, policy.as_str()));
     }
+    for (src, module, reason) in &stops {
+        tracing::warn!(src, module, reason, "module specifier resolved to no corpus file");
+    }
     stops
         .into_iter()
         .map(|(src, module, reason)| FlatFact::FileUnresolvedRow {
@@ -475,7 +478,14 @@ pub fn diet_file_edges(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
     let Some(root) = request.project_root else {
         return Err(ProjectError::DepsNeedRoot);
     };
+    let span = tracing::info_span!(
+        "deps",
+        files = tracing::field::Empty,
+        specifiers = tracing::field::Empty
+    );
+    let _entered = span.enter();
     let inputs = read_inputs(request.paths)?;
+    span.record("files", inputs.len() as u64);
     let root_absolute =
         std::fs::canonicalize(root).map_err(|err| ProjectError::Read(root.to_path_buf(), err))?;
     let relative: Vec<String> = inputs
@@ -500,6 +510,7 @@ pub fn diet_file_edges(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
             })
         })
         .collect();
+    span.record("specifiers", rows.len() as u64);
     let mut facts = fold_edges(&rows, &universe, &tsconfig);
     facts.extend(fold_unresolved(&rows, &universe, &tsconfig));
     Ok(facts)

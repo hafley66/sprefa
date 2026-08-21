@@ -32,6 +32,7 @@ use syn::{
 };
 
 use super::astgrep::{AstGrepParser, CstProjector};
+use crate::trace;
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
     DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, MethodOwner, ProjectEdge, SigSlot,
@@ -2741,14 +2742,19 @@ impl Source for RustSource {
         // ast-grep parse leaves cst None (no panic).
         let cst = if mask.cst {
             let arena = AstGrepParser.make_arena();
-            AstGrepParser
-                .parse(&arena, path, content)
-                .ok()
-                .map(|parsed| {
-                    let mut bundle = FamilyBundle::<CstF>::default();
-                    CstProjector.project(&parsed, &mut strings, &mut bundle);
-                    bundle
-                })
+            let parsed = {
+                let span = trace::parse_span("rust", "astgrep");
+                let _entered = span.enter();
+                AstGrepParser.parse(&arena, path, content).ok()
+            };
+            parsed.map(|parsed| {
+                let span = trace::family_span("rust", "cst");
+                let _entered = span.enter();
+                let mut bundle = FamilyBundle::<CstF>::default();
+                CstProjector.project(&parsed, &mut strings, &mut bundle);
+                trace::record_bundle(&span, &bundle, 0);
+                bundle
+            })
         } else {
             None
         };
@@ -2762,21 +2768,35 @@ impl Source for RustSource {
         let mut df = None;
         if mask.types || mask.call || mask.df {
             if let Ok(src) = std::str::from_utf8(content) {
-                if let Ok(parsed) = syn::parse_file(src) {
+                let parsed = {
+                    let span = trace::parse_span("rust", "syn");
+                    let _entered = span.enter();
+                    syn::parse_file(src)
+                };
+                if let Ok(parsed) = parsed {
                     let line_starts = build_line_starts(src);
                     if mask.types {
+                        let span = trace::family_span("rust", "type");
+                        let _entered = span.enter();
                         let mut bundle = FamilyBundle::<TypeF>::default();
                         project_types(&parsed, &line_starts, &mut strings, &mut bundle);
+                        trace::record_bundle(&span, &bundle, 0);
                         types = Some(bundle);
                     }
                     if mask.call {
+                        let span = trace::family_span("rust", "call");
+                        let _entered = span.enter();
                         let mut bundle = FamilyBundle::<CallF>::default();
                         project_call(&parsed, &line_starts, &mut strings, &mut bundle);
+                        trace::record_bundle(&span, &bundle, bundle.aux.sites.len());
                         call = Some(bundle);
                     }
                     if mask.df {
+                        let span = trace::family_span("rust", "df");
+                        let _entered = span.enter();
                         let mut bundle = FamilyBundle::<DfF>::default();
                         project_df(&parsed, path, src, &line_starts, &mut strings, &mut bundle);
+                        trace::record_bundle(&span, &bundle, 0);
                         df = Some(bundle);
                     }
                 }

@@ -267,6 +267,15 @@ fn stream_scip_family(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let summary = sprefa_extract::trace::install();
+    let outcome = run();
+    if let Some(state) = summary {
+        state.print();
+    }
+    outcome
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().nth(1).as_deref() == Some("query") {
         if let Err(error) = query::run(std::env::args().skip(1)) {
             eprintln!("{error}");
@@ -495,6 +504,7 @@ fn parse_arms(families: &[String]) -> Result<ResolveArms, String> {
             "type" | "types" => arms.types = true,
             "flow" => arms.flow = true,
             other => {
+                tracing::warn!(family = other, "not a resolve arm");
                 return Err(format!(
                     "--family '{other}' is not a resolve arm; under --resolve only \
                      'call', 'type' and 'flow' are meaningful"
@@ -520,6 +530,7 @@ fn parse_mask(families: &[String]) -> Result<FamilyMask, String> {
             // The cfg plane is derived from the cst parse, so it turns cst on.
             "cfg" => mask.cst = true,
             other => {
+                tracing::warn!(family = other, "not a mask family");
                 return Err(format!(
                     "--family '{other}' is not a mask family; per-file families are \
                      cst, type, call, df, data, cfg"
@@ -559,6 +570,7 @@ fn bench(
     cfg: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(src) = source_for(path) else {
+        tracing::warn!(path, "no Source matches this path; nothing to bench");
         eprintln!("no source for {path}"); // @eprintln-ok: CLI-UX summary, not a diagnostic.
         return Ok(());
     };

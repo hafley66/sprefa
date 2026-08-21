@@ -17,7 +17,12 @@ use crate::source::{ExtractOutput, FamilyMask};
 /// `Source::extract`; nothing borrowed crosses this call. The result is the
 /// content-keyed cache's shared entry, so a second identical call skips the parse.
 pub fn dispatch(path: &str, content: &[u8], mask: FamilyMask) -> Option<Arc<ExtractOutput>> {
-    let src = source_for(path)?;
+    let Some(src) = source_for(path) else {
+        tracing::warn!(path, "no Source matches this path; nothing to emit");
+        return None;
+    };
+    let span = tracing::info_span!("extract_file", path, lang = src.name(), bytes = content.len());
+    let _entered = span.enter();
     let key = CacheKey::new(content_id_of(content), src.name(), mask);
     Some(get_or_extract(key, || {
         Arc::new(src.extract(path, content, mask))

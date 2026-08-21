@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 
+use crate::trace;
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfEdgeKind, DfF, DfNodeKind,
     ProjectEdge, RefPosition, Reference, Specifier, SpecifierKind, TypeEntityKind, TypeF,
@@ -769,28 +770,45 @@ impl Source for PrologSource {
         let Ok(src) = std::str::from_utf8(content) else {
             return output;
         };
-        let Some(tree) = parse(src) else {
+        let tree = {
+            let span = trace::parse_span("prolog", "tree-sitter");
+            let _entered = span.enter();
+            parse(src)
+        };
+        let Some(tree) = tree else {
             return output;
         };
         let root = tree.root_node();
         if mask.cst {
+            let span = trace::family_span("prolog", "cst");
+            let _entered = span.enter();
             let mut bundle = FamilyBundle::<CstF>::default();
             project_cst(root, &mut output.strings, &mut bundle);
+            trace::record_bundle(&span, &bundle, 0);
             output.cst = Some(bundle);
         }
         if mask.types {
+            let span = trace::family_span("prolog", "type");
+            let _entered = span.enter();
             let mut bundle = FamilyBundle::<TypeF>::default();
             project_types(root, content, &mut output.strings, &mut bundle);
+            trace::record_bundle(&span, &bundle, 0);
             output.types = Some(bundle);
         }
         if mask.call {
+            let span = trace::family_span("prolog", "call");
+            let _entered = span.enter();
             let mut bundle = FamilyBundle::<CallF>::default();
             project_calls(root, content, &mut output.strings, &mut bundle);
+            trace::record_bundle(&span, &bundle, bundle.aux.sites.len());
             output.call = Some(bundle);
         }
         if mask.df {
+            let span = trace::family_span("prolog", "df");
+            let _entered = span.enter();
             let mut bundle = FamilyBundle::<DfF>::default();
             project_df(root, content, &mut output.strings, &mut bundle);
+            trace::record_bundle(&span, &bundle, 0);
             output.df = Some(bundle);
         }
         output

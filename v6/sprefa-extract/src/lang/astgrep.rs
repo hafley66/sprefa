@@ -13,6 +13,7 @@ use ast_grep_core::{AstGrep, Language, Node as SgNode, Pattern};
 use ast_grep_language::SupportLang;
 use serde::Serialize;
 
+use crate::trace;
 use crate::family::{CstEdgeKind, CstF};
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{ParseError, Parser, Project};
@@ -229,14 +230,19 @@ impl Source for AstgrepSource {
         let mut strings = Strings::new();
         let cst = if mask.cst {
             let arena = AstGrepParser.make_arena();
-            AstGrepParser
-                .parse(&arena, path, content)
-                .ok()
-                .map(|parsed| {
-                    let mut bundle = FamilyBundle::<CstF>::default();
-                    CstProjector.project(&parsed, &mut strings, &mut bundle);
-                    bundle
-                })
+            let parsed = {
+                let span = trace::parse_span("astgrep", "astgrep");
+                let _entered = span.enter();
+                AstGrepParser.parse(&arena, path, content).ok()
+            };
+            parsed.map(|parsed| {
+                let span = trace::family_span("astgrep", "cst");
+                let _entered = span.enter();
+                let mut bundle = FamilyBundle::<CstF>::default();
+                CstProjector.project(&parsed, &mut strings, &mut bundle);
+                trace::record_bundle(&span, &bundle, 0);
+                bundle
+            })
         } else {
             None
         };

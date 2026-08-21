@@ -115,10 +115,25 @@ pub fn get_or_extract(
     key: CacheKey,
     compute: impl FnOnce() -> Arc<ExtractOutput>,
 ) -> Arc<ExtractOutput> {
-    cache()
+    // The miss flag rides the closure, never a delta on the global counter: the
+    // rayon workers share that counter and a concurrent miss would read as this
+    // call's own.
+    let mut missed = false;
+    let span = tracing::debug_span!(
+        "cache",
+        lang = key.lang,
+        hit = tracing::field::Empty,
+        key = ?key.blob
+    );
+    let entered = span.enter();
+    let out = cache()
         .get_or_insert_with(&key, || {
+            missed = true;
             EXTRACTIONS.fetch_add(1, Ordering::Relaxed);
             Ok::<_, std::convert::Infallible>(compute())
         })
-        .expect("extraction is infallible")
+        .expect("extraction is infallible");
+    span.record("hit", !missed);
+    drop(entered);
+    out
 }

@@ -32,6 +32,8 @@ pub use crate::types::{FlatFact, SpanOut};
 /// resolves to a span through each bundle's own node vec; `NameId` resolves to a
 /// string through the shared `strings`.
 pub fn flatten(out: &ExtractOutput) -> Vec<FlatFact> {
+    let span = tracing::debug_span!("flatten", facts = tracing::field::Empty);
+    let _entered = span.enter();
     let mut facts = Vec::new();
     if let Some(bundle) = &out.cst {
         facts.extend(flatten_cst(bundle, &out.strings));
@@ -48,6 +50,7 @@ pub fn flatten(out: &ExtractOutput) -> Vec<FlatFact> {
     if let Some(bundle) = &out.data {
         facts.extend(flatten_data(bundle, &out.strings));
     }
+    span.record("facts", facts.len() as u64);
     facts
 }
 

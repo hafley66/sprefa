@@ -6,6 +6,7 @@
 
 use serde_json::{Map, Value};
 
+use crate::trace;
 use crate::lang::astgrep::AstgrepSource;
 use crate::rows::FamilyBundle;
 use crate::shape::{Span, Strings};
@@ -41,7 +42,12 @@ impl Source for DataSource {
             ExtractOutput::default()
         };
         if mask.data {
+            let span = trace::family_span("data", "data");
+            let _entered = span.enter();
             out.data = data_bundle(path, content, &mut out.strings);
+            if let Some(bundle) = &out.data {
+                trace::record_bundle(&span, bundle, bundle.aux.values.len());
+            }
         }
         out
     }

@@ -23,6 +23,7 @@ use oxc_ast_visit::Visit as OxcVisit;
 use oxc_span::{GetSpan, SourceType};
 
 use super::astgrep::{AstGrepParser, CstProjector};
+use crate::trace;
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
     DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier,
@@ -2900,14 +2901,19 @@ impl Source for TsSource {
         // failed ast-grep parse leaves cst None (no panic).
         let cst = if mask.cst {
             let arena = AstGrepParser.make_arena();
-            AstGrepParser
-                .parse(&arena, path, content)
-                .ok()
-                .map(|parsed| {
-                    let mut bundle = FamilyBundle::<CstF>::default();
-                    CstProjector.project(&parsed, &mut strings, &mut bundle);
-                    bundle
-                })
+            let parsed = {
+                let span = trace::parse_span("ts", "astgrep");
+                let _entered = span.enter();
+                AstGrepParser.parse(&arena, path, content).ok()
+            };
+            parsed.map(|parsed| {
+                let span = trace::family_span("ts", "cst");
+                let _entered = span.enter();
+                let mut bundle = FamilyBundle::<CstF>::default();
+                CstProjector.project(&parsed, &mut strings, &mut bundle);
+                trace::record_bundle(&span, &bundle, 0);
+                bundle
+            })
         } else {
             None
         };
@@ -2920,8 +2926,15 @@ impl Source for TsSource {
         let mut df = None;
         if mask.types || mask.call || mask.df {
             let arena = OxcParser.make_arena();
-            if let Ok(parsed) = OxcParser.parse(&arena, path, content) {
+            let parsed = {
+                let span = trace::parse_span("ts", "oxc");
+                let _entered = span.enter();
+                OxcParser.parse(&arena, path, content)
+            };
+            if let Ok(parsed) = parsed {
                 if mask.types {
+                    let span = trace::family_span("ts", "type");
+                    let _entered = span.enter();
                     let mut bundle = FamilyBundle::<TypeF>::default();
                     TypeProjector.project(&parsed, &mut strings, &mut bundle);
                     // const facet (port of v5 ts_const_facts_from): needs the
@@ -2931,17 +2944,23 @@ impl Source for TsSource {
                         collect_const_facts(&parsed, src, &mut strings, &mut bundle);
                         ts_doc_facts(&parsed, src, &mut strings, &mut bundle);
                     }
+                    trace::record_bundle(&span, &bundle, 0);
                     types = Some(bundle);
                 }
                 if mask.call {
+                    let span = trace::family_span("ts", "call");
+                    let _entered = span.enter();
                     let mut bundle = FamilyBundle::<CallF>::default();
                     if let Ok(src) = std::str::from_utf8(content) {
                         let call_projector = CallProjector { content: src };
                         call_projector.project(&parsed, &mut strings, &mut bundle);
                     }
+                    trace::record_bundle(&span, &bundle, bundle.aux.sites.len());
                     call = Some(bundle);
                 }
                 if mask.df {
+                    let span = trace::family_span("ts", "df");
+                    let _entered = span.enter();
                     let mut bundle = FamilyBundle::<DfF>::default();
                     if let Ok(src) = std::str::from_utf8(content) {
                         let df_projector = DfProjector {
@@ -2950,6 +2969,7 @@ impl Source for TsSource {
                         };
                         df_projector.project(&parsed, &mut strings, &mut bundle);
                     }
+                    trace::record_bundle(&span, &bundle, 0);
                     df = Some(bundle);
                 }
             }

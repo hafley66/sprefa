@@ -70,6 +70,9 @@ v6/prolog/compile/scripts/out/text-door/
 # fragments stage 1 folds back into manifest.json (scripts/sweep-stage1.sh),
 # and the timing ledger. Each is a fact about this machine on this pass, never
 # about the corpus. The out/*.oracle.jsonl snapshots they key on stay tracked.
+# DL6_TRACE=json step ledger: a timing of this machine on this pass.
+v6/prolog/compile/out/compile-trace.jsonl
+
 v6/prolog/compile/out/sweep.digests
 v6/prolog/compile/out/oracle.digests
 v6/prolog/compile/out/sweep.replay.digests.json

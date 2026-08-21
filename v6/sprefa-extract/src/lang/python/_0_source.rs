@@ -22,6 +22,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::trace;
 use crate::family::{CallF, CallKind, CallSite, CstF, SigSlot, TypeEntityKind, TypeF, TypeSig};
 use crate::lang::{AstGrepParser, CstProjector};
 use crate::rows::{FamilyBundle, Node};
@@ -473,14 +474,19 @@ impl Source for PythonSource {
         // cst via ast-grep (masked). A failed ast-grep parse leaves cst None.
         let cst = if mask.cst {
             let arena = AstGrepParser.make_arena();
-            AstGrepParser
-                .parse(&arena, path, content)
-                .ok()
-                .map(|parsed| {
-                    let mut bundle = FamilyBundle::<CstF>::default();
-                    CstProjector.project(&parsed, &mut strings, &mut bundle);
-                    bundle
-                })
+            let parsed = {
+                let span = trace::parse_span("python", "astgrep");
+                let _entered = span.enter();
+                AstGrepParser.parse(&arena, path, content).ok()
+            };
+            parsed.map(|parsed| {
+                let span = trace::family_span("python", "cst");
+                let _entered = span.enter();
+                let mut bundle = FamilyBundle::<CstF>::default();
+                CstProjector.project(&parsed, &mut strings, &mut bundle);
+                trace::record_bundle(&span, &bundle, 0);
+                bundle
+            })
         } else {
             None
         };
@@ -491,17 +497,28 @@ impl Source for PythonSource {
         let mut call = None;
         if mask.types || mask.call {
             if let Ok(src) = std::str::from_utf8(content) {
-                if let Some(tree) = py_parse(src) {
+                let tree = {
+                    let span = trace::parse_span("python", "tree-sitter");
+                    let _entered = span.enter();
+                    py_parse(src)
+                };
+                if let Some(tree) = tree {
                     let root = tree.root_node();
                     let src_bytes = src.as_bytes();
                     if mask.types {
+                        let span = trace::family_span("python", "type");
+                        let _entered = span.enter();
                         let mut bundle = FamilyBundle::<TypeF>::default();
                         project_types(root, src_bytes, &mut strings, &mut bundle);
+                        trace::record_bundle(&span, &bundle, 0);
                         types = Some(bundle);
                     }
                     if mask.call {
+                        let span = trace::family_span("python", "call");
+                        let _entered = span.enter();
                         let mut bundle = FamilyBundle::<CallF>::default();
                         project_call(root, src_bytes, &mut strings, &mut bundle);
+                        trace::record_bundle(&span, &bundle, bundle.aux.sites.len());
                         call = Some(bundle);
                     }
                 }

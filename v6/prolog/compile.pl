@@ -18,6 +18,7 @@
             dl6_seeded_form/3,
             measure_phase/3,
             restore_phase_outcome/1,
+            run_compile_step/4,
             write_compile_trace/2,
             throw_text_door_error/2,
             program_plan/2,
@@ -58,6 +59,9 @@
 :- use_module('0_type_plane',
               [world_row_shape_violation/3, type_definitions/2]).
 :- use_module('0_rel_record', [rel_cols/4]).
+:- use_module('compile/0_trace',
+              [ dl6_trace_on/0, reset_step_trace/0, record_step/3,
+                write_step_trace/2 ]).
 :- use_module('0_generic_expand', [generated_generic_name/1]).
 :- use_module(compile_messages,
               [ dl6_debug/3, dl6_debugging/1, dl6_reset_checkpoint/0,
@@ -197,27 +201,35 @@ program_plan(Term, Plan) :-
 program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindings,
              Options, Plan) :-
     % The body-use table is keyed on body terms, so it belongs to ONE program.
-    reset_body_use_cache,
+    run_compile_step(plan, reset_body_use_cache, reset_body_use_cache, _),
     % On the AUTHOR's text, before any expansion: `__host_demand_*` and the
     % catalog's own col_type decls are the compiler writing its own namespace.
     check_step(reserved_namespace, check_reserved_namespace(SugaredProg)),
     check_step(compiler_type_rules,
                preserve_compiler_type_rules(SugaredProg, Bindings, RuntimeProgram,
                                             CompilerRules, CompilerBindings)),
-    prepare_program_for_compiler(RuntimeProgram, HostRuntimeProgram),
+    run_compile_step(plan, prepare_program_for_compiler,
+                     prepare_program_for_compiler(RuntimeProgram,
+                                                  HostRuntimeProgram), _),
     HostRuntimeProgram = prog(HostDecls, HostRules),
     append(HostRules, CompilerRules, HostRulesAndCompilerRules),
     HostProg = prog(HostDecls, HostRulesAndCompilerRules),
     % Host preparation stays a PRE-PASS (see engine.pl); the sugar phases run
     % in the order 1_expansion.pl declares.
     append(Bindings, CompilerBindings, ExpansionBindings),
-    expand_program_with_bindings(HostProg, ExpansionBindings, ExpandedProg, _),
-    materialize_reference_target_rels(ExpandedProg, ReferencedProg),
-    materialize_catalog_rel(ReferencedProg, Prog),
+    run_compile_step(plan, expand_program_with_bindings,
+                     expand_program_with_bindings(HostProg, ExpansionBindings,
+                                                  ExpandedProg, _), _),
+    run_compile_step(plan, materialize_reference_target_rels,
+                     materialize_reference_target_rels(ExpandedProg,
+                                                       ReferencedProg), _),
+    run_compile_step(plan, materialize_catalog_rel,
+                     materialize_catalog_rel(ReferencedProg, Prog), _),
     Prog = prog(Decls, Rules),
     expanded_program_debug(Decls, Rules),
     % Every later plan step and every plan consumer reads this table.
-    type_definitions(Decls, Types),
+    run_compile_step(plan, type_definitions,
+                     type_definitions(Decls, Types), _),
     % ..._expanded/1, not check_supported_subset/1: Prog is ALREADY expanded
     % here, and the sugared entry expands again. That second expansion was the
     % redundant order site rank R3 removes.
@@ -235,12 +247,12 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     % get a table + arrival handling in the emitted program -- and with every
     % ref an Initial row seeds (analyze.pl:seeded_refs/2), which the oracle
     % stores whether or not anything declares it.
-    program_refs(Rules, RuleRefs),
-    declared_refs(Decls, DeclaredRefs),
-    seeded_refs(Initial, SeededRefs),
+    run_compile_step(plan, program_refs, program_refs(Rules, RuleRefs), _),
+    run_compile_step(plan, declared_refs, declared_refs(Decls, DeclaredRefs), _),
+    run_compile_step(plan, seeded_refs, seeded_refs(Initial, SeededRefs), _),
     append([RuleRefs, DeclaredRefs, SeededRefs], AllRefs0), sort(AllRefs0, AllRefs),
     check_step(single_arity, check_single_arity_per_name(AllRefs)),
-    derived_refs(Rules, DerivedRefs),
+    run_compile_step(plan, derived_refs, derived_refs(Rules, DerivedRefs), _),
     % The catalog is seeded by DDL, so it is never an arrival target; leaving it
     % in would open the serve door to writes against a compiler-owned table.
     catalog_ddl_contract(CatalogName, CatalogSpecs),
@@ -253,37 +265,46 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     % rule's head expression, which now inherits that expression's type
     % instead of falling to the no-witness TEXT default. That default was the
     % TEXT-collapse ("12" vs 12) fail-first check (a) names.
-    findall(Ref-Columns,
-            ( member(Ref, AllRefs), rel_columns(Decls, Rules, Bindings, Ref, Columns) ),
-            RefColumns),
-    program_column_types(Decls, Types, Rules, Initial, Schedule, AllRefs,
-                         RefColumns, RefTypes),
+    run_compile_step(plan, rel_columns,
+        findall(Ref-Columns,
+                ( member(Ref, AllRefs),
+                  rel_columns(Decls, Rules, Bindings, Ref, Columns) ),
+                RefColumns), _),
+    run_compile_step(plan, program_column_types,
+                     program_column_types(Decls, Types, Rules, Initial, Schedule,
+                                          AllRefs, RefColumns, RefTypes), _),
     % Ordered after the typing fixpoint: a stored rel's physical name carries a
     % digest of the storage shape that fixpoint settles.
-    relation_shapes(Decls, AllRefs, RefColumns, RefTypes, Shapes),
-    relation_storage_names(Name, Decls, DerivedRefs, Shapes, AllRefs,
-                           StorageNames),
-    findall(rel(Ref, StorageName, Kind, Cols, KeyOrNone),
-            ( member(Ref, AllRefs),
-              memberchk(Ref-StorageName, StorageNames),
-              rel_kind(Decls, Ref, Kind),
-              memberchk(Ref-Columns, RefColumns),
-              memberchk(Ref-ColumnTypes, RefTypes),
-              ( decl_key(Decls, Ref, Positions) -> KeyOrNone = key(Positions) ; KeyOrNone = none ),
-              maplist(column_origin(Decls, Ref), Columns, Origins),
-              rel_cols(Columns, Origins, ColumnTypes, Cols)
-            ), RelPlans),
+    run_compile_step(plan, relation_shapes,
+                     relation_shapes(Decls, AllRefs, RefColumns, RefTypes,
+                                     Shapes), _),
+    run_compile_step(plan, relation_storage_names,
+                     relation_storage_names(Name, Decls, DerivedRefs, Shapes,
+                                            AllRefs, StorageNames), _),
+    run_compile_step(plan, rel_plans,
+        findall(rel(Ref, StorageName, Kind, Cols, KeyOrNone),
+                ( member(Ref, AllRefs),
+                  memberchk(Ref-StorageName, StorageNames),
+                  rel_kind(Decls, Ref, Kind),
+                  memberchk(Ref-Columns, RefColumns),
+                  memberchk(Ref-ColumnTypes, RefTypes),
+                  ( decl_key(Decls, Ref, Positions) -> KeyOrNone = key(Positions) ; KeyOrNone = none ),
+                  maplist(column_origin(Decls, Ref), Columns, Origins),
+                  rel_cols(Columns, Origins, ColumnTypes, Cols)
+                ), RelPlans), _),
     % PHASE C2 RULING 1 x RULING 2: this needs RelPlans (ColumnTypes), so it
     % runs here rather than inside check_supported_subset/1 above (which
     % runs before RelPlans exists).
     check_step(edge_head_column_types,
                check_edge_head_column_types(RelPlans, Rules)),
-    sql_rule_order(Rules, RuleOrder),
-    include(rule_is_edge, Rules, EdgeRules),
+    run_compile_step(plan, sql_rule_order, sql_rule_order(Rules, RuleOrder), _),
+    run_compile_step(plan, edge_rules,
+                     include(rule_is_edge, Rules, EdgeRules), _),
     % The query decls are the cone's only seeds, read from the POST-expansion
     % Decls for the same reason emit_ts.pl:world_plan_lines/2 reads them there.
     findall(QueryAtom, member(query(QueryAtom), Decls), Queries),
-    subscribed_rels(Decls, Rules, Queries, SubscribedRels),
+    run_compile_step(plan, subscribed_rels,
+                     subscribed_rels(Decls, Rules, Queries, SubscribedRels), _),
     intern_mode(Options, InternMode),
     Plan = plan(Name, Prog, Types, RelPlans, ArrivalTargets, RuleOrder,
                 EdgeRules, SubscribedRels, InternMode),
@@ -295,7 +316,7 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
 % reports which check it stopped in rather than only the phase.
 check_step(Label, Goal) :-
     dl6_debug(check, "~w", [Label]),
-    call(Goal).
+    run_compile_step(plan, Label, Goal, _).
 
 expanded_program_debug(Decls, Rules) :-
     (   dl6_debugging(plan)
@@ -626,6 +647,7 @@ compile_dl6(File, OutFile, Options) :-
     file_base_name(File, BaseName),
     file_name_extension(Name, _Extension, BaseName),
     dl6_reset_checkpoint,
+    reset_step_trace,
     dl6_debug(parse, "source ~w", [File]),
     catch(
         ( run_compile_phase(Name, parse,
@@ -641,9 +663,11 @@ compile_dl6(File, OutFile, Options) :-
         ( emit_diag_file(File, ParseError),
           throw(ParseError) )
     ),
-    dl6_seeded_form(Prog, Initial, ProgOut),
+    run_compile_step(driver, dl6_seeded_form,
+                     dl6_seeded_form(Prog, Initial, ProgOut), _),
     emitter_option(Options, Emitter),
-    schedule_option(Options, Prog, Bindings, Schedule),
+    run_compile_step(driver, schedule_option,
+                     schedule_option(Options, Prog, Bindings, Schedule), _),
     catch(
         compile_program_phases(Name, fixture(Name, ProgOut, Initial, Schedule, []),
                                Bindings, Initial, OutFile, Emitter,
@@ -760,6 +784,7 @@ compile_program(Name, Term, Bindings, Initial, OutFile, Emitter) :-
                     [intern(Mode)]).
 
 compile_program(Name, Term, Bindings, Initial, OutFile, Emitter, Options) :-
+    reset_step_trace,
     compile_program_phases(Name, Term, Bindings, Initial, OutFile, Emitter,
                            Options, PhaseMeasurements),
     zero_phase_measurement(EmptyMeasurement),
@@ -858,6 +883,21 @@ run_compile_phase(Name, Phase, Goal, Measurement) :-
 phase_wall_debug(Phase, measurement(WallMs, _, Inferences, _, _, _, _, _, _, _,
                                     _, _)) :-
     dl6_debug(Phase, "done wall=~wms inferences=~w", [WallMs, Inferences]).
+
+:- meta_predicate run_compile_step(+, +, 0, -).
+
+% call/1 on BOTH arms, never measure_phase/3's once/1: a plan step that leaves a
+% choice point must keep it, or a traced compile answers a different program
+% from an untraced one. A step backtracked into records one row per solution.
+run_compile_step(Phase, Step, Goal, Measurement) :-
+    (   dl6_trace_on
+    ->  statistics_snapshot(Before),
+        call(Goal),
+        capture_phase_measurement(Before, Measurement),
+        record_step(Phase, Step, Measurement)
+    ;   zero_phase_measurement(Measurement),
+        call(Goal)
+    ).
 
 % Every count below walks a list, so each one is computed only under its own
 % topic; the phase begin/done lines carry the checkpoint when they are off.
@@ -1011,7 +1051,8 @@ write_compile_trace(Name, PhaseMeasurements) :-
              EmitWall, EmitInf,
              WriteWall, WriteInf,
              TotalWall, TotalInf
-           ]).
+           ]),
+    write_step_trace(Name, PhaseMeasurements).
 
 phase_trace_measurement(PhaseMeasurements, Phase, Measurement) :-
     memberchk(phase(Phase, Measurement), PhaseMeasurements).

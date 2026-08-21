@@ -710,10 +710,16 @@ fn resolve_call_edges(
     output: &ExtractOutput,
     cx: &ProjectCx,
 ) -> Vec<ProjectEdge<CallF>> {
-    match arm_for(path).and_then(|arm| arm.call) {
-        Some(resolve) => resolve(output, cx),
-        None => Vec::new(),
-    }
+    let Some(arm) = arm_for(path) else {
+        tracing::warn!(path, "no resolve arm is wired for this path");
+        return Vec::new();
+    };
+    let Some(resolve) = arm.call else {
+        return Vec::new();
+    };
+    let span = tracing::debug_span!("resolve_arm", lang = arm.name, family = "call");
+    let _entered = span.enter();
+    resolve(output, cx)
 }
 
 fn resolve_type_edges(
@@ -721,10 +727,16 @@ fn resolve_type_edges(
     output: &ExtractOutput,
     cx: &ProjectCx,
 ) -> Vec<ProjectEdge<TypeF>> {
-    match arm_for(path).and_then(|arm| arm.types) {
-        Some(resolve) => resolve(output, cx),
-        None => Vec::new(),
-    }
+    let Some(arm) = arm_for(path) else {
+        tracing::warn!(path, "no resolve arm is wired for this path");
+        return Vec::new();
+    };
+    let Some(resolve) = arm.types else {
+        return Vec::new();
+    };
+    let span = tracing::debug_span!("resolve_arm", lang = arm.name, family = "type");
+    let _entered = span.enter();
+    resolve(output, cx)
 }
 
 fn call_facts(

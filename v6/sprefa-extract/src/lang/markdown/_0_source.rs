@@ -6,6 +6,7 @@
 //! existing CstF plane and uses the same node/child wire shape as every other
 //! syntax source.
 
+use crate::trace;
 use crate::family::{CstEdgeKind, CstF, TypeF};
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, ProjectCx, Resolve};
@@ -117,17 +118,28 @@ impl Source for MarkdownSource {
             return output;
         }
         let language = tree_sitter::Language::new(tree_sitter_md::LANGUAGE);
-        let Some(tree) = parse(content, language) else {
+        let tree = {
+            let span = trace::parse_span("markdown", "tree-sitter");
+            let _entered = span.enter();
+            parse(content, language)
+        };
+        let Some(tree) = tree else {
             return output;
         };
         if mask.cst {
+            let span = trace::family_span("markdown", "cst");
+            let _entered = span.enter();
             let mut bundle = FamilyBundle::<CstF>::default();
             project_block_tree(tree.root_node(), content, &mut output.strings, &mut bundle);
+            trace::record_bundle(&span, &bundle, 0);
             output.cst = Some(bundle);
         }
         if mask.types && !mask.cst {
+            let span = trace::family_span("markdown", "type");
+            let _entered = span.enter();
             let mut bundle = FamilyBundle::<TypeF>::default();
             project_doc_nodes(tree.root_node(), content, &mut output.strings, &mut bundle);
+            trace::record_bundle(&span, &bundle, 0);
             output.types = Some(bundle);
         }
         output
