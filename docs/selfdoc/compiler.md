@@ -204,8 +204,8 @@ flowchart LR
   n8["2_emit_cli_inventory  in0/out1"]
   n9["3_emit_trace_schema  in0/out1"]
   n10["9_emit_type_artifact  in0/out4"]
-  n2 -->|20| n1
-  n1 -->|19| n2
+  n2 -->|23| n1
+  n1 -->|21| n2
   n5 -->|13| n4
   n4 -->|13| n5
   n3 -->|2| n5
@@ -221,7 +221,7 @@ flowchart LR
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
 | `v6/prolog/emit_ts.pl` | 216 | 219 | 9 | 12 |
-| `v6/prolog/emit_rust.pl` | 74 | 90 | 9 | 13 |
+| `v6/prolog/emit_rust.pl` | 79 | 100 | 9 | 13 |
 | `v6/prolog/compile/4_emit_jsonschema.pl` | 66 | 88 | 9 | 2 |
 | `v6/prolog/compile/8_emit_rust_types.pl` | 86 | 96 | 7 | 2 |
 | `v6/prolog/compile/7_emit_ts_types.pl` | 44 | 50 | 7 | 2 |
