@@ -2122,6 +2122,56 @@ sites but not against new code. **missing** = nothing.
   `a_persistent_stage_drops_a_source_the_corpus_deleted` asserts the prune and
   asserts `target/` survives it.
 
+## 58. A host seam whose fall-back was a shell, and the 246 spawns it hid
+
+- WHAT IT LOOKS LIKE: the runtime answers a host by handing a filled template to
+  `sh -c`. Every declaration that no adapter row routes still runs, so a missing
+  registration is invisible: the rail produces correct rows and simply costs
+  100x more per demand. Entry 54 is that incident; this entry is the class.
+- HOW IT BIT US: entry 54's fix made the fall-back LOUD (`sh_spawn`,
+  `linked_twin_for`) and left it reachable. A loud defect is still a defect, and
+  the shell also forbids two things the engine needs: an `sh` host cannot carry
+  a structured input, and its answer must be re-parsed out of stdout, so the
+  extract twin serialized 17929 facts to JSONL for the runner to parse back.
+- THE LAW: a seam with a slow universal fall-back has no failing case, so it
+  never teaches. Delete the fall-back and the missing registration becomes a
+  named stop at construction, before a single tick runs. A host answer crosses
+  the seam as ROWS, never as bytes: an executor that names its own columns needs
+  no decoder, and a decoder that guesses between JSON, a grid and one field per
+  line is three ways to be wrong about the same answer.
+- THE RAIL: `IHostExecutor::run` answers `Vec<HostRow>` and `executor_for`
+  returns `None` for anything outside `LINKED_EXECUTORS`, so `HostLiveRunner`
+  construction stops with `no executor links host '<name>' (adapter '<x>');
+  linked executors: ...`. `tests/live_hosts.rs`
+  `an_unrouted_sh_declaration_is_a_named_stop_at_construction` asserts the stop
+  AND asserts the template's `touch` marker never appears, which is the
+  fail-pre-fix receipt: that same plan used to create the marker.
+  `tests/consumer_integration.rs` asserts every roster name resolves and that
+  `shell` does not. Grep receipt: `Command::new` in `sprefa-engine-rs/src` is
+  the `dl6` CLI's `swipl`/`git`/`cargo` only.
+
+## 59. A whole-corpus join run once per file
+
+- WHAT IT LOOKS LIKE: a resolve that finishes instantly with no index loaded
+  never finishes with one. No error, no log, no obvious hot loop: 82 files went
+  past 506s and were killed. Loading MORE evidence made the work unbounded.
+- HOW IT BIT US: 2026-08-21. `join_documents` reads and content-hashes EVERY
+  document a SCIP index names, and the three `Resolve<CallF>` arms (rust, go,
+  ts) each called it inside `resolve`, which runs per FILE. 82 files over a
+  129-document index is 10578 whole-corpus reads and re-hashes. The join is
+  whole-project state; its own doc comment said so and said the engine would
+  cache it "when this gets hot".
+- THE LAW: work whose result depends on the PROJECT belongs to the project's
+  lifetime, not to the loop body that first needed it. A comment promising a
+  cache later is not a cache; a `OnceLock` in the bag the arms already borrow is
+  the whole fix.
+- THE RAIL: `IndexBag.joined_documents: OnceLock<Vec<Option<(ContentId,
+  Vec<u8>)>>>`, set through `get_or_init` by whichever arm reaches it first.
+  COUNT test, `v6/sprefa-extract/tests/32_join_documents_once.rs`: a reader that
+  counts its calls, 3 files, a 5-document index. Fail-pre-fix `reads = 15`,
+  after `reads = 5`. The count, not the edge set, is what detects a regression
+  here: the edges were always correct.
+
 ## 56. A runtime with no per-verb clock, and three optimizations aimed at the wrong 12%
 
 - WHAT IT LOOKS LIKE: a fold is slow, the engine writes SQL, so the SQL gets
