@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock, Mutex};
 
+use sha2::{Digest, Sha256};
+
 use crate::types::{
     Arrival, ArrivalSign, BoundaryError, HostAdapterRow, HostColumnPlan, HostPlanData, HostRow,
     ScalarSeam, ScalarValue, TickDeltas, Value,
@@ -88,6 +90,13 @@ fn is_applicative(execution: &str) -> bool {
 /// Typed ast-grep rule execution. The request arrives as the DL6 `text`
 /// transport for the documented `AstRuleRequest` YAML schema; parsing and rule
 /// matching happen through the linked extractor library, never through `sg`.
+///
+/// The digest accepts the two Soopy content identities used by source watch:
+/// `git:<oid>` or a bare Git blob OID for Git content, and `blake3:<hex>` for a
+/// worktree or plain-filesystem read. The latter path does not require Git
+/// discovery. The v5 TypeScript `live_watch` adapter emitted a bare SHA-256
+/// digest, which is accepted as a compatibility input and converted to
+/// Soopy's BLAKE3 filesystem identity after verification.
 pub struct AstRuleExecutor;
 
 impl IHostExecutor for AstRuleExecutor {
@@ -96,25 +105,66 @@ impl IHostExecutor for AstRuleExecutor {
         host: &str,
         _command_line: &str,
         env: &BTreeMap<String, String>,
-    ) -> Result<String, HostError> {
-        let path = source_mutation_input(host, env, "path")?;
-        let digest = source_mutation_input(host, env, "digest")?;
-        let request_yaml = source_mutation_input(host, env, "request")?;
+    ) -> Result<Vec<HostRow>, HostError> {
+        let path = required_input(host, env, "path")?;
+        let digest = required_input(host, env, "digest")?;
+        let request_yaml = required_input(host, env, "request")?;
         let request =
             sprefa_extract::decode_ast_rule_yaml(&request_yaml).map_err(|error| HostError {
                 host: host.to_string(),
                 message: format!("decode ast_rule request: {error}"),
             })?;
-        let repo_root = env
-            .get("repo")
-            .map(PathBuf::from)
-            .or_else(|| EXTRACT.repository_root(&path))
-            .ok_or_else(|| HostError {
-                host: host.to_string(),
-                message: format!("no repository root for digest read of {path}"),
-            })?;
-        let bytes = EXTRACT.read_blob(host, &repo_root, &digest, &path)?;
-        let content = soopy::ContentId::GitBlob(soopy::ObjectId(Arc::from(digest)));
+        let input = decode_content_id(host, &digest)?;
+        let (bytes, content) = match input {
+            AstRuleInput::Content(soopy::ContentId::GitBlob(oid)) => {
+                let repo_root = env
+                    .get("repo")
+                    .map(PathBuf::from)
+                    .or_else(|| EXTRACT.repository_root(&path))
+                    .ok_or_else(|| HostError {
+                        host: host.to_string(),
+                        message: format!("no repository root for digest read of {path}"),
+                    })?;
+                (
+                    EXTRACT.read_blob(host, &repo_root, oid.0.as_ref(), &path)?,
+                    soopy::ContentId::GitBlob(oid),
+                )
+            }
+            AstRuleInput::Content(soopy::ContentId::Blake3(expected)) => {
+                let bytes = std::fs::read(&path).map_err(|error| HostError {
+                    host: host.to_string(),
+                    message: format!("read worktree content {path}: {error}"),
+                })?;
+                let actual = soopy::ContentId::blake3(&bytes);
+                let content = soopy::ContentId::Blake3(expected);
+                if actual != content {
+                    return Err(HostError {
+                        host: host.to_string(),
+                        message: format!(
+                            "read worktree content {path}: digest is {}, expected {}",
+                            actual, content
+                        ),
+                    });
+                }
+                (bytes, content)
+            }
+            AstRuleInput::LegacySha256(expected) => {
+                let bytes = std::fs::read(&path).map_err(|error| HostError {
+                    host: host.to_string(),
+                    message: format!("read legacy live_watch content {path}: {error}"),
+                })?;
+                let actual = Sha256::digest(&bytes);
+                if actual.as_slice() != expected {
+                    return Err(HostError {
+                        host: host.to_string(),
+                        message: format!(
+                            "read legacy live_watch content {path}: SHA-256 digest mismatch"
+                        ),
+                    });
+                }
+                (bytes.clone(), soopy::ContentId::blake3(&bytes))
+            }
+        };
         let rows = sprefa_extract::query_ast_rule_with_content(&path, &bytes, &request, content)
             .map_err(|error| HostError {
                 host: host.to_string(),
@@ -122,14 +172,75 @@ impl IHostExecutor for AstRuleExecutor {
             })?;
         rows.into_iter()
             .map(|row| {
-                serde_json::to_string(&row).map_err(|error| HostError {
-                    host: host.to_string(),
-                    message: format!("serialize ast_rule row: {error}"),
-                })
+                serde_json::to_value(row)
+                    .map_err(|error| HostError {
+                        host: host.to_string(),
+                        message: format!("serialize ast_rule row: {error}"),
+                    })?
+                    .as_object()
+                    .cloned()
+                    .ok_or_else(|| HostError {
+                        host: host.to_string(),
+                        message: "serialize ast_rule row: expected JSON object".to_string(),
+                    })
             })
-            .collect::<Result<Vec<_>, _>>()
-            .map(|rows| rows.join("\n"))
+            .collect()
     }
+}
+
+enum AstRuleInput {
+    Content(soopy::ContentId),
+    LegacySha256([u8; 32]),
+}
+
+fn decode_content_id(host: &str, digest: &str) -> Result<AstRuleInput, HostError> {
+    let named = |message: String| HostError {
+        host: host.to_string(),
+        message,
+    };
+    if let Some(hex) = digest.strip_prefix("blake3:") {
+        let bytes = hex.as_bytes();
+        if bytes.len() != 64 {
+            return Err(named(format!(
+                "decode blake3 content identity: expected 64 hex digits, got {}",
+                bytes.len()
+            )));
+        }
+        let mut digest = [0u8; 32];
+        for (index, pair) in bytes.chunks_exact(2).enumerate() {
+            let high = (pair[0] as char).to_digit(16).ok_or_else(|| {
+                named(format!(
+                    "decode blake3 content identity: invalid hex at {index}"
+                ))
+            })?;
+            let low = (pair[1] as char).to_digit(16).ok_or_else(|| {
+                named(format!(
+                    "decode blake3 content identity: invalid hex at {}",
+                    index * 2 + 1
+                ))
+            })?;
+            digest[index] = ((high << 4) | low) as u8;
+        }
+        return Ok(AstRuleInput::Content(soopy::ContentId::Blake3(digest)));
+    }
+    if digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        let mut bytes = [0u8; 32];
+        for (index, pair) in digest.as_bytes().chunks_exact(2).enumerate() {
+            let high = (pair[0] as char).to_digit(16).expect("ASCII hex");
+            let low = (pair[1] as char).to_digit(16).expect("ASCII hex");
+            bytes[index] = ((high << 4) | low) as u8;
+        }
+        return Ok(AstRuleInput::LegacySha256(bytes));
+    }
+    let oid = digest.strip_prefix("git:").unwrap_or(digest);
+    if oid.is_empty() {
+        return Err(named(
+            "decode Git blob content identity: empty object id".to_string(),
+        ));
+    }
+    Ok(AstRuleInput::Content(soopy::ContentId::GitBlob(
+        soopy::ObjectId(Arc::from(oid)),
+    )))
 }
 
 /// Linked executor for the tracked-file surface: a pathspec in, one
@@ -207,12 +318,15 @@ impl IHostExecutor for FixtureExecutor {
             .map_err(|message| named(format!("unparseable template: {message}")))?;
         let (verb, payload) = match words.split_first() {
             Some((verb, rest)) if verb == "printf" => (verb, rest.first()),
-            _ => return Err(named(format!("only `printf` is a fixture answer: `{command_line}`"))),
+            _ => {
+                return Err(named(format!(
+                    "only `printf` is a fixture answer: `{command_line}`"
+                )))
+            }
         };
         let payload = payload.ok_or_else(|| named(format!("`{verb}` carries no answer")))?;
-        fixture_rows(payload).ok_or_else(|| {
-            named(format!("fixture answer is not json rows: `{payload}`"))
-        })
+        fixture_rows(payload)
+            .ok_or_else(|| named(format!("fixture answer is not json rows: `{payload}`")))
     }
 }
 
@@ -235,10 +349,12 @@ fn fixture_rows(payload: &str) -> Option<Vec<HostRow>> {
     payload
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .map(|line| match serde_json::from_str::<serde_json::Value>(line) {
-            Ok(serde_json::Value::Object(row)) => Some(row),
-            _ => None,
-        })
+        .map(
+            |line| match serde_json::from_str::<serde_json::Value>(line) {
+                Ok(serde_json::Value::Object(row)) => Some(row),
+                _ => None,
+            },
+        )
         .collect()
 }
 
@@ -732,20 +848,17 @@ fn build_scip_fold(
                 ) else {
                     continue;
                 };
-                fold.call
-                    .entry(caller.clone())
-                    .or_default()
-                    .push(host_row([
-                        ("record", serde_json::json!("resolved_edge")),
-                        ("family", serde_json::json!("call")),
-                        ("caller_path", serde_json::json!(caller)),
-                        ("callee_path", serde_json::json!(callee_path)),
-                        ("callee", serde_json::json!(callee)),
-                        (
-                            "kind",
-                            serde_json::json!(string_field(object, "kind").unwrap_or_default()),
-                        ),
-                    ]));
+                fold.call.entry(caller.clone()).or_default().push(host_row([
+                    ("record", serde_json::json!("resolved_edge")),
+                    ("family", serde_json::json!("call")),
+                    ("caller_path", serde_json::json!(caller)),
+                    ("callee_path", serde_json::json!(callee_path)),
+                    ("callee", serde_json::json!(callee)),
+                    (
+                        "kind",
+                        serde_json::json!(string_field(object, "kind").unwrap_or_default()),
+                    ),
+                ]));
             }
             Some("resolved_type_edge") => {
                 let (Some(owner), Some(target_path), Some(target)) = (
@@ -755,20 +868,17 @@ fn build_scip_fold(
                 ) else {
                     continue;
                 };
-                fold.types
-                    .entry(owner.clone())
-                    .or_default()
-                    .push(host_row([
-                        ("record", serde_json::json!("resolved_type_edge")),
-                        ("family", serde_json::json!("type")),
-                        ("owner_path", serde_json::json!(owner)),
-                        ("target_path", serde_json::json!(target_path)),
-                        ("target", serde_json::json!(target)),
-                        (
-                            "kind",
-                            serde_json::json!(string_field(object, "kind").unwrap_or_default()),
-                        ),
-                    ]));
+                fold.types.entry(owner.clone()).or_default().push(host_row([
+                    ("record", serde_json::json!("resolved_type_edge")),
+                    ("family", serde_json::json!("type")),
+                    ("owner_path", serde_json::json!(owner)),
+                    ("target_path", serde_json::json!(target_path)),
+                    ("target", serde_json::json!(target)),
+                    (
+                        "kind",
+                        serde_json::json!(string_field(object, "kind").unwrap_or_default()),
+                    ),
+                ]));
             }
             _ => {}
         }
@@ -837,7 +947,6 @@ fn scip_root(host: &str, env: &BTreeMap<String, String>) -> Result<PathBuf, Host
         message: format!("repo `{repo}` is not a readable directory: {failure}"),
     })
 }
-
 
 impl SprefaExtractExecutor {
     /// The checkout root containing `path`, derived once per directory.
@@ -1417,8 +1526,9 @@ impl<'p> HostLiveRunner<'p> {
             // in `collect`; a list has no host spelling at all.
             let scalar = match &value {
                 Value::Bytes(bytes) => ScalarValue::Bytes(bytes.clone()),
-                other => ScalarValue::at_seam(other, ScalarSeam::HostTemplateArgument)
-                    .map_err(named)?,
+                other => {
+                    ScalarValue::at_seam(other, ScalarSeam::HostTemplateArgument).map_err(named)?
+                }
             };
             inputs.insert(input.name.clone(), scalar);
         }
@@ -1455,8 +1565,7 @@ impl<'p> HostLiveRunner<'p> {
         answered: &[HostRow],
         rel_columns: &HashMap<String, Vec<String>>,
     ) -> Result<Vec<Arrival>, HostError> {
-        let span =
-            tracing::info_span!("project", host = %demand.plan.name, rows = answered.len());
+        let span = tracing::info_span!("project", host = %demand.plan.name, rows = answered.len());
         let _entered = span.enter();
         let output_rows = select_columns(&demand.plan.name, answered, &demand.plan.outputs)?;
         let response_columns = rel_columns
@@ -1527,13 +1636,7 @@ impl<'p> HostLiveRunner<'p> {
             if self.execution_for(demand.plan) != "sprefa_scip" {
                 continue;
             }
-            let text = |name: &str| {
-                demand
-                    .inputs
-                    .get(name)
-                    .map(shell_text)
-                    .unwrap_or_default()
-            };
+            let text = |name: &str| demand.inputs.get(name).map(shell_text).unwrap_or_default();
             let repo = text("repo");
             if let Ok(root) = std::fs::canonicalize(PathBuf::from(&repo)) {
                 scip_demands.push((root, text("path"), text("digest")));

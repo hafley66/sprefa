@@ -1,6 +1,6 @@
 use sprefa_extract::{
-    content_id_of, decode_ast_rule_yaml, query_ast_rule, AstRule, AstRuleError, AstRuleRequest,
-    NamedAstRule, StopBy,
+    content_id_of, decode_ast_rule_yaml, query_ast_rule, query_patterns, AstCaptureFact,
+    AstPatternQuery, AstRule, AstRuleError, AstRuleRequest, NamedAstRule, StopBy,
 };
 
 fn request(rule: AstRule) -> AstRuleRequest {
@@ -39,7 +39,10 @@ fix: eprintln!($MESSAGE)
         typed_rows[0].proposal.as_ref().unwrap().span,
         typed_rows[0].span
     );
-    assert_eq!(typed_rows[0].proposal.as_ref().unwrap().replacement, "eprintln!(\"hello\")");
+    assert_eq!(
+        typed_rows[0].proposal.as_ref().unwrap().replacement,
+        "eprintln!(\"hello\")"
+    );
     assert_eq!(typed_rows[0].proposal.as_ref().unwrap().span.start, 12);
     assert_eq!(typed_rows[0].proposal.as_ref().unwrap().span.len, 17);
 }
@@ -125,4 +128,49 @@ fn malformed_yaml_and_invalid_rules_are_named_errors() {
         ),
         Err(AstRuleError::InvalidRule(_))
     ));
+}
+
+/// The v5 AstPatternQuery surface remains available for callers that provide
+/// a pattern, an optional contextual selector, and the capture names to emit.
+/// This checks the extractor API shape; it does not assert parity with any
+/// external ast-grep YAML configuration format.
+#[test]
+fn pattern_query_preserves_contextual_selector_and_requested_captures() {
+    let facts = query_patterns(
+        "main.rs",
+        b"fn one() { println!(\"one\"); }\nfn two() {}\n",
+        &[AstPatternQuery {
+            id: "function_name".into(),
+            pattern: "fn $NAME() { $$$BODY }".into(),
+            selector: Some("function_item".into()),
+            captures: vec!["NAME".into()],
+        }],
+    )
+    .expect("v5-shaped pattern query");
+
+    assert_eq!(
+        facts,
+        vec![
+            AstCaptureFact {
+                record: "capture",
+                query: "function_name".into(),
+                capture: "NAME".into(),
+                text: "one".into(),
+                start: 3,
+                end: 6,
+                match_start: 0,
+                match_end: 29,
+            },
+            AstCaptureFact {
+                record: "capture",
+                query: "function_name".into(),
+                capture: "NAME".into(),
+                text: "two".into(),
+                start: 33,
+                end: 36,
+                match_start: 30,
+                match_end: 41,
+            },
+        ]
+    );
 }

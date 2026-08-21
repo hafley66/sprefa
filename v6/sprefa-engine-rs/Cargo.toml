@@ -21,6 +21,7 @@ futures = "0.3"
 async-stream = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 sprefa-extract = { path = "../sprefa-extract" }
 sprefa-rust-runtime-host = { path = "../../../sprefa-v6/0_runtime/1_rust_runtime_host" }
 # Git pathspec file feeds and blob identities are owned by the standalone

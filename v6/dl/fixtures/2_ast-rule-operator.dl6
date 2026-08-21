@@ -7,7 +7,7 @@ bind watch(glob: text, path: text, digest: text).
 sh ast_rule(path: text, digest: text, request: text) ->
   (record: text, query: text, source_path: text, content: json, span: json,
    captures: json, proposal: json) =
-  `"$SPREFA_AST_RULE_HOST" "{path}" "{request}"`.
+  `"$SPREFA_AST_RULE_HOST" "{path}" "{request}" # {digest}`.
 
 rel file(path: text, digest: text).
 file(Path, Digest) <- watch('**/*.rs', Path, Digest).

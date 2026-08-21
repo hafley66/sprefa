@@ -112,25 +112,40 @@ impl AstRuleMutationProposal {
         let Some(first) = proposals.first() else {
             return Err("ast-rule stage request requires at least one proposal");
         };
-        if proposals.iter().any(|proposal| proposal.content != first.content) {
+        if proposals
+            .iter()
+            .any(|proposal| proposal.content != first.content)
+        {
             return Err("ast-rule proposals for one source must share content identity");
         }
         let mut proposals = proposals.to_vec();
-        proposals.sort_by(|left, right| (&left.span, &left.query, &left.replacement).cmp(&(&right.span, &right.query, &right.replacement)));
-        let edits = proposals.into_iter().map(|proposal| soopy::TextEdit {
-            range: soopy::ActionSpan {
-                source: source.clone(),
-                start: proposal.span.start.into(),
-                end: proposal.span.end().into(),
-            },
-            replacement: proposal.replacement.into_bytes(),
-            producer: producer.clone().with_rule(proposal.query),
-        }).collect();
-        Ok(soopy::StageRequest::new(root, vec![soopy::SourceAction::Replace {
-            source,
-            expected: first.content.clone(),
-            edits,
-        }]))
+        proposals.sort_by(|left, right| {
+            (&left.span, &left.query, &left.replacement).cmp(&(
+                &right.span,
+                &right.query,
+                &right.replacement,
+            ))
+        });
+        let edits = proposals
+            .into_iter()
+            .map(|proposal| soopy::TextEdit {
+                range: soopy::ActionSpan {
+                    source: source.clone(),
+                    start: proposal.span.start.into(),
+                    end: proposal.span.end().into(),
+                },
+                replacement: proposal.replacement.into_bytes(),
+                producer: producer.clone().with_rule(proposal.query),
+            })
+            .collect();
+        Ok(soopy::StageRequest::new(
+            root,
+            vec![soopy::SourceAction::Replace {
+                source,
+                expected: first.content.clone(),
+                edits,
+            }],
+        ))
     }
 
     pub fn stage_request(
@@ -318,7 +333,16 @@ pub fn query_ast_rule_with_content(
     let mut matches = root
         .root()
         .find_all(&config.matcher)
-        .map(|matched| make_match(path, content.clone(), request, fixer.as_ref(), &config.matcher, matched))
+        .map(|matched| {
+            make_match(
+                path,
+                content.clone(),
+                request,
+                fixer.as_ref(),
+                &config.matcher,
+                matched,
+            )
+        })
         .collect::<Vec<_>>();
     matches.sort_by(|left, right| {
         (&left.query, &left.path, left.span, &left.captures).cmp(&(
@@ -379,7 +403,10 @@ fn make_match(
             AstRuleMutationProposal {
                 query: request.id.clone(),
                 content,
-                span: Span { start: edit.position as u32, len: edit.deleted_length as u32 },
+                span: Span {
+                    start: edit.position as u32,
+                    len: edit.deleted_length as u32,
+                },
                 replacement: String::from_utf8(edit.inserted_text)
                     .expect("ast-grep UTF-8 fixer replacement"),
             }
