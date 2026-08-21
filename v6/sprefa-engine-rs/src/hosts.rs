@@ -1576,7 +1576,13 @@ impl<'p> HostLiveRunner<'p> {
                     )
                 })
                 .collect();
-            let key = format!("{}|{:?}", execution, ordered_inputs);
+            // The FILLED COMMAND is what decides the answer, never the executor
+            // name: three extract-shaped hosts sharing one template still fold
+            // into one run and each selects its own columns out of that stream,
+            // while two hosts whose templates differ are two different questions
+            // and folding them hands one namespace the other's rows.
+            let command_line = fill_template(&demand.plan.template, &demand.inputs);
+            let key = format!("{}|{}|{:?}", execution, command_line, ordered_inputs);
             match group_index.get(&key) {
                 Some(&index) => groups[index].push(demand),
                 None => {
