@@ -1413,11 +1413,13 @@ pub struct ManifestMap;
 /// - `scip_index` (commit 4c): THE Tier-1 resolution index, one corpus-wide
 ///   slot, set once per refresh by the engine/ratchet when an index.scip is in
 ///   hand. `Resolve<CallF>` reads it for the ScipOverride leg; an unset slot
-///   means pure name-match resolution (no scip ground truth loaded).
+///   means pure name-match resolution (no scip oracle loaded).
+/// - `joined_documents`: index x reader, ONE slot; per FILE it is 82x129 reads.
 #[derive(Default)]
 pub struct IndexBag {
     pub def_index: std::sync::OnceLock<DefIndex>,
     pub scip_index: std::sync::OnceLock<ScipIndex>,
+    pub joined_documents: std::sync::OnceLock<Vec<Option<(ContentId, Vec<u8>)>>>,
 }
 
 // ── the corpus name index + shared resolve helpers (ADDENDUM 4a) ────────────

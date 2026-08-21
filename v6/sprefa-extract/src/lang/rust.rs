@@ -976,7 +976,10 @@ impl Resolve<CallF> for RustSource {
             .get()
             .zip(cx.reader)
             .and_then(|(index, reader)| {
-                let joined = join_documents(index, reader);
+                let joined = cx
+                    .indexes
+                    .joined_documents
+                    .get_or_init(|| join_documents(index, reader));
                 let blob = own_blob(output, def_index)?;
                 let doc_ix = joined
                     .iter()
