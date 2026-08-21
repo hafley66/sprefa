@@ -101,6 +101,38 @@ pub struct AstRuleMutationProposal {
 }
 
 impl AstRuleMutationProposal {
+    /// Combines deterministic edits for one source into Soopy's one-action
+    /// transaction. `stage_mutations` remains the conflict authority.
+    pub fn stage_request_batch(
+        proposals: &[Self],
+        root: soopy::SourceRootId,
+        source: soopy::ActionSource,
+        producer: soopy::ActionProducer,
+    ) -> Result<soopy::StageRequest, &'static str> {
+        let Some(first) = proposals.first() else {
+            return Err("ast-rule stage request requires at least one proposal");
+        };
+        if proposals.iter().any(|proposal| proposal.content != first.content) {
+            return Err("ast-rule proposals for one source must share content identity");
+        }
+        let mut proposals = proposals.to_vec();
+        proposals.sort_by(|left, right| (&left.span, &left.query, &left.replacement).cmp(&(&right.span, &right.query, &right.replacement)));
+        let edits = proposals.into_iter().map(|proposal| soopy::TextEdit {
+            range: soopy::ActionSpan {
+                source: source.clone(),
+                start: proposal.span.start.into(),
+                end: proposal.span.end().into(),
+            },
+            replacement: proposal.replacement.into_bytes(),
+            producer: producer.clone().with_rule(proposal.query),
+        }).collect();
+        Ok(soopy::StageRequest::new(root, vec![soopy::SourceAction::Replace {
+            source,
+            expected: first.content.clone(),
+            edits,
+        }]))
+    }
+
     pub fn stage_request(
         &self,
         root: soopy::SourceRootId,
@@ -253,6 +285,17 @@ pub fn query_ast_rule(
     bytes: &[u8],
     request: &AstRuleRequest,
 ) -> Result<Vec<AstRuleMatch>, AstRuleError> {
+    query_ast_rule_with_content(path, bytes, request, content_id_of(bytes))
+}
+
+/// Query bytes supplied by a source host while retaining the source host's
+/// content identity in every emitted source/span proposal relation.
+pub fn query_ast_rule_with_content(
+    path: &str,
+    bytes: &[u8],
+    request: &AstRuleRequest,
+    content: ContentId,
+) -> Result<Vec<AstRuleMatch>, AstRuleError> {
     let language =
         SupportLang::from_path(path).ok_or_else(|| AstRuleError::NoGrammar(path.into()))?;
     let source =
@@ -267,11 +310,15 @@ pub fn query_ast_rule(
         .next()
         .ok_or_else(|| AstRuleError::InvalidRule("empty rule config".into()))?;
     let root = AstGrep::<StrDoc<SupportLang>>::new(source, language);
-    let content = content_id_of(bytes);
+    let fixer = config
+        .get_fixer()
+        .map_err(|error| AstRuleError::InvalidRule(error.to_string()))?
+        .into_iter()
+        .next();
     let mut matches = root
         .root()
         .find_all(&config.matcher)
-        .map(|matched| make_match(path, content.clone(), request, matched))
+        .map(|matched| make_match(path, content.clone(), request, fixer.as_ref(), &config.matcher, matched))
         .collect::<Vec<_>>();
     matches.sort_by(|left, right| {
         (&left.query, &left.path, left.span, &left.captures).cmp(&(
@@ -289,6 +336,8 @@ fn make_match(
     path: &str,
     content: ContentId,
     request: &AstRuleRequest,
+    fixer: Option<&ast_grep_config::Fixer>,
+    matcher: &ast_grep_config::RuleCore,
     matched: NodeMatch<StrDoc<SupportLang>>,
 ) -> AstRuleMatch {
     let range = matched.range();
@@ -325,15 +374,16 @@ fn make_match(
         content: content.clone(),
         span,
         captures,
-        proposal: request
-            .fix
-            .as_ref()
-            .map(|replacement| AstRuleMutationProposal {
+        proposal: fixer.map(|fixer| {
+            let edit = matched.make_edit(matcher, fixer);
+            AstRuleMutationProposal {
                 query: request.id.clone(),
                 content,
-                span,
-                replacement: replacement.clone(),
-            }),
+                span: Span { start: edit.position as u32, len: edit.deleted_length as u32 },
+                replacement: String::from_utf8(edit.inserted_text)
+                    .expect("ast-grep UTF-8 fixer replacement"),
+            }
+        }),
     }
 }
 

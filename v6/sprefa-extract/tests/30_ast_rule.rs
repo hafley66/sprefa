@@ -39,6 +39,9 @@ fix: eprintln!($MESSAGE)
         typed_rows[0].proposal.as_ref().unwrap().span,
         typed_rows[0].span
     );
+    assert_eq!(typed_rows[0].proposal.as_ref().unwrap().replacement, "eprintln!(\"hello\")");
+    assert_eq!(typed_rows[0].proposal.as_ref().unwrap().span.start, 12);
+    assert_eq!(typed_rows[0].proposal.as_ref().unwrap().span.len, 17);
 }
 
 #[test]

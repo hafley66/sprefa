@@ -27,8 +27,8 @@ use crate::driver::format_deltas;
 use crate::program::GenProgram;
 use crate::sql::{SqlRunner, SqliteSeam};
 use crate::types::{
-    bytes_to_base64, Arrival, ArrivalSign, RelDelta, Row, RowColumnType,
-    SqlStatement, TickDeltas, Value,
+    bytes_to_base64, Arrival, ArrivalSign, RelDelta, Row, RowColumnType, SqlStatement, TickDeltas,
+    Value,
 };
 
 // The whole per-tick history a follower may fall behind by. Further back than

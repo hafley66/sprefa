@@ -143,7 +143,8 @@ pub async fn run_schedule_live(
         }
         let arrival_rows = arrivals.len();
         let deltas = {
-            let span = tracing::info_span!("drive_tick", tick = tick_number, arrivals = arrival_rows);
+            let span =
+                tracing::info_span!("drive_tick", tick = tick_number, arrivals = arrival_rows);
             let _entered = span.enter();
             drive_tick(program, seam, arrivals).await?
         };
