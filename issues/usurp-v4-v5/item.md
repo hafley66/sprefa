@@ -41,18 +41,19 @@ for it, and that is exactly what the matrix found.
 
 Filed against this epic, one per door-level gap:
 
-- `@dl6-no-text-extraction-door` — the headline. No dl6 spelling for v5's
-  `match_line` or `match_ast`.
+- `@dl6-ts-query-executor` — opened as "no dl6 spelling for v5's `match_line`
+  or `match_ast`"; `ast_rule` landed on main the same day and closed all of it
+  but the `ast` tree-sitter s-expression form.
 - `@dl6-cfg-family-unlinked` — `--family cfg` is CLI-reachable, in-process
   unreachable.
 - `@dl6-scip-facts-door` — v5's ten scip rels are eight on the dl6 door and the
   passthrough that answers the other two is not in-process either.
 - `@dl6-deps-package-door` — `--deps`, `--scip-deps`, `--package-deps` are
   CLI-only; v5's module/crate edge rels have no dl6 spelling.
-- `@v5-rail-eprintln-blocked` — the `no-new-eprintln` rail port, blocked on the
-  first child.
-- `@v6-eprintln-ratchet-five` — the five unwaived `eprintln!` sites that rail
-  would have found, measured by script instead.
+- `@v5-rail-eprintln-ported` — the `no-new-eprintln` rail, filed as blocked and
+  DONE the same day once `ast_rule` landed.
+- `@v6-eprintln-ratchet-three` — the three surviving `eprintln!` sites the
+  ported rail finds. A grep with v5's line rule says five; the rail is right.
 - `@v5-retire-multirepo-golden-pin` — the one live green gate still running the
   v5 binary, and the day v5 stops building.
 - `@scip-freshness-env-race` — found while running this lane's gates: three

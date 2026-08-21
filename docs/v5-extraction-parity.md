@@ -73,26 +73,49 @@ Per plane, so the totals are checkable:
 | 1.9 engine-internal | 28 | 0 | 0 | 0 | 10 | 18 |
 | **total** | **112** | **56** | **13** | **8** | **12** | **23** |
 
-DOOR seam, over the 84 relations in planes 1.1 to 1.8:
+DOOR seam, over the 84 relations in planes 1.1 to 1.8, measured WITH the
+`ast_rule` host:
 
 | bucket | rels |
 |---|---|
-| reachable from a `.dl6` program today | 55 |
-| record exists, the door does not reach it | 22 |
+| reachable from a `.dl6` program today | 57 |
+| record exists, the door does not reach it | 20 |
 | neither the record nor the door | 2 |
 | n/a (v5 daemon plumbing) | 5 |
 
-Extraction ops (v5 `op_docs()` source ops, 11 of them):
+The two that moved are `comment_node` and `template_parts`: their spans were
+always on the cst wire and their `text` now comes off `ast_rule`.
+
+Extraction ops (v5 `op_docs()` source ops, 11 of them). Re-measured after the
+`ast_rule` host landed on main at `3da1100f2` / `cd58a6917`:
 
 | bucket | ops |
 |---|---|
-| reachable from a `.dl6` program | 3 (`scan`, `json`, `jsonp`) |
-| record or compile path exists, the door does not reach it | 3 (`ast`, `match_ast`, `sg`) |
-| no v6 equivalent at all | 5 (`match_line`, `match`, `ast_yaml`, `cmd`, `comment`'s text half) |
+| reachable from a `.dl6` program | 9 (`scan`, `json`, `jsonp`, `match_line`, `match`, `match_ast`, `sg`, `ast_yaml`, `comment`) |
+| compile path exists, the door does not reach it | 1 (`ast`, the tree-sitter s-expression form) |
+| no v6 equivalent, by decision | 1 (`cmd`) |
 
 ## The one finding
 
-**v6 extracts more than v5 and its door asks for less.**
+**v6 extracts more than v5 and its door asks for less — but the biggest half of
+that gap closed while this census was being written.**
+
+`ast_rule` landed on main at `3da1100f2` (`v6/extract: wire typed ast-grep rules
+through DL6 hosts`) and `cd58a6917`. It is a linked in-process executor
+(`v6/sprefa-engine-rs/src/hosts.rs:48`) answering `AstRuleMatch` rows whose
+`captures` carry `name`, **`text`** and `span`
+(`v6/sprefa-extract/src/lang/1_ast_rule.rs:76-91`), with the whole ast-grep rule
+algebra behind it: `Pattern`, `Kind`, `Regex`, `Matches`, `All`, `Any`, `Not`,
+`Inside`, `Has`, `Follows`, `Precedes` with `stopBy`, plus `fix` producing an
+`AstRuleMutationProposal`.
+
+That is v5's `match_ast`, `sg`, `ast_yaml`, `match_line`, `match` and `comment`
+in one host, and it is what let the `no-new-eprintln` rail port land in this PR
+after this document first recorded it as blocked. Every count below is measured
+against the tree WITH that host, and the sections that follow keep the older
+per-relation reading where it is still true.
+
+The residue is real and smaller:
 
 Every RECORD-seam gap `@extract-port-closeout` opened is closed but three, and
 the three left are all in one arm (python). The extractor is at or past parity
@@ -111,13 +134,13 @@ hosts.rs:947   --family scip | diet_scip         ->  "mode `{}` is not linked in
 hosts.rs:947   --family cfg                      ->  "family `cfg` is not a known family"
 ```
 
-So `--ast-pattern`, `--ast-selector`, `--ast-capture`, `--resolve`, `--deps`,
-`--scip-deps`, `--package-deps`, `--scip-facts`, `--occurrence-text`,
-`--family cfg`, `--family scip` and `--family diet_scip` are all
-CLI-reachable and dl6-unreachable. Six planes v5 rails use every day sit behind
-those flags.
+So `--resolve`, `--deps`, `--scip-deps`, `--package-deps`, `--scip-facts`,
+`--occurrence-text`, `--family cfg`, `--family scip` and `--family diet_scip`
+are all CLI-reachable and dl6-unreachable. (`--ast-pattern` and its two siblings
+are also refused here, but the `ast_rule` host answers the same question with a
+richer rule model, so the CLI flags are a convenience rather than the door.)
 
-And there is no text plane at all. The cst family gives node kind and span, with
+The cst FAMILY still gives node kind and span with
 `name` null for every rust node
 (`v6/sprefa-extract/src/lang/astgrep.rs:168-200`, the `CstProjector` never fills
 `name`), so a dl6 program cannot read the identifier at a span. Probed
@@ -131,13 +154,13 @@ extract --family call probe.rs
   (no site record: the rust front-end does not project macro invocations as calls)
 ```
 
-That single gap is what blocks the `no-new-eprintln` rail port (issue
-`@v5-rail-eprintln-blocked`), and it is what 34 of the 195 v5 `.dl` files need
-(`match_line`) plus another 21 (`match_ast`). See
-[docs/v5-rail-census.md](v5-rail-census.md).
+so a program that wants text asks `ast_rule` rather than `--family cst`. That
+is a design, not a gap: the cst wire stays span-only and 48.5MB-class text never
+rides it.
 
-Child issues: `@dl6-no-text-extraction-door`, `@dl6-cfg-family-unlinked`,
-`@dl6-scip-facts-door`, `@dl6-deps-package-door`.
+Child issues, all re-measured: `@dl6-ts-query-executor` (now the `ast`
+tree-sitter arm alone), `@dl6-cfg-family-unlinked`, `@dl6-scip-facts-door`,
+`@dl6-deps-package-door`.
 
 ## 1. Built-in relations, by plane
 
@@ -275,8 +298,8 @@ The CLAUDE.md open row "sprefa-extract has no markdown extractor" is STALE:
 
 | v5 rel | v5 site | v6 equivalent | v6 site | RECORD | DOOR | fixture |
 |---|---|---|---|---|---|---|
-| `comment_node(path, line, col, end_line, end_col, text, kind)` | `src/engine/decls.rs:556` | `record=node family=cst kind=<comment kind>` | `schema.rs:23` | subset: span and grammar kind, **no `text`** (`name` is null for every cst node) | yes for the span, no for the text | probe under `extract --family cst`; no dedicated fixture — write one |
-| `template_parts(file, line, node, idx, kind, text)` | `src/engine/decls.rs:576` | cst `template_string` / `template_substitution` / `string_fragment` nodes joined by `child` edges | `schema.rs:23-24` | subset: same shape, again no `text` | span yes, text no | closed no-code-owed in `@extract-port-closeout`; no fixture — write one |
+| `comment_node(path, line, col, end_line, end_col, text, kind)` | `src/engine/decls.rs:556` | `record=node family=cst` for the span; `sh ast_rule` `kind: line_comment` for span AND text | `schema.rs:23`, `1_ast_rule.rs:87-91` | identical across the two doors | yes | `v6/dl/rails/no-new-eprintln-rail.dl6`, graded by `just no-new-eprintln` |
+| `template_parts(file, line, node, idx, kind, text)` | `src/engine/decls.rs:576` | cst `template_string` / `template_substitution` / `string_fragment` nodes for the spans; `ast_rule` `kind:` for the text | `schema.rs:23-24`, `1_ast_rule.rs:87-91` | identical across the two doors | yes | closed no-code-owed in `@extract-port-closeout`; no fixture — write one |
 | `unresolved(file, line, reason, detail)` | `src/engine/decls.rs:586` | `record=unresolved family=call` (`span`, `reason`, `detail`) | `schema.rs:45` | identical, and `detail` IS the source text at the span (`schema.rs:123`) | yes | `tests/20_unresolved.rs` |
 | `string(id, text, norm)` | `src/engine/decls.rs:855` | engine-side interner view, not extraction | `v6/prolog/compile/…` `__str` table | n/a | n/a | — |
 | `ref(id, string, file, lo, hi)` | `src/engine/decls.rs:857` | same | — | n/a | n/a | — |
@@ -359,16 +382,16 @@ v5's source ops are the body-position operators that read files.
 | v5 op | v5 site | what it does | v6 equivalent | v6 site | RECORD | DOOR |
 |---|---|---|---|---|---|---|
 | `scan(glob, path)` | `decls.rs:224` | select files by glob at a rev | `sh files(glob) -> (path, digest)`, `SoopyFilesExecutor` | `hosts.rs:92-143` | identical | yes |
-| `match_line(path, rev, /re/, line)` | `decls.rs:225` | line regex, named captures bind dl vars | **none** | — | **missing** | no |
-| `match(...)` | `decls.rs:226` | deprecated alias of `match_line` | **none** | — | **missing** | no |
+| `match_line(path, rev, /re/, line)` | `decls.rs:225` | line regex, named captures bind dl vars | `sh ast_rule` with `rule: {regex: ...}`, optionally `all:` with a `kind:` | `1_ast_rule.rs:24` | subset with a NAMED difference: the unit is a grammar node, not a line, so a match cannot straddle nodes and a regex named group does not bind a dl var (the capture set comes from pattern metavariables) | yes |
+| `match(...)` | `decls.rs:226` | deprecated alias of `match_line` | same | same | subset, as above | yes |
 | `ast(path, rev, :lang, "(query) @cap", line)` | `decls.rs:227` | tree-sitter s-expression query, captures bind | `ts_query/1`, compiles to a `tree_sitter` host demand | `registry.pl:198` | compiles | **no**: `executor_for` has no `tree_sitter` arm (`hosts.rs:41-59`), so the demand has no linked executor |
-| `match_ast(path, rev, :lang, "$X.f()", line)` | `decls.rs:228` | ast-grep structural pattern, metavars bind | `extract --ast-pattern ID=PAT --ast-capture ID=NAME` | `src/bin/extract.rs:144-171` | identical | **no**: `hosts.rs:907` rejects `--ast-pattern` |
-| `sg(...)` | `decls.rs:229` | deprecated alias of `match_ast` | same | same | identical | **no** |
-| `ast_yaml(path, rev, :lang, "rule yaml", line)` | `decls.rs:230` | ast-grep RuleCore YAML (`inside:`/`has:`) | `sg_pattern/3` is `refuse(slot_sg_metavariable_semantics)` | `registry.pl:199` | **missing** | no |
+| `match_ast(path, rev, :lang, "$X.f()", line)` | `decls.rs:228` | ast-grep structural pattern, metavars bind | `sh ast_rule` with `rule: {pattern: ...}`; captures carry `name`/`text`/`span` | `1_ast_rule.rs:20-91`, `registry.pl:336,349` | superset (adds `Kind`, `Not`, `Matches`, `utils`) | yes |
+| `sg(...)` | `decls.rs:229` | deprecated alias of `match_ast` | same | same | superset | yes |
+| `ast_yaml(path, rev, :lang, "rule yaml", line)` | `decls.rs:230` | ast-grep RuleCore YAML (`inside:`/`has:`) | `sh ast_rule`: `Inside`, `Has`, `Follows`, `Precedes`, each with `stop_by` | `1_ast_rule.rs:28-48` | superset (v5 had `inside:` at the immediate parent only and no `field:`; `stop_by` and the two ordering rules are new) | yes |
 | `json(path, rev, q:{ $k: $v })` | `decls.rs:231` | brace pattern over json/yaml/toml, key AND value captures | `record=data_value family=data` + `decode/2` | `schema.rs:43`, `registry.pl:85` | superset (v6 gives every path, not only matched ones) | yes, `--family data` |
 | `jsonp(path, rev, "a.*.b", out)` | `decls.rs:232` | dotted path over json/yaml/toml | `record=data_value.path` | `schema.rs:43` | identical | yes |
 | `cmd(path, rev, "tool {file}", line, out)` | `decls.rs:233` | shell out per file, one row per stdout line | **deliberately deleted**: "Zero shell in the engine" (CLAUDE.md, 2026-08-21); `ShellExecutor` gone | `hosts.rs:39` `LINKED_EXECUTORS` | **missing by decision** | no |
-| `comment(path, rev, /open/[, /close/], l0, l1, label)` | `decls.rs:234` | comment-marker regions, LIFO nesting | cst comment nodes give the SPANS; the marker regex needs text | `schema.rs:23` | subset | span yes, text no |
+| `comment(path, rev, /open/[, /close/], l0, l1, label)` | `decls.rs:234` | comment-marker regions, LIFO nesting | `sh ast_rule` with `all: [kind: line_comment, regex: ...]`, and `follows`/`precedes` for the pairing | `1_ast_rule.rs:24,39-48` | subset: the marker regions come out as node spans, and LIFO nesting of a BEGIN/END pair is a dl6 join rather than an op | yes |
 
 Sink ops (not extraction, listed for the retirement plan):
 
@@ -488,10 +511,9 @@ Measured, from the sites that carry the numbers.
 
 | # | v5 thing | v5 site | proposed v6 record / door shape | issue |
 |---|---|---|---|---|
-| 1 | `match_line` | `decls.rs:225` | a `text` family: one record per line matching a caller-supplied pattern, `{record:"line", path, line, start, end, text}`, behind `--family text --line-pattern ID=RE`; OR fill `name` on cst identifier nodes | `@dl6-no-text-extraction-door` |
-| 2 | `match_ast` / `sg` | `decls.rs:228-229` | link the existing `--ast-pattern` / `--ast-selector` / `--ast-capture` triple into `SprefaExtractExecutor::run`; the record (`record=capture`) already exists at `schema.rs:46` | `@dl6-no-text-extraction-door` |
-| 3 | `ast` | `decls.rs:227` | a `tree_sitter` arm in `executor_for`; `ts_query/1` already compiles to a host demand | `@dl6-no-text-extraction-door` |
-| 4 | `ast_yaml` | `decls.rs:230` | un-refuse `sg_pattern/3` once metavariable slot semantics are decided (LANG DESIGN, needs Chris) | `@dl6-no-text-extraction-door` |
+| 1 | `match_line`'s LINE unit and its named regex captures | `decls.rs:225` | `ast_rule` answers the rail cases; a regex whose match straddles grammar nodes, and a named group bound as a dl var, are the two things still unsaid | `@dl6-ts-query-executor` |
+| 2 | `match_ast` / `sg` / `ast_yaml` / `comment` | `decls.rs:228-234` | **CLOSED 2026-08-21** by `ast_rule` (`3da1100f2`, `cd58a6917`). Exercised end to end by `v6/dl/rails/no-new-eprintln-rail.dl6` | — |
+| 3 | `ast` (tree-sitter s-expression) | `decls.rs:227` | a `tree_sitter` arm in `executor_for`; `ts_query/1` already compiles to a host demand | `@dl6-ts-query-executor` |
 | 5 | `--family cfg` from dl6 | `hosts.rs:947` | one `"cfg" => want_cfg = true` arm plus the `flatten_cfg` call; the plane is already tested | `@dl6-cfg-family-unlinked` |
 | 6 | `scip_occurrence`, `scip_binding` and the eight `--family scip` rows from dl6 | `hosts.rs:947` | a `scip.facts.*` host namespace beside the four resolved ones | `@dl6-scip-facts-door` |
 | 7 | `module_edge`, `module_unresolved`, `module_binding_resolved`, `crate_edge` from dl6 | `hosts.rs:907` | `deps` / `package_deps` host names with a project-root input | `@dl6-deps-package-door` |

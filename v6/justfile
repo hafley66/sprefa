@@ -68,15 +68,6 @@ oracle-rustc:
 oracle-knip:
     {{ capped }} "${ORACLE_BUDGET_S:-600}" bash {{ v6 }}/dl/deadcode/oracle-knip.sh
 
-# @comment-ok: the recipe contract, matching every other recipe's expect line.
-# The v5 recompute-guard rail (examples/recompute-guard.dl) on the rust door: a
-# fn that calls a heavy from-scratch re-derive must early-out on an unchanged
-# digest or carry a doc-comment waiver. Six labelled fixtures, one of them the
-# closure case v5's line model got wrong. budget: measured 3s.
-# (expect: RECOMPUTE-GUARD OK findings=2, exit 0)
-recompute-guard:
-    {{ capped }} "${RECOMPUTE_GUARD_BUDGET_S:-600}" bash {{ v6 }}/dl/rails/recompute-guard-rail.sh
-
 # scip + diet_scip extractor families smoke: real scip-typescript index
 # through the served engine (SCIP FAMILIES HOLD). budget: measured 9s,
 # default 600s (SCIP_FAMILIES_BUDGET_S)
@@ -582,3 +573,20 @@ selfdoc-check:
 # ref store, the commit DAG, the rev-pinned file surface and the crawl frontier.
 crosswalk-gate:
 	bash {{ v6 }}/dl/crosswalk/gate.sh
+
+# @comment-ok: the recipe contract, matching every other recipe's expect line.
+# The two v5 rails CLAUDE.md names as live, ported to the rust door and graded
+# against labelled fixtures. recompute-guard: a fn calling a heavy from-scratch
+# re-derive must early-out on an unchanged digest or carry a doc-comment waiver
+# (six fixtures, one of them the closure case v5's line model got wrong).
+# no-new-eprintln: the `tracing` ratchet, waivers read structurally through the
+# linked ast_rule host (six fixtures, one of them the multi-line call v5 missed).
+# budget: measured 3s each.
+# (expect: RECOMPUTE-GUARD OK findings=2 / NO-NEW-EPRINTLN OK findings=4, exit 0)
+recompute-guard:
+    {{ capped }} "${RECOMPUTE_GUARD_BUDGET_S:-600}" bash {{ v6 }}/dl/rails/recompute-guard-rail.sh
+
+no-new-eprintln:
+    {{ capped }} "${EPRINTLN_BUDGET_S:-600}" bash {{ v6 }}/dl/rails/no-new-eprintln-rail.sh
+
+v5-rails: recompute-guard no-new-eprintln

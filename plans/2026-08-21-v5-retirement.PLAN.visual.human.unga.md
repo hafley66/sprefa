@@ -139,27 +139,39 @@ do not hold the retirement up.
 ```mermaid
 pie showData
     title 195 old rail programs
-    "blocked on a doorway gap" : 144
-    "would work today, needs a rewrite" : 35
-    "already have a new twin" : 4
+    "blocked on a doorway gap" : 110
+    "would work today, needs a rewrite" : 68
+    "already have a new twin" : 5
     "dead, nothing names them" : 12
 ```
+
+That chart moved 33 slices while this census was being written. A doorway that
+lets a program search source code by shape, and read the text it found, landed
+on the main branch. It is the single thing 33 of those rails were waiting for,
+and it is why both of the two rails you named as live now ship as ports here
+rather than one shipping and one being filed as impossible.
 
 The blocked ones are not blocked by anything missing in the extractor. They are
 blocked by the doorway. Two gaps account for almost all of them:
 
 ```mermaid
 flowchart TD
-    G1[a program cannot read<br/>the text at a location] --> R1[87 rails want it<br/>40 need nothing else]
-    G2[a program cannot ask for<br/>cross-file resolved links] --> R2[66 rails want it]
-    G3[a program cannot ask for<br/>import graphs or control flow] --> R3[15 rails want it]
-    R1 --> W[fix all three and 96 rails<br/>go green; the facts already<br/>exist and are already tested]
+    G0[search source by shape<br/>and read what you found] --> R0[33 rails freed]
+    G1[write a file from a program] --> R1[25 want it<br/>11 need nothing else]
+    G2[ask for cross-file<br/>resolved links] --> R2[66 want it<br/>0 need nothing else]
+    G3[ask for import graphs<br/>or control flow] --> R3[15 want it]
+    G4[the older tree-sitter<br/>query form] --> R4[11 want it<br/>4 need nothing else]
+    R0 --> D[DONE, landed 21 August]
+    R1 --> W[fix the rest and 81<br/>more rails go green]
     R2 --> W
     R3 --> W
+    R4 --> W
+    style D fill:#363,color:#fff
 ```
 
-The first gap is the one to buy: it frees 40 rails on its own, and two of its
-three pieces are wiring rather than a design question.
+Writing a file is now the cheapest buy: 11 rails need nothing else, and the card
+for it is already open. The resolved-links gap is the biggest group but frees
+nothing on its own, because every rail that wants one resolved link wants two.
 
 The extractor knows every one of these things. Its command-line tool will print
 them for you today. The engine just does not know how to ask.

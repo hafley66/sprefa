@@ -64,18 +64,24 @@ That is the entire blocking list.
 ### Not blocking, but owed: the door gaps
 
 The three gaps in `docs/v5-extraction-parity.md`. None of them keeps v5 alive;
-they decide whether the 144 blocked `.dl` rails are ever REWRITTEN or simply
-archived as reference text.
+they decide whether the 110 still-blocked `.dl` rails are ever REWRITTEN or
+simply archived as reference text.
 
 "Touches" counts blocked rails naming the construct; "frees" counts the ones
 that go green when that gap alone closes.
 
 | # | gap | touches | frees alone | issue |
 |---|---|---|---|---|
-| D1 | no text plane and no ast-grep pattern door from dl6 | 87 | 40 | `@dl6-no-text-extraction-door` |
+| ~~D0~~ | ~~no ast-grep pattern door from dl6~~ | ~~87~~ | ~~33~~ | **CLOSED 2026-08-21** by `ast_rule` (`3da1100f2`, `cd58a6917`) |
+| D1 | `ast`, the tree-sitter s-expression form, has no linked executor | 11 | 4 | `@dl6-ts-query-executor` |
 | D2 | the resolve arm and the scip fact rows unreachable from dl6 | 66 | 0 | `@dl6-scip-facts-door` |
 | D3 | `--deps` / `--package-deps` / `--family cfg` unreachable from dl6 | 15 | 0 | `@dl6-deps-package-door`, `@dl6-cfg-family-unlinked` |
-| — | all three shipped together | — | 96 | — |
+| D4 | `gen`, the codegen sink | 25 | 11 | `@fs-effects-door` (open) |
+| — | all of them shipped together | — | 81 | — |
+
+D0 closing mid-census is the reason the rail census carries two columns, and it
+is why `.dl/no-new-eprintln.dl` ships as a port in this PR rather than as a
+blocked row.
 
 D1 and D3 are wiring: the records exist, are tested, and reach the CLI. D1's
 `--ast-pattern` arm is three lines in `SprefaExtractExecutor::run`
@@ -165,7 +171,7 @@ After `multirepo-golden` stops resolving `target/release/dl`, nothing automated
 builds or runs v5. Steps 2 to 4 are cleanup of already-dead paths; step 5 is a
 human decision about a convenience file; step 6 is disk.
 
-There is no port that has to finish first. The rail census's 144 blocked files
+There is no port that has to finish first. The rail census's 110 blocked files
 are blocked on v6 door gaps, and every one of those gaps is a v6 change that
 does not touch `src/`. Holding v5's build hostage to them buys nothing: a rail
 nobody can run in v6 is equally unrunnable whether or not a v5 binary that

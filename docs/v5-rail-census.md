@@ -31,12 +31,19 @@ find . -name '*.dl' -not -path './v6/*' -not -path './.git/*' -type f | wc -l
 | `deck/snippets/` | 8 |
 | `assets/`, `tree-sitter-dl/test/` | 2 |
 
-| bucket | files | share |
+Measured twice, because the door moved mid-census. `ast_rule` landed on main at
+`3da1100f2` / `cd58a6917` and opened v5's whole pattern surface to a `.dl6`
+program; the second column is the tree as it stands.
+
+| bucket | before `ast_rule` | **now** |
 |---|---|---|
-| ported (a dl6 twin exists) | 4 | 2% |
-| portable as-is | 35 | 18% |
-| blocked | 144 | 74% |
-| dead | 12 | 6% |
+| ported (a dl6 twin exists) | 4 | **5** |
+| portable as-is | 35 | **68** |
+| blocked | 144 | **110** |
+| dead | 12 | **12** |
+
+33 rails moved from blocked to portable on one commit. The five ported now
+include both rails CLAUDE.md names as live.
 
 ## How a file lands in a bucket
 
@@ -51,9 +58,10 @@ relation names, then against the DOOR column of
 | blocked | referenced somewhere, and at least one construct is DOOR=no |
 | dead | no justfile, CI workflow, shell script, rust test or markdown file names it |
 
-`comment_node` and `template_parts` count as blockers: their SPANS are reachable
-(cst nodes) but their `text` column is not, and every program that uses them
-reads the text.
+`comment_node` and `template_parts` counted as blockers in the first
+measurement, because their SPANS were on the cst wire and their `text` was not.
+`ast_rule` answers the text, so they are no longer blockers; the "before"
+column keeps the old reading so the 33-rail move is legible.
 
 ## 1. Ported: a dl6 twin exists
 
@@ -63,10 +71,11 @@ reads the text.
 | `examples/gh-cache.dl` | `v6/dl/fixtures/ghcacher.dl6`, `ghcacher_live.dl6` | `v6/dl/fixtures/ghcacher.dl6:1` names the v5 line ranges it re-expresses |
 | `examples/version-skew.dl` | `v6/tsv2/goldens/multirepo_crawl` | `just multirepo-golden` (tsv2 door, paused) |
 | `examples/recompute-guard.dl` | `v6/dl/rails/recompute-guard-rail.dl6` | `just recompute-guard` (Rust door, THIS LANE) |
+| `.dl/no-new-eprintln.dl` | `v6/dl/rails/no-new-eprintln-rail.dl6` | `just no-new-eprintln` (Rust door, THIS LANE) |
 
-Three of the four twins grade through the paused TypeScript door, so their
-receipts cannot be re-run and their green is historical. The fourth is this
-lane's and runs on the Rust door.
+Three of the five twins grade through the paused TypeScript door, so their
+receipts cannot be re-run and their green is historical. The two this lane
+added run on the Rust door and are gated by `just v5-rails`.
 
 Classes with a dl6 program that answers the same QUESTION without naming a
 single v5 file, so they are not counted as ports:
@@ -82,18 +91,36 @@ single v5 file, so they are not counted as ports:
 
 ## 2. Portable as-is
 
-35 files whose every construct has a DOOR=yes dl6 spelling. Port cost is a
-rewrite, never a language change.
+68 files whose every construct has a DOOR=yes dl6 spelling. Port cost is a
+rewrite, never a language change. 33 of them arrived here when `ast_rule`
+landed and are marked by an ops column naming `match_line`, `match_ast`, `sg`,
+`ast_yaml` or `comment`.
 
 | file | lines | ops | v5 rels | referenced by |
 |---|---|---|---|---|
+| `.dl/dishonest-flag.dl` | 121 | comment, diag, match_ast, match_line, scan | - | gate |
 | `.dl/file-size.dl` | 118 | diag, scan | file_lines | gate |
+| `.dl/lossy-dedup.dl` | 49 | comment, diag, match_ast, scan | - | gate |
 | `.dl/marks.dl` | 5 | - | - | docs |
+| `.dl/static-n1.dl` | 85 | comment, diag, match_line, scan | - | docs |
+| `.dl/unordered-select.dl` | 86 | comment, diag, match_line, scan | - | gate |
+| `.dl/vsix-version-drift.dl` | 35 | diag, match_line, scan | - | gate |
+| `bench/printk.dl` | 17 | scan, sg | - | gate |
+| `bench/rust.dl` | 22 | scan, sg | - | gate |
 | `bench/seams/shared-names.dl` | 23 | scan | type_entity | docs |
+| `bench/stress_c.dl` | 31 | scan, sg | - | gate |
 | `deck/snippets/argmax.dl` | 18 | - | - | docs |
 | `deck/snippets/chatmarks.dl` | 24 | - | - | docs |
+| `deck/snippets/diag.dl` | 11 | diag, match, scan | - | docs |
+| `deck/snippets/facts.dl` | 9 | scan, sg | call_site | docs |
+| `deck/snippets/flowpanel.dl` | 14 | closure, scan, sg | - | docs |
+| `deck/snippets/join.dl` | 14 | scan, sg | call_site | docs |
 | `deck/snippets/ports.dl` | 15 | - | - | docs |
 | `deck/snippets/recursion.dl` | 7 | closure | - | docs |
+| `examples/ban.dl` | 23 | diag, match_ast, scan | - | docs |
+| `examples/banned-word-guard.dl` | 42 | diag, match_line, scan | - | docs |
+| `examples/call-seams.dl` | 65 | match_ast, scan | type_entity | docs |
+| `examples/callgraph-sg.dl` | 47 | match_ast, scan | - | gate |
 | `examples/doc-coverage.dl` | 22 | diag, scan | doc_comment, type_entity | docs |
 | `examples/dup-collapse.dl` | 44 | scan | type_entity | docs |
 | `examples/flow-ctor.dl` | 59 | scan | df_arg, df_edge, df_field, df_node | gate |
@@ -101,27 +128,44 @@ rewrite, never a language change.
 | `examples/flow-jsx.dl` | 56 | scan | call_name, df_field, df_node | gate |
 | `examples/flow-services.dl` | 83 | closure, jsonp, scan | call_name, df_arg, df_node, df_param | gate |
 | `examples/flow-slice.dl` | 80 | scan | df_field, df_node | docs |
+| `examples/gen-zone-info.dl` | 42 | comment, diag, scan | comment_node | docs |
 | `examples/gh-cache-batch.dl` | 72 | json | - | docs |
 | `examples/gh-cache-config.dl` | 88 | json, jsonp, scan | clock | docs |
 | `examples/gh-cache-full.dl` | 139 | json, jsonp | clock | gate |
 | `examples/gh-checkout.dl` | 58 | - | checkout, checkout_done, repo | gate |
+| `examples/latest-turn-guardrail.dl` | 83 | diag, match_line, scan | changed | docs |
+| `examples/lint-unwrap.dl` | 61 | ast_yaml, diag, scan | - | gate |
+| `examples/lints/rust.dl` | 37 | diag, match_ast, scan | - | docs |
+| `examples/lints/ts.dl` | 26 | diag, match_ast, scan | - | docs |
 | `examples/mcp-echo.dl` | 39 | - | - | gate |
 | `examples/mcp-server.dl` | 46 | jsonp | - | gate |
+| `examples/md-fences.dl` | 65 | match_ast, match_line, scan | - | docs |
 | `examples/missing-repo.dl` | 40 | - | repo | docs |
 | `examples/net-atlas.dl` | 245 | - | - | docs |
 | `examples/openapi-lsp.dl` | 54 | diag, jsonp, scan | call_def, call_name, call_site | docs |
+| `examples/openapi.dl` | 23 | jsonp, match_ast, scan | - | gate |
+| `examples/phantom-deps.dl` | 66 | match_line, scan | repo | docs |
+| `examples/pin-skew.dl` | 48 | match_line, scan | repo, rev_behind, rev_cmp_want | gate |
+| `examples/rails-call-kind.dl` | 54 | diag, match_ast, scan | call_kind, call_site, changed_line | docs |
+| `examples/rails.dl` | 64 | diag, match_ast, match_line, scan | changed | docs |
 | `examples/repo-nearest.dl` | 9 | scan | - | docs |
+| `examples/route-norm.dl` | 76 | match_ast, scan | - | docs |
 | `examples/rtkq-op-recovery.dl` | 60 | diag, jsonp, scan | call_site | docs |
 | `examples/stale-doc.dl` | 36 | diag, scan | changed_line, doc_comment, type_entity | docs |
 | `examples/string-fns.dl` | 59 | scan | call_def, call_name | docs |
 | `examples/string-values.dl` | 34 | scan | const_value, type_entity | docs |
+| `examples/styled-components.dl` | 49 | match_ast, scan | - | docs |
 | `examples/taint.dl` | 71 | diag, scan | - | docs |
+| `examples/time.dl` | 20 | match_line, scan | - | gate |
 | `examples/type_coincidence.dl` | 79 | scan | type_sig | docs |
 | `examples/vendored-drift.dl` | 55 | scan | file | docs |
+| `std/arch.dl` | 97 | json | comment_node | gate |
 | `std/entry.dl` | 129 | jsonp, scan | call_name, df_node, type_entity | gate |
 | `std/flow-collections.dl` | 55 | - | - | gate |
 | `std/parsers/openapi.dl` | 14 | jsonp, scan | - | docs |
 | `std/strings.dl` | 56 | - | const_value, df_edge, df_lit, type_entity | gate |
+| `std/suppress.dl` | 299 | diag | comment_node, file | gate |
+| `tree-sitter-dl/test/ban.dl` | 27 | diag, scan, sg | - | docs |
 
 The dl6 spellings these need, all live:
 
@@ -139,64 +183,86 @@ The dl6 spellings these need, all live:
 
 ## 3. Blocked
 
-148 files carry at least one blocker; 4 of them are the ported twins in section
-1, so 144 are blocked and unported. The table below counts over all 148. A file
-with two blockers is counted under each, so the column sums past 148.
+110 files. Grouped by the construct that stops each one; a file with two
+blockers is counted under each, so the column sums past 110.
 
 | blocker | files | why the door stops | issue |
 |---|---|---|---|
-| `match_line` (line regex) | 32 | no v6 text plane at all; the cst plane's `name` is null | `@dl6-no-text-extraction-door` |
-| `call_edge` (resolved calls) | 30 | needs `--resolve`; only `sh scip.call` / `sh scip.diet.call` reach a resolved edge, and they answer `caller_path`, not v5's `caller` symbol | `@dl6-scip-facts-door` |
-| `comment` op | 26 | the comment SPAN is a cst node, the TEXT is not on the wire | `@dl6-no-text-extraction-door` |
-| `gen` (codegen sink) | 25 | dl6 cannot write files | `@fs-effects-door` (open) |
-| `match_ast` | 20 | `hosts.rs:907` rejects `--ast-pattern` | `@dl6-no-text-extraction-door` |
-| `type_edge` (+`_rev` 2) | 16 | needs `--resolve` | `@dl6-scip-facts-door` |
-| `ast` (tree-sitter query) | 12 | `ts_query/1` compiles to a `tree_sitter` host demand; `executor_for` has no arm for it (`hosts.rs:41-59`) | `@dl6-no-text-extraction-door` |
-| `module_edge` (+`_rev` 3) | 10 | needs `--deps` / `--scip-deps` | `@dl6-deps-package-door` |
-| `comment_node` | 9 | its `text` column is not on the wire | `@dl6-no-text-extraction-door` |
-| `scc` | 9 | no dl6 spelling for strongly-connected-component condensation | `@dl6-no-text-extraction-door` |
-| `scip_def` / `scip_name` / `scip_edge` | 8 / 8 / 8 | `--family scip` not linked in-process (`hosts.rs:947`) | `@dl6-scip-facts-door` |
-| `type_link` (+`_rev` 4) | 7 | needs `--resolve --scip-index` | `@dl6-scip-facts-door` |
-| `scip_fn_edge` | 7 | same as the other scip rows | `@dl6-scip-facts-door` |
-| `sg` (deprecated `match_ast`) | 7 | same as `match_ast` | `@dl6-no-text-extraction-door` |
-| `rel_catalog` / `rel_col` / `fn_catalog` / `op_catalog` / `verb_catalog` | 6 / 2 / 3 / 3 / 1 | v5 describing v5; v6's equivalent is compile-time | delete |
-| `ast_yaml` | 5 | `sg_pattern/3` is `refuse(slot_sg_metavariable_semantics)`, `registry.pl:199` | `@dl6-no-text-extraction-door` (needs a LANG DESIGN call) |
-| `diag_stage` / `diag_mute` | 5 / 1 | v5 daemon staging; no v6 twin, none planned | delete |
-| `agent_touch` / `agent_edit` / `skill_loaded` | 5 / 2 / 2 | boop owns the harness trail now | delete |
-| `scip_occurrence` / `scip_local` / `scip_ref` / `scip_impl` / `scip_callee_type` / `scip_binding` / `scip_want` | 5 / 4 / 3 / 2 / 2 / 1 / 1 | `--scip-facts` not linked in-process | `@dl6-scip-facts-door` |
-| `hook_event` | 4 | v5 harness hooks | delete |
-| `module_unresolved` (+`_rev` 1) | 4 | needs `--deps` | `@dl6-deps-package-door` |
-| `match` (deprecated `match_line`) | 3 | same as `match_line` | `@dl6-no-text-extraction-door` |
+| `call_edge` | 30 | needs `--resolve`; `sh scip.call` answers `caller_path`, not v5's symbol | `@dl6-scip-facts-door` |
+| `gen` | 25 | dl6 cannot write files | `@fs-effects-door` (open) |
+| `type_edge` | 16 | needs `--resolve` | `@dl6-scip-facts-door` |
+| `ast` | 11 | `ts_query/1` compiles to a `tree_sitter` host demand; `executor_for` has no arm | `@dl6-ts-query-executor` |
+| `module_edge` | 10 | needs `--deps` / `--scip-deps` | `@dl6-deps-package-door` |
+| `scc` | 9 | no dl6 spelling for strongly-connected-component condensation | `@dl6-ts-query-executor` |
+| `scip_def` | 8 | `--family scip` / `--scip-facts` not linked in-process | `@dl6-scip-facts-door` |
+| `scip_name` | 8 | `--family scip` / `--scip-facts` not linked in-process | `@dl6-scip-facts-door` |
+| `scip_edge` | 8 | `--family scip` / `--scip-facts` not linked in-process | `@dl6-scip-facts-door` |
+| `type_link` | 7 | needs `--resolve --scip-index` | `@dl6-scip-facts-door` |
+| `scip_fn_edge` | 7 | `--family scip` / `--scip-facts` not linked in-process | `@dl6-scip-facts-door` |
+| `rel_catalog` | 6 | a v5-only plane with no v6 twin and none planned | delete |
+| `agent_touch` | 5 | a v5-only plane with no v6 twin and none planned | delete |
+| `scip_occurrence` | 5 | `--family scip` / `--scip-facts` not linked in-process | `@dl6-scip-facts-door` |
+| `diag_stage` | 4 | a v5-only plane with no v6 twin and none planned | delete |
+| `call_edge_rev` | 4 | same | `@dl6-scip-facts-door` |
+| `type_link_rev` | 4 | same | `@dl6-scip-facts-door` |
+| `module_unresolved` | 4 | needs `--deps` | `@dl6-deps-package-door` |
+| `scip_local` | 4 | `--family scip` / `--scip-facts` not linked in-process | `@dl6-scip-facts-door` |
+| `hook_event` | 4 | a v5-only plane with no v6 twin and none planned | delete |
+| `stmt_ms` | 3 | a v5-only plane with no v6 twin and none planned | delete |
+| `rel_count` | 3 | a v5-only plane with no v6 twin and none planned | delete |
 | `crate_edge` | 3 | needs `--package-deps` | `@dl6-deps-package-door` |
-| `rel_count` / `stmt_ms` / `query_log` / `dl_diag` | 3 / 3 / 1 / 3 | v6 emits `tracing` spans and compile-time diagnostics | delete |
-| `hover_note` / `def_target` | 3 / 2 | no v6 LSP | `plans/2026-08-12-v6-native-lsp.PLAN.md` |
-| `type_shape` / `type_lgg` | 3 / 2 | no anti-unification plane in v6 | delete |
-| `effect_cmd` / `effect_log` | 3 / 2 | the host demand/response pair IS the effect log | delete |
-| `graph_node` / `graph_edge` | 2 / 2 | no v6 flow panel | delete |
-| `created` | 2 | no v6 first-author host | delete (zero live consumers) |
+| `module_edge_rev` | 3 | same | `@dl6-deps-package-door` |
+| `effect_cmd` | 3 | a v5-only plane with no v6 twin and none planned | delete |
+| `dl_diag` | 3 | a v5-only plane with no v6 twin and none planned | delete |
+| `scip_ref` | 3 | `--family scip` / `--scip-facts` not linked in-process | `@dl6-scip-facts-door` |
+| `type_shape` | 3 | a v5-only plane with no v6 twin and none planned | delete |
+| `op_catalog` | 3 | a v5-only plane with no v6 twin and none planned | delete |
+| `fn_catalog` | 3 | a v5-only plane with no v6 twin and none planned | delete |
+| `hover_note` | 3 | no v6 LSP | `plans/2026-08-12-v6-native-lsp.PLAN.md` |
+| `graph_node` | 2 | a v5-only plane with no v6 twin and none planned | delete |
+| `graph_edge` | 2 | a v5-only plane with no v6 twin and none planned | delete |
+| `scip_impl` | 2 | `--family scip` / `--scip-facts` not linked in-process | `@dl6-scip-facts-door` |
+| `agent_edit` | 2 | a v5-only plane with no v6 twin and none planned | delete |
+| `module_binding_resolved` | 2 | needs `--deps` | `@dl6-deps-package-door` |
+| `propose_clone` | 2 | a v5-only plane with no v6 twin and none planned | delete |
+| `created` | 2 | a v5-only plane with no v6 twin and none planned | delete |
+| `type_edge_rev` | 2 | same | `@dl6-scip-facts-door` |
 | `doc_ref` | 2 | needs `--resolve` | `@dl6-scip-facts-door` |
-| `module_binding_resolved` (+`_rev` 1) | 2 | needs `--deps` | `@dl6-deps-package-door` |
-| `propose_clone` / `propose_extract` | 2 / 1 | no refactor-proposal plane in v6 | delete |
-| `node2vec` / `similar` | 2 / 1 | no embedding plane in v6 | delete |
-| `template_parts` | 1 | its `text` column is not on the wire | `@dl6-no-text-extraction-door` |
+| `skill_loaded` | 2 | a v5-only plane with no v6 twin and none planned | delete |
+| `rel_col` | 2 | a v5-only plane with no v6 twin and none planned | delete |
+| `scip_callee_type` | 2 | `--family scip` / `--scip-facts` not linked in-process | `@dl6-scip-facts-door` |
+| `type_lgg` | 2 | a v5-only plane with no v6 twin and none planned | delete |
+| `def_target` | 2 | no v6 LSP | `plans/2026-08-12-v6-native-lsp.PLAN.md` |
+| `node2vec` | 2 | a v5-only plane with no v6 twin and none planned | delete |
+| `scip_want` | 1 | `--family scip` / `--scip-facts` not linked in-process | `@dl6-scip-facts-door` |
+| `verb_catalog` | 1 | a v5-only plane with no v6 twin and none planned | delete |
+| `diag_mute` | 1 | a v5-only plane with no v6 twin and none planned | delete |
+| `propose_extract` | 1 | a v5-only plane with no v6 twin and none planned | delete |
+| `query_log` | 1 | a v5-only plane with no v6 twin and none planned | delete |
+| `scip_binding` | 1 | `--family scip` / `--scip-facts` not linked in-process | `@dl6-scip-facts-door` |
 | `cmd` | 1 | zero shell in the engine, by decision 2026-08-21 | delete |
+| `similar` | 1 | a v5-only plane with no v6 twin and none planned | delete |
+| `effect_log` | 1 | a v5-only plane with no v6 twin and none planned | delete |
+| `module_binding_resolved_rev` | 1 | same | `@dl6-deps-package-door` |
+| `module_unresolved_rev` | 1 | same | `@dl6-deps-package-door` |
 
-### Which gap buys the most
+### Which gap buys the most, re-measured
 
-"Touches" is how many blocked files name the construct at all; "is the only
-blocker" is how many go green the moment that one gap closes.
+The text door has been bought. What is left, over the 108 still blocked:
 
 | gap | touches | is the only blocker |
 |---|---|---|
-| the text door (`match_line`, `match`, `match_ast`, `sg`, `ast`, `comment`, `comment_node`) | 78 | 40 |
-| the same plus `ast_yaml` and `scc` | 87 | 40 |
-| the resolve and scip doors (`call_edge`, `type_edge`, `type_link`, `module_edge`, `doc_ref`, every `scip_*`) | 66 | — |
-| the codegen sink (`gen`) | 25 | 4 |
-| all three doors shipped together | — | 96 |
+| the resolve and scip doors (`call_edge` 30, `type_edge` 16, `module_edge` 10, `type_link` 7, `doc_ref`, every `scip_*`) | 66 | — |
+| the codegen sink (`gen`) | 25 | 11 |
+| `ast`, the tree-sitter s-expression form | 11 | 4 |
+| `scc`, strongly-connected-component condensation | 9 | — |
+| the v5-only planes on the delete list | the remainder | — |
+| resolve + scip + `gen` + `ast` + `scc` together | — | 81 |
 
-The text door is the single highest-value row: it alone frees 40 rails, it is
-the largest overlap group, and two of its three arms are wiring rather than
-design.
+`gen` is now the cheapest single row: 11 rails need nothing else, and
+`@fs-effects-door` is already open. The resolve and scip doors are the biggest
+group but free nothing alone, because every rail that wants a resolved edge
+wants two of them.
 
 ## 4. Dead
 
@@ -324,51 +390,82 @@ extract --family type probe.rs
 Attribution improves with the change: a doc comment names its owner by span, so
 the waiver cannot drift to a neighbouring function the way a line comment can.
 
-### `.dl/no-new-eprintln.dl` — BLOCKED
+### `.dl/no-new-eprintln.dl` — PORTED
 
-Not portable today. The rail asks "which lines call `eprintln!`", and no v6
-record carries that fact.
+`v6/dl/rails/no-new-eprintln-rail.dl6`, run by
+`v6/dl/rails/no-new-eprintln-rail.sh`, gated by `just no-new-eprintln`.
 
-Probed 2026-08-21 on a rust file holding `eprintln!("x")`:
+This section first recorded the rail as BLOCKED, with a probe table showing that
+no v6 record carried "this line calls `eprintln!`". That was true and is not any
+more: `ast_rule` landed on main at `3da1100f2` / `cd58a6917` while this census
+was being written, and it answers both of the rail's halves.
 
-| family | what came back |
-|---|---|
-| `call` | two `node` records for the enclosing fns. **No `site` record**: the rust front-end does not project macro invocations as call sites |
-| `cst` | `{"kind":"macro_invocation","name":null}` and `{"kind":"identifier","name":null}` — the span is there, the identifier TEXT is not |
-| `df` | zero rows |
-| `data` | zero rows |
-| `cfg` | entry/exit/stmt nodes, no names |
+Both v5 mechanisms map onto one host:
 
-Both of v5's mechanisms are door-blocked:
-
-| v5 line | construct | v6 stop |
+| v5 line | v5 construct | v6 spelling |
 |---|---|---|
-| `.dl/no-new-eprintln.dl:25` | `match_line(f, rev, /eprintln!/, line)` | no text plane |
-| `.dl/no-new-eprintln.dl:32` | `comment(f, rev, /@eprintln-ok:/, line)` | comment text not on the wire |
-| `.dl/no-new-eprintln.dl:42` | `match_line(f, rev, /\/\/.*@eprintln-ok:/, line)` | no text plane |
+| `.dl/no-new-eprintln.dl:25` | `match_line(f, rev, /eprintln!/, line)` | `all: [kind: expression_statement, has: {pattern: eprintln!($$$ARGS)}]` |
+| `.dl/no-new-eprintln.dl:32` | `comment(f, rev, /@eprintln-ok:/, line)` | `follows: {all: [kind: line_comment, regex: '@eprintln-ok']}` |
+| `.dl/no-new-eprintln.dl:42` | `match_line(f, rev, /\/\/.*@eprintln-ok:/, line)` | `precedes: {...}`, the same rule the other way |
 
-Issue `@v5-rail-eprintln-blocked`, blocked by `@dl6-no-text-extraction-door`.
+v5 needed two waiver rules because its `comment` op saw only whole-line
+comments; one `any: [follows, precedes]` covers both here, with no line
+arithmetic. Measured on the fixture set 2026-08-21:
 
-The number the rail exists to keep at zero, measured 2026-08-21 by applying v5's
-own waiver rule (`@eprintln-ok` on the hit line or the line above) with a script
-instead of the rail:
+```
+hits=7 waived=3 new=4 exceeded=0
+ok     bare.rs                  no baseline row and no waiver, one row per site
+ok     waived_above.rs          the comment-above form, v5's waiver_line == line - 1
+ok     waived_trailing.rs       the trailing form v5 needed a second rule to see
+ok     near_miss.rs             a marker neighbouring another statement waives nothing
+ok     clean.rs                 tracing only, no print to find
+ok     multiline_waiver.rs      a marker on a multi-line call's closing line, which v5 missed
+NO-NEW-EPRINTLN OK  findings=4
+```
+
+#### Where the structural rule beats v5's line rule
+
+A MULTI-LINE `eprintln!(` whose `@eprintln-ok` marker sits on the closing `);`
+line. v5's window is `[line-1, line]` against the `eprintln!` TOKEN line, so it
+never sees a marker four lines down and reports a waived print as a finding.
+The statement's next sibling is that comment either way, so `precedes` waives
+it correctly.
+
+Two of v6's own 17 sites are exactly this shape
+(`v6/sprefa-engine-rs/src/bin/emit_rust_harness.rs:89` and `:306`, the
+`--arrive` and `--live-hosts` argument errors). `multiline_waiver.rs` pins the
+case.
+
+#### Named limit
+
+The unit is `expression_statement`, so an `eprintln!` in a non-statement
+position (a match arm expression, a tail expression) is not seen; v5's line
+regex saw those. Zero such sites exist in v6 today. Widen the `kind` list when
+one appears rather than going back to a line scan.
+
+#### The live ratchet
+
+Measured 2026-08-21 by the rail itself over `v6/sprefa-*/src/*.rs` (105 files;
+git's `*` crosses `/`, so this is every crate-root and nested source file):
+
+```
+hits=17 waived=14 new=0 exceeded=0
+== rail_eprintln_counted (unwaived sites, against the baseline) ==
+  v6/sprefa-extract/src/bin/extract.rs  @10175
+  v6/sprefa-extract/src/bin/extract.rs  @20088
+  v6/sprefa-store/src/engine.rs  @3861
+```
 
 | | count |
 |---|---|
-| `eprintln!` sites in `v6/*/src/**/*.rs` | 17 |
-| waived by `@eprintln-ok` | 12 |
-| **unwaived** | **5** |
+| `eprintln!` statements in `v6/sprefa-*/src/*.rs` | 17 |
+| waived by an `@eprintln-ok` neighbour | 14 |
+| **surviving, and baselined** | **3** |
 
-| site | what it prints |
-|---|---|
-| `v6/sprefa-engine-rs/src/bin/emit_rust_harness.rs:89` | harness usage / arg error |
-| `v6/sprefa-engine-rs/src/bin/emit_rust_harness.rs:306` | harness run failure |
-| `v6/sprefa-extract/src/bin/extract.rs:281` | top-level CLI error before exit |
-| `v6/sprefa-extract/src/bin/extract.rs:592` | top-level CLI error before exit |
-| `v6/sprefa-store/src/engine.rs:75` | `[cascade]` timing line, **not** a CLI-UX contract |
+The three are two top-level CLI error reports in `extract.rs`, which want an
+`@eprintln-ok` comment rather than a rewrite, and `sprefa-store/src/engine.rs`,
+which is machinery narration in a library and belongs in `tracing`. Carded at
+`@v6-eprintln-ratchet-three`.
 
-Four of the five are CLI top-level error reports in `src/bin/**`, which is
-exactly what the waiver word exists for; they want an `@eprintln-ok` comment,
-not a rewrite. The fifth, `sprefa-store/src/engine.rs:75`, is machinery
-narration in a library and belongs in `tracing`. Filed as
-`@v6-eprintln-ratchet-five`.
+A plain grep with v5's line rule reports FIVE survivors, not three. The two
+extra are the multi-line case above: the grep is wrong and the rail is right.

@@ -1,0 +1,131 @@
+# @comment-ok: the rail contract, the single doc site for what this rail means.
+# `eprintln!` never comes back: machinery narration routes through `tracing`,
+# and stderr prints are reserved for a human-facing CLI output contract. A hit
+# is waived by an `@eprintln-ok: <reason>` comment on its own line or the line
+# above; a file with a grandfathered baseline may carry up to that many.
+#
+# THE v5 TWIN IS `.dl/no-new-eprintln.dl`, AND THE WAIVER RULE IS ITS RULE.
+# v5 read lines: `match_line(/eprintln!/)` for the hit, `comment(...)` plus a
+# second `match_line(/\/\/.*@eprintln-ok:/)` for the waiver (the comment op saw
+# only whole-line comments, so trailing waivers needed their own rule), then
+# `waiver_line >= line - 1, waiver_line <= line`.
+#
+# v6 has no line plane and needs none. `follows` and `precedes` at the
+# STATEMENT level say the same two things structurally, measured 2026-08-21 on
+# the fixture below: the comment-above case lands under `follows`, the trailing
+# case under `precedes`, and the union is exactly v5's [line-1, line] window
+# with no arithmetic. The v5 rail needed two rules because its comment op could
+# not see a trailing marker; here one `any` covers both.
+#
+# NAMED LIMIT: the unit is `expression_statement`, so an `eprintln!` in a
+# non-statement position (a match arm expression, a tail expression) is not
+# seen. v5's line regex saw those. Zero such sites exist in v6 today; widen the
+# `kind` list when one appears rather than going back to a line scan.
+#
+# WHERE THE STRUCTURAL RULE BEATS THE LINE RULE, MEASURED: a MULTI-LINE
+# `eprintln!(` whose marker sits on the closing `);` line. v5's window is
+# [line-1, line] against the `eprintln!` TOKEN line, so it never sees a marker
+# four lines down and reports a waived print. The statement's next sibling is
+# that comment either way. Two of v6's own 17 sites are this shape
+# (emit_rust_harness.rs, the `--arrive` and `--live-hosts` argument errors).
+#
+# rx: files$.pipe(mergeMap(runAstRule(hitRequest)),
+#     withLatestFrom(files$.pipe(mergeMap(runAstRule(waivedRequest)))),
+#     map(([hits, waived]) => differenceBy(hits, waived, 'span')))
+
+# `files` routes to SoopyFilesExecutor, so the template never runs as a shell.
+sh files(glob: text) -> (path: text, digest: text) =
+  `git ls-files -- '{glob}' | git hash-object --stdin-paths`.
+
+# `$SPREFA_AST_RULE_HOST` in the template is what routes this declaration to the
+# linked in-process ast-grep executor instead of the generic shell one.
+sh ast_rule(path: text, digest: text, request: text) ->
+  (record: text, query: text, span: json) =
+  `"$SPREFA_AST_RULE_HOST" "{path}" "{request}" # {digest}`.
+
+rel want(glob: text).
+
+rel source_file(path: text, digest: text).
+source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
+
+# The two requests are DATA, not code: pointing the rail at a second banned
+# macro is one row plus one rule id.
+rel rule_request(id: text, request: text).
+
+rule_request('eprintln_hit', 'id: eprintln_hit
+rule:
+  all:
+    - kind: expression_statement
+    - has:
+        pattern: eprintln!($$$ARGS)
+').
+
+rule_request('eprintln_waived', 'id: eprintln_waived
+rule:
+  all:
+    - kind: expression_statement
+    - has:
+        pattern: eprintln!($$$ARGS)
+    - any:
+        - follows:
+            all:
+              - kind: line_comment
+              - regex: ''@eprintln-ok''
+        - precedes:
+            all:
+              - kind: line_comment
+              - regex: ''@eprintln-ok''
+').
+
+rel rule_hit(path: text, query: text, at: int).
+rule_hit(Path, Query, At) <-
+  source_file(Path, Digest),
+  rule_request(_, Request),
+  ast_rule(Path, Digest, Request, 'ast_rule', Query, Span),
+  decode(Span, {start: At}).
+
+rel eprintln_hit(path: text, at: int).
+eprintln_hit(Path, At) <- rule_hit(Path, 'eprintln_hit', At).
+
+rel eprintln_waived(path: text, at: int).
+eprintln_waived(Path, At) <- rule_hit(Path, 'eprintln_waived', At).
+
+rel eprintln_counted(path: text, at: int).
+eprintln_counted(Path, At) <-
+  eprintln_hit(Path, At), not(eprintln_waived(Path, At)).
+
+rel eprintln_count(path: text, hits: int).
+eprintln_count(Path, count(At)) <- eprintln_counted(Path, At).
+
+# The grandfathered baseline, v5's `eprintln_baseline` in shape. Lower a row
+# when a commit shrinks a file's count; never raise one, and delete it at 0.
+rel eprintln_baseline(path: text, allowed: int).
+eprintln_baseline('v6/sprefa-extract/src/bin/extract.rs', 2).
+eprintln_baseline('v6/sprefa-store/src/engine.rs', 1).
+
+# A grandfathered file grew past its baseline.
+rel rail_eprintln_exceeded(path: text, hits: int, allowed: int).
+rail_eprintln_exceeded(Path, Hits, Allowed) <-
+  eprintln_count(Path, Hits), eprintln_baseline(Path, Allowed), Hits > Allowed.
+
+# A file with no baseline row prints at all: brand-new spread, one row per site.
+rel rail_eprintln_new(path: text, at: int).
+rail_eprintln_new(Path, At) <-
+  eprintln_counted(Path, At), not(eprintln_baseline(Path, _Allowed)).
+
+# The surviving sites, named rather than only counted: a baseline row is a
+# number, and a reader lowering one needs to see which sites it covers.
+rel rail_eprintln_counted(path: text, at: int).
+rail_eprintln_counted(Path, At) <- eprintln_counted(Path, At).
+
+rel rail_hit_count(hits: int).
+rail_hit_count(count(At)) <- eprintln_hit(_Path, At).
+
+rel rail_waived_count(waived: int).
+rail_waived_count(count(At)) <- eprintln_waived(_Path, At).
+
+? rail_eprintln_counted(path, at) order by path, at.
+? rail_eprintln_new(path, at) order by path, at.
+? rail_eprintln_exceeded(path, hits, allowed) order by path.
+? rail_hit_count(hits).
+? rail_waived_count(waived).
