@@ -1994,6 +1994,34 @@ sites but not against new code. **missing** = nothing.
   above: `FAIL run: ... bcb9ae809cecbca883b266a756fb51dc6ac72e39 missing`,
   gate rc=1 before `hosts.rs:380-420`, `GROUND-TRUTH OK rustc=2 rail=3` after.
 
+## 54. A silent fall-back to `sh` for a command a linked twin already answers
+
+- WHAT IT LOOKS LIKE: a rail is slow and nobody can say why. Every leg looks
+  ordinary. The whole-run number is the only number, so the cost gets blamed on
+  whatever is easiest to believe: the extractor, the decoder, a cache that is
+  missing. All three were measured innocent before the real one was found.
+- HOW IT BIT US: 2026-08-21. `dead-module-rail.dl6` grew from two extract-shaped
+  hosts to five; the `.adapters.json` sidecar was never updated. `execution_for_plan`
+  falls back to `shell` for an unmapped host, so three of them spawned the 48MB
+  `extract` binary through `sh -c`, 82 times each, 246 spawns a run. They also
+  failed `is_applicative`, so the runner could not fold them into the one
+  grouped call per file it exists to make. Cost about 3.3s of an 8.7s run.
+- WHY IT HID: `sprefa-engine-rs` had NO tracing at all: no dependency, no span,
+  nothing. An engine with no spans cannot answer "where did the wall clock go",
+  so the question got answered by guessing. Three guesses, three wrong.
+- THE LAW: a fall-back that is slower by two orders of magnitude is not a
+  fall-back, it is a defect with a polite face. Where a linked executor exists
+  for a command, reaching the shell for that command is always a missing
+  registration and must say so by name.
+- THE RAIL: `ShellExecutor::run` carries a `warn_span!("sh_spawn")`, so every
+  spawn is countable, and `linked_twin_for` matches the first shell token
+  against the linked executors and warns with the host name and the sidecar it
+  is missing from. Fail-pre-fix receipt: delete the `sig_at` row from
+  `dead-module-rail.adapters.json` and the run emits 82 lines of
+  `host shells a command the linked ``sprefa_extract`` executor answers
+  in-process; its adapter row is missing`. With all six rows present,
+  `sh_spawn` count is 0 and the run is 5.27s.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |

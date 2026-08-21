@@ -124,6 +124,16 @@ impl IHostExecutor for SoopyFilesExecutor {
     }
 }
 
+// The command shapes a linked executor already answers. Matched on the first
+// shell token only, so a pipeline that merely mentions one is not accused.
+fn linked_twin_for(command_line: &str) -> Option<&'static str> {
+    let first = command_line.split_whitespace().next()?.trim_matches('"');
+    if first == "$DL_EXTRACT_BIN" || first.ends_with("/extract") || first == "extract" {
+        return Some("sprefa_extract");
+    }
+    None
+}
+
 pub struct ShellExecutor;
 
 impl IHostExecutor for ShellExecutor {
@@ -137,6 +147,17 @@ impl IHostExecutor for ShellExecutor {
         // 100x cliff that reads as ordinary slowness in a whole-run timing.
         let span = tracing::warn_span!("sh_spawn", host, bytes = command_line.len());
         let _entered = span.enter();
+        // Shelling `git` or a one-off is ordinary. Shelling a command a linked
+        // executor already answers means an adapter row is missing, which is
+        // never intended and costs a process per demand.
+        if let Some(twin) = linked_twin_for(command_line) {
+            tracing::warn!(
+                host,
+                twin,
+                "host shells a command the linked `{twin}` executor answers in-process; \
+                 its adapter row is missing from the program's .adapters.json"
+            );
+        }
         let output = std::process::Command::new("sh")
             .arg("-c")
             .arg(command_line)

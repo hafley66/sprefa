@@ -57,6 +57,17 @@ text-door:
 plunit:
     cd {{ v6 }}/prolog/compile && {{ capped }} "${PLUNIT_BUDGET_S:-600}" swipl -q -l test/run_plunit.pl -g plunit_run -t halt
 
+# The dead-module rail against the two tools that answer the same question in
+# other ecosystems. rustc's dead_code lint cannot see a `pub` item in a lib
+# crate; knip cannot see an imported module nothing calls. Each fixture labels
+# every file with what BOTH tools must say, so a rail that drifts either way
+# goes red. budget: measured 12s rust / 20s js (knip resolves through npx).
+ground-truth:
+    {{ capped }} "${GROUND_TRUTH_BUDGET_S:-600}" bash {{ v6 }}/dl/deadcode/ground-truth.sh
+
+ground-truth-js:
+    {{ capped }} "${GROUND_TRUTH_BUDGET_S:-600}" bash {{ v6 }}/dl/deadcode/ground-truth-js.sh
+
 # scip + diet_scip extractor families smoke: real scip-typescript index
 # through the served engine (SCIP FAMILIES HOLD). budget: measured 9s,
 # default 600s (SCIP_FAMILIES_BUDGET_S)
