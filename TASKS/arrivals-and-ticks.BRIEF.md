@@ -1,7 +1,9 @@
 # Brief: one rel, external arrivals, ticks. `sh`, `bind`, `host` die.
 
 Base sha: the spawner prints it. FIRST ACTION `git merge --ff-only <sha>`; failure = stop and
-report. Never spawn subagents. One PR against `main`. `export CARGO_BUILD_JOBS=3
+report. You run on Fable and MAY fan out: opus or sonnet subagents through the Agent tool,
+each in its own worktree with disjoint files named in its prompt; you grade every subagent's
+tree yourself (git log, git status, the gate) before taking its work. One PR against `main`. `export CARGO_BUILD_JOBS=3
 RUST_TEST_THREADS=4`; wrap every command in `timeout`; no single operation over 10s except
 cargo build and scip indexing.
 
