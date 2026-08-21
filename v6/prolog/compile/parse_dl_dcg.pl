@@ -519,10 +519,11 @@ rel_stmt(Decls) -->
               % Minted like a rel template but into enum_decl terms, so the
               % enum lowering phase owns the sum.
               { Decls = [rel_template_enum(Segs, Parameters, Variants)] }
-          ;   args(decl_a_column, Specs), #`)`, #`.`,
-              % A template mints no col_type/kind entry: this ONE term is the
-              % record.
-              { Decls = [rel_template(Segs, Parameters, Specs)] }
+          ;   args(decl_a_column, Specs), #`)`,
+              relation_arrow_output(Segs, Specs, ArrowSpecs, _ReturnAlias), #`.`,
+              % A template mints no col_type/kind entry: this ONE term is
+              % the record. No Ref exists yet to hang an alias decl on.
+              { Decls = [rel_template(Segs, Parameters, ArrowSpecs)] }
           )
       ;   #`(`,
           args(decl_a_column, Specs), #`)`,
