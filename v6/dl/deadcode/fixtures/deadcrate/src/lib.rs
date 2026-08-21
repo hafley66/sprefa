@@ -4,13 +4,18 @@
 pub mod live_pub;
 pub mod dead_pub;
 pub mod live_trait_impls;
+pub mod ambiguous_owner;
+pub mod ambiguous_other;
 mod live_private;
 mod dead_private;
 mod dead_trait_impls;
 
 use live_trait_impls::{Paint, Red};
+use ambiguous_owner::Widget;
+use ambiguous_other::Gauge;
 
 pub fn entry() -> usize {
     let brush: &dyn Paint = &Red;
     live_pub::exported_one() + live_private::helper_one() + brush.paint()
+        + Widget.refresh() + Gauge.refresh()
 }

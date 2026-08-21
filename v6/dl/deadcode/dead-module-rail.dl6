@@ -1,3 +1,16 @@
+# A module every other module has stopped calling, in three buckets, because a
+# call site names a FUNCTION and never a file:
+#
+#   rail_dead_module       no call site anywhere names any definition here
+#   rail_unproven_module   reached only through a name several files define
+#   rail_unreachable_module  the crawl from the declared roots never arrives
+#
+# The middle bucket is the point. Demanding a unique name reports live code as
+# dead; ignoring ambiguity reports dead code as live. Neither is a good default
+# for a tool whose false positives get code deleted, so the ambiguity is named
+# instead of guessed. Deciding it needs the receiver's type, which the call
+# family does not carry.
+#
 # rx: sourceFile$.pipe(distinct(row => row.witnessDigest), mergeMap(runExtract));
 # liveFile$.pipe(mergeMap(callsOf), mergeMap(defFileOf), distinct()).
 
@@ -17,12 +30,6 @@ sh call_node_at(path: text, digest: text) -> (record: text, family: text, span: 
   `"$DL_EXTRACT_BIN" --family call {path}`.
 sh extract(path: text, digest: text) -> (record: text, family: text, span: span, callee: text) =
   `"$DL_EXTRACT_BIN" --family call {path}`.
-sh call_ref(path: text, digest: text) -> (record: text, family: text, span: span, callee: text, callee_path: text) =
-  `"$DL_EXTRACT_BIN" --family call {path}`.
-sh call_node(path: text, digest: text) -> (record: text, family: text, owner: span, self_type: text) =
-  `"$DL_EXTRACT_BIN" --family call {path}`.
-sh sig_at(path: text, digest: text) -> (record: text, family: text, owner: span, trait: text) =
-  `"$DL_EXTRACT_BIN" --family call {path}`.
 
 rel want(glob: text).
 rel root_file(path: text).
@@ -31,6 +38,11 @@ rel source_file(path: text, digest: text).
 source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
 
 # ── the def plane ───────────────────────────────────────────────────────────
+# Definition CLASS (free fn, inherent method, trait method) is not modelled.
+# It was, through three more host declarations reading owner and trait spans,
+# and every class ended up with the same liveness rule, because a call site
+# names a method and never an impl. Re-earn those hosts only for something the
+# name alone cannot decide, which means the receiver's type.
 rel def_site(path: text, name: text, at: span).
 def_site(Path, Name, At) <-
   source_file(Path, Digest),
@@ -39,37 +51,11 @@ def_site(Path, Name, At) <-
   source_file(Path, Digest),
   call_node_at(Path, Digest, 'node', 'call', At, 'method', Name).
 
-rel owner_self(path: text, at: span, self_type: text).
-owner_self(Path, At, SelfType) <-
-  source_file(Path, Digest),
-  call_node(Path, Digest, 'method_owner', 'call', At, SelfType).
-
-rel owner_trait(path: text, at: span, trait_name: text).
-owner_trait(Path, At, TraitName) <-
-  source_file(Path, Digest),
-  sig_at(Path, Digest, 'method_owner', 'call', At, TraitName).
-
-rel free_def(path: text, name: text).
-free_def(Path, Name) <-
-  def_site(Path, Name, At), not(owner_self(Path, At, _)), not(owner_trait(Path, At, _)).
-
-rel inherent_def(path: text, name: text, self_type: text).
-inherent_def(Path, Name, SelfType) <-
-  def_site(Path, Name, At), owner_self(Path, At, SelfType), not(owner_trait(Path, At, _)).
-
-rel trait_def(path: text, name: text, trait_name: text).
-trait_def(Path, Name, TraitName) <- def_site(Path, Name, At), owner_trait(Path, At, TraitName).
-
 # ── the call plane ──────────────────────────────────────────────────────────
 rel call_from(path: text, callee: text).
 call_from(Path, Callee) <-
   source_file(Path, Digest),
   extract(Path, Digest, 'site', 'call', _GoalAt, Callee).
-
-rel qualified_call(path: text, callee: text, callee_path: text).
-qualified_call(Path, Callee, CalleePath) <-
-  source_file(Path, Digest),
-  call_ref(Path, Digest, 'site', 'call', _GoalAt, Callee, CalleePath).
 
 # ── ambiguity, for the readable table only ──────────────────────────────────
 rel name_def_files(name: text, files: int).
@@ -88,24 +74,20 @@ rel file_ambiguous(path: text, ambiguous: int).
 file_ambiguous(Path, count(Name)) <- def_ambiguous(Path, Name).
 
 # ── used-across, per class ──────────────────────────────────────────────────
+# ONE liveness rule for every definition class. A call site offers a NAME and
+# nothing else: a receiver call (`directory.snapshot(...)`) carries no
+# callee_path, and only 24% of sites in a real crate carry one at all. So a
+# rule that demands a unique name can never mark an ambiguous one live, and the
+# file reads as dead while its call sites sit in plain view. That defect
+# reported soopy/src/_3a_files.rs dead against 19 live calls to `snapshot`.
+#
+# A dead-code rail may under-report and must never over-report: deleting live
+# code is the expensive direction. So one live call on a name makes every
+# definition of that name live, which is also exactly what dynamic dispatch
+# already forced for trait methods.
 rel def_used_across(path: text, name: text).
 def_used_across(DefPath, Name) <-
-  free_def(DefPath, Name), unique_name(Name), call_from(CallPath, Name), DefPath \== CallPath.
-def_used_across(DefPath, Name) <-
-  inherent_def(DefPath, Name, _SelfType),
-  unique_name(Name),
-  call_from(CallPath, Name),
-  DefPath \== CallPath.
-def_used_across(DefPath, Name) <-
-  inherent_def(DefPath, Name, SelfType),
-  qualified_call(CallPath, Name, CalleePath),
-  DefPath \== CallPath,
-  instr(CalleePath, SelfType) > 0.
-def_used_across(DefPath, Name) <-
-  trait_def(DefPath, Name, TraitName),
-  trait_def(_OtherPath, _OtherName, TraitName),
-  call_from(CallPath, Name),
-  DefPath \== CallPath.
+  def_site(DefPath, Name, _At), call_from(CallPath, Name), DefPath \== CallPath.
 
 rel file_defs(path: text, defs: int).
 file_defs(Path, count(Name)) <- def_site(Path, Name, _At).
@@ -128,27 +110,42 @@ module_reach(Path, Defs, Used, Ambiguous) <-
   file_defs(Path, Defs), used_or_zero(Path, Used), ambiguous_or_zero(Path, Ambiguous).
 
 # ── ONE HOP ─────────────────────────────────────────────────────────────────
+# Liveness proven by a name only ONE file defines. A call on such a name can
+# only mean this file, so the reach is certain rather than assumed.
+rel def_used_uniquely(path: text, name: text).
+def_used_uniquely(DefPath, Name) <-
+  def_site(DefPath, Name, _At), unique_name(Name), call_from(CallPath, Name), DefPath \== CallPath.
+
+# A declared root is live by definition: an entry point is the thing nothing
+# calls into. Without this it is reported by the one-hop rule while the crawl
+# correctly clears it, and the two rules disagree on every crate entry.
 rel rail_dead_module(path: text, defs: int).
-rail_dead_module(Path, Defs) <- file_defs(Path, Defs), Defs >= 5, not(file_used(Path, _Used)).
+rail_dead_module(Path, Defs) <-
+  file_defs(Path, Defs), Defs >= 5, not(file_used(Path, _Used)), not(root_file(Path)).
+
+# The third bucket, and the honest one. A file reached ONLY through names that
+# several files define is neither proven live nor proven dead: the call sites
+# exist, but nothing in the call family says which definition they meant.
+# crates/boop/src/chat.rs lands here because it defines `snapshot`, a name 48
+# other call sites use for other types; so does soopy/src/_3a_files.rs, which
+# really is live. Separating them needs the receiver's TYPE, which the call
+# family does not carry and `extract --resolve` does.
+rel rail_unproven_module(path: text, defs: int).
+rail_unproven_module(Path, Defs) <-
+  file_defs(Path, Defs),
+  Defs >= 5,
+  file_used(Path, _Used),
+  not(def_used_uniquely(Path, _Name)),
+  not(root_file(Path)).
 
 # ── THE CRAWL ───────────────────────────────────────────────────────────────
+# The crawl reaches by name for the same reason, one hop per tick until the
+# fixpoint. A trait method needs no separate rule: a call names no impl, so
+# every definition of the name is reached, which IS dynamic dispatch.
 rel live_file(path: text).
 live_file(Path) <- root_file(Path).
 live_file(Target) <-
-  live_file(Source), call_from(Source, Callee), unique_name(Callee), free_def(Target, Callee).
-live_file(Target) <-
-  live_file(Source), call_from(Source, Callee),
-  unique_name(Callee), inherent_def(Target, Callee, _SelfType).
-live_file(Target) <-
-  live_file(Source), qualified_call(Source, Callee, CalleePath),
-  inherent_def(Target, Callee, SelfType), instr(CalleePath, SelfType) > 0.
-
-# Dynamic dispatch: a live call on a trait method name reaches EVERY impl of
-# that trait, because the call site names no impl.
-rel trait_called(trait_name: text).
-trait_called(TraitName) <-
-  live_file(Source), call_from(Source, Callee), trait_def(_DefPath, Callee, TraitName).
-live_file(Target) <- trait_called(TraitName), trait_def(Target, _Name, TraitName).
+  live_file(Source), call_from(Source, Callee), def_site(Target, Callee, _At).
 
 rel rail_unreachable_module(path: text, defs: int).
 rail_unreachable_module(Path, Defs) <- file_defs(Path, Defs), Defs >= 5, not(live_file(Path)).
@@ -159,5 +156,6 @@ rail_root_not_a_source(Path) <- root_file(Path), not(source_file(Path, _Digest))
 
 ? rail_root_not_a_source(path).
 ? rail_dead_module(path, defs).
+? rail_unproven_module(path, defs).
 ? rail_unreachable_module(path, defs).
 ? module_reach(path, defs, used, ambiguous).

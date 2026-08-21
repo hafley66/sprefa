@@ -32,8 +32,12 @@ sort -u -o "$WORK/knip.set" "$WORK/knip.set"
 
 bash "$HERE/dead-module-rail.sh" "$ROOT" "$GLOB" "$SEED" >"$WORK/rail.txt" 2>&1 \
   || { cat "$WORK/rail.txt"; echo "FAIL   rail run"; exit 1; }
+sed -n '/^== rail_unproven_module/,/^== module_reach/p' "$WORK/rail.txt" \
+  | grep -oE '[A-Za-z_]+\.(rs|ts)$' | sort -u >"$WORK/unproven.set" || true
+touch "$WORK/unproven.set"
 sed -n '/^== rail_dead_module/,/^== rail_unreachable/p' "$WORK/rail.txt" \
-  | grep -oE '[A-Za-z_]+\.ts$' | sort -u >"$WORK/rail.set"
+  | grep -oE '[A-Za-z_]+\.ts$' | sort -u >"$WORK/rail.set" || true
+touch "$WORK/rail.set"
 
 # file                  knip rail  why this case exists
 while read -r file want_knip want_rail why; do

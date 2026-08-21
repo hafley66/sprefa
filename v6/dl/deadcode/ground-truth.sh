@@ -20,8 +20,12 @@ grep -oE 'src/[a-z_]+\.rs' "$WORK/rustc.txt" | sed 's|src/||' | sort -u >"$WORK/
 
 bash "$HERE/dead-module-rail.sh" "$ROOT" "$GLOB" "$SEED" >"$WORK/rail.txt" 2>&1 \
   || { cat "$WORK/rail.txt"; echo "FAIL   rail run"; exit 1; }
+sed -n '/^== rail_unproven_module/,/^== module_reach/p' "$WORK/rail.txt" \
+  | grep -oE '[A-Za-z_]+\.(rs|ts)$' | sort -u >"$WORK/unproven.set" || true
+touch "$WORK/unproven.set"
 sed -n '/^== rail_dead_module/,/^== rail_unreachable/p' "$WORK/rail.txt" \
-  | grep -oE '[a-z_]+\.rs$' | sort -u >"$WORK/rail.set"
+  | grep -oE '[a-z_]+\.rs$' | sort -u >"$WORK/rail.set" || true
+touch "$WORK/rail.set"
 
 # file            rustc   rail    why this case exists
 while read -r file want_rustc want_rail why; do
@@ -40,12 +44,26 @@ live_pub.rs          no  no  called from the crate root
 live_private.rs      no  no  called from the crate root
 live_trait_impls.rs  no  no  one dyn call must reach every impl of the trait
 lib.rs               no  no  the crate root is a declared seed
+ambiguous_owner.rs   no  no  a receiver call carries no callee_path, only the name
+ambiguous_other.rs   no  no  the second refresh, which makes the name ambiguous
 LABELS
 
 # rustc's findings are a subset of the rail's by construction; a file rustc
 # flags that the rail misses is a false negative and the sharper failure.
 missed="$(comm -23 "$WORK/rustc.set" "$WORK/rail.set" || true)"
 [ -z "$missed" ] || bad "subset" "rustc flagged but rail missed: $(echo $missed)"
+
+# The third bucket is the rail's honesty about what call-family data cannot
+# decide. A file reached only through a name several files define is neither
+# proven live nor proven dead; asserting it keeps the ambiguity from quietly
+# collapsing into either answer.
+for file in ambiguous_owner.rs ambiguous_other.rs; do
+  if grep -qx "$file" "$WORK/unproven.set"; then
+    say ok "$file" "unproven: refresh names two files, so no call proves either"
+  else
+    bad "$file" "expected in rail_unproven_module, absent"
+  fi
+done
 
 [ "$rc" = 0 ] && echo "GROUND-TRUTH OK  rustc=$(wc -l <"$WORK/rustc.set" | tr -d ' ') rail=$(wc -l <"$WORK/rail.set" | tr -d ' ')"
 exit "$rc"

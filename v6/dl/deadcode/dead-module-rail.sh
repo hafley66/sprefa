@@ -14,6 +14,31 @@ ENGINE="$V6/sprefa-engine-rs"
 TARGET="${1:-$ROOT}"
 GLOB="${2:-crates/boop-acp/src/*.rs}"
 ROOTS="${3:-}"
+# With no roots the crawl reaches nothing and every file reads as unreachable,
+# so derive them rather than report a vacuous sheet. Every bin and lib target
+# is an entry point by definition; hand-typing one crate's main.rs made every
+# OTHER crate's entry read as dead.
+if [ -z "$ROOTS" ] && [ -f "$TARGET/Cargo.toml" ] && command -v cargo >/dev/null; then
+  ROOTS="$( (cd "$TARGET" && cargo metadata --format-version 1 --no-deps 2>/dev/null) | python3 -c '
+import json,os,sys
+try: document = json.load(sys.stdin)
+except Exception: sys.exit(0)
+root = document["workspace_root"]
+kinds = {"bin", "lib", "proc-macro", "cdylib", "rlib"}
+seen = []
+for package in document["packages"]:
+    for target in package["targets"]:
+        if set(target["kind"]) & kinds:
+            path = os.path.relpath(target["src_path"], root)
+            if path not in seen:
+                seen.append(path)
+print(",".join(sorted(seen)))
+' )"
+  [ -n "$ROOTS" ] && printf 'roots from cargo metadata: %s\n' "$(printf '%s' "$ROOTS" | tr ',' ' ' | wc -w | tr -d ' ')" >&2
+fi
+if [ -z "$ROOTS" ]; then
+  printf 'WARN no roots: the crawl reaches nothing and rail_unreachable_module names every file\n' >&2
+fi
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/dead-module.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 fail() { printf 'FAIL  %s\n' "$*" >&2; exit 1; }
@@ -43,7 +68,7 @@ rows={}
 for line in open(sys.argv[1]):
     if not line.strip(): continue
     for rel,delta in json.loads(line)["deltas"].items():
-        if rel not in ("rail_dead_module","rail_unreachable_module","module_reach","rail_root_not_a_source"): continue
+        if rel not in ("rail_dead_module","rail_unreachable_module","module_reach","rail_root_not_a_source","rail_unproven_module"): continue
         live=rows.setdefault(rel,{})
         for r in delta.get("add",[]): live[json.dumps(r,sort_keys=True)]=r
         for r in delta.get("del",[]): live.pop(json.dumps(r,sort_keys=True),None)
@@ -56,7 +81,10 @@ print("== rail_dead_module (defs>=5, zero called from another file) ==")
 for r in dead: print(f"  {r[1]:>4} defs  {r[0]}")
 print("== rail_unreachable_module (the crawl, from declared roots) ==")
 for r in unre: print(f"  {r[1]:>4} defs  {r[0]}")
+unpr=sorted(rows.get("rail_unproven_module",{}).values(), key=lambda r:-int(r[1]))
+print("== rail_unproven_module (reached only through ambiguous names) ==")
+for r in unpr: print(f"  {r[1]:>4} defs  {r[0]}")
 print("== module_reach (defs / used-across) ==")
 for r in reach: print(f"  {r[1]:>4} / {r[2]:<4} amb={r[3]:<4} {r[0]}")
-print(f"findings={len(dead)}")
+print(f"findings={len(dead)} unproven={len(unpr)} unreachable={len(unre)}")
 PYTHON
