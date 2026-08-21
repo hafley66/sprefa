@@ -8,6 +8,8 @@
 //! `AstgrepSource` (cst-only).
 
 pub mod astgrep;
+#[path = "1_ast_rule.rs"]
+pub mod ast_rule;
 pub mod data;
 pub mod dl6;
 pub mod go;
@@ -22,6 +24,7 @@ pub use astgrep::{
     query_patterns, AstCaptureFact, AstGrepParser, AstPatternQuery, AstgrepSource, CstProjector,
     SgRoot,
 };
+pub use ast_rule::{decode_ast_rule_yaml, query_ast_rule, AstRule, AstRuleCapture, AstRuleError, AstRuleMatch, AstRuleMutation, AstRuleRequest, NamedAstRule, StopBy};
 pub use data::DataSource;
 pub use dl6::DlSource;
 pub use go::GoSource;

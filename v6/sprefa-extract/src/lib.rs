@@ -57,6 +57,8 @@ pub use family::{
     TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };
 pub use lang::{
+    decode_ast_rule_yaml, query_ast_rule, AstRule, AstRuleCapture, AstRuleError, AstRuleMatch,
+    AstRuleMutation, AstRuleRequest, NamedAstRule, StopBy,
     query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource,
     DataSource, DlSource, GoSource, KotlinSource, MarkdownSource, PrologSource, PythonSource,
     RustSource, TsSource,
