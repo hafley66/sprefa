@@ -22,7 +22,10 @@
 :- use_module(strat, [recursive_stratum_groups/2, cyclic_head_groups/2]).
 :- use_module('1_host_expand', [compile_host_decl/2, compile_query/2,
                                 query_decl/3, host_plan_contract/2]).
-:- use_module('compile/registry', [bind_executor/2]).
+% bind_executor/2 left the registry with the bind surface; pinned here so the
+% (now unreachable) bind_plan_json path stays byte-identical.
+bind_executor(interval, live_interval).
+bind_executor(watch,    live_watch).
 :- use_module('0_option_expand', [option_enum_name/2]).
 
 :- op(1150, xfx, <-).

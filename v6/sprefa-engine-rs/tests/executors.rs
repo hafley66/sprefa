@@ -200,3 +200,38 @@ fn soopy_checkout_reads_head_and_names_the_clone_gap() {
         failure.message
     );
 }
+
+// RULING executor_namespacing: registry.pl arrival_executor/2 is the one
+// roster; LINKED_EXECUTORS and executor_for answer the same names.
+#[test]
+fn executor_roster_matches_registry() {
+    let registry = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../prolog/compile/registry.pl");
+    let source = std::fs::read_to_string(&registry)
+        .unwrap_or_else(|error| panic!("read {}: {error}", registry.display()));
+    let mut registry_names: Vec<String> = source
+        .lines()
+        .filter_map(|line| {
+            let row = line
+                .trim()
+                .strip_prefix("arrival_executor(")?
+                .strip_suffix(").")?;
+            let dotted = row.split(',').nth(1)?;
+            Some(dotted.trim().trim_matches('\'').to_string())
+        })
+        .collect();
+    let mut linked: Vec<String> = sprefa_engine_rs::hosts::LINKED_EXECUTORS
+        .split(',')
+        .map(|name| name.trim().to_string())
+        .collect();
+    registry_names.sort();
+    linked.sort();
+    assert!(!registry_names.is_empty(), "no arrival_executor rows parsed");
+    assert_eq!(registry_names, linked, "registry roster != LINKED_EXECUTORS");
+    for name in &linked {
+        assert!(
+            sprefa_engine_rs::hosts::executor_for(name).is_some(),
+            "no executor links roster name {name}"
+        );
+    }
+}
