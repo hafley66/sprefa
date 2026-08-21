@@ -6,6 +6,7 @@ pub mod dead_pub;
 pub mod live_trait_impls;
 pub mod ambiguous_owner;
 pub mod ambiguous_other;
+pub mod test_only_defs;
 mod live_private;
 mod dead_private;
 mod dead_trait_impls;

@@ -601,6 +601,20 @@ pub struct CallFAux {
     /// One row per `Method` def whose declaration names an owner, joined to the
     /// def node by span. Rust populates it; other languages leave it empty.
     pub method_owners: Vec<MethodOwner>,
+    /// One row per def that a `#[cfg(...)]` predicate naming `test` guards,
+    /// its own or an enclosing module's, joined to the def node by span.
+    /// Emitted ONLY for guarded defs, so a consumer declaring the `cfg` column
+    /// receives exactly the conditional set and nothing else.
+    pub cfg_scopes: Vec<CfgScope>,
+}
+
+/// A def the compiler only builds under a cfg predicate. Carried so a caller
+/// counting definitions can subtract the ones that never reach a release
+/// binary, which otherwise inflate every per-file count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CfgScope {
+    pub span: Span,
+    pub cfg: NameId,
 }
 
 impl Family for CallF {
@@ -2099,6 +2113,14 @@ pub enum FlatFact {
         self_type: Option<String>,
         #[serde(rename = "trait")]
         trait_name: Option<String>,
+    },
+    /// CallF cfg scope: a def guarded by a cfg predicate naming `test`, joined
+    /// to its def node by `span`. v6-ONLY, no v5 oracle facet.
+    #[serde(rename = "cfg_scope")]
+    CfgScopeOut {
+        family: FamilyTag,
+        span: SpanOut,
+        cfg: String,
     },
     /// A Prolog term-occurrence reference: a compound in argument position,
     /// tagged goal | head_arg | term_arg. Deliberately exceeds the LSP/SCIP

@@ -45,6 +45,7 @@ use crate::seams::{
 };
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
+use crate::types::CfgScope;
 use crate::types::ScipIndex;
 
 // ── span bridge: proc_macro2 line/col -> v6 byte Span ───────────────────────
@@ -1042,12 +1043,25 @@ fn call_defs_in_items(
     line_starts: &[u32],
     defs: &mut RustCallDefs,
     owners: &mut Vec<CollectedOwner>,
+    scopes: &mut Vec<(Span, String)>,
+    under_cfg: Option<&str>,
 ) {
     for item in items {
+        // An item inherits its enclosing module's predicate: `#[cfg(test)] mod
+        // tests` guards every def beneath it, however deeply nested, and the
+        // outermost predicate is the one that decides.
+        let own = cfg_test_predicate(item_attrs(item));
+        let active: Option<&str> = under_cfg.or(own.as_deref());
+        let note = |span: Span, scopes: &mut Vec<(Span, String)>| {
+            if let Some(predicate) = active {
+                scopes.push((span, predicate.to_string()));
+            }
+        };
         match item {
             syn::Item::Fn(f) => {
                 let span = def_span(line_starts, f.sig.ident.span(), f.block.span());
                 defs.push(span, Some(f.sig.ident.to_string()), CallKind::Free);
+                note(span, scopes);
                 syn::visit::visit_block(defs, &f.block);
             }
             syn::Item::Impl(i) => {
@@ -1057,6 +1071,7 @@ fn call_defs_in_items(
                     if let syn::ImplItem::Fn(m) = ii {
                         let span = def_span(line_starts, m.sig.ident.span(), m.block.span());
                         defs.push(span, Some(m.sig.ident.to_string()), CallKind::Method);
+                        note(span, scopes);
                         owners.push(CollectedOwner {
                             span,
                             self_type: self_type.clone(),
@@ -1077,6 +1092,7 @@ fn call_defs_in_items(
                             None => def_span(line_starts, m.sig.ident.span(), m.sig.span()),
                         };
                         defs.push(span, Some(name), CallKind::Method);
+                        note(span, scopes);
                         owners.push(CollectedOwner {
                             span,
                             self_type: None,
@@ -1090,7 +1106,7 @@ fn call_defs_in_items(
             }
             syn::Item::Mod(m) => {
                 if let Some((_, inner)) = &m.content {
-                    call_defs_in_items(inner, line_starts, defs, owners);
+                    call_defs_in_items(inner, line_starts, defs, owners, scopes, active);
                 }
             }
             _ => {}
@@ -1106,6 +1122,53 @@ struct CollectedOwner {
     trait_name: Option<String>,
 }
 
+/// Every syn item form that can carry attributes, so a cfg predicate on any of
+/// them is seen. The forms with no attributes yield an empty slice rather than
+/// being skipped, which keeps the match total and the default safe.
+fn item_attrs(item: &syn::Item) -> &[syn::Attribute] {
+    match item {
+        syn::Item::Fn(i) => &i.attrs,
+        syn::Item::Impl(i) => &i.attrs,
+        syn::Item::Trait(i) => &i.attrs,
+        syn::Item::Mod(i) => &i.attrs,
+        syn::Item::Struct(i) => &i.attrs,
+        syn::Item::Enum(i) => &i.attrs,
+        syn::Item::Const(i) => &i.attrs,
+        syn::Item::Static(i) => &i.attrs,
+        syn::Item::Type(i) => &i.attrs,
+        syn::Item::Use(i) => &i.attrs,
+        syn::Item::Macro(i) => &i.attrs,
+        syn::Item::TraitAlias(i) => &i.attrs,
+        syn::Item::Union(i) => &i.attrs,
+        syn::Item::ExternCrate(i) => &i.attrs,
+        syn::Item::ForeignMod(i) => &i.attrs,
+        _ => &[],
+    }
+}
+
+/// The `cfg` predicate as written, when it names `test` anywhere inside it.
+/// `#[cfg(test)]`, `#[cfg(any(test, feature = "x"))]` and `#[cfg(all(test,
+/// unix))]` all qualify; `#[cfg(feature = "testing")]` does not, because the
+/// token is matched as a whole word and not as a substring.
+fn cfg_test_predicate(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if !attr.path().is_ident("cfg") {
+            continue;
+        }
+        let syn::Meta::List(list) = &attr.meta else {
+            continue;
+        };
+        let text = list.tokens.to_string();
+        let names_test = text
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .any(|word| word == "test");
+        if names_test {
+            return Some(text);
+        }
+    }
+    None
+}
+
 /// Project the CallF family: one def node per callable (Free / Method / Lambda)
 /// + one site per call expression. Port of v5 `rust_call_{defs,sites}_from`.
 fn project_call(
@@ -1119,13 +1182,27 @@ fn project_call(
         out: Vec::new(),
     };
     let mut owners = Vec::new();
-    call_defs_in_items(&parsed.items, line_starts, &mut defs, &mut owners);
+    let mut scopes: Vec<(Span, String)> = Vec::new();
+    call_defs_in_items(
+        &parsed.items,
+        line_starts,
+        &mut defs,
+        &mut owners,
+        &mut scopes,
+        None,
+    );
     for def in defs.out {
         let mut node = Node::new(def.span, def.kind);
         if let Some(name) = def.name {
             node = node.with_name(strings.intern(&name));
         }
         sink.nodes.push(node);
+    }
+    for (span, predicate) in scopes {
+        sink.aux.cfg_scopes.push(CfgScope {
+            span,
+            cfg: strings.intern(&predicate),
+        });
     }
     for owner in owners {
         sink.aux.method_owners.push(MethodOwner {

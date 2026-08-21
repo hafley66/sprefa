@@ -28,6 +28,8 @@ const NESTED_PATH: &str = "tests/fixtures/rust_scopes/nested_mods.rs";
 const NESTED: &[u8] = include_bytes!("fixtures/rust_scopes/nested_mods.rs");
 const OWNERS_PATH: &str = "tests/fixtures/rust_scopes/impl_owners.rs";
 const OWNERS: &[u8] = include_bytes!("fixtures/rust_scopes/impl_owners.rs");
+const CFG_PATH: &str = "tests/fixtures/rust_scopes/cfg_scopes.rs";
+const CFG: &[u8] = include_bytes!("fixtures/rust_scopes/cfg_scopes.rs");
 
 /// A callable declared inside an inline `mod` is a def of the file. The site half
 /// already walks those bodies, so without this the extractor reports uses whose
@@ -172,5 +174,48 @@ fn rust_method_defs_carry_their_owner() {
             ("draw", Some("Alpha"), Some("Erase")),
             ("draw", Some("Beta"), Some("Draw")),
         ]
+    );
+}
+
+/// A cfg predicate naming `test` guards a def wherever it sits: on the item, on
+/// an enclosing module, on an ancestor of one, or inside an `any(..)` arm. The
+/// two negative rows matter more than the positives: `feature = "testing"`
+/// contains the letters of `test` and must NOT match, which is why the
+/// predicate is split on non-word characters and compared whole.
+///
+/// FAIL-FIRST RECEIPT, before `cfg_test_predicate` existed: cfg_scopes was
+/// empty, so `left: []`, `right: ["guarded_by_an_ancestor", "guarded_by_an_any_arm",
+/// "guarded_by_the_module", "guarded_directly"]`.
+///
+/// SABOTAGE RECEIPT: matching with `text.contains("test")` instead of the word
+/// split adds "not_guarded_the_token_is_a_substring" to the left side; passing
+/// `None` instead of `active` in the `Item::Mod` arm drops
+/// "guarded_by_the_module" and "guarded_by_an_ancestor".
+#[test]
+fn rust_cfg_test_defs_are_marked_wherever_the_predicate_sits() {
+    let output = RustSource.extract(CFG_PATH, CFG, FamilyMask::ALL);
+    let call = output.call.as_ref().unwrap();
+    let guarded: BTreeSet<&str> = call
+        .aux
+        .cfg_scopes
+        .iter()
+        .map(|scope| {
+            let node = call
+                .nodes
+                .iter()
+                .find(|node| node.span.start == scope.span.start)
+                .expect("every cfg scope joins a def node by span");
+            output.strings.lookup(node.name.expect("named def"))
+        })
+        .collect();
+
+    assert_eq!(
+        guarded,
+        BTreeSet::from([
+            "guarded_directly",
+            "guarded_by_the_module",
+            "guarded_by_an_ancestor",
+            "guarded_by_an_any_arm",
+        ])
     );
 }

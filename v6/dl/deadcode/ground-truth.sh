@@ -46,6 +46,7 @@ live_trait_impls.rs  no  no  one dyn call must reach every impl of the trait
 lib.rs               no  no  the crate root is a declared seed
 ambiguous_owner.rs   no  no  a receiver call carries no callee_path, only the name
 ambiguous_other.rs   no  no  the second refresh, which makes the name ambiguous
+test_only_defs.rs    no  no  five cfg(test) defs must not count toward the floor
 LABELS
 
 # rustc's findings are a subset of the rail's by construction; a file rustc

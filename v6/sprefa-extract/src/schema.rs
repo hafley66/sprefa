@@ -32,6 +32,7 @@ RECORD SHAPES
   record=df_allocates  family=df           owner={start,end}
   record=site   family=call                span={start,end}   callee=<name>  callee_path=<string|null>
   record=method_owner  family=call         owner={start,end}  self_type=<string|null>  trait=<string|null>
+  record=cfg_scope  family=call            span={start,end}   cfg=<string>   (only for cfg-guarded defs)
   record=reference  family=call            span={start,end}   functor=<name/arity>  position=<goal|head_arg|term_arg>
   record=const  family=type                owner={start,end}  field=<string|null>  text=<string>  kind=<lit|template>
   record=doc    family=type                owner={start,end}  parent=<string|null>  text=<string>

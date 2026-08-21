@@ -377,6 +377,9 @@ host_input_contract(df_arg_at,
 host_input_contract(call_node_at,
                     [col(path, text), col(digest, text)],
                     [identity, freshness]).
+host_input_contract(cfg_at,
+                    [col(path, text), col(digest, text)],
+                    [identity, freshness]).
 host_input_contract(type_node_at,
                     [col(path, text), col(digest, text)],
                     [identity, freshness]).

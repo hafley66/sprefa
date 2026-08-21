@@ -203,6 +203,7 @@ fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<FlatFact
             + bundle.aux.sites.len()
             + bundle.aux.specifiers.len()
             + bundle.aux.method_owners.len()
+            + bundle.aux.cfg_scopes.len()
             + bundle.aux.refs.len()
             + bundle.aux.unresolved.len(),
     );
@@ -238,6 +239,13 @@ fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<FlatFact
             owner: SpanOut::new(owner.span.start, owner.span.end()),
             self_type: owner.self_type.map(|id| strings.lookup(id).to_string()),
             trait_name: owner.trait_name.map(|id| strings.lookup(id).to_string()),
+        });
+    }
+    for scope in &bundle.aux.cfg_scopes {
+        out.push(FlatFact::CfgScopeOut {
+            family: CallF::TAG,
+            span: SpanOut::new(scope.span.start, scope.span.end()),
+            cfg: strings.lookup(scope.cfg).to_string(),
         });
     }
     for reference in &bundle.aux.refs {

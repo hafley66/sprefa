@@ -28,6 +28,10 @@ sh files(glob: text) -> (path: text, digest: text) =
 # columns are what select records out of the one stream (hosts.rs:776 drops nulls).
 sh call_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text, name: text) =
   `"$DL_EXTRACT_BIN" --family call {path}`.
+# Emitted only for a def a cfg predicate naming `test` guards, so declaring the
+# `cfg` column selects exactly that set and nothing else.
+sh cfg_at(path: text, digest: text) -> (record: text, family: text, span: span, cfg: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
 sh extract(path: text, digest: text) -> (record: text, family: text, span: span, callee: text) =
   `"$DL_EXTRACT_BIN" --family call {path}`.
 
@@ -43,13 +47,24 @@ source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
 # and every class ended up with the same liveness rule, because a call site
 # names a method and never an impl. Re-earn those hosts only for something the
 # name alone cannot decide, which means the receiver's type.
+# A def the compiler only builds for tests is not part of the shipped module.
+# Counting it inflates every per-file total and lets a file clear the floor on
+# test helpers alone; the extractor made these visible when its projectors
+# started descending inline mod bodies.
+rel cfg_def(path: text, at: span).
+cfg_def(Path, At) <-
+  source_file(Path, Digest),
+  cfg_at(Path, Digest, 'cfg_scope', 'call', At, _Predicate).
+
 rel def_site(path: text, name: text, at: span).
 def_site(Path, Name, At) <-
   source_file(Path, Digest),
-  call_node_at(Path, Digest, 'node', 'call', At, 'function', Name).
+  call_node_at(Path, Digest, 'node', 'call', At, 'function', Name),
+  not(cfg_def(Path, At)).
 def_site(Path, Name, At) <-
   source_file(Path, Digest),
-  call_node_at(Path, Digest, 'node', 'call', At, 'method', Name).
+  call_node_at(Path, Digest, 'node', 'call', At, 'method', Name),
+  not(cfg_def(Path, At)).
 
 # ── the call plane ──────────────────────────────────────────────────────────
 rel call_from(path: text, callee: text).
