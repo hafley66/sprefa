@@ -159,6 +159,7 @@ pub async fn run_schedule_live(
             pending.push_back(responses);
         }
     }
+    crate::sql::report_seam_tally();
     Ok(TickFold { lines })
 }
 

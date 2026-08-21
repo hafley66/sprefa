@@ -408,6 +408,10 @@ pub(crate) fn direct_arrival_statement(
 
 // Port of IncrementalRuntime.apply_arrivals. Groups consecutive same-rel/sign
 // arrivals and writes them through the relation's arrival_add/arrival_del SQL.
+/// SQLite's SQLITE_MAX_VARIABLE_NUMBER is 32766 from 3.32; the margin covers
+/// the handful of non-row placeholders a statement can also carry.
+const SQLITE_VARIABLE_BUDGET: usize = 30_000;
+
 pub fn apply_arrivals(
     seam: &SqliteSeam,
     arrivals: &[Arrival],
@@ -421,6 +425,12 @@ pub fn apply_arrivals(
     // Group consecutive same rel+sign.
     type ArrivalGroup<'a> = (&'a IncrementalRelationPlan, i8, Vec<(u64, Row)>);
 
+    // Runs of consecutive same rel+sign, NOT one group per (rel, sign). Folding
+    // every run of a rel together was measured and is slower: it took the
+    // dead-module rail from 1787 statements to 1027 and from 1.63s to 1.72s,
+    // because one IN-list of 15000 placeholders costs more than the fifty
+    // small statements it replaced. Statement count is not the thing to
+    // minimize here.
     let mut groups: Vec<ArrivalGroup> = Vec::new();
     for (sequence, arrival) in arrivals.iter().enumerate() {
         let relation = relation_by_name
@@ -439,17 +449,43 @@ pub fn apply_arrivals(
         }
         groups.push((relation, sign, vec![entry]));
     }
+    // SQLite binds at most SQLITE_MAX_VARIABLE_NUMBER placeholders per
+    // statement (32766 since 3.32). Both writers below expand one placeholder
+    // per column per row, so a group has a ROW ceiling set by its widest
+    // statement. Exceeding it is a hard `too many SQL variables` stop, not a
+    // slow path: 22163 rows keyed on two columns is 44326 placeholders. The
+    // former run-based grouping never hit it only because interleaved arrivals
+    // happened to keep every run small.
     let verbs = write_verbs_for(relations);
-    // Groups are runs of CONSECUTIVE same rel+sign, so an interleaved arrival
-    // order fragments one batched write into many. The ratio to arrivals.len()
-    // is the thing to read.
+    // Groups are one per (rel, sign), chunked to the variable budget. The ratio
+    // to arrivals.len() is the thing to read.
     let span = tracing::info_span!(
         "apply_arrivals",
         arrivals = arrivals.len(),
         groups = groups.len()
     );
     let _entered = span.enter();
-    for (relation, sign, entries) in groups {
+    // A run is still unbounded, so the variable budget is enforced whatever the
+    // arrival order does. Chunked here rather than by rebuilding the group
+    // list, so no row is copied a second time.
+    let chunked = groups.into_iter().flat_map(|(relation, sign, entries)| {
+        let widest = relation
+            .columns
+            .len()
+            .max(relation.key_indices.len())
+            .max(1);
+        let rows_per_statement = (SQLITE_VARIABLE_BUDGET / widest).max(1);
+        let mut pieces = Vec::new();
+        let mut rest = entries;
+        while rest.len() > rows_per_statement {
+            let tail = rest.split_off(rows_per_statement);
+            pieces.push((relation, sign, rest));
+            rest = tail;
+        }
+        pieces.push((relation, sign, rest));
+        pieces
+    });
+    for (relation, sign, entries) in chunked {
         let write_statement = verbs.arrive(
             relation,
             sign,

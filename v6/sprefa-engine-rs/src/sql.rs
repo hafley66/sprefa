@@ -3,7 +3,8 @@
 // rusqlite inward; none awaits inside a single statement, so a statement's
 // effects are visible to the next statement in the same ordered batch.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Mutex;
 
 use regex::Regex;
 use rusqlite::functions::FunctionFlags;
@@ -122,8 +123,84 @@ fn row_to_values(row: &Row, columns: &[String]) -> Vec<Value> {
     out
 }
 
+/// Aggregate seam counters, read once at the end of a fold. Per-statement spans
+/// would be tens of thousands of events for one rail run, which measures the
+/// tracing layer more than the SQL.
+#[derive(Default)]
+pub struct SeamTally {
+    pub statements: std::sync::atomic::AtomicU64,
+    /// Statements that returned no rows AND changed no rows: the query ran and
+    /// nothing came of it.
+    pub inert: std::sync::atomic::AtomicU64,
+    pub rows_out: std::sync::atomic::AtomicU64,
+    pub rows_changed: std::sync::atomic::AtomicU64,
+    pub nanos: std::sync::atomic::AtomicU64,
+}
+
+/// Inert statements by shape, so the report names WHICH query ran for nothing.
+/// Behind a Mutex rather than atomics because it is keyed text; only populated
+/// when DL_SEAM_SHAPES is set, so an ordinary fold pays one env read.
+pub static INERT_SHAPES: std::sync::LazyLock<Mutex<BTreeMap<String, (u64, u64)>>> =
+    std::sync::LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+pub fn seam_shapes_wanted() -> bool {
+    static WANTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *WANTED.get_or_init(|| std::env::var_os("DL_SEAM_SHAPES").is_some())
+}
+
+/// verb + the first table name, which is what identifies a plan's statement
+/// without carrying its whole body or its bound values.
+fn statement_shape(sql: &str) -> String {
+    let mut words = sql.split_whitespace();
+    let verb = words.next().unwrap_or("?").to_uppercase();
+    let table = match verb.as_str() {
+        "INSERT" | "REPLACE" => words.nth(1),
+        "DELETE" => words.nth(1),
+        "UPDATE" => words.next(),
+        "SELECT" => sql
+            .split_whitespace()
+            .skip_while(|word| !word.eq_ignore_ascii_case("from"))
+            .nth(1),
+        _ => words.next(),
+    };
+    format!("{verb} {}", table.unwrap_or("?").trim_matches(|c| c == '"' || c == '(' ))
+}
+
+pub static SEAM_TALLY: SeamTally = SeamTally {
+    statements: std::sync::atomic::AtomicU64::new(0),
+    inert: std::sync::atomic::AtomicU64::new(0),
+    rows_out: std::sync::atomic::AtomicU64::new(0),
+    rows_changed: std::sync::atomic::AtomicU64::new(0),
+    nanos: std::sync::atomic::AtomicU64::new(0),
+};
+
+/// One event carrying the whole fold's SQL shape.
+pub fn report_seam_tally() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let statements = SEAM_TALLY.statements.load(Relaxed);
+    let inert = SEAM_TALLY.inert.load(Relaxed);
+    tracing::info!(
+        statements,
+        inert,
+        inert_pct = if statements == 0 { 0 } else { inert * 100 / statements },
+        rows_out = SEAM_TALLY.rows_out.load(Relaxed),
+        rows_changed = SEAM_TALLY.rows_changed.load(Relaxed),
+        ms = SEAM_TALLY.nanos.load(Relaxed) / 1_000_000,
+        "seam tally"
+    );
+    if seam_shapes_wanted() {
+        let shapes = INERT_SHAPES.lock().expect("inert shapes");
+        let mut rows: Vec<(&String, &(u64, u64))> = shapes.iter().collect();
+        rows.sort_by_key(|(_, (count, _))| std::cmp::Reverse(*count));
+        for (shape, (count, micros)) in rows.into_iter().take(20) {
+            tracing::info!(shape = %shape, count, ms = micros / 1000, "seam shape");
+        }
+    }
+}
+
 impl SqlRunner for SqliteSeam {
     fn execute(&self, statement: &SqlStatement) -> Result<QueryResult> {
+        let started = std::time::Instant::now();
         let mut stmt = self.conn.prepare(&statement.sql)?;
         let column_count = stmt.column_count();
         let columns: Vec<String> = (0..column_count)
@@ -143,6 +220,31 @@ impl SqlRunner for SqliteSeam {
             out_rows.push(row_to_values(row, &columns));
         }
         let rows_affected = self.conn.changes() as i64;
+        {
+            use std::sync::atomic::Ordering::Relaxed;
+            SEAM_TALLY.statements.fetch_add(1, Relaxed);
+            SEAM_TALLY.rows_out.fetch_add(out_rows.len() as u64, Relaxed);
+            SEAM_TALLY.rows_changed.fetch_add(rows_affected.max(0) as u64, Relaxed);
+            SEAM_TALLY
+                .nanos
+                .fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
+            if out_rows.is_empty() && rows_affected <= 0 {
+                SEAM_TALLY.inert.fetch_add(1, Relaxed);
+                if seam_shapes_wanted() {
+                    let mut shapes = INERT_SHAPES.lock().expect("inert shapes");
+                    let entry = shapes.entry(statement_shape(&statement.sql)).or_insert((0, 0));
+                    entry.0 += 1;
+                    entry.1 += started.elapsed().as_micros() as u64;
+                }
+            } else if seam_shapes_wanted() {
+                let mut shapes = INERT_SHAPES.lock().expect("inert shapes");
+                let entry = shapes
+                    .entry(format!("(live) {}", statement_shape(&statement.sql)))
+                    .or_insert((0, 0));
+                entry.0 += 1;
+                entry.1 += started.elapsed().as_micros() as u64;
+            }
+        }
         Ok(QueryResult {
             rows: out_rows,
             columns,
