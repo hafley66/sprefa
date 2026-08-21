@@ -2,17 +2,18 @@
 # prwatch.dl6 -- pull requests watched live, their state tracked over time, and
 # the cost of watching them measured in the same fold.
 #
-# `dl6 run v6/dl/prwatch/prwatch.dl6 --db ~/.agent/prwatch.db` stays resident
-# because `bind interval` is a continuing source; nothing on the command line
-# says so. The `sh` bodies are inert: prwatch.adapters.json routes both hosts to
-# linked executors, so no shell runs.
+# `dl6 run v6/dl/prwatch/prwatch.dl6` stays resident because `/clock/tick` is a
+# continuing source; nothing on the command line says so, and the runtime writes
+# every program into the one db.
 #
 # rx: timer(0, 60_000).pipe(
 #       map(() => Math.floor(Date.now()/1000/60)),
 #       concatMap(bucket => forkJoin(pulls(repo, bucket), cost(bucket))),
 #       scan((held, seen) => upsertByNumber(held, seen)))
 
-bind interval(period: int, bucket: int).
+# NOT YET LINKED: no Rust executor answers /clock/tick, so this program is a
+# named stop at construction until one does. The ghcache lane owns that arm.
+rel /clock/tick(every: int) -> (bucket: int).
 
 rel repo(slug: text).
 repo("hafley66/sprefa").
@@ -24,21 +25,28 @@ lane_prefix("feature/").
 lane_prefix("fix/").
 lane_prefix("plan/").
 
-# `{bucket}` salts the demand digest so a new cadence turn is a new witness and
-# the host re-asks; the executor ignores the column.
-sh pulls(repo_slug: text, bucket: int) ->
+# `bucket` is freshness, not identity: a new cadence turn is a new witness so
+# the host re-asks, and the executor ignores the column.
+rel /gh/pulls(repo_slug: text, bucket: int) ->
   (number: int, title: text, head_ref: text, head_sha: text, state: text,
    merged_at: text, merged_sha: text, updated_at: text, mergeable: text,
-   review_decision: text) =
-  `gh_pulls {repo_slug} at {bucket}`.
+   review_decision: text) key(1).
 
-sh cost(bucket: int) ->
+rel /dl/tick_cost(bucket: int) ->
   (executor: text, wall_ms: int, sqlite_ms: int, calls: int, rows_out: int,
-   bytes: int, rss_kb: int) =
-  `dl_tick_cost {bucket}`.
+   bytes: int, rss_kb: int).
+
+# The program owns its seed: an arrival rel is demanded BY a positive body,
+# so the cadence is a fact here and not a keyword. ONE probe, two readers,
+# because a rule body carries at most one arrival goal (1_host_expand.pl:445).
+rel cadence(every: int).
+cadence(60).
+
+rel beat(bucket: int).
+beat(Bucket) <- cadence(Every), /clock/tick(Every, Bucket).
 
 rel poll(slug: text, bucket: int).
-poll(Slug, Bucket) <- repo(Slug), interval(60, Bucket).
+poll(Slug, Bucket) <- repo(Slug), beat(Bucket).
 
 rel observed(bucket: int, number: int, title: text, head_ref: text,
              head_sha: text, state: text, merged_at: text, merged_sha: text,
@@ -46,8 +54,8 @@ rel observed(bucket: int, number: int, title: text, head_ref: text,
 observed(Bucket, Number, Title, HeadRef, HeadSha, State, MergedAt, MergedSha,
          UpdatedAt, Mergeable, ReviewDecision) <-
   poll(Slug, Bucket),
-  pulls(Slug, Bucket, Number, Title, HeadRef, HeadSha, State, MergedAt,
-        MergedSha, UpdatedAt, Mergeable, ReviewDecision).
+  /gh/pulls(Slug, Bucket, Number, Title, HeadRef, HeadSha, State, MergedAt,
+            MergedSha, UpdatedAt, Mergeable, ReviewDecision).
 
 # Every state this watcher ever saw, one row per (pull, tick).
 rel pr_event(bucket: int, number: int, state: text, head_ref: text,
@@ -88,8 +96,8 @@ lane_proof(HeadRef, Number, MergedSha) <-
 rel measured(bucket: int, executor: text, wall_ms: int, sqlite_ms: int,
              calls: int, rows_out: int, bytes: int, rss_kb: int).
 measured(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <-
-  interval(60, Bucket),
-  cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb).
+  beat(Bucket),
+  /dl/tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb).
 
 rel tick_cost(bucket: int, executor: text, wall_ms: int, sqlite_ms: int,
               calls: int, rows_out: int, bytes: int, rss_kb: int) log keep(all).

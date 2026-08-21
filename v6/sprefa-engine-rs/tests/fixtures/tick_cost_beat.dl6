@@ -3,16 +3,25 @@
 # asks `dl_tick_cost` what the previous one cost and stores the answer, so a
 # resident run's own memory and wall series are rows the same fold folded.
 
-bind interval(period: int, bucket: int).
+# The program owns its seed: the cadence is a fact, not a keyword, and the
+# continuing executor's re-answer IS the tick.
+rel cadence(every: int).
+cadence(1).
 
-sh cost(bucket: int) ->
-  (executor: text, wall_ms: int, rss_kb: int) =
-  `dl_tick_cost {bucket}`.
+rel /clock/tick(every: int) -> (bucket: int).
+
+rel /dl/tick_cost(bucket: int) ->
+  (executor: text, wall_ms: int, rss_kb: int).
+
+# A rule body carries at most one arrival goal (1_host_expand.pl:445), so the
+# turn is its own rel and both readers join it.
+rel beat(bucket: int).
+beat(Bucket) <- cadence(Every), /clock/tick(Every, Bucket).
 
 rel measured(bucket: int, executor: text, wall_ms: int, rss_kb: int).
 measured(Bucket, Executor, WallMs, RssKb) <-
-  interval(1, Bucket),
-  cost(Bucket, Executor, WallMs, RssKb).
+  beat(Bucket),
+  /dl/tick_cost(Bucket, Executor, WallMs, RssKb).
 
 rel tick_cost(bucket: int, executor: text, wall_ms: int, rss_kb: int)
   log keep(all).

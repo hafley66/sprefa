@@ -2446,6 +2446,17 @@ row in the same commit. `LINKED_EXECUTORS` is a `const` in one file precisely so
 that two lanes adding executors CONFLICT rather than silently diverge; do not
 split it into per-module lists.
 
+WHAT THE RE-SPELL FOUND, and it closed the open question rather than raising
+one. `bind` needs no replacement keyword: an arrival rel is demanded BY a
+positive body, so a cadence is a SEED FACT the program owns. Two existing
+compiler stops force that shape and both are correct.
+`probe_mismatch(multiple_probes(...))` (`1_host_expand.pl:445`) says one rule
+body carries at most one arrival goal, so the turn becomes its own rel that
+every reader joins. `level_rule_no_positive_body` on
+`__host_demand_clock__tick/3` says an arrival rel nothing demands is not a
+program, it is a keyword in disguise. Six programs moved and all six compile to
+a binary through `dl6 build`.
+
 ENTRY: this row.
 
 ## Rail gap table
