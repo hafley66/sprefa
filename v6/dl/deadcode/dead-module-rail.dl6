@@ -32,7 +32,12 @@ sh call_node_at(path: text, digest: text) -> (record: text, family: text, span: 
 # `cfg` column selects exactly that set and nothing else.
 sh cfg_at(path: text, digest: text) -> (record: text, family: text, span: span, cfg: text) =
   `"$DL_EXTRACT_BIN" --family call {path}`.
-sh extract(path: text, digest: text) -> (record: text, family: text, span: span, callee: text) =
+# NO `span` here, deliberately. The rule wants the SET of names this file
+# calls, and a span makes every one of 17929 sites a distinct row where 5310
+# distinct (file, callee) pairs exist. Declaring a column the rules never read
+# is not a wasted field, it is a 6x row multiplier: dropping it took tick-2
+# arrivals from 21194 to 3501 and the run from 4.8s to 3.55s.
+sh extract(path: text, digest: text) -> (record: text, family: text, callee: text) =
   `"$DL_EXTRACT_BIN" --family call {path}`.
 
 rel want(glob: text).
@@ -70,7 +75,7 @@ def_site(Path, Name, At) <-
 rel call_from(path: text, callee: text).
 call_from(Path, Callee) <-
   source_file(Path, Digest),
-  extract(Path, Digest, 'site', 'call', _GoalAt, Callee).
+  extract(Path, Digest, 'site', 'call', Callee).
 
 # ── ambiguity, for the readable table only ──────────────────────────────────
 rel name_def_files(name: text, files: int).
