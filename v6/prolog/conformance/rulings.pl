@@ -786,3 +786,11 @@ ruling(oracle_demoted_to_snapshots, snapshots_are_the_truth_between_semantic_cha
 % only; a fixture without a snapshot fails loudly naming the mint command.
 ruling(oracle_off_by_default, sweep_oracle_env_opt_in, user,
        'user 2026-08-20: "literally default the prolog sweep to false bc the conformance prolog is literally not my product". The reference prolog exists to mint snapshots and settle named algorithm disputes; it is not a per-pass gate. Wiring lands via perf/oracle-grind.').
+
+% Key is a column annotation: `rel files(glob: key(text)) -> (path, digest)`.
+% `key(int)` is the type relation `rel key(Target: type) -> Target`
+% (compile/test/annotation_surface.test.pl:26, dl/fixtures/0_typespec_basic_probe.dl6:25).
+% The suffix form `) key(1)` (parse_dl_dcg.pl:863 key_clause) is deprecated:
+% no new program writes it, the one-rel collapse rewrites what it touches.
+ruling(key_column_annotation_over_suffix, annotation_preferred, user,
+       'chat 2026-08-21: "key is annotation generic now, key at suffix special position is defunct"').
