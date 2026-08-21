@@ -557,7 +557,7 @@
 //!             is forbidden this increment - the addendum's ts catch-up is
 //!             DEFERRED to a declared snapshot increment (flagged in the 4c
 //!             report). THE RATCHET (golden_parity
-//!             call_resolve_scip_ratchet_ts; scip is the ONLY ground truth -
+//!             call_resolve_scip_ratchet_ts; scip is the ONLY oracle -
 //!             v5's captured oracle has no call-edge facet, so there is NO v5
 //!             parity for these rows): ScipSource runs over
 //!             tests/fixtures/ts; for each call SITE v6 emits, scip's
@@ -591,7 +591,7 @@
 //!             map x4, filter, reduce, flat - all typescript lib symbols),
 //!             0 missing / 0 disagreements / 0 misses / 0 overbound. NEW
 //!             FIXTURES: the scip/ trio (alpha/beta/gamma.ts - scip-ratchet
-//!             only, NOT in CASES; no v5 oracle, scip is the ground truth)
+//!             only, NOT in CASES; no v5 side, scip is the oracle)
 //!             + the fixture tsconfig.json (lib es2020: --infer-tsconfig
 //!             defaults to the ES5 lib, which lacks Array#flat (ES2019) -
 //!             the flat site then has NO scip occurrence and leg (1) cannot
@@ -1070,7 +1070,7 @@ pub trait Extract {
     fn scip_load(&self, index_path: &std::path::Path) -> Result<ScipIndex, ScipError>;
 
     /// OPEN · the ratchet: per-fact best-producer-wins over N producers
-    /// (`Ast` / `Scip` / `Ghcacher`). SCIP ground-truth for call/type/module
+    /// (`Ast` / `Scip` / `Ghcacher`). SCIP is the oracle for call/type/module
     /// resolution is ONE rule, not the whole policy. · oracle: producer agreement.
     /// REVISION -> `ratchet(&[(Producer, ExtractOutput)])`. releases `Merged`.
     fn merge(&self, scip: &ScipIndex, ast: &[(FileBundle, ProjectBundle)]) -> MergedBundle;

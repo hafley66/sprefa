@@ -690,7 +690,7 @@ fn deferred_and_v6_only_ledger() {
             };
             // The resolved call edges (4c-ii ts, 4d-ii-go go, 4d-ii-rust):
             // v6-only — v5's captured oracle has no call_edge facet, so scip
-            // is their only ground truth (the ratchets below). This corpus
+            // is their only oracle (the ratchets below). This corpus
             // has NO scip index loaded, so the counts are the pure name-match
             // leg (ScipOverride always 0 here). The legacy go fixtures are
             // covered HERE only: three package clauses in one dir is not a
@@ -733,7 +733,7 @@ fn deferred_and_v6_only_ledger() {
 }
 
 /// TS Resolve<CallF> RATCHET vs scip (4c-ii): occurrence/resolution parity
-/// with scip as ground truth — NOT a raw symbol diff (the ORACLE entry: scip
+/// with scip as the oracle, NOT a raw symbol diff (the ORACLE entry: scip
 /// is a flat exhaustive symbol table; v5/v6 model callable arrow-types in the
 /// type graph and exclude value-consts, so the models differ by construction).
 /// `ScipSource` runs over the ts fixture dir (the 4 parity fixtures + the

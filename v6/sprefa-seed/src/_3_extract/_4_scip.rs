@@ -11,7 +11,7 @@
 //! tree. The index file is reload-gated by mtime (v5 `scip.rs:99-110` `dirty()`).
 //!
 //! Merge precedence (the typed rule, not a heuristic): when a SCIP index is
-//! present for a language, SCIP definitions/references are GROUND TRUTH for the
+//! present for a language, SCIP definitions/references are THE ORACLE for the
 //! call/type/module resolution families — they override native-AST name
 //! resolution (v5 `scip_ref` override, `std/flow.dl:96-114`). The native AST
 //! still owns DATAFLOW (SCIP carries no CFG/DDG) and owns every span's byte

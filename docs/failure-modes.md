@@ -1978,7 +1978,7 @@ sites but not against new code. **missing** = nothing.
   `sh host 'call_node_at': read blob bcb9ae8 ...: bcb9ae8 missing`. The digest
   is correct. The bytes exist. Only git's object store has never been told.
 - HOW IT BIT US: 2026-08-21, found by sabotage-testing the dead-module rail's
-  ground-truth gate. `dead-module-rail.dl6`'s `files` host emits
+  oracle gate. `dead-module-rail.dl6`'s `files` host emits
   `git hash-object` over the WORKTREE, so an unstaged edit yields a real
   content address for content that was never written to the ODB.
   `hosts.rs` `read_blob` treated a `GitBatch::read` miss as a hard stop, so
@@ -1989,10 +1989,10 @@ sites but not against new code. **missing** = nothing.
   those bytes can live, and must RE-HASH what it finds. An unverified
   fall-back is worse than the panic: it serves content the digest does not
   name, silently.
-- THE RAIL: `v6/dl/deadcode/ground-truth.sh` runs the rail over a fixture
+- THE RAIL: `v6/dl/deadcode/oracle-rustc.sh` runs the rail over a fixture
   whose lib.rs is edited in place and left unstaged. Fail-pre-fix, receipt
   above: `FAIL run: ... bcb9ae809cecbca883b266a756fb51dc6ac72e39 missing`,
-  gate rc=1 before `hosts.rs:380-420`, `GROUND-TRUTH OK rustc=2 rail=3` after.
+  gate rc=1 before `hosts.rs:380-420`, `ORACLE-RUSTC OK rustc=2 rail=3` after.
 
 ## 54. A silent fall-back to `sh` for a command a linked twin already answers
 

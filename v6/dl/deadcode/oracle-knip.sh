@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ground-truth-js.sh -- grade the dead-module rail against knip on a TypeScript
+# oracle-knip.sh -- grade the dead-module rail against knip on a TypeScript
 # fixture whose every file is labelled with what each tool must say.
 #
 # knip and rustc are oracles in opposite directions. rustc cannot see a `pub`
@@ -13,7 +13,7 @@ ROOT="$(cd "$HERE/../../.." && pwd)"
 CRATE="$HERE/fixtures/deadjs"
 GLOB='v6/dl/deadcode/fixtures/deadjs/src/*.ts'
 SEED='v6/dl/deadcode/fixtures/deadjs/src/index.ts'
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/ground-truth-js.XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/oracle-knip.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 rc=0
 say() { printf '%-6s %-26s %s\n' "$1" "$2" "$3"; }
@@ -74,5 +74,5 @@ missed="$(comm -23 "$WORK/knip.set" "$WORK/dead.set" || true)"
 unproven="$(cat "$WORK/unproven.set")"
 [ -z "$unproven" ] || bad "unproven" "expected no ambiguous names, got: $(echo $unproven)"
 
-[ "$rc" = 0 ] && echo "GROUND-TRUTH-JS OK  knip=$(wc -l <"$WORK/knip.set" | tr -d ' ') dead=$(wc -l <"$WORK/dead.set" | tr -d ' ') unreachable=$(wc -l <"$WORK/unreachable.set" | tr -d ' ')"
+[ "$rc" = 0 ] && echo "ORACLE-KNIP OK  knip=$(wc -l <"$WORK/knip.set" | tr -d ' ') dead=$(wc -l <"$WORK/dead.set" | tr -d ' ') unreachable=$(wc -l <"$WORK/unreachable.set" | tr -d ' ')"
 exit "$rc"

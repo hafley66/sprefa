@@ -10,7 +10,7 @@
 //! ## The oracles (what we match, not ship)
 //! salsa, differential-dataflow, petgraph, GraphBLAS, LadybugDB — graph-
 //! algorithm engines at heart. They are INSPIRATIONS (the function surface and
-//! the invariants we re-express in SQL) and ORACLES (resident ground truth we
+//! the invariants we re-express in SQL) and ORACLES (a resident answer we
 //! run on small inputs and diff byte-for-byte). We never ship their resident
 //! runtimes. Parity with their functions is the DONE bar.
 //!
@@ -22,7 +22,7 @@
 //!
 //! ## DONE = a green parity test through this trait
 //! Each family is one trait with two impls: the SQLite engine (production) and
-//! a resident oracle (ground truth). A parity test runs shared shapes through
+//! a resident oracle. A parity test runs shared shapes through
 //! both and asserts byte-identical results. That green test is the DONE cell —
 //! no hand-edited status can lie past it.
 //!

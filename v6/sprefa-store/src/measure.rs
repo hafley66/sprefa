@@ -1351,7 +1351,7 @@ pub fn gen_multi_cyclic(layers: usize, width: usize, back_stride: usize) -> Mult
     g
 }
 
-/// Independent ground truth: after cutting `cut`, which rows are still supported?
+/// The independent oracle: after cutting `cut`, which rows are still supported?
 /// A row survives iff it is forward-reachable (over ref-count edges) from a SURVIVING
 /// root — a root being any row with no incoming ref-count edge (in-degree 0). This is
 /// a dead-simple in-Rust BFS owing nothing to counting, DRed, dd, or SQLite, so it

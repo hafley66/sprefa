@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# THE MADGE ORACLE: v6's first external ground truth for a graph relation.
+# THE MADGE ORACLE: v6's first external oracle for a graph relation.
 #
 # v5 carried nine differential oracles (tests/it/oracle_*.rs) and ran zero of
 # them by default: all fourteen test functions are #[ignore]d. The v6 extractor

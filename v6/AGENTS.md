@@ -40,7 +40,7 @@ that varies is the prune test:
 - **C · reach / blast** (SCC/TC) → prune by **reached**
 
 SQLite is the ONE production engine (`src/engine.rs`). dd + salsa are **oracles
-only** (`src/oracle.rs`) — the correctness ground truth + the resident-RAM speed
+only** (`src/oracle.rs`) — the correctness oracle + the resident-RAM speed
 yardstick. Rust/CSR is used ONLY where dd/salsa can't express it either (SCC,
 count_pairs). State lives on disk; RSS = page cache, Rust heap ≈ 0 (kills v5's
 resident 36 GB swap). Keys are surrogate ints, never hashed strings (D1).

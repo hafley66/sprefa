@@ -1,7 +1,7 @@
 /**
  * oracle.ts — the from-scratch correctness math, ported from src/oracle.rs.
  *
- * Ports ONLY the independent ground-truth math:
+ * Ports ONLY the independent oracle math:
  *   dd::mix            — the splitmix64 hash shared by every plane (cascade digest,
  *                        reach digest, reconcile cell hash).
  *   salsa::WIN / DEG   — the reconcile DAG shape knobs.
@@ -9,7 +9,7 @@
  *                        — the from-scratch reconcile oracle. `oracle_answer` is the
  *                        parity key the SQLite reconcile plane is diffed against.
  *
- * NOT ported (they stay Rust-side as ground truth): dd::DdBfs (differential-dataflow
+ * NOT ported (they stay Rust-side as the oracle): dd::DdBfs (differential-dataflow
  * single-source reachability) and salsa::SalsaReconciler (the resident salsa-crate
  * oracle). The shipping TS engine is parity-checked against THIS file's math instead.
  *

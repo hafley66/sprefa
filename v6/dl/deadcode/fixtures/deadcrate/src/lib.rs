@@ -1,4 +1,4 @@
-// Ground truth for the dead-module rail. Every module below is labelled with
+// The oracle for the dead-module rail. Every module below is labelled with
 // what rustc's dead_code lint says and what the rail must say. A run that
 // disagrees with a label is a rail defect, in one tool or the other.
 pub mod live_pub;

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ground-truth.sh -- grade the dead-module rail against rustc's own dead_code
+# oracle-rustc.sh -- grade the dead-module rail against rustc's own dead_code
 # lint on a fixture whose every file is labelled with what each tool must say.
 # rustc is a one-way oracle: a file it flags is certainly dead, but a `pub` item
 # in a lib crate is invisible to it forever, so it can never flag dead_pub.rs.
@@ -9,7 +9,7 @@ ROOT="$(cd "$HERE/../../.." && pwd)"
 CRATE="$HERE/fixtures/deadcrate"
 GLOB='v6/dl/deadcode/fixtures/deadcrate/src/*.rs'
 SEED='v6/dl/deadcode/fixtures/deadcrate/src/lib.rs'
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/ground-truth.XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/oracle-rustc.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 rc=0
 say() { printf '%-6s %-22s %s\n' "$1" "$2" "$3"; }
@@ -56,7 +56,7 @@ LABELS
 missed="$(comm -23 "$WORK/rustc.set" "$WORK/rail.set" || true)"
 [ -z "$missed" ] || bad "subset" "rustc flagged but rail missed: $(echo $missed)"
 
-# The third bucket is the rail's honesty about what call-family data cannot
+# The third bucket is what the rail says call-family data cannot
 # decide. A file reached only through a name several files define is neither
 # proven live nor proven dead; asserting it keeps the ambiguity from quietly
 # collapsing into either answer.
@@ -68,5 +68,5 @@ for file in ambiguous_owner.rs ambiguous_other.rs; do
   fi
 done
 
-[ "$rc" = 0 ] && echo "GROUND-TRUTH OK  rustc=$(wc -l <"$WORK/rustc.set" | tr -d ' ') rail=$(wc -l <"$WORK/rail.set" | tr -d ' ')"
+[ "$rc" = 0 ] && echo "ORACLE-RUSTC OK  rustc=$(wc -l <"$WORK/rustc.set" | tr -d ' ') rail=$(wc -l <"$WORK/rail.set" | tr -d ' ')"
 exit "$rc"

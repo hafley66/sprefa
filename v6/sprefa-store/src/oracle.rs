@@ -1,7 +1,7 @@
 //! Correctness oracles: dd differential, salsa red-green, hand-rolled Rust.
 //! - `dd`    : ported long ago (the cascade/reach oracle).
 //! - `salsa` : ported 2026-07-23 from the folded labkit (SalsaReconciler, the resident
-//!             salsa-crate ground truth for the reconcile plane). Its parity test
+//!             salsa-crate oracle for the reconcile plane). Its parity test
 //!             (tests/reconcile.rs) is GREEN: engine::reconcile driven through `propagate`
 //!             (the ascending topo sweep) is byte-identical to salsa on DAGs w/ diamonds.
 //! TODO remaining: move the tarjan/walk oracle out of tests/covering.rs to here.
@@ -279,7 +279,7 @@ pub mod salsa {
         fn answer(&mut self) -> i64;
     }
 
-    // ---- the salsa crate, resident, ground-truth oracle ----
+    // ---- the salsa crate, resident, the oracle ----
     #[salsa::db]
     #[derive(Clone)]
     struct Db {

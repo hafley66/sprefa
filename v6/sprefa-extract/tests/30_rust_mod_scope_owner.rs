@@ -234,7 +234,7 @@ fn rust_cfg_test_defs_are_marked_wherever_the_predicate_sits() {
 /// SABOTAGE RECEIPT: dropping the `shipped` filter in `test_only_calls` adds
 /// ("shared_step", "test") to the left side, and the dead-module rail then
 /// reports mixed_call_sites.rs dead against two shipped call sites
-/// (`v6/dl/deadcode/ground-truth.sh`). Dropping the `visit_item` override
+/// (`v6/dl/deadcode/oracle-rustc.sh`). Dropping the `visit_item` override
 /// empties the left side.
 #[test]
 fn rust_test_only_callees_leave_out_every_shipped_name() {

@@ -17,7 +17,7 @@
 //!   dd    <l> <w> <bs>   streaming dd retract (the resident engine under test)
 //!   count <l> <w> <bs>   streaming sqlite-count   (disk engine, contrast)
 //!   dred  <l> <w> <bs>   streaming sqlite-dred-loop (disk engine, contrast)
-//!   oracle <l> <w> <bs>  benchgraph ground truth (full builder; high cap)
+//!   oracle <l> <w> <bs>  the benchgraph oracle (full builder; high cap)
 //!   ramp                  driver: parity @960k, dd ramp under break cap, store
 //!                         contrast at dd's abort scale, writes DD_WALL_REPORT.md
 //!                         and appends the G6 section to PERF-REPORT.md.

@@ -234,7 +234,7 @@ test(read_only_base_rel_is_externally_fed) :-
 
 :- begin_tests(stratum_order).
 
-% Ground truth taken directly from probing level_eval.pl:stratify_level_rules/2
+% The oracle, taken directly from probing level_eval.pl:stratify_level_rules/2
 % itself (not reimplemented blind) before strat.pl was written: BOTH target
 % fixtures' level rules collapse into exactly ONE stratum group, since a
 % positive dependency (Gap=0) never forces separation -- only a negated read

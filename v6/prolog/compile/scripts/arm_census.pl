@@ -239,7 +239,7 @@ classify_unreached(UnreachedLines, SrcLines, Counts, UnreachedArms, DeadPreds) :
 % ═══════════════════════════════════════════════════════════════════════════
 % lower.pl clause inventory from the source (authoritative name/arity + clause
 % count; the current_predicate/2 enumeration drops overloaded arities, so the
-% source parser is the ground truth)
+% source parser is the oracle)
 % ═══════════════════════════════════════════════════════════════════════════
 
 lower_clause_counts(Counts) :-

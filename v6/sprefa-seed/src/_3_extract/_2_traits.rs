@@ -125,7 +125,7 @@ pub struct Cst<'a> { _arena: std::marker::PhantomData<&'a ()> }
 /// How a language is served. v5 tiered this implicitly (Tier 1 SCIP for
 /// Go/Python/C, Tier 2 native AST for Rust/Kotlin/TS, tree-sitter floor for
 /// CST/comment extraction); v6 makes it a first-class, explicit binding. The
-/// dispatcher merges tiers: SCIP is ground truth for call/type/module resolution;
+/// dispatcher merges tiers: SCIP is the oracle for call/type/module resolution;
 /// AST fills dataflow (SCIP has no CFG/DDG) + everything when no SCIP index; the
 /// tree-sitter floor covers the CST family and any lang with neither.
 pub struct Source {

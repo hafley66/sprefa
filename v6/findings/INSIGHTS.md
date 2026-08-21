@@ -148,7 +148,7 @@ This doc is the counterpart to `HYPOTHESES.md` (untested ideas) and `DECISIONS.m
   depth** (`merge(MinBy(depth))`), does not expand OUT of a `halt` node (still records
   it), and does not expand a node at depth ≥ `depth_cap` (still records it). Cycles
   terminate via the per-tag visited stamp, no depth cap required. `walk.rs:40-89` is
-  the oracle; its own `#[cfg(test)]` vectors (`walk.rs:116-251`) are ground truth.
+  the oracle; its own `#[cfg(test)]` vectors (`walk.rs:116-251`) are the oracle.
 - _(add graph findings here — SCC-in-SQL approaches tried, condensation costs, where
   the recursive form diverges from the resident form and why.)_
 

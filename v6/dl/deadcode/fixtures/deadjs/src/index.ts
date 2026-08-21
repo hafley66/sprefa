@@ -1,4 +1,4 @@
-// Ground truth for the dead-module rail on TypeScript. Every module is
+// The oracle for the dead-module rail on TypeScript. Every module is
 // labelled with what knip says and what the rail must say. knip reasons over
 // the IMPORT graph; the rail reasons over called NAMES and, in the crawl only,
 // over resolved import edges, so the two disagree in a way each label states.

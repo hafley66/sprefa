@@ -62,11 +62,11 @@ plunit:
 # crate; knip cannot see an imported module nothing calls. Each fixture labels
 # every file with what BOTH tools must say, so a rail that drifts either way
 # goes red. budget: measured 12s rust / 20s js (knip resolves through npx).
-ground-truth:
-    {{ capped }} "${GROUND_TRUTH_BUDGET_S:-600}" bash {{ v6 }}/dl/deadcode/ground-truth.sh
+oracle-rustc:
+    {{ capped }} "${ORACLE_BUDGET_S:-600}" bash {{ v6 }}/dl/deadcode/oracle-rustc.sh
 
-ground-truth-js:
-    {{ capped }} "${GROUND_TRUTH_BUDGET_S:-600}" bash {{ v6 }}/dl/deadcode/ground-truth-js.sh
+oracle-knip:
+    {{ capped }} "${ORACLE_BUDGET_S:-600}" bash {{ v6 }}/dl/deadcode/oracle-knip.sh
 
 # scip + diet_scip extractor families smoke: real scip-typescript index
 # through the served engine (SCIP FAMILIES HOLD). budget: measured 9s,

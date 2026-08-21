@@ -138,7 +138,7 @@ export function gen_multi_cyclic(layers: number, width: number, back_stride: num
 }
 
 /**
- * Independent ground truth: after cutting `cut`, which rows are still supported? A row
+ * The independent oracle: after cutting `cut`, which rows are still supported? A row
  * survives iff forward-reachable (over ref-count edges) from a SURVIVING root (a row with no
  * incoming ref-count edge). A dead-simple BFS owing nothing to counting, DRed, dd, or SQLite.
  * Returns encoded survivor keys, sorted ascending (matches the store's `alive_keys`).
