@@ -3,7 +3,7 @@ created: 2026-08-20
 updated: 2026-08-20
 type: feature
 assignee: codex
-status: open
+status: in-progress
 priority: high
 epic: relational-type-schema
 labels:

@@ -1,6 +1,6 @@
 ---
 created: 2026-08-20
-updated: 2026-08-20
+updated: 2026-08-21
 type: epic
 owner: codex
 status: open
@@ -8,6 +8,7 @@ priority: high
 labels:
 - area:dl6
 - intent:type-system
+related: ['@comptime-type-model']
 ---
 
 # Type surface gaps

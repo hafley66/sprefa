@@ -1,10 +1,11 @@
 ---
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-21
 type: epic
 owner: chris
 status: open
 priority: normal
+related: ['@comptime-type-model']
 ---
 
 # Type-plane design session (with Chris in the room)
