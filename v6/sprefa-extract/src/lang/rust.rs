@@ -45,7 +45,7 @@ use crate::seams::{
 };
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
-use crate::types::CfgScope;
+use crate::types::{CfgScope, TestOnlyCall};
 use crate::types::ScipIndex;
 
 // ── span bridge: proc_macro2 line/col -> v6 byte Span ───────────────────────
@@ -1218,8 +1218,15 @@ fn project_call(
     let mut collector = CallCollector {
         line_starts,
         sites: Vec::new(),
+        under_cfg: None,
     };
     syn::visit::visit_file(&mut collector, parsed);
+    for (callee, predicate) in test_only_calls(&collector.sites) {
+        sink.aux.test_only_calls.push(TestOnlyCall {
+            callee: strings.intern(&callee),
+            cfg: strings.intern(&predicate),
+        });
+    }
     for site in collector.sites {
         sink.aux.sites.push(CallSite {
             span: site.span,
@@ -1451,11 +1458,31 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for RustCallDefs<'a> {
     }
 }
 
-/// One collected call site before it is interned into the aux.
+/// One collected call site before it is interned into the aux. `cfg` is the
+/// enclosing cfg predicate naming `test`, at any item depth above the call.
 struct CollectedSite {
     span: Span,
     callee: String,
     callee_path: Option<String>,
+    cfg: Option<String>,
+}
+
+/// The callees this file names ONLY from cfg-guarded sites. One unguarded site
+/// keeps a callee out: the consumer subtracts the NAME, never the site.
+fn test_only_calls(sites: &[CollectedSite]) -> Vec<(String, String)> {
+    let shipped: std::collections::HashSet<&str> = sites
+        .iter()
+        .filter(|site| site.cfg.is_none())
+        .map(|site| site.callee.as_str())
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    sites
+        .iter()
+        .filter_map(|site| site.cfg.as_ref().map(|cfg| (&site.callee, cfg)))
+        .filter(|(callee, _)| !shipped.contains(callee.as_str()))
+        .filter(|(callee, _)| seen.insert(callee.as_str()))
+        .map(|(callee, cfg)| (callee.clone(), cfg.clone()))
+        .collect()
 }
 
 /// Walks the whole file for call expressions (`f(x)`, `recv.m(x)`, `Foo { .. }`).
@@ -1463,9 +1490,21 @@ struct CollectedSite {
 struct CallCollector<'a> {
     line_starts: &'a [u32],
     sites: Vec<CollectedSite>,
+    /// The cfg predicate the walk currently sits under, restored on the way out.
+    under_cfg: Option<String>,
 }
 
 impl<'ast, 'a> syn::visit::Visit<'ast> for CallCollector<'a> {
+    // Every item form reaches this, including one declared inside a fn body, so
+    // a predicate on any ancestor covers the calls beneath it.
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        let outer = self.under_cfg.take();
+        let own = cfg_test_predicate(item_attrs(item));
+        self.under_cfg = outer.clone().or(own);
+        syn::visit::visit_item(self, item);
+        self.under_cfg = outer;
+    }
+
     fn visit_expr(&mut self, expr: &'ast syn::Expr) {
         match expr {
             // `f(args)` / `Foo(args)`: callee is the path's trailing segment.
@@ -1478,6 +1517,7 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for CallCollector<'a> {
                             span: syn_span(self.line_starts, call.func.span()),
                             callee: segment.ident.to_string(),
                             callee_path: (path.path.segments.len() > 1).then_some(path_str),
+                            cfg: self.under_cfg.clone(),
                         });
                     }
                 }
@@ -1489,6 +1529,7 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for CallCollector<'a> {
                     span: syn_span(self.line_starts, call.method.span()),
                     callee: call.method.to_string(),
                     callee_path: None,
+                    cfg: self.under_cfg.clone(),
                 });
                 syn::visit::visit_expr(self, expr);
             }
@@ -1501,6 +1542,7 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for CallCollector<'a> {
                         span: syn_span(self.line_starts, struct_expr.path.span()),
                         callee: segment.ident.to_string(),
                         callee_path: (struct_expr.path.segments.len() > 1).then_some(path_str),
+                        cfg: self.under_cfg.clone(),
                     });
                 }
                 syn::visit::visit_expr(self, expr);

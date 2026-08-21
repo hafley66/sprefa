@@ -2022,6 +2022,40 @@ sites but not against new code. **missing** = nothing.
   in-process; its adapter row is missing`. With all six rows present,
   `sh_spawn` count is 0 and the run is 5.27s.
 
+## 55. A test-only call site voting a module live
+
+- WHAT IT LOOKS LIKE: a dead-code rail agrees with rustc on every file it is
+  shown, and quietly disagrees on the one class rustc is best at. The rail says
+  a module is live, `cargo check` says every function in it is never used, and
+  the two answers are both read as correct because nobody joins them.
+- HOW IT BIT US: 2026-08-21. `dead-module-rail.dl6` subtracted cfg-guarded DEFS
+  (`cfg_def`) so a test helper could not inflate a file's def count, and read
+  every call SITE in the file with no such filter. A module whose only callers
+  sat in another file's `#[cfg(test)] mod tests` read as used-across, so it left
+  the dead bucket. rustc's `dead_code` lint flags exactly that module in a
+  non-test build, so the oracle could see what the rail could not.
+- WHY IT HID: the def plane and the call plane were built at different times and
+  only the def plane learned about cfg. `CallCollector` is one whole-file walk
+  that knew nothing about items, and the fixture crate had a cfg case on the def
+  side (`test_only_defs.rs`) and none on the call side, so the label sheet was
+  green with the defect in place.
+- THE LAW: a filter that lands on one plane of a two-plane rail is half a filter.
+  A cfg predicate decides whether the compiler builds a def AND whether it builds
+  a call, so both planes subtract or neither does. The subtraction stays per
+  SITE: a name called from a test and from shipped code is a shipped call, and a
+  dead-code rail may under-report and must never over-report.
+- THE RAIL: the extractor emits `record=test_only_call` for a callee EVERY site
+  in the file names under a cfg naming `test`, and `call_from` subtracts it.
+  Fail-pre-fix receipt: `v6/dl/deadcode/fixtures/deadcrate/src/called_only_from_tests.rs`,
+  called only from `live_pub.rs`'s test module, read
+  `FAIL called_only_from_tests.rs rail said no, label says yes` plus
+  `FAIL subset rustc flagged but rail missed: called_only_from_tests.rs`.
+  Site-level receipt: `mixed_call_sites.rs` is named by a shipped site and a
+  test site in one caller file; dropping the `shipped` filter from
+  `test_only_calls` (`v6/sprefa-extract/src/lang/rust.rs`) reports it dead.
+  Unit rail: `tests/30_rust_mod_scope_owner.rs`
+  `rust_test_only_callees_leave_out_every_shipped_name`.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |

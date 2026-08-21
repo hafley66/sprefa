@@ -606,6 +606,9 @@ pub struct CallFAux {
     /// Emitted ONLY for guarded defs, so a consumer declaring the `cfg` column
     /// receives exactly the conditional set and nothing else.
     pub cfg_scopes: Vec<CfgScope>,
+    /// One row per callee this file names ONLY from cfg-guarded sites, so a
+    /// consumer can subtract the name and still keep every shipped call.
+    pub test_only_calls: Vec<TestOnlyCall>,
 }
 
 /// A def the compiler only builds under a cfg predicate. Carried so a caller
@@ -614,6 +617,14 @@ pub struct CallFAux {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CfgScope {
     pub span: Span,
+    pub cfg: NameId,
+}
+
+/// A callee EVERY site in this file names under a cfg predicate naming `test`.
+/// One site outside the predicate keeps the callee off this list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TestOnlyCall {
+    pub callee: NameId,
     pub cfg: NameId,
 }
 
@@ -2120,6 +2131,14 @@ pub enum FlatFact {
     CfgScopeOut {
         family: FamilyTag,
         span: SpanOut,
+        cfg: String,
+    },
+    /// CallF test-only callee: a name this file calls from cfg-guarded sites
+    /// ONLY. No span: it is a per-file set row, not a per-occurrence one.
+    #[serde(rename = "test_only_call")]
+    TestOnlyCallOut {
+        family: FamilyTag,
+        callee: String,
         cfg: String,
     },
     /// A Prolog term-occurrence reference: a compound in argument position,

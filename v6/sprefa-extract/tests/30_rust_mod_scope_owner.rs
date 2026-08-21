@@ -30,6 +30,8 @@ const OWNERS_PATH: &str = "tests/fixtures/rust_scopes/impl_owners.rs";
 const OWNERS: &[u8] = include_bytes!("fixtures/rust_scopes/impl_owners.rs");
 const CFG_PATH: &str = "tests/fixtures/rust_scopes/cfg_scopes.rs";
 const CFG: &[u8] = include_bytes!("fixtures/rust_scopes/cfg_scopes.rs");
+const CALL_SITES_PATH: &str = "tests/fixtures/rust_scopes/cfg_call_sites.rs";
+const CALL_SITES: &[u8] = include_bytes!("fixtures/rust_scopes/cfg_call_sites.rs");
 
 /// A callable declared inside an inline `mod` is a def of the file. The site half
 /// already walks those bodies, so without this the extractor reports uses whose
@@ -217,5 +219,42 @@ fn rust_cfg_test_defs_are_marked_wherever_the_predicate_sits() {
             "guarded_by_an_ancestor",
             "guarded_by_an_any_arm",
         ])
+    );
+}
+
+/// A callee named ONLY from cfg-guarded sites, at any item depth, with every
+/// shipped name left out. `shared_step` is called from a test AND from a
+/// shipped fn, so it must NOT appear: the consumer subtracts the name, and a
+/// file naming it in both places stays a caller of it. `only_shipped` is called
+/// from a `feature = "testing"` fn, which is not a test cfg, so it ships too.
+///
+/// FAIL-FIRST RECEIPT, before the site plane read cfg at all:
+///   left: {}, right: {("deeply_tested", "test"), ("only_tested", "test")}
+///
+/// SABOTAGE RECEIPT: dropping the `shipped` filter in `test_only_calls` adds
+/// ("shared_step", "test") to the left side, and the dead-module rail then
+/// reports mixed_call_sites.rs dead against two shipped call sites
+/// (`v6/dl/deadcode/ground-truth.sh`). Dropping the `visit_item` override
+/// empties the left side.
+#[test]
+fn rust_test_only_callees_leave_out_every_shipped_name() {
+    let output = RustSource.extract(CALL_SITES_PATH, CALL_SITES, FamilyMask::ALL);
+    let call = output.call.as_ref().unwrap();
+
+    let guarded: BTreeSet<(&str, &str)> = call
+        .aux
+        .test_only_calls
+        .iter()
+        .map(|row| {
+            (
+                output.strings.lookup(row.callee),
+                output.strings.lookup(row.cfg),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        guarded,
+        BTreeSet::from([("deeply_tested", "test"), ("only_tested", "test")])
     );
 }

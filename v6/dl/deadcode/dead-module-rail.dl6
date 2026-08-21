@@ -82,10 +82,21 @@ def_site(Path, Name, At) <-
   not(cfg_def(Path, At)).
 
 # ── the call plane ──────────────────────────────────────────────────────────
+# A call site the compiler only builds for tests is not a use of the module it
+# names: rustc's dead_code lint fires on exactly this file in a `cargo check`.
+# The record is emitted ONLY for a callee every site in the file names under a
+# cfg predicate naming `test`, so subtracting the NAME here is still a per-SITE
+# filter: one shipped site anywhere in the file keeps the callee off the row.
+rel test_only_call(path: text, callee: text).
+test_only_call(Path, Callee) <-
+  source_file(Path, Digest),
+  extract(Path, Digest, 'test_only_call', 'call', Callee).
+
 rel call_from(path: text, callee: text).
 call_from(Path, Callee) <-
   source_file(Path, Digest),
-  extract(Path, Digest, 'site', 'call', Callee).
+  extract(Path, Digest, 'site', 'call', Callee),
+  not(test_only_call(Path, Callee)).
 
 # ── the import plane ────────────────────────────────────────────────────────
 

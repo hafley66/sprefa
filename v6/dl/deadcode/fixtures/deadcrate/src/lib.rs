@@ -10,6 +10,8 @@ pub mod test_only_defs;
 mod live_private;
 mod dead_private;
 mod dead_trait_impls;
+mod called_only_from_tests;
+mod mixed_call_sites;
 
 use live_trait_impls::{Paint, Red};
 use ambiguous_owner::Widget;
