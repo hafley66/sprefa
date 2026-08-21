@@ -7,8 +7,15 @@
             reset_step_trace/0,
             record_step/3,
             collected_steps/1,
-            write_step_trace/2
+            write_step_trace/2,
+            run_compile_step/4,
+            capture_phase_measurement/2,
+            statistics_snapshot/1,
+            zero_phase_measurement/1
           ]).
+
+:- use_module(library(tableutil), [table_statistics/2]).
+:- meta_predicate run_compile_step(+, +, 0, -).
 
 :- use_module(library(lists)).
 :- use_module(library(http/json), [json_write_dict/3]).
@@ -141,3 +148,78 @@ trace_dict(Name, PhaseMeasurements, Steps, Dict) :-
             StepDicts),
     get_time(Now),
     Dict = _{program: Name, at: Now, phases: PhaseDicts, steps: StepDicts}.
+
+% ONE step of a phase, timed and recorded when the trace is on. It lives here
+% rather than in compile.pl so lower.pl can wrap its own steps: compile.pl
+% imports lower, so the other direction is a module cycle.
+%
+% call/1 on BOTH arms, never measure_phase/3's once/1: a step that leaves a
+% choice point must keep it, or a traced compile answers a different program
+% from an untraced one. A step backtracked into records one row per solution.
+run_compile_step(Phase, Step, Goal, Measurement) :-
+    (   dl6_trace_on
+    ->  statistics_snapshot(Before),
+        call(Goal),
+        capture_phase_measurement(Before, Measurement),
+        record_step(Phase, Step, Measurement)
+    ;   zero_phase_measurement(Measurement),
+        call(Goal)
+    ).
+
+capture_phase_measurement(Before, Measurement) :-
+    statistics_snapshot(After),
+    statistics_delta(Before, After,
+                     WallMs, CpuMs, Inferences,
+                     GcCount, GcReclaimedBytes, GcMs, GcLeftBytes,
+                     TableCount, TableAnswers, TableReuses,
+                     TableSpaceBytes, TableCompiledSpaceBytes),
+    Measurement = measurement(
+        WallMs, CpuMs, Inferences,
+        GcCount, GcReclaimedBytes, GcMs, GcLeftBytes,
+        TableCount, TableAnswers, TableReuses,
+        TableSpaceBytes, TableCompiledSpaceBytes).
+
+statistics_snapshot(
+        stats(CpuSeconds, Inferences, WallMilliseconds,
+              GcCount, GcReclaimedBytes, GcMilliseconds, GcLeftBytes,
+              TableCount, TableAnswers, TableReuses,
+              TableSpaceBytes, TableCompiledSpaceBytes)) :-
+    statistics(cputime, CpuSeconds),
+    statistics(inferences, Inferences),
+    statistics(walltime, [WallMilliseconds, _SinceLast]),
+    statistics(garbage_collection,
+               [GcCount, GcReclaimedBytes, GcMilliseconds, GcLeftBytes]),
+    table_statistics(tables, TableCount),
+    table_statistics(answers, TableAnswers),
+    table_statistics(complete_call, TableReuses),
+    table_statistics(space, TableSpaceBytes),
+    table_statistics(compiled_space, TableCompiledSpaceBytes).
+
+statistics_delta(
+        stats(Cpu0, Inf0, Wall0, GcCount0, GcBytes0, GcMs0, _GcLeft0,
+              TableCount0, TableAnswers0, TableReuses0,
+              TableSpace0, TableCompiledSpace0),
+        stats(Cpu1, Inf1, Wall1, GcCount1, GcBytes1, GcMs1, GcLeft1,
+              TableCount1, TableAnswers1, TableReuses1,
+              TableSpace1, TableCompiledSpace1),
+        WallMs, CpuMs, Inferences,
+        GcCount, GcReclaimedBytes, GcMs, GcLeft1,
+        TableCount, TableAnswers, TableReuses,
+        TableSpaceBytes, TableCompiledSpaceBytes) :-
+    round_two(Wall1 - Wall0, WallMs),
+    round_two((Cpu1 - Cpu0) * 1000, CpuMs),
+    Inferences is Inf1 - Inf0,
+    GcCount is GcCount1 - GcCount0,
+    GcReclaimedBytes is GcBytes1 - GcBytes0,
+    GcMs is GcMs1 - GcMs0,
+    TableCount is TableCount1 - TableCount0,
+    TableAnswers is TableAnswers1 - TableAnswers0,
+    TableReuses is TableReuses1 - TableReuses0,
+    TableSpaceBytes is TableSpace1 - TableSpace0,
+    TableCompiledSpaceBytes is TableCompiledSpace1 - TableCompiledSpace0.
+
+round_two(Value, Rounded) :-
+    Rounded is round(Value * 100) / 100.
+
+zero_phase_measurement(
+        measurement(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)).

@@ -547,6 +547,10 @@ pub fn run_capped(argv: &[&str], cwd: &Path, log_dir: &Path) -> Capped {
     ) else {
         return Capped::NotLaunched;
     };
+    // Every spawn is visible: an indexer run is the one operation allowed past
+    // the ten-second law, so its wall must be attributable to a named process.
+    let span = tracing::warn_span!("process_spawn", bin = program, args = args.len());
+    let _entered = span.enter();
     let mut command = std::process::Command::new(program);
     command
         .args(args)
@@ -572,6 +576,7 @@ pub fn run_capped(argv: &[&str], cwd: &Path, log_dir: &Path) -> Capped {
             Err(_) => return Capped::NotLaunched,
         }
         if Instant::now() >= deadline {
+            tracing::warn!(pid, secs = budget.secs, "indexer exceeded its budget; sending SIGKILL to its process group");
             kill_process_group(pid);
             let _ = child.kill();
             let _ = child.wait();
@@ -598,6 +603,8 @@ fn new_process_group(_command: &mut std::process::Command) {}
 /// dependency, and adding one for a single signal is not a trade worth making.
 #[cfg(unix)]
 fn kill_process_group(pid: u32) {
+    let span = tracing::warn_span!("process_spawn", bin = "kill", args = 2);
+    let _entered = span.enter();
     let _ = std::process::Command::new("kill")
         .args(["-9", &format!("-{pid}")])
         .stdout(std::process::Stdio::null())

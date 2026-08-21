@@ -188,6 +188,9 @@
                 relation_value_term/4, canonical_json_text/2 ]).
 :- use_module('0_body_walk', [walk_body/3, body_relation_atoms/4]).
 :- use_module('conformance/body', [rel_ref/2]).
+% run_compile_step/4 lives in 0_trace, never compile.pl: compile.pl imports
+% this module, so importing it from there is a cycle.
+:- use_module('compile/0_trace', [run_compile_step/4]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -6879,24 +6882,32 @@ lower_program_in_context(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans,
     findall(LevelHeadedRef,
             ( member(LevelRule, RuleOrder), rule_head_ref(LevelRule, LevelHeadedRef) ),
             LevelHeadedRefs),
-    maplist(rel_ddl(Mode, LoweringTypes, EdgeHeadedRefs, ArrivalTargets,
-                    LevelHeadedRefs),
-            RelPlans, RelationDdlGroups),
-    listened_departure_refs(Rules, DepartureRefs),
-    maplist(delta_ddl(Mode, DepartureRefs), RelPlans, DeltaDdlGroups),
+    run_compile_step(lower, rel_ddl,
+        maplist(rel_ddl(Mode, LoweringTypes, EdgeHeadedRefs, ArrivalTargets,
+                        LevelHeadedRefs),
+                RelPlans, RelationDdlGroups), _),
+    run_compile_step(lower, listened_departure_refs,
+        listened_departure_refs(Rules, DepartureRefs), _),
+    run_compile_step(lower, delta_ddl,
+        maplist(delta_ddl(Mode, DepartureRefs), RelPlans, DeltaDdlGroups), _),
     append(RelationDdlGroups, RelationDdl0),
-    list_view_ddls(Mode, RelPlans, ListViewDdl),
+    run_compile_step(lower, list_view_ddls,
+        list_view_ddls(Mode, RelPlans, ListViewDdl), _),
     append(RelationDdl0, ListViewDdl, RelationDdl),
     append(DeltaDdlGroups, DeltaDdl),
     include(arrival_target_relplan(ArrivalTargets), RelPlans, ArrivalRelPlans),
-    maplist(arrival_statement, ArrivalRelPlans, ArrivalStatements),
+    run_compile_step(lower, arrival_statement,
+        maplist(arrival_statement, ArrivalRelPlans, ArrivalStatements), _),
     % One rule may lower to MULTIPLE edgestmt entries now (an unmarked or
     % sampled conjunction with N trigger atoms produces N arms), so this
     % maplist collects a GROUP per rule and flattens, rather than assuming
     % one-to-one.
-    maplist(check_edge_rule_relation_values(LoweringTypes, RelPlans), EdgeRules),
-    maplist(edge_statements_for_rule(Mode, EdgeHeadedRefs, RelPlans), EdgeRules,
-            EdgeStatementGroups),
+    run_compile_step(lower, check_edge_rule_relation_values,
+        maplist(check_edge_rule_relation_values(LoweringTypes, RelPlans),
+                EdgeRules), _),
+    run_compile_step(lower, edge_statements_for_rule,
+        maplist(edge_statements_for_rule(Mode, EdgeHeadedRefs, RelPlans),
+                EdgeRules, EdgeStatementGroups), _),
     append(EdgeStatementGroups, EdgeStatements),
     % STRUCT-AS-ROWS: level bodies are compiled against RelPlans PLUS the
     % dictionary plans, and with decode/2 already rewritten into dictionary
@@ -6905,23 +6916,31 @@ lower_program_in_context(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans,
     % is Edge 2 enforced by construction rather than by a filter someone can
     % forget: a dictionary has no delta table to report and no name the tick
     % log can reach.
-    dictionary_relplans(LoweringTypes, DictionaryRelPlans),
+    run_compile_step(lower, dictionary_relplans,
+        dictionary_relplans(LoweringTypes, DictionaryRelPlans), _),
     append(DictionaryRelPlans, RelPlans, BodyRelPlans),
     % Relation TERMS become dictionary atoms before decode/2 does, so a
     % variable this pass introduces is already a legal decode source when
     % decode_binding_type/5 goes looking for one. The reverse order would make
     % the two spellings non-composable for no reason.
-    expand_relation_pattern_rules(LoweringTypes, BodyRelPlans, RuleOrder,
-                                  PatternedRuleOrder),
-    expand_decode_rules(LoweringTypes, BodyRelPlans, PatternedRuleOrder,
-                        DecodedRuleOrder),
-    level_statement_groups(Mode, BodyRelPlans, DecodedRuleOrder,
-                           RuleLevelStatements),
-    retention_statements(Decls, RelPlans, RetentionStatements),
+    run_compile_step(lower, expand_relation_pattern_rules,
+        expand_relation_pattern_rules(LoweringTypes, BodyRelPlans, RuleOrder,
+                                      PatternedRuleOrder), _),
+    run_compile_step(lower, expand_decode_rules,
+        expand_decode_rules(LoweringTypes, BodyRelPlans, PatternedRuleOrder,
+                            DecodedRuleOrder), _),
+    run_compile_step(lower, level_statement_groups,
+        level_statement_groups(Mode, BodyRelPlans, DecodedRuleOrder,
+                               RuleLevelStatements), _),
+    run_compile_step(lower, retention_statements,
+        retention_statements(Decls, RelPlans, RetentionStatements), _),
     append(RuleLevelStatements, RetentionStatements, LevelStatements),
-    maplist(ref_count_ddl(Mode, RelPlans), RuleLevelStatements, RefCountDdlGroups),
-    maplist(aggregate_scope_ddl(Mode), RuleLevelStatements,
-            AggregateScopeDdlGroups),
+    run_compile_step(lower, ref_count_ddl,
+        maplist(ref_count_ddl(Mode, RelPlans), RuleLevelStatements,
+                RefCountDdlGroups), _),
+    run_compile_step(lower, aggregate_scope_ddl,
+        maplist(aggregate_scope_ddl(Mode), RuleLevelStatements,
+                AggregateScopeDdlGroups), _),
     append(RefCountDdlGroups, RefCountDdl),
     append(AggregateScopeDdlGroups, AggregateScopeDdl),
     findall(PreRef,
@@ -6929,7 +6948,8 @@ lower_program_in_context(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans,
               level_body_pre_ref(EdgeBody, PreRef) ),
             PreRefs0),
     sort(PreRefs0, PreRefs),
-    maplist(pre_ddl(Mode, RelPlans), PreRefs, PreDdl),
+    run_compile_step(lower, pre_ddl,
+        maplist(pre_ddl(Mode, RelPlans), PreRefs, PreDdl), _),
     program_uses_tick(prog(Decls, Rules), UsesTick),
     ( UsesTick == true -> tick_table_ddl(TickDdl) ; TickDdl = [] ),
     program_uses_catalog(prog(Decls, Rules), UsesCatalog),
@@ -6943,15 +6963,19 @@ lower_program_in_context(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans,
     % STRUCT-AS-ROWS: the dictionaries come FIRST in the DDL list, in
     % topological order, so a program's storage plane exists before any table
     % whose columns point into it.
-    program_intern_ddl(Mode, RelPlans, InternDdl),
-    maplist(delta_statement(Mode), RelPlans, DeltaStatements),
-    acyclic_guard_ddl(Decls, RelPlans, AcyclicDdl),
+    run_compile_step(lower, program_intern_ddl,
+        program_intern_ddl(Mode, RelPlans, InternDdl), _),
+    run_compile_step(lower, delta_statement,
+        maplist(delta_statement(Mode), RelPlans, DeltaStatements), _),
+    run_compile_step(lower, acyclic_guard_ddl,
+        acyclic_guard_ddl(Decls, RelPlans, AcyclicDdl), _),
     append([RelationDdl, AcyclicDdl, DeltaDdl, RefCountDdl, AggregateScopeDdl,
             PreDdl, TickDdl, CatalogTableDdl, CatalogRowDdl], BodyDdl),
-    literal_seed_ddl(Mode,
-                     seeded(BodyDdl, ArrivalStatements, EdgeStatements,
-                            LevelStatements, DeltaStatements),
-                     SeedDdl),
+    run_compile_step(lower, literal_seed_ddl,
+        literal_seed_ddl(Mode,
+                         seeded(BodyDdl, ArrivalStatements, EdgeStatements,
+                                LevelStatements, DeltaStatements),
+                         SeedDdl), _),
     ( frontier_mode(shared) -> shared_frontier_ddl(SharedDdl) ; SharedDdl = [] ),
     append([InternDdl, SeedDdl, SharedDdl, BodyDdl], Ddl).
 
@@ -7129,9 +7153,13 @@ boot_statements(Mode, Decls, Types, RelPlans, Initial, LevelStatements,
 
 boot_statements_in_context(Mode, Decls, Types, RelPlans, Initial, LevelStatements,
                 BootStatements) :-
-    maplist(boot_seed_statement_for(Mode, Decls, Types, Initial), RelPlans, SeedGroups),
+    run_compile_step(boot, boot_seed_statement_for,
+        maplist(boot_seed_statement_for(Mode, Decls, Types, Initial),
+                RelPlans, SeedGroups), _),
     append(SeedGroups, SeedStatements),
-    boot_level_recompute_statements(LevelStatements, LevelBootStatements),
+    run_compile_step(boot, boot_level_recompute_statements,
+        boot_level_recompute_statements(LevelStatements,
+                                        LevelBootStatements), _),
     append(SeedStatements, LevelBootStatements, BootStatements).
 
 boot_seed_statement_for(Mode, Decls, Types, Initial, RelPlan, Statements) :-

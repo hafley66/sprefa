@@ -61,7 +61,9 @@
 :- use_module('0_rel_record', [rel_cols/4]).
 :- use_module('compile/0_trace',
               [ dl6_trace_on/0, reset_step_trace/0, record_step/3,
-                write_step_trace/2 ]).
+                write_step_trace/2, run_compile_step/4,
+                capture_phase_measurement/2, statistics_snapshot/1,
+                zero_phase_measurement/1 ]).
 :- use_module('0_generic_expand', [generated_generic_name/1]).
 :- use_module(compile_messages,
               [ dl6_debug/3, dl6_debugging/1, dl6_reset_checkpoint/0,
@@ -884,21 +886,6 @@ phase_wall_debug(Phase, measurement(WallMs, _, Inferences, _, _, _, _, _, _, _,
                                     _, _)) :-
     dl6_debug(Phase, "done wall=~wms inferences=~w", [WallMs, Inferences]).
 
-:- meta_predicate run_compile_step(+, +, 0, -).
-
-% call/1 on BOTH arms, never measure_phase/3's once/1: a plan step that leaves a
-% choice point must keep it, or a traced compile answers a different program
-% from an untraced one. A step backtracked into records one row per solution.
-run_compile_step(Phase, Step, Goal, Measurement) :-
-    (   dl6_trace_on
-    ->  statistics_snapshot(Before),
-        call(Goal),
-        capture_phase_measurement(Before, Measurement),
-        record_step(Phase, Step, Measurement)
-    ;   zero_phase_measurement(Measurement),
-        call(Goal)
-    ).
-
 % Every count below walks a list, so each one is computed only under its own
 % topic; the phase begin/done lines carry the checkpoint when they are off.
 parse_debug(Prog, Findings) :-
@@ -967,64 +954,6 @@ restore_phase_outcome(failed) :-
     fail.
 restore_phase_outcome(error(Error)) :-
     throw(Error).
-
-capture_phase_measurement(Before, Measurement) :-
-    statistics_snapshot(After),
-    statistics_delta(Before, After,
-                     WallMs, CpuMs, Inferences,
-                     GcCount, GcReclaimedBytes, GcMs, GcLeftBytes,
-                     TableCount, TableAnswers, TableReuses,
-                     TableSpaceBytes, TableCompiledSpaceBytes),
-    Measurement = measurement(
-        WallMs, CpuMs, Inferences,
-        GcCount, GcReclaimedBytes, GcMs, GcLeftBytes,
-        TableCount, TableAnswers, TableReuses,
-        TableSpaceBytes, TableCompiledSpaceBytes).
-
-statistics_snapshot(
-        stats(CpuSeconds, Inferences, WallMilliseconds,
-              GcCount, GcReclaimedBytes, GcMilliseconds, GcLeftBytes,
-              TableCount, TableAnswers, TableReuses,
-              TableSpaceBytes, TableCompiledSpaceBytes)) :-
-    statistics(cputime, CpuSeconds),
-    statistics(inferences, Inferences),
-    statistics(walltime, [WallMilliseconds, _SinceLast]),
-    statistics(garbage_collection,
-               [GcCount, GcReclaimedBytes, GcMilliseconds, GcLeftBytes]),
-    table_statistics(tables, TableCount),
-    table_statistics(answers, TableAnswers),
-    table_statistics(complete_call, TableReuses),
-    table_statistics(space, TableSpaceBytes),
-    table_statistics(compiled_space, TableCompiledSpaceBytes).
-
-statistics_delta(
-        stats(Cpu0, Inf0, Wall0, GcCount0, GcBytes0, GcMs0, _GcLeft0,
-              TableCount0, TableAnswers0, TableReuses0,
-              TableSpace0, TableCompiledSpace0),
-        stats(Cpu1, Inf1, Wall1, GcCount1, GcBytes1, GcMs1, GcLeft1,
-              TableCount1, TableAnswers1, TableReuses1,
-              TableSpace1, TableCompiledSpace1),
-        WallMs, CpuMs, Inferences,
-        GcCount, GcReclaimedBytes, GcMs, GcLeft1,
-        TableCount, TableAnswers, TableReuses,
-        TableSpaceBytes, TableCompiledSpaceBytes) :-
-    round_two(Wall1 - Wall0, WallMs),
-    round_two((Cpu1 - Cpu0) * 1000, CpuMs),
-    Inferences is Inf1 - Inf0,
-    GcCount is GcCount1 - GcCount0,
-    GcReclaimedBytes is GcBytes1 - GcBytes0,
-    GcMs is GcMs1 - GcMs0,
-    TableCount is TableCount1 - TableCount0,
-    TableAnswers is TableAnswers1 - TableAnswers0,
-    TableReuses is TableReuses1 - TableReuses0,
-    TableSpaceBytes is TableSpace1 - TableSpace0,
-    TableCompiledSpaceBytes is TableCompiledSpace1 - TableCompiledSpace0.
-
-round_two(Value, Rounded) :-
-    Rounded is round(Value * 100) / 100.
-
-zero_phase_measurement(
-        measurement(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)).
 
 write_compile_trace(Name, PhaseMeasurements) :-
     phase_trace_measurement(PhaseMeasurements, parse, ParseMeasurement),
