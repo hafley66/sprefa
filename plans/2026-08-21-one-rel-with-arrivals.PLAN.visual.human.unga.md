@@ -207,3 +207,22 @@ hand-written file watcher until the library options are priced in writing.
 4. **The fixture answers.** One kind of test host answers by having its answer
    written inside the template string. With no template, that answer has to
    move into the sidecar. Move it, or leave those tests on the old spelling?
+
+## 10. What the lane did with the four questions (2026-08-21, brief-directed)
+
+The arrivals-and-ticks brief said: pick the reading where a rel with outside
+rows is still just a rel, write it into rulings.pl, keep going. The picks:
+
+| question | pick | ruling row |
+|---|---|---|
+| the arrow | a `( name :` group after `->` IS the response column list | arrival_arrow_spelling |
+| key() twice | on an arrival rel, key() = which inputs identify the answer | arrival_identity_spelling |
+| sh and bind | dead now, not later; old text answers `removed_word` | sh_bind_surface_removed |
+| fixture answers | a canned answer is an arrival batch (`--arrive` / schedule) | fixture_answers_are_arrivals |
+
+One NEW question came out of the batching work and waits on you, in plain
+words: six endpoints can fold into one demand through `json_group_array`, and
+the executor half is built and count-tested (6 endpoints, 1 call). What blocks
+the language half is that the reference engine cannot spell a json value
+inside a witness digest, while the SQL door can. Section 14 of the PLAN has
+the two throw sites and the two ways out.
