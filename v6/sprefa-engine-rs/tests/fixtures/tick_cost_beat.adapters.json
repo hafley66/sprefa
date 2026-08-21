@@ -1,0 +1,7 @@
+[
+  {
+    "adapter": "dl_tick_cost",
+    "demand_rel": "__host_demand_cost",
+    "response_rel": "__host_response_cost"
+  }
+]

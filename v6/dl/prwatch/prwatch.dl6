@@ -1,0 +1,102 @@
+# @comment-ok: the program's contract, the one doc site for its rels and rx shape.
+# prwatch.dl6 -- pull requests watched live, their state tracked over time, and
+# the cost of watching them measured in the same fold.
+#
+# `dl6 run v6/dl/prwatch/prwatch.dl6 --db ~/.agent/prwatch.db` stays resident
+# because `bind interval` is a continuing source; nothing on the command line
+# says so. The `sh` bodies are inert: prwatch.adapters.json routes both hosts to
+# linked executors, so no shell runs.
+#
+# rx: timer(0, 60_000).pipe(
+#       map(() => Math.floor(Date.now()/1000/60)),
+#       concatMap(bucket => forkJoin(pulls(repo, bucket), cost(bucket))),
+#       scan((held, seen) => upsertByNumber(held, seen)))
+
+bind interval(period: int, bucket: int).
+
+rel repo(slug: text).
+repo("hafley66/sprefa").
+
+# A merged pull whose head branch carries one of these is a lane's own work, so
+# `lane_proof` is the receipt that a dispatched lane's commits reached main.
+rel lane_prefix(prefix: text).
+lane_prefix("feature/").
+lane_prefix("fix/").
+lane_prefix("plan/").
+
+# `{bucket}` salts the demand digest so a new cadence turn is a new witness and
+# the host re-asks; the executor ignores the column.
+sh pulls(repo_slug: text, bucket: int) ->
+  (number: int, title: text, head_ref: text, head_sha: text, state: text,
+   merged_at: text, merged_sha: text, updated_at: text, mergeable: text,
+   review_decision: text) =
+  `gh_pulls {repo_slug} at {bucket}`.
+
+sh cost(bucket: int) ->
+  (executor: text, wall_ms: int, sqlite_ms: int, calls: int, rows_out: int,
+   bytes: int, rss_kb: int) =
+  `dl_tick_cost {bucket}`.
+
+rel poll(slug: text, bucket: int).
+poll(Slug, Bucket) <- repo(Slug), interval(60, Bucket).
+
+rel observed(bucket: int, number: int, title: text, head_ref: text,
+             head_sha: text, state: text, merged_at: text, merged_sha: text,
+             updated_at: text, mergeable: text, review_decision: text).
+observed(Bucket, Number, Title, HeadRef, HeadSha, State, MergedAt, MergedSha,
+         UpdatedAt, Mergeable, ReviewDecision) <-
+  poll(Slug, Bucket),
+  pulls(Slug, Bucket, Number, Title, HeadRef, HeadSha, State, MergedAt,
+        MergedSha, UpdatedAt, Mergeable, ReviewDecision).
+
+# Every state this watcher ever saw, one row per (pull, tick).
+rel pr_event(bucket: int, number: int, state: text, head_ref: text,
+             head_sha: text, merged_sha: text, updated_at: text,
+             mergeable: text, review_decision: text) log keep(all).
+pr_event(Bucket, Number, State, HeadRef, HeadSha, MergedSha, UpdatedAt,
+         Mergeable, ReviewDecision) <+
+  observed(Bucket, Number, _Title, HeadRef, HeadSha, State, _MergedAt,
+           MergedSha, UpdatedAt, Mergeable, ReviewDecision).
+
+# `pre/1` is the grade -1 read: without it `pr_state` reaches this rule at two
+# clock offsets from one origin (3_clock_check.pl:336, clock_path_conflict).
+rel pr_transition(number: int, from_state: text, to_state: text,
+                  at_bucket: int) log keep(all).
+pr_transition(Number, FromState, ToState, Bucket) <+
+  observed(Bucket, Number, _Title, _HeadRef, _HeadSha, ToState, _MergedAt,
+           _MergedSha, _UpdatedAt, _Mergeable, _ReviewDecision),
+  pre(pr_state(Number, FromState, _Ref, _Sha, _Merged, _Held, _Seen)),
+  FromState \== ToState.
+
+rel pr_state(number: int, state: text, head_ref: text, head_sha: text,
+             merged_sha: text, title: text, updated_at: text) key(1).
+pr_state(Number, State, HeadRef, HeadSha, MergedSha, Title, UpdatedAt) <+
+  observed(_Bucket, Number, Title, HeadRef, HeadSha, State, _MergedAt,
+           MergedSha, UpdatedAt, _Mergeable, _ReviewDecision).
+
+# `instr(Ref, Prefix) == 1` is starts-with: the language has no prefix operator
+# and instr answers the 1-based position of the first occurrence.
+rel lane_proof(branch: text, pr: int, merged_sha: text).
+lane_proof(HeadRef, Number, MergedSha) <-
+  pr_state(Number, State, HeadRef, _HeadSha, MergedSha, _Title, _UpdatedAt),
+  State == "MERGED",
+  lane_prefix(Prefix),
+  instr(HeadRef, Prefix) == 1.
+
+# The engine measuring itself in the fold it is measuring: one row per trace
+# label per tick plus a `wall` row carrying the bytes that crossed the wire.
+rel measured(bucket: int, executor: text, wall_ms: int, sqlite_ms: int,
+             calls: int, rows_out: int, bytes: int, rss_kb: int).
+measured(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <-
+  interval(60, Bucket),
+  cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb).
+
+rel tick_cost(bucket: int, executor: text, wall_ms: int, sqlite_ms: int,
+              calls: int, rows_out: int, bytes: int, rss_kb: int) log keep(all).
+tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <+
+  measured(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb).
+
+? lane_proof(branch, pr, merged_sha).
+? pr_transition(number, from_state, to_state, at_bucket).
+? tick_cost(bucket, executor, wall_ms, sqlite_ms, calls, rows_out, bytes, rss_kb).
+? pr_state(number, state, head_ref, head_sha, merged_sha, title, updated_at).

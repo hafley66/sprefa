@@ -38,8 +38,8 @@ pub trait IHostExecutor: Sync {
 
 /// The SAME slash paths as registry.pl's arrival_executor/2 rows (ruling
 /// executor_namespacing), pinned equal by executor_roster_matches_registry.
-pub const LINKED_EXECUTORS: &str = "/soopy/files, /soopy/stage, /soopy/commit, \
-     /soopy/refs, /soopy/history, /soopy/repo_at, /soopy/checkout, \
+pub const LINKED_EXECUTORS: &str = "/soopy/files, /soopy/files_at, /soopy/stage, \
+     /soopy/commit, /soopy/refs, /soopy/history, /soopy/repo_at, /soopy/checkout, \
      /soopy/mirror_pr_heads, /soopy/dep_crawl, /extract/records, \
      /extract/repo_records, /extract/call_node, /extract/call_node_at, \
      /extract/call_ref, /extract/cfg_at, /extract/specifier_at, \
@@ -47,7 +47,7 @@ pub const LINKED_EXECUTORS: &str = "/soopy/files, /soopy/stage, /soopy/commit, \
      /extract/df_edge_at, /extract/df_param_at, /extract/df_arg_at, \
      /extract/data_doc_at, /extract/comment_fact, /extract/ast_rule, /scip/call, \
      /scip/type, /scip/diet/call, /scip/diet/type, /cargo/targets, /http/fetch, \
-     /gh/repos, /gh/rest_cond, /env/var, /toml/json";
+     /gh/repos, /gh/rest_cond, /gh/pulls, /env/var, /toml/json, /dl/tick_cost";
 
 static GIT_REFS: LazyLock<crate::executors::git_refs::GitRefsExecutor> =
     LazyLock::new(crate::executors::git_refs::GitRefsExecutor::new);
@@ -60,7 +60,7 @@ static DEP_CRAWL: LazyLock<crate::executors::dep_crawl::DepCrawlExecutor> =
 
 pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
     match execution {
-        // The extract.* questions share the in-process extractor; each rel
+        // The /extract/* questions share the in-process extractor; each rel
         // selects its own rows out of the one stream by column presence.
         "/extract/records" | "/extract/repo_records" | "/extract/call_node"
         | "/extract/call_node_at" | "/extract/call_ref" | "/extract/cfg_at"
@@ -69,11 +69,19 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
         | "/extract/df_arg_at" | "/extract/data_doc_at"
         | "/extract/comment_fact" => Some(&*EXTRACT),
         "/extract/ast_rule" => Some(&AstRuleExecutor),
-        "/soopy/files" => Some(&SoopyFilesExecutor),
+        // Two names, one executor: files_revision/2 reads which revision the
+        // name asks for, so a worktree read and a pinned read cannot collide.
+        "/soopy/files" | "/soopy/files_at" => Some(&SoopyFilesExecutor),
         "/soopy/stage" | "/soopy/commit" => Some(&SoopyMutationExecutor),
+        // The ghcacher five, all linked: HTTP, the process env table, the two
+        // GitHub REST walks, an existing checkout, and a TOML document.
         "/http/fetch" | "/gh/rest_cond" => Some(&crate::executors::HttpFetchExecutor),
         "/env/var" => Some(&crate::executors::EnvExecutor),
         "/gh/repos" => Some(&crate::executors::GhReposExecutor),
+        "/gh/pulls" => Some(&crate::executors::GhPullsExecutor),
+        // The engine measuring itself: the trace table and the resident set, as
+        // rows the same fold folds.
+        "/dl/tick_cost" => Some(&crate::executors::TickCostExecutor),
         "/soopy/checkout" | "/soopy/mirror_pr_heads" => {
             Some(&crate::executors::SoopyCheckoutExecutor)
         }
@@ -283,12 +291,53 @@ fn decode_content_id(host: &str, digest: &str) -> Result<AstRuleInput, HostError
     )))
 }
 
-/// Linked executor for the tracked-file surface: a pathspec in, one
-/// `{path, digest}` row per tracked file out.
-///
-/// Soopy enumerates a pathspec and batch-hashes the worktree through one
-/// `git hash-object --stdin-paths`, so no temp file lines the two streams up.
+// @comment-ok: the single-repository file surface's contract, its one doc site.
+//
+// TWO NAMES AND THE REVISION IS IN THE NAME (ruling `files_naming =
+// files_unmarked_worktree_marked_rev`, rulings.pl:544). No column carries
+// "which revision" because this language has no nulls and spells optionality as
+// variants:
+//
+//   files(glob)          the worktree
+//   files_at(rev, glob)  a pinned revision
+//
+// The repo-scoped twins are their own hosts by the same ruling line
+// (`repo_column_spelling = distinct_name_hosts`, rulings.pl:559) and live in
+// `executors/repo_at.rs`.
+//
+// THE WITNESS IS WHY THE PINNED NAMES EXIST. A host witness is
+// content-addressed over its input columns, so `files` caches for the life of
+// the db and worktree freshness is the watcher's job; a `_at` answer is keyed by
+// a rev whose tree never changes, so it caches forever and correctly.
+//
+// EVERY NAME ANSWERS A BLOB OID because all four ride the `git_files` door:
+// worktree bytes go through one `git hash-object --stdin-paths`, a commit
+// through one `git cat-file --batch-check`. A worktree oid names bytes
+// `hash-object` never wrote to the object database, which is why `read_blob`
+// falls back to the file and re-hashes. The FILESYSTEM walk is a different door
+// (`soopy::SourceTree::enumerate`), it answers `ContentId::Blake3`, and nothing
+// here reaches it.
 pub struct SoopyFilesExecutor;
+
+/// The revision each name walks. The name is the marker, so a name off this
+/// roster is a stop and never a worktree fallback.
+fn files_revision(host: &str, env: &BTreeMap<String, String>) -> Result<soopy::Revision, HostError> {
+    // `host` is the plan name, so it is module_path_name/2's `__` join of the
+    // declaration's path: `/soopy/files` arrives here as `soopy__files`.
+    match host {
+        "soopy__files" => Ok(soopy::Revision::Worktree),
+        "soopy__files_at" => Ok(crate::change_facts::parse_revision(&required_input(
+            host, env, "rev",
+        )?)),
+        other => Err(HostError {
+            host: host.to_string(),
+            message: format!(
+                "`{other}` is not a file-surface host; the roster is /soopy/files and \
+                 /soopy/files_at, and the repo-scoped twins are /soopy/repo_at's"
+            ),
+        }),
+    }
+}
 
 impl IHostExecutor for SoopyFilesExecutor {
     fn run(
@@ -301,9 +350,10 @@ impl IHostExecutor for SoopyFilesExecutor {
             host: host.to_string(),
             message,
         };
-        let span = tracing::info_span!("soopy_files", host);
-        let _entered = span.enter();
+        let revision = files_revision(host, env)?;
         let glob = required_input(host, env, "glob")?;
+        let span = tracing::info_span!("soopy_files", host, revision = ?revision);
+        let _entered = span.enter();
         let root = env
             .get("repo")
             .map(PathBuf::from)
@@ -311,21 +361,20 @@ impl IHostExecutor for SoopyFilesExecutor {
         let repository = soopy::discover(root.clone())
             .map_err(|error| named(format!("open a repository at {}: {error}", root.display())))?;
         let query = soopy::GitFilesQuery {
-            revision: soopy::Revision::Worktree,
+            revision: revision.clone(),
             pathspecs: vec![glob.clone()],
         };
         let entries = soopy::enumerate(&repository, &query)
-            .map_err(|error| named(format!("enumerate `{glob}`: {error}")))?;
+            .map_err(|error| named(format!("enumerate `{glob}` at {revision:?}: {error}")))?;
         let mut rows = Vec::with_capacity(entries.len());
         for entry in entries {
             let digest = match &entry.content {
                 soopy::ContentId::GitBlob(oid) => oid.0.to_string(),
-                // Only the worktree and commit revisions are reachable here and
-                // both yield a blob oid; anything else has no address the
-                // extract executor's blob reader could resolve.
+                // Only the filesystem walk mints a Blake3 address, and a Blake3
+                // here would have no address `read_blob` could resolve.
                 other => {
                     return Err(named(format!(
-                        "tracked file {} carries {other:?}, not a git blob",
+                        "tracked file {} at {revision:?} carries {other:?}, not a git blob",
                         entry.source.path.0
                     )))
                 }

@@ -2,8 +2,10 @@
 //! by the host's declared output column names.
 
 pub mod checkout;
+pub mod cost;
 pub mod env;
 pub mod fetch;
+pub mod pulls;
 pub mod repos;
 pub mod toml;
 
@@ -13,8 +15,10 @@ use crate::hosts::HostError;
 use crate::types::HostRow;
 
 pub use checkout::SoopyCheckoutExecutor;
+pub use cost::TickCostExecutor;
 pub use env::EnvExecutor;
 pub use fetch::HttpFetchExecutor;
+pub use pulls::GhPullsExecutor;
 pub use repos::GhReposExecutor;
 pub use toml::TomlJsonExecutor;
 

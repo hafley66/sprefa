@@ -314,6 +314,9 @@ expression_for_term(Term, Family, Precedence, SqlRendering, TypeRule) :-
 % /clock/tick and /soopy/watch (continuing cadences; a re-answer is a tick)
 % join this table with the wip/dl6-run-watch-salvage lane.
 arrival_executor(soopy__files,          '/soopy/files').
+% Two names, one executor. `files` is the worktree, `files_at` a pinned rev;
+% the name IS the marker, so neither can fall back to the other (PR #406).
+arrival_executor(soopy__files_at,       '/soopy/files_at').
 arrival_executor(soopy__stage,          '/soopy/stage').
 arrival_executor(soopy__commit,         '/soopy/commit').
 arrival_executor(soopy__checkout,       '/soopy/checkout').
@@ -359,8 +362,12 @@ arrival_executor(cargo__targets,        '/cargo/targets').
 arrival_executor(http__fetch,           '/http/fetch').
 arrival_executor(gh__repos,             '/gh/repos').
 arrival_executor(gh__rest_cond,         '/gh/rest_cond').
+arrival_executor(gh__pulls,             '/gh/pulls').
 arrival_executor(env__var,              '/env/var').
 arrival_executor(toml__json,            '/toml/json').
+% The engine measuring itself: trace rows and the resident set, folded by the
+% same fold as any other arrival.
+arrival_executor(dl__tick_cost,         '/dl/tick_cost').
 
 % One clause set is spread across two blocks: the scip rows sit with the rest
 % of the scip namespace rather than in name order.

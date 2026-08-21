@@ -1,0 +1,54 @@
+# @comment-ok: the fixture's whole point, its wiring, and its measured answer.
+# files-rev-walk.dl6 -- the two file-surface names over ONE dirty checkout.
+#
+# `files-hosts.dl6` DECLARES the ruled pair (rulings.pl:544, `files_naming =
+# files_unmarked_worktree_marked_rev`). This one PROVES the Rust door answers
+# both, which it did not until 2026-08-21: `SoopyFilesExecutor` spelled
+# `Revision::Worktree` as a literal, so `files_at` had no linked arm at all
+# (docs/failure-modes.md row 62).
+#
+# NO REGISTRY ENTRY IS NEEDED. `files_at` has no `host_input_contract/3` row, so
+# both its inputs take all-identity roles, which is what a rev-pinned host wants:
+# the rev is part of what the answer is about and each rev is its own witness.
+#
+# THE ADAPTER IS THE ROUTING. Both names carry `execution: "shell"` out of the
+# compiler and the sidecar maps each demand rel to `soopy_files`; the executor
+# then switches on the HOST NAME, because the revision is in the name.
+#
+# MEASURED 2026-08-21 over a repository holding one committed `a.txt` and one
+# uncommitted edit to it:
+#
+#   worktree_file  a.txt        7663aa741bec2b1328630882586fb7a2cbc8a255
+#   pinned_file    HEAD  a.txt  d0fe82252177cb2caf3563f8190643a292c2caa1
+#   pinned_file    WORK  a.txt  7663aa741bec2b1328630882586fb7a2cbc8a255
+#
+# `git rev-parse HEAD:a.txt` is the middle oid and `git hash-object a.txt` the
+# other two. Only the middle one is an object the database holds; the worktree
+# oid names bytes `hash-object` never wrote, which is why the blob reader falls
+# back to the file and re-hashes.
+#
+#   cd <the checkout> && DL_ADAPTERS_DIR=<this dir> emit_rust_harness \
+#     files-rev-walk.rs --arrive 'want=*.txt' --arrive 'want_at=HEAD,*.txt' \
+#     --arrive 'want_at=WORK,*.txt' --live-hosts --final-only --final-tsv \
+#     --final-rels 'worktree_file,pinned_file'
+#
+# rx: want$.pipe(mergeMap(listWorktree)) and
+#     wantAt$.pipe(groupBy(row => row.rev), mergeMap(listAtRev)).
+
+# Two names, one executor. The name says which revision, so neither walk can
+# fall back to the other; that fallback is the defect in miniature.
+rel /soopy/files(glob: text) -> (path: text, digest: text).
+
+rel /soopy/files_at(rev: text, glob: text) -> (path: text, digest: text).
+
+rel want(glob: text).
+rel want_at(rev: text, glob: text).
+
+rel worktree_file(path: text, digest: text).
+worktree_file(Path, Digest) <- want(Glob), /soopy/files(Glob, Path, Digest).
+
+rel pinned_file(rev: text, path: text, digest: text).
+pinned_file(Rev, Path, Digest) <- want_at(Rev, Glob), /soopy/files_at(Rev, Glob, Path, Digest).
+
+? worktree_file(path, digest).
+? pinned_file(rev, path, digest) order by rev, path.

@@ -1,0 +1,18 @@
+# The `bind interval` rail: a resident `dl6 run` turns each turn of the cadence into one
+# tick. The bucket is floor(epoch_secs / period), which is restart-stable, so a
+# restarted watch re-derives the same row rather than minting a fresh identity.
+#
+# The previous bucket is retired in the same batch as the new one arrives, so
+# the rel holds exactly one row per cadence rather than growing without bound.
+#
+# rx: timer(0, period * 1000).pipe(
+#       map(() => Math.floor(Date.now() / 1000 / period)),
+#       distinctUntilChanged(),
+#       pairwise(), mergeMap(([held, next]) => [del(held), add(next)]))
+
+bind interval(period: int, bucket: int).
+
+rel beat(bucket: int).
+beat(Bucket) <- interval(1, Bucket).
+
+? beat(bucket).
