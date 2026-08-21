@@ -1,0 +1,137 @@
+<lexer>
+  <config>
+    <name>dl6</name>
+    <alias>dl6</alias>
+    <filename>*.dl6</filename>
+    <mime_type>text/x-dl6</mime_type>
+  </config>
+  <rules>
+    <state name="root">
+      <rule pattern="\s+">
+        <token type="TextWhitespace"/>
+      </rule>
+      <rule pattern="#.*$">
+        <token type="CommentSingle"/>
+      </rule>
+      <rule pattern="`">
+        <token type="LiteralStringBacktick"/>
+        <push state="template"/>
+      </rule>
+      <rule pattern="&#34;">
+        <token type="LiteralStringDouble"/>
+        <push state="doublequote"/>
+      </rule>
+      <rule pattern="'">
+        <token type="LiteralStringSymbol"/>
+        <push state="atom"/>
+      </rule>
+      <rule pattern="(?:/[a-z_][A-Za-z0-9_]*)+">
+        <token type="NameNamespace"/>
+      </rule>
+      <rule pattern="\?">
+        <token type="NameDecorator"/>
+      </rule>
+      <rule pattern="&lt;-|&lt;\+|-&gt;">
+        <token type="Operator"/>
+      </rule>
+      <rule pattern="\b(rel|sh|bind|interface|import|log|keep|key|salt)\b">
+        <token type="KeywordDeclaration"/>
+      </rule>
+      <rule pattern="\b(int|text|json|bool|float|bytes|option|list|json_list|list_entity_dense_sequence|list_interned_set|list_entity_linked_sequence)\b">
+        <token type="KeywordType"/>
+      </rule>
+      <rule pattern="\b(all|avg|bind_decl|coalesce|combine|count|decode|false|finalize|group_concat|is|json_group_array|json_object|latest|match|max|min|next|not|now|pre|probe|query|regexp|seq|sh_decl|sum|true|ts_query)\b">
+        <token type="NameBuiltin"/>
+      </rule>
+      <rule pattern="\b(complete|error|json_array|json_each|scan|set|sg_pattern|subscribe|unsubscribe|zip)\b">
+        <token type="KeywordReserved"/>
+      </rule>
+      <rule pattern="\d+\.\d+(?:[eE][+-]?\d+)?">
+        <token type="LiteralNumberFloat"/>
+      </rule>
+      <rule pattern="\d+">
+        <token type="LiteralNumberInteger"/>
+      </rule>
+      <rule pattern="([a-z_][A-Za-z0-9_]*)(\s*)(\()">
+        <bygroups>
+          <token type="NameFunction"/>
+          <token type="TextWhitespace"/>
+          <token type="Punctuation"/>
+        </bygroups>
+      </rule>
+      <rule pattern="([a-z_][A-Za-z0-9_]*)(\s*)(:)(?!=)">
+        <bygroups>
+          <token type="NameAttribute"/>
+          <token type="TextWhitespace"/>
+          <token type="Punctuation"/>
+        </bygroups>
+      </rule>
+      <rule pattern="[A-Z_][A-Za-z0-9_]*">
+        <token type="NameVariable"/>
+      </rule>
+      <rule pattern="[a-z_][A-Za-z0-9_]*">
+        <token type="Name"/>
+      </rule>
+      <rule pattern=":=|&lt;=|&gt;=|!=|==|=&lt;|[&lt;&gt;=+\-*/%]">
+        <token type="Operator"/>
+      </rule>
+      <rule pattern="[\[\](){}|.,;:]">
+        <token type="Punctuation"/>
+      </rule>
+      <rule pattern=".">
+        <token type="Text"/>
+      </rule>
+    </state>
+    <state name="template">
+      <rule pattern="\\.">
+        <token type="LiteralStringEscape"/>
+      </rule>
+      <rule pattern="\$[A-Za-z_][A-Za-z0-9_]*">
+        <token type="LiteralStringInterpol"/>
+      </rule>
+      <rule pattern="`">
+        <token type="LiteralStringBacktick"/>
+        <pop depth="1"/>
+      </rule>
+      <rule pattern="[^\\`$]+">
+        <token type="LiteralStringBacktick"/>
+      </rule>
+      <rule pattern="[\\$]">
+        <token type="LiteralStringBacktick"/>
+      </rule>
+    </state>
+    <state name="doublequote">
+      <rule pattern="\\.">
+        <token type="LiteralStringEscape"/>
+      </rule>
+      <rule pattern="\$[A-Za-z_][A-Za-z0-9_]*">
+        <token type="LiteralStringInterpol"/>
+      </rule>
+      <rule pattern="&#34;">
+        <token type="LiteralStringDouble"/>
+        <pop depth="1"/>
+      </rule>
+      <rule pattern="[^\\&#34;$]+">
+        <token type="LiteralStringDouble"/>
+      </rule>
+      <rule pattern="[\\$]">
+        <token type="LiteralStringDouble"/>
+      </rule>
+    </state>
+    <state name="atom">
+      <rule pattern="\\.">
+        <token type="LiteralStringEscape"/>
+      </rule>
+      <rule pattern="'">
+        <token type="LiteralStringSymbol"/>
+        <pop depth="1"/>
+      </rule>
+      <rule pattern="[^\\']+">
+        <token type="LiteralStringSymbol"/>
+      </rule>
+      <rule pattern="\\">
+        <token type="LiteralStringSymbol"/>
+      </rule>
+    </state>
+  </rules>
+</lexer>
