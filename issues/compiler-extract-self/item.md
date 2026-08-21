@@ -4,10 +4,15 @@ updated: 2026-08-21
 type: feature
 reporter: chris
 assignee: chris
-status: in-progress
+status: done
 priority: normal
 epic: cheap-fast-analysis
 labels: [dl6, docs]
+closed: 2026-08-21
+closed_by: chris
+commits:
+- hash: bb93d5104
+  summary: 'selfdoc PR #402'
 ---
 
 # Compiler and extract self-documented through extract plus dl6
