@@ -36,6 +36,12 @@ flowchart LR
 `gate.sh` answers "does the Rust door reproduce v5 byte for byte". `run.sh`
 answers "what does this app reach, and where does it leave the repository".
 
+The function-level planes are `v6/dl/reach/feature-reach.dl6`'s, reused rather
+than re-derived: `def_at` spans, `call_site` starts, `resolved_edge`, the
+innermost-owner join, `caller_callee`, `call_edge` and the
+`reach_level`/`reach_step`/`reach_hops` closure. Each gains a `repo` column
+here and nothing else changes.
+
 ## Commands
 
 ```bash
@@ -56,9 +62,9 @@ figures of rows in it.
   naming a symbol defined in B resolves to nothing at all. The match over-links
   on a name several repositories define and never says which import a site
   resolved through.
-- **Reach stops at three hops** in `cross_path`, unrolled. `reached` is the
-  unbounded closure and carries no hop column, because a hop-counted recursive
-  rel does not terminate on a call cycle.
+- **Reach stops at `hop_ceiling(6)`.** The level rides inside the recursion and
+  the ceiling is what makes the fixpoint finite over a cyclic call graph;
+  `min(Level)` is the shortest way in. Raise the fact to widen the walk.
 - **A file touch drives no tick.** `registry.pl` declares a `watch` bind whose
   executor is `live_watch`; nothing in `sprefa-engine-rs` implements one, so the
   resident door re-ticks on a posted arrival and on nothing else.

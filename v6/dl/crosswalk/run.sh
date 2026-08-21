@@ -41,9 +41,8 @@ if [ ! -x "$HARNESS" ]; then
     || { printf 'harness build: %s\n' "$(tail -5 "$WORK/build.log")" >&2; exit 1; }
 fi
 
-timeout 300 swipl -q -l "$REPO/v6/prolog/compile.pl" -l "$REPO/v6/prolog/emit_rust.pl" \
-  -g "compile_dl6('$WORK/crosswalk.dl6','$WORK/crosswalk.rs',[emitter(emit_rust:emit_program)])" \
-  -g halt >"$WORK/compile.log" 2>&1 \
+timeout 300 bash "$REPO/v6/prolog/compile/scripts/dl6c.sh" "$WORK/crosswalk.dl6" \
+  --target rust --out "$WORK" >"$WORK/compile.log" 2>&1 \
   || { printf 'compile: %s\n' "$(tail -20 "$WORK/compile.log")" >&2; exit 1; }
 
 # `dep_gap` is every pin no checkout answers for and runs to four figures on a

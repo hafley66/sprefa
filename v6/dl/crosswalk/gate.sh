@@ -55,13 +55,13 @@ if [ ! -x "$HARNESS" ]; then
 fi
 [ -x "$HARNESS" ] || fail "no harness at $HARNESS"
 
+# The saved compiler state, not 40 source modules: measured 0.25s end to end.
 compile() {
   local program="$1"
-  timeout 300 swipl -q -l "$REPO/v6/prolog/compile.pl" -l "$REPO/v6/prolog/emit_rust.pl" \
-    -g "compile_dl6('$GOLDEN/$program.dl6','$WORK/$program.rs',[emitter(emit_rust:emit_program)])" \
-    -g halt >"$WORK/$program.compile.log" 2>&1 \
+  timeout 300 bash "$REPO/v6/prolog/compile/scripts/dl6c.sh" "$GOLDEN/$program.dl6" \
+    --target rust --out "$WORK" >"$WORK/$program.compile.log" 2>&1 \
     || fail "$program compile: $(tail -5 "$WORK/$program.compile.log")"
-  [ -s "$WORK/$program.rs" ] || fail "$program: emit_rust wrote no program"
+  [ -s "$WORK/$program.rs" ] || fail "$program: the compiler wrote no program"
 }
 
 # One TSV line per row, `rel<TAB>col...`, so nothing here parses JSON.
