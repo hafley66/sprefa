@@ -1,0 +1,129 @@
+# dead-module-rail.dl6 -- a module every other module has stopped calling.
+#
+# When a new door lands beside an old one, the old one keeps compiling and
+# keeps its tests, so nothing goes red. What goes quiet is its NAME: no file
+# outside it calls anything it defines.
+#
+#   ? rail_dead_module(path, defs).           one hop: nothing outside calls in
+#   ? rail_unreachable_module(path, defs).    the CRAWL: unreached from any
+#                                             declared root, however many dead
+#                                             neighbours call it
+#   ? module_reach(path, defs, used, ambiguous).   the readable table
+#
+# Name matching is the rule sprefa-extract's own `--resolve` uses for Rust
+# (`call_name_match`, CallEdgeKind::NameResolve), so a finding here is one the
+# extractor would make.
+#
+# rx lowering, per the standing law. Every host fan-out is one mergeMap over
+# rows; the crawl needs no recursion operator because the fixpoint IS the tick:
+#
+#   sourceFile$.pipe(map(mintIdentityAndWitness), distinct(row => row.witnessDigest),
+#                    mergeMap(runExtract), mergeMap(commitEdbArrival))
+#   defSite$.pipe(groupBy(row => row.path),
+#                 mergeMap(group => group.pipe(reduce(countOf))))    // = count
+#   liveFile$.pipe(mergeMap(callsOf), mergeMap(defFileOf), distinct())
+
+rel span(start: int, end: int).
+
+sh files(glob: text) -> (path: text, digest: text) =
+  `git ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git hash-object -- "$entry")"; done`.
+
+# HOST NAMES ARE REGISTERED. registry.pl host_input_contract/3 is keyed on
+# hardcoded names, so only `call_node_at` may take the (path, digest) shape and
+# yield (record, family, span, kind, name); `extract` reads call SITES.
+sh call_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+sh extract(path: text, digest: text) -> (record: text, family: text, span: span, callee: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+rel want(glob: text).
+rel root_file(path: text).
+
+rel source_file(path: text, digest: text).
+source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
+
+# Rust puts free functions under `function` and methods under `method`; both
+# are callable by name, so both are definitions.
+rel def_site(path: text, name: text).
+def_site(Path, Name) <-
+  source_file(Path, Digest),
+  call_node_at(Path, Digest, 'node', 'call', _DefAt, 'function', Name).
+def_site(Path, Name) <-
+  source_file(Path, Digest),
+  call_node_at(Path, Digest, 'node', 'call', _DefAt, 'method', Name).
+
+rel call_from(path: text, callee: text).
+call_from(Path, Callee) <-
+  source_file(Path, Digest),
+  extract(Path, Digest, 'site', 'call', _GoalAt, Callee).
+
+# A name defined in more than one file is a TRAIT METHOD SHAPE: every impl of
+# one trait spells `open`, `close`, `start_turn`. A call to that name names no
+# file, because the CST carries `impl_item` with no trait name on it, so two
+# impls are indistinguishable. Such a name is discounted rather than counted.
+rel name_def_files(name: text, files: int).
+name_def_files(Name, count(Path)) <- def_site(Path, Name).
+
+rel unique_name(name: text).
+unique_name(Name) <- name_def_files(Name, Files), Files == 1.
+
+rel ambiguous_name(name: text).
+ambiguous_name(Name) <- name_def_files(Name, Files), Files > 1.
+
+rel def_ambiguous(path: text, name: text).
+def_ambiguous(Path, Name) <- def_site(Path, Name), ambiguous_name(Name).
+
+rel file_ambiguous(path: text, ambiguous: int).
+file_ambiguous(Path, count(Name)) <- def_ambiguous(Path, Name).
+
+rel used_across(name: text).
+used_across(Name) <-
+  def_site(DefPath, Name),
+  unique_name(Name),
+  call_from(CallPath, Name),
+  DefPath \== CallPath.
+
+rel file_defs(path: text, defs: int).
+file_defs(Path, count(Name)) <- def_site(Path, Name).
+
+# An aggregate's body is one rel: the group key has to be delta-local, so the
+# join that decides membership lands in its own rel first.
+rel def_used_across(path: text, name: text).
+def_used_across(Path, Name) <- def_site(Path, Name), used_across(Name).
+
+rel file_used(path: text, used: int).
+file_used(Path, count(Name)) <- def_used_across(Path, Name).
+
+rel module_reach(path: text, defs: int, used: int, ambiguous: int).
+module_reach(Path, Defs, Used, Ambiguous) <-
+  file_defs(Path, Defs), file_used(Path, Used), file_ambiguous(Path, Ambiguous).
+
+# ── ONE HOP ─────────────────────────────────────────────────────────────────
+# The floor is 5 so a one-helper file does not read as an island.
+rel rail_dead_module(path: text, defs: int).
+rail_dead_module(Path, Defs) <-
+  file_defs(Path, Defs),
+  Defs >= 5,
+  not(file_used(Path, _)).
+
+# ── THE CRAWL ───────────────────────────────────────────────────────────────
+# A one-hop rail calls a file live when ANY other file calls into it, even a
+# file that is itself dead. The crawl starts at declared roots and expands
+# until the frontier stops moving.
+rel live_file(path: text).
+live_file(Path) <- root_file(Path).
+live_file(Target) <-
+  live_file(Source),
+  call_from(Source, Callee),
+  unique_name(Callee),
+  def_site(Target, Callee).
+
+rel rail_unreachable_module(path: text, defs: int).
+rail_unreachable_module(Path, Defs) <-
+  file_defs(Path, Defs),
+  Defs >= 5,
+  not(live_file(Path)).
+
+? rail_dead_module(path, defs).
+? rail_unreachable_module(path, defs).
+? module_reach(path, defs, used, ambiguous).
