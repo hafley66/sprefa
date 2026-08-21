@@ -440,6 +440,15 @@ pub fn apply_arrivals(
         groups.push((relation, sign, vec![entry]));
     }
     let verbs = write_verbs_for(relations);
+    // Groups are runs of CONSECUTIVE same rel+sign, so an interleaved arrival
+    // order fragments one batched write into many. The ratio to arrivals.len()
+    // is the thing to read.
+    let span = tracing::info_span!(
+        "apply_arrivals",
+        arrivals = arrivals.len(),
+        groups = groups.len()
+    );
+    let _entered = span.enter();
     for (relation, sign, entries) in groups {
         let write_statement = verbs.arrive(
             relation,
