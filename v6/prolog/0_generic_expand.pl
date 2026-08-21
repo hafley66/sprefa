@@ -18,7 +18,8 @@
             compiler_type_source_rows/3,
             type_relation_rows/2,
             schema_member_transport_rows/3,
-            expand_generic_program_with_bindings/3
+            expand_generic_program_with_bindings/3,
+            reset_type_row_memo/0
           ]).
 
 :- use_module(library(apply)).
@@ -1371,6 +1372,7 @@ owner_member_carrier(Decls, OwnerName, Carrier) :-
 owner_member_carrier(Decls, OwnerName, Carrier) :-
     owner_member_carrier_uncached(Decls, OwnerName, Carrier).
 
+
 owner_member_carrier_uncached(Decls, OwnerName, carrier(Kind, Specs, Keyed)) :-
     (   member(rel_template(Segments, _, TemplateSpecs), Decls),
         atomic_list_concat(Segments, '__', OwnerName)
@@ -1502,7 +1504,29 @@ key_member_ids(MemberRows, OwnerId, KeyMemberIds) :-
               memberchk(key, Roles) ),
             KeyMemberIds).
 
+% One compile asks for the same rows five times: expand_user_templates/4 and
+% freeze_type_rows/2 each rebuild them, the generic pipeline runs twice, and
+% expand_program_run/4 freezes once more. Keyed by variant, so an entry is
+% only ever reused for a Decls list that would rebuild the same rows.
+:- thread_local type_row_memo/3.
+
+reset_type_row_memo :-
+    retractall(type_row_memo(_, _, _)).
+
 normalized_type_rows(Decls, Rows) :-
+    variant_sha1(Decls, Hash),
+    (   type_row_memo(Hash, MemoDecls, MemoRows),
+        MemoDecls =@= Decls
+    ->  Rows = MemoRows
+    ;   normalized_type_rows_rebuilt(Decls, Rows),
+        % A non-ground row set would lose its variable identity to assertz/1.
+        (   ground(Rows)
+        ->  assertz(type_row_memo(Hash, Decls, Rows))
+        ;   true
+        )
+    ).
+
+normalized_type_rows_rebuilt(Decls, Rows) :-
     setup_call_cleanup(
         nb_setval(generic_semantic_id_cache, cache(t, t, t)),
         normalized_type_rows_cached(Decls, Rows),
