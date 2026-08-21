@@ -111,12 +111,14 @@ moved to `hafley66/hafley-rs`, nothing under `v6/boop` exists anymore).
 `--dry-run` prints the exact spawn line; use it before a shape you have not
 used before.
 
-**Lane models (user-set 2026-08-17, supersedes every earlier rotation for
-sprefa dispatch):** delegated tasks run on native **opus** and **sonnet**
-subagents (Agent tool, worktree isolation for anything that commits). flash4
-is off: two flash4 lanes on 2026-08-17 died on `opencode message aborted`
-with zero output. `luna` (`gpt-5.6-luna@medium`, codex harness) stays an
-explicit per-lane ask only.
+**Lane models (user-set 2026-08-21, supersedes every earlier rotation for
+sprefa dispatch):** every delegated task runs on **sonnet at high effort**
+(`--model sonnet@high` through boop; Agent tool `model: sonnet`).
+Briefs carry extreme detail: every file, every receipt, every command, every
+style law inline, so sonnet makes no judgment call. The coordinator ALWAYS
+grades sonnet's tree itself (git log, git status, the full gate) before taking
+a result. opus only on an explicit per-lane ask. flash4 is off; `luna` stays
+an explicit per-lane ask only.
 
 **A lane's `rc=0` means nothing.** `opencode run` exits 0 on a provider error
 with zero tokens emitted, and a lane can write its whole deliverable and exit 0
@@ -220,6 +222,11 @@ records the era when this leg was unwired and mail queued forever.
   scip, cargo_metadata, fixture) or is a named stop at construction. Scripts
   never push arrivals into or pull rows out of a named rel; the program owns
   its seeds and its `?` output.
+- **One server, one db.** (2026-08-21) The resident `dl6` runtime is the one
+  server; every program it runs writes into ONE SQLite file,
+  `~/.agent/dl6.db`, tables prefixed by program name (the `__txt_<program>_*`
+  shape). `--db <file>` per program is gone; no program, lane or gate mints a
+  second db. Goldens use an in-memory db.
 - **The words "ground truth" are banned** in every spelling and root form, in
   file names, recipes, identifiers, comments and reports. The word is "oracle".
 - **"I DO NOT WANT TO RUN V5 ANYTHING ANYMORE."** No design may end in "keep the

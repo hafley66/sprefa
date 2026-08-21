@@ -1,0 +1,36 @@
+# The `bind watch` rail: a resident `dl6 run` feeds this rel from soopy's watcher,
+# one coalesced burst per tick, and the `?` re-prints as `+`/`-` TSV deltas.
+#
+# The digest is what makes the bind a FRESHNESS source rather than a
+# notification: a save that changed no bytes re-enumerates to the same blob oid,
+# which is zero delta at the rel boundary, so no extract re-runs.
+#
+# rx: watchSource(glob).pipe(
+#       bufferTime(coalesceMs),
+#       map(window => enumerate(glob)),
+#       distinctUntilChanged(sameDigests),
+#       mergeMap(rows => diffAgainstHeld(rows)))
+
+bind watch(glob: text, path: text, digest: text).
+
+# Routed to the linked `sprefa_extract` adapter by the sidecar, so no `sh` runs.
+sh call_node_at(path: text, digest: text) -> (record: text, family: text, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+# rx: watch$.pipe(map(({path, digest}) => ({path, digest})), distinct())
+rel source_file(path: text, digest: text).
+source_file(Path, Digest) <- watch('crates/*/src/*.rs', Path, Digest).
+
+rel def_site(path: text, name: text).
+def_site(Path, Name) <-
+  source_file(Path, Digest),
+  call_node_at(Path, Digest, 'node', 'call', 'function', Name).
+def_site(Path, Name) <-
+  source_file(Path, Digest),
+  call_node_at(Path, Digest, 'node', 'call', 'method', Name).
+
+# rx: rows$.pipe(map(rows => sortBy(rows, [desc('defs'), 'path'])))
+rel module_defs(path: text, defs: int).
+module_defs(Path, count(Name)) <- def_site(Path, Name).
+
+? module_defs(path, defs) order by defs desc, path.

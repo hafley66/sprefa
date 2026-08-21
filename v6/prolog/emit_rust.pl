@@ -24,7 +24,7 @@
                          listened_departure_refs/2, program_uses_tick/2 ]).
 :- use_module('1_host_expand', [compile_host_decl/2, query_decl/3,
                                 host_plan_contract/2]).
-:- use_module('compile/registry', [host_execution/3]).
+:- use_module('compile/registry', [host_execution/3, bind_executor/2]).
 :- use_module('0_option_expand', [option_enum_name/2]).
 
 :- op(1150, xfx, <-).
@@ -462,6 +462,47 @@ host_field_dict(field(Name, Type), _{ name: Name, type: Type }).
 
 host_column_dict(col(Name, Type), _{ name: Name, type: Type }).
 
+% Column 1 is the configuration column for every bind (registry.pl:309), so the
+% literals are the cadences and file sets the program's own rules name there.
+bind_plan_dict(bind_decl(Name, Columns), Rules, Dict) :-
+    maplist(host_column_dict, Columns, ColumnDicts),
+    bind_read_literals(Rules, Name, Columns, Literals),
+    (   bind_executor(Name, Executor)
+    ->  true
+    ;   throw(bind_mismatch(Name, Columns))
+    ),
+    Dict = _{ name: Name, columns: ColumnDicts, literals: Literals,
+              execution: Executor }.
+
+% The scan is over the WHOLE rule term: a rule that heads a bind rel is already
+% stopped at load (bind_and_rule_head), so every occurrence reachable here reads.
+bind_read_literals(Rules, Name, Columns, Literals) :-
+    length(Columns, Arity),
+    findall(Literal,
+            ( bind_subterm(Rules, Atom),
+              compound(Atom),
+              functor(Atom, Name, Arity),
+              arg(1, Atom, Literal),
+              bind_config_literal(Literal)
+            ),
+            Raw),
+    sort(Raw, Literals).
+
+bind_config_literal(Literal) :-
+    nonvar(Literal),
+    ( integer(Literal) -> true
+    ; string(Literal)  -> true
+    ; atom(Literal), Literal \== []
+    ).
+
+bind_subterm(Term, Term) :-
+    nonvar(Term).
+bind_subterm(Term, Sub) :-
+    nonvar(Term),
+    compound(Term),
+    arg(_, Term, Argument),
+    bind_subterm(Argument, Sub).
+
 struct_ref_columns_map(RelPlans, Map) :-
     findall(Name-Refs,
             ( member(RelPlan, RelPlans),
@@ -626,6 +667,11 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
               compile_host_decl(Decl, HostPlan),
               host_plan_dict(HostPlan, HostDict) ),
             HostPlanDicts),
+    findall(BindDict,
+            ( member(BindDecl, PlanDecls),
+              BindDecl = bind_decl(_, _),
+              bind_plan_dict(BindDecl, PlanRules, BindDict) ),
+            BindPlanDicts),
 
     enum_identity_ddls(PlanDecls, EnumIdentityDdls),
     append(Ddl, EnumIdentityDdls, FullDdl),
@@ -661,7 +707,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
        % Constant true: no fallback tick path exists on either door; the field
        % stays only because engine-rs program.rs deserializes it.
        incremental_safe: true,
-       host_plans: HostPlanDicts },
+       host_plans: HostPlanDicts,
+       bind_plans: BindPlanDicts },
     json_write_string(ProgramDict, ProgramJson),
     raw_string_hashes(ProgramJson, RawStringHashes),
     format(atom(HeadLine), '// Program: ~w', [Name]),
