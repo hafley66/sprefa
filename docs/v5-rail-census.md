@@ -127,7 +127,7 @@ The dl6 spellings these need, all live:
 
 | v5 construct | dl6 spelling | site |
 |---|---|---|
-| `scan(rev, glob, path, rev_out)` | `sh files(glob) -> (path, digest)` | `v6/sprefa-engine-rs/src/hosts.rs:86` |
+| `scan(rev, glob, path, rev_out)` | `sh files(glob) -> (path, digest)` | `v6/sprefa-engine-rs/src/hosts.rs:92` |
 | `closure(edge)` | a recursive rule head | `v6/dl/deadcode/dead-module-rail.dl6:353-357` |
 | `json` / `jsonp` | `--family data` + `decode/2` | `v6/sprefa-extract/src/schema.rs:43`, `registry.pl:85` |
 | `diag(...)` sink | an ordinary rel a rail heads | `v6/dl/fixtures/diag-rail.dl6` |
@@ -149,13 +149,13 @@ with two blockers is counted under each, so the column sums past 148.
 | `call_edge` (resolved calls) | 30 | needs `--resolve`; only `sh scip.call` / `sh scip.diet.call` reach a resolved edge, and they answer `caller_path`, not v5's `caller` symbol | `@dl6-scip-facts-door` |
 | `comment` op | 26 | the comment SPAN is a cst node, the TEXT is not on the wire | `@dl6-no-text-extraction-door` |
 | `gen` (codegen sink) | 25 | dl6 cannot write files | `@fs-effects-door` (open) |
-| `match_ast` | 20 | `hosts.rs:901` rejects `--ast-pattern` | `@dl6-no-text-extraction-door` |
+| `match_ast` | 20 | `hosts.rs:907` rejects `--ast-pattern` | `@dl6-no-text-extraction-door` |
 | `type_edge` (+`_rev` 2) | 16 | needs `--resolve` | `@dl6-scip-facts-door` |
-| `ast` (tree-sitter query) | 12 | `ts_query/1` compiles to a `tree_sitter` host demand; `executor_for` has no arm for it (`hosts.rs:42-54`) | `@dl6-no-text-extraction-door` |
+| `ast` (tree-sitter query) | 12 | `ts_query/1` compiles to a `tree_sitter` host demand; `executor_for` has no arm for it (`hosts.rs:41-59`) | `@dl6-no-text-extraction-door` |
 | `module_edge` (+`_rev` 3) | 10 | needs `--deps` / `--scip-deps` | `@dl6-deps-package-door` |
 | `comment_node` | 9 | its `text` column is not on the wire | `@dl6-no-text-extraction-door` |
 | `scc` | 9 | no dl6 spelling for strongly-connected-component condensation | `@dl6-no-text-extraction-door` |
-| `scip_def` / `scip_name` / `scip_edge` | 8 / 8 / 8 | `--family scip` not linked in-process (`hosts.rs:941`) | `@dl6-scip-facts-door` |
+| `scip_def` / `scip_name` / `scip_edge` | 8 / 8 / 8 | `--family scip` not linked in-process (`hosts.rs:947`) | `@dl6-scip-facts-door` |
 | `type_link` (+`_rev` 4) | 7 | needs `--resolve --scip-index` | `@dl6-scip-facts-door` |
 | `scip_fn_edge` | 7 | same as the other scip rows | `@dl6-scip-facts-door` |
 | `sg` (deprecated `match_ast`) | 7 | same as `match_ast` | `@dl6-no-text-extraction-door` |
@@ -242,8 +242,8 @@ grep -rn 'v5\|bin dl' .github/workflows/*.yml
 | root `justfile:111` | `justfile` | `examples/dag-layers.dl` |
 | root `justfile:117` | `justfile` | `examples/fn-graph.dl` |
 | root `justfile:124` | `justfile` | `examples/feature-envy.dl` |
-| `v6/justfile:194` `flagship` | `v6/tsv2/scripts/flagship-callgraph.sh` | `examples/callgraph-ast.dl` |
-| `v6/justfile:315` `multirepo-golden` | `v6/tsv2/goldens/multirepo_crawl/2_gate.sh` | `examples/version-skew.dl` |
+| `v6/justfile:202` `flagship` | `v6/tsv2/scripts/flagship-callgraph.sh` | `examples/callgraph-ast.dl` |
+| `v6/justfile:327` `multirepo-golden` | `v6/tsv2/goldens/multirepo_crawl/2_gate.sh` | `examples/version-skew.dl` |
 
 Plus `.dl/watch-ext.dl`, `bench/printk.dl` and `bench/rust.dl`, named by the
 root justfile's bench recipes.

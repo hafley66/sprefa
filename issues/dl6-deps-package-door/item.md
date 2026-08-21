@@ -28,7 +28,7 @@ module graph (10 relations) has no dl6 spelling for 7 of them.
 | `--deps` / `--scip-deps` / `--package-deps` are CLI flags | `v6/sprefa-extract/src/bin/extract.rs:87-138` |
 | all three are tested | `tests/7_diet_deps_cli.rs` (286 lines), `tests/28_package_edges.rs` (144 lines) |
 | graded against madge | `schema.rs:215` recall 0.992 precision 0.988 (`--scip-deps`), `:219` recall 1.000 precision 1.000 (`--deps`) |
-| the in-process executor refuses every one | `v6/sprefa-engine-rs/src/hosts.rs:901-904` |
+| the in-process executor refuses every one | `v6/sprefa-engine-rs/src/hosts.rs:907-910` |
 | `package_edge` is a SUPERSET of `crate_edge` | `schema.rs:232-233`: v5's was Cargo-only and keyed on crate NAMES; v6 keys on manifest paths and covers Cargo.toml, package.json and go.mod |
 
 ## Fix shape

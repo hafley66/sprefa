@@ -79,8 +79,8 @@ that go green when that gap alone closes.
 
 D1 and D3 are wiring: the records exist, are tested, and reach the CLI. D1's
 `--ast-pattern` arm is three lines in `SprefaExtractExecutor::run`
-(`v6/sprefa-engine-rs/src/hosts.rs:890-908`). D3's `cfg` arm is one match arm
-(`hosts.rs:936-951`). D2 needs a host name and an input contract.
+(`v6/sprefa-engine-rs/src/hosts.rs:896-914`). D3's `cfg` arm is one match arm
+(`hosts.rs:942-957`). D2 needs a host name and an input contract.
 
 Only `ast_yaml` needs a language-design call (`sg_pattern/3` is
 `refuse(slot_sg_metavariable_semantics)`, `registry.pl:199`), and that is
@@ -148,9 +148,9 @@ The root `Cargo.toml` edits, by line:
 | `Cargo.toml:72-80` | `[features]` embed backends | deleted |
 | `Cargo.toml:46-51` | `[lints.clippy]` baselines | deleted |
 
-`v6/justfile`, 11 lines name v5 or `target/release/dl`
-(`grep -n 'v5\|release/dl' v6/justfile`): lines 188, 191, 204, 312, 346, 359,
-380, 383, 387, 388, 391. Steps 2 and 4 remove all of them.
+`v6/justfile`, 11 lines name v5 or `target/release/dl` outside this lane's own
+recipe (`grep -n 'v5\|release/dl' v6/justfile`): lines 197, 200, 213, 321, 355,
+368, 389, 392, 396, 397, 400. Steps 2 and 4 remove all of them.
 
 Kept at the root, unchanged: `v6/`, `issues/`, `plans/`, `chat_log/`, `docs/`,
 `.github/workflows/{ci,release-dl6}.yml`, `scripts/`, `tools/`, `labs/`,
@@ -180,7 +180,7 @@ Stated so a future census does not re-open them.
 
 | v5 thing | why not |
 |---|---|
-| `cmd` op (shell out per file) | user decision 2026-08-21, "Zero shell in the engine". `ShellExecutor` is deleted; `LINKED_EXECUTORS` at `hosts.rs:40` is the whole roster |
+| `cmd` op (shell out per file) | user decision 2026-08-21, "Zero shell in the engine". `ShellExecutor` is deleted; `LINKED_EXECUTORS` at `hosts.rs:39` is the whole roster |
 | the flow panel and its `graph_node`/`graph_edge` sinks | no v6 flow panel exists and none is planned |
 | `similar` / `node2vec` | no embedding plane in v6; no asker since 2026-07-02 |
 | `propose_extract` / `propose_clone` | soopy owns mutation now, and it stages real edits rather than proposing spans |

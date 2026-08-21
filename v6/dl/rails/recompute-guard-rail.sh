@@ -24,9 +24,9 @@ say() { printf '%-6s %-24s %s\n' "$1" "$2" "$3"; }
 bad() { rc=1; say FAIL "$1" "$2"; }
 fail() { printf 'FAIL  %s\n' "$*" >&2; exit 1; }
 
-swipl -q -l "$V6/prolog/compile.pl" -l "$V6/prolog/emit_rust.pl" \
-  -g "compile_dl6('$HERE/recompute-guard-rail.dl6','$WORK/rail.rs',[emitter(emit_rust:emit_program)])" -g halt \
-  >"$WORK/compile.log" 2>&1 || fail "compile: $(tail -20 "$WORK/compile.log")"
+bash "$V6/prolog/compile/scripts/dl6c.sh" "$HERE/recompute-guard-rail.dl6" --target rust --out "$WORK" \
+  >"$WORK/compile.log" 2>&1 && mv "$WORK/recompute-guard-rail.rs" "$WORK/rail.rs" \
+  || fail "compile: $(tail -20 "$WORK/compile.log")"
 
 cargo build --release --quiet --manifest-path "$ENGINE/Cargo.toml" --bin emit_rust_harness \
   >"$WORK/build.log" 2>&1 || fail "cargo build: $(tail -5 "$WORK/build.log")"

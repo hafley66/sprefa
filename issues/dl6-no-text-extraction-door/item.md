@@ -21,13 +21,13 @@ blocks 68 of the 195 v5 rails.
 
 | fact | receipt |
 |---|---|
-| the host command parser accepts two flags and nothing else | `v6/sprefa-engine-rs/src/hosts.rs:890-908` |
-| an unrecognised flag is a named stop | `hosts.rs:901-904` "flag `{token}` is not linked in-process" |
+| the host command parser accepts two flags and nothing else | `v6/sprefa-engine-rs/src/hosts.rs:896-914` |
+| an unrecognised flag is a named stop | `hosts.rs:907-910` "flag `{token}` is not linked in-process" |
 | the ast-grep pattern door exists on the CLI | `v6/sprefa-extract/src/bin/extract.rs:144-171` (`--ast-pattern`, `--ast-selector`, `--ast-capture`) |
 | its record already exists on the wire | `v6/sprefa-extract/src/schema.rs:46` `record=capture` with `text`, `start`, `end`, `match_start`, `match_end` |
 | it is already CLI-tested | `v6/sprefa-extract/tests/3_ast_pattern_cli.rs`, `tests/9_query_cli.rs` |
 | cst nodes carry no text | probed 2026-08-21: `extract --family cst probe.rs` returns `{"kind":"identifier","name":null}` |
-| `ts_query/1` compiles but has no executor | `v6/prolog/compile/registry.pl:198` is `live`; `hosts.rs:42-54` `executor_for` has no `tree_sitter` arm |
+| `ts_query/1` compiles but has no executor | `v6/prolog/compile/registry.pl:198` is `live`; `hosts.rs:41-59` `executor_for` has no `tree_sitter` arm |
 | `sg_pattern/3` is refused | `registry.pl:199` `value(refuse(slot_sg_metavariable_semantics))` |
 | v5's two ops | `src/engine/decls.rs:225` `match_line`, `:228` `match_ast` |
 

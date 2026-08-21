@@ -20,10 +20,10 @@ them is reachable from a `.dl6` program.
 | v6's eight, behind `--family scip` | `v6/sprefa-extract/src/schema.rs:66-73`, `:239-252` |
 | the other two ride `--scip-facts` | `schema.rs:56` (`scip_occurrence`, a superset of v5's columns) and `schema.rs:131-133` (`--occurrence-text` answers `scip_binding`'s source slice) |
 | both modes are tested | `tests/8_scip_families_cli.rs` (702 lines), `tests/5_scip_facts_cli.rs` (407 lines), `tests/6_occurrence_text_cli.rs` |
-| `--family scip` is refused in-process | `v6/sprefa-engine-rs/src/hosts.rs:941-946` "mode `scip` is not linked in-process" |
-| `--scip-facts` is refused in-process | `hosts.rs:901-904`, the generic unknown-flag stop |
+| `--family scip` is refused in-process | `v6/sprefa-engine-rs/src/hosts.rs:947-952` "mode `scip` is not linked in-process" |
+| `--scip-facts` is refused in-process | `hosts.rs:907-910`, the generic unknown-flag stop |
 | what a dl6 program CAN reach | four resolved namespaces at `v6/prolog/compile/registry.pl:499-502`, answering `resolved_edge` and `resolved_type_edge` only |
-| the in-process scip executor | `hosts.rs:583-680` `ScipNamespaceExecutor`, index-or-diet, one fold per (root, set digest, evidence) |
+| the in-process scip executor | `hosts.rs:535-680` `ScipNamespaceExecutor`, index-or-diet, one fold per (root, set digest, evidence) |
 
 ## Why this is not "just add a flag"
 

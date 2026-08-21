@@ -100,14 +100,14 @@ on facts.
 
 The DOOR is where v5 is still alive. A `.dl6` program on the Rust runtime can
 declare an `sh` host, and the host's command line is parsed by
-`SprefaExtractExecutor::run` at `v6/sprefa-engine-rs/src/hosts.rs:876-956`. That
+`SprefaExtractExecutor::run` at `v6/sprefa-engine-rs/src/hosts.rs:882-962`. That
 parser accepts exactly two flags:
 
 ```
-hosts.rs:891   --file-fact
-hosts.rs:893   --family <cst|type|call|df|data>
-hosts.rs:901   anything else starting with `--`  ->  "flag `{token}` is not linked in-process"
-hosts.rs:941   --family scip | diet_scip         ->  "mode `{}` is not linked in-process"
+hosts.rs:897   --file-fact
+hosts.rs:899   --family <cst|type|call|df|data>
+hosts.rs:907   anything else starting with `--`  ->  "flag `{token}` is not linked in-process"
+hosts.rs:947   --family scip | diet_scip         ->  "mode `{}` is not linked in-process"
 hosts.rs:947   --family cfg                      ->  "family `cfg` is not a known family"
 ```
 
@@ -297,7 +297,7 @@ These are not `sprefa-extract`'s job. In v6 they are engine hosts.
 | `repo(slug, root, url)` | `src/engine/decls.rs:8` | `sh repos` / `sh gh_repos` org fan-out | `registry.pl:359,362` | identical | yes |
 | `rev(id, repo, oid, ts)` | `src/engine/decls.rs:13` | the `digest` freshness input | `registry.pl:342` | identical in effect | yes |
 | `content(id, hash)` | `src/engine/decls.rs:15` | `record=file` (`digest`, `bytes`, `lines`) under `--file-fact` | `schema.rs:53` | superset | yes |
-| `file(repo, rev, path, content)` | `src/engine/decls.rs:17` | `sh files` / `sh repo_files`, `SoopyFilesExecutor` | `hosts.rs:86-137` | identical | yes |
+| `file(repo, rev, path, content)` | `src/engine/decls.rs:17` | `sh files` / `sh repo_files`, `SoopyFilesExecutor` | `hosts.rs:92-143` | identical | yes |
 | `file_lines(repo, path, rev, line_count)` | `src/rels/filelines.rs:28` | `record=file.lines` under `--file-fact` | `schema.rs:53` | identical | yes |
 | `true()` | `src/engine/decls.rs:6` | `surface(true/0, guard, …, live)` | `registry.pl:140` | identical | yes |
 | `changed(path)` | `src/rels/git.rs:28` | soopy change facts | closed by `@v5-source-workload-ports` (PR #293) | identical | yes |
@@ -309,7 +309,7 @@ These are not `sprefa-extract`'s job. In v6 they are engine hosts.
 | `rev_advanced(repo, name, old, new)` | `src/engine/decls.rs:917` | derivable from two `head` rows across ticks | — | subset | yes |
 | `checkout(repo, branch, pr_heads)` | `src/engine/decls.rs:367` | `sh repo_checkout` | `registry.pl:414` | identical | yes |
 | `checkout_done`, `checkout_plan` | `src/engine/decls.rs:402,404` | the host's own response rows | `registry.pl:414` | identical | yes |
-| `scip_want(repo)` | `src/engine/decls.rs:348` | `sh scip.call` demand; the index is ensured by `ScipNamespaceExecutor` | `hosts.rs:583-620` | identical | yes |
+| `scip_want(repo)` | `src/engine/decls.rs:348` | `sh scip.call` demand; the index is ensured by `ScipNamespaceExecutor` | `hosts.rs:595-632` | identical | yes |
 | `rev_cmp_want(repo, refname, upstream)` | `src/engine/decls.rs:352` | closed by `@v5-source-workload-ports` | — | identical | yes |
 | `program(path, hash, mtime)` | `src/engine/decls.rs:895` | daemon bookkeeping; dies with v5 | — | n/a | n/a |
 | `def_target(name, file, line, kind)` | `src/engine/decls.rs:357` | LSP sink; see `plans/2026-08-12-v6-native-lsp.PLAN.md` | — | **missing** | no |
@@ -358,16 +358,16 @@ v5's source ops are the body-position operators that read files.
 
 | v5 op | v5 site | what it does | v6 equivalent | v6 site | RECORD | DOOR |
 |---|---|---|---|---|---|---|
-| `scan(glob, path)` | `decls.rs:224` | select files by glob at a rev | `sh files(glob) -> (path, digest)`, `SoopyFilesExecutor` | `hosts.rs:86-137` | identical | yes |
+| `scan(glob, path)` | `decls.rs:224` | select files by glob at a rev | `sh files(glob) -> (path, digest)`, `SoopyFilesExecutor` | `hosts.rs:92-143` | identical | yes |
 | `match_line(path, rev, /re/, line)` | `decls.rs:225` | line regex, named captures bind dl vars | **none** | — | **missing** | no |
 | `match(...)` | `decls.rs:226` | deprecated alias of `match_line` | **none** | — | **missing** | no |
-| `ast(path, rev, :lang, "(query) @cap", line)` | `decls.rs:227` | tree-sitter s-expression query, captures bind | `ts_query/1`, compiles to a `tree_sitter` host demand | `registry.pl:198` | compiles | **no**: `executor_for` has no `tree_sitter` arm (`hosts.rs:42-54`), so the demand has no linked executor |
-| `match_ast(path, rev, :lang, "$X.f()", line)` | `decls.rs:228` | ast-grep structural pattern, metavars bind | `extract --ast-pattern ID=PAT --ast-capture ID=NAME` | `src/bin/extract.rs:144-171` | identical | **no**: `hosts.rs:901` rejects `--ast-pattern` |
+| `ast(path, rev, :lang, "(query) @cap", line)` | `decls.rs:227` | tree-sitter s-expression query, captures bind | `ts_query/1`, compiles to a `tree_sitter` host demand | `registry.pl:198` | compiles | **no**: `executor_for` has no `tree_sitter` arm (`hosts.rs:41-59`), so the demand has no linked executor |
+| `match_ast(path, rev, :lang, "$X.f()", line)` | `decls.rs:228` | ast-grep structural pattern, metavars bind | `extract --ast-pattern ID=PAT --ast-capture ID=NAME` | `src/bin/extract.rs:144-171` | identical | **no**: `hosts.rs:907` rejects `--ast-pattern` |
 | `sg(...)` | `decls.rs:229` | deprecated alias of `match_ast` | same | same | identical | **no** |
 | `ast_yaml(path, rev, :lang, "rule yaml", line)` | `decls.rs:230` | ast-grep RuleCore YAML (`inside:`/`has:`) | `sg_pattern/3` is `refuse(slot_sg_metavariable_semantics)` | `registry.pl:199` | **missing** | no |
 | `json(path, rev, q:{ $k: $v })` | `decls.rs:231` | brace pattern over json/yaml/toml, key AND value captures | `record=data_value family=data` + `decode/2` | `schema.rs:43`, `registry.pl:85` | superset (v6 gives every path, not only matched ones) | yes, `--family data` |
 | `jsonp(path, rev, "a.*.b", out)` | `decls.rs:232` | dotted path over json/yaml/toml | `record=data_value.path` | `schema.rs:43` | identical | yes |
-| `cmd(path, rev, "tool {file}", line, out)` | `decls.rs:233` | shell out per file, one row per stdout line | **deliberately deleted**: "Zero shell in the engine" (CLAUDE.md, 2026-08-21); `ShellExecutor` gone | `hosts.rs:40` `LINKED_EXECUTORS` | **missing by decision** | no |
+| `cmd(path, rev, "tool {file}", line, out)` | `decls.rs:233` | shell out per file, one row per stdout line | **deliberately deleted**: "Zero shell in the engine" (CLAUDE.md, 2026-08-21); `ShellExecutor` gone | `hosts.rs:39` `LINKED_EXECUTORS` | **missing by decision** | no |
 | `comment(path, rev, /open/[, /close/], l0, l1, label)` | `decls.rs:234` | comment-marker regions, LIFO nesting | cst comment nodes give the SPANS; the marker regex needs text | `schema.rs:23` | subset | span yes, text no |
 
 Sink ops (not extraction, listed for the retirement plan):
@@ -465,8 +465,8 @@ Measured, from the sites that carry the numbers.
 |---|---|---|
 | dropping one unread `span` column from a host projection | tick-2 arrivals 21194 -> 3501, run 4.8s -> 3.55s | `v6/dl/deadcode/dead-module-rail.dl6:41-45` |
 | per-file `git hash-object` vs one batch over 82 paths | 0.82s -> 0.01s | `v6/dl/deadcode/dead-module-rail.dl6:25-26` |
-| re-deriving the repository root per FILE | 2.29s of a 3.55s run | `v6/sprefa-engine-rs/src/hosts.rs:469-475` |
-| a host response memo at the extract seam | 5.48s vs 5.33s without it, never hit | `v6/sprefa-engine-rs/src/hosts.rs:461-465` |
+| re-deriving the repository root per FILE | 2.29s of a 3.55s run | `v6/sprefa-engine-rs/src/hosts.rs:476-482` |
+| a host response memo at the extract seam | 5.48s vs 5.33s without it, never hit | `v6/sprefa-engine-rs/src/hosts.rs:467-471` |
 | capturing whole JSONL per file instead of one row | 779-file corpus 20.26s -> 62.97s, db 1.0MB -> 595MB | `v6/prolog/ARCH.pl:887` |
 | `--scip-facts` full passthrough over v6/tsv2, 204 documents | 177,967 rows / 59.4MB, of which `scip_occurrence` is 123,655 rows / 48.5MB | `v6/sprefa-extract/src/schema.rs:204-206` |
 | `--scip-deps` vs madge over v6/tsv2 | recall 0.992, precision 0.988 | `schema.rs:215` |
@@ -493,8 +493,8 @@ Measured, from the sites that carry the numbers.
 | 3 | `ast` | `decls.rs:227` | a `tree_sitter` arm in `executor_for`; `ts_query/1` already compiles to a host demand | `@dl6-no-text-extraction-door` |
 | 4 | `ast_yaml` | `decls.rs:230` | un-refuse `sg_pattern/3` once metavariable slot semantics are decided (LANG DESIGN, needs Chris) | `@dl6-no-text-extraction-door` |
 | 5 | `--family cfg` from dl6 | `hosts.rs:947` | one `"cfg" => want_cfg = true` arm plus the `flatten_cfg` call; the plane is already tested | `@dl6-cfg-family-unlinked` |
-| 6 | `scip_occurrence`, `scip_binding` and the eight `--family scip` rows from dl6 | `hosts.rs:941` | a `scip.facts.*` host namespace beside the four resolved ones | `@dl6-scip-facts-door` |
-| 7 | `module_edge`, `module_unresolved`, `module_binding_resolved`, `crate_edge` from dl6 | `hosts.rs:901` | `deps` / `package_deps` host names with a project-root input | `@dl6-deps-package-door` |
+| 6 | `scip_occurrence`, `scip_binding` and the eight `--family scip` rows from dl6 | `hosts.rs:947` | a `scip.facts.*` host namespace beside the four resolved ones | `@dl6-scip-facts-door` |
+| 7 | `module_edge`, `module_unresolved`, `module_binding_resolved`, `crate_edge` from dl6 | `hosts.rs:907` | `deps` / `package_deps` host names with a project-root input | `@dl6-deps-package-door` |
 | 8 | `gen` (codegen sink) | `decls.rs:250` | the write-verb door | `@fs-effects-door` (open) |
 | 9 | `graph_node` / `graph_edge` sinks | `decls.rs:251-252` | no v6 flow panel; DELETE unless Chris wants the panel back | — (retirement plan, delete list) |
 | 10 | `hover_note` sink | `decls.rs:253` | the v6 native LSP | `plans/2026-08-12-v6-native-lsp.PLAN.md` |
