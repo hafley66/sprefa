@@ -56,6 +56,54 @@ rel root_file(path: text).
 rel source_file(path: text, digest: text).
 source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
 
+# ── the entry plane ─────────────────────────────────────────────────────────
+
+# Hand-typing one crate's main.rs made every OTHER crate's entry read as dead,
+# so a cargo workspace's own bin and lib targets are read rather than typed.
+
+# The host answers ONE json document; the declared output columns name two of
+# its top-level keys and the value plane fans the rest out into rows.
+
+# rx: metadata$.pipe(mergeMap(doc => doc.packages), mergeMap(pkg => pkg.targets),
+# filter(target => target.kind.some(isRootKind)), map(relativeToWorkspaceRoot)).
+sh cargo_targets(manifest_dir: text) -> (workspace_root: text, packages: json) =
+  `cd {manifest_dir} && cargo metadata --format-version 1 --no-deps`.
+
+rel cargo_manifest(dir: text).
+
+rel cargo_metadata_doc(workspace_root: text, packages: json).
+cargo_metadata_doc(WorkspaceRoot, Packages) <-
+  cargo_manifest(Dir), cargo_targets(Dir, WorkspaceRoot, Packages).
+
+# `kind` is a json ARRAY per target, so the spread over it IS the membership
+# test and the fact table below keeps the kinds that name an entry point.
+rel cargo_target_source(workspace_root: text, kind: text, src_path: text).
+cargo_target_source(WorkspaceRoot, Kind, SrcPath) <-
+  cargo_metadata_doc(WorkspaceRoot, Packages),
+  decode(Packages, [... {targets: [... {kind: [... Kind], src_path: SrcPath: text}]}]).
+
+rel root_kind(kind: text).
+root_kind('bin').        root_kind('lib').   root_kind('proc-macro').
+root_kind('cdylib').     root_kind('rlib').
+
+# cargo answers an absolute path and every other plane keys on the repo-relative
+# one the pathspec produced.
+rel derived_root(path: text).
+derived_root(Path) <-
+  cargo_target_source(WorkspaceRoot, Kind, SrcPath),
+  root_kind(Kind),
+  substr(SrcPath, 1, length(WorkspaceRoot)) == WorkspaceRoot,
+  Path := substr(SrcPath, length(WorkspaceRoot) + 2).
+
+rel cargo_root_count(roots: int).
+cargo_root_count(count(Path)) <- derived_root(Path).
+
+# The union both liveness planes read. One rel carrying arrivals AND a rule
+# head would make every derived row arrive twice, so the union is its own rel.
+rel entry_file(path: text).
+entry_file(Path) <- root_file(Path).
+entry_file(Path) <- derived_root(Path).
+
 # ── the def plane ───────────────────────────────────────────────────────────
 # Definition CLASS (free fn, inherent method, trait method) is not modelled.
 # It was, through three more host declarations reading owner and trait spans,
@@ -281,7 +329,7 @@ def_used_uniquely(DefPath, Name) <-
 # correctly clears it, and the two rules disagree on every crate entry.
 rel rail_dead_module(path: text, defs: int).
 rail_dead_module(Path, Defs) <-
-  file_defs(Path, Defs), Defs >= 5, not(file_used(Path, _Used)), not(root_file(Path)).
+  file_defs(Path, Defs), Defs >= 5, not(file_used(Path, _Used)), not(entry_file(Path)).
 
 # The third bucket, and the honest one. A file reached ONLY through names that
 # several files define is neither proven live nor proven dead: the call sites
@@ -296,14 +344,14 @@ rail_unproven_module(Path, Defs) <-
   Defs >= 5,
   file_used(Path, _Used),
   not(def_used_uniquely(Path, _Name)),
-  not(root_file(Path)).
+  not(entry_file(Path)).
 
 # ── THE CRAWL ───────────────────────────────────────────────────────────────
 # The crawl reaches by name for the same reason, one hop per tick until the
 # fixpoint. A trait method needs no separate rule: a call names no impl, so
 # every definition of the name is reached, which IS dynamic dispatch.
 rel live_file(path: text).
-live_file(Path) <- root_file(Path).
+live_file(Path) <- entry_file(Path).
 live_file(Target) <-
   live_file(Source), call_from(Source, Callee), def_site(Target, Callee, _At).
 live_file(Target) <- live_file(Source), imports(Source, Target).
@@ -313,8 +361,9 @@ rail_unreachable_module(Path, Defs) <- file_defs(Path, Defs), Defs >= 5, not(liv
 
 # A root outside the glob seeds nothing and every file then reads as unreachable.
 rel rail_root_not_a_source(path: text).
-rail_root_not_a_source(Path) <- root_file(Path), not(source_file(Path, _Digest)).
+rail_root_not_a_source(Path) <- entry_file(Path), not(source_file(Path, _Digest)).
 
+? cargo_root_count(roots).
 ? rail_root_not_a_source(path).
 ? rail_dead_module(path, defs).
 ? rail_unproven_module(path, defs).

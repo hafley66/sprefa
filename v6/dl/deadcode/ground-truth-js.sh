@@ -19,17 +19,18 @@ rc=0
 say() { printf '%-6s %-26s %s\n' "$1" "$2" "$3"; }
 bad() { rc=1; say FAIL "$1" "$2"; }
 
-( cd "$CRATE" && npx --yes knip@6 --reporter json ) >"$WORK/knip.json" 2>"$WORK/knip.err" || true
-python3 - "$WORK/knip.json" >"$WORK/knip.set" <<'PY' || { echo "FAIL   knip produced no usable report"; cat "$WORK/knip.err" >&2; exit 1; }
-import json,sys
-d=json.load(open(sys.argv[1]))
-for issue in d["issues"]:
-    if issue["unresolved"]:
-        raise SystemExit(f"knip could not resolve an import in {issue['file']}; fix the fixture")
-    for f in issue["files"]:
-        print(f["name"])
-PY
-sort -u -o "$WORK/knip.set" "$WORK/knip.set"
+# knip's `json` reporter answers ONE document; its default `symbols` reporter
+# answers a section header and then one path per line, which greps.
+( cd "$CRATE" && npx --yes knip@6 -n --include files,unresolved \
+    --no-config-hints --no-exit-code ) >"$WORK/knip.txt" 2>"$WORK/knip.err" || true
+if grep -q '^Unresolved imports' "$WORK/knip.txt"; then
+  echo "FAIL   knip could not resolve an import; fix the fixture"
+  sed -n '/^Unresolved imports/,$p' "$WORK/knip.txt" >&2
+  exit 1
+fi
+sed -n '/^Unused files/,/^Unresolved imports/p' "$WORK/knip.txt" \
+  | grep -E '^[^ ]+\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$' | sort -u >"$WORK/knip.set" || true
+touch "$WORK/knip.set"
 
 bash "$HERE/dead-module-rail.sh" "$ROOT" "$GLOB" "$SEED" >"$WORK/rail.txt" 2>&1 \
   || { cat "$WORK/rail.txt"; echo "FAIL   rail run"; exit 1; }
