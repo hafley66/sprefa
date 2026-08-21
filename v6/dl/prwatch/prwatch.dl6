@@ -22,7 +22,10 @@
 bind interval(period: int, bucket: int).
 
 rel repo(slug: text).
+repo("hafley66/instant").
 repo("hafley66/sprefa").
+repo("hafley66/hafley-rs").
+repo("hafley66/hafley-rxjs").
 
 # A merged pull whose head branch carries one of these is a lane's own work, so
 # `lane_proof` is the receipt that a dispatched lane's commits reached main.
