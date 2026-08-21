@@ -871,9 +871,9 @@ json_scalar_rendering(json_patch, [TargetSql, PatchSql], Sql) :-
 json_value_expr(Expr) :- compound(Expr), Expr = {}(_), !.
 json_value_expr(Expr) :- is_list(Expr), Expr \== [], !.
 json_value_expr(Expr) :- compound(Expr), Expr = [_ | _].
-json_value_expr(json_object(_)) :- !.
-json_value_expr(json_array(_)) :- !.
-json_value_expr(json_null) :- !.
+json_value_expr(Expr) :- nonvar(Expr), Expr = json_object(_), !.
+json_value_expr(Expr) :- nonvar(Expr), Expr = json_array(_), !.
+json_value_expr(Expr) :- Expr == json_null, !.
 
 % Keys sort at COMPILE time: json1 keeps argument order and the log contract
 % is sorted keys. A GROUND subtree uses the oracle's own canonicalizer.
@@ -949,7 +949,9 @@ json_document_dup_key(Expr) :-
     ;   member(_-Raw, Pairs), json_document_dup_key(Raw)
     ),
     !.
-json_document_dup_key(json_object(Pairs)) :-
+json_document_dup_key(Expr) :-
+    nonvar(Expr),
+    Expr = json_object(Pairs),
     (   pairs_keys(Pairs, Keys),
         sort(Keys, Distinct),
         length(Keys, KeyCount), length(Distinct, DistinctCount),
@@ -958,7 +960,9 @@ json_document_dup_key(json_object(Pairs)) :-
     ;   member(_-Raw, Pairs), json_document_dup_key(Raw)
     ),
     !.
-json_document_dup_key(json_array(Values)) :-
+json_document_dup_key(Expr) :-
+    nonvar(Expr),
+    Expr = json_array(Values),
     member(Element, Values),
     json_document_dup_key(Element),
     !.
@@ -971,7 +975,8 @@ json_document_dup_key(Expr) :-
 json_document_pairs(Expr, Pairs) :-
     nonvar(Expr), Expr = {}(Fields),
     json_document_field_pairs(Fields, Pairs).
-json_document_pairs(json_object(Pairs), Pairs).
+json_document_pairs(Expr, Pairs) :-
+    nonvar(Expr), Expr = json_object(Pairs).
 
 json_document_field_pairs(Fields, _) :- var(Fields), !, fail.
 json_document_field_pairs((Left, Right), Pairs) :- !,
