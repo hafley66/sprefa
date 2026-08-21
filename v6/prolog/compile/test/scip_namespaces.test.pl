@@ -15,9 +15,9 @@
 :- begin_tests(scip_namespaces).
 
 scip_source(Source) :-
-    Source = "sh scip.diet.call(repo: text, path: text, digest: text)\c
+    Source = "rel scip.diet.call(repo: text, path: text, digest: text)\c
 \n  -> (record: text, family: text, caller_path: text, callee_path: text,\c
-\n      callee: text, kind: text) = `cd {repo} && extract {path}`.\c
+\n      callee: text, kind: text) key(1, 2).\c
 \nrel edge(callee: text).\c
 \nedge(Callee) <-\c
 \n  scip.diet.call('.', 'a.rs', 'd', 'resolved_edge', 'call',\c
@@ -31,6 +31,7 @@ test(dotted_host_name_parses_to_the_module_path_atom) :-
     parse_dl_dcg_entry(scip_test, Codes, Prog, _Bindings, Findings),
     Findings == [],
     Prog = program(Decls, _Rules, _Queries),
+    memberchk(arrival_identity(scip__diet__call, [1, 2]), Decls),
     memberchk(sh_decl(scip__diet__call, Inputs, Outputs, _Template), Decls),
     Inputs == [col(repo, text), col(path, text), col(digest, text)],
     Outputs == [col(record, text), col(family, text), col(caller_path, text),

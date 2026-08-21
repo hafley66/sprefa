@@ -231,8 +231,7 @@ prog_parts(program(Decls, Rules, Queries), Decls, Rules, Queries).
 
 merged_prog(Decls, Rules, Queries, Prog) :-
     (   Queries == [],
-        \+ member(sh_decl(_, _, _, _), Decls),
-        \+ member(bind_decl(_, _), Decls)
+        \+ member(sh_decl(_, _, _, _), Decls)
     ->  Prog = prog(Decls, Rules)
     ;   Prog = program(Decls, Rules, Queries)
     ).

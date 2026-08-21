@@ -10,7 +10,8 @@ fixture(ghcacher_host_program_term,
     [ col_type(watch/1, ep, text),
       col_type(etag/2, ep, text),
       col_type(etag/2, tag, text),
-      bind_decl(interval, [col(period, int), col(bucket, int)]),
+      col_type(interval/2, period, int),
+      col_type(interval/2, bucket, int),
       sh_decl(fetch,
               [col(ep, text), col(prev, text), col(bucket, int)],
               [col(status, int), col(tag, text), col(body, json)],
@@ -177,7 +178,8 @@ fixture(native_ts_query_term,
               [col(file_digest, text), col(query, text)],
               [col(capture, text)],
               template("tree-sitter {file_digest} $query")),
-      bind_decl(interval, [col(period, int), col(bucket, int)])
+      col_type(interval/2, period, int),
+      col_type(interval/2, bucket, int)
     ],
     [ (query_value(
           ts_query(
@@ -288,23 +290,32 @@ fixture(duplicate_host_name_is_refused,
 
 % ── `repo` is not a bind column ─────────────────────────────────────────────
 %
-% The obvious next thought once the repo-scoped file hosts exist: watch N
-% repositories by putting the repo on the watcher. Refused by name, with the
-% four reasons written at validate_bind_decl/3 -- the deciding one being that a
-% crawl ENUMERATES and does not react, so the repo set is data (rows the
-% `repos` host answers on a clock) while a bind's configuration column is read
-% from the program's own literals.
-%
-% Before this clause the same declaration threw the generic
-% bind_mismatch(watch, [...]), which answers "those are not watch's columns"
-% and says nothing about why the shape is refused rather than unimplemented.
-fixture(repo_on_bind_watch_is_refused,
+% RULING sh_bind_surface_removed: an arrival rel that is ALSO rule-headed is
+% two sources writing one rel. Before this stop the arrow was silently
+% ignored (compile.pl subtracts DerivedRefs from ArrivalTargets), so the
+% author's demand plane never existed and nothing said so.
+fixture(arrival_rel_with_rule_head_is_refused,
   program(
-    [ bind_decl(watch, [col(repo, text), col(glob, text), col(path, text),
-                        col(digest, text)]) ],
-    [ (file(Repo, Path, Digest) <-
-         watch(Repo, '**/*.ts', Path, Digest)) ],
+    [ sh_decl(watch, [col(glob, text)],
+              [col(path, text), col(digest, text)], template("")) ],
+    [ (watch(Glob, Path, Digest) <-
+         seed(Glob, Path, Digest)) ],
     []),
   [],
   [],
-  [ throws(bind_repo_column(watch)) ]).
+  [ throws(host_and_rule_head(watch)) ]).
+
+% One name is one declaration: the probe rewrite used to win silently and the
+% declared table was created, writable, and never read (plan risk 2).
+fixture(arrival_rel_and_plain_rel_share_name_is_refused,
+  program(
+    [ col_type(files/3, glob, text),
+      col_type(files/3, path, text),
+      col_type(files/3, digest, text),
+      sh_decl(files, [col(glob, text)],
+              [col(path, text), col(digest, text)], template("")) ],
+    [ (seen(Path) <- probe(files, [g], [Path, _Digest], [])) ],
+    []),
+  [],
+  [],
+  [ throws(host_and_rel_share_name(files)) ]).

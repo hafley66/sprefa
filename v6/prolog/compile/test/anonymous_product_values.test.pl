@@ -49,7 +49,7 @@ artifacts(Text, Plan, Rows, Ts, Rust, JsonSchema, ProgramTs, ProgramRust) :-
 
 anonymous_source(Text) :-
     string_concat("rel source(input: text, a: int, b: text).\n",
-                  "rel resident(input: text) -> (a: int, b: text).\n",
+                  "rel resident(input: text, result: (a: int, b: text)).\n",
                   Prefix),
     string_concat(Prefix,
                   "resident(Input, {a: A, b: B}) <- source(Input, A, B).\n",
@@ -66,7 +66,7 @@ test(authored_object_constructs_and_matches) :-
     memberchk(resident(hello, obj([a-1, b-world])), IngressFinal),
     % The same object spelling is accepted as a world value for the generated
     % product column, so ingress and a rule-built value share one canonical row.
-    parse_text("rel resident(input: text) -> (a: int, b: text).\n", Ingress,
+    parse_text("rel resident(input: text, result: (a: int, b: text)).\n", Ingress,
                IngressBindings),
     expand_program_with_bindings(Ingress, IngressBindings,
                                  prog(Decls, _), _),
@@ -108,16 +108,16 @@ test(named_and_anonymous_products_have_same_field_values) :-
 
 test(incomplete_anonymous_context_is_named_refusal) :-
     string_concat("rel source(input: text, a: int).\n",
-                  "rel resident(input: text) -> (a: int, b: text).\n",
+                  "rel resident(input: text, result: (a: int, b: text)).\n",
                   Prefix),
     string_concat(Prefix,
                   "resident(Input, {a: A}) <- source(Input, A).\n",
                   Text),
     parse_text(Text, Program, _),
     catch(run_program(Program, [source(hello, 1)], [], _, _), Error, true),
-    Error = relation_pattern_not_a_relation_value(resident/2, return,
+    Error = relation_pattern_not_a_relation_value(resident/2, result,
                                                   TypeName, _),
-    sub_atom(TypeName, 0, _, _, '__anon_resident_return_').
+    sub_atom(TypeName, 0, _, _, '__anon_resident_result_').
 
 test(list_and_option_wrappers_materialize_and_execute) :-
     ListText = "rel holder(value: list((a: int, b: text))).\n",
@@ -150,17 +150,17 @@ test(generated_product_reaches_all_type_emitters_and_program_json) :-
     once(artifacts(Text, Rows, Ts, Rust, JsonSchema, ProgramTs, ProgramRust)),
     once(member(row(GeneratedId, _, _, GeneratedName, rel, _, _, _, _, _, _),
                 Rows)),
-    sub_atom(GeneratedName, 0, _, _, '__anon_resident_return_'),
+    sub_atom(GeneratedName, 0, _, _, '__anon_resident_result_'),
     memberchk(row(_, GeneratedId, _, _, concrete_type, _, _, _, _, _, _), Rows),
-    sub_atom(Ts, _, _, _, 'export interface AnonResidentReturn'),
-    sub_atom(Ts, _, _, _, 'return: AnonResidentReturn'),
-    sub_atom(Rust, _, _, _, 'pub struct AnonResidentReturn'),
-    sub_atom(Rust, _, _, _, 'r#return: AnonResidentReturn'),
-    sub_atom(JsonSchema, _, _, _, '__anon_resident_return_'),
+    sub_atom(Ts, _, _, _, 'export interface AnonResidentResult'),
+    sub_atom(Ts, _, _, _, 'result: AnonResidentResult'),
+    sub_atom(Rust, _, _, _, 'pub struct AnonResidentResult'),
+    sub_atom(Rust, _, _, _, 'result: AnonResidentResult'),
+    sub_atom(JsonSchema, _, _, _, '__anon_resident_result_'),
     sub_atom(ProgramTs, _, _, _, 'STRUCT_TYPES'),
-    sub_atom(ProgramTs, _, _, _, '__anon_resident_return_'),
+    sub_atom(ProgramTs, _, _, _, '__anon_resident_result_'),
     sub_atom(ProgramRust, _, _, _, '"struct_types"'),
-    sub_atom(ProgramRust, _, _, _, '__anon_resident_return_'), !.
+    sub_atom(ProgramRust, _, _, _, '__anon_resident_result_'), !.
 
 artifacts(Text, Rows, Ts, Rust, JsonSchema, ProgramTs, ProgramRust) :-
     artifacts(Text, _Plan, Rows, Ts, Rust, JsonSchema, ProgramTs, ProgramRust).
