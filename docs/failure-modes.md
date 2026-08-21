@@ -2171,6 +2171,14 @@ sites but not against new code. **missing** = nothing.
   counts its calls, 3 files, a 5-document index. Fail-pre-fix `reads = 15`,
   after `reads = 5`. The count, not the edge set, is what detects a regression
   here: the edges were always correct.
+- STILL OPEN, a SECOND whole-corpus walk the join was hiding: `site_occurrence`
+  tries every occurrence of a document against one call site and `byte_range`
+  rescans the document bytes from offset 0 for each, so a file the index knows
+  costs sites x occurrences x bytes. `sample` over a live resolve of hafley-rs
+  puts 2477 of 2484 stacks in `site_occurrence` -> `byte_range`. 5 files (none
+  of them in the index, every edge `name_resolve`) finish in 2.04s; 10 files do
+  not finish in 90s. The fix is a per-document line-offset table, not another
+  memo, and it is unbuilt.
 
 ## 56. A runtime with no per-verb clock, and three optimizations aimed at the wrong 12%
 
