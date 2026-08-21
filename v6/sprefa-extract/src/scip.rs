@@ -489,33 +489,61 @@ fn prune_unstaged(
 /// `Unspecified` is UTF-16 per the SCIP spec; a col landing mid-character or
 /// past the line end is None (malformed range, never clamped into a lie).
 pub fn byte_range(content: &[u8], range: [i32; 4], encoding: PositionEncoding) -> Option<Span> {
-    let line_start = |line: i32| -> Option<usize> {
+    byte_range_at(content, &LineTable::build(content), range, encoding)
+}
+
+/// Byte offset of each 0-based line start, with the document end as the final
+/// entry. One per document, never one per range.
+pub struct LineTable {
+    starts: Vec<u32>,
+}
+
+/// Document bytes a range conversion reads: one per line lookup under the
+/// table, one per byte of the document under a scan.
+static LINE_READS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn line_reads() -> u64 {
+    LINE_READS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+impl LineTable {
+    pub fn build(content: &[u8]) -> LineTable {
+        LINE_READS.fetch_add(content.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        let mut starts = Vec::new();
+        starts.push(0u32);
+        for at in memchr::memchr_iter(b'\n', content) {
+            starts.push(at as u32 + 1);
+        }
+        // The sentinel answers a range naming the line after the final newline,
+        // which the scan form answered with content.len().
+        if starts.last() != Some(&(content.len() as u32)) {
+            starts.push(content.len() as u32);
+        }
+        LineTable { starts }
+    }
+
+    fn line_start(&self, line: i32) -> Option<usize> {
+        LINE_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if line < 0 {
             return None;
         }
-        let mut seen = 0i32;
-        for (ix, &b) in content.iter().enumerate() {
-            if seen == line {
-                return Some(ix);
-            }
-            if b == b'\n' {
-                seen += 1;
-            }
-        }
-        if seen == line {
-            Some(content.len())
-        } else {
-            None
-        }
-    };
+        self.starts.get(line as usize).map(|start| *start as usize)
+    }
+}
+
+pub fn byte_range_at(
+    content: &[u8],
+    lines: &LineTable,
+    range: [i32; 4],
+    encoding: PositionEncoding,
+) -> Option<Span> {
+    let line_start = |line: i32| -> Option<usize> { lines.line_start(line) };
     let byte_col = |line: i32, col: i32| -> Option<u32> {
         if col < 0 {
             return None;
         }
         let start = line_start(line)?;
-        let line_end = content[start..]
-            .iter()
-            .position(|&b| b == b'\n')
+        let line_end = memchr::memchr(b'\n', &content[start..])
             .map(|p| start + p)
             .unwrap_or(content.len());
         let text = std::str::from_utf8(&content[start..line_end]).ok()?;
@@ -593,9 +621,10 @@ pub fn site_occurrence<'a>(
     site: Span,
     callee: &str,
 ) -> Option<&'a ScipOccurrence> {
+    let lines = LineTable::build(content);
     let mut hit: Option<(&'a ScipOccurrence, [i32; 4])> = None;
     for occ in &doc.occurrences {
-        let Some(span) = byte_range(content, occ.range, doc.position_encoding) else {
+        let Some(span) = byte_range_at(content, &lines, occ.range, doc.position_encoding) else {
             continue;
         };
         if !(site.start <= span.start && span.end() <= site.end()) {

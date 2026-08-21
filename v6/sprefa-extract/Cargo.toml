@@ -24,6 +24,9 @@ dist = true
 features = ["cli"]
 
 [dependencies]
+# The newline scan behind the per-document line table. Already unified in the
+# workspace lock through regex/aho-corasick, so this pins no new copy.
+memchr = "2"
 # ast-grep-language ships the tree-sitter grammars for rust/ts/tsx/js/go in ONE
 # dep; ast-grep-core is the parse + Node API. v5 carried these v0 -> v6 (src/sg.rs).
 # Ported verbatim, not relitigated.

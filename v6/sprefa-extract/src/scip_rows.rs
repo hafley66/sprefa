@@ -19,7 +19,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::scip::byte_range;
+use crate::scip::{byte_range_at, LineTable};
 use crate::shape::Span;
 use crate::types::{
     FlatFact, OccurrenceRole, PositionEncoding, ScipDocument, ScipIndex, ScipOccurrence,
@@ -145,11 +145,13 @@ pub fn flatten_scip_records(
         // wanted: a narrowed stream must not pay to read the corpus.
         if wants_occurrences(records) {
             if let Some(content) = reader(&document.relative_path) {
+                let lines = LineTable::build(&content);
                 for occurrence in &document.occurrences {
                     out.extend(occurrence_rows(
                         document,
                         occurrence,
                         &content,
+                        &lines,
                         records,
                         occurrence_text,
                     ));
@@ -182,18 +184,19 @@ fn occurrence_rows(
     document: &ScipDocument,
     occurrence: &ScipOccurrence,
     content: &[u8],
+    lines: &LineTable,
     records: &ScipRecords,
     occurrence_text: bool,
 ) -> Vec<FlatFact> {
     let encoding = document.position_encoding;
-    let Some(span) = byte_range(content, occurrence.range, encoding) else {
+    let Some(span) = byte_range_at(content, lines, occurrence.range, encoding) else {
         return Vec::new();
     };
     let (start, end) = (span.start, span.end());
     let path = document.relative_path.clone();
     let enclosing = occurrence
         .enclosing_range
-        .and_then(|range| byte_range(content, range, encoding));
+        .and_then(|range| byte_range_at(content, lines, range, encoding));
     let roles = occurrence.roles;
     let text = occurrence_text
         .then(|| {
@@ -310,8 +313,10 @@ fn symbol_rows(info: &ScipSymbolInfo, path: Option<&str>, records: &ScipRecords)
         // proto gives that text no position encoding of its own, and the
         // spec's default reading for an unset encoding is UTF-16.
         let bytes = signature.text.as_bytes();
+        let lines = LineTable::build(bytes);
         for occurrence in &signature.occurrences {
-            let Some(span) = byte_range(bytes, occurrence.range, PositionEncoding::Unspecified)
+            let Some(span) =
+                byte_range_at(bytes, &lines, occurrence.range, PositionEncoding::Unspecified)
             else {
                 continue;
             };

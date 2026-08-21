@@ -217,15 +217,16 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
             Vec::new()
         };
 
+    let targets = TargetIndex::build(&inputs);
     let mut facts = Vec::new();
     if request.arms.call {
         for (input, (_, edges)) in inputs.iter().zip(resolved_calls.iter()) {
-            facts.extend(call_facts(input, &inputs, edges));
+            facts.extend(call_facts(input, &targets, edges));
         }
     }
     for input in &inputs {
         if request.arms.types {
-            facts.extend(type_facts(input, &inputs, &cx));
+            facts.extend(type_facts(input, &targets, &cx));
         }
     }
     if request.arms.flow {
@@ -788,9 +789,70 @@ pub fn resolve_probes() -> u64 {
     RESOLVE_PROBES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+type SpanNames = std::collections::HashMap<(u32, u32), Option<crate::shape::NameId>>;
+
+/// Every resolved edge names a target file and a span inside it. Both lookups
+/// are tables built once over the whole input set, never a walk per edge.
+struct TargetIndex<'a> {
+    by_blob: std::collections::HashMap<&'a ContentId, &'a ProjectInput>,
+    call_names: std::collections::HashMap<&'a ContentId, SpanNames>,
+    type_names: std::collections::HashMap<&'a ContentId, SpanNames>,
+}
+
+/// First node at a span wins, the order the scan it replaces answered in.
+fn span_names<F: crate::family::Family>(bundle: &FamilyBundle<F>) -> SpanNames {
+    let mut names = SpanNames::with_capacity(bundle.nodes.len());
+    for node in &bundle.nodes {
+        names
+            .entry((node.span.start, node.span.len))
+            .or_insert(node.name);
+    }
+    names
+}
+
+impl<'a> TargetIndex<'a> {
+    fn build(inputs: &'a [ProjectInput]) -> TargetIndex<'a> {
+        let mut by_blob = std::collections::HashMap::with_capacity(inputs.len());
+        let mut call_names = std::collections::HashMap::new();
+        let mut type_names = std::collections::HashMap::new();
+        for input in inputs {
+            // First wins, the answer the scan this replaces gave when two paths
+            // carry one blob.
+            by_blob.entry(&input.blob).or_insert(input);
+            if let Some(bundle) = input.output.call.as_ref() {
+                call_names.insert(&input.blob, span_names(bundle));
+            }
+            if let Some(bundle) = input.output.types.as_ref() {
+                type_names.insert(&input.blob, span_names(bundle));
+            }
+        }
+        TargetIndex {
+            by_blob,
+            call_names,
+            type_names,
+        }
+    }
+
+    fn input(&self, blob: &ContentId) -> Option<&'a ProjectInput> {
+        RESOLVE_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.by_blob.get(blob).copied()
+    }
+}
+
+/// The declared name at `span` in one file's table, through that file's own
+/// interner.
+fn name_at(names: Option<&SpanNames>, output: &ExtractOutput, span: Span) -> Option<String> {
+    RESOLVE_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    names?
+        .get(&(span.start, span.len))
+        .copied()
+        .flatten()
+        .map(|name| output.strings.lookup(name).to_string())
+}
+
 fn call_facts(
     input: &ProjectInput,
-    inputs: &[ProjectInput],
+    targets: &TargetIndex<'_>,
     edges: &[ProjectEdge<CallF>],
 ) -> Vec<FlatFact> {
     let Some(call) = input.output.call.as_ref() else {
@@ -799,19 +861,16 @@ fn call_facts(
     edges
         .iter()
         .filter_map(|edge| {
-            let target = inputs.iter().find(|other| {
-                RESOLVE_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                other.blob == edge.dst_blob
-            })?;
+            let target = targets.input(&edge.dst_blob)?;
             Some(FlatFact::ResolvedEdge {
                 caller_path: input.path.clone(),
                 caller_name: Some(caller_name(call, &input.output, edge.src)),
                 callee_path: target.path.clone(),
-                callee_name: target
-                    .output
-                    .call
-                    .as_ref()
-                    .and_then(|bundle| node_name(bundle, &target.output, edge.dst_span)),
+                callee_name: name_at(
+                    targets.call_names.get(&target.blob),
+                    &target.output,
+                    edge.dst_span,
+                ),
                 caller_site_start: edge.call_site.map_or(0, |span| span.start),
                 caller_site_end: edge.call_site.map_or(0, |span| span.end()),
                 kind: edge.kind.as_str().to_string(),
@@ -820,29 +879,34 @@ fn call_facts(
         .collect()
 }
 
-fn type_facts(input: &ProjectInput, inputs: &[ProjectInput], cx: &ProjectCx) -> Vec<FlatFact> {
+fn type_facts(
+    input: &ProjectInput,
+    targets: &TargetIndex<'_>,
+    cx: &ProjectCx,
+) -> Vec<FlatFact> {
     let Some(types) = input.output.types.as_ref() else {
         return Vec::new();
     };
     resolve_type_edges(&input.path, &input.output, cx)
         .iter()
         .filter_map(|edge| {
-            let target = inputs.iter().find(|other| {
-                RESOLVE_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                other.blob == edge.dst_blob
-            })?;
+            let target = targets.input(&edge.dst_blob)?;
             let owner = types.node(edge.src).span;
             Some(FlatFact::ResolvedTypeEdge {
                 owner_path: input.path.clone(),
-                owner_name: node_name(types, &input.output, owner),
+                owner_name: name_at(
+                    targets.type_names.get(&input.blob),
+                    &input.output,
+                    owner,
+                ),
                 owner_start: owner.start,
                 owner_end: owner.end(),
                 target_path: target.path.clone(),
-                target_name: target
-                    .output
-                    .types
-                    .as_ref()
-                    .and_then(|bundle| node_name(bundle, &target.output, edge.dst_span)),
+                target_name: name_at(
+                    targets.type_names.get(&target.blob),
+                    &target.output,
+                    edge.dst_span,
+                ),
                 kind: edge.kind.as_str().to_string(),
             })
         })
@@ -861,25 +925,6 @@ fn caller_name<F: crate::family::Family>(
         Some(name) => output.strings.lookup(name).to_string(),
         None => format!("closure@{}", node.span.start),
     }
-}
-
-/// The declared name of the node at `span` in one bundle, through that file's
-/// own interner. A span with no node, or a node with no name, is `None` rather
-/// than a fabricated string.
-fn node_name<F: crate::family::Family>(
-    bundle: &FamilyBundle<F>,
-    output: &ExtractOutput,
-    span: Span,
-) -> Option<String> {
-    bundle
-        .nodes
-        .iter()
-        .find(|node| {
-            RESOLVE_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            node.span == span
-        })
-        .and_then(|node| node.name)
-        .map(|name| output.strings.lookup(name).to_string())
 }
 
 /// Test-only filesystem `BlobSource`: project-relative path in, bytes out,
