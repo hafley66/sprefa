@@ -4,9 +4,8 @@
 #
 #   bash v6/dl/crosswalk/gate.sh
 #
-# The programs under v6/tsv2/goldens/multirepo_crawl/ are the SPEC and are read
-# in place, never edited: tsv2 is paused and this replaces the RUN, not the
-# programs. The corpus builders there are corpus builders and not the paused
+# The programs are the arrival-form respellings under v6/dl/crosswalk/goldens
+# (the paused tsv2 originals keep the dead `sh` spelling and are not compiled). The corpus builders there are corpus builders and not the paused
 # runtime; they spell `git init` and `git commit` in shell, which is their
 # business, and nothing in the engine does.
 #
@@ -25,7 +24,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V6="$(cd "$HERE/../.." && pwd)"
 REPO="$(cd "$V6/.." && pwd)"
 ENGINE="$V6/sprefa-engine-rs"
-GOLDEN="$V6/tsv2/goldens/multirepo_crawl"
+GOLDEN="$HERE/goldens"
+TSV2_CORPUS="$V6/tsv2/goldens/multirepo_crawl"
 HARNESS="${DL_RUST_HARNESS:-$ENGINE/target/release/emit_rust_harness}"
 TAB="$(printf '\t')"
 
@@ -39,11 +39,11 @@ differing=0
 
 # ── the corpus, all three deepenings, so one tree answers every leg ─────────
 CORPUS="$WORK/corpus"
-timeout 120 bash "$GOLDEN/1_corpus.sh" "$CORPUS" >"$WORK/corpus.log" 2>&1 \
+timeout 120 bash "$TSV2_CORPUS/1_corpus.sh" "$CORPUS" >"$WORK/corpus.log" 2>&1 \
   || fail "1_corpus.sh: $(tail -5 "$WORK/corpus.log")"
-timeout 120 bash "$GOLDEN/6_history_corpus.sh" "$CORPUS" >>"$WORK/corpus.log" 2>&1 \
+timeout 120 bash "$TSV2_CORPUS/6_history_corpus.sh" "$CORPUS" >>"$WORK/corpus.log" 2>&1 \
   || fail "6_history_corpus.sh: $(tail -5 "$WORK/corpus.log")"
-timeout 120 bash "$GOLDEN/9_change_corpus.sh" "$CORPUS" >>"$WORK/corpus.log" 2>&1 \
+timeout 120 bash "$TSV2_CORPUS/9_change_corpus.sh" "$CORPUS" >>"$WORK/corpus.log" 2>&1 \
   || fail "9_change_corpus.sh: $(tail -5 "$WORK/corpus.log")"
 say "PASS  corpus: 4 repositories, deepened with a fork, two tag kinds and a change pair"
 
@@ -67,7 +67,7 @@ compile() {
 # One TSV line per row, `rel<TAB>col...`, so nothing here parses JSON.
 run() {
   local program="$1" rels="$2"; shift 2
-  timeout 300 env DL_ADAPTERS_DIR="$HERE/adapters" "$HARNESS" "$WORK/$program.rs" \
+  timeout 300 "$HARNESS" "$WORK/$program.rs" \
     "$@" --live-hosts --final-only --final-tsv --final-rels "$rels" \
     >"$WORK/$program.tsv" 2>"$WORK/$program.err" \
     || fail "$program run: $(tail -5 "$WORK/$program.err")"
@@ -103,7 +103,7 @@ say "PASS  0_multirepo_crawl folded in $(( $(date +%s) - started ))s"
 
 for rel in dep_pin skewed skew_row skew_width; do
   rows_of "$rel" 0_multirepo_crawl >"$WORK/got.$rel.tsv"
-  cp "$GOLDEN/v5_golden/v5.$rel.tsv" "$WORK/want.$rel.tsv"
+  cp "$TSV2_CORPUS/v5_golden/v5.$rel.tsv" "$WORK/want.$rel.tsv"
   grade "$rel" "$WORK/want.$rel.tsv" "$WORK/got.$rel.tsv"
 done
 
@@ -111,7 +111,7 @@ say "GAP   dep_ver: v6 stops by name at aggregate_operand_not_number(min, _, tex
 say "GAP     min/max lower to a delta-compare against the stored extremum and the"
 say "GAP     emitter carries only the numeric comparison, so a version STRING has"
 say "GAP     no lowering. v5's three rows, so the missing thing is visible:"
-sed 's/^/GAP     v5 /' "$GOLDEN/v5_golden/v5.dep_ver.tsv"
+sed 's/^/GAP     v5 /' "$TSV2_CORPUS/v5_golden/v5.dep_ver.tsv"
 
 # ═══ leg 2: 4_dep_crawl, the frontier closure over the same go.mod bytes ════
 compile 4_dep_crawl
@@ -123,14 +123,14 @@ run 4_dep_crawl 'crawl_visit,dep_target,corpus_boundary,crawl_reach' "${CRAWL[@]
 
 # v5 pins repositories by SLUG and the crawl by MODULE PATH, which is what each
 # repository's own go.mod declares, so the slug takes the module prefix back.
-awk -F"$TAB" '{ print "example.com/" $1 "\t" $2 }' "$GOLDEN/v5_golden/v5.dep_pin.tsv" \
+awk -F"$TAB" '{ print "example.com/" $1 "\t" $2 }' "$TSV2_CORPUS/v5_golden/v5.dep_pin.tsv" \
   | LC_ALL=C sort -u >"$WORK/want.dep_target.tsv"
 rows_of dep_target 4_dep_crawl | LC_ALL=C sort -u >"$WORK/got.dep_target.tsv"
 grade dep_target "$WORK/want.dep_target.tsv" "$WORK/got.dep_target.tsv"
 
 # The boundary of the corpus is a relation: the modules v5 pins that no checkout
 # under the root answers for.
-cut -f2 "$GOLDEN/v5_golden/v5.dep_pin.tsv" | LC_ALL=C sort -u >"$WORK/v5.modules.tsv"
+cut -f2 "$TSV2_CORPUS/v5_golden/v5.dep_pin.tsv" | LC_ALL=C sort -u >"$WORK/v5.modules.tsv"
 rows_of crawl_visit 4_dep_crawl | cut -f2 | LC_ALL=C sort -u >"$WORK/v6.reached.tsv"
 LC_ALL=C comm -23 "$WORK/v5.modules.tsv" "$WORK/v6.reached.tsv" >"$WORK/want.boundary.tsv"
 rows_of corpus_boundary 4_dep_crawl \

@@ -225,6 +225,7 @@ fn executor_roster_matches_registry() {
         .map(|name| name.trim().to_string())
         .collect();
     registry_names.sort();
+    registry_names.dedup();
     linked.sort();
     assert!(!registry_names.is_empty(), "no arrival_executor rows parsed");
     assert_eq!(registry_names, linked, "registry roster != LINKED_EXECUTORS");

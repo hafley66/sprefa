@@ -316,12 +316,25 @@ expression_for_term(Term, Family, Precedence, SqlRendering, TypeRule) :-
 arrival_executor(soopy__files,          'soopy.files').
 arrival_executor(soopy__stage,          'soopy.stage').
 arrival_executor(soopy__commit,         'soopy.commit').
-arrival_executor(soopy__refs,           'soopy.refs').
-arrival_executor(soopy__history,        'soopy.history').
-arrival_executor(soopy__repo_at,        'soopy.repo_at').
 arrival_executor(soopy__checkout,       'soopy.checkout').
 arrival_executor(soopy__mirror_pr_heads, 'soopy.mirror_pr_heads').
-arrival_executor(soopy__dep_crawl,      'soopy.dep_crawl').
+
+% These rels keep bare names: src/executors/{git_refs,git_history,repo_at,
+% dep_crawl}.rs branch on them and belong to another lane; many rels, one row.
+arrival_executor(git_ref,               'soopy.refs').
+arrival_executor(git_tag,               'soopy.refs').
+arrival_executor(git_merge_base,        'soopy.history').
+arrival_executor(git_ahead_behind,      'soopy.history').
+arrival_executor(git_ancestor,          'soopy.history').
+arrival_executor(git_change,            'soopy.history').
+arrival_executor(git_rename,            'soopy.history').
+arrival_executor(git_changed_line,      'soopy.history').
+arrival_executor(repo_files_at,         'soopy.repo_at').
+arrival_executor(repo_grep_at,          'soopy.repo_at').
+arrival_executor(dep_crawl_repo,        'soopy.dep_crawl').
+arrival_executor(dep_crawl_visited,     'soopy.dep_crawl').
+arrival_executor(dep_crawl_edge,        'soopy.dep_crawl').
+arrival_executor(dep_crawl_unresolved,  'soopy.dep_crawl').
 arrival_executor(extract__records,      'extract.records').
 arrival_executor(extract__repo_records, 'extract.repo_records').
 arrival_executor(extract__call_node,    'extract.call_node').

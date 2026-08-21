@@ -48,6 +48,6 @@ timeout 300 bash "$REPO/v6/prolog/compile/scripts/dl6c.sh" "$WORK/crosswalk.dl6"
 # `dep_gap` is every pin no checkout answers for and runs to four figures on a
 # real go.mod, so it is off the default read and named by CROSSWALK_RELS.
 RELS="${CROSSWALK_RELS:-repo_file_count,dep_edge,cross_edge_count,cross_path,cross_reach,skew,entry_unreached}"
-exec env DL_ADAPTERS_DIR="$HERE/adapters" DL_EXTRACT_BIN="$EXTRACT" \
+exec env DL_EXTRACT_BIN="$EXTRACT" \
   "$HARNESS" "$WORK/crosswalk.rs" --live-hosts --arrive 'crosswalk_run='"$FIXTURE" \
   --final-only --final-tsv --final-rels "$RELS" "$@"
