@@ -175,7 +175,7 @@ flowchart LR
 | `v6/prolog/0_program_check.pl` | 46 | 91 | 7 | 6 |
 | `v6/prolog/strat.pl` | 14 | 31 | 6 | 3 |
 | `v6/prolog/compile/6_isolated_compiler_dd.pl` | 96 | 120 | 5 | 10 |
-| `v6/prolog/3_clock_check.pl` | 37 | 68 | 3 | 11 |
+| `v6/prolog/3_clock_check.pl` | 38 | 70 | 3 | 11 |
 | `v6/prolog/2_subscribe.pl` | 5 | 12 | 1 | 3 |
 | `v6/prolog/compile/test/3_clock_history.pl` | 4 | 0 | 1 | 0 |
 | `v6/prolog/6_profile.pl` | 7 | 25 | 0 | 1 |
