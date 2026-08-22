@@ -1,39 +1,205 @@
 [
   [
-    {"rel":"config_candidate","sign":"add","row":[1,"ghcache.toml"]},
-    {"rel":"config_candidate","sign":"add","row":[2,"~/.config/ghcache/config.toml"]},
-    {"rel":"gh_username","sign":"add","row":["hafley66"]},
-    {"rel":"interval","sign":"add","row":[3600,0]},
-    {"rel":"interval","sign":"add","row":[60,0]}
+    {
+      "rel": "config_candidate",
+      "sign": "add",
+      "row": [
+        1,
+        "ghcache.toml"
+      ]
+    },
+    {
+      "rel": "config_candidate",
+      "sign": "add",
+      "row": [
+        2,
+        "~/.config/ghcache/config.toml"
+      ]
+    }
   ],
   [
-    {"rel":"__host_response_toml_json","sign":"add","row":[
-      "witness|toml_json|config_path:text=ghcache.toml|bucket=0",
-      0,
-      "ghcache.toml",
-      {"global":{"poll_interval_seconds":60,"org_repo_discovery_interval_seconds":3600,"rate_warn_threshold":200,"rate_stop_threshold":100,"warn_stretch_multiplier":2,"heartbeat_ttl_seconds":0,"sync_notifications":0,"staging_folder":""},
-       "repo":[{"owner":"acme","name":"widgets","default_branch":"main","sync_prs":0,"sync_events":1,"sync_notifications":0,"sync_branches":"","checkout_on_sync":0,"checkout_pr_branches":0}]}
-    ]}
+    {
+      "rel": "__host_response_clock__tick",
+      "sign": "add",
+      "row": [
+        "witness|clock__tick|every:int=3600",
+        0,
+        3600,
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_toml__json",
+      "sign": "add",
+      "row": [
+        "witness|toml__json|config_path:text=ghcache.toml|bucket:int=0",
+        0,
+        "ghcache.toml",
+        0,
+        {
+          "global": {
+            "poll_interval_seconds": 60,
+            "org_repo_discovery_interval_seconds": 3600,
+            "rate_warn_threshold": 200,
+            "rate_stop_threshold": 100,
+            "warn_stretch_multiplier": 2,
+            "heartbeat_ttl_seconds": 0,
+            "sync_notifications": 0,
+            "staging_folder": ""
+          },
+          "repo": [
+            {
+              "owner": "acme",
+              "name": "widgets",
+              "default_branch": "main",
+              "sync_prs": 0,
+              "sync_events": 1,
+              "sync_notifications": 0,
+              "sync_branches": "",
+              "checkout_on_sync": 0,
+              "checkout_pr_branches": 0
+            }
+          ]
+        }
+      ]
+    }
   ],
-  [{"rel":"interval","sign":"add","row":[60,60]}],
-  [{"rel":"interval","sign":"add","row":[60,120]}],
   [
-    {"rel":"interval","sign":"add","row":[60,180]},
-    {"rel":"__host_response_gh_rest_cond","sign":"add","row":[
-      "witness|gh_rest_cond|endpoint_path:text=repos/acme/widgets/events|prev_etag:text=|bucket=120",
-      0, "repos/acme/widgets/events", "",
-      200, "etag-120", "", 0, 500, 100000, 111, 1, {}
-    ]}
+    {
+      "rel": "__host_response_clock__tick",
+      "sign": "add",
+      "row": [
+        "witness|clock__tick|every:int=60",
+        0,
+        60,
+        0
+      ]
+    }
   ],
   [
-    {"rel":"interval","sign":"add","row":[60,240]},
-    {"rel":"__host_response_gh_rest_cond","sign":"add","row":[
-      "witness|gh_rest_cond|endpoint_path:text=repos/acme/widgets/events|prev_etag:text=etag-120|bucket=180",
-      0, "repos/acme/widgets/events", "etag-120",
-      200, "etag-180", "", 0, 40, 100000, 90, 1, {}
-    ]}
+    {
+      "rel": "__host_response_gh__rest_cond",
+      "sign": "add",
+      "row": [
+        "witness|gh__rest_cond|endpoint_path:text=repos/acme/widgets/events|prev_etag:text=|bucket:int=0",
+        0,
+        "repos/acme/widgets/events",
+        "",
+        0,
+        200,
+        "etag-0",
+        "",
+        0,
+        150,
+        1000000,
+        500,
+        1,
+        {}
+      ]
+    }
   ],
-  [{"rel":"interval","sign":"add","row":[60,300]}],
-  [{"rel":"interval","sign":"add","row":[60,360]}],
-  [{"rel":"interval","sign":"add","row":[60,420]}]
+  [
+    {
+      "rel": "__host_response_clock__tick",
+      "sign": "add",
+      "row": [
+        "witness|clock__tick|every:int=60",
+        1,
+        60,
+        60
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_gh__rest_cond",
+      "sign": "add",
+      "row": [
+        "witness|gh__rest_cond|endpoint_path:text=repos/acme/widgets/events|prev_etag:text=etag-0|bucket:int=60",
+        0,
+        "repos/acme/widgets/events",
+        "etag-0",
+        60,
+        304,
+        "",
+        "",
+        0,
+        90,
+        300,
+        0,
+        1,
+        {}
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_clock__tick",
+      "sign": "add",
+      "row": [
+        "witness|clock__tick|every:int=60",
+        2,
+        60,
+        120
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_clock__tick",
+      "sign": "add",
+      "row": [
+        "witness|clock__tick|every:int=60",
+        3,
+        60,
+        180
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_clock__tick",
+      "sign": "add",
+      "row": [
+        "witness|clock__tick|every:int=60",
+        4,
+        60,
+        240
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_clock__tick",
+      "sign": "add",
+      "row": [
+        "witness|clock__tick|every:int=60",
+        5,
+        60,
+        300
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_gh__rest_cond",
+      "sign": "add",
+      "row": [
+        "witness|gh__rest_cond|endpoint_path:text=repos/acme/widgets/events|prev_etag:text=etag-0|bucket:int=300",
+        0,
+        "repos/acme/widgets/events",
+        "etag-0",
+        300,
+        200,
+        "etag-300",
+        "",
+        0,
+        150,
+        2000000,
+        600,
+        1,
+        {}
+      ]
+    }
+  ]
 ]
