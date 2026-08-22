@@ -50,9 +50,24 @@ fi
 ticks=$(grep -c '^{"tick"' "$scratch/out")
 printf 'fold: %ss, %s ticks\n' "$fold_wall" "$ticks"
 
-# The rate-budget receipt: a stopped window issues zero GETs. `due` empty and
-# `call_log` unchanged across the window is the assertion, not end-state rows.
-calls=$(grep -c '"rel":"call_log"' "$scratch/out")
-printf 'call_log lines: %s\n' "$calls"
+# COUNT RECEIPT for issues/ghcache-dl6-poll: a 60s period is ONE minute bucket,
+# so three consecutive buckets are three polls, not one every sixty.
+due_rows=$(jq -r 'select(.rel == "due") | .rows | length' "$scratch/out" | tail -n 1)
+fresh=$(jq -r 'select(.rel == "call_log") | [.rows[] | select(.[3] == 200)] | length' "$scratch/out" | tail -n 1)
+cached=$(jq -r 'select(.rel == "call_log") | [.rows[] | select(.[3] == 304)] | length' "$scratch/out" | tail -n 1)
+cached_bytes=$(jq -r 'select(.rel == "call_log") | [.rows[] | select(.[3] == 304) | .[6]] | add // 0' "$scratch/out")
+remaining=$(jq -r 'select(.rel == "call_log") | [.rows[] | .[4]] | min' "$scratch/out")
+printf 'due=%s call_log 200=%s 304=%s 304_bytes=%s rate_remaining_min=%s\n' \
+  "$due_rows" "$fresh" "$cached" "$cached_bytes" "$remaining"
+
+fail=0
+[ "$due_rows" = 3 ] || { echo "FAIL a 60s period over 3 buckets is 3 polls, got due=$due_rows"; fail=1; }
+[ "$fresh" = 1 ] || { echo "FAIL the first poll is one 200, got $fresh"; fail=1; }
+# Three due buckets and one re-ask: a 200 moves the stored tag, the tag is
+# demand identity, so the bucket that changed asks once more, conditionally.
+[ "$cached" = 3 ] || { echo "FAIL every later pass is a 304, got $cached"; fail=1; }
+[ "$cached_bytes" = 0 ] || { echo "FAIL a 304 moves zero bytes, got $cached_bytes"; fail=1; }
+[ "$remaining" = 4997 ] || { echo "FAIL the rate headers decode as ints, got $remaining"; fail=1; }
+[ "$fail" = 0 ] || exit 1
 
 echo "GHCACHE_RUST_DOOR_HOLDS ticks=$ticks"

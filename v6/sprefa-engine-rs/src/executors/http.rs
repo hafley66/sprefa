@@ -114,6 +114,15 @@ fn request_headers(host: &str, spelled: &str) -> Result<Vec<(String, String)>, H
         .collect())
 }
 
+/// A whole-number header value arrives as a JSON NUMBER: `decode(.., X: int)`
+/// reads a number and never a string, so the transport has to type it.
+fn header_value(text: &str) -> serde_json::Value {
+    match text.parse::<i64>() {
+        Ok(number) => serde_json::json!(number),
+        Err(_) => serde_json::Value::String(text.to_string()),
+    }
+}
+
 /// Response header names are lowercased: HTTP header names are
 /// case-insensitive and a decode rule may not depend on the origin's case.
 fn answer_row(status: u16, headers: serde_json::Map<String, serde_json::Value>, body: &str) -> HostRow {
@@ -178,10 +187,7 @@ pub fn send(request: &Request) -> Result<HostRow, HostError> {
         let Ok(text) = value.to_str() else {
             continue;
         };
-        headers.insert(
-            name.as_str().to_ascii_lowercase(),
-            serde_json::Value::String(text.to_string()),
-        );
+        headers.insert(name.as_str().to_ascii_lowercase(), header_value(text));
     }
     let body = response
         .body_mut()
