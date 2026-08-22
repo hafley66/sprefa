@@ -11,6 +11,8 @@ any_two_tagged_arms_land_on_one_tick	clean	byte-clean
 arithmetic_rejects_non_int_operand_at_runtime	unsupported	arith_operand_not_number(_+1,_,text)
 arrival_affinity_rewrite_keeps_delta	clean	byte-clean
 arrival_dup_batch_partial_ignore	clean	byte-clean
+arrival_rel_and_plain_rel_share_name_is_refused	unsupported	host_and_rel_share_name(files)
+arrival_rel_with_rule_head_is_refused	unsupported	host_and_rule_head(watch)
 async_state_machine_with_pattern_scan	unsupported	trigger_arg_not_var(fresh(_,_))
 backslash_in_string_literal_survives_both_doors	clean	byte-clean
 batched_increments_both_count	clean	byte-clean
@@ -144,7 +146,7 @@ json_absent_key_yields_no_row_under_arrivals	clean	byte-clean
 json_array_groups_and_nests	unsupported	aggregate_head(json_array(_))
 json_array_spread_fans_out_correlated_siblings	clean	byte-clean
 json_array_spread_skips_non_matching_elements	clean	byte-clean
-json_capture_type_bool_is_refused	unsupported	json_capture_type_unknown(bool)
+json_bool_capture_lands_in_a_bool_column	clean	byte-clean
 json_capture_type_typo_is_refused	unsupported	json_capture_type_unknown(itn)
 json_deep_exact_key_chain_binds	clean	byte-clean
 json_descent_into_scalars_is_silent	clean	byte-clean
@@ -335,7 +337,6 @@ relation_value_in_edge_rule_rejected	unsupported	relation_value_in_edge_rule(spa
 relation_value_under_negation_rejected	unsupported	relation_value_under_negation(span/3,file,file,file(repo(acme),fpath('missing.rs')))
 repeat_is_a_self_carry_chain	clean	byte-clean
 replace_rewrites_all_occurrences	clean	byte-clean
-repo_on_bind_watch_is_refused	unsupported	bind_repo_column(watch)
 reserved_namespace_declared_rel	unsupported	reserved_rel_namespace('__txt_reach')
 reserved_namespace_derived_head	unsupported	reserved_rel_namespace('__str_stats')
 resident_coroutine_runs_bundle_into_one_ask	clean	byte-clean

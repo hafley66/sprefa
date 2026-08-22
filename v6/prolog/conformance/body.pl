@@ -473,11 +473,11 @@ list_mint_elements(Id, Elements) :-
 %   float  json_type = 'real'      float/1
 %   text   json_type = 'text'      an atom that is not the json-null stand-in
 %
-% `bool` is deliberately ABSENT and therefore refused by name. A json boolean
-% has no settled storage on this plane yet -- the json_flex verdict's card C4
-% measured a top-level `true` DOCUMENT degrading to the integer 1 through the
-% real emitted arrival statement -- so a `bool` capture would have to pick a
-% side of an open card. Refusing it says that; accepting it would guess.
+%   bool   json_type IN ('true','false')   bool_lit(true) / bool_lit(false)
+%
+% A bool capture lands in a bool column (INTEGER CHECK IN (0,1)); json1's
+% json_extract answers 1/0 for a json boolean inside a document. Card C4 (a
+% top-level `true` DOCUMENT) is a different seam and stays open.
 %
 % An unrecognised type name is a NAMED REFUSAL rather than a capture that
 % never matches: a typo would otherwise turn into a rule that silently
@@ -486,6 +486,7 @@ list_mint_elements(Id, Elements) :-
 json_capture_type(int,   Value) :- !, integer(Value).
 json_capture_type(float, Value) :- !, float(Value).
 json_capture_type(text,  Value) :- !, atom(Value), Value \== none.
+json_capture_type(bool,  Value) :- !, ( Value == bool_lit(true) ; Value == bool_lit(false) ), !.
 json_capture_type(Type,  _) :- throw(json_capture_type_unknown(Type)).
 
 braces_decode((Left, Right), Pairs) :- !,
