@@ -5,6 +5,8 @@
 # host completion are ordinary committed arrival batches. No shell, network, or
 # wall clock participates in the grade.
 
+use http.
+
 rel watch(url: text).
 rel etag_event(url: text, tag: text) log keep(all).
 rel current_etag(url: text, tag: text) key(1).
@@ -12,7 +14,7 @@ rel current_clock(period: int, bucket: int) key(1).
 
 rel interval(period: int, bucket: int).
 
-rel http.get(url: text, headers: text, prev_etag: text, bucket: int) ->
+rel get(url: text, headers: text, prev_etag: text, bucket: int) ->
   (status: int, response_headers: json, body: json, bytes: int).
 
 rel poll(url: text, headers: text, prev_etag: text, bucket: int).
@@ -34,7 +36,7 @@ poll(Url, Headers, PrevEtag, Bucket) <-
 
 resp(Url, Headers, PrevEtag, Bucket, Status, RespHeaders, Body, Bytes) <-
   poll(Url, Headers, PrevEtag, Bucket),
-  http.get(Url, Headers, PrevEtag, Bucket, Status, RespHeaders, Body, Bytes).
+  get(Url, Headers, PrevEtag, Bucket, Status, RespHeaders, Body, Bytes).
 
 fresh_hit(Url, Tag, Stars, FullName) <-
   resp(Url, _H, _P, _Bucket, Status, RespHeaders, Body, _Bytes),

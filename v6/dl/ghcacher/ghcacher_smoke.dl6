@@ -1,6 +1,8 @@
 # http.get links the Rust HttpGetExecutor directly by name (registry.pl
 # arrival_executor/2); no adapters override and no shell runs.
 
+use http.
+
 rel watch(url: text).
 rel etag_event(url: text, tag: text) log keep(all).
 rel current_etag(url: text, tag: text) key(1).
@@ -8,7 +10,7 @@ rel current_clock(period: int, bucket: int) key(1).
 
 rel interval(period: int, bucket: int).
 
-rel http.get(url: text, headers: text, prev_etag: text, bucket: int) ->
+rel get(url: text, headers: text, prev_etag: text, bucket: int) ->
   (status: int, response_headers: json, body: json, bytes: int).
 
 rel request_header(url: text, header_name: text, header_value: text).
@@ -41,7 +43,7 @@ poll(Url, Headers, PrevEtag, Bucket) <-
 
 resp(Url, Headers, PrevEtag, Bucket, Status, RespHeaders, Body, Bytes) <-
   poll(Url, Headers, PrevEtag, Bucket),
-  http.get(Url, Headers, PrevEtag, Bucket, Status, RespHeaders, Body, Bytes).
+  get(Url, Headers, PrevEtag, Bucket, Status, RespHeaders, Body, Bytes).
 
 fresh_hit(Url, Tag) <-
   resp(Url, _H, _P, _Bucket, Status, RespHeaders, _Body, _Bytes),

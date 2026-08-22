@@ -51,6 +51,9 @@
 # else: emit_ts.pl's bind_read_literals/4 collects exactly that literal and
 # serve/2_binds.ts spins exactly that one rx interval. Changing the cadence is
 # editing the rule.
+use extract.
+use http.
+
 rel interval(period: int, bucket: int).
 
 # ── which repositories exist ────────────────────────────────────────────────
@@ -79,7 +82,7 @@ rel repos(org: text, bucket: int) -> (root: text) key(1).
 #
 # It reaches GitHub through the ONE transport: the endpoint, the header set and
 # the decode of the answer are rules, and `http.get` only moves bytes.
-rel http.get(url: text, headers: text, prev_etag: text, bucket: int)
+rel get(url: text, headers: text, prev_etag: text, bucket: int)
   -> (status: int, response_headers: json, body: json, bytes: int).
 
 rel want_org(org: text).
@@ -94,7 +97,7 @@ rel org_answer(org: text, bucket: int, status: int, body: json).
 org_answer(Org, Bucket, Status, Body) <-
   org_endpoint(Org, Url, Headers),
   interval(86400, Bucket),
-  http.get(Url, Headers, "", Bucket, Status, _RespHeaders, Body, _Bytes).
+  get(Url, Headers, "", Bucket, Status, _RespHeaders, Body, _Bytes).
 
 rel org_member(org: text, slug: text).
 org_member(Org, Slug) <-
@@ -125,11 +128,11 @@ repo_file(root, path, digest) <-
 #
 # `digest` is freshness -- unchanged blob oids are a cache hit per file, and the
 # extractor does not run at all.
-rel /extract/repo_records(repo: text, path: text, digest: text, families: text) -> (callee: text) key(1, 2, 4).
+rel repo_records(repo: text, path: text, digest: text, families: text) -> (callee: text) key(1, 2, 4).
 
 rel repo_call(repo: text, path: text, callee: text).
 repo_call(root, path, callee) <-
-  repo_file(root, path, digest), /extract/repo_records(root, path, digest, "call", callee).
+  repo_file(root, path, digest), repo_records(root, path, digest, "call", callee).
 
 # ── the finding ─────────────────────────────────────────────────────────────
 # One rail over the whole org, written once, with no idea how many repositories

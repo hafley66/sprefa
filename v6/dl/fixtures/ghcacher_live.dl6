@@ -18,6 +18,8 @@
 # 10-second law; the design cadence for a 300-repo poller is 60.
 #
 # rx: interval(2_000).pipe(map(toBucketRow), mergeMap(rows => engine.submit(rows)))
+use http.
+
 rel interval(period: int, bucket: int).
 
 # The world names an endpoint. EDB: a bare top-level fact is refused
@@ -65,7 +67,7 @@ current_bucket(Period, Bucket) <+ bucket_event(Period, Bucket).
 #
 # `grep -i '^etag:'` is anchored because Access-Control-Expose-Headers lists
 # both ETag and X-RateLimit-Remaining by name in its value.
-rel http.get(url: text, headers: text, prev_etag: text, bucket: int)
+rel get(url: text, headers: text, prev_etag: text, bucket: int)
   -> (status: int, response_headers: json, body: json, bytes: int).
 
 # The conditional GET is the PROGRAM's: If-None-Match is a header row, so the
@@ -126,7 +128,7 @@ rel rest_arrival(endpoint_path: text, bucket: int, status_code: int,
 rest_arrival(EndpointPath, Bucket, StatusCode, RespHeaders, BodyJson) <-
   poll(EndpointPath, PrevEtag, Bucket),
   request_headers(EndpointPath, Headers),
-  http.get(EndpointPath, Headers, PrevEtag, Bucket, StatusCode, RespHeaders,
+  get(EndpointPath, Headers, PrevEtag, Bucket, StatusCode, RespHeaders,
            BodyJson, _Bytes).
 
 rel header_etag(endpoint_path: text, bucket: int, etag_value: text).

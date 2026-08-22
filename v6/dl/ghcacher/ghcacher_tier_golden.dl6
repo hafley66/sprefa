@@ -6,6 +6,8 @@
 # tick and a non-due repo derives no row at all. The schedule feeds every fact
 # and interval; no shell, network, or wall clock participates in the grade.
 
+use http.
+
 rel repo(repo_slug: text).
 rel repo_activity(repo_slug: text, last_event_bucket: int) key(1).
 rel tier_rule(tier_name: text, min_idle_ticks: int, max_idle_ticks: int, period_ticks: int).
@@ -20,7 +22,7 @@ rel points_budget(bucket: int, calls_this_tick: int).
 
 rel interval(period: int, bucket: int).
 
-rel http.get(url: text, headers: text, prev_etag: text, bucket: int) ->
+rel get(url: text, headers: text, prev_etag: text, bucket: int) ->
   (status: int, response_headers: json, body: json, bytes: int).
 
 rel poll(repo_slug: text, url: text, bucket: int).
@@ -71,7 +73,7 @@ resp(Url, Headers, PrevEtag, Bucket, Status, RespHeaders, Body, Bytes) <-
   poll(_RepoSlug, Url, Bucket),
   Headers := "{}",
   PrevEtag := "",
-  http.get(Url, Headers, PrevEtag, Bucket, Status, RespHeaders, Body, Bytes).
+  get(Url, Headers, PrevEtag, Bucket, Status, RespHeaders, Body, Bytes).
 
 fetched(RepoSlug, Bucket, Status, FullName) <-
   poll(RepoSlug, Url, Bucket),

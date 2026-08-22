@@ -11,6 +11,13 @@
 # (4) The transport holds NOTHING: the ETag, the 304 body, the page walk, the
 # token and the GraphQL query are rules here, so a restart re-reads the db.
 
+use clock.
+use dl as dl.
+use env.
+use http.
+use soopy as soopy.
+use toml.
+
 rel repo(owner: text, name: text).
 
 rel config_candidate(search_rank: int, config_path: text).
@@ -47,7 +54,7 @@ rel org_exclude(owner: text, name: text).
 
 rel current_clock(period: int, bucket: int).
 
-rel /clock/tick(every: int) -> (bucket: int).
+rel tick(every: int) -> (bucket: int).
 
 rel period(every: int).
 period(60).
@@ -55,7 +62,7 @@ period(3600).
 
 # expand_probe_rule only desugars a probe inside `<-` (1_host_expand.pl:432);
 # a slash executor in a `<+` body throws edge_body_shape (analyze.pl:999).
-current_clock(Period, Bucket) <- period(Period), /clock/tick(Period, Bucket).
+current_clock(Period, Bucket) <- period(Period), tick(Period, Bucket).
 
 # bind_read_literals (emit_rust.pl:479) needs a literal interval/2 call
 # somewhere; a bare-var call satisfies it too.
@@ -63,7 +70,7 @@ rel live_cadence(period: int).
 live_cadence(60) <- interval(60, _Bucket).
 live_cadence(3600) <- interval(3600, _Bucket).
 
-# `/clock/tick(60, Bucket)` answers MINUTE buckets: a period spelled in seconds
+# `tick(60, Bucket)` answers MINUTE buckets: a period spelled in seconds
 # and compared against one fired hourly (issues/ghcache-dl6-poll).
 rel clock_granularity(seconds: int).
 clock_granularity(60).
@@ -71,25 +78,25 @@ clock_granularity(60).
 # Every identity input must appear in the template (1_host_expand.pl:313) and
 # the freshness input must not, which is why `bucket` is absent from all four.
 
-rel /toml/json(config_path: text, bucket: int) -> (doc: json).
+rel json(config_path: text, bucket: int) -> (doc: json).
 
-rel /env/var(name: text, bucket: int) -> (value: text) key(1).
+rel var(name: text, bucket: int) -> (value: text) key(1).
 
 # ONE transport. `headers` is a JSON object of header name to value, so
 # Authorization and If-None-Match reach the wire only from a rule's row.
 #
 # `prev_etag` shapes no header: it is the demand-identity column that makes a
 # moved tag a NEW question rather than a re-ask of an answered one.
-rel http.get(url: text, headers: text, prev_etag: text, bucket: int)
+rel get(url: text, headers: text, prev_etag: text, bucket: int)
   -> (status: int, response_headers: json, body: json, bytes: int).
 
-rel http.post(url: text, headers: text, request_body: text, bucket: int)
+rel post(url: text, headers: text, request_body: text, bucket: int)
   -> (status: int, response_headers: json, body: json, bytes: int).
 
-rel /soopy/checkout(repo_slug: text, dest_root: text, want_sha: text)
+rel soopy.checkout(repo_slug: text, dest_root: text, want_sha: text)
   -> (checkout_path: text, head_sha: text).
 
-rel /soopy/mirror_pr_heads(repo_slug: text, dest_root: text, want_sha: text)
+rel soopy.mirror_pr_heads(repo_slug: text, dest_root: text, want_sha: text)
   -> (checkout_path: text, pr_head_count: int).
 
 # ── config resolution ───────────────────────────────────────────────────────
@@ -97,7 +104,7 @@ rel /soopy/mirror_pr_heads(repo_slug: text, dest_root: text, want_sha: text)
 config_doc(ConfigPath, Doc) <-
   config_candidate(_SearchRank, ConfigPath),
   current_clock(3600, Bucket),
-  /toml/json(ConfigPath, Bucket, Doc).
+  json(ConfigPath, Bucket, Doc).
 
 config_present(SearchRank, ConfigPath) <-
   config_candidate(SearchRank, ConfigPath),
@@ -180,7 +187,7 @@ rel api_token(token_value: text) key(1).
 token_seen(SearchRank, TokenValue) <-
   token_var(SearchRank, VarName),
   current_clock(3600, Bucket),
-  /env/var(VarName, Bucket, TokenValue),
+  var(VarName, Bucket, TokenValue),
   TokenValue != "".
 
 best_token_rank(min(SearchRank)) <- token_seen(SearchRank, _TokenValue).
@@ -455,7 +462,7 @@ page_arrival(EndpointPath, PageUrl, Bucket, Status, RespHeaders, Body, Bytes) <-
   page_fetch(EndpointPath, PageUrl, _PageOrdinal, Bucket),
   request_headers(PageUrl, Headers),
   page_prev_etag(PageUrl, PrevEtag),
-  http.get(PageUrl, Headers, PrevEtag, Bucket, Status, RespHeaders, Body,
+  get(PageUrl, Headers, PrevEtag, Bucket, Status, RespHeaders, Body,
            Bytes).
 
 # ── the response headers, decoded ───────────────────────────────────────────
@@ -874,7 +881,7 @@ graphql_headers(Url, json_object(HeaderName, HeaderValue)) <-
 pr_batch_arrival(BatchKey, Bucket, Status, RespHeaders, Data, Bytes) <-
   pr_post_body(Bucket, BatchKey, RequestBody),
   graphql_headers(Url, Headers),
-  http.post(Url, Headers, RequestBody, Bucket, Status, RespHeaders, Data,
+  post(Url, Headers, RequestBody, Bucket, Status, RespHeaders, Data,
             Bytes).
 
 rel gql_rate_remaining(batch_key: text, bucket: int, rate_remaining: int).
@@ -1218,11 +1225,11 @@ checkout_task(RepoSlug, DestRoot, WantSha, CheckoutPrBranches) <-
 
 checkout_answer(RepoSlug, CheckoutPath, HeadSha) <-
   checkout_task(RepoSlug, DestRoot, WantSha, _FetchPrBranches),
-  /soopy/checkout(RepoSlug, DestRoot, WantSha, CheckoutPath, HeadSha).
+  soopy.checkout(RepoSlug, DestRoot, WantSha, CheckoutPath, HeadSha).
 
 pr_head_mirror(RepoSlug, CheckoutPath, PrHeadCount) <-
   checkout_task(RepoSlug, DestRoot, WantSha, 1),
-  /soopy/mirror_pr_heads(RepoSlug, DestRoot, WantSha, CheckoutPath,
+  soopy.mirror_pr_heads(RepoSlug, DestRoot, WantSha, CheckoutPath,
                        PrHeadCount).
 
 checkout(RepoRef, DefaultBranch, CheckoutPath, HeadSha, Bucket) <+
@@ -1317,7 +1324,7 @@ rate_pool(ApiType, RateRemaining, RateReset, count(AtTick)) <-
 
 # ── the engine measuring itself ─────────────────────────────────────────────
 
-rel /dl/tick_cost(bucket: int) ->
+rel dl.tick_cost(bucket: int) ->
   (executor: text, wall_ms: int, sqlite_ms: int, calls: int, rows_out: int,
    bytes: int, rss_kb: int).
 
@@ -1325,7 +1332,7 @@ rel measured(bucket: int, executor: text, wall_ms: int, sqlite_ms: int,
              calls: int, rows_out: int, bytes: int, rss_kb: int).
 measured(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <-
   current_clock(60, Bucket),
-  /dl/tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb).
+  dl.tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb).
 
 rel tick_cost(bucket: int, executor: text, wall_ms: int, sqlite_ms: int,
               calls: int, rows_out: int, bytes: int, rss_kb: int) log keep(all).
