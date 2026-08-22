@@ -8,71 +8,107 @@
 # the input, and one `want_crawl` row can name a corpus the poster never
 # enumerated.
 #
-# ── FOUR NAMES, ONE FRONTIER CLOSURE ────────────────────────────────────────
-# A crawl produces four relations of different arity, and a host answers with
-# one output shape, so the crawl is declared as four hosts over the same three
-# inputs. `sprefa-engine-rs/src/hosts.rs` recognizes the four ruled names, runs
-# `dep_resolve.rs` in-process, and memoises on (frontier, checkout_root, seed),
-# so the four demands settle one traversal. That is the SoopyFilesExecutor
-# arrangement (`hosts.rs:46`) applied to a second family of ruled names, and it
-# is why every template below exits nonzero: a runtime WITHOUT the linked arm
-# must stop by name rather than answer zero rows out of a shell.
+# ── THE PROGRAM OWNS ITS SEEDS ───────────────────────────────────────────────
+# `repo_known` is one posted row per local checkout, the same shape
+# `want_repo` already is in 0_multirepo_crawl.dl6: the corpus builder knows
+# every directory it made, so it posts the roster instead of a shell scanning
+# a directory listing into a rel. There is no executor here at all: the
+# closure over `repo_known` and `repo_grep_at`'s go.mod reads IS the crawl.
 #
-# ── LOCAL LOCATE ONLY ───────────────────────────────────────────────────────
-# `dep_resolve.rs:1` never reaches the network. A target with no checkout under
-# the root becomes a `dep_crawl_unresolved` row carrying the reason, so the
-# boundary of the corpus is a relation and not a silence. On the pinned corpus
-# that boundary is exactly github.com/pkg/errors and golang.org/x/sync.
+# ── LOCAL LOCATE ONLY, GO.MOD ONLY ───────────────────────────────────────────
+# A require target with no matching `repo_known` row becomes a `crawl_gap`
+# row carrying its reason, so the boundary of the corpus is a relation and not
+# a silence. On the pinned corpus that boundary is exactly
+# github.com/pkg/errors and golang.org/x/sync. This program answers only the
+# go_mod frontier; a specifier-import crawl is not built here.
+#
+# ── THE CEILING IS WHAT MAKES THE FIXPOINT FINITE ───────────────────────────
+# Read alongside `crosswalk.dl6`'s `reach_level`/`reach_step`/`hop_ceiling`:
+# the level rides inside the recursion so a cyclic require graph settles
+# instead of minting a new hop forever, and `min(Level)` is the shortest way
+# in.
 #
 # ── THE RX LOWERING ─────────────────────────────────────────────────────────
-#   wantCrawl$.pipe(                                     // crawl_repo, and the
-#     map(mintIdentityAndWitness),                       // three siblings, one
-#     distinct(demand => demand.witnessDigest),          // shared traversal
-#     mergeMap(runCrawlMemoised),
-#     mergeMap(commitEdbArrival))
+#   wantCrawl$.pipe(                                       // crawl_level(0)
+#     mergeMap(seed => repoKnown$.pipe(
+#       filter(repo => repo.coordinate === seed.seed))))
 #
-#   merge(crawlEdge$, crawlGap$).pipe(                   // dep_target
-#     map(row => [row.fromRepo, row.target]), distinct())
+#   crawlLevel$.pipe(                                       // crawl_step
+#     expand(node => frontierTarget$.pipe(
+#              filter(t => t.fromCoordinate === node.repo),
+#              mergeMap(t => repoKnown$.pipe(
+#                filter(r => r.coordinate === t.target)))),
+#            HOP_CEILING),
+#     groupBy(node => node.key), mergeMap(g => g.pipe(min(n => n.level))))
 #
-#   crawlVisit$.pipe(groupBy(row => row.seed),           // crawl_reach
-#                    mergeMap(group => group.pipe(count())))
+#   frontierTarget$.pipe(                                    // crawl_gap
+#     mergeMap(t => repoKnown$.pipe(
+#       filter(r => r.coordinate === t.target), isEmpty()),
+#       map(() => ({ ...t, reason: 'no_local_checkout' }))))
 
-rel dep_crawl_repo(checkout_root: text, seed: text, frontier: text)
-   -> (coordinate: text, root: text).
+rel repo_grep_at(root: text, rev: text, glob: text, pattern: text)
+   -> (path: text, line: int, g1: text, g2: text, g3: text).
 
-rel dep_crawl_visited(checkout_root: text, seed: text, frontier: text)
-   -> (repo: text, rev: text, hop: int).
-
-rel dep_crawl_edge(checkout_root: text, seed: text, frontier: text)
-   -> (from_repo: text, from_rev: text, target: text, to_repo: text).
-
-rel dep_crawl_unresolved(checkout_root: text, seed: text, frontier: text)
-   -> (from_repo: text, target: text, reason: text).
-
-# One row per crawl. `frontier` names which reader answers `targets_at`:
-# go_mod for a Go corpus, specifier for the import/require plane.
 rel want_crawl(checkout_root: text, seed: text, frontier: text).
+
+# One row per local checkout the corpus builder made.
+rel repo_known(checkout_root: text, coordinate: text, dir: text).
+
+rel hop_ceiling(hops: int).
+hop_ceiling(6).
+
+# ── every require line every known checkout's go.mod declares ───────────────
+rel frontier_target(checkout_root: text, from_coordinate: text, target: text, version: text).
+frontier_target(CheckoutRoot, FromCoordinate, Target, Version) <-
+  repo_known(CheckoutRoot, FromCoordinate, Dir),
+  repo_grep_at(Dir, 'HEAD', 'go.mod',
+               '([a-zA-Z0-9._-]+/[a-zA-Z0-9._/-]+)[ ]+(v[0-9][a-zA-Z0-9._-]*)',
+               _Path, _Line, Target, Version, _G3).
+
+# ── the frontier closure, bounded so a cyclic require graph still settles ───
+rel crawl_level(seed: text, repo: text, level: int).
+rel crawl_step(seed: text, repo: text, level: int).
+
+crawl_level(Seed, Seed, 0) <-
+  want_crawl(CheckoutRoot, Seed, "go_mod"),
+  repo_known(CheckoutRoot, Seed, _Dir).
+crawl_level(Seed, Repo, Level) <- crawl_step(Seed, Repo, Level).
+
+crawl_step(Seed, ToCoordinate, NextLevel) <-
+  crawl_level(Seed, FromCoordinate, Level),
+  hop_ceiling(Ceiling),
+  Level < Ceiling,
+  want_crawl(CheckoutRoot, Seed, "go_mod"),
+  frontier_target(CheckoutRoot, FromCoordinate, ToCoordinate, _Version),
+  repo_known(CheckoutRoot, ToCoordinate, _Dir),
+  NextLevel := Level + 1.
+
+rel crawl_hops(seed: text, repo: text, hops: int).
+crawl_hops(Seed, Repo, min(Level)) <- crawl_level(Seed, Repo, Level).
 
 # ── the four projections, each carrying the seed it came from ───────────────
 rel crawl_repo(seed: text, coordinate: text, root: text).
-crawl_repo(seed, coordinate, root) <-
-  want_crawl(checkout_root, seed, frontier),
-  dep_crawl_repo(checkout_root, seed, frontier, coordinate, root).
+crawl_repo(Seed, Coordinate, Dir) <-
+  crawl_hops(Seed, Coordinate, _Hops),
+  want_crawl(CheckoutRoot, Seed, "go_mod"),
+  repo_known(CheckoutRoot, Coordinate, Dir).
 
 rel crawl_visit(seed: text, repo: text, rev: text, hop: int).
-crawl_visit(seed, repo, rev, hop) <-
-  want_crawl(checkout_root, seed, frontier),
-  dep_crawl_visited(checkout_root, seed, frontier, repo, rev, hop).
+crawl_visit(Seed, Repo, "HEAD", Hops) <- crawl_hops(Seed, Repo, Hops).
 
 rel crawl_edge(seed: text, from_repo: text, from_rev: text, target: text, to_repo: text).
-crawl_edge(seed, from_repo, from_rev, target, to_repo) <-
-  want_crawl(checkout_root, seed, frontier),
-  dep_crawl_edge(checkout_root, seed, frontier, from_repo, from_rev, target, to_repo).
+crawl_edge(Seed, FromRepo, "HEAD", Target, Target) <-
+  crawl_hops(Seed, FromRepo, _Hops),
+  want_crawl(CheckoutRoot, Seed, "go_mod"),
+  frontier_target(CheckoutRoot, FromRepo, Target, _Version),
+  repo_known(CheckoutRoot, Target, _Dir).
 
 rel crawl_gap(seed: text, from_repo: text, target: text, reason: text).
-crawl_gap(seed, from_repo, target, reason) <-
-  want_crawl(checkout_root, seed, frontier),
-  dep_crawl_unresolved(checkout_root, seed, frontier, from_repo, target, reason).
+crawl_gap(Seed, FromRepo, Target, "no_local_checkout") <-
+  crawl_hops(Seed, FromRepo, _Hops),
+  want_crawl(CheckoutRoot, Seed, "go_mod"),
+  frontier_target(CheckoutRoot, FromRepo, Target, _Version),
+  not(repo_known(CheckoutRoot, Target, _Dir)).
 
 # ── the seed-free union, which is what 2_gate.sh's v5 golden can be diffed on
 # Every dependency the corpus declares, whichever side of the checkout boundary

@@ -81,56 +81,18 @@ pub(crate) fn resolve_home(path: &str) -> std::path::PathBuf {
 // answers through soopy or an in-process module of this crate: no shell, and no
 // `Command::new("git")`, because soopy owns every Git process.
 //
-// EACH FAMILY MEMOISES because `HostLiveRunner::collect` claims once per (plan
-// name, witness) and a family is several plan names over ONE question:
-// `git_change`, `git_rename` and `git_changed_line` are three plans and one
-// diff. Without a memo keyed on the demand's inputs, three plans cost three
-// passes.
+// @comment-ok: states the removed-cache invariant a reviewer cannot see from the code.
+// EACH CALL ANSWERS FROM SOOPY DIRECTLY, no per-process memo: `hosts.rs`'s own
+// per-tick demand dedup is the one "once per tick" this system needs.
 //
 // ONE ANSWER SERVES SEVERAL NAMES because `select_columns` keeps a row only
 // when it carries every column the declaring host names (`hosts.rs`,
 // `carries_every_column`). The families are disjoint by column name, so one
 // merged row set projects into each sibling's own rows.
 
-pub mod dep_crawl;
 pub mod git_history;
 pub mod git_refs;
 pub mod repo_at;
-
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-
-
-/// One built answer per demand key, shared by the sibling host names riding one
-/// pass. The build runs outside the lock, as `ScipNamespaceExecutor::fold` does.
-pub(crate) struct FamilyMemo<T> {
-    entries: Mutex<HashMap<String, Arc<T>>>,
-}
-
-impl<T> Default for FamilyMemo<T> {
-    fn default() -> Self {
-        FamilyMemo {
-            entries: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-impl<T> FamilyMemo<T> {
-    pub(crate) fn answer<F>(&self, key: String, build: F) -> Result<Arc<T>, HostError>
-    where
-        F: FnOnce() -> Result<T, HostError>,
-    {
-        if let Some(found) = self.entries.lock().expect("family memo").get(&key) {
-            return Ok(found.clone());
-        }
-        let built = Arc::new(build()?);
-        self.entries
-            .lock()
-            .expect("family memo")
-            .insert(key, built.clone());
-        Ok(built)
-    }
-}
 
 /// A named stop carrying the host that could not answer.
 pub(crate) fn stop(host: &str, message: String) -> HostError {

@@ -2576,7 +2576,39 @@ The observed standard, in order — no step is optional:
 - **Rail**: `hosts.rs` gained `ExecutorCadence` (`Once` default, `Continuing` on `ClockExecutor`/`SoopyWatchExecutor`); `registry.pl` gained the `clock__tick`/`soopy__watch` `arrival_executor` rows the roster-parity test pins against `LINKED_EXECUTORS`; `run::stays_resident` now asks `hosts::cadence_for_plan` over the loaded program's own `host_plans` instead of reading a bind literal that no longer exists.
 - **Entry**: both tests pass; `tests/dl6_run.rs`'s 9-test suite is green in 3 separate full runs.
 
-## 67. A door the whole compiler goes through, and four tools that skipped it
+## 67. A lane ported a traversal into an executor cache
+
+- **Incident** (2026-08-22): `dep_crawl.rs` (added 2026-08-21, `456162553`) put a
+  whole frontier-closure BFS over local checkouts inside a linked host
+  executor, keyed by a per-process `FamilyMemo` so repeated demands answered
+  from a cache instead of the demand graph. Three siblings (`git_refs.rs`,
+  `git_history.rs`, `repo_at.rs`) copied the same `FamilyMemo` shape for
+  ordinary single-call reads that never needed it: `hosts.rs`'s own per-tick
+  demand dedup (`HostLiveRunner::collect`, claimed demands) already settles a
+  family of sibling plan names in one pass, so the memo bought nothing an
+  executor caller could not already get for free, while hiding a traversal
+  that belonged in the language as an executor implementation detail.
+- **RCA**: "the host answers several plan names from one soopy call" was read
+  as "the host must remember its own answers," conflating the runner's
+  once-per-tick claim with a would-be cross-tick cache, and a BFS frontier
+  closure was written in Rust because dl6 rules did not obviously reach a
+  directory-scanned repo roster, instead of writing the roster as a posted
+  fact and the closure as a recursive rule.
+- **Fail-pre-fix**: `v6/dl/crosswalk/gate.sh` leg 2 (`4_dep_crawl`) depended on
+  `arrival_executor(dep_crawl_repo, '/soopy/dep_crawl')` et al.; deleting
+  `dep_crawl.rs` alone left the golden program unable to compile.
+- **Rail**: `dep_crawl.rs`, its `hosts.rs` roster rows, and its
+  `registry.pl` `arrival_executor` rows are deleted; `FamilyMemo` is deleted
+  from `src/executors/mod.rs` and every sibling that carried one.
+  `v6/dl/crosswalk/goldens/4_dep_crawl.dl6` now derives `crawl_level` /
+  `crawl_step` / `crawl_hops` as a hop-ceilinged recursive closure over a
+  posted `repo_known` roster and `repo_grep_at`'s go.mod reads, the same
+  `hop_ceiling`/`min(Level)` shape `crosswalk.dl6`'s `reach_level` already
+  uses, so the traversal is the program's own rules and not an executor.
+- **Entry**: `v6/dl/crosswalk/gate.sh` graded green with the rule-based
+  crawl; numbers in the PR body.
+
+## 68. A door the whole compiler goes through, and four tools that skipped it
 
 - **Incident** (2026-08-22): `use soopy.` landed as the executor-module import, resolved in `use_resolve.pl` where every `use` line already lives, and 35 `.dl6` programs gained one. `compile.pl` reads them through `expand_uses/8` and stayed green; `6_profile.pl`, `compile/scripts/dl6_oracle.pl`, `compile/test/scip_namespaces.test.pl` and `tools/self_map_facts.pl` each call `parse_dl_dcg`'s `parse_dl_file/4` or `parse_dl_dcg_entry/5` directly, and a `use` line has never been a statement that parser accepts. The compile-speed gate stopped at `parse error at line 14` on the first pinned program; `scip_namespaces:receiver_rail_declares_the_registry_columns` read `sh_decl(call, ...)` where the registry says `scip__call`.
 - **RCA**: the front door is `use_resolve.pl`, not the parser, and nothing named that. Four tools reached past it for a single-file surface read, which was harmless while every tracked program was use-free.
