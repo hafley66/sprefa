@@ -59,8 +59,8 @@ pub const LINKED_EXECUTORS: &str = "/soopy/files, /soopy/files_at, /soopy/stage,
      /extract/type_node_at, /extract/sig_at, /extract/df_node_at, \
      /extract/df_edge_at, /extract/df_param_at, /extract/df_arg_at, \
      /extract/data_doc_at, /extract/comment_fact, /extract/ast_rule, /scip/call, \
-     /scip/type, /scip/diet/call, /scip/diet/type, /cargo/targets, /http/fetch, \
-     /gh/repos, /gh/rest_cond, /gh/pulls, /gh/pr_batch, /env/var, /toml/json, \
+     /scip/type, /scip/diet/call, /scip/diet/type, /cargo/targets, /http/get, \
+     /http/post, /env/var, /toml/json, \
      /dl/tick_cost";
 
 static GIT_REFS: LazyLock<crate::executors::git_refs::GitRefsExecutor> =
@@ -91,13 +91,11 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
         // name asks for, so a worktree read and a pinned read cannot collide.
         "/soopy/files" | "/soopy/files_at" => Some(&SoopyFilesExecutor),
         "/soopy/stage" | "/soopy/commit" => Some(&SoopyMutationExecutor),
-        // The ghcacher six, all linked: HTTP, the process env table, the three
-        // GitHub REST/GraphQL walks, an existing checkout, and a TOML document.
-        "/http/fetch" | "/gh/rest_cond" => Some(&crate::executors::HttpFetchExecutor),
-        "/gh/pr_batch" => Some(&crate::executors::GhPrBatchExecutor),
+        // ONE transport, no GitHub knowledge: a conditional GET, a page walk
+        // and a GraphQL batch are rules in the program that spelled them.
+        "/http/get" => Some(&crate::executors::HttpGetExecutor),
+        "/http/post" => Some(&crate::executors::HttpPostExecutor),
         "/env/var" => Some(&crate::executors::EnvExecutor),
-        "/gh/repos" => Some(&crate::executors::GhReposExecutor),
-        "/gh/pulls" => Some(&crate::executors::GhPullsExecutor),
         // The engine measuring itself: the trace table and the resident set, as
         // rows the same fold folds.
         "/dl/tick_cost" => Some(&crate::executors::TickCostExecutor),
@@ -1696,16 +1694,44 @@ impl<'p> HostLiveRunner<'p> {
         }
         let run_span = tracing::info_span!("run_groups", groups = groups.len());
         let _run_entered = run_span.enter();
-        for group in groups {
+        // The transport groups of one tick ride ONE bounded pool: 8 endpoints
+        // answered serially took 26s on the first poll bucket (10-second law).
+        let mut transported: HashMap<usize, Vec<HostRow>> = HashMap::new();
+        let mut transport_index: Vec<usize> = Vec::new();
+        let mut transport_requests: Vec<crate::executors::http::Request> = Vec::new();
+        for (index, group) in groups.iter().enumerate() {
             let first = group[0];
-            let executor = executor_for_plan(first.plan, &self.adapter_rows)
-                .expect("validated at construction");
-            let command_line = fill_template(&first.plan.template, &first.inputs);
+            let execution = self.execution_for(first.plan);
             let env = env_for_inputs(&first.inputs);
-            let answered = {
-                let span = tracing::info_span!("host_run", host = %first.plan.name);
-                let _entered = span.enter();
-                executor.run(&first.plan.name, &command_line, &env)?
+            let Some(built) =
+                crate::executors::http::transport_request(&execution, &first.plan.name, &env)
+            else {
+                continue;
+            };
+            transport_index.push(index);
+            transport_requests.push(built?);
+        }
+        if !transport_requests.is_empty() {
+            for (index, answered) in transport_index
+                .iter()
+                .zip(crate::executors::http::send_all(&transport_requests))
+            {
+                transported.insert(*index, vec![answered?]);
+            }
+        }
+        for (index, group) in groups.into_iter().enumerate() {
+            let first = group[0];
+            let answered = match transported.remove(&index) {
+                Some(rows) => rows,
+                None => {
+                    let executor = executor_for_plan(first.plan, &self.adapter_rows)
+                        .expect("validated at construction");
+                    let command_line = fill_template(&first.plan.template, &first.inputs);
+                    let env = env_for_inputs(&first.inputs);
+                    let span = tracing::info_span!("host_run", host = %first.plan.name);
+                    let _entered = span.enter();
+                    executor.run(&first.plan.name, &command_line, &env)?
+                }
             };
             for demand in group {
                 arrivals.extend(Self::project(demand, &answered, self.rel_columns)?);
