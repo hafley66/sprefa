@@ -20,67 +20,57 @@
 #                   mergeMap(group => group.pipe(reduce(maxOf))))
 #   requiredField$.pipe(withLatestFrom(snapshotJson$), filter(keyAbsent))
 #
-# HOST NAMES ARE BORROWED. registry.pl host_input_contract/3 is keyed on
-# hardcoded host names, and only a registered name may take the standard
-# (path, digest) shape with `digest` in the freshness role. `type_node_at`,
-# `sig_at`, `call_node`, `call_ref` and `df_node_at` are the registered names
-# this rail had to spend; each carries a comment saying what it really reads.
-# Renaming them needs a registry row (ARCH cold_author_defects D1).
+# HOST NAMES ARE BORROWED for ast-pattern queries; `families` below is a
+# placeholder ("type"), since the executor has no ast-pattern family to pass.
 
 rel span(start: int, end: int).
 
-sh files(glob: text) -> (path: text, digest: text) =
-  `git ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git hash-object -- "$entry")"; done`.
+rel /soopy/files(glob: text) -> (path: text, digest: text).
 
 # struct entity nodes; the span is the IDENT, never the item, so every join
 # below is nearest-declaration-above rather than containment.
-sh type_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text, name: text) =
-  `"$DL_EXTRACT_BIN" --family type {path}`.
+rel /extract/type_node_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, kind: text, name: text) key(1, 3).
 
 # the const rows: one per `const NAME: &str = r#"..."#`, carrying the whole
 # literal as `text`.
-sh sig_at(path: text, digest: text) -> (record: text, family: text, owner: span, kind: text, text: text) =
-  `"$DL_EXTRACT_BIN" --family type {path}`.
+rel /extract/sig_at(path: text, digest: text, families: text) -> (record: text, family: text, owner: span, kind: text, text: text) key(1, 3).
 
 # field names. A field_declaration with a visibility modifier and one without
 # are two ast-grep patterns; the pattern language has no optional-child form.
-sh call_node(path: text, digest: text) -> (record: text, query: text, capture: text, text: text, start: int, end: int) =
-  `"$DL_EXTRACT_BIN" --ast-pattern 'fld=struct S { pub $NAME: $TY }' --ast-selector fld=field_declaration --ast-capture fld=NAME {path}`.
-sh call_ref(path: text, digest: text) -> (record: text, query: text, capture: text, text: text, start: int, end: int) =
-  `"$DL_EXTRACT_BIN" --ast-pattern 'fld=struct S { $NAME: $TY }' --ast-selector fld=field_declaration --ast-capture fld=NAME {path}`.
+rel /extract/call_node(path: text, digest: text, families: text) -> (record: text, query: text, capture: text, text: text, start: int, end: int) key(1, 3).
+rel /extract/call_ref(path: text, digest: text, families: text) -> (record: text, query: text, capture: text, text: text, start: int, end: int) key(1, 3).
 
 # attribute text. The `type`/`call`/`df` families carry no attribute at all, so
 # the pattern door is the only one that sees `#[serde(default)]`.
-sh df_node_at(path: text, digest: text) -> (record: text, query: text, capture: text, text: text, start: int, end: int) =
-  `"$DL_EXTRACT_BIN" --ast-pattern 'attr=#[$ARG]' --ast-capture attr=ARG {path}`.
+rel /extract/df_node_at(path: text, digest: text, families: text) -> (record: text, query: text, capture: text, text: text, start: int, end: int) key(1, 3).
 
 rel want_source(glob: text).
 rel want_snapshot(glob: text).
 
 rel source_rs(path: text, digest: text).
-source_rs(Path, Digest) <- want_source(Glob), files(Glob, Path, Digest).
+source_rs(Path, Digest) <- want_source(Glob), /soopy/files(Glob, Path, Digest).
 
 rel snapshot_file(path: text, digest: text).
-snapshot_file(Path, Digest) <- want_snapshot(Glob), files(Glob, Path, Digest).
+snapshot_file(Path, Digest) <- want_snapshot(Glob), /soopy/files(Glob, Path, Digest).
 
 rel struct_def(path: text, struct_start: int, struct_name: text).
 struct_def(Path, StructStart, StructName) <-
   source_rs(Path, Digest),
-  type_node_at(Path, Digest, 'node', 'type', StructAt, 'struct', StructName),
+  /extract/type_node_at(Path, Digest, "type", 'node', 'type', StructAt, 'struct', StructName),
   decode(StructAt, {start: StructStart, end: _StructEnd}).
 
 rel attr_text(path: text, attr_start: int, attr_end: int, attr_body: text).
 attr_text(Path, AttrStart, AttrEnd, AttrBody) <-
   source_rs(Path, Digest),
-  df_node_at(Path, Digest, 'capture', 'attr', 'ARG', AttrBody, AttrStart, AttrEnd).
+  /extract/df_node_at(Path, Digest, "type", 'capture', 'attr', 'ARG', AttrBody, AttrStart, AttrEnd).
 
 rel field_decl(path: text, field_start: int, field_name: text).
 field_decl(Path, FieldStart, FieldName) <-
   source_rs(Path, Digest),
-  call_node(Path, Digest, 'capture', 'fld', 'NAME', FieldName, FieldStart, _FieldEnd).
+  /extract/call_node(Path, Digest, "type", 'capture', 'fld', 'NAME', FieldName, FieldStart, _FieldEnd).
 field_decl(Path, FieldStart, FieldName) <-
   source_rs(Path, Digest),
-  call_ref(Path, Digest, 'capture', 'fld', 'NAME', FieldName, FieldStart, _FieldEnd).
+  /extract/call_ref(Path, Digest, "type", 'capture', 'fld', 'NAME', FieldName, FieldStart, _FieldEnd).
 
 # ── nearest declaration above ───────────────────────────────────────────────
 rel field_struct_candidate(path: text, field_start: int, struct_start: int).
@@ -159,7 +149,7 @@ required_field(Path, StructName, FieldName) <-
 rel snapshot_json(snapshot: text, json_text: text).
 snapshot_json(Path, JsonText) <-
   snapshot_file(Path, Digest),
-  sig_at(Path, Digest, 'const', 'type', _Owner, 'lit', JsonText).
+  /extract/sig_at(Path, Digest, "type", 'const', 'type', _Owner, 'lit', JsonText).
 
 rel field_present(path: text, struct_name: text, field_name: text, snapshot: text).
 field_present(Path, StructName, FieldName, Snapshot) <-

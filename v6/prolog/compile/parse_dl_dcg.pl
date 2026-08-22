@@ -44,7 +44,6 @@
 
 % Editor CST boundaries this parser erases: Nonterminal -> Node-FieldNames,
 % bare = shape from clauses, ref = name only, repeat = item only, '-' = unnamed.
-cst_shape(bind_decl_stmt/1, bind_declaration-[name]).
 cst_shape(decl_a_column/1,  declaration_parameter-[name, type]).
 cst_shape(enum_variants/1,  enum_variants-[]).
 cst_shape(rel_modifiers/2,  repeat(relation_modifier)-[]).
@@ -56,7 +55,6 @@ cst_shape(statement/2,      statement-[]).
 cst_shape(statements/3,     source_file-[]).
 cst_shape(rel_stmt/1,       relation_declaration-[]).
 cst_shape(interface_stmt/1, interface_declaration-[]).
-cst_shape(sh_decl_stmt/1,   shell_declaration-[]).
 cst_shape(typed_col/2,      ref(column)-[]).
 cst_shape(type_expr/1,      type-[]).
 cst_shape(annotation_type/1, type_annotation-[type, applications]).
@@ -162,8 +160,7 @@ parse_dl_pass(_, Codes, Prog, Bindings, Findings) :-
     reverse(BindingsRev, Bindings),
     findall(F, finding_fact(F), Findings),
     ( Queries == [],
-      \+ member(sh_decl(_, _, _, _), Decls),
-      \+ member(bind_decl(_, _), Decls)
+      \+ member(sh_decl(_, _, _, _), Decls)
     -> Prog = prog(Decls, Rules)
     ; Prog = program(Decls, Rules, Queries)
     ).
@@ -331,7 +328,10 @@ normalize_host_leaf(Decls, Atom, probe(Name, Ins, Outs, Salts)) :-
     Atom =.. [_ | Values],
     length(Cols, N),
     split_probe_values(N, Values, SurfaceIns, Outs),
-    host_input_roles(Name, Cols, Roles),
+    ( memberchk(arrival_identity(Name, Positions), Decls)
+    -> arrival_roles(Cols, Positions, Roles)
+    ;  host_input_roles(Name, Cols, Roles)
+    ),
     ( same_length(Cols, SurfaceIns)
     -> partition_hiv(Cols, SurfaceIns, Roles, Ins, Salts)
     ; Ins = SurfaceIns, Salts = []
@@ -518,10 +518,9 @@ import_stmt(import_decl(File, Line, Col, EndLine, EndCol)) -->
 
 statement(Kind, Item) -->
     ws,
-    ( bind_decl_stmt(D) -> { Kind = decl_list, Item = [D] }
+    ( removed_world_decl_stmt(Ds) -> { Kind = decl_list, Item = Ds }
     ; interface_stmt(D) -> { Kind = decl_list, Item = [D] }
     ; rel_stmt(Ds) -> { Kind = decl_list, Item = Ds }
-    ; sh_decl_stmt(D) -> { Kind = decl_list, Item = [D] }
     ; import_stmt(D) -> { Kind = decl_list, Item = [D] }
     ; query_stmt(Q) -> { Kind = query, Item = Q }
     ; ( match_stmt(R) -> [] ; rule_stmt(R) -> [] ),
@@ -556,6 +555,9 @@ rel_stmt(Decls) -->
               % the record. No Ref exists yet to hang an alias decl on.
               { Decls = [rel_template(Segs, Parameters, ArrowSpecs)] }
           )
+      ;   #`(`,
+          args(decl_a_column, Specs), #`)`,
+          arrival_decl_tail(Segs, Specs, Decls)
       ;   #`(`,
           args(decl_a_column, Specs), #`)`,
           relation_arrow_output(Segs, Specs, ArrowSpecs, ReturnAlias),
@@ -599,6 +601,50 @@ relation_arrow_alias(Specs, OutputName, alias(Position), type) :-
     nth1(Position, Specs, column(OutputName, type)),
     !.
 relation_arrow_alias(_, OutputType, none, OutputType).
+
+% RULING arrival_arrow_spelling: a `( ident :` group after `->` on a rel is an
+% arrival rel's response columns, desugared to sh_decl/4 with template('').
+arrival_decl_tail(Segs, InSpecs, Decls) -->
+    ws, @`->`, ws,
+    here(Input), { response_column_group_ahead(Input) },
+    { module_path_name(Segs, Name) },
+    @`(`, host_output_columns(Name, OutSpecs), #`)`, ws,
+    arrival_identity_decls(Name, InSpecs, IdentityDecls),
+    #`.`,
+    { specs_to_columns(InSpecs, Ins),
+      specs_to_columns(OutSpecs, Outs),
+      append(InSpecs, OutSpecs, Specs),
+      record_spec_names(Name, Specs),
+      record_host_signature(Name, Ins, Outs),
+      record_host_path(Name, Segs),
+      Decls = [sh_decl(Name, Ins, Outs, template("")) | IdentityDecls] }.
+
+response_column_group_ahead([0'( | Rest]) :-
+    whitespace_tail(Rest, [First | More]),
+    ( code_type(First, alpha) ; First =:= 0'_ ),
+    identifier_run(More, After),
+    whitespace_tail(After, [0':, Next | _]),
+    Next =\= 0':.
+
+identifier_run([Code | Rest], After) :-
+    ( code_type(Code, alnum) ; Code =:= 0'_ ),
+    !,
+    identifier_run(Rest, After).
+identifier_run(After, After).
+
+arrival_identity_decls(Name, InSpecs, Decls) -->
+    ( key_clause(Positions)
+    -> ws,
+       { length(InSpecs, InputCount),
+         (   forall(member(P, Positions),
+                    ( integer(P), P >= 1, P =< InputCount ))
+         ->  true
+         ;   throw(unsupported_construct(
+                     arrival_identity_out_of_range(Name, Positions)))
+         ),
+         Decls = [arrival_identity(Name, Positions)] }
+    ;  { Decls = [] }
+    ).
 
 arrow_return_alias_decl(_, none, []).
 arrow_return_alias_decl(Ref, alias(Position), [return_alias(Ref, Position)]).
@@ -987,9 +1033,8 @@ declared_column_type_name(Decls, Name) :-
       ; column_element_type_name(Type, Name)
       ; key_option_relation_type_name(Type, Name)
       )
-    ; ( member(sh_decl(_, Ins, Outs, _), Decls), append(Ins, Outs, Cols)
-      ; member(bind_decl(_, Cols), Decls)
-      ),
+    ; member(sh_decl(_, Ins, Outs, _), Decls),
+      append(Ins, Outs, Cols),
       member(col(_, Name), Cols)
     ; member(enum_decl(_, Variants), Decls),
       tree_leaf(';', Variants, Variant),
@@ -1010,43 +1055,26 @@ option_relation_type_name(option(Inner), Name) :- !,
 option_relation_type_name(Name, Name) :- atom(Name).
 
 
-bind_decl_stmt(bind_decl(Name, Cols)) -->
-    ~`bind`, ws, ident(Name), #`(`,
-    decl_b_columns(Name, Specs), #`)`, #`.`,
-    { specs_to_columns(Specs, Cols),
-      record_spec_names(Name, Specs) }.
+% RULING sh_bind_surface_removed: the whole statement is consumed with quotes
+% and backticks respected, so a template's own `.` cannot end it early.
+removed_world_decl_stmt([]) -->
+    ( ~`sh` -> { Word = sh } ; ~`bind` -> { Word = bind } ),
+    ws, consume_removed_statement,
+    { unsupported(removed_word(Word)) }.
 
-% sh_head//2 is called separately by each clause, never shared across them:
-% clause 2 must reparse the columns so column_type_wrapper is recorded twice.
-%
-% The name is a DOTTED PATH, so `scip.call` and `scip.diet.call` are two host
-% namespaces answering the same question with different evidence. The atom every
-% later phase carries is module_path_name/2's `__` join, which is already this
-% compiler's spelling for a dotted name and is a legal SQL and Rust identifier;
-% the dotted form survives only in the author's text and in print_dl's output.
-sh_head(Name, Specs) -->
-    ~`sh`, ws, dotted_path(Segments), { module_path_name(Segments, Name) }, #`(`,
-    decl_b_columns(Name, Specs), #`)`, ws,
-    { record_host_path(Name, Segments) }.
+consume_removed_statement -->
+    [C],
+    ( { C == 0'. } -> []
+    ; { memberchk(C, [0'`, 0'\', 0'"]) } -> skip_quoted_span(C), consume_removed_statement
+    ; consume_removed_statement
+    ).
 
-sh_decl_stmt(sh_decl(Name, Ins, Outs, template(Template))) -->
-    sh_head(Name, InSpecs),
-    @`->`, #`(`,
-    host_output_columns(Name, OutSpecs), #`)`, ws,
-    @`=`, ws, template_lit(Template), #`.`,
-    { specs_to_columns(InSpecs, Ins),
-      specs_to_columns(OutSpecs, Outs),
-      append(InSpecs, OutSpecs, Specs),
-      record_spec_names(Name, Specs),
-      record_host_signature(Name, Ins, Outs) }.
-
-sh_decl_stmt(unsupported_host_decl(Name, Cols)) -->
-    sh_head(Name, Specs),
-    @`=`, ws, template_lit(_), #`.`,
-    { specs_to_columns(Specs, Cols),
-      length(Cols, Arity),
-      record_spec_names(Name, Specs),
-      unsupported(host_decl_inferred(Name/Arity)) }.
+skip_quoted_span(Quote) -->
+    [C],
+    ( { C == Quote } -> []
+    ; { C == 0'\\ } -> ( [_] -> [] ; [] ), skip_quoted_span(Quote)
+    ; skip_quoted_span(Quote)
+    ).
 
 host_output_columns(Rel, Specs) --> args(typed_col(host_col_type(Rel)), Specs).
 
@@ -1566,9 +1594,23 @@ compound_or_var(E) -->
       back(S1), dot_chain(Rec, E)
     ).
 
-dotted_path([Segment | Rest]) -->
+% Executor paths are slash-rooted `/soopy/files`, module paths dotted `a.b`
+% (ruling executor_path_slashes); both reach module_path_name/2's `__` join.
+dotted_path(Segments) -->
+    ( peek(0'/) -> slash_path(Segments) ; dotted_path_segments(Segments) ).
+
+dotted_path_segments([Segment | Rest]) -->
     ident(Segment),
-    ( dot_then_ident -> dotted_path(Rest) ; { Rest = [] } ).
+    ( dot_then_ident -> dotted_path_segments(Rest) ; { Rest = [] } ).
+
+slash_path([Segment | Rest]) -->
+    slash_then_ident, ident(Segment),
+    ( peek(0'/) -> slash_path(Rest) ; { Rest = [] } ).
+
+slash_then_ident([0'/ | S], S) :-
+    S = [C | _],
+    ( code_type(C, alpha) ; C == 0'_ ),
+    !.
 
 dot_chain(Rec, Final) -->
     ( dot_then_ident

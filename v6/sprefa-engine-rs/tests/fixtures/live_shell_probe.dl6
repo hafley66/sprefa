@@ -1,7 +1,6 @@
 rel source_file(path: text).
 
-sh look(path: text) -> (start: int, end: int) =
-  `printf '{"start":3,"end":9}' # {path}`.
+rel look(path: text) -> (start: int, end: int).
 
 rel spanned(path: text, start: int, end: int).
 spanned(path, start, end) <- source_file(path), look(path, start, end).

@@ -170,26 +170,22 @@ impl IHostExecutor for HttpFetchExecutor {
         _command_line: &str,
         env: &BTreeMap<String, String>,
     ) -> Result<Vec<HostRow>, HostError> {
-        let endpoint = required_input(host, env, &["ep", "endpoint_path", "url"])?;
-        let url = absolute_url(endpoint);
-        // A program that carries the tag relationally wins; one that does not
-        // still re-asks conditionally, from this process's own store.
-        let prev = match first_input(env, &["prev", "prev_etag", "tag"]) {
-            Some(tag) if !tag.is_empty() => tag.to_string(),
-            _ => cached_entry(&url).map(|(tag, _)| tag).unwrap_or_default(),
-        };
-        let mut fetched = conditional_get(host, &url, &prev)?;
-        if fetched.status == 304 {
-            // The 304 arm `repos.rs` and `pulls.rs` take: the previous body IS
-            // the answer, and `bytes` stays 0 because none crossed the wire.
-            if let Some((_, body)) = cached_entry(&url) {
-                fetched.body = body;
+        // The batching seam: an `eps` input carrying a JSON array of endpoint
+        // texts (json_group_array in the language) is ONE demand, one run.
+        if let Some(batch) = first_input(env, &["eps"]).filter(|eps| !eps.is_empty()) {
+            let endpoints: Vec<String> = serde_json::from_str(batch).map_err(|error| {
+                host_error(host, format!("`eps` is not a JSON array of texts: {error}"))
+            })?;
+            let mut rows = Vec::with_capacity(endpoints.len());
+            for endpoint in &endpoints {
+                let mut row = fetch_one(host, endpoint, first_input(env, &["prev", "prev_etag", "tag"]))?;
+                row.insert("ep".to_string(), serde_json::json!(endpoint));
+                rows.push(row);
             }
-        } else {
-            remember(&url, &fetched.tag, &fetched.body);
+            return Ok(rows);
         }
-        let pages = follow_link_next(host, &mut fetched)?;
-        Ok(vec![answer_row(&fetched, pages)])
+        let endpoint = required_input(host, env, &["ep", "endpoint_path", "url"])?;
+        fetch_one(host, &endpoint, first_input(env, &["prev", "prev_etag", "tag"])).map(|row| vec![row])
     }
 }
 
@@ -245,6 +241,28 @@ fn json_text(body: &str) -> &str {
     } else {
         body
     }
+}
+
+fn fetch_one(host: &str, endpoint: &str, prev_input: Option<&str>) -> Result<HostRow, HostError> {
+    let url = absolute_url(endpoint);
+    // A program that carries the tag relationally wins; one that does not
+    // still re-asks conditionally, from this process's own store.
+    let prev = match prev_input {
+        Some(tag) if !tag.is_empty() => tag.to_string(),
+        _ => cached_entry(&url).map(|(tag, _)| tag).unwrap_or_default(),
+    };
+    let mut fetched = conditional_get(host, &url, &prev)?;
+    if fetched.status == 304 {
+        // The 304 arm `repos.rs` and `pulls.rs` take: the previous body IS
+        // the answer, and `bytes` stays 0 because none crossed the wire.
+        if let Some((_, body)) = cached_entry(&url) {
+            fetched.body = body;
+        }
+    } else {
+        remember(&url, &fetched.tag, &fetched.body);
+    }
+    let pages = follow_link_next(host, &mut fetched)?;
+    Ok(answer_row(&fetched, pages))
 }
 
 /// The declared columns decide which keys survive: `carries_every_column`

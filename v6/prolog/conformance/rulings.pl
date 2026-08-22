@@ -787,6 +787,58 @@ ruling(oracle_demoted_to_snapshots, snapshots_are_the_truth_between_semantic_cha
 ruling(oracle_off_by_default, sweep_oracle_env_opt_in, user,
        'user 2026-08-20: "literally default the prolog sweep to false bc the conformance prolog is literally not my product". The reference prolog exists to mint snapshots and settle named algorithm disputes; it is not a per-pass gate. Wiring lands via perf/oracle-grind.').
 
+% 2026-08-21: the one-rel-with-arrivals collapse (user, verbatim: "all the old
+% bind and sh and host shit is now just arrival and ticks", "send rel''s in and
+% out of the thing"). The arrivals-and-ticks brief instructs the lane to close
+% the plan''s section-13 forks by the reading most consistent with "a rel whose
+% rows arrive from outside is still just a rel". The four picks:
+
+% Fork 1, the arrow. A parenthesized COLUMN group after `->` on a plain rel
+% declaration is the response column list of an arrival rel; the group is
+% recognized by its `ident :` prefix, so anonymous SUM literals `(Ok(..); ..)`
+% and arrow types `((a: int) -> int)` keep their spellings, and the anonymous
+% PRODUCT keeps its column-position spelling `rel r(result: (a: int, b: text))`.
+% One authored line moves (v6/dl/fixtures/anonymous-type-syntax.dl6).
+ruling(arrival_arrow_spelling, paren_group_after_arrow_is_response_columns, user,
+       'arrivals-and-ticks brief 2026-08-21: `rel n(ins) -> (outs) key(..)` is the one arrival form; the anonymous product loses arrow position (one authored line) and keeps column position. Desugars to sh_decl(N, Ins, Outs, template(\'\')) so every later phase and emit_ts.pl see the term they saw yesterday.').
+
+% Fork 2, key() doing two jobs. On a stored rel key(..) is UNIQUE positions;
+% on an arrival rel (arrow present) it is demand identity: the named INPUT
+% positions identify the answer, every other input is freshness. Same word,
+% two readings, held apart by the arrow: an arrival declaration desugars its
+% key() into arrival_identity/2 and mints NO keyed/2, so the storage reading
+% never sees it. A rel is still just a rel; key() states which columns say
+% WHICH rel row the world is answering.
+ruling(arrival_identity_spelling, key_positions_are_demand_identity_on_arrival_rels, user,
+       'arrivals-and-ticks brief 2026-08-21: key(P..) on an arrival rel = identity inputs, rest freshness; absent key() = all identity (registry identity_roles/2 unchanged). host_input_contract/3 rows stay as the term-door fallback.').
+
+% Fork 3, the keywords. `sh` and `bind` die from the surface now, not later:
+% the parser accepts only the rel form, and every authored program moves in
+% the same arc. The TERMS sh_decl/4 and bind-shaped schedules stay internal,
+% which is what keeps emit_ts.pl untouched and its output for unchanged
+% programs byte-identical. Templates die with `sh`: linked executors read
+% named inputs, never a command line, so the surface carries no backtick
+% string and validate_template/4 guards on the non-empty templates the term
+% door may still carry.
+ruling(sh_bind_surface_removed, arrival_rel_is_the_only_spelling, user,
+       'user 2026-08-21 verbatim: "all the old bind and sh and host shit is now just arrival and ticks". bind interval/watch included; /clock/tick and /soopy/watch are arrival rels answered by continuing executors, and a continuing executor''s re-answer is a tick.').
+
+% Fork 4, the fixture executor. A fixture answer is rows arriving from
+% outside, so it travels the arrival paths that already exist (--arrive and
+% the schedule file), never a template-parsing executor. FixtureExecutor and
+% its printf template die with the surface.
+ruling(fixture_answers_are_arrivals, schedule_and_arrive_replace_fixture_executor, user,
+       'arrivals-and-ticks brief 2026-08-21: a rel whose rows arrive from outside is still just a rel; a canned answer is an arrival batch, not an executor.').
+
+% Executor namespacing, same brief: every rel that reaches an executor is
+% spelled <executor>.<question> dotted (/soopy/files, /http/fetch, /gh/repos,
+% /clock/tick, /soopy/watch), as /scip/diet/call already is. The registry''s
+% arrival_executor/2 rows are the one roster; LINKED_EXECUTORS in
+% sprefa-engine-rs/src/hosts.rs lists the same names and a test pins the two
+% equal. An arrival rel no executor links (a replay-only fixture feeder) keeps
+% a plain name; it reaches no executor, so the namespace rule does not bind it.
+ruling(executor_namespacing, dotted_executor_question_names_registry_is_roster, user,
+       'arrivals-and-ticks brief 2026-08-21: "non confusing named and well namespaced"; no bare files, no bare fetch. The __ atom join (module_path_name/2) stays the internal spelling.').
 % Key is a column annotation: `rel files(glob: key(text)) -> (path, digest)`.
 % `key(int)` is the type relation `rel key(Target: type) -> Target`
 % (compile/test/annotation_surface.test.pl:26, dl/fixtures/0_typespec_basic_probe.dl6:25).
@@ -795,6 +847,13 @@ ruling(oracle_off_by_default, sweep_oracle_env_opt_in, user,
 ruling(key_column_annotation_over_suffix, annotation_preferred, user,
        'chat 2026-08-21: "key is annotation generic now, key at suffix special position is defunct"').
 
+% 2026-08-21, amendment to executor_namespacing: the executor path is spelled
+% with SLASHES, not dots. `rel /soopy/files(glob: key(text)) -> (path: text,
+% digest: text).` /scip/diet/call becomes /scip/diet/call. The dotted spelling
+% never reaches a user's eye; the internal __ atom join (module_path_name/2)
+% is unchanged.
+ruling(executor_path_slashes, slash_separated_executor_paths, user,
+       'user 2026-08-21: "the executor path is spelled with slashes". Applies across parser (parse_dl_dcg.pl), registry roster, LINKED_EXECUTORS (sprefa-engine-rs/src/hosts.rs), every .dl6 and test string, tmLanguage and docs.').
 % The clock checker's path walk (clock_path_conflict, unconstructive_clock_cycle)
 % is PINNED OFF the compile path: it was early-stage and nothing can express
 % infinite yet. The cheap cross_plane checks stay. The code stays, commented as

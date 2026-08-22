@@ -210,6 +210,69 @@ fn soopy_checkout_reads_head_and_names_the_clone_gap() {
     );
 }
 
+// RULING executor_namespacing: registry.pl arrival_executor/2 is the one
+// roster; LINKED_EXECUTORS and executor_for answer the same names.
+#[test]
+fn executor_roster_matches_registry() {
+    let registry = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../prolog/compile/registry.pl");
+    let source = std::fs::read_to_string(&registry)
+        .unwrap_or_else(|error| panic!("read {}: {error}", registry.display()));
+    let mut registry_names: Vec<String> = source
+        .lines()
+        .filter_map(|line| {
+            let row = line
+                .trim()
+                .strip_prefix("arrival_executor(")?
+                .strip_suffix(").")?;
+            let dotted = row.split(',').nth(1)?;
+            Some(dotted.trim().trim_matches('\'').to_string())
+        })
+        .collect();
+    let mut linked: Vec<String> = sprefa_engine_rs::hosts::LINKED_EXECUTORS
+        .split(',')
+        .map(|name| name.trim().to_string())
+        .collect();
+    registry_names.sort();
+    registry_names.dedup();
+    linked.sort();
+    assert!(!registry_names.is_empty(), "no arrival_executor rows parsed");
+    assert_eq!(registry_names, linked, "registry roster != LINKED_EXECUTORS");
+    for name in &linked {
+        assert!(
+            sprefa_engine_rs::hosts::executor_for(name).is_some(),
+            "no executor links roster name {name}"
+        );
+    }
+}
+
+// COUNT RECEIPT for the batching seam: six endpoints ride ONE `eps` JSON
+// array (json_group_array in the language), so one executor call answers six
+// rows. The serve() rounds argument is the network-side count.
+#[test]
+fn http_fetch_batches_six_endpoints_in_one_executor_call() {
+    let _hold = serialized();
+    sprefa_engine_rs::executors::fetch::forget_all();
+    let body = r#"{"kind":"row"}"#.to_string();
+    let (base, handle) = serve(body, "\"tag-b\"", 6);
+    std::env::set_var("DL_GITHUB_API_BASE", &base);
+    let eps: Vec<String> = (1..=6).map(|n| format!("repos/org/r{n}")).collect();
+    let eps_json = serde_json::to_string(&eps).expect("eps array");
+
+    let rows = HttpFetchExecutor
+        .run("gh_pr_poll", "", &inputs(&[("eps", &eps_json), ("prev", "")]))
+        .expect("one batched executor call");
+    std::env::remove_var("DL_GITHUB_API_BASE");
+    handle.join().expect("listener served all six");
+
+    assert_eq!(rows.len(), 6, "six endpoints, one call, six rows");
+    for (row, ep) in rows.iter().zip(&eps) {
+        assert_eq!(row["status"], 200);
+        assert_eq!(row["ep"], ep.as_str(), "each row names its endpoint");
+        assert_eq!(row["kind"], "row", "body fields splice in per endpoint");
+    }
+}
+
 // TEST: prwatch-every-tick. The lane report measured 6857541 wire bytes on
 // EVERY 60s tick over six ticks. These two cases separate the two candidate
 // causes: whether the executor asks conditionally at all, and whether the

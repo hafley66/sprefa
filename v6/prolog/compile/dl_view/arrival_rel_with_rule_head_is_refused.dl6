@@ -1,0 +1,3 @@
+rel watch(glob: text) -> (path: text, digest: text).
+
+watch(Glob, Path, Digest) <- seed(Glob, Path, Digest).

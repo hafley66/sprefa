@@ -1,1 +1,0 @@
-[{"adapter":"soopy","demand_rel":"__host_demand_source_stage","response_rel":"__host_response_source_stage"},{"adapter":"soopy","demand_rel":"__host_demand_source_commit","response_rel":"__host_response_source_commit"}]

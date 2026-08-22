@@ -114,7 +114,7 @@ fn stage_directory(root: &TempDir, state: &TempDir) -> serde_json::Value {
         },
     );
     run(
-        "source_stage",
+        "soopy__stage",
         &[
             ("root", text(root.path().display().to_string())),
             ("state", text(state.path().display().to_string())),
@@ -172,21 +172,8 @@ fn compiled_dl6_source_mutation_golden_stages_approves_commits_and_replays() {
     let seam = SqliteSeam::in_memory().expect("program seam");
     seam.run_ddl(&program.ddl).expect("program DDL");
     run_boot(&seam, &program.boot);
-    let adapter_rows = [
-        HostAdapterRow {
-            adapter: "soopy".to_string(),
-            demand_rel: "__host_demand_source_stage".to_string(),
-            response_rel: "__host_response_source_stage".to_string(),
-        },
-        HostAdapterRow {
-            adapter: "soopy".to_string(),
-            demand_rel: "__host_demand_source_commit".to_string(),
-            response_rel: "__host_response_source_commit".to_string(),
-        },
-    ];
-    let mut runner =
-        HostLiveRunner::with_adapter_rows(&program.host_plans, &program.rel_columns, &adapter_rows)
-            .expect("sidecar routes generated hosts in process");
+    let mut runner = HostLiveRunner::new(&program.host_plans, &program.rel_columns)
+        .expect("the rel names route the generated hosts in process");
 
     // Tick 1: authored source evidence joins to the generated source_stage
     // demand. Its only side effect is durable staging outside the target root.
@@ -228,12 +215,12 @@ fn compiled_dl6_source_mutation_golden_stages_approves_commits_and_replays() {
         )
         .expect("source evidence tick");
     assert_eq!(
-        delta_adds(&staged_demand, "__host_demand_source_stage").len(),
+        delta_adds(&staged_demand, "__host_demand_soopy__stage").len(),
         1
     );
     let staged_response = runner.collect(&staged_demand).expect("stage host response");
     assert_eq!(staged_response.len(), 1);
-    assert_eq!(staged_response[0].rel, "__host_response_source_stage");
+    assert_eq!(staged_response[0].rel, "__host_response_soopy__stage");
     assert_eq!(staged_response[0].row[6], Value::Text("staged".to_string()));
     let stage_id = match &staged_response[0].row[5] {
         Value::Text(stage_id) => stage_id.clone(),
@@ -250,7 +237,7 @@ fn compiled_dl6_source_mutation_golden_stages_approves_commits_and_replays() {
         .expect("stage response tick");
     assert_eq!(delta_adds(&staged, "source_stage_preview").len(), 1);
     assert!(
-        delta_adds(&staged, "__host_demand_source_commit").is_empty(),
+        delta_adds(&staged, "__host_demand_soopy__commit").is_empty(),
         "a stage result alone must derive no commit host demand"
     );
     assert!(runner
@@ -276,7 +263,7 @@ fn compiled_dl6_source_mutation_golden_stages_approves_commits_and_replays() {
         )
         .expect("wrong approval tick");
     assert!(
-        delta_adds(&wrong_approval, "__host_demand_source_commit").is_empty(),
+        delta_adds(&wrong_approval, "__host_demand_soopy__commit").is_empty(),
         "a wrong StageId must derive no commit host demand"
     );
     assert!(runner
@@ -303,12 +290,12 @@ fn compiled_dl6_source_mutation_golden_stages_approves_commits_and_replays() {
         )
         .expect("exact approval tick");
     assert_eq!(
-        delta_adds(&approved, "__host_demand_source_commit").len(),
+        delta_adds(&approved, "__host_demand_soopy__commit").len(),
         1
     );
     let committed_response = runner.collect(&approved).expect("commit host response");
     assert_eq!(committed_response.len(), 1);
-    assert_eq!(committed_response[0].rel, "__host_response_source_commit");
+    assert_eq!(committed_response[0].rel, "__host_response_soopy__commit");
     assert_eq!(
         committed_response[0].row[5],
         Value::Text("committed".to_string())
@@ -339,9 +326,8 @@ fn compiled_dl6_source_mutation_golden_stages_approves_commits_and_replays() {
     // A replacement runner models a runtime restart before acknowledgement.
     // Replaying the emitted commit demand uses the durable Soopy receipt and
     // leaves the target bytes unchanged.
-    let mut restarted =
-        HostLiveRunner::with_adapter_rows(&program.host_plans, &program.rel_columns, &adapter_rows)
-            .expect("restarted sidecar hosts");
+    let mut restarted = HostLiveRunner::new(&program.host_plans, &program.rel_columns)
+        .expect("restarted hosts");
     let replayed = restarted
         .collect(&approved)
         .expect("idempotent replay host response");
@@ -368,7 +354,7 @@ fn stage_and_commit_responses_reenter_the_generic_host_runner_on_later_ticks() {
         },
     );
     let stage_plan = mutation_plan(
-        "source_stage",
+        "soopy__stage",
         &["root", "state", "request"],
         &[
             ("stage_id", "text"),
@@ -407,7 +393,7 @@ fn stage_and_commit_responses_reenter_the_generic_host_runner_on_later_ticks() {
     ]);
     let stage_plans = [stage_plan];
     let stage_rows = [HostAdapterRow {
-        adapter: "soopy".to_string(),
+        adapter: "/soopy/stage".to_string(),
         demand_rel: "stage_demand".to_string(),
         response_rel: "stage_response".to_string(),
     }];
@@ -437,7 +423,7 @@ fn stage_and_commit_responses_reenter_the_generic_host_runner_on_later_ticks() {
     };
 
     let commit_plan = mutation_plan(
-        "source_commit",
+        "soopy__commit",
         &["root", "state", "stage_id"],
         &[
             ("outcome", "text"),
@@ -472,7 +458,7 @@ fn stage_and_commit_responses_reenter_the_generic_host_runner_on_later_ticks() {
     );
     let commit_plans = [commit_plan];
     let commit_rows = [HostAdapterRow {
-        adapter: "soopy".to_string(),
+        adapter: "/soopy/commit".to_string(),
         demand_rel: "commit_demand".to_string(),
         response_rel: "commit_response".to_string(),
     }];
@@ -518,7 +504,7 @@ fn directory_stage_waits_for_its_exact_approval_then_commits_idempotently() {
     );
 
     let wrong = run(
-        "source_commit",
+        "soopy__commit",
         &[
             ("root", text(root.path().display().to_string())),
             ("state", text(state.path().display().to_string())),
@@ -532,7 +518,7 @@ fn directory_stage_waits_for_its_exact_approval_then_commits_idempotently() {
     );
 
     let committed = run(
-        "source_commit",
+        "soopy__commit",
         &[
             ("root", text(root.path().display().to_string())),
             ("state", text(state.path().display().to_string())),
@@ -546,7 +532,7 @@ fn directory_stage_waits_for_its_exact_approval_then_commits_idempotently() {
     );
 
     let again = run(
-        "source_commit",
+        "soopy__commit",
         &[
             ("root", text(root.path().display().to_string())),
             ("state", text(state.path().display().to_string())),
@@ -581,7 +567,7 @@ fn stale_stage_is_a_response_row_and_performs_zero_writes() {
         }],
     );
     let refused = run(
-        "source_stage",
+        "soopy__stage",
         &[
             ("root", text(root.path().display().to_string())),
             ("state", text(state.path().display().to_string())),
@@ -614,7 +600,7 @@ fn state_directory_inside_the_target_is_refused_before_stage_storage_is_created(
         },
     );
     let refused = run(
-        "source_stage",
+        "soopy__stage",
         &[
             ("root", text(root.path().display().to_string())),
             ("state", text(state.display().to_string())),
@@ -649,7 +635,7 @@ fn git_worktree_stage_and_commit_use_the_worktree_identity() {
         },
     );
     let staged = run(
-        "source_stage",
+        "soopy__stage",
         &[
             ("root", text(root.path().display().to_string())),
             ("state", text(state.path().display().to_string())),
@@ -659,7 +645,7 @@ fn git_worktree_stage_and_commit_use_the_worktree_identity() {
     assert_eq!(staged["outcome"], "staged");
     let stage_id = staged["stage_id"].as_str().expect("stage id").to_string();
     let committed = run(
-        "source_commit",
+        "soopy__commit",
         &[
             ("root", text(root.path().display().to_string())),
             ("state", text(state.path().display().to_string())),

@@ -46,12 +46,7 @@ watch("repos/cli/cli").
 # Same shell body as v5 (examples/gh-cache.dl:75-80). The host declaration
 # separates request inputs from response outputs, and the template references every
 # declared input and no output.
-sh fetch(ep: text, prev: text) -> (status: int, tag: text, body: text) =
-  `R=$(gh api {ep} -i -H "If-None-Match: $prev" 2>/dev/null)
-   C=$(printf '%s' "$R" | head -1 | grep -oE '[0-9][0-9][0-9]' | head -1)
-   E=$(printf '%s' "$R" | grep -iE '^etag:' | head -1 | sed -E 's/^[Ee]tag:[[:space:]]*//; s/\r$//')
-   B=$(printf '%s' "$R" | perl -0777 -pe 's/^.*?\r?\n\r?\n//s' | tr -d '\n')
-   printf '%s\n%s\n%s' "$C" "$E" "$B"`.
+rel /http/fetch(ep: text, prev: text) -> (status: int, tag: text, body: text).
 
 # etag: bootstrap fact UNION resp-derived value (gap #2 above). Deliberately NOT
 # `rel(1)`: retention markers only govern EDB-style commit() writes (applyRelWrite,
@@ -73,7 +68,7 @@ poll(ep, prev) <- watch(ep), etag(ep, prev).
 # template always emits status/tag/body, matching v5's raw `resp` (examples/gh-cache.dl:
 # 89-90) before its 200-only filter.
 rel resp(ep: text, status: int, tag: text, body: text).
-resp(ep, status, tag, body) <- poll(ep, prev), fetch(ep, prev, status, tag, body).
+resp(ep, status, tag, body) <- poll(ep, prev), /http/fetch(ep, prev, status, tag, body).
 
 # --- normalize: entities from 200 bodies ----------------------------------------
 # v5 uses term-form `jsonp`/`json` (examples/gh-cache.dl:110,113,121-124) to extract
@@ -82,13 +77,11 @@ resp(ep, status, tag, body) <- poll(ep, prev), fetch(ep, prev, status, tag, body
 # left is another `sh` host, chained by a second probe off the SAME `body` value. This
 # is the most direct spelling the grammar allows for field extraction, but it costs a
 # real subprocess per distinct body (jq), where v5's jsonp was in-process.
-sh extract_stars(body: text) -> (n: text) =
-  `printf '%s' "$body" | jq -r '.stargazers_count // empty'`.
+rel extract_stars(body: text) -> (n: text).
 rel stars(ep: text, n: text).
 stars(ep, n) <- resp(ep, 200, _, body), extract_stars(body, n).
 
-sh extract_full_name(body: text) -> (name: text) =
-  `printf '%s' "$body" | jq -r '.full_name // empty'`.
+rel extract_full_name(body: text) -> (name: text).
 rel full_name(ep: text, name: text).
 full_name(ep, name) <- resp(ep, 200, _, body), extract_full_name(body, name).
 

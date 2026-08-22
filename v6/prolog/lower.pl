@@ -1604,11 +1604,10 @@ catalog_level_family_rows([Kind-Table | Rest], Columns, ColumnTypes, ModuleId,
     catalog_level_family_rows(Rest, Columns, ColumnTypes, ModuleId, RelId,
                               RelHId, Id1, More, IdFinal).
 
-% ── host and bind port rows ───────────────────────────────────────────────
+% ── host port rows ────────────────────────────────────────────────────────
 % A sh_decl is an effect: it mints a port row (the demand rel in type_id, the
 % declared INPUT count as arity) plus a port_response child (the response rel,
-% the declared OUTPUT count). A bind_decl mints a port row with NO response
-% child (effect-ness only from a bind at link time), its own rel in type_id.
+% the declared OUTPUT count).
 catalog_port_plane_rows([], _RelIdMap, _Modules, Id, [], Id).
 catalog_port_plane_rows([Decl | Rest], RelIdMap, Modules,
                         Id0, Rows, IdFinal) :-
@@ -1630,14 +1629,6 @@ catalog_port_plane_rows([Decl | Rest], RelIdMap, Modules,
                           '', ''),
         Id2 is Id1 + 1,
         ThisRows = [PortRow, ResponseRow]
-    ;   Decl = bind_decl(Name, Columns)
-    ->  rel_row_id(RelIdMap, Name, BindId),
-        length(Columns, BindArity),
-        rel_h_id(ModuleHash, Name, BindArity, BindHId),
-        BindRow = row(Id0, ModuleId, 0, Name, port, BindId, BindArity,
-                      ModuleId, BindHId, '', ''),
-        Id2 is Id0 + 1,
-        ThisRows = [BindRow]
     ;   ThisRows = [], Id2 = Id0
     ),
     catalog_port_plane_rows(Rest, RelIdMap, Modules, Id2,

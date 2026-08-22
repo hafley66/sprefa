@@ -43,14 +43,12 @@
 # record shapes, and scip_def and scip_ref BOTH carry a symbol and a file. The
 # named projection alone cannot tell them apart, so the rules below filter on
 # the tag the wire already puts on every line.
-sh scip_rel(root: text) -> (record: text, symbol: text, file: text) =
-  `"$DL_EXTRACT_BIN" --family scip --scip-cache "$SCIP_CACHE" {root}`.
+rel scip_rel(root: text) -> (record: text, symbol: text, file: text).
 
 # The diet family's universe IS its argument list (it resolves across exactly
 # the files it is handed), so the template globs the root. One record shape per
 # declaration, and `resolved_edge` is the one with both paths.
-sh diet_rel(root: text) -> (record: text, caller_path: text, callee_path: text) =
-  `"$DL_EXTRACT_BIN" --family diet_scip {root}/*.ts`.
+rel diet_rel(root: text) -> (record: text, caller_path: text, callee_path: text).
 
 # ── one demand row per family ────────────────────────────────────────────────
 # Two rels rather than one shared rel, so each family's demand is separately

@@ -197,7 +197,7 @@ the 5 it does not reach are the phase-2 (resolved) rows, all behind `--resolve`.
 | `call_def(repo, sym, kind, file, line, end)` | `src/engine/decls.rs:595` | `record=node family=call` (`span`, `kind`, `name`) | `schema.rs:23` | superset: v5's `line`/`end` are the same span in bytes; v6 adds `method_owner` | yes, `sh call_node_at` | `tests/golden_parity.rs` PORTED `call_def` |
 | `call_def_rev(…, rev)` | `src/engine/decls.rs:599` | digest-keyed | `schema.rs:23` | identical in effect | yes | `tests/27_blob_cache.rs` |
 | `call_site(repo, caller, callee, file, line)` | `src/engine/decls.rs:603` | `record=site family=call` (`span`, `callee`, `callee_path`) | `schema.rs:33` | superset: v5's `caller` is derivable by span containment against the `node` rows, and v6 adds `callee_path` | yes, `sh extract` / `call_ref` | `tests/golden_parity.rs` PORTED `call_site` |
-| `call_edge(caller, callee, kind)` | `src/engine/decls.rs:607` | `record=resolved_edge` (`caller_path`, `caller_name`, `callee_path`, `callee_name`, `kind`) | `schema.rs:47` | superset (both file paths, the call-site span) | yes via `sh scip.call` / `sh scip.diet.call` | `tests/8_scip_families_cli.rs`, `v6/dl/deadcode/receiver-rail.dl6` |
+| `call_edge(caller, callee, kind)` | `src/engine/decls.rs:607` | `record=resolved_edge` (`caller_path`, `caller_name`, `callee_path`, `callee_name`, `kind`) | `schema.rs:47` | superset (both file paths, the call-site span) | yes via `sh /scip/call` / `sh /scip/diet/call` | `tests/8_scip_families_cli.rs`, `v6/dl/deadcode/receiver-rail.dl6` |
 | `call_edge_rev(…, rev)` | `src/engine/decls.rs:610` | digest-keyed | `schema.rs:47` | identical in effect | yes | same |
 | `call_name(sym, name)` | `src/engine/decls.rs:617` | the `name` column on `record=node family=call` | `schema.rs:23` | identical (v5's sym-to-name side table is one column of the node row) | yes | `tests/golden_parity.rs` |
 | `call_kind(fn, kind)` | `src/engine/decls.rs:625` | not extraction: v5 computes it in the engine over `call_site` | `src/engine/family/call_kind.rs:2-6` | n/a | n/a | closed no-code-owed in `@extract-port-closeout` |
@@ -332,7 +332,7 @@ These are not `sprefa-extract`'s job. In v6 they are engine hosts.
 | `rev_advanced(repo, name, old, new)` | `src/engine/decls.rs:917` | derivable from two `head` rows across ticks | — | subset | yes |
 | `checkout(repo, branch, pr_heads)` | `src/engine/decls.rs:367` | `sh repo_checkout` | `registry.pl:414` | identical | yes |
 | `checkout_done`, `checkout_plan` | `src/engine/decls.rs:402,404` | the host's own response rows | `registry.pl:414` | identical | yes |
-| `scip_want(repo)` | `src/engine/decls.rs:348` | `sh scip.call` demand; the index is ensured by `ScipNamespaceExecutor` | `hosts.rs:759-796` | identical | yes |
+| `scip_want(repo)` | `src/engine/decls.rs:348` | `sh /scip/call` demand; the index is ensured by `ScipNamespaceExecutor` | `hosts.rs:759-796` | identical | yes |
 | `rev_cmp_want(repo, refname, upstream)` | `src/engine/decls.rs:352` | closed by `@v5-source-workload-ports` | — | identical | yes |
 | `program(path, hash, mtime)` | `src/engine/decls.rs:895` | daemon bookkeeping; dies with v5 | — | n/a | n/a |
 | `def_target(name, file, line, kind)` | `src/engine/decls.rs:357` | LSP sink; see `plans/2026-08-12-v6-native-lsp.PLAN.md` | — | **missing** | no |

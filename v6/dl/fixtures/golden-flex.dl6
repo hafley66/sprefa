@@ -150,10 +150,9 @@ rel Ast(node: text).
 rel Result(E, T)(err(error: E); ok(value: T)).
 rel parse(source: text) -> Result(ParseError, Ast).
 
-sh weigh(tree_id: int, grams: int) -> (label: text) =
-  `printf '%s' "tree-{tree_id}-at-{grams}g"`.
+rel weigh(tree_id: int, grams: int) -> (label: text).
 
-bind interval(period: int, bucket: int).
+rel interval(period: int, bucket: int).
 
 
 rel tree_label(tree_id: int, label: text).

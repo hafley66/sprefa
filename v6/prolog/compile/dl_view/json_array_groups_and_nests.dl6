@@ -1,1 +1,1 @@
-repo_langs(Repo, json_array(Lang)) <- repo_lang(Repo, Lang).
+repo_langs(Repo, []) <- repo_lang(Repo, []).

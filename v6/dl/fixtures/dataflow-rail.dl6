@@ -12,13 +12,12 @@
 # is this program's. library(...) targets are filtered at the host: they are
 # system modules, not repo dataflow.
 
-bind watch(glob: text, path: text, digest: text).
+rel watch(glob: text, path: text, digest: text).
 
 rel pl_file(path: text, digest: text).
 pl_file(path, digest) <- watch('v6/prolog/**/*.pl', path, digest).
 
-sh pl_use(path: text, digest: text) -> (target_path: text) =
-  `: {digest}; dir=$(dirname {path}); grep -oE "use_module[(]'[^']+'|use_module[(][a-z_0-9]+" {path} | sed -E "s/^use_module[(]'?//; s/'$//" | while IFS= read -r t; do case "$t" in library) continue;; esac; p="$dir/$t"; case "$p" in *.pl) ;; *) p="$p.pl";; esac; while case "$p" in */../*) true;; *) false;; esac; do p=$(printf '%s' "$p" | sed 's|[^/][^/]*/[.][.]/||'); done; printf '%s\n' "$p"; done`.
+rel pl_use(path: text, digest: text) -> (target_path: text) key(1).
 
 rel pl_edge(from_path: text, to_path: text).
 pl_edge(path, target_path) <- pl_file(path, digest), pl_use(path, digest, target_path).

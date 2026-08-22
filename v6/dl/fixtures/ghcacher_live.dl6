@@ -18,7 +18,7 @@
 # 10-second law; the design cadence for a 300-repo poller is 60.
 #
 # rx: interval(2_000).pipe(map(toBucketRow), mergeMap(rows => engine.submit(rows)))
-bind interval(period: int, bucket: int).
+rel interval(period: int, bucket: int).
 
 # The world names an endpoint. EDB: a bare top-level fact is refused
 # (level_rule_no_positive_body), so this arrives over /arrivals.
@@ -65,18 +65,8 @@ current_bucket(Period, Bucket) <+ bucket_event(Period, Bucket).
 #
 # `grep -i '^etag:'` is anchored because Access-Control-Expose-Headers lists
 # both ETag and X-RateLimit-Remaining by name in its value.
-sh gh_rest_cond(endpoint_path: text, prev_etag: text, bucket: int)
-  -> (status_code: int, next_etag: text, body_json: text, rest_remaining: int) =
-  `RAW=$(gh api --include -H "If-None-Match: {prev_etag}" '{endpoint_path}' 2>/dev/null || true)
-   STATUS=$(printf '%s\n' "$RAW" | head -1 | awk '{print $2}')
-   [ -n "$STATUS" ] || STATUS=0
-   ETAG=$(printf '%s\n' "$RAW" | grep -i '^etag:' | head -1 | sed -e 's/^[^:]*:[[:space:]]*//' -e 's/\r$//')
-   [ -n "$ETAG" ] || ETAG='{prev_etag}'
-   REMAIN=$(printf '%s\n' "$RAW" | grep -i '^x-ratelimit-remaining:' | head -1 | sed -e 's/^[^:]*:[[:space:]]*//' -e 's/\r$//')
-   [ -n "$REMAIN" ] || REMAIN=0
-   BODY=$(printf '%s\n' "$RAW" | awk 'seen{print $0} /^[[:space:]]*$/{seen=1}')
-   [ "$STATUS" = 200 ] || BODY=
-   jq -c -n --argjson st "$STATUS" --arg et "$ETAG" --arg bd "$BODY" --argjson rem "$REMAIN" '{status_code:$st,next_etag:$et,body_json:$bd,rest_remaining:$rem}'`.
+rel /gh/rest_cond(endpoint_path: text, prev_etag: text, bucket: int)
+  -> (status_code: int, next_etag: text, body_json: text, rest_remaining: int) key(1, 2).
 
 # ── the etag latch ──────────────────────────────────────────────────────────
 # `etag_event` is the DELAY that makes the poll loop legal, and it is not
@@ -123,7 +113,7 @@ rel rest_call(endpoint_path: text, bucket: int, status_code: int,
               next_etag: text, body_json: text, rest_remaining: int).
 rest_call(EndpointPath, Bucket, StatusCode, NextEtag, BodyJson, RestRemaining) <-
   poll(EndpointPath, PrevEtag, Bucket),
-  gh_rest_cond(EndpointPath, PrevEtag, Bucket, StatusCode, NextEtag, BodyJson, RestRemaining).
+  /gh/rest_cond(EndpointPath, PrevEtag, Bucket, StatusCode, NextEtag, BodyJson, RestRemaining).
 
 # ── what a 200 buys ─────────────────────────────────────────────────────────
 # rx: restCall$.pipe(filter(row => row.statusCode === 200), map(toEtagPair))

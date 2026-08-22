@@ -65,10 +65,28 @@ test(sum_payload_accepts_complete_type_expression) :-
     parse_dl(Printed, RoundTripped, _, []),
     Prog =@= RoundTripped.
 
-test(arrow_return_position_round_trips) :-
+% RULING arrival_arrow_spelling: a `( ident :` group after `->` is an arrival
+% rel's response columns now; the product keeps its column-position spelling.
+test(arrow_paren_group_is_an_arrival_decl_and_round_trips) :-
     parse_text("rel r(a: int) -> (b: text, c: bool).", Prog, Bindings),
+    Prog = program([sh_decl(r, [col(a, int)],
+                            [col(b, text), col(c, bool)], template(""))],
+                   [], []),
     print_dl_program(Prog, Bindings, Text),
-    assertion(sub_string(Text, _, _, _, "return: (b: text, c: bool)")),
+    assertion(sub_string(Text, _, _, _, "rel r(a: int) -> (b: text, c: bool)")),
+    atom_codes(Text, Printed),
+    parse_dl(Printed, RoundTripped, _, []),
+    Prog =@= RoundTripped.
+
+test(arrival_key_positions_round_trip) :-
+    parse_text("rel f(ep: text, bucket: int) -> (status: int) key(1).",
+               Prog, Bindings),
+    Prog = program([sh_decl(f, [col(ep, text), col(bucket, int)],
+                            [col(status, int)], template("")),
+                    arrival_identity(f, [1])],
+                   [], []),
+    print_dl_program(Prog, Bindings, Text),
+    assertion(sub_string(Text, _, _, _, "key(1)")),
     atom_codes(Text, Printed),
     parse_dl(Printed, RoundTripped, _, []),
     Prog =@= RoundTripped.
@@ -175,17 +193,18 @@ test(sum_with_two_zero_field_variants_parses) :-
 % ── identity minting ─────────────────────────────────────────────────────────
 
 test(product_mints_owner_scoped_identity_and_materializes_type_decl) :-
-    parse_text("rel resident(input: text) -> (a: int, b: text).", Prog, Bindings),
+    parse_text("rel resident(input: text, result: (a: int, b: text)).",
+               Prog, Bindings),
     expand_program_with_bindings(Prog, Bindings, Expanded, _),
     Expanded = prog(Decls, _),
     once(member(semantic_type_rows(Rows), Decls)),
-    once(member(anonymous(named(local, relation, resident), [return],
+    once(member(anonymous(named(local, relation, resident), [result],
                           product_type([field(a, int), field(b, text)])), Rows)),
     once(member(declaration(GenId, root, GenName, relation, materialized),
                 Rows)),
     GenName \== '',
     once(member(type_decl(GenName, [col(a, int), col(b, text)]), Decls)),
-    once(member(col_type(resident/2, return, GenName), Decls)).
+    once(member(col_type(resident/2, result, GenName), Decls)).
 
 test(sum_mints_identity_and_enum_context_sees_it) :-
     parse_text("rel A(a: int, b: (Derp(value: int); Derpy(value: float))).",
@@ -302,19 +321,20 @@ test(authored_anon_prefix_is_not_classified_as_generated) :-
     \+ memberchk(anonymous_generated_decl('__anon_authored'), Decls).
 
 test(identity_is_stable_under_unrelated_declaration_insertion) :-
-    parse_text("rel resident(input: text) -> (a: int, b: text).", Prog, Bindings),
+    parse_text("rel resident(input: text, result: (a: int, b: text)).",
+               Prog, Bindings),
     expand_program_with_bindings(Prog, Bindings, Expanded, _),
     Expanded = prog(Decls, _),
     once(member(semantic_type_rows(Rows), Decls)),
-    once(member(anonymous(Owner, [return],
+    once(member(anonymous(Owner, [result],
                           product_type([field(a, int), field(b, text)])), Rows)),
     % A second, unrelated declaration must not change the identity.
-    parse_text("rel resident(input: text) -> (a: int, b: text).\nrel unrelated(x: text).",
+    parse_text("rel resident(input: text, result: (a: int, b: text)).\nrel unrelated(x: text).",
                Prog2, Bindings2),
     expand_program_with_bindings(Prog2, Bindings2, Expanded2, _),
     Expanded2 = prog(Decls2, _),
     once(member(semantic_type_rows(Rows2), Decls2)),
-    once(member(anonymous(Owner2, [return],
+    once(member(anonymous(Owner2, [result],
                           product_type([field(a, int), field(b, text)])), Rows2)),
     Owner2 == Owner.
 

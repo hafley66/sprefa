@@ -194,10 +194,7 @@ fn prepare(args: &ProgramArgs) -> Result<(GenProgram, Vec<Arrival>, RunOptions, 
 
 fn run(args: ProgramArgs) -> Result<()> {
     let finals = args.finals();
-    let binds = run::bind_plans_from_json(emitted_program::PROGRAM_JSON)?;
-    let (program, mut seeds, options, _adapters) = prepare(&args)?;
-    // A one-shot run over a `bind watch` program still reads the watched set.
-    seeds.extend(run::bind_seeds(&binds, Path::new("."))?);
+    let (program, seeds, options, _adapters) = prepare(&args)?;
     let outcome = run::run_once(&program, seeds, options)?;
     run::print_outcome(&program, &outcome, &finals)?;
     if outcome.failed() {
@@ -211,7 +208,6 @@ fn watch(args: ProgramArgs) -> Result<()> {
         .root
         .canonicalize()
         .with_context(|| format!("read {}", args.root.display()))?;
-    let binds = run::bind_plans_from_json(emitted_program::PROGRAM_JSON)?;
     let (program, seeds, options, _adapters) = prepare(&args)?;
     let (stop, listen) = tokio::sync::watch::channel(false);
     // SIGINT only flips the flag, so the loop finishes the tick it is in.
@@ -228,7 +224,7 @@ fn watch(args: ProgramArgs) -> Result<()> {
             });
         })
         .context("spawn the signal thread")?;
-    if run::watch(&program, seeds, WatchOptions::new(options, binds, root), listen)? {
+    if run::watch(&program, seeds, WatchOptions::new(options, root), listen)? {
         std::process::exit(1);
     }
     Ok(())

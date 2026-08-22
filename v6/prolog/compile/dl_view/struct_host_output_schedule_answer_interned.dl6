@@ -2,7 +2,7 @@ rel span(end: int, start: int).
 rel source_path(path: text).
 rel host_span(path: text, at: span).
 rel host_start(path: text, start: int).
-sh scan_span(path: text) -> (at: span) = `scan {path}`.
+rel scan_span(path: text) -> (at: span).
 
 host_span(Path, At) <-
   source_path(Path),

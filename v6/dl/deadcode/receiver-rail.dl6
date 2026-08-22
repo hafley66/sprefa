@@ -1,8 +1,8 @@
 # @comment-ok: the file header states which evidence each namespace carries,
 # which is the whole reason the two names exist and is not visible in the code.
 #
-#   scip.diet.call   this crate's tree-sitter front-ends, resolved by name match
-#   scip.call        a real SCIP index, resolved by the language's own indexer
+#   /scip/diet/call   this crate's tree-sitter front-ends, resolved by name match
+#   /scip/call        a real SCIP index, resolved by the language's own indexer
 #
 # Same question, same output columns, one host name apart. Where they disagree
 # is the point: a name several files define is unresolvable to a name match and
@@ -13,24 +13,21 @@
 
 rel want(glob: text).
 
-# One `git hash-object` process for the whole set, routed to the linked
-# `soopy_files` adapter by the sidecar; the template is the readable spelling.
-sh files(glob: text) -> (path: text, digest: text) =
-  `git ls-files -- '{glob}' | git hash-object --stdin-paths`.
+# One `git hash-object` process for the whole set; the rel name IS the
+# executor binding (registry.pl arrival_executor/2).
+rel /soopy/files(glob: text) -> (path: text, digest: text).
 
 rel source_file(path: text, digest: text).
-source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
+source_file(Path, Digest) <- want(Glob), /soopy/files(Glob, Path, Digest).
 
 # THE INTERFACING TYPE: registry.pl scip_interface_columns/2 is the one list
 # both are checked against (compile/test/scip_namespaces.test.pl).
-sh scip.diet.call(repo: text, path: text, digest: text)
+rel /scip/diet/call(repo: text, path: text, digest: text)
   -> (record: text, family: text, caller_path: text, callee_path: text,
-      callee: text, kind: text) =
-  `cd {repo} && "$DL_EXTRACT_BIN" --family diet_scip {path}`.
-sh scip.call(repo: text, path: text, digest: text)
+      callee: text, kind: text) key(1, 2).
+rel /scip/call(repo: text, path: text, digest: text)
   -> (record: text, family: text, caller_path: text, callee_path: text,
-      callee: text, kind: text) =
-  `cd {repo} && "$DL_EXTRACT_BIN" --resolve --project-root . --scip-build {path}`.
+      callee: text, kind: text) key(1, 2).
 
 # ONE rel for both, so the column list is written once and a namespace is a
 # column value rather than a second shape.
@@ -38,11 +35,11 @@ rel receiver_edge(source: text, callee: text, caller_path: text,
                   callee_path: text, kind: text).
 receiver_edge('scip.diet', Callee, CallerPath, CalleePath, Kind) <-
   source_file(Path, Digest),
-  scip.diet.call('.', Path, Digest, 'resolved_edge', 'call',
+  /scip/diet/call('.', Path, Digest, 'resolved_edge', 'call',
                  CallerPath, CalleePath, Callee, Kind).
 receiver_edge('scip', Callee, CallerPath, CalleePath, Kind) <-
   source_file(Path, Digest),
-  scip.call('.', Path, Digest, 'resolved_edge', 'call',
+  /scip/call('.', Path, Digest, 'resolved_edge', 'call',
             CallerPath, CalleePath, Callee, Kind).
 
 # A cross-file edge is the one a name match cannot prove: the caller and the

@@ -6,11 +6,11 @@
 # seam as the clock golden; no shell, network, or wall clock participates.
 #
 # SURFACE NOTE: the plan's `path_exists(config_path, bucket)` and
-# `read_org_config(config_path, bucket)` are spelled as the registered hosts
-# `repos` (identity org=freshness bucket) and `answer` (identity name=freshness
-# bucket). Unregistered sh names cannot carry a freshness salt, so the two
-# host identifiers are the one deviation forced by the compiler registry; the
-# rel signatures and compute rules below are the plan's verbatim.
+# `read_org_config(config_path, bucket)` are spelled as the arrival hosts
+# `/gh/repos` (identity org=freshness bucket, executor-linked by name via
+# registry.pl arrival_executor/2) and `answer` (identity name=freshness
+# bucket, no linked executor). The rel signatures and compute rules below are
+# the plan's verbatim.
 
 rel config_candidate(search_rank: int, config_path: text).
 rel current_bucket(period: int, bucket: int) key(1).
@@ -19,14 +19,12 @@ rel best_rank(best_search_rank: int).
 rel chosen_config(config_path: text).
 rel want_org(owner: text, fs_alias: text, sync_prs: int, sync_events: int, poll_period: int).
 
-bind interval(period: int, bucket: int).
+rel interval(period: int, bucket: int).
 
-sh repos(org: text, bucket: int) -> (exists_flag: int) =
-  `if [ -f '{org}' ]; then printf '1\n'; else printf '0\n'; fi`.
+rel /gh/repos(org: text, bucket: int) -> (exists_flag: int) key(1).
 
-sh answer(name: text, bucket: int)
-  -> (owner: text, fs_alias: text, sync_prs: int, sync_events: int, poll_period: int) =
-  `read {name}`.
+rel answer(name: text, bucket: int)
+  -> (owner: text, fs_alias: text, sync_prs: int, sync_events: int, poll_period: int) key(1).
 
 # config_present: a candidate the filesystem confirms exists
 current_bucket(Period, Bucket) <+ interval(Period, Bucket).
@@ -34,7 +32,7 @@ current_bucket(Period, Bucket) <+ interval(Period, Bucket).
 config_present(SearchRank, ConfigPath) <-
   config_candidate(SearchRank, ConfigPath),
   current_bucket(3600, Bucket),
-  repos(ConfigPath, Bucket, ExistsFlag),
+  /gh/repos(ConfigPath, Bucket, ExistsFlag),
   ExistsFlag == 1.
 
 # the winner is the lowest rank that exists; min/1 is a live aggregate head

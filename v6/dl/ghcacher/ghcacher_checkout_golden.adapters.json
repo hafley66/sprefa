@@ -1,7 +1,0 @@
-[
-  {
-    "adapter": "soopy_checkout",
-    "demand_rel": "__host_demand_repo_checkout",
-    "response_rel": "__host_response_repo_checkout"
-  }
-]

@@ -51,7 +51,7 @@
 # else: emit_ts.pl's bind_read_literals/4 collects exactly that literal and
 # serve/2_binds.ts spins exactly that one rx interval. Changing the cadence is
 # editing the rule.
-bind interval(period: int, bucket: int).
+rel interval(period: int, bucket: int).
 
 # ── which repositories exist ────────────────────────────────────────────────
 #
@@ -68,8 +68,7 @@ bind interval(period: int, bucket: int).
 # The `if` is not decoration: `[ -d ... ] && printf` leaves the loop's exit
 # status at 1 whenever the LAST candidate is not a repository, and a nonzero
 # exit is a host failure (serve/1_hosts.ts runShellLine). `if` returns 0.
-sh repos(org: text, bucket: int) -> (root: text) =
-  `ls -1 '{org}' | while IFS= read -r name; do if [ -d '{org}'/"$name"/.git ]; then printf '%s/%s\n' '{org}' "$name"; fi; done`.
+rel repos(org: text, bucket: int) -> (root: text) key(1).
 
 # THE GH-SHAPED VARIANT, written and NOT graded (it needs credentials), and its
 # gap is named rather than papered over: `gh repo list` answers SLUGS, not
@@ -81,8 +80,7 @@ sh repos(org: text, bucket: int) -> (root: text) =
 # It is a distinct NAME rather than a mode column on `repos` for the same reason
 # repo_files is distinct from files: a host is name-keyed, and "which backend"
 # is not a value this language can carry as a null or a default.
-sh gh_repos(org: text, bucket: int) -> (slug: text) =
-  `gh repo list '{org}' --limit 1000 --json nameWithOwner --jq '.[].nameWithOwner'`.
+rel /gh/repos(org: text, bucket: int) -> (slug: text) key(1).
 
 rel want_org(org: text).
 
@@ -96,8 +94,7 @@ repo(root) <- want_org(org), interval(86400, bucket), repos(org, bucket, root).
 # its witness caches FOREVER and re-crawling an unchanged repository costs one
 # `ls-files` and zero file reads. The worktree twin (repo_files) is the right
 # host for a repository being edited; this one is right for 389 that are not.
-sh repo_files_at(repo: text, rev: text, glob: text) -> (path: text, digest: text) =
-  `git -C '{repo}' ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git -C '{repo}' rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
+rel repo_files_at(repo: text, rev: text, glob: text) -> (path: text, digest: text).
 
 rel repo_file(repo: text, path: text, digest: text).
 repo_file(root, path, digest) <-
@@ -105,20 +102,16 @@ repo_file(root, path, digest) <-
 
 # ── extraction, repo-scoped ─────────────────────────────────────────────────
 #
-# `{repo}/{path}` is what makes this a DIFFERENT EXECUTOR from the unscoped
-# `extract` host (registry.pl host_execution -> sprefa_extract_repo, its own
-# exact three-column contract). It keeps the applicative fold: several named
-# projections over one file are still one subprocess.
+# `repo` is what makes this a DIFFERENT EXECUTOR from the unscoped `/extract/records`
+# host (registry.pl arrival_executor(extract__repo_records, '/extract/repo_records')).
 #
-# `digest` is freshness -- the template never mentions it -- so re-crawling a
-# repository whose blob oids have not moved is a cache hit per file, and the
+# `digest` is freshness -- unchanged blob oids are a cache hit per file, and the
 # extractor does not run at all.
-sh repo_extract(repo: text, path: text, digest: text) -> (callee: text) =
-  `"$DL_EXTRACT_BIN" --family call {repo}/{path}`.
+rel /extract/repo_records(repo: text, path: text, digest: text, families: text) -> (callee: text) key(1, 2, 4).
 
 rel repo_call(repo: text, path: text, callee: text).
 repo_call(root, path, callee) <-
-  repo_file(root, path, digest), repo_extract(root, path, digest, callee).
+  repo_file(root, path, digest), /extract/repo_records(root, path, digest, "call", callee).
 
 # ── the finding ─────────────────────────────────────────────────────────────
 # One rail over the whole org, written once, with no idea how many repositories

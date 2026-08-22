@@ -2,26 +2,23 @@
 # Technique 2 has the standalone suppression/pairing/unused rail; this file
 # keeps the finding contract independently runnable.
 
-bind watch(glob: text, path: text, digest: text).
+rel watch(glob: text, path: text, digest: text).
 rel file(path: text, digest: text).
 file(path, digest) <- watch('**/*.ts', path, digest).
 
-sh comment_fact(path: text, digest: text) -> (line: int, kind: text, comment_text: text) =
-  `: {digest}; "$DL_EXTRACT_BIN" --family cst {path} | python3 "$DL_COMMENT_NODE" comments {path}`.
+rel /extract/comment_fact(path: text, digest: text, families: text) -> (line: int, kind: text, comment_text: text) key(1, 3).
 rel comment_node(path: text, digest: text, line: int, kind: text, comment_text: text).
-comment_node(path, digest, line, kind, comment_text) <- file(path, digest), comment_fact(path, digest, line, kind, comment_text).
+comment_node(path, digest, line, kind, comment_text) <- file(path, digest), /extract/comment_fact(path, digest, "cst", line, kind, comment_text).
 
-sh disable_line(path: text, digest: text) -> (line: int, code: text) =
-  `: {digest}; grep -nE 'dl-disable-line +[A-Za-z0-9_-]+' {path} | sed -E 's/^([0-9]+):.*dl-disable-line +([A-Za-z0-9_-]+).*/{"line":\\1,"code":"\\2"}/'`.
+rel disable_line(path: text, digest: text) -> (line: int, code: text) key(1).
 rel directive(path: text, digest: text, line: int, code: text).
 directive(path, digest, line, code) <- file(path, digest), disable_line(path, digest, line, code).
 rel suppressed(path: text, line: int, code: text).
 suppressed(path, line, code) <- directive(path, digest, line, code), comment_node(path, digest, line, kind, text).
 
-sh call_ref(path: text, digest: text) -> (line: int, callee: text) =
-  `: {digest}; "$DL_EXTRACT_BIN" --family call {path} | python3 "$DL_COMMENT_NODE" lines {path}`.
+rel /extract/call_ref(path: text, digest: text, families: text) -> (line: int, callee: text) key(1, 3).
 rel call_site(path: text, digest: text, line: int, callee: text).
-call_site(path, digest, line, callee) <- file(path, digest), call_ref(path, digest, line, callee).
+call_site(path, digest, line, callee) <- file(path, digest), /extract/call_ref(path, digest, "call", line, callee).
 rel rail_finding(path: text, line: int, code: text).
 rail_finding(path, line, 'no-eval') <- call_site(path, digest, line, callee), callee == 'eval'.
 rel diag_v5(path: text, line: int, code: text).

@@ -58,8 +58,8 @@ flowchart LR
   p6 -->|3| p5
   p6 -->|1| p3
   p3 -->|12| p1
-  p3 -->|2| p2
   p3 -->|1| p5
+  p3 -->|1| p2
   p1 -->|5| p2
   p1 -->|2| p4
   p1 -->|1| p5
@@ -80,7 +80,7 @@ flowchart LR
   n1["0_type_plane  in16/out2"]
   n2["parse_dl_dcg  in15/out4"]
   n3["0_generic_expand  in14/out11"]
-  n4["0_compiler_relations  in11/out6"]
+  n4["0_compiler_relations  in10/out5"]
   n5["0_rel_record  in9/out0"]
   n6["0_body_walk  in9/out1"]
   n7["0_dot_expand  in8/out7"]
@@ -116,9 +116,9 @@ flowchart LR
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
 | `v6/prolog/0_type_plane.pl` | 75 | 112 | 16 | 2 |
-| `v6/prolog/compile/parse_dl_dcg.pl` | 211 | 274 | 15 | 4 |
+| `v6/prolog/compile/parse_dl_dcg.pl` | 218 | 284 | 15 | 4 |
 | `v6/prolog/0_generic_expand.pl` | 320 | 316 | 14 | 11 |
-| `v6/prolog/0_compiler_relations.pl` | 38 | 56 | 11 | 6 |
+| `v6/prolog/0_compiler_relations.pl` | 38 | 56 | 10 | 5 |
 | `v6/prolog/0_rel_record.pl` | 18 | 13 | 9 | 0 |
 | `v6/prolog/0_body_walk.pl` | 14 | 23 | 9 | 1 |
 | `v6/prolog/0_dot_expand.pl` | 71 | 93 | 8 | 7 |
@@ -129,7 +129,7 @@ flowchart LR
 | `v6/prolog/0_negated_guard_expand.pl` | 8 | 14 | 7 | 6 |
 | `v6/prolog/0_option_expand.pl` | 34 | 49 | 6 | 0 |
 | `v6/prolog/0_type_ids.pl` | 16 | 19 | 6 | 0 |
-| `v6/prolog/print_dl.pl` | 74 | 99 | 5 | 3 |
+| `v6/prolog/print_dl.pl` | 72 | 97 | 5 | 3 |
 | `v6/prolog/0_cst_query.pl` | 37 | 53 | 5 | 1 |
 | `v6/prolog/0_anonymous_expand.pl` | 36 | 58 | 5 | 5 |
 | `v6/prolog/compile/0_trace.pl` | 19 | 41 | 5 | 0 |
@@ -149,12 +149,12 @@ The expanded program to a `plan/9` term: analysis, stratification, host expansio
 
 ```mermaid
 flowchart LR
-  n1["analyze  in20/out17"]
-  n2["1_host_expand  in15/out6"]
+  n1["analyze  in19/out16"]
+  n2["1_host_expand  in10/out4"]
   n3["0_program_check  in7/out6"]
   n4["strat  in6/out3"]
-  n5["6_isolated_compiler_dd  in5/out11"]
-  n6["3_clock_check  in3/out12"]
+  n5["6_isolated_compiler_dd  in5/out10"]
+  n6["3_clock_check  in3/out11"]
   n7["2_subscribe  in1/out3"]
   n8["3_clock_history  in1/out0"]
   n9["6_profile  in0/out1"]
@@ -163,23 +163,19 @@ flowchart LR
   n5 -->|4| n1
   n3 -->|3| n1
   n6 -->|2| n3
-  n2 -->|1| n1
   n7 -->|1| n2
-  n6 -->|1| n2
-  n1 -->|1| n2
-  n5 -->|1| n2
   n5 -->|1| n4
   n4 -->|1| n1
 ```
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
-| `v6/prolog/analyze.pl` | 127 | 144 | 20 | 17 |
-| `v6/prolog/1_host_expand.pl` | 57 | 86 | 15 | 6 |
+| `v6/prolog/analyze.pl` | 127 | 144 | 19 | 16 |
+| `v6/prolog/1_host_expand.pl` | 58 | 88 | 10 | 4 |
 | `v6/prolog/0_program_check.pl` | 46 | 91 | 7 | 6 |
 | `v6/prolog/strat.pl` | 14 | 31 | 6 | 3 |
-| `v6/prolog/compile/6_isolated_compiler_dd.pl` | 96 | 120 | 5 | 11 |
-| `v6/prolog/3_clock_check.pl` | 37 | 68 | 3 | 12 |
+| `v6/prolog/compile/6_isolated_compiler_dd.pl` | 96 | 120 | 5 | 10 |
+| `v6/prolog/3_clock_check.pl` | 38 | 70 | 3 | 11 |
 | `v6/prolog/2_subscribe.pl` | 5 | 12 | 1 | 3 |
 | `v6/prolog/compile/test/3_clock_history.pl` | 4 | 0 | 1 | 0 |
 | `v6/prolog/6_profile.pl` | 7 | 25 | 0 | 1 |
@@ -190,7 +186,7 @@ The plan to SQL text. One module, and the largest in the tree.
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
-| `v6/prolog/lower.pl` | 545 | 530 | 21 | 18 |
+| `v6/prolog/lower.pl` | 545 | 530 | 21 | 17 |
 
 ## emit
 
@@ -208,8 +204,8 @@ flowchart LR
   n8["2_emit_cli_inventory  in0/out1"]
   n9["3_emit_trace_schema  in0/out1"]
   n10["9_emit_type_artifact  in0/out4"]
-  n2 -->|20| n1
-  n1 -->|19| n2
+  n2 -->|23| n1
+  n1 -->|21| n2
   n5 -->|13| n4
   n4 -->|13| n5
   n3 -->|2| n5
@@ -224,13 +220,13 @@ flowchart LR
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
-| `v6/prolog/emit_ts.pl` | 215 | 219 | 9 | 12 |
-| `v6/prolog/emit_rust.pl` | 74 | 90 | 9 | 13 |
+| `v6/prolog/emit_ts.pl` | 216 | 219 | 9 | 12 |
+| `v6/prolog/emit_rust.pl` | 79 | 100 | 9 | 13 |
 | `v6/prolog/compile/4_emit_jsonschema.pl` | 66 | 88 | 9 | 2 |
 | `v6/prolog/compile/8_emit_rust_types.pl` | 86 | 96 | 7 | 2 |
 | `v6/prolog/compile/7_emit_ts_types.pl` | 44 | 50 | 7 | 2 |
 | `v6/prolog/compile/5_emit_openapi.pl` | 12 | 17 | 1 | 1 |
-| `v6/prolog/compile/1_emit_registry_docs.pl` | 26 | 40 | 0 | 0 |
+| `v6/prolog/compile/1_emit_registry_docs.pl` | 25 | 39 | 0 | 0 |
 | `v6/prolog/compile/2_emit_cli_inventory.pl` | 4 | 7 | 0 | 1 |
 | `v6/prolog/compile/3_emit_trace_schema.pl` | 4 | 7 | 0 | 1 |
 | `v6/prolog/compile/9_emit_type_artifact.pl` | 4 | 10 | 0 | 4 |
@@ -249,7 +245,7 @@ flowchart LR
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
-| `v6/prolog/compile/registry.pl` | 20 | 13 | 18 | 0 |
+| `v6/prolog/compile/registry.pl` | 20 | 16 | 18 | 0 |
 | `v6/prolog/compile.pl` | 81 | 125 | 16 | 10 |
 | `v6/prolog/dl6c.pl` | 15 | 31 | 2 | 1 |
 | `v6/prolog/src/kernel.pl` | 4 | 3 | 1 | 0 |
@@ -426,60 +422,6 @@ in the owning program that name the host.
 
 | program | host | executor | demands |
 |---|---|---|---:|
-| `v6/dl/deadcode/dead-module-rail.dl6` | `call_node_at` | sprefa_extract | 2 |
-| `v6/dl/deadcode/dead-module-rail.dl6` | `cargo_targets` | cargo_metadata | 1 |
-| `v6/dl/deadcode/dead-module-rail.dl6` | `cfg_at` | sprefa_extract | 1 |
-| `v6/dl/deadcode/dead-module-rail.dl6` | `extract` | sprefa_extract | 2 |
-| `v6/dl/deadcode/dead-module-rail.dl6` | `files` | soopy_files | 1 |
-| `v6/dl/deadcode/dead-module-rail.dl6` | `specifier_at` | sprefa_extract | 1 |
-| `v6/dl/deadcode/receiver-rail.dl6` | `files` | soopy_files | 1 |
-| `v6/dl/deadcode/receiver-rail.dl6` | `scip__call` | sprefa_scip | 0 |
-| `v6/dl/deadcode/receiver-rail.dl6` | `scip__diet__call` | sprefa_scip | 0 |
-| `v6/dl/fixtures/0_extraction-clock-golden.dl6` | `extract` | sprefa_extract | 1 |
-| `v6/dl/fixtures/1_rtkq-extraction-golden.dl6` | `extract` | sprefa_extract | 1 |
-| `v6/dl/fixtures/crawl_org.dl6` | `repo_extract` | sprefa_extract | 1 |
-| `v6/dl/fixtures/diag-rail.dl6` | `call_node` | sprefa_extract | 1 |
-| `v6/dl/fixtures/diag-rail.dl6` | `call_ref` | sprefa_extract | 1 |
-| `v6/dl/fixtures/extraction-live.dl6` | `extract` | sprefa_extract | 1 |
-| `v6/dl/fixtures/flagship-callgraph.dl6` | `call_node` | sprefa_extract | 1 |
-| `v6/dl/fixtures/flagship-callgraph.dl6` | `call_ref` | sprefa_extract | 1 |
-| `v6/dl/fixtures/flagship-flow.dl6` | `call_node_at` | sprefa_extract | 1 |
-| `v6/dl/fixtures/flagship-flow.dl6` | `df_arg_at` | sprefa_extract | 1 |
-| `v6/dl/fixtures/flagship-flow.dl6` | `df_edge_at` | sprefa_extract | 1 |
-| `v6/dl/fixtures/flagship-flow.dl6` | `df_node_at` | sprefa_extract | 1 |
-| `v6/dl/fixtures/flagship-flow.dl6` | `df_param_at` | sprefa_extract | 1 |
-| `v6/dl/fixtures/flagship-flow.dl6` | `sig_at` | sprefa_extract | 1 |
-| `v6/dl/fixtures/flagship-flow.dl6` | `type_node_at` | sprefa_extract | 1 |
-| `v6/dl/fixtures/live_extract_calls.dl6` | `extract` | sprefa_extract | 0 |
-| `v6/dl/fixtures/live_shell_probe.dl6` | `look` | fixture | 0 |
-| `v6/dl/fixtures/openapi-data-family.dl6` | `extract` | sprefa_extract | 1 |
-| `v6/dl/fixtures/source-mutations.dl6` | `source_commit` | soopy | 1 |
-| `v6/dl/fixtures/source-mutations.dl6` | `source_stage` | soopy | 1 |
-| `v6/dl/ghcacher/ghcacher_304_golden.dl6` | `fetch` | http_fetch | 1 |
-| `v6/dl/ghcacher/ghcacher_checkout_golden.dl6` | `repo_checkout` | soopy_checkout | 1 |
-| `v6/dl/ghcacher/ghcacher_env_golden.dl6` | `env_var` | env | 1 |
-| `v6/dl/ghcacher/ghcacher_env_golden.dl6` | `toml_json` | toml_json | 1 |
-| `v6/dl/ghcacher/ghcacher_smoke.dl6` | `fetch` | http_fetch | 1 |
-| `v6/dl/ghcacher/ghcacher_tick_golden.dl6` | `fetch` | http_fetch | 1 |
-| `v6/dl/ghcacher/ghcacher_tier_golden.dl6` | `fetch` | http_fetch | 1 |
-| `v6/dl/hotpath/prolog-hotpath-rails.dl6` | `call_node_at` | sprefa_extract | 1 |
-| `v6/dl/hotpath/prolog-hotpath-rails.dl6` | `call_ref` | sprefa_extract | 1 |
-| `v6/dl/hotpath/prolog-hotpath-rails.dl6` | `extract` | sprefa_extract | 1 |
-| `v6/dl/reach/feature-reach.dl6` | `call_node_at` | sprefa_extract | 1 |
-| `v6/dl/reach/feature-reach.dl6` | `call_ref` | sprefa_extract | 1 |
-| `v6/dl/reach/feature-reach.dl6` | `cargo_targets` | cargo_metadata | 1 |
-| `v6/dl/reach/feature-reach.dl6` | `cfg_at` | sprefa_extract | 1 |
-| `v6/dl/reach/feature-reach.dl6` | `df_arg_at` | sprefa_extract | 1 |
-| `v6/dl/reach/feature-reach.dl6` | `extract` | sprefa_extract | 1 |
-| `v6/dl/reach/feature-reach.dl6` | `files` | soopy_files | 1 |
-| `v6/dl/reach/feature-reach.dl6` | `scip__call` | sprefa_scip | 0 |
-| `v6/dl/reach/feature-reach.dl6` | `scip__diet__call` | sprefa_scip | 0 |
-| `v6/dl/selfdoc/selfdoc.dl6` | `call_node_at` | sprefa_extract | 2 |
-| `v6/dl/selfdoc/selfdoc.dl6` | `call_ref` | sprefa_extract | 1 |
-| `v6/dl/selfdoc/selfdoc.dl6` | `data_doc_at` | sprefa_extract | 1 |
-| `v6/dl/selfdoc/selfdoc.dl6` | `extract` | sprefa_extract | 1 |
-| `v6/dl/selfdoc/selfdoc.dl6` | `files` | soopy_files | 1 |
-| `v6/dl/selfdoc/selfdoc.dl6` | `specifier_at` | sprefa_extract | 1 |
 
 ## Orphan predicates
 
@@ -489,7 +431,7 @@ the closure as an arity-0 ATOM, and the call family emits no record for an
 atom argument, so `path_component_stem/2` reads as an orphan against a live
 call at `0_anonymous_expand.pl:266`. Read every row before deleting one.
 
-Total: 286.
+Total: 287.
 
 | module | predicate | arity |
 |---|---|---:|
@@ -534,7 +476,7 @@ Total: 286.
 | `v6/prolog/1_host_expand.pl` | `normalize_rule` | 2 |
 | `v6/prolog/1_host_expand.pl` | `salt_matches_column` | 2 |
 
-The first 40 of 286, by module. Run `just selfdoc` for the whole set.
+The first 40 of 287, by module. Run `just selfdoc` for the whole set.
 
 ## The twenty hottest symbols
 

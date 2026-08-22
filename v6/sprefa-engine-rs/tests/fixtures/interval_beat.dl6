@@ -1,4 +1,4 @@
-# The `bind interval` rail: a resident `dl6 run` turns each turn of the cadence into one
+# The `/clock/tick` rail: a resident `dl6 run` turns each turn of the cadence into one
 # tick. The bucket is floor(epoch_secs / period), which is restart-stable, so a
 # restarted watch re-derives the same row rather than minting a fresh identity.
 #
@@ -10,9 +10,13 @@
 #       distinctUntilChanged(),
 #       pairwise(), mergeMap(([held, next]) => [del(held), add(next)]))
 
-bind interval(period: int, bucket: int).
+# The program owns its seed: the cadence is a fact, not a keyword.
+rel cadence(every: int).
+cadence(1).
+
+rel /clock/tick(every: int) -> (bucket: int).
 
 rel beat(bucket: int).
-beat(Bucket) <- interval(1, Bucket).
+beat(Bucket) <- cadence(Every), /clock/tick(Every, Bucket).
 
 ? beat(bucket).

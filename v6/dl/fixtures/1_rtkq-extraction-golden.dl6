@@ -12,11 +12,12 @@
 # shape rules form a union, and containment joins endpoint properties to API
 # scopes. No parser or RTKQ special case exists in the DL compiler/runtime.
 
-bind watch(glob: text, path: text, digest: text).
+rel watch(glob: text, path: text, digest: text).
 
-sh extract(
+rel /extract/records(
   path: text,
-  digest: text
+  digest: text,
+  families: text
 ) -> (
   record: text,
   query: text,
@@ -26,8 +27,7 @@ sh extract(
   end: int,
   match_start: int,
   match_end: int
-) =
-  `"$DL_EXTRACT_BIN" --ast-pattern 'create=createApi({ $$$BEFORE, endpoints: ($BUILDER) => ($BODY), $$$AFTER })' --ast-capture create=BUILDER --ast-pattern 'inject=$API.injectEndpoints({ $$$BEFORE, endpoints: ($BUILDER) => ($BODY), $$$AFTER })' --ast-capture inject=API --ast-capture inject=BUILDER --ast-pattern 'generic=const endpoints = { $ENDPOINT: $BUILDER.$KIND<$RESULT, $ARG>($CONFIG) }' --ast-selector generic=pair --ast-capture generic=ENDPOINT --ast-capture generic=KIND --ast-pattern 'plain=const endpoints = { $ENDPOINT: $BUILDER.$KIND($CONFIG) }' --ast-selector plain=pair --ast-capture plain=ENDPOINT --ast-capture plain=KIND {path}`.
+) key(1, 3).
 
 rel file(path: text, digest: text).
 file(path, digest) <- watch('**/*.ts', path, digest).
@@ -44,7 +44,7 @@ rel ast_capture(
 ).
 ast_capture(path, query, capture, text, start, end, match_start, match_end) <-
   file(path, digest),
-  extract(path, digest, 'capture', query, capture, text, start, end, match_start, match_end).
+  /extract/records(path, digest, "call", 'capture', query, capture, text, start, end, match_start, match_end).
 
 # createApi and injectEndpoints are separate syntax shapes whose results share
 # one relation. Only their whole-match spans are retained.

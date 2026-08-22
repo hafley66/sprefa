@@ -1968,15 +1968,14 @@ test(step5_effect_host_mints_port_and_response) :-
                   _, 2, _, _, '', ''), Responses2),
     !.
 
-test(step5_bind_port_never_has_a_response_child) :-
+% A plain arrival rel (the former bind) mints NO port row at all: interval
+% is an ordinary EDB-by-absence rel in this fixture now.
+test(step5_plain_arrival_rel_mints_no_port_row) :-
     hosts_ports_are(native_ts_query_term, Ports, Responses),
     memberchk(row(TsId, _, 0, tree_sitter, port, _, 2, _, _, '', ''), Ports),
     memberchk(row(_, TsId, 0, '__host_response_tree_sitter', port_response,
                   _, 1, _, _, '', ''), Responses),
-    memberchk(row(IntervalId, _, 0, interval, port, _, 2, _, _, '', ''),
-              Ports),
-    \+ memberchk(row(_, IntervalId, _, _, port_response, _, _, _, _, '', ''),
-                 Responses),
+    \+ memberchk(row(_, _, _, interval, port, _, _, _, _, '', ''), Ports),
     !.
 
 :- end_tests(catalog_port_rows).
@@ -3202,14 +3201,15 @@ test(retention_count_is_one_set_based_delete_statement) :-
 
 test(selected_surface_round_trips) :-
     string_codes(
-      "sh fetch(ep: text, prev: text, bucket: int) -> (status: int) = `run {ep} $prev`.\nresult(Status) <- input(Ep, Prev, Bucket), fetch(Ep, Prev, Bucket, Status).\n? result(Status).\n",
+      "rel fetch(ep: text, prev: text, bucket: int) -> (status: int) key(1, 2).\nresult(Status) <- input(Ep, Prev, Bucket), fetch(Ep, Prev, Bucket, Status).\n? result(Status).\n",
       Codes),
     parse_dl(Codes, Program, Bindings, []),
     Program = program(
                 [sh_decl(fetch,
                          [col(ep, text), col(prev, text), col(bucket, int)],
                          [col(status, int)],
-                         template("run {ep} $prev"))],
+                         template("")),
+                 arrival_identity(fetch, [1, 2])],
                 [(_ <- (_, probe(fetch, [_, _], [_], [salt(bucket, _)])))],
                 [query(result(_))]),
     print_dl_program(Program, Bindings, Printed),
@@ -3246,28 +3246,18 @@ test(selected_surface_round_trips) :-
 % PREMISE CORRECTED while writing this: struct type names did NOT work there
 % either. `at: patch` degraded the same way -- only host OUTPUTS resolved a
 % struct name. The three surfaces now read one vocabulary.
-test(host_input_and_bind_columns_read_the_full_type_vocabulary) :-
+test(host_input_columns_read_the_full_type_vocabulary) :-
     string_codes(
-      "sh weigh(kilos: float, ok: bool) -> (note: text) = `run {kilos} {ok}`.\nbind reading(kilos: float, ok: bool, at: patch).\n",
+      "rel weigh(kilos: float, ok: bool) -> (note: text).\nrel reading(kilos: float, ok: bool, at: patch) -> (note: text).\n",
       Codes),
     parse_dl(Codes, Program, _, []),
     arg(1, Program, Decls),
     memberchk(sh_decl(weigh, [col(kilos, float), col(ok, bool)],
                       [col(note, text)], _), Decls),
-    memberchk(bind_decl(reading,
-                        [col(kilos, float), col(ok, bool), col(at, patch)]),
+    memberchk(sh_decl(reading,
+                      [col(kilos, float), col(ok, bool), col(at, patch)],
+                      [col(note, text)], _),
               Decls).
-
-% The wrapper unsupported construct the widened clause must NOT swallow: `Key(...)` and its
-% two siblings are dead spellings, and they stay named rather than becoming a
-% parse error or a struct type called Key.
-test(host_input_column_wrapper_is_still_a_named_unsupported) :-
-    string_codes(
-      "sh weigh(path: Key(text)) -> (note: text) = `run {path}`.\n",
-      Codes),
-    parse_dl(Codes, _, _, Findings),
-    memberchk(unsupported_surface(column_type_wrapper(weigh, path, 'Key')),
-              Findings).
 
 test(rhs_probe_marker_is_rejected,
      [throws(dl_parse_error(statement, _))]) :-
@@ -3285,7 +3275,7 @@ test(rhs_postfix_probe_marker_is_rejected,
 
 test(plain_host_resolution_is_declaration_order_independent) :-
     string_codes(
-      "result(Status) <- fetch('repo', '', 3, Status).\nsh fetch(ep: text, prev: text, bucket: int) -> (status: int) = `run {ep} $prev`.\n",
+      "result(Status) <- fetch('repo', '', 3, Status).\nrel fetch(ep: text, prev: text, bucket: int) -> (status: int) key(1, 2).\n",
       Codes),
     parse_dl(
       Codes,
@@ -3293,7 +3283,8 @@ test(plain_host_resolution_is_declaration_order_independent) :-
         [sh_decl(fetch,
                  [col(ep, text), col(prev, text), col(bucket, int)],
                  [col(status, int)],
-                 template("run {ep} $prev"))],
+                 template("")),
+         arrival_identity(fetch, [1, 2])],
         [(result(Status) <-
             probe(fetch, [repo, ''], [Status], [salt(bucket, 3)]))],
         []),
@@ -3316,7 +3307,7 @@ test(plain_non_host_rhs_remains_relation_atom) :-
 test(plain_host_arity_mismatch_reaches_existing_named_unsupported,
      [throws(probe_mismatch(probe(fetch, [repo], [], [])))]) :-
     string_codes(
-      "sh fetch(ep: text) -> (status: int) = `run {ep}`.\nresult('missing') <- fetch('repo').\n",
+      "rel fetch(ep: text) -> (status: int).\nresult('missing') <- fetch('repo').\n",
       Codes),
     parse_dl(Codes, Program, _, []),
     prepare_program(Program, _, _, _, _).
@@ -3466,7 +3457,7 @@ test(host_duplicate_column_unsupported,
 % response-column lowering, and emitted host plan together.
 test(host_declared_struct_output_parses_and_lowers_as_ref) :-
     string_codes(
-      "rel span(end: int, start: int).\nrel source_path(path: text).\nrel host_span(path: text, at: span).\nsh scan_span(path: text) -> (at: span) = `scan {path}`.\nhost_span(Path, At) <- source_path(Path), scan_span(Path, At).\n",
+      "rel span(end: int, start: int).\nrel source_path(path: text).\nrel host_span(path: text, at: span).\nrel scan_span(path: text) -> (at: span).\nhost_span(Path, At) <- source_path(Path), scan_span(Path, At).\n",
       Codes),
     parse_dl(Codes, Program, Bindings, []),
     program_plan(
@@ -3497,7 +3488,7 @@ test(host_declared_struct_output_parses_and_lowers_as_ref) :-
 test(host_unknown_struct_output_refuses_by_type_name,
      [throws(unsupported_construct(column_type_unknown(spann)))]) :-
     string_codes(
-      "rel span(end: int, start: int).\nrel source_path(path: text).\nrel host_span(path: text, at: span).\nsh scan_span(path: text) -> (at: spann) = `scan {path}`.\nhost_span(Path, At) <- source_path(Path), scan_span(Path, At).\n",
+      "rel span(end: int, start: int).\nrel source_path(path: text).\nrel host_span(path: text, at: span).\nrel scan_span(path: text) -> (at: spann).\nhost_span(Path, At) <- source_path(Path), scan_span(Path, At).\n",
       Codes),
     parse_dl(Codes, Program, Bindings, []),
     program_plan(
@@ -3515,12 +3506,13 @@ test(probe_arity_unsupported,
         []),
       _, _, _, _).
 
-test(bind_and_rule_head_unsupported,
-     [throws(bind_and_rule_head(interval))]) :-
+test(arrival_rel_with_rule_head_unsupported,
+     [throws(host_and_rule_head(tick))]) :-
     prepare_program(
       program(
-        [bind_decl(interval, [col(period, int), col(bucket, int)])],
-        [(interval(Period, Bucket) <- seed(Period, Bucket))],
+        [sh_decl(tick, [col(period, int)], [col(bucket, int)],
+                 template(""))],
+        [(tick(Period, Bucket) <- seed(Period, Bucket))],
         []),
       _, _, _, _).
 
@@ -3598,13 +3590,9 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     boot_statements(Mode, Decls, Types, RelPlans, Initial, LevelStatements, Boot),
     emit_program(native_ts_query_term, Plan, Lowered, Boot, Text),
     once(sub_atom(Text, _, _, _, 'export const host_plans')),
-    % PHASE 2 (runtime bridge arc): the two named unsupported constructs are gone; both world
-    % terms now carry the executor the served runtime dispatches on. The bind's
-    % `literals` list is EMPTY for this fixture on purpose -- it declares
-    % `bind interval(...)` and seeds an `interval(300, 1)` Initial row, but no
-    % RULE reads a literal period, so no timer is owed.
+    % The former bind_decl is a plain arrival rel now, so no bind plan and no
+    % live_interval executor line is owed; the host plan still carries shell.
     once(sub_atom(Text, _, _, _, 'execution: "shell"')),
-    once(sub_atom(Text, _, _, _, 'literals: [], execution: "live_interval"')),
     once(sub_atom(Text, _, _, _,
                   'export const unsupported_execution: readonly string[] = [];')),
     once(sub_atom(Text, _, _, _,
@@ -9422,9 +9410,9 @@ test(source_mutations_fixture_keeps_one_document_boundary_and_exact_approval_joi
         true,
         ( once(compile_dl6(Source, OutFile)),
           once(read_file_to_string(OutFile, Text, [])),
-          sub_string(Text, _, _, _, 'name: "source_stage"'),
-          sub_string(Text, _, _, _, 'name: "source_commit"'),
-          sub_string(Text, _, _, _, 'execution: "shell"'),
+          sub_string(Text, _, _, _, 'name: "soopy__stage"'),
+          sub_string(Text, _, _, _, 'name: "soopy__commit"'),
+          sub_string(Text, _, _, _, 'execution: "/soopy/stage"'),
           sub_string(Text, _, _, _, 'source_proposal_candidate'),
           sub_string(Text, _, _, _, 'source_dependency'),
           sub_string(Text, _, _, _, 'source_ownership'),

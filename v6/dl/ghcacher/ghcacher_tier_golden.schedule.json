@@ -13,23 +13,23 @@
   ],
   [
     {"rel":"interval","sign":"add","row":[60,101]},
-    {"rel":"__host_response_fetch","sign":"add","row":["witness|fetch|repo_slug:text=org/hot|bucket:int=100",0,"org/hot",100,200,"org/hot"]}
+    {"rel":"__host_response_http__fetch","sign":"add","row":["witness|http__fetch|repo_slug:text=org/hot|bucket=100",0,"org/hot",200,"org/hot"]}
   ],
   [
     {"rel":"interval","sign":"add","row":[60,102]},
-    {"rel":"__host_response_fetch","sign":"add","row":["witness|fetch|repo_slug:text=org/hot|bucket:int=101",0,"org/hot",101,200,"org/hot"]}
+    {"rel":"__host_response_http__fetch","sign":"add","row":["witness|http__fetch|repo_slug:text=org/hot|bucket=101",0,"org/hot",200,"org/hot"]}
   ],
   [
     {"rel":"interval","sign":"add","row":[60,120]},
-    {"rel":"__host_response_fetch","sign":"add","row":["witness|fetch|repo_slug:text=org/hot|bucket:int=102",0,"org/hot",102,200,"org/hot"]}
+    {"rel":"__host_response_http__fetch","sign":"add","row":["witness|http__fetch|repo_slug:text=org/hot|bucket=102",0,"org/hot",200,"org/hot"]}
   ],
   [
     {"rel":"interval","sign":"add","row":[60,150]},
-    {"rel":"__host_response_fetch","sign":"add","row":["witness|fetch|repo_slug:text=org/cold|bucket:int=120",0,"org/cold",120,200,"org/cold"]},
-    {"rel":"__host_response_fetch","sign":"add","row":["witness|fetch|repo_slug:text=org/hot|bucket:int=120",0,"org/hot",120,200,"org/hot"]}
+    {"rel":"__host_response_http__fetch","sign":"add","row":["witness|http__fetch|repo_slug:text=org/cold|bucket=120",0,"org/cold",200,"org/cold"]},
+    {"rel":"__host_response_http__fetch","sign":"add","row":["witness|http__fetch|repo_slug:text=org/hot|bucket=120",0,"org/hot",200,"org/hot"]}
   ],
   [
-    {"rel":"__host_response_fetch","sign":"add","row":["witness|fetch|repo_slug:text=org/cold|bucket:int=150",0,"org/cold",150,200,"org/cold"]},
-    {"rel":"__host_response_fetch","sign":"add","row":["witness|fetch|repo_slug:text=org/hot|bucket:int=150",0,"org/hot",150,200,"org/hot"]}
+    {"rel":"__host_response_http__fetch","sign":"add","row":["witness|http__fetch|repo_slug:text=org/cold|bucket=150",0,"org/cold",200,"org/cold"]},
+    {"rel":"__host_response_http__fetch","sign":"add","row":["witness|http__fetch|repo_slug:text=org/hot|bucket=150",0,"org/hot",200,"org/hot"]}
   ]
 ]

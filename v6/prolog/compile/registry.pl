@@ -14,8 +14,8 @@
             surface_for_term/6,
             body_surface_for_term/6,
             wrapper_lower_role/3,
-            bind_definition/2,
-            bind_executor/2,
+            arrival_executor/2,
+            arrival_roles/3,
             host_execution/3,
             host_input_contract/3,
             host_input_roles/3,
@@ -191,9 +191,11 @@ surface(set/0,           decl,      no_refs,                      decl(refuse(re
 % are files and files_at.
 surface(scan/variadic,   world,     no_refs,                      goal(refuse(removed_word)),            reserved).
 surface(match/2,         sugar,     no_refs,                      block(match_arms),                      live).
+% sh_decl/4 is the arrival rel's TERM: `rel n(ins) -> (outs) key(..)` desugars
+% into it (ruling arrival_arrow_spelling); the `sh` and `bind` keywords are dead.
 surface(sh_decl/4,       world,     no_refs,                      decl(host_plan),                        live).
+surface(arrival_identity/2, world,  no_refs,                      decl(arrival_identity),                 live).
 surface(probe/4,         world,     no_refs,                      wrapper(host_probe, lower),             live).
-surface(bind_decl/2,     world,     no_refs,                      decl(bind_plan),                        live).
 surface(query/1,         read,      no_refs,                      decl(query_plan),                       live).
 surface(ts_query/1,      world,     no_refs,                      value(tree_sitter_query),               live).
 surface(sg_pattern/3,    world,     no_refs,                      value(refuse(slot_sg_metavariable_semantics)), refused).
@@ -301,42 +303,95 @@ expression_for_term(Term, Family, Precedence, SqlRendering, TypeRule) :-
     functor(Term, Name, Arity),
     expression(Name/Arity, Family, Precedence, SqlRendering, TypeRule).
 
-% ═══ world push sources (bind_decl) ═════════════════════════════════════════
-%
-% bind_definition(Name, Columns)  the row shape the served runtime pushes
-% bind_executor(Name, Executor)   the executor name emitted into the plan
-%
-% COLUMN 1 IS THE CONFIGURATION COLUMN, for every bind: the program's own rules
-% state which cadences / which file sets they consume as LITERALS in that
-% position (`interval(2, Bucket)`, `watch("src/**/*.ts", Path, Digest)`), and
-% emit_ts.pl's bind_read_literals/4 collects exactly those. A declared bind
-% whose rules read no literal gets an empty list and therefore no live source
-% at all -- an honest zero, never an invented default.
-%
-% `watch` is the file-watcher push bind (golden plan phase 2). Its row is
-% (glob, path, digest): the DIGEST is what makes it a freshness source rather
-% than a notification -- a save that does not change content re-emits an
-% identical row, which is zero delta at the rel boundary, so nothing
-% downstream re-derives (ruling salt_minting = content_addressed; the digest
-% IS the salt every demand host addresses its cache by). Presence and absence
-% ride the ARRIVAL SIGN, not a second column and not a null: a removed file is
-% a `-` arrival of the row that was there. See v6/tsv2/serve/2_binds.ts.
-bind_definition(interval, [col(period, int), col(bucket, int)]).
-bind_definition(watch,    [col(glob, text), col(path, text), col(digest, text)]).
+% ═══ the executor roster (ruling executor_namespacing) ══════════════════════
 
-bind_executor(interval, live_interval).
-bind_executor(watch,    live_watch).
+% THE ONE ROSTER: hosts.rs LINKED_EXECUTORS lists these same slash paths and
+% a hosts.rs test pins the two equal; a rel absent here is replay-only.
+
+% /extract/* share one executor; the `families` INPUT column replaces the dead
+% template's --family flag, so one file + one families value = one run.
+
+% /clock/tick and /soopy/watch: ExecutorCadence::Continuing in hosts.rs, a
+% re-answer from either IS a tick.
+arrival_executor(clock__tick,           '/clock/tick').
+arrival_executor(soopy__watch,          '/soopy/watch').
+arrival_executor(soopy__files,          '/soopy/files').
+% Two names, one executor. `files` is the worktree, `files_at` a pinned rev;
+% the name IS the marker, so neither can fall back to the other (PR #406).
+arrival_executor(soopy__files_at,       '/soopy/files_at').
+arrival_executor(soopy__stage,          '/soopy/stage').
+arrival_executor(soopy__commit,         '/soopy/commit').
+arrival_executor(soopy__checkout,       '/soopy/checkout').
+arrival_executor(soopy__mirror_pr_heads, '/soopy/mirror_pr_heads').
+
+% These rels keep bare names: src/executors/{git_refs,git_history,repo_at,
+% dep_crawl}.rs branch on them and belong to another lane; many rels, one row.
+arrival_executor(git_ref,               '/soopy/refs').
+arrival_executor(git_tag,               '/soopy/refs').
+arrival_executor(git_merge_base,        '/soopy/history').
+arrival_executor(git_ahead_behind,      '/soopy/history').
+arrival_executor(git_ancestor,          '/soopy/history').
+arrival_executor(git_change,            '/soopy/history').
+arrival_executor(git_rename,            '/soopy/history').
+arrival_executor(git_changed_line,      '/soopy/history').
+arrival_executor(repo_files_at,         '/soopy/repo_at').
+arrival_executor(repo_grep_at,          '/soopy/repo_at').
+arrival_executor(dep_crawl_repo,        '/soopy/dep_crawl').
+arrival_executor(dep_crawl_visited,     '/soopy/dep_crawl').
+arrival_executor(dep_crawl_edge,        '/soopy/dep_crawl').
+arrival_executor(dep_crawl_unresolved,  '/soopy/dep_crawl').
+arrival_executor(extract__records,      '/extract/records').
+arrival_executor(extract__repo_records, '/extract/repo_records').
+arrival_executor(extract__call_node,    '/extract/call_node').
+arrival_executor(extract__call_node_at, '/extract/call_node_at').
+arrival_executor(extract__call_ref,     '/extract/call_ref').
+arrival_executor(extract__cfg_at,       '/extract/cfg_at').
+arrival_executor(extract__specifier_at, '/extract/specifier_at').
+arrival_executor(extract__type_node_at, '/extract/type_node_at').
+arrival_executor(extract__sig_at,       '/extract/sig_at').
+arrival_executor(extract__df_node_at,   '/extract/df_node_at').
+arrival_executor(extract__df_edge_at,   '/extract/df_edge_at').
+arrival_executor(extract__df_param_at,  '/extract/df_param_at').
+arrival_executor(extract__df_arg_at,    '/extract/df_arg_at').
+arrival_executor(extract__data_doc_at,  '/extract/data_doc_at').
+arrival_executor(extract__comment_fact, '/extract/comment_fact').
+arrival_executor(extract__ast_rule,     '/extract/ast_rule').
+arrival_executor(scip__call,            '/scip/call').
+arrival_executor(scip__type,            '/scip/type').
+arrival_executor(scip__diet__call,      '/scip/diet/call').
+arrival_executor(scip__diet__type,      '/scip/diet/type').
+arrival_executor(cargo__targets,        '/cargo/targets').
+arrival_executor(http__fetch,           '/http/fetch').
+arrival_executor(gh__repos,             '/gh/repos').
+arrival_executor(gh__rest_cond,         '/gh/rest_cond').
+arrival_executor(gh__pulls,             '/gh/pulls').
+arrival_executor(gh__pr_batch,          '/gh/pr_batch').
+arrival_executor(env__var,              '/env/var').
+arrival_executor(toml__json,            '/toml/json').
+% The engine measuring itself: trace rows and the resident set, folded by the
+% same fold as any other arrival.
+arrival_executor(dl__tick_cost,         '/dl/tick_cost').
 
 % One clause set is spread across two blocks: the scip rows sit with the rest
 % of the scip namespace rather than in name order.
 :- discontiguous host_input_contract/3.
 
-% The named in-process ast-grep rule executor has a fixed authored boundary.
-% All other `sh` declarations retain the generic shell executor.
-host_execution(ast_rule, Template, ast_rule) :-
-    sub_string(Template, _, _, _, '$SPREFA_AST_RULE_HOST'),
+% A rostered arrival rel names its own executor; anything else keeps the
+% `shell` sentinel the runtime resolves through the adapters sidecar.
+host_execution(Name, _Template, Executor) :-
+    arrival_executor(Name, Executor),
     !.
 host_execution(_, _, shell).
+
+% key(P..) on an arrival declaration: the named INPUT positions are identity,
+% every other input is freshness (ruling arrival_identity_spelling).
+arrival_roles(Inputs, Positions, Roles) :-
+    length(Inputs, InputCount),
+    numlist(1, InputCount, Indexes),
+    maplist([Index, Role]>>( memberchk(Index, Positions)
+                           -> Role = identity
+                           ;  Role = freshness ),
+            Indexes, Roles).
 
 % Ordinary `sh` inputs can serve two existing internal host roles. Identity
 % inputs participate in both demand identity and witness digests and return on
@@ -494,18 +549,18 @@ host_input_contract(toml_json,
 
 % ═══ scip ═══════════════════════════════════════════════════════════════════
 %
-% TWO NAMESPACES, ONE QUESTION. `scip.<x>` answers from a real SCIP index built
-% by the language's own indexer, `scip.diet.<x>` from this crate's tree-sitter
+% TWO NAMESPACES, ONE QUESTION. `/scip/<x>` answers from a real SCIP index built
+% by the language's own indexer, `/scip/diet/<x>` from this crate's tree-sitter
 % front-ends resolved by name match across the supplied file set. Both spell the
 % same `<x>` and both carry the SAME output columns, so a program swaps one for
 % the other by changing the host name and nothing else. Where they disagree is
 % the whole reason the two names exist: a name several files define is
 % unresolvable to a name match and resolved through the import by an index.
 %
-% The dl6 spelling is dotted (`sh scip.diet.call(...)`); the atom every phase
-% below the parser carries is module_path_name/2's `__` join, which is what the
-% demand and response rel names, the emitted SQL identifiers, and the adapters
-% sidecar all use.
+% The dl6 spelling is slash-rooted (`rel /scip/diet/call(...) -> (...)`); the
+% atom every phase below the parser carries is module_path_name/2's `__` join,
+% which is what the demand and response rel names, the emitted SQL identifiers,
+% and the adapters sidecar all use.
 %
 % The input contract is repo_extract's, shared by ONE clause over the four
 % names rather than four hand-copied lists: `repo` and `path` are identity and

@@ -1,7 +1,7 @@
 rel watch(ep: text).
 rel etag(ep: text, tag: text).
-bind interval(period: int, bucket: int).
-sh fetch(ep: text, prev: text, bucket: int) -> (status: int, tag: text, body: json) = `fetch {ep} with $prev`.
+rel interval(period: int, bucket: int).
+rel fetch(ep: text, prev: text, bucket: int) -> (status: int, tag: text, body: json).
 
 poll(Ep, Prev, Bucket) <-
   watch(Ep),

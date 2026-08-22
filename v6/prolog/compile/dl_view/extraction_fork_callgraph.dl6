@@ -1,4 +1,4 @@
-sh sg(file_digest: text, query_digest: text) -> (caller: text, callee: text, start_byte: int, end_byte: int) = `sg {file_digest} $query_digest`.
+rel sg(file_digest: text, query_digest: text) -> (caller: text, callee: text, start_byte: int, end_byte: int).
 
 call_edge(File, Caller, Callee, Start, End) <-
   file(File, FileDigest),

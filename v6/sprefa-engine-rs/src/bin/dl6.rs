@@ -527,21 +527,22 @@ fn run(args: ProgramArgs) -> Result<()> {
         .root
         .canonicalize()
         .with_context(|| format!("read {}", args.root.display()))?;
-    let (loaded, mut seeds, options) = prepare(&args)?;
-    if !args.once && run::stays_resident(&loaded.binds) {
+    let (loaded, seeds, options) = prepare(&args)?;
+    let adapter_rows = sprefa_engine_rs::types::load_program_host_adapter_rows(&loaded.program.name)
+        .context("read the process adapter sidecar")?;
+    if !args.once && run::stays_resident(&loaded.program, &adapter_rows) {
         let (stop, listen) = tokio::sync::watch::channel(false);
         // SIGINT is the one way a resident run ends, and the handler only flips
         // the flag: the loop finishes the tick it is in rather than dying mid-fold.
         ctrlc_flag(stop)?;
-        let options = WatchOptions::new(options, loaded.binds.clone(), root);
+        let options = WatchOptions::new(options, root);
         if run::watch(&loaded.program, seeds, options, listen)? {
             std::process::exit(1);
         }
         return Ok(());
     }
-    // A one-shot fold of a resident program still reads its world: the
-    // enumeration is tick 0's rows with no watcher armed behind it.
-    seeds.extend(run::bind_seeds(&loaded.binds, Path::new("."))?);
+    // A one-shot fold of a resident program still reads its world inside
+    // `run_once`, keyed off the same continuing-executor routing.
     let outcome = run::run_once(&loaded.program, seeds, options)?;
     run::print_outcome(&loaded.program, &outcome, &finals)?;
     if outcome.failed() {

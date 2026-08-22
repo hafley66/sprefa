@@ -176,8 +176,8 @@ Refusals: `coalesce_no_output`, `coalesce_multiple_outputs`,
 | `scan/variadic` | `world` | `no_refs` | `goal(refuse(removed_word))` | `reserved` |
 | `match/2` | `sugar` | `no_refs` | `block(match_arms)` | `live` |
 | `sh_decl/4` | `world` | `no_refs` | `decl(host_plan)` | `live` |
+| `arrival_identity/2` | `world` | `no_refs` | `decl(arrival_identity)` | `live` |
 | `probe/4` | `world` | `no_refs` | `wrapper(host_probe,lower)` | `live` |
-| `bind_decl/2` | `world` | `no_refs` | `decl(bind_plan)` | `live` |
 | `query/1` | `read` | `no_refs` | `decl(query_plan)` | `live` |
 | `ts_query/1` | `world` | `no_refs` | `value(tree_sitter_query)` | `live` |
 | `sg_pattern/3` | `world` | `no_refs` | `value(refuse(slot_sg_metavariable_semantics))` | `refused` |
@@ -253,9 +253,8 @@ construct inventory.
 | named args | `col: val` | resolved to declared positional order |
 | body named args with omitted columns | `rel(first: Value)` | omitted declared columns become fresh anonymous variables; RX relation projection |
 | partial named head | `head(first: Value) <- ...` | `unsupported_surface(partial_head(Name/Arity))` |
-| shell host declaration | `sh name(in: type, ...) -> (out: type, ...) = \`template\`.` | `sh_decl(Name, Inputs, Outputs, template(Text))`; RX-H1 |
-| host call | `name(inputs..., outputs...)` when `name` resolves to an `sh` signature | `probe(Name, IdentityInputs, Outputs, FreshnessSalts)`; RX-H2; registered positional metadata selects freshness inputs; an unresolved name remains an ordinary relation atom |
-| bind declaration | `bind name(column: type, ...).` | `bind_decl(Name, Columns)`; RX-B1 |
+| arrival rel declaration | `rel name(in: type, ...) -> (out: type, ...) key(P, ...).` | `sh_decl(Name, Inputs, Outputs, template(""))` plus `arrival_identity(Name, Positions)` from `key(..)`; RX-H1; ruling arrival_arrow_spelling; the `sh` and `bind` keywords answer `unsupported_surface(removed_word(..))` |
+| host call | `name(inputs..., outputs...)` when `name` resolves to an arrival signature | `probe(Name, IdentityInputs, Outputs, FreshnessSalts)`; RX-H2; `key(..)` positions (falling back to registered contracts) select freshness inputs; an unresolved name remains an ordinary relation atom |
 | query | `? name(args).` | `query(RelAtom)`; RX-Q1 |
 | ordered query | `? name(args) order by col [asc\|desc], ... .` | `query(RelAtom, order([order_col(Position, Direction), ...]))`; RX-Q2; `asc` is the unwritten direction; a column the query's args do not name is `dl_parse_error(order_column_unknown(Name, Column), _)` |
 | mutation | `rel!(args)` | `unsupported_surface(mutation(Name/Arity))` |
@@ -345,9 +344,8 @@ the compiler does not treat the resulting declaration as writable surface.
 
 | term | rx lowering | phase-1 compiler result |
 |---|---|---|
-| `sh_decl(Name, Inputs, Outputs, template(Text))` | RX-H1: request rows group by witness, take one request, decode declared outputs, then commit an EDB arrival | emitted as a `hostPlans` data row carrying executor key `execution: "shell"`, or `"sprefa_extract"` for the established `extract(path, digest)` contract; the served runtime (`v6/tsv2/serve/1_hosts.ts`) runs the declaration template and commits the decoded response as an EDB arrival |
+| `sh_decl(Name, Inputs, Outputs, template(""))` | RX-H1: request rows group by witness, take one request, decode declared outputs, then commit an EDB arrival | emitted as a `hostPlans` data row whose `execution` is the registry's `arrival_executor/2` slash path (`/soopy/files`, `/extract/records`, ...) or the `shell` sentinel for a replay-only feeder; the Rust runtime links every rostered name in-process (hosts.rs LINKED_EXECUTORS) |
 | `probe(Name, Inputs, Outputs, Salts)` | RX-H2: mint identity from host plus identity inputs, mint witness from identity plus compiler-registered freshness inputs, deduplicate by witness, then demand the host | lowers to `__host_demand_Name` SQL and a join with keyed EDB relation `__host_response_Name`; `Salts` is internal IR with no DL6 spelling |
-| `bind_decl(interval, Columns)` | RX-B1: subscribe to the registered interval source while the program is active and commit each row as EDB | emitted as a `bindPlans` data row carrying `periods` (the integer literals the program's own rules read in the bind atom's first column) and `execution: "live_interval"`; schedule arrivals still grade phase 1, and the served runtime (`v6/tsv2/serve/2_binds.ts`) spins one rx `interval` per declared period |
 | `query(RelAtom)` | RX-Q1: scan the current SQLite query plan and stream its rows | emitted as a `queryPlans` data row |
 | `query(RelAtom, order(OrderCols))` | RX-Q2: RX-Q1 then `sortBy` the named columns, each with its direction | the same `queryPlans` row plus an `ORDER BY` clause on the rel's `final_select` cursor, and nowhere else; an order index rides the rel's DDL only when the ordered read hits the base table |
 | `ts_query(Patterns)` | RX-TS1: group file demand by content and query identity, run the compiled tree-sitter query, then commit EDB rows | value compiles to query text; phase-2 host execution is named `unsupported_host_execution_phase_2(tree_sitter_query)` |

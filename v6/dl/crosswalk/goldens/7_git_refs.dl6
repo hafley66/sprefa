@@ -1,0 +1,148 @@
+# 7_git_refs.dl6 -- refs, tags, and the revision graph, as authored dl6.
+#
+# 0_multirepo_crawl.dl6 reads each repository's FILE BYTES and 4_dep_crawl.dl6
+# reads the dependency frontier BETWEEN repositories. This program reads the
+# third plane neither of them touches: the Git ref store and the commit DAG.
+# A ref name, a tag date, a fork point, and an ahead/behind count are facts a
+# regex over tracked files cannot produce at all, because they are not in any
+# tracked file.
+#
+# ── TWO FAMILIES, TWO MEMO KEYS ─────────────────────────────────────────────
+# `git_ref` and `git_tag` are ONE `for-each-ref` pass per repository, memoised
+# on the repository root. `git_merge_base`, `git_ahead_behind`, and
+# `git_ancestor` are ONE revision-graph answer per (repo, rev_a, rev_b),
+# memoised on the whole triple, because Git has no batch form for the pairwise
+# relations and three declarations would otherwise cost six processes.
+# `sprefa-engine-rs/src/hosts.rs` recognizes the five ruled names and delegates
+# to Soopy in-process. That is the SoopyFilesExecutor arrangement
+# (`hosts.rs:52`) and the dep_crawl arrangement (`hosts.rs:61`) applied to a
+# third family, and it is why every template below exits nonzero: a runtime
+# WITHOUT the linked arm must stop by name rather than answer zero rows.
+#
+# ── ANCESTRY IS BOUNDED BY DEMAND ───────────────────────────────────────────
+# `git_ancestor` answers the pair a `want_pair` row names, in BOTH directions,
+# and nothing else. The whole DAG closure is never taken: a repository with ten
+# thousand commits answers one `merge-base --is-ancestor` per posted pair, not
+# a hundred million rows.
+#
+# ── ABSENCE IS A ROW COUNT, NOT A NULL ──────────────────────────────────────
+# Two revisions with no shared history produce ZERO `fork_point` rows, and two
+# diverged tips produce ZERO `reachable` rows. A lightweight tag has no tag
+# object and so no tag date; `annotated` is the column that keeps its zero
+# `tagged_at` from reading as the Unix epoch.
+#
+# ── THE RX LOWERING ─────────────────────────────────────────────────────────
+#   wantRefs$.pipe(                                      // repo_ref, repo_tag
+#     map(mintIdentityAndWitness),                       // two names, one
+#     distinct(demand => demand.witnessDigest),          // for-each-ref pass
+#     mergeMap(snapshotMemoised),
+#     mergeMap(commitEdbArrival))
+#
+#   wantPair$.pipe(                                      // fork_point, and the
+#     mergeMap(revisionGraphMemoised),                   // two siblings, one
+#     mergeMap(commitEdbArrival))                        // graph answer
+#
+#   repoRef$.pipe(filter(row => row.kind === 'branch'),  // branch_count
+#                 groupBy(row => row.repo),
+#                 mergeMap(group => group.pipe(count())))
+#
+#   combineLatest([repoTag$, reachable$]).pipe(          // released_ancestor
+#     filter(([tag, edge]) => tag.annotated &&
+#                             tag.targetSha === edge.ancestorSha))
+
+rel git_ref(repo: text)
+   -> (ref_name: text, kind: text, target_sha: text).
+
+rel git_tag(repo: text)
+   -> (tag_name: text, target_sha: text, tagged_at: int, annotated: bool).
+
+rel git_merge_base(repo: text, rev_a: text, rev_b: text)
+   -> (base_sha: text).
+
+rel git_ahead_behind(repo: text, rev_a: text, rev_b: text)
+   -> (ahead_count: int, behind_count: int).
+
+rel git_ancestor(repo: text, rev_a: text, rev_b: text)
+   -> (ancestor_sha: text, descendant_sha: text).
+
+# One row per repository whose ref store the program wants read.
+rel want_refs(repo: text).
+
+# One row per pairwise question. The poster names the two revisions, so the
+# commit DAG is walked exactly where a rule asked and nowhere else.
+rel want_pair(repo: text, rev_a: text, rev_b: text).
+
+# ── the ref store, projected ────────────────────────────────────────────────
+# `kind` names the ref's NAMESPACE (branch, tag, remote, head), never the Git
+# object type: every branch tip is a `commit` object, so the object type cannot
+# tell a branch from a tag. `target_sha` is peeled, so an annotated tag's row
+# carries the commit and joins against a commit-keyed relation.
+rel repo_ref(repo: text, ref_name: text, kind: text, target_sha: text).
+repo_ref(repo, ref_name, kind, target_sha) <-
+  want_refs(repo),
+  git_ref(repo, ref_name, kind, target_sha).
+
+rel repo_tag(repo: text, tag_name: text, target_sha: text, tagged_at: int, annotated: bool).
+repo_tag(repo, tag_name, target_sha, tagged_at, annotated) <-
+  want_refs(repo),
+  git_tag(repo, tag_name, target_sha, tagged_at, annotated).
+
+# ── the commit DAG, projected ───────────────────────────────────────────────
+# A pair with several best common ancestors produces several rows, which is why
+# this is a relation and not a function.
+rel fork_point(repo: text, rev_a: text, rev_b: text, base_sha: text).
+fork_point(repo, rev_a, rev_b, base_sha) <-
+  want_pair(repo, rev_a, rev_b),
+  git_merge_base(repo, rev_a, rev_b, base_sha).
+
+rel divergence(repo: text, rev_a: text, rev_b: text, ahead_count: int, behind_count: int).
+divergence(repo, rev_a, rev_b, ahead_count, behind_count) <-
+  want_pair(repo, rev_a, rev_b),
+  git_ahead_behind(repo, rev_a, rev_b, ahead_count, behind_count).
+
+rel reachable(repo: text, ancestor_sha: text, descendant_sha: text).
+reachable(repo, ancestor_sha, descendant_sha) <-
+  want_pair(repo, rev_a, rev_b),
+  git_ancestor(repo, rev_a, rev_b, ancestor_sha, descendant_sha).
+
+# ── the branch head set, which is what a ref-keyed program actually joins on ─
+# Two rules into one rel is the split-and-union shape: a branch tip and a
+# detached HEAD are the same fact about "a commit this repository points at",
+# and only the ref name differs.
+rel head_commit(repo: text, ref_name: text, target_sha: text).
+head_commit(repo, ref_name, target_sha) <-
+  repo_ref(repo, ref_name, kind, target_sha), kind == "branch".
+head_commit(repo, ref_name, target_sha) <-
+  repo_ref(repo, ref_name, kind, target_sha), kind == "head".
+
+# ── how many branches each repository carries ───────────────────────────────
+# The grouping column is local to the rel being counted, which is what
+# aggregate_group_not_delta_local requires.
+rel branch_count(repo: text, branches: int).
+branch_count(repo, count(ref_name)) <-
+  repo_ref(repo, ref_name, kind, _), kind == "branch".
+
+# ── a release is an ANNOTATED tag, and only an annotated tag has a date ─────
+rel released(repo: text, tag_name: text, target_sha: text, tagged_at: int).
+released(repo, tag_name, target_sha, tagged_at) <-
+  repo_tag(repo, tag_name, target_sha, tagged_at, annotated),
+  annotated == true.
+
+# ── the join the two families exist for: which tags are behind the tip ──────
+# A tag whose target is an ancestor of a revision this program asked about is a
+# tag already contained in that revision's history. Neither family can answer
+# this alone: the ref store holds the tag, the commit DAG holds the ancestry.
+rel tag_in_history(repo: text, tag_name: text, descendant_sha: text).
+tag_in_history(repo, tag_name, descendant_sha) <-
+  repo_tag(repo, tag_name, target_sha, _, _),
+  reachable(repo, target_sha, descendant_sha).
+
+? repo_ref(repo, ref_name, kind, target_sha).
+? repo_tag(repo, tag_name, target_sha, tagged_at, annotated).
+? fork_point(repo, rev_a, rev_b, base_sha).
+? divergence(repo, rev_a, rev_b, ahead_count, behind_count).
+? reachable(repo, ancestor_sha, descendant_sha).
+? head_commit(repo, ref_name, target_sha).
+? branch_count(repo, branches).
+? released(repo, tag_name, target_sha, tagged_at).
+? tag_in_history(repo, tag_name, descendant_sha).

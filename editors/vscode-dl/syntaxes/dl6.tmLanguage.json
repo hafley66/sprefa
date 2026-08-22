@@ -14,6 +14,7 @@
         { "include": "#rule-arrow" },
         { "include": "#semicolon" },
         { "include": "#enum-shape" },
+        { "include": "#executor-path" },
         { "include": "#decl-words" },
         { "include": "#live-keywords" },
         { "include": "#reserved-keywords" },
@@ -66,13 +67,17 @@
       "name": "storage.type.enum.dl6",
       "match": "\\brel\\b(?=\\s+[a-z_]\\w*\\s*\\([^\\n]*;)"
     },
+    "executor-path": {
+      "name": "entity.name.function.dl6",
+      "match": "/[a-z_]\\w*(?:/[a-z_]\\w*)*(?=\\s*\\()"
+    },
     "decl-words": {
       "name": "storage.type.declaration.dl6",
-      "match": "\\b(rel|sh|bind|log|keep|key|int|float|bool|text|json|bytes|salt)\\b"
+      "match": "\\b(rel|log|keep|key|int|float|bool|text|json|bytes|salt)\\b"
     },
     "live-keywords": {
       "name": "keyword.control.dl6",
-      "match": "\\b(avg|bind_decl|coalesce|combine|count|decode|finalize|group_concat|is|json_group_array|json_object|latest|match|max|min|next|not|now|pre|probe|query|regexp|seq|sh_decl|sum|true|ts_query)\\b"
+      "match": "\\b(arrival_identity|avg|coalesce|combine|count|decode|finalize|group_concat|is|json_group_array|json_object|latest|match|max|min|next|not|now|pre|probe|query|regexp|seq|sh_decl|sum|true|ts_query)\\b"
     },
     "reserved-keywords": {
       "name": "invalid.illegal.reserved.dl6",

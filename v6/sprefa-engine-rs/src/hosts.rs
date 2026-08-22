@@ -25,6 +25,14 @@ impl std::fmt::Display for HostError {
     }
 }
 
+/// `Once` answers a demand and is done; `Continuing` re-answers on its own
+/// clock or its own filesystem watcher, and each re-answer is a tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutorCadence {
+    Once,
+    Continuing,
+}
+
 /// A host answer is a row set, never a byte stream: the executor names its own
 /// columns and the runner projects them, so nothing between the two parses text.
 pub trait IHostExecutor: Sync {
@@ -34,14 +42,26 @@ pub trait IHostExecutor: Sync {
         command_line: &str,
         env: &BTreeMap<String, String>,
     ) -> Result<Vec<HostRow>, HostError>;
+
+    fn cadence(&self) -> ExecutorCadence {
+        ExecutorCadence::Once
+    }
 }
 
-/// The roster a construction stop names. Every entry runs in this process or
-/// spawns one known binary; none of them reaches a shell.
-pub const LINKED_EXECUTORS: &str =
-    "soopy, soopy_files, soopy_refs, soopy_history, soopy_repo_at, dep_crawl, \
-     sprefa_extract, sprefa_scip, cargo_metadata, fixture, http_fetch, env, gh_repos, \
-     gh_pulls, dl_tick_cost, soopy_checkout, toml_json";
+/// The SAME slash paths as registry.pl's arrival_executor/2 rows (ruling
+/// executor_namespacing), pinned equal by executor_roster_matches_registry.
+pub const LINKED_EXECUTORS: &str = "/soopy/files, /soopy/files_at, /soopy/stage, \
+     /soopy/commit, /soopy/refs, /soopy/history, /soopy/repo_at, /soopy/checkout, \
+     /soopy/mirror_pr_heads, /soopy/dep_crawl, /soopy/watch, /clock/tick, \
+     /extract/records, \
+     /extract/repo_records, /extract/call_node, /extract/call_node_at, \
+     /extract/call_ref, /extract/cfg_at, /extract/specifier_at, \
+     /extract/type_node_at, /extract/sig_at, /extract/df_node_at, \
+     /extract/df_edge_at, /extract/df_param_at, /extract/df_arg_at, \
+     /extract/data_doc_at, /extract/comment_fact, /extract/ast_rule, /scip/call, \
+     /scip/type, /scip/diet/call, /scip/diet/type, /cargo/targets, /http/fetch, \
+     /gh/repos, /gh/rest_cond, /gh/pulls, /gh/pr_batch, /env/var, /toml/json, \
+     /dl/tick_cost";
 
 static GIT_REFS: LazyLock<crate::executors::git_refs::GitRefsExecutor> =
     LazyLock::new(crate::executors::git_refs::GitRefsExecutor::new);
@@ -51,38 +71,63 @@ static REPO_AT: LazyLock<crate::executors::repo_at::RepoAtExecutor> =
     LazyLock::new(crate::executors::repo_at::RepoAtExecutor::new);
 static DEP_CRAWL: LazyLock<crate::executors::dep_crawl::DepCrawlExecutor> =
     LazyLock::new(crate::executors::dep_crawl::DepCrawlExecutor::new);
+static CLOCK_TICK: LazyLock<crate::executors::clock::ClockExecutor> =
+    LazyLock::new(crate::executors::clock::ClockExecutor::new);
+static SOOPY_WATCH: LazyLock<crate::executors::watch::SoopyWatchExecutor> =
+    LazyLock::new(crate::executors::watch::SoopyWatchExecutor::new);
 
 pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
     match execution {
-        "soopy" => Some(&SoopyMutationExecutor),
-        // The linked twin: sprefa-extract runs in this process, no child spawn.
-        "sprefa_extract" => Some(&*EXTRACT),
-        "ast_rule" => Some(&AstRuleExecutor),
-        "soopy_files" => Some(&SoopyFilesExecutor),
-        // The ghcacher four, all linked: HTTP, the process env table, the
-        // GitHub REST walk, an existing checkout, and a TOML document.
-        "http_fetch" => Some(&crate::executors::HttpFetchExecutor),
-        "gh_pr_batch" => Some(&crate::executors::GhPrBatchExecutor),
-        "env" => Some(&crate::executors::EnvExecutor),
-        "gh_repos" => Some(&crate::executors::GhReposExecutor),
-        "gh_pulls" => Some(&crate::executors::GhPullsExecutor),
+        // The /extract/* questions share the in-process extractor; each rel
+        // selects its own rows out of the one stream by column presence.
+        "/extract/records" | "/extract/repo_records" | "/extract/call_node"
+        | "/extract/call_node_at" | "/extract/call_ref" | "/extract/cfg_at"
+        | "/extract/specifier_at" | "/extract/type_node_at" | "/extract/sig_at"
+        | "/extract/df_node_at" | "/extract/df_edge_at" | "/extract/df_param_at"
+        | "/extract/df_arg_at" | "/extract/data_doc_at"
+        | "/extract/comment_fact" => Some(&*EXTRACT),
+        "/extract/ast_rule" => Some(&AstRuleExecutor),
+        // Two names, one executor: files_revision/2 reads which revision the
+        // name asks for, so a worktree read and a pinned read cannot collide.
+        "/soopy/files" | "/soopy/files_at" => Some(&SoopyFilesExecutor),
+        "/soopy/stage" | "/soopy/commit" => Some(&SoopyMutationExecutor),
+        // The ghcacher six, all linked: HTTP, the process env table, the three
+        // GitHub REST/GraphQL walks, an existing checkout, and a TOML document.
+        "/http/fetch" | "/gh/rest_cond" => Some(&crate::executors::HttpFetchExecutor),
+        "/gh/pr_batch" => Some(&crate::executors::GhPrBatchExecutor),
+        "/env/var" => Some(&crate::executors::EnvExecutor),
+        "/gh/repos" => Some(&crate::executors::GhReposExecutor),
+        "/gh/pulls" => Some(&crate::executors::GhPullsExecutor),
         // The engine measuring itself: the trace table and the resident set, as
         // rows the same fold folds.
-        "dl_tick_cost" => Some(&crate::executors::TickCostExecutor),
-        "soopy_checkout" => Some(&crate::executors::SoopyCheckoutExecutor),
-        "toml_json" => Some(&crate::executors::TomlJsonExecutor),
+        "/dl/tick_cost" => Some(&crate::executors::TickCostExecutor),
+        "/soopy/checkout" | "/soopy/mirror_pr_heads" => {
+            Some(&crate::executors::SoopyCheckoutExecutor)
+        }
+        "/toml/json" => Some(&crate::executors::TomlJsonExecutor),
         // The cross-repository families. Each memoises on its demand inputs, so
         // the sibling host names riding one pass settle in one soopy call.
-        "soopy_refs" => Some(&*GIT_REFS),
-        "soopy_history" => Some(&*GIT_HISTORY),
-        "soopy_repo_at" => Some(&*REPO_AT),
-        "dep_crawl" => Some(&*DEP_CRAWL),
+        "/soopy/refs" => Some(&*GIT_REFS),
+        "/soopy/history" => Some(&*GIT_HISTORY),
+        "/soopy/repo_at" => Some(&*REPO_AT),
+        "/soopy/dep_crawl" => Some(&*DEP_CRAWL),
+        "/clock/tick" => Some(&*CLOCK_TICK),
+        "/soopy/watch" => Some(&*SOOPY_WATCH),
         // The two scip namespaces, both in-process: no child spawn for the
         // diet side, one budgeted indexer run for the index side.
-        "sprefa_scip" => Some(&*SCIP),
-        "cargo_metadata" => Some(&CargoMetadataExecutor),
-        "fixture" => Some(&FixtureExecutor),
+        "/scip/call" | "/scip/type" | "/scip/diet/call" | "/scip/diet/type" => Some(&*SCIP),
+        "/cargo/targets" => Some(&CargoMetadataExecutor),
         _ => None,
+    }
+}
+
+/// The applicative fold scope: every /extract/* question folds with its
+/// siblings on equal ordered inputs; anything else folds only with itself.
+fn fold_scope(execution: &str) -> &str {
+    if execution.starts_with("/extract/") && execution != "/extract/ast_rule" {
+        "extract"
+    } else {
+        execution
     }
 }
 
@@ -106,8 +151,17 @@ fn executor_for_plan(
     executor_for(&execution_for_plan(plan, adapter_rows))
 }
 
+/// `run.rs`'s resident loop reads this to decide which routed rels are its own
+/// continuing sources, and never invokes `IHostExecutor::run` for anything else.
+pub fn cadence_for_plan(plan: &HostPlanData, adapter_rows: &[HostAdapterRow]) -> ExecutorCadence {
+    executor_for_plan(plan, adapter_rows)
+        .map(IHostExecutor::cadence)
+        .unwrap_or(ExecutorCadence::Once)
+}
+
 fn is_applicative(execution: &str) -> bool {
-    matches!(execution, "sprefa_extract" | "sprefa_scip")
+    (execution.starts_with("/extract/") && execution != "/extract/ast_rule")
+        || execution.starts_with("/scip/")
 }
 
 /// Typed ast-grep rule execution. The request arrives as the DL6 `text`
@@ -297,16 +351,18 @@ pub struct SoopyFilesExecutor;
 /// The revision each name walks. The name is the marker, so a name off this
 /// roster is a stop and never a worktree fallback.
 fn files_revision(host: &str, env: &BTreeMap<String, String>) -> Result<soopy::Revision, HostError> {
+    // `host` is the plan name, so it is module_path_name/2's `__` join of the
+    // declaration's path: `/soopy/files` arrives here as `soopy__files`.
     match host {
-        "files" => Ok(soopy::Revision::Worktree),
-        "files_at" => Ok(crate::change_facts::parse_revision(&required_input(
+        "soopy__files" => Ok(soopy::Revision::Worktree),
+        "soopy__files_at" => Ok(crate::change_facts::parse_revision(&required_input(
             host, env, "rev",
         )?)),
         other => Err(HostError {
             host: host.to_string(),
             message: format!(
-                "`{other}` is not a file-surface host; the roster is files and files_at, \
-                 and the repo-scoped twins are soopy_repo_at's"
+                "`{other}` is not a file-surface host; the roster is /soopy/files and \
+                 /soopy/files_at, and the repo-scoped twins are /soopy/repo_at's"
             ),
         }),
     }
@@ -359,65 +415,6 @@ impl IHostExecutor for SoopyFilesExecutor {
         }
         Ok(rows)
     }
-}
-
-/// A fixture host whose template is a constant: `printf '<json>'` answers that
-/// json and nothing else, so a conformance program folds with no process.
-pub struct FixtureExecutor;
-
-impl IHostExecutor for FixtureExecutor {
-    fn run(
-        &self,
-        host: &str,
-        command_line: &str,
-        _env: &BTreeMap<String, String>,
-    ) -> Result<Vec<HostRow>, HostError> {
-        let named = |message: String| HostError {
-            host: host.to_string(),
-            message,
-        };
-        let words = template_words(command_line)
-            .map_err(|message| named(format!("unparseable template: {message}")))?;
-        let (verb, payload) = match words.split_first() {
-            Some((verb, rest)) if verb == "printf" => (verb, rest.first()),
-            _ => {
-                return Err(named(format!(
-                    "only `printf` is a fixture answer: `{command_line}`"
-                )))
-            }
-        };
-        let payload = payload.ok_or_else(|| named(format!("`{verb}` carries no answer")))?;
-        fixture_rows(payload)
-            .ok_or_else(|| named(format!("fixture answer is not json rows: `{payload}`")))
-    }
-}
-
-/// One object, a json array of objects, or one object per line.
-fn fixture_rows(payload: &str) -> Option<Vec<HostRow>> {
-    let of = |value: serde_json::Value| match value {
-        serde_json::Value::Object(row) => Some(vec![row]),
-        serde_json::Value::Array(items) => items
-            .into_iter()
-            .map(|item| match item {
-                serde_json::Value::Object(row) => Some(row),
-                _ => None,
-            })
-            .collect::<Option<Vec<HostRow>>>(),
-        _ => None,
-    };
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(payload.trim()) {
-        return of(value);
-    }
-    payload
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(
-            |line| match serde_json::from_str::<serde_json::Value>(line) {
-                Ok(serde_json::Value::Object(row)) => Some(row),
-                _ => None,
-            },
-        )
-        .collect()
 }
 
 /// `MetadataCommand` spawns the `cargo` binary itself, so nothing between this
@@ -473,8 +470,8 @@ impl IHostExecutor for SoopyMutationExecutor {
         env: &BTreeMap<String, String>,
     ) -> Result<Vec<HostRow>, HostError> {
         match host {
-            "source_stage" => source_stage_response(host, env),
-            "source_commit" => source_commit_response(host, env),
+            "soopy__stage" => source_stage_response(host, env),
+            "soopy__commit" => source_commit_response(host, env),
             _ => Err(HostError {
                 host: host.to_string(),
                 message: "not a Soopy source-mutation host".to_string(),
@@ -727,7 +724,7 @@ enum ScipInterface {
     Type,
 }
 
-/// The `__` join is what the parser's dotted host name lowers to, so this is
+/// The `__` join is what the parser's host path lowers to, so this is
 /// the whole namespace roster the registry declares.
 fn scip_namespace(host: &str) -> Option<(ScipInterface, ScipEvidence)> {
     match host {
@@ -749,7 +746,7 @@ struct ScipFold {
     skips: Vec<HostRow>,
 }
 
-/// `scip.<x>` and `scip.diet.<x>`, both answered in this process.
+/// `/scip/<x>` and `/scip/diet/<x>`, both answered in this process.
 ///
 /// A DEMAND ARRIVES PER FILE AND AN INDEX IS PER REPOSITORY, so the runner's
 /// applicative grouping cannot collapse these into one call: its key is the
@@ -965,8 +962,8 @@ impl IHostExecutor for ScipNamespaceExecutor {
         };
         let Some((interface, evidence)) = scip_namespace(host) else {
             return Err(named(
-                "not a scip namespace; the roster is scip.call, scip.diet.call, \
-                 scip.type and scip.diet.type"
+                "not a scip namespace; the roster is /scip/call, /scip/diet/call, \
+                 /scip/type and /scip/diet/type"
                     .to_string(),
             ));
         };
@@ -1098,47 +1095,21 @@ impl IHostExecutor for SprefaExtractExecutor {
     fn run(
         &self,
         host: &str,
-        command_line: &str,
+        _command_line: &str,
         env: &BTreeMap<String, String>,
     ) -> Result<Vec<HostRow>, HostError> {
         let named = |message: String| HostError {
             host: host.to_string(),
             message,
         };
-        let tokens = template_words(command_line)
-            .map_err(|message| named(format!("unparseable command `{command_line}`: {message}")))?;
-        let mut rest = tokens.iter();
-        match rest.next() {
-            Some(first) if first == "$DL_EXTRACT_BIN" || first.ends_with("extract") => {}
-            other => {
-                return Err(named(format!(
-                    "expected the extract binary first in `{command_line}`, got {other:?}"
-                )))
-            }
-        }
-        let mut family: Option<String> = None;
-        let mut want_file_fact = false;
-        let mut path: Option<String> = None;
-        while let Some(token) = rest.next() {
-            if token == "--file-fact" {
-                want_file_fact = true;
-            } else if token == "--family" {
-                family = Some(
-                    rest.next()
-                        .ok_or_else(|| named("--family needs a value".to_string()))?
-                        .clone(),
-                );
-            } else if let Some(value) = token.strip_prefix("--family=") {
-                family = Some(value.to_string());
-            } else if token.starts_with("--") {
-                // The in-process twin covers the per-file surface; an
-                // unrecognized flag is a named stop, never a silent shell fall-back.
-                return Err(named(format!("flag `{token}` is not linked in-process")));
-            } else {
-                path = Some(token.clone());
-            }
-        }
-        let path = path.ok_or_else(|| named(format!("no path in `{command_line}`")))?;
+        // The dead template's `--family` flag is the `families` INPUT now: a
+        // comma list of family words, absent = every family.
+        let path = required_input(host, env, "path")?;
+        let family = env
+            .get("families")
+            .map(String::as_str)
+            .filter(|families| !families.is_empty())
+            .map(str::to_string);
         let digest = env
             .get("digest")
             .map(String::as_str)
@@ -1189,10 +1160,6 @@ impl IHostExecutor for SprefaExtractExecutor {
         let span = tracing::info_span!("extract", host, path = %path);
         let _entered = span.enter();
         let mut rows: Vec<HostRow> = Vec::new();
-        if want_file_fact {
-            let fact = sprefa_extract::file_fact(&path, &content);
-            rows.push(fact_row(&named, &fact)?);
-        }
         if let Some(out) = sprefa_extract::dispatch(&path, &content, mask) {
             for fact in sprefa_extract::flatten(&out) {
                 rows.push(fact_row(&named, &fact)?);
@@ -1214,64 +1181,6 @@ where
         Ok(other) => Err(named(format!("fact is not a row: {other}"))),
         Err(error) => Err(named(format!("convert a fact to a row: {error}"))),
     }
-}
-
-// Minimal POSIX-style word split for a filled template: single quotes are
-// literal, double quotes keep `\` escapes, bare backslash escapes one char.
-fn template_words(command_line: &str) -> Result<Vec<String>, String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut in_word = false;
-    let mut chars = command_line.chars().peekable();
-    while let Some(character) = chars.next() {
-        match character {
-            '\'' => {
-                in_word = true;
-                loop {
-                    match chars.next() {
-                        Some('\'') => break,
-                        Some(inner) => current.push(inner),
-                        None => return Err("unterminated single quote".to_string()),
-                    }
-                }
-            }
-            '"' => {
-                in_word = true;
-                loop {
-                    match chars.next() {
-                        Some('"') => break,
-                        Some('\\') => match chars.next() {
-                            Some(escaped) => current.push(escaped),
-                            None => return Err("dangling escape".to_string()),
-                        },
-                        Some(inner) => current.push(inner),
-                        None => return Err("unterminated double quote".to_string()),
-                    }
-                }
-            }
-            '\\' => {
-                in_word = true;
-                match chars.next() {
-                    Some(escaped) => current.push(escaped),
-                    None => return Err("dangling escape".to_string()),
-                }
-            }
-            character if character.is_whitespace() => {
-                if in_word {
-                    tokens.push(std::mem::take(&mut current));
-                    in_word = false;
-                }
-            }
-            character => {
-                in_word = true;
-                current.push(character);
-            }
-        }
-    }
-    if in_word {
-        tokens.push(current);
-    }
-    Ok(tokens)
 }
 
 // ═══ template fill (the quote-context walk from serve/1_hosts.ts) ═══════════
@@ -1510,6 +1419,36 @@ struct HostDemand<'p> {
     inputs: BTreeMap<String, ScalarValue>,
 }
 
+/// The same `'witness|<plan>|<col>:<type>=<value>...'` string the compiled
+/// boot SQL hashes into the demand row's own column.
+fn witness_digest_for(plan: &HostPlanData, inputs: &BTreeMap<String, ScalarValue>) -> String {
+    let mut digest = format!("witness|{}", plan.name);
+    for input in &plan.inputs {
+        let value = inputs.get(&input.name).map(shell_text).unwrap_or_default();
+        digest.push_str(&format!(
+            "|{}:{}={value}",
+            input.name, input.column_type
+        ));
+    }
+    digest
+}
+
+pub fn project_host_answer(
+    plan: &HostPlanData,
+    inputs: BTreeMap<String, ScalarValue>,
+    answered: &[HostRow],
+    rel_columns: &HashMap<String, Vec<String>>,
+    sign: ArrivalSign,
+) -> Result<Vec<Arrival>, HostError> {
+    let witness_digest = witness_digest_for(plan, &inputs);
+    let demand = HostDemand {
+        plan,
+        witness_digest,
+        inputs,
+    };
+    HostLiveRunner::project_signed(&demand, answered, rel_columns, sign)
+}
+
 pub struct HostLiveRunner<'p> {
     plans: Vec<&'p HostPlanData>,
     rel_columns: &'p HashMap<String, Vec<String>>,
@@ -1627,6 +1566,17 @@ impl<'p> HostLiveRunner<'p> {
         answered: &[HostRow],
         rel_columns: &HashMap<String, Vec<String>>,
     ) -> Result<Vec<Arrival>, HostError> {
+        Self::project_signed(demand, answered, rel_columns, ArrivalSign::Add)
+    }
+
+    /// The resident loop's own continuing sources re-answer outside any demand
+    /// delta (`collect` below only ever emits `Add`), so they need the sign too.
+    fn project_signed(
+        demand: &HostDemand<'p>,
+        answered: &[HostRow],
+        rel_columns: &HashMap<String, Vec<String>>,
+        sign: ArrivalSign,
+    ) -> Result<Vec<Arrival>, HostError> {
         let span = tracing::info_span!("project", host = %demand.plan.name, rows = answered.len());
         let _entered = span.enter();
         let output_rows = select_columns(&demand.plan.name, answered, &demand.plan.outputs)?;
@@ -1639,7 +1589,7 @@ impl<'p> HostLiveRunner<'p> {
             .enumerate()
             .map(|(ordinal, output_row)| Arrival {
                 rel: demand.plan.response_rel.clone(),
-                sign: ArrivalSign::Add,
+                sign,
                 row: response_columns
                     .iter()
                     .map(|column| {
@@ -1695,7 +1645,7 @@ impl<'p> HostLiveRunner<'p> {
         // applicative key (which carries `path`) can never collapse them.
         let mut scip_demands: Vec<(PathBuf, String, String)> = Vec::new();
         for demand in &claimed {
-            if self.execution_for(demand.plan) != "sprefa_scip" {
+            if !self.execution_for(demand.plan).starts_with("/scip/") {
                 continue;
             }
             let text = |name: &str| demand.inputs.get(name).map(shell_text).unwrap_or_default();
@@ -1733,13 +1683,9 @@ impl<'p> HostLiveRunner<'p> {
                     )
                 })
                 .collect();
-            // The FILLED COMMAND is what decides the answer, never the executor
-            // name: three extract-shaped hosts sharing one template still fold
-            // into one run and each selects its own columns out of that stream,
-            // while two hosts whose templates differ are two different questions
-            // and folding them hands one namespace the other's rows.
-            let command_line = fill_template(&demand.plan.template, &demand.inputs);
-            let key = format!("{}|{}|{:?}", execution, command_line, ordered_inputs);
+            // Fold scope + ordered inputs decide the answer: extract.* fold on
+            // one (path, digest, families); scip namespaces never cross-fold.
+            let key = format!("{}|{:?}", fold_scope(&execution), ordered_inputs);
             match group_index.get(&key) {
                 Some(&index) => groups[index].push(demand),
                 None => {
