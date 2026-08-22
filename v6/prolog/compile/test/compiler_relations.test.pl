@@ -74,6 +74,23 @@ test(unsafe_compiler_rule_is_refused,
     evaluate_compiler_relations(
         compiler_relations(Relations, [codec(X, _Format) <- codec(X, text)]), [], _).
 
+test(type_apply_constructor_cycle_is_refused,
+     [throws(unsupported_construct(type_apply_recursive_construction([a/2])))]) :-
+    Relations = [compiler_relation(a/2, 2, []), compiler_relation(b/2, 2, []),
+                 compiler_relation(type_apply/3, 3, [])],
+    Rules = [ a(Constructor, Application) <-
+                  ( b(Constructor, Application),
+                    type_apply(Constructor, [Application], Application) ),
+              b(Constructor, Application) <- a(Constructor, Application) ],
+    evaluate_compiler_relations(compiler_relations(Relations, Rules), [], _).
+
+test(type_apply_non_ground_application_is_refused,
+     [throws(unsupported_construct(type_apply_non_ground_application(_)))]) :-
+    Relations = [compiler_relation(result/1, 1, []),
+                 compiler_relation(type_apply/3, 3, [])],
+    Rules = [result(Application) <- type_apply(_Constructor, [_Argument], Application)],
+    evaluate_compiler_relations(compiler_relations(Relations, Rules), [], _).
+
 test(bare_compiler_fact_reaches_closure) :-
     Program = prog(
         [ col_type(document/1, id, int),
@@ -97,6 +114,98 @@ test(real_dl6_type_terms_elaborate_and_erase_before_runtime) :-
     Closure == [capability(named(local, relation, 'Document'), primitive(text))],
     type_relation_rows(Decls, Rows),
     member(type_relation(named(local, relation, capability), _, _, none, []), Rows).
+
+test(generic_compiler_plane_is_erased_after_application_evaluation) :-
+    string_codes(
+        "rel Box(T)(value: T).\nrel capability(Self: type, Format: type).\ncapability(Box(int), text).\n",
+        Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expand_generic_program_with_bindings(Program, Bindings, prog(Decls, Rules)),
+    Rules == [],
+    member(compiler_type_metadata(_, Closure), Decls),
+    member(capability(AppId, primitive(text)), Closure),
+    AppId = application(named(local, relation, 'Box'), [_]),
+    \+ member(col_type(capability/2, _, _), Decls),
+    \+ member(rel_template(_, _, _), Decls),
+    \+ member(compiler_type_metadata(_, _), Rules).
+
+test(type_apply_body_request_refreezes_and_next_round_observes_generated_type) :-
+    Program = prog(
+        [ rel_template([box], [type_parameter('T', [])], [column(value, 'T')]),
+          col_type(seed/2, constructor, type), col_type(seed/2, argument, type),
+          col_type(request/3, constructor, type), col_type(request/3, argument, type),
+          col_type(request/3, application, type), col_type(observed/2, type, type),
+          col_type(observed/2, member, type) ],
+        [ seed(box, int),
+          request(Constructor, Argument, Application) <-
+              ( seed(Constructor, Argument),
+                type_apply(Constructor, [Argument], Application) ),
+          observed(Type, Member) <-
+              ( type_application(Type, _), type_member(Member, _, _, value, _) ) ]),
+    expand_generic_program_with_bindings(Program, [], prog(Decls, [])),
+    Constructor = named(local, relation, box),
+    Application = application(Constructor, [primitive(int)]),
+    member(compiler_type_metadata(_, Closure), Decls),
+    member(request(Constructor, primitive(int), Application), Closure),
+    member(semantic_type_rows(Rows), Decls),
+    member(declaration(GeneratedId, root, _, relation, materialized), Rows),
+    member(observed(Application, GeneratedMember), Closure),
+    memberchk(member(GeneratedMember, GeneratedId, 1, value,
+                     type_ref(primitive(int))), Rows),
+    \+ member(compiler_type_apply_request_rows(_), Decls).
+
+test(type_apply_list_request_refreezes_and_erases_transport) :-
+    Program = prog(
+        [ col_type(seed/1, type, type), col_type(request/1, type, type) ],
+        [ seed(int), request(ListInt) <-
+              ( seed(T), type_apply(list, [T], ListInt) ) ]),
+    expand_generic_program_with_bindings(Program, [], prog(Decls, [])),
+    ListId = named(local, relation, list),
+    ListInt = application(ListId, [primitive(int)]),
+    member(compiler_type_metadata(_, Closure), Decls),
+    member(request(ListInt), Closure),
+    member(semantic_type_rows(Rows), Decls),
+    memberchk(application(ListInt, ListId), Rows),
+    memberchk(argument(_, ListInt, 1, type_atom(int)), Rows),
+    \+ member(compiler_type_apply_request_rows(_), Decls),
+    \+ member(compiler_type_apply_request(_), Decls).
+
+test(type_apply_existing_application_reuses_canonical_identity) :-
+    Program = prog(
+        [ rel_template([box], [type_parameter('T', [])], [column(value, 'T')]),
+          col_type(holder/1, value, box(int)),
+          col_type(seed/1, type, type), col_type(request/1, type, type) ],
+        [ seed(int), request(App) <- ( seed(T), type_apply(box, [T], App) ) ]),
+    expand_generic_program_with_bindings(Program, [], prog(Decls, [])),
+    App = application(named(local, relation, box), [primitive(int)]),
+    member(compiler_type_metadata(_, Closure), Decls),
+    member(request(App), Closure),
+    member(semantic_type_rows(Rows), Decls),
+    findall(Application, member(application(Application, _), Rows), Applications),
+    include(=(App), Applications, [App]),
+    \+ member(compiler_type_apply_request_rows(_), Decls),
+    \+ member(compiler_type_apply_request(_), Decls).
+
+test(type_apply_unknown_constructor_is_named,
+     [throws(unsupported_construct(
+         type_apply_unknown_constructor(named(local, relation, missing))))]) :-
+    Program = prog(
+        [ col_type(seed/2, constructor, semantic), col_type(seed/2, return, type),
+          col_type(request/1, application, type) ],
+        [ seed(named(local, relation, missing), int),
+          request(App) <- ( seed(C, T), type_apply(C, [T], App) ) ]),
+    expand_generic_program_with_bindings(Program, [], _).
+
+test(type_apply_arity_mismatch_is_named,
+     [throws(unsupported_construct(
+         type_apply_arity_mismatch(named(local, relation, box), 1, 2)))]) :-
+    Program = prog(
+        [ rel_template([box], [type_parameter('T', [])], [column(value, 'T')]),
+          col_type(seed/2, constructor, semantic), col_type(seed/2, return, type),
+          col_type(request/1, application, type) ],
+        [ seed(named(local, relation, box), int),
+          request(App) <- ( seed(C, T), type_apply(C, [T, T], App) ) ]),
+    expand_generic_program_with_bindings(Program, [], _).
 
 test(annotation_application_sites_are_typed_relation_values) :-
     string_codes("rel operation(Target: type, Method: text) -> Target.\nrel Pet(id: int).\nrel route(first: operation(Pet, Method: 'GET'), second: operation(Pet, Method: 'GET')).\nrel seen(Owner: type, Member: type, Method: text, Input: type, Output: type, Position: semantic) -> Owner.\nseen(Owner, Member, Method, Input, Output, Position, Owner) <- type_application_site(operation(Input, Method, Output), Owner, Member, Position).\n", Source),

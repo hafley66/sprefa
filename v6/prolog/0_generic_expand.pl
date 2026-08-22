@@ -39,7 +39,8 @@
                 id_kind_name/3 ]).
 :- use_module('0_compiler_relations',
               [ partition_compiler_program/5,
-                evaluate_compiler_relations/3 ]).
+                evaluate_compiler_relations/3,
+                compiler_type_apply_requests/3 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -56,7 +57,80 @@ expand_generic_program(Program, Expanded) :-
     expand_generic_program_with_bindings(Program, [], Expanded).
 
 expand_generic_program_with_bindings(prog(Decls0, Rules0), Bindings,
-                                     prog(Decls, Rules)) :-
+                                     Expanded) :-
+    type_apply_refreeze(Decls0, Rules0, Bindings, [], 0, Expanded).
+
+type_apply_refreeze(Decls0, Rules0, Bindings, Seen0, Round,
+                    prog(Decls, Rules)) :-
+    ( Round >= 16
+    -> throw(unsupported_construct(type_apply_round_limit_exhausted(16)))
+    ; true
+    ),
+    expand_generic_program_round(prog(Decls0, Rules0), Bindings,
+                                 prog(RoundDecls, RoundRules)),
+    type_apply_requests(Decls0, RoundDecls, Requests),
+    subtract(Requests, Seen0, NewRequests),
+    ( NewRequests == []
+    -> erase_type_apply_transport(RoundDecls, Decls),
+       Rules = RoundRules
+    ; append(Decls0, NewRequests, NextDecls),
+      append(Seen0, NewRequests, Seen1),
+      NextRound is Round + 1,
+      type_apply_refreeze(NextDecls, Rules0, Bindings, Seen1, NextRound,
+                          prog(Decls, Rules))
+    ).
+
+erase_type_apply_transport(Decls0, Decls) :-
+    exclude(type_apply_transport_decl, Decls0, Decls).
+
+type_apply_transport_decl(compiler_type_apply_request_rows(_)).
+type_apply_transport_decl(compiler_type_apply_request(_)).
+
+type_apply_requests(SourceDecls, Decls, Requests) :-
+    member(compiler_type_apply_request_rows(RequestRows), Decls),
+    !,
+    findall(compiler_type_apply_request(Type),
+            ( member(type_apply_request(Application), RequestRows),
+              Application = application(Constructor, _),
+              \+ frozen_type_application(Decls, Application, Constructor),
+              type_apply_request_type(SourceDecls, Constructor, Application, Type),
+              ground(Type) ),
+            Requests0),
+    sort(Requests0, Requests).
+type_apply_requests(_, _, []).
+
+frozen_type_application(Decls, Application, Constructor) :-
+    member(semantic_type_rows(Rows), Decls),
+    memberchk(application(Application, Constructor), Rows).
+
+type_apply_request_type(Decls, Constructor, Application, Type) :-
+    semantic_type_constructor_term(Decls, Constructor, Name),
+    ( member(rel_template(Segments, Parameters, _), Decls),
+      atomic_list_concat(Segments, '__', Name)
+    -> Application = application(_, Arguments),
+       length(Parameters, Expected), length(Arguments, Found),
+       ( Expected =:= Found -> true
+       ; throw(unsupported_construct(
+             type_apply_arity_mismatch(Constructor, Expected, Found))) ),
+       semantic_type_term(Decls, Application, Type)
+    ; builtin_type_constructor(Name)
+    -> Application = application(_, Arguments),
+       length(Arguments, Found),
+       ( Found =:= 1 -> semantic_type_term(Decls, Application, Type)
+       ; throw(unsupported_construct(
+             type_apply_arity_mismatch(Constructor, 1, Found))) )
+    ; member(rel_template_enum(Segments, Parameters, _), Decls),
+      atomic_list_concat(Segments, '__', Name)
+    -> Application = application(_, Arguments),
+       length(Parameters, Expected), length(Arguments, Found),
+       ( Expected =:= Found -> semantic_type_term(Decls, Application, Type)
+       ; throw(unsupported_construct(
+             type_apply_arity_mismatch(Constructor, Expected, Found))) )
+    ; throw(unsupported_construct(type_apply_unknown_constructor(Constructor)))
+    ).
+
+expand_generic_program_round(prog(Decls0, Rules0), Bindings,
+                             prog(Decls, Rules)) :-
     Step = run_compile_step(plan),
     call(Step, generic:expand_user_templates,
          expand_user_templates(Decls0, Rules0, _UserInstances, UserDecls), _),
@@ -755,12 +829,13 @@ expand_user_templates(Decls0, Rules, Instances, Decls) :-
     compile_type_plane(WithInstances, TypeIr, ProofPlane),
     judge_template_bounds(ProofPlane, Templates, Instances, JudgmentRows),
     maplist(rewrite_user_template_decl(Instances), WithInstances, Rewritten),
-    exclude(is_rel_template, Rewritten, RuntimeDecls),
+    exclude(expansion_only_decl, Rewritten, RuntimeDecls),
     generic_catalog_decls(WithInstances, TypeIr, Instances, JudgmentRows, CatalogDecls),
     append(RuntimeDecls, CatalogDecls, Decls).
 
 is_rel_template(rel_template(_, _, _)).
 is_rel_template_enum(rel_template_enum(_, _, _)).
+expansion_only_decl(Decl) :- is_rel_template(Decl).
 
 % The compiler plane closes before enum, storage, and runtime planning.  Its
 % declarations/rules disappear from the executable program while the semantic
@@ -780,13 +855,15 @@ elaborate_and_erase_compiler_relations(Decls0, Rules0, Bindings, Decls, Rules) :
        append([SeedRows, TypeSourceRows, SiteRows], CompilerSeedRows),
        evaluate_compiler_relations(compiler_relations(Relations, CompilerRules),
                                    CompilerSeedRows, ClosureRows),
+       compiler_type_apply_requests(CompilerRules, ClosureRows, RequestRows),
        erase_annotation_transport(RuntimeDecls, RuntimeDecls1, AnnotationEvidence),
        ( AnnotationEvidence == []
        -> Metadata = compiler_type_metadata(MetadataRows, ClosureRows)
        ;  Metadata = compiler_type_metadata(MetadataRows, ClosureRows,
                                             AnnotationEvidence)
        ),
-       append(RuntimeDecls1, [Metadata], Decls),
+       append(RuntimeDecls1, [Metadata,
+                              compiler_type_apply_request_rows(RequestRows)], Decls),
        Rules = RuntimeRules
     ).
 
@@ -888,6 +965,7 @@ compiler_type_source_signature(type_argument/4,
                                [semantic, semantic, int, semantic]).
 compiler_type_source_signature(type_application_site/4,
                                [relation_value, semantic, semantic, semantic]).
+compiler_type_source_signature(type_apply/3, [type, semantic_type_ids, type]).
 
 elaborate_compiler_argument(Decls, Bindings, Domain0, Argument, Elaborated) :-
     compiler_argument_domain(Domain0, Domain),
@@ -911,12 +989,24 @@ elaborate_compiler_argument(_, _, bool, bool_lit(Argument), Argument) :-
 elaborate_compiler_argument(_, _, float, Argument, Argument) :- float(Argument), !.
 elaborate_compiler_argument(_, _, float, float_lit(Argument), Argument) :- float(Argument), !.
 elaborate_compiler_argument(_, _, semantic, Argument, Argument) :- ground(Argument), !.
+elaborate_compiler_argument(Decls, Bindings, semantic_type_ids, Arguments0,
+                            Arguments) :-
+    is_list(Arguments0),
+    !,
+    maplist(elaborate_compiler_semantic_type_id(Decls, Bindings), Arguments0,
+            Arguments).
 elaborate_compiler_argument(Decls, Bindings, relation_value, Argument,
                             Elaborated) :-
     compiler_relation_value(Decls, Bindings, Argument, Elaborated),
     !.
 elaborate_compiler_argument(_, _, Type, Argument, _) :-
     throw(unsupported_construct(compiler_relation_argument_type(Type, Argument))).
+
+elaborate_compiler_semantic_type_id(_, _, Value, Value) :- var(Value), !.
+elaborate_compiler_semantic_type_id(Decls, Bindings, Value0, Value) :-
+    compiler_type_source_term(Decls, Bindings, Value0, Type),
+    compiler_declared_type_term(Decls, Type),
+    semantic_type_id(Decls, Type, Value).
 
 compiler_relation_value(_, _, Value0, Value) :-
     Value0 = relation_value(_, _),
@@ -1012,6 +1102,7 @@ source_variable_name(Bindings, Variable, Name) :-
 compiler_declared_type(Decls, Name) :- compiler_declared_type_term(Decls, Name).
 
 compiler_declared_type_term(_, Type) :- atom(Type), semantic_primitive(Type), !.
+compiler_declared_type_term(_, Type) :- builtin_type_constructor(Type), !.
 compiler_declared_type_term(Decls, Type) :-
     atom(Type),
     ( member(type_decl(Type, _), Decls)
@@ -1020,6 +1111,10 @@ compiler_declared_type_term(Decls, Type) :-
     ; member(enum_decl(Type, _), Decls)
     ; member(rel_template_enum(Segments, _, _), Decls), atomic_list_concat(Segments, '__', Type)
     ), !.
+compiler_declared_type_term(Decls, Type) :-
+    atom(Type),
+    member(semantic_type_rows(Rows), Decls),
+    member(declaration(_, _, Type, relation, compile_time), Rows), !.
 compiler_declared_type_term(Decls, Type) :-
     compound(Type),
     Type =.. [Constructor | Arguments],
@@ -1032,6 +1127,9 @@ compiler_type_constructor(_, list).
 compiler_type_constructor(Decls, Constructor) :-
     member(rel_template(Segments, _, _), Decls),
     atomic_list_concat(Segments, '__', Constructor).
+compiler_type_constructor(Decls, Constructor) :-
+    member(semantic_type_rows(Rows), Decls),
+    member(declaration(_, _, Constructor, relation, compile_time), Rows).
 
 % A parameterized enum template mints one concrete enum_decl per ground
 % application, with variant payload types substituted. The enum lowering phase
@@ -2124,6 +2222,9 @@ semantic_type_constructor_id(Decls, Name, Id) :-
     ; builtin_type_constructor(Name)
     ),
     semantic_decl_id(Decls, relation, Name, Id).
+semantic_type_constructor_id(Decls, Name, Id) :-
+    member(semantic_type_rows(Rows), Decls),
+    member(declaration(Id, _, Name, relation, compile_time), Rows).
 
 generic_relation_constructor_name(Decls, Name) :-
     member(rel_template(Segments, _, _), Decls),
@@ -2890,6 +2991,8 @@ generic_source_type(Decls, Type) :-
 generic_source_type(Decls, Type) :-
     member(enum_decl(_, Variants), Decls),
     enum_payload_type(Variants, Type).
+generic_source_type(Decls, Type) :-
+    member(compiler_type_apply_request(Type), Decls).
 
 generic_type(list(_)).
 generic_type(list_entity_dense_sequence(_)).
