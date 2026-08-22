@@ -119,7 +119,14 @@ parse_dl(Codes, Prog, Bindings, Findings) :-
 parse_dl_source(_, Codes, _, _, _) :-
     var(Codes), !,
     throw(dl_parse_error(invalid_input, position(1, 1))).
+% Named and punned arguments resolve against a rel's declared column order,
+% and a rule may precede the declaration it reads, so a first pass records
+% every declaration's column order and the real pass starts from that set.
 parse_dl_source(Source, Codes, Prog, Bindings, Findings) :-
+    nb_setval(dl_prepass_columns, []),
+    catch(( parse_dl_pass(Source, Codes, _, _, _) -> true ; true ), _, true),
+    findall(Name-Cols, rel_column_order_fact(Name, Cols), Known),
+    nb_setval(dl_prepass_columns, Known),
     catch(parse_dl_pass(Source, Codes, Prog, Bindings, Findings),
           dl_parse_error(Reason, _),
           parse_dl_marked_failure(Source, Codes, Reason)).
@@ -144,6 +151,8 @@ parse_dl_pass(_, Codes, Prog, Bindings, Findings) :-
             [ finding_fact(_), rel_column_order_fact(_, _),
               host_signature_fact(_, _, _), host_path_fact(_, _),
               source_statement_fact(_, _, _) ]),
+    ( nb_current(dl_prepass_columns, Known) -> true ; Known = [] ),
+    forall(member(Name-Cols, Known), assertz(rel_column_order_fact(Name, Cols))),
     length(Codes, Len),
     nb_setval(parse_input_length, Len),
     nb_setval(parse_furthest_remaining, Len),
