@@ -194,7 +194,7 @@ rel watched_repo_seen(repo_ref: repo, owner: text, name: text,
                       checkout_pr_branches: int, fs_alias: text).
 rel org_owner(owner: text, fs_alias: text).
 rel gh_username(login: text) key(1).
-rel not_an_org(owner: text).
+rel not_an_org(owner: text) key(1).
 rel discovered_repo(owner: text, name: text, default_branch: text).
 
 org_owner(Owner, FsAlias) <-
@@ -348,8 +348,9 @@ poll_state_polled(EndpointPath, Bucket) <+
                 _Body).
 
 poll_state_changed(EndpointPath, Bucket) <+
-  rest_response(EndpointPath, Bucket, 200, _E, _L, _P, _RR, _RS, _B, _Pg,
-                _Body).
+  rest_response(EndpointPath, Bucket, RespStatus, _E, _L, _P, _RR, _RS, _B, _Pg,
+                _Body),
+  RespStatus == 200.
 
 poll_state(EndpointPath, Etag, LastModified, ServerPeriod, LastPolled,
            LastChanged) <-
@@ -365,24 +366,30 @@ rel call_log(at_tick: int, api_type: text, endpoint_path: text, status: int,
              rate_remaining: int, rate_reset: int, bytes: int,
              cache_hit: int) log keep(all).
 
-call_log(AtTick, 'rest', EndpointPath, Status, RateRemaining, RateReset, Bytes,
-         1) <+
+call_log(AtTick, ApiType, EndpointPath, Status, RateRemaining, RateReset, Bytes,
+         CacheHit) <+
   rest_response(EndpointPath, _Bucket, Status, _E, _L, _P, RateRemaining,
                 RateReset, Bytes, _Pg, _Body),
   Status == 304,
+  ApiType := 'rest',
+  CacheHit := 1,
   now(AtTick).
 
-call_log(AtTick, 'rest', EndpointPath, Status, RateRemaining, RateReset, Bytes,
-         0) <+
+call_log(AtTick, ApiType, EndpointPath, Status, RateRemaining, RateReset, Bytes,
+         CacheHit) <+
   rest_response(EndpointPath, _Bucket, Status, _E, _L, _P, RateRemaining,
                 RateReset, Bytes, _Pg, _Body),
   Status != 304,
+  ApiType := 'rest',
+  CacheHit := 0,
   now(AtTick).
 
-call_log(AtTick, 'graphql', BatchKey, Status, RateRemaining, RateReset, Bytes,
-         0) <+
+call_log(AtTick, ApiType, BatchKey, Status, RateRemaining, RateReset, Bytes,
+         CacheHit) <+
   pr_batch_response(BatchKey, _Bucket, Status, RateRemaining, RateReset,
                     _GqlCost, Bytes, _Data),
+  ApiType := 'graphql',
+  CacheHit := 0,
   now(AtTick).
 
 # ── org discovery ───────────────────────────────────────────────────────────
@@ -390,24 +397,28 @@ call_log(AtTick, 'graphql', BatchKey, Status, RateRemaining, RateReset, Bytes,
 discovered_repo(Owner, Name, DefaultBranch) <-
   watched_global(EndpointPath, _ApiType, 'org_repos'),
   org_owner(Owner, _FsAlias),
-  rest_response(EndpointPath, _Bucket, 200, _E, _L, _P, _RR, _RS, _B, _Pg,
+  rest_response(EndpointPath, _Bucket, RespStatus, _E, _L, _P, _RR, _RS, _B, _Pg,
                 Body),
+  RespStatus == 200,
   decode(Body, [... {name: Name: text, default_branch: DefaultBranch: text}]).
 
 discovered_repo(Owner, Name, DefaultBranch) <-
   watched_global(EndpointPath, _ApiType, 'user_repos'),
   org_owner(Owner, _FsAlias),
-  rest_response(EndpointPath, _Bucket, 200, _E, _L, _P, _RR, _RS, _B, _Pg,
+  rest_response(EndpointPath, _Bucket, RespStatus, _E, _L, _P, _RR, _RS, _B, _Pg,
                 Body),
+  RespStatus == 200,
   decode(Body, [... {name: Name: text, default_branch: DefaultBranch: text}]).
 
 # A 404 on /orgs marks the owner a user; the fallback endpoint appears in
 # `watched_global` on the next tick (sync/mod.rs:78-79).
 not_an_org(Owner) <+
-  watched_global(EndpointPath, _ApiType, 'org_repos'),
+  watched_global(EndpointPath, ApiType, Kind),
+  Kind == 'org_repos',
   org_owner(Owner, _FsAlias),
-  rest_response(EndpointPath, _Bucket, 404, _E, _L, _P, _RR, _RS, _B, _Pg,
-                _Body).
+  rest_response(EndpointPath, _Bucket, RespStatus, _E, _L, _P, _RR, _RS, _B, _Pg,
+                _Body),
+  RespStatus == 404.
 
 # ── repo events ─────────────────────────────────────────────────────────────
 
@@ -422,8 +433,9 @@ rel dirty_repo(repo_ref: repo).
 # event writes an identical row, and an identical write is a zero delta.
 repo_event_seen(RepoRef, GhId, EventType, Actor, Payload, CreatedAt) <-
   watched_endpoint(EndpointPath, _ApiType, 'repo_events', RepoRef),
-  rest_response(EndpointPath, _Bucket, 200, _E, _L, _P, _RR, _RS, _B, _Pg,
+  rest_response(EndpointPath, _Bucket, RespStatus, _E, _L, _P, _RR, _RS, _B, _Pg,
                 Body),
+  RespStatus == 200,
   decode(Body, [... {id: GhId: text, type: EventType: text,
                      actor: {login: Actor: text}, payload: Payload,
                      created_at: CreatedAt: text}]).
@@ -494,8 +506,9 @@ branch_pattern(RepoRef, Pattern) <-
 
 candidate_branch(RepoRef, BranchName, Sha) <-
   watched_endpoint(EndpointPath, _ApiType, 'branches', RepoRef),
-  rest_response(EndpointPath, _Bucket, 200, _E, _L, _P, _RR, _RS, _B, _Pg,
+  rest_response(EndpointPath, _Bucket, RespStatus, _E, _L, _P, _RR, _RS, _B, _Pg,
                 Body),
+  RespStatus == 200,
   decode(Body, [... {name: BranchName: text, commit: {sha: Sha: text}}]).
 
 # sync/branches.rs:90-95 matches_glob: a trailing `*` is a prefix test, anything
@@ -596,7 +609,8 @@ pull_request_seen(repo(Owner, Name), Number, GhNodeId, State, Title, Author,
                   HeadRef, HeadSha, BaseRef, Mergeable, Draft, Additions,
                   Deletions, ChangedFiles, CreatedAt, UpdatedAt, MergedAt,
                   ClosedAt, PrBody) <-
-  pr_batch_response(_BatchKey, _Bucket, 200, _RR, _RS, _GC, _B, Data),
+  pr_batch_response(_BatchKey, _Bucket, RespStatus, _RR, _RS, _GC, _B, Data),
+  RespStatus == 200,
   decode(Data, {pulls: [... {owner: Owner: text, name: Name: text,
                              number: Number: int, node_id: GhNodeId: text,
                              state: State: text, title: Title: text,
@@ -627,7 +641,8 @@ rel pr_review_seen(repo_ref: repo, number: int, gh_id: int, author: text,
 
 pr_review_seen(repo(Owner, Name), Number, GhId, Author, State, ReviewBody,
                SubmittedAt) <-
-  pr_batch_response(_BatchKey, _Bucket, 200, _RR, _RS, _GC, _B, Data),
+  pr_batch_response(_BatchKey, _Bucket, RespStatus, _RR, _RS, _GC, _B, Data),
+  RespStatus == 200,
   decode(Data, {reviews: [... {owner: Owner: text, name: Name: text,
                                number: Number: int, gh_id: GhId: int,
                                author: Author: text, state: State: text,
@@ -647,7 +662,8 @@ rel pr_comment_seen(repo_ref: repo, number: int, gh_id: int, author: text,
 
 pr_comment_seen(repo(Owner, Name), Number, GhId, Author, CommentBody, Path,
                 Line, InReplyToId, CreatedAt, UpdatedAt) <-
-  pr_batch_response(_BatchKey, _Bucket, 200, _RR, _RS, _GC, _B, Data),
+  pr_batch_response(_BatchKey, _Bucket, RespStatus, _RR, _RS, _GC, _B, Data),
+  RespStatus == 200,
   decode(Data, {comments: [... {owner: Owner: text, name: Name: text,
                                 number: Number: int, gh_id: GhId: int,
                                 author: Author: text, body: CommentBody: text,
@@ -670,7 +686,8 @@ rel pr_status_check_seen(repo_ref: repo, number: int, context: text,
 
 pr_status_check_seen(repo(Owner, Name), Number, Context, State, TargetUrl,
                      Description, UpdatedAt) <-
-  pr_batch_response(_BatchKey, _Bucket, 200, _RR, _RS, _GC, _B, Data),
+  pr_batch_response(_BatchKey, _Bucket, RespStatus, _RR, _RS, _GC, _B, Data),
+  RespStatus == 200,
   decode(Data, {status_checks: [... {owner: Owner: text, name: Name: text,
                                      number: Number: int,
                                      context: Context: text,
@@ -689,7 +706,8 @@ rel pr_label(repo_ref: repo, number: int, label: text, color: text)
 rel pr_label_seen(repo_ref: repo, number: int, label: text, color: text).
 
 pr_label_seen(repo(Owner, Name), Number, Label, Color) <-
-  pr_batch_response(_BatchKey, _Bucket, 200, _RR, _RS, _GC, _B, Data),
+  pr_batch_response(_BatchKey, _Bucket, RespStatus, _RR, _RS, _GC, _B, Data),
+  RespStatus == 200,
   decode(Data, {labels: [... {owner: Owner: text, name: Name: text,
                               number: Number: int, label: Label: text,
                               color: Color: text}]}).
@@ -702,7 +720,8 @@ rel pr_requested_reviewer(repo_ref: repo, number: int, reviewer: text)
 rel pr_requested_reviewer_seen(repo_ref: repo, number: int, reviewer: text).
 
 pr_requested_reviewer_seen(repo(Owner, Name), Number, Reviewer) <-
-  pr_batch_response(_BatchKey, _Bucket, 200, _RR, _RS, _GC, _B, Data),
+  pr_batch_response(_BatchKey, _Bucket, RespStatus, _RR, _RS, _GC, _B, Data),
+  RespStatus == 200,
   decode(Data, {requested_reviewers: [... {owner: Owner: text,
                                            name: Name: text,
                                            number: Number: int,
@@ -728,8 +747,9 @@ notification_seen(GhId, repo(Owner, Name), SubjectType, SubjectTitle,
                   SubjectUrl, SubjectNumber, HtmlUrl, Reason, Unread,
                   UpdatedAt, LastReadAt) <-
   watched_global(EndpointPath, _ApiType, 'notifications'),
-  rest_response(EndpointPath, _Bucket, 200, _E, _L, _P, _RR, _RS, _B, _Pg,
+  rest_response(EndpointPath, _Bucket, RespStatus, _E, _L, _P, _RR, _RS, _B, _Pg,
                 Body),
+  RespStatus == 200,
   decode(Body, [... {id: GhId: text,
                      repository: {owner: {login: Owner: text},
                                   name: Name: text},
@@ -780,7 +800,8 @@ pr_head_mirror(RepoSlug, CheckoutPath, PrHeadCount) <-
 
 checkout(RepoRef, DefaultBranch, CheckoutPath, HeadSha, Bucket) <+
   checkout_answer(RepoSlug, CheckoutPath, HeadSha),
-  current_clock(60, Bucket),
+  current_clock(Period, Bucket),
+  Period == 60,
   watched_repo(RepoRef, Owner, Name, DefaultBranch, _SP, _SE, _SB, _CS, _CP,
                _FA),
   RepoSlug == concat([Owner, "/", Name]).

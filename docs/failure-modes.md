@@ -2461,3 +2461,11 @@ The observed standard, in order — no step is optional:
 - **Fail-pre-fix**: `bash v6/tools/doctor-deps.sh` with the old symlink prints `DEPS STALE` and exits 1.
 - **Rail**: `v6/tools/doctor-deps.sh` canonicalizes every hafley-rs path dep and requires it under `~/projects/hafley-rs` (`HAFLEY_RS` overrides); `grade.sh` runs it first, `just doctor-deps` runs it alone, and every lane brief's first action includes it.
 - **Entry**: the symlink now points at `~/projects/hafley-rs`.
+
+## 65. An ARCH row marked done for a half-landed fix
+
+- **Incident** (2026-08-21): `ARCH.pl` row `clock_check_path_blowup` read `done` since 2026-07-31. `v6/dl/ghcache/ghcache.dl6` (84 rels) hit the same symptom the row describes: `Stack limit exceeded` inside `clock_violation/2` after 20 minutes. `recurrence_free_clock/6` had landed the fast path only for zero-weight cycles and fell through to the exponential `clock_path/7`; the resource bound the row prescribed was never written.
+- **RCA**: a row flipped to done on the lane's word, with no program in the corpus wide enough to hit the fallthrough.
+- **Fail-pre-fix**: compile `ghcache.dl6` with the prolog flag `dl6_clock_path_walk` true.
+- **Rail**: user decision `rulings.pl clock_path_check_pinned_off`: the path walk is off the compile path (`3_clock_check.pl` `clock_path_walk_enabled/0`), the checker's own battery turns it on. The row stays open as the seed of the clock calculus.
+- **Entry**: `ghcache.dl6` passes the clock step in 1.6s.
