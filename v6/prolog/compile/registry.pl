@@ -363,6 +363,7 @@ arrival_executor(http__fetch,           '/http/fetch').
 arrival_executor(gh__repos,             '/gh/repos').
 arrival_executor(gh__rest_cond,         '/gh/rest_cond').
 arrival_executor(gh__pulls,             '/gh/pulls').
+arrival_executor(gh__pr_batch,          '/gh/pr_batch').
 arrival_executor(env__var,              '/env/var').
 arrival_executor(toml__json,            '/toml/json').
 % The engine measuring itself: trace rows and the resident set, folded by the

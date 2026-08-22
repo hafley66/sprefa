@@ -42,41 +42,40 @@ rel org_exclude(owner: text, name: text).
 
 rel current_clock(period: int, bucket: int) key(1).
 
-bind interval(period: int, bucket: int).
+rel /clock/tick(every: int) -> (bucket: int).
 
-current_clock(Period, Bucket) <+ interval(Period, Bucket).
+rel period(every: int).
+period(60).
+period(3600).
+
+current_clock(Period, Bucket) <+ period(Period), /clock/tick(Period, Bucket).
 
 # Every identity input must appear in the template (1_host_expand.pl:313) and
 # the freshness input must not, which is why `bucket` is absent from all five.
 
-sh toml_json(config_path: text, bucket: int) -> (doc: json) =
-  `read toml at {config_path}`.
+rel /toml/json(config_path: text, bucket: int) -> (doc: json).
 
-sh gh_rest_cond(endpoint_path: text, prev_etag: text, bucket: int)
+rel /gh/rest_cond(endpoint_path: text, prev_etag: text, bucket: int)
   -> (status: int, etag: text, last_modified: text, poll_interval: int,
       rate_remaining: int, rate_reset: int, bytes: int, pages: int,
-      body: json) =
-  `GET {endpoint_path} if-none-match {prev_etag}`.
+      body: json).
 
-sh gh_pr_batch(batch_key: text, slug_list: text, bucket: int)
+rel /gh/pr_batch(batch_key: text, slug_list: text, bucket: int)
   -> (status: int, rate_remaining: int, rate_reset: int, gql_cost: int,
-      bytes: int, data: json) =
-  `graphql {batch_key} over {slug_list}`.
+      bytes: int, data: json).
 
-sh repo_checkout(repo_slug: text, dest_root: text, want_sha: text)
-  -> (checkout_path: text, head_sha: text) =
-  `checkout {repo_slug} under {dest_root}`.
+rel /soopy/checkout(repo_slug: text, dest_root: text, want_sha: text)
+  -> (checkout_path: text, head_sha: text).
 
-sh repo_mirror_pr_heads(repo_slug: text, dest_root: text, want_sha: text)
-  -> (checkout_path: text, pr_head_count: int) =
-  `mirror pr heads of {repo_slug} under {dest_root}`.
+rel /soopy/mirror_pr_heads(repo_slug: text, dest_root: text, want_sha: text)
+  -> (checkout_path: text, pr_head_count: int).
 
 # ── config resolution ───────────────────────────────────────────────────────
 
 config_doc(ConfigPath, Doc) <-
   config_candidate(_SearchRank, ConfigPath),
   current_clock(3600, Bucket),
-  toml_json(ConfigPath, Bucket, Doc).
+  /toml/json(ConfigPath, Bucket, Doc).
 
 config_present(SearchRank, ConfigPath) <-
   config_candidate(SearchRank, ConfigPath),
@@ -323,7 +322,7 @@ poll(EndpointPath, PrevEtag, Bucket) <-
 rest_response(EndpointPath, Bucket, Status, Etag, LastModified, PollInterval,
               RateRemaining, RateReset, Bytes, Pages, Body) <-
   poll(EndpointPath, PrevEtag, Bucket),
-  gh_rest_cond(EndpointPath, PrevEtag, Bucket, Status, Etag, LastModified,
+  /gh/rest_cond(EndpointPath, PrevEtag, Bucket, Status, Etag, LastModified,
                PollInterval, RateRemaining, RateReset, Bytes, Pages, Body).
 
 # Written direct from the response so every path back into the host demand
@@ -576,7 +575,7 @@ pr_batch(Bucket, BatchIndex, BatchKey, group_concat(RepoSlug, " ")) <-
 pr_batch_response(BatchKey, Bucket, Status, RateRemaining, RateReset, GqlCost,
                   Bytes, Data) <-
   pr_batch(Bucket, _BatchIndex, BatchKey, SlugList),
-  gh_pr_batch(BatchKey, SlugList, Bucket, Status, RateRemaining, RateReset,
+  /gh/pr_batch(BatchKey, SlugList, Bucket, Status, RateRemaining, RateReset,
               GqlCost, Bytes, Data).
 
 rel pull_request(repo_ref: repo, number: int, gh_node_id: text, state: text,
@@ -771,11 +770,11 @@ checkout_task(RepoSlug, DestRoot, WantSha, CheckoutPrBranches) <-
 
 checkout_answer(RepoSlug, CheckoutPath, HeadSha) <-
   checkout_task(RepoSlug, DestRoot, WantSha, _FetchPrBranches),
-  repo_checkout(RepoSlug, DestRoot, WantSha, CheckoutPath, HeadSha).
+  /soopy/checkout(RepoSlug, DestRoot, WantSha, CheckoutPath, HeadSha).
 
 pr_head_mirror(RepoSlug, CheckoutPath, PrHeadCount) <-
   checkout_task(RepoSlug, DestRoot, WantSha, 1),
-  repo_mirror_pr_heads(RepoSlug, DestRoot, WantSha, CheckoutPath,
+  /soopy/mirror_pr_heads(RepoSlug, DestRoot, WantSha, CheckoutPath,
                        PrHeadCount).
 
 checkout(RepoRef, DefaultBranch, CheckoutPath, HeadSha, Bucket) <+
