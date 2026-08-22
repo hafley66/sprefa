@@ -39,6 +39,8 @@
 #      is what is below.
 #
 # --- what to poll --------------------------------------------------------------
+use http.
+
 rel watch(ep: text).
 watch("repos/cli/cli").
 
@@ -46,7 +48,7 @@ watch("repos/cli/cli").
 # Same shell body as v5 (examples/gh-cache.dl:75-80). The host declaration
 # separates request inputs from response outputs, and the template references every
 # declared input and no output.
-rel http.get(url: text, headers: text, prev_etag: text, bucket: int)
+rel get(url: text, headers: text, prev_etag: text, bucket: int)
   -> (status: int, response_headers: json, body: json, bytes: int).
 
 # etag: bootstrap fact UNION resp-derived value (gap #2 above). Deliberately NOT
@@ -73,7 +75,7 @@ poll(ep, prev, headers) <-
 rel arrival(ep: text, status: int, response_headers: json, body: json).
 arrival(ep, status, response_headers, body) <-
   poll(ep, prev, headers),
-  http.get(ep, headers, prev, 0, status, response_headers, body, _bytes).
+  get(ep, headers, prev, 0, status, response_headers, body, _bytes).
 
 rel resp(ep: text, status: int, tag: text, body: json).
 resp(ep, status, tag, body) <-

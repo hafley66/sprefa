@@ -9,6 +9,8 @@
 # gate: the clone directory is a pure function of (repo_slug, dest_root), and a
 # branch that has not moved re-asks on a witness the host already answered.
 
+use soopy as soopy.
+
 rel repo(repo_slug: text, dest_root: text).
 rel branch_sha_event(repo_slug: text, bucket: int, want_sha: text).
 rel branch_sha(repo_slug: text, want_sha: text) key(1).
@@ -16,7 +18,7 @@ rel current_clock(period: int, bucket: int) key(1).
 
 rel interval(period: int, bucket: int).
 
-rel /soopy/checkout(repo_slug: text, dest_root: text, want_sha: text)
+rel soopy.checkout(repo_slug: text, dest_root: text, want_sha: text)
   -> (checkout_path: text, head_sha: text) key(1, 2).
 
 rel checkout_answer(repo_slug: text, dest_root: text, checkout_path: text, head_sha: text).
@@ -30,7 +32,7 @@ branch_sha(RepoSlug, WantSha) <+ branch_sha_event(RepoSlug, _Bucket, WantSha).
 checkout_answer(RepoSlug, DestRoot, CheckoutPath, HeadSha) <-
   repo(RepoSlug, DestRoot),
   branch_sha(RepoSlug, WantSha),
-  /soopy/checkout(RepoSlug, DestRoot, WantSha, CheckoutPath, HeadSha).
+  soopy.checkout(RepoSlug, DestRoot, WantSha, CheckoutPath, HeadSha).
 
 checkout(RepoSlug, CheckoutPath, HeadSha) <+
   checkout_answer(RepoSlug, _DestRoot, CheckoutPath, HeadSha).

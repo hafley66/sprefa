@@ -15,6 +15,9 @@
 # candidate below is spelled with `~/`, and the schedule feeds its response
 # directly rather than running the executor.
 
+use env.
+use toml.
+
 rel config_candidate(search_rank: int, config_path: text).
 rel env_lookup(var_name: text).
 rel env_override(config_path: text).
@@ -27,7 +30,7 @@ rel db_path(path: text).
 
 rel interval(period: int, bucket: int).
 
-rel /env/var(name: text, bucket: int) -> (value: text) key(1).
+rel var(name: text, bucket: int) -> (value: text) key(1).
 
 # @comment-ok: user banner verbatim, ruling design_debt_mode = utility_over_pedantry.
 # FUCKING WARNING: AI IS DUMB AND DECIDED THIS BECAUSE USER IS WANTING SOMETHING USEFUL AND IS DONE BEING PEDANTIC, DONT CAUSE CONTRADICTIONS WHEN POSSIBLE BUT FUCK IT
@@ -35,14 +38,14 @@ rel /env/var(name: text, bucket: int) -> (value: text) key(1).
 # a program needs it. The tilde case-arm is the `~` resolves to home
 # requirement; expansion lives in the /toml/json executor, never a language
 # construct, so a `~/` candidate is ordinary text until this host reads it.
-rel /toml/json(config_path: text, bucket: int) -> (doc: json) key(1).
+rel json(config_path: text, bucket: int) -> (doc: json) key(1).
 
 current_bucket(Period, Bucket) <+ interval(Period, Bucket).
 
 env_override(ConfigPath) <-
   env_lookup(VarName),
   current_bucket(3600, Bucket),
-  /env/var(VarName, Bucket, ConfigPath).
+  var(VarName, Bucket, ConfigPath).
 
 effective_candidate(0, ConfigPath) <- env_override(ConfigPath).
 effective_candidate(SearchRank, ConfigPath) <-
@@ -57,7 +60,7 @@ chosen_config(ConfigPath) <-
 config_doc(Doc) <-
   chosen_config(ConfigPath),
   current_bucket(3600, Bucket),
-  /toml/json(ConfigPath, Bucket, Doc).
+  json(ConfigPath, Bucket, Doc).
 
 db_path(Path) <-
   config_doc(Doc),
