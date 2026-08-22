@@ -47,7 +47,9 @@
 # index entry, so an unstaged edit is visible. One process per file is the cost
 # of that honesty and is why this host is the boot feed rather than the steady
 # state; the watcher carries the steady state at zero processes.
-rel /soopy/files(glob: text) -> (path: text, digest: text).
+use soopy.
+
+rel files(glob: text) -> (path: text, digest: text).
 
 # The pinned twin. MEASURED, not assumed: `git ls-tree` does NOT accept glob
 # pathspecs -- `git ls-tree -r HEAD -- 'v6/**/*.ts'` returns zero rows and
@@ -67,7 +69,7 @@ rel want(glob: text).
 rel want_at(rev: text, glob: text).
 
 rel file(path: text, digest: text).
-file(path, digest) <- want(glob), /soopy/files(glob, path, digest).
+file(path, digest) <- want(glob), files(glob, path, digest).
 file(path, digest) <- want_at(rev, glob), files_at(rev, glob, path, digest).
 
 # ── the repo-scoped pair ─────────────────────────────────────────────────────

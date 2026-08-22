@@ -21,7 +21,7 @@
 # minting a new hop number forever, and `min(Level)` is the shortest way in.
 #
 # THE MATCHING RULE ACROSS A DEP EDGE, and what it cannot see. Within one
-# repository the call graph comes from `/scip/diet/call`, which RESOLVES a site
+# repository the call graph comes from `diet.call`, which RESOLVES a site
 # to the file that defines it. Across repositories it cannot: an index is per
 # repository (`hosts.rs`, ScipNamespaceExecutor keys its file set on the
 # checkout root), so a site in A naming a symbol defined in B resolves to
@@ -84,6 +84,9 @@
 #     filter(([at, call, edge, def]) => call.callee === def.name &&
 #                                       edge.toRepo === def.repo))
 
+use extract.
+use scip.
+
 rel span(start: int, end: int).
 
 # ── the hosts ───────────────────────────────────────────────────────────────
@@ -93,19 +96,19 @@ rel repo_files_at(root: text, rev: text, glob: text)
 rel repo_grep_at(root: text, rev: text, glob: text, pattern: text)
    -> (path: text, line: int, g1: text, g2: text, g3: text).
 
-rel /extract/call_node_at(path: text, digest: text, families: text)
+rel call_node_at(path: text, digest: text, families: text)
    -> (record: text, family: text, span: span, kind: text, name: text) key(1, 3).
 
-rel /extract/cfg_at(path: text, digest: text, families: text)
+rel cfg_at(path: text, digest: text, families: text)
    -> (record: text, family: text, span: span, cfg: text) key(1, 3).
 
-rel /extract/records(path: text, digest: text, families: text)
+rel records(path: text, digest: text, families: text)
    -> (record: text, family: text, span: span, callee: text) key(1, 3).
 
-rel /extract/call_ref(path: text, digest: text, families: text)
+rel call_ref(path: text, digest: text, families: text)
    -> (record: text, family: text, callee: text, cfg: text) key(1, 3).
 
-rel /scip/diet/call(repo: text, path: text, digest: text)
+rel diet.call(repo: text, path: text, digest: text)
    -> (record: text, family: text, caller_path: text, callee_path: text,
        callee: text, kind: text) key(1, 2).
 
@@ -142,13 +145,13 @@ source_file(Repo, Root, Rev, RelPath, Path, Digest) <-
 rel cfg_def(repo: text, path: text, at: span).
 cfg_def(Repo, Path, At) <-
   source_file(Repo, _Root, _Rev, _RelPath, Path, Digest),
-  /extract/cfg_at(Path, Digest, "call", 'cfg_scope', 'call', At, _Predicate).
+  cfg_at(Path, Digest, "call", 'cfg_scope', 'call', At, _Predicate).
 
 rel def_at(repo: text, path: text, def_start: int, def_end: int,
            kind: text, name: text).
 def_at(Repo, Path, DefStart, DefEnd, Kind, Name) <-
   source_file(Repo, _Root, _Rev, _RelPath, Path, Digest),
-  /extract/call_node_at(Path, Digest, "call", 'node', 'call', At, Kind, Name),
+  call_node_at(Path, Digest, "call", 'node', 'call', At, Kind, Name),
   not(cfg_def(Repo, Path, At)),
   decode(At, {start: DefStart, end: DefEnd}).
 
@@ -168,19 +171,19 @@ corpus_defined(Name) <- def_at(_Repo, _Path, _DefStart, _DefEnd, _Kind, Name).
 rel test_only_call(repo: text, path: text, callee: text).
 test_only_call(Repo, Path, Callee) <-
   source_file(Repo, _Root, _Rev, _RelPath, Path, Digest),
-  /extract/call_ref(Path, Digest, "call", 'test_only_call', 'call', Callee, _Predicate).
+  call_ref(Path, Digest, "call", 'test_only_call', 'call', Callee, _Predicate).
 
 rel call_site(repo: text, path: text, site_start: int, callee: text).
 call_site(Repo, Path, SiteStart, Callee) <-
   source_file(Repo, _Root, _Rev, _RelPath, Path, Digest),
-  /extract/records(Path, Digest, "call", 'site', 'call', At, Callee),
+  records(Path, Digest, "call", 'site', 'call', At, Callee),
   decode(At, {start: SiteStart, end: _SiteEnd}).
 
 # ── the resolved plane, one index per repository ────────────────────────────
 rel resolved_edge(repo: text, caller_path: text, callee_path: text, callee: text).
 resolved_edge(Repo, CallerPath, CalleePath, Callee) <-
   source_file(Repo, Root, _Rev, _RelPath, Path, Digest),
-  /scip/diet/call(Root, Path, Digest, 'resolved_edge', 'call',
+  diet.call(Root, Path, Digest, 'resolved_edge', 'call',
                  CallerPath, CalleePath, Callee, _Kind).
 
 rel edge_callee(repo: text, caller_path: text, callee: text).

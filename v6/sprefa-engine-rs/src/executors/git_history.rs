@@ -20,7 +20,7 @@ use crate::change_facts::{IRevisionDiffer, RevisionDiff, SoopyRevisionDiffer};
 use crate::hosts::{host_row, required_input, HostError, IHostExecutor};
 use crate::types::HostRow;
 
-use super::{checkout_root, revision_of, stop, FamilyMemo};
+use super::{checkout_root, revision_of, stop};
 
 pub const GIT_MERGE_BASE_COLUMNS: &[&str] = &["base_sha"];
 pub const GIT_AHEAD_BEHIND_COLUMNS: &[&str] = &["ahead_count", "behind_count"];
@@ -41,10 +41,7 @@ fn family_of(host: &str) -> Option<Family> {
 }
 
 #[derive(Default)]
-pub struct GitHistoryExecutor {
-    pairs: FamilyMemo<Vec<HostRow>>,
-    diffs: FamilyMemo<Vec<HostRow>>,
-}
+pub struct GitHistoryExecutor;
 
 impl GitHistoryExecutor {
     pub fn new() -> Self {
@@ -72,18 +69,12 @@ impl IHostExecutor for GitHistoryExecutor {
             Family::Pair => {
                 let rev_a = required_input(host, env, "rev_a")?;
                 let rev_b = required_input(host, env, "rev_b")?;
-                let key = format!("{}|{rev_a}|{rev_b}", root.display());
-                let rows = self
-                    .pairs
-                    .answer(key, || pair_rows(host, &root, &rev_a, &rev_b))?;
-                Ok(rows.as_ref().clone())
+                pair_rows(host, &root, &rev_a, &rev_b)
             }
             Family::Diff => {
                 let base = required_input(host, env, "rev_base")?;
                 let head = required_input(host, env, "rev_head")?;
-                let key = format!("{}|{base}|{head}", root.display());
-                let rows = self.diffs.answer(key, || diff_rows(host, &root, &base, &head))?;
-                Ok(rows.as_ref().clone())
+                diff_rows(host, &root, &base, &head)
             }
         }
     }

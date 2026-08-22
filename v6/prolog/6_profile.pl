@@ -23,7 +23,7 @@
                 write_compile_trace/2,
                 dl6_seeded_form/3
               ]).
-:- use_module('compile/parse_dl_dcg', [parse_dl_file/4]).
+:- use_module('use_resolve', [expand_uses/8]).
 :- use_module(lower, [lower_program/2, boot_statements/7]).
 :- use_module(emit_ts, [emit_program/5]).
 
@@ -39,7 +39,7 @@ compile_dl6_profiled(File, OutFile) :-
 
 compile_dl6_profiled(File, OutFile, LogStream) :-
     phase(LogStream, File, 1, parse,
-          parse_dl_file(File, Prog, Bindings, Findings),
+          expand_uses(File, [], [], _, Prog, _, Bindings, Findings),
           ParseMeasurement),
     ( Findings == []
     -> true

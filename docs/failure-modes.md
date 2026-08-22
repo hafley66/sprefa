@@ -2220,7 +2220,7 @@ sites but not against new code. **missing** = nothing.
   `diet` and `scip` planes run against a temp-dir copy that IS its own
   repository, which is exactly the shape that cannot detect this.
 
-## 64. A runtime with no per-verb clock, and three optimizations aimed at the wrong 12%
+## 61. A runtime with no per-verb clock, and three optimizations aimed at the wrong 12%
 
 - WHAT IT LOOKS LIKE: a fold is slow, the engine writes SQL, so the SQL gets
   tuned. Batching, grouping and memoizing all land, all are measured, and all
@@ -2256,7 +2256,7 @@ sites but not against new code. **missing** = nothing.
   Bench: `v6/sprefa-engine-rs/bench/profile.sh`, `bench/ab.sh`,
   `bench/rail-profile.sh`, `bench/file-db.sh`.
 
-## 65. Program metadata recomputed once per tick
+## 62. Program metadata recomputed once per tick
 
 - WHAT IT LOOKS LIKE: a fold that costs the same whether the tick moved one row
   or ten thousand. The per-verb table shows the cost nowhere, because the work
@@ -2279,7 +2279,7 @@ sites but not against new code. **missing** = nothing.
 - WHAT IT DID NOT FIX: this class is cheap in absolute terms (schema-sized, not
   row-sized). The row-sized cost was entry 61.
 
-## 66. Three full copies of an arrival batch before it reached the seam
+## 63. Three full copies of an arrival batch before it reached the seam
 
 - WHAT IT LOOKS LIKE: an `intern` phase costing 448ms of Rust against 25ms of
   SQL, on 6482 rows. The trace attributes it correctly and it still reads as a
@@ -2304,7 +2304,7 @@ sites but not against new code. **missing** = nothing.
   __host_response_extract` 205359 -> 22878, `stage __host_response_extract`
   142211 -> 11607, TOTAL rust in scopes 3093662 -> 736591. RUST-GRADE stayed
   439/335 byte-clean across every step.
-## 67. A program driven only by boot facts, answering silence that reads as a finding
+## 64. A program driven only by boot facts, answering silence that reads as a finding
 
 - WHAT IT LOOKS LIKE: every seed is a plain fact in the source, the program
   compiles clean, the harness exits 0, and the reads come back empty except for
@@ -2332,7 +2332,7 @@ sites but not against new code. **missing** = nothing.
   a compiler-lane request on the crosswalk PR rather than fixed here, because
   `v6/prolog/**` is another lane's tree.
 
-## 68. Two hosts meant to share one pass, split by a name the registry never heard of
+## 65. Two hosts meant to share one pass, split by a name the registry never heard of
 
 - WHAT IT LOOKS LIKE: two `sh` declarations carry the same template on purpose,
   so the runner's applicative grouping folds them into one process and each
@@ -2361,7 +2361,7 @@ sites but not against new code. **missing** = nothing.
   per file, and `DL_TRACE_SUMMARY=1` already prints the call count that would
   catch a second pass.
 
-## 69. A resumed agent whose worktree was gone, and a reset that landed in the coordinator's tree
+## 66. A resumed agent whose worktree was gone, and a reset that landed in the coordinator's tree
 
 INCIDENT (2026-08-21, arrivals-and-ticks lane). A subagent's isolated worktree
 was cut from the wrong base and the agent stopped correctly. Its worktree was
@@ -2391,7 +2391,7 @@ the incident cost one uncommitted file, not the arc.
 
 ENTRY: this row.
 
-## 70. A surface removed on one branch, and two new programs written in it on the other
+## 67. A surface removed on one branch, and two new programs written in it on the other
 
 INCIDENT (2026-08-21, arrivals-and-ticks landing). The branch deleted `sh` and
 `bind` from the parser and moved every `.dl6` it owned to the arrival form.
@@ -2552,7 +2552,7 @@ The observed standard, in order — no step is optional:
    Then — and only then — the class moves from this doc's gap table to its
    enforced list.
 
-## 64. A symlink older than the crate it names
+## 68. A symlink older than the crate it names
 
 - **Incident** (2026-08-21): grading PR #410 in `~/projects/sprefa-worktrees/grade-410` failed with `cannot find function hash_object in crate soopy`. `soopy = { path = "../../../hafley-rs/crates/soopy" }` (`v6/sprefa-engine-rs/Cargo.toml:29`) resolved through `sprefa-worktrees/hafley-rs`, a symlink made 2026-08-17 to a hafley-rs worktree four days stale. Twenty minutes on a phantom API break.
 - **RCA**: a relative path dep means every tree location needs its own sibling `hafley-rs`, and nothing checked that the sibling was the live checkout.
@@ -2560,7 +2560,7 @@ The observed standard, in order — no step is optional:
 - **Rail**: `v6/tools/doctor-deps.sh` canonicalizes every hafley-rs path dep and requires it under `~/projects/hafley-rs` (`HAFLEY_RS` overrides); `grade.sh` runs it first, `just doctor-deps` runs it alone, and every lane brief's first action includes it.
 - **Entry**: the symlink now points at `~/projects/hafley-rs`.
 
-## 65. An ARCH row marked done for a half-landed fix
+## 69. An ARCH row marked done for a half-landed fix
 
 - **Incident** (2026-08-21): `ARCH.pl` row `clock_check_path_blowup` read `done` since 2026-07-31. `v6/dl/ghcache/ghcache.dl6` (84 rels) hit the same symptom the row describes: `Stack limit exceeded` inside `clock_violation/2` after 20 minutes. `recurrence_free_clock/6` had landed the fast path only for zero-weight cycles and fell through to the exponential `clock_path/7`; the resource bound the row prescribed was never written.
 - **RCA**: a row flipped to done on the lane's word, with no program in the corpus wide enough to hit the fallthrough.
@@ -2568,7 +2568,7 @@ The observed standard, in order — no step is optional:
 - **Rail**: user decision `rulings.pl clock_path_check_pinned_off`: the path walk is off the compile path (`3_clock_check.pl` `clock_path_walk_enabled/0`), the checker's own battery turns it on. The row stays open as the seed of the clock calculus.
 - **Entry**: `ghcache.dl6` passes the clock step in 1.6s.
 
-## 66. A keyword deleted from the surface while the runtime still keyed on it
+## 70. A keyword deleted from the surface while the runtime still keyed on it
 
 - **Incident** (2026-08-22): the `bind watch(glob, ...)` / `bind interval(period, ...)` declarations were retired in favor of ordinary rels routed to `/soopy/watch` and `/clock/tick`, and `served-watch-rail.dl6` / `tick_cost_beat.dl6` were re-spelled to the new form. `run.rs::stays_resident` and the whole watch loop still read `BindPlanData` exclusively, so a program with zero `bind` decls (every re-spelled fixture) always answered `false` and folded once instead of staying resident: `one_touched_file_produces_exactly_one_extra_tick` and `a_resident_run_measures_itself_and_a_storeless_program_stays_flat` both reported 0 ticks past the first fold.
 - **RCA**: the compiler-facing keyword and the runtime reader that keyed off it were changed by different people at different times with nothing pinning them together; `registry.pl` also had no `arrival_executor` rows for the two new slash paths, so `hosts::executor_for` had never heard of them either.
@@ -2576,7 +2576,47 @@ The observed standard, in order — no step is optional:
 - **Rail**: `hosts.rs` gained `ExecutorCadence` (`Once` default, `Continuing` on `ClockExecutor`/`SoopyWatchExecutor`); `registry.pl` gained the `clock__tick`/`soopy__watch` `arrival_executor` rows the roster-parity test pins against `LINKED_EXECUTORS`; `run::stays_resident` now asks `hosts::cadence_for_plan` over the loaded program's own `host_plans` instead of reading a bind literal that no longer exists.
 - **Entry**: both tests pass; `tests/dl6_run.rs`'s 9-test suite is green in 3 separate full runs.
 
-## 67. A cache the program could not see, and every restart paid for it
+## 71. A lane ported a traversal into an executor cache
+
+- **Incident** (2026-08-22): `dep_crawl.rs` (added 2026-08-21, `456162553`) put a
+  whole frontier-closure BFS over local checkouts inside a linked host
+  executor, keyed by a per-process `FamilyMemo` so repeated demands answered
+  from a cache instead of the demand graph. Three siblings (`git_refs.rs`,
+  `git_history.rs`, `repo_at.rs`) copied the same `FamilyMemo` shape for
+  ordinary single-call reads that never needed it: `hosts.rs`'s own per-tick
+  demand dedup (`HostLiveRunner::collect`, claimed demands) already settles a
+  family of sibling plan names in one pass, so the memo bought nothing an
+  executor caller could not already get for free, while hiding a traversal
+  that belonged in the language as an executor implementation detail.
+- **RCA**: "the host answers several plan names from one soopy call" was read
+  as "the host must remember its own answers," conflating the runner's
+  once-per-tick claim with a would-be cross-tick cache, and a BFS frontier
+  closure was written in Rust because dl6 rules did not obviously reach a
+  directory-scanned repo roster, instead of writing the roster as a posted
+  fact and the closure as a recursive rule.
+- **Fail-pre-fix**: `v6/dl/crosswalk/gate.sh` leg 2 (`4_dep_crawl`) depended on
+  `arrival_executor(dep_crawl_repo, '/soopy/dep_crawl')` et al.; deleting
+  `dep_crawl.rs` alone left the golden program unable to compile.
+- **Rail**: `dep_crawl.rs`, its `hosts.rs` roster rows, and its
+  `registry.pl` `arrival_executor` rows are deleted; `FamilyMemo` is deleted
+  from `src/executors/mod.rs` and every sibling that carried one.
+  `v6/dl/crosswalk/goldens/4_dep_crawl.dl6` now derives `crawl_level` /
+  `crawl_step` / `crawl_hops` as a hop-ceilinged recursive closure over a
+  posted `repo_known` roster and `repo_grep_at`'s go.mod reads, the same
+  `hop_ceiling`/`min(Level)` shape `crosswalk.dl6`'s `reach_level` already
+  uses, so the traversal is the program's own rules and not an executor.
+- **Entry**: `v6/dl/crosswalk/gate.sh` graded green with the rule-based
+  crawl; numbers in the PR body.
+
+## 72. A door the whole compiler goes through, and four tools that skipped it
+
+- **Incident** (2026-08-22): `use soopy.` landed as the executor-module import, resolved in `use_resolve.pl` where every `use` line already lives, and 35 `.dl6` programs gained one. `compile.pl` reads them through `expand_uses/8` and stayed green; `6_profile.pl`, `compile/scripts/dl6_oracle.pl`, `compile/test/scip_namespaces.test.pl` and `tools/self_map_facts.pl` each call `parse_dl_dcg`'s `parse_dl_file/4` or `parse_dl_dcg_entry/5` directly, and a `use` line has never been a statement that parser accepts. The compile-speed gate stopped at `parse error at line 14` on the first pinned program; `scip_namespaces:receiver_rail_declares_the_registry_columns` read `sh_decl(call, ...)` where the registry says `scip__call`.
+- **RCA**: the front door is `use_resolve.pl`, not the parser, and nothing named that. Four tools reached past it for a single-file surface read, which was harmless while every tracked program was use-free.
+- **Fail-pre-fix**: `swipl -q -g "parse_dl_file('v6/dl/reach/feature-reach.dl6', P, _, _)"` throws `dl_parse_error(statement, position(1, 5))` on the `use cargo.` line; the same file through `expand_uses/8` returns a program.
+- **Rail**: the three non-lab callers now go through `expand_uses/8`. The plunit unit `executor_modules` pins that all four spellings of one program compile to the same term, so a door that resolves one and not the others fails there rather than in a gate.
+- **Entry**: conformance 440/0, plunit 1054/0, `scip_namespaces` green; compile-speed stays allowlisted red, now failing inside golden-flex's emit rather than at the parse of its first program (`.github/CI-KNOWN-RED.md`).
+
+## 73. A cache the program could not see, and every restart paid for it
 
 - **Incident** (2026-08-22): `executors/fetch.rs:31-50` kept the ETag and the previous body in a process-private `HashMap`, and `:255-260` substituted that body on a 304. `ghcache.dl6:308` already carried `poll_state_etag` relationally, so the map was a second copy that no rule could read, no query could show, and no restart could keep. `issues/dl6-run-restart-loses-etags`: every `dl6 run` restart re-downloaded roughly a megabyte. Under it, `sql.rs::run_program_ddl` dropped every table the program declares at each boot, so the relational copy died too.
 - **RCA**: an executor that answers a QUESTION grew state that answers it DIFFERENTLY on the second ask. Once the cache is invisible to the program, the program cannot be the thing that decides when to re-ask.
@@ -2584,7 +2624,7 @@ The observed standard, in order — no step is optional:
 - **Rail**: the transport is `executors/http.rs` and holds nothing but a connection pool: every header on the wire, `If-None-Match` included, comes from the demand row's `headers` column. `run_program_ddl` keeps a TABLE whose CREATE is the one already standing and drops one whose shape moved.
 - **Entry**: kill, restart, first poll is 8 x 304 with `bytes = 0` out of 8 stored ETags and 8 stored bodies.
 
-## 68. Seconds compared against minutes, twice, in one program
+## 74. Seconds compared against minutes, twice, in one program
 
 - **Incident** (2026-08-22): `ghcache.dl6` compared `poll_interval_seconds` directly against `current_clock(60, Bucket)`, whose bucket advances once per MINUTE, so a 60s poll fired hourly (`issues/ghcache-dl6-poll`). The same shape sat in `over_budget`, comparing `x-ratelimit-reset` (epoch SECONDS) against the same minute bucket: measured live, once the stop threshold tripped, `Bucket < ResetAt` stayed true forever and the poll never resumed.
 - **RCA**: two quantities with the same name (`seconds`) and different units met with no conversion and no type to stop them. The first was filed and the second was invisible until a live run drove the budget down.

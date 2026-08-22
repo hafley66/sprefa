@@ -19,6 +19,8 @@
 :- use_module(library(readutil), [read_file_to_string/3]).
 :- use_module('compile/parse_dl_dcg', [use_item/3, parse_dl_dcg_entry/5]).
 :- use_module('0_dot_expand', [declared_path/3]).
+:- use_module('executor_modules',
+              [split_use_specs/3, bind_executor_modules/3]).
 :- use_module('compile/0_trace', [run_compile_step/4]).
 
 :- op(1150, xfx, <-).
@@ -135,7 +137,8 @@ collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files, Tables,
     ;   true
     ),
     run_compile_step(parse, strip_entry,
-                     strip_entry(EntryPath, EntryAbs, UseSpecs, CoreCodes), _),
+                     strip_entry(EntryPath, EntryAbs, AllUseSpecs, CoreCodes), _),
+    split_use_specs(AllUseSpecs, UseSpecs, ModuleSpecs),
     include_roots(EntryPath, Roots),
     module_name(EntryAbs, EntryName),
     module_hash(BaseDir, EntryAbs, EntryHash),
@@ -146,7 +149,13 @@ collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files, Tables,
     run_compile_step(parse, parse_source,
                      parse_source(EntryPath, CoreCodes, OwnProg, OwnBindings,
                                   OwnFindings), _),
-    prog_parts(OwnProg, OwnDecls0, OwnRules, OwnQueries),
+    prog_parts(OwnProg, ParsedDecls, ParsedRules, ParsedQueries),
+    run_compile_step(parse, bind_executor_modules,
+                     bind_executor_modules(ModuleSpecs,
+                                           parts(ParsedDecls, ParsedRules,
+                                                 ParsedQueries),
+                                           parts(OwnDecls0, OwnRules,
+                                                 OwnQueries)), _),
     run_compile_step(parse, check_use_local_name_collisions,
                      check_use_local_name_collisions(OwnDecls0, EdgeDecls), _),
     run_compile_step(parse, rel_module_decls,

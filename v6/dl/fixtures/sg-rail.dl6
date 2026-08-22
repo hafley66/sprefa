@@ -1,6 +1,8 @@
 # no-console rail over a fixture repo: ast-grep hits become diag rows.
 
-rel /extract/ast_rule(path: text, digest: text, request: text) ->
+use extract.
+
+rel ast_rule(path: text, digest: text, request: text) ->
   (record: text, query: text, span: json) key(1, 3).
 
 rel console_rule(id: text, request: text).
@@ -20,7 +22,7 @@ rel(1) hit_count(hits: int).
 console_hit(path, start, end) <-
     file(path, content_hash),
     console_rule(_, request),
-    /extract/ast_rule(path, content_hash, request, 'console_log_hit', _query, span),
+    ast_rule(path, content_hash, request, 'console_log_hit', _query, span),
     decode(span, {start: start, end: end}).
 
 hit_count(hits: count(path)) <- console_hit(path).

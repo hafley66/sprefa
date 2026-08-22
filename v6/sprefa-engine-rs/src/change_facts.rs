@@ -1,5 +1,4 @@
-// The rev-pair change plane. Column constants live beside the mechanics, the
-// way dep_resolve.rs holds the crawl's.
+// The rev-pair change plane. Column constants live beside the mechanics.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

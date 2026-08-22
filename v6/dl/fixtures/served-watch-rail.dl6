@@ -15,12 +15,14 @@
 #     concatMap(batch => engine.submit(batch)))
 # and of the rule: `watch$.pipe(map(({path, digest}) => ({path, digest})))`.
 
-# The program owns its seed: the watched glob is a fact, and /soopy/watch is
+# The program owns its seed: the watched glob is a fact, and watch is
 # the continuing executor whose re-answer IS the tick.
+use soopy.
+
 rel want(glob: text).
 want('**/*.ts').
 
-rel /soopy/watch(glob: text) -> (path: text, digest: text).
+rel watch(glob: text) -> (path: text, digest: text).
 
 rel seen(path: text, digest: text).
-seen(path, digest) <- want(glob), /soopy/watch(glob, path, digest).
+seen(path, digest) <- want(glob), watch(glob, path, digest).

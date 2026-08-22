@@ -75,6 +75,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 :- use_module('../../use_resolve',
               [ expand_uses/6, expand_uses/8, include_roots/2, resolve_use_path/3,
                 reset_parse_counts/0, parse_count/2 ]).
+:- use_module('../../executor_modules', [ executor_family_export/3 ]).
 :- use_module('../../0_cst_query', [ parse_cst_query/2 ]).
 :- use_module('../../0_body_walk', [ relation_atom_wrapper/1 ]).
 :- use_module('../../0_type_plane', [ type_definitions/2, column_storage/3 ]).
@@ -9537,6 +9538,164 @@ catalog_rows_of(Dir, Rows) :-
     catalog_decl_rows(main, Rules, RelPlans, Decls, Rows, _).
 
 :- end_tests(mount_door).
+
+% ═══ executors as modules (ruling executor_modules_use_import) ══════════════
+% Byte-identity across the three spellings is the whole receipt: the entry
+% basename is what module identity hashes, so the three programs share one.
+
+executor_module_program(Dir, Text, Normalized) :-
+    make_use_fixture(Dir, ["main.dl6" = Text]),
+    use_entry(Dir, 'main.dl6', Entry),
+    expand_uses(Entry, [], [], _, Prog, _),
+    copy_term(Prog, Copy),
+    numbervars(Copy, 0, _),
+    Normalized = Copy.
+
+files_program_text(use_form,
+    "use soopy.\n\c
+     rel files(glob: key(text)) -> (path: text, digest: text).\n\c
+     rel want(glob: text).\nrel found(path: text).\n\c
+     found(Path) <- want(Glob), files(glob: Glob, path: Path, digest: _).\n").
+files_program_text(dot_form,
+    "rel soopy.files(glob: key(text)) -> (path: text, digest: text).\n\c
+     rel want(glob: text).\nrel found(path: text).\n\c
+     found(Path) <- want(Glob), soopy.files(glob: Glob, path: Path, digest: _).\n").
+files_program_text(slash_form,
+    "rel /soopy/files(glob: key(text)) -> (path: text, digest: text).\n\c
+     rel want(glob: text).\nrel found(path: text).\n\c
+     found(Path) <- want(Glob), /soopy/files(glob: Glob, path: Path, digest: _).\n").
+files_program_text(alias_form,
+    "use soopy as sy.\n\c
+     rel sy.files(glob: key(text)) -> (path: text, digest: text).\n\c
+     rel want(glob: text).\nrel found(path: text).\n\c
+     found(Path) <- want(Glob), sy.files(glob: Glob, path: Path, digest: _).\n").
+
+% Every tracked .dl6 outside the narrative trees; the ratchet's corpus.
+ratchet_dl6_files(Files) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../../..'], RepoDir),
+    process_create(path(git),
+                   ['-C', RepoDir, 'ls-files', '*.dl6'],
+                   [stdout(pipe(Out))]),
+    read_string(Out, _, Text),
+    close(Out),
+    split_string(Text, "\n", "", Parts),
+    findall(Abs,
+            ( member(Part, Parts), Part \== "",
+              \+ ratchet_excluded(Part),
+              atomic_list_concat([RepoDir, '/', Part], Abs) ),
+            Files).
+
+% editors/ paints every spelling on purpose. The ghcache family is another
+% lane's tree and the coordinator re-spells it once both land.
+ratchet_excluded(Path) :-
+    member(Prefix, ["chat_log/", "plans/", "issues/", "archive/", "editors/",
+                    "v6/dl/ghcache/", "v6/dl/ghcacher/", "v6/dl/prwatch/",
+                    "v6/dl/fixtures/ghcacher", "v6/dl/fixtures/crawl_org"]),
+    string_concat(Prefix, _, Path).
+
+% One line per offending declaration, so a failure names the file and the text.
+ratchet_offender(File, Line) :-
+    read_file_to_string(File, Text, []),
+    split_string(Text, "\n", "", Lines),
+    member(Line0, Lines),
+    string_concat("rel ", Rest0, Line0),
+    normalize_space(string(Rest), Rest0),
+    ratchet_path_declaration(Rest),
+    Line = Line0.
+
+ratchet_path_declaration(Rest) :-
+    string_concat("/", _, Rest), !.
+ratchet_path_declaration(Rest) :-
+    split_string(Rest, ".", "", [Head | [_ | _]]),
+    atom_string(Family, Head),
+    executor_family_export(Family, _, _).
+
+:- begin_tests(executor_modules).
+
+test(use_item_parses_a_bare_module_name) :-
+    string_codes("use soopy.", Codes),
+    use_item(use_mod(soopy), Codes, []).
+
+test(use_item_parses_a_module_alias) :-
+    string_codes("use soopy as sy.", Codes),
+    use_item(use_mod(soopy, sy), Codes, []).
+
+test(use_item_keeps_a_quoted_target_a_file) :-
+    string_codes("use \"lib.dl6\".", Codes),
+    use_item(use("lib.dl6"), Codes, []).
+
+test(pub_use_of_a_module_carries_its_own_functor) :-
+    string_codes("pub use soopy.", Codes),
+    use_item(pub_use_mod(soopy), Codes, []).
+
+% FAIL-FIRST RECEIPT: before bind_executor_modules/3 the bare declaration left
+% sh_decl(files, ...) and this memberchk found no soopy__files at all.
+test(use_binds_a_bare_declaration_to_the_registry_name) :-
+    files_program_text(use_form, Text),
+    executor_module_program(_, Text, program(Decls, Rules, _)),
+    memberchk(sh_decl(soopy__files, _, _, _), Decls),
+    \+ memberchk(sh_decl(files, _, _, _), Decls),
+    memberchk((_ <- (_, probe(soopy__files, _, _, _))), Rules).
+
+test(alias_binds_the_aliased_declaration_and_its_references) :-
+    files_program_text(alias_form, Text),
+    executor_module_program(_, Text, program(Decls, Rules, _)),
+    memberchk(sh_decl(soopy__files, _, _, _), Decls),
+    \+ memberchk(sh_decl(sy__files, _, _, _), Decls),
+    memberchk((_ <- (_, probe(soopy__files, _, _, _))), Rules).
+
+% The three spellings are ONE program. A difference here is an emit difference.
+test(every_spelling_of_one_program_is_the_same_program) :-
+    forall(member(Form, [dot_form, slash_form, alias_form]),
+           ( files_program_text(use_form, UseText),
+             files_program_text(Form, OtherText),
+             executor_module_program(_, UseText, A),
+             executor_module_program(_, OtherText, B),
+             A == B )).
+
+test(a_family_no_import_names_leaves_a_rel_alone) :-
+    executor_module_program(_,
+        "use soopy.\nrel tick(every: int).\nrel beat(n: int).\n\c
+         beat(N) <- tick(N).\n",
+        prog(Decls, _)),
+    memberchk(col_type(tick/1, every, int), Decls),
+    \+ memberchk(col_type(clock__tick/1, _, _), Decls).
+
+test(an_unrostered_module_name_stops_the_compile) :-
+    make_use_fixture(Dir, ["main.dl6" = "use orchard.\nrel top(z: int).\n"]),
+    use_entry(Dir, 'main.dl6', Entry),
+    catch(( expand_uses(Entry, [], [], _, _, _), Refused = no_unsupported ),
+          unsupported_construct(unknown_executor_module(orchard)),
+          Refused = refused),
+    Refused == refused.
+
+% No two rostered families share a leaf today, so the stop is exercised on the
+% resolver directly rather than through a program that cannot be written.
+test(two_families_claiming_one_leaf_stop_the_compile) :-
+    catch(( executor_modules:claimed_by(
+                [files-soopy-soopy__files, files-gh-gh__files],
+                files, _),
+            Refused = no_unsupported ),
+          unsupported_construct(ambiguous_executor_leaf(files, [gh, soopy])),
+          Refused = refused),
+    Refused == refused.
+
+test(every_rostered_family_leaf_rejoins_its_canonical_name) :-
+    forall(executor_family_export(Family, Segments, Canonical),
+           ( atomic_list_concat([Family | Segments], '__', Rejoined),
+             Rejoined == Canonical )).
+
+% RATCHET, additive: no tracked program writes a path-spelled executor rel.
+% editors/ is exempt; its fixture exists to paint every spelling.
+test(no_tracked_dl6_declares_a_path_spelled_executor_rel) :-
+    ratchet_dl6_files(Files),
+    findall(File-Line,
+            ( member(File, Files), ratchet_offender(File, Line) ),
+            Offenders),
+    Offenders == [].
+
+:- end_tests(executor_modules).
 
 % ═══ the interned-storage rail ══════════════════════════════════════════════
 % The fifth "a door has a sibling that bypasses it" incident of the interning

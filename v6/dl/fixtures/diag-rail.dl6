@@ -54,12 +54,14 @@
 #                                         // the incremental emitter already writes
 
 # ── the world push: one watcher over one glob (extraction-live.dl6's loop) ──
+use extract.
+
 rel watch(glob: text, path: text, digest: text).
 
 # ── the world pull: two hosts, one record shape each (flagship's split) ─────
-rel /extract/call_node(path: text, digest: text, families: text) -> (record: text, family: text, kind: text, name: text) key(1, 3).
+rel call_node(path: text, digest: text, families: text) -> (record: text, family: text, kind: text, name: text) key(1, 3).
 
-rel /extract/call_ref(path: text, digest: text, families: text) -> (record: text, family: text, callee: text) key(1, 3).
+rel call_ref(path: text, digest: text, families: text) -> (record: text, family: text, callee: text) key(1, 3).
 
 # ── the program's own file set ──────────────────────────────────────────────
 rel file(path: text, digest: text).
@@ -68,7 +70,7 @@ file(path, digest) <- watch('**/*.ts', path, digest).
 # ── node lines (defs + import/export specifiers, undiscriminated) ──────────
 rel node_fact(path: text, record: text, family: text, kind: text, name: text).
 node_fact(path, record, family, kind, name) <-
-  file(path, digest), /extract/call_node(path, digest, "cst,type,call,df", record, family, kind, name).
+  file(path, digest), call_node(path, digest, "cst,type,call,df", record, family, kind, name).
 
 # ── v5's `def`: every named callable declaration ────────────────────────────
 # The constant match in argument position is the record filter (flagship's
@@ -79,7 +81,7 @@ def(path, name) <- node_fact(path, 'node', 'call', _, name).
 # ── call sites, content-addressed on the digest (extraction-live's shape) ──
 rel call_site(path: text, digest: text, callee: text).
 call_site(path, digest, callee) <-
-  file(path, digest), /extract/call_ref(path, digest, "cst,type,call,df", 'site', 'call', callee).
+  file(path, digest), call_ref(path, digest, "cst,type,call,df", 'site', 'call', callee).
 
 rel call(path: text, callee: text).
 call(path, callee) <- call_site(path, _, callee).

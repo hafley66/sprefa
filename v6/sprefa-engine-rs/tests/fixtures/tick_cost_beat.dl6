@@ -8,20 +8,23 @@
 rel cadence(every: int).
 cadence(1).
 
-rel /clock/tick(every: int) -> (bucket: int).
+use clock.
+use dl as runtime.
 
-rel /dl/tick_cost(bucket: int) ->
+rel tick(every: int) -> (bucket: int).
+
+rel runtime.tick_cost(bucket: int) ->
   (executor: text, wall_ms: int, rss_kb: int).
 
 # A rule body carries at most one arrival goal (1_host_expand.pl:445), so the
 # turn is its own rel and both readers join it.
 rel beat(bucket: int).
-beat(Bucket) <- cadence(Every), /clock/tick(Every, Bucket).
+beat(Bucket) <- cadence(Every), tick(Every, Bucket).
 
 rel measured(bucket: int, executor: text, wall_ms: int, rss_kb: int).
 measured(Bucket, Executor, WallMs, RssKb) <-
   beat(Bucket),
-  /dl/tick_cost(Bucket, Executor, WallMs, RssKb).
+  runtime.tick_cost(Bucket, Executor, WallMs, RssKb).
 
 rel tick_cost(bucket: int, executor: text, wall_ms: int, rss_kb: int)
   log keep(all).
