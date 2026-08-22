@@ -2567,3 +2567,11 @@ The observed standard, in order — no step is optional:
 - **Fail-pre-fix**: compile `ghcache.dl6` with the prolog flag `dl6_clock_path_walk` true.
 - **Rail**: user decision `rulings.pl clock_path_check_pinned_off`: the path walk is off the compile path (`3_clock_check.pl` `clock_path_walk_enabled/0`), the checker's own battery turns it on. The row stays open as the seed of the clock calculus.
 - **Entry**: `ghcache.dl6` passes the clock step in 1.6s.
+
+## 66. A keyword deleted from the surface while the runtime still keyed on it
+
+- **Incident** (2026-08-22): the `bind watch(glob, ...)` / `bind interval(period, ...)` declarations were retired in favor of ordinary rels routed to `/soopy/watch` and `/clock/tick`, and `served-watch-rail.dl6` / `tick_cost_beat.dl6` were re-spelled to the new form. `run.rs::stays_resident` and the whole watch loop still read `BindPlanData` exclusively, so a program with zero `bind` decls (every re-spelled fixture) always answered `false` and folded once instead of staying resident: `one_touched_file_produces_exactly_one_extra_tick` and `a_resident_run_measures_itself_and_a_storeless_program_stays_flat` both reported 0 ticks past the first fold.
+- **RCA**: the compiler-facing keyword and the runtime reader that keyed off it were changed by different people at different times with nothing pinning them together; `registry.pl` also had no `arrival_executor` rows for the two new slash paths, so `hosts::executor_for` had never heard of them either.
+- **Fail-pre-fix**: `dl6 run tests/fixtures/tick_cost_beat.dl6 --final-tsv --final-only --final-rels tick_cost` printed zero rows and exited after one fold.
+- **Rail**: `hosts.rs` gained `ExecutorCadence` (`Once` default, `Continuing` on `ClockExecutor`/`SoopyWatchExecutor`); `registry.pl` gained the `clock__tick`/`soopy__watch` `arrival_executor` rows the roster-parity test pins against `LINKED_EXECUTORS`; `run::stays_resident` now asks `hosts::cadence_for_plan` over the loaded program's own `host_plans` instead of reading a bind literal that no longer exists.
+- **Entry**: both tests pass; `tests/dl6_run.rs`'s 9-test suite is green in 3 separate full runs.

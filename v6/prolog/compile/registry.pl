@@ -311,8 +311,10 @@ expression_for_term(Term, Family, Precedence, SqlRendering, TypeRule) :-
 % /extract/* share one executor; the `families` INPUT column replaces the dead
 % template's --family flag, so one file + one families value = one run.
 
-% /clock/tick and /soopy/watch (continuing cadences; a re-answer is a tick)
-% join this table with the wip/dl6-run-watch-salvage lane.
+% /clock/tick and /soopy/watch: ExecutorCadence::Continuing in hosts.rs, a
+% re-answer from either IS a tick.
+arrival_executor(clock__tick,           '/clock/tick').
+arrival_executor(soopy__watch,          '/soopy/watch').
 arrival_executor(soopy__files,          '/soopy/files').
 % Two names, one executor. `files` is the worktree, `files_at` a pinned rev;
 % the name IS the marker, so neither can fall back to the other (PR #406).

@@ -25,6 +25,14 @@ impl std::fmt::Display for HostError {
     }
 }
 
+/// `Once` answers a demand and is done; `Continuing` re-answers on its own
+/// clock or its own filesystem watcher, and each re-answer is a tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutorCadence {
+    Once,
+    Continuing,
+}
+
 /// A host answer is a row set, never a byte stream: the executor names its own
 /// columns and the runner projects them, so nothing between the two parses text.
 pub trait IHostExecutor: Sync {
@@ -34,13 +42,18 @@ pub trait IHostExecutor: Sync {
         command_line: &str,
         env: &BTreeMap<String, String>,
     ) -> Result<Vec<HostRow>, HostError>;
+
+    fn cadence(&self) -> ExecutorCadence {
+        ExecutorCadence::Once
+    }
 }
 
 /// The SAME slash paths as registry.pl's arrival_executor/2 rows (ruling
 /// executor_namespacing), pinned equal by executor_roster_matches_registry.
 pub const LINKED_EXECUTORS: &str = "/soopy/files, /soopy/files_at, /soopy/stage, \
      /soopy/commit, /soopy/refs, /soopy/history, /soopy/repo_at, /soopy/checkout, \
-     /soopy/mirror_pr_heads, /soopy/dep_crawl, /extract/records, \
+     /soopy/mirror_pr_heads, /soopy/dep_crawl, /soopy/watch, /clock/tick, \
+     /extract/records, \
      /extract/repo_records, /extract/call_node, /extract/call_node_at, \
      /extract/call_ref, /extract/cfg_at, /extract/specifier_at, \
      /extract/type_node_at, /extract/sig_at, /extract/df_node_at, \
@@ -58,6 +71,10 @@ static REPO_AT: LazyLock<crate::executors::repo_at::RepoAtExecutor> =
     LazyLock::new(crate::executors::repo_at::RepoAtExecutor::new);
 static DEP_CRAWL: LazyLock<crate::executors::dep_crawl::DepCrawlExecutor> =
     LazyLock::new(crate::executors::dep_crawl::DepCrawlExecutor::new);
+static CLOCK_TICK: LazyLock<crate::executors::clock::ClockExecutor> =
+    LazyLock::new(crate::executors::clock::ClockExecutor::new);
+static SOOPY_WATCH: LazyLock<crate::executors::watch::SoopyWatchExecutor> =
+    LazyLock::new(crate::executors::watch::SoopyWatchExecutor::new);
 
 pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
     match execution {
@@ -94,6 +111,8 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
         "/soopy/history" => Some(&*GIT_HISTORY),
         "/soopy/repo_at" => Some(&*REPO_AT),
         "/soopy/dep_crawl" => Some(&*DEP_CRAWL),
+        "/clock/tick" => Some(&*CLOCK_TICK),
+        "/soopy/watch" => Some(&*SOOPY_WATCH),
         // The two scip namespaces, both in-process: no child spawn for the
         // diet side, one budgeted indexer run for the index side.
         "/scip/call" | "/scip/type" | "/scip/diet/call" | "/scip/diet/type" => Some(&*SCIP),
@@ -130,6 +149,14 @@ fn executor_for_plan(
     adapter_rows: &[HostAdapterRow],
 ) -> Option<&'static dyn IHostExecutor> {
     executor_for(&execution_for_plan(plan, adapter_rows))
+}
+
+/// `run.rs`'s resident loop reads this to decide which routed rels are its own
+/// continuing sources, and never invokes `IHostExecutor::run` for anything else.
+pub fn cadence_for_plan(plan: &HostPlanData, adapter_rows: &[HostAdapterRow]) -> ExecutorCadence {
+    executor_for_plan(plan, adapter_rows)
+        .map(IHostExecutor::cadence)
+        .unwrap_or(ExecutorCadence::Once)
 }
 
 fn is_applicative(execution: &str) -> bool {
@@ -1392,6 +1419,36 @@ struct HostDemand<'p> {
     inputs: BTreeMap<String, ScalarValue>,
 }
 
+/// The same `'witness|<plan>|<col>:<type>=<value>...'` string the compiled
+/// boot SQL hashes into the demand row's own column.
+fn witness_digest_for(plan: &HostPlanData, inputs: &BTreeMap<String, ScalarValue>) -> String {
+    let mut digest = format!("witness|{}", plan.name);
+    for input in &plan.inputs {
+        let value = inputs.get(&input.name).map(shell_text).unwrap_or_default();
+        digest.push_str(&format!(
+            "|{}:{}={value}",
+            input.name, input.column_type
+        ));
+    }
+    digest
+}
+
+pub fn project_host_answer(
+    plan: &HostPlanData,
+    inputs: BTreeMap<String, ScalarValue>,
+    answered: &[HostRow],
+    rel_columns: &HashMap<String, Vec<String>>,
+    sign: ArrivalSign,
+) -> Result<Vec<Arrival>, HostError> {
+    let witness_digest = witness_digest_for(plan, &inputs);
+    let demand = HostDemand {
+        plan,
+        witness_digest,
+        inputs,
+    };
+    HostLiveRunner::project_signed(&demand, answered, rel_columns, sign)
+}
+
 pub struct HostLiveRunner<'p> {
     plans: Vec<&'p HostPlanData>,
     rel_columns: &'p HashMap<String, Vec<String>>,
@@ -1509,6 +1566,17 @@ impl<'p> HostLiveRunner<'p> {
         answered: &[HostRow],
         rel_columns: &HashMap<String, Vec<String>>,
     ) -> Result<Vec<Arrival>, HostError> {
+        Self::project_signed(demand, answered, rel_columns, ArrivalSign::Add)
+    }
+
+    /// The resident loop's own continuing sources re-answer outside any demand
+    /// delta (`collect` below only ever emits `Add`), so they need the sign too.
+    fn project_signed(
+        demand: &HostDemand<'p>,
+        answered: &[HostRow],
+        rel_columns: &HashMap<String, Vec<String>>,
+        sign: ArrivalSign,
+    ) -> Result<Vec<Arrival>, HostError> {
         let span = tracing::info_span!("project", host = %demand.plan.name, rows = answered.len());
         let _entered = span.enter();
         let output_rows = select_columns(&demand.plan.name, answered, &demand.plan.outputs)?;
@@ -1521,7 +1589,7 @@ impl<'p> HostLiveRunner<'p> {
             .enumerate()
             .map(|(ordinal, output_row)| Arrival {
                 rel: demand.plan.response_rel.clone(),
-                sign: ArrivalSign::Add,
+                sign,
                 row: response_columns
                     .iter()
                     .map(|column| {

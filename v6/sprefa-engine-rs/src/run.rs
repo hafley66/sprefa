@@ -1,67 +1,38 @@
 // @comment-ok: the shared contract behind `dl6 run`, the built binary's verbs
 // and emit_rust_harness; the one doc site for their shape.
-//
-// `run_once` folds a program over a schedule and reads its `?` rows, which is
-// what every one-shot rail script used to spell by hand. `watch` keeps the same
-// seam resident and feeds it from the program's OWN `bind` sources, which is
-// what `stays_resident` reads to decide the verb's shape for it: a
-// `bind watch(glob, ...)` rel from soopy's file watcher, a
-// `bind interval(period, ...)` rel from a monotonic clock. One external batch
-// is one tick, and the finals re-print as `+`/`-` prefixed TSV deltas.
-//
+
+// `watch` stays resident on the program's OWN continuing executors: a rel
+// routed to `/soopy/watch` or `/clock/tick`, `ExecutorCadence::Continuing`.
+
+// `stays_resident` reads that routing. One external batch is one tick.
+
 // rx: merge(watchSource(glob), timer(period)).pipe(
 //       bufferTime(coalesceMs), filter(batch => batch.length > 0),
 //       concatMap(batch => engine.submit(batch)), map(diffAgainstLastFinal))
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
-use serde::Deserialize;
 
 use crate::driver::{drive_tick, format_deltas, run_schedule, run_schedule_live};
-use crate::hosts::HostLiveRunner;
+use crate::executors::clock::ClockExecutor;
+use crate::executors::watch::SoopyWatchExecutor;
+use crate::hosts::{self, ExecutorCadence, HostLiveRunner};
 use crate::program::{run_boot, GenProgram};
 use crate::sql::{SqlRunner, SqliteSeam};
 use crate::types::{
-    Arrival, ArrivalSign, ProgramJson, RowColumnType, SqlStatement, TickDeltas, Value,
+    Arrival, ArrivalSign, HostAdapterRow, HostPlanData, ProgramJson, RowColumnType, ScalarValue,
+    SqlStatement, TickDeltas, Value,
 };
 
 // ═══ the program document ════════════════════════════════════════════════════
 
-/// One `bind` declaration as emit_rust.pl writes it. Column 1 is the
-/// configuration column (registry.pl:309), so `literals` are what rules name there.
-#[derive(Debug, Clone, Deserialize)]
-pub struct BindPlanData {
-    pub name: String,
-    pub columns: Vec<BindColumn>,
-    #[serde(default)]
-    pub literals: Vec<serde_json::Value>,
-    pub execution: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct BindColumn {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub column_type: String,
-}
-
-// Read off the emitted document rather than off GenProgram: ProgramJson is
-// owned by another arc's audit, and `#[serde(default)]` keeps an older IR loading.
-#[derive(Deserialize)]
-struct BindPlansDocument {
-    #[serde(default)]
-    bind_plans: Vec<BindPlanData>,
-}
-
-/// A program as the two bins carry it: the runtime's own document plus the
-/// bind plans `watch` drives its world sources from.
+/// A program as `dl6` carries it after loading the emitted document.
 pub struct LoadedProgram {
     pub program: GenProgram,
-    pub binds: Vec<BindPlanData>,
 }
 
 /// The JSON body inside an emitted module's raw string literal.
@@ -80,11 +51,8 @@ pub fn program_json_text(module_text: &str) -> Result<&str> {
 pub fn load_program_text(text: &str) -> Result<LoadedProgram> {
     let json = program_json_text(text)?;
     let document: ProgramJson = serde_json::from_str(json).context("parse the program json")?;
-    let binds: BindPlansDocument =
-        serde_json::from_str(json).context("parse the program's bind plans")?;
     Ok(LoadedProgram {
         program: GenProgram::try_from_json(document)?,
-        binds: binds.bind_plans,
     })
 }
 
@@ -92,13 +60,6 @@ pub fn load_program(path: &Path) -> Result<LoadedProgram> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("read the emitted program {}", path.display()))?;
     load_program_text(&text)
-}
-
-/// The bind plans alone, for a built binary that already holds its GenProgram.
-pub fn bind_plans_from_json(json: &str) -> Result<Vec<BindPlanData>> {
-    let document: BindPlansDocument =
-        serde_json::from_str(json).context("parse the program's bind plans")?;
-    Ok(document.bind_plans)
 }
 
 // ═══ seeds ═══════════════════════════════════════════════════════════════════
@@ -232,11 +193,27 @@ impl RunOutcome {
 
 pub fn run_once(
     program: &GenProgram,
-    seeds: Vec<Arrival>,
+    mut seeds: Vec<Arrival>,
     options: RunOptions,
 ) -> Result<RunOutcome> {
     let seam = open_seam(options.db.as_deref())?;
     let mut schedule = options.schedule;
+    if options.live_hosts {
+        let adapter_rows = crate::types::load_program_host_adapter_rows(&program.name)
+            .context("read the process adapter sidecar")?;
+        if stays_resident(program, &adapter_rows) {
+            seam.size_statement_cache(program.stable_sql_count() + 64);
+            seam.run_program_ddl(&program.ddl, &program.queries)
+                .context("run the DDL")?;
+            run_boot(&seam, &program.boot);
+            seeds.extend(continuing_seed_arrivals(
+                program,
+                &seam,
+                &adapter_rows,
+                Path::new("."),
+            )?);
+        }
+    }
     if !seeds.is_empty() {
         match schedule.first_mut() {
             Some(first) => first.extend(seeds),
@@ -674,35 +651,207 @@ impl<'p> LiveLoop<'p> {
 #[derive(Debug)]
 pub struct WatchOptions {
     pub run: RunOptions,
-    /// The bind plans the program declares; empty means no live source at all.
-    pub binds: Vec<BindPlanData>,
-    /// The tree a `bind watch` glob is read against.
+    /// The tree a `/soopy/watch` glob is read against.
     pub root: PathBuf,
     /// How long a burst of filesystem events is gathered into one tick.
     pub coalesce: Duration,
 }
 
 impl WatchOptions {
-    pub fn new(run: RunOptions, binds: Vec<BindPlanData>, root: PathBuf) -> WatchOptions {
+    pub fn new(run: RunOptions, root: PathBuf) -> WatchOptions {
         WatchOptions {
             run,
-            binds,
             root,
             coalesce: Duration::from_millis(120),
         }
     }
 }
 
-/// The names registry.pl gives the two live world sources.
-const WATCH_EXECUTOR: &str = "live_watch";
-const INTERVAL_EXECUTOR: &str = "live_interval";
+/// The one host demand rel this crate's resident loop drives on its own clock
+/// or its own file watcher, never through the once-per-witness collect seam.
+fn continuing_plans<'p>(
+    program: &'p GenProgram,
+    adapter_rows: &[HostAdapterRow],
+) -> Vec<&'p HostPlanData> {
+    program
+        .host_plans
+        .iter()
+        .filter(|plan| hosts::cadence_for_plan(plan, adapter_rows) == ExecutorCadence::Continuing)
+        .collect()
+}
 
 /// The one question `dl6 run` asks the file: a rel routed to a continuing
-/// source is what makes the process stay, so the verb never has to.
-pub fn stays_resident(binds: &[BindPlanData]) -> bool {
-    [WATCH_EXECUTOR, INTERVAL_EXECUTOR]
+/// executor is what makes the process stay, so the verb never has to.
+pub fn stays_resident(program: &GenProgram, adapter_rows: &[HostAdapterRow]) -> bool {
+    !continuing_plans(program, adapter_rows).is_empty()
+}
+
+fn relation_table<'p>(program: &'p GenProgram, rel: &str) -> Result<&'p str> {
+    program
+        .relations
         .iter()
-        .any(|executor| bind_rel(binds, executor).is_some())
+        .find(|relation| relation.rel == rel)
+        .map(|relation| relation.table_name.as_str())
+        .ok_or_else(|| anyhow!("no incremental relation plan for {rel}"))
+}
+
+fn plan_input_column(plan: &HostPlanData) -> Result<&str> {
+    plan.inputs
+        .first()
+        .map(|input| input.name.as_str())
+        .ok_or_else(|| anyhow!("{} declares no input column", plan.name))
+}
+
+fn distinct_ints(seam: &SqliteSeam, table: &str, column: &str) -> Result<Vec<i64>> {
+    let result = seam
+        .execute(&SqlStatement {
+            sql: format!("SELECT DISTINCT \"{column}\" FROM \"{table}\""),
+            args: vec![],
+        })
+        .with_context(|| format!("read {column} from {table}"))?;
+    result
+        .rows
+        .into_iter()
+        .map(|row| match row.into_iter().next() {
+            Some(Value::Integer(number)) => Ok(number),
+            other => bail!("{column} in {table} is not an integer: {other:?}"),
+        })
+        .collect()
+}
+
+/// A declared `text` column may store an `__str` surrogate id, per the rel's
+/// own text-intern plan, so a raw `SELECT` on it reads an integer, not text.
+fn column_is_interned(program: &GenProgram, rel: &str, column: &str) -> bool {
+    let Some(plan) = &program.text_intern_plan else {
+        return false;
+    };
+    let Some(index) = program
+        .rel_columns
+        .get(rel)
+        .and_then(|columns| columns.iter().position(|name| name == column))
+    else {
+        return false;
+    };
+    plan.rel_columns
+        .get(rel)
+        .and_then(|flags| flags.get(index))
+        .copied()
+        .unwrap_or(false)
+}
+
+fn distinct_texts(
+    program: &GenProgram,
+    seam: &SqliteSeam,
+    table: &str,
+    rel: &str,
+    column: &str,
+) -> Result<Vec<String>> {
+    let sql = if column_is_interned(program, rel, column) {
+        format!(
+            "SELECT DISTINCT s.\"content\" FROM \"{table}\" t \
+             JOIN \"__str\" s ON s.\"__id\" = t.\"{column}\""
+        )
+    } else {
+        format!("SELECT DISTINCT \"{column}\" FROM \"{table}\"")
+    };
+    let result = seam
+        .execute(&SqlStatement { sql, args: vec![] })
+        .with_context(|| format!("read {column} from {table}"))?;
+    result
+        .rows
+        .into_iter()
+        .map(|row| match row.into_iter().next() {
+            Some(Value::Text(text)) => Ok(text),
+            other => bail!("{column} in {table} is not text: {other:?}"),
+        })
+        .collect()
+}
+
+/// `/clock/tick`'s answer at one `every`/`bucket` pair, called directly since
+/// the resident loop never re-claims a demand delta.
+fn clock_answer(
+    plan: &HostPlanData,
+    rel_columns: &HashMap<String, Vec<String>>,
+    every: i64,
+    bucket: i64,
+    sign: ArrivalSign,
+) -> Result<Vec<Arrival>> {
+    let mut inputs = BTreeMap::new();
+    inputs.insert("every".to_string(), ScalarValue::Integer(every));
+    let answered = vec![crate::hosts::host_row([(
+        "bucket",
+        serde_json::json!(bucket),
+    )])];
+    hosts::project_host_answer(plan, inputs, &answered, rel_columns, sign)
+        .map_err(|failure| anyhow!("{failure}"))
+}
+
+/// `/soopy/watch`'s answer for every `(path, digest)` entry one glob currently
+/// carries.
+fn watch_answer_rows(
+    plan: &HostPlanData,
+    rel_columns: &HashMap<String, Vec<String>>,
+    glob: &str,
+    entries: &[(String, String)],
+    sign: ArrivalSign,
+) -> Result<Vec<Arrival>> {
+    let mut inputs = BTreeMap::new();
+    inputs.insert("glob".to_string(), ScalarValue::Text(glob.to_string()));
+    let answered: Vec<_> = entries
+        .iter()
+        .map(|(path, digest)| {
+            crate::hosts::host_row([
+                ("path", serde_json::json!(path)),
+                ("digest", serde_json::json!(digest)),
+            ])
+        })
+        .collect();
+    hosts::project_host_answer(plan, inputs, &answered, rel_columns, sign)
+        .map_err(|failure| anyhow!("{failure}"))
+}
+
+/// Tick 0's rows for every continuing plan, read off the demand table the
+/// boot facts already cascaded into.
+pub fn continuing_seed_arrivals(
+    program: &GenProgram,
+    seam: &SqliteSeam,
+    adapter_rows: &[HostAdapterRow],
+    root: &Path,
+) -> Result<Vec<Arrival>> {
+    let mut seeds = Vec::new();
+    for plan in continuing_plans(program, adapter_rows) {
+        let table = relation_table(program, &plan.demand_rel)?;
+        let column = plan_input_column(plan)?;
+        match plan.name.as_str() {
+            "clock__tick" => {
+                for every in distinct_ints(seam, table, column)? {
+                    let bucket = ClockExecutor::bucket_of(every);
+                    seeds.extend(clock_answer(
+                        plan,
+                        &program.rel_columns,
+                        every,
+                        bucket,
+                        ArrivalSign::Add,
+                    )?);
+                }
+            }
+            "soopy__watch" => {
+                for glob in distinct_texts(program, seam, table, &plan.demand_rel, column)? {
+                    let entries = SoopyWatchExecutor::enumerate_glob(root, &glob)
+                        .map_err(|failure| anyhow!("{failure}"))?;
+                    seeds.extend(watch_answer_rows(
+                        plan,
+                        &program.rel_columns,
+                        &glob,
+                        &entries,
+                        ArrivalSign::Add,
+                    )?);
+                }
+            }
+            other => bail!("{other} declares a continuing cadence with no resident-loop driver"),
+        }
+    }
+    Ok(seeds)
 }
 
 /// How often the loop wakes to notice a stop request while nothing else moves.
@@ -715,23 +864,226 @@ enum WatchEvent {
     Closed(String, String),
 }
 
-/// Tick 0's bind rows without a watcher: `bind watch` becomes the enumeration of
-/// each glob, `bind interval` its current bucket. A one-shot run seeds with this.
-pub fn bind_seeds(binds: &[BindPlanData], root: &Path) -> Result<Vec<Arrival>> {
-    let mut seeds = Vec::new();
-    if let Some(rel) = bind_rel(binds, WATCH_EXECUTOR) {
-        let globs = literal_texts(binds, WATCH_EXECUTOR);
-        seeds.extend(FileSources::new(root, &globs).snapshot_arrivals(&rel)?);
-    }
-    if let Some(rel) = bind_rel(binds, INTERVAL_EXECUTOR) {
-        let periods = literal_integers(binds, INTERVAL_EXECUTOR);
-        seeds.extend(IntervalClocks::open(&periods).arrivals(&rel));
-    }
-    Ok(seeds)
+/// One bucket counter per declared `every`, keyed for its plan's own re-answer.
+struct ClockSource<'p> {
+    plan: &'p HostPlanData,
+    buckets: BTreeMap<i64, i64>,
 }
 
-/// Fold, print the finals, then stay up: one `bind` push is one tick and the
-/// finals re-print as `+`/`-` TSV deltas. Returns on `stop` or on every close.
+impl<'p> ClockSource<'p> {
+    fn open(plan: &'p HostPlanData, periods: &[i64]) -> ClockSource<'p> {
+        ClockSource {
+            plan,
+            buckets: periods.iter().map(|period| (*period, -1)).collect(),
+        }
+    }
+
+    fn seed_arrivals(&mut self, rel_columns: &HashMap<String, Vec<String>>) -> Result<Vec<Arrival>> {
+        let mut arrivals = Vec::new();
+        let periods: Vec<i64> = self.buckets.keys().copied().collect();
+        for period in periods {
+            let bucket = ClockExecutor::bucket_of(period);
+            self.buckets.insert(period, bucket);
+            arrivals.extend(clock_answer(
+                self.plan,
+                rel_columns,
+                period,
+                bucket,
+                ArrivalSign::Add,
+            )?);
+        }
+        Ok(arrivals)
+    }
+
+    fn due_arrivals(&mut self, rel_columns: &HashMap<String, Vec<String>>) -> Result<Vec<Arrival>> {
+        let mut arrivals = Vec::new();
+        let periods: Vec<i64> = self.buckets.keys().copied().collect();
+        for period in periods {
+            let bucket = ClockExecutor::bucket_of(period);
+            let held = self.buckets[&period];
+            if bucket == held {
+                continue;
+            }
+            arrivals.extend(clock_answer(
+                self.plan,
+                rel_columns,
+                period,
+                held,
+                ArrivalSign::Del,
+            )?);
+            arrivals.extend(clock_answer(
+                self.plan,
+                rel_columns,
+                period,
+                bucket,
+                ArrivalSign::Add,
+            )?);
+            self.buckets.insert(period, bucket);
+        }
+        Ok(arrivals)
+    }
+
+    /// How long the loop may park before the earliest cadence turns over.
+    fn next_fire(&self) -> Option<Duration> {
+        let now = ClockExecutor::bucket_of(1);
+        self.buckets
+            .keys()
+            .map(|period| {
+                let elapsed = now % *period;
+                Duration::from_secs((*period - elapsed).max(1) as u64)
+            })
+            .min()
+    }
+}
+
+/// The watcher NOTIFIES and `SoopyWatchExecutor::enumerate_glob` ANSWERS, keyed
+/// for its plan's own re-answer.
+struct WatchSource<'p> {
+    plan: &'p HostPlanData,
+    root: PathBuf,
+    globs: Vec<String>,
+    open: BTreeSet<String>,
+    /// The rows the rel currently holds, so a re-enumeration is a set difference.
+    held: BTreeMap<(String, String), String>,
+}
+
+impl<'p> WatchSource<'p> {
+    fn new(plan: &'p HostPlanData, root: &Path, globs: &[String]) -> WatchSource<'p> {
+        WatchSource {
+            plan,
+            root: root.to_path_buf(),
+            globs: globs.to_vec(),
+            open: globs.iter().cloned().collect(),
+            held: BTreeMap::new(),
+        }
+    }
+
+    /// One notifying thread per glob. A one-shot `dl6 run` never calls this: it
+    /// takes the enumeration and folds, so it spawns no thread and no watcher.
+    fn arm(&mut self, events: mpsc::Sender<WatchEvent>) -> Result<()> {
+        for glob in &self.globs {
+            let repository = soopy::discover(&self.root)
+                .with_context(|| format!("open a repository at {}", self.root.display()))?;
+            let mut watcher = soopy::SourceTree::open(repository)
+                .watch(soopy::SourceQuery {
+                    revision: soopy::Revision::Worktree,
+                    patterns: vec![soopy::Pattern(glob.clone())],
+                })
+                .with_context(|| format!("watch `{glob}`"))?;
+            let owned = glob.clone();
+            let events = events.clone();
+            std::thread::Builder::new()
+                .name(format!("dl6-watch-{glob}"))
+                .spawn(move || loop {
+                    match watcher.recv_timeout(Duration::from_secs(3600)) {
+                        Ok(Some(deltas)) if !deltas.is_empty() => {
+                            if events.send(WatchEvent::Moved).is_err() {
+                                return;
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(failure) => {
+                            let _ = events
+                                .send(WatchEvent::Closed(owned.clone(), failure.to_string()));
+                            return;
+                        }
+                    }
+                })
+                .with_context(|| format!("spawn the watcher thread for `{glob}`"))?;
+        }
+        Ok(())
+    }
+
+    fn close(&mut self, glob: &str) {
+        self.open.remove(glob);
+    }
+
+    fn enumerate(&self) -> Result<BTreeMap<(String, String), String>> {
+        let mut rows = BTreeMap::new();
+        for glob in self.globs.iter().filter(|glob| self.open.contains(*glob)) {
+            let entries = SoopyWatchExecutor::enumerate_glob(&self.root, glob)
+                .map_err(|failure| anyhow!("{failure}"))?;
+            for (path, digest) in entries {
+                rows.insert((glob.clone(), path), digest);
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Tick 0's rows.
+    fn snapshot_arrivals(
+        &mut self,
+        rel_columns: &HashMap<String, Vec<String>>,
+    ) -> Result<Vec<Arrival>> {
+        self.held = self.enumerate()?;
+        let mut arrivals = Vec::new();
+        for glob in &self.globs {
+            let entries: Vec<(String, String)> = self
+                .held
+                .iter()
+                .filter(|((held_glob, _), _)| held_glob == glob)
+                .map(|((_, path), digest)| (path.clone(), digest.clone()))
+                .collect();
+            if !entries.is_empty() {
+                arrivals.extend(watch_answer_rows(
+                    self.plan,
+                    rel_columns,
+                    glob,
+                    &entries,
+                    ArrivalSign::Add,
+                )?);
+            }
+        }
+        Ok(arrivals)
+    }
+
+    /// A save that changed no bytes re-enumerates to the same digest and is zero
+    /// delta at the rel boundary, so nothing downstream re-derives.
+    fn refresh_arrivals(
+        &mut self,
+        rel_columns: &HashMap<String, Vec<String>>,
+    ) -> Result<Vec<Arrival>> {
+        let next = self.enumerate()?;
+        let mut arrivals = Vec::new();
+        for glob in &self.globs {
+            let dels: Vec<(String, String)> = self
+                .held
+                .iter()
+                .filter(|(key, _)| &key.0 == glob)
+                .filter(|(key, digest)| next.get(*key) != Some(*digest))
+                .map(|(key, digest)| (key.1.clone(), digest.clone()))
+                .collect();
+            let adds: Vec<(String, String)> = next
+                .iter()
+                .filter(|(key, _)| &key.0 == glob)
+                .filter(|(key, digest)| self.held.get(*key) != Some(*digest))
+                .map(|(key, digest)| (key.1.clone(), digest.clone()))
+                .collect();
+            if !dels.is_empty() {
+                arrivals.extend(watch_answer_rows(
+                    self.plan,
+                    rel_columns,
+                    glob,
+                    &dels,
+                    ArrivalSign::Del,
+                )?);
+            }
+            if !adds.is_empty() {
+                arrivals.extend(watch_answer_rows(
+                    self.plan,
+                    rel_columns,
+                    glob,
+                    &adds,
+                    ArrivalSign::Add,
+                )?);
+            }
+        }
+        self.held = next;
+        Ok(arrivals)
+    }
+}
+
+/// Fold, print the finals, then stay up: one continuing re-answer is one tick.
 /// `true` means `--fail-on` answered rows, so the caller exits 1.
 pub fn watch(
     program: &GenProgram,
@@ -744,22 +1096,55 @@ pub fn watch(
     let mut live = LiveLoop::open(program, options.run.live_hosts, options.run.drain_cap)?;
     live.boot(&seam)?;
 
-    let globs = literal_texts(&options.binds, WATCH_EXECUTOR);
-    let periods = literal_integers(&options.binds, INTERVAL_EXECUTOR);
-    let watch_rel = bind_rel(&options.binds, WATCH_EXECUTOR);
-    let interval_rel = bind_rel(&options.binds, INTERVAL_EXECUTOR);
+    let adapter_rows = crate::types::load_program_host_adapter_rows(&program.name)
+        .context("read the process adapter sidecar")?;
+    let plans = continuing_plans(program, &adapter_rows);
+    if plans.is_empty() {
+        bail!(
+            "{} declares no continuing executor, so a watch would never tick; \
+             run it once with `dl6 run`",
+            program.name
+        );
+    }
+    let clock_plan = plans.iter().find(|plan| plan.name == "clock__tick").copied();
+    let watch_plan = plans.iter().find(|plan| plan.name == "soopy__watch").copied();
+    if let Some(other) = plans
+        .iter()
+        .find(|plan| plan.name != "clock__tick" && plan.name != "soopy__watch")
+    {
+        bail!("{} declares a continuing cadence with no resident-loop driver", other.name);
+    }
+
+    let mut clocks = match clock_plan {
+        Some(plan) => {
+            let table = relation_table(program, &plan.demand_rel)?;
+            let column = plan_input_column(plan)?;
+            let periods = distinct_ints(&seam, table, column)?;
+            Some(ClockSource::open(plan, &periods))
+        }
+        None => None,
+    };
+    let mut sources = match watch_plan {
+        Some(plan) => {
+            let table = relation_table(program, &plan.demand_rel)?;
+            let column = plan_input_column(plan)?;
+            let globs = distinct_texts(program, &seam, table, &plan.demand_rel, column)?;
+            Some(WatchSource::new(plan, &options.root, &globs))
+        }
+        None => None,
+    };
 
     let (events, inbox) = mpsc::channel::<WatchEvent>();
-    let mut sources = FileSources::new(&options.root, &globs);
-    sources.arm(events)?;
-    let mut clocks = IntervalClocks::open(&periods);
+    if let Some(sources) = sources.as_mut() {
+        sources.arm(events)?;
+    }
 
     let mut first = seeds;
-    if let Some(rel) = &watch_rel {
-        first.extend(sources.snapshot_arrivals(rel)?);
+    if let Some(clocks) = clocks.as_mut() {
+        first.extend(clocks.seed_arrivals(&program.rel_columns)?);
     }
-    if let Some(rel) = &interval_rel {
-        first.extend(clocks.arrivals(rel));
+    if let Some(sources) = sources.as_mut() {
+        first.extend(sources.snapshot_arrivals(&program.rel_columns)?);
     }
 
     let started = Instant::now();
@@ -780,19 +1165,16 @@ pub fn watch(
         wall_ms = started.elapsed().as_millis() as u64,
         "watch: first fold"
     );
-    if globs.is_empty() && periods.is_empty() {
-        bail!(
-            "{} declares no `bind watch` or `bind interval` source, so a watch would never tick; \
-             run it once with `dl6 run`",
-            program.name
-        );
-    }
 
     loop {
         if *stop.borrow_and_update() {
             break;
         }
-        let deadline = clocks.next_fire().unwrap_or(STOP_POLL).min(STOP_POLL);
+        let deadline = clocks
+            .as_ref()
+            .and_then(ClockSource::next_fire)
+            .unwrap_or(STOP_POLL)
+            .min(STOP_POLL);
         let mut batch: Vec<Arrival> = Vec::new();
         match inbox.recv_timeout(deadline) {
             Ok(event) => {
@@ -810,26 +1192,28 @@ pub fn watch(
                     match event {
                         WatchEvent::Moved => moved = true,
                         WatchEvent::Closed(glob, failure) => {
-                            sources.close(&glob);
+                            if let Some(sources) = sources.as_mut() {
+                                sources.close(&glob);
+                            }
                             tracing::warn!(glob, failure, "watch: a file source closed");
                         }
                     }
                 }
                 if moved {
-                    if let Some(rel) = &watch_rel {
-                        batch.extend(sources.refresh_arrivals(rel)?);
+                    if let Some(sources) = sources.as_mut() {
+                        batch.extend(sources.refresh_arrivals(&program.rel_columns)?);
                     }
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                if periods.is_empty() {
+                if clocks.is_none() {
                     break;
                 }
             }
         }
-        if let Some(rel) = &interval_rel {
-            batch.extend(clocks.due_arrivals(rel));
+        if let Some(clocks) = clocks.as_mut() {
+            batch.extend(clocks.due_arrivals(&program.rel_columns)?);
         }
         if batch.is_empty() {
             continue;
@@ -882,246 +1266,6 @@ fn unix_seconds() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|since| since.as_secs())
         .unwrap_or(0)
-}
-
-fn bind_rel(binds: &[BindPlanData], executor: &str) -> Option<String> {
-    binds
-        .iter()
-        .find(|plan| plan.execution == executor && !plan.literals.is_empty())
-        .map(|plan| plan.name.clone())
-}
-
-fn literal_texts(binds: &[BindPlanData], executor: &str) -> Vec<String> {
-    binds
-        .iter()
-        .filter(|plan| plan.execution == executor)
-        .flat_map(|plan| plan.literals.iter())
-        .filter_map(|literal| literal.as_str().map(str::to_string))
-        .collect()
-}
-
-fn literal_integers(binds: &[BindPlanData], executor: &str) -> Vec<i64> {
-    binds
-        .iter()
-        .filter(|plan| plan.execution == executor)
-        .flat_map(|plan| plan.literals.iter())
-        .filter_map(serde_json::Value::as_i64)
-        .filter(|period| *period > 0)
-        .collect()
-}
-
-// ═══ bind watch: soopy's file watcher ════════════════════════════════════════
-
-/// The watcher NOTIFIES and `soopy::enumerate` ANSWERS: a delta carries
-/// `ContentId::Blake3`, a demand host reads by the `GitBlob` oid (hosts.rs:839).
-struct FileSources {
-    root: PathBuf,
-    globs: Vec<String>,
-    open: BTreeSet<String>,
-    /// The rows the rel currently holds, so a re-enumeration is a set difference.
-    held: BTreeMap<(String, String), String>,
-}
-
-impl FileSources {
-    fn new(root: &Path, globs: &[String]) -> FileSources {
-        FileSources {
-            root: root.to_path_buf(),
-            globs: globs.to_vec(),
-            open: globs.iter().cloned().collect(),
-            held: BTreeMap::new(),
-        }
-    }
-
-    /// One notifying thread per glob. A one-shot `dl6 run` never calls this: it
-    /// takes the enumeration and folds, so it spawns no thread and no watcher.
-    fn arm(&mut self, events: mpsc::Sender<WatchEvent>) -> Result<()> {
-        for glob in &self.globs {
-            let repository = soopy::discover(&self.root)
-                .with_context(|| format!("open a repository at {}", self.root.display()))?;
-            let mut watcher = soopy::SourceTree::open(repository)
-                .watch(soopy::SourceQuery {
-                    revision: soopy::Revision::Worktree,
-                    patterns: vec![soopy::Pattern(glob.clone())],
-                })
-                .with_context(|| format!("watch `{glob}`"))?;
-            let owned = glob.clone();
-            let events = events.clone();
-            std::thread::Builder::new()
-                .name(format!("dl6-watch-{glob}"))
-                .spawn(move || loop {
-                    match watcher.recv_timeout(Duration::from_secs(3600)) {
-                        Ok(Some(deltas)) if !deltas.is_empty() => {
-                            if events.send(WatchEvent::Moved).is_err() {
-                                return;
-                            }
-                        }
-                        Ok(_) => {}
-                        Err(failure) => {
-                            let _ = events
-                                .send(WatchEvent::Closed(owned.clone(), failure.to_string()));
-                            return;
-                        }
-                    }
-                })
-                .with_context(|| format!("spawn the watcher thread for `{glob}`"))?;
-        }
-        Ok(())
-    }
-
-    fn close(&mut self, glob: &str) {
-        self.open.remove(glob);
-    }
-
-    /// Every tracked file each glob names, with its blob digest. The same
-    /// enumeration `SoopyFilesExecutor` runs for the `files` host.
-    fn enumerate(&self) -> Result<BTreeMap<(String, String), String>> {
-        let repository = soopy::discover(&self.root)
-            .with_context(|| format!("open a repository at {}", self.root.display()))?;
-        let mut rows = BTreeMap::new();
-        for glob in self.globs.iter().filter(|glob| self.open.contains(*glob)) {
-            let entries = soopy::enumerate(
-                &repository,
-                &soopy::GitFilesQuery {
-                    revision: soopy::Revision::Worktree,
-                    pathspecs: vec![glob.clone()],
-                },
-            )
-            .with_context(|| format!("enumerate `{glob}`"))?;
-            for entry in entries {
-                let soopy::ContentId::GitBlob(oid) = &entry.content else {
-                    bail!(
-                        "tracked file {} carries no git blob digest",
-                        entry.source.path.0
-                    );
-                };
-                rows.insert(
-                    (glob.clone(), entry.source.path.0.to_string()),
-                    oid.0.to_string(),
-                );
-            }
-        }
-        Ok(rows)
-    }
-
-    /// Tick 0's rows.
-    fn snapshot_arrivals(&mut self, rel: &str) -> Result<Vec<Arrival>> {
-        self.held = self.enumerate()?;
-        Ok(self
-            .held
-            .iter()
-            .map(|((glob, path), digest)| {
-                bind_arrival(rel, ArrivalSign::Add, [glob, path, digest].map(String::as_str))
-            })
-            .collect())
-    }
-
-    /// A save that changed no bytes re-enumerates to the same digest and is zero
-    /// delta at the rel boundary, so nothing downstream re-derives.
-    fn refresh_arrivals(&mut self, rel: &str) -> Result<Vec<Arrival>> {
-        let next = self.enumerate()?;
-        let mut arrivals = Vec::new();
-        for (key, digest) in &self.held {
-            if next.get(key) != Some(digest) {
-                arrivals.push(bind_arrival(
-                    rel,
-                    ArrivalSign::Del,
-                    [key.0.as_str(), key.1.as_str(), digest.as_str()],
-                ));
-            }
-        }
-        for (key, digest) in &next {
-            if self.held.get(key) != Some(digest) {
-                arrivals.push(bind_arrival(
-                    rel,
-                    ArrivalSign::Add,
-                    [key.0.as_str(), key.1.as_str(), digest.as_str()],
-                ));
-            }
-        }
-        self.held = next;
-        Ok(arrivals)
-    }
-}
-
-fn bind_arrival(rel: &str, sign: ArrivalSign, cells: [&str; 3]) -> Arrival {
-    Arrival {
-        rel: rel.to_string(),
-        sign,
-        row: cells
-            .iter()
-            .map(|cell| Value::Text((*cell).to_string()))
-            .collect(),
-    }
-}
-
-// ═══ bind interval: the monotonic clock ══════════════════════════════════════
-
-/// One bucket counter per declared period. The previous bucket is retired in the
-/// same batch, so the rel holds one row per cadence rather than growing.
-struct IntervalClocks {
-    buckets: BTreeMap<i64, i64>,
-}
-
-impl IntervalClocks {
-    fn open(periods: &[i64]) -> IntervalClocks {
-        IntervalClocks {
-            buckets: periods.iter().map(|period| (*period, -1)).collect(),
-        }
-    }
-
-    fn now() -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|since| since.as_secs() as i64)
-            .unwrap_or(0)
-    }
-
-    /// The first batch: every cadence's current bucket, with nothing to retire.
-    fn arrivals(&mut self, rel: &str) -> Vec<Arrival> {
-        let now = IntervalClocks::now();
-        let mut arrivals = Vec::new();
-        for (period, held) in self.buckets.iter_mut() {
-            let bucket = now / *period;
-            *held = bucket;
-            arrivals.push(interval_arrival(rel, ArrivalSign::Add, *period, bucket));
-        }
-        arrivals
-    }
-
-    fn due_arrivals(&mut self, rel: &str) -> Vec<Arrival> {
-        let now = IntervalClocks::now();
-        let mut arrivals = Vec::new();
-        for (period, held) in self.buckets.iter_mut() {
-            let bucket = now / *period;
-            if bucket == *held {
-                continue;
-            }
-            arrivals.push(interval_arrival(rel, ArrivalSign::Del, *period, *held));
-            arrivals.push(interval_arrival(rel, ArrivalSign::Add, *period, bucket));
-            *held = bucket;
-        }
-        arrivals
-    }
-
-    /// How long the loop may park before the earliest cadence turns over.
-    fn next_fire(&self) -> Option<Duration> {
-        let now = IntervalClocks::now();
-        self.buckets
-            .keys()
-            .map(|period| {
-                let elapsed = now % *period;
-                Duration::from_secs((*period - elapsed).max(1) as u64)
-            })
-            .min()
-    }
-}
-
-fn interval_arrival(rel: &str, sign: ArrivalSign, period: i64, bucket: i64) -> Arrival {
-    Arrival {
-        rel: rel.to_string(),
-        sign,
-        row: vec![Value::Integer(period), Value::Integer(bucket)],
-    }
 }
 
 // ═══ the printed delta ═══════════════════════════════════════════════════════

@@ -1,18 +1,27 @@
 # no-console rail over a fixture repo: ast-grep hits become diag rows.
 
-rel console_hit(path: text, start: int, end: int, text: text).
+rel /extract/ast_rule(path: text, digest: text, request: text) ->
+  (record: text, query: text, span: json) key(1, 3).
+
+rel console_rule(id: text, request: text).
+console_rule('console_log_hit', 'id: console_log_hit
+rule:
+  has:
+    pattern: console.log($$$ARGS)
+').
+
+rel console_hit(path: text, start: int, end: int).
 
 # newest row only (rel(1) state): the live count of remaining hits.
 rel(1) hit_count(hits: int).
 
-# {pattern} splices into the command line; $path is passed as an env var.
-sh sg(pattern: text, path: text, start: int, end: int, text: text) =
-  `sg run --pattern '{pattern}' --json $path`.
-
-# demand: one sg run per (pattern, path, content witness); salt re-fires on edit.
-console_hit(path, start, end, text) <-
+# demand: one ast_rule run per (path, content witness, rule); the (path,
+# request) key re-fires on either the file's digest or the rule text changing.
+console_hit(path, start, end) <-
     file(path, content_hash),
-    sg?("console.log($$$ARGS)", path, content_hash, start, end, text).
+    console_rule(_, request),
+    /extract/ast_rule(path, content_hash, request, 'console_log_hit', _query, span),
+    decode(span, {start: start, end: end}).
 
 hit_count(hits: count(path)) <- console_hit(path).
 

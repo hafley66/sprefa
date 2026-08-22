@@ -11,8 +11,6 @@
 #       concatMap(bucket => forkJoin(conditionalGet(ep, etag, bucket), cost(bucket))),
 #       scan((held, seen) => upsertByNumber(held, seen)))
 
-# NOT YET LINKED: no Rust executor answers /clock/tick, so this program is a
-# named stop at construction until one does. The ghcache lane owns that arm.
 rel /clock/tick(every: int) -> (bucket: int).
 
 rel repo(slug: text).
