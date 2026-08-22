@@ -917,12 +917,19 @@ rel gql_pull(batch_key: text, bucket: int, repo_alias: text, number: int,
              gh_node_id: text, gql_state: text, title: text, author: text,
              head_ref: text, head_sha: text, base_ref: text, mergeable: text,
              draft: int, additions: int, deletions: int, changed_files: int,
-             created_at: text, updated_at: text, merged_at: text,
-             closed_at: text, body: text).
+             created_at: text, updated_at: text, body: text).
+# A json null in a captured field answers zero rows (measured: live PR batch,
+# `mergedAt: MergedAt: text` on an open PR), so every nullable field is its
+# own rel and absence is the absent row. `isDraft` is a json bool, captured
+# untyped: no capture type spells bool (json_capture_type_unknown).
+rel gql_pull_merged_at(batch_key: text, bucket: int, repo_alias: text,
+                       number: int, merged_at: text).
+rel gql_pull_closed_at(batch_key: text, bucket: int, repo_alias: text,
+                       number: int, closed_at: text).
 
 gql_pull(BatchKey, Bucket, RepoAlias, Number, GhNodeId, GqlState, Title, Author,
          HeadRef, HeadSha, BaseRef, Mergeable, Draft, Additions, Deletions,
-         ChangedFiles, CreatedAt, UpdatedAt, MergedAt, ClosedAt, PrBody) <-
+         ChangedFiles, CreatedAt, UpdatedAt, PrBody) <-
   pr_batch_response(BatchKey, Bucket, RespStatus, _RR, _RS, _By, Data),
   RespStatus == 200,
   decode(Data, {data: {$RepoAlias: {pullRequests: {nodes: [...
@@ -930,11 +937,22 @@ gql_pull(BatchKey, Bucket, RepoAlias, Number, GhNodeId, GqlState, Title, Author,
      title: Title: text, author: {login: Author: text},
      headRefName: HeadRef: text, headRefOid: HeadSha: text,
      baseRefName: BaseRef: text, mergeable: Mergeable: text,
-     isDraft: Draft: int, additions: Additions: int,
+     isDraft: Draft, additions: Additions: int,
      deletions: Deletions: int, changedFiles: ChangedFiles: int,
      createdAt: CreatedAt: text, updatedAt: UpdatedAt: text,
-     mergedAt: MergedAt: text, closedAt: ClosedAt: text,
      body: PrBody: text}]}}}}).
+
+gql_pull_merged_at(BatchKey, Bucket, RepoAlias, Number, MergedAt) <-
+  pr_batch_response(BatchKey, Bucket, RespStatus, _RR, _RS, _By, Data),
+  RespStatus == 200,
+  decode(Data, {data: {$RepoAlias: {pullRequests: {nodes: [...
+    {number: Number: int, mergedAt: MergedAt: text}]}}}}).
+
+gql_pull_closed_at(BatchKey, Bucket, RepoAlias, Number, ClosedAt) <-
+  pr_batch_response(BatchKey, Bucket, RespStatus, _RR, _RS, _By, Data),
+  RespStatus == 200,
+  decode(Data, {data: {$RepoAlias: {pullRequests: {nodes: [...
+    {number: Number: int, closedAt: ClosedAt: text}]}}}}).
 
 # GraphQL answers OPEN/CLOSED/MERGED; the reader views and `open_pr_head` are
 # written against the REST vocabulary, so the state is lowered here.
@@ -944,9 +962,10 @@ pull_request_seen(repo(Owner, Name), Number, GhNodeId, State, Title, Author,
                   ClosedAt, PrBody) <-
   gql_pull(BatchKey, Bucket, RepoAlias, Number, GhNodeId, GqlState, Title,
            Author, HeadRef, HeadSha, BaseRef, Mergeable, Draft, Additions,
-           Deletions, ChangedFiles, CreatedAt, UpdatedAt, MergedAt, ClosedAt,
-           PrBody),
+           Deletions, ChangedFiles, CreatedAt, UpdatedAt, PrBody),
   pr_batch_alias(Bucket, BatchKey, RepoAlias, Owner, Name),
+  coalesce(gql_pull_merged_at(BatchKey, Bucket, RepoAlias, Number, MergedAt), ""),
+  coalesce(gql_pull_closed_at(BatchKey, Bucket, RepoAlias, Number, ClosedAt), ""),
   State := lower(GqlState).
 
 pull_request(RepoRef, Number, GhNodeId, State, Title, Author, HeadRef, HeadSha,
