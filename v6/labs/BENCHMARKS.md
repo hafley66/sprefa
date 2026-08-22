@@ -23,7 +23,7 @@ history, and the bank each bench writes its numbers to.
 8. [dred profile](#dred-profile---single-retract-flame)
 9. [dl6 budget cell](#dl6-budget-cell---the-regression-gate)
 10. [sqlite build baseline](#sqlite-build-baseline---landing)
-11. [shared frontier arms](#shared-frontier-arms--per_rel-vs-frontiershared)
+11. [shared frontier arms](#shared-frontier-arms-per_rel-vs-frontiershared)
 12. [Open items](#open-items)
 
 ## The truth stack
@@ -325,7 +325,7 @@ build dominates, a few seconds warm.
 
 ---
 
-## shared frontier arms — per_rel vs frontier(shared)
+## shared frontier arms: per_rel vs frontier(shared)
 
 **Purpose.** Price the `frontier(shared)` compile option against the default
 `per_rel` on the Rust door: what it costs in emitted text and what it buys per
@@ -387,6 +387,14 @@ frontier NAME alive as a TEMP view over the shared pair so compiled reads keep
 their text (`shared_frontier_view_ddl/3`), and a view carrying the payload
 column list plus the join is longer than the `CREATE TEMP TABLE` it replaced.
 Three objects per rel become two, so the object count falls; the text rises.
+
+`plans/2026-08-19-shared-sqlite-frontier.md:196` priced pokeapi at `DDL bytes
+1,682,616 -> 716,125`, and finding F6 above it
+(`v6/labs/shared_frontier/REPORT.md:436`) reads "966,907 of 1,682,616 DDL bytes,
+57.5%, replaced by 416 bytes of shared DDL". That arm minted no views. The
+shipped lowering replaces the same 966,907 bytes with 416 bytes of shared DDL
+plus two `CREATE TEMP VIEW` statements per relation. The table-count half of the
+prediction holds; the byte half comes out the opposite sign.
 
 ### Correctness of the shared arm, whole corpus
 
