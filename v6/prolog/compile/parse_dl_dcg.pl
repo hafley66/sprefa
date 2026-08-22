@@ -1202,6 +1202,19 @@ atom_arg(named(Name, Value)) -->
 atom_arg(pos(Value)) --> expr(Value).
 
 
+% A SHORT all-positional body call puns by name when EVERY argument is a
+% capitalized variable naming a declared column (user 2026-08-22: "only when
+% all puns are matching cap first, otherwise its ambiguous"). A full-arity
+% call stays positional; a short call with one non-punning argument stays
+% positional and lands on the arity check.
+resolve_named_args(body, Rel, Args, Pos) :-
+    \+ member(named(_, _), Args),
+    lookup_column_order(Rel, Cols),
+    length(Args, ArgCount), length(Cols, ColCount), ArgCount < ColCount,
+    activate_keyword_puns(Args, Cols, Resolved),
+    forall(member(Arg, Resolved), Arg = named(_, _)),
+    !,
+    resolve_mixed_args(body, Rel, Resolved, Cols, Pos).
 resolve_named_args(_, _, Args, Pos) :-
     \+ member(named(_, _), Args), !,
     maplist(arg_value, Args, Pos).
@@ -1223,6 +1236,26 @@ capitalized_keyword_pun(Name, Column) :-
     char_type(First, upper),
     downcase_atom(First, Lower),
     atom_chars(Column, [Lower | Rest]).
+% `PollPeriod` also puns `poll_period`: the camel form is how every rule in
+% the corpus spells a multi-word column variable.
+capitalized_keyword_pun(Name, Column) :-
+    atom_chars(Name, [First | Rest]),
+    char_type(First, upper),
+    once(( member(Upper, Rest), char_type(Upper, upper) )),
+    snake_chars([First | Rest], SnakeChars),
+    atom_chars(Column, SnakeChars).
+
+snake_chars([First | Rest], [Lower | More]) :-
+    downcase_atom(First, LowerAtom), atom_chars(LowerAtom, [Lower]),
+    snake_tail(Rest, More).
+
+snake_tail([], []).
+snake_tail([C | Rest], Out) :-
+    (   char_type(C, upper)
+    ->  downcase_atom(C, LowerAtom), atom_chars(LowerAtom, [Lower]),
+        snake_tail(Rest, More), Out = ['_', Lower | More]
+    ;   snake_tail(Rest, More), Out = [C | More]
+    ).
 
 activate_keyword_puns([], _, []).
 activate_keyword_puns([pos(Value) | Rest], Cols, [Arg | More]) :-

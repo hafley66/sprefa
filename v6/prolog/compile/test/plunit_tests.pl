@@ -6936,6 +6936,30 @@ test(capitalized_pun_can_omit_the_columns_between_it_and_a_keyword) :-
               triple(Source, BodyTarget, fixed))],
     var(BodyTarget).
 
+test(a_short_all_pun_body_call_binds_by_column_name) :-
+    parsed_module_path_program(
+        'rel pull_request(number: int, state: text, title: text, author: text).\nrel open_pr(number: int).\nopen_pr(Number) <- pull_request(Number, State), State == \'open\'.',
+        _, Rules),
+    Rules =@= [(open_pr(Number) <- pull_request(Number, State, _, _), State == open)].
+
+test(a_short_all_pun_body_call_binds_out_of_order) :-
+    parsed_module_path_program(
+        'rel pull_request(number: int, state: text, title: text, author: text).\nrel open_pr(number: int).\nopen_pr(Number) <- pull_request(State, Number), State == \'open\'.',
+        _, Rules),
+    Rules =@= [(open_pr(Number) <- pull_request(Number, State, _, _), State == open)].
+
+test(a_camel_case_variable_puns_a_snake_case_column) :-
+    parsed_module_path_program(
+        'rel global_setting(poll_period: int, org_discovery_period: int, rate_warn_threshold: int).\nrel period(every: int).\nperiod(PollPeriod) <- global_setting(PollPeriod).',
+        _, Rules),
+    Rules =@= [(period(PollPeriod) <- global_setting(PollPeriod, _, _))].
+
+test(a_short_call_with_one_non_punning_variable_stays_positional) :-
+    parsed_module_path_program(
+        'rel pull_request(number: int, state: text, title: text, author: text).\nrel open_pr(number: int).\nopen_pr(Number) <- pull_request(Number, Other).',
+        _, Rules),
+    Rules =@= [(open_pr(Number) <- pull_request(Number, _Other))].
+
 test(a_head_atom_uses_a_capitalized_pun) :-
     parsed_module_path_program(
         'rel pair(source: text, target: text).\nrel selected(source: text, target: text).\nselected(Source, target: Target) <- pair(Source, Target).',
