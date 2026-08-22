@@ -556,6 +556,105 @@ fn digest_of(variable: &str) -> String {
     std::env::var(variable).unwrap_or_else(|_| "unknown".to_string())
 }
 
+// ═══ the drain-overflow report ═══════════════════════════════════════════════
+
+/// How many trailing drain ticks the overflow report reads.
+pub const DRAIN_REPORT_TICKS: usize = 6;
+/// How many rels the overflow message names.
+pub const DRAIN_REPORT_RELS: usize = 3;
+
+/// One tick's delta line beside the per-rel +/- counts the report ranks on.
+struct DrainTick {
+    tick: usize,
+    line: String,
+    rels: Vec<(String, usize, usize)>,
+}
+
+impl DrainTick {
+    fn of(tick: usize, deltas: &TickDeltas, line: &str) -> DrainTick {
+        DrainTick {
+            tick,
+            line: line.to_string(),
+            rels: deltas
+                .rels
+                .iter()
+                .filter(|delta| !delta.add.is_empty() || !delta.del.is_empty())
+                .map(|delta| (delta.rel.clone(), delta.add.len(), delta.del.len()))
+                .collect(),
+        }
+    }
+}
+
+/// The rels with the most +/- lines over the window, loudest first. Ties break
+/// on the rel name so one looping program reports one order every run.
+fn loudest_rels(window: &VecDeque<DrainTick>, wanted: usize) -> Vec<(String, usize, usize)> {
+    let mut tally: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    for entry in window {
+        for (rel, add, del) in &entry.rels {
+            let counts = tally.entry(rel.as_str()).or_insert((0, 0));
+            counts.0 += add;
+            counts.1 += del;
+        }
+    }
+    let mut ranked: Vec<(String, usize, usize)> = tally
+        .into_iter()
+        .map(|(rel, (add, del))| (rel.to_string(), add, del))
+        .collect();
+    ranked.sort_by(|left, right| {
+        (right.1 + right.2)
+            .cmp(&(left.1 + left.2))
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    ranked.truncate(wanted);
+    ranked
+}
+
+fn name_loudest_rels(window: &VecDeque<DrainTick>, wanted: usize) -> String {
+    let named: Vec<String> = loudest_rels(window, wanted)
+        .into_iter()
+        .map(|(rel, add, del)| format!("{rel} +{add}/-{del}"))
+        .collect();
+    if named.is_empty() {
+        "no rel moved".to_string()
+    } else {
+        named.join(", ")
+    }
+}
+
+/// The diagnosis the bail line cannot carry. A demand row holds whatever the
+/// program put in it, `Authorization` included, so rows stay at debug level.
+fn report_drain_overflow(window: &VecDeque<DrainTick>) {
+    for entry in window {
+        let moved: Vec<String> = entry
+            .rels
+            .iter()
+            .map(|(rel, add, del)| format!("{rel} +{add}/-{del}"))
+            .collect();
+        tracing::warn!(
+            target: "sprefa_engine_rs::drain",
+            tick = entry.tick,
+            rels = %moved.join(", "),
+            "drain tick"
+        );
+        tracing::debug!(
+            target: "sprefa_engine_rs::drain",
+            tick = entry.tick,
+            deltas = %entry.line,
+            "drain tick rows"
+        );
+    }
+    for (rel, add, del) in loudest_rels(window, usize::MAX) {
+        tracing::warn!(
+            target: "sprefa_engine_rs::drain",
+            rel = %rel,
+            add,
+            del,
+            ticks = window.len(),
+            "drain rel"
+        );
+    }
+}
+
 // ═══ the resident live loop ══════════════════════════════════════════════════
 
 /// One external batch and every host-response and carry-drain tick it implies.
@@ -606,6 +705,7 @@ impl<'p> LiveLoop<'p> {
         let mut lines = Vec::new();
         let mut carry_pending = false;
         let mut off_batch = 0usize;
+        let mut window: VecDeque<DrainTick> = VecDeque::new();
         loop {
             let arrivals = match pending.pop_front() {
                 Some(arrivals) => arrivals,
@@ -615,17 +715,26 @@ impl<'p> LiveLoop<'p> {
             if lines.len() > 0 {
                 off_batch += 1;
                 if off_batch > self.drain_cap {
+                    report_drain_overflow(&window);
                     bail!(
-                        "drain overflow: {} exceeded {} host/drain ticks in one batch",
+                        "drain overflow: {} exceeded {} host/drain ticks in one batch; \
+                         over the last {} ticks the loudest rels are {}",
                         self.program.name,
-                        self.drain_cap
+                        self.drain_cap,
+                        window.len(),
+                        name_loudest_rels(&window, DRAIN_REPORT_RELS)
                     );
                 }
             }
             let deltas = self.drive(seam, arrivals).await?;
             self.tick += 1;
             carry_pending = deltas.carry_pending;
-            lines.push(format_deltas(self.program, self.tick, &deltas));
+            let line = format_deltas(self.program, self.tick, &deltas);
+            if window.len() == DRAIN_REPORT_TICKS {
+                window.pop_front();
+            }
+            window.push_back(DrainTick::of(self.tick, &deltas, &line));
+            lines.push(line);
             if let Some(runner) = self.runner.as_mut() {
                 let responses = {
                     let _scope = crate::trace::Scope::phase("host_collect");

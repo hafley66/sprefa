@@ -1,4 +1,4 @@
-# Four structural properties, argued in README.md, that a reader needs before
+# Five structural properties, argued in README.md, that a reader needs before
 # editing any rule below.
 #
 # @comment-ok: the rate-budget contract, the one doc site.
@@ -10,6 +10,8 @@
 # warn stretch can only SLOW a poll, never shorten the configured floor.
 # (4) The transport holds NOTHING: the ETag, the 304 body, the page walk, the
 # token and the GraphQL query are rules here, so a restart re-reads the db.
+# (5) NO INPUT OF A DEMAND MOVES WITHIN A BUCKET. `page_stored_etag` reads only
+# a tag written in an earlier bucket, so one page asks one question per bucket.
 
 use clock.
 use dl.
@@ -85,8 +87,8 @@ rel var(name: text, bucket: int) -> (value: text) key(1).
 # ONE transport. `headers` is a JSON object of header name to value, so
 # Authorization and If-None-Match reach the wire only from a rule's row.
 #
-# `prev_etag` shapes no header: it is the demand-identity column that makes a
-# moved tag a NEW question rather than a re-ask of an answered one.
+# `prev_etag` shapes no header. It is demand identity, and `page_stored_etag`
+# is what keeps it still for a whole bucket.
 rel get(url: text, headers: text, prev_etag: text, bucket: int)
   -> (status: int, response_headers: json, body: json, bytes: int).
 
@@ -377,16 +379,21 @@ rel due(endpoint_path: text, bucket: int, api_type: text).
 rel poll_state(endpoint_path: text, etag: text, last_modified: text,
                poll_interval: int, last_polled_bucket: int,
                last_changed_bucket: int).
-rel poll_state_etag(page_url: text, etag: text) key(1).
+# `at_bucket` is what keeps the tag out of the demand identity while it moves:
+# the request reads only a tag stored in an EARLIER bucket.
+rel poll_state_etag(page_url: text, etag: text, at_bucket: int) key(1).
 rel poll_state_modified(page_url: text, last_modified: text) key(1).
 rel poll_state_period(page_url: text, server_period: int) key(1).
 rel poll_state_polled(page_url: text, last_polled_bucket: int) key(1).
 rel poll_state_changed(page_url: text, last_changed_bucket: int) key(1).
 
+# `api_token` is a `<+` fold one tick behind `token_seen`: without it here the
+# first poll is unauthenticated and reads the 60/hr bucket.
 due(EndpointPath, Bucket, ApiType) <-
   current_clock(60, Bucket),
   poll_endpoint(EndpointPath, ApiType),
   endpoint_period(EndpointPath, PeriodTicks),
+  api_token(TokenValue),
   not(over_budget(ApiType, Bucket)),
   PhaseSlot := Bucket mod PeriodTicks,
   PhaseSlot == 0.
@@ -403,8 +410,11 @@ rel page_ordinal(page_url: text, bucket: int, page_ordinal: int) key(1, 2).
 
 page_fetch(EndpointPath, EndpointPath, 1, Bucket) <-
   due(EndpointPath, Bucket).
+# `page_queued` is a keyed fold and never retires, so without the clock join a
+# page walked in ANY past bucket keeps re-deriving its question.
 page_fetch(EndpointPath, PageUrl, PageOrdinal, Bucket) <-
-  page_queued(EndpointPath, PageUrl, PageOrdinal, Bucket).
+  page_queued(EndpointPath, PageUrl, PageOrdinal, Bucket),
+  current_clock(60, Bucket).
 
 page_ordinal(EndpointPath, Bucket, 1) <+
   due(EndpointPath, Bucket).
@@ -436,9 +446,17 @@ request_header(PageUrl, "Authorization", AuthValue) <-
   api_token(TokenValue),
   AuthValue := concat(["Bearer ", TokenValue]).
 
+rel page_stored_etag(page_url: text, bucket: int, prev_etag: text).
+
+# `AtBucket < Bucket` is the whole cut: a tag this bucket's own answer wrote is
+# not readable until the clock moves, so the question cannot re-ask itself.
+page_stored_etag(PageUrl, Bucket, PrevEtag) <-
+  page_fetch(page_url: PageUrl, bucket: Bucket),
+  poll_state_etag(page_url: PageUrl, etag: PrevEtag, at_bucket: AtBucket),
+  AtBucket < Bucket.
+
 request_header(PageUrl, "If-None-Match", PrevEtag) <-
-  page_fetch(PageUrl),
-  poll_state_etag(PageUrl, PrevEtag),
+  page_stored_etag(PageUrl, PrevEtag),
   PrevEtag != "".
 
 request_headers(PageUrl, json_object(HeaderName, HeaderValue)) <-
@@ -452,8 +470,8 @@ rel page_arrival(endpoint_path: text, page_url: text, bucket: int, status: int,
 # still polls exactly once. Its own rel because a coalesce output may not
 # appear again in the same body (0_coalesce_expand.pl:157).
 page_prev_etag(PageUrl, PrevEtag) <-
-  page_fetch(PageUrl),
-  coalesce(poll_state_etag(PageUrl, PrevEtag), "").
+  page_fetch(page_url: PageUrl, bucket: Bucket),
+  coalesce(page_stored_etag(PageUrl, Bucket, PrevEtag), "").
 
 page_arrival(EndpointPath, PageUrl, Bucket, Status, RespHeaders, Body, Bytes) <-
   page_fetch(EndpointPath, PageUrl, Bucket),
@@ -562,8 +580,8 @@ rest_response(EndpointPath, Bucket, Status, Body) <-
 
 # Written direct from the response so every path back into the host demand
 # carries ONE tick offset (3_clock_check.pl:336); not writing is db.rs:173's COALESCE.
-poll_state_etag(PageUrl, Etag) <+
-  page_response(PageUrl, Etag),
+poll_state_etag(PageUrl, Etag, AtBucket) <+
+  page_response(page_url: PageUrl, bucket: AtBucket, etag: Etag),
   Etag != "".
 
 poll_state_modified(PageUrl, LastModified) <+
@@ -581,10 +599,15 @@ poll_state_changed(PageUrl, Bucket) <+
   page_response(page_url: PageUrl, bucket: Bucket, status: RespStatus),
   RespStatus == 200.
 
+# A coalesce source may leave exactly ONE column unbound
+# (0_coalesce_expand.pl:161), so the tag reaches the view without its bucket.
+rel poll_state_tag(page_url: text, etag: text).
+poll_state_tag(PageUrl, Etag) <- poll_state_etag(PageUrl, Etag).
+
 poll_state(PageUrl, Etag, LastModified, ServerPeriod, LastPolled,
            LastChanged) <-
   poll_state_polled(PageUrl, LastPolled),
-  coalesce(poll_state_etag(PageUrl, Etag), ""),
+  coalesce(poll_state_tag(PageUrl, Etag), ""),
   coalesce(poll_state_modified(PageUrl, LastModified), ""),
   coalesce(poll_state_period(PageUrl, ServerPeriod), 0),
   coalesce(poll_state_changed(PageUrl, LastChanged), 0).
