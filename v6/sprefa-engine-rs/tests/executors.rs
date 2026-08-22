@@ -255,7 +255,10 @@ fn http_get_answers_200_then_304_from_the_rows_own_header() {
         serde_json::from_str(first[0]["response_headers"].as_str().expect("header text"))
             .expect("a json object of headers");
     assert_eq!(headers["etag"], "\"tag-v1\"", "header names are lowercased");
-    assert_eq!(headers["x-ratelimit-remaining"], "4998");
+    assert_eq!(
+        headers["x-ratelimit-remaining"], 4998,
+        "a whole-number header is a JSON number so `decode(.., R: int)` reads it"
+    );
 
     let second = HttpGetExecutor
         .run(

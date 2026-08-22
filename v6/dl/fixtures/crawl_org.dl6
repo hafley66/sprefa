@@ -77,12 +77,30 @@ rel repos(org: text, bucket: int) -> (root: text) key(1).
 # retry policy -- and no such host exists here. So this host is the org
 # MEMBERSHIP source and the clone host is a named absence, not a silent one.
 #
-# It is a distinct NAME rather than a mode column on `repos` for the same reason
-# repo_files is distinct from files: a host is name-keyed, and "which backend"
-# is not a value this language can carry as a null or a default.
-rel /gh/repos(org: text, bucket: int) -> (slug: text) key(1).
+# It reaches GitHub through the ONE transport: the endpoint, the header set and
+# the decode of the answer are rules, and `http.get` only moves bytes.
+rel http.get(url: text, headers: text, prev_etag: text, bucket: int)
+  -> (status: int, response_headers: json, body: json, bytes: int).
 
 rel want_org(org: text).
+
+rel org_endpoint(org: text, url: text, headers: text).
+org_endpoint(Org, Url, Headers) <-
+  want_org(Org),
+  Url := concat(["orgs/", Org, "/repos?per_page=100"]),
+  Headers := "{\"Accept\":\"application/vnd.github+json\"}".
+
+rel org_answer(org: text, bucket: int, status: int, body: json).
+org_answer(Org, Bucket, Status, Body) <-
+  org_endpoint(Org, Url, Headers),
+  interval(86400, Bucket),
+  http.get(Url, Headers, "", Bucket, Status, _RespHeaders, Body, _Bytes).
+
+rel org_member(org: text, slug: text).
+org_member(Org, Slug) <-
+  org_answer(Org, _Bucket, Status, Body),
+  Status == 200,
+  decode(Body, [... {full_name: Slug: text}]).
 
 rel repo(root: text).
 repo(root) <- want_org(org), interval(86400, bucket), repos(org, bucket, root).

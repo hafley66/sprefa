@@ -65,8 +65,20 @@ current_bucket(Period, Bucket) <+ bucket_event(Period, Bucket).
 #
 # `grep -i '^etag:'` is anchored because Access-Control-Expose-Headers lists
 # both ETag and X-RateLimit-Remaining by name in its value.
-rel /gh/rest_cond(endpoint_path: text, prev_etag: text, bucket: int)
-  -> (status_code: int, next_etag: text, body_json: text, rest_remaining: int) key(1, 2).
+rel http.get(url: text, headers: text, prev_etag: text, bucket: int)
+  -> (status: int, response_headers: json, body: json, bytes: int).
+
+# The conditional GET is the PROGRAM's: If-None-Match is a header row, so the
+# transport carries no ETag and no cache of its own.
+rel request_header(endpoint_path: text, header_name: text, header_value: text).
+rel request_headers(endpoint_path: text, headers: text).
+request_header(EndpointPath, "Accept", "application/vnd.github+json") <-
+  watch_endpoint(EndpointPath).
+request_header(EndpointPath, "If-None-Match", PrevEtag) <-
+  poll_state(EndpointPath, PrevEtag),
+  PrevEtag != ''.
+request_headers(EndpointPath, json_object(HeaderName, HeaderValue)) <-
+  request_header(EndpointPath, HeaderName, HeaderValue).
 
 # ── the etag latch ──────────────────────────────────────────────────────────
 # `etag_event` is the DELAY that makes the poll loop legal, and it is not
@@ -109,11 +121,30 @@ poll(EndpointPath, PrevEtag, Bucket) <-
 
 # rx: poll$.pipe(map(mintIdentityAndWitness), distinct(row => row.witnessDigest),
 #                mergeMap(runShell), mergeMap(commitEdbArrival))
-rel rest_call(endpoint_path: text, bucket: int, status_code: int,
-              next_etag: text, body_json: text, rest_remaining: int).
-rest_call(EndpointPath, Bucket, StatusCode, NextEtag, BodyJson, RestRemaining) <-
+rel rest_arrival(endpoint_path: text, bucket: int, status_code: int,
+                 response_headers: json, body_json: json).
+rest_arrival(EndpointPath, Bucket, StatusCode, RespHeaders, BodyJson) <-
   poll(EndpointPath, PrevEtag, Bucket),
-  /gh/rest_cond(EndpointPath, PrevEtag, Bucket, StatusCode, NextEtag, BodyJson, RestRemaining).
+  request_headers(EndpointPath, Headers),
+  http.get(EndpointPath, Headers, PrevEtag, Bucket, StatusCode, RespHeaders,
+           BodyJson, _Bytes).
+
+rel header_etag(endpoint_path: text, bucket: int, etag_value: text).
+header_etag(EndpointPath, Bucket, EtagValue) <-
+  rest_arrival(EndpointPath, Bucket, _StatusCode, RespHeaders, _BodyJson),
+  decode(RespHeaders, {etag: EtagValue: text}).
+
+rel header_rest_remaining(endpoint_path: text, bucket: int, remaining: int).
+header_rest_remaining(EndpointPath, Bucket, Remaining) <-
+  rest_arrival(EndpointPath, Bucket, _StatusCode, RespHeaders, _BodyJson),
+  decode(RespHeaders, {"x-ratelimit-remaining": Remaining: int}).
+
+rel rest_call(endpoint_path: text, bucket: int, status_code: int,
+              next_etag: text, body_json: json, rest_remaining: int).
+rest_call(EndpointPath, Bucket, StatusCode, NextEtag, BodyJson, RestRemaining) <-
+  rest_arrival(EndpointPath, Bucket, StatusCode, _RespHeaders, BodyJson),
+  coalesce(header_etag(EndpointPath, Bucket, NextEtag), ''),
+  coalesce(header_rest_remaining(EndpointPath, Bucket, RestRemaining), -1).
 
 # ── what a 200 buys ─────────────────────────────────────────────────────────
 # rx: restCall$.pipe(filter(row => row.statusCode === 200), map(toEtagPair))
@@ -123,7 +154,7 @@ fresh_etag(EndpointPath, NextEtag) <-
   StatusCode == 200.
 
 # rx: restCall$.pipe(filter(row => row.statusCode === 200), map(toBodyPair))
-rel fresh_body(endpoint_path: text, body_json: text).
+rel fresh_body(endpoint_path: text, body_json: json).
 fresh_body(EndpointPath, BodyJson) <-
   rest_call(EndpointPath, _Bucket, StatusCode, _NextEtag, BodyJson, _RestRemaining),
   StatusCode == 200.
@@ -133,7 +164,7 @@ fresh_body(EndpointPath, BodyJson) <-
 # leaves this table byte-identical, and that is the whole receipt.
 #
 # rx: freshBody$.pipe(scan((cache, row) => cache.set(row.path, row.body), new Map()))
-rel cached_body(endpoint_path: text, body_json: text) key(1).
+rel cached_body(endpoint_path: text, body_json: json) key(1).
 cached_body(EndpointPath, BodyJson) <+ fresh_body(EndpointPath, BodyJson).
 
 # ── the rate pool ───────────────────────────────────────────────────────────

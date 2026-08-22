@@ -189,14 +189,20 @@ pub fn send(request: &Request) -> Result<HostRow, HostError> {
         };
         headers.insert(name.as_str().to_ascii_lowercase(), header_value(text));
     }
-    let body = response
-        .body_mut()
-        .with_config()
-        .limit(BODY_LIMIT)
-        .read_to_string()
-        .map_err(|failure| {
-            host_error(&request.host, format!("read body of {}: {failure}", request.url))
-        })?;
+    // RFC 9110 15.4.5 / 15.3.5: a 304 and a 204 carry NO body, and the origin
+    // still sends `Content-Encoding: gzip`, so decoding zero bytes is an error.
+    let body = if status == 304 || status == 204 {
+        String::new()
+    } else {
+        response
+            .body_mut()
+            .with_config()
+            .limit(BODY_LIMIT)
+            .read_to_string()
+            .map_err(|failure| {
+                host_error(&request.host, format!("read body of {}: {failure}", request.url))
+            })?
+    };
     span.record("status", status);
     span.record("bytes", body.len());
     // The tick-cost counters: a 304 carries no body and moves no wire bytes.
