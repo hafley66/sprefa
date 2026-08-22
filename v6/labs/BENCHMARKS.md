@@ -23,7 +23,8 @@ history, and the bank each bench writes its numbers to.
 8. [dred profile](#dred-profile---single-retract-flame)
 9. [dl6 budget cell](#dl6-budget-cell---the-regression-gate)
 10. [sqlite build baseline](#sqlite-build-baseline---landing)
-11. [Open items](#open-items)
+11. [shared frontier arms](#shared-frontier-arms--per_rel-vs-frontiershared)
+12. [Open items](#open-items)
 
 ## The truth stack
 
@@ -321,6 +322,113 @@ Its numbers are banked in `labs/exec_shootout/dl6/BASELINE.md`.
 
 **Expected wall time.** single grid_10000 naive run ~1.5s (best of 3); the crate
 build dominates, a few seconds warm.
+
+---
+
+## shared frontier arms — per_rel vs frontier(shared)
+
+**Purpose.** Price the `frontier(shared)` compile option against the default
+`per_rel` on the Rust door: what it costs in emitted text and what it buys per
+tick. `plans/2026-08-19-shared-sqlite-frontier.md` justified the arc on codegen
+size and table count; these are the first numbers taken through the shipped
+compiler rather than a hand-written rig.
+
+**Run commands.**
+
+```
+bash v6/sprefa-engine-rs/shared-frontier-bench.sh          # emitted bytes, statements/fold, fold ms
+bash v6/sprefa-engine-rs/shared-frontier-grade.sh          # shared arm vs the oracle, whole corpus
+bash v6/sprefa-engine-rs/shared-frontier-gate.sh           # per_rel vs shared tick logs, 8 fixtures
+```
+
+**Expected wall time.** bench ~40s, grade ~4 min, gate ~15s.
+
+### Measured 2026-08-22 at `c88ebb0fd`, Apple M2 Pro
+
+The wide fixtures are `v6/sprefa-engine-rs/tests/shared_frontier_wide/`: N
+source rels, N derived rels behind a guard rule, 3 ticks, every source rel
+touched every tick. `generate.py` regenerates them at any N.
+
+| program | rels | emitted bytes per_rel | shared | statements/fold per_rel | shared | delta | fold ms per_rel | shared | delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| wide_4 | 8 | 39,272 | 43,178 | 367 | 290 | -21.0% | 32.2 | 31.9 | -0.9% |
+| wide_16 | 32 | 155,456 | 169,024 | 1,447 | 1,082 | -25.2% | 85.0 | 67.0 | -21.2% |
+| wide_64 | 128 | 621,200 | 673,636 | 5,767 | 4,250 | -26.3% | 255.7 | 230.8 | -9.7% |
+
+**Read the statement count, not the wall.** Every cell above is one script run;
+the statement count came back identical in all three runs of every cell and in
+all three separate script invocations, and the emitted byte counts are exact.
+The fold wall is the noisy column: across three invocations the shared arm was
+faster in every cell of every one, by -0.9% to -6.1% on wide_4, -5.3% to -21.2%
+on wide_16 and -9.7% to -14.0% on wide_64. Its first fold of a script run pays a
+cold start (one wide_16 `per_rel` run read 1100.5 ms against 82.3 and 85.0 for
+its siblings), which the median absorbs and a single reading would not.
+
+Emitted bytes move +8.4% to +9.9% the wrong way, and that direction is stable.
+
+### Boot DDL, every corpus fixture the shared guard admits
+
+202 of the 341 fixtures that lower, both arms lowered in one process.
+
+| metric | per_rel | shared | delta |
+| --- | ---: | ---: | ---: |
+| DDL statements | 6,737 | 7,056 | +4.7% |
+| DDL bytes | 1,340,274 | 1,538,745 | +14.8% |
+| ... of that, frontier objects | 397,463 | 595,934 | +49.9% |
+| ... of that, every other statement | 942,811 | 942,811 | 0.0% |
+| TEMP tables | 3,450 | 2,674 | -22.5% |
+| indexes | 2,336 | 2,049 | -12.3% |
+| TEMP views | 892 | 2,274 | +154.9% |
+
+**The plan's codegen-size claim is inverted by the shipped lowering, and the
+inversion is entirely inside the frontier objects.** Every non-frontier
+statement is byte-identical between the arms. `lower.pl` keeps every per-rel
+frontier NAME alive as a TEMP view over the shared pair so compiled reads keep
+their text (`shared_frontier_view_ddl/3`), and a view carrying the payload
+column list plus the join is longer than the `CREATE TEMP TABLE` it replaced.
+Three objects per rel become two, so the object count falls; the text rises.
+
+### Correctness of the shared arm, whole corpus
+
+`shared-frontier-grade.sh` compiles every conformance fixture in shared mode and
+diffs its Rust fold against the same oracle tick log `grade.sh` uses.
+
+```
+SHARED-GRADE graded=440 byte-clean=200
+  unsupported 238
+```
+
+Zero `diff`, zero `runtime-error`. Every fixture the guard admits agrees with
+the oracle byte for byte. The gap to `grade.sh`'s `byte-clean=335` is 136 guard
+stops, 135 of which are byte-clean under `per_rel`.
+
+### The reach ceiling
+
+The 136 stops, by reason, from that same run:
+
+| reason | fixtures |
+| --- | ---: |
+| `edge_rules` | 72 |
+| `aggregate_head` | 44 |
+| `recursion` | 6 |
+| `host` | 5 |
+| `non_set_rel` | 7 |
+| `retention` | 2 |
+
+`v6/dl/ghcache/ghcache.dl6` does not compile under `frontier(shared)` either. It
+stops at `unsupported_construct(frontier_shared_todo(edge_rules))`, and that is
+the first of five families rather than the only one: 157 rels, 220 rules,
+reasons `aggregate_head`-11, `edge_rules`-1, `host`-8, `non_set_rel`-4,
+`tick`-1.
+
+Every one is a TODO site in `lower.pl` `shared_frontier_todo/3` rather than a
+measured impossibility, and none has been probed since it was written. The one
+structural constraint the code does show: `shared_frontier_view_ddl/3` joins
+`__frontier."row_id"` to the durable table's `__id`, so a frontier row with no
+live durable row (`departure`) and a rel whose storage carries no `__id`
+(`non_set_rel`) each need an answer before their guard lifts.
+
+The default cannot flip while the option reaches no program anyone runs.
 
 ---
 
