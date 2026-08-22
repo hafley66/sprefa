@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+bash "$(dirname "${BASH_SOURCE[0]}")/../tools/doctor-deps.sh"
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 here="$root/v6/sprefa-engine-rs"

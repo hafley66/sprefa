@@ -47,7 +47,8 @@ pub const LINKED_EXECUTORS: &str = "/soopy/files, /soopy/files_at, /soopy/stage,
      /extract/df_edge_at, /extract/df_param_at, /extract/df_arg_at, \
      /extract/data_doc_at, /extract/comment_fact, /extract/ast_rule, /scip/call, \
      /scip/type, /scip/diet/call, /scip/diet/type, /cargo/targets, /http/fetch, \
-     /gh/repos, /gh/rest_cond, /gh/pulls, /env/var, /toml/json, /dl/tick_cost";
+     /gh/repos, /gh/rest_cond, /gh/pulls, /gh/pr_batch, /env/var, /toml/json, \
+     /dl/tick_cost";
 
 static GIT_REFS: LazyLock<crate::executors::git_refs::GitRefsExecutor> =
     LazyLock::new(crate::executors::git_refs::GitRefsExecutor::new);
@@ -73,9 +74,10 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
         // name asks for, so a worktree read and a pinned read cannot collide.
         "/soopy/files" | "/soopy/files_at" => Some(&SoopyFilesExecutor),
         "/soopy/stage" | "/soopy/commit" => Some(&SoopyMutationExecutor),
-        // The ghcacher five, all linked: HTTP, the process env table, the two
-        // GitHub REST walks, an existing checkout, and a TOML document.
+        // The ghcacher six, all linked: HTTP, the process env table, the three
+        // GitHub REST/GraphQL walks, an existing checkout, and a TOML document.
         "/http/fetch" | "/gh/rest_cond" => Some(&crate::executors::HttpFetchExecutor),
+        "/gh/pr_batch" => Some(&crate::executors::GhPrBatchExecutor),
         "/env/var" => Some(&crate::executors::EnvExecutor),
         "/gh/repos" => Some(&crate::executors::GhReposExecutor),
         "/gh/pulls" => Some(&crate::executors::GhPullsExecutor),

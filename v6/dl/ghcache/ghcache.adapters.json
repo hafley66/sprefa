@@ -1,0 +1,27 @@
+[
+  {
+    "adapter": "http_fetch",
+    "demand_rel": "__host_demand_gh_rest_cond",
+    "response_rel": "__host_response_gh_rest_cond"
+  },
+  {
+    "adapter": "gh_pr_batch",
+    "demand_rel": "__host_demand_gh_pr_batch",
+    "response_rel": "__host_response_gh_pr_batch"
+  },
+  {
+    "adapter": "toml_json",
+    "demand_rel": "__host_demand_toml_json",
+    "response_rel": "__host_response_toml_json"
+  },
+  {
+    "adapter": "soopy_checkout",
+    "demand_rel": "__host_demand_repo_checkout",
+    "response_rel": "__host_response_repo_checkout"
+  },
+  {
+    "adapter": "soopy_checkout",
+    "demand_rel": "__host_demand_repo_mirror_pr_heads",
+    "response_rel": "__host_response_repo_mirror_pr_heads"
+  }
+]

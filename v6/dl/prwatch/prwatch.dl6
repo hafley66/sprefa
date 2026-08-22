@@ -8,7 +8,7 @@
 #
 # rx: timer(0, 60_000).pipe(
 #       map(() => Math.floor(Date.now()/1000/60)),
-#       concatMap(bucket => forkJoin(pulls(repo, bucket), cost(bucket))),
+#       concatMap(bucket => forkJoin(conditionalGet(ep, etag, bucket), cost(bucket))),
 #       scan((held, seen) => upsertByNumber(held, seen)))
 
 # NOT YET LINKED: no Rust executor answers /clock/tick, so this program is a
@@ -16,7 +16,10 @@
 rel /clock/tick(every: int) -> (bucket: int).
 
 rel repo(slug: text).
+repo("hafley66/instant").
 repo("hafley66/sprefa").
+repo("hafley66/hafley-rs").
+repo("hafley66/hafley-rxjs").
 
 # A merged pull whose head branch carries one of these is a lane's own work, so
 # `lane_proof` is the receipt that a dispatched lane's commits reached main.

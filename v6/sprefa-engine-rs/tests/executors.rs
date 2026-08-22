@@ -75,9 +75,12 @@ fn serve(body: String, etag: &'static str, rounds: usize) -> (String, std::threa
 
 #[test]
 fn http_fetch_answers_200_then_304() {
+    // The ETag store is one process-global map, so every case that calls
+    // `forget_all` has to hold the same guard or they wipe each other.
+    let _guard = serialized();
     sprefa_engine_rs::executors::fetch::forget_all();
     let body = r#"{"full_name":"cli/cli","stargazers_count":7}"#.to_string();
-    let (base, handle) = serve(body, "\"tag-v1\"", 2);
+    let (base, handle) = serve(body.clone(), "\"tag-v1\"", 2);
     let url = format!("{base}/repos/cli/cli");
 
     let first = HttpFetchExecutor
@@ -95,7 +98,13 @@ fn http_fetch_answers_200_then_304() {
         .expect("conditional GET");
     let second = &second[0];
     assert_eq!(second["status"], 304);
-    assert_eq!(second["body"], "", "a 304 carries no body bytes");
+    assert_eq!(second["bytes"], 0, "a 304 carries no body bytes");
+    // CONTRACT CHANGE (ghcache lane): the ROW now answers the remembered body
+    // rather than the empty string, the arm `repos.rs` and `pulls.rs` already
+    // took. `bytes` above is what proves nothing crossed the wire; the body
+    // column has to stay json_valid because a host may declare it `json`.
+    assert_eq!(second["body"], body, "the previous body is the answer");
+    assert_eq!(second["full_name"], "cli/cli", "so its fields still splice in");
     handle.join().expect("listener thread");
 }
 
@@ -262,4 +271,112 @@ fn http_fetch_batches_six_endpoints_in_one_executor_call() {
         assert_eq!(row["ep"], ep.as_str(), "each row names its endpoint");
         assert_eq!(row["kind"], "row", "body fields splice in per endpoint");
     }
+}
+
+// TEST: prwatch-every-tick. The lane report measured 6857541 wire bytes on
+// EVERY 60s tick over six ticks. These two cases separate the two candidate
+// causes: whether the executor asks conditionally at all, and whether the
+// PROGRAM's per-tick demand defeats it.
+// Sabotage receipt: deleting the `If-None-Match` header in
+// `fetch::conditional_get` turns `pulls_second_pass_is_a_304` red.
+
+fn pulls_body() -> String {
+    r#"[{"number":1,"title":"one","state":"open","updated_at":"2026-01-01T00:00:00Z",
+         "head":{"ref":"feature/a","sha":"aaa"},"merge_commit_sha":"","draft":false}]"#
+        .to_string()
+}
+
+#[test]
+fn pulls_second_pass_is_a_304_and_moves_zero_bytes() {
+    let _guard = serialized();
+    sprefa_engine_rs::executors::fetch::forget_all();
+    // Two rounds: page 1 of pass one, then page 1 of pass two. A short page
+    // ends each walk, so the executor asks once per pass.
+    let (base, handle) = serve(pulls_body(), "\"pulls-v1\"", 2);
+    std::env::set_var("DL_GITHUB_API_BASE", &base);
+
+    let before = sprefa_engine_rs::executors::cost::wire_bytes_total();
+    let first = sprefa_engine_rs::executors::GhPullsExecutor
+        .run("pulls", "", &inputs(&[("repo_slug", "o/n"), ("bucket", "1")]))
+        .expect("first pass");
+    let after_first = sprefa_engine_rs::executors::cost::wire_bytes_total();
+
+    let second = sprefa_engine_rs::executors::GhPullsExecutor
+        .run("pulls", "", &inputs(&[("repo_slug", "o/n"), ("bucket", "2")]))
+        .expect("second pass");
+    let after_second = sprefa_engine_rs::executors::cost::wire_bytes_total();
+    std::env::remove_var("DL_GITHUB_API_BASE");
+
+    assert_eq!(first.len(), 1, "pass one reads the page");
+    assert_eq!(
+        second.len(),
+        1,
+        "pass two answers the same rows from the remembered body"
+    );
+    assert!(
+        after_first > before,
+        "pass one moves the body over the wire"
+    );
+    assert_eq!(
+        after_second, after_first,
+        "pass two is a 304 and must move ZERO wire bytes; a fresh 200 here is \
+         the prwatch-every-tick defect"
+    );
+    handle.join().expect("listener thread");
+}
+
+/// TEST: the prwatch-every-tick receipt. Ten conditional GETs against one
+/// unchanged resource: the FIRST moves the body, the other nine are 304s that
+/// move zero bytes, and the resident set does not climb across them.
+/// The lane report measured 6857541 bytes on every one of six ticks and RSS
+/// 47 -> 104 MB; this is the shape that measurement should have had.
+/// Sabotage receipt: dropping `prev_etag` from the executor's inputs turns the
+/// `wire bytes` assertion red on tick 2.
+#[test]
+fn ten_conditional_ticks_move_the_body_once_and_leave_rss_flat() {
+    let _guard = serialized();
+    sprefa_engine_rs::executors::fetch::forget_all();
+    let (base, handle) = serve(pulls_body(), "\"pulls-v1\"", 10);
+    std::env::set_var("DL_GITHUB_API_BASE", &base);
+
+    let mut wire = Vec::new();
+    let mut rss = Vec::new();
+    let mut rows_per_tick = Vec::new();
+    for bucket in 1..=10 {
+        let before = sprefa_engine_rs::executors::cost::wire_bytes_total();
+        let rows = sprefa_engine_rs::executors::GhPullsExecutor
+            .run(
+                "pulls",
+                "",
+                &inputs(&[("repo_slug", "o/n"), ("bucket", &bucket.to_string())]),
+            )
+            .expect("tick");
+        wire.push(sprefa_engine_rs::executors::cost::wire_bytes_total() - before);
+        rows_per_tick.push(rows.len());
+        rss.push(sprefa_engine_rs::executors::cost::resident_kb());
+    }
+    std::env::remove_var("DL_GITHUB_API_BASE");
+
+    assert!(wire[0] > 0, "tick 1 reads the body, got {wire:?}");
+    assert_eq!(
+        &wire[1..],
+        &[0u64; 9],
+        "ticks 2..10 must every one be a 304 moving zero bytes, got {wire:?}"
+    );
+    assert_eq!(
+        rows_per_tick,
+        vec![1usize; 10],
+        "a 304 still answers the same rows from the remembered body"
+    );
+
+    // RSS is sampled, so it is bounded rather than pinned: nine 304s must not
+    // grow the process the way nine fresh 6.8MB bodies did.
+    let low = rss.iter().min().copied().unwrap_or(0);
+    let high = rss.iter().max().copied().unwrap_or(0);
+    assert!(
+        high - low < 8 * 1024,
+        "resident set climbed {}KB across ten conditional ticks: {rss:?}",
+        high - low
+    );
+    handle.join().expect("listener thread");
 }

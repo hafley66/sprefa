@@ -32,6 +32,12 @@ pub fn count_request(bytes: u64, not_modified: bool) {
     }
 }
 
+/// The lifetime wire-byte total, for a test that wants the delta across one
+/// executor call without consuming the per-tick counters `dl_tick_cost` reads.
+pub fn wire_bytes_total() -> u64 {
+    WIRE_BYTES.load(Ordering::Relaxed)
+}
+
 /// The counter readings the previous call consumed. Subtracting them is what
 /// makes a row a per-tick cost rather than a lifetime total.
 #[derive(Default)]

@@ -1,6 +1,6 @@
 // @comment-ok: the binary's usage contract, the one doc site for its flags.
 // dl6 build <prog>.dl6 [--out <path>] [--adapters <file>]
-// dl6 run   <prog>.dl6 [--arrive <rel>=<v>[,<v>]]... [--final-tsv] [--db <file>]
+// dl6 run   <prog>.dl6 [--arrive <rel>=<v>[,<v>]]... [--final-tsv]
 //
 // `build` compiles the program for the Rust target, writes a cargo bin crate
 // from src/build_template/ under <engine>/target/dl6-build/<prog>/, builds it
@@ -77,9 +77,9 @@ struct ProgramArgs {
     /// Name and order the rels to print; without it every `?` rel prints, sorted.
     #[arg(long, value_name = "REL[,REL...]", value_delimiter = ',')]
     final_rels: Option<Vec<String>>,
-    /// Fold into a plain SQLite file a cold `sqlite3` reads afterwards.
-    #[arg(long, value_name = "FILE")]
-    db: Option<PathBuf>,
+    /// Fold in memory instead of into the one db, for a golden or a probe.
+    #[arg(long)]
+    in_memory: bool,
     /// Exit 1 when this `?` query answers any row.
     #[arg(long, value_name = "QUERY")]
     fail_on: Option<String>,
@@ -483,10 +483,7 @@ fn prepare(args: &ProgramArgs) -> Result<(run::LoadedProgram, Vec<sprefa_engine_
     if adapters_text(&source, args.adapters.as_deref())?.contains("dl_tick_cost") {
         sprefa_engine_rs::trace::force_summary();
     }
-    let db = match &args.db {
-        Some(path) => Some(absolute_db_path(path)?),
-        None => None,
-    };
+    let db = if args.in_memory { None } else { Some(one_db_path()?) };
     let loaded = run::load_program(&compiled)?;
     let schedule = match &args.schedule {
         Some(path) => read_schedule(&path.canonicalize().with_context(|| {
@@ -511,15 +508,17 @@ fn prepare(args: &ProgramArgs) -> Result<(run::LoadedProgram, Vec<sprefa_engine_
     ))
 }
 
-// --root moves the process, so a relative --db would land in the watched tree
-// rather than where the caller typed it.
-fn absolute_db_path(path: &Path) -> Result<PathBuf> {
-    if path.is_absolute() {
-        return Ok(path.to_path_buf());
+// ONE SERVER, ONE DB (CLAUDE.md 2026-08-21): every program this runtime folds
+// writes into `~/.agent/dl6.db`, its tables carrying the program's own name.
+// `DL6_DB` moves the file for a test; nothing on the command line does.
+const ONE_DB: &str = "dl6.db";
+
+fn one_db_path() -> Result<PathBuf> {
+    if let Some(named) = std::env::var_os("DL6_DB") {
+        return Ok(PathBuf::from(named));
     }
-    Ok(std::env::current_dir()
-        .context("read the working directory")?
-        .join(path))
+    let home = std::env::var_os("HOME").context("read HOME for the one db")?;
+    Ok(PathBuf::from(home).join(".agent").join(ONE_DB))
 }
 
 fn run(args: ProgramArgs) -> Result<()> {

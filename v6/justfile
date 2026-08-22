@@ -590,3 +590,7 @@ no-new-eprintln:
     {{ capped }} "${EPRINTLN_BUDGET_S:-600}" bash {{ v6 }}/dl/rails/no-new-eprintln-rail.sh
 
 v5-rails: recompute-guard no-new-eprintln
+
+# Every hafley-rs path dep resolves to ~/projects/hafley-rs from ANY worktree.
+doctor-deps:
+    bash {{ v6 }}/tools/doctor-deps.sh
