@@ -1023,9 +1023,12 @@ edge_sampled_goals([not(Atom) | Rest], TriggerAtoms, SampleAtoms,
     plain_positive_rel_atom(Atom), !,
     edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, PreAtoms,
                        NegAtoms, GuardGoals).
+% decode/2 rides the guard bucket rather than a bucket of its own: it binds
+% and filters, and lower.pl splits it back out ahead of the other guards.
 edge_sampled_goals([Goal | Rest], TriggerAtoms, SampleAtoms, PreAtoms,
                    NegAtoms, [Goal | GuardGoals]) :-
-    ( guard_or_bind_goal(Goal) ; tick_goal(Goal, _) ), !,
+    ( guard_or_bind_goal(Goal) ; tick_goal(Goal, _)
+    ; edge_body_decode_goal(Goal) ), !,
     edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, PreAtoms,
                        NegAtoms, GuardGoals).
 edge_sampled_goals([Atom | Rest], [Atom | TriggerAtoms], SampleAtoms, PreAtoms,
@@ -1099,17 +1102,19 @@ edge_goal_unsupported(now(Argument), Body, 4, edge_body_with_now(Body)) :-
 % condition rather than refused.
 edge_goal_unsupported(not(Atom), Body, 5, edge_body_with_negation(Body)) :-
     \+ plain_positive_rel_atom(Atom).
-% Edge bodies cannot destructure JSON values because their runtime encoding is
-% not available to the edge SQL shape.
+% decode/2 turns on the SOURCE COLUMN's declared type, and RelPlans does not
+% exist here; lower.pl:check_edge_decode_sources/3 makes that call instead.
 edge_goal_unsupported(Goal, Body, 8, edge_body_needs_json_destructure(Body)) :-
     nonvar(Goal),
-    ( Goal = decode(_, _) ; Goal = json_each(_, _) ).
+    Goal = json_each(_, _).
 
 % The ordered goal list splices next/1 and combine while leaving not/1 whole.
 conjunction_goals(Body, Goals) :-
     body_conjunction_goals(Body,
                            walk_policy(descend_not(false), splice_bare(true)),
                            Goals).
+
+edge_body_decode_goal(Goal) :- nonvar(Goal), Goal = decode(_, _).
 
 plain_positive_atom(Goal) :-
     compound(Goal),

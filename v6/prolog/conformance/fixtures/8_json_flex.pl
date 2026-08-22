@@ -398,3 +398,90 @@ fixture(json_capture_type_typo_is_refused,
   [ event(obj([n-4])) ],
   [],
   [ throws(json_capture_type_unknown(itn)) ]).
+
+% ═══ Q6 DECODE IN AN EDGE BODY ══════════════════════════════════════════════
+%
+% FAIL-FIRST at this wave's base: every one of the four below compiled to
+% unsupported_construct(edge_body_needs_json_destructure(...)) because
+% analyze.pl branched on the rule KIND, never on the source column's type.
+% The cost was a `_seen` level twin per fold, existing only to host a decode
+% the edge body was not allowed to carry.
+
+% A keyed set head folded straight from the document: ONE table, ONE
+% INSERT ... ON CONFLICT DO UPDATE, and the second arrival overwrites the key.
+fixture(json_decode_in_an_edge_body_folds_a_keyed_row,
+  prog([col_type(config_doc/1, doc, json), kind(config_doc/1, log),
+        keep(config_doc/1, all),
+        col_type(global_setting/2, scope, text),
+        col_type(global_setting/2, poll_interval_seconds, int),
+        keyed(global_setting/2, [1])],
+       [ (global_setting(Scope, PollIntervalSeconds) <+
+            config_doc(Doc),
+            decode(Doc, {scope: Scope: text,
+                         poll_interval_seconds: PollIntervalSeconds: int})) ]),
+  [],
+  [ [ +config_doc(obj([scope-global, poll_interval_seconds-30])) ],
+    [ +config_doc(obj([scope-global, poll_interval_seconds-90])) ] ],
+  [ final(global_setting/2, [ global_setting(global, 90) ]),
+    deltas(global_setting/2, [ [ +global_setting(global, 30) ],
+                               [ -global_setting(global, 30),
+                                 +global_setting(global, 90) ],
+                               [] ]),
+    ticks(3) ]).
+
+% One document, several keyed rows: the spread is a json_each join inside the
+% edge arm, which is the arrival shape a paginated API answer has.
+fixture(json_decode_spread_in_an_edge_body_folds_many_keyed_rows,
+  prog([col_type(pull_page/1, doc, json), kind(pull_page/1, log),
+        keep(pull_page/1, all),
+        col_type(pull_state/2, number, int),
+        col_type(pull_state/2, title, text),
+        keyed(pull_state/2, [1])],
+       [ (pull_state(Number, Title) <+
+            pull_page(Doc),
+            decode(Doc, {pulls: spread({number: Number: int,
+                                        title: Title: text})})) ]),
+  [],
+  [ [ +pull_page(obj([pulls-[obj([number-1, title-first]),
+                             obj([number-2, title-second])]])) ],
+    [ +pull_page(obj([pulls-[obj([number-2, title-renamed])]])) ] ],
+  [ final(pull_state/2, [ pull_state(1, first), pull_state(2, renamed) ]),
+    deltas(pull_state/2, [ [ +pull_state(1, first), +pull_state(2, second) ],
+                           [ -pull_state(2, second), +pull_state(2, renamed) ],
+                           [] ]),
+    ticks(3) ]).
+
+% A LOG head takes the same body. No key, so every derived row appends and
+% the same document twice appends twice.
+fixture(json_decode_in_an_edge_body_appends_to_a_log,
+  prog([col_type(event_doc/1, doc, json), kind(event_doc/1, log),
+        keep(event_doc/1, all),
+        col_type(audit/1, action, text), kind(audit/1, log),
+        keep(audit/1, all)],
+       [ (audit(Action) <+ event_doc(Doc), decode(Doc, {action: Action: text})) ]),
+  [],
+  [ [ +event_doc(obj([action-open])) ],
+    [ +event_doc(obj([action-open])), +event_doc(obj([action-close])) ] ],
+  [ final(audit/1, [ audit(close), audit(open), audit(open) ]),
+    deltas(audit/1, [ [ +audit(open) ],
+                      [ +audit(open), +audit(close) ],
+                      [] ]),
+    ticks(3) ]).
+
+% The type guard is the same guard the level arm emits, so a document whose
+% value carries the wrong json type contributes no row on either door.
+fixture(json_decode_in_an_edge_body_filters_a_wrong_typed_value,
+  prog([col_type(config_doc/1, doc, json), kind(config_doc/1, log),
+        keep(config_doc/1, all),
+        col_type(global_setting/2, scope, text),
+        col_type(global_setting/2, poll_interval_seconds, int),
+        keyed(global_setting/2, [1])],
+       [ (global_setting(Scope, PollIntervalSeconds) <+
+            config_doc(Doc),
+            decode(Doc, {scope: Scope: text,
+                         poll_interval_seconds: PollIntervalSeconds: int})) ]),
+  [],
+  [ [ +config_doc(obj([scope-global, poll_interval_seconds-30])),
+      +config_doc(obj([scope-repo, poll_interval_seconds-often])) ] ],
+  [ final(global_setting/2, [ global_setting(global, 30) ]),
+    ticks(2) ]).
