@@ -71,7 +71,8 @@ type_apply_refreeze(Decls0, Rules0, Bindings, Seen0, PreviousRows, Round,
     canonical_semantic_type_rows(RoundDecls, CurrentRows),
     type_apply_requests(Decls0, RoundDecls, Requests),
     subtract(Requests, Seen0, NewRequests),
-    ( NewRequests == [], PreviousRows == CurrentRows
+    ( NewRequests == [],
+      ( PreviousRows == none ; PreviousRows == CurrentRows )
     -> erase_type_apply_transport(RoundDecls, Decls),
        Rules = RoundRules
     ; append(Decls0, NewRequests, NextDecls),
