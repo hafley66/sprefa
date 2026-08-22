@@ -46,6 +46,12 @@ bind interval(period: int, bucket: int).
 
 current_clock(Period, Bucket) <+ interval(Period, Bucket).
 
+# bind_read_literals (emit_rust.pl:479) needs a literal interval/2 call
+# somewhere; the trigger above (lower.pl:4184) must stay bare vars.
+rel live_cadence(period: int).
+live_cadence(60) <- interval(60, _Bucket).
+live_cadence(3600) <- interval(3600, _Bucket).
+
 # Every identity input must appear in the template (1_host_expand.pl:313) and
 # the freshness input must not, which is why `bucket` is absent from all five.
 
