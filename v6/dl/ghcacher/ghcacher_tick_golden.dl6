@@ -5,37 +5,43 @@
 # host completion are ordinary committed arrival batches. No shell, network, or
 # wall clock participates in the grade.
 
-rel watch(ep: text).
-rel etag_event(ep: text, tag: text) log keep(all).
-rel current_etag(ep: text, tag: text) key(1).
+rel watch(url: text).
+rel etag_event(url: text, tag: text) log keep(all).
+rel current_etag(url: text, tag: text) key(1).
 rel current_clock(period: int, bucket: int) key(1).
 
 rel interval(period: int, bucket: int).
 
-rel /http/fetch(ep: text, prev: text, bucket: int) ->
-  (status: int, tag: text, stars: int, full_name: text) key(1, 2).
+rel http.get(url: text, headers: text, prev_etag: text, bucket: int) ->
+  (status: int, response_headers: json, body: json, bytes: int).
 
-rel poll(ep: text, prev: text, bucket: int).
-rel resp(ep: text, bucket: int, status: int, tag: text, stars: int, full_name: text).
-rel fresh_hit(ep: text, tag: text, stars: int, full_name: text).
-rel cache_view(ep: text, tag: text, stars: int, full_name: text) key(1).
+rel poll(url: text, headers: text, prev_etag: text, bucket: int).
+rel resp(url: text, headers: text, prev_etag: text, bucket: int, status: int,
+         response_headers: json, body: json, bytes: int).
+rel fresh_hit(url: text, tag: text, stars: int, full_name: text).
+rel cache_view(url: text, tag: text, stars: int, full_name: text) key(1).
 
-current_etag(Ep, Tag) <+ etag_event(Ep, Tag).
+current_etag(Url, Tag) <+ etag_event(Url, Tag).
 current_clock(Period, Bucket) <+ interval(Period, Bucket).
 
-poll(Ep, Prev, Bucket) <-
-  watch(Ep),
-  current_etag(Ep, Prev),
-  current_clock(300, Bucket).
+# The conditional GET is the PROGRAM's: If-None-Match is a header the rule
+# builds, so the transport carries no ETag of its own.
+poll(Url, Headers, PrevEtag, Bucket) <-
+  watch(Url),
+  current_etag(Url, PrevEtag),
+  current_clock(300, Bucket),
+  Headers := concat(["{\"If-None-Match\":\"", PrevEtag, "\"}"]).
 
-resp(Ep, Bucket, Status, Tag, Stars, FullName) <-
-  poll(Ep, Prev, Bucket),
-  /http/fetch(Ep, Prev, Bucket, Status, Tag, Stars, FullName).
+resp(Url, Headers, PrevEtag, Bucket, Status, RespHeaders, Body, Bytes) <-
+  poll(Url, Headers, PrevEtag, Bucket),
+  http.get(Url, Headers, PrevEtag, Bucket, Status, RespHeaders, Body, Bytes).
 
-fresh_hit(Ep, Tag, Stars, FullName) <-
-  resp(Ep, _, Status, Tag, Stars, FullName),
-  Status == 200.
+fresh_hit(Url, Tag, Stars, FullName) <-
+  resp(Url, _H, _P, _Bucket, Status, RespHeaders, Body, _Bytes),
+  Status == 200,
+  decode(RespHeaders, {etag: Tag: text}),
+  decode(Body, {stargazers_count: Stars: int, full_name: FullName: text}).
 
-cache_view(Ep, Tag, Stars, FullName) <+ fresh_hit(Ep, Tag, Stars, FullName).
+cache_view(Url, Tag, Stars, FullName) <+ fresh_hit(Url, Tag, Stars, FullName).
 
-? cache_view(Ep, Tag, Stars, FullName).
+? cache_view(Url, Tag, Stars, FullName).

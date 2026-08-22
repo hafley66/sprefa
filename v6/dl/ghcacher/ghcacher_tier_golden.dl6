@@ -20,11 +20,13 @@ rel points_budget(bucket: int, calls_this_tick: int).
 
 rel interval(period: int, bucket: int).
 
-rel /http/fetch(repo_slug: text, bucket: int) ->
-  (status: int, full_name: text) key(1).
+rel http.get(url: text, headers: text, prev_etag: text, bucket: int) ->
+  (status: int, response_headers: json, body: json, bytes: int).
 
-rel poll(repo_slug: text, bucket: int).
-rel resp(repo_slug: text, bucket: int, status: int, full_name: text).
+rel poll(repo_slug: text, url: text, bucket: int).
+rel resp(url: text, headers: text, prev_etag: text, bucket: int, status: int,
+         response_headers: json, body: json, bytes: int).
+rel fetched(repo_slug: text, bucket: int, status: int, full_name: text).
 
 # Which band a repo is in: idle ticks since its last event, matched against
 # NON-OVERLAPPING bands. The bands are fact rows, so retiering is posting rows.
@@ -61,12 +63,20 @@ points_budget(Bucket, count(BatchIndex)) <-
   batch_query(Bucket, BatchIndex, _SlugList).
 
 # The network work downstream: only due repos are polled and fetched.
-poll(RepoSlug, Bucket) <-
-  due(RepoSlug, Bucket, _TierName).
+poll(RepoSlug, Url, Bucket) <-
+  due(RepoSlug, Bucket, _TierName),
+  Url := concat(["repos/", RepoSlug]).
 
-resp(RepoSlug, Bucket, Status, FullName) <-
-  poll(RepoSlug, Bucket),
-  /http/fetch(RepoSlug, Bucket, Status, FullName).
+resp(Url, Headers, PrevEtag, Bucket, Status, RespHeaders, Body, Bytes) <-
+  poll(_RepoSlug, Url, Bucket),
+  Headers := "{}",
+  PrevEtag := "",
+  http.get(Url, Headers, PrevEtag, Bucket, Status, RespHeaders, Body, Bytes).
+
+fetched(RepoSlug, Bucket, Status, FullName) <-
+  poll(RepoSlug, Url, Bucket),
+  resp(Url, _H, _P, Bucket, Status, _RespHeaders, Body, _Bytes),
+  decode(Body, {full_name: FullName: text}).
 
 ? batch_query(Bucket, BatchIndex, SlugList).
 ? points_budget(Bucket, CallsThisTick).
