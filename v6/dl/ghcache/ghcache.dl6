@@ -581,10 +581,16 @@ pr_batch_member(Bucket, BatchIndex, RepoSlug) <-
   BatchIndex := Ordinal / RowsPerCall,
   RepoSlug := concat([Owner, "/", Name]).
 
-# The aliased-query slug list is built by a SQL aggregate, never string code.
-pr_batch(Bucket, BatchIndex, BatchKey, group_concat(RepoSlug, " ")) <-
+rel pr_batch_member_keyed(bucket: int, batch_index: int, batch_key: text,
+                          repo_slug: text).
+
+pr_batch_member_keyed(Bucket, BatchIndex, BatchKey, RepoSlug) <-
   pr_batch_member(Bucket, BatchIndex, RepoSlug),
   BatchKey := concat(["graphql:prs:batch/", BatchIndex]).
+
+# The aliased-query slug list is built by a SQL aggregate, never string code.
+pr_batch(Bucket, BatchIndex, BatchKey, group_concat(RepoSlug, " ")) <-
+  pr_batch_member_keyed(Bucket, BatchIndex, BatchKey, RepoSlug).
 
 pr_batch_response(BatchKey, Bucket, Status, RateRemaining, RateReset, GqlCost,
                   Bytes, Data) <-
@@ -883,9 +889,10 @@ recent_event(RepoSlug, EventType, Actor, CreatedAt, Action) <-
   decode(Payload, {action: Action: text}),
   RepoSlug := concat([Owner, "/", Name]).
 
-rate_pool(ApiType, Remaining, ResetAt, count(AtTick)) <-
-  rate_state(ApiType, Remaining, ResetAt),
-  call_log(AtTick, ApiType, _Ep, _St, _RR, _RS, _By, _Ch).
+# Grouped columns must all come from one positive body atom's own delta rows
+# (lower.pl:4635); call_log carries rate_remaining/rate_reset itself.
+rate_pool(ApiType, RateRemaining, RateReset, count(AtTick)) <-
+  call_log(AtTick, ApiType, _Ep, _St, RateRemaining, RateReset, _By, _Ch).
 
 # ── queries ─────────────────────────────────────────────────────────────────
 
