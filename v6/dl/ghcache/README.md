@@ -67,11 +67,25 @@ Three contract points a reader needs.
 | `headers` and `request_body` are `text`, not `json` | every identity input is concatenated into the witness digest, and `compile_concat_part` (`lower.pl:1050`) refuses a `json` piece |
 | a whole-number response header is a JSON NUMBER | `decode(.., X: int)` reads a number and never a string (the no-coercions law), measured: `{"x-ratelimit-remaining":"150"}` decodes to zero rows at `: int` |
 
-`prev_etag` shapes no header. It is demand identity, so a moved tag is a NEW
-question. That is also why one changed endpoint costs TWO calls in a bucket:
-the 200 moves the tag, and the tag re-fires the same bucket conditionally. The
-second call is a 304 with zero bytes, and `ghcacher_live.dl6:98-102` already
-described this as the intended shape.
+`prev_etag` shapes no header. It is demand identity, and demand identity may
+not move while the question stands. `poll_state_etag` carries the tag the last
+answer gave AND the tag that answer was ASKED with, keyed on `page_url` with
+the bucket that wrote it:
+
+| the request reads | when |
+|---|---|
+| `etag` | `at_bucket < Bucket`: the stored row predates this bucket |
+| `asked_etag` | `at_bucket == Bucket`: this bucket's own answer already landed |
+
+The two arms are exclusive on a `key(1)` rel and answer the same value, so a
+200 landing mid-bucket cannot rewrite the question its own bucket asked. One
+page is ONE wire call per bucket, changed or not.
+
+Before this, the tag fed the header directly and GitHub answers one resource
+with `W/"tag"` and `"tag"` depending on the request, so the two spellings
+chased each other with zero wire traffic. Measured live: a period-4 cycle on
+`.../events?page=3` with `rate_remaining` flat at 4967/4964/4961/4956 and
+`change_log` gaining 64 rows every 6 drain ticks (failure-modes entry 75).
 
 ## How to run it
 

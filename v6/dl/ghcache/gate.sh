@@ -63,9 +63,9 @@ printf 'due=%s call_log 200=%s 304=%s 304_bytes=%s rate_remaining_min=%s\n' \
 fail=0
 [ "$due_rows" = 3 ] || { echo "FAIL a 60s period over 3 buckets is 3 polls, got due=$due_rows"; fail=1; }
 [ "$fresh" = 1 ] || { echo "FAIL the first poll is one 200, got $fresh"; fail=1; }
-# Three due buckets and one re-ask: a 200 moves the stored tag, the tag is
-# demand identity, so the bucket that changed asks once more, conditionally.
-[ "$cached" = 3 ] || { echo "FAIL every later pass is a 304, got $cached"; fail=1; }
+# Three due buckets, three polls, no re-ask: the 200 moves the stored tag and
+# `page_prev_etag` keeps its bucket reading the tag it asked with.
+[ "$cached" = 2 ] || { echo "FAIL every later pass is a 304, got $cached"; fail=1; }
 [ "$cached_bytes" = 0 ] || { echo "FAIL a 304 moves zero bytes, got $cached_bytes"; fail=1; }
 [ "$remaining" = 4997 ] || { echo "FAIL the rate headers decode as ints, got $remaining"; fail=1; }
 [ "$fail" = 0 ] || exit 1

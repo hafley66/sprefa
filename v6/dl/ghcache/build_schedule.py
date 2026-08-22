@@ -62,7 +62,7 @@ EVENTS = json.dumps(
 )
 
 
-def demands(program, batches):
+def demands(program, batches, rel="__host_demand_http__get"):
     schedule = "/tmp/ghcache-schedule-step.json"
     with open(schedule, "w") as handle:
         json.dump(batches, handle)
@@ -72,11 +72,30 @@ def demands(program, batches):
         text=True,
         check=True,
     )
+    # A demand rel's TABLE keeps every row it ever held, transients included;
+    # adds minus dels over the tick lines is what a live host is handed.
+    standing = {}
     for line in answered.stdout.splitlines():
         row = json.loads(line)
-        if row.get("rel") == "__host_demand_http__get":
-            return row["rows"]
-    return []
+        deltas = row.get("deltas")
+        if not isinstance(deltas, dict) or rel not in deltas:
+            continue
+        for gone in deltas[rel].get("del", []):
+            standing.pop(gone[1], None)
+        for fresh in deltas[rel].get("add", []):
+            standing[fresh[1]] = fresh
+    return list(standing.values())
+
+
+# `due` requires `api_token`, so the token has to be answered before the first
+# minute bucket or nothing polls at all.
+def token_response(demand):
+    _identity, witness, var_name, _bucket = demand
+    return {
+        "rel": "__host_response_env__var",
+        "sign": "add",
+        "row": [witness, 0, var_name, "scripted-token"],
+    }
 
 
 def response(demand, status, etag, remaining, body):
@@ -123,12 +142,21 @@ def main():
             },
         ]
     ]
+    for demand in demands(program, batches, "__host_demand_env__var"):
+        if demand[2] == "GITHUB_TOKEN":
+            batches.append([token_response(demand)])
     # A 60s period is ONE minute bucket, so three consecutive buckets are three
     # polls: the first a 200, the next two conditional 304s moving zero bytes.
     served = {}
     for ordinal, bucket in enumerate([0, 1, 2]):
         batches.append([clock(60, ordinal, bucket)])
-        fresh = [row for row in demands(program, batches) if row[1] not in served]
+        # A demand rel keeps every row it ever held; a live host answers only
+        # what THIS bucket asked, so the generator filters the same way.
+        fresh = [
+            row
+            for row in demands(program, batches)
+            if row[1] not in served and row[5] == bucket
+        ]
         for demand in fresh:
             served[demand[1]] = True
             status, etag, remaining, body = (

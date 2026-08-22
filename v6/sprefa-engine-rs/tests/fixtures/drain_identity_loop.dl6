@@ -1,8 +1,7 @@
 # @comment-ok: the drain-overflow rail's fixture, the one doc site for its shape.
 # A demand whose identity its own answer rewrites. `salt` is an identity input
 # of `env.var` and the answer bumps it, so every drain tick mints a NEW witness
-# and the fold never reaches a fixed point. `echo` fans one answer out to three
-# rows, so the loudest-rel ranking has a winner rather than a four-way tie.
+# and the fold never reaches a fixed point.
 
 use clock.
 use env.
@@ -11,38 +10,29 @@ rel cadence(every: int).
 cadence(1).
 
 rel tick(every: int) -> (bucket: int).
-rel var(var_name: text, salt: int) -> (value: text).
+rel var(name: text, salt: int) -> (value: text).
 
 rel beat(bucket: int).
 beat(Bucket) <- cadence(Every), tick(Every, Bucket).
 
-rel probe(var_name: text).
+rel probe(name: text).
 probe("PATH").
 
-rel next_salt(var_name: text, salt: int) key(1).
-rel ask(var_name: text, salt: int).
-rel answered(var_name: text, salt: int, value: text).
+rel next_salt(name: text, salt: int) key(1).
+rel ask(name: text, salt: int).
+rel answered(name: text, salt: int, value: text).
 
-ask(VarName, Salt) <-
-  probe(VarName),
-  coalesce(next_salt(VarName, Salt), 0).
+ask(Name, Salt) <-
+  probe(Name),
+  beat(Bucket),
+  coalesce(next_salt(Name, Salt), 0).
 
-answered(VarName, Salt, Value) <-
-  ask(VarName, Salt),
-  var(VarName, Salt, Value).
+answered(Name, Salt, Value) <-
+  ask(Name, Salt),
+  var(Name, Salt, Value).
 
-next_salt(VarName, BumpedSalt) <+
-  answered(VarName, Salt),
+next_salt(Name, BumpedSalt) <+
+  answered(Name, Salt),
   BumpedSalt := Salt + 1.
 
-rel slot(slot: int).
-slot(1).
-slot(2).
-slot(3).
-
-rel echo(var_name: text, salt: int, slot: int).
-echo(VarName, Salt, Slot) <-
-  answered(VarName, Salt),
-  slot(Slot).
-
-? echo(var_name, salt, slot).
+? ask(name, salt).

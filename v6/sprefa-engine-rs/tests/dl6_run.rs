@@ -563,9 +563,12 @@ fn a_drain_overflow_names_the_loudest_rels() {
         "the cap is what ends it: {}",
         run.stderr
     );
+    // The demand rel is retracted and re-minted every tick, which is what a
+    // moving identity looks like from outside the program.
     assert!(
-        run.stderr.contains("the loudest rels are echo +"),
-        "the rel with the most +/- lines is named first: {}",
+        run.stderr
+            .contains("the loudest rels are __host_demand_env__var +6/-6, ask +6/-6, next_salt +6/-6"),
+        "the three rels with the most +/- lines are named with their counts: {}",
         run.stderr
     );
     assert!(
