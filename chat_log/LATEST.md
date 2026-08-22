@@ -1,1 +1,1 @@
-20260821.3.zero-shell-traced-everything-nine-lanes.md
+20260821.4.one-name-collapse-landed-boop-idle.md
