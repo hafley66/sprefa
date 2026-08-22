@@ -98,6 +98,34 @@ test(real_dl6_type_terms_elaborate_and_erase_before_runtime) :-
     type_relation_rows(Decls, Rows),
     member(type_relation(named(local, relation, capability), _, _, none, []), Rows).
 
+test(generic_compiler_plane_is_erased_after_application_evaluation) :-
+    string_codes(
+        "rel Box(T)(value: T).\nrel capability(Self: type, Format: type).\ncapability(Box(int), text).\n",
+        Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expand_generic_program_with_bindings(Program, Bindings, prog(Decls, Rules)),
+    Rules == [],
+    member(compiler_type_metadata(_, Closure), Decls),
+    member(capability(AppId, primitive(text)), Closure),
+    AppId = application(named(local, relation, 'Box'), [_]),
+    \+ member(col_type(capability/2, _, _), Decls),
+    \+ member(rel_template(_, _, _), Decls),
+    \+ member(compiler_type_metadata(_, _), Rules).
+
+test(compiler_relation_can_request_absent_generic_application_before_erasure) :-
+    string_codes(
+        "rel Box(T)(value: T).\nrel reflect(Self: type, Value: type).\nreflect(Box(int), text).\n",
+        Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expand_generic_program_with_bindings(Program, Bindings, prog(Decls, Rules)),
+    Rules == [],
+    member(compiler_type_metadata(_, Closure), Decls),
+    member(reflect(application(named(local, relation, 'Box'), [_]),
+                   primitive(text)), Closure),
+    \+ member(col_type(reflect/2, _, _), Decls),
+    \+ member(rel_template(_, _, _), Decls),
+    \+ member(compiler_type_metadata(_, _), Rules).
+
 test(annotation_application_sites_are_typed_relation_values) :-
     string_codes("rel operation(Target: type, Method: text) -> Target.\nrel Pet(id: int).\nrel route(first: operation(Pet, Method: 'GET'), second: operation(Pet, Method: 'GET')).\nrel seen(Owner: type, Member: type, Method: text, Input: type, Output: type, Position: semantic) -> Owner.\nseen(Owner, Member, Method, Input, Output, Position, Owner) <- type_application_site(operation(Input, Method, Output), Owner, Member, Position).\n", Source),
     parse_dl(Source, Program, Bindings, []),
