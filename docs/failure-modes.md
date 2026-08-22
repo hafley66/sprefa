@@ -2631,3 +2631,11 @@ The observed standard, in order — no step is optional:
 - **Fail-pre-fix**: `v6/dl/ghcache/gate.sh` asserts `due=3` over three consecutive buckets; before the fix it read `due=1`.
 - **Rail**: a `clock_granularity(60)` fact is the one place the unit lives; every period is `ceil(seconds / granularity)` buckets and the reset is `ResetAt / granularity`. The gate prints `due`, the 200 count, the 304 count, the 304 byte total and the minimum `rate_remaining` on every run.
 - **Entry**: `GHCACHE_RUST_DOOR_HOLDS ticks=10`, `due=3 call_log 200=1 304=3 304_bytes=0 rate_remaining_min=4997`.
+
+## 75. A statement counter that charged a batch of 48 as one
+
+- **Incident** (2026-08-22): the shared-frontier arc's whole claim is fewer SQL statements per tick, and the Rust seam's own tally could not see the difference. `sql.rs::execute_multiple` ran `execute_batch` and recorded nothing in `SEAM_TALLY.statements`, while `execute` recorded one per call. Every per-rel clear, promote and merge goes through `execute_multiple` as one `";\n"`-joined batch, which is exactly where the shared arm removes statements. Measured on `sf_join`, both arms reported `statements=27`; with the batch counted they read 367 vs 290 on `wide_4`.
+- **RCA**: the counter counted CALLS to the seam, and the name said statements. A batch is the one shape where those two numbers diverge, and it is the shape the optimization targets.
+- **Fail-pre-fix**: `sql::tests::a_batch_reaches_the_seam_tally` reads `left: 0, right: 2` with the `fetch_add` removed (run and read, 2026-08-22). `a_batch_counts_every_statement_in_it` pins the quoting case a naive `split(';')` gets wrong: `INSERT INTO "t" VALUES ('a;b');\nDELETE FROM "t"` is 2 statements, not 3.
+- **Rail**: `batch_statement_count/1` splits outside quotes and `execute_multiple` adds it to the tally, so `report_seam_tally`'s `statements` is every statement SQLite ran. `v6/sprefa-engine-rs/shared-frontier-bench.sh` prints it per arm.
+- **Entry**: cargo 158/0 unchanged by the counter; `wide_64` reads per_rel 5,767 vs shared 4,250 statements per fold, identical across three runs of each arm.
