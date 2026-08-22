@@ -75,13 +75,8 @@ surface(seq/1,          sugar,     no_refs,                      wrapper(expr, e
 % edge body (lowered to a read of the emitted __tick counter); analyze.pl
 % keeps now_in_level_rule and edge_body_with_now for the wider placements.
 surface(now/1,          time,      no_refs,                      wrapper(expr, lower),                  live).
-% STRUCT-AS-ROWS (SLOT-DECODE-SURFACE): decode/2 stays on the surface as sugar
-% and lowers to a dictionary JOIN in a LEVEL body over a struct-typed column
-% (lower.pl expand_decode_rules/4). Every wider placement keeps a named
-% unsupported construct: an edge body is edge_body_needs_json_destructure (the untyped
-% compound-arrival encoding, SLOT-TERM-STRUCT), an untyped source is
-% decode_source_not_struct, a non-object pattern is decode_pattern_not_object,
-% and a key the type does not declare is decode_field_unknown.
+% SLOT-DECODE-SURFACE: decode/2 lowers off the SOURCE COLUMN'S declared type
+% (struct -> dictionary join, json -> json1 SQL), never off the rule kind.
 surface(decode/2,       guard,     no_refs,                      wrapper(expr_pair, lower),             live).
 surface(json_each/2,    guard,     no_refs,                      wrapper(expr_pair, refuse(goal)),      refused).
 

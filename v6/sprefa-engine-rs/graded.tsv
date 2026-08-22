@@ -118,7 +118,7 @@ ghcacher_host_program_term	unsupported	level_body_goal(pull_request(_,_,_,_,_),j
 group_concat_one_argument_joins_members	clean	byte-clean
 groupby_aggregate_two_bare_integer_literals	clean	byte-clean
 groupby_two_bare_integer_literals	clean	byte-clean
-guard_stage_fires_on_negation_and_comparison	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_),_>100,not(muted(_))))
+guard_stage_fires_on_negation_and_comparison	unsupported	trigger_arg_not_var(no_tag)
 head_column_int_widens_into_float	clean	byte-clean
 head_column_list_and_json_share_storage	clean	byte-clean
 head_column_type_conflict_is_refused	unsupported	head_column_type_conflict(target/1,total,int,source/1,name,text)
@@ -148,6 +148,10 @@ json_array_spread_fans_out_correlated_siblings	clean	byte-clean
 json_array_spread_skips_non_matching_elements	clean	byte-clean
 json_bool_capture_lands_in_a_bool_column	clean	byte-clean
 json_capture_type_typo_is_refused	unsupported	json_capture_type_unknown(itn)
+json_decode_in_an_edge_body_appends_to_a_log	clean	byte-clean
+json_decode_in_an_edge_body_filters_a_wrong_typed_value	clean	byte-clean
+json_decode_in_an_edge_body_folds_a_keyed_row	clean	byte-clean
+json_decode_spread_in_an_edge_body_folds_many_keyed_rows	clean	byte-clean
 json_deep_exact_key_chain_binds	clean	byte-clean
 json_descent_into_scalars_is_silent	clean	byte-clean
 json_descent_matches_at_any_depth	clean	byte-clean
