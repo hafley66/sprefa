@@ -1,24 +1,6 @@
 [
   [
     {
-      "rel": "config_candidate",
-      "sign": "add",
-      "row": [
-        1,
-        "ghcache.toml"
-      ]
-    },
-    {
-      "rel": "config_candidate",
-      "sign": "add",
-      "row": [
-        2,
-        "~/.config/ghcache/config.toml"
-      ]
-    }
-  ],
-  [
-    {
       "rel": "__host_response_clock__tick",
       "sign": "add",
       "row": [
@@ -78,23 +60,19 @@
   ],
   [
     {
-      "rel": "__host_response_gh__rest_cond",
+      "rel": "__host_response_http__get",
       "sign": "add",
       "row": [
-        "witness|gh__rest_cond|endpoint_path:text=repos/acme/widgets/events|prev_etag:text=|bucket:int=0",
+        "witness|http__get|url:text=repos/acme/widgets/events|headers:text={\"Accept\":\"application/vnd.github+json\"}|prev_etag:text=|bucket:int=0",
         0,
         "repos/acme/widgets/events",
+        "{\"Accept\":\"application/vnd.github+json\"}",
         "",
         0,
         200,
-        "etag-0",
-        "",
-        0,
-        150,
-        1000000,
-        500,
-        1,
-        {}
+        "{\"etag\":\"etag-0\",\"x-ratelimit-remaining\":4999,\"x-ratelimit-reset\":1000000}",
+        "[{\"id\":\"1\",\"type\":\"PushEvent\",\"actor\":{\"login\":\"someone\"},\"payload\":{\"ref\":\"refs/heads/main\",\"action\":\"pushed\"},\"created_at\":\"2026-08-22T00:00:00Z\"}]",
+        149
       ]
     }
   ],
@@ -106,29 +84,43 @@
         "witness|clock__tick|every:int=60",
         1,
         60,
-        60
+        1
       ]
     }
   ],
   [
     {
-      "rel": "__host_response_gh__rest_cond",
+      "rel": "__host_response_http__get",
       "sign": "add",
       "row": [
-        "witness|gh__rest_cond|endpoint_path:text=repos/acme/widgets/events|prev_etag:text=etag-0|bucket:int=60",
+        "witness|http__get|url:text=repos/acme/widgets/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"If-None-Match\":\"etag-0\"}|prev_etag:text=etag-0|bucket:int=0",
         0,
         "repos/acme/widgets/events",
+        "{\"Accept\":\"application/vnd.github+json\",\"If-None-Match\":\"etag-0\"}",
         "etag-0",
-        60,
+        0,
         304,
-        "",
-        "",
+        "{\"etag\":\"etag-0\",\"x-ratelimit-remaining\":4998,\"x-ratelimit-reset\":1000000}",
+        "null",
+        0
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=repos/acme/widgets/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"If-None-Match\":\"etag-0\"}|prev_etag:text=etag-0|bucket:int=1",
         0,
-        90,
-        300,
-        0,
+        "repos/acme/widgets/events",
+        "{\"Accept\":\"application/vnd.github+json\",\"If-None-Match\":\"etag-0\"}",
+        "etag-0",
         1,
-        {}
+        304,
+        "{\"etag\":\"etag-0\",\"x-ratelimit-remaining\":4998,\"x-ratelimit-reset\":1000000}",
+        "null",
+        0
       ]
     }
   ],
@@ -140,65 +132,25 @@
         "witness|clock__tick|every:int=60",
         2,
         60,
-        120
+        2
       ]
     }
   ],
   [
     {
-      "rel": "__host_response_clock__tick",
+      "rel": "__host_response_http__get",
       "sign": "add",
       "row": [
-        "witness|clock__tick|every:int=60",
-        3,
-        60,
-        180
-      ]
-    }
-  ],
-  [
-    {
-      "rel": "__host_response_clock__tick",
-      "sign": "add",
-      "row": [
-        "witness|clock__tick|every:int=60",
-        4,
-        60,
-        240
-      ]
-    }
-  ],
-  [
-    {
-      "rel": "__host_response_clock__tick",
-      "sign": "add",
-      "row": [
-        "witness|clock__tick|every:int=60",
-        5,
-        60,
-        300
-      ]
-    }
-  ],
-  [
-    {
-      "rel": "__host_response_gh__rest_cond",
-      "sign": "add",
-      "row": [
-        "witness|gh__rest_cond|endpoint_path:text=repos/acme/widgets/events|prev_etag:text=etag-0|bucket:int=300",
+        "witness|http__get|url:text=repos/acme/widgets/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"If-None-Match\":\"etag-0\"}|prev_etag:text=etag-0|bucket:int=2",
         0,
         "repos/acme/widgets/events",
+        "{\"Accept\":\"application/vnd.github+json\",\"If-None-Match\":\"etag-0\"}",
         "etag-0",
-        300,
-        200,
-        "etag-300",
-        "",
-        0,
-        150,
-        2000000,
-        600,
-        1,
-        {}
+        2,
+        304,
+        "{\"etag\":\"etag-0\",\"x-ratelimit-remaining\":4997,\"x-ratelimit-reset\":1000000}",
+        "null",
+        0
       ]
     }
   ]

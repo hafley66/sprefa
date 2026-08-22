@@ -5,10 +5,7 @@ pub mod checkout;
 pub mod clock;
 pub mod cost;
 pub mod env;
-pub mod fetch;
-pub mod graphql;
-pub mod pulls;
-pub mod repos;
+pub mod http;
 pub mod toml;
 pub mod watch;
 
@@ -20,10 +17,7 @@ use crate::types::HostRow;
 pub use checkout::SoopyCheckoutExecutor;
 pub use cost::TickCostExecutor;
 pub use env::EnvExecutor;
-pub use fetch::HttpFetchExecutor;
-pub use graphql::GhPrBatchExecutor;
-pub use pulls::GhPullsExecutor;
-pub use repos::GhReposExecutor;
+pub use http::{HttpGetExecutor, HttpPostExecutor};
 pub use toml::TomlJsonExecutor;
 
 /// Two registered host names ask one question under different column spellings

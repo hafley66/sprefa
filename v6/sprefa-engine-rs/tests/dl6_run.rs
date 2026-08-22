@@ -140,7 +140,10 @@ fn fail_on_exits_one_when_the_query_answers_rows() {
         answered.stderr
     );
 
-    let mut empty = scratch.dl6();
+    // A SECOND scratch, so a second db: the one db keeps a table whose shape
+    // did not move, and re-using this one would answer the seeded rows again.
+    let unseeded = Scratch::new();
+    let mut empty = unseeded.dl6();
     empty
         .arg("run")
         .arg(fixture("query_order_tail.dl6"))

@@ -46,7 +46,8 @@ watch("repos/cli/cli").
 # Same shell body as v5 (examples/gh-cache.dl:75-80). The host declaration
 # separates request inputs from response outputs, and the template references every
 # declared input and no output.
-rel /http/fetch(ep: text, prev: text) -> (status: int, tag: text, body: text).
+rel http.get(url: text, headers: text, prev_etag: text, bucket: int)
+  -> (status: int, response_headers: json, body: json, bytes: int).
 
 # etag: bootstrap fact UNION resp-derived value (gap #2 above). Deliberately NOT
 # `rel(1)`: retention markers only govern EDB-style commit() writes (applyRelWrite,
@@ -60,35 +61,42 @@ rel etag(ep: text, tag: text).
 etag(ep, "") <- watch(ep).
 etag(ep, tag) <- resp(ep, 200, tag, _).
 
-rel poll(ep: text, prev: text).
-poll(ep, prev) <- watch(ep), etag(ep, prev).
+rel poll(ep: text, prev: text, headers: text).
+poll(ep, prev, headers) <-
+  watch(ep), etag(ep, prev),
+  headers := concat(["{\"If-None-Match\":\"", prev, "\"}"]).
 
 # Fire it. Content-addressed on (fetch, ep, prev) — the host call is the async effect;
 # there is no separate @async marker to write. Every status lands (not just 200): the
 # template always emits status/tag/body, matching v5's raw `resp` (examples/gh-cache.dl:
 # 89-90) before its 200-only filter.
-rel resp(ep: text, status: int, tag: text, body: text).
-resp(ep, status, tag, body) <- poll(ep, prev), /http/fetch(ep, prev, status, tag, body).
+rel arrival(ep: text, status: int, response_headers: json, body: json).
+arrival(ep, status, response_headers, body) <-
+  poll(ep, prev, headers),
+  http.get(ep, headers, prev, 0, status, response_headers, body, _bytes).
+
+rel resp(ep: text, status: int, tag: text, body: json).
+resp(ep, status, tag, body) <-
+  arrival(ep, status, response_headers, body),
+  decode(response_headers, {etag: tag: text}).
 
 # --- normalize: entities from 200 bodies ----------------------------------------
-# v5 uses term-form `jsonp`/`json` (examples/gh-cache.dl:110,113,121-124) to extract
-# fields from the bound `body` string in-rule. v6 has neither op (grepped dl.langium
-# and 5_diag.ts's builtin list — no json/jsonp anywhere); the only extraction surface
-# left is another `sh` host, chained by a second probe off the SAME `body` value. This
-# is the most direct spelling the grammar allows for field extraction, but it costs a
-# real subprocess per distinct body (jq), where v5's jsonp was in-process.
-rel extract_stars(body: text) -> (n: text).
+# v5's jsonp/json term ops are `decode` here, in-process and with no subprocess:
+# the two gaps this section used to name are both closed.
 rel stars(ep: text, n: text).
-stars(ep, n) <- resp(ep, 200, _, body), extract_stars(body, n).
+stars(ep, n) <- resp(ep, 200, _, body), decode(body, {stargazers_count: n: text}).
 
-rel extract_full_name(body: text) -> (name: text).
 rel full_name(ep: text, name: text).
-full_name(ep, name) <- resp(ep, 200, _, body), extract_full_name(body, name).
+full_name(ep, name) <- resp(ep, 200, _, body), decode(body, {full_name: name: text}).
 
-# v5's pull_request (examples/gh-cache.dl:120-124) needs `json(body, q:[... {...} ...])`
-# to explode a JSON ARRAY into one row per element with correlated sibling/nested
-# fields in one match. No v6 equivalent exists (no array-explode op at all, term-match
-# or otherwise) — INEXPRESSIBLE, not attempted here. See findings.md.
+# v5's pull_request (examples/gh-cache.dl:120-124) needs an ARRAY explode with
+# correlated nested fields; `decode(body, [... {...}])` is that, so this is the
+# spelling rather than a named absence.
+rel pull_request(ep: text, number: int, title: text, head_ref: text).
+pull_request(ep, number, title, head_ref) <-
+  resp(ep, 200, _, body),
+  decode(body, [... {number: number: int, title: title: text,
+                     head: {ref: head_ref: text}}]).
 
 # --- the change feed (append-only) -----------------------------------------------
 # v5 needs an explicit @next carry (examples/gh-cache.dl:132-137) because a PLAIN

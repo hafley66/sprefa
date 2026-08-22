@@ -2615,3 +2615,19 @@ The observed standard, in order — no step is optional:
 - **Fail-pre-fix**: `swipl -q -g "parse_dl_file('v6/dl/reach/feature-reach.dl6', P, _, _)"` throws `dl_parse_error(statement, position(1, 5))` on the `use cargo.` line; the same file through `expand_uses/8` returns a program.
 - **Rail**: the three non-lab callers now go through `expand_uses/8`. The plunit unit `executor_modules` pins that all four spellings of one program compile to the same term, so a door that resolves one and not the others fails there rather than in a gate.
 - **Entry**: conformance 440/0, plunit 1054/0, `scip_namespaces` green; compile-speed stays allowlisted red, now failing inside golden-flex's emit rather than at the parse of its first program (`.github/CI-KNOWN-RED.md`).
+
+## 73. A cache the program could not see, and every restart paid for it
+
+- **Incident** (2026-08-22): `executors/fetch.rs:31-50` kept the ETag and the previous body in a process-private `HashMap`, and `:255-260` substituted that body on a 304. `ghcache.dl6:308` already carried `poll_state_etag` relationally, so the map was a second copy that no rule could read, no query could show, and no restart could keep. `issues/dl6-run-restart-loses-etags`: every `dl6 run` restart re-downloaded roughly a megabyte. Under it, `sql.rs::run_program_ddl` dropped every table the program declares at each boot, so the relational copy died too.
+- **RCA**: an executor that answers a QUESTION grew state that answers it DIFFERENTLY on the second ask. Once the cache is invisible to the program, the program cannot be the thing that decides when to re-ask.
+- **Fail-pre-fix**: `sql::tests::a_restart_keeps_a_table_whose_shape_did_not_move` reads 0 rows with the `table_shape_stands` arm deleted.
+- **Rail**: the transport is `executors/http.rs` and holds nothing but a connection pool: every header on the wire, `If-None-Match` included, comes from the demand row's `headers` column. `run_program_ddl` keeps a TABLE whose CREATE is the one already standing and drops one whose shape moved.
+- **Entry**: kill, restart, first poll is 8 x 304 with `bytes = 0` out of 8 stored ETags and 8 stored bodies.
+
+## 74. Seconds compared against minutes, twice, in one program
+
+- **Incident** (2026-08-22): `ghcache.dl6` compared `poll_interval_seconds` directly against `current_clock(60, Bucket)`, whose bucket advances once per MINUTE, so a 60s poll fired hourly (`issues/ghcache-dl6-poll`). The same shape sat in `over_budget`, comparing `x-ratelimit-reset` (epoch SECONDS) against the same minute bucket: measured live, once the stop threshold tripped, `Bucket < ResetAt` stayed true forever and the poll never resumed.
+- **RCA**: two quantities with the same name (`seconds`) and different units met with no conversion and no type to stop them. The first was filed and the second was invisible until a live run drove the budget down.
+- **Fail-pre-fix**: `v6/dl/ghcache/gate.sh` asserts `due=3` over three consecutive buckets; before the fix it read `due=1`.
+- **Rail**: a `clock_granularity(60)` fact is the one place the unit lives; every period is `ceil(seconds / granularity)` buckets and the reset is `ResetAt / granularity`. The gate prints `due`, the 200 count, the 304 count, the 304 byte total and the minimum `rate_remaining` on every run.
+- **Entry**: `GHCACHE_RUST_DOOR_HOLDS ticks=10`, `due=3 call_log 200=1 304=3 304_bytes=0 rate_remaining_min=4997`.

@@ -1,40 +1,56 @@
-# /http/fetch links the Rust http_fetch executor directly by name
-# (registry.pl arrival_executor/2); no adapters override and no shell runs.
+# http.get links the Rust HttpGetExecutor directly by name (registry.pl
+# arrival_executor/2); no adapters override and no shell runs.
 
-rel watch(ep: text).
-rel etag_event(ep: text, tag: text) log keep(all).
-rel current_etag(ep: text, tag: text) key(1).
+rel watch(url: text).
+rel etag_event(url: text, tag: text) log keep(all).
+rel current_etag(url: text, tag: text) key(1).
 rel current_clock(period: int, bucket: int) key(1).
 
 rel interval(period: int, bucket: int).
 
-rel /http/fetch(ep: text, prev: text, bucket: int) ->
-  (status: int, tag: text, body: text) key(1, 2).
+rel http.get(url: text, headers: text, prev_etag: text, bucket: int) ->
+  (status: int, response_headers: json, body: json, bytes: int).
 
-rel poll(ep: text, prev: text, bucket: int).
-rel resp(ep: text, bucket: int, status: int, tag: text, body: text).
-rel fresh_hit(ep: text, tag: text).
-rel not_modified(ep: text, bucket: int).
+rel request_header(url: text, header_name: text, header_value: text).
+rel request_headers(url: text, headers: text).
+rel poll(url: text, headers: text, prev_etag: text, bucket: int).
+rel resp(url: text, headers: text, prev_etag: text, bucket: int, status: int,
+         response_headers: json, body: json, bytes: int).
+rel fresh_hit(url: text, tag: text).
+rel not_modified(url: text, bucket: int).
 
-current_etag(Ep, Tag) <+ etag_event(Ep, Tag).
+current_etag(Url, Tag) <+ etag_event(Url, Tag).
 current_clock(Period, Bucket) <+ interval(Period, Bucket).
 
-poll(Ep, Prev, Bucket) <-
-  watch(Ep),
-  current_etag(Ep, Prev),
+# The conditional GET is the PROGRAM's: If-None-Match is a header row, so the
+# transport carries no ETag of its own.
+request_header(Url, "Accept", "application/vnd.github+json") <- watch(Url).
+request_header(Url, "If-None-Match", PrevEtag) <-
+  watch(Url),
+  current_etag(Url, PrevEtag),
+  PrevEtag != "".
+
+request_headers(Url, json_object(HeaderName, HeaderValue)) <-
+  request_header(Url, HeaderName, HeaderValue).
+
+poll(Url, Headers, PrevEtag, Bucket) <-
+  watch(Url),
+  request_headers(Url, Headers),
+  current_etag(Url, PrevEtag),
   current_clock(300, Bucket).
 
-resp(Ep, Bucket, Status, Tag, Body) <-
-  poll(Ep, Prev, Bucket),
-  /http/fetch(Ep, Prev, Bucket, Status, Tag, Body).
+resp(Url, Headers, PrevEtag, Bucket, Status, RespHeaders, Body, Bytes) <-
+  poll(Url, Headers, PrevEtag, Bucket),
+  http.get(Url, Headers, PrevEtag, Bucket, Status, RespHeaders, Body, Bytes).
 
-fresh_hit(Ep, Tag) <-
-  resp(Ep, _Bucket, Status, Tag, _Body),
-  Status == 200.
+fresh_hit(Url, Tag) <-
+  resp(Url, _H, _P, _Bucket, Status, RespHeaders, _Body, _Bytes),
+  Status == 200,
+  decode(RespHeaders, {etag: Tag: text}).
 
-not_modified(Ep, Bucket) <-
-  resp(Ep, Bucket, Status, _Tag, _Body),
+not_modified(Url, Bucket) <-
+  resp(Url, _H, _P, Bucket, Status, _RespHeaders, _Body, _Bytes),
   Status == 304.
 
-? fresh_hit(Ep, Tag).
-? not_modified(Ep, Bucket).
+? fresh_hit(Url, Tag).
+? not_modified(Url, Bucket).

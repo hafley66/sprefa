@@ -107,8 +107,8 @@ impl SqliteSeam {
         self.dispatches.get()
     }
 
-    /// ONE SERVER, ONE DB: the file is shared, so a program's own objects are
-    /// dropped and re-created while the shared globals are left standing.
+    /// ONE SERVER, ONE DB: shared globals stay standing, a TABLE whose CREATE
+    /// is the one already there keeps its rows, a moved shape is dropped.
     pub fn run_program_ddl(&self, ddl: &[String], queries: &[String]) -> Result<()> {
         for statement in ddl {
             let Some((kind, name)) = created_object(statement) else {
@@ -117,13 +117,30 @@ impl SqliteSeam {
             if SHARED_GLOBALS.contains(&name) {
                 continue;
             }
+            if kind == "TABLE" && self.table_shape_stands(name, statement)? {
+                continue;
+            }
             self.execute_multiple(&format!("DROP {kind} IF EXISTS \"{name}\""))?;
         }
         for query in queries {
             self.execute_multiple(&format!("DROP VIEW IF EXISTS \"v_{query}\""))?;
         }
-        let owned: Vec<String> = ddl.iter().map(|statement| shared_idempotent(statement)).collect();
+        let owned: Vec<String> = ddl.iter().map(|statement| idempotent(statement)).collect();
         self.run_ddl(&owned)
+    }
+
+    /// Whether the db already carries this exact table, whitespace-normalized:
+    /// `sqlite_master.sql` is the CREATE as it was executed.
+    fn table_shape_stands(&self, name: &str, statement: &str) -> Result<bool> {
+        let standing: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT \"sql\" FROM \"sqlite_master\" WHERE \"type\" = 'table' AND \"name\" = ?1",
+                rusqlite::params![name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(standing.as_deref().map(normalized_ddl) == Some(normalized_ddl(statement)))
     }
 
     pub fn run_ddl(&self, ddl: &[String]) -> Result<()> {
@@ -524,6 +541,18 @@ pub fn column_index(result: &QueryResult, name: &str) -> Option<usize> {
 /// dangle their rows; `__meta` already carries a `program` column.
 pub const SHARED_GLOBALS: &[&str] = &["__str", "__meta"];
 
+/// `sqlite_master.sql` records the CREATE as executed, minus `IF NOT EXISTS`,
+/// so the two texts are compared with their whitespace collapsed.
+fn normalized_ddl(statement: &str) -> String {
+    statement
+        .replacen("IF NOT EXISTS ", "", 1)
+        .split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ")
+        .trim_end_matches(';')
+        .to_string()
+}
+
 /// The kind and name a `CREATE ...` statement makes, or None for anything else.
 fn created_object(statement: &str) -> Option<(&'static str, &str)> {
     for (prefix, kind) in [
@@ -544,15 +573,83 @@ fn created_object(statement: &str) -> Option<(&'static str, &str)> {
     None
 }
 
-/// A shared global's CREATE has to be idempotent: the second program to open the
-/// one db finds `__str` already standing.
-fn shared_idempotent(statement: &str) -> String {
+/// Every CREATE TABLE has to be idempotent: a shared global and a kept table
+/// are both already standing when the next start runs the DDL.
+fn idempotent(statement: &str) -> String {
     match created_object(statement) {
-        Some((_, name))
-            if SHARED_GLOBALS.contains(&name) && !statement.contains("IF NOT EXISTS") =>
-        {
+        Some(("TABLE", _)) if !statement.contains("IF NOT EXISTS") => {
             statement.replacen("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)
         }
         _ => statement.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const POLL_STATE: &str = "CREATE TABLE \"p_poll_state_etag\" \
+        (\"__id\" INTEGER PRIMARY KEY, \"page_url\" INTEGER, \"etag\" INTEGER)";
+
+    fn stored_etags(seam: &SqliteSeam) -> i64 {
+        seam.scalar("SELECT COUNT(*) FROM \"p_poll_state_etag\"").expect("count")
+    }
+
+    /// TEST: issues/dl6-run-restart-loses-etags. Every restart dropped this
+    /// program's tables, so the poll re-downloaded ~1 MB it already had.
+    /// Sabotage receipt: deleting the `table_shape_stands` arm in
+    /// `run_program_ddl` turns `restart` back to 0 rows.
+    #[test]
+    fn a_restart_keeps_a_table_whose_shape_did_not_move() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let url = home.path().join("dl6.db").to_string_lossy().to_string();
+        let ddl = vec![POLL_STATE.to_string()];
+
+        let first = SqliteSeam::open(&url).expect("first start");
+        first.run_program_ddl(&ddl, &[]).expect("first ddl");
+        first
+            .execute_multiple("INSERT INTO \"p_poll_state_etag\" VALUES (1, 10, 20)")
+            .expect("one stored etag");
+        assert_eq!(stored_etags(&first), 1);
+        drop(first);
+
+        let restart = SqliteSeam::open(&url).expect("restart");
+        restart.run_program_ddl(&ddl, &[]).expect("restart ddl");
+        assert_eq!(
+            stored_etags(&restart),
+            1,
+            "a restart re-reads the stored ETag rather than the whole wire"
+        );
+        drop(restart);
+
+        let moved = vec![format!("{POLL_STATE}").replace("\"etag\" INTEGER", "\"etag\" TEXT")];
+        let reshaped = SqliteSeam::open(&url).expect("reshaped start");
+        reshaped.run_program_ddl(&moved, &[]).expect("reshaped ddl");
+        assert_eq!(
+            stored_etags(&reshaped),
+            0,
+            "a table whose columns moved is dropped: the rows no longer fit"
+        );
+    }
+
+    #[test]
+    fn a_shared_global_is_never_dropped() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let url = home.path().join("dl6.db").to_string_lossy().to_string();
+        let ddl = vec!["CREATE TABLE \"__str\" (\"__id\" INTEGER PRIMARY KEY, \
+                        \"content\" TEXT NOT NULL UNIQUE)"
+            .to_string()];
+        let first = SqliteSeam::open(&url).expect("first start");
+        first.run_program_ddl(&ddl, &[]).expect("first ddl");
+        first
+            .execute_multiple("INSERT INTO \"__str\" VALUES (1, 'orgs/hafley66/repos')")
+            .expect("one interned text")
+            ;
+        first.run_program_ddl(&ddl, &[]).expect("second ddl in the same process");
+        assert_eq!(
+            first.scalar("SELECT COUNT(*) FROM \"__str\"").expect("count"),
+            1,
+            "the interned text dictionary is shared by every program in the one db"
+        );
     }
 }

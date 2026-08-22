@@ -1,58 +1,98 @@
 [
   [
-    {"rel":"watch","sign":"add","row":["repo"]},
-    {"rel":"etag_event","sign":"add","row":["repo",""]},
-    {"rel":"interval","sign":"add","row":[300,1]}
-  ],
-  [
     {
-      "rel":"__host_response_http__fetch",
-      "sign":"add",
-      "row":[
-        "witness|http__fetch|ep:text=repo|prev:text=|bucket=1",
-        0,
-        "repo",
-        "",
-        200,
-        "tag-v1",
-        17,
-        "cli/cli"
+      "rel": "watch",
+      "sign": "add",
+      "row": [
+        "repo"
       ]
-    }
-  ],
-  [
-    {"rel":"etag_event","sign":"add","row":["repo","tag-v1"]},
-    {"rel":"interval","sign":"add","row":[300,2]}
-  ],
-  [
+    },
     {
-      "rel":"__host_response_http__fetch",
-      "sign":"add",
-      "row":[
-        "witness|http__fetch|ep:text=repo|prev:text=tag-v1|bucket=2",
-        0,
+      "rel": "etag_event",
+      "sign": "add",
+      "row": [
         "repo",
-        "tag-v1",
-        200,
-        "tag-v2",
-        18,
-        "cli/cli"
+        ""
+      ]
+    },
+    {
+      "rel": "interval",
+      "sign": "add",
+      "row": [
+        300,
+        1
       ]
     }
   ],
   [
     {
-      "rel":"__host_response_http__fetch",
-      "sign":"add",
-      "row":[
-        "witness|http__fetch|ep:text=repo|prev:text=|bucket=1",
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=repo|headers:text={\"If-None-Match\":\"\"}|prev_etag:text=|bucket:int=1",
         0,
         "repo",
+        "{\"If-None-Match\":\"\"}",
         "",
+        1,
         200,
-        "tag-late",
-        999,
-        "wrong/late"
+        "{\"etag\":\"tag-v1\"}",
+        "{\"full_name\":\"cli/cli\",\"stargazers_count\":17}",
+        45
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "etag_event",
+      "sign": "add",
+      "row": [
+        "repo",
+        "tag-v1"
+      ]
+    },
+    {
+      "rel": "interval",
+      "sign": "add",
+      "row": [
+        300,
+        2
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=repo|headers:text={\"If-None-Match\":\"tag-v1\"}|prev_etag:text=tag-v1|bucket:int=2",
+        0,
+        "repo",
+        "{\"If-None-Match\":\"tag-v1\"}",
+        "tag-v1",
+        2,
+        200,
+        "{\"etag\":\"tag-v2\"}",
+        "{\"full_name\":\"cli/cli\",\"stargazers_count\":18}",
+        45
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=repo|headers:text={\"If-None-Match\":\"\"}|prev_etag:text=|bucket:int=1",
+        0,
+        "repo",
+        "{\"If-None-Match\":\"\"}",
+        "",
+        1,
+        200,
+        "{\"etag\":\"tag-late\"}",
+        "{\"full_name\":\"wrong/late\",\"stargazers_count\":999}",
+        49
       ]
     }
   ]

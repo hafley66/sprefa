@@ -1,12 +1,15 @@
-# @comment-ok: the rate-budget contract, the one doc site; README.md carries the
-# ghcacher file:line map and every design argument. Three properties hold
-# structurally rather than by convention, and a reader has to know them before
-# editing any rule below. (1) A poll that is not due derives NO ROW in `due`,
-# so `gh_rest_cond` is never demanded and no request leaves the process. (2)
-# `over_budget` anti-joins into `due`, so below the stop threshold the poll
-# plane is empty until the reset bucket passes. (3) `endpoint_period` is a max
-# over candidates, so X-Poll-Interval and the warn stretch can only SLOW a
-# poll; no rule can shorten a period below the configured floor.
+# Four structural properties, argued in README.md, that a reader needs before
+# editing any rule below.
+#
+# @comment-ok: the rate-budget contract, the one doc site.
+# (1) A poll that is not due derives NO ROW in `due`, so `http.get` is never
+# demanded and no request leaves the process.
+# (2) `over_budget` anti-joins into `due`, so below the stop threshold the poll
+# plane is empty until the reset bucket passes.
+# (3) `endpoint_period` is a max over candidates, so X-Poll-Interval and the
+# warn stretch can only SLOW a poll, never shorten the configured floor.
+# (4) The transport holds NOTHING: the ETag, the 304 body, the page walk, the
+# token and the GraphQL query are rules here, so a restart re-reads the db.
 
 rel repo(owner: text, name: text).
 
@@ -60,19 +63,28 @@ rel live_cadence(period: int).
 live_cadence(60) <- interval(60, _Bucket).
 live_cadence(3600) <- interval(3600, _Bucket).
 
+# `/clock/tick(60, Bucket)` answers MINUTE buckets: a period spelled in seconds
+# and compared against one fired hourly (issues/ghcache-dl6-poll).
+rel clock_granularity(seconds: int).
+clock_granularity(60).
+
 # Every identity input must appear in the template (1_host_expand.pl:313) and
-# the freshness input must not, which is why `bucket` is absent from all five.
+# the freshness input must not, which is why `bucket` is absent from all four.
 
 rel /toml/json(config_path: text, bucket: int) -> (doc: json).
 
-rel /gh/rest_cond(endpoint_path: text, prev_etag: text, bucket: int)
-  -> (status: int, etag: text, last_modified: text, poll_interval: int,
-      rate_remaining: int, rate_reset: int, bytes: int, pages: int,
-      body: json).
+rel /env/var(name: text, bucket: int) -> (value: text) key(1).
 
-rel /gh/pr_batch(batch_key: text, slug_list: text, bucket: int)
-  -> (status: int, rate_remaining: int, rate_reset: int, gql_cost: int,
-      bytes: int, data: json).
+# ONE transport. `headers` is a JSON object of header name to value, so
+# Authorization and If-None-Match reach the wire only from a rule's row.
+#
+# `prev_etag` shapes no header: it is the demand-identity column that makes a
+# moved tag a NEW question rather than a re-ask of an answered one.
+rel http.get(url: text, headers: text, prev_etag: text, bucket: int)
+  -> (status: int, response_headers: json, body: json, bytes: int).
+
+rel http.post(url: text, headers: text, request_body: text, bucket: int)
+  -> (status: int, response_headers: json, body: json, bytes: int).
 
 rel /soopy/checkout(repo_slug: text, dest_root: text, want_sha: text)
   -> (checkout_path: text, head_sha: text).
@@ -156,6 +168,27 @@ repo_config(Owner, Name, DefaultBranch, SyncPrs, SyncEvents, SyncNotifications,
                    SyncNotifications, SyncBranches, CheckoutOnSync,
                    CheckoutPrBranches).
 
+# ── the token, read once an hour and carried on every request row ───────────
+
+rel token_var(search_rank: int, var_name: text).
+token_var(1, "GITHUB_TOKEN").
+token_var(2, "GH_TOKEN").
+rel token_seen(search_rank: int, token_value: text).
+rel best_token_rank(search_rank: int).
+rel api_token(token_value: text) key(1).
+
+token_seen(SearchRank, TokenValue) <-
+  token_var(SearchRank, VarName),
+  current_clock(3600, Bucket),
+  /env/var(VarName, Bucket, TokenValue),
+  TokenValue != "".
+
+best_token_rank(min(SearchRank)) <- token_seen(SearchRank, _TokenValue).
+
+api_token(TokenValue) <+
+  best_token_rank(SearchRank),
+  token_seen(SearchRank, TokenValue).
+
 # ── the rate budget ─────────────────────────────────────────────────────────
 
 rel api_tier(api_type: text, warn_threshold: int, stop_threshold: int).
@@ -181,12 +214,17 @@ rate_warm(ApiType) <-
   Remaining =< WarnThreshold,
   Remaining > StopThreshold.
 
+# `x-ratelimit-reset` is EPOCH SECONDS and `Bucket` is epoch MINUTES, so the
+# comparison is in buckets: raw, every reset is in the future and the poll
+# never resumes (MEASURED live: zero calls after one stop, forever).
 over_budget(ApiType, Bucket) <-
   current_clock(60, Bucket),
   rate_state(ApiType, Remaining, ResetAt),
   api_tier(ApiType, _WarnThreshold, StopThreshold),
   Remaining =< StopThreshold,
-  Bucket < ResetAt.
+  clock_granularity(Granularity),
+  ResetBucket := ResetAt / Granularity,
+  Bucket < ResetBucket.
 
 # ── the endpoint plane ──────────────────────────────────────────────────────
 
@@ -233,6 +271,19 @@ watched_repo(RepoRef, Owner, Name, DefaultBranch, SyncPrs, SyncEvents,
   watched_repo_seen(RepoRef, Owner, Name, DefaultBranch, SyncPrs, SyncEvents,
                     SyncBranches, CheckoutOnSync, CheckoutPrBranches, FsAlias).
 
+# The authenticated login, its own endpoint: the org-events path spells it and
+# nothing else sources it (issues/ghcache-gh-username-unsourced).
+watched_global("user", 'rest', 'gh_user') <- org_owner(_Owner, _FsAlias).
+
+rel gh_username_seen(login: text).
+gh_username_seen(Login) <-
+  watched_global(EndpointPath, _ApiType, 'gh_user'),
+  rest_response(EndpointPath, _Bucket, RespStatus, Body),
+  RespStatus == 200,
+  decode(Body, {login: Login: text}).
+
+gh_username(Login) <+ gh_username_seen(Login).
+
 watched_global(EndpointPath, 'rest', 'org_repos') <-
   org_owner(Owner, _FsAlias),
   EndpointPath := concat(["orgs/", Owner, "/repos?per_page=100"]).
@@ -273,47 +324,60 @@ poll_endpoint(EndpointPath, ApiType, EndpointKind) <-
 poll_endpoint(EndpointPath, ApiType, EndpointKind) <-
   watched_global(EndpointPath, ApiType, EndpointKind).
 
-period_candidate(EndpointPath, PollPeriod) <-
+# Seconds to buckets, rounded UP: a period shorter than one bucket still polls
+# every bucket rather than every bucket-count-of-seconds.
+period_candidate(EndpointPath, PeriodTicks) <-
   poll_endpoint(EndpointPath, _ApiType, EndpointKind),
   EndpointKind != 'org_repos',
   EndpointKind != 'user_repos',
-  global_setting(PollPeriod, _O, _W, _S, _WS, _H, _SN, _F).
+  global_setting(PollPeriod, _O, _W, _S, _WS, _H, _SN, _F),
+  clock_granularity(Granularity),
+  Rounded := PollPeriod + Granularity - 1,
+  PeriodTicks := Rounded / Granularity.
 
-period_candidate(EndpointPath, OrgDiscoveryPeriod) <-
+period_candidate(EndpointPath, PeriodTicks) <-
   poll_endpoint(EndpointPath, _ApiType, 'org_repos'),
-  global_setting(_P, OrgDiscoveryPeriod, _W, _S, _WS, _H, _SN, _F).
-period_candidate(EndpointPath, OrgDiscoveryPeriod) <-
+  global_setting(_P, OrgDiscoveryPeriod, _W, _S, _WS, _H, _SN, _F),
+  clock_granularity(Granularity),
+  Rounded := OrgDiscoveryPeriod + Granularity - 1,
+  PeriodTicks := Rounded / Granularity.
+period_candidate(EndpointPath, PeriodTicks) <-
   poll_endpoint(EndpointPath, _ApiType, 'user_repos'),
-  global_setting(_P, OrgDiscoveryPeriod, _W, _S, _WS, _H, _SN, _F).
+  global_setting(_P, OrgDiscoveryPeriod, _W, _S, _WS, _H, _SN, _F),
+  clock_granularity(Granularity),
+  Rounded := OrgDiscoveryPeriod + Granularity - 1,
+  PeriodTicks := Rounded / Granularity.
 
-period_candidate(EndpointPath, ServerPeriod) <-
+period_candidate(EndpointPath, PeriodTicks) <-
   poll_state_period(EndpointPath, ServerPeriod),
-  ServerPeriod > 0.
+  ServerPeriod > 0,
+  clock_granularity(Granularity),
+  Rounded := ServerPeriod + Granularity - 1,
+  PeriodTicks := Rounded / Granularity.
 
-period_candidate(EndpointPath, StretchPeriod) <-
+period_candidate(EndpointPath, PeriodTicks) <-
   poll_endpoint(EndpointPath, ApiType, _EndpointKind),
   rate_warm(ApiType),
   global_setting(PollPeriod, _O, _W, _S, WarnStretch, _H, _SN, _F),
-  StretchPeriod := PollPeriod * WarnStretch.
+  clock_granularity(Granularity),
+  StretchSeconds := PollPeriod * WarnStretch,
+  Rounded := StretchSeconds + Granularity - 1,
+  PeriodTicks := Rounded / Granularity.
 
 endpoint_period(EndpointPath, max(PeriodTicks)) <-
   period_candidate(EndpointPath, PeriodTicks).
 
-# ── the poll ────────────────────────────────────────────────────────────────
+# ── the poll, one demand row per PAGE ───────────────────────────────────────
 
 rel due(endpoint_path: text, bucket: int, api_type: text).
 rel poll_state(endpoint_path: text, etag: text, last_modified: text,
                poll_interval: int, last_polled_bucket: int,
                last_changed_bucket: int).
-rel poll_state_etag(endpoint_path: text, etag: text) key(1).
-rel poll_state_modified(endpoint_path: text, last_modified: text) key(1).
-rel poll_state_period(endpoint_path: text, server_period: int) key(1).
-rel poll_state_polled(endpoint_path: text, last_polled_bucket: int) key(1).
-rel poll_state_changed(endpoint_path: text, last_changed_bucket: int) key(1).
-rel poll(endpoint_path: text, prev_etag: text, bucket: int).
-rel rest_response(endpoint_path: text, bucket: int, status: int, etag: text,
-                  last_modified: text, poll_interval: int, rate_remaining: int,
-                  rate_reset: int, bytes: int, pages: int, body: json).
+rel poll_state_etag(page_url: text, etag: text) key(1).
+rel poll_state_modified(page_url: text, last_modified: text) key(1).
+rel poll_state_period(page_url: text, server_period: int) key(1).
+rel poll_state_polled(page_url: text, last_polled_bucket: int) key(1).
+rel poll_state_changed(page_url: text, last_changed_bucket: int) key(1).
 
 due(EndpointPath, Bucket, ApiType) <-
   current_clock(60, Bucket),
@@ -323,51 +387,209 @@ due(EndpointPath, Bucket, ApiType) <-
   PhaseSlot := Bucket mod PeriodTicks,
   PhaseSlot == 0.
 
-# coalesce is the TOTAL read: a never-polled endpoint carries the empty tag and
-# still polls exactly once.
-poll(EndpointPath, PrevEtag, Bucket) <-
-  due(EndpointPath, Bucket, _ApiType),
-  coalesce(poll_state_etag(EndpointPath, PrevEtag), "").
+# Page 1 is the endpoint; a later page is queued through a keyed rel so the
+# walk carries ONE tick offset rather than a cycle through the transport.
+rel page_cap(pages: int).
+page_cap(10).
+rel page_fetch(endpoint_path: text, page_url: text, page_ordinal: int,
+               bucket: int).
+rel page_queued(endpoint_path: text, page_url: text, page_ordinal: int,
+                bucket: int) key(2, 4).
+rel page_ordinal(page_url: text, bucket: int, page_ordinal: int) key(1, 2).
 
-rest_response(EndpointPath, Bucket, Status, Etag, LastModified, PollInterval,
-              RateRemaining, RateReset, Bytes, Pages, Body) <-
-  poll(EndpointPath, PrevEtag, Bucket),
-  /gh/rest_cond(EndpointPath, PrevEtag, Bucket, Status, Etag, LastModified,
-               PollInterval, RateRemaining, RateReset, Bytes, Pages, Body).
+page_fetch(EndpointPath, EndpointPath, 1, Bucket) <-
+  due(EndpointPath, Bucket, _ApiType).
+page_fetch(EndpointPath, PageUrl, PageOrdinal, Bucket) <-
+  page_queued(EndpointPath, PageUrl, PageOrdinal, Bucket).
+
+page_ordinal(EndpointPath, Bucket, 1) <+
+  due(EndpointPath, Bucket, _ApiType).
+
+page_ordinal(NextUrl, Bucket, NextOrdinal) <+
+  next_page(_EndpointPath, PageUrl, Bucket, NextUrl),
+  page_ordinal(PageUrl, Bucket, ParentOrdinal),
+  page_cap(Cap),
+  ParentOrdinal < Cap,
+  NextOrdinal := ParentOrdinal + 1.
+
+page_queued(EndpointPath, NextUrl, NextOrdinal, Bucket) <+
+  next_page(EndpointPath, PageUrl, Bucket, NextUrl),
+  page_ordinal(PageUrl, Bucket, ParentOrdinal),
+  page_cap(Cap),
+  ParentOrdinal < Cap,
+  NextOrdinal := ParentOrdinal + 1.
+
+# ── the request row: every header the wire sees is derived here ─────────────
+
+rel request_header(page_url: text, header_name: text, header_value: text).
+rel request_headers(page_url: text, headers: text).
+
+request_header(PageUrl, "Accept", "application/vnd.github+json") <-
+  page_fetch(_EndpointPath, PageUrl, _PageOrdinal, _Bucket).
+
+request_header(PageUrl, "Authorization", AuthValue) <-
+  page_fetch(_EndpointPath, PageUrl, _PageOrdinal, _Bucket),
+  api_token(TokenValue),
+  AuthValue := concat(["Bearer ", TokenValue]).
+
+request_header(PageUrl, "If-None-Match", PrevEtag) <-
+  page_fetch(_EndpointPath, PageUrl, _PageOrdinal, _Bucket),
+  poll_state_etag(PageUrl, PrevEtag),
+  PrevEtag != "".
+
+request_headers(PageUrl, json_object(HeaderName, HeaderValue)) <-
+  request_header(PageUrl, HeaderName, HeaderValue).
+
+rel page_prev_etag(page_url: text, prev_etag: text).
+rel page_arrival(endpoint_path: text, page_url: text, bucket: int, status: int,
+                 response_headers: json, body: json, bytes: int).
+
+# coalesce is the TOTAL read: a never-polled page carries the empty tag and
+# still polls exactly once. Its own rel because a coalesce output may not
+# appear again in the same body (0_coalesce_expand.pl:157).
+page_prev_etag(PageUrl, PrevEtag) <-
+  page_fetch(_EndpointPath, PageUrl, _PageOrdinal, _Bucket),
+  coalesce(poll_state_etag(PageUrl, PrevEtag), "").
+
+page_arrival(EndpointPath, PageUrl, Bucket, Status, RespHeaders, Body, Bytes) <-
+  page_fetch(EndpointPath, PageUrl, _PageOrdinal, Bucket),
+  request_headers(PageUrl, Headers),
+  page_prev_etag(PageUrl, PrevEtag),
+  http.get(PageUrl, Headers, PrevEtag, Bucket, Status, RespHeaders, Body,
+           Bytes).
+
+# ── the response headers, decoded ───────────────────────────────────────────
+
+rel header_etag(page_url: text, bucket: int, etag: text).
+rel header_modified(page_url: text, bucket: int, last_modified: text).
+rel header_poll_interval(page_url: text, bucket: int, server_period: int).
+rel header_rate_remaining(page_url: text, bucket: int, rate_remaining: int).
+rel header_rate_reset(page_url: text, bucket: int, rate_reset: int).
+rel header_link(page_url: text, bucket: int, link: text).
+
+header_etag(PageUrl, Bucket, Etag) <-
+  page_arrival(_Ep, PageUrl, Bucket, _S, RespHeaders, _B, _By),
+  decode(RespHeaders, {etag: Etag: text}).
+
+header_modified(PageUrl, Bucket, LastModified) <-
+  page_arrival(_Ep, PageUrl, Bucket, _S, RespHeaders, _B, _By),
+  decode(RespHeaders, {"last-modified": LastModified: text}).
+
+header_poll_interval(PageUrl, Bucket, ServerPeriod) <-
+  page_arrival(_Ep, PageUrl, Bucket, _S, RespHeaders, _B, _By),
+  decode(RespHeaders, {"x-poll-interval": ServerPeriod: int}).
+
+header_rate_remaining(PageUrl, Bucket, RateRemaining) <-
+  page_arrival(_Ep, PageUrl, Bucket, _S, RespHeaders, _B, _By),
+  decode(RespHeaders, {"x-ratelimit-remaining": RateRemaining: int}).
+
+header_rate_reset(PageUrl, Bucket, RateReset) <-
+  page_arrival(_Ep, PageUrl, Bucket, _S, RespHeaders, _B, _By),
+  decode(RespHeaders, {"x-ratelimit-reset": RateReset: int}).
+
+header_link(PageUrl, Bucket, Link) <-
+  page_arrival(_Ep, PageUrl, Bucket, _S, RespHeaders, _B, _By),
+  decode(RespHeaders, {link: Link: text}).
+
+rel page_response(endpoint_path: text, page_url: text, bucket: int,
+                  status: int, etag: text, last_modified: text,
+                  server_period: int, rate_remaining: int, rate_reset: int,
+                  link: text, bytes: int).
+
+# An absent header is NO ROW out of decode, so every reading is a total read
+# with the same default the deleted executor hard-coded.
+page_response(EndpointPath, PageUrl, Bucket, Status, Etag, LastModified,
+              ServerPeriod, RateRemaining, RateReset, Link, Bytes) <-
+  page_arrival(EndpointPath, PageUrl, Bucket, Status, _RH, _Body, Bytes),
+  coalesce(header_etag(PageUrl, Bucket, Etag), ""),
+  coalesce(header_modified(PageUrl, Bucket, LastModified), ""),
+  coalesce(header_poll_interval(PageUrl, Bucket, ServerPeriod), 0),
+  coalesce(header_rate_remaining(PageUrl, Bucket, RateRemaining), -1),
+  coalesce(header_rate_reset(PageUrl, Bucket, RateReset), 0),
+  coalesce(header_link(PageUrl, Bucket, Link), "").
+
+# ── RFC 5988 rel="next", read out of the Link header by rule ────────────────
+
+rel link_part_list(endpoint_path: text, page_url: text, bucket: int,
+                   parts: list(text)).
+rel link_part(endpoint_path: text, page_url: text, bucket: int, part: text).
+rel next_page(endpoint_path: text, page_url: text, bucket: int,
+              next_url: text).
+
+link_part_list(EndpointPath, PageUrl, Bucket, Parts) <-
+  page_response(EndpointPath, PageUrl, Bucket, Status, _E, _L, _P, _RR, _RS,
+                Link, _By),
+  Status == 200,
+  Link != "",
+  Parts := split(Link, ',').
+
+link_part(EndpointPath, PageUrl, Bucket, Part) <-
+  link_part_list(EndpointPath, PageUrl, Bucket, Parts),
+  decode(Parts, [... Part]).
+
+next_page(EndpointPath, PageUrl, Bucket, NextUrl) <-
+  link_part(EndpointPath, PageUrl, Bucket, Part),
+  RelAt := instr(Part, "rel=\"next\""),
+  RelAt > 0,
+  OpenAt := instr(Part, "<"),
+  CloseAt := instr(Part, ">"),
+  OpenAt > 0,
+  CloseAt > OpenAt,
+  Start := OpenAt + 1,
+  Span := CloseAt - Start,
+  NextUrl := substr(Part, Start, Span).
+
+# ── the 304, as a join against the body the program itself kept ─────────────
+
+rel last_body(page_url: text, body: json) key(1).
+rel rest_response(endpoint_path: text, bucket: int, status: int, body: json).
+
+last_body(PageUrl, Body) <+
+  page_arrival(_EndpointPath, PageUrl, _Bucket, Status, _RH, Body, _By),
+  Status == 200.
+
+rest_response(EndpointPath, Bucket, Status, Body) <-
+  page_arrival(EndpointPath, _PageUrl, Bucket, Status, _RH, Body, _By),
+  Status == 200.
+
+rest_response(EndpointPath, Bucket, Status, Body) <-
+  page_arrival(EndpointPath, PageUrl, Bucket, Status, _RH, _B, _By),
+  Status == 304,
+  last_body(PageUrl, Body).
 
 # Written direct from the response so every path back into the host demand
 # carries ONE tick offset (3_clock_check.pl:336); not writing is db.rs:173's COALESCE.
-poll_state_etag(EndpointPath, Etag) <+
-  rest_response(EndpointPath, _Bucket, _Status, Etag, _L, _P, _RR, _RS, _B,
-                _Pg, _Body),
+poll_state_etag(PageUrl, Etag) <+
+  page_response(_Ep, PageUrl, _Bucket, _Status, Etag, _L, _P, _RR, _RS, _Link,
+                _By),
   Etag != "".
 
-poll_state_modified(EndpointPath, LastModified) <+
-  rest_response(EndpointPath, _Bucket, _Status, _E, LastModified, _P, _RR, _RS,
-                _B, _Pg, _Body),
+poll_state_modified(PageUrl, LastModified) <+
+  page_response(_Ep, PageUrl, _Bucket, _Status, _E, LastModified, _P, _RR, _RS,
+                _Link, _By),
   LastModified != "".
 
-poll_state_period(EndpointPath, ServerPeriod) <+
-  rest_response(EndpointPath, _Bucket, _Status, _E, _L, ServerPeriod, _RR, _RS,
-                _B, _Pg, _Body),
+poll_state_period(PageUrl, ServerPeriod) <+
+  page_response(_Ep, PageUrl, _Bucket, _Status, _E, _L, ServerPeriod, _RR, _RS,
+                _Link, _By),
   ServerPeriod > 0.
 
-poll_state_polled(EndpointPath, Bucket) <+
-  rest_response(EndpointPath, Bucket, _Status, _E, _L, _P, _RR, _RS, _B, _Pg,
-                _Body).
+poll_state_polled(PageUrl, Bucket) <+
+  page_response(_Ep, PageUrl, Bucket, _Status, _E, _L, _P, _RR, _RS, _Link,
+                _By).
 
-poll_state_changed(EndpointPath, Bucket) <+
-  rest_response(EndpointPath, Bucket, RespStatus, _E, _L, _P, _RR, _RS, _B, _Pg,
-                _Body),
+poll_state_changed(PageUrl, Bucket) <+
+  page_response(_Ep, PageUrl, Bucket, RespStatus, _E, _L, _P, _RR, _RS, _Link,
+                _By),
   RespStatus == 200.
 
-poll_state(EndpointPath, Etag, LastModified, ServerPeriod, LastPolled,
+poll_state(PageUrl, Etag, LastModified, ServerPeriod, LastPolled,
            LastChanged) <-
-  poll_state_polled(EndpointPath, LastPolled),
-  coalesce(poll_state_etag(EndpointPath, Etag), ""),
-  coalesce(poll_state_modified(EndpointPath, LastModified), ""),
-  coalesce(poll_state_period(EndpointPath, ServerPeriod), 0),
-  coalesce(poll_state_changed(EndpointPath, LastChanged), 0).
+  poll_state_polled(PageUrl, LastPolled),
+  coalesce(poll_state_etag(PageUrl, Etag), ""),
+  coalesce(poll_state_modified(PageUrl, LastModified), ""),
+  coalesce(poll_state_period(PageUrl, ServerPeriod), 0),
+  coalesce(poll_state_changed(PageUrl, LastChanged), 0).
 
 # ── the call log ────────────────────────────────────────────────────────────
 
@@ -375,19 +597,19 @@ rel call_log(at_tick: int, api_type: text, endpoint_path: text, status: int,
              rate_remaining: int, rate_reset: int, bytes: int,
              cache_hit: int) log keep(all).
 
-call_log(AtTick, ApiType, EndpointPath, Status, RateRemaining, RateReset, Bytes,
+call_log(AtTick, ApiType, PageUrl, Status, RateRemaining, RateReset, Bytes,
          CacheHit) <+
-  rest_response(EndpointPath, _Bucket, Status, _E, _L, _P, RateRemaining,
-                RateReset, Bytes, _Pg, _Body),
+  page_response(_Ep, PageUrl, _Bucket, Status, _E, _L, _P, RateRemaining,
+                RateReset, _Link, Bytes),
   Status == 304,
   ApiType := 'rest',
   CacheHit := 1,
   now(AtTick).
 
-call_log(AtTick, ApiType, EndpointPath, Status, RateRemaining, RateReset, Bytes,
+call_log(AtTick, ApiType, PageUrl, Status, RateRemaining, RateReset, Bytes,
          CacheHit) <+
-  rest_response(EndpointPath, _Bucket, Status, _E, _L, _P, RateRemaining,
-                RateReset, Bytes, _Pg, _Body),
+  page_response(_Ep, PageUrl, _Bucket, Status, _E, _L, _P, RateRemaining,
+                RateReset, _Link, Bytes),
   Status != 304,
   ApiType := 'rest',
   CacheHit := 0,
@@ -395,8 +617,8 @@ call_log(AtTick, ApiType, EndpointPath, Status, RateRemaining, RateReset, Bytes,
 
 call_log(AtTick, ApiType, BatchKey, Status, RateRemaining, RateReset, Bytes,
          CacheHit) <+
-  pr_batch_response(BatchKey, _Bucket, Status, RateRemaining, RateReset,
-                    _GqlCost, Bytes, _Data),
+  pr_batch_response(BatchKey, _Bucket, Status, RateRemaining, RateReset, Bytes,
+                    _Data),
   ApiType := 'graphql',
   CacheHit := 0,
   now(AtTick).
@@ -406,16 +628,14 @@ call_log(AtTick, ApiType, BatchKey, Status, RateRemaining, RateReset, Bytes,
 discovered_repo(Owner, Name, DefaultBranch) <-
   watched_global(EndpointPath, _ApiType, 'org_repos'),
   org_owner(Owner, _FsAlias),
-  rest_response(EndpointPath, _Bucket, RespStatus, _E, _L, _P, _RR, _RS, _B, _Pg,
-                Body),
+  rest_response(EndpointPath, _Bucket, RespStatus, Body),
   RespStatus == 200,
   decode(Body, [... {name: Name: text, default_branch: DefaultBranch: text}]).
 
 discovered_repo(Owner, Name, DefaultBranch) <-
   watched_global(EndpointPath, _ApiType, 'user_repos'),
   org_owner(Owner, _FsAlias),
-  rest_response(EndpointPath, _Bucket, RespStatus, _E, _L, _P, _RR, _RS, _B, _Pg,
-                Body),
+  rest_response(EndpointPath, _Bucket, RespStatus, Body),
   RespStatus == 200,
   decode(Body, [... {name: Name: text, default_branch: DefaultBranch: text}]).
 
@@ -425,8 +645,7 @@ not_an_org(Owner) <+
   watched_global(EndpointPath, ApiType, Kind),
   Kind == 'org_repos',
   org_owner(Owner, _FsAlias),
-  rest_response(EndpointPath, _Bucket, RespStatus, _E, _L, _P, _RR, _RS, _B, _Pg,
-                _Body),
+  rest_response(EndpointPath, _Bucket, RespStatus, _Body),
   RespStatus == 404.
 
 # ── repo events ─────────────────────────────────────────────────────────────
@@ -442,8 +661,7 @@ rel dirty_repo(repo_ref: repo).
 # event writes an identical row, and an identical write is a zero delta.
 repo_event_seen(RepoRef, GhId, EventType, Actor, Payload, CreatedAt) <-
   watched_endpoint(EndpointPath, _ApiType, 'repo_events', RepoRef),
-  rest_response(EndpointPath, _Bucket, RespStatus, _E, _L, _P, _RR, _RS, _B, _Pg,
-                Body),
+  rest_response(EndpointPath, _Bucket, RespStatus, Body),
   RespStatus == 200,
   decode(Body, [... {id: GhId: text, type: EventType: text,
                      actor: {login: Actor: text}, payload: Payload,
@@ -515,8 +733,7 @@ branch_pattern(RepoRef, Pattern) <-
 
 candidate_branch(RepoRef, BranchName, Sha) <-
   watched_endpoint(EndpointPath, _ApiType, 'branches', RepoRef),
-  rest_response(EndpointPath, _Bucket, RespStatus, _E, _L, _P, _RR, _RS, _B, _Pg,
-                Body),
+  rest_response(EndpointPath, _Bucket, RespStatus, Body),
   RespStatus == 200,
   decode(Body, [... {name: BranchName: text, commit: {sha: Sha: text}}]).
 
@@ -547,14 +764,28 @@ branch(RepoRef, BranchName, Sha, UpdatedAt) <+
   branch_seen(RepoRef, BranchName, Sha, UpdatedAt).
 
 # ── pull requests, through the batched GraphQL call ─────────────────────────
+#
+# One aliased selection per repository in ONE query; the alias comes BACK
+# through a `$` capture key, so the six fan-outs are six decode rules.
 
 rel batch_size(rows_per_call: int) key(1).
 rel repo_ordinal(repo_ref: repo, ordinal: int) key(1).
-rel pr_batch_member(bucket: int, batch_index: int, repo_slug: text).
-rel pr_batch(bucket: int, batch_index: int, batch_key: text, slug_list: text).
+rel pr_batch_member(bucket: int, batch_index: int, batch_key: text,
+                    repo_alias: text, owner: text, name: text).
+rel pr_batch_alias(bucket: int, batch_key: text, repo_alias: text,
+                   owner: text, name: text).
+rel pr_selection(bucket: int, batch_key: text, repo_alias: text,
+                 selection: text).
+rel pr_batch(bucket: int, batch_key: text, selections: text).
+rel pr_query(bucket: int, batch_key: text, query_text: text).
+rel pr_post_field(bucket: int, batch_key: text, field_name: text,
+                  field_value: text).
+rel pr_post_body(bucket: int, batch_key: text, request_body: text).
+rel pr_batch_arrival(batch_key: text, bucket: int, status: int,
+                     response_headers: json, data: json, bytes: int).
 rel pr_batch_response(batch_key: text, bucket: int, status: int,
-                      rate_remaining: int, rate_reset: int, gql_cost: int,
-                      bytes: int, data: json).
+                      rate_remaining: int, rate_reset: int, bytes: int,
+                      data: json).
 rel pr_due(repo_ref: repo, bucket: int).
 rel pr_ever_synced(repo_ref: repo) key(1).
 
@@ -580,7 +811,7 @@ pr_ever_synced(RepoRef) <+
   pull_request_seen(RepoRef, _N, _G, _S, _T, _A, _HR, _HS, _BR, _M, _D, _Ad,
                     _De, _CF, _C, _U, _Me, _Cl, _B).
 
-pr_batch_member(Bucket, BatchIndex, RepoSlug) <-
+pr_batch_member(Bucket, BatchIndex, BatchKey, RepoAlias, Owner, Name) <-
   pr_due(RepoRef, Bucket),
   watched_repo(RepoRef, Owner, Name, _DB, SyncPrs, _SE, _SB, _CS, _CP, _FA),
   SyncPrs == 1,
@@ -588,24 +819,80 @@ pr_batch_member(Bucket, BatchIndex, RepoSlug) <-
   repo_ordinal(RepoRef, Ordinal),
   batch_size(RowsPerCall),
   BatchIndex := Ordinal / RowsPerCall,
-  RepoSlug := concat([Owner, "/", Name]).
+  BatchKey := concat(["graphql:prs:batch/", BatchIndex]),
+  RepoAlias := concat(["repo_", Ordinal]).
 
-rel pr_batch_member_keyed(bucket: int, batch_index: int, batch_key: text,
-                          repo_slug: text).
+pr_batch_alias(Bucket, BatchKey, RepoAlias, Owner, Name) <-
+  pr_batch_member(Bucket, _BatchIndex, BatchKey, RepoAlias, Owner, Name).
 
-pr_batch_member_keyed(Bucket, BatchIndex, BatchKey, RepoSlug) <-
-  pr_batch_member(Bucket, BatchIndex, RepoSlug),
-  BatchKey := concat(["graphql:prs:batch/", BatchIndex]).
+pr_selection(Bucket, BatchKey, RepoAlias, Selection) <-
+  pr_batch_member(Bucket, _BatchIndex, BatchKey, RepoAlias, Owner, Name),
+  Selection := concat([RepoAlias, ": repository(owner: \"", Owner,
+    "\", name: \"", Name, "\") { pullRequests(first: 100, states: OPEN, ",
+    "orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { ",
+    "number title state isDraft body headRefName headRefOid baseRefName ",
+    "mergeable additions deletions changedFiles createdAt updatedAt ",
+    "mergedAt closedAt databaseId id author { login } mergeCommit { oid } ",
+    "reviews(last: 20) { nodes { databaseId author { login } state body ",
+    "submittedAt } } comments(last: 50) { nodes { databaseId author { login } ",
+    "body createdAt updatedAt } } reviewRequests(first: 20) { nodes { ",
+    "requestedReviewer { ... on User { login } ... on Team { login: slug } ",
+    "} } } labels(first: 10) { nodes { name color } } commits(last: 1) { ",
+    "nodes { commit { statusCheckRollup { contexts(first: 50) { nodes { ",
+    "__typename ... on StatusContext { context state targetUrl description } ",
+    "... on CheckRun { name conclusion detailsUrl } } } } } } } } } } "]).
 
-# The aliased-query slug list is built by a SQL aggregate, never string code.
-pr_batch(Bucket, BatchIndex, BatchKey, group_concat(RepoSlug, " ")) <-
-  pr_batch_member_keyed(Bucket, BatchIndex, BatchKey, RepoSlug).
+# The aliased-query text is built by a SQL aggregate, never string code.
+pr_batch(Bucket, BatchKey, group_concat(Selection, "")) <-
+  pr_selection(Bucket, BatchKey, _RepoAlias, Selection).
 
-pr_batch_response(BatchKey, Bucket, Status, RateRemaining, RateReset, GqlCost,
-                  Bytes, Data) <-
-  pr_batch(Bucket, _BatchIndex, BatchKey, SlugList),
-  /gh/pr_batch(BatchKey, SlugList, Bucket, Status, RateRemaining, RateReset,
-              GqlCost, Bytes, Data).
+pr_query(Bucket, BatchKey, QueryText) <-
+  pr_batch(Bucket, BatchKey, Selections),
+  QueryText := concat(["{ rateLimit { cost remaining resetAt } ", Selections,
+                       "}"]).
+
+pr_post_field(Bucket, BatchKey, "query", QueryText) <-
+  pr_query(Bucket, BatchKey, QueryText).
+
+# json_object is the escaper: the query text carries quotes and braces, and the
+# envelope has to stay a valid JSON document.
+pr_post_body(Bucket, BatchKey, json_object(FieldName, FieldValue)) <-
+  pr_post_field(Bucket, BatchKey, FieldName, FieldValue).
+
+rel graphql_header(url: text, header_name: text, header_value: text).
+rel graphql_headers(url: text, headers: text).
+
+graphql_header("graphql", "Accept", "application/vnd.github+json").
+graphql_header("graphql", "Content-Type", "application/json").
+graphql_header("graphql", "Authorization", AuthValue) <-
+  api_token(TokenValue),
+  AuthValue := concat(["Bearer ", TokenValue]).
+
+graphql_headers(Url, json_object(HeaderName, HeaderValue)) <-
+  graphql_header(Url, HeaderName, HeaderValue).
+
+pr_batch_arrival(BatchKey, Bucket, Status, RespHeaders, Data, Bytes) <-
+  pr_post_body(Bucket, BatchKey, RequestBody),
+  graphql_headers(Url, Headers),
+  http.post(Url, Headers, RequestBody, Bucket, Status, RespHeaders, Data,
+            Bytes).
+
+rel gql_rate_remaining(batch_key: text, bucket: int, rate_remaining: int).
+rel gql_rate_reset(batch_key: text, bucket: int, rate_reset: int).
+
+gql_rate_remaining(BatchKey, Bucket, RateRemaining) <-
+  pr_batch_arrival(BatchKey, Bucket, _S, RespHeaders, _D, _By),
+  decode(RespHeaders, {"x-ratelimit-remaining": RateRemaining: int}).
+
+gql_rate_reset(BatchKey, Bucket, RateReset) <-
+  pr_batch_arrival(BatchKey, Bucket, _S, RespHeaders, _D, _By),
+  decode(RespHeaders, {"x-ratelimit-reset": RateReset: int}).
+
+pr_batch_response(BatchKey, Bucket, Status, RateRemaining, RateReset, Bytes,
+                  Data) <-
+  pr_batch_arrival(BatchKey, Bucket, Status, _RH, Data, Bytes),
+  coalesce(gql_rate_remaining(BatchKey, Bucket, RateRemaining), -1),
+  coalesce(gql_rate_reset(BatchKey, Bucket, RateReset), 0).
 
 rel pull_request(repo_ref: repo, number: int, gh_node_id: text, state: text,
                  title: text, author: text, head_ref: text, head_sha: text,
@@ -619,27 +906,41 @@ rel pull_request_seen(repo_ref: repo, number: int, gh_node_id: text,
                       draft: int, additions: int, deletions: int,
                       changed_files: int, created_at: text, updated_at: text,
                       merged_at: text, closed_at: text, body: text).
+rel gql_pull(batch_key: text, bucket: int, repo_alias: text, number: int,
+             gh_node_id: text, gql_state: text, title: text, author: text,
+             head_ref: text, head_sha: text, base_ref: text, mergeable: text,
+             draft: int, additions: int, deletions: int, changed_files: int,
+             created_at: text, updated_at: text, merged_at: text,
+             closed_at: text, body: text).
 
+gql_pull(BatchKey, Bucket, RepoAlias, Number, GhNodeId, GqlState, Title, Author,
+         HeadRef, HeadSha, BaseRef, Mergeable, Draft, Additions, Deletions,
+         ChangedFiles, CreatedAt, UpdatedAt, MergedAt, ClosedAt, PrBody) <-
+  pr_batch_response(BatchKey, Bucket, RespStatus, _RR, _RS, _By, Data),
+  RespStatus == 200,
+  decode(Data, {data: {$RepoAlias: {pullRequests: {nodes: [...
+    {number: Number: int, id: GhNodeId: text, state: GqlState: text,
+     title: Title: text, author: {login: Author: text},
+     headRefName: HeadRef: text, headRefOid: HeadSha: text,
+     baseRefName: BaseRef: text, mergeable: Mergeable: text,
+     isDraft: Draft: int, additions: Additions: int,
+     deletions: Deletions: int, changedFiles: ChangedFiles: int,
+     createdAt: CreatedAt: text, updatedAt: UpdatedAt: text,
+     mergedAt: MergedAt: text, closedAt: ClosedAt: text,
+     body: PrBody: text}]}}}}).
+
+# GraphQL answers OPEN/CLOSED/MERGED; the reader views and `open_pr_head` are
+# written against the REST vocabulary, so the state is lowered here.
 pull_request_seen(repo(Owner, Name), Number, GhNodeId, State, Title, Author,
                   HeadRef, HeadSha, BaseRef, Mergeable, Draft, Additions,
                   Deletions, ChangedFiles, CreatedAt, UpdatedAt, MergedAt,
                   ClosedAt, PrBody) <-
-  pr_batch_response(_BatchKey, _Bucket, RespStatus, _RR, _RS, _GC, _B, Data),
-  RespStatus == 200,
-  decode(Data, {pulls: [... {owner: Owner: text, name: Name: text,
-                             number: Number: int, node_id: GhNodeId: text,
-                             state: State: text, title: Title: text,
-                             author: Author: text, head_ref: HeadRef: text,
-                             head_sha: HeadSha: text, base_ref: BaseRef: text,
-                             mergeable: Mergeable: text, draft: Draft: int,
-                             additions: Additions: int,
-                             deletions: Deletions: int,
-                             changed_files: ChangedFiles: int,
-                             created_at: CreatedAt: text,
-                             updated_at: UpdatedAt: text,
-                             merged_at: MergedAt: text,
-                             closed_at: ClosedAt: text,
-                             body: PrBody: text}]}).
+  gql_pull(BatchKey, Bucket, RepoAlias, Number, GhNodeId, GqlState, Title,
+           Author, HeadRef, HeadSha, BaseRef, Mergeable, Draft, Additions,
+           Deletions, ChangedFiles, CreatedAt, UpdatedAt, MergedAt, ClosedAt,
+           PrBody),
+  pr_batch_alias(Bucket, BatchKey, RepoAlias, Owner, Name),
+  State := lower(GqlState).
 
 pull_request(RepoRef, Number, GhNodeId, State, Title, Author, HeadRef, HeadSha,
              BaseRef, Mergeable, Draft, Additions, Deletions, ChangedFiles,
@@ -649,20 +950,49 @@ pull_request(RepoRef, Number, GhNodeId, State, Title, Author, HeadRef, HeadSha,
                     ChangedFiles, CreatedAt, UpdatedAt, MergedAt, ClosedAt,
                     PrBody).
 
+rel pr_merge_commit(repo_ref: repo, number: int, merge_commit_sha: text)
+                    key(1, 2).
+rel gql_merge_commit(batch_key: text, bucket: int, repo_alias: text,
+                     number: int, merge_commit_sha: text).
+rel pr_merge_commit_seen(repo_ref: repo, number: int, merge_commit_sha: text).
+
+gql_merge_commit(BatchKey, Bucket, RepoAlias, Number, MergeCommitSha) <-
+  pr_batch_response(BatchKey, Bucket, RespStatus, _RR, _RS, _By, Data),
+  RespStatus == 200,
+  decode(Data, {data: {$RepoAlias: {pullRequests: {nodes: [...
+    {number: Number: int, mergeCommit: {oid: MergeCommitSha: text}}]}}}}).
+
+pr_merge_commit_seen(repo(Owner, Name), Number, MergeCommitSha) <-
+  gql_merge_commit(BatchKey, Bucket, RepoAlias, Number, MergeCommitSha),
+  pr_batch_alias(Bucket, BatchKey, RepoAlias, Owner, Name).
+
+pr_merge_commit(RepoRef, Number, MergeCommitSha) <+
+  pr_merge_commit_seen(RepoRef, Number, MergeCommitSha).
+
 rel pr_review(repo_ref: repo, number: int, gh_id: int, author: text,
               state: text, body: text, submitted_at: text) key(1, 2, 3).
 rel pr_review_seen(repo_ref: repo, number: int, gh_id: int, author: text,
                    state: text, body: text, submitted_at: text).
+rel gql_review(batch_key: text, bucket: int, repo_alias: text, number: int,
+               gh_id: int, author: text, state: text, body: text,
+               submitted_at: text).
+
+gql_review(BatchKey, Bucket, RepoAlias, Number, GhId, Author, State,
+           ReviewBody, SubmittedAt) <-
+  pr_batch_response(BatchKey, Bucket, RespStatus, _RR, _RS, _By, Data),
+  RespStatus == 200,
+  decode(Data, {data: {$RepoAlias: {pullRequests: {nodes: [...
+    {number: Number: int,
+     reviews: {nodes: [... {databaseId: GhId: int,
+                            author: {login: Author: text},
+                            state: State: text, body: ReviewBody: text,
+                            submittedAt: SubmittedAt: text}]}}]}}}}).
 
 pr_review_seen(repo(Owner, Name), Number, GhId, Author, State, ReviewBody,
                SubmittedAt) <-
-  pr_batch_response(_BatchKey, _Bucket, RespStatus, _RR, _RS, _GC, _B, Data),
-  RespStatus == 200,
-  decode(Data, {reviews: [... {owner: Owner: text, name: Name: text,
-                               number: Number: int, gh_id: GhId: int,
-                               author: Author: text, state: State: text,
-                               body: ReviewBody: text,
-                               submitted_at: SubmittedAt: text}]}).
+  gql_review(BatchKey, Bucket, RepoAlias, Number, GhId, Author, State,
+             ReviewBody, SubmittedAt),
+  pr_batch_alias(Bucket, BatchKey, RepoAlias, Owner, Name).
 
 pr_review(RepoRef, Number, GhId, Author, State, ReviewBody, SubmittedAt) <+
   pr_review_seen(RepoRef, Number, GhId, Author, State, ReviewBody,
@@ -674,18 +1004,29 @@ rel pr_comment(repo_ref: repo, number: int, gh_id: int, author: text,
 rel pr_comment_seen(repo_ref: repo, number: int, gh_id: int, author: text,
                     body: text, path: text, line: int, in_reply_to_id: int,
                     created_at: text, updated_at: text).
+rel gql_comment(batch_key: text, bucket: int, repo_alias: text, number: int,
+                gh_id: int, author: text, body: text, created_at: text,
+                updated_at: text).
 
-pr_comment_seen(repo(Owner, Name), Number, GhId, Author, CommentBody, Path,
-                Line, InReplyToId, CreatedAt, UpdatedAt) <-
-  pr_batch_response(_BatchKey, _Bucket, RespStatus, _RR, _RS, _GC, _B, Data),
+gql_comment(BatchKey, Bucket, RepoAlias, Number, GhId, Author, CommentBody,
+            CreatedAt, UpdatedAt) <-
+  pr_batch_response(BatchKey, Bucket, RespStatus, _RR, _RS, _By, Data),
   RespStatus == 200,
-  decode(Data, {comments: [... {owner: Owner: text, name: Name: text,
-                                number: Number: int, gh_id: GhId: int,
-                                author: Author: text, body: CommentBody: text,
-                                path: Path: text, line: Line: int,
-                                in_reply_to_id: InReplyToId: int,
-                                created_at: CreatedAt: text,
-                                updated_at: UpdatedAt: text}]}).
+  decode(Data, {data: {$RepoAlias: {pullRequests: {nodes: [...
+    {number: Number: int,
+     comments: {nodes: [... {databaseId: GhId: int,
+                             author: {login: Author: text},
+                             body: CommentBody: text,
+                             createdAt: CreatedAt: text,
+                             updatedAt: UpdatedAt: text}]}}]}}}}).
+
+# An issue comment carries no file position; `path`/`line`/`in_reply_to_id` are
+# the REST review-comment columns and stay empty on this plane.
+pr_comment_seen(repo(Owner, Name), Number, GhId, Author, CommentBody, "", 0, 0,
+                CreatedAt, UpdatedAt) <-
+  gql_comment(BatchKey, Bucket, RepoAlias, Number, GhId, Author, CommentBody,
+              CreatedAt, UpdatedAt),
+  pr_batch_alias(Bucket, BatchKey, RepoAlias, Owner, Name).
 
 pr_comment(RepoRef, Number, GhId, Author, CommentBody, Path, Line,
            InReplyToId, CreatedAt, UpdatedAt) <+
@@ -698,18 +1039,47 @@ rel pr_status_check(repo_ref: repo, number: int, context: text, state: text,
 rel pr_status_check_seen(repo_ref: repo, number: int, context: text,
                          state: text, target_url: text, description: text,
                          updated_at: text).
+rel gql_status_context(batch_key: text, bucket: int, repo_alias: text,
+                       number: int, context: text, state: text,
+                       target_url: text, description: text).
+rel gql_check_run(batch_key: text, bucket: int, repo_alias: text, number: int,
+                  context: text, state: text, target_url: text).
+
+# The rollup is a UNION of two GraphQL types, so it is two decode rules: a
+# `... on` inline fragment cannot be aliased into one shape without a type clash.
+gql_status_context(BatchKey, Bucket, RepoAlias, Number, Context, State,
+                   TargetUrl, Description) <-
+  pr_batch_response(BatchKey, Bucket, RespStatus, _RR, _RS, _By, Data),
+  RespStatus == 200,
+  decode(Data, {data: {$RepoAlias: {pullRequests: {nodes: [...
+    {number: Number: int,
+     commits: {nodes: [... {commit: {statusCheckRollup:
+       {contexts: {nodes: [... {context: Context: text, state: State: text,
+                                targetUrl: TargetUrl: text,
+                                description: Description: text}]}}}}]}}]}}}}).
+
+gql_check_run(BatchKey, Bucket, RepoAlias, Number, Context, State,
+              TargetUrl) <-
+  pr_batch_response(BatchKey, Bucket, RespStatus, _RR, _RS, _By, Data),
+  RespStatus == 200,
+  decode(Data, {data: {$RepoAlias: {pullRequests: {nodes: [...
+    {number: Number: int,
+     commits: {nodes: [... {commit: {statusCheckRollup:
+       {contexts: {nodes: [... {name: Context: text,
+                                conclusion: State: text,
+                                detailsUrl: TargetUrl: text}]}}}}]}}]}}}}).
 
 pr_status_check_seen(repo(Owner, Name), Number, Context, State, TargetUrl,
-                     Description, UpdatedAt) <-
-  pr_batch_response(_BatchKey, _Bucket, RespStatus, _RR, _RS, _GC, _B, Data),
-  RespStatus == 200,
-  decode(Data, {status_checks: [... {owner: Owner: text, name: Name: text,
-                                     number: Number: int,
-                                     context: Context: text,
-                                     state: State: text,
-                                     target_url: TargetUrl: text,
-                                     description: Description: text,
-                                     updated_at: UpdatedAt: text}]}).
+                     Description, "") <-
+  gql_status_context(BatchKey, Bucket, RepoAlias, Number, Context, State,
+                     TargetUrl, Description),
+  pr_batch_alias(Bucket, BatchKey, RepoAlias, Owner, Name).
+
+pr_status_check_seen(repo(Owner, Name), Number, Context, State, TargetUrl, "",
+                     "") <-
+  gql_check_run(BatchKey, Bucket, RepoAlias, Number, Context, State,
+                TargetUrl),
+  pr_batch_alias(Bucket, BatchKey, RepoAlias, Owner, Name).
 
 pr_status_check(RepoRef, Number, Context, State, TargetUrl, Description,
                 UpdatedAt) <+
@@ -719,13 +1089,19 @@ pr_status_check(RepoRef, Number, Context, State, TargetUrl, Description,
 rel pr_label(repo_ref: repo, number: int, label: text, color: text)
              key(1, 2, 3).
 rel pr_label_seen(repo_ref: repo, number: int, label: text, color: text).
+rel gql_label(batch_key: text, bucket: int, repo_alias: text, number: int,
+              label: text, color: text).
+
+gql_label(BatchKey, Bucket, RepoAlias, Number, Label, Color) <-
+  pr_batch_response(BatchKey, Bucket, RespStatus, _RR, _RS, _By, Data),
+  RespStatus == 200,
+  decode(Data, {data: {$RepoAlias: {pullRequests: {nodes: [...
+    {number: Number: int,
+     labels: {nodes: [... {name: Label: text, color: Color: text}]}}]}}}}).
 
 pr_label_seen(repo(Owner, Name), Number, Label, Color) <-
-  pr_batch_response(_BatchKey, _Bucket, RespStatus, _RR, _RS, _GC, _B, Data),
-  RespStatus == 200,
-  decode(Data, {labels: [... {owner: Owner: text, name: Name: text,
-                              number: Number: int, label: Label: text,
-                              color: Color: text}]}).
+  gql_label(BatchKey, Bucket, RepoAlias, Number, Label, Color),
+  pr_batch_alias(Bucket, BatchKey, RepoAlias, Owner, Name).
 
 pr_label(RepoRef, Number, Label, Color) <+
   pr_label_seen(RepoRef, Number, Label, Color).
@@ -733,17 +1109,54 @@ pr_label(RepoRef, Number, Label, Color) <+
 rel pr_requested_reviewer(repo_ref: repo, number: int, reviewer: text)
                           key(1, 2, 3).
 rel pr_requested_reviewer_seen(repo_ref: repo, number: int, reviewer: text).
+rel gql_requested_reviewer(batch_key: text, bucket: int, repo_alias: text,
+                           number: int, reviewer: text).
+
+gql_requested_reviewer(BatchKey, Bucket, RepoAlias, Number, Reviewer) <-
+  pr_batch_response(BatchKey, Bucket, RespStatus, _RR, _RS, _By, Data),
+  RespStatus == 200,
+  decode(Data, {data: {$RepoAlias: {pullRequests: {nodes: [...
+    {number: Number: int,
+     reviewRequests: {nodes: [... {requestedReviewer:
+       {login: Reviewer: text}}]}}]}}}}).
 
 pr_requested_reviewer_seen(repo(Owner, Name), Number, Reviewer) <-
-  pr_batch_response(_BatchKey, _Bucket, RespStatus, _RR, _RS, _GC, _B, Data),
-  RespStatus == 200,
-  decode(Data, {requested_reviewers: [... {owner: Owner: text,
-                                           name: Name: text,
-                                           number: Number: int,
-                                           reviewer: Reviewer: text}]}).
+  gql_requested_reviewer(BatchKey, Bucket, RepoAlias, Number, Reviewer),
+  pr_batch_alias(Bucket, BatchKey, RepoAlias, Owner, Name).
 
 pr_requested_reviewer(RepoRef, Number, Reviewer) <+
   pr_requested_reviewer_seen(RepoRef, Number, Reviewer).
+
+# ── the pull-request state track, folded in from prwatch.dl6 ────────────────
+
+rel lane_prefix(prefix: text).
+lane_prefix("feature/").
+lane_prefix("fix/").
+lane_prefix("plan/").
+
+# `pre/1` is the grade -1 read: without it `pull_request` reaches this rule at
+# two clock offsets from one origin (3_clock_check.pl:336, clock_path_conflict).
+rel pr_transition(repo_ref: repo, number: int, from_state: text,
+                  to_state: text, at_tick: int) log keep(all).
+pr_transition(RepoRef, Number, FromState, ToState, AtTick) <+
+  pull_request_seen(RepoRef, Number, _G, ToState, _T, _A, _HR, _HS, _BR, _M,
+                    _D, _Ad, _De, _CF, _C, _U, _Me, _Cl, _B),
+  pre(pull_request(RepoRef, Number, _G2, FromState, _T2, _A2, _HR2, _HS2, _BR2,
+                   _M2, _D2, _Ad2, _De2, _CF2, _C2, _U2, _Me2, _Cl2, _B2)),
+  FromState != ToState,
+  now(AtTick).
+
+# `instr(HeadRef, Prefix) == 1` is starts-with: the language has no prefix
+# operator and instr answers the 1-based position of the first occurrence.
+rel lane_proof(repo_slug: text, branch: text, pr: int, merge_commit_sha: text).
+lane_proof(RepoSlug, HeadRef, Number, MergeCommitSha) <-
+  pull_request(repo(Owner, Name), Number, _G, 'merged', _T, _A, HeadRef, _HS,
+               _BR, _M, _D, _Ad, _De, _CF, _C, _U, _Me, _Cl, _B),
+  pr_merge_commit(repo(Owner, Name), Number, MergeCommitSha),
+  lane_prefix(Prefix),
+  PrefixAt := instr(HeadRef, Prefix),
+  PrefixAt == 1,
+  RepoSlug := concat([Owner, "/", Name]).
 
 # ── notifications ───────────────────────────────────────────────────────────
 
@@ -762,8 +1175,7 @@ notification_seen(GhId, repo(Owner, Name), SubjectType, SubjectTitle,
                   SubjectUrl, SubjectNumber, HtmlUrl, Reason, Unread,
                   UpdatedAt, LastReadAt) <-
   watched_global(EndpointPath, _ApiType, 'notifications'),
-  rest_response(EndpointPath, _Bucket, RespStatus, _E, _L, _P, _RR, _RS, _B, _Pg,
-                Body),
+  rest_response(EndpointPath, _Bucket, RespStatus, Body),
   RespStatus == 200,
   decode(Body, [... {id: GhId: text,
                      repository: {owner: {login: Owner: text},
@@ -903,7 +1315,7 @@ recent_event(RepoSlug, EventType, Actor, CreatedAt, Action) <-
 rate_pool(ApiType, RateRemaining, RateReset, count(AtTick)) <-
   call_log(AtTick, ApiType, _Ep, _St, RateRemaining, RateReset, _By, _Ch).
 
-# ── the engine measuring itself, prwatch.dl6:97-106's shape ────────────────
+# ── the engine measuring itself ─────────────────────────────────────────────
 
 rel /dl/tick_cost(bucket: int) ->
   (executor: text, wall_ms: int, sqlite_ms: int, calls: int, rows_out: int,
@@ -937,8 +1349,10 @@ tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <+
 ? rate_pool(ApiType, Remaining, ResetAt, Calls).
 ? due(EndpointPath, Bucket, ApiType).
 ? over_budget(ApiType, Bucket).
-? poll_state(EndpointPath, Etag, LastModified, PollInterval, LastPolledBucket,
+? poll_state(PageUrl, Etag, LastModified, PollInterval, LastPolledBucket,
              LastChangedBucket).
 ? branch(RepoRef, BranchName, Sha, UpdatedAt).
 ? checkout(RepoRef, BranchName, LocalPath, Sha, CheckedOutBucket).
+? lane_proof(repo_slug, branch, pr, merge_commit_sha).
+? pr_transition(repo_ref, number, from_state, to_state, at_tick).
 ? tick_cost(bucket, executor, wall_ms, sqlite_ms, calls, rows_out, bytes, rss_kb).

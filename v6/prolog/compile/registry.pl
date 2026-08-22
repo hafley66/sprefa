@@ -360,11 +360,10 @@ arrival_executor(scip__type,            '/scip/type').
 arrival_executor(scip__diet__call,      '/scip/diet/call').
 arrival_executor(scip__diet__type,      '/scip/diet/type').
 arrival_executor(cargo__targets,        '/cargo/targets').
-arrival_executor(http__fetch,           '/http/fetch').
-arrival_executor(gh__repos,             '/gh/repos').
-arrival_executor(gh__rest_cond,         '/gh/rest_cond').
-arrival_executor(gh__pulls,             '/gh/pulls').
-arrival_executor(gh__pr_batch,          '/gh/pr_batch').
+% ONE transport. A conditional GET, a page walk, a GraphQL batch and a rate
+% budget are rules in the program; this pair only moves bytes.
+arrival_executor(http__get,             '/http/get').
+arrival_executor(http__post,            '/http/post').
 arrival_executor(env__var,              '/env/var').
 arrival_executor(toml__json,            '/toml/json').
 % The engine measuring itself: trace rows and the resident set, folded by the
