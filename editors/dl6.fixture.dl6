@@ -1,8 +1,17 @@
 # every token class the chroma lexer paints, in one file
 import "grafana.spec".
 
-rel /soopy/files(glob: key(text)) -> (path: text, digest: text).
-rel /clock/tick(every: key(int)) -> (bucket: int).
+use clock.
+use soopy.
+use extract as ex.
+
+rel files(glob: key(text)) -> (path: text, digest: text).
+rel tick(every: key(int)) -> (bucket: int).
+rel ex.records(path: text, digest: text, families: text) -> (record: text).
+
+# the path spellings the parser still accepts, both painted as one namespace
+rel /gh/repos(org: key(text)) -> (name: text).
+rel toml.json(path: key(text)) -> (doc: json).
 
 rel pr_seen(repo: text, number: int, state: text, bucket: int) log keep(all).
 rel sample(ratio: float, payload: json, blob: bytes, ok: bool) keep(count(64)).

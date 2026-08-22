@@ -78,37 +78,37 @@ Source text to an expanded program: the DCG, `expand_uses/8`, and the `0_`/`1_` 
 ```mermaid
 flowchart LR
   n1["0_type_plane  in16/out2"]
-  n2["parse_dl_dcg  in15/out4"]
-  n3["0_generic_expand  in14/out11"]
-  n4["0_compiler_relations  in10/out5"]
-  n5["0_rel_record  in9/out0"]
-  n6["0_body_walk  in9/out1"]
-  n7["0_dot_expand  in8/out7"]
-  n8["use_resolve  in8/out3"]
+  n2["0_generic_expand  in14/out11"]
+  n3["parse_dl_dcg  in14/out4"]
+  n4["use_resolve  in10/out4"]
+  n5["0_compiler_relations  in10/out5"]
+  n6["0_rel_record  in9/out0"]
+  n7["0_body_walk  in9/out1"]
+  n8["0_dot_expand  in8/out7"]
   n9["0_coalesce_expand  in8/out6"]
   n10["0_seq_expand  in8/out5"]
   n11["1_expansion  in8/out3"]
   n12["0_negated_guard_expand  in7/out6"]
-  n7 -->|5| n1
-  n9 -->|3| n7
-  n7 -->|3| n9
+  n8 -->|5| n1
+  n9 -->|3| n8
+  n8 -->|3| n9
   n9 -->|2| n12
   n9 -->|2| n10
-  n7 -->|2| n12
-  n7 -->|2| n10
-  n3 -->|2| n4
+  n8 -->|2| n12
+  n8 -->|2| n10
+  n2 -->|2| n5
   n12 -->|2| n9
-  n12 -->|2| n7
+  n12 -->|2| n8
   n12 -->|2| n10
   n10 -->|2| n9
-  n10 -->|2| n7
+  n10 -->|2| n8
   n10 -->|2| n12
-  n4 -->|1| n10
-  n3 -->|1| n1
-  n11 -->|1| n3
+  n5 -->|1| n10
   n2 -->|1| n1
-  n8 -->|1| n7
-  n8 -->|1| n2
+  n11 -->|1| n2
+  n3 -->|1| n1
+  n4 -->|1| n8
+  n4 -->|1| n3
 ```
 
 12 of 27 modules are drawn, ranked by fan-in; every one is in the table.
@@ -116,13 +116,13 @@ flowchart LR
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
 | `v6/prolog/0_type_plane.pl` | 75 | 112 | 16 | 2 |
-| `v6/prolog/compile/parse_dl_dcg.pl` | 218 | 284 | 15 | 4 |
 | `v6/prolog/0_generic_expand.pl` | 320 | 316 | 14 | 11 |
+| `v6/prolog/compile/parse_dl_dcg.pl` | 219 | 285 | 14 | 4 |
+| `v6/prolog/use_resolve.pl` | 44 | 77 | 10 | 4 |
 | `v6/prolog/0_compiler_relations.pl` | 38 | 56 | 10 | 5 |
 | `v6/prolog/0_rel_record.pl` | 18 | 13 | 9 | 0 |
 | `v6/prolog/0_body_walk.pl` | 14 | 23 | 9 | 1 |
 | `v6/prolog/0_dot_expand.pl` | 71 | 93 | 8 | 7 |
-| `v6/prolog/use_resolve.pl` | 44 | 76 | 8 | 3 |
 | `v6/prolog/0_coalesce_expand.pl` | 22 | 40 | 8 | 6 |
 | `v6/prolog/0_seq_expand.pl` | 16 | 41 | 8 | 5 |
 | `v6/prolog/1_expansion.pl` | 12 | 21 | 8 | 3 |
@@ -237,7 +237,7 @@ The entry points and the tables everything reads.
 
 ```mermaid
 flowchart LR
-  n1["registry  in18/out0"]
+  n1["registry  in19/out0"]
   n2["compile  in16/out10"]
   n3["dl6c  in2/out1"]
   n4["kernel  in1/out0"]
@@ -245,7 +245,7 @@ flowchart LR
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
-| `v6/prolog/compile/registry.pl` | 20 | 16 | 18 | 0 |
+| `v6/prolog/compile/registry.pl` | 20 | 16 | 19 | 0 |
 | `v6/prolog/compile.pl` | 81 | 125 | 16 | 10 |
 | `v6/prolog/dl6c.pl` | 15 | 31 | 2 | 1 |
 | `v6/prolog/src/kernel.pl` | 4 | 3 | 1 | 0 |
@@ -296,7 +296,7 @@ flowchart LR
 | `v6/prolog/compile/test/dl6c.test.pl` | 3 | 19 | 0 | 1 |
 | `v6/prolog/compile/test/shared_frontier.test.pl` | 3 | 12 | 0 | 2 |
 | `v6/prolog/compile/test/anonymous_sum_values.test.pl` | 2 | 18 | 0 | 7 |
-| `v6/prolog/compile/test/scip_namespaces.test.pl` | 2 | 15 | 0 | 2 |
+| `v6/prolog/compile/test/scip_namespaces.test.pl` | 2 | 15 | 0 | 3 |
 | `v6/prolog/compile/test/typed_host_contracts.test.pl` | 2 | 11 | 0 | 4 |
 
 ## unphased
@@ -309,7 +309,7 @@ Prolog files the rule places nowhere: tools, labs, and one-off scripts.
 | `v6/prolog/compile/scripts/metamorphic_rename.pl` | 69 | 107 | 7 | 11 |
 | `v6/prolog/sweep.pl` | 54 | 104 | 7 | 12 |
 | `v6/prolog/tools/self_map_facts.pl` | 15 | 43 | 6 | 6 |
-| `v6/prolog/compile/test/plunit_tests.pl` | 200 | 343 | 4 | 102 |
+| `v6/prolog/compile/test/plunit_tests.pl` | 206 | 350 | 4 | 103 |
 | `v6/prolog/compile/test/dd/isolated_compiler_dd_unsupported_fixture.pl` | 1 | 0 | 4 | 0 |
 | `v6/prolog/src/grader.pl` | 1 | 7 | 4 | 0 |
 | `v6/prolog/compile/scripts/arm_census.pl` | 39 | 79 | 3 | 4 |
@@ -319,6 +319,7 @@ Prolog files the rule places nowhere: tools, labs, and one-off scripts.
 | `v6/prolog/diag.pl` | 16 | 31 | 2 | 1 |
 | `v6/prolog/compile/scripts/text_door_receipt.pl` | 15 | 31 | 2 | 2 |
 | `v6/prolog/tools/arch_map.pl` | 14 | 29 | 2 | 2 |
+| `v6/prolog/executor_modules.pl` | 12 | 27 | 2 | 1 |
 | `v6/prolog/compile/scripts/golden_oracle.pl` | 7 | 20 | 2 | 7 |
 | `v6/prolog/compile/scripts/dl6_oracle.pl` | 4 | 15 | 2 | 5 |
 | `v6/prolog/sweep_timings.pl` | 3 | 14 | 2 | 0 |
@@ -431,7 +432,7 @@ the closure as an arity-0 ATOM, and the call family emits no record for an
 atom argument, so `path_component_stem/2` reads as an orphan against a live
 call at `0_anonymous_expand.pl:266`. Read every row before deleting one.
 
-Total: 287.
+Total: 288.
 
 | module | predicate | arity |
 |---|---|---:|
@@ -476,7 +477,7 @@ Total: 287.
 | `v6/prolog/1_host_expand.pl` | `normalize_rule` | 2 |
 | `v6/prolog/1_host_expand.pl` | `salt_matches_column` | 2 |
 
-The first 40 of 287, by module. Run `just selfdoc` for the whole set.
+The first 40 of 288, by module. Run `just selfdoc` for the whole set.
 
 ## The twenty hottest symbols
 

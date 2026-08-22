@@ -6,7 +6,7 @@
 # value inside it. `decode/2` is the query over the document column, so a yaml
 # spec reaches rules with no yaml-to-json pass anywhere.
 #
-# ── WHY THE HOST IS NAMED `/extract/records` ─────────────────────────────────
+# ── WHY THE HOST IS NAMED `records` ─────────────────────────────────
 # `families` is a plain INPUT column now (registry.pl arrival_executor), not a
 # hardcoded-name lookup, so the identity is spelled the same way any extract.*
 # rel spells it: path/families identity, digest freshness.
@@ -34,14 +34,16 @@
 #                     map(([method, body]) =>
 #                       ({ pathTemplate, method, operationId: body.operationId })))))
 
+use extract.
+
 rel spec_file(path: text, digest: text) key(1, 2).
 
-rel /extract/records(path: text, digest: text, families: text) -> (record: text, doc: json) key(1, 3).
+rel records(path: text, digest: text, families: text) -> (record: text, doc: json) key(1, 3).
 
 rel spec_doc(path: text, doc: json).
 spec_doc(path, doc) <-
   spec_file(path, digest),
-  /extract/records(path, digest, "data", 'data_doc', doc).
+  records(path, digest, "data", 'data_doc', doc).
 
 rel spec_operation(path_template: text, method: text, operation_id: text).
 spec_operation(path_template, method, operation_id) <-

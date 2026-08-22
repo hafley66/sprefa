@@ -457,6 +457,22 @@ to one. The same name with conflicting cols is a hard error naming both col
 vectors (a typo silently shadowing a library rel is the import story's worst
 failure mode). Rules and queries splice verbatim.
 
+**Executor modules (v6 `.dl6` only).** A quoted target is a file; a bare
+identifier is an executor family the registry rosters, and importing one lets
+the program declare that family's rels by their leaf name:
+
+```
+use soopy.
+rel files(glob: key(text)) -> (path: text, digest: text).
+```
+
+`use soopy as sy.` spells them `sy.files(...)` instead, which is how a program
+that wants a `files` of its own keeps it. The path forms `rel soopy.files(...)`
+and `rel /soopy/files(...)` still parse and mean the same rel. All four reach
+one internal name, `soopy__files`, so the emitted SQL, the linked executor and
+every sidecar see exactly one spelling. Roster:
+[v6/prolog/compile/HOST-CONTRACTS.md](v6/prolog/compile/HOST-CONTRACTS.md).
+
 **Shipped stdlib** lives in [std/](std/):
 
 <!-- BEGIN: stdlib -->

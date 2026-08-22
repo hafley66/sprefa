@@ -2,14 +2,16 @@
 # suppression. The candidate marker hosts are policy code; the grammar join is
 # the string-literal safety boundary.
 
+use extract.
+
 rel watch(glob: text, path: text, digest: text).
 rel file(path: text, digest: text).
 file(path, digest) <- watch('**/*.ts', path, digest).
 
-rel /extract/comment_fact(path: text, digest: text, families: text) -> (line: int, kind: text, comment_text: text) key(1, 3).
+rel comment_fact(path: text, digest: text, families: text) -> (line: int, kind: text, comment_text: text) key(1, 3).
 rel comment_node(path: text, digest: text, line: int, kind: text, comment_text: text).
 comment_node(path, digest, line, kind, comment_text) <-
-  file(path, digest), /extract/comment_fact(path, digest, "cst", line, kind, comment_text).
+  file(path, digest), comment_fact(path, digest, "cst", line, kind, comment_text).
 
 rel disable_line(path: text, digest: text) -> (line: int, code: text) key(1).
 rel disable_next(path: text, digest: text) -> (line: int, code: text) key(1).
@@ -35,9 +37,9 @@ suppress_unused(path, line, code) <- suppressed(path, line, code), not(rail_find
 rel rail_finding(path: text, line: int, code: text).
 rail_finding(path, line, 'no-eval') <- call_site(path, line, callee), callee == 'eval'.
 
-rel /extract/call_ref(path: text, digest: text, families: text) -> (line: int, callee: text) key(1, 3).
+rel call_ref(path: text, digest: text, families: text) -> (line: int, callee: text) key(1, 3).
 rel call_site(path: text, line: int, callee: text).
-call_site(path, line, callee) <- file(path, digest), /extract/call_ref(path, digest, "call", line, callee).
+call_site(path, line, callee) <- file(path, digest), call_ref(path, digest, "call", line, callee).
 
 rel diag_v5(path: text, line: int, code: text).
 diag_v5(path, line, 'no-eval') <- rail_finding(path, line, 'no-eval'), not(suppressed(path, line, 'no-eval')).

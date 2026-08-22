@@ -28,13 +28,27 @@
       <rule pattern="(?:/[a-z_][A-Za-z0-9_]*)+">
         <token type="NameNamespace"/>
       </rule>
+      <rule pattern="(\buse\b)(\s+)([a-z_][A-Za-z0-9_]*)">
+        <bygroups>
+          <token type="KeywordDeclaration"/>
+          <token type="TextWhitespace"/>
+          <token type="NameNamespace"/>
+        </bygroups>
+      </rule>
+      <rule pattern="(\bas\b)(\s+)([a-z_][A-Za-z0-9_]*)">
+        <bygroups>
+          <token type="KeywordDeclaration"/>
+          <token type="TextWhitespace"/>
+          <token type="NameNamespace"/>
+        </bygroups>
+      </rule>
       <rule pattern="\?">
         <token type="NameDecorator"/>
       </rule>
       <rule pattern="&lt;-|&lt;\+|-&gt;">
         <token type="Operator"/>
       </rule>
-      <rule pattern="\b(rel|sh|bind|interface|import|log|keep|key|salt)\b">
+      <rule pattern="\b(rel|sh|bind|interface|import|pub|use|as|log|keep|key|salt)\b">
         <token type="KeywordDeclaration"/>
       </rule>
       <rule pattern="\b(int|text|json|bool|float|bytes|option|list|json_list|list_entity_dense_sequence|list_interned_set|list_entity_linked_sequence)\b">

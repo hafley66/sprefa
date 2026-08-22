@@ -3,33 +3,36 @@
 
 # rx: want$.pipe(mergeMap(runFiles), distinct(r => r.digest), mergeMap(runExtract)).
 
+use extract.
+use soopy.
+
 rel span(start: int, end: int).
 
-rel /soopy/files(glob: text) -> (path: text, digest: text).
+rel files(glob: text) -> (path: text, digest: text).
 
 # The declared OUTPUT columns select records out of the one stream
 # (hosts.rs:776 drops nulls).
-rel /extract/call_node_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, kind: text, name: text) key(1, 3).
+rel call_node_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, kind: text, name: text) key(1, 3).
 
 # The span IS read, by the containment join below. Measured over this corpus:
 # 31054 sites, 30936 inside exactly one definition, 0 inside two, 118 inside none.
-rel /extract/records(path: text, digest: text, families: text) -> (record: text, family: text, span: span, callee: text) key(1, 3).
+rel records(path: text, digest: text, families: text) -> (record: text, family: text, span: span, callee: text) key(1, 3).
 
 # NO `module`: an export list and a `use_module` import differ by KIND, and the
 # module name splits one export into no extra answer.
-rel /extract/specifier_at(path: text, digest: text, families: text) -> (record: text, family: text, kind: text, name: text) key(1, 3).
+rel specifier_at(path: text, digest: text, families: text) -> (record: text, family: text, kind: text, name: text) key(1, 3).
 
 # NO `span` and NO `position`: the rule reads the SET of functors a file mentions,
 # and either column makes every occurrence its own row.
-rel /extract/call_ref(path: text, digest: text, families: text) -> (record: text, family: text, functor: text) key(1, 3).
+rel call_ref(path: text, digest: text, families: text) -> (record: text, family: text, functor: text) key(1, 3).
 
 # One json document per sidecar, fanned out by the value plane.
-rel /extract/data_doc_at(path: text, digest: text, families: text) -> (record: text, family: text, doc: json) key(1, 3).
+rel data_doc_at(path: text, digest: text, families: text) -> (record: text, family: text, doc: json) key(1, 3).
 
 rel want(glob: text).
 
 rel source_file(path: text, digest: text).
-source_file(Path, Digest) <- want(Glob), /soopy/files(Glob, Path, Digest).
+source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
 
 # ── the language plane ──────────────────────────────────────────────────────
 
@@ -67,10 +70,10 @@ source_stem(Path, Stem) <-
 rel def_span(path: text, name: text, start: int, end: int).
 def_span(Path, Name, Start, End) <-
   indexed_file(Path, Digest),
-  /extract/call_node_at(Path, Digest, "call", 'node', 'call', span(Start, End), 'function', Name).
+  call_node_at(Path, Digest, "call", 'node', 'call', span(Start, End), 'function', Name).
 def_span(Path, Name, Start, End) <-
   indexed_file(Path, Digest),
-  /extract/call_node_at(Path, Digest, "call", 'node', 'call', span(Start, End), 'method', Name).
+  call_node_at(Path, Digest, "call", 'node', 'call', span(Start, End), 'method', Name).
 
 # One row per definition NAME, so a predicate with 40 clauses counts once.
 rel def_name(path: text, name: text).
@@ -79,7 +82,7 @@ def_name(Path, Name) <- def_span(Path, Name, _Start, _End).
 rel call_site(path: text, callee: text, start: int, end: int).
 call_site(Path, Callee, Start, End) <-
   indexed_file(Path, Digest),
-  /extract/records(Path, Digest, "call", 'site', 'call', span(Start, End), Callee).
+  records(Path, Digest, "call", 'site', 'call', span(Start, End), Callee).
 
 rel call_from(path: text, callee: text).
 call_from(Path, Callee) <- call_site(Path, Callee, _Start, _End).
@@ -89,7 +92,7 @@ call_from(Path, Callee) <- call_site(Path, Callee, _Start, _End).
 rel exported(path: text, name: text).
 exported(Path, Name) <-
   indexed_file(Path, Digest),
-  /extract/specifier_at(Path, Digest, "call", 'specifier', 'call', 'reexport', Name).
+  specifier_at(Path, Digest, "call", 'specifier', 'call', 'reexport', Name).
 
 # ── the call graph ──────────────────────────────────────────────────────────
 
@@ -305,7 +308,7 @@ called_name(ToName) <- calls(_FromPath, _FromName, ToName).
 rel term_reference(path: text, functor: text).
 term_reference(Path, Functor) <-
   indexed_file(Path, Digest),
-  /extract/call_ref(Path, Digest, "call", 'reference', 'call', Functor).
+  call_ref(Path, Digest, "call", 'reference', 'call', Functor).
 
 rel called_bare(name: text).
 called_bare(Name) <-
@@ -346,7 +349,7 @@ rel adapters_doc(path: text, doc: json).
 adapters_doc(Path, Doc) <-
   source_file(Path, Digest),
   adapters_file(Path),
-  /extract/data_doc_at(Path, Digest, "data", 'data_doc', 'data', Doc).
+  data_doc_at(Path, Digest, "data", 'data_doc', 'data', Doc).
 
 rel adapter_binding(sidecar: text, executor: text, demand_rel: text).
 adapter_binding(Sidecar, Executor, DemandRel) <-

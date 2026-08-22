@@ -14,6 +14,7 @@
         { "include": "#rule-arrow" },
         { "include": "#semicolon" },
         { "include": "#enum-shape" },
+        { "include": "#module-import" },
         { "include": "#executor-path" },
         { "include": "#decl-words" },
         { "include": "#live-keywords" },
@@ -66,6 +67,16 @@
     "enum-shape": {
       "name": "storage.type.enum.dl6",
       "match": "\\brel\\b(?=\\s+[a-z_]\\w*\\s*\\([^\\n]*;)"
+    },
+    "module-import": {
+      "match": "\\b(?:(pub)\\s+)?(use)\\s+([a-z_]\\w*)(?:\\s+(as)\\s+([a-z_]\\w*))?",
+      "captures": {
+        "1": { "name": "storage.modifier.dl6" },
+        "2": { "name": "keyword.control.import.dl6" },
+        "3": { "name": "entity.name.namespace.dl6" },
+        "4": { "name": "keyword.control.import.dl6" },
+        "5": { "name": "entity.name.namespace.dl6" }
+      }
     },
     "executor-path": {
       "name": "entity.name.function.dl6",

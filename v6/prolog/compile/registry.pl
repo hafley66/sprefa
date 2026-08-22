@@ -303,10 +303,13 @@ expression_for_term(Term, Family, Precedence, SqlRendering, TypeRule) :-
     functor(Term, Name, Arity),
     expression(Name/Arity, Family, Precedence, SqlRendering, TypeRule).
 
-% ═══ the executor roster (ruling executor_namespacing) ══════════════════════
+% ═══ the executor roster (ruling executor_modules_use_import) ═══════════════
 
 % THE ONE ROSTER: hosts.rs LINKED_EXECUTORS lists these same slash paths and
 % a hosts.rs test pins the two equal; a rel absent here is replay-only.
+
+% A name's first `__` segment is the MODULE a program imports with `use`
+% (executor_modules.pl); a name with no `__` names no module.
 
 % /extract/* share one executor; the `families` INPUT column replaces the dead
 % template's --family flag, so one file + one families value = one run.
@@ -553,8 +556,8 @@ host_input_contract(toml_json,
 % the whole reason the two names exist: a name several files define is
 % unresolvable to a name match and resolved through the import by an index.
 %
-% The dl6 spelling is slash-rooted (`rel /scip/diet/call(...) -> (...)`); the
-% atom every phase below the parser carries is module_path_name/2's `__` join,
+% The dl6 spelling is `use scip.` then `rel diet.call(...) -> (...)`; the atom
+% every phase below the parser carries is module_path_name/2's `__` join,
 % which is what the demand and response rel names, the emitted SQL identifiers,
 % and the adapters sidecar all use.
 %

@@ -1,13 +1,15 @@
 # Technique 4: LANG-JUNCTION(slug) capture, grammar witness, and registry drift
 # antijoin. The registry side is a host row so the language list remains data.
 
+use extract.
+
 rel watch(glob: text, path: text, digest: text).
 rel file(path: text, digest: text).
 file(path, digest) <- watch('**/*.rs', path, digest).
 
-rel /extract/comment_fact(path: text, digest: text, families: text) -> (line: int, kind: text, comment_text: text) key(1, 3).
+rel comment_fact(path: text, digest: text, families: text) -> (line: int, kind: text, comment_text: text) key(1, 3).
 rel comment_node(path: text, digest: text, line: int, kind: text, comment_text: text).
-comment_node(path, digest, line, kind, comment_text) <- file(path, digest), /extract/comment_fact(path, digest, "cst", line, kind, comment_text).
+comment_node(path, digest, line, kind, comment_text) <- file(path, digest), comment_fact(path, digest, "cst", line, kind, comment_text).
 
 rel junction_marker(path: text, digest: text) -> (line: int, slug: text, meaning: text) key(1).
 rel junction_text(path: text, digest: text, line: int, slug: text, meaning: text).

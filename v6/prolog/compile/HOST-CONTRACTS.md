@@ -14,7 +14,10 @@ v6/prolog/compile/1_emit_registry_docs.pl -g emit_registry_docs -g halt.
 
 | arrival rel | executor |
 |---|---|
+| `clock__tick` | `'/clock/tick'` |
+| `soopy__watch` | `'/soopy/watch'` |
 | `soopy__files` | `'/soopy/files'` |
+| `soopy__files_at` | `'/soopy/files_at'` |
 | `soopy__stage` | `'/soopy/stage'` |
 | `soopy__commit` | `'/soopy/commit'` |
 | `soopy__checkout` | `'/soopy/checkout'` |
@@ -57,8 +60,11 @@ v6/prolog/compile/1_emit_registry_docs.pl -g emit_registry_docs -g halt.
 | `http__fetch` | `'/http/fetch'` |
 | `gh__repos` | `'/gh/repos'` |
 | `gh__rest_cond` | `'/gh/rest_cond'` |
+| `gh__pulls` | `'/gh/pulls'` |
+| `gh__pr_batch` | `'/gh/pr_batch'` |
 | `env__var` | `'/env/var'` |
 | `toml__json` | `'/toml/json'` |
+| `dl__tick_cost` | `'/dl/tick_cost'` |
 
 ## host_input_contract/3
 

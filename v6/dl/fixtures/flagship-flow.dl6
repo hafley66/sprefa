@@ -13,17 +13,19 @@
 # the intended exact joins; this program must not replace them with
 # callable-plane edges.
 
+use extract.
+
 rel span(start: int, end: int).
 
 rel files_at(rev: text, glob: text) -> (path: text, digest: text).
 
-rel /extract/df_node_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, kind: text) key(1, 3).
-rel /extract/df_edge_at(path: text, digest: text, families: text) -> (record: text, family: text, kind: text, from: span, to: span) key(1, 3).
-rel /extract/df_param_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, pos: int) key(1, 3).
-rel /extract/df_arg_at(path: text, digest: text, families: text) -> (record: text, family: text, call: span, pos: int, arg: span) key(1, 3).
-rel /extract/call_node_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, kind: text) key(1, 3).
-rel /extract/type_node_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, kind: text, name: text) key(1, 3).
-rel /extract/sig_at(path: text, digest: text, families: text) -> (record: text, family: text, owner_start: int, owner_end: int, slot: text, pos: int, ty: text) key(1, 3).
+rel df_node_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, kind: text) key(1, 3).
+rel df_edge_at(path: text, digest: text, families: text) -> (record: text, family: text, kind: text, from: span, to: span) key(1, 3).
+rel df_param_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, pos: int) key(1, 3).
+rel df_arg_at(path: text, digest: text, families: text) -> (record: text, family: text, call: span, pos: int, arg: span) key(1, 3).
+rel call_node_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, kind: text) key(1, 3).
+rel type_node_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, kind: text, name: text) key(1, 3).
+rel sig_at(path: text, digest: text, families: text) -> (record: text, family: text, owner_start: int, owner_end: int, slot: text, pos: int, ty: text) key(1, 3).
 rel resolve_at(rev: text, glob: text) -> (caller_path: text, caller_name: text, callee_path: text, callee_name: text, caller_site_start: int, caller_site_end: int, kind: text).
 
 rel want_at(rev: text, glob: text).
@@ -32,31 +34,31 @@ file(path, digest) <- want_at(rev, glob), files_at(rev, glob, path, digest).
 
 rel df_node(path: text, at: span, kind: text).
 df_node(path, at, kind) <-
-  file(path, digest), /extract/df_node_at(path, digest, "cst,type,call,df", 'node', 'df', at, kind).
+  file(path, digest), df_node_at(path, digest, "cst,type,call,df", 'node', 'df', at, kind).
 
 rel df_edge(path: text, from: span, to: span).
 df_edge(path, from, to) <-
-  file(path, digest), /extract/df_edge_at(path, digest, "cst,type,call,df", 'edge', 'df', 'direct', from, to).
+  file(path, digest), df_edge_at(path, digest, "cst,type,call,df", 'edge', 'df', 'direct', from, to).
 
 rel df_param(path: text, at: span, pos: int).
 df_param(path, at, pos) <-
-  file(path, digest), /extract/df_param_at(path, digest, "cst,type,call,df", 'param', 'df', at, pos).
+  file(path, digest), df_param_at(path, digest, "cst,type,call,df", 'param', 'df', at, pos).
 
 rel df_arg(path: text, call: span, pos: int, arg: span).
 df_arg(path, call, pos, arg) <-
-  file(path, digest), /extract/df_arg_at(path, digest, "cst,type,call,df", 'arg', 'df', call, pos, arg).
+  file(path, digest), df_arg_at(path, digest, "cst,type,call,df", 'arg', 'df', call, pos, arg).
 
 rel call_span(path: text, at: span, kind: text).
 call_span(path, at, kind) <-
-  file(path, digest), /extract/call_node_at(path, digest, "cst,type,call,df", 'node', 'call', at, kind).
+  file(path, digest), call_node_at(path, digest, "cst,type,call,df", 'node', 'call', at, kind).
 
 rel type_callable(path: text, at: span, name: text).
 type_callable(path, at, name) <-
-  file(path, digest), /extract/type_node_at(path, digest, "cst,type,call,df", 'node', 'type', at, _, name).
+  file(path, digest), type_node_at(path, digest, "cst,type,call,df", 'node', 'type', at, _, name).
 
 rel sig(path: text, owner_start: int, owner_end: int, slot: text, pos: int, ty: text).
 sig(path, owner_start, owner_end, slot, pos, ty) <-
-  file(path, digest), /extract/sig_at(path, digest, "cst,type,call,df", 'sig', 'type', owner_start, owner_end, slot, pos, ty).
+  file(path, digest), sig_at(path, digest, "cst,type,call,df", 'sig', 'type', owner_start, owner_end, slot, pos, ty).
 
 rel resolved_call_edge(caller_path: text, caller_name: text, callee_path: text, callee_name: text, caller_site_start: int, caller_site_end: int, kind: text).
 resolved_call_edge(caller_path, caller_name, callee_path, callee_name, caller_site_start, caller_site_end, kind) <-

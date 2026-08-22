@@ -2607,3 +2607,11 @@ The observed standard, in order — no step is optional:
   uses, so the traversal is the program's own rules and not an executor.
 - **Entry**: `v6/dl/crosswalk/gate.sh` graded green with the rule-based
   crawl; numbers in the PR body.
+
+## 68. A door the whole compiler goes through, and four tools that skipped it
+
+- **Incident** (2026-08-22): `use soopy.` landed as the executor-module import, resolved in `use_resolve.pl` where every `use` line already lives, and 35 `.dl6` programs gained one. `compile.pl` reads them through `expand_uses/8` and stayed green; `6_profile.pl`, `compile/scripts/dl6_oracle.pl`, `compile/test/scip_namespaces.test.pl` and `tools/self_map_facts.pl` each call `parse_dl_dcg`'s `parse_dl_file/4` or `parse_dl_dcg_entry/5` directly, and a `use` line has never been a statement that parser accepts. The compile-speed gate stopped at `parse error at line 14` on the first pinned program; `scip_namespaces:receiver_rail_declares_the_registry_columns` read `sh_decl(call, ...)` where the registry says `scip__call`.
+- **RCA**: the front door is `use_resolve.pl`, not the parser, and nothing named that. Four tools reached past it for a single-file surface read, which was harmless while every tracked program was use-free.
+- **Fail-pre-fix**: `swipl -q -g "parse_dl_file('v6/dl/reach/feature-reach.dl6', P, _, _)"` throws `dl_parse_error(statement, position(1, 5))` on the `use cargo.` line; the same file through `expand_uses/8` returns a program.
+- **Rail**: the three non-lab callers now go through `expand_uses/8`. The plunit unit `executor_modules` pins that all four spellings of one program compile to the same term, so a door that resolves one and not the others fails there rather than in a gate.
+- **Entry**: conformance 440/0, plunit 1054/0, `scip_namespaces` green; compile-speed stays allowlisted red, now failing inside golden-flex's emit rather than at the parse of its first program (`.github/CI-KNOWN-RED.md`).

@@ -33,40 +33,43 @@
 #                  groupBy(row => row.goalStart),
 #                  mergeMap(group => group.pipe(reduce(maxOf))))   // = the max aggregate
 #
-# HOST NAMES ARE BORROWED: `/extract/records` reads call SITES here and
-# `/extract/call_ref` reads directive REFERENCES, same as elsewhere in the corpus.
+# HOST NAMES ARE BORROWED: `records` reads call SITES here and
+# `call_ref` reads directive REFERENCES, same as elsewhere in the corpus.
+
+use extract.
+use soopy.
 
 rel span(start: int, end: int).
 
-rel /soopy/files(glob: text) -> (path: text, digest: text).
+rel files(glob: text) -> (path: text, digest: text).
 
-rel /extract/call_node_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, kind: text, name: text) key(1, 3).
-rel /extract/records(path: text, digest: text, families: text) -> (record: text, family: text, span: span, callee: text) key(1, 3).
-rel /extract/call_ref(path: text, digest: text, families: text) -> (record: text, family: text, span: span, functor: text, position: text) key(1, 3).
+rel call_node_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, kind: text, name: text) key(1, 3).
+rel records(path: text, digest: text, families: text) -> (record: text, family: text, span: span, callee: text) key(1, 3).
+rel call_ref(path: text, digest: text, families: text) -> (record: text, family: text, span: span, functor: text, position: text) key(1, 3).
 
 rel want(glob: text).
 
 rel source_file(path: text, digest: text).
-source_file(Path, Digest) <- want(Glob), /soopy/files(Glob, Path, Digest).
+source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
 
 # `node` and `specifier` rows carry the same five keys, so the record name is a
 # constant in argument position rather than a guard.
 rel clause_def(path: text, clause_start: int, clause_end: int, pred: text).
 clause_def(Path, ClauseStart, ClauseEnd, Pred) <-
   source_file(Path, Digest),
-  /extract/call_node_at(Path, Digest, "call", 'node', 'call', ClauseAt, 'function', Pred),
+  call_node_at(Path, Digest, "call", 'node', 'call', ClauseAt, 'function', Pred),
   decode(ClauseAt, {start: ClauseStart, end: ClauseEnd}).
 
 rel goal_site(path: text, goal_start: int, goal_end: int, callee: text).
 goal_site(Path, GoalStart, GoalEnd, Callee) <-
   source_file(Path, Digest),
-  /extract/records(Path, Digest, "call", 'site', 'call', GoalAt, Callee),
+  records(Path, Digest, "call", 'site', 'call', GoalAt, Callee),
   decode(GoalAt, {start: GoalStart, end: GoalEnd}).
 
 rel directive_goal(path: text, functor: text).
 directive_goal(Path, Functor) <-
   source_file(Path, Digest),
-  /extract/call_ref(Path, Digest, "call", 'reference', 'call', _RefAt, Functor, 'goal').
+  call_ref(Path, Digest, "call", 'reference', 'call', _RefAt, Functor, 'goal').
 
 # ── goal to enclosing clause ────────────────────────────────────────────────
 rel goal_clause_candidate(path: text, goal_start: int, callee: text, clause_start: int).
