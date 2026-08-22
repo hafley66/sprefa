@@ -1,0 +1,81 @@
+rel source_0(name: text, weight: int).
+rel source_1(name: text, weight: int).
+rel source_2(name: text, weight: int).
+rel source_3(name: text, weight: int).
+rel source_4(name: text, weight: int).
+rel source_5(name: text, weight: int).
+rel source_6(name: text, weight: int).
+rel source_7(name: text, weight: int).
+rel source_8(name: text, weight: int).
+rel source_9(name: text, weight: int).
+rel source_10(name: text, weight: int).
+rel source_11(name: text, weight: int).
+rel source_12(name: text, weight: int).
+rel source_13(name: text, weight: int).
+rel source_14(name: text, weight: int).
+rel source_15(name: text, weight: int).
+
+heavy_0(Name) <-
+  source_0(Name, Weight),
+  Weight >= 10.
+
+heavy_1(Name) <-
+  source_1(Name, Weight),
+  Weight >= 10.
+
+heavy_2(Name) <-
+  source_2(Name, Weight),
+  Weight >= 10.
+
+heavy_3(Name) <-
+  source_3(Name, Weight),
+  Weight >= 10.
+
+heavy_4(Name) <-
+  source_4(Name, Weight),
+  Weight >= 10.
+
+heavy_5(Name) <-
+  source_5(Name, Weight),
+  Weight >= 10.
+
+heavy_6(Name) <-
+  source_6(Name, Weight),
+  Weight >= 10.
+
+heavy_7(Name) <-
+  source_7(Name, Weight),
+  Weight >= 10.
+
+heavy_8(Name) <-
+  source_8(Name, Weight),
+  Weight >= 10.
+
+heavy_9(Name) <-
+  source_9(Name, Weight),
+  Weight >= 10.
+
+heavy_10(Name) <-
+  source_10(Name, Weight),
+  Weight >= 10.
+
+heavy_11(Name) <-
+  source_11(Name, Weight),
+  Weight >= 10.
+
+heavy_12(Name) <-
+  source_12(Name, Weight),
+  Weight >= 10.
+
+heavy_13(Name) <-
+  source_13(Name, Weight),
+  Weight >= 10.
+
+heavy_14(Name) <-
+  source_14(Name, Weight),
+  Weight >= 10.
+
+heavy_15(Name) <-
+  source_15(Name, Weight),
+  Weight >= 10.
+
