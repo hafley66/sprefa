@@ -11,6 +11,8 @@
 rel repo(owner: text, name: text).
 
 rel config_candidate(search_rank: int, config_path: text).
+config_candidate(1, "ghcache.toml").
+config_candidate(2, "~/.config/ghcache/config.toml").
 rel config_doc(config_path: text, doc: json).
 rel config_present(search_rank: int, config_path: text).
 rel best_config_rank(search_rank: int).
