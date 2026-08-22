@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use crate::hosts::{host_row, required_input, HostError, IHostExecutor};
 use crate::types::HostRow;
 
-use super::{checkout_root, revision_of, stop, FamilyMemo};
+use super::{checkout_root, revision_of, stop};
 
 pub const REPO_FILES_AT_COLUMNS: &[&str] = &["path", "digest"];
 pub const REPO_GREP_AT_COLUMNS: &[&str] = &["path", "line", "g1", "g2", "g3"];
@@ -32,10 +32,7 @@ pub const REPO_GREP_AT_COLUMNS: &[&str] = &["path", "line", "g1", "g2", "g3"];
 const DECLARED_GROUPS: usize = 3;
 
 #[derive(Default)]
-pub struct RepoAtExecutor {
-    listings: FamilyMemo<Vec<HostRow>>,
-    greps: FamilyMemo<Vec<HostRow>>,
-}
+pub struct RepoAtExecutor;
 
 impl RepoAtExecutor {
     pub fn new() -> Self {
@@ -54,20 +51,10 @@ impl IHostExecutor for RepoAtExecutor {
         let rev = required_input(host, env, "rev")?;
         let glob = required_input(host, env, "glob")?;
         match host {
-            "repo_files_at" => {
-                let key = format!("{}|{rev}|{glob}", root.display());
-                let rows = self
-                    .listings
-                    .answer(key, || listing_rows(host, &root, &rev, &glob))?;
-                Ok(rows.as_ref().clone())
-            }
+            "repo_files_at" => listing_rows(host, &root, &rev, &glob),
             "repo_grep_at" => {
                 let pattern = required_input(host, env, "pattern")?;
-                let key = format!("{}|{rev}|{glob}|{pattern}", root.display());
-                let rows = self
-                    .greps
-                    .answer(key, || grep_rows(host, &root, &rev, &glob, &pattern))?;
-                Ok(rows.as_ref().clone())
+                grep_rows(host, &root, &rev, &glob, &pattern)
             }
             _ => Err(stop(
                 host,

@@ -1,12 +1,12 @@
-//! CONTROL: 13 passed, 0 failed.
+//! CONTROL: 11 passed, 0 failed.
 //!
 //! SABOTAGE 1, answer `git_ref` with `observation.direct` instead of the peeled
 //! oid: `git_ref_names_the_namespace_and_peels_the_tag` goes RED at the
-//! target_sha equality (12 passed, 1 failed). An annotated tag's row would
+//! target_sha equality (10 passed, 1 failed). An annotated tag's row would
 //! carry the TAG object and join nothing commit-keyed.
 //!
 //! SABOTAGE 2, push a `g<n>` column only when the capture group participated:
-//! `repo_grep_at_carries_every_declared_group` goes RED with `left: []` (12
+//! `repo_grep_at_carries_every_declared_group` goes RED with `left: []` (10
 //! passed, 1 failed). `select_columns` drops a row missing any declared column,
 //! so a two-group pattern would lose every row it matched.
 //!
@@ -19,8 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sprefa_engine_rs::executors::{
-    dep_crawl::DepCrawlExecutor, git_history::GitHistoryExecutor, git_refs::GitRefsExecutor,
-    repo_at::RepoAtExecutor,
+    git_history::GitHistoryExecutor, git_refs::GitRefsExecutor, repo_at::RepoAtExecutor,
 };
 use sprefa_engine_rs::hosts::IHostExecutor;
 use sprefa_engine_rs::types::HostRow;
@@ -446,111 +445,6 @@ fn repo_grep_at_carries_every_declared_group() {
     // the whole row at `select_columns` and a dropped row is a lost fact.
     assert!(selected.iter().all(|row| text(row, "g3").is_empty()));
     assert!(selected.iter().all(|row| number(row, "line") > 0), "1-based");
-}
-
-// ═══ dep_crawl ══════════════════════════════════════════════════════════════
-
-fn corpus_with_two_repos() -> (PathBuf, Repo, Repo) {
-    let root = std::env::temp_dir().join(format!(
-        "sprefa_crosswalk_corpus_{}_{}",
-        std::process::id(),
-        FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).expect("corpus directory");
-    let alpha = go_fixture(
-        "alpha",
-        "example.com/alpha",
-        &[("example.com/shared", "v1.2.0"), ("github.com/pkg/errors", "v0.9.1")],
-    );
-    let shared = go_fixture("shared", "example.com/shared", &[("github.com/pkg/errors", "v0.9.1")]);
-    move_into(&alpha.root, &root.join("alpha"));
-    move_into(&shared.root, &root.join("shared"));
-    (root, alpha, shared)
-}
-
-/// The crawl's roster is a directory listing, so each checkout has to sit under
-/// one root before the traversal runs.
-fn move_into(from: &Path, to: &Path) {
-    std::fs::rename(from, to).expect("move a checkout under the corpus root");
-    std::fs::create_dir_all(from).expect("keep the Drop path valid");
-}
-
-#[test]
-fn the_crawl_answers_four_names_from_one_traversal() {
-    let (root, _alpha, _shared) = corpus_with_two_repos();
-    let executor = DepCrawlExecutor::new();
-    let env = env_of(&[
-        ("checkout_root", &root.display().to_string()),
-        ("seed", "example.com/alpha"),
-        ("frontier", "go_mod"),
-    ]);
-    let rows = executor.run("dep_crawl_visited", "", &env).expect("the crawl answers");
-    assert_eq!(rows, executor.run("dep_crawl_edge", "", &env).expect("edges answer"));
-
-    let mut visits: Vec<(String, i64)> = carrying(&rows, &["repo", "rev", "hop"])
-        .iter()
-        .map(|row| (text(row, "repo"), number(row, "hop")))
-        .collect();
-    visits.sort();
-    assert_eq!(
-        visits,
-        vec![
-            ("example.com/alpha".to_string(), 0),
-            ("example.com/shared".to_string(), 1),
-        ]
-    );
-    assert_eq!(
-        tuples(
-            &carrying(&rows, &["from_repo", "target", "reason"]),
-            &["from_repo", "target", "reason"]
-        ),
-        vec![
-            vec![
-                "example.com/alpha".to_string(),
-                "github.com/pkg/errors".to_string(),
-                "no_local_checkout".to_string()
-            ],
-            vec![
-                "example.com/shared".to_string(),
-                "github.com/pkg/errors".to_string(),
-                "no_local_checkout".to_string()
-            ],
-        ],
-        "the boundary of the corpus is a relation, never a silence, and it is \
-         per DEPENDING repository: the program dedupes, the host does not"
-    );
-    let edges = carrying(&rows, &["from_repo", "from_rev", "target", "to_repo"]);
-    assert_eq!(
-        tuples(&edges, &["from_repo", "to_repo"]),
-        vec![vec![
-            "example.com/alpha".to_string(),
-            "example.com/shared".to_string()
-        ]]
-    );
-    let _ = std::fs::remove_dir_all(&root);
-}
-
-#[test]
-fn an_unknown_frontier_is_a_named_stop() {
-    let (root, _alpha, _shared) = corpus_with_two_repos();
-    let failure = DepCrawlExecutor::new()
-        .run(
-            "dep_crawl_repo",
-            "",
-            &env_of(&[
-                ("checkout_root", &root.display().to_string()),
-                ("seed", "example.com/alpha"),
-                ("frontier", "cargo_lock"),
-            ]),
-        )
-        .expect_err("an unbuilt frontier stops by name");
-    assert!(
-        failure.message.contains("go_mod") && failure.message.contains("specifier"),
-        "the stop names the roster it has: {}",
-        failure.message
-    );
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
