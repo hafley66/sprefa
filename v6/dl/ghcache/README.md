@@ -8,6 +8,7 @@ their own section with a throw site each.
 ## Contents
 
 - [Status](#status)
+- [The one transport](#the-one-transport)
 - [How to run it](#how-to-run-it)
 - [The rate budget](#the-rate-budget-the-whole-point)
 - [Ability map](#ability-map)
@@ -21,36 +22,56 @@ their own section with a throw site each.
 
 | leg | state |
 |---|---|
-| `ghcache.dl6` parses, plans, and types clean | yes |
-| `ghcache.dl6` reaches the emitter | **yes** |
-| `executors/graphql.rs` + `executors/fetch.rs` | built, 11 unit tests green |
-| the six `v6/dl/ghcacher` goldens | unchanged, gate green |
-| simulated schedule through the Rust door | yes, `v6/dl/ghcache/gate.sh` and `dl6 run --schedule`, rate-stop-threshold receipt below |
-| live `dl6 run` against `hafley66` (instant, sprefa, hafley-rs, hafley-rxjs) | yes, pass 1 = 200, every later pass = 304/bytes=0, receipt below |
+| `ghcache.dl6` compiles through the Rust emitter | yes, 2.6s |
+| the ETag, the 304 body, the page walk, the token, the GraphQL query | RULES, not executor code |
+| `src/executors/{fetch,graphql,pulls,repos}.rs` | DELETED; `http.rs` is the whole transport |
+| the six `v6/dl/ghcacher` goldens | on `http.get`, gate green, `goldens=6` |
+| simulated schedule through the Rust door | `GHCACHE_RUST_DOOR_HOLDS ticks=10`, COUNT receipt below |
+| live `dl6 run` against `hafley66` (instant, sprefa, hafley-rs, hafley-rxjs) | first pass 25 x 200 / 2320284 bytes, every later pass 304 / bytes=0 |
+| kill + restart, first poll | 8 x 304, bytes=0, out of 8 stored ETags and 8 stored bodies |
+| the GraphQL pull-request batch | compiles and folds; NOT exercised live (the org's REST budget hit the stop threshold first) |
 
-**Known defect, filed, not fixed here**: `period_candidate`/`endpoint_period`
-compare `global_setting.poll_period` (raw SECONDS) directly as a mod-divisor
-against `current_clock(60,Bucket)`, whose `Bucket` increments once per real
-MINUTE (`clock.rs:bucket_of` = `now_secs/every`). Never divided by the clock
-granularity, so `poll_interval_seconds=60` is due every 60 buckets = 60
-minutes, not every 60 seconds; the same gap hits `org_repo_discovery_interval_seconds`
-and the server `X-Poll-Interval` candidate. Filed as issue `ghcache-dl6-poll`
-(main `3fe20ee7c`). The live receipt below works around it with
-`poll_interval_seconds=1` in the smoke-test config only.
+Two unit bugs closed, both the same shape: a value in SECONDS compared against
+a clock bucket in MINUTES.
 
-The `3_clock_check.pl` path-walk blowup that used to stop this program at
-`compile.pl:239` is pinned off on the compile path
-(`clock_path_walk_enabled :- fail.`, ruling `clock_path_check_pinned_off`,
-`v6/prolog/conformance/rulings.pl`). Six lowering stops followed and are
-fixed in the program: `trigger_arg_not_var` on eleven edge-rule (`<+`)
-literals, `edge_into_unkeyed_set(not_an_org/1)`,
-`aggregate_group_not_delta_local` on `rate_pool/4` and `pr_batch/4` (grouped
-columns must come from one positive body atom's own delta rows,
-`lower.pl:4635`; `pr_batch` now routes through `pr_batch_member_keyed/4` to
-materialize `BatchKey` as a stored column first), and `edge_body_shape` on
-`current_clock/2` (main's #408 merge: `expand_probe_rule` only desugars a
-slash executor inside a `<-` body, so `current_clock` moved from `<+` to `<-`,
-matching `prwatch.dl6:47`'s `beat/1`).
+| issue | rule | fix |
+|---|---|---|
+| `ghcache-dl6-poll` | `period_candidate` | `ceil(seconds / clock_granularity)` buckets; `poll_interval_seconds=60` is due every minute bucket, not every 60 |
+| found live, same family | `over_budget` | `x-ratelimit-reset` is epoch SECONDS, `Bucket` epoch MINUTES; raw, every reset was in the future and one stop never released |
+
+`gh_username` had no rule at all (`ghcache-gh-username-unsourced`), so the
+org-events endpoint never polled. It is one `http.get` of `user` and a keyed
+fold of `login` now.
+
+## The one transport
+
+```
+rel http.get(url: text, headers: text, prev_etag: text, bucket: int)
+  -> (status: int, response_headers: json, body: json, bytes: int).
+rel http.post(url: text, headers: text, request_body: text, bucket: int)
+  -> (status: int, response_headers: json, body: json, bytes: int).
+```
+
+The request IS the row. `headers` is a JSON object the program built with the
+`json_object/2` aggregate over a `request_header(page_url, name, value)` rel,
+so `Authorization` and `If-None-Match` reach the wire only because a rule put
+them there. `src/executors/http.rs` holds no ETag map, no page walk, no token
+lookup and no 304 body substitution: its only state across calls is the `ureq`
+connection pool.
+
+Three contract points a reader needs.
+
+| point | why |
+|---|---|
+| the output column is `response_headers`, not `headers` | `disjoint_columns` (`1_host_expand.pl`) refuses one name on both sides of `->` |
+| `headers` and `request_body` are `text`, not `json` | every identity input is concatenated into the witness digest, and `compile_concat_part` (`lower.pl:1050`) refuses a `json` piece |
+| a whole-number response header is a JSON NUMBER | `decode(.., X: int)` reads a number and never a string (the no-coercions law), measured: `{"x-ratelimit-remaining":"150"}` decodes to zero rows at `: int` |
+
+`prev_etag` shapes no header. It is demand identity, so a moved tag is a NEW
+question. That is also why one changed endpoint costs TWO calls in a bucket:
+the 200 moves the tag, and the tag re-fires the same bucket conditionally. The
+second call is a 304 with zero bytes, and `ghcacher_live.dl6:98-102` already
+described this as the intended shape.
 
 ## How to run it
 
@@ -257,32 +278,63 @@ no such executor, so there was nothing to reuse and nothing was built twice.
 
 | # | brief asked | what shipped | throw site / reason |
 |---:|---|---|---|
-| 1 | `follow_link_next` as a host INPUT | pagination inside the executor, `pages` as an OUTPUT column | `registry.pl:456-461` fixes `gh_rest_cond`'s inputs at exactly `(endpoint_path, prev_etag, bucket)`. A fourth input fails to unify, and `host_input_roles/3` (`registry.pl:552-557`) then falls through to `identity_roles/2`, giving the host NO freshness column — so it would be demanded once and memoised forever, which is the opposite of polling. Adding the input means editing `v6/prolog/registry.pl`, forbidden to this lane. |
-| 2 | `graphql.query(query: key(text)) -> ...` | the registered `gh_pr_batch(batch_key, slug_list, bucket)` | same file, same reason: a new host NAME needs a `host_input_contract/3` row. `gh_pr_batch` was already registered (`registry.pl:467-471`) for exactly this and had no executor; this arc wrote it. |
-| 3 | `json.rows` executor | not built | the language has `spread`; see the section above. |
-| 4 | `worktree` table | not carried | no registered host answers a filesystem worktree scan. `worktree.rs:105-203` shells `git worktree list --porcelain` and `git status` per worktree, and "Zero shell in the engine" (CLAUDE.md, 2026-08-21) requires a linked Rust executor. `executors/git_refs.rs` and `repo_at.rs` are soopy-backed and answer refs, not worktrees. A `worktree_scan` host is new registry surface. |
-| 5 | `pr_comment` filled | rule written, executor answers it | the ORIGINAL never writes this table: `grep -rn pr_comment ~/projects/ghcacher/src` finds only two READS, `query/prs.rs:80` and `:216`, and no INSERT anywhere. `PR_FIELDS` (`sync/prs.rs:7-41`) never selects `comments`. This program adds `comments(last: 50)` to the selection and fills the rel, so it is a superset, not a gap. `path`/`line`/`in_reply_to_id` stay empty because the issue-comment connection carries none of them. |
-| 6 | SSE broadcast | `change_log/4` only | `cmd.rs:177-216` `broadcast_loop` is transport. `GET /ticks` (`HOST-CONTRACTS.md:65`) is the runtime's own SSE surface and reads the tick log; `change_log` is the rel it carries. Subscriptions, heartbeat, pause/resume (`cmd.rs:43-128`, `:344-363`) are daemon lifecycle, which CLAUDE.md's "Infra is bought, never built" puts outside the program. |
+| 1 | `worktree` table | not carried | no linked executor answers a filesystem worktree scan. `worktree.rs:105-203` shells `git worktree list --porcelain`, and "Zero shell in the engine" requires a Rust executor. `git_refs.rs` and `repo_at.rs` answer refs, not worktrees. |
+| 2 | `pr_comment` filled | rule written | the ORIGINAL never writes this table: `grep -rn pr_comment ~/projects/ghcacher/src` finds two READS and no INSERT. This program adds `comments(last: 50)` to the selection, so it is a superset. `path`/`line`/`in_reply_to_id` stay empty: the issue-comment connection carries none of them. |
+| 3 | SSE broadcast | `change_log/4` only | `cmd.rs:177-216` `broadcast_loop` is transport. Subscriptions, heartbeat and pause/resume are daemon lifecycle, which "Infra is bought, never built" puts outside the program. |
+
+Three rows that stood here are CLOSED, and each was a claim about the language
+that measurement contradicted.
+
+| was | now |
+|---|---|
+| "pagination has to live in the executor, a fourth host input cannot be added" | the page walk is `next_page` + `page_queued`, decoded out of the `link` header with `split`/`instr`/`substr`; `page_cap(10)` is a program fact |
+| "a rel column cannot spell the alias whose name I computed", so `graphql.rs` had to flatten | `decode(Data, {data: {$RepoAlias: {...}}})` captures the alias INTO a variable; nested spreads then fan out six planes. Runtime receipt in the arc's probe: `{"repo_0": ..., "repo_1": ...}` answers three rows and skips `rateLimit`. |
+| "a `json.rows` executor is needed" | `decode` with a spread is that |
+
+## The pull-request state track (folded in from `prwatch.dl6`)
+
+`prwatch.dl6` was a second program watching the same four repositories over its
+own `/gh/pulls` executor. Its two rels live here now, over `pull_request`:
+
+| rel | what it answers |
+|---|---|
+| `pr_transition(repo_ref, number, from_state, to_state, at_tick)` | every state change, read with `pre/1` so the two clock offsets do not conflict |
+| `lane_proof(repo_slug, branch, pr, merge_commit_sha)` | a merged pull whose head branch carries a lane prefix: the receipt that a dispatched lane's commits reached main |
+
+The incident its README recorded is closed by construction here. The endpoint
+was `state=all` over five pages of a hundred, 6857541 wire bytes on EVERY 60s
+tick, because an absent optional column read as the executor's most expensive
+default. There is no optional column to omit now: the url and every header are
+in the row.
 
 ## Executors
 
 | host | executor | file | new? |
 |---|---|---|---|
-| `gh_rest_cond`, `fetch` | `http_fetch` | `executors/fetch.rs` | extended |
-| `gh_pr_batch` | `gh_pr_batch` | `executors/graphql.rs` | NEW |
-| `toml_json` | `toml_json` | `executors/toml.rs` | reused |
-| `repo_checkout`, `repo_mirror_pr_heads` | `soopy_checkout` | `executors/checkout.rs` | reused |
+| `http.get` | `HttpGetExecutor` | `executors/http.rs` | NEW |
+| `http.post` | `HttpPostExecutor` | `executors/http.rs` | NEW |
+| `/env/var` | `EnvExecutor` | `executors/env.rs` | reused |
+| `/toml/json` | `TomlJsonExecutor` | `executors/toml.rs` | reused |
+| `/soopy/checkout`, `/soopy/mirror_pr_heads` | `SoopyCheckoutExecutor` | `executors/checkout.rs` | reused |
+| `/clock/tick` | `ClockExecutor` | `executors/clock.rs` | reused |
+| `/dl/tick_cost` | `TickCostExecutor` | `executors/cost.rs` | reused |
 
-`fetch.rs` gained seven output columns (`etag`, `last_modified`,
-`poll_interval`, `rate_remaining`, `rate_reset`, `bytes`, `pages`) and
-Link-header pagination. Adding columns cannot break an existing program:
-`select_columns` keeps only the columns a host DECLARES and drops a row missing
-any of them (`hosts.rs`, `carries_every_column`). The six `v6/dl/ghcacher`
-goldens are scripted and were re-run: `GHCACHER_RUST_DOOR_HOLDS goldens=6`.
+Deleted with this arc: `fetch.rs` (368), `graphql.rs` (459), `pulls.rs` (192),
+`repos.rs` (150), and their `/http/fetch`, `/gh/rest_cond`, `/gh/repos`,
+`/gh/pulls`, `/gh/pr_batch` roster rows.
 
-`graphql.rs` flattens the nested per-alias GraphQL answer into six element
-arrays (`pulls`, `reviews`, `comments`, `labels`, `requested_reviewers`,
-`status_checks`), each element carrying `owner`/`name`/`number`. Flattening
-there rather than in dl6 is forced: the answer nests under aliases named
-`repo_0..repo_19`, and a rel column cannot spell "the alias whose name I
-computed".
+`hosts.rs` `collect` dispatches one tick's `http.*` demands on a bounded pool
+(`std::thread::scope`, width `DL_HTTP_CONCURRENCY` or a quarter of the cores,
+floor 2) and joins them in demand order. COUNT receipt in `tests/executors.rs`:
+eight endpoints against a listener that holds each request 3s answer in 3.01s,
+where serial is 24s.
+
+## Restart
+
+`sql.rs` `run_program_ddl` dropped every table this program declares at every
+boot, so each restart re-downloaded roughly a megabyte
+(`issues/dl6-run-restart-loses-etags`). A TABLE whose CREATE is the one already
+standing in `~/.agent/dl6.db` now keeps its rows; a table whose shape moved is
+still dropped, because its rows no longer fit. Live receipt: kill, start, and
+the first poll is 8 x 304 with `bytes = 0` out of 8 stored ETags and 8 stored
+bodies.

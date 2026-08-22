@@ -214,12 +214,17 @@ rate_warm(ApiType) <-
   Remaining =< WarnThreshold,
   Remaining > StopThreshold.
 
+# `x-ratelimit-reset` is EPOCH SECONDS and `Bucket` is epoch MINUTES, so the
+# comparison is in buckets: raw, every reset is in the future and the poll
+# never resumes (MEASURED live: zero calls after one stop, forever).
 over_budget(ApiType, Bucket) <-
   current_clock(60, Bucket),
   rate_state(ApiType, Remaining, ResetAt),
   api_tier(ApiType, _WarnThreshold, StopThreshold),
   Remaining =< StopThreshold,
-  Bucket < ResetAt.
+  clock_granularity(Granularity),
+  ResetBucket := ResetAt / Granularity,
+  Bucket < ResetBucket.
 
 # ── the endpoint plane ──────────────────────────────────────────────────────
 
