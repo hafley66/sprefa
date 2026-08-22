@@ -1,0 +1,21 @@
+rel source_0(name: text, weight: int).
+rel source_1(name: text, weight: int).
+rel source_2(name: text, weight: int).
+rel source_3(name: text, weight: int).
+
+heavy_0(Name) <-
+  source_0(Name, Weight),
+  Weight >= 10.
+
+heavy_1(Name) <-
+  source_1(Name, Weight),
+  Weight >= 10.
+
+heavy_2(Name) <-
+  source_2(Name, Weight),
+  Weight >= 10.
+
+heavy_3(Name) <-
+  source_3(Name, Weight),
+  Weight >= 10.
+
