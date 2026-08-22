@@ -794,3 +794,13 @@ ruling(oracle_off_by_default, sweep_oracle_env_opt_in, user,
 % no new program writes it, the one-rel collapse rewrites what it touches.
 ruling(key_column_annotation_over_suffix, annotation_preferred, user,
        'chat 2026-08-21: "key is annotation generic now, key at suffix special position is defunct"').
+
+% The clock checker's path walk (clock_path_conflict, unconstructive_clock_cycle)
+% is PINNED OFF the compile path: it was early-stage and nothing can express
+% infinite yet. The cheap cross_plane checks stay. The code stays, commented as
+% the seed of a later calculus: edge reference counting (when a full retraction
+% invalidates other edges and refCounts, auto-drop like Rust), relational
+% cardinality over time, and det modes in the Mercury sense with clocks on the
+% pipeline ("this pipe is lazy 1"), to catch rxjs-world bugs at compile time.
+ruling(clock_path_check_pinned_off, stub_keep_cross_plane, user,
+       'chat 2026-08-21: "fuck the clock checker at this point, pin it ... comment it/stub it out, we havent a need for it yet bc we cant even express infinite yet"').
