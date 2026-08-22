@@ -40,7 +40,7 @@ rel repo_config_seen(owner: text, name: text, default_branch: text,
                      checkout_pr_branches: int).
 rel org_exclude(owner: text, name: text).
 
-rel current_clock(period: int, bucket: int) key(1).
+rel current_clock(period: int, bucket: int).
 
 rel /clock/tick(every: int) -> (bucket: int).
 
@@ -48,7 +48,15 @@ rel period(every: int).
 period(60).
 period(3600).
 
-current_clock(Period, Bucket) <+ period(Period), /clock/tick(Period, Bucket).
+# expand_probe_rule only desugars a probe inside `<-` (1_host_expand.pl:432);
+# a slash executor in a `<+` body throws edge_body_shape (analyze.pl:999).
+current_clock(Period, Bucket) <- period(Period), /clock/tick(Period, Bucket).
+
+# bind_read_literals (emit_rust.pl:479) needs a literal interval/2 call
+# somewhere; a bare-var call satisfies it too.
+rel live_cadence(period: int).
+live_cadence(60) <- interval(60, _Bucket).
+live_cadence(3600) <- interval(3600, _Bucket).
 
 # Every identity input must appear in the template (1_host_expand.pl:313) and
 # the freshness input must not, which is why `bucket` is absent from all five.
@@ -580,10 +588,16 @@ pr_batch_member(Bucket, BatchIndex, RepoSlug) <-
   BatchIndex := Ordinal / RowsPerCall,
   RepoSlug := concat([Owner, "/", Name]).
 
-# The aliased-query slug list is built by a SQL aggregate, never string code.
-pr_batch(Bucket, BatchIndex, BatchKey, group_concat(RepoSlug, " ")) <-
+rel pr_batch_member_keyed(bucket: int, batch_index: int, batch_key: text,
+                          repo_slug: text).
+
+pr_batch_member_keyed(Bucket, BatchIndex, BatchKey, RepoSlug) <-
   pr_batch_member(Bucket, BatchIndex, RepoSlug),
   BatchKey := concat(["graphql:prs:batch/", BatchIndex]).
+
+# The aliased-query slug list is built by a SQL aggregate, never string code.
+pr_batch(Bucket, BatchIndex, BatchKey, group_concat(RepoSlug, " ")) <-
+  pr_batch_member_keyed(Bucket, BatchIndex, BatchKey, RepoSlug).
 
 pr_batch_response(BatchKey, Bucket, Status, RateRemaining, RateReset, GqlCost,
                   Bytes, Data) <-
@@ -882,9 +896,27 @@ recent_event(RepoSlug, EventType, Actor, CreatedAt, Action) <-
   decode(Payload, {action: Action: text}),
   RepoSlug := concat([Owner, "/", Name]).
 
-rate_pool(ApiType, Remaining, ResetAt, count(AtTick)) <-
-  rate_state(ApiType, Remaining, ResetAt),
-  call_log(AtTick, ApiType, _Ep, _St, _RR, _RS, _By, _Ch).
+# Grouped columns must all come from one positive body atom's own delta rows
+# (lower.pl:4635); call_log carries rate_remaining/rate_reset itself.
+rate_pool(ApiType, RateRemaining, RateReset, count(AtTick)) <-
+  call_log(AtTick, ApiType, _Ep, _St, RateRemaining, RateReset, _By, _Ch).
+
+# ── the engine measuring itself, prwatch.dl6:97-106's shape ────────────────
+
+rel /dl/tick_cost(bucket: int) ->
+  (executor: text, wall_ms: int, sqlite_ms: int, calls: int, rows_out: int,
+   bytes: int, rss_kb: int).
+
+rel measured(bucket: int, executor: text, wall_ms: int, sqlite_ms: int,
+             calls: int, rows_out: int, bytes: int, rss_kb: int).
+measured(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <-
+  current_clock(60, Bucket),
+  /dl/tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb).
+
+rel tick_cost(bucket: int, executor: text, wall_ms: int, sqlite_ms: int,
+              calls: int, rows_out: int, bytes: int, rss_kb: int) log keep(all).
+tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <+
+  measured(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb).
 
 # ── queries ─────────────────────────────────────────────────────────────────
 
@@ -907,3 +939,4 @@ rate_pool(ApiType, Remaining, ResetAt, count(AtTick)) <-
              LastChangedBucket).
 ? branch(RepoRef, BranchName, Sha, UpdatedAt).
 ? checkout(RepoRef, BranchName, LocalPath, Sha, CheckedOutBucket).
+? tick_cost(bucket, executor, wall_ms, sqlite_ms, calls, rows_out, bytes, rss_kb).

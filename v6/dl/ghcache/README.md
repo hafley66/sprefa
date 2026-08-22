@@ -22,58 +22,41 @@ their own section with a throw site each.
 | leg | state |
 |---|---|
 | `ghcache.dl6` parses, plans, and types clean | yes |
-| `ghcache.dl6` reaches the emitter | **NO — blocked in `3_clock_check.pl`** |
+| `ghcache.dl6` reaches the emitter | **yes** |
 | `executors/graphql.rs` + `executors/fetch.rs` | built, 11 unit tests green |
 | the six `v6/dl/ghcacher` goldens | unchanged, gate green |
+| simulated schedule through the Rust door | yes, `v6/dl/ghcache/gate.sh` and `dl6 run --schedule`, rate-stop-threshold receipt below |
+| live `dl6 run` against `hafley66` (instant, sprefa, hafley-rs, hafley-rxjs) | yes, pass 1 = 200, every later pass = 304/bytes=0, receipt below |
 
-The program is blocked by a compiler scaling limit, not by a language limit.
-It parses, plans, type-checks and passes every earlier stage; `compile.pl:239`
-`check_step(clock, check_clock_program(Prog))` is where it stops.
+**Known defect, filed, not fixed here**: `period_candidate`/`endpoint_period`
+compare `global_setting.poll_period` (raw SECONDS) directly as a mod-divisor
+against `current_clock(60,Bucket)`, whose `Bucket` increments once per real
+MINUTE (`clock.rs:bucket_of` = `now_secs/every`). Never divided by the clock
+granularity, so `poll_interval_seconds=60` is due every 60 buckets = 60
+minutes, not every 60 seconds; the same gap hits `org_repo_discovery_interval_seconds`
+and the server `X-Poll-Interval` candidate. Filed as issue `ghcache-dl6-poll`
+(main `3fe20ee7c`). The live receipt below works around it with
+`poll_interval_seconds=1` in the smoke-test config only.
 
-**`ARCH.pl:894` records this exact defect as `done`.** Its own words:
-
-> DEFECT found by the atlas-variants lane 2026-07-31: 3_clock_check.pl
-> clock_path_conflict enumerates EVERY simple path between every ref pair --
-> exponential in mid-chain route count. Measured: [...] then Stack limit
-> exceeded inside clock_violation/2's setof at the served compiler's 1GB
-> INSTEAD OF REFUSING (self-diagnosis law: cliffs must be named, not fatal).
-> Fix = offset algebra per SCC/edge [...], never path enumeration; plus a
-> resource-bounded unsupported construct.
-
-The symptom recurs verbatim on this program. Measured, this tree, base sha
-`5d5cc07cc`:
-
-| run | stack | wall | result |
-|---|---|---:|---|
-| `ghcache.dl6`, 81 rules / 84 rels | default | ~20 min | `Stack limit exceeded` inside `clock_violation/2`'s `setof` |
-| same | `--stack_limit=12G` | 3 min 14 s, RSS flat at 4.4 MB | still running, killed |
-| 31-rule linear chain | default | 0.25 s | clean |
-| 27-rule diamond ladder, 2^13 simple paths | default | 0.25 s | clean |
-
-The two control probes show raw rule count is not the cause. What the
-2026-07-31 fix actually landed is visible at `3_clock_check.pl:478-491`:
-`recurrence_free_clock/6` propagates offsets **only when
-`zero_weight_cycles_only/2` holds**, and otherwise falls back to the old
-`clock_path/7` enumeration. This program takes the fallback. Its comment at
-`:470-474` argues the fallback shape "is already refused one clause further
-down" — but `clock_path_conflict` is clause-ordered at `:336` and
-`unconstructive_clock_cycle` at `:347`, so the non-terminating clause is tried
-FIRST and the refusal that was meant to contain it is never reached.
-
-Two things are therefore still open from the original prescription: the
-resource bound ("cliffs must be named, not fatal") was never added, and the
-containment argument depends on a clause order that does not hold.
-`clock_check_path_blowup` should be reopened.
-
-This is a `v6/prolog/**` defect and that tree is outside this lane's ownership,
-so nothing here works around it. `gate.sh` names the blocker and exits 1.
+The `3_clock_check.pl` path-walk blowup that used to stop this program at
+`compile.pl:239` is pinned off on the compile path
+(`clock_path_walk_enabled :- fail.`, ruling `clock_path_check_pinned_off`,
+`v6/prolog/conformance/rulings.pl`). Six lowering stops followed and are
+fixed in the program: `trigger_arg_not_var` on eleven edge-rule (`<+`)
+literals, `edge_into_unkeyed_set(not_an_org/1)`,
+`aggregate_group_not_delta_local` on `rate_pool/4` and `pr_batch/4` (grouped
+columns must come from one positive body atom's own delta rows,
+`lower.pl:4635`; `pr_batch` now routes through `pr_batch_member_keyed/4` to
+materialize `BatchKey` as a stored column first), and `edge_body_shape` on
+`current_clock/2` (main's #408 merge: `expand_probe_rule` only desugars a
+slash executor inside a `<-` body, so `current_clock` moved from `<+` to `<-`,
+matching `prwatch.dl6:47`'s `beat/1`).
 
 ## How to run it
 
 `dl6 run` landed with PR #407 and folds into the ONE db, `~/.agent/dl6.db`,
 tables carrying the program's own name (CLAUDE.md 2026-08-21). There is no
-per-program db flag. The program is driven through `emit_rust_harness` here
-because it does not compile yet:
+per-program db flag.
 
 ```bash
 swipl -q -l v6/prolog/compile.pl -l v6/prolog/emit_rust.pl \
@@ -82,8 +65,6 @@ DL_ADAPTERS_DIR=v6/dl/ghcache RUST_LOG=sprefa_engine_rs=info \
   timeout 60 v6/sprefa-engine-rs/target/debug/emit_rust_harness \
   /tmp/ghcache.rs v6/dl/ghcache/ghcache.schedule.json --live-hosts --final
 ```
-
-The first command is the one that does not currently return.
 
 ## The rate budget (the whole point)
 
@@ -174,7 +155,7 @@ tick 2000 not over_budget                 due resumes
 | `sync/events.rs:105-112`, `:235-247` CI sha -> PR | three `dirty_pr/2` rules joining `open_pr_head/4` on `head_sha` |
 | `sync/branches.rs:7-88` `sync` | `candidate_branch/3` -> `matched_branch/3` -> `branch/4` |
 | `sync/branches.rs:90-95` `matches_glob` | the two `matched_branch/3` rules (exact, then `*` prefix) |
-| `sync/prs.rs:60-145` `sync_batch` | `pr_batch_member/3` -> `pr_batch/4` -> `pr_batch_response/8` |
+| `sync/prs.rs:60-145` `sync_batch` | `pr_batch_member/3` -> `pr_batch_member_keyed/4` -> `pr_batch/4` -> `pr_batch_response/8` |
 | `sync/prs.rs:58` `BATCH_SIZE` | `batch_size(20)`, `BatchIndex := Ordinal / RowsPerCall` |
 | `sync/prs.rs:71-84` alias building | `group_concat(RepoSlug, " ")` + `graphql.rs:query_for` |
 | `sync/prs.rs:147-198` `sync_targeted` | the `dirty_repo` arm of `pr_due/2` |
@@ -280,9 +261,8 @@ no such executor, so there was nothing to reuse and nothing was built twice.
 | 2 | `graphql.query(query: key(text)) -> ...` | the registered `gh_pr_batch(batch_key, slug_list, bucket)` | same file, same reason: a new host NAME needs a `host_input_contract/3` row. `gh_pr_batch` was already registered (`registry.pl:467-471`) for exactly this and had no executor; this arc wrote it. |
 | 3 | `json.rows` executor | not built | the language has `spread`; see the section above. |
 | 4 | `worktree` table | not carried | no registered host answers a filesystem worktree scan. `worktree.rs:105-203` shells `git worktree list --porcelain` and `git status` per worktree, and "Zero shell in the engine" (CLAUDE.md, 2026-08-21) requires a linked Rust executor. `executors/git_refs.rs` and `repo_at.rs` are soopy-backed and answer refs, not worktrees. A `worktree_scan` host is new registry surface. |
-| 5 | one program | one program, blocked in the clock checker | `3_clock_check.pl:336-346`; see Status. |
-| 6 | `pr_comment` filled | rule written, executor answers it | the ORIGINAL never writes this table: `grep -rn pr_comment ~/projects/ghcacher/src` finds only two READS, `query/prs.rs:80` and `:216`, and no INSERT anywhere. `PR_FIELDS` (`sync/prs.rs:7-41`) never selects `comments`. This program adds `comments(last: 50)` to the selection and fills the rel, so it is a superset, not a gap. `path`/`line`/`in_reply_to_id` stay empty because the issue-comment connection carries none of them. |
-| 7 | SSE broadcast | `change_log/4` only | `cmd.rs:177-216` `broadcast_loop` is transport. `GET /ticks` (`HOST-CONTRACTS.md:65`) is the runtime's own SSE surface and reads the tick log; `change_log` is the rel it carries. Subscriptions, heartbeat, pause/resume (`cmd.rs:43-128`, `:344-363`) are daemon lifecycle, which CLAUDE.md's "Infra is bought, never built" puts outside the program. |
+| 5 | `pr_comment` filled | rule written, executor answers it | the ORIGINAL never writes this table: `grep -rn pr_comment ~/projects/ghcacher/src` finds only two READS, `query/prs.rs:80` and `:216`, and no INSERT anywhere. `PR_FIELDS` (`sync/prs.rs:7-41`) never selects `comments`. This program adds `comments(last: 50)` to the selection and fills the rel, so it is a superset, not a gap. `path`/`line`/`in_reply_to_id` stay empty because the issue-comment connection carries none of them. |
+| 6 | SSE broadcast | `change_log/4` only | `cmd.rs:177-216` `broadcast_loop` is transport. `GET /ticks` (`HOST-CONTRACTS.md:65`) is the runtime's own SSE surface and reads the tick log; `change_log` is the rel it carries. Subscriptions, heartbeat, pause/resume (`cmd.rs:43-128`, `:344-363`) are daemon lifecycle, which CLAUDE.md's "Infra is bought, never built" puts outside the program. |
 
 ## Executors
 
