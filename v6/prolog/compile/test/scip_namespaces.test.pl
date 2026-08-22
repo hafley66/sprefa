@@ -5,6 +5,7 @@
 
 :- use_module(library(plunit)).
 :- use_module('../parse_dl_dcg', [parse_dl_dcg_entry/5]).
+:- use_module('../../use_resolve', [expand_uses/8]).
 :- use_module('../registry',
               [ host_input_contract/3,
                 host_output_contract/3,
@@ -51,8 +52,8 @@ test(slash_executor_goal_becomes_a_probe_on_the_flat_name) :-
     Salts == [salt(digest, d)],
     length(Outs, 6).
 
-% Ruling executor_path_slashes: one segment list, two spellings. The dotted
-% module path stays legal, so a program written before the call still parses.
+% Ruling executor_modules_use_import: one segment list, two path spellings,
+% both still legal beside the `use` form.
 test(a_slash_path_and_a_dotted_path_reach_one_atom) :-
     forall(member(Spelling-Expected,
                   ["/scip/diet/call"-scip__diet__call,
@@ -113,8 +114,9 @@ test(receiver_rail_declares_the_registry_columns) :-
     module_property(scip_namespaces_tests, file(TestFile)),
     file_directory_name(TestFile, TestDir),
     atomic_list_concat([TestDir, '/../../../dl/deadcode/receiver-rail.dl6'], Rail),
-    read_file_to_codes(Rail, Codes, []),
-    parse_dl_dcg_entry(Rail, Codes, program(Decls, _, _), _Bindings, _Findings),
+    % Through the whole door: `use scip.` binds the leaf, and the raw parser
+    % alone reports the file's local name instead of the registry's.
+    expand_uses(Rail, [], [], _, program(Decls, _, _), _, _, _),
     forall(member(Host, [scip__call, scip__diet__call]),
            ( memberchk(sh_decl(Host, Inputs, Outputs, _), Decls),
              once(host_input_contract(Host, Inputs, _Roles)),

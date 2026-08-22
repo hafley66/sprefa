@@ -1,15 +1,15 @@
 % bop_check.pl : the bop CLI's `check` verb (registry.pl cli_command(check,
 % ...)). Validates one `.dl6` file through the SAME text door compile_dl6/2
-% uses (parse_dl_file/4 then compile_program/6 with the real emitter), never
+% uses (expand_uses/8 then compile_program/6 with the real emitter), never
 % a parallel validation path, and writes its answer as an EXIT CODE per the
 % user's CLI contract:
 %
 %   0  clean    -- zero parse findings, compiles without a named unsupported construct
-%   1  broken   -- the file does not parse at all (parse_dl_file FAILS, or
+%   1  broken   -- the file does not parse at all (expand_uses FAILS, or
 %                  throws something that is not one of the compiler's own
 %                  named-reason exceptions below), or any other uncaught
 %                  fault during compilation
-%   2  findings -- parse_dl_file returned unsupported_surface(...) findings,
+%   2  findings -- expand_uses returned unsupported_surface(...) findings,
 %                  OR the compile pipeline threw one of its own NAMED
 %                  unsupported construct reasons
 %

@@ -493,15 +493,24 @@ hole_var('_', _) :- !.
 hole_var(Name, Var) :- get_or_make_var(Name, Var).
 
 
+% A quoted target is a file; a bare ident is an executor family the registry
+% rosters (use_mod, resolved in executor_modules.pl).
 use_item(Item) -->
     ws,
-    ( ~`pub` -> ws, ~`use`, { F = pub_use } ; ~`use`, { F = use } ),
-    ws, string_lit(Text), ws,
+    ( ~`pub` -> ws, ~`use`, { Visibility = pub_use } ; ~`use`, { Visibility = use } ),
+    ws,
+    ( string_lit(Text) -> { Target = Text, F = Visibility }
+    ; ident(Module), { Target = Module, module_use_functor(Visibility, F) }
+    ),
+    ws,
     ( ~`as`, ws, ident(Alias)
-    -> { Item =.. [F, Text, Alias] }
-    ; { Item =.. [F, Text] }
+    -> { Item =.. [F, Target, Alias] }
+    ; { Item =.. [F, Target] }
     ),
     ws, [0'.].
+
+module_use_functor(use, use_mod).
+module_use_functor(pub_use, pub_use_mod).
 
 
 % import "spec": attaches an external spec; records its source span (0-based,
@@ -1594,8 +1603,8 @@ compound_or_var(E) -->
       back(S1), dot_chain(Rec, E)
     ).
 
-% Executor paths are slash-rooted `/soopy/files`, module paths dotted `a.b`
-% (ruling executor_path_slashes); both reach module_path_name/2's `__` join.
+% Slash and dot are one path spelling (ruling executor_modules_use_import) and
+% both reach module_path_name/2's `__` join, as `use soopy.` plus a leaf does.
 dotted_path(Segments) -->
     ( peek(0'/) -> slash_path(Segments) ; dotted_path_segments(Segments) ).
 

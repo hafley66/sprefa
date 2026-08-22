@@ -23,6 +23,8 @@ use "source.dl6" as source.
 # revision-backed file and its half-open byte range. `request` is already a
 # complete StageRequest JSON document supplied by the boundary producer. These
 # rules select and explain a candidate; they do not construct its action array.
+use soopy.
+
 rel source_request(proposal: text, root: text, state: text, request: text,
                    at: source.span).
 rel source_dependency(at: source.span, target: text, kind: text).
@@ -43,15 +45,15 @@ source_proposal(Proposal, Root, State, Request) <-
   source_proposal_candidate(Proposal, Root, State, Request, _, _, _, _).
 
 # The rel name is the executor binding (registry.pl arrival_executor/2):
-# /soopy/stage invokes Soopy in-process.
-rel /soopy/stage(root: text, state: text, request: text) ->
+# stage invokes Soopy in-process.
+rel stage(root: text, state: text, request: text) ->
   (stage_id: text, outcome: text, detail: text, document: json).
 
 rel source_stage_result(proposal: text, root: text, state: text,
                         stage_id: text, outcome: text, detail: text, document: json).
 source_stage_result(Proposal, Root, State, StageId, Outcome, Detail, Document) <-
   source_proposal(Proposal, Root, State, Request),
-  /soopy/stage(Root, State, Request, StageId, Outcome, Detail, Document).
+  stage(Root, State, Request, StageId, Outcome, Detail, Document).
 
 rel source_stage_preview(proposal: text, stage_id: text, preview: json).
 source_stage_preview(Proposal, StageId, Preview) <-
@@ -73,7 +75,7 @@ source_commit_demand(Root, State, StageId) <-
   source_stage_result(Proposal, Root, State, StageId, "staged", _, _),
   source_approval(Proposal, StageId).
 
-rel /soopy/commit(root: text, state: text, stage_id: text) ->
+rel commit(root: text, state: text, stage_id: text) ->
   (outcome: text, detail: text, document: json).
 
 # These response facts arrive after the demand tick. While no approval joins,
@@ -82,7 +84,7 @@ rel source_commit_result(root: text, state: text, stage_id: text,
                          outcome: text, detail: text, document: json).
 source_commit_result(Root, State, StageId, Outcome, Detail, Document) <-
   source_commit_demand(Root, State, StageId),
-  /soopy/commit(Root, State, StageId, Outcome, Detail, Document).
+  commit(Root, State, StageId, Outcome, Detail, Document).
 
 rel source_commit_receipt(stage_id: text, receipt: json).
 source_commit_receipt(StageId, Receipt) <-

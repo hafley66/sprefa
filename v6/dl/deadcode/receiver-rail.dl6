@@ -1,8 +1,8 @@
 # @comment-ok: the file header states which evidence each namespace carries,
 # which is the whole reason the two names exist and is not visible in the code.
 #
-#   /scip/diet/call   this crate's tree-sitter front-ends, resolved by name match
-#   /scip/call        a real SCIP index, resolved by the language's own indexer
+#   diet.call   this crate's tree-sitter front-ends, resolved by name match
+#   call        a real SCIP index, resolved by the language's own indexer
 #
 # Same question, same output columns, one host name apart. Where they disagree
 # is the point: a name several files define is unresolvable to a name match and
@@ -11,21 +11,24 @@
 #
 # rx: fileSet$.pipe(mergeMap(runScip), groupBy(row => row.callee)).
 
+use scip.
+use soopy.
+
 rel want(glob: text).
 
 # One `git hash-object` process for the whole set; the rel name IS the
 # executor binding (registry.pl arrival_executor/2).
-rel /soopy/files(glob: text) -> (path: text, digest: text).
+rel files(glob: text) -> (path: text, digest: text).
 
 rel source_file(path: text, digest: text).
-source_file(Path, Digest) <- want(Glob), /soopy/files(Glob, Path, Digest).
+source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
 
 # THE INTERFACING TYPE: registry.pl scip_interface_columns/2 is the one list
 # both are checked against (compile/test/scip_namespaces.test.pl).
-rel /scip/diet/call(repo: text, path: text, digest: text)
+rel diet.call(repo: text, path: text, digest: text)
   -> (record: text, family: text, caller_path: text, callee_path: text,
       callee: text, kind: text) key(1, 2).
-rel /scip/call(repo: text, path: text, digest: text)
+rel call(repo: text, path: text, digest: text)
   -> (record: text, family: text, caller_path: text, callee_path: text,
       callee: text, kind: text) key(1, 2).
 
@@ -35,11 +38,11 @@ rel receiver_edge(source: text, callee: text, caller_path: text,
                   callee_path: text, kind: text).
 receiver_edge('scip.diet', Callee, CallerPath, CalleePath, Kind) <-
   source_file(Path, Digest),
-  /scip/diet/call('.', Path, Digest, 'resolved_edge', 'call',
+  diet.call('.', Path, Digest, 'resolved_edge', 'call',
                  CallerPath, CalleePath, Callee, Kind).
 receiver_edge('scip', Callee, CallerPath, CalleePath, Kind) <-
   source_file(Path, Digest),
-  /scip/call('.', Path, Digest, 'resolved_edge', 'call',
+  call('.', Path, Digest, 'resolved_edge', 'call',
             CallerPath, CalleePath, Callee, Kind).
 
 # A cross-file edge is the one a name match cannot prove: the caller and the

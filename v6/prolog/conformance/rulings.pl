@@ -830,13 +830,13 @@ ruling(sh_bind_surface_removed, arrival_rel_is_the_only_spelling, user,
 ruling(fixture_answers_are_arrivals, schedule_and_arrive_replace_fixture_executor, user,
        'arrivals-and-ticks brief 2026-08-21: a rel whose rows arrive from outside is still just a rel; a canned answer is an arrival batch, not an executor.').
 
-% Executor namespacing, same brief: every rel that reaches an executor is
-% spelled <executor>.<question> dotted (/soopy/files, /http/fetch, /gh/repos,
-% /clock/tick, /soopy/watch), as /scip/diet/call already is. The registry''s
-% arrival_executor/2 rows are the one roster; LINKED_EXECUTORS in
-% sprefa-engine-rs/src/hosts.rs lists the same names and a test pins the two
-% equal. An arrival rel no executor links (a replay-only fixture feeder) keeps
-% a plain name; it reaches no executor, so the namespace rule does not bind it.
+% Executor namespacing, same brief: every rel that reaches an executor carries
+% its executor family, and the family is named by an import (`use soopy.`),
+% never left implicit. "No bare files, no bare fetch" means no bare files
+% WITHOUT a use. The registry''s arrival_executor/2 rows are the one roster;
+% LINKED_EXECUTORS in sprefa-engine-rs/src/hosts.rs lists the same names and a
+% test pins the two equal. An arrival rel no executor links (a replay-only
+% fixture feeder) keeps a plain name and no family binds it.
 ruling(executor_namespacing, dotted_executor_question_names_registry_is_roster, user,
        'arrivals-and-ticks brief 2026-08-21: "non confusing named and well namespaced"; no bare files, no bare fetch. The __ atom join (module_path_name/2) stays the internal spelling.').
 % Key is a column annotation: `rel files(glob: key(text)) -> (path, digest)`.
@@ -847,13 +847,18 @@ ruling(executor_namespacing, dotted_executor_question_names_registry_is_roster, 
 ruling(key_column_annotation_over_suffix, annotation_preferred, user,
        'chat 2026-08-21: "key is annotation generic now, key at suffix special position is defunct"').
 
-% 2026-08-21, amendment to executor_namespacing: the executor path is spelled
-% with SLASHES, not dots. `rel /soopy/files(glob: key(text)) -> (path: text,
-% digest: text).` /scip/diet/call becomes /scip/diet/call. The dotted spelling
-% never reaches a user's eye; the internal __ atom join (module_path_name/2)
-% is unchanged.
-ruling(executor_path_slashes, slash_separated_executor_paths, user,
-       'user 2026-08-21: "the executor path is spelled with slashes". Applies across parser (parse_dl_dcg.pl), registry roster, LINKED_EXECUTORS (sprefa-engine-rs/src/hosts.rs), every .dl6 and test string, tmLanguage and docs.').
+% An executor family is a MODULE. `use soopy.` then bare `files(...)`, or
+% `use soopy as sy.` then `sy.files(...)`. `rel soopy.files(...)` and
+% `rel /soopy/files(...)` still parse and mean the same rel; no file in this
+% repo writes either. The DECLARATION is what binds: `use soopy.` plus
+% `rel files(...)` makes that rel soopy's, so a file wanting a `files` of its
+% own aliases the module instead. Two used families exporting one leaf, both
+% unaliased, stop at ambiguous_executor_leaf. The internal __ atom join
+% (module_path_name/2) is unchanged, so every emitted name is byte-identical
+% across the three spellings (executor_modules.pl, compile/test
+% plunit unit executor_modules).
+ruling(executor_modules_use_import, use_named_module_then_bare_leaf, user,
+       'user 2026-08-22, in order: "Put the dots back; keep the slashes as an alias for dot; never use them." then "Dont require dots either. You should be able to import things with an alias or by module name."').
 % The clock checker's path walk (clock_path_conflict, unconstructive_clock_cycle)
 % is PINNED OFF the compile path: it was early-stage and nothing can express
 % infinite yet. The cheap cross_plane checks stay. The code stays, commented as
