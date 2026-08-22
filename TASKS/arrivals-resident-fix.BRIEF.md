@@ -48,3 +48,8 @@ Yours: `src/run.rs`, `src/bin/dl6.rs`, `tests/dl6_run.rs`, the three fixture fil
 No em dashes. Banned: provenance, substrate, load-bearing, regime, refusal, "ground truth".
 tracing only. Comment budget: constraints only. Failure ledger entry: "a keyword deleted
 from the surface while the runtime still keyed on it".
+
+## Reaching the coordinator
+`boop beep hail sprefa-coordinator --from <your-lane-name> --body "<one line>"` lands in the
+coordinator hook inbox at its next turn. Use it when blocked, when done (PR number + gate
+numbers), when this brief is wrong, or when you find a defect outside your ownership.

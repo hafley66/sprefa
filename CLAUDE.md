@@ -131,6 +131,19 @@ hails get typed into the coordinator pane, mid-turn or idle; no `lane wait`
 needs arming. `lane wait` remains the blocking/backstop form. Failure-mode 51
 records the era when this leg was unwired and mail queued forever.
 
+**Reaching the coordinator (every lane, every session, kimi included).** The
+coordinator is the boop lane `sprefa-coordinator`. One command, zero tokens
+beyond the body, lands in its hook inbox at its next turn:
+
+```bash
+boop beep hail sprefa-coordinator --from <your-lane-name> --body "<one line: what, where, what you need>"
+```
+
+Use it when blocked, when done (say the PR number and the gate numbers), when
+a brief is wrong, or when you find a defect outside your ownership. Never spawn
+a lane to carry a message; never edit main to get attention. `boop beep lane
+list` shows your own lane name.
+
 - Every worktree agent's FIRST action: `git merge --ff-only <sha>`, coordinator
   states the sha. Failure or missing tree = STOP AND REPORT. Working around a
   blocked command (archive/tar, `--no-verify`, copying) is a defect; a

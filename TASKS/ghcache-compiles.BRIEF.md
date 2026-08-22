@@ -53,3 +53,8 @@ Yours: `v6/dl/ghcache/**`, `v6/dl/ghcacher/gate.sh` read only. FORBIDDEN: `v6/pr
 ## Style laws
 No em dashes. Banned: provenance, substrate, load-bearing, regime, refusal, "ground truth".
 Comment budget: constraints only. Failure ledger entry: "a lane that never ran its program".
+
+## Reaching the coordinator
+`boop beep hail sprefa-coordinator --from <your-lane-name> --body "<one line>"` lands in the
+coordinator hook inbox at its next turn. Use it when blocked, when done (PR number + gate
+numbers), when this brief is wrong, or when you find a defect outside your ownership.
