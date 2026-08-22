@@ -112,6 +112,42 @@ test(generic_compiler_plane_is_erased_after_application_evaluation) :-
     \+ member(rel_template(_, _, _), Decls),
     \+ member(compiler_type_metadata(_, _), Rules).
 
+test(type_apply_body_request_refreezes_and_next_round_observes_generated_type) :-
+    Program = prog(
+        [ rel_template([box], [type_parameter('T', [])],
+                       [column(value, 'T')]),
+          col_type(seed/2, constructor, type),
+          col_type(seed/2, argument, type),
+          col_type(request/3, constructor, type),
+          col_type(request/3, argument, type),
+          col_type(request/3, application, type),
+          col_type(observed/1, type, type) ],
+        [ seed(box, int),
+          request(Constructor, Argument, Application) <-
+              ( seed(Constructor, Argument),
+                type_apply(Constructor, [Argument], Application) ),
+          observed(Type) <- type_decl(Type, _, _, _) ]),
+    expand_generic_program_with_bindings(Program, [], prog(Decls, Rules)),
+    Rules == [],
+    Constructor = named(local, relation, box),
+    Application = application(Constructor, [primitive(int)]),
+    member(compiler_type_metadata(_, Closure), Decls),
+    member(request(Constructor, primitive(int), Application), Closure),
+    member(observed(GeneratedId), Closure),
+    member(semantic_type_rows(Rows), Decls),
+    memberchk(application(Application, Constructor), Rows),
+    memberchk(argument(_, Application, 1, type_atom(int)), Rows),
+    member(declaration(GeneratedId, root, GeneratedName, relation,
+                       materialized), Rows),
+    GeneratedId = named(local, relation, GeneratedName),
+    sub_atom(GeneratedName, 0, _, _, '__gen__box'),
+    memberchk(member(_, GeneratedId, 1, value,
+                     type_ref(primitive(int))), Rows),
+    \+ member(col_type(seed/2, _, _), Decls),
+    \+ member(col_type(request/3, _, _), Decls),
+    \+ member(col_type(observed/1, _, _), Decls),
+    \+ member(rel_template(_, _, _), Decls).
+
 test(compiler_relation_can_request_absent_generic_application_before_erasure) :-
     string_codes(
         "rel Box(T)(value: T).\nrel reflect(Self: type, Value: type).\nreflect(Box(int), text).\n",
