@@ -52,7 +52,7 @@ pub trait IHostExecutor: Sync {
 /// executor_namespacing), pinned equal by executor_roster_matches_registry.
 pub const LINKED_EXECUTORS: &str = "/soopy/files, /soopy/files_at, /soopy/stage, \
      /soopy/commit, /soopy/refs, /soopy/history, /soopy/repo_at, /soopy/checkout, \
-     /soopy/mirror_pr_heads, /soopy/dep_crawl, /soopy/watch, /clock/tick, \
+     /soopy/mirror_pr_heads, /soopy/watch, /clock/tick, \
      /extract/records, \
      /extract/repo_records, /extract/call_node, /extract/call_node_at, \
      /extract/call_ref, /extract/cfg_at, /extract/specifier_at, \
@@ -69,8 +69,6 @@ static GIT_HISTORY: LazyLock<crate::executors::git_history::GitHistoryExecutor> 
     LazyLock::new(crate::executors::git_history::GitHistoryExecutor::new);
 static REPO_AT: LazyLock<crate::executors::repo_at::RepoAtExecutor> =
     LazyLock::new(crate::executors::repo_at::RepoAtExecutor::new);
-static DEP_CRAWL: LazyLock<crate::executors::dep_crawl::DepCrawlExecutor> =
-    LazyLock::new(crate::executors::dep_crawl::DepCrawlExecutor::new);
 static CLOCK_TICK: LazyLock<crate::executors::clock::ClockExecutor> =
     LazyLock::new(crate::executors::clock::ClockExecutor::new);
 static SOOPY_WATCH: LazyLock<crate::executors::watch::SoopyWatchExecutor> =
@@ -105,12 +103,11 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
             Some(&crate::executors::SoopyCheckoutExecutor)
         }
         "/toml/json" => Some(&crate::executors::TomlJsonExecutor),
-        // The cross-repository families. Each memoises on its demand inputs, so
-        // the sibling host names riding one pass settle in one soopy call.
+        // The cross-repository families, each a fresh soopy call per demand;
+        // this runner's own per-tick claim is what keeps a shared pass to one call.
         "/soopy/refs" => Some(&*GIT_REFS),
         "/soopy/history" => Some(&*GIT_HISTORY),
         "/soopy/repo_at" => Some(&*REPO_AT),
-        "/soopy/dep_crawl" => Some(&*DEP_CRAWL),
         "/clock/tick" => Some(&*CLOCK_TICK),
         "/soopy/watch" => Some(&*SOOPY_WATCH),
         // The two scip namespaces, both in-process: no child spawn for the

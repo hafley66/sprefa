@@ -7,17 +7,17 @@
 # regex over tracked files cannot produce at all, because they are not in any
 # tracked file.
 #
-# ── TWO FAMILIES, TWO MEMO KEYS ─────────────────────────────────────────────
-# `git_ref` and `git_tag` are ONE `for-each-ref` pass per repository, memoised
-# on the repository root. `git_merge_base`, `git_ahead_behind`, and
-# `git_ancestor` are ONE revision-graph answer per (repo, rev_a, rev_b),
-# memoised on the whole triple, because Git has no batch form for the pairwise
-# relations and three declarations would otherwise cost six processes.
-# `sprefa-engine-rs/src/hosts.rs` recognizes the five ruled names and delegates
-# to Soopy in-process. That is the SoopyFilesExecutor arrangement
-# (`hosts.rs:52`) and the dep_crawl arrangement (`hosts.rs:61`) applied to a
-# third family, and it is why every template below exits nonzero: a runtime
-# WITHOUT the linked arm must stop by name rather than answer zero rows.
+# ── TWO FAMILIES, ONE SOOPY CALL PER DEMAND ─────────────────────────────────
+# `git_ref` and `git_tag` are ONE `for-each-ref` pass per repository. `git_merge_base`,
+# `git_ahead_behind`, and `git_ancestor` are ONE revision-graph answer per
+# (repo, rev_a, rev_b), because Git has no batch form for the pairwise
+# relations and three declarations would otherwise cost six processes. Neither
+# family caches across demands; the runner's own per-tick claim is what keeps
+# a shared pass to one call. `sprefa-engine-rs/src/hosts.rs` recognizes the
+# five ruled names and delegates to Soopy in-process, the SoopyFilesExecutor
+# arrangement (`hosts.rs:52`) applied to a third family, and it is why every
+# template below exits nonzero: a runtime WITHOUT the linked arm must stop by
+# name rather than answer zero rows.
 #
 # ── ANCESTRY IS BOUNDED BY DEMAND ───────────────────────────────────────────
 # `git_ancestor` answers the pair a `want_pair` row names, in BOTH directions,

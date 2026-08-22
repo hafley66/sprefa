@@ -15,15 +15,13 @@ use std::collections::BTreeMap;
 use crate::hosts::{host_row, required_input, HostError, IHostExecutor};
 use crate::types::HostRow;
 
-use super::{checkout_root, stop, FamilyMemo};
+use super::{checkout_root, stop};
 
 pub const GIT_REF_COLUMNS: &[&str] = &["ref_name", "kind", "target_sha"];
 pub const GIT_TAG_COLUMNS: &[&str] = &["tag_name", "target_sha", "tagged_at", "annotated"];
 
 #[derive(Default)]
-pub struct GitRefsExecutor {
-    snapshots: FamilyMemo<Vec<HostRow>>,
-}
+pub struct GitRefsExecutor;
 
 impl GitRefsExecutor {
     pub fn new() -> Self {
@@ -45,11 +43,7 @@ impl IHostExecutor for GitRefsExecutor {
             ));
         }
         let root = checkout_root(host, &required_input(host, env, "repo")?)?;
-        let key = root.display().to_string();
-        let rows = self
-            .snapshots
-            .answer(key.clone(), || snapshot_rows(host, &root))?;
-        Ok(rows.as_ref().clone())
+        snapshot_rows(host, &root)
     }
 }
 

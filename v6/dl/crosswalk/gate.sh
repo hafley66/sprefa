@@ -118,6 +118,7 @@ compile 4_dep_crawl
 CRAWL=()
 for module in alpha beta gamma shared; do
   CRAWL+=(--arrive "want_crawl=$CORPUS,example.com/$module,go_mod")
+  CRAWL+=(--arrive "repo_known=$CORPUS,example.com/$module,$CORPUS/$module")
 done
 run 4_dep_crawl 'crawl_visit,dep_target,corpus_boundary,crawl_reach' "${CRAWL[@]}"
 
