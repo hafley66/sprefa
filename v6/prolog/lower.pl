@@ -5954,7 +5954,7 @@ json_pattern_sql(Typed, Position, Index, Index, Bound0, Bound, [], WhereTexts) :
     json_capture_json_type(Type, JsonTypeName),
     json_value_sql(Position, ValueSql),
     json_type_sql(Position, TypeSql),
-    format(atom(TypeGuard), '~w = ''~w''', [TypeSql, JsonTypeName]),
+    json_capture_type_guard(JsonTypeName, TypeSql, TypeGuard),
     (   bound_lookup(Bound0, Hole, typed(Existing, _, ExistingEncoding))
     ->  Bound = Bound0,
         aligned_pair(direct, ValueSql, ExistingEncoding, Existing, AlignedValue, AlignedExisting),
@@ -6005,15 +6005,21 @@ json_object_guard(Position, Text) :-
 
 % The capture types, clause-for-clause with body.pl:json_capture_type/2 (the
 % agreement is pinned by the json_typed_capture plunit unit and, ultimately,
-% by the byte-identical tick-log grade). Each maps to exactly ONE json1
-% `json_type` answer, which is what keeps the guard a single equality; `bool`
-% is absent for the reason body.pl states (json_flex card C4) and lands on the
-% same named unsupported construct a typo does.
+% by the byte-identical tick-log grade). int/float/text map to ONE json1
+% `json_type` answer each; bool maps to the pair true/false.
 json_capture_json_type(int,   integer) :- !.
 json_capture_json_type(float, real) :- !.
 json_capture_json_type(text,  text) :- !.
+json_capture_json_type(bool,  boolean) :- !.
 json_capture_json_type(Type,  _) :-
     throw(unsupported_construct(json_capture_type_unknown(Type))).
+
+% json1 answers a boolean as TWO json_type names, so that guard is a set test;
+% every other type is one equality.
+json_capture_type_guard(boolean, TypeSql, Guard) :- !,
+    format(atom(Guard), '~w IN (''true'', ''false'')', [TypeSql]).
+json_capture_type_guard(JsonTypeName, TypeSql, Guard) :-
+    format(atom(Guard), '~w = ''~w''', [TypeSql, JsonTypeName]).
 
 json_members_sql([], _, Index, Index, Bound, Bound, [], []).
 json_members_sql([Key-Sub | Rest], Position, Index0, Index, Bound0, Bound,

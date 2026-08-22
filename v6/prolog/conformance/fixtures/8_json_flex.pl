@@ -284,6 +284,25 @@ fixture(json_spread_and_capture_and_descent_multiply,
 
 % THE FLAGSHIP: a json event log folded into a keyed running total. Both arms
 % of the match block read the same capture, the second one arithmetically.
+% A json boolean inside a document captures as `bool` into a bool column. The
+% live receipt: GitHub's `isDraft` is a json bool and a `: int` capture answered
+% zero rows for every open PR (ghcache.dl6, 2026-08-22).
+fixture(json_bool_capture_lands_in_a_bool_column,
+  prog([col_type(event/1, payload, json), kind(event/1, log), keep(event/1, all),
+        col_type(draft_flag/2, number, int), col_type(draft_flag/2, draft, bool)],
+       [ (draft_flag(Number, Draft) <-
+            event(Payload),
+            decode(Payload, {number: Number: int, isDraft: Draft: bool})) ]),
+  [],
+  [ [ +event(obj([number-8, isDraft-bool_lit(false)])) ],
+    [ +event(obj([number-9, isDraft-bool_lit(true)])) ],
+    [ +event(obj([number-10, isDraft-1])) ] ],
+  [ final(draft_flag/2, [ draft_flag(8, bool_lit(false)), draft_flag(9, bool_lit(true)) ]),
+    deltas(draft_flag/2, [ [ +draft_flag(8, bool_lit(false)) ],
+                           [ +draft_flag(9, bool_lit(true)) ],
+                           [] ]),
+    ticks(3) ]).
+
 fixture(json_typed_capture_folds_into_a_keyed_int_total,
   prog([col_type(event/1, payload, json), kind(event/1, log), keep(event/1, all),
         col_type(total/2, repo, text), col_type(total/2, sum, int),
@@ -372,18 +391,7 @@ fixture(json_untyped_capture_binds_without_a_type,
     ticks(1) ]).
 
 % A capture type this plane does not define is a NAMED REFUSAL, never a
-% pattern that quietly matches nothing. `bool` is on the refused side on
-% purpose: a json boolean has no settled storage here (json_flex card C4
-% measured a top-level `true` DOCUMENT degrading to the integer 1 through the
-% real emitted arrival statement), so accepting it would guess at an open
-% card.
-fixture(json_capture_type_bool_is_refused,
-  prog([col_type(event/1, payload, json)],
-       [ (flagged(Value) <- event(Payload), decode(Payload, {ok: Value: bool})) ]),
-  [ event(obj([ok-bool_lit(true)])) ],
-  [],
-  [ throws(json_capture_type_unknown(bool)) ]).
-
+% pattern that quietly matches nothing.
 fixture(json_capture_type_typo_is_refused,
   prog([col_type(event/1, payload, json)],
        [ (counted(Value) <- event(Payload), decode(Payload, {n: Value: itn})) ]),

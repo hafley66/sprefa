@@ -1844,7 +1844,7 @@ plane_kind(expand). plane_kind(dred). plane_kind(avg_accumulator).
 % 41/309/309), so every move is a new fixture and never a lowering that grew.
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-192, refcount-1628, refcount_staging-1628,
+    Counts = [scope-192, refcount-1632, refcount_staging-1632,
               expand-56, dred-84, avg_accumulator-8].
 
 corpus_plane_kind_counts(Counts) :-
@@ -6294,6 +6294,7 @@ test(untyped_pair_still_prints_untyped) :-
 live_capture_type(int).
 live_capture_type(float).
 live_capture_type(text).
+live_capture_type(bool).
 
 test(capture_types_agree_across_doors) :-
     forall(live_capture_type(Type),
@@ -6307,12 +6308,19 @@ test(capture_types_agree_across_doors) :-
              ; throw(oracle_refuses_live_capture_type(Type, Thrown)) ) )).
 
 test(unknown_capture_type_is_refused_by_the_compiler,
-     [throws(unsupported_construct(json_capture_type_unknown(bool)))]) :-
-    json_capture_json_type(bool, _).
+     [throws(unsupported_construct(json_capture_type_unknown(date)))]) :-
+    json_capture_json_type(date, _).
 
 test(unknown_capture_type_is_refused_by_the_oracle,
-     [throws(json_capture_type_unknown(bool))]) :-
-    json_capture_type(bool, x).
+     [throws(json_capture_type_unknown(date))]) :-
+    json_capture_type(date, x).
+
+test(a_bool_capture_binds_both_literals_and_nothing_else) :-
+    json_capture_type(bool, bool_lit(true)),
+    json_capture_type(bool, bool_lit(false)),
+    \+ json_capture_type(bool, 1),
+    \+ json_capture_type(bool, true),
+    \+ json_capture_type(bool, none).
 
 % The oracle's arms, one value per json1 answer the emitted guard tests for.
 test(oracle_capture_types_match_their_json_type_answer) :-
