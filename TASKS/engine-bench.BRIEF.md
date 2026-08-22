@@ -56,3 +56,8 @@ Yours: `v6/sprefa-engine-rs/bench/**`, `v6/justfile` (append recipes only), `v6/
 No em dashes. Banned: provenance, substrate, load-bearing, regime, refusal, "ground truth"
 (say oracle). tracing only, no eprintln. Comment budget: constraints only. Failure ledger
 entry: "a door with no bench".
+
+## Reaching the coordinator
+`boop beep hail sprefa-coordinator --from <your-lane-name> --body "<one line>"` lands in the
+coordinator hook inbox at its next turn. Use it when blocked, when done (PR number + gate
+numbers), when this brief is wrong, or when you find a defect outside your ownership.
