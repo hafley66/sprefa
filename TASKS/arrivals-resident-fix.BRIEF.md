@@ -1,4 +1,4 @@
-# Brief: on feature/arrivals-and-ticks, a program routed to a continuing executor stays resident
+# Brief (v3): on feature/arrivals-and-ticks, a program routed to a continuing executor stays resident
 
 FIRST ACTIONS: `git fetch origin feature/arrivals-and-ticks && git reset --hard
 origin/feature/arrivals-and-ticks` (ce1130f53, the collapse, 26 commits, gated by the
@@ -14,6 +14,22 @@ Cause, read it: `src/run.rs:702 stays_resident(binds)` asks for a `bind watch`/`
 decl (`WATCH_EXECUTOR`, `INTERVAL_EXECUTOR`, `bind_rel`), and the collapse deleted `bind`.
 The re-spelled programs route `/soopy/watch` and `/clock/tick` rels to executors whose
 `cadence()` is `ExecutorCadence::Continuing` (`hosts.rs`, grep `Continuing`).
+
+## What the previous lane measured before its turn ended (its finding stands)
+`hosts.rs` on the branch has NO `ExecutorCadence` and NO executor behind `/clock/tick` or
+`/soopy/watch`: the collapse renamed the surface but the continuing executors were never
+built on this branch (they existed only in a salvage that was lost; `run.rs` from #407
+still drives `live_watch`/`live_interval` through `bind` plans). So the brief's "grep
+Continuing" line was wrong. Build them:
+- `src/executors/clock.rs` `ClockExecutor`: input `every: int`, output `bucket: int` =
+  `floor(epoch_secs / every)`; re-answers when the bucket turns over.
+- `src/executors/watch.rs` `SoopyWatchExecutor`: input `glob`, output `(path, digest)` via
+  `soopy::SourceTree::open(repo).watch(SourceQuery{Worktree, patterns})`, one
+  `soopy::SourceWatcher` per (root, glob) kept for the runtime's life; the watcher wakes,
+  `soopy::enumerate` answers.
+- `IHostExecutor` gains `fn cadence(&self) -> ExecutorCadence` with a default of `Once`;
+  the two above return `Continuing`. Register `/clock/tick` and `/soopy/watch` in
+  `LINKED_EXECUTORS`, `executor_for`, and `registry.pl arrival_executor/2`.
 
 ## Fix
 `stays_resident` and every `bind_rel(...)` reader in `run.rs` decide from the loaded
@@ -53,3 +69,9 @@ from the surface while the runtime still keyed on it".
 `boop beep hail sprefa-coordinator --from <your-lane-name> --body "<one line>"` lands in the
 coordinator hook inbox at its next turn. Use it when blocked, when done (PR number + gate
 numbers), when this brief is wrong, or when you find a defect outside your ownership.
+
+## Turn law (boop treats the end of your turn as your death)
+Never end your turn before the PR is posted and its gate numbers are in a `boop beep hail
+sprefa-coordinator` body. Waiting on a background job: poll it with an `until` loop inside
+one Bash call, never by ending the turn. A finding that changes scope: hail it in one line
+AND keep working on the parts it does not change.

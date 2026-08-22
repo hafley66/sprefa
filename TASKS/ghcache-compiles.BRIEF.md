@@ -1,6 +1,6 @@
-# Brief: ghcache.dl6 compiles, folds a simulated schedule, then runs live against the org
+# Brief (v2): ghcache.dl6 compiles, folds a simulated schedule, then runs live against the org
 
-Base sha: the spawner prints it. FIRST ACTIONS: `git merge --ff-only <sha>`; `bash
+Base sha: the spawner prints it. FIRST ACTIONS: `git fetch origin feature/ghcache-compiles && git reset --hard origin/feature/ghcache-compiles` (two commits of the previous lane: the aggregate fix and live_cadence), then `git merge origin/main`; `bash
 v6/tools/doctor-deps.sh` (DEPS OK). Never spawn subagents. Commit every green step. PR
 against `main`. `timeout` on every command; `export CARGO_BUILD_JOBS=3 RUST_TEST_THREADS=4`.
 
@@ -12,7 +12,8 @@ ruling `clock_path_check_pinned_off`), so `v6/dl/ghcache/ghcache.dl6` reaches lo
   is a stop (`lower.pl:4184`); fixed by a fresh variable plus `Var == literal,` after the
   goal (11 sites `RespStatus == 200`, `Lit`, `Period == 60`).
 - `edge_into_unkeyed_set(not_an_org/1)`: `lower.pl:4006`; fixed with `key(1)`.
-- NEXT: `aggregate_group_not_delta_local(rate_pool(_,_,_,count(_)))`. Find the throw site
+- DONE by the previous lane (commits on the branch): `aggregate_group_not_delta_local` and the literal interval reads (`live_cadence`). The previous lane reported "conformance 439 clean, dl6 built, live 2-bucket poll running" and then ended its turn, so nothing was pasted and `ghcache_call_log` in ~/.agent/dl6.db holds 0 rows. Redo the receipts.
+- NEXT if compile still stops: `aggregate_group_not_delta_local(rate_pool(_,_,_,count(_)))`. Find the throw site
   (`grep -rn aggregate_group_not_delta_local v6/prolog`), read what "delta local" means
   there, rewrite `rate_pool` so the aggregate groups on columns the delta carries, and
   keep going until `swipl -q -l v6/prolog/compile.pl -l v6/prolog/emit_rust.pl -g
@@ -58,3 +59,9 @@ Comment budget: constraints only. Failure ledger entry: "a lane that never ran i
 `boop beep hail sprefa-coordinator --from <your-lane-name> --body "<one line>"` lands in the
 coordinator hook inbox at its next turn. Use it when blocked, when done (PR number + gate
 numbers), when this brief is wrong, or when you find a defect outside your ownership.
+
+## Turn law (boop treats the end of your turn as your death)
+Never end your turn before the PR is posted and its gate numbers are in a `boop beep hail
+sprefa-coordinator` body. Waiting on a background job: poll it with an `until` loop inside
+one Bash call, never by ending the turn. A finding that changes scope: hail it in one line
+AND keep working on the parts it does not change.
