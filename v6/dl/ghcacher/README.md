@@ -8,16 +8,13 @@ executor; nothing here spawns `sh`.
 
 | file | what it is |
 |---|---|
-| `<golden>.dl6` | byte copy of `v6/tsv2/goldens/<golden>/0_*.dl6`, the spec |
-| `<golden>.schedule.json` | byte copy of that golden's `1_schedule.json` |
-| `<golden>.expected.tick.jsonl` | byte copy of `2_expected.tick.jsonl` |
-| `<golden>.expected.final.jsonl` | byte copy of `3_expected.final.jsonl` |
-| `<golden>.adapters.json` | which linked executor answers each host, live |
+| `<golden>.dl6` | the arrival-rel spec (was a byte copy of `v6/tsv2/goldens/<golden>/0_*.dl6`; the tsv2 door is paused and this copy has since diverged on purpose) |
+| `<golden>.schedule.json` | the scripted arrival batches the gate feeds it |
+| `<golden>.expected.tick.jsonl` | per-tick delta oracle |
+| `<golden>.expected.final.jsonl` | final-state oracle |
+| `<golden>.adapters.json` | live-executor override, only where one is still needed (executor binding is by rel name now, via registry.pl `arrival_executor/2`, so most goldens carry no file at all) |
 | `ghcacher_smoke.dl6` | the live smoke: one endpoint, two clock buckets |
 | `gate.sh` | the gate `just ghcacher-rust` runs |
-
-`gate.sh` diffs each `.dl6` against the tsv2 original, so a drifted copy is a
-failure rather than a silent pass.
 
 ## The two tick-log shapes
 
@@ -54,20 +51,29 @@ cost. Smoke: 0.37s, two requests, 5687 body bytes on the 200 and 0 on the 304.
 
 ## Executors
 
+Every host below is an arrival rel, `rel <name>(...) -> (...) key(...)`; the
+dotted name IS the executor lookup key (`registry.pl arrival_executor/2`,
+`hosts.rs executor_for`). No adapter row and no shell template is needed for
+any of these.
+
 | host | executor name | file | crate |
 |---|---|---|---|
-| `fetch`, `gh_rest_cond` | `http_fetch` | `executors/fetch.rs` | `ureq` |
-| `env_var` | `env` | `executors/env.rs` | std |
-| `repos`, `gh_repos` | `gh_repos` | `executors/repos.rs` | `ureq` |
-| `repo_checkout` | `soopy_checkout` | `executors/checkout.rs` | `soopy` |
-| `toml_json` | `toml_json` | `executors/toml.rs` | `basic-toml` |
+| `/http/fetch` | `http_fetch` | `executors/fetch.rs` | `ureq` |
+| `/env/var` | `env` | `executors/env.rs` | std |
+| `/gh/repos` | `gh_repos` | `executors/repos.rs` | `ureq` |
+| `/soopy/checkout` | `soopy_checkout` | `executors/checkout.rs` | `soopy` |
+| `/toml/json` | `toml_json` | `executors/toml.rs` | `basic-toml` |
 
-The gate itself is scripted, so it reads no adapter row; the sidecars are the
-live wiring, read through `DL_ADAPTERS_DIR`.
+The gate itself is scripted, so it reads no adapter row; `DL_ADAPTERS_DIR` only
+matters for the live smoke below, and even there it is a fallback, never
+consulted for a rostered dotted name.
 
-`ghcacher_config_golden.adapters.json` is EMPTY on purpose. That golden spells
-its path-existence probe as the `repos` host and its config read as `answer`
-(its own header explains the deviation), and neither question is what the live
-`gh_repos` executor answers. Live, those two hosts are a named stop until the
-program is respelled onto the registered `path_exists` / `read_org_config`
-names, which `compile/registry.pl:425-431` already carries.
+`ghcacher_config_golden` spells its path-existence probe as the `/gh/repos`
+host and its config read as `answer` (its own header explains the deviation).
+`/gh/repos` IS now a rostered, executor-linked name, but the LIVE `gh_repos`
+executor answers a different question (a real GitHub repos lookup) than this
+fixture's file-exists probe -- the mismatch is a naming collision, not a
+missing binding. `ghcacher_config_golden.adapters.json` stays empty because
+this golden never runs `--live-hosts`; `answer` has no linked executor at any
+name, and the program is not yet respelled onto `path_exists` /
+`read_org_config`, which `compile/registry.pl:472-477` also carries.

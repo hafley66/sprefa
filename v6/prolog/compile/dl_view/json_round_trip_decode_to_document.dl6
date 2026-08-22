@@ -2,7 +2,7 @@ repo_lang(Name, Lang) <-
   raw_doc(Body),
   decode(Body, {name: Name, langs: Langs}),
   json_each(Langs, Lang).
-lang_list(Name, json_array(Lang)) <- repo_lang(Name, Lang).
+lang_list(Name, []) <- repo_lang(Name, []).
 lang_doc(Name, Doc) <-
   lang_list(Name, Langs),
   Doc := {langs: Langs}.

@@ -18,6 +18,7 @@
 :- module(host_expand,
           [ prepare_program/5,
             compile_host_decl/2,
+            compile_host_decl/3,
             host_plan_contract/2,
             compile_query/2,
             query_decl/3,
@@ -31,7 +32,7 @@
 :- use_module(library(pairs)).
 :- use_module('0_body_walk', [body_conjunction_goals/3]).
 :- use_module('compile/registry',
-              [ bind_definition/2,
+              [ arrival_roles/3,
                 host_input_roles/3
               ]).
 :- use_module('0_cst_query', [ serialize_ts_query/2 ]).
@@ -40,27 +41,23 @@
 :- op(1150, xfx, <+).
 :- op(700, xfx, :=).
 
-prepare_program(Input, prog(Decls, Rules), HostPlans, BindPlans, QueryPlans) :-
+prepare_program(Input, prog(Decls, Rules), HostPlans, [], QueryPlans) :-
     program_parts(Input, RawDecls, RawRules, Queries),
     maplist(normalize_rule, RawRules, NormalizedRules),
     findall(HostPlan,
             ( member(Decl, RawDecls),
               Decl = sh_decl(_, _, _, _),
-              compile_host_decl(Decl, HostPlan)
+              compile_host_decl(Decl, RawDecls, HostPlan)
             ),
             HostPlans),
     no_duplicate_host_names(HostPlans),
-    findall(bind_plan(Name, Columns),
-            ( member(bind_decl(Name, Columns), RawDecls),
-              validate_bind_decl(Name, Columns, NormalizedRules)
-            ),
-            BindPlans),
+    no_host_rel_name_collisions(HostPlans, RawDecls),
+    no_host_rule_heads(HostPlans, NormalizedRules),
     maplist(compile_query, Queries, QueryPlans),
     expand_probe_rules(NormalizedRules, HostPlans, RawDecls,
                        ExpandedRules, GeneratedDecls),
     unprobed_host_decls(HostPlans, GeneratedDecls, UnprobedDecls),
-    bind_column_decls(BindPlans, BindColumnDecls),
-    append([RawDecls, Queries, GeneratedDecls, UnprobedDecls, BindColumnDecls],
+    append([RawDecls, Queries, GeneratedDecls, UnprobedDecls],
            Decls0),
     dedupe_terms(Decls0, Decls),
     append(ExpandedRules, [], Rules).
@@ -141,6 +138,28 @@ no_duplicate_host_names(HostPlans) :-
     ; true
     ).
 
+% One name is one declaration: a same-named ordinary rel used to be created,
+% writable, and never read, because the body atom rewrote to probe/4.
+no_host_rel_name_collisions(HostPlans, RawDecls) :-
+    ( member(host_plan(Name, _, _, _, _, _, _), HostPlans),
+      member(col_type(Name/_, _, _), RawDecls)
+    -> throw(host_and_rel_share_name(Name))
+    ; true
+    ).
+
+% An arrival rel with a rule head is two sources writing one rel; today the
+% arrow would be silently ignored (compile.pl subtracts DerivedRefs), so stop.
+no_host_rule_heads(HostPlans, Rules) :-
+    ( member(host_plan(Name, _, _, _, _, _, _), HostPlans),
+      member(Rule, Rules),
+      rule_head_name(Rule, Name)
+    -> throw(host_and_rule_head(Name))
+    ; true
+    ).
+
+rule_head_name((Head <- _), Name) :- functor(Head, Name, _).
+rule_head_name((Head <+ _), Name) :- functor(Head, Name, _).
+
 normalize_rule(Raw, Rule) :-
     normalize_rule_shape(Raw, Shaped),
     compile_value_terms(Shaped, Rule).
@@ -180,8 +199,14 @@ body_from_list([Only], Only) :- !.
 body_from_list([First | Rest], (First, Body)) :-
     body_from_list(Rest, Body).
 
+compile_host_decl(Decl, HostPlan) :-
+    compile_host_decl(Decl, [], HostPlan).
+
+% Context is the raw decl list: an arrival_identity/2 riding beside the
+% sh_decl (the surface key(P..)) wins over the registry's contract rows.
 compile_host_decl(
     sh_decl(Name, Inputs, Outputs, template(Template)),
+    Context,
     host_plan(Name, Inputs, Outputs, template(Template),
               demand_ref(DemandRef), response_ref(ResponseRef),
               input_roles(Roles))) :-
@@ -194,11 +219,14 @@ compile_host_decl(
     disjoint_columns(InputNames, OutputNames),
     no_reserved_columns(Name, input, InputNames),
     no_reserved_columns(Name, output, OutputNames),
-    host_input_roles(Name, Inputs, Roles),
+    ( memberchk(arrival_identity(Name, Positions), Context)
+    -> arrival_roles(Inputs, Positions, Roles)
+    ;  host_input_roles(Name, Inputs, Roles)
+    ),
     validate_template(Template, InputNames, OutputNames, Roles),
     host_relation_refs(Name, DemandRef, ResponseRef),
     !.
-compile_host_decl(Decl, _) :-
+compile_host_decl(Decl, _, _) :-
     throw(refused_host_decl(Decl)).
 
 % The legacy host_plan/7 term remains the shared lowering shape used by the
@@ -307,6 +335,8 @@ no_reserved_columns(Host, Role, Names) :-
     ;   true
     ).
 
+% An arrival rel carries no command line; only a term-door template is checked.
+validate_template("", _, _, _) :- !.
 validate_template(Template, Inputs, Outputs, Roles) :-
     role_names(identity, Inputs, Roles, IdentityInputs),
     ( member(Name, IdentityInputs), \+ template_mentions(Template, Name)
@@ -373,55 +403,6 @@ host_relation_refs(Name, DemandRef, ResponseRef) :-
     atom_concat('__host_response_', Name, ResponseName),
     DemandRef = DemandName,
     ResponseRef = ResponseName.
-
-% A BIND IS NOT WHERE `repo` GOES, and the unsupported construct is named rather than left to
-% the generic bind_mismatch below, because `bind watch(repo, glob, path,
-% digest)` is the obvious next thought once repo_files/repo_files_at exist and
-% the generic message ("these are not watch's columns") answers the wrong
-% question. Four reasons, and the first is the one that decides it:
-%
-%   1  A CRAWL ENUMERATES, IT DOES NOT REACT. The repo set is DATA -- rows the
-%      `repos` host answers on a clock -- and a bind's configuration column is
-%      read from the program's own LITERALS (registry.pl bind_definition header,
-%      emit_ts.pl bind_read_literals/4). A watcher per repository row would need
-%      the seam to spawn and retire OS resources from row deltas, which no bind
-%      does and which nothing in the alpha asks for.
-%   2  The handle budget is per working tree. `bind watch` is one recursive
-%      watcher over one root, and every flatness receipt in the phase-2 exit
-%      (v6/tsv2/scripts/extraction-live.sh) is measured at that scope. N repos
-%      is N watchers with no measurement behind it.
-%   3  (glob, path, digest) stops being a key. Two repositories routinely hold
-%      the same path, so the repo column would have to join every downstream
-%      rule -- the same reason repo_file/3 is its own rel and not more clauses
-%      of file/2.
-%   4  Freshness is already spelled for the crawl, twice: repo_files_at pins a
-%      rev and caches forever, and repo_files re-asked on an interval bucket is
-%      a fresh witness. A live seam with no consumer is a widened seam with no
-%      receipt.
-%
-% This is a REFUSAL, not a ruling against the shape forever: it is decidable at
-% load, so the day a program proves the gap the unsupported construct is where the argument
-% gets reopened.
-validate_bind_decl(Name, Columns, Rules) :-
-    ( memberchk(col(repo, _), Columns)
-    -> throw(bind_repo_column(Name))
-    ; true
-    ),
-    ( bind_definition(Name, Columns)
-    -> true
-    ; throw(bind_mismatch(Name, Columns))
-    ),
-    length(Columns, Arity),
-    Ref = Name/Arity,
-    ( member(Rule, Rules), rule_head_ref(Rule, Ref)
-    -> throw(bind_and_rule_head(Name))
-    ; true
-    ).
-
-rule_head_ref((Head <- _), Name/Arity) :-
-    functor(Head, Name, Arity).
-rule_head_ref((Head <+ _), Name/Arity) :-
-    functor(Head, Name, Arity).
 
 % The ONE reader of both `?` decl shapes; order rides the final cursor alone,
 % so a query plan is the same term with or without a tail.
@@ -599,23 +580,11 @@ declared_column_type(Decls, Name, Type) :-
     member(col_type(_, Name, Type), Decls),
     !.
 declared_column_type(Decls, Name, Type) :-
-    member(bind_decl(_, Columns), Decls),
-    memberchk(col(Name, Type), Columns),
-    !.
-declared_column_type(Decls, Name, Type) :-
     member(sh_decl(_, Inputs, Outputs, _), Decls),
     ( memberchk(col(Name, Type), Inputs)
     ; memberchk(col(Name, Type), Outputs)
     ),
     !.
-
-bind_column_decls([], []).
-bind_column_decls([bind_plan(Name, Columns) | Rest], Decls) :-
-    length(Columns, Arity),
-    Ref = Name/Arity,
-    column_type_decls(Ref, Columns, Here),
-    bind_column_decls(Rest, More),
-    append(Here, More, Decls).
 
 % First occurrence wins and the surviving order is the input order. The scan
 % form below is quadratic in the declaration count and measured 15.1 ms on

@@ -801,9 +801,6 @@ declared_column_type_use(Decls, Name) :-
 declared_column_type_use(Decls, Name) :-
     member(sh_decl(_, Inputs, Outputs, _), Decls),
     ( member(col(_, Name), Inputs) ; member(col(_, Name), Outputs) ).
-declared_column_type_use(Decls, Name) :-
-    member(bind_decl(_, Columns), Decls),
-    member(col(_, Name), Columns).
 
 % ── helpers for the relation-pattern class ───────────────────────────────────
 

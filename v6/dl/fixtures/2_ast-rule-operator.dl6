@@ -2,12 +2,11 @@
 # schema owned by sprefa-extract: id, rule, optional utils, optional fix.
 # The host plan carries `execution: "ast_rule"`; Rust dispatches it in-process.
 
-bind watch(glob: text, path: text, digest: text).
+rel watch(glob: text, path: text, digest: text).
 
-sh ast_rule(path: text, digest: text, request: text) ->
+rel /extract/ast_rule(path: text, digest: text, request: text) ->
   (record: text, query: text, source_path: text, content: json, span: json,
-   captures: json, proposal: json) =
-  `"$SPREFA_AST_RULE_HOST" "{path}" "{request}" # {digest}`.
+   captures: json, proposal: json) key(1, 3).
 
 rel file(path: text, digest: text).
 file(Path, Digest) <- watch('**/*.rs', Path, Digest).
@@ -24,5 +23,5 @@ rel ast_rule_match(path: text, query: text, content: json, span: json,
 ast_rule_match(Path, Query, Content, Span, Captures, Proposal) <-
   file(Path, Digest),
   rule_request(_, Request),
-  ast_rule(Path, Digest, Request, 'ast_rule', Query, _, Content, Span,
+  /extract/ast_rule(Path, Digest, Request, 'ast_rule', Query, _, Content, Span,
            Captures, Proposal).

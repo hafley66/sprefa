@@ -70,7 +70,7 @@ One file plus a mask to a family output, then the JSONL wire.
 
 ```mermaid
 flowchart LR
-  n1["types  in40/out10"]
+  n1["types  in30/out10"]
   n2["cfg  in28/out21"]
   n3["trace  in25/out17"]
   n4["cache  in25/out14"]
@@ -116,7 +116,7 @@ flowchart LR
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
-| `v6/sprefa-extract/src/types.rs` | 40 | 50 | 40 | 10 |
+| `v6/sprefa-extract/src/types.rs` | 40 | 50 | 30 | 10 |
 | `v6/sprefa-extract/src/cfg.rs` | 19 | 58 | 28 | 21 |
 | `v6/sprefa-extract/src/trace.rs` | 18 | 43 | 25 | 17 |
 | `v6/sprefa-extract/src/cache.rs` | 7 | 28 | 25 | 14 |
@@ -140,133 +140,133 @@ One module per language front-end. Each projects a tree-sitter parse into the sh
 
 ```mermaid
 flowchart LR
-  n1["rust  in35/out23"]
-  n2["ts  in30/out22"]
-  n3["_0_source  in30/out18"]
-  n4["_0_source  in30/out18"]
-  n5["_0_source  in29/out15"]
-  n6["_0_source  in28/out19"]
-  n7["astgrep  in28/out18"]
-  n8["go  in25/out24"]
-  n9["kotlin  in25/out22"]
-  n10["_0_source  in22/out19"]
+  n1["_0_source  in30/out18"]
+  n2["_0_source  in30/out18"]
+  n3["rust  in27/out22"]
+  n4["ts  in22/out22"]
+  n5["_0_source  in22/out15"]
+  n6["_0_source  in20/out19"]
+  n7["astgrep  in20/out18"]
+  n8["go  in17/out23"]
+  n9["kotlin  in17/out21"]
+  n10["_0_source  in15/out19"]
   n11["mod  in4/out11"]
   n12["1_ast_rule  in0/out12"]
-  n1 -->|16| n2
-  n8 -->|15| n1
+  n3 -->|16| n4
+  n8 -->|15| n3
   n8 -->|14| n9
-  n8 -->|14| n2
+  n8 -->|14| n4
   n9 -->|14| n8
-  n1 -->|14| n8
-  n2 -->|14| n1
-  n9 -->|13| n1
-  n9 -->|13| n2
-  n1 -->|12| n9
-  n2 -->|11| n8
-  n2 -->|10| n9
-  n4 -->|9| n3
-  n3 -->|9| n4
+  n3 -->|14| n8
+  n4 -->|14| n3
+  n9 -->|13| n3
+  n9 -->|13| n4
+  n3 -->|12| n9
+  n4 -->|11| n8
+  n4 -->|10| n9
+  n2 -->|9| n1
+  n1 -->|9| n2
   n8 -->|7| n10
   n9 -->|7| n10
   n10 -->|7| n8
   n10 -->|7| n9
-  n10 -->|7| n1
-  n10 -->|6| n2
-  n1 -->|6| n10
-  n8 -->|5| n4
-  n8 -->|5| n3
-  n9 -->|5| n4
-  n9 -->|5| n3
-  n1 -->|5| n4
-  n1 -->|5| n3
-  n7 -->|4| n2
-  n4 -->|4| n1
-  n3 -->|4| n1
-  n2 -->|4| n4
-  n7 -->|3| n4
-  n7 -->|3| n3
-  n6 -->|3| n4
-  n6 -->|3| n3
-  n4 -->|3| n8
-  n4 -->|3| n9
-  n4 -->|3| n2
+  n10 -->|7| n3
+  n10 -->|6| n4
+  n3 -->|6| n10
+  n8 -->|5| n2
+  n8 -->|5| n1
+  n9 -->|5| n2
+  n9 -->|5| n1
+  n3 -->|5| n2
+  n3 -->|5| n1
+  n7 -->|4| n4
+  n2 -->|4| n3
+  n1 -->|4| n3
+  n4 -->|4| n2
+  n7 -->|3| n2
+  n7 -->|3| n1
+  n6 -->|3| n2
+  n6 -->|3| n1
+  n2 -->|3| n8
+  n2 -->|3| n9
+  n2 -->|3| n4
   n8 -->|3| n7
   n9 -->|3| n7
-  n3 -->|3| n8
-  n3 -->|3| n9
+  n1 -->|3| n8
+  n1 -->|3| n9
   n10 -->|3| n7
-  n10 -->|3| n4
-  n10 -->|3| n3
-  n1 -->|3| n7
-  n2 -->|3| n7
-  n2 -->|3| n3
-  n2 -->|3| n10
+  n10 -->|3| n2
+  n10 -->|3| n1
+  n3 -->|3| n7
+  n4 -->|3| n7
+  n4 -->|3| n1
+  n4 -->|3| n10
   n7 -->|2| n6
   n7 -->|2| n5
-  n7 -->|2| n1
+  n7 -->|2| n3
   n6 -->|2| n7
   n6 -->|2| n5
-  n6 -->|2| n1
-  n6 -->|2| n2
-  n4 -->|2| n6
-  n4 -->|2| n5
+  n6 -->|2| n3
+  n6 -->|2| n4
+  n2 -->|2| n6
+  n2 -->|2| n5
   n8 -->|2| n6
   n9 -->|2| n6
   n5 -->|2| n6
-  n5 -->|2| n4
-  n5 -->|2| n3
-  n3 -->|2| n6
-  n3 -->|2| n5
-  n3 -->|2| n2
-  n10 -->|2| n6
+  n5 -->|2| n2
+  n5 -->|2| n1
+  n1 -->|2| n6
   n1 -->|2| n5
-  n2 -->|2| n5
-  n12 -->|1| n4
-  n12 -->|1| n3
+  n1 -->|2| n4
+  n10 -->|2| n6
+  n3 -->|2| n5
+  n4 -->|2| n5
+  n12 -->|1| n2
+  n12 -->|1| n1
   n7 -->|1| n8
   n7 -->|1| n9
   n7 -->|1| n10
   n6 -->|1| n8
   n6 -->|1| n9
   n6 -->|1| n10
-  n4 -->|1| n7
-  n4 -->|1| n10
+  n2 -->|1| n7
+  n2 -->|1| n10
   n8 -->|1| n5
   n9 -->|1| n5
   n5 -->|1| n7
-  n5 -->|1| n1
-  n5 -->|1| n2
+  n5 -->|1| n3
+  n5 -->|1| n4
   n11 -->|1| n7
   n11 -->|1| n6
-  n11 -->|1| n4
+  n11 -->|1| n2
   n11 -->|1| n8
   n11 -->|1| n9
   n11 -->|1| n5
-  n11 -->|1| n3
-  n11 -->|1| n10
   n11 -->|1| n1
-  n11 -->|1| n2
-  n3 -->|1| n7
-  n3 -->|1| n10
+  n11 -->|1| n10
+  n11 -->|1| n3
+  n11 -->|1| n4
+  n1 -->|1| n7
+  n1 -->|1| n10
   n10 -->|1| n5
-  n1 -->|1| n6
-  n2 -->|1| n6
+  n3 -->|1| n6
+  n4 -->|1| n6
 ```
 
 12 of 17 modules are drawn, ranked by fan-in; every one is in the table.
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
-| `v6/sprefa-extract/src/lang/rust.rs` | 70 | 192 | 35 | 23 |
-| `v6/sprefa-extract/src/lang/ts.rs` | 92 | 207 | 30 | 22 |
 | `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | 37 | 98 | 30 | 18 |
 | `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | 22 | 76 | 30 | 18 |
-| `v6/sprefa-extract/src/lang/markdown/_0_source.rs` | 12 | 54 | 29 | 15 |
-| `v6/sprefa-extract/src/lang/data/_0_source.rs` | 28 | 102 | 28 | 19 |
-| `v6/sprefa-extract/src/lang/astgrep.rs` | 7 | 52 | 28 | 18 |
-| `v6/sprefa-extract/src/lang/go.rs` | 47 | 150 | 25 | 24 |
-| `v6/sprefa-extract/src/lang/kotlin.rs` | 43 | 141 | 25 | 22 |
-| `v6/sprefa-extract/src/lang/python/_0_source.rs` | 23 | 65 | 22 | 19 |
+| `v6/sprefa-extract/src/lang/rust.rs` | 70 | 192 | 27 | 22 |
+| `v6/sprefa-extract/src/lang/ts.rs` | 92 | 207 | 22 | 22 |
+| `v6/sprefa-extract/src/lang/markdown/_0_source.rs` | 12 | 54 | 22 | 15 |
+| `v6/sprefa-extract/src/lang/data/_0_source.rs` | 28 | 102 | 20 | 19 |
+| `v6/sprefa-extract/src/lang/astgrep.rs` | 7 | 52 | 20 | 18 |
+| `v6/sprefa-extract/src/lang/go.rs` | 47 | 150 | 17 | 23 |
+| `v6/sprefa-extract/src/lang/kotlin.rs` | 43 | 141 | 17 | 21 |
+| `v6/sprefa-extract/src/lang/python/_0_source.rs` | 23 | 65 | 15 | 19 |
 | `v6/sprefa-extract/src/lang/mod.rs` | 2 | 5 | 4 | 11 |
 | `v6/sprefa-extract/src/lang/1_ast_rule.rs` | 18 | 91 | 0 | 12 |
 | `v6/sprefa-extract/src/lang/data/mod.rs` | 0 | 0 | 0 | 0 |
@@ -302,7 +302,7 @@ A SCIP index in, raw rows out. The one plane a compiler resolved.
 
 ```mermaid
 flowchart LR
-  n1["scip_ensure  in27/out18"]
+  n1["scip_ensure  in27/out19"]
   n2["scip_v5_rels  in25/out8"]
   n3["scip_rows  in21/out11"]
   n4["scip  in6/out11"]
@@ -324,7 +324,7 @@ flowchart LR
 
 | module | defs | sites | fan-in | fan-out |
 |---|---:|---:|---:|---:|
-| `v6/sprefa-extract/src/scip_ensure.rs` | 32 | 123 | 27 | 18 |
+| `v6/sprefa-extract/src/scip_ensure.rs` | 32 | 123 | 27 | 19 |
 | `v6/sprefa-extract/src/scip_v5_rels.rs` | 12 | 68 | 25 | 8 |
 | `v6/sprefa-extract/src/scip_rows.rs` | 10 | 56 | 21 | 11 |
 | `v6/sprefa-extract/src/scip.rs` | 16 | 91 | 6 | 11 |

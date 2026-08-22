@@ -69,7 +69,7 @@
 # `git ls-files -- <glob>`; the digest is then read from the WORKING TREE, so
 # an unstaged edit re-fires and an untracked file is invisible. Both halves are
 # the files ruling applied to the watcher, not a new policy.
-bind watch(glob: text, path: text, digest: text).
+rel watch(glob: text, path: text, digest: text).
 
 rel source(path: text, digest: text).
 source(path, digest) <- watch('v6/prolog/compile/registry.pl', path, digest).
@@ -91,32 +91,25 @@ source(path, digest) <- watch('v6/dl/fixtures/self-map.dl6', path, digest).
 # the command line itself change when the file does, which is what keeps a
 # stale shell-level cache (if one is ever introduced below the host) honest.
 
-sh sm_surface(path: text, digest: text)
-  -> (record: text, functor: text, arity: text, axis: text, status: text) =
-  `: {digest}; swipl -q -l "$SELF_MAP_FACTS" -g main -t halt -- {path}`.
+rel sm_surface(path: text, digest: text)
+  -> (record: text, functor: text, arity: text, axis: text, status: text) key(1).
 
-sh sm_phase(path: text, digest: text)
-  -> (record: text, phase_order: int, phase_name: text, expander: text) =
-  `: {digest}; swipl -q -l "$SELF_MAP_FACTS" -g main -t halt -- {path}`.
+rel sm_phase(path: text, digest: text)
+  -> (record: text, phase_order: int, phase_name: text, expander: text) key(1).
 
-sh sm_task(path: text, digest: text)
-  -> (record: text, task_name: text, state: text) =
-  `: {digest}; swipl -q -l "$SELF_MAP_FACTS" -g main -t halt -- {path}`.
+rel sm_task(path: text, digest: text)
+  -> (record: text, task_name: text, state: text) key(1).
 
-sh sm_task_dep(path: text, digest: text)
-  -> (record: text, task_name: text, dep_name: text) =
-  `: {digest}; swipl -q -l "$SELF_MAP_FACTS" -g main -t halt -- {path}`.
+rel sm_task_dep(path: text, digest: text)
+  -> (record: text, task_name: text, dep_name: text) key(1).
 
-sh sm_rel(path: text, digest: text)
-  -> (record: text, program: text, rel_name: text, rel_kind: text, origin: text) =
-  `: {digest}; swipl -q -l "$SELF_MAP_FACTS" -g main -t halt -- {path}`.
+rel sm_rel(path: text, digest: text)
+  -> (record: text, program: text, rel_name: text, rel_kind: text, origin: text) key(1).
 
-sh sm_rel_edge(path: text, digest: text)
-  -> (record: text, program: text, from_rel: text, to_rel: text, sign: text, arrow: text) =
-  `: {digest}; swipl -q -l "$SELF_MAP_FACTS" -g main -t halt -- {path}`.
+rel sm_rel_edge(path: text, digest: text)
+  -> (record: text, program: text, from_rel: text, to_rel: text, sign: text, arrow: text) key(1).
 
-sh write_arch_map(path: text, document: text) -> (status: text) =
-  `printf '%s' "$document" > "$path"; printf '%s' written`.
+rel write_arch_map(path: text, document: text) -> (status: text).
 
 # ═════════════════════════════════════════════════════════════════════════════
 # DIAGRAM 1 -- the expansion phase order (1_expansion.pl:expansion_phase/3)

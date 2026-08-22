@@ -229,7 +229,6 @@ decl_order_item(Decl, Decl) :- Decl = interface_decl(_, _).
 decl_order_item(Decl, Decl) :- Decl = rel_template(_, _, _).
 decl_order_item(Decl, Decl) :- Decl = type_decl(_, _).
 decl_order_item(Decl, Decl) :- Decl = sh_decl(_, _, _, _).
-decl_order_item(Decl, Decl) :- Decl = bind_decl(_, _).
 decl_order_item(kind(Ref, log), Ref).
 % Arity 0 only: a column-bearing rel prints from its col_type entries, and a
 % kind(Ref, set) line there would double the decl.
@@ -304,20 +303,21 @@ decl_line(Decls, _, _, type_decl(Name, Specs), Line) :-
     is_clause_text(Decls, Name/Arity, ConformanceText),
     format(atom(Line), "rel ~w(~w)~w~w~w.~n",
            [Name, ColumnsText, Sep, ModifiersText, ConformanceText]).
-decl_line(_, _, _, sh_decl(Name, Inputs, Outputs, template(Template)), Line) :-
+% Arrival rel spelling (ruling arrival_arrow_spelling); the template is not
+% printed, so a non-empty term-door template deliberately does not round-trip.
+decl_line(Decls, _, _, sh_decl(Name, Inputs, Outputs, template(_)), Line) :-
     !,
     maplist(print_host_column, Inputs, InputTexts),
     maplist(print_host_column, Outputs, OutputTexts),
     atomic_list_concat(InputTexts, ', ', InputsText),
     atomic_list_concat(OutputTexts, ', ', OutputsText),
-    quote_template(Template, TemplateText),
-    format(atom(Line), "sh ~w(~w) -> (~w) = `~w`.~n",
-           [Name, InputsText, OutputsText, TemplateText]).
-decl_line(_, _, _, bind_decl(Name, Columns), Line) :-
-    !,
-    maplist(print_host_column, Columns, ColumnTexts),
-    atomic_list_concat(ColumnTexts, ', ', ColumnsText),
-    format(atom(Line), "bind ~w(~w).~n", [Name, ColumnsText]).
+    ( memberchk(arrival_identity(Name, Positions), Decls)
+    -> atomic_list_concat(Positions, ', ', PositionsText),
+       format(atom(KeyText), " key(~w)", [PositionsText])
+    ;  KeyText = ''
+    ),
+    format(atom(Line), "rel ~w(~w) -> (~w)~w.~n",
+           [Name, InputsText, OutputsText, KeyText]).
 % rel_columns/5 runs numlist(1, Arity, _), which fails outright at arity 0.
 decl_line(Decls, _Rules, _Bindings, Name/0, Line) :-
     !,
@@ -485,21 +485,6 @@ print_annotation_argument(named(Name, Value), Text) :-
     format(atom(Text), "~w: ~w", [Name, ValueText]).
 print_annotation_argument(pos(Value), Text) :-
     print_term(Value, [], 0, top, Text).
-
-quote_template(Template, Text) :-
-    string_codes(Template, Codes),
-    escape_template_codes(Codes, Escaped),
-    atom_codes(Text, Escaped).
-
-escape_template_codes([], []).
-escape_template_codes([0'` | Rest], [0'\\, 0'` | More]) :-
-    !,
-    escape_template_codes(Rest, More).
-escape_template_codes([0'\\ | Rest], [0'\\, 0'\\ | More]) :-
-    !,
-    escape_template_codes(Rest, More).
-escape_template_codes([Code | Rest], [Code | More]) :-
-    escape_template_codes(Rest, More).
 
 decl_is_modifier(kind(Ref, log), Ref).
 decl_is_modifier(keep(Ref, _), Ref).

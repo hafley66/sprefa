@@ -5,8 +5,8 @@
 #   feature        a free fn a `fn main` body names directly and some file defines
 #   feature_reach  the matrix cell: reachable, min hops, and WHICH plane proved it
 #
-# TWO PLANES, ONE GRAPH. `scip.diet.call` resolves a call by name match over the
-# supplied file set; `scip.call` resolves it through a real SCIP index. Both
+# TWO PLANES, ONE GRAPH. `/scip/diet/call` resolves a call by name match over the
+# supplied file set; `/scip/call` resolves it through a real SCIP index. Both
 # answer (caller_path, callee_path, callee) and NEITHER answers a caller name,
 # so function granularity on the caller side comes from the call family's own
 # site spans: the innermost named def containing a site IS the caller.
@@ -27,41 +27,32 @@
 
 rel span(start: int, end: int).
 
-# One `git hash-object` for the whole set, routed to the linked `soopy_files`
-# adapter by the sidecar; the template is the readable spelling of that work.
-sh files(glob: text) -> (path: text, digest: text) =
-  `git ls-files -- '{glob}' | git hash-object --stdin-paths`.
+# One `git hash-object` for the whole set; the rel name is the executor
+# binding (registry.pl arrival_executor/2).
+rel /soopy/files(glob: text) -> (path: text, digest: text).
 
 # Hand-typing one crate's main.rs makes every other crate's entry read as absent.
-sh cargo_targets(manifest_dir: text) -> (workspace_root: text, packages: json) =
-  `cd {manifest_dir} && cargo metadata --format-version 1 --no-deps`.
+rel /cargo/targets(manifest_dir: text) -> (workspace_root: text, packages: json).
 
-# Four projections of ONE `--family call` run: the applicative fold collapses
-# demands sharing one command over one file into a single extraction.
-sh call_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text, name: text) =
-  `"$DL_EXTRACT_BIN" --family call {path}`.
-sh cfg_at(path: text, digest: text) -> (record: text, family: text, span: span, cfg: text) =
-  `"$DL_EXTRACT_BIN" --family call {path}`.
-sh extract(path: text, digest: text) -> (record: text, family: text, span: span, callee: text) =
-  `"$DL_EXTRACT_BIN" --family call {path}`.
-sh call_ref(path: text, digest: text) -> (record: text, family: text, callee: text, cfg: text) =
-  `"$DL_EXTRACT_BIN" --family call {path}`.
+# Four projections of ONE families="call" run: the applicative fold collapses
+# demands sharing one (path, digest, families) into a single extraction.
+rel /extract/call_node_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, kind: text, name: text) key(1, 3).
+rel /extract/cfg_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, cfg: text) key(1, 3).
+rel /extract/records(path: text, digest: text, families: text) -> (record: text, family: text, span: span, callee: text) key(1, 3).
+rel /extract/call_ref(path: text, digest: text, families: text) -> (record: text, family: text, callee: text, cfg: text) key(1, 3).
 
 # The `arg` record's `call` span is the WHOLE call expression for a free fn and
 # the method IDENT for a method (rust.rs:1979 against rust.rs:2028).
-sh df_arg_at(path: text, digest: text) -> (record: text, family: text, call: span, pos: int, arg: span) =
-  `"$DL_EXTRACT_BIN" --family df {path}`.
+rel /extract/df_arg_at(path: text, digest: text, families: text) -> (record: text, family: text, call: span, pos: int, arg: span) key(1, 3).
 
 # THE INTERFACING TYPE: registry.pl scip_interface_columns/2 is the one list
 # both namespaces are checked against. Same columns, one host name apart.
-sh scip.diet.call(repo: text, path: text, digest: text)
+rel /scip/diet/call(repo: text, path: text, digest: text)
   -> (record: text, family: text, caller_path: text, callee_path: text,
-      callee: text, kind: text) =
-  `cd {repo} && "$DL_EXTRACT_BIN" --family diet_scip {path}`.
-sh scip.call(repo: text, path: text, digest: text)
+      callee: text, kind: text) key(1, 2).
+rel /scip/call(repo: text, path: text, digest: text)
   -> (record: text, family: text, caller_path: text, callee_path: text,
-      callee: text, kind: text) =
-  `cd {repo} && "$DL_EXTRACT_BIN" --resolve --project-root . --scip-build {path}`.
+      callee: text, kind: text) key(1, 2).
 
 rel want(glob: text).
 rel root_file(path: text).
@@ -73,13 +64,13 @@ rel repo_root(dir: text).
 rel want_scip(enabled: int).
 
 rel source_file(path: text, digest: text).
-source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
+source_file(Path, Digest) <- want(Glob), /soopy/files(Glob, Path, Digest).
 
 # ── the entry plane ─────────────────────────────────────────────────────────
 
 rel cargo_metadata_doc(workspace_root: text, packages: json).
 cargo_metadata_doc(WorkspaceRoot, Packages) <-
-  cargo_manifest(Dir), cargo_targets(Dir, WorkspaceRoot, Packages).
+  cargo_manifest(Dir), /cargo/targets(Dir, WorkspaceRoot, Packages).
 
 # `kind` is a json ARRAY per target, so the spread over it IS the membership test.
 rel cargo_target_source(workspace_root: text, kind: text, src_path: text).
@@ -120,12 +111,12 @@ cargo_root_count(count(Path)) <- derived_root(_Kind, Path).
 rel cfg_def(path: text, at: span).
 cfg_def(Path, At) <-
   source_file(Path, Digest),
-  cfg_at(Path, Digest, 'cfg_scope', 'call', At, _Predicate).
+  /extract/cfg_at(Path, Digest, "call", 'cfg_scope', 'call', At, _Predicate).
 
 rel def_at(path: text, def_start: int, def_end: int, kind: text, name: text).
 def_at(Path, DefStart, DefEnd, Kind, Name) <-
   source_file(Path, Digest),
-  call_node_at(Path, Digest, 'node', 'call', At, Kind, Name),
+  /extract/call_node_at(Path, Digest, "call", 'node', 'call', At, Kind, Name),
   not(cfg_def(Path, At)),
   decode(At, {start: DefStart, end: DefEnd}).
 
@@ -161,14 +152,14 @@ reach_root_not_a_source(Path) <- lib_root(Path), not(source_file(Path, _Digest))
 rel test_only_call(path: text, callee: text).
 test_only_call(Path, Callee) <-
   source_file(Path, Digest),
-  call_ref(Path, Digest, 'test_only_call', 'call', Callee, _Predicate).
+  /extract/call_ref(Path, Digest, "call", 'test_only_call', 'call', Callee, _Predicate).
 
 # The test-only cut sits on the two SMALL consumers below and not here: a
 # negation on the 18077-row site plane recounts it on every tick.
 rel call_site(path: text, site_start: int, callee: text).
 call_site(Path, SiteStart, Callee) <-
   source_file(Path, Digest),
-  extract(Path, Digest, 'site', 'call', At, Callee),
+  /extract/records(Path, Digest, "call", 'site', 'call', At, Callee),
   decode(At, {start: SiteStart, end: _SiteEnd}).
 
 # ── the resolved plane ──────────────────────────────────────────────────────
@@ -182,11 +173,11 @@ scip_source_file(Path, Digest) <- source_file(Path, Digest), want_scip(1).
 rel resolved_edge(source: text, caller_path: text, callee_path: text, callee: text).
 resolved_edge('diet', CallerPath, CalleePath, Callee) <-
   source_file(Path, Digest),
-  scip.diet.call('.', Path, Digest, 'resolved_edge', 'call',
+  /scip/diet/call('.', Path, Digest, 'resolved_edge', 'call',
                  CallerPath, CalleePath, Callee, _Kind).
 resolved_edge('scip', CallerPath, CalleePath, Callee) <-
   scip_source_file(Path, Digest),
-  scip.call('.', Path, Digest, 'resolved_edge', 'call',
+  /scip/call('.', Path, Digest, 'resolved_edge', 'call',
             CallerPath, CalleePath, Callee, _Kind).
 
 # The owner join is quadratic in (sites x defs) per file, so the site side is cut
@@ -370,7 +361,7 @@ entry_reach_summary(Entry, Features, Defs) <-
 rel arg_at(path: text, call_start: int, call_end: int, arg_start: int).
 arg_at(Path, CallStart, CallEnd, ArgStart) <-
   entry_source(Path, Digest),
-  df_arg_at(Path, Digest, 'arg', 'df', CallAt, _Pos, ArgAt),
+  /extract/df_arg_at(Path, Digest, "df", 'arg', 'df', CallAt, _Pos, ArgAt),
   decode(CallAt, {start: CallStart, end: CallEnd}),
   decode(ArgAt, {start: ArgStart, end: _ArgEnd}).
 

@@ -144,7 +144,7 @@ fn byte_host_transport_refuses_before_executor_process() {
         template: format!("touch {} # {{payload}}", marker.display()),
         demand_rel: "__host_demand_bytes".to_string(),
         response_rel: "__host_response_bytes".to_string(),
-        execution: "sprefa_extract".to_string(),
+        execution: "/extract/records".to_string(),
         request_type: None,
         response_type: None,
     };

@@ -1,25 +1,22 @@
 # Technique 4: LANG-JUNCTION(slug) capture, grammar witness, and registry drift
 # antijoin. The registry side is a host row so the language list remains data.
 
-bind watch(glob: text, path: text, digest: text).
+rel watch(glob: text, path: text, digest: text).
 rel file(path: text, digest: text).
 file(path, digest) <- watch('**/*.rs', path, digest).
 
-sh comment_fact(path: text, digest: text) -> (line: int, kind: text, comment_text: text) =
-  `: {digest}; "$DL_EXTRACT_BIN" --family cst {path} | python3 "$DL_COMMENT_NODE" comments {path}`.
+rel /extract/comment_fact(path: text, digest: text, families: text) -> (line: int, kind: text, comment_text: text) key(1, 3).
 rel comment_node(path: text, digest: text, line: int, kind: text, comment_text: text).
-comment_node(path, digest, line, kind, comment_text) <- file(path, digest), comment_fact(path, digest, line, kind, comment_text).
+comment_node(path, digest, line, kind, comment_text) <- file(path, digest), /extract/comment_fact(path, digest, "cst", line, kind, comment_text).
 
-sh junction_marker(path: text, digest: text) -> (line: int, slug: text, meaning: text) =
-  `: {digest}; python3 "$DL_POLICY_MARKERS" junction {path}`.
+rel junction_marker(path: text, digest: text) -> (line: int, slug: text, meaning: text) key(1).
 rel junction_text(path: text, digest: text, line: int, slug: text, meaning: text).
 junction_text(path, digest, line, slug, meaning) <- file(path, digest), junction_marker(path, digest, line, slug, meaning).
 
 rel junction(path: text, line: int, slug: text, meaning: text).
 junction(path, line, slug, meaning) <- junction_text(path, digest, line, slug, meaning), comment_node(path, digest, line, kind, text).
 
-sh registry_marker(path: text, digest: text) -> (slug: text) =
-  `: {digest}; python3 "$DL_POLICY_MARKERS" registry {path}`.
+rel registry_marker(path: text, digest: text) -> (slug: text) key(1).
 rel registry_slug(path: text, digest: text, slug: text).
 registry_slug(path, digest, slug) <- file(path, digest), registry_marker(path, digest, slug).
 

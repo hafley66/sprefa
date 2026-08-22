@@ -1,19 +1,19 @@
 # Deterministic config-as-json golden over the current v6 text surface.
 #
-# GHCACHE_CONFIG, when set, is the rank-0 candidate; when absent (zero env_var
+# GHCACHE_CONFIG, when set, is the rank-0 candidate; when absent (zero /env/var
 # response rows), the file candidate list decides by lowest rank. The winner's
-# path is handed to toml_json, whose response doc is the json decode plane's
+# path is handed to /toml/json, whose response doc is the json decode plane's
 # input. Host response rows arrive through the same schedule seam as the
 # config golden; no shell, python3, printenv, or wall clock participates in
 # the grade.
 #
-# ABSENT VAR SEMANTICS: env_var runs `printenv '{name}' || true`, which prints
-# NOTHING for an unset variable. Empty host output is zero response rows, and
-# that zero row set is exactly the "absent" meaning the rules below rely on.
-# git_toplevel's not-a-repo case is the same zero-row shape. toml_json's body
-# resolves a leading `~/` to $HOME; the tilde candidate below is spelled with
-# `~/`, and the schedule feeds its response directly rather than running the
-# body.
+# ABSENT VAR SEMANTICS: /env/var's live executor runs `printenv '{name}' ||
+# true`, which prints NOTHING for an unset variable. Empty host output is zero
+# response rows, and that zero row set is exactly the "absent" meaning the
+# rules below rely on. git_toplevel's not-a-repo case is the same zero-row
+# shape. /toml/json's executor resolves a leading `~/` to $HOME; the tilde
+# candidate below is spelled with `~/`, and the schedule feeds its response
+# directly rather than running the executor.
 
 rel config_candidate(search_rank: int, config_path: text).
 rel env_lookup(var_name: text).
@@ -25,26 +25,24 @@ rel chosen_config(config_path: text).
 rel config_doc(doc: json).
 rel db_path(path: text).
 
-bind interval(period: int, bucket: int).
+rel interval(period: int, bucket: int).
 
-sh env_var(name: text, bucket: int) -> (value: text) =
-  `printenv '{name}' || true`.
+rel /env/var(name: text, bucket: int) -> (value: text) key(1).
 
 # @comment-ok: user banner verbatim, ruling design_debt_mode = utility_over_pedantry.
 # FUCKING WARNING: AI IS DUMB AND DECIDED THIS BECAUSE USER IS WANTING SOMETHING USEFUL AND IS DONE BEING PEDANTIC, DONT CAUSE CONTRADICTIONS WHEN POSSIBLE BUT FUCK IT
 # python3 stdlib tomllib chosen for zero new dependencies; yaml deferred until
 # a program needs it. The tilde case-arm is the `~` resolves to home
-# requirement; expansion lives in path-taking host bodies, never a language
+# requirement; expansion lives in the /toml/json executor, never a language
 # construct, so a `~/` candidate is ordinary text until this host reads it.
-sh toml_json(config_path: text, bucket: int) -> (doc: json) =
-  `p='{config_path}'; case "$p" in "~"*) p="$HOME${p#\~}";; esac; [ -f "$p" ] && python3 -c 'import tomllib,json,sys; print(json.dumps(tomllib.load(open(sys.argv[1],"rb"))))' "$p" || true`.
+rel /toml/json(config_path: text, bucket: int) -> (doc: json) key(1).
 
 current_bucket(Period, Bucket) <+ interval(Period, Bucket).
 
 env_override(ConfigPath) <-
   env_lookup(VarName),
   current_bucket(3600, Bucket),
-  env_var(VarName, Bucket, ConfigPath).
+  /env/var(VarName, Bucket, ConfigPath).
 
 effective_candidate(0, ConfigPath) <- env_override(ConfigPath).
 effective_candidate(SearchRank, ConfigPath) <-
@@ -59,7 +57,7 @@ chosen_config(ConfigPath) <-
 config_doc(Doc) <-
   chosen_config(ConfigPath),
   current_bucket(3600, Bucket),
-  toml_json(ConfigPath, Bucket, Doc).
+  /toml/json(ConfigPath, Bucket, Doc).
 
 db_path(Path) <-
   config_doc(Doc),

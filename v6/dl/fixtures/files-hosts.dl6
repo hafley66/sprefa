@@ -47,8 +47,7 @@
 # index entry, so an unstaged edit is visible. One process per file is the cost
 # of that honesty and is why this host is the boot feed rather than the steady
 # state; the watcher carries the steady state at zero processes.
-sh files(glob: text) -> (path: text, digest: text) =
-  `git ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git hash-object -- "$entry")"; done`.
+rel /soopy/files(glob: text) -> (path: text, digest: text).
 
 # The pinned twin. MEASURED, not assumed: `git ls-tree` does NOT accept glob
 # pathspecs -- `git ls-tree -r HEAD -- 'v6/**/*.ts'` returns zero rows and
@@ -62,14 +61,13 @@ sh files(glob: text) -> (path: text, digest: text) =
 # `--with-tree` unions the tree with the index, so a path staged but absent at
 # that rev has no blob: `rev-parse` fails, the guard drops it, and it is no row
 # (absence is row absence, never an empty digest).
-sh files_at(rev: text, glob: text) -> (path: text, digest: text) =
-  `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse --verify --quiet '{rev}':"$entry")"; if [ -n "$oid" ]; then printf '%s %s\n' "$entry" "$oid"; fi; done`.
+rel files_at(rev: text, glob: text) -> (path: text, digest: text).
 
 rel want(glob: text).
 rel want_at(rev: text, glob: text).
 
 rel file(path: text, digest: text).
-file(path, digest) <- want(glob), files(glob, path, digest).
+file(path, digest) <- want(glob), /soopy/files(glob, path, digest).
 file(path, digest) <- want_at(rev, glob), files_at(rev, glob, path, digest).
 
 # ── the repo-scoped pair ─────────────────────────────────────────────────────
@@ -95,11 +93,9 @@ file(path, digest) <- want_at(rev, glob), files_at(rev, glob, path, digest).
 # repo is an IDENTITY input on both: it is part of what the answer is about, it
 # returns on the response row, and two repos asking the same glob are two
 # witnesses and two subprocesses (they must be -- the answers differ).
-sh repo_files(repo: text, glob: text) -> (path: text, digest: text) =
-  `git -C '{repo}' ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git -C '{repo}' hash-object -- "$entry")"; done`.
+rel repo_files(repo: text, glob: text) -> (path: text, digest: text).
 
-sh repo_files_at(repo: text, rev: text, glob: text) -> (path: text, digest: text) =
-  `git -C '{repo}' ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git -C '{repo}' rev-parse --verify --quiet '{rev}':"$entry")"; if [ -n "$oid" ]; then printf '%s %s\n' "$entry" "$oid"; fi; done`.
+rel repo_files_at(repo: text, rev: text, glob: text) -> (path: text, digest: text).
 
 rel want_repo(repo: text, glob: text).
 rel want_repo_at(repo: text, rev: text, glob: text).

@@ -26,8 +26,8 @@ pub mod write_verbs;
 
 pub use program::GenProgram;
 pub use run::{
-    run_once, watch, BindPlanData, FinalRel, FinalRequest, LoadedProgram, RunOptions, RunOutcome,
-    SeedSpec, WatchOptions,
+    run_once, watch, FinalRel, FinalRequest, LoadedProgram, RunOptions, RunOutcome, SeedSpec,
+    WatchOptions,
 };
 pub use serve::{router, serve_on, serve_unix, ServeError, ServeState};
 pub use sql::{result_rows, SqlRunner, SqliteSeam};

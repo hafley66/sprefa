@@ -33,27 +33,24 @@
 # lifecycle rows under one block) only attaches to the FIRST of the group.
 # Both are honest consequences of preceding-decl attachment, not bugs.
 
-bind watch(glob: text, path: text, digest: text).
+rel watch(glob: text, path: text, digest: text).
 
 rel source(path: text, digest: text).
 source(path, digest) <- watch('v6/prolog/compile/registry.pl', path, digest).
 
-sh comment_fact(path: text, digest: text)
-  -> (line: int, end_line: int, kind: text, comment_text: text) =
-  `: {digest}; "$DL_EXTRACT_BIN" --family cst {path} | python3 "$DL_COMMENT_NODE" comments {path}`.
+rel /extract/comment_fact(path: text, digest: text, families: text)
+  -> (line: int, end_line: int, kind: text, comment_text: text) key(1, 3).
 rel comment_node(path: text, digest: text, start_line: int, end_line: int, comment_text: text).
 comment_node(path, digest, start_line, end_line, comment_text) <-
-  source(path, digest), comment_fact(path, digest, start_line, end_line, _kind, comment_text).
+  source(path, digest), /extract/comment_fact(path, digest, "cst", start_line, end_line, _kind, comment_text).
 
-sh construct_marker(path: text, digest: text)
-  -> (line: int, name: text, arity: text, axis: text, status: text) =
-  `: {digest}; python3 "$DL_POLICY_MARKERS" construct {path}`.
+rel construct_marker(path: text, digest: text)
+  -> (line: int, name: text, arity: text, axis: text, status: text) key(1).
 rel construct_line(path: text, line: int, name: text, arity: text, axis: text, status: text).
 construct_line(path, line, name, arity, axis, status) <-
   source(path, digest), construct_marker(path, digest, line, name, arity, axis, status).
 
-sh decl_marker(path: text, digest: text) -> (line: int) =
-  `: {digest}; python3 "$DL_POLICY_MARKERS" decl-line {path}`.
+rel decl_marker(path: text, digest: text) -> (line: int) key(1).
 rel decl_line(path: text, line: int).
 decl_line(path, line) <- source(path, digest), decl_marker(path, digest, line).
 
@@ -158,8 +155,7 @@ doc_line(ordinal, line) <-
 rel reference_document(document: text).
 reference_document(group_concat(line, '\n', ordinal)) <- doc_line(ordinal, line).
 
-sh write_reference_docs(path: text, document: text) -> (status: text) =
-  `printf '%s' "$document" > "$path"; printf '%s' written`.
+rel write_reference_docs(path: text, document: text) -> (status: text).
 
 rel write_receipt(document: text, status: text).
 write_receipt(document, status) <-

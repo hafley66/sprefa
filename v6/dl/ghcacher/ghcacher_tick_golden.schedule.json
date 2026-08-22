@@ -6,10 +6,10 @@
   ],
   [
     {
-      "rel":"__host_response_fetch",
+      "rel":"__host_response_http__fetch",
       "sign":"add",
       "row":[
-        "witness|fetch|ep:text=repo|prev:text=|bucket=1",
+        "witness|http__fetch|ep:text=repo|prev:text=|bucket=1",
         0,
         "repo",
         "",
@@ -26,10 +26,10 @@
   ],
   [
     {
-      "rel":"__host_response_fetch",
+      "rel":"__host_response_http__fetch",
       "sign":"add",
       "row":[
-        "witness|fetch|ep:text=repo|prev:text=tag-v1|bucket=2",
+        "witness|http__fetch|ep:text=repo|prev:text=tag-v1|bucket=2",
         0,
         "repo",
         "tag-v1",
@@ -42,10 +42,10 @@
   ],
   [
     {
-      "rel":"__host_response_fetch",
+      "rel":"__host_response_http__fetch",
       "sign":"add",
       "row":[
-        "witness|fetch|ep:text=repo|prev:text=|bucket=1",
+        "witness|http__fetch|ep:text=repo|prev:text=|bucket=1",
         0,
         "repo",
         "",

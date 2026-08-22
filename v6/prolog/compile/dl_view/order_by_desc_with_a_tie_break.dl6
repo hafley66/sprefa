@@ -1,0 +1,3 @@
+rel module_defs(path: text, defs: int).
+
+? module_defs(_Path, _Defs) order by _Defs desc, _Path.

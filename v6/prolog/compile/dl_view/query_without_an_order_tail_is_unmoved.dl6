@@ -1,0 +1,3 @@
+rel tally(player: int, points: int).
+
+? tally(_Player, _Points).

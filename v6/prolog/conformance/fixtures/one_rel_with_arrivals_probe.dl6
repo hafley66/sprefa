@@ -1,0 +1,45 @@
+# PROBE, NOT WIRED IN. go.pl:18 loads only `*.pl` from this directory, so this
+# file runs nothing and grades nothing. It records what the compiler does TODAY
+# with the two spellings the one-rel-with-arrivals design has to pick between.
+# Re-measure with:
+#
+#   swipl -q -l v6/prolog/compile.pl -l v6/prolog/emit_rust.pl \
+#     -g "compile_dl6('<this file>','/tmp/probe.rs',[emitter(emit_rust:emit_program)])" -g halt
+#
+# MEASURED 2026-08-21 at 107f292dd: rc=0, no named unsupported construct.
+#
+# FINDING 1. `rel N(ins) -> (outs).` ALREADY PARSES and already means something
+# else. parse_dl_dcg.pl:582 relation_arrow_output reads a type_expr after `->`,
+# and parse_dl_dcg.pl:764 type_base reads a `(`-led group as an ANONYMOUS
+# PRODUCT TYPE. So the arrow rel in this file emits:
+#
+#   extract           : path text, digest text, return ref
+#   __anon_extract_return_ed2df8f08021f1d6 : record text, callee text
+#
+# One column named `return`, not three response columns. The proposed surface
+# is taken.
+#
+# rx: today this is scan(mergeInto) over one product value per row; the design
+# wants demand$.pipe(mergeMap(runExecutor), mergeMap(rows => from(rows))).
+rel want(glob: text).
+rel extract(path: text, digest: text) -> (record: text, callee: text).
+
+# FINDING 2. A rel and a host may carry ONE NAME with no diagnostic, and the
+# host wins. `files/3` is declared as an ordinary rel AND as a host whose
+# surface arity is also 3 (1 input + 2 outputs). parse_dl_dcg.pl:319
+# normalize_host_leaf rewrites the body atom into probe/4 because a sh_decl of
+# that name exists, so the declared table is created, is an arrival target, and
+# nothing ever reads it. compile.pl:262 still lists `files` in ArrivalTargets.
+#
+# This is what the collapse removes: one name cannot mean two declarations.
+#
+# rx: the author wrote source$ = of(...declared rows); the compiler subscribed
+# to executor$ instead, and the declared Subject was never merged in.
+rel files(glob: text, path: text, digest: text).
+sh files(glob: text) -> (path: text, digest: text) =
+  `git ls-files -- '{glob}'`.
+
+rel seen(path: text).
+seen(Path) <- want(Glob), files(Glob, Path, _Digest).
+
+? seen(path).

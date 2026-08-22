@@ -21,9 +21,9 @@
 # minted literal seed, which has no positive body). Noted, not worked around.
 rel seed(name: text).
 
-bind interval(period: int, bucket: int).
+rel interval(period: int, bucket: int).
 
-sh answer(name: text, bucket: int) -> (value: text) = `printf '%s' "{name}-answered"`.
+rel answer(name: text, bucket: int) -> (value: text) key(1).
 
 rel poll(name: text, bucket: int).
 poll(name, bucket) <- seed(name), interval(1, bucket).

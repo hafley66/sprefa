@@ -1,5 +1,5 @@
 //! Live host execution receipts. Every host answers through a LINKED Rust
-//! executor; an `sh` declaration no adapter row routes is a named stop at
+//! executor; an arrival rel the roster does not name is a named stop at
 //! runner construction, so no template ever reaches a process.
 //!
 //! FAIL-FIRST: before driver::run_schedule_live existed, the extract happy path
@@ -231,11 +231,11 @@ fn ast_rule_executor_accepts_the_legacy_live_watch_sha256_digest() {
     assert_eq!(output[0]["captures"][0]["text"], "\"legacy-watch\"");
 }
 
-/// An `sh` declaration whose adapter sidecar routes it nowhere is named at
-/// construction. FAIL-PRE-FIX: this plan used to reach `sh -c` and run the
-/// template; the marker below proves no process starts now.
+/// An arrival rel the roster does not link is named at construction.
+/// FAIL-PRE-FIX: this plan used to reach `sh -c` and run the template; the
+/// marker below proves no process starts now.
 #[test]
-fn an_unrouted_sh_declaration_is_a_named_stop_at_construction() {
+fn an_unrostered_arrival_rel_is_a_named_stop_at_construction() {
     let marker = std::env::temp_dir().join(format!("sprefa-unrouted-host-{}", std::process::id()));
     let _ = std::fs::remove_file(&marker);
     let plan = HostPlanData {
@@ -270,7 +270,9 @@ fn an_unrouted_sh_declaration_is_a_named_stop_at_construction() {
         failure.message.contains("no executor links host"),
         "{failure}"
     );
-    assert!(failure.message.contains("sprefa_extract"), "{failure}");
+    // The stop names the roster, so the author sees what IS linked.
+    assert!(failure.message.contains("/extract/records"), "{failure}");
+    assert!(failure.message.contains("/soopy/files"), "{failure}");
     assert!(!marker.exists(), "no template may reach a process");
 }
 
@@ -278,27 +280,43 @@ fn an_unrouted_sh_declaration_is_a_named_stop_at_construction() {
 fn native_structured_input_does_not_enter_a_scalar_transport_check() {
     let plan = HostPlanData {
         name: "native_structured".to_string(),
-        inputs: vec![HostColumnPlan {
-            name: "request".to_string(),
-            column_type: "stage_request".to_string(),
-        }],
+        inputs: vec![
+            HostColumnPlan {
+                name: "request".to_string(),
+                column_type: "stage_request".to_string(),
+            },
+            HostColumnPlan {
+                name: "path".to_string(),
+                column_type: "text".to_string(),
+            },
+        ],
         outputs: vec![],
-        template: "$DL_EXTRACT_BIN /definitely/missing/native-typed-input".to_string(),
+        template: String::new(),
         demand_rel: "__host_demand_native_structured".to_string(),
         response_rel: "__host_response_native_structured".to_string(),
-        execution: "sprefa_extract".to_string(),
+        execution: "/extract/records".to_string(),
         request_type: Some(HostTypeDescriptor {
-            type_ref: "__host_demand_native_structured/1".to_string(),
-            fields: vec![HostTypeField {
-                name: "request".to_string(),
-                field_type: "stage_request".to_string(),
-            }],
+            type_ref: "__host_demand_native_structured/2".to_string(),
+            fields: vec![
+                HostTypeField {
+                    name: "request".to_string(),
+                    field_type: "stage_request".to_string(),
+                },
+                HostTypeField {
+                    name: "path".to_string(),
+                    field_type: "text".to_string(),
+                },
+            ],
         }),
         response_type: None,
     };
     let rel_columns = std::collections::HashMap::from([(
         "__host_demand_native_structured".to_string(),
-        vec!["request".to_string(), "witness_digest".to_string()],
+        vec![
+            "request".to_string(),
+            "path".to_string(),
+            "witness_digest".to_string(),
+        ],
     )]);
     let mut runner = HostLiveRunner::new(std::slice::from_ref(&plan), &rel_columns)
         .expect("native host plan is known");
@@ -307,7 +325,11 @@ fn native_structured_input_does_not_enter_a_scalar_transport_check() {
             rels: vec![RelDelta {
                 rel: "__host_demand_native_structured".to_string(),
                 // The struct plane may carry a reference id at this seam.
-                add: vec![vec![Value::Integer(41), text("witness-native")]],
+                add: vec![vec![
+                    Value::Integer(41),
+                    text("/definitely/missing/native-typed-input"),
+                    text("witness-native"),
+                ]],
                 del: vec![],
             }],
             carry_pending: false,
@@ -331,45 +353,6 @@ fn table_rows(program: &GenProgram, seam: &SqliteSeam, rel: &str) -> Vec<Vec<Val
         })
         .expect("select rows");
     result.rows
-}
-
-/// The fixture executor answers a constant template with no process at all,
-/// so a fixture host still folds demand -> answer -> response.
-#[tokio::test]
-async fn a_constant_template_answers_through_the_fixture_executor() {
-    let program = fixture_program("live_shell_probe");
-    let seam = SqliteSeam::in_memory().expect("seam");
-    let schedule = vec![vec![add("source_file", vec![text("a.rs")])]];
-    let fold = run_schedule_live(&program, &seam, &schedule, 100)
-        .await
-        .expect("live run");
-    assert_eq!(
-        table_rows(&program, &seam, "spanned"),
-        vec![vec![text("a.rs"), Value::Integer(3), Value::Integer(9)]],
-        "the template's literal span must land through demand -> answer -> response"
-    );
-    assert_eq!(
-        fold.lines.len(),
-        2,
-        "one scheduled arrival tick, then exactly one host-response tick"
-    );
-}
-
-/// SABOTAGE. The same program with the literal forced to a wrong span lands the
-/// wrong bytes, so the exact-row assert above is a real detector.
-#[tokio::test]
-async fn a_sabotaged_fixture_literal_lands_the_wrong_span() {
-    let mut program = fixture_program("live_shell_probe");
-    program.host_plans[0].template = "printf '{\"start\":4,\"end\":9}' # {path}".to_string();
-    let seam = SqliteSeam::in_memory().expect("seam");
-    let schedule = vec![vec![add("source_file", vec![text("a.rs")])]];
-    run_schedule_live(&program, &seam, &schedule, 100)
-        .await
-        .expect("live run");
-    assert_eq!(
-        table_rows(&program, &seam, "spanned"),
-        vec![vec![text("a.rs"), Value::Integer(4), Value::Integer(9)]],
-    );
 }
 
 /// The linked twin: DL_EXTRACT_BIN is absent from the environment, so a
@@ -450,25 +433,24 @@ fn unknown_family_name_is_a_named_stop_in_the_extract_twin() {
         "{}/tests/fixtures/live_extract_target.rs",
         env!("CARGO_MANIFEST_DIR")
     );
-    let env = BTreeMap::new();
+    // The dead template's `--family` flag is the `families` INPUT now, so the
+    // family name reaches the executor as a named input and never as argv.
+    let demand = |families: &str| {
+        BTreeMap::from([
+            ("path".to_string(), target.clone()),
+            ("families".to_string(), families.to_string()),
+        ])
+    };
 
     let mode = SprefaExtractExecutor::default()
-        .run(
-            "extract",
-            &format!("$DL_EXTRACT_BIN --family diet_scip {target}"),
-            &env,
-        )
+        .run("extract", "", &demand("diet_scip"))
         .err()
         .expect("a mode name is not linked in-process");
     assert!(mode.message.contains("diet_scip"), "{mode}");
     assert!(mode.message.contains("not linked in-process"), "{mode}");
 
     let unknown = SprefaExtractExecutor::default()
-        .run(
-            "extract",
-            &format!("$DL_EXTRACT_BIN --family nonsense {target}"),
-            &env,
-        )
+        .run("extract", "", &demand("nonsense"))
         .err()
         .expect("an unknown family is a named stop");
     assert!(unknown.message.contains("nonsense"), "{unknown}");
@@ -540,13 +522,11 @@ fn digest_carrying_demand_reads_the_blob_not_the_worktree() {
     let env = BTreeMap::from([
         ("repo".to_string(), root.display().to_string()),
         ("digest".to_string(), committed_oid),
+        ("path".to_string(), format!("{}/src/file.ts", root.display())),
+        ("families".to_string(), "call".to_string()),
     ]);
-    let command_line = format!(
-        "$DL_EXTRACT_BIN --family call {}/src/file.ts",
-        root.display()
-    );
     let answered = SprefaExtractExecutor::default()
-        .run("extract", &command_line, &env)
+        .run("extract", "", &env)
         .expect("extract the committed blob");
     let output = rows_text(&answered);
     assert!(

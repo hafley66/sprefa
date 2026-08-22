@@ -35,22 +35,20 @@
 # rx: want$.pipe(mergeMap(listWorktree)) and
 #     wantAt$.pipe(groupBy(row => row.rev), mergeMap(listAtRev)).
 
-# Neither template ever runs: no shell spelling covers both walks, which is the
-# defect in miniature, so each is a named stop.
-sh files(glob: text) -> (path: text, digest: text) =
-  `echo 'files {glob} is linked in-process' >&2; exit 3`.
+# Two names, one executor. The name says which revision, so neither walk can
+# fall back to the other; that fallback is the defect in miniature.
+rel /soopy/files(glob: text) -> (path: text, digest: text).
 
-sh files_at(rev: text, glob: text) -> (path: text, digest: text) =
-  `echo 'files_at {rev} {glob} is linked in-process' >&2; exit 3`.
+rel /soopy/files_at(rev: text, glob: text) -> (path: text, digest: text).
 
 rel want(glob: text).
 rel want_at(rev: text, glob: text).
 
 rel worktree_file(path: text, digest: text).
-worktree_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
+worktree_file(Path, Digest) <- want(Glob), /soopy/files(Glob, Path, Digest).
 
 rel pinned_file(rev: text, path: text, digest: text).
-pinned_file(Rev, Path, Digest) <- want_at(Rev, Glob), files_at(Rev, Glob, Path, Digest).
+pinned_file(Rev, Path, Digest) <- want_at(Rev, Glob), /soopy/files_at(Rev, Glob, Path, Digest).
 
 ? worktree_file(path, digest).
 ? pinned_file(rev, path, digest) order by rev, path.

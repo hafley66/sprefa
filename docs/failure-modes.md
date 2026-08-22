@@ -2220,7 +2220,7 @@ sites but not against new code. **missing** = nothing.
   `diet` and `scip` planes run against a temp-dir copy that IS its own
   repository, which is exactly the shape that cannot detect this.
 
-## 56. A runtime with no per-verb clock, and three optimizations aimed at the wrong 12%
+## 64. A runtime with no per-verb clock, and three optimizations aimed at the wrong 12%
 
 - WHAT IT LOOKS LIKE: a fold is slow, the engine writes SQL, so the SQL gets
   tuned. Batching, grouping and memoizing all land, all are measured, and all
@@ -2256,7 +2256,7 @@ sites but not against new code. **missing** = nothing.
   Bench: `v6/sprefa-engine-rs/bench/profile.sh`, `bench/ab.sh`,
   `bench/rail-profile.sh`, `bench/file-db.sh`.
 
-## 60. Program metadata recomputed once per tick
+## 65. Program metadata recomputed once per tick
 
 - WHAT IT LOOKS LIKE: a fold that costs the same whether the tick moved one row
   or ten thousand. The per-verb table shows the cost nowhere, because the work
@@ -2279,7 +2279,7 @@ sites but not against new code. **missing** = nothing.
 - WHAT IT DID NOT FIX: this class is cheap in absolute terms (schema-sized, not
   row-sized). The row-sized cost was entry 61.
 
-## 61. Three full copies of an arrival batch before it reached the seam
+## 66. Three full copies of an arrival batch before it reached the seam
 
 - WHAT IT LOOKS LIKE: an `intern` phase costing 448ms of Rust against 25ms of
   SQL, on 6482 rows. The trace attributes it correctly and it still reads as a
@@ -2304,7 +2304,7 @@ sites but not against new code. **missing** = nothing.
   __host_response_extract` 205359 -> 22878, `stage __host_response_extract`
   142211 -> 11607, TOTAL rust in scopes 3093662 -> 736591. RUST-GRADE stayed
   439/335 byte-clean across every step.
-## 62. A program driven only by boot facts, answering silence that reads as a finding
+## 67. A program driven only by boot facts, answering silence that reads as a finding
 
 - WHAT IT LOOKS LIKE: every seed is a plain fact in the source, the program
   compiles clean, the harness exits 0, and the reads come back empty except for
@@ -2332,7 +2332,7 @@ sites but not against new code. **missing** = nothing.
   a compiler-lane request on the crosswalk PR rather than fixed here, because
   `v6/prolog/**` is another lane's tree.
 
-## 63. Two hosts meant to share one pass, split by a name the registry never heard of
+## 68. Two hosts meant to share one pass, split by a name the registry never heard of
 
 - WHAT IT LOOKS LIKE: two `sh` declarations carry the same template on purpose,
   so the runner's applicative grouping folds them into one process and each
@@ -2360,6 +2360,104 @@ sites but not against new code. **missing** = nothing.
   count: two hosts declared with one template must produce one `host_run` span
   per file, and `DL_TRACE_SUMMARY=1` already prints the call count that would
   catch a second pass.
+
+## 69. A resumed agent whose worktree was gone, and a reset that landed in the coordinator's tree
+
+INCIDENT (2026-08-21, arrivals-and-ticks lane). A subagent's isolated worktree
+was cut from the wrong base and the agent stopped correctly. Its worktree was
+auto-cleaned the moment it stopped. The coordinator resumed it with "run
+`git reset --hard <sha>` in your worktree" - but the resumed agent no longer
+HAD a worktree, its cwd had fallen back to the coordinator's own working tree,
+and the reset executed there, wiping the coordinator's uncommitted work (one
+file rewrite; recovered from the transcript and recommitted).
+
+RCA. Two facts composed: (1) an isolation worktree is deleted when the agent
+first completes, so a RESUMED agent silently inherits some other cwd; (2) the
+instruction named an action ("reset --hard") relative to a location ("your
+worktree") that no longer existed, and nothing checked the location before the
+destructive command ran.
+
+FAIL-PRE-FIX PROBE. Resume any completed worktree agent and have it print
+`git rev-parse --show-toplevel`: it answers the COORDINATOR's tree, not an
+agent worktree.
+
+RAIL. Standing instruction, both directions: an agent asked to run any
+destructive git command MUST first print `git rev-parse --show-toplevel` and
+STOP unless the answer is the tree the coordinator named in the same message;
+a coordinator resuming a completed isolation agent MUST re-state the absolute
+tree path and MUST NOT name reset/checkout/clean/stash in a resume message.
+Committing early and often on the coordinator branch bounds the blast radius:
+the incident cost one uncommitted file, not the arc.
+
+ENTRY: this row.
+
+## 70. A surface removed on one branch, and two new programs written in it on the other
+
+INCIDENT (2026-08-21, arrivals-and-ticks landing). The branch deleted `sh` and
+`bind` from the parser and moved every `.dl6` it owned to the arrival form.
+`origin/main` meanwhile gained two brand-new rails,
+`v6/dl/rails/{no-new-eprintln,recompute-guard}-rail.dl6`, both written in the
+`sh` surface with `.adapters.json` sidecars naming `soopy_files` and
+`sprefa_extract`, adapter names the new roster no longer answers to. `git
+merge` reported zero conflicts: neither branch touched a line the other
+touched. `just v5-rails` went red on the first run after the merge, with a
+compile stop from the rule index rather than from the parser.
+
+RCA. A surface removal is a change to the LANGUAGE, and a merge only compares
+FILES. Nothing in the tree relates "the parser stopped accepting `sh`" to "a
+file spelling `sh` was added". The corpus sweep does not read `v6/dl/rails/**`,
+and `just v5-rails` is not part of `just green-all`'s default legs, so the only
+signal was a leg run by hand.
+
+FAIL-PRE-FIX PROBE. `git merge origin/main` on the collapse branch, then
+`cd v6 && just v5-rails`: the recompute rail stops with
+`unsupported_construct: compiler refused rule 'surface_findings'`, and no gate
+between the merge and that command says anything.
+
+RAIL. A surface-removal arc greps the LIVE corpus for the removed keyword after
+every merge from main, not only before the first commit:
+
+    git grep -nE '^\s*(sh|bind) [a-z_]' -- 'v6/dl/**/*.dl6'
+
+The two rails here are now in the arrival form and their sidecars are deleted.
+Two hits remain and are NOT this arc's: `v6/dl/fixtures/{sg-rail,pr-size}.dl6`
+are byte-identical to origin/main, absent from
+`v6/prolog/compile/out/manifest.json`, named by no recipe, and already fail to
+parse on main at their `?`-demand lines (15:5 and 23:6), not at `sh`. They are
+tsv2-era dead corpus whose conversion needs `/clock/tick`, which the
+wip/dl6-run-watch-salvage lane owns. Anything else the grep reports is live.
+
+SECOND INSTANCE, same day, same merge direction. `origin/main` moved to
+3d65add5b (PRs #405, #406, #407) and brought THREE more programs in the removed
+surface: `v6/dl/fixtures/files-rev-walk.dl6` (`sh files`, `sh files_at`),
+`v6/dl/prwatch/prwatch.dl6` (`bind interval`, `sh pulls`, `sh cost`), plus
+three `.adapters.json` sidecars. `hosts.rs` conflicted this time, because both
+sides edited `LINKED_EXECUTORS`, which is the ONLY reason the collision was
+visible at all. The registry roster is what makes it visible in general: three
+new executors (`GhPullsExecutor`, `TickCostExecutor`, and `files_at`'s arm of
+`SoopyFilesExecutor`) reached main with no `arrival_executor/2` row, and
+`executor_roster_matches_registry` is the test that would have named them.
+`files-rev-walk.dl6` is converted here. `prwatch.dl6` is NOT: `bind interval`
+lowers to `/clock/tick`, whose `executors/clock.rs` did not land with #407, and
+the file belongs to the pr-watch-resident lane.
+
+RAIL, SECOND HALF. A lane that adds an executor adds its `arrival_executor/2`
+row in the same commit. `LINKED_EXECUTORS` is a `const` in one file precisely so
+that two lanes adding executors CONFLICT rather than silently diverge; do not
+split it into per-module lists.
+
+WHAT THE RE-SPELL FOUND, and it closed the open question rather than raising
+one. `bind` needs no replacement keyword: an arrival rel is demanded BY a
+positive body, so a cadence is a SEED FACT the program owns. Two existing
+compiler stops force that shape and both are correct.
+`probe_mismatch(multiple_probes(...))` (`1_host_expand.pl:445`) says one rule
+body carries at most one arrival goal, so the turn becomes its own rel that
+every reader joins. `level_rule_no_positive_body` on
+`__host_demand_clock__tick/3` says an arrival rel nothing demands is not a
+program, it is a keyword in disguise. Six programs moved and all six compile to
+a binary through `dl6 build`.
+
+ENTRY: this row.
 
 ## Rail gap table
 
@@ -2469,3 +2567,11 @@ The observed standard, in order — no step is optional:
 - **Fail-pre-fix**: compile `ghcache.dl6` with the prolog flag `dl6_clock_path_walk` true.
 - **Rail**: user decision `rulings.pl clock_path_check_pinned_off`: the path walk is off the compile path (`3_clock_check.pl` `clock_path_walk_enabled/0`), the checker's own battery turns it on. The row stays open as the seed of the clock calculus.
 - **Entry**: `ghcache.dl6` passes the clock step in 1.6s.
+
+## 66. A keyword deleted from the surface while the runtime still keyed on it
+
+- **Incident** (2026-08-22): the `bind watch(glob, ...)` / `bind interval(period, ...)` declarations were retired in favor of ordinary rels routed to `/soopy/watch` and `/clock/tick`, and `served-watch-rail.dl6` / `tick_cost_beat.dl6` were re-spelled to the new form. `run.rs::stays_resident` and the whole watch loop still read `BindPlanData` exclusively, so a program with zero `bind` decls (every re-spelled fixture) always answered `false` and folded once instead of staying resident: `one_touched_file_produces_exactly_one_extra_tick` and `a_resident_run_measures_itself_and_a_storeless_program_stays_flat` both reported 0 ticks past the first fold.
+- **RCA**: the compiler-facing keyword and the runtime reader that keyed off it were changed by different people at different times with nothing pinning them together; `registry.pl` also had no `arrival_executor` rows for the two new slash paths, so `hosts::executor_for` had never heard of them either.
+- **Fail-pre-fix**: `dl6 run tests/fixtures/tick_cost_beat.dl6 --final-tsv --final-only --final-rels tick_cost` printed zero rows and exited after one fold.
+- **Rail**: `hosts.rs` gained `ExecutorCadence` (`Once` default, `Continuing` on `ClockExecutor`/`SoopyWatchExecutor`); `registry.pl` gained the `clock__tick`/`soopy__watch` `arrival_executor` rows the roster-parity test pins against `LINKED_EXECUTORS`; `run::stays_resident` now asks `hosts::cadence_for_plan` over the loaded program's own `host_plans` instead of reading a bind literal that no longer exists.
+- **Entry**: both tests pass; `tests/dl6_run.rs`'s 9-test suite is green in 3 separate full runs.

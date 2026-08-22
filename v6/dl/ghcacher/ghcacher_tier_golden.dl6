@@ -18,11 +18,10 @@ rel due_batch(bucket: int, batch_index: int, repo_slug: text).
 rel batch_query(bucket: int, batch_index: int, slug_list: text).
 rel points_budget(bucket: int, calls_this_tick: int).
 
-bind interval(period: int, bucket: int).
+rel interval(period: int, bucket: int).
 
-sh fetch(repo_slug: text, bucket: int) ->
-  (status: int, full_name: text) =
-  `fetch {repo_slug} at $bucket`.
+rel /http/fetch(repo_slug: text, bucket: int) ->
+  (status: int, full_name: text) key(1).
 
 rel poll(repo_slug: text, bucket: int).
 rel resp(repo_slug: text, bucket: int, status: int, full_name: text).
@@ -67,7 +66,7 @@ poll(RepoSlug, Bucket) <-
 
 resp(RepoSlug, Bucket, Status, FullName) <-
   poll(RepoSlug, Bucket),
-  fetch(RepoSlug, Bucket, Status, FullName).
+  /http/fetch(RepoSlug, Bucket, Status, FullName).
 
 ? batch_query(Bucket, BatchIndex, SlugList).
 ? points_budget(Bucket, CallsThisTick).

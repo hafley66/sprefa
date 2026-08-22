@@ -160,8 +160,8 @@ fn files_at_walks_the_commit_and_files_the_edit() {
     let edited = repo.worktree_oid("a.txt");
     assert_ne!(committed, edited, "the fixture must actually be dirty");
 
-    let worktree = listing(&repo, "files", &[("glob", "*.txt")]);
-    let at_head = listing(&repo, "files_at", &[("rev", "HEAD"), ("glob", "*.txt")]);
+    let worktree = listing(&repo, "soopy__files", &[("glob", "*.txt")]);
+    let at_head = listing(&repo, "soopy__files_at", &[("rev", "HEAD"), ("glob", "*.txt")]);
 
     assert_eq!(
         worktree.get("a.txt"),
@@ -196,8 +196,8 @@ fn files_at_walks_the_commit_and_files_the_edit() {
 fn files_at_work_is_the_worktree() {
     let repo = dirty_fixture("work");
     assert_eq!(
-        listing(&repo, "files", &[("glob", "*.txt")]),
-        listing(&repo, "files_at", &[("rev", "WORK"), ("glob", "*.txt")]),
+        listing(&repo, "soopy__files", &[("glob", "*.txt")]),
+        listing(&repo, "soopy__files_at", &[("rev", "WORK"), ("glob", "*.txt")]),
     );
 }
 
@@ -209,8 +209,8 @@ fn files_at_a_tag_does_not_see_the_tip() {
     repo.write("later.txt", "after the tag\n");
     repo.commit("past the tag");
 
-    let at_tag = listing(&repo, "files_at", &[("rev", "v1.0.0"), ("glob", "*.txt")]);
-    let at_head = listing(&repo, "files_at", &[("rev", "HEAD"), ("glob", "*.txt")]);
+    let at_tag = listing(&repo, "soopy__files_at", &[("rev", "v1.0.0"), ("glob", "*.txt")]);
+    let at_head = listing(&repo, "soopy__files_at", &[("rev", "HEAD"), ("glob", "*.txt")]);
 
     assert!(!at_tag.contains_key("later.txt"), "later.txt is not in v1.0.0");
     assert!(at_head.contains_key("later.txt"), "later.txt is at the tip");
@@ -234,7 +234,7 @@ fn an_unlisted_file_host_stops() {
         )
         .expect_err("an unlisted host name must not walk anything");
     assert!(
-        failure.message.contains("files and files_at"),
+        failure.message.contains("/soopy/files and /soopy/files_at"),
         "the stop names the roster: {}",
         failure.message
     );
@@ -246,7 +246,7 @@ fn files_at_without_a_rev_stops() {
     let repo = dirty_fixture("norev");
     let failure = SoopyFilesExecutor
         .run(
-            "files_at",
+            "soopy__files_at",
             "",
             &env_of(&[("repo", &repo.path()), ("glob", "*.txt")]),
         )

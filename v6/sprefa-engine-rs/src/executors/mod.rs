@@ -2,6 +2,7 @@
 //! by the host's declared output column names.
 
 pub mod checkout;
+pub mod clock;
 pub mod cost;
 pub mod env;
 pub mod fetch;
@@ -9,6 +10,7 @@ pub mod graphql;
 pub mod pulls;
 pub mod repos;
 pub mod toml;
+pub mod watch;
 
 use std::collections::BTreeMap;
 

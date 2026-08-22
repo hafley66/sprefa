@@ -1,16 +1,15 @@
-# The `sh` body is inert: ghcacher_smoke.adapters.json routes this host to the
-# linked http_fetch executor, so no shell runs.
+# /http/fetch links the Rust http_fetch executor directly by name
+# (registry.pl arrival_executor/2); no adapters override and no shell runs.
 
 rel watch(ep: text).
 rel etag_event(ep: text, tag: text) log keep(all).
 rel current_etag(ep: text, tag: text) key(1).
 rel current_clock(period: int, bucket: int) key(1).
 
-bind interval(period: int, bucket: int).
+rel interval(period: int, bucket: int).
 
-sh fetch(ep: text, prev: text, bucket: int) ->
-  (status: int, tag: text, body: text) =
-  `http_fetch {ep} with $prev`.
+rel /http/fetch(ep: text, prev: text, bucket: int) ->
+  (status: int, tag: text, body: text) key(1, 2).
 
 rel poll(ep: text, prev: text, bucket: int).
 rel resp(ep: text, bucket: int, status: int, tag: text, body: text).
@@ -27,7 +26,7 @@ poll(Ep, Prev, Bucket) <-
 
 resp(Ep, Bucket, Status, Tag, Body) <-
   poll(Ep, Prev, Bucket),
-  fetch(Ep, Prev, Bucket, Status, Tag, Body).
+  /http/fetch(Ep, Prev, Bucket, Status, Tag, Body).
 
 fresh_hit(Ep, Tag) <-
   resp(Ep, _Bucket, Status, Tag, _Body),

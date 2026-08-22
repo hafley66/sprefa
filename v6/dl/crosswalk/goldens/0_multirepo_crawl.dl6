@@ -1,0 +1,115 @@
+# 0_multirepo_crawl.dl6 -- the v6 port of examples/version-skew.dl.
+#
+# Stopping-point program #5 (repo rows + rev rows + dep edges), graded against
+# the v5 engine running its own unmodified program over the same four-repo
+# corpus. 2_gate.sh is the rig; it follows flagship-callgraph.sh exactly.
+#
+# ── WHERE REPO ROWS COME FROM, WHICH IS THE WHOLE DIFFERENCE ────────────────
+# v5 reads `repo(slug, root, url)` out of $SPREFA_CONFIG's `[[repos]]` tables:
+# the multi-repo set is AMBIENT CONFIGURATION the engine loads before the
+# program runs. v6 has no such file and should not grow one -- ruling
+# spine_residency says the git/fs spine is hosted IN THE LANGUAGE. So the repo
+# set arrives the way every other world fact arrives: as EDB rows posted to
+# /arrivals, one `want_repo(slug, root, rev)` per repository.
+#
+# That is a real difference in KIND and the gate states it rather than hiding
+# it: v5's repo set is configuration, v6's is data. It is also the reason the
+# v6 leg can crawl a corpus the config file has never heard of.
+#
+# ── ONE HOST, PARAMETERISED BY ROOT ─────────────────────────────────────────
+# The shipped files/grep hosts (fixtures/files-hosts.dl6,
+# fixtures/v5-git-diags.dl6) run git in the SERVER'S cwd, so they can only ever
+# see one repository. Crossing repositories needs the root to become an input
+# column, and then it is an ordinary `cd` in the template. ZERO NEW CONSTRUCTS:
+# this is the same `sh` host, the same content-addressed witness, and the same
+# named output projection -- the witness now includes the root, so each repo is
+# one subprocess and asking twice for the same (root, rev, glob, pattern) is
+# free.
+#
+# The executable is scripts/parity-grep.py, reused verbatim via $MULTIREPO_GREP.
+# It already takes (rev, pathspec, regex) and runs git in the current directory,
+# so `cd` is the entire adaptation. Its own header explains why a rev-pinned
+# host is what makes the answer immutable and the cache correct.
+#
+# ── REGEX DIALECT, STATED BECAUSE IT DIVERGES ───────────────────────────────
+# v5 spells the pin line `/(?<m>\S+\/\S+)\s+(?<v>v[0-9]\S*)/` (the rust regex
+# crate). This program CANNOT write a backslash: one in a .dl6 string constant
+# is eaten twice on the way to a host (parse_dl.pl's catch-all escape_code/2,
+# then JavaScript template-literal escape processing), silently. So `\S`
+# becomes an explicit character class and `\s+` becomes `[ ]+`, and the corpus
+# pins a SPACE between module and version so the two dialects select the same
+# rows. Assertion 2 in the gate proves that on this corpus instead of assuming
+# it; it is the same shape as the flagship rig's globset-vs-pathspec assertion.
+#
+# ── THE RX LOWERING ─────────────────────────────────────────────────────────
+#   wantRepo$.pipe(                                        // dep_pin
+#     map(mintIdentityAndWitness), distinct(r => r.witnessDigest),
+#     mergeMap(runShell), mergeMap(commitEdbArrival))
+#
+#   depPin$.pipe(groupBy(r => r.module),                   // dep_ver
+#                mergeMap(g => g.pipe(scan(minMax, seed))))
+#   depVer$.pipe(filter(([lo, hi]) => lo !== hi))           // skew
+#   combineLatest([skew$, depPin$]).pipe(                   // skew_row
+#     map(([s, p]) => p.filter(row => s.has(row.module))))
+#   skewRow$.pipe(groupBy(r => r.module),                   // skew_width
+#                 mergeMap(g => g.pipe(count())))
+
+# One line-regex host per (root, rev, glob, pattern). `cd` is the only thing
+# that separates this from the shipped single-repo grep host.
+rel repo_grep_at(root: text, rev: text, glob: text, pattern: text)
+   -> (path: text, line: int, g1: text, g2: text, g3: text).
+
+# The repo set, as data. One row per repository, posted to /arrivals.
+rel want_repo(slug: text, root: text, rev: text).
+
+# ── dep edges: every repo's pinned requires ─────────────────────────────────
+# v5: dep_pin(r, m, v) <- repo(r,_,_), scan(r,"HEAD","go.mod",p,rev),
+#                         match_line(p, rev, /.../, l).
+# The shapes line up atom for atom: the repo atom becomes want_repo, and
+# scan+match_line collapse into the one host that does both.
+rel dep_pin(repo: text, module: text, ver: text).
+dep_pin(slug, module, ver) <-
+  want_repo(slug, root, rev),
+  repo_grep_at(root, rev, 'go.mod',
+               '([a-zA-Z0-9._-]+/[a-zA-Z0-9._/-]+)[ ]+(v[0-9][a-zA-Z0-9._-]*)',
+               path, line, module, ver, _).
+
+# ── skew, and the NAMED GAP where v5's two-witness columns would be ─────────
+# v5 writes the witnesses with aggregates:
+#     dep_ver(m, min(v), max(v)) <- dep_pin(_, m, v).
+#     skew(m, lo, hi)            <- dep_ver(m, lo, hi), lo != hi.
+# and v6 REFUSES that first line, by name, measured not guessed:
+#     unsupported_construct(aggregate_operand_not_number(min, _, text))
+# min/max lower to a delta-compare against the stored extremum and the emitter
+# only has the numeric comparison; a version string is text. So `dep_ver` and
+# the lo/hi COLUMNS of `skew` are not expressible here today. 2_gate.sh reports
+# that as a named gap against v5's own rows rather than quietly dropping a rel.
+#
+# What is NOT blocked is skew MEMBERSHIP, because the skew test never needed an
+# ordering -- v5's own header says so ("the skew TEST is order-independent",
+# "treat lo/hi as two witnesses, not oldest/newest"). "More than one distinct
+# version exists" is a self-join and a disequality:
+rel skewed(module: text).
+skewed(module) <-
+  dep_pin(_, module, left), dep_pin(_, module, right), left != right.
+
+# ── the worklist: every (repo, version) row of every skewed module ──────────
+rel skew_row(module: text, repo: text, ver: text).
+skew_row(module, repo, ver) <- skewed(module), dep_pin(repo, module, ver).
+
+# ── blast radius, and the one rule body that is NOT a transliteration ───────
+# v5 writes  skew_width(m, count(r)) <- skew(m,_,_), dep_pin(r,m,_).
+# Written that way here the grouping column reaches the aggregate from `skew`
+# while the aggregated rows come from `dep_pin`, which is the shape
+# `aggregate_group_not_delta_local` refuses -- the group a delta belongs to is
+# not decidable from the delta. Aggregating `skew_row` instead is the same
+# function (skew_row IS skewed joined to dep_pin, declared right above) with the
+# grouping column local to the rel being counted. The gate grades the ROWS, and
+# they must match v5's to the byte.
+rel skew_width(module: text, repos: int).
+skew_width(module, count(repo)) <- skew_row(module, repo, _).
+
+? dep_pin(repo, module, ver).
+? skewed(module).
+? skew_row(module, repo, ver).
+? skew_width(module, repos).

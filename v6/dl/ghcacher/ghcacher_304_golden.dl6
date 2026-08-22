@@ -10,11 +10,10 @@ rel etag_event(ep: text, tag: text) log keep(all).
 rel current_etag(ep: text, tag: text) key(1).
 rel current_clock(period: int, bucket: int) key(1).
 
-bind interval(period: int, bucket: int).
+rel interval(period: int, bucket: int).
 
-sh fetch(ep: text, prev: text, bucket: int) ->
-  (status: int, tag: text, stars: int, full_name: text) =
-  `fetch {ep} with $prev`.
+rel /http/fetch(ep: text, prev: text, bucket: int) ->
+  (status: int, tag: text, stars: int, full_name: text) key(1, 2).
 
 rel poll(ep: text, prev: text, bucket: int).
 rel resp(ep: text, bucket: int, status: int, tag: text, stars: int, full_name: text).
@@ -31,7 +30,7 @@ poll(Ep, Prev, Bucket) <-
 
 resp(Ep, Bucket, Status, Tag, Stars, FullName) <-
   poll(Ep, Prev, Bucket),
-  fetch(Ep, Prev, Bucket, Status, Tag, Stars, FullName).
+  /http/fetch(Ep, Prev, Bucket, Status, Tag, Stars, FullName).
 
 fresh_hit(Ep, Tag, Stars, FullName) <-
   resp(Ep, _, Status, Tag, Stars, FullName),

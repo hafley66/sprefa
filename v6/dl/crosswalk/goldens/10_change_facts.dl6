@@ -1,0 +1,156 @@
+# 10_change_facts.dl6 -- the V5 change-fact family as authored dl6.
+#
+# 0_multirepo_crawl.dl6 reads each repository's FILE BYTES at one revision,
+# 4_dep_crawl.dl6 reads the dependency frontier BETWEEN repositories, and
+# 7_git_refs.dl6 reads the ref store and the commit DAG. This program reads the
+# plane none of them touches: what a PAIR of revisions did to the tree. A
+# creation, a deletion, a rename and a touched line number are facts about the
+# DIFFERENCE between two trees, and no reading of either tree alone produces
+# them.
+#
+# ── WHY THE DEMAND PATH AND NOT SourceBind ──────────────────────────────────
+# SourceBind (`sprefa-engine-rs/src/source_bind/_0_types.rs:5-10`) declares
+# repo / rev / blob / file / span / specifier: content that binds PER SOURCE ROW
+# and arrives on its own schedule. A change fact binds to no source row. It is
+# keyed on a (repository, base, head) TRIPLE that a rule posts, and the answer
+# to that question is a row set. That is the demand contract exactly, the same
+# reading `git_merge_base` and `git_ahead_behind` got in `hosts.rs`, so the
+# three names below ride it and their column constants live beside the executor
+# in `change_facts.rs`.
+#
+# ── THREE NAMES, ONE DIFF ───────────────────────────────────────────────────
+# `git_change`, `git_rename` and `git_changed_line` settle ONE answer per
+# (repo, rev_base, rev_head): two tracked-file listings and one
+# `cat-file --batch` over the blobs the line diff reads. Three declarations
+# would otherwise cost six Git passes. `hosts.rs` recognizes the three ruled
+# names and delegates to Soopy in-process, the SoopyFilesExecutor arrangement
+# (`hosts.rs:52`) applied to a fourth family, which is why every template below
+# exits nonzero: a runtime WITHOUT the linked arm must stop by name rather than
+# answer zero rows.
+#
+# ── THE FOUR KINDS PARTITION THE DIFF ───────────────────────────────────────
+# A renamed path is a rename and NOT a creation plus a deletion, which is the
+# single letter `git diff --name-status` prints per row. Renames are
+# EXACT-CONTENT only, the `-M100%` spelling: Git's default `-M` is a
+# 50%-similarity heuristic with a tunable threshold, and a relation whose answer
+# moves when a knob moves is not a fact. A file that moved AND changed is
+# therefore a deletion plus a creation, and says so.
+#
+# ── ABSENCE IS A ROW COUNT, NOT A NULL ──────────────────────────────────────
+# An unchanged path produces NO row in any of the six relations, which is what
+# makes this a diff rather than a listing. A binary file produces its `modified`
+# row and ZERO `changed_line` rows, because `git diff` prints a header and no
+# hunk for one; `opaque_change` below is that fact given a name instead of
+# leaving it as a silent gap.
+#
+# ── changed_line IS HEAD-SIDE AND 1-BASED ───────────────────────────────────
+# V5's `changed_line` is "the new-side lines of every hunk, pure-deletion hunks
+# emit nothing" (`src/rels/git.rs:82-97`), and this keeps that contract against
+# a rev pair rather than against the worktree. A deleted path has no head side
+# and so contributes no line; a created path contributes every line it has.
+#
+# ── THE RX LOWERING ─────────────────────────────────────────────────────────
+#   wantDiff$.pipe(                                    // three names, one diff
+#     map(mintIdentityAndWitness),
+#     distinct(demand => demand.witnessDigest),
+#     mergeMap(revisionDiffMemoised),
+#     mergeMap(commitEdbArrival))
+#
+#   merge(created$, deleted$, modified$,                // changed
+#         renamed$.pipe(map(row => ({ ...row, path: row.pathTo }))))
+#
+#   modified$.pipe(                                     // opaque_change
+#     withLatestFrom(changedLine$),
+#     filter(([row, lines]) => !lines.some(line => line.path === row.path)))
+#
+#   combineLatest([created$, changedLine$]).pipe(       // new_line
+#     filter(([made, line]) => made.path === line.path))
+
+rel git_change(repo: text, rev_base: text, rev_head: text)
+   -> (change_kind: text, path: text).
+
+rel git_rename(repo: text, rev_base: text, rev_head: text)
+   -> (path_from: text, path_to: text).
+
+rel git_changed_line(repo: text, rev_base: text, rev_head: text)
+   -> (path: text, line_number: int).
+
+# One row per rev pair the program wants diffed. The poster names both
+# revisions, so two trees are read exactly where a rule asked and nowhere else.
+rel want_diff(repo: text, rev_base: text, rev_head: text).
+
+# ── the three single-path kinds ─────────────────────────────────────────────
+# One host answers all three and names its kind in the row, because the three
+# come out of ONE pass over the two listings and splitting them across three
+# host names would not buy a second pass any information.
+rel created(repo: text, rev_base: text, rev_head: text, path: text).
+created(repo, rev_base, rev_head, path) <-
+  want_diff(repo, rev_base, rev_head),
+  git_change(repo, rev_base, rev_head, change_kind, path),
+  change_kind == "created".
+
+rel deleted(repo: text, rev_base: text, rev_head: text, path: text).
+deleted(repo, rev_base, rev_head, path) <-
+  want_diff(repo, rev_base, rev_head),
+  git_change(repo, rev_base, rev_head, change_kind, path),
+  change_kind == "deleted".
+
+rel modified(repo: text, rev_base: text, rev_head: text, path: text).
+modified(repo, rev_base, rev_head, path) <-
+  want_diff(repo, rev_base, rev_head),
+  git_change(repo, rev_base, rev_head, change_kind, path),
+  change_kind == "modified".
+
+# ── the fourth kind, which carries two paths ────────────────────────────────
+rel renamed(repo: text, rev_base: text, rev_head: text, path_from: text, path_to: text).
+renamed(repo, rev_base, rev_head, path_from, path_to) <-
+  want_diff(repo, rev_base, rev_head),
+  git_rename(repo, rev_base, rev_head, path_from, path_to).
+
+# ── the head-side lines ─────────────────────────────────────────────────────
+rel changed_line(repo: text, rev_base: text, rev_head: text, path: text, line_number: int).
+changed_line(repo, rev_base, rev_head, path, line_number) <-
+  want_diff(repo, rev_base, rev_head),
+  git_changed_line(repo, rev_base, rev_head, path, line_number).
+
+# ── the union view ──────────────────────────────────────────────────────────
+# Four rules into one rel is the split-and-union shape. A rename contributes its
+# HEAD-side path only, which is V5's own reading: `git status` prints
+# `old -> new` and V5 takes the new side (`src/rels/git.rs:48-53`). A deleted
+# path has no head side and is still a path this pair touched, so it is a row.
+rel changed(repo: text, rev_base: text, rev_head: text, path: text).
+changed(repo, rev_base, rev_head, path) <- created(repo, rev_base, rev_head, path).
+changed(repo, rev_base, rev_head, path) <- deleted(repo, rev_base, rev_head, path).
+changed(repo, rev_base, rev_head, path) <- modified(repo, rev_base, rev_head, path).
+changed(repo, rev_base, rev_head, path) <- renamed(repo, rev_base, rev_head, _, path).
+
+# ── a change with no readable line, which is what binary means here ─────────
+# The join the two families exist for: the kind family says the blob moved, the
+# line family says nothing about where. Neither answers this alone.
+rel opaque_change(repo: text, rev_base: text, rev_head: text, path: text).
+opaque_change(repo, rev_base, rev_head, path) <-
+  modified(repo, rev_base, rev_head, path),
+  not(changed_line(repo, rev_base, rev_head, path, _)).
+
+# ── the lines that arrived with a brand-new file ────────────────────────────
+rel new_line(repo: text, rev_base: text, rev_head: text, path: text, line_number: int).
+new_line(repo, rev_base, rev_head, path, line_number) <-
+  created(repo, rev_base, rev_head, path),
+  changed_line(repo, rev_base, rev_head, path, line_number).
+
+# ── how many head-side lines each touched path carries ──────────────────────
+# Every grouping column is local to the rel being counted, which is what
+# aggregate_group_not_delta_local requires.
+rel changed_line_count(repo: text, rev_base: text, rev_head: text, path: text, lines: int).
+changed_line_count(repo, rev_base, rev_head, path, count(line_number)) <-
+  changed_line(repo, rev_base, rev_head, path, line_number).
+
+? created(repo, rev_base, rev_head, path).
+? deleted(repo, rev_base, rev_head, path).
+? modified(repo, rev_base, rev_head, path).
+? renamed(repo, rev_base, rev_head, path_from, path_to).
+? changed(repo, rev_base, rev_head, path).
+? changed_line(repo, rev_base, rev_head, path, line_number).
+? opaque_change(repo, rev_base, rev_head, path).
+? new_line(repo, rev_base, rev_head, path, line_number).
+? changed_line_count(repo, rev_base, rev_head, path, lines).

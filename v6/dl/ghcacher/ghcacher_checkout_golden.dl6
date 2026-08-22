@@ -14,11 +14,10 @@ rel branch_sha_event(repo_slug: text, bucket: int, want_sha: text).
 rel branch_sha(repo_slug: text, want_sha: text) key(1).
 rel current_clock(period: int, bucket: int) key(1).
 
-bind interval(period: int, bucket: int).
+rel interval(period: int, bucket: int).
 
-sh repo_checkout(repo_slug: text, dest_root: text, want_sha: text)
-  -> (checkout_path: text, head_sha: text) =
-  `checkout {repo_slug} under {dest_root}`.
+rel /soopy/checkout(repo_slug: text, dest_root: text, want_sha: text)
+  -> (checkout_path: text, head_sha: text) key(1, 2).
 
 rel checkout_answer(repo_slug: text, dest_root: text, checkout_path: text, head_sha: text).
 rel checkout(repo_slug: text, checkout_path: text, head_sha: text) key(1).
@@ -31,7 +30,7 @@ branch_sha(RepoSlug, WantSha) <+ branch_sha_event(RepoSlug, _Bucket, WantSha).
 checkout_answer(RepoSlug, DestRoot, CheckoutPath, HeadSha) <-
   repo(RepoSlug, DestRoot),
   branch_sha(RepoSlug, WantSha),
-  repo_checkout(RepoSlug, DestRoot, WantSha, CheckoutPath, HeadSha).
+  /soopy/checkout(RepoSlug, DestRoot, WantSha, CheckoutPath, HeadSha).
 
 checkout(RepoSlug, CheckoutPath, HeadSha) <+
   checkout_answer(RepoSlug, _DestRoot, CheckoutPath, HeadSha).
