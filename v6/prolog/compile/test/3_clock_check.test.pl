@@ -3,6 +3,10 @@
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
 
+% The path walk is pinned off on the compile path (rulings.pl
+% clock_path_check_pinned_off); this battery tests it, so it turns it on.
+:- create_prolog_flag(dl6_clock_path_walk, false, [type(boolean), keep(true)]).
+:- set_prolog_flag(dl6_clock_path_walk, true).
 :- use_module(library(plunit)).
 :- use_module('../../3_clock_check',
               [ clock_dependencies/2, clock_dependency/8, inferred_clock/4,

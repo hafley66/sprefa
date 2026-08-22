@@ -303,6 +303,16 @@ cycle_from(Start, Current, Component, Dependencies, Visited, Sum0, Sum) :-
                  Sum1, Sum)
     ).
 
+% PINNED OFF (rulings.pl clock_path_check_pinned_off): the clock path walk,
+% clock_path_conflict and unconstructive_clock_cycle, does not run on the
+% compile path. The code stays as the seed of a later calculus: edge reference
+% counting (a full retraction invalidating edges and refCounts, auto-drop as in
+% Rust), relational cardinality over time, and det modes in the Mercury sense
+% with clocks on the pipeline. The prolog flag dl6_clock_path_walk (false by
+% default; the checker's own test battery sets it true) brings it back.
+:- create_prolog_flag(dl6_clock_path_walk, false, [type(boolean), keep(true)]).
+clock_path_walk_enabled :- current_prolog_flag(dl6_clock_path_walk, true).
+
 clock_violation(Program, cross_plane(finalize_in_level_rule(Ref))) :-
     clock_dependencies(Program, Dependencies),
     member(dependency(_, Ref, _, z, b, negative, 1, finalize_in_level),
@@ -334,6 +344,7 @@ clock_violation(Program, cross_plane(latest_in_level_rule(Ref))) :-
 % a full component search per path. That product was the plan phase's cost:
 % 58 chain rules times a whole component search each.
 clock_violation(Program, clock_path_conflict(Origin, Ref, Left, Right)) :-
+    clock_path_walk_enabled,
     clock_dependencies(Program, Dependencies),
     program_nodes(Program, Dependencies, Nodes),
     delayed_recurrence_nodes(Program, Dependencies, DelayedNodes),
@@ -346,6 +357,7 @@ clock_violation(Program, clock_path_conflict(Origin, Ref, Left, Right)) :-
     Left < Right,
     !.
 clock_violation(Program, unconstructive_clock_cycle(Component, Reason)) :-
+    clock_path_walk_enabled,
     clock_scc(Program, Component, invalid(Reason)).
 
 % Multiple grade-zero trigger sources in one edge arm are intentional
