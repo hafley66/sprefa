@@ -29,13 +29,16 @@ their own section with a throw site each.
 The `3_clock_check.pl` path-walk blowup that used to stop this program at
 `compile.pl:239` is pinned off on the compile path
 (`clock_path_walk_enabled :- fail.`, ruling `clock_path_check_pinned_off`,
-`v6/prolog/conformance/rulings.pl`). Five lowering stops followed and are
+`v6/prolog/conformance/rulings.pl`). Six lowering stops followed and are
 fixed in the program: `trigger_arg_not_var` on eleven edge-rule (`<+`)
-literals, `edge_into_unkeyed_set(not_an_org/1)`, and
+literals, `edge_into_unkeyed_set(not_an_org/1)`,
 `aggregate_group_not_delta_local` on `rate_pool/4` and `pr_batch/4` (grouped
 columns must come from one positive body atom's own delta rows,
 `lower.pl:4635`; `pr_batch` now routes through `pr_batch_member_keyed/4` to
-materialize `BatchKey` as a stored column first).
+materialize `BatchKey` as a stored column first), and `edge_body_shape` on
+`current_clock/2` (main's #408 merge: `expand_probe_rule` only desugars a
+slash executor inside a `<-` body, so `current_clock` moved from `<+` to `<-`,
+matching `prwatch.dl6:47`'s `beat/1`).
 
 ## How to run it
 
