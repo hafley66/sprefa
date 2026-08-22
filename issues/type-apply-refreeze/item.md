@@ -42,3 +42,8 @@ Closed named fixed-arity constructors only. Constructor variables, higher kinds,
 ### 2026-08-22T21:59:22Z · @terra
 
 Current focused CI: compiler_relations 28/28; type_relation_ir 57/57; annotation_surface 8/8; total 93/93. git diff --check passed. Independent review remains pending.
+
+### 2026-08-22T22:03:25Z · @terra
+
+Independent Luna review: one medium canonical-row termination finding, corrected in a3e857029; focused review receipt 93/93. Current full Prolog CI: just plunit completed 1,070 results, 1,069 passed, 1 failed: catalog_plane_rail:level_plane_family_corpus_counts at v6/prolog/compile/test/plunit_tests.pl:1845. Card remains open pending a passing full CI receipt.
+
