@@ -1,6 +1,6 @@
 # Brief (v2): ghcache.dl6 compiles, folds a simulated schedule, then runs live against the org
 
-Base sha: the spawner prints it. FIRST ACTIONS: `git fetch origin feature/ghcache-compiles && git reset --hard origin/feature/ghcache-compiles` (two commits of the previous lane: the aggregate fix and live_cadence), then `git merge origin/main`; `bash
+Base sha: the spawner prints it. FIRST ACTIONS: `git fetch origin feature/ghcache-compiles && git reset --hard origin/feature/ghcache-compiles` (four commits of two previous lanes: aggregate fix, live_cadence, a main merge, schedule growth), then `git merge origin/main` (main now carries #408: the rel form, slash executors, no sh/bind; re-spell anything the merge leaves in the old form); `bash
 v6/tools/doctor-deps.sh` (DEPS OK). Never spawn subagents. Commit every green step. PR
 against `main`. `timeout` on every command; `export CARGO_BUILD_JOBS=3 RUST_TEST_THREADS=4`.
 
