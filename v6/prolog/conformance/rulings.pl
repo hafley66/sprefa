@@ -804,3 +804,9 @@ ruling(key_column_annotation_over_suffix, annotation_preferred, user,
 % pipeline ("this pipe is lazy 1"), to catch rxjs-world bugs at compile time.
 ruling(clock_path_check_pinned_off, stub_keep_cross_plane, user,
        'chat 2026-08-21: "fuck the clock checker at this point, pin it ... comment it/stub it out, we havent a need for it yet bc we cant even express infinite yet"').
+
+% Shell comes back ONLY as an ordinary executor rel, never a keyword:
+% `rel /sh/run(cmd: key(text), cwd: text) -> (line: int, out: text, status: int)`.
+% The `sh` declaration form stays dead.
+ruling(shell_as_executor_rel, rel_sh_run_only, user,
+       'chat 2026-08-21: "we will add sh back but it will literally be rel sh(cmd: string, etc.)"').
