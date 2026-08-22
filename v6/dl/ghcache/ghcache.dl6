@@ -901,6 +901,23 @@ recent_event(RepoSlug, EventType, Actor, CreatedAt, Action) <-
 rate_pool(ApiType, RateRemaining, RateReset, count(AtTick)) <-
   call_log(AtTick, ApiType, _Ep, _St, RateRemaining, RateReset, _By, _Ch).
 
+# ── the engine measuring itself, prwatch.dl6:97-106's shape ────────────────
+
+rel /dl/tick_cost(bucket: int) ->
+  (executor: text, wall_ms: int, sqlite_ms: int, calls: int, rows_out: int,
+   bytes: int, rss_kb: int).
+
+rel measured(bucket: int, executor: text, wall_ms: int, sqlite_ms: int,
+             calls: int, rows_out: int, bytes: int, rss_kb: int).
+measured(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <-
+  current_clock(60, Bucket),
+  /dl/tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb).
+
+rel tick_cost(bucket: int, executor: text, wall_ms: int, sqlite_ms: int,
+              calls: int, rows_out: int, bytes: int, rss_kb: int) log keep(all).
+tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <+
+  measured(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb).
+
 # ── queries ─────────────────────────────────────────────────────────────────
 
 ? open_pr(RepoSlug, Number, Title, Author, HeadRef, Draft, Mergeable,
@@ -922,3 +939,4 @@ rate_pool(ApiType, RateRemaining, RateReset, count(AtTick)) <-
              LastChangedBucket).
 ? branch(RepoRef, BranchName, Sha, UpdatedAt).
 ? checkout(RepoRef, BranchName, LocalPath, Sha, CheckedOutBucket).
+? tick_cost(bucket, executor, wall_ms, sqlite_ms, calls, rows_out, bytes, rss_kb).

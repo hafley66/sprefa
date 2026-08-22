@@ -25,6 +25,18 @@ their own section with a throw site each.
 | `ghcache.dl6` reaches the emitter | **yes** |
 | `executors/graphql.rs` + `executors/fetch.rs` | built, 11 unit tests green |
 | the six `v6/dl/ghcacher` goldens | unchanged, gate green |
+| simulated schedule through the Rust door | yes, `v6/dl/ghcache/gate.sh` and `dl6 run --schedule`, rate-stop-threshold receipt below |
+| live `dl6 run` against `hafley66` (instant, sprefa, hafley-rs, hafley-rxjs) | yes, pass 1 = 200, every later pass = 304/bytes=0, receipt below |
+
+**Known defect, filed, not fixed here**: `period_candidate`/`endpoint_period`
+compare `global_setting.poll_period` (raw SECONDS) directly as a mod-divisor
+against `current_clock(60,Bucket)`, whose `Bucket` increments once per real
+MINUTE (`clock.rs:bucket_of` = `now_secs/every`). Never divided by the clock
+granularity, so `poll_interval_seconds=60` is due every 60 buckets = 60
+minutes, not every 60 seconds; the same gap hits `org_repo_discovery_interval_seconds`
+and the server `X-Poll-Interval` candidate. Filed as issue `ghcache-dl6-poll`
+(main `3fe20ee7c`). The live receipt below works around it with
+`poll_interval_seconds=1` in the smoke-test config only.
 
 The `3_clock_check.pl` path-walk blowup that used to stop this program at
 `compile.pl:239` is pinned off on the compile path
