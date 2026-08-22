@@ -12,10 +12,10 @@
 # token and the GraphQL query are rules here, so a restart re-reads the db.
 
 use clock.
-use dl as dl.
+use dl.
 use env.
 use http.
-use soopy as soopy.
+use soopy.
 use toml.
 
 rel repo(owner: text, name: text).
@@ -93,10 +93,10 @@ rel get(url: text, headers: text, prev_etag: text, bucket: int)
 rel post(url: text, headers: text, request_body: text, bucket: int)
   -> (status: int, response_headers: json, body: json, bytes: int).
 
-rel soopy.checkout(repo_slug: text, dest_root: text, want_sha: text)
+rel checkout(repo_slug: text, dest_root: text, want_sha: text)
   -> (checkout_path: text, head_sha: text).
 
-rel soopy.mirror_pr_heads(repo_slug: text, dest_root: text, want_sha: text)
+rel mirror_pr_heads(repo_slug: text, dest_root: text, want_sha: text)
   -> (checkout_path: text, pr_head_count: int).
 
 # ── config resolution ───────────────────────────────────────────────────────
@@ -1208,7 +1208,7 @@ notification(GhId, RepoRef, SubjectType, SubjectTitle, SubjectUrl,
 
 rel checkout_task(repo_slug: text, dest_root: text, want_sha: text,
                   fetch_pr_branches: int).
-rel checkout(repo_ref: repo, branch: text, local_path: text, sha: text,
+rel repo_checkout(repo_ref: repo, branch: text, local_path: text, sha: text,
              checked_out_bucket: int) key(1, 2).
 rel checkout_answer(repo_slug: text, checkout_path: text, head_sha: text).
 rel pr_head_mirror(repo_slug: text, checkout_path: text, pr_head_count: int).
@@ -1225,14 +1225,14 @@ checkout_task(RepoSlug, DestRoot, WantSha, CheckoutPrBranches) <-
 
 checkout_answer(RepoSlug, CheckoutPath, HeadSha) <-
   checkout_task(RepoSlug, DestRoot, WantSha),
-  soopy.checkout(RepoSlug, DestRoot, WantSha, CheckoutPath, HeadSha).
+  checkout(RepoSlug, DestRoot, WantSha, CheckoutPath, HeadSha).
 
 pr_head_mirror(RepoSlug, CheckoutPath, PrHeadCount) <-
   checkout_task(RepoSlug, DestRoot, WantSha, 1),
-  soopy.mirror_pr_heads(RepoSlug, DestRoot, WantSha, CheckoutPath,
+  mirror_pr_heads(RepoSlug, DestRoot, WantSha, CheckoutPath,
                        PrHeadCount).
 
-checkout(RepoRef, DefaultBranch, CheckoutPath, HeadSha, Bucket) <+
+repo_checkout(RepoRef, DefaultBranch, CheckoutPath, HeadSha, Bucket) <+
   checkout_answer(RepoSlug, CheckoutPath, HeadSha),
   current_clock(Period, Bucket),
   Period == 60,
@@ -1318,7 +1318,7 @@ rate_pool(ApiType, RateRemaining, RateReset, count(AtTick)) <-
 
 # ── the engine measuring itself ─────────────────────────────────────────────
 
-rel dl.tick_cost(bucket: int) ->
+rel tick_cost(bucket: int) ->
   (executor: text, wall_ms: int, sqlite_ms: int, calls: int, rows_out: int,
    bytes: int, rss_kb: int).
 
@@ -1326,11 +1326,11 @@ rel measured(bucket: int, executor: text, wall_ms: int, sqlite_ms: int,
              calls: int, rows_out: int, bytes: int, rss_kb: int).
 measured(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <-
   current_clock(60, Bucket),
-  dl.tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb).
+  tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb).
 
-rel tick_cost(bucket: int, executor: text, wall_ms: int, sqlite_ms: int,
+rel engine_tick_cost(bucket: int, executor: text, wall_ms: int, sqlite_ms: int,
               calls: int, rows_out: int, bytes: int, rss_kb: int) log keep(all).
-tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <+
+engine_tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <+
   measured(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb).
 
 # ── queries ─────────────────────────────────────────────────────────────────
@@ -1353,7 +1353,7 @@ tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <+
 ? poll_state(PageUrl, Etag, LastModified, PollInterval, LastPolledBucket,
              LastChangedBucket).
 ? branch(RepoRef, BranchName, Sha, UpdatedAt).
-? checkout(RepoRef, BranchName, LocalPath, Sha, CheckedOutBucket).
+? repo_checkout(RepoRef, BranchName, LocalPath, Sha, CheckedOutBucket).
 ? lane_proof(repo_slug, branch, pr, merge_commit_sha).
 ? pr_transition(repo_ref, number, from_state, to_state, at_tick).
-? tick_cost(bucket, executor, wall_ms, sqlite_ms, calls, rows_out, bytes, rss_kb).
+? engine_tick_cost(bucket, executor, wall_ms, sqlite_ms, calls, rows_out, bytes, rss_kb).

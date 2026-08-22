@@ -1323,11 +1323,16 @@ impl FinalSnapshot {
     }
 }
 
+/// The delta log is one row per line; a tab or newline inside a value is
+/// escaped so a PR body cannot forge a column or end the resident run.
 fn delta_line(sign: char, rel: &str, row: &[String]) -> Result<String> {
-    for cell in row {
-        if cell.contains('\t') || cell.contains('\n') {
-            bail!("a watch delta cannot carry the tab or newline in a {rel} value");
-        }
+    let cells: Vec<String> = row.iter().map(|cell| delta_cell(cell)).collect();
+    Ok(format!("{sign}{rel}\t{}", cells.join("\t")))
+}
+
+fn delta_cell(cell: &str) -> String {
+    if !cell.contains(['\t', '\n', '\r', '\\']) {
+        return cell.to_string();
     }
-    Ok(format!("{sign}{rel}\t{}", row.join("\t")))
+    cell.replace('\\', "\\\\").replace('\t', "\\t").replace('\n', "\\n").replace('\r', "\\r")
 }
