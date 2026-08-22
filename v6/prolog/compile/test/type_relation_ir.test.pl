@@ -6,6 +6,7 @@
 :- use_module('../../0_generic_expand',
               [ schema_member_rows/2, type_relation_rows/2,
                 expand_generic_program/2, expand_generic_program_raw/2,
+                expand_generic_program_with_bindings/3,
                 freeze_type_rows/2, normalize_key_wrappers/2 ]).
 :- use_module('../../lower', [ catalog_type_rows/6,
                                catalog_type_relation_rows/3,
@@ -757,6 +758,45 @@ test(canonical_freeze_imported_generic_enum_keeps_enum_identity) :-
     member(declaration(ConcreteId, root, ConcreteName, enum, compile_time), Rows),
     ConcreteId = named(foreign, enum, ConcreteName),
     sub_atom(ConcreteName, 0, _, _, '__gen__Result').
+
+test(type_application_reuses_existing_semantic_identity) :-
+    Constructor = named(local, relation, box),
+    Application = application(Constructor, [primitive(int)]),
+    Rows = [ declaration(Constructor, root, box, relation, compile_time),
+             application(Application, Constructor),
+             argument(arg(Application, 1), Application, 1, type_atom(int)) ],
+    freeze_type_rows([semantic_type_rows(Rows)], Frozen),
+    memberchk(semantic_type_rows(FrozenRows), Frozen),
+    findall(Id, member(application(Id, _), FrozenRows), Ids),
+    Ids == [Application].
+
+test(type_application_refreeze_constructs_nested_applications) :-
+    Constructor = named(local, relation, 'Box'),
+    Inner = application(named(local, relation, list), [primitive(int)]),
+    Outer = application(Constructor, [Inner]),
+    string_codes("rel Box(T)(value: T).\nrel Holder(value: Box(list(int))).\n",
+                 Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expand_generic_program_with_bindings(Program, Bindings, prog(Decls, _)),
+    memberchk(semantic_type_rows(Rows), Decls),
+    memberchk(application(Inner, named(local, relation, list)), Rows),
+    memberchk(application(Outer, Constructor), Rows),
+    memberchk(argument(_, Outer, 1, type_application(Inner)), Rows).
+
+test(type_application_duplicate_requests_have_one_application_row) :-
+    Constructor = named(local, relation, box),
+    Application = application(Constructor, [primitive(int)]),
+    Rows = [ declaration(Constructor, root, box, relation, compile_time),
+             application(Application, Constructor),
+             application(Application, Constructor),
+             argument(arg(Application, 1), Application, 1, type_atom(int)),
+             argument(arg(Application, 1), Application, 1, type_atom(int)) ],
+    freeze_type_rows([semantic_type_rows(Rows)], Frozen),
+    memberchk(semantic_type_rows(FrozenRows), Frozen),
+    findall(application(Application, Candidate),
+            member(application(Application, Candidate), FrozenRows),
+            RowsForApp),
+    RowsForApp = [application(Application, Constructor)].
 
 test(canonical_freeze_type_annotation_fixture_compiles) :-
     predicate_property(plunit_type_relation_ir:associated_scalar_rows(_),

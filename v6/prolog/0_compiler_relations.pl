@@ -3,7 +3,8 @@
 :- module(compiler_relations,
           [ partition_compiler_relations/3,
             partition_compiler_program/5,
-            evaluate_compiler_relations/3
+            evaluate_compiler_relations/3,
+            compiler_type_apply_requests/3
           ]).
 
 :- use_module(library(lists)).
@@ -96,6 +97,7 @@ compiler_builtin_ref(type_member_role/3).
 compiler_builtin_ref(type_application/2).
 compiler_builtin_ref(type_argument/4).
 compiler_builtin_ref(type_application_site/4).
+compiler_builtin_ref(type_apply/3).
 
 compiler_builtin_declaration_collisions(_, []) :- !.
 compiler_builtin_declaration_collisions(Decls,
@@ -237,10 +239,58 @@ evaluate_compiler_relations(compiler_relations(Relations, Rules), SeedRows,
                             ClosureRows) :-
     maplist(validate_compiler_seed(Relations), SeedRows),
     maplist(validate_compiler_rule_plane_with_relations(Relations), Rules),
+    validate_type_apply_recursive_construction(Rules),
     sort(SeedRows, SeedSet),
     compiler_fixpoint(Rules, SeedSet, Closure0),
     validate_functional_rows(Relations, Closure0),
     ClosureRows = Closure0.
+
+validate_type_apply_recursive_construction(Rules) :-
+    member(Rule, Rules),
+    rule_head_ref(Rule, Ref),
+    rule_body(Rule, Body),
+    body_contains_type_apply(Body),
+    rule_dependency_path(Rules, Ref, Ref, [Ref]),
+    !,
+    throw(unsupported_construct(type_apply_recursive_construction([Ref]))).
+validate_type_apply_recursive_construction(_).
+
+rule_dependency_path(Rules, From, Target, Seen) :-
+    rule_dependency(Rules, From, Next),
+    ( Next == Target
+    ; \+ memberchk(Next, Seen),
+      rule_dependency_path(Rules, Next, Target, [Next | Seen])
+    ).
+
+rule_dependency(Rules, HeadRef, BodyRef) :-
+    member(Rule, Rules),
+    rule_head_ref(Rule, HeadRef),
+    rule_body(Rule, Body),
+    body_atoms(Body, Atoms),
+    member(Atom, Atoms),
+    atom_ref(Atom, BodyRef).
+
+compiler_type_apply_requests(Rules, Rows, Requests) :-
+    findall(type_apply_request(Application),
+            ( member(Rule0, Rules),
+              copy_term(Rule0, Rule),
+              rule_body(Rule, Body),
+              body_contains_type_apply(Body),
+              satisfy_compiler_body(Rows, Body),
+              body_type_apply_application(Body, Application),
+              ground(Application) ),
+            Requests0),
+    sort(Requests0, Requests).
+
+body_contains_type_apply(type_apply(_, _, _)) :- !.
+body_contains_type_apply((Left, Right)) :- !,
+    ( body_contains_type_apply(Left) ; body_contains_type_apply(Right) ).
+
+body_type_apply_application(type_apply(_, _, Application), Application) :- !.
+body_type_apply_application((Left, _), Application) :-
+    body_type_apply_application(Left, Application).
+body_type_apply_application((_, Right), Application) :-
+    body_type_apply_application(Right, Application).
 
 validate_compiler_seed(Relations, Row) :-
     ( atom_ref(Row, Ref)
@@ -280,6 +330,13 @@ satisfy_compiler_body(_, true) :- !.
 satisfy_compiler_body(Rows, (Left, Right)) :- !,
     satisfy_compiler_body(Rows, Left),
     satisfy_compiler_body(Rows, Right).
+satisfy_compiler_body(_, type_apply(Constructor, Arguments, Application)) :-
+    !,
+    ( ground(Constructor), is_list(Arguments), maplist(ground, Arguments)
+    -> Application = application(Constructor, Arguments)
+    ; throw(unsupported_construct(type_apply_non_ground_application(
+                type_apply(Constructor, Arguments, Application))))
+    ).
 satisfy_compiler_body(Rows, Goal) :- member(Row, Rows), Row = Goal.
 
 validate_functional_rows([], _).
