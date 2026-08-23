@@ -38,6 +38,14 @@ pub fn dedup_key(row: &[Value]) -> String {
 
 /// One comparison per probe under the index, one per (statement, relation)
 /// pair under a scan.
+/// Level statements a tick actually ran, so a COUNT test can read that a level
+/// whose sources did not move paid nothing.
+static LEVEL_RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn level_runs() -> u64 {
+    LEVEL_RUNS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 static PLAN_PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub fn plan_probes() -> u64 {
@@ -674,6 +682,46 @@ fn rows_equal(left: &Row, right: &Row) -> bool {
     left == right
 }
 
+/// The `pre/1` plane, filled once per tick after the arrivals land and before
+/// the level phase: `pre(level_head(..))` reads last tick's settled rows.
+pub fn snapshot_pre(
+    seam: &SqliteSeam,
+    pre_rels: &[String],
+    relations: &[IncrementalRelationPlan],
+) -> BoundaryResult<()> {
+    if pre_rels.is_empty() {
+        return Ok(());
+    }
+    let plans = plan_index(relations);
+    let mut statements = Vec::new();
+    for rel in pre_rels {
+        let relation = plan_for(&plans, rel, "pre snapshot relation missing");
+        let columns = relation
+            .columns
+            .iter()
+            .map(|column| quote_identifier(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let pre_table = quote_identifier(&format!("__pre_{}", relation.table_name));
+        statements.push(format!("DELETE FROM {pre_table}"));
+        statements.push(format!(
+            "INSERT INTO {} ({}) SELECT {} FROM {}",
+            pre_table,
+            columns,
+            columns,
+            quote_identifier(&relation.table_name)
+        ));
+    }
+    let _scope = crate::trace::Scope::verb(
+        "snapshot_pre",
+        "-",
+        crate::write_verbs::strategy_name(relations),
+    );
+    seam.execute_multiple(&statements.join(";\n"))
+        .expect("pre snapshot failed");
+    Ok(())
+}
+
 // One statement per tick: the clock the oracle fixes for the whole tick.
 pub fn advance_tick(seam: &SqliteSeam) {
     let _scope = crate::trace::Scope::phase("advance_tick");
@@ -1144,6 +1192,7 @@ fn apply_level_statement(
         &statement.head_rel,
         "incremental level head relation missing",
     );
+    LEVEL_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if let Some(aggregate) = &statement.aggregate_sql {
         apply_aggregate_level_statement(
             seam,
@@ -1464,14 +1513,47 @@ fn edge_log_write_statement(
     })
 }
 
+/// Where an edge write's events go. A sequenced arm collects, because a row it
+/// writes and then overwrites inside the same tick must not carry.
+enum EdgeSink<'a> {
+    Stage,
+    Collect(&'a mut Vec<DeltaEvent>),
+}
+
+impl EdgeSink<'_> {
+    fn take(
+        &mut self,
+        seam: &SqliteSeam,
+        relation: &IncrementalRelationPlan,
+        events: Vec<DeltaEvent>,
+    ) -> BoundaryResult<()> {
+        match self {
+            EdgeSink::Stage => stage_events(
+                seam,
+                std::slice::from_ref(relation),
+                &events,
+                &[(relation.next_frontier_table_name.clone(), 0)],
+            ),
+            EdgeSink::Collect(collected) => {
+                collected.extend(events);
+                Ok(())
+            }
+        }
+    }
+}
+
+// `base` is 0 for a set-at-once arm and the running occurrence counter for a
+// sequenced one, so the frontier keeps arrival order across the whole walk.
 fn apply_log_edge(
     seam: &SqliteSeam,
     statement: &crate::types::IncrementalEdgeStatement,
     relation: &IncrementalRelationPlan,
     rows: &[Row],
-) -> BoundaryResult<()> {
+    base: u64,
+    sink: &mut EdgeSink,
+) -> BoundaryResult<u64> {
     if rows.is_empty() {
-        return Ok(());
+        return Ok(base);
     }
     let events: Vec<DeltaEvent> = rows
         .iter()
@@ -1479,7 +1561,7 @@ fn apply_log_edge(
         .map(|(sequence, row)| DeltaEvent {
             rel: statement.head_rel.clone(),
             sign: 1,
-            sequence: sequence as u64,
+            sequence: base + sequence as u64,
             row: row.clone(),
         })
         .collect();
@@ -1493,12 +1575,8 @@ fn apply_log_edge(
         seam.execute(&edge_log_write_statement(statement, rows)?)
             .expect("edge log write failed");
     }
-    stage_events(
-        seam,
-        std::slice::from_ref(relation),
-        &events,
-        &[(relation.next_frontier_table_name.clone(), 0)],
-    )
+    sink.take(seam, relation, events)?;
+    Ok(base + rows.len() as u64)
 }
 
 fn apply_keyed_edge(
@@ -1506,7 +1584,9 @@ fn apply_keyed_edge(
     statement: &crate::types::IncrementalEdgeStatement,
     relation: &IncrementalRelationPlan,
     projected_rows: &[Row],
-) -> BoundaryResult<()> {
+    base: u64,
+    sink: &mut EdgeSink,
+) -> BoundaryResult<u64> {
     let mut resolved: Vec<Row> = Vec::new();
     let mut resolved_index: HashMap<String, usize> = HashMap::new();
     for row in projected_rows {
@@ -1521,7 +1601,7 @@ fn apply_keyed_edge(
     }
     let rows: Vec<Row> = resolved;
     if rows.is_empty() {
-        return Ok(());
+        return Ok(base);
     }
     let mut key_args: Vec<ScalarValue> = Vec::new();
     for row in &rows {
@@ -1559,7 +1639,7 @@ fn apply_keyed_edge(
         }
     }
     if changed_rows.is_empty() {
-        return Ok(());
+        return Ok(base);
     }
     let mut events = Vec::new();
     for (sequence, row) in changed_rows.iter().enumerate() {
@@ -1568,14 +1648,14 @@ fn apply_keyed_edge(
             events.push(DeltaEvent {
                 rel: statement.head_rel.clone(),
                 sign: -1,
-                sequence: (sequence * 2) as u64,
+                sequence: base + (sequence * 2) as u64,
                 row: before.clone(),
             });
         }
         events.push(DeltaEvent {
             rel: statement.head_rel.clone(),
             sign: 1,
-            sequence: (sequence * 2 + 1) as u64,
+            sequence: base + (sequence * 2 + 1) as u64,
             row: row.clone(),
         });
     }
@@ -1585,12 +1665,355 @@ fn apply_keyed_edge(
         seam.execute(&edge_keyed_write_statement(statement, &changed_rows)?)
             .expect("edge keyed write failed");
     }
-    stage_events(
-        seam,
-        std::slice::from_ref(relation),
-        &events,
-        &[(relation.next_frontier_table_name.clone(), 0)],
-    )
+    sink.take(seam, relation, events)?;
+    Ok(base + (changed_rows.len() * 2) as u64)
+}
+
+fn write_head_rows(
+    seam: &SqliteSeam,
+    statement: &crate::types::IncrementalEdgeStatement,
+    relation: &IncrementalRelationPlan,
+    rows: &[Row],
+    base: u64,
+    sink: &mut EdgeSink,
+) -> BoundaryResult<u64> {
+    match statement.head_kind {
+        RelationKind::Log => apply_log_edge(seam, statement, relation, rows, base, sink),
+        RelationKind::Set => apply_keyed_edge(seam, statement, relation, rows, base, sink),
+    }
+}
+
+/// The tick's NET per rel: a row written and then overwritten inside the walk
+/// leaves the store unchanged and must not reach the carry.
+fn net_additions<'a>(events: &[&'a DeltaEvent]) -> Vec<&'a DeltaEvent> {
+    let mut weights: HashMap<String, i64> = HashMap::new();
+    for event in events {
+        *weights.entry(dedup_key(&event.row)).or_insert(0) += event.sign as i64;
+    }
+    let mut additions = Vec::new();
+    for event in events {
+        if event.sign != 1 {
+            continue;
+        }
+        let weight = weights
+            .get_mut(&dedup_key(&event.row))
+            .expect("weight recorded above");
+        if *weight <= 0 {
+            continue;
+        }
+        *weight -= 1;
+        additions.push(*event);
+    }
+    additions
+}
+
+fn stage_collected_events(
+    seam: &SqliteSeam,
+    relations: &[IncrementalRelationPlan],
+    events: &[DeltaEvent],
+) -> BoundaryResult<()> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    stage_events(seam, relations, events, &[])?;
+    let plans = plan_index(relations);
+    let mut rels: Vec<&str> = events.iter().map(|event| event.rel.as_str()).collect();
+    rels.sort_unstable();
+    rels.dedup();
+    for rel in rels {
+        let relation = plan_for(&plans, rel, "sequenced edge head relation missing");
+        let grouped: Vec<&DeltaEvent> = events.iter().filter(|event| event.rel == rel).collect();
+        let additions = net_additions(&grouped);
+        if additions.is_empty() {
+            continue;
+        }
+        let mut scope = crate::trace::Scope::verb(
+            "stage",
+            rel,
+            crate::write_verbs::relation_strategy(relation),
+        );
+        scope.rows(additions.len());
+        seam.execute(&frontier_stage_statement(
+            relation,
+            &relation.next_frontier_table_name,
+            0,
+            &additions,
+        )?)
+        .expect("sequenced frontier staging failed");
+    }
+    Ok(())
+}
+
+/// One trigger row a sequenced arm consumes, carrying the frontier index the
+/// tick's pick order reads (ruling one_pick_order).
+struct Occurrence {
+    rel: String,
+    kind: crate::types::TriggerKind,
+    row: Row,
+    phase: i64,
+    sequence: i64,
+}
+
+fn occurrence_read_sql(
+    relation: &IncrementalRelationPlan,
+    kind: crate::types::TriggerKind,
+) -> Option<String> {
+    let table = match kind {
+        crate::types::TriggerKind::Arrival => relation.frontier_table_name.clone(),
+        crate::types::TriggerKind::Departure => relation.departure_frontier_table_name.clone()?,
+    };
+    let columns: Vec<String> = relation
+        .columns
+        .iter()
+        .map(|column| quote_identifier(column))
+        .collect();
+    // Declared columns first: result_rows reads a row by POSITION, so the two
+    // index columns ride behind them.
+    let projection = if columns.is_empty() {
+        String::new()
+    } else {
+        format!("{}, ", columns.join(", "))
+    };
+    Some(format!(
+        "SELECT {}\"_phase\", \"_sequence\" FROM {} ORDER BY \"_phase\", \"_sequence\"",
+        projection,
+        quote_identifier(&table)
+    ))
+}
+
+// The frontier IS the occurrence list: last tick's carry, this tick's arrivals
+// and this tick's before-edge level rows, already in (_phase, _sequence) order.
+fn read_occurrences(
+    seam: &SqliteSeam,
+    statements: &[&crate::types::IncrementalEdgeStatement],
+    plans: &HashMap<&str, &IncrementalRelationPlan>,
+) -> BoundaryResult<Vec<Occurrence>> {
+    let mut triggers: Vec<(&str, crate::types::TriggerKind)> = statements
+        .iter()
+        .map(|statement| (statement.trigger_rel.as_str(), statement.trigger_kind))
+        .collect();
+    triggers.sort_unstable_by_key(|(rel, kind)| (*rel, *kind as u8));
+    triggers.dedup();
+    let mut occurrences = Vec::new();
+    for (rel, kind) in triggers {
+        let relation = plan_for(plans, rel, "sequenced edge trigger relation missing");
+        let Some(sql) = occurrence_read_sql(relation, kind) else {
+            continue;
+        };
+        let _scope = crate::trace::Scope::verb(
+            "read_staged",
+            rel,
+            crate::write_verbs::relation_strategy(relation),
+        );
+        let result = seam
+            .execute(&SqlStatement { sql, args: vec![] })
+            .expect("sequenced occurrence read failed");
+        let phase_index = crate::sql::column_index(&result, "_phase");
+        let sequence_index = crate::sql::column_index(&result, "_sequence");
+        let rows = result_rows(&result, &relation.columns, &relation.column_types)?;
+        for (result_row, row) in result.rows.iter().zip(rows) {
+            occurrences.push(Occurrence {
+                rel: rel.to_string(),
+                kind,
+                row,
+                phase: phase_index
+                    .and_then(|index| result_row.get(index))
+                    .and_then(|value| value.as_i64())
+                    .unwrap_or(0),
+                sequence: sequence_index
+                    .and_then(|index| result_row.get(index))
+                    .and_then(|value| value.as_i64())
+                    .unwrap_or(0),
+            });
+        }
+    }
+    occurrences.sort_by_key(|occurrence| (occurrence.phase, occurrence.sequence));
+    Ok(occurrences)
+}
+
+/// A `pre/1` head's evolving mirror: occurrence N+1 reads what occurrence N
+/// wrote, which is the whole reason this arm is sequenced.
+fn write_pre_rows(
+    statement: &crate::types::IncrementalEdgeStatement,
+    rows: &[Row],
+) -> BoundaryResult<Option<SqlStatement>> {
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let table = quote_identifier(&format!("__pre_{}", statement.head_table_name));
+    let columns = edge_columns_text(statement);
+    let conflict = if statement.head_kind == RelationKind::Log {
+        String::new()
+    } else {
+        let key_columns: Vec<String> = statement
+            .key_indices
+            .iter()
+            .map(|index| columns[*index].clone())
+            .collect();
+        let non_key_columns: Vec<String> = columns
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !statement.key_indices.contains(index))
+            .map(|(_, column)| column.clone())
+            .collect();
+        if non_key_columns.is_empty() {
+            format!(" ON CONFLICT({}) DO NOTHING", key_columns.join(", "))
+        } else {
+            format!(
+                " ON CONFLICT({}) DO UPDATE SET {}",
+                key_columns.join(", "),
+                non_key_columns
+                    .iter()
+                    .map(|column| format!("{} = excluded.{}", column, column))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    };
+    Ok(Some(SqlStatement {
+        sql: format!(
+            "INSERT INTO {} ({}) VALUES {}{}",
+            table,
+            columns.join(", "),
+            values_sql(rows.len(), columns.len()),
+            conflict
+        ),
+        args: flat_bind_args(rows)?,
+    }))
+}
+
+// Occurrence-major across every sequenced arm, because two arms on different
+// trigger rels can fold the same key and arrival order decides the winner.
+fn apply_sequenced_edges(
+    seam: &SqliteSeam,
+    statements: &[&crate::types::IncrementalEdgeStatement],
+    relations: &[IncrementalRelationPlan],
+    plans: &HashMap<&str, &IncrementalRelationPlan>,
+) -> BoundaryResult<()> {
+    let occurrences = read_occurrences(seam, statements, plans)?;
+    if occurrences.is_empty() {
+        return Ok(());
+    }
+    let strategy = crate::write_verbs::strategy_name(relations);
+    let mut sequence = 0u64;
+    let mut collected: Vec<DeltaEvent> = Vec::new();
+    for occurrence in &occurrences {
+        let args = ScalarValue::row_at_seam(&occurrence.row, ScalarSeam::SqlParameter)?;
+        // Every arm of one occurrence reads the store as the occurrence found
+        // it, so the whole projection pass precedes the whole write pass.
+        let mut projected: Vec<(usize, Row)> = Vec::new();
+        for (index, statement) in statements.iter().enumerate() {
+            if statement.trigger_rel != occurrence.rel || statement.trigger_kind != occurrence.kind {
+                continue;
+            }
+            let relation = plan_for(
+                plans,
+                &statement.head_rel,
+                "incremental edge head relation missing",
+            );
+            let sql = statement
+                .occurrence_project_sql
+                .as_ref()
+                .expect("sequenced arm without an occurrence projection");
+            let mut scope = crate::trace::Scope::verb("edge_project", &statement.head_rel, strategy);
+            let result = intern_then_execute(
+                seam,
+                statement.occurrence_intern_sql.as_ref(),
+                &SqlStatement {
+                    sql: sql.clone(),
+                    args: args.clone(),
+                },
+            );
+            let rows = result_rows(&result, &statement.head_columns, &relation.column_types)?;
+            scope.rows(rows.len());
+            drop(scope);
+            projected.extend(rows.into_iter().map(|row| (index, row)));
+        }
+        sequence = write_occurrence(
+            seam,
+            statements,
+            plans,
+            &projected,
+            sequence,
+            strategy,
+            &mut collected,
+        )?;
+    }
+    stage_collected_events(seam, relations, &collected)
+}
+
+// Two arms deriving the same row for the same head in one occurrence is one
+// write; two rows on one key with different values is a program defect.
+fn write_occurrence(
+    seam: &SqliteSeam,
+    statements: &[&crate::types::IncrementalEdgeStatement],
+    plans: &HashMap<&str, &IncrementalRelationPlan>,
+    projected: &[(usize, Row)],
+    mut sequence: u64,
+    strategy: &'static str,
+    collected: &mut Vec<DeltaEvent>,
+) -> BoundaryResult<u64> {
+    let mut seen_rows: std::collections::HashSet<(&str, String)> = std::collections::HashSet::new();
+    let mut keyed: HashMap<String, &Row> = HashMap::new();
+    let mut accepted: Vec<(usize, Row)> = Vec::new();
+    for (index, row) in projected {
+        let statement = statements[*index];
+        DEDUP_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if !seen_rows.insert((statement.head_rel.as_str(), dedup_key(row))) {
+            continue;
+        }
+        if statement.head_kind == RelationKind::Set {
+            let key = format!(
+                "{}:{}",
+                statement.head_rel,
+                row_key(row, &statement.key_indices)?
+            );
+            match keyed.get(&key) {
+                Some(prior) if *prior != row => {
+                    panic!("keyed conflict in one occurrence for {}", statement.head_rel)
+                }
+                Some(_) => {}
+                None => {
+                    keyed.insert(key, row);
+                }
+            }
+        }
+        accepted.push((*index, row.clone()));
+    }
+    let mut at = 0usize;
+    while at < accepted.len() {
+        let index = accepted[at].0;
+        let mut end = at;
+        while end < accepted.len() && accepted[end].0 == index {
+            end += 1;
+        }
+        let rows: Vec<Row> = accepted[at..end]
+            .iter()
+            .map(|(_, row)| row.clone())
+            .collect();
+        let statement = statements[index];
+        let relation = plan_for(
+            plans,
+            &statement.head_rel,
+            "incremental edge head relation missing",
+        );
+        sequence = write_head_rows(
+            seam,
+            statement,
+            relation,
+            &rows,
+            sequence,
+            &mut EdgeSink::Collect(collected),
+        )?;
+        if statement.evolves_pre {
+            if let Some(pre) = write_pre_rows(statement, &rows)? {
+                let _scope = crate::trace::Scope::verb("edge_write", &statement.head_rel, strategy);
+                seam.execute(&pre).expect("pre plane write failed");
+            }
+        }
+        at = end;
+    }
+    Ok(sequence)
 }
 
 pub fn apply_edges(
@@ -1599,7 +2022,22 @@ pub fn apply_edges(
     relations: &[IncrementalRelationPlan],
 ) -> BoundaryResult<()> {
     let plans = plan_index(relations);
-    for statement in statements {
+    let sequenced: Vec<&crate::types::IncrementalEdgeStatement> = statements
+        .iter()
+        .filter(|statement| statement.schedule == crate::types::ArmSchedule::Sequenced)
+        .collect();
+    // The sequenced group runs where its first arm sits in emission order, so a
+    // set-at-once arm keeps its position relative to it.
+    let sequenced_at = statements
+        .iter()
+        .position(|statement| statement.schedule == crate::types::ArmSchedule::Sequenced);
+    for (index, statement) in statements.iter().enumerate() {
+        if Some(index) == sequenced_at {
+            apply_sequenced_edges(seam, &sequenced, relations, &plans)?;
+        }
+        if statement.schedule == crate::types::ArmSchedule::Sequenced {
+            continue;
+        }
         let relation = plan_for(
             &plans,
             &statement.head_rel,
@@ -1618,10 +2056,7 @@ pub fn apply_edges(
         let rows = result_rows(&result, &statement.head_columns, &relation.column_types)?;
         scope.rows(rows.len());
         drop(scope);
-        match statement.head_kind {
-            RelationKind::Log => apply_log_edge(seam, statement, relation, &rows)?,
-            RelationKind::Set => apply_keyed_edge(seam, statement, relation, &rows)?,
-        }
+        write_head_rows(seam, statement, relation, &rows, 0, &mut EdgeSink::Stage)?;
     }
     Ok(())
 }

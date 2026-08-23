@@ -199,35 +199,6 @@ fn a_level_statement_fetches_its_plan_by_name() {
     );
 }
 
-// TEST: the ordered snapshot diff counts a rel's rows through an index. Pre-fix
-// row_counts scanned what it had already collected, so 4000 rows cost 8 million
-// comparisons per side and this assertion read 16000 vs 15998000.
-#[test]
-fn the_ordered_snapshot_diff_counts_rows_through_an_index() {
-    let rows = 4_000usize;
-    let before_rows: Vec<Vec<Value>> = (0..rows)
-        .map(|index| vec![Value::Integer(index as i64)])
-        .collect();
-    let after_rows: Vec<Vec<Value>> = (0..rows)
-        .map(|index| vec![Value::Integer(index as i64 + 1)])
-        .collect();
-    let _serial = PROBE_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
-    let before = sprefa_engine_rs::ordered::diff_probes();
-    let started = std::time::Instant::now();
-    let (add, del) = sprefa_engine_rs::ordered::multiset_diff(&before_rows, &after_rows);
-    let probes = sprefa_engine_rs::ordered::diff_probes() - before;
-    assert_eq!((add.len(), del.len()), (1, 1));
-    assert!(
-        probes <= 8 * rows as u64,
-        "{probes} probes for {rows} rows a side is a scan"
-    );
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(2),
-        "quadratic timing: {:?}",
-        started.elapsed()
-    );
-}
-
 // TEST: the boundary read keys each row once, not twice. Pre-fix the index was
 // asked with one rendering and written with a second, so the Debug rendering ran
 // 40000 times for 20000 rows and this assertion read 20000 vs 40000.

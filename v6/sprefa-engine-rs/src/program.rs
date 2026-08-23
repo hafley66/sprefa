@@ -31,10 +31,7 @@ pub struct GenProgram {
     pub struct_ref_columns: HashMap<String, Vec<Option<String>>>,
     pub enum_types: Vec<crate::types::EnumTypePlan>,
     pub enum_ref_columns: crate::types::EnumRefColumns,
-    pub ordered_program: bool,
-    pub ordered_arms: Vec<crate::types::OrderedEdgeArm>,
-    pub ordered_pre_refs: Vec<String>,
-    pub ordered_recursive_levels: bool,
+    pub pre_snapshot_rels: Vec<String>,
     pub relations: Vec<IncrementalRelationPlan>,
     pub edges: Vec<IncrementalEdgeStatement>,
     pub levels: Vec<IncrementalLevelStatement>,
@@ -112,10 +109,7 @@ impl GenProgram {
             struct_ref_columns: pj.struct_ref_columns,
             enum_types: pj.enum_types,
             enum_ref_columns: pj.enum_ref_columns,
-            ordered_program: pj.ordered_program,
-            ordered_arms: pj.ordered_arms,
-            ordered_pre_refs: pj.ordered_pre_refs,
-            ordered_recursive_levels: pj.ordered_recursive_levels,
+            pre_snapshot_rels: pj.pre_snapshot_rels,
             relations: pj.relations,
             edges: pj.edges,
             levels: pj.levels,
@@ -176,9 +170,6 @@ impl GenProgram {
     }
 
     pub fn run_tick(&self, seam: &SqliteSeam, arrivals: &[Arrival]) -> BoundaryResult<TickDeltas> {
-        if self.ordered_program {
-            return crate::ordered::run_tick(self, seam, arrivals);
-        }
         incremental::prepare_tick(seam, &self.relations);
         if self.uses_tick {
             incremental::advance_tick(seam);
@@ -206,6 +197,9 @@ impl GenProgram {
         };
         let arrivals = normalized.as_ref();
         incremental::apply_arrivals(seam, arrivals, &self.relations)?;
+        // Before the level phase: a `pre/1` body over a level head reads that
+        // head as the previous tick settled it.
+        incremental::snapshot_pre(seam, &self.pre_snapshot_rels, &self.relations)?;
         incremental::apply_levels_before_edges(
             seam,
             &self.levels,

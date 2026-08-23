@@ -67,10 +67,7 @@ async fn external_consumer_drives_runtime_and_hosts() {
         text_intern_plan: None,
         struct_types: vec![],
         struct_ref_columns: HashMap::new(),
-        ordered_program: false,
-        ordered_arms: vec![],
-        ordered_pre_refs: vec![],
-        ordered_recursive_levels: false,
+        pre_snapshot_rels: Vec::new(),
         relations: vec![IncrementalRelationPlan {
             rel: "node".to_string(),
             kind: RelationKind::Set,

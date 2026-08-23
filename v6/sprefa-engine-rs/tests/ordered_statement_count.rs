@@ -43,12 +43,12 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
 
 use sprefa_engine_rs::driver::format_deltas;
-use sprefa_engine_rs::ordered::level_recomputes;
+use sprefa_engine_rs::incremental::level_runs;
 use sprefa_engine_rs::program::run_boot;
 use sprefa_engine_rs::run;
 use sprefa_engine_rs::serve::{arrival_batch, ArrivalDto};
 use sprefa_engine_rs::sql::SEAM_TALLY;
-use sprefa_engine_rs::types::Arrival;
+use sprefa_engine_rs::types::{Arrival, ArmSchedule};
 
 /// A tick with no arrival reads the clock and the carry, nothing else.
 const ZERO_ARRIVAL_CAP: u64 = 100;
@@ -191,14 +191,14 @@ fn fold(
         );
         let count = arrivals.len();
         let before = SEAM_TALLY.statements.load(Relaxed);
-        let before_recomputes = level_recomputes();
+        let before_recomputes = level_runs();
         let deltas = program
             .run_tick(&seam, &arrivals)
             .unwrap_or_else(|failure| panic!("tick {tick_number}: {failure:?}"));
         ticks.push(Tick {
             arrivals: count,
             statements: SEAM_TALLY.statements.load(Relaxed) - before,
-            recomputes: level_recomputes() - before_recomputes,
+            recomputes: level_runs() - before_recomputes,
         });
         tick_number += 1;
         if drains {
@@ -217,9 +217,14 @@ fn an_ordered_tick_costs_its_change_not_the_program_size() {
     let program = run::load_program(&module)
         .expect("load the emitted ghcache module")
         .program;
+    let sequenced = program
+        .edges
+        .iter()
+        .filter(|edge| edge.schedule == ArmSchedule::Sequenced)
+        .count();
     assert!(
-        program.ordered_program,
-        "ghcache folds through ordered.rs::run_tick, which is what this test counts"
+        sequenced > 0,
+        "ghcache carries sequenced arms, which is what this test counts"
     );
     let schedule = schedule(&root);
 
