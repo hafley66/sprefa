@@ -23,12 +23,15 @@
 //! rels five times, `recompute_levels` rebuilt all 100 levels twice, and the
 //! frontier clear fired 2 statements per rel.
 //!
-//! With the dirty set the same ticks read 443, 178, 219, 397, 362, 367, 70,
-//! 143, 256, 59, 37, recomputing 102, 28, 32, 37, 39, 36, 7, 20, 21, 6 and 4 of
-//! the 100 levels. Tick 0 rebuilds every level because a db this process has
-//! not folded before may carry level tables a killed process left inconsistent.
-//! The caps sit above the cone, not above the program: the widest arrival moves
-//! 25 rels and runs 37 level recomputes over the two passes, which is the 397.
+//! Re-measured 2026-08-23 on top of #423 (ordered.rs's own fix) plus
+//! issues/engine-tick-trace item 3 (the `_recent` graphql selection, a 4th
+//! schedule bucket): 447, 178, 224, 483, 249, 505, 367, 70, 143, 256, 165,
+//! 658, 264, 58 statements over 14 ticks, recomputing 102, 28, 32, 51, 28,
+//! 67, 36, 7, 20, 21, 22, 96, 28 and 6 of the 100 levels. Tick 0 rebuilds
+//! every level because a db this process has not folded before may carry
+//! level tables a killed process left inconsistent. Tick 11's 658 is the new
+//! widest arrival: the merged-PR transition rides the same batched graphql
+//! call as the OPEN selection, so its dependency cone covers both.
 //!
 //! The tick log is compared byte for byte against `ghcache_ticklog_base.txt`,
 //! which was generated at that same sha and is the correctness receipt: a
@@ -49,9 +52,10 @@ use sprefa_engine_rs::types::Arrival;
 
 /// A tick with no arrival reads the clock and the carry, nothing else.
 const ZERO_ARRIVAL_CAP: u64 = 100;
-/// One arrival pays for its own dependency cone. The widest arrival in this
-/// schedule moves 25 rels and runs 37 level recomputes over the two passes.
-const ONE_ARRIVAL_CAP: u64 = 450;
+/// One arrival pays for its own dependency cone. issues/engine-tick-trace's
+/// 4th schedule bucket (a fresh events poll plus the `_recent` graphql batch)
+/// widened the cone; measured max moved from 397 to 658, cap 450 -> 700.
+const ONE_ARRIVAL_CAP: u64 = 700;
 const DRAIN_CAP: usize = 100;
 
 fn engine_dir() -> PathBuf {
@@ -242,7 +246,7 @@ fn an_ordered_tick_costs_its_change_not_the_program_size() {
         expected.lines().count()
     );
 
-    assert_eq!(ticks.len(), 11, "the scripted schedule folds in 11 ticks");
+    assert_eq!(ticks.len(), 14, "the scripted schedule folds in 14 ticks");
     // A db this process has not folded before may carry level tables a killed
     // process left inconsistent, so tick 0 rebuilds every level.
     assert!(
