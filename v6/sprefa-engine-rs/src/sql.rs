@@ -39,6 +39,35 @@ pub struct SqliteSeam {
     counting: Cell<bool>,
     dispatches: Cell<u64>,
     cache_capacity: Cell<usize>,
+    /// True between `begin_tick()` and its matching commit/rollback.
+    in_tick: Cell<bool>,
+}
+
+/// `begin_tick()` called while a tick transaction is already open: a driver
+/// bug, distinct from an ordinary SQL failure.
+#[derive(Debug)]
+pub enum TickTransactionError {
+    NestedBegin,
+    Sql(rusqlite::Error),
+}
+
+impl std::fmt::Display for TickTransactionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TickTransactionError::NestedBegin => {
+                write!(f, "begin_tick called while a tick transaction was already open")
+            }
+            TickTransactionError::Sql(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for TickTransactionError {}
+
+impl From<rusqlite::Error> for TickTransactionError {
+    fn from(error: rusqlite::Error) -> TickTransactionError {
+        TickTransactionError::Sql(error)
+    }
 }
 
 impl SqliteSeam {
@@ -65,6 +94,7 @@ impl SqliteSeam {
             counting: Cell::new(false),
             dispatches: Cell::new(0),
             cache_capacity: Cell::new(DEFAULT_STATEMENT_CACHE),
+            in_tick: Cell::new(false),
         })
     }
 
@@ -148,6 +178,29 @@ impl SqliteSeam {
         for statement in ddl {
             SqlRunner::execute_multiple(self, statement)?;
         }
+        Ok(())
+    }
+
+    /// One SQLite transaction per tick: a process killed mid-tick must never
+    /// leave base tables half-promoted (docs/failure-modes.md).
+    pub fn begin_tick(&self) -> std::result::Result<(), TickTransactionError> {
+        if self.in_tick.get() {
+            return Err(TickTransactionError::NestedBegin);
+        }
+        SqlRunner::execute_multiple(self, "BEGIN IMMEDIATE")?;
+        self.in_tick.set(true);
+        Ok(())
+    }
+
+    pub fn commit_tick(&self) -> Result<()> {
+        SqlRunner::execute_multiple(self, "COMMIT")?;
+        self.in_tick.set(false);
+        Ok(())
+    }
+
+    pub fn rollback_tick(&self) -> Result<()> {
+        SqlRunner::execute_multiple(self, "ROLLBACK")?;
+        self.in_tick.set(false);
         Ok(())
     }
 }
