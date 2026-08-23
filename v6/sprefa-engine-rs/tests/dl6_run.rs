@@ -541,3 +541,46 @@ fn re_running_one_program_replaces_only_its_own_tables() {
         "__meta appends one row per run"
     );
 }
+
+/// TEST: a demand whose identity its own answer rewrites bails on the drain cap
+/// and NAMES the rels that moved, so the diagnosis reaches the operator instead
+/// of dying with the delta lines `fold` drops.
+///
+/// Sabotage receipt: returning `Vec::new()` from `run.rs::loudest_rels` reds
+/// this with `the loudest rels are no rel moved`.
+#[test]
+fn a_drain_overflow_names_the_loudest_rels() {
+    let scratch = Scratch::new();
+    let mut command = scratch.dl6();
+    command
+        .env("RUST_LOG", "sprefa_engine_rs::drain=warn")
+        .arg("run")
+        .arg(fixture("drain_identity_loop.dl6"));
+    let run = finish(&mut command, "drain overflow");
+    assert_ne!(run.code, Some(0), "a fold that never settles must not exit 0");
+    assert!(
+        run.stderr.contains("drain overflow"),
+        "the cap is what ends it: {}",
+        run.stderr
+    );
+    // The demand rel is retracted and re-minted every tick, which is what a
+    // moving identity looks like from outside the program.
+    assert!(
+        run.stderr
+            .contains("the loudest rels are __host_demand_env__var +6/-6, ask +6/-6, next_salt +6/-6"),
+        "the three rels with the most +/- lines are named with their counts: {}",
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains("drain rel") && run.stderr.contains("drain tick"),
+        "the trailing window is warned per rel and per tick: {}",
+        run.stderr
+    );
+    // A demand row carries whatever the program put in it, `Authorization`
+    // included, so no row payload may reach the default log level.
+    assert!(
+        !run.stderr.contains("\"deltas\":{"),
+        "row payloads stay at debug: {}",
+        run.stderr
+    );
+}

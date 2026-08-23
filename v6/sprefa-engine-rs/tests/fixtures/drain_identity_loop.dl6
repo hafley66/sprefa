@@ -1,0 +1,38 @@
+# @comment-ok: the drain-overflow rail's fixture, the one doc site for its shape.
+# A demand whose identity its own answer rewrites. `salt` is an identity input
+# of `env.var` and the answer bumps it, so every drain tick mints a NEW witness
+# and the fold never reaches a fixed point.
+
+use clock.
+use env.
+
+rel cadence(every: int).
+cadence(1).
+
+rel tick(every: int) -> (bucket: int).
+rel var(name: text, salt: int) -> (value: text).
+
+rel beat(bucket: int).
+beat(Bucket) <- cadence(Every), tick(Every, Bucket).
+
+rel probe(name: text).
+probe("PATH").
+
+rel next_salt(name: text, salt: int) key(1).
+rel ask(name: text, salt: int).
+rel answered(name: text, salt: int, value: text).
+
+ask(Name, Salt) <-
+  probe(Name),
+  beat(Bucket),
+  coalesce(next_salt(Name, Salt), 0).
+
+answered(Name, Salt, Value) <-
+  ask(Name, Salt),
+  var(Name, Salt, Value).
+
+next_salt(Name, BumpedSalt) <+
+  answered(Name, Salt),
+  BumpedSalt := Salt + 1.
+
+? ask(name, salt).

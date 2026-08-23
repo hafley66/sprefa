@@ -26,8 +26,8 @@ their own section with a throw site each.
 | the ETag, the 304 body, the page walk, the token, the GraphQL query | RULES, not executor code |
 | `src/executors/{fetch,graphql,pulls,repos}.rs` | DELETED; `http.rs` is the whole transport |
 | the six `v6/dl/ghcacher` goldens | on `http.get`, gate green, `goldens=6` |
-| simulated schedule through the Rust door | `GHCACHE_RUST_DOOR_HOLDS ticks=10`, COUNT receipt below |
-| live `dl6 run` against `hafley66` (instant, sprefa, hafley-rs, hafley-rxjs) | first pass 25 x 200 / 2320284 bytes, every later pass 304 / bytes=0 |
+| simulated schedule through the Rust door | `GHCACHE_RUST_DOOR_HOLDS ticks=11`, COUNT receipt below |
+| live `dl6 run` against `hafley66` (instant, sprefa, hafley-rs, hafley-rxjs) | ONE call per endpoint per bucket; a quiet bucket is 9 x 304 / bytes=0 |
 | kill + restart, first poll | 8 x 304, bytes=0, out of 8 stored ETags and 8 stored bodies |
 | the GraphQL pull-request batch | compiles and folds; NOT exercised live (the org's REST budget hit the stop threshold first) |
 
@@ -67,11 +67,36 @@ Three contract points a reader needs.
 | `headers` and `request_body` are `text`, not `json` | every identity input is concatenated into the witness digest, and `compile_concat_part` (`lower.pl:1050`) refuses a `json` piece |
 | a whole-number response header is a JSON NUMBER | `decode(.., X: int)` reads a number and never a string (the no-coercions law), measured: `{"x-ratelimit-remaining":"150"}` decodes to zero rows at `: int` |
 
-`prev_etag` shapes no header. It is demand identity, so a moved tag is a NEW
-question. That is also why one changed endpoint costs TWO calls in a bucket:
-the 200 moves the tag, and the tag re-fires the same bucket conditionally. The
-second call is a 304 with zero bytes, and `ghcacher_live.dl6:98-102` already
-described this as the intended shape.
+`prev_etag` shapes no header. It is demand identity, and demand identity may
+not move while the question stands. `poll_state_etag(page_url, etag,
+asked_etag, at_bucket) key(1)` carries the tag the last answer gave AND the tag
+that answer was asked with, and `page_prev_etag` picks between them in three
+exclusive arms:
+
+| the request reads | when |
+|---|---|
+| `etag` | `at_bucket < Bucket`: the stored row predates this bucket |
+| `asked_etag` | `at_bucket == Bucket`: this bucket's own answer already landed |
+| `""` | no stored row at all: a never-polled page |
+
+Arms, not a `coalesce`: a coalesce over a DERIVED rel lets the read and the
+negation disagree for one tick, and that tick's demand is claimed before they
+settle. The header and the identity column both read `page_prev_etag`, so one
+tick cannot mint a demand whose header says one thing and whose identity says
+another. One page is ONE wire call per bucket, changed or not, and
+`page_arrival` carries `prev_etag` so writing the keyed rel is one row per
+answer.
+
+Known residual: the FIRST bucket flip after a page's tag is first stored mints
+one extra demand, because the keyed write and the `not(poll_state_etag(...))`
+arm land in the same tick. One extra conditional call per page per db
+lifetime; the scripted gate shows it as the second bucket's second row.
+
+Before this, the tag fed the header directly and GitHub answers one resource
+with `W/"tag"` and `"tag"` depending on the request, so the two spellings
+chased each other with zero wire traffic. Measured live: a period-4 cycle on
+`.../events?page=3` with `rate_remaining` flat at 4967/4964/4961/4956 and
+`change_log` gaining 64 rows every 6 drain ticks (failure-modes entry 77).
 
 ## How to run it
 
