@@ -837,6 +837,30 @@ pr_selection(Bucket, BatchKey, RepoAlias, Selection) <-
     "__typename ... on StatusContext { context state targetUrl description } ",
     "... on CheckRun { name conclusion detailsUrl } } } } } } } } } } "]).
 
+# An OPEN-only selection drops a PR once it stops being open; this rides the
+# same batched query, alias `<RepoAlias>_recent` (issues/engine-tick-trace).
+pr_selection(Bucket, BatchKey, RecentAlias, Selection) <-
+  pr_batch_member(Bucket, BatchKey, RepoAlias, Owner, Name),
+  RecentAlias := concat([RepoAlias, "_recent"]),
+  Selection := concat([RecentAlias, ": repository(owner: \"", Owner,
+    "\", name: \"", Name, "\") { pullRequests(first: 10, states: [MERGED, CLOSED], ",
+    "orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { ",
+    "number title state isDraft body headRefName headRefOid baseRefName ",
+    "mergeable additions deletions changedFiles createdAt updatedAt ",
+    "mergedAt closedAt databaseId id author { login } mergeCommit { oid } ",
+    "reviews(last: 20) { nodes { databaseId author { login } state body ",
+    "submittedAt } } comments(last: 50) { nodes { databaseId author { login } ",
+    "body createdAt updatedAt } } reviewRequests(first: 20) { nodes { ",
+    "requestedReviewer { ... on User { login } ... on Team { login: slug } ",
+    "} } } labels(first: 10) { nodes { name color } } commits(last: 1) { ",
+    "nodes { commit { statusCheckRollup { contexts(first: 50) { nodes { ",
+    "__typename ... on StatusContext { context state targetUrl description } ",
+    "... on CheckRun { name conclusion detailsUrl } } } } } } } } } } "]).
+
+pr_batch_alias(Bucket, BatchKey, RecentAlias, Owner, Name) <-
+  pr_batch_member(Bucket, BatchKey, RepoAlias, Owner, Name),
+  RecentAlias := concat([RepoAlias, "_recent"]).
+
 # The aliased-query text is built by a SQL aggregate, never string code.
 pr_batch(Bucket, BatchKey, group_concat(Selection, "")) <-
   pr_selection(Bucket, BatchKey, Selection).
