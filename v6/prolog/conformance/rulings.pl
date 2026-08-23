@@ -874,3 +874,6 @@ ruling(clock_path_check_pinned_off, stub_keep_cross_plane, user,
 % The `sh` declaration form stays dead.
 ruling(shell_as_executor_rel, rel_sh_run_only, user,
        'chat 2026-08-21: "we will add sh back but it will literally be rel sh(cmd: string, etc.)"').
+
+ruling(per_rel_delta_only, no_program_wide_recompute, user,
+       'chat 2026-08-23: "yea im trying to efficiently compute dbsp, not spamming its worst versions" and "only do work for what has its deps changing". A rel does work only when a rel it reads moved; a `<+` arm that reads pre/1 is sequenced per occurrence, per ARM, never by flipping the whole module onto a rebuild loop (emit_rust.pl:216 ordered_program/1 is the defect). Plan: plans/2026-08-23-one-tick-path.PLAN.visual.human.unga.md.').
