@@ -691,6 +691,7 @@ impl<'p> LiveLoop<'p> {
     }
 
     fn boot(&self, seam: &SqliteSeam) -> Result<()> {
+        crate::trace::force_summary();
         crate::trace::arm();
         seam.size_statement_cache(self.program.stable_sql_count() + 64);
         seam.run_program_ddl(&self.program.ddl, &self.program.queries)
