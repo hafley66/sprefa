@@ -44,8 +44,9 @@ impl IHostExecutor for ClockExecutor {
         if every <= 0 {
             return Err(super::host_error(host, "`every` wants a positive integer"));
         }
-        Ok(vec![row([
-            ("bucket", serde_json::json!(ClockExecutor::bucket_of(every))),
-        ])])
+        Ok(vec![row([(
+            "bucket",
+            serde_json::json!(ClockExecutor::bucket_of(every)),
+        )])])
     }
 }

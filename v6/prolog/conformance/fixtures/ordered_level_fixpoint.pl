@@ -95,3 +95,15 @@ fixture(unordered_program_level_fold_reaches_three_links,
   [ final(leg_total/3, [ leg_total(11, 1, 2),
                          leg_total(12, 1, 5),
                          leg_total(13, 1, 9) ]) ]).
+
+fixture(recount_retraction_reaches_two_heads_same_tick,
+  prog([],
+       [ (b(Value) <- a(Value)),
+         (c(Value) <- b(Value)) ]),
+  [],
+  [ [ +a(1) ],
+    [ -a(1) ] ],
+  [ deltas(b/1, [ [ +b(1) ], [ -b(1) ] ]),
+    deltas(c/1, [ [ +c(1) ], [ -c(1) ] ]),
+    final(b/1, []),
+    final(c/1, []) ]).

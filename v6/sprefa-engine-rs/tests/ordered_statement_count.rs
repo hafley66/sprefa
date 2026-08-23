@@ -45,7 +45,7 @@ use sprefa_engine_rs::program::run_boot;
 use sprefa_engine_rs::run;
 use sprefa_engine_rs::serve::{arrival_batch, ArrivalDto};
 use sprefa_engine_rs::sql::SEAM_TALLY;
-use sprefa_engine_rs::types::{Arrival, ArmSchedule};
+use sprefa_engine_rs::types::{ArmSchedule, Arrival};
 
 /// A tick with no arrival still empties what the tick before it wrote; the
 /// schedule's one such tick measured 199.

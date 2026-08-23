@@ -290,16 +290,17 @@ pub fn open_seam(db: Option<&Path>) -> Result<SqliteSeam> {
     let Some(path) = db else {
         return SqliteSeam::in_memory().context("open the in-memory seam");
     };
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create {}", parent.display()))?;
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let url = path
         .to_str()
         .ok_or_else(|| anyhow!("the db path is not utf-8: {}", path.display()))?;
     SqliteSeam::open(url).with_context(|| format!("open {url}"))
 }
-
 
 // ═══ reading the `?` rows ════════════════════════════════════════════════════
 
@@ -513,7 +514,12 @@ fn install_db_views(
             continue;
         };
         seam.execute_multiple(&format!("CREATE VIEW IF NOT EXISTS {tail}"))
-            .with_context(|| format!("re-create a persistent view from `{}`", &statement[..80.min(statement.len())]))?;
+            .with_context(|| {
+                format!(
+                    "re-create a persistent view from `{}`",
+                    &statement[..80.min(statement.len())]
+                )
+            })?;
         created += 1;
     }
     for query in &program.queries {
@@ -739,7 +745,9 @@ impl<'p> LiveLoop<'p> {
             if let Some(runner) = self.runner.as_mut() {
                 let responses = {
                     let _scope = crate::trace::Scope::phase("host_collect");
-                    runner.collect(&deltas).map_err(|failure| anyhow!("{failure}"))?
+                    runner
+                        .collect(&deltas)
+                        .map_err(|failure| anyhow!("{failure}"))?
                 };
                 if !responses.is_empty() {
                     pending.push_back(responses);
@@ -988,7 +996,10 @@ impl<'p> ClockSource<'p> {
         }
     }
 
-    fn seed_arrivals(&mut self, rel_columns: &HashMap<String, Vec<String>>) -> Result<Vec<Arrival>> {
+    fn seed_arrivals(
+        &mut self,
+        rel_columns: &HashMap<String, Vec<String>>,
+    ) -> Result<Vec<Arrival>> {
         let mut arrivals = Vec::new();
         let periods: Vec<i64> = self.buckets.keys().copied().collect();
         for period in periods {
@@ -1093,8 +1104,8 @@ impl<'p> WatchSource<'p> {
                         }
                         Ok(_) => {}
                         Err(failure) => {
-                            let _ = events
-                                .send(WatchEvent::Closed(owned.clone(), failure.to_string()));
+                            let _ =
+                                events.send(WatchEvent::Closed(owned.clone(), failure.to_string()));
                             return;
                         }
                     }
@@ -1216,13 +1227,22 @@ pub fn watch(
             program.name
         );
     }
-    let clock_plan = plans.iter().find(|plan| plan.name == "clock__tick").copied();
-    let watch_plan = plans.iter().find(|plan| plan.name == "soopy__watch").copied();
+    let clock_plan = plans
+        .iter()
+        .find(|plan| plan.name == "clock__tick")
+        .copied();
+    let watch_plan = plans
+        .iter()
+        .find(|plan| plan.name == "soopy__watch")
+        .copied();
     if let Some(other) = plans
         .iter()
         .find(|plan| plan.name != "clock__tick" && plan.name != "soopy__watch")
     {
-        bail!("{} declares a continuing cadence with no resident-loop driver", other.name);
+        bail!(
+            "{} declares a continuing cadence with no resident-loop driver",
+            other.name
+        );
     }
 
     let mut clocks = match clock_plan {
@@ -1444,5 +1464,8 @@ fn delta_cell(cell: &str) -> String {
     if !cell.contains(['\t', '\n', '\r', '\\']) {
         return cell.to_string();
     }
-    cell.replace('\\', "\\\\").replace('\t', "\\t").replace('\n', "\\n").replace('\r', "\\r")
+    cell.replace('\\', "\\\\")
+        .replace('\t', "\\t")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }

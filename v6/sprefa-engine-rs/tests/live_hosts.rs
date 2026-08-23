@@ -522,7 +522,10 @@ fn digest_carrying_demand_reads_the_blob_not_the_worktree() {
     let env = BTreeMap::from([
         ("repo".to_string(), root.display().to_string()),
         ("digest".to_string(), committed_oid),
-        ("path".to_string(), format!("{}/src/file.ts", root.display())),
+        (
+            "path".to_string(),
+            format!("{}/src/file.ts", root.display()),
+        ),
         ("families".to_string(), "call".to_string()),
     ]);
     let answered = SprefaExtractExecutor::default()

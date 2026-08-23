@@ -27,9 +27,7 @@ use std::env;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use sprefa_engine_rs::run::{
-    self, FinalRequest, RunOptions, SeedSpec, DRAIN_CAP,
-};
+use sprefa_engine_rs::run::{self, FinalRequest, RunOptions, SeedSpec, DRAIN_CAP};
 use sprefa_engine_rs::serve::{arrival_batch, ArrivalDto, ServeState};
 use sprefa_engine_rs::types::Arrival;
 

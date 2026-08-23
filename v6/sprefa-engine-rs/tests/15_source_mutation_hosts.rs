@@ -326,8 +326,8 @@ fn compiled_dl6_source_mutation_golden_stages_approves_commits_and_replays() {
     // A replacement runner models a runtime restart before acknowledgement.
     // Replaying the emitted commit demand uses the durable Soopy receipt and
     // leaves the target bytes unchanged.
-    let mut restarted = HostLiveRunner::new(&program.host_plans, &program.rel_columns)
-        .expect("restarted hosts");
+    let mut restarted =
+        HostLiveRunner::new(&program.host_plans, &program.rel_columns).expect("restarted hosts");
     let replayed = restarted
         .collect(&approved)
         .expect("idempotent replay host response");
