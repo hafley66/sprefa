@@ -484,12 +484,19 @@ union_arms(Sql, Count) :-
     length(Parts, Count).
 
 delta_shape_for(Label, Prog, HeadRef, ClauseCount, ArmCount) :-
-    once(( program_plan(fixture(Label, Prog, [], [], [])-[], Plan),
-           lower_program(Plan, lowered(_, _, _, _, LevelStatements, _, _, _)),
-           memberchk(levelstmt(HeadRef, _, InsertSqls, DeltaInsertSql, _, _, _),
-                     LevelStatements),
+    once(( level_shape_for(Label, Prog, HeadRef, InsertSqls, DeltaInsertSql, _),
            length(InsertSqls, ClauseCount),
            union_arms(DeltaInsertSql, ArmCount) )).
+
+level_shape_for(Label, Prog, HeadRef, InsertSqls, DeltaInsertSql, RefCountSql) :-
+    program_plan(fixture(Label, Prog, [], [], [])-[], Plan),
+    lower_program(Plan, lowered(_, _, _, _, LevelStatements, _, _, _)),
+    memberchk(levelstmt(HeadRef, _, InsertSqls, DeltaInsertSql, RefCountSql, _, _),
+              LevelStatements).
+
+sql_occurrences(Sql, Needle, Count) :-
+    findall(Before, sub_atom(Sql, Before, _, _, Needle), Positions),
+    length(Positions, Count).
 
 % Four positive body items, no coalesce: ONE clause, FOUR arms. A subset
 % expansion would read 16 here.
@@ -513,10 +520,9 @@ test(a_four_item_body_lowers_to_four_delta_arms) :-
     ClauseCount == 1,
     ArmCount == 4.
 
-% The same head reached through three coalesce goals instead. The clause count
-% is 2^3 and the arms are 8*1 + 3*4 = 20: the fan-out is the coalesce
-% desugar's, and lower.pl stays linear inside each clause it is handed.
-test(three_coalesce_goals_fan_out_to_eight_clauses_before_lowering) :-
+% Three optional reads remain one clause. The driver contributes one arm and
+% each optional read contributes gain and loss arms.
+test(three_coalesce_goals_lower_to_one_clause_and_seven_arms) :-
     delta_shape_for(three_coalesce_goals,
         prog([ kind(driver/1, set), col_type(driver/1, key, text),
                kind(head_a/2, set), col_type(head_a/2, key, text),
@@ -533,8 +539,34 @@ test(three_coalesce_goals_fan_out_to_eight_clauses_before_lowering) :-
                     coalesce(head_b(Key, B), 0),
                     coalesce(head_c(Key, C), 0)) ]),
         totalled/4, ClauseCount, ArmCount),
-    ClauseCount == 8,
-    ArmCount == 20.
+    ClauseCount == 1,
+    ArmCount == 7.
+
+% The requested N + 4 pin: one ordinary positive item and two optional items.
+test(two_coalesce_goals_lower_to_one_clause_and_n_plus_four_arms) :-
+    Prog = prog([ kind(driver/1, set), col_type(driver/1, key, text),
+                  kind(head_a/2, set), col_type(head_a/2, key, text),
+                  col_type(head_a/2, a, int),
+                  kind(head_b/2, set), col_type(head_b/2, key, text),
+                  col_type(head_b/2, b, int),
+                  col_type(totalled/3, key, text),
+                  col_type(totalled/3, a, int),
+                  col_type(totalled/3, b, int) ],
+                [ (totalled(Key, A, B) <-
+                       driver(Key),
+                       coalesce(head_a(Key, A), 0),
+                       coalesce(head_b(Key, B), 0)) ]),
+    once(level_shape_for(two_coalesce_goals, Prog, totalled/3,
+                         InsertSqls, DeltaSql,
+                         refcountsql(_, RefCountSeedSql, _, _, _, _, _, _, _, _,
+                                     _, _, _, _, _, _))),
+    InsertSqls = [RecomputeSql],
+    union_arms(DeltaSql, 5),
+    sql_occurrences(RecomputeSql, ' LEFT JOIN ', 2),
+    sql_occurrences(RecomputeSql, 'COALESCE(', 2),
+    sql_occurrences(DeltaSql, ' EXCEPT ', 4),
+    sql_occurrences(RefCountSeedSql, ' LEFT JOIN ', 2),
+    sql_occurrences(RefCountSeedSql, ' WHERE 0)', 2).
 
 :- end_tests(delta_arm_count).
 
@@ -5018,6 +5050,17 @@ test(coalesce_level_arm_reads_the_bare_atom) :-
           (repo_latest(Name, Commit) <- (repo(Name),
                                          not(latest_commit(Name, _)),
                                          Commit := absent)) ].
+
+test(coalesce_level_wrapper_survives_compiler_expansion) :-
+    Program = prog([],
+        [ (repo_latest(Name, Commit) <-
+               repo(Name),
+               coalesce(latest_commit(Name, Commit), absent)) ]),
+    expand_program_with_bindings(Program, [], prog(_, Expanded), _),
+    Expanded =@=
+        [ (repo_latest(Name, Commit) <-
+               (repo(Name),
+                coalesce(latest_commit(Name, Commit), absent))) ].
 
 % A bare relation atom in an EDGE body is an occurrence. The read arm samples
 % instead, or an arrival on the coalesced rel would fire the rule on its own.
