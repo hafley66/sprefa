@@ -457,16 +457,23 @@ fn a_resident_run_measures_itself_and_a_storeless_program_stays_flat() {
         resident.len() >= 4,
         "every tick answers one `wall` row: {stdout}"
     );
-    let low = *resident.iter().min().expect("a low reading");
-    let high = *resident.iter().max().expect("a high reading");
-    assert!(low > 0, "the resident set is a real reading, got {resident:?}");
+    assert!(
+        resident.iter().all(|&kb| kb > 0),
+        "the resident set is a real reading, got {resident:?}"
+    );
     // SCOPE: this program stores five rows a tick, so a climb here is the LOOP
     // leaking, never stored history. A program with a real `keep(all)` log grows
     // by design and is not pinned by this number (v6/dl/prwatch measured
     // 46 MB to 100 MB over six ticks; PR #407 body carries the series).
+    // issues/tick-transaction: a tick's dirty pages now stay pinned until its
+    // own COMMIT, so cache warm-up is steeper; measured flat 25-28 MB past
+    // tick 4 over 25 ticks direct. The tail slice below is the steady state.
+    let steady = &resident[resident.len() / 2..];
+    let low = *steady.iter().min().expect("a low reading");
+    let high = *steady.iter().max().expect("a high reading");
     assert!(
         high * 4 <= low * 5,
-        "rss climbed from {low} kB to {high} kB across {} ticks: {resident:?}",
+        "rss climbed from {low} kB to {high} kB across the steady-state half of {} ticks: {resident:?}",
         buckets.len()
     );
 }
