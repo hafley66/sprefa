@@ -21,6 +21,11 @@
 //! rels five times, `recompute_levels` rebuilt all 100 levels twice, and the
 //! frontier clear fired 2 statements per rel.
 //!
+//! With the dirty set the same ticks read 103, 176, 217, 395, 360, 365, 68,
+//! 141, 254, 57, 35. The caps sit above the cone, not above the program: the
+//! widest arrival here moves 25 rels and runs 37 level recomputes over the two
+//! passes, which is the 395.
+//!
 //! The tick log is compared byte for byte against `ghcache_ticklog_base.txt`,
 //! which was generated at that same sha and is the correctness receipt: a
 //! skipped level that mattered moves a row and reds this test.
