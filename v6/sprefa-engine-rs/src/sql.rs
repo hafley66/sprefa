@@ -272,6 +272,57 @@ pub fn statement_cache_wanted() -> bool {
     *WANTED.get_or_init(|| std::env::var("DL_SEAM_STMT_CACHE").as_deref() != Ok("0"))
 }
 
+/// `DL_EXPLAIN=1`: every distinct statement text gets one `EXPLAIN QUERY PLAN`
+/// logged at info under target `sprefa_engine_rs::explain`, with `scan=true`
+/// when a SCAN appears after the driving table (an inner full scan). Once
+/// per text, never per call.
+pub fn explain_wanted() -> bool {
+    static WANTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *WANTED.get_or_init(|| std::env::var_os("DL_EXPLAIN").is_some())
+}
+
+static EXPLAINED: std::sync::LazyLock<std::sync::Mutex<HashSet<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashSet::new()));
+
+fn explain_once(conn: &Connection, sql: &str) {
+    if !explain_wanted() {
+        return;
+    }
+    {
+        let mut seen = EXPLAINED.lock().expect("explained set");
+        if !seen.insert(sql.to_string()) {
+            return;
+        }
+    }
+    let plan = conn
+        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+        .and_then(|mut stmt| {
+            let rows = stmt.query_map([], |row| row.get::<_, String>(3))?;
+            rows.collect::<rusqlite::Result<Vec<String>>>()
+        });
+    match plan {
+        Ok(lines) => {
+            // The driving table of a statement is always a SCAN; the finding is
+            // a SCAN inside the join, after the first plan line.
+            let scan = lines.iter().skip(1).any(|line| line.starts_with("SCAN"));
+            tracing::info!(
+                target: "sprefa_engine_rs::explain",
+                shape = %statement_shape(sql),
+                scan,
+                plan = %lines.join(" | "),
+                sql = %sql,
+                "explain"
+            );
+        }
+        Err(failure) => tracing::debug!(
+            target: "sprefa_engine_rs::explain",
+            shape = %statement_shape(sql),
+            %failure,
+            "explain skipped"
+        ),
+    }
+}
+
 pub fn seam_shapes_wanted() -> bool {
     static WANTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *WANTED.get_or_init(|| std::env::var_os("DL_SEAM_SHAPES").is_some())
@@ -390,6 +441,7 @@ impl SqlRunner for SqliteSeam {
                 self.prepared.borrow_mut().insert(statement.sql.clone());
             }
         }
+        explain_once(&self.conn, &statement.sql);
         let mut cached;
         let mut fresh;
         let stmt: &mut rusqlite::Statement = if statement_cache_wanted() {
