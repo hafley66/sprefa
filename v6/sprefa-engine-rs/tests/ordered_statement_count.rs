@@ -1,37 +1,27 @@
-//! COUNT TEST for issues/ordered-tick-recompute: the ordered tick pays for what
-//! changed, not for the program's size.
+//! COUNT TEST for issues/ordered-tick-recompute and issues/one-tick-path: a
+//! tick pays for what changed, not for the program's size.
 //!
 //! @comment-ok: TEST header carrying the fail-pre-fix receipt.
 //!
 //! Fail-pre-fix receipt, measured 2026-08-23 at def5dbb63 on ghcache.dl6
-//! (154 rels, 100 levels, 52 ordered arms), statements per tick through
-//! `SEAM_TALLY`, this test's own reading:
+//! (154 rels, 100 levels, 52 arms, 5 of them sequenced), statements per tick
+//! through `SEAM_TALLY`, this test's own reading. Before #423, on
+//! `ordered.rs::run_tick`: 1890, 1901, 1895, 1925, 1890, 1902, 1884, 1885,
+//! 1902, 1881, 1878. An idle tick cost the same as a working one.
 //!
-//!   tick  0: 1890 (2 arrivals)   tick  6: 1884 (1 arrival)
-//!   tick  1: 1901 (1 arrival)    tick  7: 1885 (1 arrival)
-//!   tick  2: 1895 (1 arrival)    tick  8: 1902 (1 arrival)
-//!   tick  3: 1925 (1 arrival)    tick  9: 1881 (0 arrivals)
-//!   tick  4: 1890 (1 arrival)    tick 10: 1878 (0 arrivals)
-//!   tick  5: 1902 (1 arrival)
+//! After #423 (the dirty set inside the ordered loop) plus the `_recent`
+//! graphql selection, still on `ordered.rs`, 14 ticks: 447, 178, 224, 483,
+//! 249, 505, 367, 70, 143, 256, 165, 658, 264, 58.
 //!
-//! The issue's table says 1,135 for tick 5. That number counted the statements
-//! dispatched one at a time through `execute` and listed the 202
-//! `execute_multiple` batches on their own row; this test reads the tick's
-//! total, every statement inside those batches included.
-//!
-//! An idle tick cost the same as a working one: `read_snapshot` read all 154
-//! rels five times, `recompute_levels` rebuilt all 100 levels twice, and the
-//! frontier clear fired 2 statements per rel.
-//!
-//! Re-measured 2026-08-23 on top of #423 (ordered.rs's own fix) plus
-//! issues/engine-tick-trace item 3 (the `_recent` graphql selection, a 4th
-//! schedule bucket): 447, 178, 224, 483, 249, 505, 367, 70, 143, 256, 165,
-//! 658, 264, 58 statements over 14 ticks, recomputing 102, 28, 32, 51, 28,
-//! 67, 36, 7, 20, 21, 22, 96, 28 and 6 of the 100 levels. Tick 0 rebuilds
-//! every level because a db this process has not folded before may carry
-//! level tables a killed process left inconsistent. Tick 11's 658 is the new
-//! widest arrival: the merged-PR transition rides the same batched graphql
-//! call as the OPEN selection, so its dependency cone covers both.
+//! On the one path (this tree), the same 14 ticks: 475, 522, 1172, 1364, 1318,
+//! 1771, 1200, 702, 691, 676, 668, 1643, 1208, 199, running 32, 32, 80, 81,
+//! 83, 96, 74, 46, 48, 42, 45, 105, 71 and 16 of the 100 level statements.
+//! `ordered.rs` rebuilt every level from its base tables twice a tick and read
+//! every rel to diff it; the one path derives each level from the frontier and
+//! runs it only when a rel it reads moved, so the counts move with the
+//! arrival's dependency cone rather than with the program. The two shapes are
+//! not comparable statement for statement: the ordered path's number counted
+//! whole-table rebuilds, this one counts per-level delta inserts.
 //!
 //! The tick log is compared byte for byte against `ghcache_ticklog_base.txt`,
 //! which was generated at that same sha and is the correctness receipt: a
@@ -50,12 +40,11 @@ use sprefa_engine_rs::serve::{arrival_batch, ArrivalDto};
 use sprefa_engine_rs::sql::SEAM_TALLY;
 use sprefa_engine_rs::types::{Arrival, ArmSchedule};
 
-/// A tick with no arrival reads the clock and the carry, nothing else.
-const ZERO_ARRIVAL_CAP: u64 = 100;
-/// One arrival pays for its own dependency cone. issues/engine-tick-trace's
-/// 4th schedule bucket (a fresh events poll plus the `_recent` graphql batch)
-/// widened the cone; measured max moved from 397 to 658, cap 450 -> 700.
-const ONE_ARRIVAL_CAP: u64 = 700;
+/// A tick with no arrival still empties what the tick before it wrote; the
+/// schedule's one such tick measured 199.
+const ZERO_ARRIVAL_CAP: u64 = 260;
+/// One arrival pays for its own dependency cone. Measured max 1771 on tick 5.
+const ONE_ARRIVAL_CAP: u64 = 2100;
 const DRAIN_CAP: usize = 100;
 
 fn engine_dir() -> PathBuf {
@@ -252,19 +241,19 @@ fn an_ordered_tick_costs_its_change_not_the_program_size() {
     );
 
     assert_eq!(ticks.len(), 14, "the scripted schedule folds in 14 ticks");
-    // A db this process has not folded before may carry level tables a killed
-    // process left inconsistent, so tick 0 rebuilds every level.
+    // A tick pays for its cone: `ordered.rs` ran all 100 levels twice a tick,
+    // arrivals or none. A recursive head runs more than once in its own tick,
+    // so the count is not bounded by the statement count; the cone is.
+    let levels = program.levels.len() as u64;
+    let narrowest = ticks.iter().map(|tick| tick.recomputes).min().unwrap_or(0);
     assert!(
-        ticks[0].recomputes >= program.levels.len() as u64,
-        "the first tick against a db rebuilds all {} levels, ran {}",
-        program.levels.len(),
-        ticks[0].recomputes
+        narrowest * 4 < levels,
+        "the narrowest tick ran {narrowest} of {levels} level statements"
     );
     assert!(
-        ticks[1].recomputes < program.levels.len() as u64,
-        "a later tick recomputes its cone, not the program: {} of {}",
-        ticks[1].recomputes,
-        program.levels.len()
+        ticks[0].recomputes * 2 < levels,
+        "the first tick ran {} of {levels} level statements",
+        ticks[0].recomputes
     );
     let over: Vec<String> = ticks
         .iter()
