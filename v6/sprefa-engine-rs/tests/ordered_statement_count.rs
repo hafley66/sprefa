@@ -23,6 +23,13 @@
 //! not comparable statement for statement: the ordered path's number counted
 //! whole-table rebuilds, this one counts per-level delta inserts.
 //!
+//! Fail-pre-fix receipt for issues/one-path-busy-tick-cost, measured
+//! 2026-08-23 at 13527429a. A level ran again in the same tick whenever its
+//! head rel was in the moved set, which its own write had just put there, so
+//! every head paid its insert and its recount twice: 475, 522, 1172, 1364,
+//! 1318, 1771, 1200, 702, 691, 676, 668, 1643, 1208, 199 = 13609 statements
+//! over the fold, of which the recount verb dispatched 8279.
+//!
 //! The tick log is compared byte for byte against `ghcache_ticklog_base.txt`,
 //! which was generated at that same sha and is the correctness receipt: a
 //! skipped level that mattered moves a row and reds this test.
@@ -43,9 +50,16 @@ use sprefa_engine_rs::types::{Arrival, ArmSchedule};
 /// A tick with no arrival still empties what the tick before it wrote; the
 /// schedule's one such tick measured 199.
 const ZERO_ARRIVAL_CAP: u64 = 260;
-/// One arrival pays for its own dependency cone. Measured max 1771 on tick 5.
-const ONE_ARRIVAL_CAP: u64 = 2100;
+/// One arrival pays for its own dependency cone. Measured max 1340 on tick 5.
+const ONE_ARRIVAL_CAP: u64 = 1600;
 const DRAIN_CAP: usize = 100;
+/// The whole 14-tick fold, the number issues/one-path-busy-tick-cost is about.
+/// Measured 13609 before this arc and 9860 after; the pre-#427 reading the
+/// issue asks for is 7113 and the gap is priced in the PR.
+const FOLD_STATEMENT_CAP: u64 = 10_400;
+/// The from-base refcount re-derive, the verb that was half the fold's
+/// statements. 8279 before this arc, 5630 after.
+const RECOUNT_STATEMENT_CAP: u64 = 6_000;
 
 fn engine_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -209,9 +223,13 @@ fn fold(
 /// Every statement a tick dispatches carries a verb; `unlabelled` is the
 /// trace's name for one that reached the seam outside every scope.
 fn unlabelled_calls() -> u64 {
+    verb_calls("unlabelled")
+}
+
+fn verb_calls(verb: &str) -> u64 {
     sprefa_engine_rs::trace::summary_rows()
         .into_iter()
-        .filter(|(label, _)| label.verb == "unlabelled")
+        .filter(|(label, _)| label.verb == verb)
         .map(|(_, stat)| stat.calls)
         .sum()
 }
@@ -276,6 +294,18 @@ fn an_ordered_tick_costs_its_change_not_the_program_size() {
         "the first tick ran {} of {levels} level statements",
         ticks[0].recomputes
     );
+    let fold_statements: u64 = ticks.iter().map(|tick| tick.statements).sum();
+    println!("ordered_statement_count: fold statements {fold_statements}");
+    assert!(
+        fold_statements <= FOLD_STATEMENT_CAP,
+        "the fold cost {fold_statements} statements, cap {FOLD_STATEMENT_CAP}"
+    );
+    let recount = verb_calls("recount");
+    assert!(
+        recount <= RECOUNT_STATEMENT_CAP,
+        "recount dispatched {recount} statements, cap {RECOUNT_STATEMENT_CAP}"
+    );
+
     let over: Vec<String> = ticks
         .iter()
         .enumerate()
