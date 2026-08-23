@@ -22,3 +22,8 @@ Measured 2026-08-23 by the coordinator, release emit_rust_harness, ghcache.sched
 ### 2026-08-23T18:05:16Z · @sprefa-coordinator
 
 PR #430 (f7bce8702): ghcache fold 276 -> 235 ms, statements 14955 -> 11534; recount 8279 -> 5630, level_insert 1873 -> 1284. Receipt (7113 / 152 ms) NOT reached; the remainder is lower.pl's 2^N delta arms (issue delta-arm-subset-expansion) and recount's from-scratch re-derive (issue recount-waits-for-a-retraction). Stays open until those land.
+
+### 2026-08-23T21:11:35Z · @sprefa-coordinator
+
+#434+#435+#436+#433: fold 11,534 -> 6,738 statements, wall 235 -> 191 ms, page_response 7,284 -> 152 us/call. Statements beat the 7,113 target; wall still above the 152 ms pre-#427 receipt. Left open for the wall remainder.
+
