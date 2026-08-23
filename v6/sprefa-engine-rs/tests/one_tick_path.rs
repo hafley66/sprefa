@@ -85,6 +85,41 @@ fn emitted() -> PathBuf {
     module
 }
 
+fn emitted_ghcache() -> PathBuf {
+    let root = repo_root();
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/one_tick_path");
+    std::fs::create_dir_all(&directory).expect("create the emit directory");
+    let source = root.join("v6/dl/ghcache/ghcache.dl6");
+    let module = directory.join("ghcache.rs");
+    let goal = format!(
+        "compile_dl6('{}','{}',[emitter(emit_rust:emit_program)])",
+        source.display(),
+        module.display()
+    );
+    let output = Command::new("swipl")
+        .arg("--stack_limit=12G")
+        .arg("-q")
+        .args([
+            "-l",
+            &root.join("v6/prolog/compile.pl").display().to_string(),
+        ])
+        .args([
+            "-l",
+            &root.join("v6/prolog/emit_rust.pl").display().to_string(),
+        ])
+        .args(["-g", &goal])
+        .args(["-g", "halt"])
+        .output()
+        .expect("spawn swipl");
+    assert!(
+        output.status.success() && module.is_file(),
+        "ghcache did not compile: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    module
+}
+
 fn arrival(rel: &str, row: Vec<Value>) -> Arrival {
     Arrival {
         rel: rel.to_string(),
@@ -97,6 +132,27 @@ struct Tick {
     statements: u64,
     level_runs: u64,
     carry_pending: bool,
+}
+
+#[test]
+fn page_response_delta_sql_is_linear_in_its_seven_positive_items() {
+    let module = emitted_ghcache();
+    let program = run::load_program(&module)
+        .expect("load the emitted ghcache module")
+        .program;
+    let level = program
+        .levels
+        .iter()
+        .find(|level| level.head_rel == "page_response")
+        .expect("page_response level");
+    let sql = level.insert_sql.as_ref().expect("page_response insert SQL");
+    let arms = sql.matches(" UNION ALL ").count() + 1;
+    assert_eq!(arms, 7, "page_response delta arms");
+    assert!(
+        sql.len() < 10_000,
+        "page_response insert SQL is {} bytes",
+        sql.len()
+    );
 }
 
 #[test]

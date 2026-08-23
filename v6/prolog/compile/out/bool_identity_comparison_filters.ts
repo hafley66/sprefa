@@ -168,6 +168,7 @@ const ddl: readonly string[] = [
   `CREATE TEMP VIEW "__txt_bool_identity_comparison_filters_enabled_name" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."__refcount" AS "__refcount" FROM "bool_identity_comparison_filters_enabled_name" t`,
   `CREATE TABLE "bool_identity_comparison_filters_flag_928da2c2d5b2" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)), UNIQUE ("name", "enabled"))`,
   `CREATE TEMP VIEW "__txt_bool_identity_comparison_filters_flag_928da2c2d5b2" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."enabled" AS "enabled" FROM "bool_identity_comparison_filters_flag_928da2c2d5b2" t`,
+  `CREATE INDEX "bool_identity_comparison_filters_flag_928da2c2d5b2__scan_enabled" ON "bool_identity_comparison_filters_flag_928da2c2d5b2" ("enabled")`,
   `CREATE TEMP TABLE "__delta_bool_identity_comparison_filters_enabled_name" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_bool_identity_comparison_filters_enabled_name_sign" ON "__delta_bool_identity_comparison_filters_enabled_name" ("_sign")`,
   `CREATE INDEX "__delta_bool_identity_comparison_filters_enabled_name_group" ON "__delta_bool_identity_comparison_filters_enabled_name" ("name")`,

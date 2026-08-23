@@ -168,6 +168,7 @@ const ddl: readonly string[] = [
   `CREATE TEMP VIEW "__txt_float_exact_comparison_has_no_epsilon_exact" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."__refcount" AS "__refcount" FROM "float_exact_comparison_has_no_epsilon_exact" t`,
   `CREATE TABLE "float_exact_comparison_has_no_epsilon_score_74f788ec9f37" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), UNIQUE ("name", "value"))`,
   `CREATE TEMP VIEW "__txt_float_exact_comparison_has_no_epsilon_score_74f788ec9f37" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."value" AS "value" FROM "float_exact_comparison_has_no_epsilon_score_74f788ec9f37" t`,
+  `CREATE INDEX "float_exact_comparison_has_no_epsilon_score_74f788ec9f37__scan_value" ON "float_exact_comparison_has_no_epsilon_score_74f788ec9f37" ("value")`,
   `CREATE TEMP TABLE "__delta_float_exact_comparison_has_no_epsilon_exact" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_float_exact_comparison_has_no_epsilon_exact_sign" ON "__delta_float_exact_comparison_has_no_epsilon_exact" ("_sign")`,
   `CREATE INDEX "__delta_float_exact_comparison_has_no_epsilon_exact_group" ON "__delta_float_exact_comparison_has_no_epsilon_exact" ("name")`,

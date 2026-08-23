@@ -467,12 +467,10 @@ test(an_ordered_comparison_earns_nothing) :-
 % DELTA ARM COUNT (issues/delta-arm-subset-expansion)
 %
 % The issue reported `levels[i].insert_sql` as one arm per SUBSET of the body,
-% 2^N. It is not: level_delta_insert_sql/6 walks positive body uses ONE at a
-% time (lower.pl:level_positive_delta_arms/9), so one clause with N positive
-% items yields N arms, the incremental-view-maintenance count. These two tests
-% pin that reading and locate the real 2^N, which is upstream in
-% 0_coalesce_expand.pl: N coalesce goals on one rule fan out to 2^N CLAUSES
-% before lower.pl ever runs, and each clause then contributes its own arms.
+% 2^N. level_delta_insert_sql/6 now walks positive body uses ONE at a time
+% (lower.pl:level_positive_delta_arms/9), so one clause with N positive items
+% yields N arms, the incremental-view-maintenance count. Coalesce transitions
+% remain one clause and add one arm per coalesced item.
 %
 % Measured on ghcache page_response at 3b2064aaf: 6 coalesce goals -> 64
 % clauses -> 64 recompute statements and 64 + 6*32 = 256 delta arms, 248 KB.
@@ -488,6 +486,26 @@ delta_shape_for(Label, Prog, HeadRef, ClauseCount, ArmCount) :-
            length(InsertSqls, ClauseCount),
            union_arms(DeltaInsertSql, ArmCount) )).
 
+delta_sql_for(Label, Prog, HeadRef, ClauseCount, DeltaInsertSql) :-
+    once(( level_shape_for(Label, Prog, HeadRef, InsertSqls, DeltaInsertSql, _),
+           length(InsertSqls, ClauseCount) )).
+
+four_item_program(
+    prog([ kind(part_a/2, set), col_type(part_a/2, key, text),
+           col_type(part_a/2, a, int),
+           kind(part_b/2, set), col_type(part_b/2, key, text),
+           col_type(part_b/2, b, int),
+           kind(part_c/2, set), col_type(part_c/2, key, text),
+           col_type(part_c/2, c, int),
+           kind(part_d/2, set), col_type(part_d/2, key, text),
+           col_type(part_d/2, d, int),
+           col_type(joined/5, key, text), col_type(joined/5, a, int),
+           col_type(joined/5, b, int), col_type(joined/5, c, int),
+           col_type(joined/5, d, int) ],
+         [ (joined(Key, A, B, C, D) <-
+                part_a(Key, A), part_b(Key, B),
+                part_c(Key, C), part_d(Key, D)) ])).
+
 level_shape_for(Label, Prog, HeadRef, InsertSqls, DeltaInsertSql, RefCountSql) :-
     program_plan(fixture(Label, Prog, [], [], [])-[], Plan),
     lower_program(Plan, lowered(_, _, _, _, LevelStatements, _, _, _)),
@@ -501,28 +519,66 @@ sql_occurrences(Sql, Needle, Count) :-
 % Four positive body items, no coalesce: ONE clause, FOUR arms. A subset
 % expansion would read 16 here.
 test(a_four_item_body_lowers_to_four_delta_arms) :-
-    delta_shape_for(four_item_body,
-        prog([ kind(part_a/2, set), col_type(part_a/2, key, text),
-               col_type(part_a/2, a, int),
-               kind(part_b/2, set), col_type(part_b/2, key, text),
-               col_type(part_b/2, b, int),
-               kind(part_c/2, set), col_type(part_c/2, key, text),
-               col_type(part_c/2, c, int),
-               kind(part_d/2, set), col_type(part_d/2, key, text),
-               col_type(part_d/2, d, int),
-               col_type(joined/5, key, text), col_type(joined/5, a, int),
-               col_type(joined/5, b, int), col_type(joined/5, c, int),
-               col_type(joined/5, d, int) ],
-             [ (joined(Key, A, B, C, D) <-
-                    part_a(Key, A), part_b(Key, B),
-                    part_c(Key, C), part_d(Key, D)) ]),
+    four_item_program(Prog),
+    delta_shape_for(four_item_body, Prog,
         joined/5, ClauseCount, ArmCount),
     ClauseCount == 1,
     ArmCount == 4.
 
-% Three optional reads remain one clause. The driver contributes one arm and
-% each optional read contributes gain and loss arms.
-test(three_coalesce_goals_lower_to_one_clause_and_seven_arms) :-
+test(each_arm_reads_new_before_and_old_after) :-
+    once(( four_item_program(Prog),
+           delta_sql_for(four_item_body, Prog, joined/5, 1, DeltaInsertSql),
+           atomic_list_concat(Arms, ' UNION ALL ', DeltaInsertSql),
+           Arms = [First, Second, Third, Fourth],
+           sub_atom(First, _, _, _, 'FROM "__frontier_four_item_body_part_a_'),
+           sub_atom(First, _, _, _, 'FROM "four_item_body_part_b_'),
+           sub_atom(First, _, _, _, 'FROM "four_item_body_part_c_'),
+           sub_atom(First, _, _, _, 'FROM "four_item_body_part_d_'),
+           sub_atom(Second, _, _, _, 'FROM "__frontier_four_item_body_part_b_'),
+           sub_atom(Second, _, _, _, ', "four_item_body_part_a_'),
+           \+ sub_atom(Second, _, _, _, 'FROM "four_item_body_part_a_'),
+           sub_atom(Second, _, _, _, 'FROM "four_item_body_part_c_'),
+           sub_atom(Second, _, _, _, 'FROM "four_item_body_part_d_'),
+           sub_atom(Third, _, _, _, 'FROM "__frontier_four_item_body_part_c_'),
+           sub_atom(Third, _, _, _, ', "four_item_body_part_a_'),
+           sub_atom(Third, _, _, _, ', "four_item_body_part_b_'),
+           sub_atom(Third, _, _, _, 'FROM "four_item_body_part_d_'),
+           sub_atom(Fourth, _, _, _, 'FROM "__frontier_four_item_body_part_d_'),
+           sub_atom(Fourth, _, _, _, ', "four_item_body_part_a_'),
+           sub_atom(Fourth, _, _, _, ', "four_item_body_part_b_'),
+           sub_atom(Fourth, _, _, _, ', "four_item_body_part_c_'),
+           \+ sub_atom(Fourth, _, _, _, ' old_row GROUP BY ') )).
+
+test(a_negated_rel_shrink_has_a_same_tick_insert_arm) :-
+    lowered_for('3_flagship_callgraph.pl',
+                callgraph_unused_inverts_with_the_call_set,
+                lowered(_, _, _, _, LevelStatements, _, _, _)),
+    memberchk(levelstmt(unused/1, _, _, DeltaInsertSql, _, _, _),
+              LevelStatements),
+    atomic_list_concat([_PositiveArm, NegativeArm], ' UNION ALL ',
+                       DeltaInsertSql),
+    NegativeArm ==
+      'SELECT DISTINCT b0."name" FROM "__delta_callgraph_unused_inverts_with_the_call_set_call_b9604c3c8a3f" d0, "callgraph_unused_inverts_with_the_call_set_def" b0 WHERE d0."_sign" < 0 AND d0."callee" = b0."name" AND NOT EXISTS (SELECT 1 FROM "callgraph_unused_inverts_with_the_call_set_call_b9604c3c8a3f" n0 WHERE n0."callee" = b0."name") RETURNING "name"'.
+
+test(dictionary_rows_never_read_a_frontier) :-
+    lowered_for('6_relation_depth.pl', relation_depth2_chained_decode,
+                lowered(_, _, _, _, LevelStatements, _, _, _)),
+    forall(member(levelstmt(_, _, _, DeltaInsertSql, _, _, _),
+                  LevelStatements),
+           \+ sub_atom(DeltaInsertSql, _, _, _, '__frontier___ref_')).
+
+test(old_state_rows_keep_the_internal_identity_used_by_relation_joins) :-
+    lowered_for('6_relation_depth.pl', relation_depth2_chained_decode,
+                lowered(_, _, _, _, LevelStatements, _, _, _)),
+    forall(( member(levelstmt(_, _, _, DeltaInsertSql, _, _, _),
+                    LevelStatements),
+             sub_atom(DeltaInsertSql, _, _, _, ' old_row GROUP BY ') ),
+           sub_atom(DeltaInsertSql, _, _, _,
+                    '(SELECT old_row."__id",')).
+
+% Three optional reads remain one clause and contribute one transition arm
+% each beside the driver's arm.
+test(three_coalesce_goals_lower_to_one_clause_and_four_arms) :-
     delta_shape_for(three_coalesce_goals,
         prog([ kind(driver/1, set), col_type(driver/1, key, text),
                kind(head_a/2, set), col_type(head_a/2, key, text),
@@ -540,10 +596,9 @@ test(three_coalesce_goals_lower_to_one_clause_and_seven_arms) :-
                     coalesce(head_c(Key, C), 0)) ]),
         totalled/4, ClauseCount, ArmCount),
     ClauseCount == 1,
-    ArmCount == 7.
+    ArmCount == 4.
 
-% The requested N + 4 pin: one ordinary positive item and two optional items.
-test(two_coalesce_goals_lower_to_one_clause_and_n_plus_four_arms) :-
+test(two_coalesce_goals_lower_to_one_clause_and_three_arms) :-
     Prog = prog([ kind(driver/1, set), col_type(driver/1, key, text),
                   kind(head_a/2, set), col_type(head_a/2, key, text),
                   col_type(head_a/2, a, int),
@@ -561,10 +616,13 @@ test(two_coalesce_goals_lower_to_one_clause_and_n_plus_four_arms) :-
                          refcountsql(_, RefCountSeedSql, _, _, _, _, _, _, _, _,
                                      _, _, _, _, _, _))),
     InsertSqls = [RecomputeSql],
-    union_arms(DeltaSql, 5),
+    union_arms(DeltaSql, 3),
+    atomic_list_concat([DriverArm | _], ' UNION ALL ', DeltaSql),
+    \+ sub_atom(DriverArm, _, _, _, ' old_row GROUP BY '),
     sql_occurrences(RecomputeSql, ' LEFT JOIN ', 2),
     sql_occurrences(RecomputeSql, 'COALESCE(', 2),
-    sql_occurrences(DeltaSql, ' EXCEPT ', 4),
+    sql_occurrences(DeltaSql, ' EXCEPT ', 2),
+    sql_occurrences(DeltaSql, ' OR EXISTS ', 2),
     sql_occurrences(RefCountSeedSql, ' LEFT JOIN ', 2),
     sql_occurrences(RefCountSeedSql, ' WHERE 0)', 2).
 
