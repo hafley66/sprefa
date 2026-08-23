@@ -156,12 +156,15 @@ struct Tick {
 fn fold(
     program: &sprefa_engine_rs::program::GenProgram,
     schedule: &[Vec<Arrival>],
-) -> (Vec<Tick>, String) {
+) -> (Vec<Tick>, String, u64) {
+    sprefa_engine_rs::trace::arm();
+    sprefa_engine_rs::trace::force_summary();
     let seam = run::open_seam(None).expect("in-memory seam");
     seam.size_statement_cache(program.stable_sql_count() + 64);
     seam.run_program_ddl(&program.ddl, &program.queries)
         .expect("DDL execution failed");
     run_boot(&seam, &program.boot);
+    let unlabelled_before = unlabelled_calls();
     let mut ticks = Vec::new();
     let mut lines = Vec::new();
     let mut tick_number = 0usize;
@@ -196,7 +199,21 @@ fn fold(
         carry_pending = deltas.carry_pending;
         lines.push(format_deltas(program, tick_number, &deltas));
     }
-    (ticks, lines.join("\n") + "\n")
+    (
+        ticks,
+        lines.join("\n") + "\n",
+        unlabelled_calls() - unlabelled_before,
+    )
+}
+
+/// Every statement a tick dispatches carries a verb; `unlabelled` is the
+/// trace's name for one that reached the seam outside every scope.
+fn unlabelled_calls() -> u64 {
+    sprefa_engine_rs::trace::summary_rows()
+        .into_iter()
+        .filter(|(label, _)| label.verb == "unlabelled")
+        .map(|(_, stat)| stat.calls)
+        .sum()
 }
 
 #[test]
@@ -218,7 +235,7 @@ fn an_ordered_tick_costs_its_change_not_the_program_size() {
     let schedule = schedule(&root);
 
     let started = Instant::now();
-    let (ticks, log) = fold(&program, &schedule);
+    let (ticks, log, unlabelled) = fold(&program, &schedule);
     println!(
         "ordered_statement_count: fold {:.2}s",
         started.elapsed().as_secs_f64()
@@ -229,6 +246,11 @@ fn an_ordered_tick_costs_its_change_not_the_program_size() {
             tick.arrivals, tick.statements, tick.recomputes
         );
     }
+
+    assert_eq!(
+        unlabelled, 0,
+        "{unlabelled} statements reached the seam inside a tick with no verb"
+    );
 
     let expected =
         std::fs::read_to_string(engine_dir().join("tests/fixtures/ghcache_ticklog_base.txt"))

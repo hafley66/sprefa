@@ -93,6 +93,29 @@ impl TickWork {
         work
     }
 
+    /// The maximal reading: every rel might have moved, so no phase skips. The
+    /// door for a caller that drives one phase without a whole tick's tables.
+    pub fn unskipped(relations: &[IncrementalRelationPlan]) -> TickWork {
+        let names = || -> std::collections::HashSet<String> {
+            relations
+                .iter()
+                .map(|relation| relation.rel.clone())
+                .collect()
+        };
+        TickWork {
+            moved: std::cell::RefCell::new(names()),
+            carry: names(),
+            stale: names(),
+            departures: std::cell::RefCell::new(
+                relations
+                    .iter()
+                    .filter(|relation| relation.departure_frontier_table_name.is_some())
+                    .map(|relation| relation.rel.clone())
+                    .collect(),
+            ),
+        }
+    }
+
     pub fn mark(&self, rel: &str) {
         let mut moved = self.moved.borrow_mut();
         if !moved.contains(rel) {
