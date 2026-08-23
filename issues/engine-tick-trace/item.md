@@ -55,3 +55,8 @@ Reducing the statement count. That is @ordered-tick-recompute.
 ### 2026-08-23T06:18:45Z · @sprefa-coordinator
 
 Items 1, 4 (wall row only), 5 landed in PR #424 (cb72bce75). Items 2 (Scope::verb in ordered.rs) landed in PR #423 (30fbd3669). Item 3 (the _recent GraphQL selection, pr_transition open->merged) is PR 2, in flight on lane fix-engine-tick-trace.
+
+### 2026-08-23T06:34:18Z · @sprefa-coordinator
+
+Live receipt 2026-08-23 (coordinator, merged main 748342380 + README commit): probe PR hafley66/sprefa#426 opened 06:29, captured open at tick 30, merged 06:31:28, v_pr_transition row (hafley66/sprefa, 426, open, merged, at_tick=49) read from ~/.agent/dl6.db at 06:33:50. Resident dl6 run pid 15271 alive throughout.
+
