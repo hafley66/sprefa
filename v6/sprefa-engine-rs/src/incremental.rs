@@ -54,7 +54,10 @@ fn plan_for<'a>(
     missing: &str,
 ) -> &'a IncrementalRelationPlan {
     PLAN_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    index.get(rel).copied().unwrap_or_else(|| panic!("{missing}"))
+    index
+        .get(rel)
+        .copied()
+        .unwrap_or_else(|| panic!("{missing}"))
 }
 
 /// One substring search per (statement, relation) pair the frontier scan walks.
@@ -113,7 +116,11 @@ fn bind_args(values: &[Value]) -> BoundaryResult<Vec<ScalarValue>> {
 
 /// The staged JSON straight off the borrowed rows: no Vec<Value> is built per
 /// event to carry the two leading integers.
-fn staged_json(prefix: [i64; 2], events: &[&DeltaEvent], sequence_only: bool) -> BoundaryResult<String> {
+fn staged_json(
+    prefix: [i64; 2],
+    events: &[&DeltaEvent],
+    sequence_only: bool,
+) -> BoundaryResult<String> {
     let mut out = String::new();
     out.push('[');
     for (index, event) in events.iter().enumerate() {
@@ -721,9 +728,7 @@ pub fn boundary_delta(
             .unwrap_or(0);
         let weight = sign * count;
         match weight_index.entry(dedup_key(&values)) {
-            std::collections::hash_map::Entry::Occupied(seen) => {
-                weights[*seen.get()].1 += weight
-            }
+            std::collections::hash_map::Entry::Occupied(seen) => weights[*seen.get()].1 += weight,
             std::collections::hash_map::Entry::Vacant(fresh) => {
                 fresh.insert(weights.len());
                 weights.push((values, weight));
@@ -1353,7 +1358,14 @@ pub fn apply_levels_before_edges(
                 .collect();
             reconcile_ref_count_statement(seam, statement, relations, &plans, &copies)
         } else {
-            apply_level_statement(seam, statement, relations, &plans, false, &mut next_sequence)
+            apply_level_statement(
+                seam,
+                statement,
+                relations,
+                &plans,
+                false,
+                &mut next_sequence,
+            )
         }
     })
 }

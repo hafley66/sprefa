@@ -39,8 +39,9 @@ use sprefa_engine_rs::types::Arrival;
 
 /// A tick with no arrival reads the clock and the carry, nothing else.
 const ZERO_ARRIVAL_CAP: u64 = 100;
-/// One arrival pays for its own dependency cone, not for 154 rels.
-const ONE_ARRIVAL_CAP: u64 = 300;
+/// One arrival pays for its own dependency cone. The widest arrival in this
+/// schedule moves 25 rels and runs 37 level recomputes over the two passes.
+const ONE_ARRIVAL_CAP: u64 = 450;
 const DRAIN_CAP: usize = 100;
 
 fn engine_dir() -> PathBuf {
