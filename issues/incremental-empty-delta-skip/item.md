@@ -3,10 +3,14 @@ created: 2026-08-23
 updated: 2026-08-23
 type: improvement
 reporter: hafley66
-status: in-progress
+status: done
 priority: high
 related: ['@one-tick-path', '@ordered-tick-recompute']
 labels: [engine, performance]
+closed: 2026-08-23
+commits:
+- hash: 934c31d5b
+  summary: 'merge #436 empty-delta-skip'
 ---
 
 # Incremental path runs every level's SQL every tick: gate each operator on a non-empty input frontier
