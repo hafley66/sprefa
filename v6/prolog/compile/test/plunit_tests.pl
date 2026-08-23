@@ -484,38 +484,79 @@ union_arms(Sql, Count) :-
     length(Parts, Count).
 
 delta_shape_for(Label, Prog, HeadRef, ClauseCount, ArmCount) :-
+    delta_sql_for(Label, Prog, HeadRef, ClauseCount, DeltaInsertSql),
+    union_arms(DeltaInsertSql, ArmCount).
+
+delta_sql_for(Label, Prog, HeadRef, ClauseCount, DeltaInsertSql) :-
     once(( program_plan(fixture(Label, Prog, [], [], [])-[], Plan),
            lower_program(Plan, lowered(_, _, _, _, LevelStatements, _, _, _)),
            memberchk(levelstmt(HeadRef, _, InsertSqls, DeltaInsertSql, _, _, _),
                      LevelStatements),
-           length(InsertSqls, ClauseCount),
-           union_arms(DeltaInsertSql, ArmCount) )).
+           length(InsertSqls, ClauseCount) )).
+
+four_item_program(
+    prog([ kind(part_a/2, set), col_type(part_a/2, key, text),
+           col_type(part_a/2, a, int),
+           kind(part_b/2, set), col_type(part_b/2, key, text),
+           col_type(part_b/2, b, int),
+           kind(part_c/2, set), col_type(part_c/2, key, text),
+           col_type(part_c/2, c, int),
+           kind(part_d/2, set), col_type(part_d/2, key, text),
+           col_type(part_d/2, d, int),
+           col_type(joined/5, key, text), col_type(joined/5, a, int),
+           col_type(joined/5, b, int), col_type(joined/5, c, int),
+           col_type(joined/5, d, int) ],
+         [ (joined(Key, A, B, C, D) <-
+                part_a(Key, A), part_b(Key, B),
+                part_c(Key, C), part_d(Key, D)) ])).
 
 % Four positive body items, no coalesce: ONE clause, FOUR arms. A subset
 % expansion would read 16 here.
 test(a_four_item_body_lowers_to_four_delta_arms) :-
-    delta_shape_for(four_item_body,
-        prog([ kind(part_a/2, set), col_type(part_a/2, key, text),
-               col_type(part_a/2, a, int),
-               kind(part_b/2, set), col_type(part_b/2, key, text),
-               col_type(part_b/2, b, int),
-               kind(part_c/2, set), col_type(part_c/2, key, text),
-               col_type(part_c/2, c, int),
-               kind(part_d/2, set), col_type(part_d/2, key, text),
-               col_type(part_d/2, d, int),
-               col_type(joined/5, key, text), col_type(joined/5, a, int),
-               col_type(joined/5, b, int), col_type(joined/5, c, int),
-               col_type(joined/5, d, int) ],
-             [ (joined(Key, A, B, C, D) <-
-                    part_a(Key, A), part_b(Key, B),
-                    part_c(Key, C), part_d(Key, D)) ]),
+    four_item_program(Prog),
+    delta_shape_for(four_item_body, Prog,
         joined/5, ClauseCount, ArmCount),
     ClauseCount == 1,
     ArmCount == 4.
 
+test(each_arm_reads_new_before_and_old_after) :-
+    once(( four_item_program(Prog),
+           delta_sql_for(four_item_body, Prog, joined/5, 1, DeltaInsertSql),
+           atomic_list_concat(Arms, ' UNION ALL ', DeltaInsertSql),
+           Arms = [First, Second, Third, Fourth],
+           sub_atom(First, _, _, _, 'FROM "__frontier_four_item_body_part_a_'),
+           sub_atom(First, _, _, _, 'FROM "four_item_body_part_b_'),
+           sub_atom(First, _, _, _, 'FROM "four_item_body_part_c_'),
+           sub_atom(First, _, _, _, 'FROM "four_item_body_part_d_'),
+           sub_atom(Second, _, _, _, 'FROM "__frontier_four_item_body_part_b_'),
+           sub_atom(Second, _, _, _, ', "four_item_body_part_a_'),
+           \+ sub_atom(Second, _, _, _, 'FROM "four_item_body_part_a_'),
+           sub_atom(Second, _, _, _, 'FROM "four_item_body_part_c_'),
+           sub_atom(Second, _, _, _, 'FROM "four_item_body_part_d_'),
+           sub_atom(Third, _, _, _, 'FROM "__frontier_four_item_body_part_c_'),
+           sub_atom(Third, _, _, _, ', "four_item_body_part_a_'),
+           sub_atom(Third, _, _, _, ', "four_item_body_part_b_'),
+           sub_atom(Third, _, _, _, 'FROM "four_item_body_part_d_'),
+           sub_atom(Fourth, _, _, _, 'FROM "__frontier_four_item_body_part_d_'),
+           sub_atom(Fourth, _, _, _, ', "four_item_body_part_a_'),
+           sub_atom(Fourth, _, _, _, ', "four_item_body_part_b_'),
+           sub_atom(Fourth, _, _, _, ', "four_item_body_part_c_'),
+           \+ sub_atom(Fourth, _, _, _, ' old_row GROUP BY ') )).
+
+test(a_negated_rel_shrink_has_a_same_tick_insert_arm) :-
+    lowered_for('3_flagship_callgraph.pl',
+                callgraph_unused_inverts_with_the_call_set,
+                lowered(_, _, _, _, LevelStatements, _, _, _)),
+    memberchk(levelstmt(unused/1, _, _, DeltaInsertSql, _, _, _),
+              LevelStatements),
+    atomic_list_concat([_PositiveArm, NegativeArm], ' UNION ALL ',
+                       DeltaInsertSql),
+    NegativeArm ==
+      'SELECT DISTINCT b0."name" FROM "__delta_callgraph_unused_inverts_with_the_call_set_call_b9604c3c8a3f" d0, "callgraph_unused_inverts_with_the_call_set_def" b0 WHERE d0."_sign" < 0 AND d0."callee" = b0."name" AND NOT EXISTS (SELECT 1 FROM "callgraph_unused_inverts_with_the_call_set_call_b9604c3c8a3f" n0 WHERE n0."callee" = b0."name") RETURNING "name"'.
+
 % The same head reached through three coalesce goals instead. The clause count
-% is 2^3 and the arms are 8*1 + 3*4 = 20: the fan-out is the coalesce
-% desugar's, and lower.pl stays linear inside each clause it is handed.
+% is 2^3. Each expanded clause has four source transitions after the negated
+% departure arm is included, for 32 arms total.
 test(three_coalesce_goals_fan_out_to_eight_clauses_before_lowering) :-
     delta_shape_for(three_coalesce_goals,
         prog([ kind(driver/1, set), col_type(driver/1, key, text),
@@ -534,7 +575,7 @@ test(three_coalesce_goals_fan_out_to_eight_clauses_before_lowering) :-
                     coalesce(head_c(Key, C), 0)) ]),
         totalled/4, ClauseCount, ArmCount),
     ClauseCount == 8,
-    ArmCount == 20.
+    ArmCount == 32.
 
 :- end_tests(delta_arm_count).
 

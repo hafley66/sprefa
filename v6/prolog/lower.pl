@@ -526,9 +526,8 @@ compile_positive_uses(Mode, RelPlans,
                           MoreFrom, MoreWhere),
     append(HereWhere, MoreWhere, WhereParts).
 compile_positive_uses(Mode, RelPlans, [use(Ref, Args, pos, Source) | Rest], Index, Bound0, Bound, [From | MoreFrom], WhereParts) :-
-    positive_use_table(Source, RelPlans, Ref, Table), quote_ident(Table, QuotedTable),
     format(atom(Alias), 'b~w', [Index]),
-    format(atom(From), '~w ~w', [QuotedTable, Alias]),
+    positive_use_from(Source, RelPlans, Ref, Alias, From),
     relplan_columns(RelPlans, Ref, Columns),
     relplan_column_types(RelPlans, Ref, ColumnTypes),
     compile_atom_args(Mode, Args, Columns, ColumnTypes, Alias, Bound0, FieldBound, HereWhere),
@@ -541,6 +540,25 @@ compile_positive_uses(Mode, RelPlans, [use(Ref, Args, pos, Source) | Rest], Inde
 positive_use_table(pre, _RelPlans, Ref, Table) :- !, pre_table_name(Ref, Table).
 positive_use_table(_, RelPlans, Ref, Table) :-
     relplan_storage_name(RelPlans, Ref, Table).
+
+positive_use_from(old_state(Source), RelPlans, Ref, Alias, From) :-
+    !,
+    positive_use_table(Source, RelPlans, Ref, Table),
+    quote_ident(Table, QuotedTable),
+    frontier_table_name(Ref, FrontierTable),
+    quote_ident(FrontierTable, QuotedFrontierTable),
+    relplan_columns(RelPlans, Ref, Columns),
+    qualified_equalities(Columns, old_delta, old_row, FrontierEqualities),
+    qualified_column_list(Columns, old_row, SelectedColumns),
+    atomic_list_concat(FrontierEqualities, ' AND ', FrontierWhere),
+    format(atom(From),
+           '(SELECT ~w FROM ~w old_row GROUP BY ~w HAVING count(*) > (SELECT count(*) FROM ~w old_delta WHERE old_delta."_phase" >= 0 AND ~w)) ~w',
+           [SelectedColumns, QuotedTable, SelectedColumns,
+            QuotedFrontierTable, FrontierWhere, Alias]).
+positive_use_from(Source, RelPlans, Ref, Alias, From) :-
+    positive_use_table(Source, RelPlans, Ref, Table),
+    quote_ident(Table, QuotedTable),
+    format(atom(From), '~w ~w', [QuotedTable, Alias]).
 
 compile_seeded_pre_use(Mode, RelPlans, Ref, Args, Seed, Index, Bound0, Bound,
                        WhereParts) :-
@@ -6403,7 +6421,11 @@ level_rule_delta_arms(Mode, RelPlans, (Head <- Body), DeltaArms, InternGroups) :
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
     level_positive_delta_arms(Mode, RelPlans, Head, Body, PosUses, NegUses, PosUses,
-                              DeltaArms, InternGroups).
+                              PositiveArms, PositiveInterns),
+    level_negative_delta_arms(Mode, RelPlans, Head, Body, PosUses, NegUses,
+                              NegUses, NegativeArms, NegativeInterns),
+    append(PositiveArms, NegativeArms, DeltaArms),
+    append(PositiveInterns, NegativeInterns, InternGroups).
 
 level_positive_delta_arms(_, _, _, _, [], _, _, [], []).
 % STRUCT-AS-ROWS: a dictionary atom gets NO delta arm, and needs none. A
@@ -6420,7 +6442,9 @@ level_positive_delta_arms(Mode, RelPlans, Head, Body, [_ | RestPositions], NegUs
     length(RestPositions, RemainingCount),
     length(PosUses, PositiveCount),
     Position is PositiveCount - RemainingCount - 1,
-    nth0_select(Position, PosUses, DeltaUse, OtherPosUses),
+    nth0_split(Position, PosUses, NewBeforeUses, DeltaUse, AfterUses),
+    maplist(old_state_use, AfterUses, OldAfterUses),
+    append(NewBeforeUses, OldAfterUses, OtherPosUses),
     level_positive_delta_arms(Mode, RelPlans, Head, Body, RestPositions, NegUses, PosUses,
                               RestArms, RestInterns),
     (   dictionary_use(DeltaUse)
@@ -6433,11 +6457,14 @@ level_positive_delta_arms(Mode, RelPlans, Head, Body, [_ | RestPositions], NegUs
 
 dictionary_use(use(Name/_Arity, _, _, _)) :- sub_atom(Name, 0, _, _, '__ref_').
 
-nth0_select(0, [Selected | Rest], Selected, Rest) :- !.
-nth0_select(Index, [Item | Rest], Selected, [Item | More]) :-
+old_state_use(use(Ref, Args, pos, Source),
+              use(Ref, Args, pos, old_state(Source))).
+
+nth0_split(0, [Selected | Rest], [], Selected, Rest) :- !.
+nth0_split(Index, [Item | Rest], [Item | Before], Selected, After) :-
     Index > 0,
     NextIndex is Index - 1,
-    nth0_select(NextIndex, Rest, Selected, More).
+    nth0_split(NextIndex, Rest, Before, Selected, After).
 
 % The guard walk runs HERE too, not only in the recompute insert. Omitting it
 % was a real miscompile caught by the sweep, not a theoretical one: with the
@@ -6475,6 +6502,49 @@ level_delta_select_arm(Mode, RelPlans, Head, Body, use(DeltaRef, DeltaArgs, pos,
     append([['d0."_phase" >= 0' | DeltaWhereTexts], IdentityWhereTexts,
             OtherWhereTexts], PositiveWhereTexts),
     append([PositiveWhereTexts, GuardWhereTexts, NegWhereTexts], WhereTexts),
+    atomic_list_concat(WhereTexts, ' AND ', WhereSql),
+    format(atom(DeltaArm), 'SELECT DISTINCT ~w FROM ~w WHERE ~w',
+           [SelectSql, FromSql, WhereSql]),
+    intern_write_statements(BuiltValues, FromSql, WhereSql, TextInternSqls),
+    list_intern_statements(ListInterns, FromSql, WhereSql, ListInternSqls),
+    append(TextInternSqls, ListInternSqls, InternSqls).
+
+level_negative_delta_arms(_, _, _, _, _, [], _, [], []).
+level_negative_delta_arms(Mode, RelPlans, Head, Body, PosUses,
+                          [NegUse | Rest], NegUses,
+                          [Arm | MoreArms], InternGroups) :-
+    level_negative_delta_arm(Mode, RelPlans, Head, Body, PosUses, NegUse,
+                             NegUses, Arm, ArmInterns),
+    level_negative_delta_arms(Mode, RelPlans, Head, Body, PosUses, Rest,
+                              NegUses, MoreArms, RestInterns),
+    append(ArmInterns, RestInterns, InternGroups).
+
+level_negative_delta_arm(Mode, RelPlans, Head, Body, PosUses,
+                         use(DeltaRef, DeltaArgs, neg, _), NegUses,
+                         DeltaArm, InternSqls) :-
+    delta_table_name(DeltaRef, DeltaTable),
+    quote_ident(DeltaTable, QuotedDeltaTable),
+    rel_ref(Head, HeadRef),
+    relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
+    compile_positive_uses(Mode, RelPlans, PosUses, [], Bound0,
+                          PositiveFromParts, PositiveWhereTexts),
+    compile_body_guards(Mode, Body, Bound0, Bound, JsonFromParts,
+                        GuardWhereTexts),
+    relplan_columns(RelPlans, DeltaRef, DeltaColumns),
+    relplan_column_types(RelPlans, DeltaRef, DeltaColumnTypes),
+    compile_negative_atom_args(Mode, DeltaArgs, DeltaColumns,
+                               DeltaColumnTypes, d0, Bound,
+                               DeltaWhereParts),
+    maplist(where_text, DeltaWhereParts, DeltaWhereTexts),
+    compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, none, SelectExprs,
+                     BuiltValues, ListInterns),
+    atomic_list_concat(SelectExprs, ', ', SelectSql),
+    format(atom(DeltaFrom), '~w d0', [QuotedDeltaTable]),
+    append([[DeltaFrom], PositiveFromParts, JsonFromParts], FromParts),
+    atomic_list_concat(FromParts, ', ', FromSql),
+    append([['d0."_sign" < 0' | DeltaWhereTexts], PositiveWhereTexts,
+            GuardWhereTexts, NegWhereTexts], WhereTexts),
     atomic_list_concat(WhereTexts, ' AND ', WhereSql),
     format(atom(DeltaArm), 'SELECT DISTINCT ~w FROM ~w WHERE ~w',
            [SelectSql, FromSql, WhereSql]),
