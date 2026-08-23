@@ -6650,7 +6650,7 @@ coalesce_use_key_exprs(Mode, [Arg | RestArgs], [_ | RestColumns], Output,
                            Position, NextColumnPosition, More).
 
 coalesce_key_alias(Position, ColumnPosition, Alias) :-
-    format(atom(Alias), '__coalesce_~w_~w', [Position, ColumnPosition]).
+    format(atom(Alias), 'c~w_~w', [Position, ColumnPosition]).
 
 level_positive_delta_arms(_, _, _, _, [], _, _, _, [], []).
 % STRUCT-AS-ROWS: a dictionary atom gets NO delta arm, and needs none. A
