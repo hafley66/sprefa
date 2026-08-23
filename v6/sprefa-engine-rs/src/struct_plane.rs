@@ -142,6 +142,7 @@ fn encoded_rows(rows: &[Row]) -> BoundaryResult<ScalarValue> {
 }
 
 fn intern_type(
+    work: &crate::incremental::TickWork,
     seam: &SqliteSeam,
     plan: &StructTypePlan,
     collected: &[Collected],
@@ -178,7 +179,7 @@ fn intern_type(
     if !conflict.rows.is_empty() {
         panic!("relation_reference_conflict({})", plan.name);
     }
-    crate::incremental::apply_arrivals(seam, &staged, relations)?;
+    crate::incremental::apply_arrivals(seam, &staged, relations, work)?;
     let lookup = seam
         .execute(&SqlStatement {
             sql: plan.lookup_sql.clone(),
@@ -275,6 +276,7 @@ pub fn intern<'a>(
     arrivals: std::borrow::Cow<'a, [Arrival]>,
     relations: &[IncrementalRelationPlan],
     text_plan: Option<&TextInternPlan>,
+    work: &crate::incremental::TickWork,
 ) -> BoundaryResult<std::borrow::Cow<'a, [Arrival]>> {
     if types.is_empty() || arrivals.is_empty() {
         return Ok(arrivals);
@@ -290,7 +292,7 @@ pub fn intern<'a>(
     let mut ids = HashMap::new();
     for plan in types {
         if let Some(collected) = per_type.get(&plan.name) {
-            intern_type(seam, plan, &collected.0, &mut ids, relations, text_plan)?;
+            intern_type(work, seam, plan, &collected.0, &mut ids, relations, text_plan)?;
         }
     }
     let rewritten: Vec<Arrival> = arrivals

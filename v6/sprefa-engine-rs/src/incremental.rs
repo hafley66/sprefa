@@ -21,6 +21,220 @@ pub struct DeltaEvent {
     pub row: Row,
 }
 
+/// Columns in one probe statement. SQLite's default column ceiling is 2000 and
+/// each column here is a shallow EXISTS.
+const PROBE_WIDTH: usize = 600;
+
+/// Columns `probe_columns` returns per rel.
+const PROBE_COLUMNS: usize = 3;
+
+/// Which level operator a head ran under, so the two passes over the same head
+/// share one reading of "did my inputs move since I last ran".
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LevelPhase {
+    /// apply_levels_before_edges and apply_levels_after_edges: the delta insert.
+    Insert,
+    /// recompute_levels_before_edges and recompute_levels_after_edges: the
+    /// from-base refcount re-derive.
+    Recount,
+}
+
+/// Which rels hold transient rows this tick, so a phase touches only those.
+/// Every write marks and nothing unmarks: over-approximating wastes a statement.
+pub struct TickWork {
+    /// Rel -> the tick clock reading at its last write. The key set is the moved
+    /// set; a rel absent here has not been written this tick.
+    moved_at: std::cell::RefCell<HashMap<String, u64>>,
+    /// Monotone inside one tick. A level operator's rows are a function of the
+    /// rels it reads, so a re-run with no newer input restages nothing.
+    clock: std::cell::Cell<u64>,
+    ran_at: std::cell::RefCell<HashMap<(LevelPhase, String), u64>>,
+    /// `unskipped`: no tick tables to read, so every gate answers yes.
+    ungated: bool,
+    carry: std::collections::HashSet<String>,
+    stale: std::collections::HashSet<String>,
+    departures: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Rels this tick wrote a frontier row for; the merge and the promote move
+    /// rows between exactly these tables and leave the rest empty.
+    staged_current: std::cell::RefCell<std::collections::HashSet<String>>,
+    staged_next: std::cell::RefCell<std::collections::HashSet<String>>,
+}
+
+fn probe_columns(relation: &IncrementalRelationPlan) -> [String; PROBE_COLUMNS] {
+    let exists = |table: &str| format!("EXISTS(SELECT 1 FROM {})", quote_identifier(table));
+    [
+        exists(&relation.frontier_table_name),
+        format!(
+            "{} OR {}",
+            exists(&relation.delta_table_name),
+            exists(&relation.next_frontier_table_name)
+        ),
+        match &relation.departure_frontier_table_name {
+            Some(table) => exists(table),
+            None => "0".to_string(),
+        },
+    ]
+}
+
+impl TickWork {
+    /// One chunked read at the top of the tick. Nothing but a tick writes these
+    /// tables, so one reading holds until this tick's own writes mark.
+    pub fn probe(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) -> TickWork {
+        let mut work = TickWork {
+            moved_at: std::cell::RefCell::new(HashMap::new()),
+            clock: std::cell::Cell::new(0),
+            ran_at: std::cell::RefCell::new(HashMap::new()),
+            ungated: false,
+            carry: std::collections::HashSet::new(),
+            stale: std::collections::HashSet::new(),
+            departures: std::cell::RefCell::new(std::collections::HashSet::new()),
+            staged_current: std::cell::RefCell::new(std::collections::HashSet::new()),
+            staged_next: std::cell::RefCell::new(std::collections::HashSet::new()),
+        };
+        if relations.is_empty() {
+            return work;
+        }
+        let columns: Vec<String> = relations.iter().flat_map(probe_columns).collect();
+        let mut answers: Vec<bool> = Vec::with_capacity(columns.len());
+        let _scope =
+            crate::trace::Scope::verb("probe", "-", crate::write_verbs::strategy_name(relations));
+        for chunk in columns.chunks(PROBE_WIDTH) {
+            let result = seam
+                .execute(&SqlStatement {
+                    sql: format!("SELECT {}", chunk.join(", ")),
+                    args: vec![],
+                })
+                .expect("tick probe failed");
+            let row = result.rows.first().expect("tick probe row");
+            answers.extend(row.iter().map(|value| value.as_i64().unwrap_or(0) != 0));
+        }
+        for (index, relation) in relations.iter().enumerate() {
+            let at = index * PROBE_COLUMNS;
+            if answers[at] {
+                work.carry.insert(relation.rel.clone());
+                work.mark(&relation.rel);
+            }
+            if answers[at + 1] {
+                work.stale.insert(relation.rel.clone());
+            }
+            if answers[at + 2] {
+                work.departures.borrow_mut().insert(relation.rel.clone());
+                work.mark(&relation.rel);
+            }
+        }
+        work
+    }
+
+    /// The maximal reading: every rel might have moved, so no phase skips. The
+    /// door for a caller that drives one phase without a whole tick's tables.
+    pub fn unskipped(relations: &[IncrementalRelationPlan]) -> TickWork {
+        let names = || -> std::collections::HashSet<String> {
+            relations
+                .iter()
+                .map(|relation| relation.rel.clone())
+                .collect()
+        };
+        TickWork {
+            moved_at: std::cell::RefCell::new(
+                names().into_iter().map(|rel| (rel, 1u64)).collect(),
+            ),
+            clock: std::cell::Cell::new(1),
+            ran_at: std::cell::RefCell::new(HashMap::new()),
+            ungated: true,
+            carry: names(),
+            stale: names(),
+            departures: std::cell::RefCell::new(
+                relations
+                    .iter()
+                    .filter(|relation| relation.departure_frontier_table_name.is_some())
+                    .map(|relation| relation.rel.clone())
+                    .collect(),
+            ),
+            staged_current: std::cell::RefCell::new(names()),
+            staged_next: std::cell::RefCell::new(names()),
+        }
+    }
+
+    pub fn mark(&self, rel: &str) {
+        let clock = self.clock.get() + 1;
+        self.clock.set(clock);
+        let mut moved_at = self.moved_at.borrow_mut();
+        match moved_at.get_mut(rel) {
+            Some(at) => *at = clock,
+            None => {
+                moved_at.insert(rel.to_string(), clock);
+            }
+        }
+    }
+
+    pub fn moved(&self, rel: &str) -> bool {
+        self.moved_at.borrow().contains_key(rel)
+    }
+
+    /// A frontier row landed. `next` picks the carry table over the current one.
+    fn note_frontier_write(&self, rel: &str, next: bool) {
+        let mut staged = if next {
+            self.staged_next.borrow_mut()
+        } else {
+            self.staged_current.borrow_mut()
+        };
+        if !staged.contains(rel) {
+            staged.insert(rel.to_string());
+        }
+    }
+
+    /// The carry table holds rows only where this tick wrote them; nothing else
+    /// fills it and `prepare_tick` emptied it.
+    fn carries(&self, rel: &str) -> bool {
+        self.staged_next.borrow().contains(rel)
+    }
+
+    /// Either frontier table holds a row: this tick's writes plus the carry the
+    /// tick before promoted.
+    fn holds_frontier(&self, rel: &str) -> bool {
+        self.carry.contains(rel)
+            || self.staged_current.borrow().contains(rel)
+            || self.staged_next.borrow().contains(rel)
+    }
+
+    /// True when one of `rels` was written after this head's last run under
+    /// `phase`, and records this run's reading when it is.
+    fn moved_since_run(&self, head: &str, phase: LevelPhase, rels: &[String]) -> bool {
+        if self.ungated {
+            return true;
+        }
+        let last = self
+            .ran_at
+            .borrow()
+            .get(&(phase, head.to_string()))
+            .copied()
+            .unwrap_or(0);
+        let fresh = {
+            let moved_at = self.moved_at.borrow();
+            rels.iter()
+                .any(|rel| moved_at.get(rel).is_some_and(|at| *at > last))
+        };
+        if fresh {
+            self.note_run(head, phase);
+        }
+        fresh
+    }
+
+    fn note_run(&self, head: &str, phase: LevelPhase) {
+        if self.ungated {
+            return;
+        }
+        self.ran_at
+            .borrow_mut()
+            .insert((phase, head.to_string()), self.clock.get());
+    }
+
+    fn departed(&self, rel: &str) -> bool {
+        self.departures.borrow().contains(rel)
+    }
+}
+
+
 /// Rows dedup by an index, never by scanning what is already collected. The
 /// counter is what a COUNT test reads: one probe per row, never one per pair.
 static DEDUP_PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -38,6 +252,14 @@ pub fn dedup_key(row: &[Value]) -> String {
 
 /// One comparison per probe under the index, one per (statement, relation)
 /// pair under a scan.
+/// Level statements a tick actually ran, so a COUNT test can read that a level
+/// whose sources did not move paid nothing.
+static LEVEL_RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn level_runs() -> u64 {
+    LEVEL_RUNS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 static PLAN_PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub fn plan_probes() -> u64 {
@@ -312,9 +534,13 @@ pub fn stage_events(
     relations: &[IncrementalRelationPlan],
     events: &[DeltaEvent],
     frontier_copies: &[(String, i64)],
+    work: &TickWork,
 ) -> BoundaryResult<()> {
     if events.is_empty() {
         return Ok(());
+    }
+    for event in events {
+        work.mark(&event.rel);
     }
     let relation_by_name: HashMap<&str, &IncrementalRelationPlan> =
         relations.iter().map(|r| (r.rel.as_str(), r)).collect();
@@ -335,8 +561,25 @@ pub fn stage_events(
         scope.rows(grouped.len());
         let statements = verbs.stage(relation, grouped, frontier_copies)?;
         seam.batch(&statements).expect("stage_events batch failed");
+        // The frontier copies carry ADDITIONS only, the way `stage` writes them.
+        if grouped.iter().any(|event| event.sign == 1) {
+            note_frontier_copies(relation, frontier_copies, work);
+        }
     }
     Ok(())
+}
+
+fn note_frontier_copies(
+    relation: &IncrementalRelationPlan,
+    frontier_copies: &[(String, i64)],
+    work: &TickWork,
+) {
+    for (table_name, _) in frontier_copies {
+        work.note_frontier_write(
+            &relation.rel,
+            *table_name == relation.next_frontier_table_name,
+        );
+    }
 }
 
 fn storage_row(relation: &IncrementalRelationPlan, row: &Row) -> Row {
@@ -481,6 +724,7 @@ pub fn apply_arrivals(
     seam: &SqliteSeam,
     arrivals: &[Arrival],
     relations: &[IncrementalRelationPlan],
+    work: &TickWork,
 ) -> BoundaryResult<()> {
     if arrivals.is_empty() {
         return Ok(());
@@ -616,6 +860,7 @@ pub fn apply_arrivals(
                 std::slice::from_ref(relation),
                 &events,
                 &[(relation.frontier_table_name.clone(), 1)],
+                work,
             )?;
             continue;
         }
@@ -637,6 +882,7 @@ pub fn apply_arrivals(
                 std::slice::from_ref(relation),
                 &events,
                 &[(relation.frontier_table_name.clone(), 1)],
+                work,
             )?;
             continue;
         }
@@ -665,6 +911,7 @@ pub fn apply_arrivals(
             std::slice::from_ref(relation),
             &events,
             &[(relation.frontier_table_name.clone(), 1)],
+            work,
         )?;
     }
     Ok(())
@@ -674,6 +921,46 @@ fn rows_equal(left: &Row, right: &Row) -> bool {
     left == right
 }
 
+/// The `pre/1` plane, filled once per tick after the arrivals land and before
+/// the level phase: `pre(level_head(..))` reads last tick's settled rows.
+pub fn snapshot_pre(
+    seam: &SqliteSeam,
+    pre_rels: &[String],
+    relations: &[IncrementalRelationPlan],
+) -> BoundaryResult<()> {
+    if pre_rels.is_empty() {
+        return Ok(());
+    }
+    let plans = plan_index(relations);
+    let mut statements = Vec::new();
+    for rel in pre_rels {
+        let relation = plan_for(&plans, rel, "pre snapshot relation missing");
+        let columns = relation
+            .columns
+            .iter()
+            .map(|column| quote_identifier(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let pre_table = quote_identifier(&format!("__pre_{}", relation.table_name));
+        statements.push(format!("DELETE FROM {pre_table}"));
+        statements.push(format!(
+            "INSERT INTO {} ({}) SELECT {} FROM {}",
+            pre_table,
+            columns,
+            columns,
+            quote_identifier(&relation.table_name)
+        ));
+    }
+    let _scope = crate::trace::Scope::verb(
+        "snapshot_pre",
+        "-",
+        crate::write_verbs::strategy_name(relations),
+    );
+    seam.execute_multiple(&statements.join(";\n"))
+        .expect("pre snapshot failed");
+    Ok(())
+}
+
 // One statement per tick: the clock the oracle fixes for the whole tick.
 pub fn advance_tick(seam: &SqliteSeam) {
     let _scope = crate::trace::Scope::phase("advance_tick");
@@ -681,8 +968,14 @@ pub fn advance_tick(seam: &SqliteSeam) {
         .expect("advance_tick failed");
 }
 
-pub fn prepare_tick(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) {
-    if relations.is_empty() {
+// Only a rel whose delta or next frontier held rows has anything to empty.
+pub fn prepare_tick(seam: &SqliteSeam, relations: &[IncrementalRelationPlan], work: &TickWork) {
+    let stale: Vec<IncrementalRelationPlan> = relations
+        .iter()
+        .filter(|relation| work.stale.contains(&relation.rel))
+        .cloned()
+        .collect();
+    if stale.is_empty() {
         return;
     }
     let _scope = crate::trace::Scope::verb(
@@ -691,8 +984,11 @@ pub fn prepare_tick(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) {
         crate::write_verbs::strategy_name(relations),
     );
     let sql = write_verbs_for(relations)
-        .clear(relations, TickBoundary::Prepare)
+        .clear(&stale, TickBoundary::Prepare)
         .join(";\n");
+    if sql.is_empty() {
+        return;
+    }
     seam.execute_multiple(&sql).expect("prepare_tick failed");
 }
 
@@ -781,13 +1077,23 @@ fn normalize_boundary(
     }
 }
 
+// A rel nothing wrote this tick has an empty delta table, and its delta is
+// empty without a read.
 pub fn read_boundary(
     seam: &SqliteSeam,
     relations: &[IncrementalRelationPlan],
+    work: &TickWork,
 ) -> BoundaryResult<Vec<crate::types::RelDelta>> {
     relations
         .iter()
         .map(|relation| {
+            if !work.moved(&relation.rel) {
+                return Ok(crate::types::RelDelta {
+                    rel: relation.rel.clone(),
+                    add: vec![],
+                    del: vec![],
+                });
+            }
             let mut scope = crate::trace::Scope::verb(
                 "publish",
                 &relation.rel,
@@ -806,6 +1112,7 @@ pub fn stage_departures(
     seam: &SqliteSeam,
     relations: &[IncrementalRelationPlan],
     deltas: &[crate::types::RelDelta],
+    work: &TickWork,
 ) -> BoundaryResult<()> {
     let departures_by_rel: HashMap<&str, &[Row]> = deltas
         .iter()
@@ -820,17 +1127,24 @@ pub fn stage_departures(
         let Some(table_name) = &relation.departure_frontier_table_name else {
             continue;
         };
-        statements.push(SqlStatement {
-            sql: format!("DELETE FROM {}", quote_identifier(table_name)),
-            args: vec![],
-        });
         let departed = departures_by_rel
             .get(relation.rel.as_str())
             .copied()
             .unwrap_or_default();
-        if departed.is_empty() {
+        // Nothing to clear and nothing to write is a statement about an empty
+        // table.
+        if departed.is_empty() && !work.departed(&relation.rel) {
             continue;
         }
+        statements.push(SqlStatement {
+            sql: format!("DELETE FROM {}", quote_identifier(table_name)),
+            args: vec![],
+        });
+        if departed.is_empty() {
+            work.departures.borrow_mut().remove(&relation.rel);
+            continue;
+        }
+        work.departures.borrow_mut().insert(relation.rel.clone());
         let mut columns = vec!["_phase".to_string(), "_sequence".to_string()];
         columns.extend(relation.columns.clone());
         let quoted_columns: Vec<String> = columns
@@ -873,88 +1187,41 @@ pub fn stage_departures(
     Ok(())
 }
 
-pub fn stage_ordered_frontiers(
+// Port of promote_frontiers: read carry, promote next into current. Only a rel
+// whose frontier or next frontier holds rows has anything to move.
+pub fn promote_frontiers(
     seam: &SqliteSeam,
     relations: &[IncrementalRelationPlan],
-    additions: &[crate::types::RelDelta],
-) -> BoundaryResult<bool> {
-    let mut events_by_rel: HashMap<&str, Vec<DeltaEvent>> = HashMap::new();
-    let mut sequence = 0;
-    for delta in additions {
-        for row in &delta.add {
-            events_by_rel
-                .entry(delta.rel.as_str())
-                .or_default()
-                .push(DeltaEvent {
-                    rel: delta.rel.clone(),
-                    sign: 1,
-                    sequence,
-                    row: row.clone(),
-                });
-            sequence += 1;
-        }
-    }
-    let mut statements = Vec::new();
-    let mut carry_pending = false;
-    for relation in relations {
-        statements.push(SqlStatement {
-            sql: format!(
-                "DELETE FROM {}",
-                quote_identifier(&relation.frontier_table_name)
-            ),
-            args: vec![],
-        });
-        statements.push(SqlStatement {
-            sql: format!(
-                "DELETE FROM {}",
-                quote_identifier(&relation.next_frontier_table_name)
-            ),
-            args: vec![],
-        });
-        let Some(events) = events_by_rel.get(relation.rel.as_str()) else {
-            continue;
-        };
-        carry_pending = true;
-        let borrowed: Vec<&DeltaEvent> = events.iter().collect();
-        statements.push(frontier_stage_statement(
-            relation,
-            &relation.frontier_table_name,
-            0,
-            &borrowed,
-        )?);
-    }
-    if !statements.is_empty() {
-        seam.batch(&statements)
-            .expect("ordered frontier staging failed");
-    }
-    Ok(carry_pending)
-}
-
-// Port of promote_frontiers: read carry, promote next into current.
-pub fn promote_frontiers(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) -> bool {
-    if relations.is_empty() {
-        return false;
+    work: &TickWork,
+) -> bool {
+    let moved: Vec<IncrementalRelationPlan> = relations
+        .iter()
+        .filter(|relation| work.holds_frontier(&relation.rel))
+        .cloned()
+        .collect();
+    if moved.is_empty() {
+        return !work.departures.borrow().is_empty();
     }
     let verbs = write_verbs_for(relations);
     let strategy = crate::write_verbs::strategy_name(relations);
-    let promote_sql = verbs.clear(relations, TickBoundary::Promote).join(";\n");
+    let promote_sql = verbs.clear(&moved, TickBoundary::Promote).join(";\n");
     let promote = || {
         let _scope = crate::trace::Scope::verb("clear", "promote", strategy);
         if !promote_sql.is_empty() {
             seam.execute_multiple(&promote_sql).expect("promote failed");
         }
     };
-    let carry_sql = verbs.read_staged(relations);
+    let carry_sql = verbs.read_staged(&moved);
     if carry_sql.is_empty() {
         promote();
-        return false;
+        return !work.departures.borrow().is_empty();
     }
     let carry_pending = {
         let _scope = crate::trace::Scope::verb("read_staged", "-", strategy);
         seam.scalar(&carry_sql).expect("carry read failed") == 1
     };
     promote();
-    carry_pending
+    carry_pending || !work.departures.borrow().is_empty()
 }
 
 // ═══ level phases (port of 1_incremental.ts apply_level_* + reconcile_*) ═══
@@ -989,6 +1256,165 @@ fn to_statements(texts: &[String]) -> Vec<SqlStatement> {
             args: vec![],
         })
         .collect()
+}
+
+/// Which rels one level head reads, and whether it reads a table belonging to no
+/// rel at all, which is the case that never skips.
+#[derive(Clone)]
+pub struct LevelSources {
+    pub rels: Vec<String>,
+    pub always: bool,
+    /// The head reads its own frontier, directly or around a cycle, so the rows
+    /// one round stages are the next round's input rather than its output.
+    pub self_feeding: bool,
+}
+
+/// A table that owns no rel and never forces a run: the global text intern, the
+/// clock, and the per-program meta row.
+fn global_table(name: &str) -> bool {
+    name == "__str" || name == "__tick" || name == "__meta" || name.starts_with("__str_")
+}
+
+fn level_statement_texts(statement: &crate::types::IncrementalLevelStatement) -> Vec<&str> {
+    let mut texts: Vec<&str> = Vec::new();
+    texts.extend(statement.insert_sql.as_deref());
+    for group in [
+        statement.support_sql.as_ref(),
+        statement.support_intern_sql.as_ref(),
+        statement.intern_sql.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        texts.extend(group.iter().map(String::as_str));
+    }
+    if let Some(plan) = &statement.support_count_sql {
+        texts.push(&plan.clear_sql);
+        texts.extend(plan.write_sqls.iter().map(String::as_str));
+    }
+    if let Some(aggregate) = &statement.aggregate_sql {
+        texts.push(&aggregate.scope_clear_sql);
+        texts.push(&aggregate.delete_scoped_sql);
+        texts.extend(aggregate.scope_seed_sql.iter().map(String::as_str));
+        texts.extend(aggregate.insert_scoped_sql.iter().map(String::as_str));
+        if let Some(intern) = &aggregate.intern_sql {
+            texts.extend(intern.iter().map(String::as_str));
+        }
+    }
+    texts
+}
+
+fn quoted_tables(sql: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    for keyword in ["FROM ", "JOIN ", "INTO ", "UPDATE "] {
+        for (at, _) in sql.match_indices(keyword) {
+            let rest = sql[at + keyword.len()..].trim_start();
+            let Some(rest) = rest.strip_prefix('"') else {
+                continue;
+            };
+            if let Some(end) = rest.find('"') {
+                names.push(&rest[..end]);
+            }
+        }
+    }
+    names
+}
+
+/// Every table name a rel owns, so a level's read of any of them counts as a
+/// read of that rel.
+fn table_owners(relations: &[IncrementalRelationPlan]) -> HashMap<String, &str> {
+    let mut owners = HashMap::new();
+    for relation in relations {
+        let rel = relation.rel.as_str();
+        let mut names = vec![
+            relation.table_name.clone(),
+            relation.delta_table_name.clone(),
+            relation.frontier_table_name.clone(),
+            relation.next_frontier_table_name.clone(),
+        ];
+        names.extend(relation.departure_frontier_table_name.clone());
+        for prefix in [
+            "__txt_",
+            "__new_",
+            "__pre_",
+            "__support_",
+            "__support_next_",
+            "__agg_scope_",
+            "__avg_",
+        ] {
+            names.push(format!("{prefix}{}", relation.table_name));
+        }
+        for name in names {
+            owners.insert(name, rel);
+        }
+    }
+    owners
+}
+
+/// One substring pass per program, never per tick: the answer is metadata.
+/// `cyclic` is `recursive_heads`, taken as an argument so the frontier scan
+/// behind it stays one scan per program.
+pub fn level_sources(
+    statements: &[crate::types::IncrementalLevelStatement],
+    relations: &[IncrementalRelationPlan],
+    cyclic: &[String],
+) -> HashMap<String, LevelSources> {
+    let owners = table_owners(relations);
+    let mut sources: HashMap<String, LevelSources> = HashMap::new();
+    for statement in statements {
+        let self_feeding = cyclic.contains(&statement.head_rel);
+        let entry = sources
+            .entry(statement.head_rel.clone())
+            .or_insert_with(|| LevelSources {
+                rels: Vec::new(),
+                always: false,
+                self_feeding,
+            });
+        for text in level_statement_texts(statement) {
+            for table in quoted_tables(text) {
+                match owners.get(table) {
+                    Some(rel) => entry.rels.push((*rel).to_string()),
+                    None if global_table(table) => {}
+                    None => entry.always = true,
+                }
+            }
+        }
+        entry.rels.sort();
+        entry.rels.dedup();
+    }
+    sources
+}
+
+fn level_runs_this_tick(
+    sources: &HashMap<String, LevelSources>,
+    statement: &crate::types::IncrementalLevelStatement,
+    work: &TickWork,
+    phase: LevelPhase,
+) -> bool {
+    let head = statement.head_rel.as_str();
+    match sources.get(head) {
+        Some(reads) if !reads.always => work.moved_since_run(head, phase, &reads.rels),
+        _ => {
+            work.note_run(head, phase);
+            true
+        }
+    }
+}
+
+
+/// The rows a run stages are its own output, so the reading it records is taken
+/// after it. Only a head reading its own frontier takes them back as input.
+fn settle_level_run(
+    sources: &HashMap<String, LevelSources>,
+    statement: &crate::types::IncrementalLevelStatement,
+    work: &TickWork,
+    phase: LevelPhase,
+) {
+    let head = statement.head_rel.as_str();
+    if sources.get(head).is_some_and(|reads| reads.self_feeding) {
+        return;
+    }
+    work.note_run(head, phase);
 }
 
 /// A head reads a rel when one of `tables` (quoted table name, rel) occurs in
@@ -1138,12 +1564,14 @@ fn apply_level_statement(
     plans: &HashMap<&str, &IncrementalRelationPlan>,
     after_edges: bool,
     next_sequence: &mut dyn FnMut() -> u64,
+    work: &TickWork,
 ) -> BoundaryResult<usize> {
     let relation = plan_for(
         plans,
         &statement.head_rel,
         "incremental level head relation missing",
     );
+    LEVEL_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if let Some(aggregate) = &statement.aggregate_sql {
         apply_aggregate_level_statement(
             seam,
@@ -1152,6 +1580,7 @@ fn apply_level_statement(
             relation,
             after_edges,
             next_sequence,
+            work,
         )?;
         return Ok(0);
     }
@@ -1192,7 +1621,7 @@ fn apply_level_statement(
         })
         .collect();
     let copies = level_frontier_copies(relation, after_edges);
-    stage_events(seam, std::slice::from_ref(relation), &events, &copies)?;
+    stage_events(seam, std::slice::from_ref(relation), &events, &copies, work)?;
     Ok(rows.len())
 }
 
@@ -1205,6 +1634,7 @@ fn apply_aggregate_level_statement(
     relation: &IncrementalRelationPlan,
     after_edges: bool,
     next_sequence: &mut dyn FnMut() -> u64,
+    work: &TickWork,
 ) -> BoundaryResult<()> {
     // The intern arm reads the scope table, so it follows the seed inside the
     // same ordered batch and precedes the insert that looks its ids back up.
@@ -1261,13 +1691,14 @@ fn apply_aggregate_level_statement(
         return Ok(());
     }
     let copies = level_frontier_copies(relation, after_edges);
-    stage_events(seam, std::slice::from_ref(relation), &events, &copies)
+    stage_events(seam, std::slice::from_ref(relation), &events, &copies, work)
 }
 
 pub fn apply_retention(
     seam: &SqliteSeam,
     statements: &[crate::types::IncrementalRetentionStatement],
     relations: &[IncrementalRelationPlan],
+    work: &TickWork,
 ) -> BoundaryResult<()> {
     let plans = plan_index(relations);
     let mut sequence = 0u64;
@@ -1307,7 +1738,7 @@ pub fn apply_retention(
                 }
             })
             .collect();
-        stage_events(seam, std::slice::from_ref(relation), &events, &[])?;
+        stage_events(seam, std::slice::from_ref(relation), &events, &[], work)?;
     }
     Ok(())
 }
@@ -1335,6 +1766,8 @@ pub fn apply_levels_before_edges(
     statements: &[crate::types::IncrementalLevelStatement],
     relations: &[IncrementalRelationPlan],
     feeds_another_round: &[String],
+    work: &TickWork,
+    sources: &HashMap<String, LevelSources>,
 ) -> BoundaryResult<()> {
     if statements.is_empty() {
         return Ok(());
@@ -1350,13 +1783,21 @@ pub fn apply_levels_before_edges(
     sequence_level_rounds(&ordered, |statement| {
         let closes_in_one_pass = feeds_another_round.iter().any(|h| h == &statement.head_rel)
             && statement.support_sql.is_some();
-        if closes_in_one_pass {
+        let phase = if closes_in_one_pass {
+            LevelPhase::Recount
+        } else {
+            LevelPhase::Insert
+        };
+        if !level_runs_this_tick(sources, statement, work, phase) {
+            return Ok(0);
+        }
+        let moved = if closes_in_one_pass {
             let copies: Vec<(String, i64)> = relations
                 .iter()
                 .filter(|r| r.rel == statement.head_rel)
                 .map(|r| (r.frontier_table_name.clone(), 2))
                 .collect();
-            reconcile_ref_count_statement(seam, statement, relations, &plans, &copies)
+            reconcile_ref_count_statement(seam, statement, relations, &plans, &copies, work)?
         } else {
             apply_level_statement(
                 seam,
@@ -1365,8 +1806,11 @@ pub fn apply_levels_before_edges(
                 &plans,
                 false,
                 &mut next_sequence,
-            )
-        }
+                work,
+            )?
+        };
+        settle_level_run(sources, statement, work, phase);
+        Ok(moved)
     })
 }
 
@@ -1464,14 +1908,53 @@ fn edge_log_write_statement(
     })
 }
 
+/// Where an edge write's events go. A sequenced arm collects, because a row it
+/// writes and then overwrites inside the same tick must not carry.
+enum EdgeSink<'a> {
+    Stage,
+    Collect(&'a mut Vec<DeltaEvent>),
+}
+
+impl EdgeSink<'_> {
+    fn take(
+        &mut self,
+        seam: &SqliteSeam,
+        relation: &IncrementalRelationPlan,
+        events: Vec<DeltaEvent>,
+        work: &TickWork,
+    ) -> BoundaryResult<()> {
+        match self {
+            EdgeSink::Stage => stage_events(
+                seam,
+                std::slice::from_ref(relation),
+                &events,
+                &[(relation.next_frontier_table_name.clone(), 0)],
+                work,
+            ),
+            EdgeSink::Collect(collected) => {
+                for event in &events {
+                    work.mark(&event.rel);
+                }
+                collected.extend(events);
+                Ok(())
+            }
+        }
+    }
+}
+
+// `base` is 0 for a set-at-once arm and the running occurrence counter for a
+// sequenced one, so the frontier keeps arrival order across the whole walk.
 fn apply_log_edge(
     seam: &SqliteSeam,
     statement: &crate::types::IncrementalEdgeStatement,
     relation: &IncrementalRelationPlan,
     rows: &[Row],
-) -> BoundaryResult<()> {
+    base: u64,
+    sink: &mut EdgeSink,
+    work: &TickWork,
+) -> BoundaryResult<u64> {
     if rows.is_empty() {
-        return Ok(());
+        return Ok(base);
     }
     let events: Vec<DeltaEvent> = rows
         .iter()
@@ -1479,7 +1962,7 @@ fn apply_log_edge(
         .map(|(sequence, row)| DeltaEvent {
             rel: statement.head_rel.clone(),
             sign: 1,
-            sequence: sequence as u64,
+            sequence: base + sequence as u64,
             row: row.clone(),
         })
         .collect();
@@ -1493,12 +1976,8 @@ fn apply_log_edge(
         seam.execute(&edge_log_write_statement(statement, rows)?)
             .expect("edge log write failed");
     }
-    stage_events(
-        seam,
-        std::slice::from_ref(relation),
-        &events,
-        &[(relation.next_frontier_table_name.clone(), 0)],
-    )
+    sink.take(seam, relation, events, work)?;
+    Ok(base + rows.len() as u64)
 }
 
 fn apply_keyed_edge(
@@ -1506,7 +1985,10 @@ fn apply_keyed_edge(
     statement: &crate::types::IncrementalEdgeStatement,
     relation: &IncrementalRelationPlan,
     projected_rows: &[Row],
-) -> BoundaryResult<()> {
+    base: u64,
+    sink: &mut EdgeSink,
+    work: &TickWork,
+) -> BoundaryResult<u64> {
     let mut resolved: Vec<Row> = Vec::new();
     let mut resolved_index: HashMap<String, usize> = HashMap::new();
     for row in projected_rows {
@@ -1521,7 +2003,7 @@ fn apply_keyed_edge(
     }
     let rows: Vec<Row> = resolved;
     if rows.is_empty() {
-        return Ok(());
+        return Ok(base);
     }
     let mut key_args: Vec<ScalarValue> = Vec::new();
     for row in &rows {
@@ -1559,7 +2041,7 @@ fn apply_keyed_edge(
         }
     }
     if changed_rows.is_empty() {
-        return Ok(());
+        return Ok(base);
     }
     let mut events = Vec::new();
     for (sequence, row) in changed_rows.iter().enumerate() {
@@ -1568,14 +2050,14 @@ fn apply_keyed_edge(
             events.push(DeltaEvent {
                 rel: statement.head_rel.clone(),
                 sign: -1,
-                sequence: (sequence * 2) as u64,
+                sequence: base + (sequence * 2) as u64,
                 row: before.clone(),
             });
         }
         events.push(DeltaEvent {
             rel: statement.head_rel.clone(),
             sign: 1,
-            sequence: (sequence * 2 + 1) as u64,
+            sequence: base + (sequence * 2 + 1) as u64,
             row: row.clone(),
         });
     }
@@ -1585,21 +2067,399 @@ fn apply_keyed_edge(
         seam.execute(&edge_keyed_write_statement(statement, &changed_rows)?)
             .expect("edge keyed write failed");
     }
-    stage_events(
-        seam,
-        std::slice::from_ref(relation),
-        &events,
-        &[(relation.next_frontier_table_name.clone(), 0)],
-    )
+    sink.take(seam, relation, events, work)?;
+    Ok(base + (changed_rows.len() * 2) as u64)
+}
+
+fn write_head_rows(
+    seam: &SqliteSeam,
+    statement: &crate::types::IncrementalEdgeStatement,
+    relation: &IncrementalRelationPlan,
+    rows: &[Row],
+    base: u64,
+    sink: &mut EdgeSink,
+    work: &TickWork,
+) -> BoundaryResult<u64> {
+    match statement.head_kind {
+        RelationKind::Log => apply_log_edge(seam, statement, relation, rows, base, sink, work),
+        RelationKind::Set => apply_keyed_edge(seam, statement, relation, rows, base, sink, work),
+    }
+}
+
+/// The tick's NET per rel: a row written and then overwritten inside the walk
+/// leaves the store unchanged and must not reach the carry.
+fn net_additions<'a>(events: &[&'a DeltaEvent]) -> Vec<&'a DeltaEvent> {
+    let mut weights: HashMap<String, i64> = HashMap::new();
+    for event in events {
+        *weights.entry(dedup_key(&event.row)).or_insert(0) += event.sign as i64;
+    }
+    let mut additions = Vec::new();
+    for event in events {
+        if event.sign != 1 {
+            continue;
+        }
+        let weight = weights
+            .get_mut(&dedup_key(&event.row))
+            .expect("weight recorded above");
+        if *weight <= 0 {
+            continue;
+        }
+        *weight -= 1;
+        additions.push(*event);
+    }
+    additions
+}
+
+fn stage_collected_events(
+    seam: &SqliteSeam,
+    relations: &[IncrementalRelationPlan],
+    events: &[DeltaEvent],
+    work: &TickWork,
+) -> BoundaryResult<()> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    stage_events(seam, relations, events, &[], work)?;
+    let plans = plan_index(relations);
+    let mut rels: Vec<&str> = events.iter().map(|event| event.rel.as_str()).collect();
+    rels.sort_unstable();
+    rels.dedup();
+    for rel in rels {
+        let relation = plan_for(&plans, rel, "sequenced edge head relation missing");
+        let grouped: Vec<&DeltaEvent> = events.iter().filter(|event| event.rel == rel).collect();
+        let additions = net_additions(&grouped);
+        if additions.is_empty() {
+            continue;
+        }
+        let mut scope = crate::trace::Scope::verb(
+            "stage",
+            rel,
+            crate::write_verbs::relation_strategy(relation),
+        );
+        scope.rows(additions.len());
+        seam.execute(&frontier_stage_statement(
+            relation,
+            &relation.next_frontier_table_name,
+            0,
+            &additions,
+        )?)
+        .expect("sequenced frontier staging failed");
+        work.note_frontier_write(&relation.rel, true);
+    }
+    Ok(())
+}
+
+/// One trigger row a sequenced arm consumes, carrying the frontier index the
+/// tick's pick order reads (ruling one_pick_order).
+struct Occurrence {
+    rel: String,
+    kind: crate::types::TriggerKind,
+    row: Row,
+    phase: i64,
+    sequence: i64,
+}
+
+fn occurrence_read_sql(
+    relation: &IncrementalRelationPlan,
+    kind: crate::types::TriggerKind,
+) -> Option<String> {
+    let table = match kind {
+        crate::types::TriggerKind::Arrival => relation.frontier_table_name.clone(),
+        crate::types::TriggerKind::Departure => relation.departure_frontier_table_name.clone()?,
+    };
+    let columns: Vec<String> = relation
+        .columns
+        .iter()
+        .map(|column| quote_identifier(column))
+        .collect();
+    // Declared columns first: result_rows reads a row by POSITION, so the two
+    // index columns ride behind them.
+    let projection = if columns.is_empty() {
+        String::new()
+    } else {
+        format!("{}, ", columns.join(", "))
+    };
+    Some(format!(
+        "SELECT {}\"_phase\", \"_sequence\" FROM {} ORDER BY \"_phase\", \"_sequence\"",
+        projection,
+        quote_identifier(&table)
+    ))
+}
+
+// The frontier IS the occurrence list: last tick's carry, this tick's arrivals
+// and this tick's before-edge level rows, already in (_phase, _sequence) order.
+fn read_occurrences(
+    seam: &SqliteSeam,
+    statements: &[&crate::types::IncrementalEdgeStatement],
+    plans: &HashMap<&str, &IncrementalRelationPlan>,
+    work: &TickWork,
+) -> BoundaryResult<Vec<Occurrence>> {
+    let mut triggers: Vec<(&str, crate::types::TriggerKind)> = statements
+        .iter()
+        .map(|statement| (statement.trigger_rel.as_str(), statement.trigger_kind))
+        .collect();
+    triggers.sort_unstable_by_key(|(rel, kind)| (*rel, *kind as u8));
+    triggers.dedup();
+    let mut occurrences = Vec::new();
+    for (rel, kind) in triggers {
+        if !work.moved(rel) {
+            continue;
+        }
+        let relation = plan_for(plans, rel, "sequenced edge trigger relation missing");
+        let Some(sql) = occurrence_read_sql(relation, kind) else {
+            continue;
+        };
+        let _scope = crate::trace::Scope::verb(
+            "read_staged",
+            rel,
+            crate::write_verbs::relation_strategy(relation),
+        );
+        let result = seam
+            .execute(&SqlStatement { sql, args: vec![] })
+            .expect("sequenced occurrence read failed");
+        let phase_index = crate::sql::column_index(&result, "_phase");
+        let sequence_index = crate::sql::column_index(&result, "_sequence");
+        let rows = result_rows(&result, &relation.columns, &relation.column_types)?;
+        for (result_row, row) in result.rows.iter().zip(rows) {
+            occurrences.push(Occurrence {
+                rel: rel.to_string(),
+                kind,
+                row,
+                phase: phase_index
+                    .and_then(|index| result_row.get(index))
+                    .and_then(|value| value.as_i64())
+                    .unwrap_or(0),
+                sequence: sequence_index
+                    .and_then(|index| result_row.get(index))
+                    .and_then(|value| value.as_i64())
+                    .unwrap_or(0),
+            });
+        }
+    }
+    occurrences.sort_by_key(|occurrence| (occurrence.phase, occurrence.sequence));
+    Ok(occurrences)
+}
+
+/// A `pre/1` head's evolving mirror: occurrence N+1 reads what occurrence N
+/// wrote, which is the whole reason this arm is sequenced.
+fn write_pre_rows(
+    statement: &crate::types::IncrementalEdgeStatement,
+    rows: &[Row],
+) -> BoundaryResult<Option<SqlStatement>> {
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let table = quote_identifier(&format!("__pre_{}", statement.head_table_name));
+    let columns = edge_columns_text(statement);
+    let conflict = if statement.head_kind == RelationKind::Log {
+        String::new()
+    } else {
+        let key_columns: Vec<String> = statement
+            .key_indices
+            .iter()
+            .map(|index| columns[*index].clone())
+            .collect();
+        let non_key_columns: Vec<String> = columns
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !statement.key_indices.contains(index))
+            .map(|(_, column)| column.clone())
+            .collect();
+        if non_key_columns.is_empty() {
+            format!(" ON CONFLICT({}) DO NOTHING", key_columns.join(", "))
+        } else {
+            format!(
+                " ON CONFLICT({}) DO UPDATE SET {}",
+                key_columns.join(", "),
+                non_key_columns
+                    .iter()
+                    .map(|column| format!("{} = excluded.{}", column, column))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    };
+    Ok(Some(SqlStatement {
+        sql: format!(
+            "INSERT INTO {} ({}) VALUES {}{}",
+            table,
+            columns.join(", "),
+            values_sql(rows.len(), columns.len()),
+            conflict
+        ),
+        args: flat_bind_args(rows)?,
+    }))
+}
+
+// Occurrence-major across every sequenced arm, because two arms on different
+// trigger rels can fold the same key and arrival order decides the winner.
+fn apply_sequenced_edges(
+    seam: &SqliteSeam,
+    statements: &[&crate::types::IncrementalEdgeStatement],
+    relations: &[IncrementalRelationPlan],
+    plans: &HashMap<&str, &IncrementalRelationPlan>,
+    work: &TickWork,
+) -> BoundaryResult<()> {
+    let occurrences = read_occurrences(seam, statements, plans, work)?;
+    if occurrences.is_empty() {
+        return Ok(());
+    }
+    let strategy = crate::write_verbs::strategy_name(relations);
+    let mut sequence = 0u64;
+    let mut collected: Vec<DeltaEvent> = Vec::new();
+    for occurrence in &occurrences {
+        let args = ScalarValue::row_at_seam(&occurrence.row, ScalarSeam::SqlParameter)?;
+        // Every arm of one occurrence reads the store as the occurrence found
+        // it, so the whole projection pass precedes the whole write pass.
+        let mut projected: Vec<(usize, Row)> = Vec::new();
+        for (index, statement) in statements.iter().enumerate() {
+            if statement.trigger_rel != occurrence.rel || statement.trigger_kind != occurrence.kind {
+                continue;
+            }
+            let relation = plan_for(
+                plans,
+                &statement.head_rel,
+                "incremental edge head relation missing",
+            );
+            let sql = statement
+                .occurrence_project_sql
+                .as_ref()
+                .expect("sequenced arm without an occurrence projection");
+            let mut scope = crate::trace::Scope::verb("edge_project", &statement.head_rel, strategy);
+            let result = intern_then_execute(
+                seam,
+                statement.occurrence_intern_sql.as_ref(),
+                &SqlStatement {
+                    sql: sql.clone(),
+                    args: args.clone(),
+                },
+            );
+            let rows = result_rows(&result, &statement.head_columns, &relation.column_types)?;
+            scope.rows(rows.len());
+            drop(scope);
+            projected.extend(rows.into_iter().map(|row| (index, row)));
+        }
+        sequence = write_occurrence(
+            seam,
+            statements,
+            plans,
+            &projected,
+            sequence,
+            strategy,
+            &mut collected,
+            work,
+        )?;
+    }
+    stage_collected_events(seam, relations, &collected, work)
+}
+
+// Two arms deriving the same row for the same head in one occurrence is one
+// write; two rows on one key with different values is a program defect.
+fn write_occurrence(
+    seam: &SqliteSeam,
+    statements: &[&crate::types::IncrementalEdgeStatement],
+    plans: &HashMap<&str, &IncrementalRelationPlan>,
+    projected: &[(usize, Row)],
+    mut sequence: u64,
+    strategy: &'static str,
+    collected: &mut Vec<DeltaEvent>,
+    work: &TickWork,
+) -> BoundaryResult<u64> {
+    let mut seen_rows: std::collections::HashSet<(&str, String)> = std::collections::HashSet::new();
+    let mut keyed: HashMap<String, &Row> = HashMap::new();
+    let mut accepted: Vec<(usize, Row)> = Vec::new();
+    for (index, row) in projected {
+        let statement = statements[*index];
+        DEDUP_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if !seen_rows.insert((statement.head_rel.as_str(), dedup_key(row))) {
+            continue;
+        }
+        if statement.head_kind == RelationKind::Set {
+            let key = format!(
+                "{}:{}",
+                statement.head_rel,
+                row_key(row, &statement.key_indices)?
+            );
+            match keyed.get(&key) {
+                Some(prior) if *prior != row => {
+                    panic!("keyed conflict in one occurrence for {}", statement.head_rel)
+                }
+                Some(_) => {}
+                None => {
+                    keyed.insert(key, row);
+                }
+            }
+        }
+        accepted.push((*index, row.clone()));
+    }
+    let mut at = 0usize;
+    while at < accepted.len() {
+        let index = accepted[at].0;
+        let mut end = at;
+        while end < accepted.len() && accepted[end].0 == index {
+            end += 1;
+        }
+        let rows: Vec<Row> = accepted[at..end]
+            .iter()
+            .map(|(_, row)| row.clone())
+            .collect();
+        let statement = statements[index];
+        let relation = plan_for(
+            plans,
+            &statement.head_rel,
+            "incremental edge head relation missing",
+        );
+        sequence = write_head_rows(
+            seam,
+            statement,
+            relation,
+            &rows,
+            sequence,
+            &mut EdgeSink::Collect(collected),
+            work,
+        )?;
+        if statement.evolves_pre {
+            if let Some(pre) = write_pre_rows(statement, &rows)? {
+                let _scope = crate::trace::Scope::verb("edge_write", &statement.head_rel, strategy);
+                seam.execute(&pre).expect("pre plane write failed");
+            }
+        }
+        at = end;
+    }
+    Ok(sequence)
+}
+
+/// An arm whose trigger frontier holds nothing derives nothing. An IR emitted
+/// before the field existed carries no trigger and always runs.
+fn arm_has_work(statement: &crate::types::IncrementalEdgeStatement, work: &TickWork) -> bool {
+    statement.trigger_rel.is_empty() || work.moved(&statement.trigger_rel)
 }
 
 pub fn apply_edges(
     seam: &SqliteSeam,
     statements: &[crate::types::IncrementalEdgeStatement],
     relations: &[IncrementalRelationPlan],
+    work: &TickWork,
 ) -> BoundaryResult<()> {
     let plans = plan_index(relations);
-    for statement in statements {
+    let sequenced: Vec<&crate::types::IncrementalEdgeStatement> = statements
+        .iter()
+        .filter(|statement| statement.schedule == crate::types::ArmSchedule::Sequenced)
+        .filter(|statement| arm_has_work(statement, work))
+        .collect();
+    // The sequenced group runs where its first arm sits in emission order, so a
+    // set-at-once arm keeps its position relative to it.
+    let sequenced_at = statements.iter().position(|statement| {
+        statement.schedule == crate::types::ArmSchedule::Sequenced && arm_has_work(statement, work)
+    });
+    for (index, statement) in statements.iter().enumerate() {
+        if Some(index) == sequenced_at {
+            apply_sequenced_edges(seam, &sequenced, relations, &plans, work)?;
+        }
+        if statement.schedule == crate::types::ArmSchedule::Sequenced || !arm_has_work(statement, work)
+        {
+            continue;
+        }
         let relation = plan_for(
             &plans,
             &statement.head_rel,
@@ -1618,16 +2478,22 @@ pub fn apply_edges(
         let rows = result_rows(&result, &statement.head_columns, &relation.column_types)?;
         scope.rows(rows.len());
         drop(scope);
-        match statement.head_kind {
-            RelationKind::Log => apply_log_edge(seam, statement, relation, &rows)?,
-            RelationKind::Set => apply_keyed_edge(seam, statement, relation, &rows)?,
-        }
+        write_head_rows(seam, statement, relation, &rows, 0, &mut EdgeSink::Stage, work)?;
     }
     Ok(())
 }
 
-pub fn merge_next_into_current(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) {
-    if relations.is_empty() {
+pub fn merge_next_into_current(
+    seam: &SqliteSeam,
+    relations: &[IncrementalRelationPlan],
+    work: &TickWork,
+) {
+    let carrying: Vec<IncrementalRelationPlan> = relations
+        .iter()
+        .filter(|relation| work.carries(&relation.rel))
+        .cloned()
+        .collect();
+    if carrying.is_empty() {
         return;
     }
     let _scope = crate::trace::Scope::verb(
@@ -1636,7 +2502,7 @@ pub fn merge_next_into_current(seam: &SqliteSeam, relations: &[IncrementalRelati
         crate::write_verbs::strategy_name(relations),
     );
     let sql = write_verbs_for(relations)
-        .clear(relations, TickBoundary::Merge)
+        .clear(&carrying, TickBoundary::Merge)
         .join(";\n");
     if sql.is_empty() {
         return;
@@ -1649,6 +2515,8 @@ pub fn apply_levels_after_edges(
     seam: &SqliteSeam,
     statements: &[crate::types::IncrementalLevelStatement],
     relations: &[IncrementalRelationPlan],
+    work: &TickWork,
+    sources: &HashMap<String, LevelSources>,
 ) -> BoundaryResult<()> {
     let plans = plan_index(relations);
     let mut sequence = 0u64;
@@ -1659,7 +2527,13 @@ pub fn apply_levels_after_edges(
     };
     let ordered: Vec<&crate::types::IncrementalLevelStatement> = statements.iter().collect();
     sequence_level_rounds(&ordered, |statement| {
-        apply_level_statement(seam, statement, relations, &plans, true, &mut next_sequence)
+        if !level_runs_this_tick(sources, statement, work, LevelPhase::Insert) {
+            return Ok(0);
+        }
+        let moved =
+            apply_level_statement(seam, statement, relations, &plans, true, &mut next_sequence, work)?;
+        settle_level_run(sources, statement, work, LevelPhase::Insert);
+        Ok(moved)
     })
 }
 
@@ -1671,6 +2545,8 @@ pub fn recompute_levels_before_edges(
     relations: &[IncrementalRelationPlan],
     reconcile_every_tick: bool,
     arrival_count: usize,
+    work: &TickWork,
+    sources: &HashMap<String, LevelSources>,
 ) -> BoundaryResult<()> {
     if arrival_count == 0 || relations.is_empty() {
         return Ok(());
@@ -1685,18 +2561,24 @@ pub fn recompute_levels_before_edges(
     let plans = plan_index(relations);
     let reconcile = |seam: &SqliteSeam| -> BoundaryResult<()> {
         sequence_level_rounds(&ref_count_statements, |statement| {
+            if !level_runs_this_tick(sources, statement, work, LevelPhase::Recount) {
+                return Ok(0);
+            }
             let relation = plan_for(
                 &plans,
                 &statement.head_rel,
                 "incremental level head relation missing",
             );
-            reconcile_ref_count_statement(
+            let moved = reconcile_ref_count_statement(
                 seam,
                 statement,
                 relations,
                 &plans,
                 &[(relation.frontier_table_name.clone(), 2)],
-            )
+                work,
+            )?;
+            settle_level_run(sources, statement, work, LevelPhase::Recount);
+            Ok(moved)
         })
     };
     if reconcile_every_tick {
@@ -1746,6 +2628,7 @@ fn reconcile_ref_count_statement(
     relations: &[IncrementalRelationPlan],
     plans: &HashMap<&str, &IncrementalRelationPlan>,
     frontier_copies: &[(String, i64)],
+    work: &TickWork,
 ) -> BoundaryResult<usize> {
     let support_sql = statement
         .support_sql
@@ -1819,9 +2702,17 @@ fn reconcile_ref_count_statement(
         head.extend(tail);
         let results = seam.batch(&head).expect("reconcile batch failed");
         let offset = 2 + support_interns.len();
-        let moved = moved_rows(&results, offset + fill_new_index)
-            + moved_rows(&results, offset + collect_zero_index);
+        let fresh = moved_rows(&results, offset + fill_new_index);
+        let moved = fresh + moved_rows(&results, offset + collect_zero_index);
         scope.rows(moved);
+        if moved > 0 {
+            work.mark(&statement.head_rel);
+        }
+        // The frontier arms of the tail read `__new_`, so they wrote exactly
+        // when the fill did.
+        if fresh > 0 {
+            note_frontier_copies(relation, frontier_copies, work);
+        }
         return Ok(moved);
     };
     // Port of the rx expand wavefront (1_incremental.ts:610). The CTE seed
@@ -1887,8 +2778,15 @@ fn reconcile_ref_count_statement(
         args: vec![],
     });
     let results = seam.batch(&close).expect("expand close batch failed");
-    let moved = moved_rows(&results, fill_new_index) + moved_rows(&results, collect_zero_index);
+    let fresh = moved_rows(&results, fill_new_index);
+    let moved = fresh + moved_rows(&results, collect_zero_index);
     scope.rows(moved);
+    if moved > 0 {
+        work.mark(&statement.head_rel);
+    }
+    if fresh > 0 {
+        note_frontier_copies(relation, frontier_copies, work);
+    }
     Ok(moved)
 }
 
@@ -1906,6 +2804,8 @@ pub fn recompute_levels_after_edges(
     statements: &[crate::types::IncrementalLevelStatement],
     relations: &[IncrementalRelationPlan],
     reconcile_every_tick: bool,
+    work: &TickWork,
+    sources: &HashMap<String, LevelSources>,
 ) -> BoundaryResult<()> {
     if statements.is_empty() {
         return Ok(());
@@ -1922,6 +2822,9 @@ pub fn recompute_levels_after_edges(
         };
         let ordered: Vec<&crate::types::IncrementalLevelStatement> = statements.iter().collect();
         sequence_level_rounds(&ordered, |statement| {
+            if !level_runs_this_tick(sources, statement, work, LevelPhase::Recount) {
+                return Ok(0);
+            }
             let relation = plan_for(
                 &plans,
                 &statement.head_rel,
@@ -1938,10 +2841,14 @@ pub fn recompute_levels_after_edges(
                     relation,
                     false,
                     &mut next_sequence,
+                    work,
                 )?;
+                settle_level_run(sources, statement, work, LevelPhase::Recount);
                 return Ok(0);
             }
-            reconcile_ref_count_statement(seam, statement, relations, &plans, &[])
+            let moved = reconcile_ref_count_statement(seam, statement, relations, &plans, &[], work)?;
+            settle_level_run(sources, statement, work, LevelPhase::Recount);
+            Ok(moved)
         })
     };
     if reconcile_every_tick {

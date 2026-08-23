@@ -39,7 +39,9 @@
                 catalog_all_rows/10,
                 plan_rule_level_statements/2,
                 program_text_intern_plan/3,
-                json_capture_json_type/2 ]).
+                json_capture_json_type/2,
+                audit_scan_index_pairs/5, audit_scan_index_ddls/5,
+                audit_scan_index_ddl/3 ]).
 :- use_module('../../analyze',
               [ check_supported_subset/1, literal_witness/1, snake_name/2 ]).
 :- use_module('../../0_rel_record',
@@ -404,6 +406,137 @@ test(a_struct_column_declares_its_type_name_and_stores_a_ref) :-
     relplan_column_types(RelPlans, finding/2, [text, ref(span)]).
 
 :- end_tests(rel_record).
+
+% issues/inner-scan-audit: audit_scan_index_pairs/5 derives (rel, column)
+% pairs from a rule body, no rel name lives in the compiler. Each case
+% compiles a tiny inline program through lower_program/2 and reads the
+% real Ddl list, matching by `__scan_` suffix so a fixture's storage-name
+% hash never enters the assertion.
+
+:- begin_tests(audit_scan_index_ddl).
+
+scan_index_ddls_for(Label, Prog, ScanDdl) :-
+    once(( program_plan(fixture(Label, Prog, [], [], [])-[], Plan),
+           lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+           include([D]>>sub_atom(D, _, _, _, '__scan_'), Ddl, ScanDdl) )).
+
+% A non-leading column an `==` guard filters earns a dedicated index.
+test(a_non_leading_column_filtered_by_a_guard_earns_an_index) :-
+    scan_index_ddls_for(a_guard_filter,
+        prog([ kind(widget_a/2, set), col_type(widget_a/2, tag, text),
+               col_type(widget_a/2, status, int) ],
+             [ (echo_a(Tag) <- widget_a(Tag, Status), Status == 200) ]),
+        ScanDdl),
+    ScanDdl = [Ddl],
+    once(sub_atom(Ddl, _, _, _, '__scan_status" ON ')),
+    sub_atom(Ddl, _, 11, 0, ' ("status")').
+
+% An inline literal argument (`widget_d(Tag, 1)`) is the same equality
+% filter compile_atom_args turns into a WHERE clause as a guard.
+test(a_non_leading_column_bound_to_an_inline_literal_earns_an_index) :-
+    scan_index_ddls_for(an_inline_literal,
+        prog([ kind(widget_d/2, set), col_type(widget_d/2, tag, text),
+               col_type(widget_d/2, flag, int) ],
+             [ (echo_d(Tag) <- widget_d(Tag, 1)) ]),
+        ScanDdl),
+    ScanDdl = [Ddl],
+    once(sub_atom(Ddl, _, _, _, '__scan_flag" ON ')),
+    sub_atom(Ddl, _, 9, 0, ' ("flag")').
+
+% The LEADING key column earns nothing: it already seeks through the
+% composite UNIQUE index, filtered or not.
+test(a_leading_key_column_earns_nothing) :-
+    scan_index_ddls_for(a_leading_filter,
+        prog([ kind(widget_b/2, set), col_type(widget_b/2, tag, text),
+               col_type(widget_b/2, status, int) ],
+             [ (echo_b(Status) <- widget_b(Tag, Status), Tag == foo) ]),
+        []).
+
+% An ordered comparison (`>`) is not the identity family: SQLite can range-
+% scan an index on it, but this predicate only names the `==` shape.
+test(an_ordered_comparison_earns_nothing) :-
+    scan_index_ddls_for(an_ordered_filter,
+        prog([ kind(widget_c/2, set), col_type(widget_c/2, tag, text),
+               col_type(widget_c/2, level, int) ],
+             [ (echo_c(Tag) <- widget_c(Tag, Level), Level > 50) ]),
+        []).
+
+:- end_tests(audit_scan_index_ddl).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% DELTA ARM COUNT (issues/delta-arm-subset-expansion)
+%
+% The issue reported `levels[i].insert_sql` as one arm per SUBSET of the body,
+% 2^N. It is not: level_delta_insert_sql/6 walks positive body uses ONE at a
+% time (lower.pl:level_positive_delta_arms/9), so one clause with N positive
+% items yields N arms, the incremental-view-maintenance count. These two tests
+% pin that reading and locate the real 2^N, which is upstream in
+% 0_coalesce_expand.pl: N coalesce goals on one rule fan out to 2^N CLAUSES
+% before lower.pl ever runs, and each clause then contributes its own arms.
+%
+% Measured on ghcache page_response at 3b2064aaf: 6 coalesce goals -> 64
+% clauses -> 64 recompute statements and 64 + 6*32 = 256 delta arms, 248 KB.
+
+:- begin_tests(delta_arm_count).
+
+union_arms(Sql, Count) :-
+    atomic_list_concat(Parts, ' UNION ALL ', Sql),
+    length(Parts, Count).
+
+delta_shape_for(Label, Prog, HeadRef, ClauseCount, ArmCount) :-
+    once(( program_plan(fixture(Label, Prog, [], [], [])-[], Plan),
+           lower_program(Plan, lowered(_, _, _, _, LevelStatements, _, _, _)),
+           memberchk(levelstmt(HeadRef, _, InsertSqls, DeltaInsertSql, _, _, _),
+                     LevelStatements),
+           length(InsertSqls, ClauseCount),
+           union_arms(DeltaInsertSql, ArmCount) )).
+
+% Four positive body items, no coalesce: ONE clause, FOUR arms. A subset
+% expansion would read 16 here.
+test(a_four_item_body_lowers_to_four_delta_arms) :-
+    delta_shape_for(four_item_body,
+        prog([ kind(part_a/2, set), col_type(part_a/2, key, text),
+               col_type(part_a/2, a, int),
+               kind(part_b/2, set), col_type(part_b/2, key, text),
+               col_type(part_b/2, b, int),
+               kind(part_c/2, set), col_type(part_c/2, key, text),
+               col_type(part_c/2, c, int),
+               kind(part_d/2, set), col_type(part_d/2, key, text),
+               col_type(part_d/2, d, int),
+               col_type(joined/5, key, text), col_type(joined/5, a, int),
+               col_type(joined/5, b, int), col_type(joined/5, c, int),
+               col_type(joined/5, d, int) ],
+             [ (joined(Key, A, B, C, D) <-
+                    part_a(Key, A), part_b(Key, B),
+                    part_c(Key, C), part_d(Key, D)) ]),
+        joined/5, ClauseCount, ArmCount),
+    ClauseCount == 1,
+    ArmCount == 4.
+
+% The same head reached through three coalesce goals instead. The clause count
+% is 2^3 and the arms are 8*1 + 3*4 = 20: the fan-out is the coalesce
+% desugar's, and lower.pl stays linear inside each clause it is handed.
+test(three_coalesce_goals_fan_out_to_eight_clauses_before_lowering) :-
+    delta_shape_for(three_coalesce_goals,
+        prog([ kind(driver/1, set), col_type(driver/1, key, text),
+               kind(head_a/2, set), col_type(head_a/2, key, text),
+               col_type(head_a/2, a, int),
+               kind(head_b/2, set), col_type(head_b/2, key, text),
+               col_type(head_b/2, b, int),
+               kind(head_c/2, set), col_type(head_c/2, key, text),
+               col_type(head_c/2, c, int),
+               col_type(totalled/4, key, text), col_type(totalled/4, a, int),
+               col_type(totalled/4, b, int), col_type(totalled/4, c, int) ],
+             [ (totalled(Key, A, B, C) <-
+                    driver(Key),
+                    coalesce(head_a(Key, A), 0),
+                    coalesce(head_b(Key, B), 0),
+                    coalesce(head_c(Key, C), 0)) ]),
+        totalled/4, ClauseCount, ArmCount),
+    ClauseCount == 8,
+    ArmCount == 20.
+
+:- end_tests(delta_arm_count).
 
 % ═══════════════════════════════════════════════════════════════════════════
 % RELATION IDENTITY TARGETS (relplan_reference_target(s)/2)

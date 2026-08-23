@@ -169,7 +169,11 @@
             fixpoint_round_cap/1,
             % The `?` order tail's SQL, read by both emitters so the clause
             % they append to final_select has one definition.
-            query_order_by_map/3 ]).
+            query_order_by_map/3,
+            % issues/inner-scan-audit: exported so the plunit unit pins the
+            % derived (rel, column) pairs and the DDL text directly.
+            audit_scan_index_pairs/5, audit_scan_index_ddls/5,
+            audit_scan_index_ddl/3 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -4701,6 +4705,32 @@ aggregate_scope_seed_sql(Mode, RelPlans, ScopeColumns, QuotedScopeTable, (Head <
            'INSERT OR IGNORE INTO ~w (~w) SELECT DISTINCT ~w FROM ~w d0 WHERE ~w',
            [QuotedScopeTable, ScopeColumnsSql, GroupSql, QuotedDeltaTable, WhereSql]).
 
+% A NEGATED atom is a delta source too, and only seeded when its own args bind
+% every group column; the rest is the open row in docs/failure-modes.md.
+aggregate_scope_seed_sql(Mode, RelPlans, ScopeColumns, QuotedScopeTable, (Head <- Body),
+                         SeedSql) :-
+    aggregate_head_template(Head, Template),
+    body_ref_uses(Body, Uses),
+    member(use(DeltaRef, DeltaArgs, neg, _), Uses),
+    delta_table_name(DeltaRef, DeltaTable),
+    quote_ident(DeltaTable, QuotedDeltaTable),
+    relplan_columns(RelPlans, DeltaRef, DeltaColumns),
+    relplan_column_types(RelPlans, DeltaRef, DeltaColumnTypes),
+    compile_atom_args(Mode, DeltaArgs, DeltaColumns, DeltaColumnTypes, d0, [],
+                      DeltaBound, DeltaWhereParts),
+    maplist(where_text, DeltaWhereParts, DeltaWhereTexts),
+    catch(aggregate_scope_group_exprs(Mode, Template, DeltaBound, Head, GroupExprs),
+          unsupported_construct(aggregate_group_not_delta_local(_)),
+          fail),
+    atomic_list_concat(GroupExprs, ', ', GroupSql),
+    maplist(quote_ident, ScopeColumns, QuotedScopeColumns),
+    atomic_list_concat(QuotedScopeColumns, ', ', ScopeColumnsSql),
+    append(['d0."_sign" IN (-1, 1)'], DeltaWhereTexts, WhereTexts),
+    atomic_list_concat(WhereTexts, ' AND ', WhereSql),
+    format(atom(SeedSql),
+           'INSERT OR IGNORE INTO ~w (~w) SELECT DISTINCT ~w FROM ~w d0 WHERE ~w',
+           [QuotedScopeTable, ScopeColumnsSql, GroupSql, QuotedDeltaTable, WhereSql]).
+
 aggregate_scope_group_exprs(Mode, Template, DeltaBound, Head, GroupExprs) :-
     aggregate_group_positions(Template, Positions),
     ( Positions == []
@@ -6607,6 +6637,57 @@ order_index_ddl(Ref, Ordinal, Columns, OrderCols, Ddl) :-
     format(atom(Ddl), 'CREATE INDEX ~w ON ~w (~w)',
            [QuotedIndexName, QuotedTable, TermsSql]).
 
+% A stored rel's non-leading-key column some rule body compares by identity
+% (==) against a literal or bound var: the composite UNIQUE key can't seek it.
+audit_scan_index_pairs(RelPlans, Rules, EdgeHeadedRefs, ArrivalTargets, Pairs) :-
+    findall(Ref-Column,
+            audit_scan_index_pair(RelPlans, Rules, EdgeHeadedRefs,
+                                  ArrivalTargets, Ref, Column),
+            Pairs0),
+    sort(Pairs0, Pairs).
+
+audit_scan_index_pair(RelPlans, Rules, EdgeHeadedRefs, ArrivalTargets, Ref,
+                      Column) :-
+    member(Rule, Rules),
+    rule_body_conjunction(Rule, Body),
+    body_ref_uses(Body, Uses),
+    member(use(Ref, Args, pos, _), Uses),
+    relplan_shape(RelPlans, Ref, set, Columns, KeyOrNone, _),
+    set_rel_key_positions(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargets,
+                          Columns, [Leading | _]),
+    nth1(Position, Args, Arg),
+    Position \== Leading,
+    audit_scan_index_filtered(Arg, Body),
+    nth1(Position, Columns, Column).
+
+rule_body_conjunction((_ <- Body), Body).
+rule_body_conjunction((_ <+ Body), Body).
+
+% An inline literal argument compiles to the same WHERE equality as a
+% `== Literal` guard (both feed compile_atom_args' bound-arg path).
+audit_scan_index_filtered(Arg, _Body) :- atomic(Arg), !.
+audit_scan_index_filtered(Arg, Body) :-
+    var(Arg),
+    body_guard_goals(Body, Goals),
+    member(Left == Right, Goals),
+    ( Arg == Left ; Arg == Right ).
+
+audit_scan_index_ddls(RelPlans, Rules, EdgeHeadedRefs, ArrivalTargets, Ddls) :-
+    audit_scan_index_pairs(RelPlans, Rules, EdgeHeadedRefs, ArrivalTargets,
+                           Pairs),
+    findall(Ddl,
+            ( member(Ref-Column, Pairs), audit_scan_index_ddl(Ref, Column, Ddl) ),
+            Ddls).
+
+audit_scan_index_ddl(Ref, Column, Ddl) :-
+    table_name(Ref, Table),
+    quote_ident(Table, QuotedTable),
+    format(atom(IndexName), '~w__scan_~w', [Table, Column]),
+    quote_ident(IndexName, QuotedIndexName),
+    quote_ident(Column, QuotedColumn),
+    format(atom(Ddl), 'CREATE INDEX ~w ON ~w (~w)',
+           [QuotedIndexName, QuotedTable, QuotedColumn]).
+
 retention_statement(RelPlans, keep(Ref, count(Limit)),
                     retentionstmt(Ref, Limit, DeleteSql)) :-
     integer(Limit),
@@ -7112,8 +7193,12 @@ lower_program_in_context(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans,
     run_compile_step(lower, query_order_index_ddls,
         query_order_index_ddls(Mode, Decls, RelPlans, EdgeHeadedRefs,
                                ArrivalTargets, OrderIndexDdl), _),
-    append([RelationDdl, OrderIndexDdl, AcyclicDdl, DeltaDdl, RefCountDdl,
-            AggregateScopeDdl, PreDdl, TickDdl, CatalogTableDdl, CatalogRowDdl],
+    run_compile_step(lower, audit_scan_index_ddls,
+        audit_scan_index_ddls(RelPlans, Rules, EdgeHeadedRefs, ArrivalTargets,
+                              AuditScanIndexDdl), _),
+    append([RelationDdl, OrderIndexDdl, AuditScanIndexDdl, AcyclicDdl,
+            DeltaDdl, RefCountDdl, AggregateScopeDdl, PreDdl, TickDdl,
+            CatalogTableDdl, CatalogRowDdl],
            BodyDdl),
     run_compile_step(lower, literal_seed_ddl,
         literal_seed_ddl(Mode,
