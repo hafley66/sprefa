@@ -54,6 +54,10 @@ pub struct TickWork {
     carry: std::collections::HashSet<String>,
     stale: std::collections::HashSet<String>,
     departures: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Rels this tick wrote a frontier row for; the merge and the promote move
+    /// rows between exactly these tables and leave the rest empty.
+    staged_current: std::cell::RefCell<std::collections::HashSet<String>>,
+    staged_next: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 fn probe_columns(relation: &IncrementalRelationPlan) -> [String; PROBE_COLUMNS] {
@@ -84,6 +88,8 @@ impl TickWork {
             carry: std::collections::HashSet::new(),
             stale: std::collections::HashSet::new(),
             departures: std::cell::RefCell::new(std::collections::HashSet::new()),
+            staged_current: std::cell::RefCell::new(std::collections::HashSet::new()),
+            staged_next: std::cell::RefCell::new(std::collections::HashSet::new()),
         };
         if relations.is_empty() {
             return work;
@@ -144,6 +150,8 @@ impl TickWork {
                     .map(|relation| relation.rel.clone())
                     .collect(),
             ),
+            staged_current: std::cell::RefCell::new(names()),
+            staged_next: std::cell::RefCell::new(names()),
         }
     }
 
@@ -161,6 +169,32 @@ impl TickWork {
 
     pub fn moved(&self, rel: &str) -> bool {
         self.moved_at.borrow().contains_key(rel)
+    }
+
+    /// A frontier row landed. `next` picks the carry table over the current one.
+    fn note_frontier_write(&self, rel: &str, next: bool) {
+        let mut staged = if next {
+            self.staged_next.borrow_mut()
+        } else {
+            self.staged_current.borrow_mut()
+        };
+        if !staged.contains(rel) {
+            staged.insert(rel.to_string());
+        }
+    }
+
+    /// The carry table holds rows only where this tick wrote them; nothing else
+    /// fills it and `prepare_tick` emptied it.
+    fn carries(&self, rel: &str) -> bool {
+        self.staged_next.borrow().contains(rel)
+    }
+
+    /// Either frontier table holds a row: this tick's writes plus the carry the
+    /// tick before promoted.
+    fn holds_frontier(&self, rel: &str) -> bool {
+        self.carry.contains(rel)
+            || self.staged_current.borrow().contains(rel)
+            || self.staged_next.borrow().contains(rel)
     }
 
     /// True when one of `rels` was written after this head's last run under
@@ -527,8 +561,25 @@ pub fn stage_events(
         scope.rows(grouped.len());
         let statements = verbs.stage(relation, grouped, frontier_copies)?;
         seam.batch(&statements).expect("stage_events batch failed");
+        // The frontier copies carry ADDITIONS only, the way `stage` writes them.
+        if grouped.iter().any(|event| event.sign == 1) {
+            note_frontier_copies(relation, frontier_copies, work);
+        }
     }
     Ok(())
+}
+
+fn note_frontier_copies(
+    relation: &IncrementalRelationPlan,
+    frontier_copies: &[(String, i64)],
+    work: &TickWork,
+) {
+    for (table_name, _) in frontier_copies {
+        work.note_frontier_write(
+            &relation.rel,
+            *table_name == relation.next_frontier_table_name,
+        );
+    }
 }
 
 fn storage_row(relation: &IncrementalRelationPlan, row: &Row) -> Row {
@@ -1136,63 +1187,6 @@ pub fn stage_departures(
     Ok(())
 }
 
-pub fn stage_ordered_frontiers(
-    seam: &SqliteSeam,
-    relations: &[IncrementalRelationPlan],
-    additions: &[crate::types::RelDelta],
-) -> BoundaryResult<bool> {
-    let mut events_by_rel: HashMap<&str, Vec<DeltaEvent>> = HashMap::new();
-    let mut sequence = 0;
-    for delta in additions {
-        for row in &delta.add {
-            events_by_rel
-                .entry(delta.rel.as_str())
-                .or_default()
-                .push(DeltaEvent {
-                    rel: delta.rel.clone(),
-                    sign: 1,
-                    sequence,
-                    row: row.clone(),
-                });
-            sequence += 1;
-        }
-    }
-    let mut statements = Vec::new();
-    let mut carry_pending = false;
-    for relation in relations {
-        statements.push(SqlStatement {
-            sql: format!(
-                "DELETE FROM {}",
-                quote_identifier(&relation.frontier_table_name)
-            ),
-            args: vec![],
-        });
-        statements.push(SqlStatement {
-            sql: format!(
-                "DELETE FROM {}",
-                quote_identifier(&relation.next_frontier_table_name)
-            ),
-            args: vec![],
-        });
-        let Some(events) = events_by_rel.get(relation.rel.as_str()) else {
-            continue;
-        };
-        carry_pending = true;
-        let borrowed: Vec<&DeltaEvent> = events.iter().collect();
-        statements.push(frontier_stage_statement(
-            relation,
-            &relation.frontier_table_name,
-            0,
-            &borrowed,
-        )?);
-    }
-    if !statements.is_empty() {
-        seam.batch(&statements)
-            .expect("ordered frontier staging failed");
-    }
-    Ok(carry_pending)
-}
-
 // Port of promote_frontiers: read carry, promote next into current. Only a rel
 // whose frontier or next frontier holds rows has anything to move.
 pub fn promote_frontiers(
@@ -1202,7 +1196,7 @@ pub fn promote_frontiers(
 ) -> bool {
     let moved: Vec<IncrementalRelationPlan> = relations
         .iter()
-        .filter(|relation| work.moved(&relation.rel))
+        .filter(|relation| work.holds_frontier(&relation.rel))
         .cloned()
         .collect();
     if moved.is_empty() {
@@ -2493,12 +2487,12 @@ pub fn merge_next_into_current(
     relations: &[IncrementalRelationPlan],
     work: &TickWork,
 ) {
-    let moved: Vec<IncrementalRelationPlan> = relations
+    let carrying: Vec<IncrementalRelationPlan> = relations
         .iter()
-        .filter(|relation| work.moved(&relation.rel))
+        .filter(|relation| work.carries(&relation.rel))
         .cloned()
         .collect();
-    if moved.is_empty() {
+    if carrying.is_empty() {
         return;
     }
     let _scope = crate::trace::Scope::verb(
@@ -2507,7 +2501,7 @@ pub fn merge_next_into_current(
         crate::write_verbs::strategy_name(relations),
     );
     let sql = write_verbs_for(relations)
-        .clear(&moved, TickBoundary::Merge)
+        .clear(&carrying, TickBoundary::Merge)
         .join(";\n");
     if sql.is_empty() {
         return;
@@ -2707,11 +2701,16 @@ fn reconcile_ref_count_statement(
         head.extend(tail);
         let results = seam.batch(&head).expect("reconcile batch failed");
         let offset = 2 + support_interns.len();
-        let moved = moved_rows(&results, offset + fill_new_index)
-            + moved_rows(&results, offset + collect_zero_index);
+        let fresh = moved_rows(&results, offset + fill_new_index);
+        let moved = fresh + moved_rows(&results, offset + collect_zero_index);
         scope.rows(moved);
         if moved > 0 {
             work.mark(&statement.head_rel);
+        }
+        // The frontier arms of the tail read `__new_`, so they wrote exactly
+        // when the fill did.
+        if fresh > 0 {
+            note_frontier_copies(relation, frontier_copies, work);
         }
         return Ok(moved);
     };
@@ -2778,10 +2777,14 @@ fn reconcile_ref_count_statement(
         args: vec![],
     });
     let results = seam.batch(&close).expect("expand close batch failed");
-    let moved = moved_rows(&results, fill_new_index) + moved_rows(&results, collect_zero_index);
+    let fresh = moved_rows(&results, fill_new_index);
+    let moved = fresh + moved_rows(&results, collect_zero_index);
     scope.rows(moved);
     if moved > 0 {
         work.mark(&statement.head_rel);
+    }
+    if fresh > 0 {
+        note_frontier_copies(relation, frontier_copies, work);
     }
     Ok(moved)
 }
