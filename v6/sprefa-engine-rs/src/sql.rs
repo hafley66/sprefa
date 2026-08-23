@@ -273,9 +273,8 @@ pub fn statement_cache_wanted() -> bool {
 }
 
 /// `DL_EXPLAIN=1`: every distinct statement text gets one `EXPLAIN QUERY PLAN`
-/// logged at info under target `sprefa_engine_rs::explain`, with `scan=true`
-/// when a SCAN appears after the driving table (an inner full scan). Once
-/// per text, never per call.
+/// logged at info under target `sprefa_engine_rs::explain`, `scan=true` only
+/// for `scan_kind=inner` (issues/inner-scan-audit). Once per text, never call.
 pub fn explain_wanted() -> bool {
     static WANTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *WANTED.get_or_init(|| std::env::var_os("DL_EXPLAIN").is_some())
@@ -283,6 +282,51 @@ pub fn explain_wanted() -> bool {
 
 static EXPLAINED: std::sync::LazyLock<std::sync::Mutex<HashSet<String>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(HashSet::new()));
+
+/// json_each = expected array spread; ref_subquery = a rowid SEARCH with no
+/// SCAN; inner = a real SCAN after a join, the only kind that sets `scan`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanKind {
+    JsonEach,
+    RefSubquery,
+    Inner,
+    None,
+}
+
+impl ScanKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            ScanKind::JsonEach => "json_each",
+            ScanKind::RefSubquery => "ref_subquery",
+            ScanKind::Inner => "inner",
+            ScanKind::None => "none",
+        }
+    }
+}
+
+/// `lines[0]` (always a SCAN) and a synthesized `SCAN CONSTANT ROW` (a
+/// recursive CTE's seed row, not a table) never count toward the class.
+fn classify_plan(lines: &[String]) -> (bool, ScanKind) {
+    let scan_entries: Vec<&str> = lines
+        .iter()
+        .skip(1)
+        .map(String::as_str)
+        .filter(|line| line.starts_with("SCAN") && *line != "SCAN CONSTANT ROW")
+        .collect();
+    if scan_entries.iter().any(|line| !line.contains("VIRTUAL TABLE")) {
+        return (true, ScanKind::Inner);
+    }
+    if !scan_entries.is_empty() {
+        return (false, ScanKind::JsonEach);
+    }
+    let ref_subquery = lines
+        .iter()
+        .any(|line| line.contains("SEARCH") && line.contains("USING INTEGER PRIMARY KEY (rowid=?)"));
+    if ref_subquery {
+        return (false, ScanKind::RefSubquery);
+    }
+    (false, ScanKind::None)
+}
 
 fn explain_once(conn: &Connection, sql: &str) {
     if !explain_wanted() {
@@ -302,13 +346,12 @@ fn explain_once(conn: &Connection, sql: &str) {
         });
     match plan {
         Ok(lines) => {
-            // The driving table of a statement is always a SCAN; the finding is
-            // a SCAN inside the join, after the first plan line.
-            let scan = lines.iter().skip(1).any(|line| line.starts_with("SCAN"));
+            let (scan, scan_kind) = classify_plan(&lines);
             tracing::info!(
                 target: "sprefa_engine_rs::explain",
                 shape = %statement_shape(sql),
                 scan,
+                scan_kind = %scan_kind.as_str(),
                 plan = %lines.join(" | "),
                 sql = %sql,
                 "explain"
@@ -775,5 +818,30 @@ mod tests {
         seam.execute_multiple("INSERT INTO \"t\" VALUES (1);\nDELETE FROM \"t\"")
             .expect("batch");
         assert_eq!(SEAM_TALLY.statements.load(Relaxed) - before, 2);
+    }
+
+    /// TEST: issues/inner-scan-audit. Only a real inner SCAN after a join
+    /// sets scan; json_each and a __ref_*/__str rowid SEARCH never do.
+    #[test]
+    fn scan_kind_gates_scan_on_a_real_inner_scan_only() {
+        let json_each = vec![
+            "SEARCH t USING COVERING INDEX sqlite_autoindex_x_1".to_string(),
+            "SCAN j0 VIRTUAL TABLE INDEX 1:".to_string(),
+        ];
+        assert_eq!(classify_plan(&json_each), (false, ScanKind::JsonEach));
+
+        let ref_subquery = vec![
+            "SEARCH b0 USING COVERING INDEX sqlite_autoindex_x_1 (id=?)".to_string(),
+            "CORRELATED SCALAR SUBQUERY 1".to_string(),
+            "SEARCH s USING INTEGER PRIMARY KEY (rowid=?)".to_string(),
+        ];
+        assert_eq!(classify_plan(&ref_subquery), (false, ScanKind::RefSubquery));
+
+        let inner = vec![
+            "SCAN CONSTANT ROW".to_string(),
+            "SCAN b0 USING COVERING INDEX sqlite_autoindex_ghcache_pr_batch_response_1"
+                .to_string(),
+        ];
+        assert_eq!(classify_plan(&inner), (true, ScanKind::Inner));
     }
 }
