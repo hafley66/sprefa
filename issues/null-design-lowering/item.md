@@ -3,10 +3,14 @@ created: 2026-08-23
 updated: 2026-08-23
 type: improvement
 reporter: hafley66
-status: open
+status: done
 priority: high
 related: ['@delta-arm-subset-expansion', '@one-path-busy-tick-cost']
 labels: [compiler, performance]
+closed: 2026-08-23
+commits:
+- hash: fe0aa88ba
+  summary: 'merge #433 coalesce outer-join lowering'
 ---
 
 # null_design lowering: coalesce as LEFT JOIN + COALESCE in one clause, not 2^N expander clauses
