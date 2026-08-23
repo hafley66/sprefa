@@ -6545,8 +6545,7 @@ level_coalesce_cte(Mode, RelPlans, Head, Body, PosUses, NegUses, RuleIndex,
         format(atom(Projection), 'SELECT DISTINCT ~w FROM ~w WHERE ~w',
                [SelectSql, FromSql, WhereText])
     ),
-    quote_ident(CteName, QuotedCteName),
-    format(atom(CteSql), '~w AS (~w)', [QuotedCteName, Projection]),
+    format(atom(CteSql), '~w AS (~w)', [CteName, Projection]),
     intern_write_statements(BuiltValues, FromSql, WhereSql, TextInternSqls),
     list_intern_statements(ListInterns, FromSql, WhereSql, ListInternSqls),
     append(TextInternSqls, ListInternSqls, InternSqls).
@@ -6680,7 +6679,6 @@ coalesce_cte_event_arm(RelPlans, Head, DeltaRef, DeltaArgs, Output, Position,
                        CteName, Event, Arm) :-
     coalesce_event_table(DeltaRef, Event, EventTable, EventWhere),
     quote_ident(EventTable, QuotedEventTable),
-    quote_ident(CteName, QuotedCteName),
     rel_ref(Head, HeadRef),
     relplan_storage_name(RelPlans, HeadRef, HeadTable),
     quote_ident(HeadTable, QuotedHeadTable),
@@ -6695,7 +6693,7 @@ coalesce_cte_event_arm(RelPlans, Head, DeltaRef, DeltaArgs, Output, Position,
     atomic_list_concat([EventWhere | KeyEqualities], ' AND ', WhereSql),
     format(atom(Arm),
            'SELECT * FROM (SELECT DISTINCT ~w FROM ~w q, ~w d0 WHERE ~w EXCEPT SELECT ~w FROM ~w)',
-           [SelectSql, QuotedCteName, QuotedEventTable, WhereSql,
+           [SelectSql, CteName, QuotedEventTable, WhereSql,
             HeadColumnsSql, QuotedHeadTable]).
 
 qualified_quoted_column(Alias, Column, Expr) :-
