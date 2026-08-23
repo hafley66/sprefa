@@ -3,9 +3,13 @@ created: 2026-08-23
 updated: 2026-08-23
 type: chore
 reporter: hafley66
-status: open
+status: done
 priority: normal
 labels: [docs]
+closed: 2026-08-23
+commits:
+- hash: 296a8328f
+  summary: 'Merge PR #432 ARCH spring cleaning'
 ---
 
 # ARCH.pl spring cleaning: history out to plans/, rows under 600 chars, rail against regrowth
