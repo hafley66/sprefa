@@ -722,6 +722,27 @@ compile_negative_uses(Mode, RelPlans, [use(Ref, Args, neg, _) | Rest], Index, Bo
     NextIndex is Index + 1,
     compile_negative_uses(Mode, RelPlans, Rest, NextIndex, Bound, More).
 
+% The runtime classifies refCount invalidation from NOT EXISTS spans in
+% support_sql[1]; an outer-join source changes both its matched and absent rows.
+compile_coalesce_recount_markers(RelPlans, Uses, Texts) :-
+    compile_coalesce_recount_markers(RelPlans, Uses, 0, Texts).
+
+compile_coalesce_recount_markers(_, [], _, []).
+compile_coalesce_recount_markers(RelPlans,
+                                 [use(Ref, _, neg, coalesce_recount) | Rest],
+                                 Index, [Text | More]) :-
+    !,
+    table_name(Ref, Table),
+    quote_ident(Table, QuotedTable),
+    format(atom(Alias), 'c~w', [Index]),
+    format(atom(Text),
+           'NOT EXISTS (SELECT 1 FROM ~w ~w WHERE 0)',
+           [QuotedTable, Alias]),
+    NextIndex is Index + 1,
+    compile_coalesce_recount_markers(RelPlans, Rest, NextIndex, More).
+compile_coalesce_recount_markers(RelPlans, [_ | Rest], Index, More) :-
+    compile_coalesce_recount_markers(RelPlans, Rest, Index, More).
+
 compile_negative_atom_args(_, [], [], [], _, _, []).
 compile_negative_atom_args(Mode, [Arg | RestArgs], [Column | RestColumns], [ColumnType | RestTypes],
                            Alias, Bound, WhereParts) :-
@@ -5863,7 +5884,9 @@ level_ref_count_arm(Mode, RelPlans, Rule, RefCountArm, InternSqls) :-
     compile_positive_uses(Mode, RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
     compile_body_guards(Mode, Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
     compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
-    append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
+    compile_coalesce_recount_markers(RelPlans, NegUses, RecountWhereTexts),
+    append([PosWhereTexts, GuardWhereTexts, NegWhereTexts, RecountWhereTexts],
+           AllWhereTexts),
     append(FromParts, JsonFromParts, AllFromParts),
     from_parts_sql(AllFromParts, FromSql),
     relplan_columns(RelPlans, HeadRef, HeadColumns),

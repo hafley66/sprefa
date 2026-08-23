@@ -484,14 +484,14 @@ union_arms(Sql, Count) :-
     length(Parts, Count).
 
 delta_shape_for(Label, Prog, HeadRef, ClauseCount, ArmCount) :-
-    once(( level_shape_for(Label, Prog, HeadRef, InsertSqls, DeltaInsertSql),
+    once(( level_shape_for(Label, Prog, HeadRef, InsertSqls, DeltaInsertSql, _),
            length(InsertSqls, ClauseCount),
            union_arms(DeltaInsertSql, ArmCount) )).
 
-level_shape_for(Label, Prog, HeadRef, InsertSqls, DeltaInsertSql) :-
+level_shape_for(Label, Prog, HeadRef, InsertSqls, DeltaInsertSql, RefCountSql) :-
     program_plan(fixture(Label, Prog, [], [], [])-[], Plan),
     lower_program(Plan, lowered(_, _, _, _, LevelStatements, _, _, _)),
-    memberchk(levelstmt(HeadRef, _, InsertSqls, DeltaInsertSql, _, _, _),
+    memberchk(levelstmt(HeadRef, _, InsertSqls, DeltaInsertSql, RefCountSql, _, _),
               LevelStatements).
 
 sql_occurrences(Sql, Needle, Count) :-
@@ -557,12 +557,16 @@ test(two_coalesce_goals_lower_to_one_clause_and_n_plus_four_arms) :-
                        coalesce(head_a(Key, A), 0),
                        coalesce(head_b(Key, B), 0)) ]),
     once(level_shape_for(two_coalesce_goals, Prog, totalled/3,
-                         InsertSqls, DeltaSql)),
+                         InsertSqls, DeltaSql,
+                         refcountsql(_, RefCountSeedSql, _, _, _, _, _, _, _, _,
+                                     _, _, _, _, _, _))),
     InsertSqls = [RecomputeSql],
     union_arms(DeltaSql, 5),
     sql_occurrences(RecomputeSql, ' LEFT JOIN ', 2),
     sql_occurrences(RecomputeSql, 'COALESCE(', 2),
-    sql_occurrences(DeltaSql, ' EXCEPT ', 4).
+    sql_occurrences(DeltaSql, ' EXCEPT ', 4),
+    sql_occurrences(RefCountSeedSql, ' LEFT JOIN ', 2),
+    sql_occurrences(RefCountSeedSql, ' WHERE 0)', 2).
 
 :- end_tests(delta_arm_count).
 
