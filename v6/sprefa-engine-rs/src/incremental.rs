@@ -26,7 +26,7 @@ pub struct DeltaEvent {
 const PROBE_WIDTH: usize = 800;
 
 /// Columns `probe_columns` returns per rel.
-const PROBE_COLUMNS: usize = 4;
+const PROBE_COLUMNS: usize = 5;
 
 /// Which level operator a head ran under, so the two passes over the same head
 /// share one reading of "did my inputs move since I last ran".
@@ -52,11 +52,15 @@ pub struct TickWork {
     /// Monotone inside one tick. A level operator's rows are a function of the
     /// rels it reads, so a re-run with no newer input restages nothing.
     clock: std::cell::Cell<u64>,
+    /// The clock reading at the last `mark`, so "did ANY rel move since" costs
+    /// one read rather than a pass over `moved_at`.
+    last_moved: std::cell::Cell<u64>,
     ran_at: std::cell::RefCell<HashMap<(LevelPhase, String), u64>>,
     /// `unskipped`: no tick tables to read, so every gate answers yes.
     ungated: bool,
     carry: std::collections::HashSet<String>,
-    stale: std::collections::HashSet<String>,
+    delta_pending: std::collections::HashSet<String>,
+    next_pending: std::collections::HashSet<String>,
     departures: std::cell::RefCell<std::collections::HashSet<String>>,
     /// Rels this tick wrote a frontier row for; the merge and the promote move
     /// rows between exactly these tables and leave the rest empty.
@@ -68,11 +72,8 @@ fn probe_columns(relation: &IncrementalRelationPlan) -> [String; PROBE_COLUMNS] 
     let exists = |table: &str| format!("EXISTS(SELECT 1 FROM {})", quote_identifier(table));
     [
         exists(&relation.frontier_table_name),
-        format!(
-            "{} OR {}",
-            exists(&relation.delta_table_name),
-            exists(&relation.next_frontier_table_name)
-        ),
+        exists(&relation.delta_table_name),
+        exists(&relation.next_frontier_table_name),
         match &relation.departure_frontier_table_name {
             Some(table) => exists(table),
             None => "0".to_string(),
@@ -93,10 +94,12 @@ impl TickWork {
             shrank_at: std::cell::RefCell::new(HashMap::new()),
             grew_at: std::cell::RefCell::new(HashMap::new()),
             clock: std::cell::Cell::new(0),
+            last_moved: std::cell::Cell::new(0),
             ran_at: std::cell::RefCell::new(HashMap::new()),
             ungated: false,
             carry: std::collections::HashSet::new(),
-            stale: std::collections::HashSet::new(),
+            delta_pending: std::collections::HashSet::new(),
+            next_pending: std::collections::HashSet::new(),
             departures: std::cell::RefCell::new(std::collections::HashSet::new()),
             staged_current: std::cell::RefCell::new(std::collections::HashSet::new()),
             staged_next: std::cell::RefCell::new(std::collections::HashSet::new()),
@@ -125,13 +128,16 @@ impl TickWork {
                 work.mark_grew(&relation.rel);
             }
             if answers[at + 1] {
-                work.stale.insert(relation.rel.clone());
+                work.delta_pending.insert(relation.rel.clone());
             }
             if answers[at + 2] {
+                work.next_pending.insert(relation.rel.clone());
+            }
+            if answers[at + 3] {
                 work.departures.borrow_mut().insert(relation.rel.clone());
                 work.mark_shrank(&relation.rel);
             }
-            if answers[at + 3] {
+            if answers[at + 4] {
                 work.carry_shrink(&relation.rel);
             }
         }
@@ -152,10 +158,12 @@ impl TickWork {
             shrank_at: std::cell::RefCell::new(HashMap::new()),
             grew_at: std::cell::RefCell::new(HashMap::new()),
             clock: std::cell::Cell::new(1),
+            last_moved: std::cell::Cell::new(1),
             ran_at: std::cell::RefCell::new(HashMap::new()),
             ungated: true,
             carry: names(),
-            stale: names(),
+            delta_pending: names(),
+            next_pending: names(),
             departures: std::cell::RefCell::new(
                 relations
                     .iter()
@@ -171,6 +179,7 @@ impl TickWork {
     pub fn mark(&self, rel: &str) {
         let clock = self.clock.get() + 1;
         self.clock.set(clock);
+        self.last_moved.set(clock);
         stamp(&self.moved_at, rel, clock);
     }
 
@@ -212,17 +221,15 @@ impl TickWork {
         self.staged_next.borrow().contains(rel)
     }
 
-    /// Either frontier table holds a row: this tick's writes plus the carry the
-    /// tick before promoted.
+    /// The current frontier holds a row: the carry the tick before promoted,
+    /// plus this tick's own writes into it.
     fn holds_frontier(&self, rel: &str) -> bool {
-        self.carry.contains(rel)
-            || self.staged_current.borrow().contains(rel)
-            || self.staged_next.borrow().contains(rel)
+        self.carry.contains(rel) || self.staged_current.borrow().contains(rel)
     }
 
-    /// True when one of `rels` was written after this head's last run under
-    /// `phase`, and records this run's reading when it is.
-    fn moved_since_run(&self, head: &str, phase: LevelPhase, rels: &[String]) -> bool {
+    /// True when one of `reads` was written after this head's last run under
+    /// `phase`. A head reading a shared plane names no rel there, so ANY write is.
+    fn moved_since_run(&self, head: &str, phase: LevelPhase, reads: &LevelSources) -> bool {
         if self.ungated {
             return true;
         }
@@ -232,9 +239,11 @@ impl TickWork {
             .get(&(phase, head.to_string()))
             .copied()
             .unwrap_or(0);
-        let fresh = {
+        let fresh = (reads.shared_plane && self.last_moved.get() > last) || {
             let moved_at = self.moved_at.borrow();
-            rels.iter()
+            reads
+                .rels
+                .iter()
                 .any(|rel| moved_at.get(rel).is_some_and(|at| *at > last))
         };
         if fresh {
@@ -1016,28 +1025,56 @@ pub fn advance_tick(seam: &SqliteSeam) {
         .expect("advance_tick failed");
 }
 
-// Only a rel whose delta or next frontier held rows has anything to empty.
+// Only a rel whose delta or next frontier held rows has anything to empty, and
+// the two tables answer that question separately.
 pub fn prepare_tick(seam: &SqliteSeam, relations: &[IncrementalRelationPlan], work: &TickWork) {
-    let stale: Vec<IncrementalRelationPlan> = relations
+    clear_boundary(
+        seam,
+        relations,
+        &subset(relations, |rel| work.delta_pending.contains(rel)),
+        TickBoundary::PrepareDelta,
+        "prepare",
+    );
+    clear_boundary(
+        seam,
+        relations,
+        &subset(relations, |rel| work.next_pending.contains(rel)),
+        TickBoundary::PrepareNext,
+        "prepare",
+    );
+}
+
+fn subset(
+    relations: &[IncrementalRelationPlan],
+    wanted: impl Fn(&str) -> bool,
+) -> Vec<IncrementalRelationPlan> {
+    relations
         .iter()
-        .filter(|relation| work.stale.contains(&relation.rel))
+        .filter(|relation| wanted(&relation.rel))
         .cloned()
-        .collect();
-    if stale.is_empty() {
+        .collect()
+}
+
+// `boundary` names one table, so an empty set means that table is already empty
+// and the whole statement group is skipped.
+fn clear_boundary(
+    seam: &SqliteSeam,
+    relations: &[IncrementalRelationPlan],
+    at: &[IncrementalRelationPlan],
+    boundary: TickBoundary,
+    label: &str,
+) {
+    if at.is_empty() {
         return;
     }
-    let _scope = crate::trace::Scope::verb(
-        "clear",
-        "prepare",
-        crate::write_verbs::strategy_name(relations),
-    );
-    let sql = write_verbs_for(relations)
-        .clear(&stale, TickBoundary::Prepare)
-        .join(";\n");
+    let sql = write_verbs_for(relations).clear(at, boundary).join(";\n");
     if sql.is_empty() {
         return;
     }
-    seam.execute_multiple(&sql).expect("prepare_tick failed");
+    let _scope =
+        crate::trace::Scope::verb("clear", label, crate::write_verbs::strategy_name(relations));
+    seam.execute_multiple(&sql)
+        .unwrap_or_else(|failure| panic!("{label} clear failed: {failure}"));
 }
 
 // Port of boundary_delta: sum sign*count over each relation's delta table and
@@ -1235,41 +1272,44 @@ pub fn stage_departures(
     Ok(())
 }
 
-// Port of promote_frontiers: read carry, promote next into current. Only a rel
-// whose frontier or next frontier holds rows has anything to move.
+// Port of promote_frontiers: read carry, promote next into current. The drop and
+// the move are separate sets; the departures set answers for a rel in neither.
 pub fn promote_frontiers(
     seam: &SqliteSeam,
     relations: &[IncrementalRelationPlan],
     work: &TickWork,
 ) -> bool {
-    let moved: Vec<IncrementalRelationPlan> = relations
-        .iter()
-        .filter(|relation| work.holds_frontier(&relation.rel))
-        .cloned()
-        .collect();
-    if moved.is_empty() {
-        return !work.departures.borrow().is_empty();
-    }
-    let verbs = write_verbs_for(relations);
-    let strategy = crate::write_verbs::strategy_name(relations);
-    let promote_sql = verbs.clear(&moved, TickBoundary::Promote).join(";\n");
-    let promote = || {
-        let _scope = crate::trace::Scope::verb("clear", "promote", strategy);
-        if !promote_sql.is_empty() {
-            seam.execute_multiple(&promote_sql).expect("promote failed");
-        }
+    let dropping = subset(relations, |rel| work.holds_frontier(rel));
+    let moving = subset(relations, |rel| work.carries(rel));
+    let departed = !work.departures.borrow().is_empty();
+    // The read is over the tables the move is about to empty, so it precedes it.
+    let carry_sql = match moving.is_empty() {
+        true => String::new(),
+        false => write_verbs_for(relations).read_staged(&moving),
     };
-    let carry_sql = verbs.read_staged(&moved);
-    if carry_sql.is_empty() {
-        promote();
-        return !work.departures.borrow().is_empty();
-    }
-    let carry_pending = {
-        let _scope = crate::trace::Scope::verb("read_staged", "-", strategy);
+    let carry_pending = !carry_sql.is_empty() && {
+        let _scope = crate::trace::Scope::verb(
+            "read_staged",
+            "-",
+            crate::write_verbs::strategy_name(relations),
+        );
         seam.scalar(&carry_sql).expect("carry read failed") == 1
     };
-    promote();
-    carry_pending || !work.departures.borrow().is_empty()
+    clear_boundary(
+        seam,
+        relations,
+        &dropping,
+        TickBoundary::PromoteDrop,
+        "promote",
+    );
+    clear_boundary(
+        seam,
+        relations,
+        &moving,
+        TickBoundary::PromoteMove,
+        "promote",
+    );
+    carry_pending || departed
 }
 
 // ═══ level phases (port of 1_incremental.ts apply_level_* + reconcile_*) ═══
@@ -1315,6 +1355,9 @@ pub struct LevelSources {
     pub negated: Vec<String>,
     pub recount_always: bool,
     pub always: bool,
+    /// The head touches a table the shared strategy keys by `relation_id`, so
+    /// the name carries no rel and the reading falls back to "any rel moved".
+    pub shared_plane: bool,
     /// The head reads its own frontier, directly or around a cycle, so the rows
     /// one round stages are the next round's input rather than its output.
     pub self_feeding: bool,
@@ -1324,6 +1367,14 @@ pub struct LevelSources {
 /// clock, and the per-program meta row.
 fn global_table(name: &str) -> bool {
     name == "__str" || name == "__tick" || name == "__meta" || name.starts_with("__str_")
+}
+
+/// The shared strategy's three tables. Every rel's rows live in them under a
+/// `relation_id`, so the name alone says nothing about WHICH rel a read wants.
+fn shared_plane_table(name: &str) -> bool {
+    name == crate::write_verbs::SHARED_FRONTIER_TABLE
+        || name == crate::write_verbs::SHARED_NEXT_FRONTIER_TABLE
+        || name == crate::write_verbs::SHARED_SUPPORT_TABLE
 }
 
 fn level_statement_texts(statement: &crate::types::IncrementalLevelStatement) -> Vec<&str> {
@@ -1458,6 +1509,7 @@ pub fn level_sources(
                 negated: Vec::new(),
                 recount_always: false,
                 always: false,
+                shared_plane: false,
                 self_feeding,
             });
         for text in level_statement_texts(statement) {
@@ -1465,6 +1517,7 @@ pub fn level_sources(
                 match owners.get(table) {
                     Some(rel) => entry.rels.push((*rel).to_string()),
                     None if global_table(table) => {}
+                    None if shared_plane_table(table) => entry.shared_plane = true,
                     None => entry.always = true,
                 }
             }
@@ -1503,7 +1556,7 @@ fn level_runs_this_tick(
 ) -> bool {
     let head = statement.head_rel.as_str();
     match sources.get(head) {
-        Some(reads) if !reads.always => work.moved_since_run(head, phase, &reads.rels),
+        Some(reads) if !reads.always => work.moved_since_run(head, phase, reads),
         _ => {
             work.note_run(head, phase);
             true
@@ -2631,27 +2684,12 @@ pub fn merge_next_into_current(
     relations: &[IncrementalRelationPlan],
     work: &TickWork,
 ) {
-    let carrying: Vec<IncrementalRelationPlan> = relations
-        .iter()
-        .filter(|relation| work.carries(&relation.rel))
-        .cloned()
-        .collect();
-    if carrying.is_empty() {
-        return;
+    let carrying = subset(relations, |rel| work.carries(rel));
+    // The copy fills the current frontier, which is what the promote then drops.
+    for relation in &carrying {
+        work.note_frontier_write(&relation.rel, false);
     }
-    let _scope = crate::trace::Scope::verb(
-        "clear",
-        "merge",
-        crate::write_verbs::strategy_name(relations),
-    );
-    let sql = write_verbs_for(relations)
-        .clear(&carrying, TickBoundary::Merge)
-        .join(";\n");
-    if sql.is_empty() {
-        return;
-    }
-    seam.execute_multiple(&sql)
-        .expect("merge_next_into_current failed");
+    clear_boundary(seam, relations, &carrying, TickBoundary::Merge, "merge");
 }
 
 pub fn apply_levels_after_edges(

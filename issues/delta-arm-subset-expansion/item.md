@@ -2,10 +2,19 @@
 created: 2026-08-23
 updated: 2026-08-23
 type: bug
-status: open
+status: fixed
 priority: high
 related: ['@one-path-busy-tick-cost']
 labels: [engine, performance]
+closed: 2026-08-23
+closed_by: null-design-lowering
+commits:
+- hash: 8e6e7e02c
+  summary: lower-level-coalesce
+- hash: ecab16fc5
+  summary: recount-optional-flips
+- hash: 328176ee2
+  summary: tighten-cost-caps
 ---
 
 # A level's delta insert is one arm per SUBSET of its body: 2^8 = 256 arms on ghcache page_response, 5.6x slower than the same rule's rebuild
@@ -79,3 +88,9 @@ Baseline receipts, release emit_rust_harness, ghcache.schedule.json, 3 runs:
 Landing LEFT JOIN + SQL coalesce needs: 0_coalesce_expand.pl (keep every validation throw, stop rewriting level rules; edge rules keep the latest/1 split so fixtures/7_coalesce.pl case d is untouched), registry.pl (wrapper row), analyze.pl + strat.pl (the source rel needs the STRICT stratum edge the absent arm's not(...) supplies today, per fixtures/7_coalesce.pl:96), engine.pl (oracle solves coalesce/2), lower.pl (11 FROM-assembly sites, all `atomic_list_concat(Parts, ', ', Sql)`). The refCount retraction path already covers the flip fixtures/7_coalesce.pl:77 grades, and level_ref_count_sql is emitted for every non-aggregate head unconditionally (lower.pl:4288), so the non-monotone LEFT JOIN keeps its retraction machinery.
 
 NEEDS THE USER: this reverses the ARCH.pl:394 decision and moves a construct off the shared-expander phase order. Not a lane call.
+
+## Resolution
+
+### 2026-08-23T20:10:07Z · @null-design-lowering
+
+Fixed by PR #433: compiler LEVEL coalesce lowers to one outer-join clause with linear gain and loss arms; oracle and EDGE expansion remain unchanged.

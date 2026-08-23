@@ -525,6 +525,30 @@ compile_positive_uses(Mode, RelPlans,
     compile_positive_uses(Mode, RelPlans, Rest, NextIndex, Bound1, Bound,
                           MoreFrom, MoreWhere),
     append(HereWhere, MoreWhere, WhereParts).
+compile_positive_uses(Mode, RelPlans,
+                      [use(Ref, Args, pos, coalesce(Output, Default)) | Rest],
+                      Index, Bound0, Bound,
+                      [left_join(Join) | MoreFrom], WhereParts) :-
+    !,
+    compile_coalesced_use(Mode, RelPlans, Ref, Args, Output, Default, current,
+                          Index, Bound0, Bound1, Join, HereWhere),
+    NextIndex is Index + 1,
+    compile_positive_uses(Mode, RelPlans, Rest, NextIndex, Bound1, Bound,
+                          MoreFrom, MoreWhere),
+    append(HereWhere, MoreWhere, WhereParts).
+compile_positive_uses(Mode, RelPlans,
+                      [use(Ref, Args, pos,
+                           old_state(coalesce(Output, Default))) | Rest],
+                      Index, Bound0, Bound,
+                      [left_join(Join) | MoreFrom], WhereParts) :-
+    !,
+    compile_coalesced_use(Mode, RelPlans, Ref, Args, Output, Default,
+                          old_state(current), Index, Bound0, Bound1, Join,
+                          HereWhere),
+    NextIndex is Index + 1,
+    compile_positive_uses(Mode, RelPlans, Rest, NextIndex, Bound1, Bound,
+                          MoreFrom, MoreWhere),
+    append(HereWhere, MoreWhere, WhereParts).
 compile_positive_uses(Mode, RelPlans, [use(Ref, Args, pos, Source) | Rest], Index, Bound0, Bound, [From | MoreFrom], WhereParts) :-
     format(atom(Alias), 'b~w', [Index]),
     positive_use_from(Source, RelPlans, Ref, Alias, From),
@@ -537,12 +561,100 @@ compile_positive_uses(Mode, RelPlans, [use(Ref, Args, pos, Source) | Rest], Inde
     compile_positive_uses(Mode, RelPlans, Rest, NextIndex, Bound1, Bound, MoreFrom, MoreWhere),
     append(HereWhere, MoreWhere, WhereParts).
 
+compile_coalesced_use(Mode, RelPlans, Ref, Args, Output, Default, Source, Index,
+                      Bound0, Bound, Join, []) :-
+    coalesced_relation_sql(RelPlans, Ref, Source, RelationSql),
+    format(atom(Alias), 'b~w', [Index]),
+    relplan_columns(RelPlans, Ref, Columns),
+    relplan_column_types(RelPlans, Ref, ColumnTypes),
+    compile_coalesced_args(Mode, Args, Columns, ColumnTypes, Alias, Output,
+                           Bound0, OnParts, none, OutputColumn, OutputType,
+                           OutputEncoding),
+    maplist(where_text, OnParts, OnTexts),
+    (   OnTexts == []
+    ->  OnSql = '1'
+    ;   atomic_list_concat(OnTexts, ' AND ', OnSql)
+    ),
+    compile_expr(Mode, identity, Default, Bound0, DefaultSql, DefaultType,
+                 DefaultEncoding),
+    join_column_types_agree(OutputColumn, OutputType, DefaultSql, DefaultType),
+    align_to_encoding(OutputEncoding, DefaultEncoding, DefaultSql,
+                      AlignedDefaultSql),
+    format(atom(OutputSql), 'COALESCE(~w, ~w)',
+           [OutputColumn, AlignedDefaultSql]),
+    Bound = [Output-typed(OutputSql, OutputType, OutputEncoding) | Bound0],
+    format(atom(Join), '~w ~w ON ~w', [RelationSql, Alias, OnSql]).
+
+coalesced_relation_sql(RelPlans, Ref, current, QuotedTable) :-
+    relplan_storage_name(RelPlans, Ref, Table),
+    quote_ident(Table, QuotedTable).
+coalesced_relation_sql(RelPlans, Ref, old_state(Source), RelationSql) :-
+    old_state_relation_sql(Source, RelPlans, Ref, RelationSql).
+
+compile_coalesced_args(_, [], [], [], _, _, _, OnParts, some(OutputColumn,
+                        OutputType, OutputEncoding), OutputColumn, OutputType,
+                        OutputEncoding) :-
+    !,
+    OnParts = [].
+compile_coalesced_args(Mode, [Arg | RestArgs], [Column | RestColumns],
+                       [ColumnType | RestTypes], Alias, Output, Bound,
+                       OnParts, Output0, OutputColumn, OutputType,
+                       OutputEncoding) :-
+    format(atom(ColumnExpr), '~w."~w"', [Alias, Column]),
+    (   Arg == Output
+    ->  coalesced_output_column(Mode, ColumnExpr, ColumnType, Output0, Output1,
+                                HereOn)
+    ;   compile_pattern_arg(Mode, Arg, ColumnExpr, ColumnType, Bound, _,
+                            HereOn, check),
+        Output1 = Output0
+    ),
+    compile_coalesced_args(Mode, RestArgs, RestColumns, RestTypes, Alias,
+                           Output, Bound, MoreOn, Output1, OutputColumn,
+                           OutputType, OutputEncoding),
+    append(HereOn, MoreOn, OnParts).
+
+coalesced_output_column(Mode, ColumnExpr, ColumnType, none,
+                        some(ColumnExpr, ColumnType, Encoding), []) :-
+    column_encoding(Mode, ColumnType, Encoding).
+coalesced_output_column(_, ColumnExpr, ColumnType,
+                        some(FirstExpr, FirstType, Encoding),
+                        some(FirstExpr, FirstType, Encoding),
+                        [pair(ColumnExpr, FirstExpr)]) :-
+    join_column_types_agree(ColumnExpr, ColumnType, FirstExpr, FirstType).
+
+from_parts_sql([left_join(Join) | Rest], Sql) :-
+    !,
+    format(atom(First), '(SELECT 1) "__coalesce_root" LEFT JOIN ~w', [Join]),
+    foldl(append_from_part, Rest, First, Sql).
+from_parts_sql([Part | Rest], Sql) :-
+    from_part_text(Part, First),
+    foldl(append_from_part, Rest, First, Sql).
+
+from_part_text(left_join(Join), Text) :-
+    !,
+    format(atom(Text), 'LEFT JOIN ~w', [Join]).
+from_part_text(Part, Part).
+
+append_from_part(left_join(Join), Before, Sql) :-
+    !,
+    format(atom(Sql), '~w LEFT JOIN ~w', [Before, Join]).
+append_from_part(Part, Before, Sql) :-
+    format(atom(Sql), '~w, ~w', [Before, Part]).
+
 positive_use_table(pre, _RelPlans, Ref, Table) :- !, pre_table_name(Ref, Table).
 positive_use_table(_, RelPlans, Ref, Table) :-
     relplan_storage_name(RelPlans, Ref, Table).
 
 positive_use_from(old_state(Source), RelPlans, Ref, Alias, From) :-
     !,
+    old_state_relation_sql(Source, RelPlans, Ref, RelationSql),
+    format(atom(From), '~w ~w', [RelationSql, Alias]).
+positive_use_from(Source, RelPlans, Ref, Alias, From) :-
+    positive_use_table(Source, RelPlans, Ref, Table),
+    quote_ident(Table, QuotedTable),
+    format(atom(From), '~w ~w', [QuotedTable, Alias]).
+
+old_state_relation_sql(Source, RelPlans, Ref, RelationSql) :-
     positive_use_table(Source, RelPlans, Ref, Table),
     quote_ident(Table, QuotedTable),
     frontier_table_name(Ref, FrontierTable),
@@ -551,14 +663,10 @@ positive_use_from(old_state(Source), RelPlans, Ref, Alias, From) :-
     qualified_equalities(Columns, old_delta, old_row, FrontierEqualities),
     qualified_column_list(Columns, old_row, SelectedColumns),
     atomic_list_concat(FrontierEqualities, ' AND ', FrontierWhere),
-    format(atom(From),
-           '(SELECT ~w FROM ~w old_row GROUP BY ~w HAVING count(*) > (SELECT count(*) FROM ~w old_delta WHERE old_delta."_phase" >= 0 AND ~w)) ~w',
+    format(atom(RelationSql),
+           '(SELECT ~w FROM ~w old_row GROUP BY ~w HAVING count(*) > (SELECT count(*) FROM ~w old_delta WHERE old_delta."_phase" >= 0 AND ~w))',
            [SelectedColumns, QuotedTable, SelectedColumns,
-            QuotedFrontierTable, FrontierWhere, Alias]).
-positive_use_from(Source, RelPlans, Ref, Alias, From) :-
-    positive_use_table(Source, RelPlans, Ref, Table),
-    quote_ident(Table, QuotedTable),
-    format(atom(From), '~w ~w', [QuotedTable, Alias]).
+            QuotedFrontierTable, FrontierWhere]).
 
 compile_seeded_pre_use(Mode, RelPlans, Ref, Args, Seed, Index, Bound0, Bound,
                        WhereParts) :-
@@ -631,6 +739,11 @@ compile_negative_uses(Mode, RelPlans, Uses, Bound, NegTexts) :-
     compile_negative_uses(Mode, RelPlans, Uses, 0, Bound, NegTexts).
 
 compile_negative_uses(_, _, [], _, _, []).
+compile_negative_uses(Mode, RelPlans,
+                      [use(_, _, neg, coalesce_recount) | Rest], Index, Bound,
+                      More) :-
+    !,
+    compile_negative_uses(Mode, RelPlans, Rest, Index, Bound, More).
 compile_negative_uses(Mode, RelPlans, [use(Ref, Args, neg, _) | Rest], Index, Bound, [Text | More]) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     format(atom(Alias), 'n~w', [Index]),
@@ -645,6 +758,27 @@ compile_negative_uses(Mode, RelPlans, [use(Ref, Args, neg, _) | Rest], Index, Bo
     ),
     NextIndex is Index + 1,
     compile_negative_uses(Mode, RelPlans, Rest, NextIndex, Bound, More).
+
+% The runtime classifies refCount invalidation from NOT EXISTS spans in
+% support_sql[1]; an outer-join source changes both its matched and absent rows.
+compile_coalesce_recount_markers(RelPlans, Uses, Texts) :-
+    compile_coalesce_recount_markers(RelPlans, Uses, 0, Texts).
+
+compile_coalesce_recount_markers(_, [], _, []).
+compile_coalesce_recount_markers(RelPlans,
+                                 [use(Ref, _, neg, coalesce_recount) | Rest],
+                                 Index, [Text | More]) :-
+    !,
+    table_name(Ref, Table),
+    quote_ident(Table, QuotedTable),
+    format(atom(Alias), 'c~w', [Index]),
+    format(atom(Text),
+           'NOT EXISTS (SELECT 1 FROM ~w ~w WHERE 0)',
+           [QuotedTable, Alias]),
+    NextIndex is Index + 1,
+    compile_coalesce_recount_markers(RelPlans, Rest, NextIndex, More).
+compile_coalesce_recount_markers(RelPlans, [_ | Rest], Index, More) :-
+    compile_coalesce_recount_markers(RelPlans, Rest, Index, More).
 
 compile_negative_atom_args(_, [], [], [], _, _, []).
 compile_negative_atom_args(Mode, [Arg | RestArgs], [Column | RestColumns], [ColumnType | RestTypes],
@@ -4047,7 +4181,7 @@ edge_statement_single(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     maplist(negated_atom_use, NegAtoms, NegUses),
     compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
     append([PositiveWhereTexts, GuardWhereTexts, NegWhereTexts], WhereTexts),
-    ( FromParts == [] -> FromSql = none ; atomic_list_concat(FromParts, ', ', FromSql) ),
+    ( FromParts == [] -> FromSql = none ; from_parts_sql(FromParts, FromSql) ),
     ( WhereTexts == [] -> WhereSql = none ; atomic_list_concat(WhereTexts, ' AND ', WhereSql) ),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
@@ -4164,7 +4298,7 @@ edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     format(atom(DeltaFrom), '~w ~w', [QuotedFrontierTable, DeltaAlias]),
     append([[DeltaFrom], OtherFromParts, JsonFromParts], FromParts),
-    atomic_list_concat(FromParts, ', ', FromSql),
+    from_parts_sql(FromParts, FromSql),
     append([['d0."_phase" >= 0' | TriggerWhereTexts], OtherWhereTexts,
             GuardWhereTexts, NegWhereTexts], WhereTexts),
     atomic_list_concat(WhereTexts, ' AND ', WhereSql),
@@ -4491,7 +4625,7 @@ avg_body_rows_sql(Mode, RelPlans, _HeadRef, (Head <- Body), Sql) :-
     memberchk(ValueType, [int, float]),
     append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], WhereTexts),
     append(FromParts, JsonFromParts, AllFromParts),
-    atomic_list_concat(AllFromParts, ', ', FromSql),
+    from_parts_sql(AllFromParts, FromSql),
     avg_body_where_sql(WhereTexts, WhereSql),
     avg_body_projection(GroupExprs, ValueSql, ProjectionSql),
     format(atom(Sql), 'SELECT ~w FROM ~w~w',
@@ -4802,7 +4936,7 @@ aggregate_insert_scoped_sql(Mode, RelPlans, HeadRef, ScopeColumns, QuotedScopeTa
     append([PosWhereTexts, GuardWhereTexts, NegWhereTexts, [ScopeWhereText]],
            AllWhereTexts),
     append(FromParts, JsonFromParts, AllFromParts),
-    atomic_list_concat(AllFromParts, ', ', FromSql),
+    from_parts_sql(AllFromParts, FromSql),
     aggregate_select_statement(Mode, HeadColumnTypes, Head, Template, Bound, FromSql,
                                AllWhereTexts, SelectStatement, InternSqls),
     format(atom(InsertScopedSql), 'INSERT OR IGNORE INTO ~w (~w) ~w RETURNING ~w',
@@ -5267,7 +5401,7 @@ dred_seed_sql(Mode, RelPlans, Rule, QuotedPing, HeadColumnsSql, ProbeSql, Sign,
     dred_seed_from_parts(RelPlans, HeadRef, PosUses, PosFromParts, Index, Sign,
                          SeedFromParts),
     append(SeedFromParts, JsonFromParts, AllFromParts),
-    atomic_list_concat(AllFromParts, ', ', FromSql),
+    from_parts_sql(AllFromParts, FromSql),
     ( WhereTexts == []
     -> format(atom(ArmSql), 'SELECT ~w FROM ~w', [SelectSql, FromSql])
     ;  atomic_list_concat(WhereTexts, ' AND ', WhereSql),
@@ -5352,7 +5486,7 @@ dred_hop_arm(Mode, RelPlans, HeadRef, Rule, QuotedFrontier, ArmSql) :-
     format(atom(SelfFrom), '~w ~w', [QuotedFrontier, SelfAlias]),
     dred_replace_nth0(SelfIndex, PosFromParts, SelfFrom, HopFromParts),
     append(HopFromParts, JsonFromParts, AllFromParts),
-    atomic_list_concat(AllFromParts, ', ', FromSql),
+    from_parts_sql(AllFromParts, FromSql),
     ( WhereTexts == []
     -> format(atom(ArmSql), 'SELECT ~w FROM ~w', [SelectSql, FromSql])
     ;  atomic_list_concat(WhereTexts, ' AND ', WhereSql),
@@ -5374,7 +5508,7 @@ dred_rederive_seed_sql(Mode, RelPlans, Rule, QuotedPing, QuotedCone, HeadColumns
                               JsonFromParts, WhereTexts, SelectSql, RawExprs),
     append(PosFromParts, JsonFromParts, ArmFromParts),
     format(atom(ConeFrom), '~w c', [QuotedCone]),
-    atomic_list_concat([ConeFrom | ArmFromParts], ', ', FromSql),
+    from_parts_sql([ConeFrom | ArmFromParts], FromSql),
     findall(Equality,
             ( nth1(Position, HeadColumns, Column),
               nth1(Position, RawExprs, RawExpr),
@@ -5737,7 +5871,7 @@ level_recursive_arm(Mode, RelPlans, Rule, RecursiveArm) :-
                               JsonFromParts, AllWhereTexts, SelectSql,
                               _RawExprs),
     append(PosFromParts, JsonFromParts, AllFromParts),
-    atomic_list_concat(AllFromParts, ', ', FromSql),
+    from_parts_sql(AllFromParts, FromSql),
     ( AllWhereTexts == []
     -> format(atom(RecursiveArm), 'SELECT ~w FROM ~w',
               [SelectSql, FromSql])
@@ -5787,9 +5921,11 @@ level_ref_count_arm(Mode, RelPlans, Rule, RefCountArm, InternSqls) :-
     compile_positive_uses(Mode, RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
     compile_body_guards(Mode, Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
     compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
-    append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
+    compile_coalesce_recount_markers(RelPlans, NegUses, RecountWhereTexts),
+    append([PosWhereTexts, GuardWhereTexts, NegWhereTexts, RecountWhereTexts],
+           AllWhereTexts),
     append(FromParts, JsonFromParts, AllFromParts),
-    atomic_list_concat(AllFromParts, ', ', FromSql),
+    from_parts_sql(AllFromParts, FromSql),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
     head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, AliasedSelectExprs, BuiltValues, ListInterns),
@@ -5864,7 +6000,7 @@ level_insert_sql(Mode, RelPlans, HeadRef, (Head <- Body), InsertSql, InternSqls)
     compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
     append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
     append(FromParts, JsonFromParts, AllFromParts),
-    atomic_list_concat(AllFromParts, ', ', FromSql),
+    from_parts_sql(AllFromParts, FromSql),
     ( aggregate_head_template(Head, Template)
     -> aggregate_select_statement(Mode, HeadColumnTypes, Head, Template, Bound, FromSql,
                                   AllWhereTexts, SelectStatement, InternSqls)
@@ -6403,31 +6539,120 @@ level_delta_insert_sql(Mode, RelPlans, HeadRef, Rules, DeltaInsertSql, InternSql
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
-    level_rules_delta_arms(Mode, RelPlans, Rules, DeltaArms, InternSqls),
+    level_rules_delta_arms(Mode, RelPlans, Rules, 0, DeltaArms, CteSqls,
+                           InternSqls),
     atomic_list_concat(DeltaArms, ' UNION ALL ', DeltaSelectSql),
+    (   CteSqls == []
+    ->  WithSql = ''
+    ;   atomic_list_concat(CteSqls, ', ', CtesSql),
+        format(atom(WithSql), 'WITH ~w ', [CtesSql])
+    ),
     format(atom(DeltaInsertSql),
-           'INSERT OR IGNORE INTO ~w (~w) ~w RETURNING ~w',
-           [QuotedHeadTable, HeadColumnsSql, DeltaSelectSql, HeadColumnsSql]).
+           '~wINSERT OR IGNORE INTO ~w (~w) ~w RETURNING ~w',
+           [WithSql, QuotedHeadTable, HeadColumnsSql, DeltaSelectSql,
+            HeadColumnsSql]).
 
-level_rules_delta_arms(_, _, [], [], []).
-level_rules_delta_arms(Mode, RelPlans, [Rule | Rest], DeltaArms, InternGroups) :-
-    level_rule_delta_arms(Mode, RelPlans, Rule, RuleArms, RuleInterns),
-    level_rules_delta_arms(Mode, RelPlans, Rest, RestArms, RestInterns),
+level_rules_delta_arms(_, _, [], _, [], [], []).
+level_rules_delta_arms(Mode, RelPlans, [Rule | Rest], RuleIndex, DeltaArms,
+                       CteSqls, InternGroups) :-
+    level_rule_delta_arms(Mode, RelPlans, Rule, RuleIndex, RuleArms, RuleCtes,
+                          RuleInterns),
+    NextRuleIndex is RuleIndex + 1,
+    level_rules_delta_arms(Mode, RelPlans, Rest, NextRuleIndex, RestArms,
+                           RestCtes, RestInterns),
     append(RuleArms, RestArms, DeltaArms),
+    append(RuleCtes, RestCtes, CteSqls),
     append(RuleInterns, RestInterns, InternGroups).
 
-level_rule_delta_arms(Mode, RelPlans, (Head <- Body), DeltaArms, InternGroups) :-
+level_rule_delta_arms(Mode, RelPlans, (Head <- Body), RuleIndex, DeltaArms,
+                      CteSqls, InternGroups) :-
     body_ref_uses(Body, Uses),
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
-    level_positive_delta_arms(Mode, RelPlans, Head, Body, PosUses, NegUses, PosUses,
-                              PositiveArms, PositiveInterns),
-    level_negative_delta_arms(Mode, RelPlans, Head, Body, PosUses, NegUses,
-                              NegUses, NegativeArms, NegativeInterns),
+    level_coalesce_cte(Mode, RelPlans, Head, Body, PosUses, NegUses, RuleIndex,
+                       CteName, CteSqls, CteInterns),
+    level_positive_delta_arms(Mode, RelPlans, Head, Body, PosUses, NegUses,
+                              PosUses, CteName, PositiveArms,
+                              PositiveInterns),
+    exclude(coalesce_recount_use, NegUses, DeltaNegUses),
+    level_negative_delta_arms(Mode, RelPlans, Head, Body, PosUses,
+                              DeltaNegUses, NegUses, NegativeArms,
+                              NegativeInterns),
     append(PositiveArms, NegativeArms, DeltaArms),
-    append(PositiveInterns, NegativeInterns, InternGroups).
+    append([CteInterns, PositiveInterns, NegativeInterns], InternGroups).
 
-level_positive_delta_arms(_, _, _, _, [], _, _, [], []).
+coalesce_recount_use(use(_, _, neg, coalesce_recount)).
+
+level_coalesce_cte(Mode, RelPlans, Head, Body, PosUses, NegUses, RuleIndex,
+                   CteName, [CteSql], InternSqls) :-
+    member(use(_, _, pos, coalesce(_, _)), PosUses),
+    !,
+    format(atom(CteName), '__coalesce_rule_~w', [RuleIndex]),
+    compile_positive_uses(Mode, RelPlans, PosUses, [], Bound0, FromParts,
+                          PosWhereTexts),
+    compile_body_guards(Mode, Body, Bound0, Bound, JsonFromParts,
+                        GuardWhereTexts),
+    compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
+    append(FromParts, JsonFromParts, AllFromParts),
+    from_parts_sql(AllFromParts, FromSql),
+    rel_ref(Head, HeadRef),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns,
+                     HeadSelectExprs, BuiltValues, ListInterns),
+    coalesce_cte_key_exprs(Mode, RelPlans, PosUses, Bound, 0, KeySelectExprs),
+    append(HeadSelectExprs, KeySelectExprs, SelectExprs),
+    atomic_list_concat(SelectExprs, ', ', SelectSql),
+    append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], WhereTexts),
+    (   WhereTexts == []
+    ->  WhereSql = none,
+        format(atom(Projection), 'SELECT DISTINCT ~w FROM ~w',
+               [SelectSql, FromSql])
+    ;   atomic_list_concat(WhereTexts, ' AND ', WhereText),
+        WhereSql = WhereText,
+        format(atom(Projection), 'SELECT DISTINCT ~w FROM ~w WHERE ~w',
+               [SelectSql, FromSql, WhereText])
+    ),
+    format(atom(CteSql), '~w AS (~w)', [CteName, Projection]),
+    intern_write_statements(BuiltValues, FromSql, WhereSql, TextInternSqls),
+    list_intern_statements(ListInterns, FromSql, WhereSql, ListInternSqls),
+    append(TextInternSqls, ListInternSqls, InternSqls).
+level_coalesce_cte(_, _, _, _, _, _, _, none, [], []).
+
+coalesce_cte_key_exprs(_, _, [], _, _, []).
+coalesce_cte_key_exprs(Mode, RelPlans,
+                       [use(Ref, Args, pos, coalesce(Output, _)) | Rest],
+                       Bound, Position, Exprs) :-
+    !,
+    relplan_columns(RelPlans, Ref, Columns),
+    coalesce_use_key_exprs(Mode, Args, Columns, Output, Bound, Position, 0,
+                           Here),
+    NextPosition is Position + 1,
+    coalesce_cte_key_exprs(Mode, RelPlans, Rest, Bound, NextPosition, More),
+    append(Here, More, Exprs).
+coalesce_cte_key_exprs(Mode, RelPlans, [_ | Rest], Bound, Position, Exprs) :-
+    NextPosition is Position + 1,
+    coalesce_cte_key_exprs(Mode, RelPlans, Rest, Bound, NextPosition, Exprs).
+
+coalesce_use_key_exprs(_, [], [], _, _, _, _, []).
+coalesce_use_key_exprs(Mode, [Arg | RestArgs], [_ | RestColumns], Output,
+                       Bound, Position, ColumnPosition, Exprs) :-
+    NextColumnPosition is ColumnPosition + 1,
+    (   Arg == Output
+    ->  Exprs = More
+    ;   compile_expr(Mode, identity, Arg, Bound, Sql, _, _),
+        coalesce_key_alias(Position, ColumnPosition, Alias),
+        quote_ident(Alias, QuotedAlias),
+        format(atom(Expr), '~w AS ~w', [Sql, QuotedAlias]),
+        Exprs = [Expr | More]
+    ),
+    coalesce_use_key_exprs(Mode, RestArgs, RestColumns, Output, Bound,
+                           Position, NextColumnPosition, More).
+
+coalesce_key_alias(Position, ColumnPosition, Alias) :-
+    format(atom(Alias), '__coalesce_~w_~w', [Position, ColumnPosition]).
+
+level_positive_delta_arms(_, _, _, _, [], _, _, _, [], []).
 % STRUCT-AS-ROWS: a dictionary atom gets NO delta arm, and needs none. A
 % dictionary row is created only by interning a value some ARRIVING row
 % carries, and interning runs before that tick's arrival statements, so every
@@ -6437,18 +6662,23 @@ level_positive_delta_arms(_, _, _, _, [], _, _, [], []).
 % create (a dictionary is storage plane: no delta table, no frontier, no
 % boundary), so this is the same fact stated twice: dictionaries do not move
 % on their own.
-level_positive_delta_arms(Mode, RelPlans, Head, Body, [_ | RestPositions], NegUses, PosUses,
-                          Arms, InternGroups) :-
+level_positive_delta_arms(Mode, RelPlans, Head, Body, [_ | RestPositions],
+                          NegUses, PosUses, CteName, Arms, InternGroups) :-
     length(RestPositions, RemainingCount),
     length(PosUses, PositiveCount),
     Position is PositiveCount - RemainingCount - 1,
     nth0_split(Position, PosUses, NewBeforeUses, DeltaUse, AfterUses),
     maplist(old_state_use, AfterUses, OldAfterUses),
     append(NewBeforeUses, OldAfterUses, OtherPosUses),
-    level_positive_delta_arms(Mode, RelPlans, Head, Body, RestPositions, NegUses, PosUses,
-                              RestArms, RestInterns),
+    level_positive_delta_arms(Mode, RelPlans, Head, Body, RestPositions,
+                              NegUses, PosUses, CteName, RestArms, RestInterns),
     (   dictionary_use(DeltaUse)
     ->  Arms = RestArms, InternGroups = RestInterns
+    ;   DeltaUse = use(_, _, pos, coalesce(_, _))
+    ->  level_coalesce_delta_arm(RelPlans, Head, DeltaUse, Position, CteName,
+                                 CoalesceArm),
+        Arms = [CoalesceArm | RestArms],
+        InternGroups = RestInterns
     ;   level_delta_select_arm(Mode, RelPlans, Head, Body, DeltaUse, OtherPosUses, NegUses,
                                DeltaArm, ArmInterns),
         Arms = [DeltaArm | RestArms],
@@ -6501,7 +6731,7 @@ level_delta_select_arm(Mode, RelPlans, Head, Body, use(DeltaRef, DeltaArgs, pos,
     format(atom(DeltaFrom), '~w d0', [QuotedFrontierTable]),
     append([[DeltaFrom], IdentityFromParts, OtherFromParts, JsonFromParts],
            FromParts),
-    atomic_list_concat(FromParts, ', ', FromSql),
+    from_parts_sql(FromParts, FromSql),
     append([['d0."_phase" >= 0' | DeltaWhereTexts], IdentityWhereTexts,
             OtherWhereTexts], PositiveWhereTexts),
     append([PositiveWhereTexts, GuardWhereTexts, NegWhereTexts], WhereTexts),
@@ -6545,7 +6775,7 @@ level_negative_delta_arm(Mode, RelPlans, Head, Body, PosUses,
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     format(atom(DeltaFrom), '~w d0', [QuotedDeltaTable]),
     append([[DeltaFrom], PositiveFromParts, JsonFromParts], FromParts),
-    atomic_list_concat(FromParts, ', ', FromSql),
+    from_parts_sql(FromParts, FromSql),
     append([['d0."_sign" < 0' | DeltaWhereTexts], PositiveWhereTexts,
             GuardWhereTexts, NegWhereTexts], WhereTexts),
     atomic_list_concat(WhereTexts, ' AND ', WhereSql),
@@ -6554,6 +6784,58 @@ level_negative_delta_arm(Mode, RelPlans, Head, Body, PosUses,
     intern_write_statements(BuiltValues, FromSql, WhereSql, TextInternSqls),
     list_intern_statements(ListInterns, FromSql, WhereSql, ListInternSqls),
     append(TextInternSqls, ListInternSqls, InternSqls).
+
+level_coalesce_delta_arm(RelPlans, Head,
+                         use(DeltaRef, DeltaArgs, pos,
+                             coalesce(Output, _)),
+                         Position, CteName, Arm) :-
+    frontier_table_name(DeltaRef, FrontierTable),
+    quote_ident(FrontierTable, QuotedFrontierTable),
+    delta_table_name(DeltaRef, DeltaTable),
+    quote_ident(DeltaTable, QuotedDeltaTable),
+    rel_ref(Head, HeadRef),
+    relplan_storage_name(RelPlans, HeadRef, HeadTable),
+    quote_ident(HeadTable, QuotedHeadTable),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    maplist(qualified_quoted_column(q), HeadColumns, SelectExprs),
+    atomic_list_concat(SelectExprs, ', ', SelectSql),
+    maplist(quote_ident, HeadColumns, QuotedHeadColumns),
+    atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
+    relplan_columns(RelPlans, DeltaRef, DeltaColumns),
+    coalesce_event_key_equalities(DeltaArgs, DeltaColumns, Output, Position,
+                                  gain, 0, GainEqualities),
+    coalesce_event_key_equalities(DeltaArgs, DeltaColumns, Output, Position,
+                                  loss, 0, LossEqualities),
+    atomic_list_concat(['gain."_phase" >= 0' | GainEqualities], ' AND ',
+                       GainWhere),
+    atomic_list_concat(['loss."_sign" < 0' | LossEqualities], ' AND ',
+                       LossWhere),
+    format(atom(Arm),
+           'SELECT * FROM (SELECT DISTINCT ~w FROM ~w q WHERE (EXISTS (SELECT 1 FROM ~w gain WHERE ~w) OR EXISTS (SELECT 1 FROM ~w loss WHERE ~w)) EXCEPT SELECT ~w FROM ~w)',
+           [SelectSql, CteName, QuotedFrontierTable, GainWhere,
+            QuotedDeltaTable, LossWhere,
+            HeadColumnsSql, QuotedHeadTable]).
+
+qualified_quoted_column(Alias, Column, Expr) :-
+    quote_ident(Column, QuotedColumn),
+    format(atom(Expr), '~w.~w', [Alias, QuotedColumn]).
+
+coalesce_event_key_equalities([], [], _, _, _, _, []).
+coalesce_event_key_equalities([Arg | RestArgs], [Column | RestColumns], Output,
+                               Position, EventAlias, ColumnPosition,
+                               Equalities) :-
+    NextColumnPosition is ColumnPosition + 1,
+    (   Arg == Output
+    ->  Equalities = More
+    ;   coalesce_key_alias(Position, ColumnPosition, KeyAlias),
+        quote_ident(KeyAlias, QuotedKeyAlias),
+        quote_ident(Column, QuotedColumn),
+        format(atom(Equality), 'q.~w = ~w.~w',
+               [QuotedKeyAlias, EventAlias, QuotedColumn]),
+        Equalities = [Equality | More]
+    ),
+    coalesce_event_key_equalities(RestArgs, RestColumns, Output, Position,
+                                   EventAlias, NextColumnPosition, More).
 
 delta_reference_identity(RelPlans, Name/Arity, Args, Columns,
                          Bound0, Bound, [From], Equalities) :-

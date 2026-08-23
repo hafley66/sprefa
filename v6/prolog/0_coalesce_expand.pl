@@ -1,12 +1,14 @@
 % 0_coalesce_expand.pl : `coalesce/2`, the use-site total read.
 %
-% One rule carrying a coalesce becomes two ordinary
-% clauses of the same head:
+% The oracle turns one rule carrying a coalesce into two ordinary clauses of
+% the same head:
 %
 %   h(...) <- Rest, latest_commit(Repo, Commit).
 %   h(...) <- Rest, not(latest_commit(Repo, _)), Commit := 'absent'.
 %
-% Multiple coalesce goals produce 2^N clauses.
+% Multiple oracle coalesce goals produce 2^N clauses. The compiler validates
+% the same LEVEL form and leaves it intact for lower.pl. EDGE rules keep this
+% split on both paths.
 %
 % In a LEVEL body the present arm is the bare relation atom: a level body reads
 % state. In an EDGE body a bare atom is a TRIGGER, an occurrence, so the bare
@@ -44,10 +46,8 @@
 %                                  no lowering would be read as an ordinary
 %                                  join and drop the default in SILENCE.
 %
-% Every unsupported construct is thrown HERE, in the one expansion both doors consult
-% (1_expansion.pl phase 45), so the oracle and the compiler cannot disagree
-% about which programs are legal. The single-door unsupported construct is this repo's
-% recurring defect class and a shared expander is the shape that closes it.
+% Every unsupported construct is thrown HERE, in the phase both paths consult
+% (1_expansion.pl phase 45), so accepted program shapes remain identical.
 
 :- module(coalesce_expand,
           [ expand_coalesce_in_context/3 ]).
@@ -60,8 +60,58 @@
 :- op(1150, xfx, <+).
 :- op(700,  xfx, :=).
 
+expand_coalesce_in_context(coalesce_context(compiler, _),
+                           prog(Decls, Rules0), prog(Decls, Rules)) :-
+    !,
+    validate_compiler_rules(Rules0, Rules).
 expand_coalesce_in_context(_, prog(Decls, Rules0), prog(Decls, Rules)) :-
     expand_rules(Rules0, Rules).
+
+validate_compiler_rules([], []).
+validate_compiler_rules([Rule | Rest], Rules) :-
+    validate_compiler_rule(Rule, Clauses),
+    validate_compiler_rules(Rest, RestRules),
+    append(Clauses, RestRules, Rules).
+
+validate_compiler_rule((Head <- Body), [(Head <- Body)]) :-
+    !,
+    refuse_coalesce_in_head(Head),
+    validate_level_body(Body).
+validate_compiler_rule((Head <+ Body), Clauses) :-
+    !,
+    refuse_coalesce_in_head(Head),
+    expand_clause(edge, Head, Body, Clauses).
+validate_compiler_rule(Rule, [Rule]) :-
+    refuse_residual_coalesce(Rule).
+
+validate_level_body(Body) :-
+    conjunction_goals(Body, Goals),
+    validate_level_goals(Goals, Goals),
+    exclude(top_level_coalesce, Goals, OtherGoals),
+    goals_conjunction(OtherGoals, OtherBody),
+    refuse_residual_coalesce(OtherBody).
+
+validate_level_goals([], _).
+validate_level_goals([Goal | Rest], AllGoals) :-
+    (   top_level_coalesce(Goal)
+    ->  Goal = coalesce(Source, Default),
+        select_eq(Goal, AllGoals, OtherGoals),
+        validate_default(Source, Default),
+        output_column(Source, OtherGoals, _, _)
+    ;   true
+    ),
+    validate_level_goals(Rest, AllGoals).
+
+top_level_coalesce(Goal) :-
+    nonvar(Goal),
+    Goal = coalesce(_, _).
+
+select_eq(Target, [Head | Rest], Remaining) :-
+    (   Target == Head
+    ->  Remaining = Rest
+    ;   Remaining = [Head | More],
+        select_eq(Target, Rest, More)
+    ).
 
 expand_rules([], []).
 expand_rules([Rule | Rest], Rules) :-

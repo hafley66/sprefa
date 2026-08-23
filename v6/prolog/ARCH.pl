@@ -391,7 +391,7 @@ construct(coalesce,             t0, new).     % WIRED 2026-07-30 (ruling
 %   `coalesce(rel_atom(Bound..., Out), Default)` binds Out from the row when
 %   one exists and from Default when none does, so the tuple survives instead
 %   of dropping out of the join. Null never enters storage or the type system.
-%   Tier 0 and NOT a new lowering: 0_coalesce_expand.pl (expansion phase 45)
+%   Compiler LEVEL lowering emits one LEFT JOIN + SQL COALESCE per item; EDGE
 %   rewrites one rule into two ordinary clauses -- the read, and `not(...)`
 %   plus a `:=` of the default -- so the emitter gained nothing. The name is
 %   the SQL word, per the vocabulary law; Datomic's `get-else` is the prior

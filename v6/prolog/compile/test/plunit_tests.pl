@@ -484,14 +484,12 @@ union_arms(Sql, Count) :-
     length(Parts, Count).
 
 delta_shape_for(Label, Prog, HeadRef, ClauseCount, ArmCount) :-
-    delta_sql_for(Label, Prog, HeadRef, ClauseCount, DeltaInsertSql),
-    union_arms(DeltaInsertSql, ArmCount).
+    once(( level_shape_for(Label, Prog, HeadRef, InsertSqls, DeltaInsertSql, _),
+           length(InsertSqls, ClauseCount),
+           union_arms(DeltaInsertSql, ArmCount) )).
 
 delta_sql_for(Label, Prog, HeadRef, ClauseCount, DeltaInsertSql) :-
-    once(( program_plan(fixture(Label, Prog, [], [], [])-[], Plan),
-           lower_program(Plan, lowered(_, _, _, _, LevelStatements, _, _, _)),
-           memberchk(levelstmt(HeadRef, _, InsertSqls, DeltaInsertSql, _, _, _),
-                     LevelStatements),
+    once(( level_shape_for(Label, Prog, HeadRef, InsertSqls, DeltaInsertSql, _),
            length(InsertSqls, ClauseCount) )).
 
 four_item_program(
@@ -509,6 +507,16 @@ four_item_program(
          [ (joined(Key, A, B, C, D) <-
                 part_a(Key, A), part_b(Key, B),
                 part_c(Key, C), part_d(Key, D)) ])).
+
+level_shape_for(Label, Prog, HeadRef, InsertSqls, DeltaInsertSql, RefCountSql) :-
+    program_plan(fixture(Label, Prog, [], [], [])-[], Plan),
+    lower_program(Plan, lowered(_, _, _, _, LevelStatements, _, _, _)),
+    memberchk(levelstmt(HeadRef, _, InsertSqls, DeltaInsertSql, RefCountSql, _, _),
+              LevelStatements).
+
+sql_occurrences(Sql, Needle, Count) :-
+    findall(Before, sub_atom(Sql, Before, _, _, Needle), Positions),
+    length(Positions, Count).
 
 % Four positive body items, no coalesce: ONE clause, FOUR arms. A subset
 % expansion would read 16 here.
@@ -561,10 +569,9 @@ test(dictionary_rows_never_read_a_frontier) :-
                   LevelStatements),
            \+ sub_atom(DeltaInsertSql, _, _, _, '__frontier___ref_')).
 
-% The same head reached through three coalesce goals instead. The clause count
-% is 2^3. Each expanded clause has four source transitions after the negated
-% departure arm is included, for 32 arms total.
-test(three_coalesce_goals_fan_out_to_eight_clauses_before_lowering) :-
+% Three optional reads remain one clause and contribute one transition arm
+% each beside the driver's arm.
+test(three_coalesce_goals_lower_to_one_clause_and_four_arms) :-
     delta_shape_for(three_coalesce_goals,
         prog([ kind(driver/1, set), col_type(driver/1, key, text),
                kind(head_a/2, set), col_type(head_a/2, key, text),
@@ -581,8 +588,34 @@ test(three_coalesce_goals_fan_out_to_eight_clauses_before_lowering) :-
                     coalesce(head_b(Key, B), 0),
                     coalesce(head_c(Key, C), 0)) ]),
         totalled/4, ClauseCount, ArmCount),
-    ClauseCount == 8,
-    ArmCount == 32.
+    ClauseCount == 1,
+    ArmCount == 4.
+
+test(two_coalesce_goals_lower_to_one_clause_and_three_arms) :-
+    Prog = prog([ kind(driver/1, set), col_type(driver/1, key, text),
+                  kind(head_a/2, set), col_type(head_a/2, key, text),
+                  col_type(head_a/2, a, int),
+                  kind(head_b/2, set), col_type(head_b/2, key, text),
+                  col_type(head_b/2, b, int),
+                  col_type(totalled/3, key, text),
+                  col_type(totalled/3, a, int),
+                  col_type(totalled/3, b, int) ],
+                [ (totalled(Key, A, B) <-
+                       driver(Key),
+                       coalesce(head_a(Key, A), 0),
+                       coalesce(head_b(Key, B), 0)) ]),
+    once(level_shape_for(two_coalesce_goals, Prog, totalled/3,
+                         InsertSqls, DeltaSql,
+                         refcountsql(_, RefCountSeedSql, _, _, _, _, _, _, _, _,
+                                     _, _, _, _, _, _))),
+    InsertSqls = [RecomputeSql],
+    union_arms(DeltaSql, 3),
+    sql_occurrences(RecomputeSql, ' LEFT JOIN ', 2),
+    sql_occurrences(RecomputeSql, 'COALESCE(', 2),
+    sql_occurrences(DeltaSql, ' EXCEPT ', 2),
+    sql_occurrences(DeltaSql, ' OR EXISTS ', 2),
+    sql_occurrences(RefCountSeedSql, ' LEFT JOIN ', 2),
+    sql_occurrences(RefCountSeedSql, ' WHERE 0)', 2).
 
 :- end_tests(delta_arm_count).
 
@@ -5066,6 +5099,17 @@ test(coalesce_level_arm_reads_the_bare_atom) :-
           (repo_latest(Name, Commit) <- (repo(Name),
                                          not(latest_commit(Name, _)),
                                          Commit := absent)) ].
+
+test(coalesce_level_wrapper_survives_compiler_expansion) :-
+    Program = prog([],
+        [ (repo_latest(Name, Commit) <-
+               repo(Name),
+               coalesce(latest_commit(Name, Commit), absent)) ]),
+    expand_program_with_bindings(Program, [], prog(_, Expanded), _),
+    Expanded =@=
+        [ (repo_latest(Name, Commit) <-
+               (repo(Name),
+                coalesce(latest_commit(Name, Commit), absent))) ].
 
 % A bare relation atom in an EDGE body is an occurrence. The read arm samples
 % instead, or an arrival on the coalesced rel would fire the rule on its own.
