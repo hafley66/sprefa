@@ -3,9 +3,13 @@ created: 2026-08-23
 updated: 2026-08-23
 type: bug
 reporter: hafley66
-status: open
+status: fixed
 priority: high
 labels: [engine, self-diagnosis]
+closed: 2026-08-23
+commits:
+- hash: '748342380'
+  summary: 'Merge PR #425 _recent selection'
 ---
 
 # Engine tick trace: live sqlite_ms reads 0 and every ordered statement is unlabelled
