@@ -555,6 +555,24 @@ pub struct WriteSupportCountPlan {
     pub write_sqls: Vec<String>,
 }
 
+/// Sequenced = the body reads the store this tick is still writing (`pre/1`, or
+/// a negation over a rel another arm heads). Per ARM, never per module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArmSchedule {
+    #[default]
+    SetAtOnce,
+    Sequenced,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TriggerKind {
+    #[default]
+    Arrival,
+    Departure,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncrementalEdgeStatement {
     pub head_rel: String,
@@ -562,31 +580,26 @@ pub struct IncrementalEdgeStatement {
     pub head_table_name: String,
     pub head_kind: RelationKind,
     pub key_indices: Vec<usize>,
+    /// The set-at-once projection: the whole trigger frontier in one statement.
     pub project_sql: String,
     #[serde(default)]
     pub intern_sql: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum OrderedTriggerKind {
-    Arrival,
-    Departure,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OrderedEdgeArm {
+    #[serde(default)]
+    pub schedule: ArmSchedule,
+    #[serde(default)]
     pub trigger_rel: String,
-    pub trigger_kind: OrderedTriggerKind,
-    pub head_rel: String,
-    pub head_table_name: String,
-    pub head_kind: RelationKind,
-    pub head_columns: Vec<String>,
-    pub key_indices: Vec<usize>,
-    pub project_sql: String,
-    pub write_sql: String,
+    #[serde(default)]
+    pub trigger_kind: TriggerKind,
+    /// One occurrence's projection, the trigger row bound to `?1..?n`. Present
+    /// exactly when `schedule` is `Sequenced`.
+    #[serde(default)]
+    pub occurrence_project_sql: Option<String>,
+    #[serde(default)]
+    pub occurrence_intern_sql: Option<Vec<String>>,
+    /// Some body reads this head through `pre/1`, so each write also lands in
+    /// `__pre_<head>` for the occurrences still to come.
+    #[serde(default)]
     pub evolves_pre: bool,
-    pub intern_sql: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -697,14 +710,10 @@ pub struct ProgramJson {
     pub enum_types: Vec<EnumTypePlan>,
     #[serde(default)]
     pub enum_ref_columns: EnumRefColumns,
+    /// The rels a `pre/1` body reads, each mirrored into `__pre_<table>` at the
+    /// tick's edge boundary.
     #[serde(default)]
-    pub ordered_program: bool,
-    #[serde(default)]
-    pub ordered_arms: Vec<OrderedEdgeArm>,
-    #[serde(default)]
-    pub ordered_pre_refs: Vec<String>,
-    #[serde(default)]
-    pub ordered_recursive_levels: bool,
+    pub pre_snapshot_rels: Vec<String>,
     pub relations: Vec<IncrementalRelationPlan>,
     pub edges: Vec<IncrementalEdgeStatement>,
     pub levels: Vec<IncrementalLevelStatement>,

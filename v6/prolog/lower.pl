@@ -4705,6 +4705,32 @@ aggregate_scope_seed_sql(Mode, RelPlans, ScopeColumns, QuotedScopeTable, (Head <
            'INSERT OR IGNORE INTO ~w (~w) SELECT DISTINCT ~w FROM ~w d0 WHERE ~w',
            [QuotedScopeTable, ScopeColumnsSql, GroupSql, QuotedDeltaTable, WhereSql]).
 
+% A NEGATED atom is a delta source too, and only seeded when its own args bind
+% every group column; the rest is the open row in docs/failure-modes.md.
+aggregate_scope_seed_sql(Mode, RelPlans, ScopeColumns, QuotedScopeTable, (Head <- Body),
+                         SeedSql) :-
+    aggregate_head_template(Head, Template),
+    body_ref_uses(Body, Uses),
+    member(use(DeltaRef, DeltaArgs, neg, _), Uses),
+    delta_table_name(DeltaRef, DeltaTable),
+    quote_ident(DeltaTable, QuotedDeltaTable),
+    relplan_columns(RelPlans, DeltaRef, DeltaColumns),
+    relplan_column_types(RelPlans, DeltaRef, DeltaColumnTypes),
+    compile_atom_args(Mode, DeltaArgs, DeltaColumns, DeltaColumnTypes, d0, [],
+                      DeltaBound, DeltaWhereParts),
+    maplist(where_text, DeltaWhereParts, DeltaWhereTexts),
+    catch(aggregate_scope_group_exprs(Mode, Template, DeltaBound, Head, GroupExprs),
+          unsupported_construct(aggregate_group_not_delta_local(_)),
+          fail),
+    atomic_list_concat(GroupExprs, ', ', GroupSql),
+    maplist(quote_ident, ScopeColumns, QuotedScopeColumns),
+    atomic_list_concat(QuotedScopeColumns, ', ', ScopeColumnsSql),
+    append(['d0."_sign" IN (-1, 1)'], DeltaWhereTexts, WhereTexts),
+    atomic_list_concat(WhereTexts, ' AND ', WhereSql),
+    format(atom(SeedSql),
+           'INSERT OR IGNORE INTO ~w (~w) SELECT DISTINCT ~w FROM ~w d0 WHERE ~w',
+           [QuotedScopeTable, ScopeColumnsSql, GroupSql, QuotedDeltaTable, WhereSql]).
+
 aggregate_scope_group_exprs(Mode, Template, DeltaBound, Head, GroupExprs) :-
     aggregate_group_positions(Template, Positions),
     ( Positions == []

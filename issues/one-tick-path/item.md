@@ -3,10 +3,14 @@ created: 2026-08-23
 updated: 2026-08-23
 type: improvement
 reporter: hafley66
-status: open
+status: done
 priority: high
 related: ['@ordered-tick-recompute', '@tick-transaction']
 labels: [engine, performance]
+closed: 2026-08-23
+commits:
+- hash: ecce409d5
+  summary: 'Merge PR #427 one tick path'
 ---
 
 # One tick path: sequenced arms inside the incremental path, delete ordered.rs

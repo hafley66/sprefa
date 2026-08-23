@@ -10,7 +10,6 @@ pub mod enum_plane;
 pub mod executors;
 pub mod hosts;
 pub mod incremental;
-pub mod ordered;
 pub mod program;
 pub mod run;
 pub mod serve;
