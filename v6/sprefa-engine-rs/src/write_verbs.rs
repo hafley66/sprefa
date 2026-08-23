@@ -31,13 +31,15 @@ pub enum WriteVerbStrategy {
     Shared,
 }
 
-/// Where a tick stands when it calls `clear`: emptying this tick's transient
-/// state, folding next into current mid-tick, or promoting at the end.
+/// Where a tick stands when it calls `clear`. One variant per TABLE the
+/// boundary touches, so a rel whose frontier held no row pays for none of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TickBoundary {
-    Prepare,
+    PrepareDelta,
+    PrepareNext,
     Merge,
-    Promote,
+    PromoteDrop,
+    PromoteMove,
 }
 
 pub trait WriteVerbs: Sync {
@@ -248,40 +250,32 @@ impl WriteVerbs for PerRelWriteVerbs {
     fn clear(&self, relations: &[IncrementalRelationPlan], boundary: TickBoundary) -> Vec<String> {
         let mut statements = Vec::new();
         for relation in relations {
+            let copy = || {
+                let joined = frontier_columns_text(relation);
+                format!(
+                    "INSERT INTO {} ({}) SELECT {} FROM {}",
+                    quote_identifier(&relation.frontier_table_name),
+                    joined,
+                    joined,
+                    quote_identifier(&relation.next_frontier_table_name)
+                )
+            };
             match boundary {
-                TickBoundary::Prepare => {
-                    statements.push(format!(
-                        "DELETE FROM {}",
-                        quote_identifier(&relation.delta_table_name)
-                    ));
-                    statements.push(format!(
-                        "DELETE FROM {}",
-                        quote_identifier(&relation.next_frontier_table_name)
-                    ));
-                }
-                TickBoundary::Merge => {
-                    let joined = frontier_columns_text(relation);
-                    statements.push(format!(
-                        "INSERT INTO {} ({}) SELECT {} FROM {}",
-                        quote_identifier(&relation.frontier_table_name),
-                        joined,
-                        joined,
-                        quote_identifier(&relation.next_frontier_table_name)
-                    ));
-                }
-                TickBoundary::Promote => {
-                    let joined = frontier_columns_text(relation);
-                    statements.push(format!(
-                        "DELETE FROM {}",
-                        quote_identifier(&relation.frontier_table_name)
-                    ));
-                    statements.push(format!(
-                        "INSERT INTO {} ({}) SELECT {} FROM {}",
-                        quote_identifier(&relation.frontier_table_name),
-                        joined,
-                        joined,
-                        quote_identifier(&relation.next_frontier_table_name)
-                    ));
+                TickBoundary::PrepareDelta => statements.push(format!(
+                    "DELETE FROM {}",
+                    quote_identifier(&relation.delta_table_name)
+                )),
+                TickBoundary::PrepareNext => statements.push(format!(
+                    "DELETE FROM {}",
+                    quote_identifier(&relation.next_frontier_table_name)
+                )),
+                TickBoundary::Merge => statements.push(copy()),
+                TickBoundary::PromoteDrop => statements.push(format!(
+                    "DELETE FROM {}",
+                    quote_identifier(&relation.frontier_table_name)
+                )),
+                TickBoundary::PromoteMove => {
+                    statements.push(copy());
                     statements.push(format!(
                         "DELETE FROM {}",
                         quote_identifier(&relation.next_frontier_table_name)
@@ -348,26 +342,28 @@ impl WriteVerbs for SharedWriteVerbs {
             SHARED_FRONTIER_COLUMNS,
             quote_identifier(SHARED_NEXT_FRONTIER_TABLE)
         );
+        // The three shared tables are emptied whole: one rel's rows in them are
+        // exactly the rows this tick's boundary set names.
         match boundary {
-            TickBoundary::Prepare => {
-                let mut statements: Vec<String> = relations
-                    .iter()
-                    .map(|relation| {
-                        format!(
-                            "DELETE FROM {}",
-                            quote_identifier(&relation.delta_table_name)
-                        )
-                    })
-                    .collect();
-                statements.push(format!(
-                    "DELETE FROM {}",
-                    quote_identifier(SHARED_NEXT_FRONTIER_TABLE)
-                ));
-                statements
-            }
+            TickBoundary::PrepareDelta => relations
+                .iter()
+                .map(|relation| {
+                    format!(
+                        "DELETE FROM {}",
+                        quote_identifier(&relation.delta_table_name)
+                    )
+                })
+                .collect(),
+            TickBoundary::PrepareNext => vec![format!(
+                "DELETE FROM {}",
+                quote_identifier(SHARED_NEXT_FRONTIER_TABLE)
+            )],
             TickBoundary::Merge => vec![copy],
-            TickBoundary::Promote => vec![
-                format!("DELETE FROM {}", quote_identifier(SHARED_FRONTIER_TABLE)),
+            TickBoundary::PromoteDrop => vec![format!(
+                "DELETE FROM {}",
+                quote_identifier(SHARED_FRONTIER_TABLE)
+            )],
+            TickBoundary::PromoteMove => vec![
                 copy,
                 format!(
                     "DELETE FROM {}",
