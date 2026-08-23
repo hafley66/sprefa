@@ -986,6 +986,35 @@ fn to_statements(texts: &[String]) -> Vec<SqlStatement> {
         .collect()
 }
 
+/// A head reads a rel when one of `tables` (quoted table name, rel) occurs in
+/// its SQL: frontier tables for recursion, base tables for the ordered dirty set.
+pub fn reads_by_head<'a>(
+    heads: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
+    tables: &[(String, &str)],
+) -> Vec<(String, Vec<String>)> {
+    let mut reads: Vec<(String, Vec<String>)> = Vec::new();
+    let mut source_index: HashMap<&str, usize> = HashMap::new();
+    for (head_rel, sql) in heads {
+        let mut sources = Vec::new();
+        if let Some(sql) = sql {
+            for (table, rel) in tables {
+                FRONTIER_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if sql.contains(table.as_str()) {
+                    sources.push((*rel).to_string());
+                }
+            }
+        }
+        match source_index.get(head_rel) {
+            Some(index) => reads[*index].1.extend(sources),
+            None => {
+                source_index.insert(head_rel, reads.len());
+                reads.push((head_rel.to_string(), sources));
+            }
+        }
+    }
+    reads
+}
+
 /// Program metadata, so the substring pass over every insert text runs at
 /// construction and never once per tick.
 pub fn recursive_heads(
@@ -1001,26 +1030,12 @@ pub fn recursive_heads(
             )
         })
         .collect();
-    let mut reads_frontier_of: Vec<(String, Vec<String>)> = Vec::new();
-    let mut source_index: HashMap<&str, usize> = HashMap::new();
-    for statement in statements {
-        let mut sources = Vec::new();
-        if let Some(insert_sql) = &statement.insert_sql {
-            for (frontier, rel) in &frontiers {
-                FRONTIER_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if insert_sql.contains(frontier.as_str()) {
-                    sources.push((*rel).to_string());
-                }
-            }
-        }
-        match source_index.get(statement.head_rel.as_str()) {
-            Some(index) => reads_frontier_of[*index].1.extend(sources),
-            None => {
-                source_index.insert(statement.head_rel.as_str(), reads_frontier_of.len());
-                reads_frontier_of.push((statement.head_rel.clone(), sources));
-            }
-        }
-    }
+    let reads_frontier_of = reads_by_head(
+        statements
+            .iter()
+            .map(|statement| (statement.head_rel.as_str(), statement.insert_sql.as_deref())),
+        &frontiers,
+    );
     fn reaches(
         from: &str,
         target: &str,
