@@ -34,7 +34,7 @@
               "owner": "acme",
               "name": "widgets",
               "default_branch": "main",
-              "sync_prs": 0,
+              "sync_prs": 1,
               "sync_events": 1,
               "sync_notifications": 0,
               "sync_branches": "",
@@ -85,6 +85,24 @@
         "{\"etag\":\"etag-0\",\"x-ratelimit-remaining\":4999,\"x-ratelimit-reset\":1000000}",
         "[{\"id\":\"1\",\"type\":\"PushEvent\",\"actor\":{\"login\":\"someone\"},\"payload\":{\"ref\":\"refs/heads/main\",\"action\":\"pushed\"},\"created_at\":\"2026-08-22T00:00:00Z\"}]",
         149
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_http__post",
+      "sign": "add",
+      "row": [
+        "witness|http__post|url:text=graphql|headers:text={\"Authorization\":\"Bearer scripted-token\"}|request_body:text={\"query\":\"{ rateLimit { cost remaining resetAt } repo_1: repository(owner: \\\"acme\\\", name: \\\"widgets\\\") { pullRequests(first: 100, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title state isDraft body headRefName headRefOid baseRefName mergeable additions deletions changedFiles createdAt updatedAt mergedAt closedAt databaseId id author { login } mergeCommit { oid } reviews(last: 20) { nodes { databaseId author { login } state body submittedAt } } comments(last: 50) { nodes { databaseId author { login } body createdAt updatedAt } } reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } ... on Team { login: slug } } } } labels(first: 10) { nodes { name color } } commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes { __typename ... on StatusContext { context state targetUrl description } ... on CheckRun { name conclusion detailsUrl } } } } } } } } } } repo_1_recent: repository(owner: \\\"acme\\\", name: \\\"widgets\\\") { pullRequests(first: 10, states: [MERGED, CLOSED], orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title state isDraft body headRefName headRefOid baseRefName mergeable additions deletions changedFiles createdAt updatedAt mergedAt closedAt databaseId id author { login } mergeCommit { oid } reviews(last: 20) { nodes { databaseId author { login } state body submittedAt } } comments(last: 50) { nodes { databaseId author { login } body createdAt updatedAt } } reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } ... on Team { login: slug } } } } labels(first: 10) { nodes { name color } } commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes { __typename ... on StatusContext { context state targetUrl description } ... on CheckRun { name conclusion detailsUrl } } } } } } } } } } }\"}|bucket:int=0",
+        0,
+        "graphql",
+        "{\"Authorization\":\"Bearer scripted-token\"}",
+        "{\"query\":\"{ rateLimit { cost remaining resetAt } repo_1: repository(owner: \\\"acme\\\", name: \\\"widgets\\\") { pullRequests(first: 100, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title state isDraft body headRefName headRefOid baseRefName mergeable additions deletions changedFiles createdAt updatedAt mergedAt closedAt databaseId id author { login } mergeCommit { oid } reviews(last: 20) { nodes { databaseId author { login } state body submittedAt } } comments(last: 50) { nodes { databaseId author { login } body createdAt updatedAt } } reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } ... on Team { login: slug } } } } labels(first: 10) { nodes { name color } } commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes { __typename ... on StatusContext { context state targetUrl description } ... on CheckRun { name conclusion detailsUrl } } } } } } } } } } repo_1_recent: repository(owner: \\\"acme\\\", name: \\\"widgets\\\") { pullRequests(first: 10, states: [MERGED, CLOSED], orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title state isDraft body headRefName headRefOid baseRefName mergeable additions deletions changedFiles createdAt updatedAt mergedAt closedAt databaseId id author { login } mergeCommit { oid } reviews(last: 20) { nodes { databaseId author { login } state body submittedAt } } comments(last: 50) { nodes { databaseId author { login } body createdAt updatedAt } } reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } ... on Team { login: slug } } } } labels(first: 10) { nodes { name color } } commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes { __typename ... on StatusContext { context state targetUrl description } ... on CheckRun { name conclusion detailsUrl } } } } } } } } } } }\"}",
+        0,
+        200,
+        "{\"x-ratelimit-remaining\":4998,\"x-ratelimit-reset\":1000000}",
+        "{\"data\":{\"rateLimit\":{\"cost\":1,\"remaining\":4998,\"resetAt\":\"2026-08-23T01:00:00Z\"},\"repo_1\":{\"pullRequests\":{\"nodes\":[{\"number\":1,\"title\":\"probe: close me\",\"state\":\"OPEN\",\"isDraft\":false,\"body\":\"probe, close me\",\"headRefName\":\"probe/pr-transition\",\"headRefOid\":\"deadbeef00\",\"baseRefName\":\"main\",\"mergeable\":\"MERGEABLE\",\"additions\":1,\"deletions\":0,\"changedFiles\":1,\"createdAt\":\"2026-08-23T00:00:00Z\",\"updatedAt\":\"2026-08-23T00:00:00Z\",\"mergedAt\":null,\"closedAt\":null,\"databaseId\":9001,\"id\":\"PR_kwID_probe\",\"author\":{\"login\":\"hafley66\"},\"mergeCommit\":null,\"reviews\":{\"nodes\":[]},\"comments\":{\"nodes\":[]},\"reviewRequests\":{\"nodes\":[]},\"labels\":{\"nodes\":[]},\"commits\":{\"nodes\":[{\"commit\":{\"statusCheckRollup\":null}}]}}]}},\"repo_1_recent\":{\"pullRequests\":{\"nodes\":[]}}}}",
+        763
       ]
     }
   ],
@@ -163,6 +181,54 @@
         "{\"etag\":\"etag-0\",\"x-ratelimit-remaining\":4997,\"x-ratelimit-reset\":1000000}",
         "null",
         0
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_clock__tick",
+      "sign": "add",
+      "row": [
+        "witness|clock__tick|every:int=60",
+        3,
+        60,
+        3
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=repos/acme/widgets/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-0\"}|prev_etag:text=etag-0|bucket:int=3",
+        0,
+        "repos/acme/widgets/events",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-0\"}",
+        "etag-0",
+        3,
+        200,
+        "{\"etag\":\"etag-1\",\"x-ratelimit-remaining\":4996,\"x-ratelimit-reset\":1000000}",
+        "[{\"id\":\"2\",\"type\":\"PullRequestEvent\",\"actor\":{\"login\":\"someone\"},\"payload\":{\"action\":\"closed\",\"number\":1},\"created_at\":\"2026-08-23T00:10:00Z\"}]",
+        143
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_http__post",
+      "sign": "add",
+      "row": [
+        "witness|http__post|url:text=graphql|headers:text={\"Authorization\":\"Bearer scripted-token\"}|request_body:text={\"query\":\"{ rateLimit { cost remaining resetAt } repo_1: repository(owner: \\\"acme\\\", name: \\\"widgets\\\") { pullRequests(first: 100, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title state isDraft body headRefName headRefOid baseRefName mergeable additions deletions changedFiles createdAt updatedAt mergedAt closedAt databaseId id author { login } mergeCommit { oid } reviews(last: 20) { nodes { databaseId author { login } state body submittedAt } } comments(last: 50) { nodes { databaseId author { login } body createdAt updatedAt } } reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } ... on Team { login: slug } } } } labels(first: 10) { nodes { name color } } commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes { __typename ... on StatusContext { context state targetUrl description } ... on CheckRun { name conclusion detailsUrl } } } } } } } } } } repo_1_recent: repository(owner: \\\"acme\\\", name: \\\"widgets\\\") { pullRequests(first: 10, states: [MERGED, CLOSED], orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title state isDraft body headRefName headRefOid baseRefName mergeable additions deletions changedFiles createdAt updatedAt mergedAt closedAt databaseId id author { login } mergeCommit { oid } reviews(last: 20) { nodes { databaseId author { login } state body submittedAt } } comments(last: 50) { nodes { databaseId author { login } body createdAt updatedAt } } reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } ... on Team { login: slug } } } } labels(first: 10) { nodes { name color } } commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes { __typename ... on StatusContext { context state targetUrl description } ... on CheckRun { name conclusion detailsUrl } } } } } } } } } } }\"}|bucket:int=3",
+        0,
+        "graphql",
+        "{\"Authorization\":\"Bearer scripted-token\"}",
+        "{\"query\":\"{ rateLimit { cost remaining resetAt } repo_1: repository(owner: \\\"acme\\\", name: \\\"widgets\\\") { pullRequests(first: 100, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title state isDraft body headRefName headRefOid baseRefName mergeable additions deletions changedFiles createdAt updatedAt mergedAt closedAt databaseId id author { login } mergeCommit { oid } reviews(last: 20) { nodes { databaseId author { login } state body submittedAt } } comments(last: 50) { nodes { databaseId author { login } body createdAt updatedAt } } reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } ... on Team { login: slug } } } } labels(first: 10) { nodes { name color } } commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes { __typename ... on StatusContext { context state targetUrl description } ... on CheckRun { name conclusion detailsUrl } } } } } } } } } } repo_1_recent: repository(owner: \\\"acme\\\", name: \\\"widgets\\\") { pullRequests(first: 10, states: [MERGED, CLOSED], orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title state isDraft body headRefName headRefOid baseRefName mergeable additions deletions changedFiles createdAt updatedAt mergedAt closedAt databaseId id author { login } mergeCommit { oid } reviews(last: 20) { nodes { databaseId author { login } state body submittedAt } } comments(last: 50) { nodes { databaseId author { login } body createdAt updatedAt } } reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } ... on Team { login: slug } } } } labels(first: 10) { nodes { name color } } commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes { __typename ... on StatusContext { context state targetUrl description } ... on CheckRun { name conclusion detailsUrl } } } } } } } } } } }\"}",
+        3,
+        200,
+        "{\"x-ratelimit-remaining\":4998,\"x-ratelimit-reset\":1000000}",
+        "{\"data\":{\"rateLimit\":{\"cost\":1,\"remaining\":4996,\"resetAt\":\"2026-08-23T01:00:00Z\"},\"repo_1\":{\"pullRequests\":{\"nodes\":[]}},\"repo_1_recent\":{\"pullRequests\":{\"nodes\":[{\"number\":1,\"title\":\"probe: close me\",\"state\":\"MERGED\",\"isDraft\":false,\"body\":\"probe, close me\",\"headRefName\":\"probe/pr-transition\",\"headRefOid\":\"deadbeef00\",\"baseRefName\":\"main\",\"mergeable\":\"MERGEABLE\",\"additions\":1,\"deletions\":0,\"changedFiles\":1,\"createdAt\":\"2026-08-23T00:00:00Z\",\"updatedAt\":\"2026-08-23T00:10:00Z\",\"mergedAt\":\"2026-08-23T00:10:00Z\",\"closedAt\":\"2026-08-23T00:10:00Z\",\"databaseId\":9001,\"id\":\"PR_kwID_probe\",\"author\":{\"login\":\"hafley66\"},\"mergeCommit\":{\"oid\":\"mergedsha001\"},\"reviews\":{\"nodes\":[]},\"comments\":{\"nodes\":[]},\"reviewRequests\":{\"nodes\":[]},\"labels\":{\"nodes\":[]},\"commits\":{\"nodes\":[{\"commit\":{\"statusCheckRollup\":null}}]}}]}}}}",
+        819
       ]
     }
   ]

@@ -50,24 +50,28 @@ fi
 ticks=$(grep -c '^{"tick"' "$scratch/out")
 printf 'fold: %ss, %s ticks\n' "$fold_wall" "$ticks"
 
-# COUNT RECEIPT for issues/ghcache-dl6-poll: a 60s period is ONE minute bucket,
-# so three consecutive buckets are three polls, not one every sixty.
+# COUNT RECEIPT: a 60s period is ONE minute bucket, four buckets four polls.
+# Bucket 3's fresh events answer re-fires pr_due's dirty_repo arm (engine-tick-trace).
 due_rows=$(jq -r 'select(.rel == "due") | .rows | length' "$scratch/out" | tail -n 1)
 fresh=$(jq -r 'select(.rel == "call_log") | [.rows[] | select(.[3] == 200)] | length' "$scratch/out" | tail -n 1)
 cached=$(jq -r 'select(.rel == "call_log") | [.rows[] | select(.[3] == 304)] | length' "$scratch/out" | tail -n 1)
 cached_bytes=$(jq -r 'select(.rel == "call_log") | [.rows[] | select(.[3] == 304) | .[6]] | add // 0' "$scratch/out")
 remaining=$(jq -r 'select(.rel == "call_log") | [.rows[] | .[4]] | min' "$scratch/out")
-printf 'due=%s call_log 200=%s 304=%s 304_bytes=%s rate_remaining_min=%s\n' \
-  "$due_rows" "$fresh" "$cached" "$cached_bytes" "$remaining"
+transitions=$(jq -r 'select(.rel == "pr_transition") | [.rows[] | select(.[2] == "open" and .[3] == "merged")] | length' "$scratch/out" | tail -n 1)
+printf 'due=%s call_log 200=%s 304=%s 304_bytes=%s rate_remaining_min=%s pr_transition_open_merged=%s\n' \
+  "$due_rows" "$fresh" "$cached" "$cached_bytes" "$remaining" "$transitions"
 
 fail=0
-[ "$due_rows" = 3 ] || { echo "FAIL a 60s period over 3 buckets is 3 polls, got due=$due_rows"; fail=1; }
-[ "$fresh" = 1 ] || { echo "FAIL the first poll is one 200, got $fresh"; fail=1; }
-# Three due buckets, three polls, no re-ask: the 200 moves the stored tag and
+[ "$due_rows" = 4 ] || { echo "FAIL a 60s period over 4 buckets is 4 polls, got due=$due_rows"; fail=1; }
+[ "$fresh" = 5 ] || { echo "FAIL two events 200s plus three graphql 200s is 5, got $fresh"; fail=1; }
+# Two due buckets stay cached: the 200 moves the stored tag and
 # `page_prev_etag` keeps its bucket reading the tag it asked with.
-[ "$cached" = 2 ] || { echo "FAIL every later pass is a 304, got $cached"; fail=1; }
+[ "$cached" = 2 ] || { echo "FAIL every non-fresh events pass is a 304, got $cached"; fail=1; }
 [ "$cached_bytes" = 0 ] || { echo "FAIL a 304 moves zero bytes, got $cached_bytes"; fail=1; }
-[ "$remaining" = 4997 ] || { echo "FAIL the rate headers decode as ints, got $remaining"; fail=1; }
+[ "$remaining" = 4996 ] || { echo "FAIL the rate headers decode as ints, got $remaining"; fail=1; }
+# The OPEN-only pr_selection never carries a closing PR past its filter; the
+# `_recent` alias is what lets pr_transition see it (issues/engine-tick-trace).
+[ "$transitions" = 1 ] || { echo "FAIL open -> merged should record exactly once, got $transitions"; fail=1; }
 [ "$fail" = 0 ] || exit 1
 
 echo "GHCACHE_RUST_DOOR_HOLDS ticks=$ticks"
