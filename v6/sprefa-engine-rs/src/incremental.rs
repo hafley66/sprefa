@@ -54,7 +54,10 @@ fn plan_for<'a>(
     missing: &str,
 ) -> &'a IncrementalRelationPlan {
     PLAN_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    index.get(rel).copied().unwrap_or_else(|| panic!("{missing}"))
+    index
+        .get(rel)
+        .copied()
+        .unwrap_or_else(|| panic!("{missing}"))
 }
 
 /// One substring search per (statement, relation) pair the frontier scan walks.
@@ -113,7 +116,11 @@ fn bind_args(values: &[Value]) -> BoundaryResult<Vec<ScalarValue>> {
 
 /// The staged JSON straight off the borrowed rows: no Vec<Value> is built per
 /// event to carry the two leading integers.
-fn staged_json(prefix: [i64; 2], events: &[&DeltaEvent], sequence_only: bool) -> BoundaryResult<String> {
+fn staged_json(
+    prefix: [i64; 2],
+    events: &[&DeltaEvent],
+    sequence_only: bool,
+) -> BoundaryResult<String> {
     let mut out = String::new();
     out.push('[');
     for (index, event) in events.iter().enumerate() {
@@ -721,9 +728,7 @@ pub fn boundary_delta(
             .unwrap_or(0);
         let weight = sign * count;
         match weight_index.entry(dedup_key(&values)) {
-            std::collections::hash_map::Entry::Occupied(seen) => {
-                weights[*seen.get()].1 += weight
-            }
+            std::collections::hash_map::Entry::Occupied(seen) => weights[*seen.get()].1 += weight,
             std::collections::hash_map::Entry::Vacant(fresh) => {
                 fresh.insert(weights.len());
                 weights.push((values, weight));
@@ -986,6 +991,35 @@ fn to_statements(texts: &[String]) -> Vec<SqlStatement> {
         .collect()
 }
 
+/// A head reads a rel when one of `tables` (quoted table name, rel) occurs in
+/// its SQL: frontier tables for recursion, base tables for the ordered dirty set.
+pub fn reads_by_head<'a>(
+    heads: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
+    tables: &[(String, &str)],
+) -> Vec<(String, Vec<String>)> {
+    let mut reads: Vec<(String, Vec<String>)> = Vec::new();
+    let mut source_index: HashMap<&str, usize> = HashMap::new();
+    for (head_rel, sql) in heads {
+        let mut sources = Vec::new();
+        if let Some(sql) = sql {
+            for (table, rel) in tables {
+                FRONTIER_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if sql.contains(table.as_str()) {
+                    sources.push((*rel).to_string());
+                }
+            }
+        }
+        match source_index.get(head_rel) {
+            Some(index) => reads[*index].1.extend(sources),
+            None => {
+                source_index.insert(head_rel, reads.len());
+                reads.push((head_rel.to_string(), sources));
+            }
+        }
+    }
+    reads
+}
+
 /// Program metadata, so the substring pass over every insert text runs at
 /// construction and never once per tick.
 pub fn recursive_heads(
@@ -1001,26 +1035,12 @@ pub fn recursive_heads(
             )
         })
         .collect();
-    let mut reads_frontier_of: Vec<(String, Vec<String>)> = Vec::new();
-    let mut source_index: HashMap<&str, usize> = HashMap::new();
-    for statement in statements {
-        let mut sources = Vec::new();
-        if let Some(insert_sql) = &statement.insert_sql {
-            for (frontier, rel) in &frontiers {
-                FRONTIER_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if insert_sql.contains(frontier.as_str()) {
-                    sources.push((*rel).to_string());
-                }
-            }
-        }
-        match source_index.get(statement.head_rel.as_str()) {
-            Some(index) => reads_frontier_of[*index].1.extend(sources),
-            None => {
-                source_index.insert(statement.head_rel.as_str(), reads_frontier_of.len());
-                reads_frontier_of.push((statement.head_rel.clone(), sources));
-            }
-        }
-    }
+    let reads_frontier_of = reads_by_head(
+        statements
+            .iter()
+            .map(|statement| (statement.head_rel.as_str(), statement.insert_sql.as_deref())),
+        &frontiers,
+    );
     fn reaches(
         from: &str,
         target: &str,
@@ -1338,7 +1358,14 @@ pub fn apply_levels_before_edges(
                 .collect();
             reconcile_ref_count_statement(seam, statement, relations, &plans, &copies)
         } else {
-            apply_level_statement(seam, statement, relations, &plans, false, &mut next_sequence)
+            apply_level_statement(
+                seam,
+                statement,
+                relations,
+                &plans,
+                false,
+                &mut next_sequence,
+            )
         }
     })
 }
