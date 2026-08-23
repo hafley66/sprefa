@@ -464,6 +464,81 @@ test(an_ordered_comparison_earns_nothing) :-
 :- end_tests(audit_scan_index_ddl).
 
 % ═══════════════════════════════════════════════════════════════════════════
+% DELTA ARM COUNT (issues/delta-arm-subset-expansion)
+%
+% The issue reported `levels[i].insert_sql` as one arm per SUBSET of the body,
+% 2^N. It is not: level_delta_insert_sql/6 walks positive body uses ONE at a
+% time (lower.pl:level_positive_delta_arms/9), so one clause with N positive
+% items yields N arms, the incremental-view-maintenance count. These two tests
+% pin that reading and locate the real 2^N, which is upstream in
+% 0_coalesce_expand.pl: N coalesce goals on one rule fan out to 2^N CLAUSES
+% before lower.pl ever runs, and each clause then contributes its own arms.
+%
+% Measured on ghcache page_response at 3b2064aaf: 6 coalesce goals -> 64
+% clauses -> 64 recompute statements and 64 + 6*32 = 256 delta arms, 248 KB.
+
+:- begin_tests(delta_arm_count).
+
+union_arms(Sql, Count) :-
+    atomic_list_concat(Parts, ' UNION ALL ', Sql),
+    length(Parts, Count).
+
+delta_shape_for(Label, Prog, HeadRef, ClauseCount, ArmCount) :-
+    once(( program_plan(fixture(Label, Prog, [], [], [])-[], Plan),
+           lower_program(Plan, lowered(_, _, _, _, LevelStatements, _, _, _)),
+           memberchk(levelstmt(HeadRef, _, InsertSqls, DeltaInsertSql, _, _, _),
+                     LevelStatements),
+           length(InsertSqls, ClauseCount),
+           union_arms(DeltaInsertSql, ArmCount) )).
+
+% Four positive body items, no coalesce: ONE clause, FOUR arms. A subset
+% expansion would read 16 here.
+test(a_four_item_body_lowers_to_four_delta_arms) :-
+    delta_shape_for(four_item_body,
+        prog([ kind(part_a/2, set), col_type(part_a/2, key, text),
+               col_type(part_a/2, a, int),
+               kind(part_b/2, set), col_type(part_b/2, key, text),
+               col_type(part_b/2, b, int),
+               kind(part_c/2, set), col_type(part_c/2, key, text),
+               col_type(part_c/2, c, int),
+               kind(part_d/2, set), col_type(part_d/2, key, text),
+               col_type(part_d/2, d, int),
+               col_type(joined/5, key, text), col_type(joined/5, a, int),
+               col_type(joined/5, b, int), col_type(joined/5, c, int),
+               col_type(joined/5, d, int) ],
+             [ (joined(Key, A, B, C, D) <-
+                    part_a(Key, A), part_b(Key, B),
+                    part_c(Key, C), part_d(Key, D)) ]),
+        joined/5, ClauseCount, ArmCount),
+    ClauseCount == 1,
+    ArmCount == 4.
+
+% The same head reached through three coalesce goals instead. The clause count
+% is 2^3 and the arms are 8*1 + 3*4 = 20: the fan-out is the coalesce
+% desugar's, and lower.pl stays linear inside each clause it is handed.
+test(three_coalesce_goals_fan_out_to_eight_clauses_before_lowering) :-
+    delta_shape_for(three_coalesce_goals,
+        prog([ kind(driver/1, set), col_type(driver/1, key, text),
+               kind(head_a/2, set), col_type(head_a/2, key, text),
+               col_type(head_a/2, a, int),
+               kind(head_b/2, set), col_type(head_b/2, key, text),
+               col_type(head_b/2, b, int),
+               kind(head_c/2, set), col_type(head_c/2, key, text),
+               col_type(head_c/2, c, int),
+               col_type(totalled/4, key, text), col_type(totalled/4, a, int),
+               col_type(totalled/4, b, int), col_type(totalled/4, c, int) ],
+             [ (totalled(Key, A, B, C) <-
+                    driver(Key),
+                    coalesce(head_a(Key, A), 0),
+                    coalesce(head_b(Key, B), 0),
+                    coalesce(head_c(Key, C), 0)) ]),
+        totalled/4, ClauseCount, ArmCount),
+    ClauseCount == 8,
+    ArmCount == 20.
+
+:- end_tests(delta_arm_count).
+
+% ═══════════════════════════════════════════════════════════════════════════
 % RELATION IDENTITY TARGETS (relplan_reference_target(s)/2)
 %
 % ref(TypeName) storage in ANY column names that type as a relation identity
