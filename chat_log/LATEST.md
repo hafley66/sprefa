@@ -1,1 +1,1 @@
-20260823.1.executors-in-dl6-day3b-one-tick-path-landed.md
+20260823.2.executors-in-dl6-day3c-codex-lanes-null-design.md
