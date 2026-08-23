@@ -78,6 +78,7 @@ scip-families:
 # budget: measured 0.9s, default 300s (ARCH_BUDGET_S)
 arch:
     {{ capped }} "${ARCH_BUDGET_S:-300}" swipl -q -l {{ v6 }}/prolog/ARCH.pl -g go -g halt
+    awk 'length($0) > 600 { printf "ARCH.pl:%d exceeds 600 characters\n", NR > "/dev/stderr"; failed = 1 } END { exit failed }' {{ v6 }}/prolog/ARCH.pl
 
 # go-to-reference, both module systems; fails on a prolog import naming a
 # predicate its target does not export. (expect: dangling=0, crossings=2, exit 0)
