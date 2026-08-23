@@ -88,7 +88,7 @@ pub async fn run_schedule(
             let span =
                 tracing::info_span!("tick", tick = tick_number, arrivals = arrivals.len());
             let _entered = span.enter();
-            drive_tick(program, seam, arrivals).await?
+            drive_tick_transacted(program, seam, arrivals).await?
         };
         tick_number += 1;
         if drains {
@@ -161,7 +161,7 @@ pub async fn run_schedule_live(
         let deltas = {
             let span = tracing::info_span!("tick", tick = tick_number, arrivals = arrival_rows);
             let _entered = span.enter();
-            drive_tick(program, seam, arrivals).await?
+            drive_tick_transacted(program, seam, arrivals).await?
         };
         tick_number += 1;
         carry_pending = deltas.carry_pending;
@@ -193,6 +193,27 @@ pub async fn drive_tick(
 ) -> BoundaryResult<TickDeltas> {
     let mut stream = program.tick(seam, arrivals);
     stream.next().await.expect("tick stream produced no item")
+}
+
+/// `drive_tick` wrapped in one SQLite transaction: a tick killed partway
+/// through never leaves a base table half-promoted (docs/failure-modes.md).
+pub async fn drive_tick_transacted(
+    program: &GenProgram,
+    seam: &SqliteSeam,
+    arrivals: Vec<Arrival>,
+) -> BoundaryResult<TickDeltas> {
+    seam.begin_tick()
+        .unwrap_or_else(|error| panic!("tick transaction: {error}"));
+    match drive_tick(program, seam, arrivals).await {
+        Ok(deltas) => {
+            seam.commit_tick().expect("COMMIT failed");
+            Ok(deltas)
+        }
+        Err(error) => {
+            seam.rollback_tick().expect("ROLLBACK failed");
+            Err(error)
+        }
+    }
 }
 
 /// Feed one debounced Soopy worktree batch through the same SourceBind tick
