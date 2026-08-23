@@ -661,12 +661,26 @@ old_state_relation_sql(Source, RelPlans, Ref, RelationSql) :-
     quote_ident(FrontierTable, QuotedFrontierTable),
     relplan_columns(RelPlans, Ref, Columns),
     qualified_equalities(Columns, old_delta, old_row, FrontierEqualities),
-    qualified_column_list(Columns, old_row, SelectedColumns),
-    atomic_list_concat(FrontierEqualities, ' AND ', FrontierWhere),
+    old_state_projection_columns(Source, RelPlans, Ref, Columns,
+                                 ProjectionColumns),
+    qualified_column_list(ProjectionColumns, old_row, SelectedColumns),
+    old_state_frontier_where(FrontierEqualities, FrontierWhere),
     format(atom(RelationSql),
            '(SELECT ~w FROM ~w old_row GROUP BY ~w HAVING count(*) > (SELECT count(*) FROM ~w old_delta WHERE old_delta."_phase" >= 0 AND ~w))',
            [SelectedColumns, QuotedTable, SelectedColumns,
             QuotedFrontierTable, FrontierWhere]).
+
+old_state_frontier_where([], '1').
+old_state_frontier_where(Equalities, Where) :-
+    Equalities = [_ | _],
+    atomic_list_concat(Equalities, ' AND ', Where).
+
+old_state_projection_columns(pre, _, _, Columns, Columns) :- !.
+old_state_projection_columns(_, RelPlans, Ref, Columns, ProjectionColumns) :-
+    (   reference_target_ref(RelPlans, Ref)
+    ->  ProjectionColumns = ['__id' | Columns]
+    ;   ProjectionColumns = Columns
+    ).
 
 compile_seeded_pre_use(Mode, RelPlans, Ref, Args, Seed, Index, Bound0, Bound,
                        WhereParts) :-
@@ -715,9 +729,7 @@ seeded_pre_args(Mode, [Arg | Args], [Column | Columns], [Type | Types], Alias,
 % instead of manufacturing JSON or performing a hidden target write.
 bind_reference_target_identity(RelPlans, Name/Arity, Args, Alias,
                                Bound0, Bound) :-
-    member(RelPlan, RelPlans),
-    relplan_parts(RelPlan, _, _, _, _, ColumnTypes),
-    memberchk(ref(Name), ColumnTypes),
+    reference_target_ref(RelPlans, Name/Arity),
     !,
     length(Args, Arity),
     Atom =.. [Name | Args],

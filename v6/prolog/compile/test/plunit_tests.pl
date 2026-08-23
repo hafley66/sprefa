@@ -467,12 +467,10 @@ test(an_ordered_comparison_earns_nothing) :-
 % DELTA ARM COUNT (issues/delta-arm-subset-expansion)
 %
 % The issue reported `levels[i].insert_sql` as one arm per SUBSET of the body,
-% 2^N. It is not: level_delta_insert_sql/6 walks positive body uses ONE at a
-% time (lower.pl:level_positive_delta_arms/9), so one clause with N positive
-% items yields N arms, the incremental-view-maintenance count. These two tests
-% pin that reading and locate the real 2^N, which is upstream in
-% 0_coalesce_expand.pl: N coalesce goals on one rule fan out to 2^N CLAUSES
-% before lower.pl ever runs, and each clause then contributes its own arms.
+% 2^N. level_delta_insert_sql/6 now walks positive body uses ONE at a time
+% (lower.pl:level_positive_delta_arms/9), so one clause with N positive items
+% yields N arms, the incremental-view-maintenance count. Coalesce transitions
+% remain one clause and add one arm per coalesced item.
 %
 % Measured on ghcache page_response at 3b2064aaf: 6 coalesce goals -> 64
 % clauses -> 64 recompute statements and 64 + 6*32 = 256 delta arms, 248 KB.
@@ -568,6 +566,15 @@ test(dictionary_rows_never_read_a_frontier) :-
     forall(member(levelstmt(_, _, _, DeltaInsertSql, _, _, _),
                   LevelStatements),
            \+ sub_atom(DeltaInsertSql, _, _, _, '__frontier___ref_')).
+
+test(old_state_rows_keep_the_internal_identity_used_by_relation_joins) :-
+    lowered_for('6_relation_depth.pl', relation_depth2_chained_decode,
+                lowered(_, _, _, _, LevelStatements, _, _, _)),
+    forall(( member(levelstmt(_, _, _, DeltaInsertSql, _, _, _),
+                    LevelStatements),
+             sub_atom(DeltaInsertSql, _, _, _, ' old_row GROUP BY ') ),
+           sub_atom(DeltaInsertSql, _, _, _,
+                    '(SELECT old_row."__id",')).
 
 % Three optional reads remain one clause and contribute one transition arm
 % each beside the driver's arm.
