@@ -1,5 +1,7 @@
 # One tick path
 
+Landed 2026-08-23: `ordered.rs` is deleted, sequenced arms run inside the incremental path, and a rel does work only when a rel it reads moved. ARCH `one_tick_path` carries the numbers.
+
 Design rule (Chris, 2026-08-23): invalidate red/green; a rel does work only when something it depends on changed. Recompute-everything is out.
 
 Status: proposal, not dispatched. Read after #423 (dirty set on the ordered path) lands.

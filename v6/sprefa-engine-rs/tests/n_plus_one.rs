@@ -91,7 +91,7 @@ fn stage_departures_asks_each_rel_once() {
     let _serial = PROBE_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
     let before = sprefa_engine_rs::incremental::plan_probes();
     let started = std::time::Instant::now();
-    sprefa_engine_rs::incremental::stage_departures(&seam, &relations, &deltas)
+    sprefa_engine_rs::incremental::stage_departures(&seam, &relations, &deltas, &sprefa_engine_rs::incremental::TickWork::unskipped(&relations))
         .expect("stage departures");
     let probes = sprefa_engine_rs::incremental::plan_probes() - before;
     assert!(
@@ -137,7 +137,7 @@ fn the_frontier_scan_runs_once_per_program() {
     let started = std::time::Instant::now();
     let heads = sprefa_engine_rs::incremental::recursive_heads(&statements, &relations);
     for _ in 0..3 {
-        sprefa_engine_rs::incremental::apply_levels_before_edges(&seam, &statements, &relations, &heads)
+        sprefa_engine_rs::incremental::apply_levels_before_edges(&seam, &statements, &relations, &heads, &sprefa_engine_rs::incremental::TickWork::unskipped(&relations), &sprefa_engine_rs::incremental::level_sources(&statements, &relations))
             .expect("levels");
     }
     let probes = sprefa_engine_rs::incremental::frontier_probes() - before;
@@ -183,7 +183,7 @@ fn a_level_statement_fetches_its_plan_by_name() {
     let before = sprefa_engine_rs::incremental::plan_probes();
     let started = std::time::Instant::now();
     for _ in 0..3 {
-        sprefa_engine_rs::incremental::apply_levels_before_edges(&seam, &statements, &relations, &heads)
+        sprefa_engine_rs::incremental::apply_levels_before_edges(&seam, &statements, &relations, &heads, &sprefa_engine_rs::incremental::TickWork::unskipped(&relations), &sprefa_engine_rs::incremental::level_sources(&statements, &relations))
             .expect("levels");
     }
     let probes = sprefa_engine_rs::incremental::plan_probes() - before;
@@ -191,35 +191,6 @@ fn a_level_statement_fetches_its_plan_by_name() {
         probes <= (2 * 3 * statements_count) as u64,
         "{probes} plan probes for {} lookups is a scan",
         3 * statements_count
-    );
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(2),
-        "quadratic timing: {:?}",
-        started.elapsed()
-    );
-}
-
-// TEST: the ordered snapshot diff counts a rel's rows through an index. Pre-fix
-// row_counts scanned what it had already collected, so 4000 rows cost 8 million
-// comparisons per side and this assertion read 16000 vs 15998000.
-#[test]
-fn the_ordered_snapshot_diff_counts_rows_through_an_index() {
-    let rows = 4_000usize;
-    let before_rows: Vec<Vec<Value>> = (0..rows)
-        .map(|index| vec![Value::Integer(index as i64)])
-        .collect();
-    let after_rows: Vec<Vec<Value>> = (0..rows)
-        .map(|index| vec![Value::Integer(index as i64 + 1)])
-        .collect();
-    let _serial = PROBE_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
-    let before = sprefa_engine_rs::ordered::diff_probes();
-    let started = std::time::Instant::now();
-    let (add, del) = sprefa_engine_rs::ordered::multiset_diff(&before_rows, &after_rows);
-    let probes = sprefa_engine_rs::ordered::diff_probes() - before;
-    assert_eq!((add.len(), del.len()), (1, 1));
-    assert!(
-        probes <= 8 * rows as u64,
-        "{probes} probes for {rows} rows a side is a scan"
     );
     assert!(
         started.elapsed() < std::time::Duration::from_secs(2),

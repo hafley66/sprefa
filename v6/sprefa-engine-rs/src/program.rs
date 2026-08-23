@@ -31,10 +31,7 @@ pub struct GenProgram {
     pub struct_ref_columns: HashMap<String, Vec<Option<String>>>,
     pub enum_types: Vec<crate::types::EnumTypePlan>,
     pub enum_ref_columns: crate::types::EnumRefColumns,
-    pub ordered_program: bool,
-    pub ordered_arms: Vec<crate::types::OrderedEdgeArm>,
-    pub ordered_pre_refs: Vec<String>,
-    pub ordered_recursive_levels: bool,
+    pub pre_snapshot_rels: Vec<String>,
     pub relations: Vec<IncrementalRelationPlan>,
     pub edges: Vec<IncrementalEdgeStatement>,
     pub levels: Vec<IncrementalLevelStatement>,
@@ -48,6 +45,9 @@ pub struct GenProgram {
     /// Which level heads feed another round, decided once here because the
     /// answer is a substring pass over every insert text.
     pub recursive_level_heads: Vec<String>,
+    /// Per level head: the rels it reads, decided once because the answer is a
+    /// substring pass over every emitted text.
+    pub level_sources: HashMap<String, incremental::LevelSources>,
 }
 
 // The IR shape this runtime interprets. Bumped whenever a field's meaning
@@ -97,6 +97,7 @@ impl GenProgram {
 
     fn from_checked_json(pj: ProgramJson) -> Self {
         let recursive_level_heads = incremental::recursive_heads(&pj.levels, &pj.relations);
+        let level_sources = incremental::level_sources(&pj.levels, &pj.relations);
         GenProgram {
             name: pj.name,
             intern_mode: pj.intern_mode,
@@ -112,10 +113,7 @@ impl GenProgram {
             struct_ref_columns: pj.struct_ref_columns,
             enum_types: pj.enum_types,
             enum_ref_columns: pj.enum_ref_columns,
-            ordered_program: pj.ordered_program,
-            ordered_arms: pj.ordered_arms,
-            ordered_pre_refs: pj.ordered_pre_refs,
-            ordered_recursive_levels: pj.ordered_recursive_levels,
+            pre_snapshot_rels: pj.pre_snapshot_rels,
             relations: pj.relations,
             edges: pj.edges,
             levels: pj.levels,
@@ -127,6 +125,7 @@ impl GenProgram {
             host_plans: pj.host_plans,
             queries: pj.queries,
             recursive_level_heads,
+            level_sources,
         }
     }
 
@@ -176,10 +175,8 @@ impl GenProgram {
     }
 
     pub fn run_tick(&self, seam: &SqliteSeam, arrivals: &[Arrival]) -> BoundaryResult<TickDeltas> {
-        if self.ordered_program {
-            return crate::ordered::run_tick(self, seam, arrivals);
-        }
-        incremental::prepare_tick(seam, &self.relations);
+        let work = incremental::TickWork::probe(seam, &self.relations);
+        incremental::prepare_tick(seam, &self.relations, &work);
         if self.uses_tick {
             incremental::advance_tick(seam);
         }
@@ -202,15 +199,21 @@ impl GenProgram {
                 interned,
                 &self.relations,
                 self.text_intern_plan.as_ref(),
+                &work,
             )?
         };
         let arrivals = normalized.as_ref();
-        incremental::apply_arrivals(seam, arrivals, &self.relations)?;
+        incremental::apply_arrivals(seam, arrivals, &self.relations, &work)?;
+        // Before the level phase: a `pre/1` body over a level head reads that
+        // head as the previous tick settled it.
+        incremental::snapshot_pre(seam, &self.pre_snapshot_rels, &self.relations)?;
         incremental::apply_levels_before_edges(
             seam,
             &self.levels,
             &self.relations,
             &self.recursive_level_heads,
+            &work,
+            &self.level_sources,
         )?;
         if !self.edges.is_empty() {
             incremental::recompute_levels_before_edges(
@@ -219,20 +222,30 @@ impl GenProgram {
                 &self.relations,
                 self.reconcile_every_tick,
                 arrivals.len(),
+                &work,
+                &self.level_sources,
             )?;
-            incremental::apply_edges(seam, &self.edges, &self.relations)?;
-            incremental::merge_next_into_current(seam, &self.relations);
-            incremental::apply_levels_after_edges(seam, &self.levels, &self.relations)?;
+            incremental::apply_edges(seam, &self.edges, &self.relations, &work)?;
+            incremental::merge_next_into_current(seam, &self.relations, &work);
+            incremental::apply_levels_after_edges(
+                seam,
+                &self.levels,
+                &self.relations,
+                &work,
+                &self.level_sources,
+            )?;
         }
-        incremental::apply_retention(seam, &self.retentions, &self.relations)?;
+        incremental::apply_retention(seam, &self.retentions, &self.relations, &work)?;
         incremental::recompute_levels_after_edges(
             seam,
             &self.levels,
             &self.relations,
             self.reconcile_every_tick,
+            &work,
+            &self.level_sources,
         )?;
-        let physical_rels = incremental::read_boundary(seam, &self.relations)?;
-        incremental::stage_departures(seam, &self.relations, &physical_rels)?;
+        let physical_rels = incremental::read_boundary(seam, &self.relations, &work)?;
+        incremental::stage_departures(seam, &self.relations, &physical_rels, &work)?;
         let rels = {
             let _scope = crate::trace::Scope::phase("decode");
             crate::enum_plane::decode_deltas(
@@ -243,7 +256,7 @@ impl GenProgram {
                 physical_rels,
             )?
         };
-        let carry_pending = incremental::promote_frontiers(seam, &self.relations);
+        let carry_pending = incremental::promote_frontiers(seam, &self.relations, &work);
         Ok(TickDeltas {
             rels,
             carry_pending,

@@ -186,20 +186,34 @@ relations_list(RelPlans, ArrivalStatements, DepartureRefs, DeltaStatements, Dict
     maplist(relation_dict(RelPlans, ArrivalStatements, DepartureRefs),
             DeltaStatements, Dicts).
 
-edge_dict(RelPlans,
-          edgestmt(HeadRef, _Trigger, HeadColumns, KeyColumns, _Proj, _Write,
-                   DeltaProjectSql, _Kind, edgeinterns(_, DeltaInternSqls)),
+edge_dict(RelPlans, PreRefs,
+          edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, _Write,
+                   DeltaProjectSql, Kind, edgeinterns(ProjectInternSqls, DeltaInternSqls)),
           Dict) :-
     ref_name(HeadRef, HeadName),
+    ref_name(TriggerRef, TriggerName),
     relplan_storage_name(RelPlans, HeadRef, HeadStorageName),
     relplan_shape(RelPlans, HeadRef, HeadKind, _Columns, _Key, _Types),
     format(atom(DeltaTable), '__delta_~w', [HeadStorageName]),
     head_to_key_indices(HeadColumns, KeyColumns, KeyIndices),
     intern_field(DeltaInternSqls, InternField),
+    arm_schedule(Kind, Schedule),
+    ordered_trigger_kind(Kind, TriggerKind),
+    (   Schedule == sequenced
+    ->  OccurrenceProject = ProjectSql,
+        intern_field(ProjectInternSqls, OccurrenceIntern)
+    ;   OccurrenceProject = null, OccurrenceIntern = null
+    ),
+    ( memberchk(HeadRef, PreRefs) -> EvolvesPre = true ; EvolvesPre = false ),
     Dict = _{ head_rel: HeadName, head_columns: HeadColumns,
               head_table_name: HeadStorageName, head_delta_table_name: DeltaTable, head_kind: HeadKind,
               key_indices: KeyIndices, project_sql: DeltaProjectSql,
-              intern_sql: InternField }.
+              intern_sql: InternField,
+              schedule: Schedule,
+              trigger_rel: TriggerName, trigger_kind: TriggerKind,
+              occurrence_project_sql: OccurrenceProject,
+              occurrence_intern_sql: OccurrenceIntern,
+              evolves_pre: EvolvesPre }.
 
 intern_field([], null) :- !.
 intern_field(InternSqls, InternSqls).
@@ -207,16 +221,14 @@ head_to_key_indices(HeadColumns, KeyColumns, Indices) :-
     maplist(key_index(HeadColumns), KeyColumns, Indices).
 key_index(Columns, Col, Index) :- nth0(Index, Columns, Col).
 
-edges_list(RelPlans, EdgeStatements, Dicts) :-
-    maplist(edge_dict(RelPlans), EdgeStatements, Dicts).
+edges_list(RelPlans, PreRefs, EdgeStatements, Dicts) :-
+    maplist(edge_dict(RelPlans, PreRefs), EdgeStatements, Dicts).
 
-ordered_edge_statement(edgestmt(_, _, _, _, _, _, _, ordered_arrival, _)).
-ordered_edge_statement(edgestmt(_, _, _, _, _, _, _, ordered_departure, _)).
-
-ordered_program(EdgeStatements) :-
-    member(Statement, EdgeStatements),
-    ordered_edge_statement(Statement),
-    !.
+% arrival_trigger_kind/4 reaches these two exactly when the body reads the
+% store this tick is still writing: pre/1, or a negation over an edge head.
+arm_schedule(ordered_arrival, sequenced) :- !.
+arm_schedule(ordered_departure, sequenced) :- !.
+arm_schedule(_, set_at_once).
 
 ordered_trigger_kind(ordered_departure, departure) :- !.
 ordered_trigger_kind(departure, departure) :- !.
@@ -228,45 +240,6 @@ plan_pre_refs(Rules, Refs) :-
               level_body_pre_ref(Body, Ref) ),
             Refs0),
     sort(Refs0, Refs).
-
-ordered_arm_dict(RelPlans, PreRefs,
-        edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql,
-                 WriteSql, _, EdgeTriggerKind,
-                 edgeinterns(ProjectInternSqls, _)), Dict) :-
-    ref_name(HeadRef, HeadName),
-    ref_name(TriggerRef, TriggerName),
-    relplan_shape(RelPlans, HeadRef, HeadKind, _, _, _),
-    relplan_storage_name(RelPlans, HeadRef, HeadStorageName),
-    ordered_trigger_kind(EdgeTriggerKind, TriggerKind),
-    head_to_key_indices(HeadColumns, KeyColumns, KeyIndices),
-    ( memberchk(HeadRef, PreRefs) -> EvolvesPre = true ; EvolvesPre = false ),
-    intern_field(ProjectInternSqls, InternField),
-    Dict = _{ trigger_rel: TriggerName, trigger_kind: TriggerKind,
-              head_rel: HeadName, head_table_name: HeadStorageName,
-              head_kind: HeadKind,
-              head_columns: HeadColumns, key_indices: KeyIndices,
-              project_sql: ProjectSql, write_sql: WriteSql,
-              evolves_pre: EvolvesPre, intern_sql: InternField }.
-
-ordered_recursive_levels(Rules, Recursive) :-
-    ( member(Rule, Rules), Rule = (_ <- Body),
-      rule_head_ref(Rule, HeadRef),
-      body_ref_uses(Body, Uses),
-      memberchk(use(HeadRef, _, pos, _), Uses)
-    -> Recursive = true
-    ;  Recursive = false
-    ).
-
-ordered_fields(EdgeStatements, RelPlans, Rules, Ordered, Arms, PreNames,
-               RecursiveLevels) :-
-    ( ordered_program(EdgeStatements)
-    -> Ordered = true,
-       plan_pre_refs(Rules, PreRefs),
-       maplist(ordered_arm_dict(RelPlans, PreRefs), EdgeStatements, Arms),
-       maplist(ref_name, PreRefs, PreNames),
-       ordered_recursive_levels(Rules, RecursiveLevels)
-    ;  Ordered = false, Arms = [], PreNames = [], RecursiveLevels = false
-    ).
 
 level_dict(RelPlans, HeadTable, CyclicHeadGroups,
            levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
@@ -650,7 +623,9 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     arrival_templates_map(ArrivalStatements, ArrivalTemplates),
     relations_list(RelPlans, ArrivalStatements, DepartureRefs, DeltaStatements,
                    Relations),
-    edges_list(RelPlans, EdgeStatements, Edges),
+    plan_pre_refs(PlanRules, PreRefs),
+    maplist(ref_name, PreRefs, PreSnapshotRels),
+    edges_list(RelPlans, PreRefs, EdgeStatements, Edges),
     cyclic_head_groups(PlanRules, CyclicHeadGroups),
     levels_list(RelPlans, RuleLevelStatements, HeadTable, CyclicHeadGroups, Levels),
     retentions_list(RetentionStatements, Retentions),
@@ -662,9 +637,6 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     enum_type_plans(PlanDecls, RelPlans, DeltaStatements, EnumPlans),
     maplist(enum_type_dict, EnumPlans, EnumTypes),
     enum_ref_columns_map(PlanDecls, RelPlans, EnumRefColumns),
-    ordered_fields(EdgeStatements, RelPlans, PlanRules,
-                   OrderedProgram, OrderedArms, OrderedPreRefs,
-                   OrderedRecursiveLevels),
     findall(HostDict,
             ( member(Decl, PlanDecls),
               Decl = sh_decl(_, _, _, _),
@@ -698,10 +670,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
        struct_ref_columns: StructRefColumns,
        enum_types: EnumTypes,
        enum_ref_columns: EnumRefColumns,
-       ordered_program: OrderedProgram,
-       ordered_arms: OrderedArms,
-       ordered_pre_refs: OrderedPreRefs,
-       ordered_recursive_levels: OrderedRecursiveLevels,
+       pre_snapshot_rels: PreSnapshotRels,
        relations: Relations,
        edges: Edges,
        levels: Levels,

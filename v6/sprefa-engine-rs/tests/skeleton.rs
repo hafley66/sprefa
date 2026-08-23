@@ -84,10 +84,8 @@ fn fixture_program() -> GenProgram {
         text_intern_plan: None,
         struct_types: Vec::new(),
         struct_ref_columns: HashMap::new(),
-        ordered_program: false,
-        ordered_arms: Vec::new(),
-        ordered_pre_refs: Vec::new(),
-        ordered_recursive_levels: false,
+        pre_snapshot_rels: Vec::new(),
+        level_sources: Default::default(),
         relations,
         edges: vec![],
         levels: vec![IncrementalLevelStatement {
