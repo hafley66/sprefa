@@ -1,5 +1,7 @@
 # One tick path
 
+Design rule (Chris, 2026-08-23): invalidate red/green; a rel does work only when something it depends on changed. Recompute-everything is out.
+
 Status: proposal, not dispatched. Read after #423 (dirty set on the ordered path) lands.
 
 - [What a tick is](#what-a-tick-is)
