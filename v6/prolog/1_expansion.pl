@@ -71,15 +71,15 @@ expansion_phase(50, relation_edge,
 % ── the fold ─────────────────────────────────────────────────────────────────
 
 expand_program(SurfaceProgram, ExpandedProgram, ExpansionContext) :-
-    expand_program_run(SurfaceProgram, [], ExpandedProgram,
+    expand_program_run(oracle, SurfaceProgram, [], ExpandedProgram,
                        ExpansionContext).
 
 expand_program_with_bindings(SurfaceProgram, Bindings,
                              ExpandedProgram, ExpansionContext) :-
-    expand_program_run(SurfaceProgram, Bindings, ExpandedProgram,
+    expand_program_run(compiler, SurfaceProgram, Bindings, ExpandedProgram,
                        ExpansionContext).
 
-expand_program_run(SurfaceProgram0, Bindings, ExpandedProgram,
+expand_program_run(Door, SurfaceProgram0, Bindings, ExpandedProgram,
                    ExpansionContext) :-
     reset_type_row_memo,
     % BEFORE phase 5. `list(orchard.tree)` mints its artifact name from the
@@ -106,7 +106,7 @@ expand_program_run(SurfaceProgram0, Bindings, ExpandedProgram,
     expansion_phase_start(SurfaceProgram, Bindings, SurfaceDecls, ContextDecls,
                           DeclsForEnumContext, OrderedPhases,
                           PhaseProgram, RemainingPhases),
-    foldl(run_phase(expansion_context(EnumContext, Bindings)),
+    foldl(run_phase(expansion_context(Door, EnumContext, Bindings)),
           RemainingPhases,
           PhaseProgram, PhasedProgram),
     run_compile_step(plan, expansion:drop_minted_keyed_on_derived,
@@ -190,6 +190,9 @@ run_phase_call(Context, _-ast-Expander, Program, Expanded) :- !,
     call(Expander, Context, Program, Expanded).
 run_phase_call(Context, _-option-Expander, Program, Expanded) :- !,
     call(Expander, Context, Program, Expanded).
-run_phase_call(expansion_context(EnumContext, _), _-_-Expander,
+run_phase_call(expansion_context(Door, EnumContext, _), _-coalesce-Expander,
+               Program, Expanded) :- !,
+    call(Expander, coalesce_context(Door, EnumContext), Program, Expanded).
+run_phase_call(expansion_context(_, EnumContext, _), _-_-Expander,
                Program, Expanded) :-
     call(Expander, EnumContext, Program, Expanded).

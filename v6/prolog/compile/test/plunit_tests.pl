@@ -5019,6 +5019,17 @@ test(coalesce_level_arm_reads_the_bare_atom) :-
                                          not(latest_commit(Name, _)),
                                          Commit := absent)) ].
 
+test(coalesce_level_wrapper_survives_compiler_expansion) :-
+    Program = prog([],
+        [ (repo_latest(Name, Commit) <-
+               repo(Name),
+               coalesce(latest_commit(Name, Commit), absent)) ]),
+    expand_program_with_bindings(Program, [], prog(_, Expanded), _),
+    Expanded =@=
+        [ (repo_latest(Name, Commit) <-
+               (repo(Name),
+                coalesce(latest_commit(Name, Commit), absent))) ].
+
 % A bare relation atom in an EDGE body is an occurrence. The read arm samples
 % instead, or an arrival on the coalesced rel would fire the rule on its own.
 test(coalesce_edge_arm_samples_instead_of_triggering) :-

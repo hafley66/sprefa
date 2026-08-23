@@ -60,8 +60,57 @@
 :- op(1150, xfx, <+).
 :- op(700,  xfx, :=).
 
+expand_coalesce_in_context(coalesce_context(compiler, _),
+                           prog(Decls, Rules), prog(Decls, Rules)) :-
+    !,
+    validate_compiler_rules(Rules).
 expand_coalesce_in_context(_, prog(Decls, Rules0), prog(Decls, Rules)) :-
     expand_rules(Rules0, Rules).
+
+validate_compiler_rules([]).
+validate_compiler_rules([Rule | Rest]) :-
+    validate_compiler_rule(Rule),
+    validate_compiler_rules(Rest).
+
+validate_compiler_rule((Head <- Body)) :-
+    !,
+    refuse_coalesce_in_head(Head),
+    validate_level_body(Body).
+validate_compiler_rule((Head <+ Body)) :-
+    !,
+    refuse_coalesce_in_head(Head),
+    expand_clause(edge, Head, Body, _).
+validate_compiler_rule(Rule) :-
+    refuse_residual_coalesce(Rule).
+
+validate_level_body(Body) :-
+    conjunction_goals(Body, Goals),
+    validate_level_goals(Goals, Goals),
+    exclude(top_level_coalesce, Goals, OtherGoals),
+    goals_conjunction(OtherGoals, OtherBody),
+    refuse_residual_coalesce(OtherBody).
+
+validate_level_goals([], _).
+validate_level_goals([Goal | Rest], AllGoals) :-
+    (   top_level_coalesce(Goal)
+    ->  Goal = coalesce(Source, Default),
+        select_eq(Goal, AllGoals, OtherGoals),
+        validate_default(Source, Default),
+        output_column(Source, OtherGoals, _, _)
+    ;   true
+    ),
+    validate_level_goals(Rest, AllGoals).
+
+top_level_coalesce(Goal) :-
+    nonvar(Goal),
+    Goal = coalesce(_, _).
+
+select_eq(Target, [Head | Rest], Remaining) :-
+    (   Target == Head
+    ->  Remaining = Rest
+    ;   Remaining = [Head | More],
+        select_eq(Target, Rest, More)
+    ).
 
 expand_rules([], []).
 expand_rules([Rule | Rest], Rules) :-
