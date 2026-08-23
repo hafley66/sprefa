@@ -26,10 +26,11 @@ their own section with a throw site each.
 | the ETag, the 304 body, the page walk, the token, the GraphQL query | RULES, not executor code |
 | `src/executors/{fetch,graphql,pulls,repos}.rs` | DELETED; `http.rs` is the whole transport |
 | the six `v6/dl/ghcacher` goldens | on `http.get`, gate green, `goldens=6` |
-| simulated schedule through the Rust door | `GHCACHE_RUST_DOOR_HOLDS ticks=11`, COUNT receipt below |
+| simulated schedule through the Rust door | `GHCACHE_RUST_DOOR_HOLDS ticks=14`, `pr_transition_open_merged=1`, COUNT receipt below |
 | live `dl6 run` against `hafley66` (instant, sprefa, hafley-rs, hafley-rxjs) | ONE call per endpoint per bucket; a quiet bucket is 9 x 304 / bytes=0 |
 | kill + restart, first poll | 8 x 304, bytes=0, out of 8 stored ETags and 8 stored bodies |
-| the GraphQL pull-request batch | compiles and folds; NOT exercised live (the org's REST budget hit the stop threshold first) |
+| the GraphQL pull-request batch | live: `ghcache_pull_request` holds every open PR of the four repos, `_recent` selection (#425) sees merges |
+| open -> merged, live | PR #426 opened 06:29, captured open at tick 30, merged 06:31:28, `v_pr_transition` row `hafley66/sprefa 426 open merged at_tick=49` by 06:33:50; resident process alive throughout (#423 dirty set, #424 trace armed); cold-start page-walk ticks 26 and 43 took 7.3 s and 8.3 s, every other tick ~1.1 s |
 
 Two unit bugs closed, both the same shape: a value in SECONDS compared against
 a clock bucket in MINUTES.
