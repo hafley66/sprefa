@@ -96,7 +96,7 @@ Before this, the tag fed the header directly and GitHub answers one resource
 with `W/"tag"` and `"tag"` depending on the request, so the two spellings
 chased each other with zero wire traffic. Measured live: a period-4 cycle on
 `.../events?page=3` with `rate_remaining` flat at 4967/4964/4961/4956 and
-`change_log` gaining 64 rows every 6 drain ticks (failure-modes entry 75).
+`change_log` gaining 64 rows every 6 drain ticks (failure-modes entry 77).
 
 ## How to run it
 
