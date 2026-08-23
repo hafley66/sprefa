@@ -21,10 +21,12 @@
 //! rels five times, `recompute_levels` rebuilt all 100 levels twice, and the
 //! frontier clear fired 2 statements per rel.
 //!
-//! With the dirty set the same ticks read 103, 176, 217, 395, 360, 365, 68,
-//! 141, 254, 57, 35. The caps sit above the cone, not above the program: the
-//! widest arrival here moves 25 rels and runs 37 level recomputes over the two
-//! passes, which is the 395.
+//! With the dirty set the same ticks read 443, 178, 219, 397, 362, 367, 70,
+//! 143, 256, 59, 37, recomputing 102, 28, 32, 37, 39, 36, 7, 20, 21, 6 and 4 of
+//! the 100 levels. Tick 0 rebuilds every level because a db this process has
+//! not folded before may carry level tables a killed process left inconsistent.
+//! The caps sit above the cone, not above the program: the widest arrival moves
+//! 25 rels and runs 37 level recomputes over the two passes, which is the 397.
 //!
 //! The tick log is compared byte for byte against `ghcache_ticklog_base.txt`,
 //! which was generated at that same sha and is the correctness receipt: a
@@ -36,6 +38,7 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
 
 use sprefa_engine_rs::driver::format_deltas;
+use sprefa_engine_rs::ordered::level_recomputes;
 use sprefa_engine_rs::program::run_boot;
 use sprefa_engine_rs::run;
 use sprefa_engine_rs::serve::{arrival_batch, ArrivalDto};
@@ -150,6 +153,7 @@ fn schedule(root: &Path) -> Vec<Vec<Arrival>> {
 struct Tick {
     arrivals: usize,
     statements: u64,
+    recomputes: u64,
 }
 
 /// driver::run_schedule's loop, with the tally read between ticks. The driver
@@ -181,12 +185,14 @@ fn fold(
         );
         let count = arrivals.len();
         let before = SEAM_TALLY.statements.load(Relaxed);
+        let before_recomputes = level_recomputes();
         let deltas = program
             .run_tick(&seam, &arrivals)
             .unwrap_or_else(|failure| panic!("tick {tick_number}: {failure:?}"));
         ticks.push(Tick {
             arrivals: count,
             statements: SEAM_TALLY.statements.load(Relaxed) - before,
+            recomputes: level_recomputes() - before_recomputes,
         });
         tick_number += 1;
         if drains {
@@ -219,8 +225,8 @@ fn an_ordered_tick_costs_its_change_not_the_program_size() {
     );
     for (index, tick) in ticks.iter().enumerate() {
         println!(
-            "ordered_statement_count: tick {index} arrivals={} statements={}",
-            tick.arrivals, tick.statements
+            "ordered_statement_count: tick {index} arrivals={} statements={} recomputes={}",
+            tick.arrivals, tick.statements, tick.recomputes
         );
     }
 
@@ -235,6 +241,20 @@ fn an_ordered_tick_costs_its_change_not_the_program_size() {
     );
 
     assert_eq!(ticks.len(), 11, "the scripted schedule folds in 11 ticks");
+    // A db this process has not folded before may carry level tables a killed
+    // process left inconsistent, so tick 0 rebuilds every level.
+    assert!(
+        ticks[0].recomputes >= program.levels.len() as u64,
+        "the first tick against a db rebuilds all {} levels, ran {}",
+        program.levels.len(),
+        ticks[0].recomputes
+    );
+    assert!(
+        ticks[1].recomputes < program.levels.len() as u64,
+        "a later tick recomputes its cone, not the program: {} of {}",
+        ticks[1].recomputes,
+        program.levels.len()
+    );
     let over: Vec<String> = ticks
         .iter()
         .enumerate()

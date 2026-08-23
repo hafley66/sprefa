@@ -37,7 +37,6 @@ struct OrderedPlan {
 struct TickProbe {
     live: HashSet<String>,
     empty: HashSet<String>,
-    seeded: bool,
 }
 
 /// A read whose table is no rel's base table (a frontier, a `__pre_` snapshot, a
@@ -144,24 +143,9 @@ impl OrderedPlan {
                 quote_identifier(&relation.table_name)
             )
         }));
-        let mut heads: Vec<&str> = program
-            .levels
-            .iter()
-            .map(|level| level.head_table_name.as_str())
-            .collect();
-        heads.sort_unstable();
-        heads.dedup();
-        // A program with no levels has nothing to seed, and an empty column
-        // list is not a SELECT.
-        columns.push(if heads.is_empty() {
-            "1".to_string()
-        } else {
-            heads
-                .iter()
-                .map(|table| format!("EXISTS(SELECT 1 FROM {})", quote_identifier(table)))
-                .collect::<Vec<_>>()
-                .join(" OR ")
-        });
+        // An empty column list is not a SELECT, and a program with no rels has
+        // nothing to ask about.
+        columns.push("1".to_string());
         let probe = columns
             .chunks(PROBE_WIDTH)
             .map(|chunk| format!("SELECT {}", chunk.join(", ")))
@@ -402,6 +386,14 @@ fn read_snapshot_of(
     Ok(snapshot)
 }
 
+/// Levels whose recompute ran, so a test can read that the first tick against a
+/// db rebuilt every one of them.
+static LEVEL_RECOMPUTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn level_recomputes() -> u64 {
+    LEVEL_RECOMPUTES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// One comparison per row under an index, one per pair under a scan.
 static DIFF_PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -586,6 +578,7 @@ fn recompute_levels(
             dirty.arm(program, seam, &statement.head_rel)?;
         }
         for statement in &program.levels {
+            LEVEL_RECOMPUTES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let _scope = crate::trace::Scope::verb("recompute", &statement.head_rel, "ordered");
             seam.execute_multiple(&statement.recompute_delete_sql)
                 .expect("ordered level clear failed");
@@ -633,6 +626,7 @@ fn recompute_levels(
         {
             continue;
         }
+        LEVEL_RECOMPUTES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         dirty.arm(program, seam, &statement.head_rel)?;
         let _scope = crate::trace::Scope::verb("recompute", &statement.head_rel, "ordered");
         let deleted = seam
@@ -752,13 +746,29 @@ fn read_probe(program: &GenProgram, seam: &SqliteSeam, plan: &OrderedPlan) -> Ti
             empty.insert(relation.rel.clone());
         }
     }
-    TickProbe {
-        live,
-        empty,
-        // Level tables holding nothing means they were never filled on this
-        // seam, and every level owes its first recompute.
-        seeded: answers[2 * count] != 0,
-    }
+    TickProbe { live, empty }
+}
+
+/// A TEMP table lives in the connection's own schema and dies with it, so its
+/// absence is this process's first tick against this db.
+fn first_fold(program: &GenProgram, seam: &SqliteSeam) -> bool {
+    let _scope = crate::trace::Scope::phase("probe");
+    let table = quote_identifier(&format!("__ordered_folded_{}", program.name));
+    seam.execute(&SqlStatement {
+        sql: format!("CREATE TEMP TABLE IF NOT EXISTS {table} (\"folded\" INTEGER PRIMARY KEY)"),
+        args: vec![],
+    })
+    .expect("ordered fold marker failed");
+    let result = seam
+        .execute(&SqlStatement {
+            sql: format!(
+                "INSERT INTO temp.{table} (\"folded\") VALUES (1) \
+                 ON CONFLICT DO NOTHING RETURNING \"folded\""
+            ),
+            args: vec![],
+        })
+        .expect("ordered fold marker read failed");
+    !result.rows.is_empty()
 }
 
 fn count_rows(seam: &SqliteSeam, relation: &IncrementalRelationPlan) -> usize {
@@ -1241,7 +1251,9 @@ pub fn run_tick(
     let mut dirty = TickDirty::new(probe.empty);
     let mut stamps = vec![0u64; program.levels.len()];
     let live = probe.live;
-    let force = !probe.seeded;
+    // A db this process has not folded before may carry level tables a killed
+    // process left inconsistent with their sources, so the first tick rebuilds.
+    let force = first_fold(program, seam);
     // Armed before the clock turns, which is where the pre-dirty path read the
     // whole before-snapshot.
     for arrival in arrivals {
