@@ -219,8 +219,8 @@ impl Scope {
         )
     }
 
-    /// A phase of the tick that is not one of the six verbs: interning,
-    /// decoding, the boundary read.
+    /// Not one of the eight verbs (`stage`/`arrive`/`clear`/`read_staged`/
+    /// `edge_lookup`/`edge_write`/`snapshot`/`recompute`): interning, decoding.
     pub fn phase(name: &'static str) -> Scope {
         let span = tracing::debug_span!(
             "phase",
