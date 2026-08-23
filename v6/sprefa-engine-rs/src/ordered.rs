@@ -151,13 +151,17 @@ impl OrderedPlan {
             .collect();
         heads.sort_unstable();
         heads.dedup();
-        columns.push(
+        // A program with no levels has nothing to seed, and an empty column
+        // list is not a SELECT.
+        columns.push(if heads.is_empty() {
+            "1".to_string()
+        } else {
             heads
                 .iter()
                 .map(|table| format!("EXISTS(SELECT 1 FROM {})", quote_identifier(table)))
                 .collect::<Vec<_>>()
-                .join(" OR "),
-        );
+                .join(" OR ")
+        });
         let probe = columns
             .chunks(PROBE_WIDTH)
             .map(|chunk| format!("SELECT {}", chunk.join(", ")))
