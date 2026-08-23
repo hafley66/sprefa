@@ -186,10 +186,14 @@ run_phase_step(Context, Order-Name-Expander, Program, Expanded) :-
 run_phase_call(_, _-_-unwired, Program, Program) :- !.
 % ast takes the whole context, every other phase the enum half; without the cut
 % the clause below re-runs ast on the wrong argument as a second solution.
-run_phase_call(Context, _-ast-Expander, Program, Expanded) :- !,
-    call(Expander, Context, Program, Expanded).
-run_phase_call(Context, _-option-Expander, Program, Expanded) :- !,
-    call(Expander, Context, Program, Expanded).
+run_phase_call(expansion_context(_, EnumContext, Bindings), _-ast-Expander,
+               Program, Expanded) :- !,
+    call(Expander, expansion_context(EnumContext, Bindings), Program,
+         Expanded).
+run_phase_call(expansion_context(_, EnumContext, Bindings), _-option-Expander,
+               Program, Expanded) :- !,
+    call(Expander, expansion_context(EnumContext, Bindings), Program,
+         Expanded).
 run_phase_call(expansion_context(Door, EnumContext, _), _-coalesce-Expander,
                Program, Expanded) :- !,
     call(Expander, coalesce_context(Door, EnumContext), Program, Expanded).

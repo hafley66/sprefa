@@ -113,7 +113,41 @@ reset_body_use_cache :- abolish_table_subgoals(body_ref_uses(_, _)).
 body_ref_uses(Body, Uses) :-
     walk_body(Body, walk_policy(descend_not(true), splice_bare(true)),
               Events),
-    events_uses(Events, Uses).
+    events_uses(Events, RawUses),
+    maplist(resolve_coalesce_use(Body), RawUses, UseGroups),
+    append(UseGroups, ResolvedUses),
+    partition(coalesced_use, ResolvedUses, CoalescedUses, OtherUses),
+    append(OtherUses, CoalescedUses, Uses).
+
+resolve_coalesce_use(Body,
+                     use(Ref, Args, Polarity, coalesce_source(Source, Default)),
+                     [use(Ref, Args, Polarity, coalesce(Output, Default)),
+                      use(Ref, Args, neg, coalesce_recount)]) :-
+    !,
+    coalesce_output_in_body(Body, Source, Output).
+resolve_coalesce_use(_, Use, [Use]).
+
+coalesced_use(use(_, _, pos, coalesce(_, _))).
+
+coalesce_output_in_body(Body, Source, Output) :-
+    conjunction_goals(Body, Goals),
+    select_coalesce_goal(Source, Goals, RestGoals),
+    term_variables(Source, SourceVariables),
+    term_variables(RestGoals, BoundVariables),
+    exclude(variable_in(BoundVariables), SourceVariables, [Output]).
+
+select_coalesce_goal(Source, [Goal | Rest], Rest) :-
+    nonvar(Goal),
+    Goal = coalesce(GoalSource, _),
+    GoalSource == Source,
+    !.
+select_coalesce_goal(Source, [Goal | Rest], [Goal | More]) :-
+    select_coalesce_goal(Source, Rest, More).
+
+variable_in(Variables, Variable) :-
+    member(Existing, Variables),
+    Existing == Variable,
+    !.
 
 events_uses([], []).
 events_uses([Event | Rest], Uses) :-
@@ -129,6 +163,12 @@ event_use(event(_, Polarity, plain_atom, Atom), use(Ref, Args, Polarity,
                                                     trigger)) :-
     !,
     atom_ref_args(Atom, Ref, Args).
+event_use(event(_, Polarity,
+                surface(coalesce/2, _, refs_of_arg(1, pos, sampled), _, _),
+                coalesce(Source, Default)),
+          use(Ref, Args, Polarity, coalesce_source(Source, Default))) :-
+    !,
+    atom_ref_args(Source, Ref, Args).
 event_use(event(_, Polarity, surface(_, _, refs_of_arg(Index, Sign, Marking),
                                      _, _), Term),
           use(Ref, Args, Polarity, Marking)) :-

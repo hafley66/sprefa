@@ -67,7 +67,7 @@ surface(not/1,          sign,      arm(neg),                     wrapper(body_it
 % what makes that unreachable. The AnalyzeRole is stated honestly all the same,
 % so the pre-expansion readers (print_dl.pl's decl synthesis) see the source
 % relation as the sampled reference it is.
-surface(coalesce/2,     sugar,     refs_of_arg(1, pos, sampled), wrapper(rel_atom_default, expand(coalesce)), live).
+surface(coalesce/2,     sugar,     refs_of_arg(1, pos, sampled), wrapper(rel_atom_default, lower),            live).
 surface(pre/1,          sample,    refs_of_arg(1, pos, sampled), wrapper(rel_atom, lower),              live).
 surface(pre/2,          sample,    refs_of_arg(1, pos, sampled), wrapper(rel_atom_default, lower),      live).
 surface(seq/1,          sugar,     no_refs,                      wrapper(expr, expand(seq)),           live).
