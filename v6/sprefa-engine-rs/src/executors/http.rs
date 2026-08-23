@@ -48,8 +48,8 @@ pub fn absolute_url(endpoint: &str) -> String {
     if endpoint.contains("://") {
         return endpoint.to_string();
     }
-    let base =
-        std::env::var("DL_GITHUB_API_BASE").unwrap_or_else(|_| "https://api.github.com".to_string());
+    let base = std::env::var("DL_GITHUB_API_BASE")
+        .unwrap_or_else(|_| "https://api.github.com".to_string());
     format!(
         "{}/{}",
         base.trim_end_matches('/'),
@@ -83,9 +83,7 @@ fn json_column(text: &str) -> serde_json::Value {
     if serde_json::from_str::<serde::de::IgnoredAny>(trimmed).is_ok() {
         return serde_json::Value::String(trimmed.to_string());
     }
-    serde_json::Value::String(
-        serde_json::Value::String(text.to_string()).to_string(),
-    )
+    serde_json::Value::String(serde_json::Value::String(text.to_string()).to_string())
 }
 
 /// The `headers` input column: a JSON object of header name to header value.
@@ -125,7 +123,11 @@ fn header_value(text: &str) -> serde_json::Value {
 
 /// Response header names are lowercased: HTTP header names are
 /// case-insensitive and a decode rule may not depend on the origin's case.
-fn answer_row(status: u16, headers: serde_json::Map<String, serde_json::Value>, body: &str) -> HostRow {
+fn answer_row(
+    status: u16,
+    headers: serde_json::Map<String, serde_json::Value>,
+    body: &str,
+) -> HostRow {
     super::row([
         ("status", serde_json::json!(status)),
         (
@@ -179,7 +181,10 @@ pub fn send(request: &Request) -> Result<HostRow, HostError> {
         }
     };
     let mut response = sent.map_err(|failure| {
-        host_error(&request.host, format!("{} {}: {failure}", request.method.spelling(), request.url))
+        host_error(
+            &request.host,
+            format!("{} {}: {failure}", request.method.spelling(), request.url),
+        )
     })?;
     let status = response.status().as_u16();
     let mut headers = serde_json::Map::new();
@@ -200,7 +205,10 @@ pub fn send(request: &Request) -> Result<HostRow, HostError> {
             .limit(BODY_LIMIT)
             .read_to_string()
             .map_err(|failure| {
-                host_error(&request.host, format!("read body of {}: {failure}", request.url))
+                host_error(
+                    &request.host,
+                    format!("read body of {}: {failure}", request.url),
+                )
             })?
     };
     span.record("status", status);
@@ -346,14 +354,22 @@ mod tests {
         assert_eq!(
             headers,
             vec![
-                ("Accept".to_string(), "application/vnd.github+json".to_string()),
+                (
+                    "Accept".to_string(),
+                    "application/vnd.github+json".to_string()
+                ),
                 ("If-None-Match".to_string(), "\"tag\"".to_string()),
             ],
             "an empty value is no header, never a blank one"
         );
         assert!(request_headers("http_get", "").expect("absent").is_empty());
-        assert!(request_headers("http_get", "null").expect("null").is_empty());
-        assert!(request_headers("http_get", "[1]").is_err(), "an array is a named stop");
+        assert!(request_headers("http_get", "null")
+            .expect("null")
+            .is_empty());
+        assert!(
+            request_headers("http_get", "[1]").is_err(),
+            "an array is a named stop"
+        );
     }
 
     #[test]

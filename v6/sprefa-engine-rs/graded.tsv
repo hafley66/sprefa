@@ -308,6 +308,7 @@ probe_output_comparison_guard	clean	byte-clean
 query_without_an_order_tail_is_unmoved	clean	byte-clean
 quote_in_literal_doubles_the_escape	clean	byte-clean
 range_join_over_arithmetic	clean	byte-clean
+recount_retraction_reaches_two_heads_same_tick	clean	byte-clean
 recursive_closure_passes_both_build_guard_arms	clean	byte-clean
 recursive_cte_multiple_self_reads_is_refused	unsupported	recursive_cte_multiple_self_reads(reachable/2,2)
 recursive_enum_tree_and_cycles_round_trip	clean	byte-clean

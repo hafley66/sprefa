@@ -71,8 +71,12 @@ fn entries_at(
     rev: &str,
     glob: &str,
 ) -> Result<(soopy::SourceTree, Vec<soopy::SourceEntry>), HostError> {
-    let repository = soopy::discover(root.to_path_buf())
-        .map_err(|error| stop(host, format!("open a repository at {}: {error}", root.display())))?;
+    let repository = soopy::discover(root.to_path_buf()).map_err(|error| {
+        stop(
+            host,
+            format!("open a repository at {}: {error}", root.display()),
+        )
+    })?;
     let mut tree = soopy::SourceTree::open(repository);
     let pathspecs = if glob.is_empty() {
         Vec::new()

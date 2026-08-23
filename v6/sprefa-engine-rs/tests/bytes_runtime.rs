@@ -166,8 +166,5 @@ fn byte_host_transport_refuses_before_executor_process() {
         .expect_err("byte host transport must stop before execution");
     assert_eq!(failure.host, "bytes_host");
     assert_eq!(failure.message, "bytes_host_transport_unsupported");
-    assert!(
-        !marker.exists(),
-        "no executor may receive byte input"
-    );
+    assert!(!marker.exists(), "no executor may receive byte input");
 }

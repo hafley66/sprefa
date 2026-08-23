@@ -120,7 +120,10 @@ fn final_rels_names_the_read_order() {
     ]);
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout, "spanned\ta.rs\t3\t9\nsource_file\ta.rs\n", "{stdout}");
+    assert_eq!(
+        stdout, "spanned\ta.rs\t3\t9\nsource_file\ta.rs\n",
+        "{stdout}"
+    );
 }
 
 #[test]

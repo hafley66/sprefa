@@ -172,8 +172,8 @@ fn boundary_delta_probes_once_per_row() {
     };
     let before = sprefa_engine_rs::incremental::dedup_probes();
     let started = std::time::Instant::now();
-    let delta = sprefa_engine_rs::incremental::boundary_delta(&relation, &result)
-        .expect("boundary delta");
+    let delta =
+        sprefa_engine_rs::incremental::boundary_delta(&relation, &result).expect("boundary delta");
     let probes = sprefa_engine_rs::incremental::dedup_probes() - before;
     assert_eq!(delta.add.len(), program_rows);
     assert!(

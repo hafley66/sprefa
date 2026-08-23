@@ -135,7 +135,8 @@ impl GenProgram {
     pub fn stable_sql_count(&self) -> usize {
         let mut count = self.ddl.len() + self.boot.len() + self.final_select.len();
         for relation in &self.relations {
-            count += 1 + usize::from(relation.arrival_add_sql.is_some())
+            count += 1
+                + usize::from(relation.arrival_add_sql.is_some())
                 + usize::from(relation.arrival_del_sql.is_some());
         }
         for edge in &self.edges {
@@ -143,8 +144,16 @@ impl GenProgram {
         }
         for level in &self.levels {
             count += 3 + level.recompute_insert_sqls.len();
-            count += level.intern_sql.as_ref().map(|sqls| sqls.len()).unwrap_or(0);
-            count += level.support_sql.as_ref().map(|sqls| sqls.len()).unwrap_or(0);
+            count += level
+                .intern_sql
+                .as_ref()
+                .map(|sqls| sqls.len())
+                .unwrap_or(0);
+            count += level
+                .support_sql
+                .as_ref()
+                .map(|sqls| sqls.len())
+                .unwrap_or(0);
             count += level
                 .support_intern_sql
                 .as_ref()
@@ -160,7 +169,11 @@ impl GenProgram {
                 count += 2
                     + aggregate.scope_seed_sql.len()
                     + aggregate.insert_scoped_sql.len()
-                    + aggregate.intern_sql.as_ref().map(|sqls| sqls.len()).unwrap_or(0);
+                    + aggregate
+                        .intern_sql
+                        .as_ref()
+                        .map(|sqls| sqls.len())
+                        .unwrap_or(0);
             }
         }
         count += self.retentions.len();
