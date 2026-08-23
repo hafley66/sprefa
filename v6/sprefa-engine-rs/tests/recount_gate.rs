@@ -159,4 +159,15 @@ fn recount_waits_for_a_retraction_or_a_negated_addition() {
     let (fires, rows) = gated_and_naive(&negated, &negated_addition);
     assert_eq!(fires, vec![0, 1]);
     assert_eq!(rows.last(), Some(&Vec::new()));
+
+    // Tick 1 is the negated gain. Tick 3's negated LOSS is the delta insert's
+    // own signed-loss arm, so it pays no from-base re-derive.
+    let negated_loss = vec![
+        vec![arrival("b", ArrivalSign::Add, 7)],
+        vec![arrival("a", ArrivalSign::Add, 7)],
+        vec![arrival("b", ArrivalSign::Del, 7)],
+    ];
+    let (fires, rows) = gated_and_naive(&negated, &negated_loss);
+    assert_eq!(fires, vec![1, 0, 0]);
+    assert_eq!(rows, vec![Vec::new(), Vec::new(), vec![7]]);
 }
