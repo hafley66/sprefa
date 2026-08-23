@@ -169,7 +169,11 @@
             fixpoint_round_cap/1,
             % The `?` order tail's SQL, read by both emitters so the clause
             % they append to final_select has one definition.
-            query_order_by_map/3 ]).
+            query_order_by_map/3,
+            % issues/inner-scan-audit: the audited (rel, column) index pairs,
+            % exported so the plunit unit pins the DDL text directly.
+            audit_scan_index_column/2, audit_scan_index_ddls/2,
+            audit_scan_index_ddl/3 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -6607,6 +6611,31 @@ order_index_ddl(Ref, Ordinal, Columns, OrderCols, Ddl) :-
     format(atom(Ddl), 'CREATE INDEX ~w ON ~w (~w)',
            [QuotedIndexName, QuotedTable, TermsSql]).
 
+% A stored rel's non-leading-key column, measured with a SCAN after a join
+% in plans/inner-scan-audit/explain.log; the UNIQUE key can't seek on it.
+audit_scan_index_column(pr_batch_response, status).
+audit_scan_index_column(rest_response, status).
+audit_scan_index_column(checkout_task, fetch_pr_branches).
+
+audit_scan_index_ddls(RelPlans, Ddls) :-
+    findall(Ddl,
+            ( member(Rel, RelPlans),
+              relplan_parts(Rel, Ref, _, Columns, _, _),
+              Ref = Name/_,
+              audit_scan_index_column(Name, Column),
+              memberchk(Column, Columns),
+              audit_scan_index_ddl(Ref, Column, Ddl) ),
+            Ddls).
+
+audit_scan_index_ddl(Ref, Column, Ddl) :-
+    table_name(Ref, Table),
+    quote_ident(Table, QuotedTable),
+    format(atom(IndexName), '~w__scan_~w', [Table, Column]),
+    quote_ident(IndexName, QuotedIndexName),
+    quote_ident(Column, QuotedColumn),
+    format(atom(Ddl), 'CREATE INDEX ~w ON ~w (~w)',
+           [QuotedIndexName, QuotedTable, QuotedColumn]).
+
 retention_statement(RelPlans, keep(Ref, count(Limit)),
                     retentionstmt(Ref, Limit, DeleteSql)) :-
     integer(Limit),
@@ -7112,8 +7141,11 @@ lower_program_in_context(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans,
     run_compile_step(lower, query_order_index_ddls,
         query_order_index_ddls(Mode, Decls, RelPlans, EdgeHeadedRefs,
                                ArrivalTargets, OrderIndexDdl), _),
-    append([RelationDdl, OrderIndexDdl, AcyclicDdl, DeltaDdl, RefCountDdl,
-            AggregateScopeDdl, PreDdl, TickDdl, CatalogTableDdl, CatalogRowDdl],
+    run_compile_step(lower, audit_scan_index_ddls,
+        audit_scan_index_ddls(RelPlans, AuditScanIndexDdl), _),
+    append([RelationDdl, OrderIndexDdl, AuditScanIndexDdl, AcyclicDdl,
+            DeltaDdl, RefCountDdl, AggregateScopeDdl, PreDdl, TickDdl,
+            CatalogTableDdl, CatalogRowDdl],
            BodyDdl),
     run_compile_step(lower, literal_seed_ddl,
         literal_seed_ddl(Mode,

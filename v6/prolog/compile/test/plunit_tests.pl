@@ -39,7 +39,9 @@
                 catalog_all_rows/10,
                 plan_rule_level_statements/2,
                 program_text_intern_plan/3,
-                json_capture_json_type/2 ]).
+                json_capture_json_type/2,
+                audit_scan_index_column/2, audit_scan_index_ddls/2,
+                audit_scan_index_ddl/3 ]).
 :- use_module('../../analyze',
               [ check_supported_subset/1, literal_witness/1, snake_name/2 ]).
 :- use_module('../../0_rel_record',
@@ -404,6 +406,31 @@ test(a_struct_column_declares_its_type_name_and_stores_a_ref) :-
     relplan_column_types(RelPlans, finding/2, [text, ref(span)]).
 
 :- end_tests(rel_record).
+
+% issues/inner-scan-audit: audit_scan_index_column/2's measured (rel, column)
+% pairs, exercised against hand-built RelPlans (inferred_relplan/2) so the
+% index text stays independent of a fixture's storage-name hash suffix.
+
+:- begin_tests(audit_scan_index_ddl).
+
+test(a_measured_rel_column_earns_its_dedicated_index) :-
+    inferred_relplan(
+        rel_spec(pr_batch_response/2, set, [batch_key, status], none, [text, int]),
+        RelPlan),
+    audit_scan_index_ddls([RelPlan], Ddls),
+    Ddls == ['CREATE INDEX "pr_batch_response__scan_status" ON "pr_batch_response" ("status")'].
+
+test(a_rel_missing_the_measured_column_earns_nothing) :-
+    inferred_relplan(
+        rel_spec(pr_batch_response/2, set, [batch_key, rate_reset], none, [text, int]),
+        RelPlan),
+    audit_scan_index_ddls([RelPlan], []).
+
+test(a_rel_the_audit_never_named_earns_nothing) :-
+    inferred_relplan(rel_spec(unrelated/1, set, [name], none, [text]), RelPlan),
+    audit_scan_index_ddls([RelPlan], []).
+
+:- end_tests(audit_scan_index_ddl).
 
 % ═══════════════════════════════════════════════════════════════════════════
 % RELATION IDENTITY TARGETS (relplan_reference_target(s)/2)
