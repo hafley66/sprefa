@@ -1153,3 +1153,331 @@ Source: `v6/prolog/ARCH.pl:964`
 ```text
 LANDED 2026-08-23 (ruling per_rel_delta_only): ordered_program/1 and ordered.rs are DELETED. Each edgestmt carries its own ArmSchedule (set_at_once/sequenced) from its kind; a sequenced arm walks its trigger's frontier in (_phase, _sequence) order inside apply_edges, every arm of one occurrence projecting before any writes, occurrence-major across arms because one_pick_order referees by arrival index; a row written then overwritten in the tick stages its NET into the carry. snapshot_pre keeps ordered.rs's phase position (after arrivals, before levels), so pre(level_head(..)) still reads last tick's settled rows. TickWork::probe opens the tick with one chunked EXISTS read and level_sources maps every table name a rel owns back to that rel, so a rel does work only when a rel it reads moved; a level reading a table no rel owns never skips. Receipts: ghcache statements/tick 447,178,224,483,249,505,367,70,143,256,165,658,264,58 (ordered+#423) -> 475,522,1172,1364,1318,1771,1200,702,691,676,668,1643,1208,199 (the two count different shapes: whole-table rebuilds vs per-level delta inserts), tick log byte-identical, settled idle tick 3 statements, unlabelled calls inside ticks 997 -> 0. conformance 444/0, plunit 1076/0, RUST-GRADE graded=444 byte-clean=340, cargo 163/0, ghcache ticks=14 pr_transition_open_merged=1, goldens=6, ARCH 7/0. Disclosed en route and fixed: an aggregate never rescoped on the rel its own body negates (docs/failure-modes.md 81), with a narrower residual open for the user.
 ```
+
+## file_span_redesign
+
+Source: `v6/prolog/ARCH.pl:764`
+
+```text
+The struct arc's free-floating `type span(start: int, end: int)` is the single hole behind four shipped warts: path riding as a sibling column beside every span; flagship-flow.dl6 hand-building identity with concat([path,':',start,':',end]) (that concat IS the missing file reference); comment rails shelling out to grep because text lives nowhere; line/col living in a python referee translator while LSP line numbers ship as 0. line(span)/col(span) derive through a per-digest newline index IN-LANGUAGE; slice(span, from, to) is sub-range projection (NOT destructuring -- the running assign lab was briefed on the wrong reading). Extractor untouched: the wire keeps bare byte ranges and the HOST BOUNDARY pairs each record span with the demand's file. 3 user decision cards open in the doc
+```
+
+## file_span_storage_lab
+
+Source: `v6/prolog/ARCH.pl:765`
+
+```text
+SELECTED physical row: file_span(file_span_id,rev_file_id,start,end), facts carry one dense id; no blob_span table. Real-distribution replay, 405,696 facts, two fresh-process runs: selected 32.24 bytes/fact and 517.6/530.5ms ingest; two-level located/content span 38.30; content-span ref 43.89; embedded coordinates 51.95; repeated TEXT 315.31. Selected filter + reverse placement paths are covering SEARCH only. PATH VERDICT over 2996 real paths x20 refs: whole-path dictionary 954,368B / 0.0385-0.0387ms prefix search; segment+junction 1,146,880B / 0.0573-0.0588ms; repeated TEXT 3,448,832B / 1.022-1.023ms. CONTENT VERDICT over 300 Git blobs/8.50MB x3 reads: persistent git cat-file --batch 58.25-58.88ms; optional SQLite stored_blob 12.85-12.88ms and 8.67MB; 1MiB LRU held at 1,048,564B, all newline indexes 212,892B. NULL-FREE shape: committed_rev and work_rev are total variant rels with ordinary union rules; git_blob and stored_blob are ADDITIVE capability rels, so a BlobId may have either or both. HOST verdict: reuse sh_decl/probe's one demand-response plan with a registered typed non-shell executor; bind_decl remains continuous discovery; no file-specific call syntax. TWO user cards remain before implementation: generic relation-reference column type (physical dense int, static FileRef/BlobRef/FileSpanRef) and typed-host authoring spelling. Existing enum tag projection stores TEXT and must use declaration-order ordinal when materialized or be omitted when match reads variant rels directly
+```
+
+## rel_value_unification_lab
+
+Source: `v6/prolog/ARCH.pl:766`
+
+```text
+CORRECTED MODEL: referenced rel remains an ordinary public/queryable rel; parent typed column stores an edge endpoint to the target row; one target table with hidden physical __id and content/key uniqueness; temporary __ref_<name> join view only; zero __dict_* tables and zero stored __semantic/__rendered JSON. 9-check actual compiler hole lab passes: public target, typed edge, one table, direct RHS query, indexed dereference, no FK/cascade, and confirms two holes. HOLES: existing key(...) is not yet the reference identity; old content-DAG check still rejects keyed entity cycles. Both use existing semantics and justify no new construct. Sweep: 102 compiled, 91 unchanged identical, 9 expected old nested-JSON oracle disagreements, 2 pre-existing run errors. NEXT: key-driven identity, keyed-cycle acceptance, oracle relation-row migration, delete StructPlane/dictionary naming
+```
+
+## file_span_kernel_host_boundary_lab
+
+Source: `v6/prolog/ARCH.pl:767`
+
+```text
+REL EDGE: typed relation constructor currently emits a JSON compound into an INTEGER endpoint; opaque row identity capture is unavailable; ref/1 is unregistered and emits another JSON compound. Therefore automatic key-driven edge construction is the next implementation, while ref remains unselected pending an opaque-identity receipt. STRINGS: 3019 paths x20, dedicated whole path 962560B/15.9417B per ref/0.0374-0.0381ms; universal strings+path 1036288B/17.1628B per ref/0.1472-0.1476ms. Across 200 extracted files, 39642 name occurrences and 6269 names had zero path/name text overlap; universal and separate dictionaries both used 1728512B. HOST: existing shell executor is one spawn per witness; span text must use registered batched execution behind existing demand/response rels, grouped by blob and repo, with no new DL6 spelling. SELF-HOST: relation joins, slice arithmetic, line/column aggregates, variants, and capability selection. EXTERNAL: Git/filesystem observation, byte acquisition, optional persistence, newline scan
+```
+
+## rel_edge_clock_fixpoint
+
+Source: `v6/prolog/ARCH.pl:768`
+
+```text
+ITERATION 3: pin target arrival, missing target, keyed replacement, retraction, dangling-edge antijoin, and exact oracle/emitter ticks. ITERATION 4: attempt opaque identity capture/transport through current variables and modes; ref remains unregistered unless a required actual-world case survives. ITERATION 5: extractor -> rev_file -> file_span -> batched span_text/newline provider vertical slice. LOCKED: rel-only declarations, public queryable target rel, ordinary target table with hidden dense id, integer parent endpoint, key defines semantic entity identity, no dictionary/stored JSON/NULL payload/cascade, demand-response provider grouped by repo/blob
+```
+
+## key_edge_case_census
+
+Source: `v6/prolog/ARCH.pl:769`
+
+```text
+HOLES: key(0), key(arity+1), and duplicate positions survive planning; keyed self/mutual entity cycles inherit the content-DAG unsupported construct; construction still consumes full target arity and emits JSON. CLOCK EDGE: positive keyed arrival replaces by key while negative arrival deletes the exact full row, so stale retraction does not remove the replacement. GATES before reference implementation: validate key positions, pin replacement/retraction ticks, and pin conflicting non-key fields for one key
+```
+
+## reference_construction_contexts
+
+Source: `v6/prolog/ARCH.pl:772`
+
+```text
+Missing target constructor performs no existence join. Runtime INSERT OR IGNORE is key-constrained but lookup uses the full row, so same-key/non-key conflict finds no id. Key-only arity is currently just a compound term. Boot path queries removed __semantic columns absent from DDL. LEADING MINIMAL LOWERING: in derived rules, relation-shaped value is an indexed match against an existing public target row and projects its __id; missing target means no parent derivation; creating the target is an ordinary target-headed rule. World arrivals remain the boundary case: atomically resolve/assert target before parent and refuse same-key conflicts by name
+```
+
+## existing_target_identity_prototype
+
+Source: `v6/prolog/ARCH.pl:773`
+
+```text
+COST: one compile-time term binding, zero JSON/subquery/extra SQL/hidden write/surface syntax. Receipts: construction contexts 8 PASS, plunit 147 PASS, sweep 164 total/103 compiled/61 unsupported/0 crash, runtime 92 identical/9 expected old relation-value oracle disagreements/2 recorded run errors. OPEN: direct edge trigger still lacks __id binding; constructor without explicit target atom still emits JSON; boot/world arrival still uses obsolete full-row interner and __semantic path
+```
+
+## clock_checker_proof_payoff
+
+Source: `v6/prolog/ARCH.pl:776`
+
+```text
+EXECUTION-ONLY: general tick placement, glitch behavior, keyed batch order, host response timing, oracle/emitter equality. MISSING: registry ring/grade metadata, inferred clock expressions, labelled-SCC causality/productivity, external provider liveness theorem, boundary referential integrity. RANKED ZERO-SURFACE ITERATION: (1) project rule dependencies labelled ring/sign/grade from current AST and registry; (2) infer path offsets and reject unequal clocks; (3) accept only monotone-B zero-grade SCCs and positive-delay recurrence; (4) compile live-parent/missing-target as boundary antijoin; (5) expose proof facts for fixture comparison. Rust borrow checking supplies only the boundary-lifetime analogy because relation IDs are durable graph edges, not memory borrows. Lustre supplies clock compatibility/delay/initialization comparisons. Esterel supplies constructive same-instant SCC comparison. Four decision cards, each <=5 options; no new syntax selected
+```
+
+## flow_parity_residue
+
+Source: `v6/prolog/ARCH.pl:782`
+
+```text
+Referee normalizes root:: symbol keys, method owner prefixes, and root-qualified types; flow_param_type 35/40 matched. Direct flow remains 2457/2457 exact. Total flow_edge: V5 2772, V6 3114, matched 2654, V5-only 118 (down from current baseline 315). BLOCKER is Rust call-target resolution evidence: targets V5 200/V6 168, matched 113, V5-only 87, V6-only 55. Current resolver picks first same-file/unique-blob definition while V5 retains qualified method targets and omits some contexts. Close with improved typed Rust resolution facts or a pinned SCIP index, not another DL rule. Classifier now fails on direct drift or empty/nonmatching node types. ADVANCED 2026-08-16 by the extractor's caller-name fact, plans/2026-08-16-flow-parity-rust-targets.REPORT.md: a closure def carries no name, resolve_at types caller_name text, so every resolved edge whose call sits inside a closure body was dropped at the typed boundary (measured: 215 resolved edges, 166 both-named = exactly the graded call_target count). project.rs names a nameless caller closure@<byte_start>. Rig twice, identical: targets V5 203/V6 193, matched 113 -> 134, V5-only 90 -> 69, V6-only 53 -> 59; flow_edge matched 2601 -> 2634, V5-only 125 -> 92; flow_param_type 35/39 -> 39/39 V5-only 0; flow_node_type 35/39 -> 39/39 V5-only 0; arg 90 -> 102, ret 126 -> 147; direct 2387/2387 exact both runs (2457 was the older corpus). RESIDUE IS ONE CLASS, all 69 rows: V5 attaches one resolved callee to EVERY call_res node of a call chain (`.entry(output.strings.lookup(name).to_string())` scores lookup at col 25 AND col 59) while V6 scores it once at the call's own position; V6 already carries the same (callee_path, callee_name) on each of those lines. Matching them means emitting V5's duplicates, not better resolution. SCIP FORK PRICED AND REJECTED: `rust-analyzer scip .` on the pinned corpus dies in 0.14s with "no projects" (13 files copied with no Cargo.toml), so option (b) needs a synthesized crate manifest in the rig plus a toolchain pin, and buys nothing this class needs.
+```
+
+## text_expression_parity
+
+Source: `v6/prolog/ARCH.pl:785`
+
+```text
+Census already measured 57 V5 text-operation sites across =~, replace_re, trim, split, json, match_line, and match_ast; V6 registry currently has zero writable text operations. Each admitted operation lowers to SQLite when the loaded SQLite capability has an exact semantics receipt; otherwise it uses the existing typed host demand/response boundary over batched deltas. File byte slicing stays with file_span_redesign's blob/newline provider, not SQLite character substr. Exit receipts: motivating program moves from named unsupported construct to oracle-identical, SQL path has generated-SQL/EXPLAIN evidence, host path has batching and clock receipts, zero speculative string-method surface.
+```
+
+## extraction_host_batching_lab
+
+Source: `v6/prolog/ARCH.pl:795`
+
+```text
+Release sprefa-extract proves --family df,call,type equals three separate runs. Smallest internal route groups same-tick fixed extractor plans by executor/template/path/digest/ordered inputs, runs once, projects heterogeneous stdout through existing typed output schemas, and settles existing witnesses separately. Ordinary response rel rows only; no syntax, JSON storage, or second type model.
+```
+
+## receipt_folding
+
+Source: `v6/prolog/ARCH.pl:802`
+
+```text
+A canonical-plan or labbed status is temporary: preserve the receipt as regression evidence, attach its production consumer or decision card in ARCH, and remove duplicate lab-only semantics. Current fold order: phase5_bool_float, clock_checker_proof_payoff, rel_definition_hash_lab, file_span_redesign, comment_rail_wiring, mode/scope proof views, flow_parity_residue. Scan surface and optional JSON policy stop only at their indexed decision cards.
+```
+
+## scan_match_reconciliation
+
+Source: `v6/prolog/ARCH.pl:804`
+
+```text
+Scan+match expands to ordinary guarded ordered edge rules: 2 persistent rel tables, 7 TEMP support tables including __pre_machine, 2 arms. Init order and T boundary/T+1 listener clock pinned. No exact-one construct exists; current 0/1/differing-N/equal-N behaviors are silent/write/keyed_conflict/dedupe.
+```
+
+## scan_surface_composition_lab
+
+Source: `v6/prolog/ARCH.pl:805`
+
+```text
+Subscriber identity stays outside reducer key/body, so two subscribers create two views and exactly one reduction. Demand removal retracts views at T, finalize cancellation arrives T+1, later events gate; inactive cell remains because edge heads cannot delete, and re-demand resets it. Nested match reads named scan_view. Exact lowering: 10 rules, 7 edge statements, 3 level groups, 9 persistent tables, 32 TEMP, one keyed __pre_scan_cell; rule count fixed for 1 or 1000 demands. Three unselected surface cards remain.
+```
+
+## json_interop_lab
+
+Source: `v6/prolog/ARCH.pl:807`
+
+```text
+Locked boundary: JSON/json1 is transient wire adaptation; queryable objects and arrays normalize to ordinary target rel rows plus integer reference edges and generated joins. No JSON dictionary, nested-blob storage, relation-like intermediate type, or second checker. 12/12 receipts PASS. SQLite storage receipt: 10,000 repeated objects consume 921,600B inline JSON versus 98,304B relational references, 9.38x. Five bounded user cards remain for module residency, array relation shape, null mapping, schema contribution, and recursive entity identity.
+```
+
+## byte_span_flattener
+
+Source: `v6/prolog/ARCH.pl:808`
+
+```text
+The comment lab's flattener (host template lifts "span":{start,end} to flat line/col, since decodeObjectItems projects TOP-LEVEL declared columns only) was the cheapest fix for diag-rail.dl6's whole-file zeros and flagship-callgraph.dl6's dropped line column. file_span_redesign does the same job STRUCTURALLY -- line/col derive in-language from a per-digest newline index -- so the template hack would be work aimed at a wart that is being removed. Recoverable if the redesign stalls: 9b5ba958:v6/prolog/labs/comment_node/cn.py
+```
+
+## doc_format_extraction
+
+Source: `v6/prolog/ARCH.pl:809`
+
+```text
+MARKDOWN is the one item with an existing receipt behind it: the comment lab named it the single extractor hole in comment parity (v5 has walk_md_comments, the cst family has no md grammar) and scoped SLOT-EXTRACTOR-WAIVER to exactly it. Four named slots incl SLOT-KEYPATH-SPELLING. Feeds schema_import_epic's json/yaml halves
+```
+
+## simplify_wave
+
+Source: `v6/prolog/ARCH.pl:810`
+
+```text
+(2) 0_unsupported_messages.pl's umbrella renders unsupported_construct/1 only, so 1_host_expand.pl's 15 bare throws still print "Unknown message" (the B4 complaint, half-closed); (3) watch and enumerate write two DIFFERENT hash functions into one column named `digest` (2_binds.ts sha256 vs git hash-object) and nothing asserts they agree. Item 1 of the altitude set already landed at 6522f848
+```
+
+## analysis_oracle_exam
+
+Source: `v6/prolog/ARCH.pl:812`
+
+```text
+Prior art already written: plans/2026-07-25-analysis-engine-bakeoff-labs.md holds the constraints (parse-only, no builds -- which disqualifies CodeQL's compiled-language extractors by rule; native-speed lens; a declared RAM budget per tier; same corpus, same question battery, answers diffed against an oracle) and a fixed Q battery. What has changed since that doc: we now HAVE three graded v5-vs-v6 rigs (callgraph, flow, comment) whose shape a third-engine leg can reuse instead of inventing
+```
+
+## amplification_sensors
+
+Source: `v6/prolog/ARCH.pl:813`
+
+```text
+The gap is that NO bench in this repo SENSES amplification: `just memory-soak` asserts page-count flatness under churn and GET /stats reports page_count/freelist/dbstat sums, but nothing reports db-bytes/corpus-bytes or boundary-rows/input-row, so a 3x storage regression lands green. Sensor columns belong in the SHARED bench CSV. Diet arc only if the sensor says so -- and file_span_redesign removes the biggest class (raw path text per row) structurally, so build the sensor first or the redesign will be credited with a number nobody measured
+```
+
+## golden_flex_residue
+
+Source: `v6/prolog/ARCH.pl:827`
+
+```text
+, while struct type names DO work there); dl6_oracle schedule_value/2 term_to_atoms a dict so struct-typed arrival columns are ungradeable through the text door; .dl6 text has no final-state oracle leg (print_ticklog/3 discards FinalAll); one ITickOutcome renders a struct column two ways (outcome.line canonicalizes per the ruling, outcome.deltas and GET /idb hand back raw stored text in arrival key order); IRowValue cannot type a struct value the engine both accepts and prints. Also banked: 14 fixtures are strict subsets of the golden = retirement candidates, and one unexplained `swipl exit null` run recorded in the rig header, not reproduced in 5 later runs (opus, lane/golden-e2e): USER DIRECTIVE -- one golden-flex.dl6 exercising EVERY live registry construct, registry-driven coverage gate (new construct fails golden until exercised = the language-kept-in-check mechanism), 0/1/many + perturbed cardinality grading, served-HTTP e2e leg; owns the serve-exit /idb race + hardcoded-port collision fixes. Motivated by the unit-maxing diagnosis: every bug this session was a composition bug under all-green single-construct suites
+```
+
+## null_coherence_lab
+
+Source: `v6/prolog/ARCH.pl:834`
+
+```text
+First receipt decides much of it: json_extract returns SQL NULL for BOTH an absent key and a json null, which is the silent-wrong-answer class this repo keeps filing. Also: SQLite allows MULTIPLE NULLs in a UNIQUE index against our PK-over-key-columns keyed replace; DISTINCT treats NULLs equal while = does not, which lands in delta computation; prolog has no null so the oracle needs a representation that survives the sign decomposition. Prior art is unanimously against (Souffle none, classical datalog absence, Datomic absence, Flix Option), so the useful output is the SMALLEST coherent null. Tier-0 verdict required; if null is tier 0 it is the first this project accepts
+```
+
+## extract_spelunk
+
+Source: `v6/prolog/ARCH.pl:836`
+
+```text
+Also: bin-vs-lib capability parity (nothing asserts it today), whether the missing TS module resolver is really the madge blocker given scip-typescript is already invoked by the ratchets, and the document-sources gap (no md/html/xml/toml/yaml Source, BlobSource unimplemented)
+```
+
+## ordered_aggregate_lab
+
+Source: `v6/prolog/ARCH.pl:868`
+
+```text
+BOTH order axes proven on @libsql 3.45.1 -- value-sort = v5 parity (v5 sorts by the VALUE; no group_concat exists in v5), explicit ordinal = json_group_array(value, ordinal) two-arg; group_concat(value, sep ORDER BY ordinal) live = string-join own aggregate; incremental tier = group-scoped delete+rebuild via __agg_scope seed, SEARCH receipts, 2 statements flat 10 vs 1000 groups; empty group = absent head row; nesting composes through json(payload). Q6 minus-delta is reasoned prose only -- the wiring arc owes the executed fixture.
+```
+
+## cold_author_defects
+
+Source: `v6/prolog/ARCH.pl:882`
+
+```text
+D5 single-output sh host truncates at first whitespace (parseWhitespace fields[0] fallback, silent). D3+D2 = the natural next errors lane; D1 = registry design card; D5 = decode-seam guard. D3 CLOSED 2026-07-31: throw_text_door_error/2 is exported from compile.pl and bop_check.pl's own compile catch site calls it, so one wrapper now serves both text-door callers; `bop check` prints `<file>:4: unsupported_construct: ...` exit 2 where it printed `rule-index unavailable`, located test + second sabotage receipt in bopCheck.test.ts and the bop_check.pl header, GETTING-STARTED section 5 rewritten (the asymmetry paragraph it documented is gone) and getting-started.sh's normalizer taught the macOS /var vs /private/var realpath spelling that a resolving CLI prints. NOTE for the wider location work (finish-the-job 9.12, review-B4): "parse_dl keeps no source positions" is now too strong -- parse_dl.pl records source_statement_fact/3 per statement and parse_dl_line_for_reason/2 finds a line whenever the unsupported construct reason mentions a Name/Arity that a recorded statement carries; what is missing is per-GOAL positions, so a reason naming no relation still falls back to rule-index unavailable. D1/D2/D4/D5 remain open.
+```
+
+## clock_check_path_blowup
+
+Source: `v6/prolog/ARCH.pl:897`
+
+```text
+3_clock_check.pl clock_path_conflict enumerates EVERY simple path between every ref pair -- exponential in mid-chain route count. Measured: the atlas program's folds added 4 routes and compile went 30s -> 4m16s -> 9m40s at 8GB, then Stack limit exceeded inside clock_violation/2's setof at the served compiler's 1GB INSTEAD OF REFUSING (self-diagnosis law: cliffs must be named, not fatal). Fix = offset algebra per SCC/edge (the checker's own ranked item 2), never path enumeration; plus a resource-bounded unsupported construct. Also the likely suspect behind compile_speed_regression (same era, parse+check conflated in that measurement -- verify when bisecting).
+```
+
+## gen_templating_card
+
+Source: `v6/prolog/ARCH.pl:902`
+
+```text
+(1) quote-escape = doubling rule, whole gap is ONE throw at lower.pl:221, all three spellings already parse clean; (2) regen staleness gate MISSING (self-map.sh:23 promises one, self-map/devlog in neither green recipe, ARCH-MAP.md is a release gate, 5 sightings); (3) sink shape (self-map = $document env, devlog = {document} argv at 105KB vs ARG_MAX 1MB = 10% fuse); (4) template spelling = sqlite printf (three {col} policies already in-tree); (5) NAMING executes gen_word_banned: printf > format > write (printf/format same sqlite fn since 3.38; concat ABSENT on linked sqlite 3.43.2 -- v6's concat is already a borrowed word the engine cannot honour; format( 740x in prolog impl, printf 29x as shell text in fixtures).
+```
+
+## design_archaeology
+
+Source: `v6/prolog/ARCH.pl:903`
+
+```text
+5 only-now forms (byte-graded oracle, named unsupported constructs, endurance law, observable emitted SQL, executed docs). 6 WHAT-WAS-LOST shelf candidates: general gen construct (rides gen_templating_card), multi-repo/rev extraction plane (rides org_fanout ruling), universal first-class cursor, v4 durable mounted sql`` construct, v3 effect journal/approval saga (pending/approved/rolled_back states -- current abort ruling is best-effort only), programmable LSP-op family (dl6 has fixed boundary services).
+```
+
+## json_pattern_expand
+
+Source: `v6/prolog/ARCH.pl:905`
+
+```text
+Fix = shared expansion 0_json_pattern_expand.pl rewriting a brace arg at a json column into atom(V), decode(V, {...}) + one 1_expansion.pl row. Adjacent named divergence to price in the same arc: untyped json capture on a NUMBER (oracle 4 vs emitter "4"; closing it = giving untyped captures a type, the widening typed captures exist instead of).
+```
+
+## type_matrix_lab
+
+Source: `v6/prolog/ARCH.pl:907`
+
+```text
+Slot recs: decl conflict = widen edge_head_column_type_mismatch to all positions (2 vs 155 divergences, the loud position is the working one); float/int boundary already collapsed, contract owes the sentence; undeclared text default fine, its two paths must agree. AWAITING USER: unsupported construct-widening blast radius, int_widens_to_float, wide_int_fate, bool_storage.
+```
+
+## bounded_log_arm_order
+
+Source: `v6/prolog/ARCH.pl:919`
+
+```text
+Two or more edge arms on a log head carrying keep(count(N)): retention prunes at tick END across every write in the tick, so the surviving row is whichever arm ran last, and arm order IS source line order. Swapping two adjacent rule lines changes the final state, silently, and BOTH doors agree on it so the byte-compare gate stays green. Cause is one line: analyze.pl:1331 check_no_edge_head_conflict_risk inspects KEYED heads only, so a log head is never pairwise-compared; the keyed twin throws keyed_conflict/3 (engine.pl:397) and an unkeyed set throws edge_into_unkeyed_set/1 (engine.pl:415). FIRST unsupported construct class that is INTRA-plane: all five shipped unsupported constructs (TICK-MODEL.md section 5) are cross-plane placements, which is why the clock checker was the wrong home. Two flash lanes measured the blast radius: ZERO tracked programs carry the shape (20 conformance fixtures + ~30 dl_view/labs programs have 2+ arms on one head; every log one is keep(all)), so the unsupported construct breaks nothing and had no red test until this arc authored one. Ruled REFUSE by the user 2026-08-03 over the documented-contract alternative, because everywhere else in the language moving a rule up or down is safe, and the wanted semantics already has a loud spelling in the keyed rel. Broader trigger than its keyed twin ON PURPOSE: no shared-trigger condition, because retention is per-tick-end rather than per-occurrence, so two arms on DIFFERENT triggers still collide.
+```
+
+## watch_bind_hazards
+
+Source: `v6/prolog/ARCH.pl:920`
+
+```text
+THE DEAF WATCHER WAS NEVER A DEFECT: bop run self-terminates after BOP_RUN_IDLE_MS=2000 idle (bop.ts:165) and the coordinator's receipt scripts (3s poll sleeps) were talking to a dead process -- filed as an engine defect twice, disproved by this lane. Surviving real finding: cold-boot host spawn ~1s/subprocess (55s cold vs 6s warm for 44 grep hosts). bop-run-idle vs rail receipts (serve, or a --forever flag) = user ruling pending.
+```
+
+## catalog_g1_producer
+
+Source: `v6/prolog/ARCH.pl:929`
+
+```text
+Landed as e3997cec: catalog_ddl_contract/2 + two []-returning stubs + the wired call site in lower_program/2 (lower.pl:3503). Shape = ONE table __catalog_rel(rel_id, parent_id, ordinal, local_name, kind, type_id), kind in {primitive, rel, column}; a column is a CHILD row of its rel, so it carries a type + annotation exactly as a rel can. Bill = 3 DDL statements per catalog-using program (CREATE TABLE, CREATE INDEX, one INSERT OR IGNORE carrying every row); across the 212 emitted modules catalog rows run 7/12/225 min/median/max incl the five primitives, and the seed adds 8.4%/14.6%/29.4% to the module's ddl array, which itself runs 714/2578/80198 bytes. Gated on program_uses_catalog/2 mirroring program_uses_tick/2 (analyze.pl:180); all 212 emitted modules stay byte-identical.
+```
+
+## enum_nullary_variant_empty_pk
+
+Source: `v6/prolog/ARCH.pl:934`
+
+```text
+SQLITE_ERROR: near ")": syntax error`. Every fixture in conformance/fixtures/0_enum_variants.pl gives every variant at least one field, so the nullary arm has never run. Two candidate fixes: key a fieldless variant on its id column, or refuse the construct with a named message. Blocks enum_column_type_erased below, because `none()` is the arm that makes an enum an Option.
+```
+
+## derived_rel_as_reference_target_duplicates
+
+Source: `v6/prolog/ARCH.pl:936`
+
+```text
+The target then takes rows from BOTH its own rules and the nested ingress, and the oracle returns a duplicated row: got [grade_tag(401,ripe),grade_tag(401,ripe)] want [grade_tag(401,ripe)]. Nothing refuses this. Measured the same day: zero unsupported constructs in analyze.pl or 0_program_check.pl name source or derived, and conformance/engine.pl has no bail site. CLAUDE.md carried "engine bails" from c4869c17 (2026-06-13), which described V5's rebuild_derived doing a full DELETE FROM rel; rebuild_derived exists only in v5 tests/it/*.rs and the 2026-08-02 turbo-minimize dropped that reason, so the line read as a v6 law. CLAUDE.md now scopes it to v5. Wanted: a named unsupported construct when a column type names a rel that any rule heads, plus a conformance fixture asserting it. Workaround in place: an enum column carries the instance id as int (0_enum_expand.pl retarget_enum_column_type/3), so no reference target is created.
+```
+
+## emit_rust_sqlite
+
+Source: `v6/prolog/ARCH.pl:956`
+
+```text
+Same emit_program/5 signature so the parameterized seam at compile.pl:438 takes it with no call-site special case. Graded by tick-log byte-diff against the oracle jsonl, widened by construct class. lower.pl:5325 already keeps delta-SQL generation backend-neutral for exactly this; ruling boop_dl6_sh_door (rulings.pl:678) named rust emitters as the later arc.
+```
+
+## shared_frontier_view_inflation
+
+Source: `v6/prolog/ARCH.pl:961`
+
+```text
+Cause is a design choice at lower.pl shared_frontier_view_ddl/3: every per-rel frontier NAME survives as a TEMP view carrying the payload column list and the __id join, so compiled reads keep their text unchanged. Three objects per rel become two (tables -22.5%, indexes -12.3%) while views go +154.9%. plans/2026-08-19-shared-sqlite-frontier.md priced pokeapi at 1,682,616 -> 716,125 DDL bytes; that number came from a rig with NO views and is not what the compiler emits. The alternative is rewriting every compiled frontier read to hit the shared table with a relation_id predicate instead of naming a view; nobody has priced it.
+```
+
+## shared_frontier_guard_lift
+
+Source: `v6/prolog/ARCH.pl:962`
+
+```text
+Each of the eight is a TODO written without a probe; none has been tested against the standing law that a stop is a hypothesis. The one structural constraint visible in the code is that shared_frontier_view_ddl/3 joins __frontier.row_id to the durable __id, so any frontier row without a live durable row (departure) or any rel whose storage carries no __id (non_set_rel) needs an answer before its guard lifts.
+```
+
+## direct_trigger_identity_prototype
+
+Source: `v6/prolog/ARCH.pl:774`
+
+```text
+NEXT separate hypothesis: automatically inject a target membership match when a relation-shaped head value lacks an explicit target atom; must grade recursive level fixpoint timing before landing. World/boot arrivals remain separate
+```
+
+## bigint_seam_normalize
+
+Source: `v6/prolog/ARCH.pl:874`
+
+```text
+Also: matrix classifier does not recognize runtime named unsupported constructs (name_mismatch bucket 5).
+```
