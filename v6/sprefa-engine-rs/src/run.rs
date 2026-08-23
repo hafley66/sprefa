@@ -17,7 +17,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 
-use crate::driver::{drive_tick, format_deltas, run_schedule, run_schedule_live};
+use crate::driver::{drive_tick_transacted, format_deltas, run_schedule, run_schedule_live};
 use crate::executors::clock::ClockExecutor;
 use crate::executors::watch::SoopyWatchExecutor;
 use crate::hosts::{self, ExecutorCadence, HostLiveRunner};
@@ -752,7 +752,7 @@ impl<'p> LiveLoop<'p> {
     async fn drive(&self, seam: &SqliteSeam, arrivals: Vec<Arrival>) -> Result<TickDeltas> {
         let span = tracing::info_span!("tick", tick = self.tick, arrivals = arrivals.len());
         let _entered = span.enter();
-        Ok(drive_tick(self.program, seam, arrivals).await?)
+        Ok(drive_tick_transacted(self.program, seam, arrivals).await?)
     }
 }
 
