@@ -97,7 +97,8 @@ impl GenProgram {
 
     fn from_checked_json(pj: ProgramJson) -> Self {
         let recursive_level_heads = incremental::recursive_heads(&pj.levels, &pj.relations);
-        let level_sources = incremental::level_sources(&pj.levels, &pj.relations);
+        let level_sources =
+            incremental::level_sources(&pj.levels, &pj.relations, &recursive_level_heads);
         GenProgram {
             name: pj.name,
             intern_mode: pj.intern_mode,

@@ -25,16 +25,38 @@ pub struct DeltaEvent {
 /// each column here is a shallow EXISTS.
 const PROBE_WIDTH: usize = 600;
 
+/// Columns `probe_columns` returns per rel.
+const PROBE_COLUMNS: usize = 3;
+
+/// Which level operator a head ran under, so the two passes over the same head
+/// share one reading of "did my inputs move since I last ran".
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LevelPhase {
+    /// apply_levels_before_edges and apply_levels_after_edges: the delta insert.
+    Insert,
+    /// recompute_levels_before_edges and recompute_levels_after_edges: the
+    /// from-base refcount re-derive.
+    Recount,
+}
+
 /// Which rels hold transient rows this tick, so a phase touches only those.
 /// Every write marks and nothing unmarks: over-approximating wastes a statement.
 pub struct TickWork {
-    moved: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Rel -> the tick clock reading at its last write. The key set is the moved
+    /// set; a rel absent here has not been written this tick.
+    moved_at: std::cell::RefCell<HashMap<String, u64>>,
+    /// Monotone inside one tick. A level operator's rows are a function of the
+    /// rels it reads, so a re-run with no newer input restages nothing.
+    clock: std::cell::Cell<u64>,
+    ran_at: std::cell::RefCell<HashMap<(LevelPhase, String), u64>>,
+    /// `unskipped`: no tick tables to read, so every gate answers yes.
+    ungated: bool,
     carry: std::collections::HashSet<String>,
     stale: std::collections::HashSet<String>,
     departures: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
-fn probe_columns(relation: &IncrementalRelationPlan) -> [String; 3] {
+fn probe_columns(relation: &IncrementalRelationPlan) -> [String; PROBE_COLUMNS] {
     let exists = |table: &str| format!("EXISTS(SELECT 1 FROM {})", quote_identifier(table));
     [
         exists(&relation.frontier_table_name),
@@ -55,7 +77,10 @@ impl TickWork {
     /// tables, so one reading holds until this tick's own writes mark.
     pub fn probe(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) -> TickWork {
         let mut work = TickWork {
-            moved: std::cell::RefCell::new(std::collections::HashSet::new()),
+            moved_at: std::cell::RefCell::new(HashMap::new()),
+            clock: std::cell::Cell::new(0),
+            ran_at: std::cell::RefCell::new(HashMap::new()),
+            ungated: false,
             carry: std::collections::HashSet::new(),
             stale: std::collections::HashSet::new(),
             departures: std::cell::RefCell::new(std::collections::HashSet::new()),
@@ -78,14 +103,15 @@ impl TickWork {
             answers.extend(row.iter().map(|value| value.as_i64().unwrap_or(0) != 0));
         }
         for (index, relation) in relations.iter().enumerate() {
-            if answers[index * 3] {
+            let at = index * PROBE_COLUMNS;
+            if answers[at] {
                 work.carry.insert(relation.rel.clone());
                 work.mark(&relation.rel);
             }
-            if answers[index * 3 + 1] {
+            if answers[at + 1] {
                 work.stale.insert(relation.rel.clone());
             }
-            if answers[index * 3 + 2] {
+            if answers[at + 2] {
                 work.departures.borrow_mut().insert(relation.rel.clone());
                 work.mark(&relation.rel);
             }
@@ -103,7 +129,12 @@ impl TickWork {
                 .collect()
         };
         TickWork {
-            moved: std::cell::RefCell::new(names()),
+            moved_at: std::cell::RefCell::new(
+                names().into_iter().map(|rel| (rel, 1u64)).collect(),
+            ),
+            clock: std::cell::Cell::new(1),
+            ran_at: std::cell::RefCell::new(HashMap::new()),
+            ungated: true,
             carry: names(),
             stale: names(),
             departures: std::cell::RefCell::new(
@@ -117,25 +148,58 @@ impl TickWork {
     }
 
     pub fn mark(&self, rel: &str) {
-        let mut moved = self.moved.borrow_mut();
-        if !moved.contains(rel) {
-            moved.insert(rel.to_string());
+        let clock = self.clock.get() + 1;
+        self.clock.set(clock);
+        let mut moved_at = self.moved_at.borrow_mut();
+        match moved_at.get_mut(rel) {
+            Some(at) => *at = clock,
+            None => {
+                moved_at.insert(rel.to_string(), clock);
+            }
         }
     }
 
     pub fn moved(&self, rel: &str) -> bool {
-        self.moved.borrow().contains(rel)
+        self.moved_at.borrow().contains_key(rel)
     }
 
-    fn any_moved(&self, rels: &[String]) -> bool {
-        let moved = self.moved.borrow();
-        rels.iter().any(|rel| moved.contains(rel))
+    /// True when one of `rels` was written after this head's last run under
+    /// `phase`, and records this run's reading when it is.
+    fn moved_since_run(&self, head: &str, phase: LevelPhase, rels: &[String]) -> bool {
+        if self.ungated {
+            return true;
+        }
+        let last = self
+            .ran_at
+            .borrow()
+            .get(&(phase, head.to_string()))
+            .copied()
+            .unwrap_or(0);
+        let fresh = {
+            let moved_at = self.moved_at.borrow();
+            rels.iter()
+                .any(|rel| moved_at.get(rel).is_some_and(|at| *at > last))
+        };
+        if fresh {
+            self.note_run(head, phase);
+        }
+        fresh
+    }
+
+    fn note_run(&self, head: &str, phase: LevelPhase) {
+        if self.ungated {
+            return;
+        }
+        self.ran_at
+            .borrow_mut()
+            .insert((phase, head.to_string()), self.clock.get());
     }
 
     fn departed(&self, rel: &str) -> bool {
         self.departures.borrow().contains(rel)
     }
 }
+
 
 /// Rows dedup by an index, never by scanning what is already collected. The
 /// counter is what a COUNT test reads: one probe per row, never one per pair.
@@ -1206,6 +1270,9 @@ fn to_statements(texts: &[String]) -> Vec<SqlStatement> {
 pub struct LevelSources {
     pub rels: Vec<String>,
     pub always: bool,
+    /// The head reads its own frontier, directly or around a cycle, so the rows
+    /// one round stages are the next round's input rather than its output.
+    pub self_feeding: bool,
 }
 
 /// A table that owns no rel and never forces a run: the global text intern, the
@@ -1291,18 +1358,23 @@ fn table_owners(relations: &[IncrementalRelationPlan]) -> HashMap<String, &str> 
 }
 
 /// One substring pass per program, never per tick: the answer is metadata.
+/// `cyclic` is `recursive_heads`, taken as an argument so the frontier scan
+/// behind it stays one scan per program.
 pub fn level_sources(
     statements: &[crate::types::IncrementalLevelStatement],
     relations: &[IncrementalRelationPlan],
+    cyclic: &[String],
 ) -> HashMap<String, LevelSources> {
     let owners = table_owners(relations);
     let mut sources: HashMap<String, LevelSources> = HashMap::new();
     for statement in statements {
+        let self_feeding = cyclic.contains(&statement.head_rel);
         let entry = sources
             .entry(statement.head_rel.clone())
             .or_insert_with(|| LevelSources {
                 rels: Vec::new(),
                 always: false,
+                self_feeding,
             });
         for text in level_statement_texts(statement) {
             for table in quoted_tables(text) {
@@ -1323,11 +1395,32 @@ fn level_runs_this_tick(
     sources: &HashMap<String, LevelSources>,
     statement: &crate::types::IncrementalLevelStatement,
     work: &TickWork,
+    phase: LevelPhase,
 ) -> bool {
-    match sources.get(&statement.head_rel) {
-        Some(reads) => reads.always || work.any_moved(&reads.rels),
-        None => true,
+    let head = statement.head_rel.as_str();
+    match sources.get(head) {
+        Some(reads) if !reads.always => work.moved_since_run(head, phase, &reads.rels),
+        _ => {
+            work.note_run(head, phase);
+            true
+        }
     }
+}
+
+
+/// The rows a run stages are its own output, so the reading it records is taken
+/// after it. Only a head reading its own frontier takes them back as input.
+fn settle_level_run(
+    sources: &HashMap<String, LevelSources>,
+    statement: &crate::types::IncrementalLevelStatement,
+    work: &TickWork,
+    phase: LevelPhase,
+) {
+    let head = statement.head_rel.as_str();
+    if sources.get(head).is_some_and(|reads| reads.self_feeding) {
+        return;
+    }
+    work.note_run(head, phase);
 }
 
 /// A head reads a rel when one of `tables` (quoted table name, rel) occurs in
@@ -1694,18 +1787,23 @@ pub fn apply_levels_before_edges(
     };
     let ordered: Vec<&crate::types::IncrementalLevelStatement> = statements.iter().collect();
     sequence_level_rounds(&ordered, |statement| {
-        if !level_runs_this_tick(sources, statement, work) {
-            return Ok(0);
-        }
         let closes_in_one_pass = feeds_another_round.iter().any(|h| h == &statement.head_rel)
             && statement.support_sql.is_some();
-        if closes_in_one_pass {
+        let phase = if closes_in_one_pass {
+            LevelPhase::Recount
+        } else {
+            LevelPhase::Insert
+        };
+        if !level_runs_this_tick(sources, statement, work, phase) {
+            return Ok(0);
+        }
+        let moved = if closes_in_one_pass {
             let copies: Vec<(String, i64)> = relations
                 .iter()
                 .filter(|r| r.rel == statement.head_rel)
                 .map(|r| (r.frontier_table_name.clone(), 2))
                 .collect();
-            reconcile_ref_count_statement(seam, statement, relations, &plans, &copies, work)
+            reconcile_ref_count_statement(seam, statement, relations, &plans, &copies, work)?
         } else {
             apply_level_statement(
                 seam,
@@ -1715,8 +1813,10 @@ pub fn apply_levels_before_edges(
                 false,
                 &mut next_sequence,
                 work,
-            )
-        }
+            )?
+        };
+        settle_level_run(sources, statement, work, phase);
+        Ok(moved)
     })
 }
 
@@ -2432,10 +2532,13 @@ pub fn apply_levels_after_edges(
     };
     let ordered: Vec<&crate::types::IncrementalLevelStatement> = statements.iter().collect();
     sequence_level_rounds(&ordered, |statement| {
-        if !level_runs_this_tick(sources, statement, work) {
+        if !level_runs_this_tick(sources, statement, work, LevelPhase::Insert) {
             return Ok(0);
         }
-        apply_level_statement(seam, statement, relations, &plans, true, &mut next_sequence, work)
+        let moved =
+            apply_level_statement(seam, statement, relations, &plans, true, &mut next_sequence, work)?;
+        settle_level_run(sources, statement, work, LevelPhase::Insert);
+        Ok(moved)
     })
 }
 
@@ -2463,7 +2566,7 @@ pub fn recompute_levels_before_edges(
     let plans = plan_index(relations);
     let reconcile = |seam: &SqliteSeam| -> BoundaryResult<()> {
         sequence_level_rounds(&ref_count_statements, |statement| {
-            if !level_runs_this_tick(sources, statement, work) {
+            if !level_runs_this_tick(sources, statement, work, LevelPhase::Recount) {
                 return Ok(0);
             }
             let relation = plan_for(
@@ -2471,14 +2574,16 @@ pub fn recompute_levels_before_edges(
                 &statement.head_rel,
                 "incremental level head relation missing",
             );
-            reconcile_ref_count_statement(
+            let moved = reconcile_ref_count_statement(
                 seam,
                 statement,
                 relations,
                 &plans,
                 &[(relation.frontier_table_name.clone(), 2)],
                 work,
-            )
+            )?;
+            settle_level_run(sources, statement, work, LevelPhase::Recount);
+            Ok(moved)
         })
     };
     if reconcile_every_tick {
@@ -2713,7 +2818,7 @@ pub fn recompute_levels_after_edges(
         };
         let ordered: Vec<&crate::types::IncrementalLevelStatement> = statements.iter().collect();
         sequence_level_rounds(&ordered, |statement| {
-            if !level_runs_this_tick(sources, statement, work) {
+            if !level_runs_this_tick(sources, statement, work, LevelPhase::Recount) {
                 return Ok(0);
             }
             let relation = plan_for(
@@ -2734,9 +2839,12 @@ pub fn recompute_levels_after_edges(
                     &mut next_sequence,
                     work,
                 )?;
+                settle_level_run(sources, statement, work, LevelPhase::Recount);
                 return Ok(0);
             }
-            reconcile_ref_count_statement(seam, statement, relations, &plans, &[], work)
+            let moved = reconcile_ref_count_statement(seam, statement, relations, &plans, &[], work)?;
+            settle_level_run(sources, statement, work, LevelPhase::Recount);
+            Ok(moved)
         })
     };
     if reconcile_every_tick {

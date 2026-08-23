@@ -255,12 +255,11 @@ fn an_ordered_tick_costs_its_change_not_the_program_size() {
     let expected =
         std::fs::read_to_string(engine_dir().join("tests/fixtures/ghcache_ticklog_base.txt"))
             .expect("read the base tick log");
-    assert!(
-        log == expected,
-        "the tick log moved: {} lines here against {} in the base fixture",
-        log.lines().count(),
-        expected.lines().count()
-    );
+    if log != expected {
+        let dump = engine_dir().join("target/ordered_statement_count/ghcache_ticklog.txt");
+        std::fs::write(&dump, &log).expect("write the moved tick log");
+        panic!("the tick log moved; this fold wrote {}", dump.display());
+    }
 
     assert_eq!(ticks.len(), 14, "the scripted schedule folds in 14 ticks");
     // A tick pays for its cone: `ordered.rs` ran all 100 levels twice a tick,
