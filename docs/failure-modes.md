@@ -2687,3 +2687,11 @@ The observed standard, in order — no step is optional:
 - **Fail-pre-fix**: the probe above folded through `emit_rust_harness`, tick 2 read `{"drained":{"add":[["s",1]]}}` with no `head` delta; after the fix it reads `head add ["s",2] del ["s",1]` (run and read, 2026-08-23).
 - **Rail**: a second `aggregate_scope_seed_sql/6` clause emits a seed arm per negated atom whose own args bind every group column. `lower.pl` is shared, so `emit_ts.pl` output moves for those programs; exactly one committed artifact changed, `compile/out/concat_program_queue.ts`, and it was regenerated.
 - **Entry**: OPEN, needs the user. A negated atom that does NOT bind every group column still seeds nothing, which is the same silent under-approximation for a narrower shape. The two candidate closes are (a) refuse the program by name the way a positive atom does (`aggregate_group_not_delta_local`), which newly refuses programs that compile today and silently answer wrong, or (b) rescope every live group of that head from the head table when the negated rel moves, which never refuses and costs one statement. Neither was taken in this arc: it is a compile-surface decision.
+
+## 82. Grading a live lane's worktree shares its cargo target
+
+- **Incident** (2026-08-23): the coordinator's grade of PR #427 read `cargo passed=136 failed=1` then `94 failed=8`, and `gate.sh` read `200=2 ... pr_transition_open_merged=0` twice, while the lane reported all green. A third run with the lane's builds finished read 163/0 and `200=5 pr_transition_open_merged=1`.
+- **RCA**: the coordinator ran `cargo test` and `gate.sh` inside the lane's worktree while the lane itself was running `cargo clean`/`cargo build` there; both share `target/`, so half-built binaries and a partially rebuilt `emit_rust_harness` folded the gate.
+- **Fail-pre-fix**: none automated; the receipt is the three runs above.
+- **Rail**: grade in a coordinator-owned checkout (`git worktree add <scratch> <branch>`), never in the lane's worktree while the lane is live; or hail the lane to stand down first. Red numbers from a shared `target/` are not evidence either way.
+- **Entry**: #427 merged at ecce409d5 after the third run.
