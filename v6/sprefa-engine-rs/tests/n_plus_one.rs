@@ -137,7 +137,7 @@ fn the_frontier_scan_runs_once_per_program() {
     let started = std::time::Instant::now();
     let heads = sprefa_engine_rs::incremental::recursive_heads(&statements, &relations);
     for _ in 0..3 {
-        sprefa_engine_rs::incremental::apply_levels_before_edges(&seam, &statements, &relations, &heads, &sprefa_engine_rs::incremental::TickWork::unskipped(&relations), &sprefa_engine_rs::incremental::level_sources(&statements, &relations))
+        sprefa_engine_rs::incremental::apply_levels_before_edges(&seam, &statements, &relations, &heads, &sprefa_engine_rs::incremental::TickWork::unskipped(&relations), &sprefa_engine_rs::incremental::level_sources(&statements, &relations, &heads))
             .expect("levels");
     }
     let probes = sprefa_engine_rs::incremental::frontier_probes() - before;
@@ -183,7 +183,7 @@ fn a_level_statement_fetches_its_plan_by_name() {
     let before = sprefa_engine_rs::incremental::plan_probes();
     let started = std::time::Instant::now();
     for _ in 0..3 {
-        sprefa_engine_rs::incremental::apply_levels_before_edges(&seam, &statements, &relations, &heads, &sprefa_engine_rs::incremental::TickWork::unskipped(&relations), &sprefa_engine_rs::incremental::level_sources(&statements, &relations))
+        sprefa_engine_rs::incremental::apply_levels_before_edges(&seam, &statements, &relations, &heads, &sprefa_engine_rs::incremental::TickWork::unskipped(&relations), &sprefa_engine_rs::incremental::level_sources(&statements, &relations, &heads))
             .expect("levels");
     }
     let probes = sprefa_engine_rs::incremental::plan_probes() - before;
