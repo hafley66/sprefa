@@ -2,10 +2,14 @@
 created: 2026-08-23
 updated: 2026-08-23
 type: improvement
-status: open
+status: done
 priority: high
 related: ['@one-path-busy-tick-cost', '@incremental-empty-delta-skip']
 labels: [engine, performance]
+closed: 2026-08-23
+commits:
+- hash: 78d264786
+  summary: 'merge #434 recount gate'
 ---
 
 # recount runs on additive ticks: gate the from-base re-derive on a source losing rows, and settle the level plane inside the tick

@@ -111,14 +111,14 @@ moved to `hafley66/hafley-rs`, nothing under `v6/boop` exists anymore).
 `--dry-run` prints the exact spawn line; use it before a shape you have not
 used before.
 
-**Lane models (user-set 2026-08-21, supersedes every earlier rotation for
-sprefa dispatch):** every delegated task runs on **sonnet at high effort**
-(`--model sonnet@high` through boop; Agent tool `model: sonnet`).
+**Lane models (user-set 2026-08-23, supersedes every earlier rotation for
+sprefa dispatch):** every delegated task runs on **native opus** (boop
+`--harness claude --model opus`; Agent tool `model: opus`). Codex sol only
+on an explicit per-lane ask; sonnet is off.
 Briefs carry extreme detail: every file, every receipt, every command, every
-style law inline, so sonnet makes no judgment call. The coordinator ALWAYS
-grades sonnet's tree itself (git log, git status, the full gate) before taking
-a result. opus only on an explicit per-lane ask. flash4 is off; `luna` stays
-an explicit per-lane ask only.
+style law inline. The coordinator ALWAYS grades a lane's tree itself (git
+log, git status, the full gate) before taking a result. flash4 is off; `luna`
+stays an explicit per-lane ask only.
 
 **A lane's `rc=0` means nothing.** `opencode run` exits 0 on a provider error
 with zero tokens emitted, and a lane can write its whole deliverable and exit 0
