@@ -54,8 +54,8 @@ const ZERO_ARRIVAL_CAP: u64 = 200;
 const ONE_ARRIVAL_CAP: u64 = 1450;
 const DRAIN_CAP: usize = 100;
 /// The whole 14-tick fold, the number issues/one-path-busy-tick-cost is about.
-/// Measured 7522 before null design lowering and 7366 after.
-const FOLD_STATEMENT_CAP: u64 = 7_450;
+/// Measured 6886 before null design lowering and 6730 after.
+const FOLD_STATEMENT_CAP: u64 = 6_800;
 /// The from-base refcount re-derive, the verb that was half the fold's
 /// statements. 3268 before null design lowering, 3244 after.
 const RECOUNT_STATEMENT_CAP: u64 = 3_300;
