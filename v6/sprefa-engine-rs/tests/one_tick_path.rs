@@ -19,7 +19,7 @@ use sprefa_engine_rs::incremental::level_runs;
 use sprefa_engine_rs::program::run_boot;
 use sprefa_engine_rs::run;
 use sprefa_engine_rs::sql::{SqlRunner, SEAM_TALLY};
-use sprefa_engine_rs::types::{Arrival, ArrivalSign, ArmSchedule, Value};
+use sprefa_engine_rs::types::{ArmSchedule, Arrival, ArrivalSign, Value};
 
 const LEVELS: usize = 50;
 

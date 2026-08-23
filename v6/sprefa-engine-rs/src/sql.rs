@@ -366,15 +366,18 @@ fn classify_plan(lines: &[String]) -> (bool, ScanKind) {
         .map(String::as_str)
         .filter(|line| line.starts_with("SCAN") && *line != "SCAN CONSTANT ROW")
         .collect();
-    if scan_entries.iter().any(|line| !line.contains("VIRTUAL TABLE")) {
+    if scan_entries
+        .iter()
+        .any(|line| !line.contains("VIRTUAL TABLE"))
+    {
         return (true, ScanKind::Inner);
     }
     if !scan_entries.is_empty() {
         return (false, ScanKind::JsonEach);
     }
-    let ref_subquery = lines
-        .iter()
-        .any(|line| line.contains("SEARCH") && line.contains("USING INTEGER PRIMARY KEY (rowid=?)"));
+    let ref_subquery = lines.iter().any(|line| {
+        line.contains("SEARCH") && line.contains("USING INTEGER PRIMARY KEY (rowid=?)")
+    });
     if ref_subquery {
         return (false, ScanKind::RefSubquery);
     }
@@ -578,7 +581,10 @@ impl SqlRunner for SqliteSeam {
             span.record("rows_out", out_rows.len() as u64);
             span.record("rows_changed", rows_affected);
             span.record("prepare_us", prepare_nanos / 1_000);
-            span.record("step_us", elapsed_nanos.saturating_sub(prepare_nanos) / 1_000);
+            span.record(
+                "step_us",
+                elapsed_nanos.saturating_sub(prepare_nanos) / 1_000,
+            );
         }
         {
             use std::sync::atomic::Ordering::Relaxed;
@@ -644,7 +650,8 @@ impl SqlRunner for SqliteSeam {
     fn scalar(&self, sql: &str) -> Result<i64> {
         let started = std::time::Instant::now();
         let label = crate::trace::current_label();
-        let span = tracing::trace_span!("sql_scalar", relation = %label.relation, verb = label.verb);
+        let span =
+            tracing::trace_span!("sql_scalar", relation = %label.relation, verb = label.verb);
         let _entered = span.enter();
         let value = self.conn.query_row(sql, [], |row| row.get(0)).optional()?;
         crate::trace::record(label, started.elapsed().as_nanos() as u64, 1, 0);
@@ -781,7 +788,8 @@ mod tests {
         (\"__id\" INTEGER PRIMARY KEY, \"page_url\" INTEGER, \"etag\" INTEGER)";
 
     fn stored_etags(seam: &SqliteSeam) -> i64 {
-        seam.scalar("SELECT COUNT(*) FROM \"p_poll_state_etag\"").expect("count")
+        seam.scalar("SELECT COUNT(*) FROM \"p_poll_state_etag\"")
+            .expect("count")
     }
 
     /// TEST: issues/dl6-run-restart-loses-etags. Every restart dropped this
@@ -832,11 +840,14 @@ mod tests {
         first.run_program_ddl(&ddl, &[]).expect("first ddl");
         first
             .execute_multiple("INSERT INTO \"__str\" VALUES (1, 'orgs/hafley66/repos')")
-            .expect("one interned text")
-            ;
-        first.run_program_ddl(&ddl, &[]).expect("second ddl in the same process");
+            .expect("one interned text");
+        first
+            .run_program_ddl(&ddl, &[])
+            .expect("second ddl in the same process");
         assert_eq!(
-            first.scalar("SELECT COUNT(*) FROM \"__str\"").expect("count"),
+            first
+                .scalar("SELECT COUNT(*) FROM \"__str\"")
+                .expect("count"),
             1,
             "the interned text dictionary is shared by every program in the one db"
         );
@@ -847,9 +858,7 @@ mod tests {
     #[test]
     fn a_batch_counts_every_statement_in_it() {
         assert_eq!(
-            batch_statement_count(
-                "DELETE FROM \"__delta_a\";\nDELETE FROM \"__next_frontier_a\""
-            ),
+            batch_statement_count("DELETE FROM \"__delta_a\";\nDELETE FROM \"__next_frontier_a\""),
             2
         );
         assert_eq!(
@@ -892,8 +901,7 @@ mod tests {
 
         let inner = vec![
             "SCAN CONSTANT ROW".to_string(),
-            "SCAN b0 USING COVERING INDEX sqlite_autoindex_ghcache_pr_batch_response_1"
-                .to_string(),
+            "SCAN b0 USING COVERING INDEX sqlite_autoindex_ghcache_pr_batch_response_1".to_string(),
         ];
         assert_eq!(classify_plan(&inner), (true, ScanKind::Inner));
     }

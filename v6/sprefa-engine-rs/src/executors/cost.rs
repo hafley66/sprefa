@@ -64,7 +64,10 @@ pub fn resident_kb() -> u64 {
         true,
         ProcessRefreshKind::nothing().with_memory(),
     );
-    probe.process(pid).map(|found| found.memory() / 1024).unwrap_or(0)
+    probe
+        .process(pid)
+        .map(|found| found.memory() / 1024)
+        .unwrap_or(0)
 }
 
 pub struct TickCostExecutor;
@@ -152,8 +155,14 @@ fn cost_row(bucket: i64, executor: &str, stat: &Stat, bytes: u64, rss_kb: u64) -
     row([
         ("bucket", serde_json::json!(bucket)),
         ("executor", serde_json::json!(executor)),
-        ("wall_ms", serde_json::json!((stat.wall_nanos / 1_000_000) as i64)),
-        ("sqlite_ms", serde_json::json!((stat.nanos / 1_000_000) as i64)),
+        (
+            "wall_ms",
+            serde_json::json!((stat.wall_nanos / 1_000_000) as i64),
+        ),
+        (
+            "sqlite_ms",
+            serde_json::json!((stat.nanos / 1_000_000) as i64),
+        ),
         ("calls", serde_json::json!(stat.calls as i64)),
         ("rows_out", serde_json::json!(stat.rows_out as i64)),
         ("bytes", serde_json::json!(bytes as i64)),

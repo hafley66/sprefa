@@ -330,8 +330,7 @@ struct CacheKey {
 
 impl CacheKey {
     fn read(source: &Path, repo_root: &Path) -> Result<CacheKey> {
-        let bytes = std::fs::read(source)
-            .with_context(|| format!("read {}", source.display()))?;
+        let bytes = std::fs::read(source).with_context(|| format!("read {}", source.display()))?;
         Ok(CacheKey {
             source: blake3::hash(&bytes),
             compiler: compiler_tree_digest(repo_root)?,
@@ -380,7 +379,9 @@ fn collect_prolog_stamps(
         if path.is_dir() {
             collect_prolog_stamps(&path, repo_root, stamps)?;
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("pl") {
-            let metadata = entry.metadata().with_context(|| format!("stat {}", path.display()))?;
+            let metadata = entry
+                .metadata()
+                .with_context(|| format!("stat {}", path.display()))?;
             let modified = metadata
                 .modified()
                 .ok()
@@ -388,7 +389,11 @@ fn collect_prolog_stamps(
                 .map(|since| since.as_nanos())
                 .unwrap_or(0);
             let relative = path.strip_prefix(repo_root).unwrap_or(&path);
-            stamps.push(format!("{} {} {modified}", relative.display(), metadata.len()));
+            stamps.push(format!(
+                "{} {} {modified}",
+                relative.display(),
+                metadata.len()
+            ));
         }
     }
     Ok(())
@@ -418,8 +423,7 @@ fn compiled_program(source: &Path, repo_root: &Path) -> Result<(PathBuf, CacheKe
         repo_root: repo_root.to_path_buf(),
     };
     compiler.program(source, &staged)?;
-    std::fs::rename(&staged, &cached)
-        .with_context(|| format!("install {}", cached.display()))?;
+    std::fs::rename(&staged, &cached).with_context(|| format!("install {}", cached.display()))?;
     Ok((cached, key, false))
 }
 
@@ -459,7 +463,13 @@ fn read_schedule(path: &Path) -> Result<Vec<Vec<sprefa_engine_rs::types::Arrival
 
 /// Everything both verbs do before their first tick: compile (or hit the cache),
 /// load the program, resolve the seeds, and move to the tree the hosts read.
-fn prepare(args: &ProgramArgs) -> Result<(run::LoadedProgram, Vec<sprefa_engine_rs::types::Arrival>, RunOptions)> {
+fn prepare(
+    args: &ProgramArgs,
+) -> Result<(
+    run::LoadedProgram,
+    Vec<sprefa_engine_rs::types::Arrival>,
+    RunOptions,
+)> {
     let source = args
         .source
         .canonicalize()
@@ -483,12 +493,18 @@ fn prepare(args: &ProgramArgs) -> Result<(run::LoadedProgram, Vec<sprefa_engine_
     if adapters_text(&source, args.adapters.as_deref())?.contains("dl_tick_cost") {
         sprefa_engine_rs::trace::force_summary();
     }
-    let db = if args.in_memory { None } else { Some(one_db_path()?) };
+    let db = if args.in_memory {
+        None
+    } else {
+        Some(one_db_path()?)
+    };
     let loaded = run::load_program(&compiled)?;
     let schedule = match &args.schedule {
-        Some(path) => read_schedule(&path.canonicalize().with_context(|| {
-            format!("read the schedule {}", path.display())
-        })?)?,
+        Some(path) => read_schedule(
+            &path
+                .canonicalize()
+                .with_context(|| format!("read the schedule {}", path.display()))?,
+        )?,
         None => Vec::new(),
     };
     std::env::set_current_dir(&args.root)
@@ -528,8 +544,9 @@ fn run(args: ProgramArgs) -> Result<()> {
         .canonicalize()
         .with_context(|| format!("read {}", args.root.display()))?;
     let (loaded, seeds, options) = prepare(&args)?;
-    let adapter_rows = sprefa_engine_rs::types::load_program_host_adapter_rows(&loaded.program.name)
-        .context("read the process adapter sidecar")?;
+    let adapter_rows =
+        sprefa_engine_rs::types::load_program_host_adapter_rows(&loaded.program.name)
+            .context("read the process adapter sidecar")?;
     if !args.once && run::stays_resident(&loaded.program, &adapter_rows) {
         let (stop, listen) = tokio::sync::watch::channel(false);
         // SIGINT is the one way a resident run ends, and the handler only flips
@@ -555,7 +572,10 @@ fn ctrlc_flag(stop: tokio::sync::watch::Sender<bool>) -> Result<()> {
     std::thread::Builder::new()
         .name("dl6-signal".to_string())
         .spawn(move || {
-            let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
                 Ok(runtime) => runtime,
                 Err(_) => return,
             };

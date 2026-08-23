@@ -43,10 +43,14 @@ fn pr_batch_response_searches_status_after_the_audit_index() {
          WHERE (b0.\"status\" IS 200)",
     );
     assert!(
-        plan_text.contains("SEARCH") && plan_text.contains("ghcache_pr_batch_response__scan_status"),
+        plan_text.contains("SEARCH")
+            && plan_text.contains("ghcache_pr_batch_response__scan_status"),
         "no SEARCH on the status index in: {plan_text}"
     );
-    assert!(!plan_text.contains("SCAN b0"), "b0 still SCANned: {plan_text}");
+    assert!(
+        !plan_text.contains("SCAN b0"),
+        "b0 still SCANned: {plan_text}"
+    );
 }
 
 #[test]
@@ -78,7 +82,10 @@ fn rest_response_searches_status_after_the_audit_index() {
         plan_text.contains("SEARCH") && plan_text.contains("ghcache_rest_response__scan_status"),
         "no SEARCH on the status index in: {plan_text}"
     );
-    assert!(!plan_text.contains("SCAN b1"), "b1 still SCANned: {plan_text}");
+    assert!(
+        !plan_text.contains("SCAN b1"),
+        "b1 still SCANned: {plan_text}"
+    );
 }
 
 #[test]
@@ -110,5 +117,8 @@ fn checkout_task_searches_fetch_pr_branches_after_the_audit_index() {
             && plan_text.contains("ghcache_checkout_task__scan_fetch_pr_branches"),
         "no SEARCH on the fetch_pr_branches index in: {plan_text}"
     );
-    assert!(!plan_text.contains("SCAN b0"), "b0 still SCANned: {plan_text}");
+    assert!(
+        !plan_text.contains("SCAN b0"),
+        "b0 still SCANned: {plan_text}"
+    );
 }

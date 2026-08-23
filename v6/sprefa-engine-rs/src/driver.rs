@@ -85,8 +85,7 @@ pub async fn run_schedule(
             );
         }
         let deltas = {
-            let span =
-                tracing::info_span!("tick", tick = tick_number, arrivals = arrivals.len());
+            let span = tracing::info_span!("tick", tick = tick_number, arrivals = arrivals.len());
             let _entered = span.enter();
             drive_tick_transacted(program, seam, arrivals).await?
         };

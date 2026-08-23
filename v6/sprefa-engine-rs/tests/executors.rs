@@ -20,7 +20,9 @@ use sprefa_engine_rs::hosts::IHostExecutor;
 static ENVIRONMENT: Mutex<()> = Mutex::new(());
 
 fn serialized() -> MutexGuard<'static, ()> {
-    ENVIRONMENT.lock().unwrap_or_else(|poison| poison.into_inner())
+    ENVIRONMENT
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
 }
 
 fn inputs(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
@@ -43,7 +45,10 @@ fn env_var_absent_answers_zero_rows() {
     let absent = EnvExecutor
         .run("env_var", "", &inputs(&[("name", "DL_GHCACHER_NEVER_SET")]))
         .expect("absent var");
-    assert!(absent.is_empty(), "an unset variable is zero rows, never an empty row");
+    assert!(
+        absent.is_empty(),
+        "an unset variable is zero rows, never an empty row"
+    );
 }
 
 #[test]
@@ -58,7 +63,11 @@ fn toml_json_decodes_a_document() {
         .expect("decode");
     assert_eq!(decoded[0]["doc"]["global"]["db_path"], "/repo/db.sqlite");
 
-    let missing = home.path().join("absent.toml").to_string_lossy().to_string();
+    let missing = home
+        .path()
+        .join("absent.toml")
+        .to_string_lossy()
+        .to_string();
     let empty = TomlJsonExecutor
         .run("toml_json", "", &inputs(&[("config_path", &missing)]))
         .expect("absent file");
@@ -71,7 +80,11 @@ fn soopy_checkout_reads_head_and_names_the_clone_gap() {
         .join("../..")
         .canonicalize()
         .expect("repository root");
-    let dest_root = root.parent().expect("parent of root").to_string_lossy().to_string();
+    let dest_root = root
+        .parent()
+        .expect("parent of root")
+        .to_string_lossy()
+        .to_string();
     let repo_slug = root
         .file_name()
         .expect("root directory name")
@@ -115,8 +128,7 @@ fn soopy_checkout_reads_head_and_names_the_clone_gap() {
 // roster; LINKED_EXECUTORS and executor_for answer the same names.
 #[test]
 fn executor_roster_matches_registry() {
-    let registry = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../prolog/compile/registry.pl");
+    let registry = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../prolog/compile/registry.pl");
     let source = std::fs::read_to_string(&registry)
         .unwrap_or_else(|error| panic!("read {}: {error}", registry.display()));
     let mut registry_names: Vec<String> = source
@@ -137,8 +149,14 @@ fn executor_roster_matches_registry() {
     registry_names.sort();
     registry_names.dedup();
     linked.sort();
-    assert!(!registry_names.is_empty(), "no arrival_executor rows parsed");
-    assert_eq!(registry_names, linked, "registry roster != LINKED_EXECUTORS");
+    assert!(
+        !registry_names.is_empty(),
+        "no arrival_executor rows parsed"
+    );
+    assert_eq!(
+        registry_names, linked,
+        "registry roster != LINKED_EXECUTORS"
+    );
     for name in &linked {
         assert!(
             sprefa_engine_rs::hosts::executor_for(name).is_some(),
@@ -146,7 +164,6 @@ fn executor_roster_matches_registry() {
         );
     }
 }
-
 
 // ═══ the one transport ══════════════════════════════════════════════════════
 
@@ -188,7 +205,9 @@ fn write_response(stream: &mut TcpStream, status: &str, headers: &str, body: &st
         "HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
-    stream.write_all(response.as_bytes()).expect("write response");
+    stream
+        .write_all(response.as_bytes())
+        .expect("write response");
     stream.flush().expect("flush response");
 }
 
@@ -208,12 +227,16 @@ fn serve(
                 return;
             };
             let seen = read_request(&mut stream);
-            let conditional = seen
-                .lines
-                .iter()
-                .any(|line| line.to_ascii_lowercase().starts_with("if-none-match:") && line.contains(etag));
+            let conditional = seen.lines.iter().any(|line| {
+                line.to_ascii_lowercase().starts_with("if-none-match:") && line.contains(etag)
+            });
             if conditional {
-                write_response(&mut stream, "304 Not Modified", &format!("ETag: {etag}\r\n"), "");
+                write_response(
+                    &mut stream,
+                    "304 Not Modified",
+                    &format!("ETag: {etag}\r\n"),
+                    "",
+                );
             } else {
                 write_response(
                     &mut stream,
@@ -249,7 +272,10 @@ fn http_get_answers_200_then_304_from_the_rows_own_header() {
         .expect("first GET");
     assert_eq!(first.len(), 1);
     assert_eq!(first[0]["status"], 200);
-    assert_eq!(first[0]["body"], body, "the body column is the document text");
+    assert_eq!(
+        first[0]["body"], body,
+        "the body column is the document text"
+    );
     assert_eq!(first[0]["bytes"], body.len());
     let headers: serde_json::Value =
         serde_json::from_str(first[0]["response_headers"].as_str().expect("header text"))
@@ -325,8 +351,15 @@ fn http_post_sends_the_rows_request_body() {
     assert_eq!(answered[0]["status"], 200);
     assert_eq!(answered[0]["body"], r#"{"data":{"ok":1}}"#);
     let seen = log.lock().expect("request log");
-    assert_eq!(seen[0].body, query, "the GraphQL query is built by rule, not here");
-    assert!(seen[0].lines[0].starts_with("POST "), "{:?}", seen[0].lines[0]);
+    assert_eq!(
+        seen[0].body, query,
+        "the GraphQL query is built by rule, not here"
+    );
+    assert!(
+        seen[0].lines[0].starts_with("POST "),
+        "{:?}",
+        seen[0].lines[0]
+    );
 }
 
 /// COUNT RECEIPT for the 10-second law. Eight endpoints against a listener that

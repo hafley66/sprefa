@@ -116,8 +116,7 @@ fn a_one_shot_run_prints_the_ordered_final_tsv() {
     score_seeds(&mut command);
     let stdout = ok(&finish(&mut command, "one-shot run"), "one-shot run");
     assert_eq!(
-        stdout,
-        "score\t2\t30\nscore\t1\t10\nmodule_defs\ta.ts\t9\nmodule_defs\tb.ts\t4\n",
+        stdout, "score\t2\t30\nscore\t1\t10\nmodule_defs\ta.ts\t9\nmodule_defs\tb.ts\t4\n",
         "the `?` order tail decides the row order, and --final-rels the rel order"
     );
 }
@@ -144,10 +143,11 @@ fn fail_on_exits_one_when_the_query_answers_rows() {
     // did not move, and re-using this one would answer the seeded rows again.
     let unseeded = Scratch::new();
     let mut empty = unseeded.dl6();
-    empty
-        .arg("run")
-        .arg(fixture("query_order_tail.dl6"))
-        .args(["--final-only", "--fail-on", "score"]);
+    empty.arg("run").arg(fixture("query_order_tail.dl6")).args([
+        "--final-only",
+        "--fail-on",
+        "score",
+    ]);
     let quiet = finish(&mut empty, "fail-on with no rows");
     assert_eq!(
         quiet.code,
@@ -169,8 +169,7 @@ fn an_unknown_fail_on_query_is_named_before_the_fold() {
     let run = finish(&mut command, "fail-on an unknown query");
     assert_ne!(run.code, Some(0), "an unknown query is a stop");
     assert!(
-        run.stderr.contains("which the program does not answer")
-            && run.stderr.contains("score"),
+        run.stderr.contains("which the program does not answer") && run.stderr.contains("score"),
         "the stop names the query and lists the declared ones: {}",
         run.stderr
     );
@@ -208,7 +207,9 @@ impl SwiplCounter {
             ),
         )
         .expect("write the swipl shim");
-        let mut mode = std::fs::metadata(&shim).expect("stat the shim").permissions();
+        let mut mode = std::fs::metadata(&shim)
+            .expect("stat the shim")
+            .permissions();
         std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o755);
         std::fs::set_permissions(&shim, mode).expect("make the shim executable");
         SwiplCounter { directory, log }
@@ -321,7 +322,11 @@ fn git(worktree: &Path, arguments: &[&str]) {
         .args(arguments)
         .status()
         .expect("run git");
-    assert!(status.success(), "git {arguments:?} in {}", worktree.display());
+    assert!(
+        status.success(),
+        "git {arguments:?} in {}",
+        worktree.display()
+    );
 }
 
 #[test]
@@ -355,7 +360,9 @@ fn one_touched_file_produces_exactly_one_extra_tick() {
     std::fs::write(root.join("src/one.ts"), "export const one = 11;\n").expect("touch one.ts");
     std::thread::sleep(Duration::from_millis(3500));
     let _ = child.kill();
-    let output = child.wait_with_output().expect("collect the resident file watch");
+    let output = child
+        .wait_with_output()
+        .expect("collect the resident file watch");
     let elapsed = started.elapsed();
     println!("dl6_run: watch one touch {:.2}s", elapsed.as_secs_f64());
     assert!(
@@ -421,7 +428,10 @@ fn a_resident_run_measures_itself_and_a_storeless_program_stays_flat() {
     let _ = child.kill();
     let output = child.wait_with_output().expect("collect the resident run");
     let elapsed = started.elapsed();
-    println!("dl6_run: resident self-measurement {:.2}s", elapsed.as_secs_f64());
+    println!(
+        "dl6_run: resident self-measurement {:.2}s",
+        elapsed.as_secs_f64()
+    );
     assert!(
         elapsed < TEN_SECOND_LAW,
         "the resident test took {elapsed:?}, over its 10-second cap"
@@ -440,8 +450,7 @@ fn a_resident_run_measures_itself_and_a_storeless_program_stays_flat() {
         rows.len()
     );
 
-    let buckets: std::collections::BTreeSet<&str> =
-        rows.iter().map(|row| row[0]).collect();
+    let buckets: std::collections::BTreeSet<&str> = rows.iter().map(|row| row[0]).collect();
     assert!(
         buckets.len() >= 4,
         "the cadence turned {} times in eight seconds: {stderr}",
@@ -543,7 +552,11 @@ fn re_running_one_program_replaces_only_its_own_tables() {
         "the second pass re-created the view rather than doubling its rows"
     );
     assert_eq!(
-        sqlite(&db, "SELECT count(*) FROM __meta WHERE program='query_order_tail'").trim(),
+        sqlite(
+            &db,
+            "SELECT count(*) FROM __meta WHERE program='query_order_tail'"
+        )
+        .trim(),
         "2",
         "__meta appends one row per run"
     );
@@ -564,7 +577,11 @@ fn a_drain_overflow_names_the_loudest_rels() {
         .arg("run")
         .arg(fixture("drain_identity_loop.dl6"));
     let run = finish(&mut command, "drain overflow");
-    assert_ne!(run.code, Some(0), "a fold that never settles must not exit 0");
+    assert_ne!(
+        run.code,
+        Some(0),
+        "a fold that never settles must not exit 0"
+    );
     assert!(
         run.stderr.contains("drain overflow"),
         "the cap is what ends it: {}",
@@ -573,8 +590,9 @@ fn a_drain_overflow_names_the_loudest_rels() {
     // The demand rel is retracted and re-minted every tick, which is what a
     // moving identity looks like from outside the program.
     assert!(
-        run.stderr
-            .contains("the loudest rels are __host_demand_env__var +6/-6, ask +6/-6, next_salt +6/-6"),
+        run.stderr.contains(
+            "the loudest rels are __host_demand_env__var +6/-6, ask +6/-6, next_salt +6/-6"
+        ),
         "the three rels with the most +/- lines are named with their counts: {}",
         run.stderr
     );

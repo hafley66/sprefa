@@ -292,7 +292,15 @@ pub fn intern<'a>(
     let mut ids = HashMap::new();
     for plan in types {
         if let Some(collected) = per_type.get(&plan.name) {
-            intern_type(work, seam, plan, &collected.0, &mut ids, relations, text_plan)?;
+            intern_type(
+                work,
+                seam,
+                plan,
+                &collected.0,
+                &mut ids,
+                relations,
+                text_plan,
+            )?;
         }
     }
     let rewritten: Vec<Arrival> = arrivals

@@ -42,10 +42,7 @@ impl IHostExecutor for SoopyCheckoutExecutor {
             ));
         }
         let repository = soopy::discover(&checkout_path).map_err(|failure| {
-            host_error(
-                host,
-                format!("open {}: {failure}", checkout_path.display()),
-            )
+            host_error(host, format!("open {}: {failure}", checkout_path.display()))
         })?;
         let query = soopy::RefQuery {
             repository: repository.identity.clone(),

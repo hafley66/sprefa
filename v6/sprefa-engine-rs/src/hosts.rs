@@ -78,11 +78,20 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
     match execution {
         // The /extract/* questions share the in-process extractor; each rel
         // selects its own rows out of the one stream by column presence.
-        "/extract/records" | "/extract/repo_records" | "/extract/call_node"
-        | "/extract/call_node_at" | "/extract/call_ref" | "/extract/cfg_at"
-        | "/extract/specifier_at" | "/extract/type_node_at" | "/extract/sig_at"
-        | "/extract/df_node_at" | "/extract/df_edge_at" | "/extract/df_param_at"
-        | "/extract/df_arg_at" | "/extract/data_doc_at"
+        "/extract/records"
+        | "/extract/repo_records"
+        | "/extract/call_node"
+        | "/extract/call_node_at"
+        | "/extract/call_ref"
+        | "/extract/cfg_at"
+        | "/extract/specifier_at"
+        | "/extract/type_node_at"
+        | "/extract/sig_at"
+        | "/extract/df_node_at"
+        | "/extract/df_edge_at"
+        | "/extract/df_param_at"
+        | "/extract/df_arg_at"
+        | "/extract/data_doc_at"
         | "/extract/comment_fact" => Some(&*EXTRACT),
         "/extract/ast_rule" => Some(&AstRuleExecutor),
         // Two names, one executor: files_revision/2 reads which revision the
@@ -345,7 +354,10 @@ pub struct SoopyFilesExecutor;
 
 /// The revision each name walks. The name is the marker, so a name off this
 /// roster is a stop and never a worktree fallback.
-fn files_revision(host: &str, env: &BTreeMap<String, String>) -> Result<soopy::Revision, HostError> {
+fn files_revision(
+    host: &str,
+    env: &BTreeMap<String, String>,
+) -> Result<soopy::Revision, HostError> {
     // `host` is the plan name, so it is module_path_name/2's `__` join of the
     // declaration's path: `/soopy/files` arrives here as `soopy__files`.
     match host {
@@ -1420,10 +1432,7 @@ fn witness_digest_for(plan: &HostPlanData, inputs: &BTreeMap<String, ScalarValue
     let mut digest = format!("witness|{}", plan.name);
     for input in &plan.inputs {
         let value = inputs.get(&input.name).map(shell_text).unwrap_or_default();
-        digest.push_str(&format!(
-            "|{}:{}={value}",
-            input.name, input.column_type
-        ));
+        digest.push_str(&format!("|{}:{}={value}", input.name, input.column_type));
     }
     digest
 }
