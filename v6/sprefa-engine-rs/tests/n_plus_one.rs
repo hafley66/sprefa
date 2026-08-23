@@ -91,7 +91,7 @@ fn stage_departures_asks_each_rel_once() {
     let _serial = PROBE_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
     let before = sprefa_engine_rs::incremental::plan_probes();
     let started = std::time::Instant::now();
-    sprefa_engine_rs::incremental::stage_departures(&seam, &relations, &deltas)
+    sprefa_engine_rs::incremental::stage_departures(&seam, &relations, &deltas, &sprefa_engine_rs::incremental::TickWork::probe(&seam, &relations))
         .expect("stage departures");
     let probes = sprefa_engine_rs::incremental::plan_probes() - before;
     assert!(
@@ -137,7 +137,7 @@ fn the_frontier_scan_runs_once_per_program() {
     let started = std::time::Instant::now();
     let heads = sprefa_engine_rs::incremental::recursive_heads(&statements, &relations);
     for _ in 0..3 {
-        sprefa_engine_rs::incremental::apply_levels_before_edges(&seam, &statements, &relations, &heads)
+        sprefa_engine_rs::incremental::apply_levels_before_edges(&seam, &statements, &relations, &heads, &sprefa_engine_rs::incremental::TickWork::probe(&seam, &relations), &sprefa_engine_rs::incremental::level_sources(&statements, &relations))
             .expect("levels");
     }
     let probes = sprefa_engine_rs::incremental::frontier_probes() - before;
@@ -183,7 +183,7 @@ fn a_level_statement_fetches_its_plan_by_name() {
     let before = sprefa_engine_rs::incremental::plan_probes();
     let started = std::time::Instant::now();
     for _ in 0..3 {
-        sprefa_engine_rs::incremental::apply_levels_before_edges(&seam, &statements, &relations, &heads)
+        sprefa_engine_rs::incremental::apply_levels_before_edges(&seam, &statements, &relations, &heads, &sprefa_engine_rs::incremental::TickWork::probe(&seam, &relations), &sprefa_engine_rs::incremental::level_sources(&statements, &relations))
             .expect("levels");
     }
     let probes = sprefa_engine_rs::incremental::plan_probes() - before;
