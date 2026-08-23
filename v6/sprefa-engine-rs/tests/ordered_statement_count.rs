@@ -14,8 +14,10 @@
 //!   tick  4: 1890 (1 arrival)    tick 10: 1878 (0 arrivals)
 //!   tick  5: 1902 (1 arrival)
 //!
-//! The issue's table says 1,135 for tick 5; that number is the sum of the four
-//! phases it attributed, and the tick's total is what this test reads.
+//! The issue's table says 1,135 for tick 5. That number counted the statements
+//! dispatched one at a time through `execute` and listed the 202
+//! `execute_multiple` batches on their own row; this test reads the tick's
+//! total, every statement inside those batches included.
 //!
 //! An idle tick cost the same as a working one: `read_snapshot` read all 154
 //! rels five times, `recompute_levels` rebuilt all 100 levels twice, and the
