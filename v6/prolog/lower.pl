@@ -170,9 +170,9 @@
             % The `?` order tail's SQL, read by both emitters so the clause
             % they append to final_select has one definition.
             query_order_by_map/3,
-            % issues/inner-scan-audit: the audited (rel, column) index pairs,
-            % exported so the plunit unit pins the DDL text directly.
-            audit_scan_index_column/2, audit_scan_index_ddls/2,
+            % issues/inner-scan-audit: exported so the plunit unit pins the
+            % derived (rel, column) pairs and the DDL text directly.
+            audit_scan_index_pairs/5, audit_scan_index_ddls/5,
             audit_scan_index_ddl/3 ]).
 
 :- use_module(library(lists)).
@@ -6637,20 +6637,46 @@ order_index_ddl(Ref, Ordinal, Columns, OrderCols, Ddl) :-
     format(atom(Ddl), 'CREATE INDEX ~w ON ~w (~w)',
            [QuotedIndexName, QuotedTable, TermsSql]).
 
-% A stored rel's non-leading-key column, measured with a SCAN after a join
-% in plans/inner-scan-audit/explain.log; the UNIQUE key can't seek on it.
-audit_scan_index_column(pr_batch_response, status).
-audit_scan_index_column(rest_response, status).
-audit_scan_index_column(checkout_task, fetch_pr_branches).
+% A stored rel's non-leading-key column some rule body compares by identity
+% (==) against a literal or bound var: the composite UNIQUE key can't seek it.
+audit_scan_index_pairs(RelPlans, Rules, EdgeHeadedRefs, ArrivalTargets, Pairs) :-
+    findall(Ref-Column,
+            audit_scan_index_pair(RelPlans, Rules, EdgeHeadedRefs,
+                                  ArrivalTargets, Ref, Column),
+            Pairs0),
+    sort(Pairs0, Pairs).
 
-audit_scan_index_ddls(RelPlans, Ddls) :-
+audit_scan_index_pair(RelPlans, Rules, EdgeHeadedRefs, ArrivalTargets, Ref,
+                      Column) :-
+    member(Rule, Rules),
+    rule_body_conjunction(Rule, Body),
+    body_ref_uses(Body, Uses),
+    member(use(Ref, Args, pos, _), Uses),
+    relplan_shape(RelPlans, Ref, set, Columns, KeyOrNone, _),
+    set_rel_key_positions(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargets,
+                          Columns, [Leading | _]),
+    nth1(Position, Args, Arg),
+    Position \== Leading,
+    audit_scan_index_filtered(Arg, Body),
+    nth1(Position, Columns, Column).
+
+rule_body_conjunction((_ <- Body), Body).
+rule_body_conjunction((_ <+ Body), Body).
+
+% An inline literal argument compiles to the same WHERE equality as a
+% `== Literal` guard (both feed compile_atom_args' bound-arg path).
+audit_scan_index_filtered(Arg, _Body) :- atomic(Arg), !.
+audit_scan_index_filtered(Arg, Body) :-
+    var(Arg),
+    body_guard_goals(Body, Goals),
+    member(Left == Right, Goals),
+    ( Arg == Left ; Arg == Right ).
+
+audit_scan_index_ddls(RelPlans, Rules, EdgeHeadedRefs, ArrivalTargets, Ddls) :-
+    audit_scan_index_pairs(RelPlans, Rules, EdgeHeadedRefs, ArrivalTargets,
+                           Pairs),
     findall(Ddl,
-            ( member(Rel, RelPlans),
-              relplan_parts(Rel, Ref, _, Columns, _, _),
-              Ref = Name/_,
-              audit_scan_index_column(Name, Column),
-              memberchk(Column, Columns),
-              audit_scan_index_ddl(Ref, Column, Ddl) ),
+            ( member(Ref-Column, Pairs), audit_scan_index_ddl(Ref, Column, Ddl) ),
             Ddls).
 
 audit_scan_index_ddl(Ref, Column, Ddl) :-
@@ -7168,7 +7194,8 @@ lower_program_in_context(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans,
         query_order_index_ddls(Mode, Decls, RelPlans, EdgeHeadedRefs,
                                ArrivalTargets, OrderIndexDdl), _),
     run_compile_step(lower, audit_scan_index_ddls,
-        audit_scan_index_ddls(RelPlans, AuditScanIndexDdl), _),
+        audit_scan_index_ddls(RelPlans, Rules, EdgeHeadedRefs, ArrivalTargets,
+                              AuditScanIndexDdl), _),
     append([RelationDdl, OrderIndexDdl, AuditScanIndexDdl, AcyclicDdl,
             DeltaDdl, RefCountDdl, AggregateScopeDdl, PreDdl, TickDdl,
             CatalogTableDdl, CatalogRowDdl],
