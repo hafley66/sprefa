@@ -54,7 +54,7 @@ const ZERO_ARRIVAL_CAP: u64 = 260;
 const ONE_ARRIVAL_CAP: u64 = 1600;
 const DRAIN_CAP: usize = 100;
 /// The whole 14-tick fold, the number issues/one-path-busy-tick-cost is about.
-/// Measured 13609 before this arc and 9860 after; the pre-#427 reading the
+/// Measured 13609 before this arc and 9884 after; the pre-#427 reading the
 /// issue asks for is 7113 and the gap is priced in the PR.
 const FOLD_STATEMENT_CAP: u64 = 10_400;
 /// The from-base refcount re-derive, the verb that was half the fold's
