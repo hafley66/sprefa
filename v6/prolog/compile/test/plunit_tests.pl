@@ -617,6 +617,8 @@ test(two_coalesce_goals_lower_to_one_clause_and_three_arms) :-
                                      _, _, _, _, _, _))),
     InsertSqls = [RecomputeSql],
     union_arms(DeltaSql, 3),
+    atomic_list_concat([DriverArm | _], ' UNION ALL ', DeltaSql),
+    \+ sub_atom(DriverArm, _, _, _, ' old_row GROUP BY '),
     sql_occurrences(RecomputeSql, ' LEFT JOIN ', 2),
     sql_occurrences(RecomputeSql, 'COALESCE(', 2),
     sql_occurrences(DeltaSql, ' EXCEPT ', 2),
