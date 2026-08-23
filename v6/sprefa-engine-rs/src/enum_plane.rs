@@ -110,15 +110,17 @@ mod tests {
     #[test]
     fn a_tagged_value_in_a_reference_column_is_named() {
         let seam = SqliteSeam::in_memory().unwrap();
-        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| intern(
-            &seam,
-            &[],
-            &refs(),
-            std::borrow::Cow::Owned(vec![resident(Value::Text(
-                r#"{"tag":"ok","value":"yes"}"#.into()
-            ))])
-        )))
-        .is_err());
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| intern(
+                &seam,
+                &[],
+                &refs(),
+                std::borrow::Cow::Owned(vec![resident(Value::Text(
+                    r#"{"tag":"ok","value":"yes"}"#.into()
+                ))])
+            )))
+            .is_err()
+        );
     }
 
     #[test]

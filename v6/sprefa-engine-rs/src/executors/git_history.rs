@@ -88,8 +88,12 @@ fn pair_rows(
 ) -> Result<Vec<HostRow>, HostError> {
     let span = tracing::info_span!("git_pair", repo = %root.display(), rev_a, rev_b);
     let _entered = span.enter();
-    let repository = soopy::discover(root.to_path_buf())
-        .map_err(|error| stop(host, format!("open a repository at {}: {error}", root.display())))?;
+    let repository = soopy::discover(root.to_path_buf()).map_err(|error| {
+        stop(
+            host,
+            format!("open a repository at {}: {error}", root.display()),
+        )
+    })?;
     let identity = repository.identity.clone();
     let graph = soopy::RevisionGraph::open(repository);
     let resolved = graph
@@ -105,11 +109,14 @@ fn pair_rows(
         .map_err(|error| stop(host, format!("resolve {rev_a} and {rev_b}: {error}")))?;
     // A revision this repository cannot resolve answers ZERO rows: the pair was
     // never a fact about this checkout, and a stop would red the whole fold.
-    let mut commits = resolved.resolutions.iter().map(|resolution| match resolution {
-        soopy::RevisionResolution::Present(oid)
-        | soopy::RevisionResolution::ShallowBoundary(oid) => Some(oid.clone()),
-        soopy::RevisionResolution::Absent | soopy::RevisionResolution::CorruptObject => None,
-    });
+    let mut commits = resolved
+        .resolutions
+        .iter()
+        .map(|resolution| match resolution {
+            soopy::RevisionResolution::Present(oid)
+            | soopy::RevisionResolution::ShallowBoundary(oid) => Some(oid.clone()),
+            soopy::RevisionResolution::Absent | soopy::RevisionResolution::CorruptObject => None,
+        });
     let (Some(Some(left)), Some(Some(right))) = (commits.next(), commits.next()) else {
         return Ok(Vec::new());
     };
@@ -118,18 +125,23 @@ fn pair_rows(
             repository: identity,
             resolve: Vec::new(),
             parents: Vec::new(),
-            ancestry: vec![
-                (left.clone(), right.clone()),
-                (right.clone(), left.clone()),
-            ],
+            ancestry: vec![(left.clone(), right.clone()), (right.clone(), left.clone())],
             merge_bases: vec![(left.clone(), right.clone())],
             ahead_behind: vec![(left, right)],
             walks: Vec::new(),
         })
-        .map_err(|error| stop(host, format!("walk the graph for {rev_a} and {rev_b}: {error}")))?;
+        .map_err(|error| {
+            stop(
+                host,
+                format!("walk the graph for {rev_a} and {rev_b}: {error}"),
+            )
+        })?;
     let mut rows: Vec<HostRow> = Vec::new();
     for base in answer.merge_bases.iter().flat_map(|pair| &pair.bases) {
-        rows.push(host_row([("base_sha", serde_json::json!(base.0.to_string()))]));
+        rows.push(host_row([(
+            "base_sha",
+            serde_json::json!(base.0.to_string()),
+        )]));
     }
     for counts in &answer.ahead_behind {
         rows.push(host_row([
@@ -139,7 +151,10 @@ fn pair_rows(
     }
     for edge in answer.ancestry.iter().filter(|edge| edge.is_ancestor) {
         rows.push(host_row([
-            ("ancestor_sha", serde_json::json!(edge.ancestor.0.to_string())),
+            (
+                "ancestor_sha",
+                serde_json::json!(edge.ancestor.0.to_string()),
+            ),
             (
                 "descendant_sha",
                 serde_json::json!(edge.descendant.0.to_string()),
@@ -166,7 +181,10 @@ fn diff_rows(
         .map_err(|error| {
             stop(
                 host,
-                format!("diff {rev_base}..{rev_head} in {}: {error:#}", root.display()),
+                format!(
+                    "diff {rev_base}..{rev_head} in {}: {error:#}",
+                    root.display()
+                ),
             )
         })?;
     let mut rows: Vec<HostRow> =

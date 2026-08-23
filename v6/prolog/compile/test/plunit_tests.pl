@@ -2005,7 +2005,7 @@ plane_kind(expand). plane_kind(dred). plane_kind(avg_accumulator).
 % 41/309/309), so every move is a new fixture and never a lowering that grew.
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-192, refcount-1632, refcount_staging-1632,
+    Counts = [scope-192, refcount-1640, refcount_staging-1640,
               expand-56, dred-84, avg_accumulator-8].
 
 corpus_plane_kind_counts(Counts) :-

@@ -17,8 +17,8 @@ pub mod source_bind;
 pub mod sql;
 pub mod struct_plane;
 pub mod text_plane;
-pub mod trace;
 pub mod ticklog;
+pub mod trace;
 pub mod types;
 pub mod write_verbs;
 
@@ -29,6 +29,6 @@ pub use run::{
 };
 pub use serve::{router, serve_on, serve_unix, ServeError, ServeState};
 pub use sql::{result_rows, SqlRunner, SqliteSeam};
-pub use trace::Scope as TraceScope;
 pub use ticklog::{js_float_text, tick_line};
+pub use trace::Scope as TraceScope;
 pub use types::*;

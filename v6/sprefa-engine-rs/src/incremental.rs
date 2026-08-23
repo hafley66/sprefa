@@ -23,10 +23,10 @@ pub struct DeltaEvent {
 
 /// Columns in one probe statement. SQLite's default column ceiling is 2000 and
 /// each column here is a shallow EXISTS.
-const PROBE_WIDTH: usize = 600;
+const PROBE_WIDTH: usize = 800;
 
 /// Columns `probe_columns` returns per rel.
-const PROBE_COLUMNS: usize = 3;
+const PROBE_COLUMNS: usize = 4;
 
 /// Which level operator a head ran under, so the two passes over the same head
 /// share one reading of "did my inputs move since I last ran".
@@ -45,6 +45,10 @@ pub struct TickWork {
     /// Rel -> the tick clock reading at its last write. The key set is the moved
     /// set; a rel absent here has not been written this tick.
     moved_at: std::cell::RefCell<HashMap<String, u64>>,
+    /// Rel -> the tick clock reading at its last deleted row.
+    shrank_at: std::cell::RefCell<HashMap<String, u64>>,
+    /// Rel -> the tick clock reading at its last added row.
+    grew_at: std::cell::RefCell<HashMap<String, u64>>,
     /// Monotone inside one tick. A level operator's rows are a function of the
     /// rels it reads, so a re-run with no newer input restages nothing.
     clock: std::cell::Cell<u64>,
@@ -73,6 +77,10 @@ fn probe_columns(relation: &IncrementalRelationPlan) -> [String; PROBE_COLUMNS] 
             Some(table) => exists(table),
             None => "0".to_string(),
         },
+        format!(
+            "EXISTS(SELECT 1 FROM {} WHERE \"_sign\" = -1)",
+            quote_identifier(&relation.delta_table_name)
+        ),
     ]
 }
 
@@ -82,6 +90,8 @@ impl TickWork {
     pub fn probe(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) -> TickWork {
         let mut work = TickWork {
             moved_at: std::cell::RefCell::new(HashMap::new()),
+            shrank_at: std::cell::RefCell::new(HashMap::new()),
+            grew_at: std::cell::RefCell::new(HashMap::new()),
             clock: std::cell::Cell::new(0),
             ran_at: std::cell::RefCell::new(HashMap::new()),
             ungated: false,
@@ -112,14 +122,17 @@ impl TickWork {
             let at = index * PROBE_COLUMNS;
             if answers[at] {
                 work.carry.insert(relation.rel.clone());
-                work.mark(&relation.rel);
+                work.mark_grew(&relation.rel);
             }
             if answers[at + 1] {
                 work.stale.insert(relation.rel.clone());
             }
             if answers[at + 2] {
                 work.departures.borrow_mut().insert(relation.rel.clone());
-                work.mark(&relation.rel);
+                work.mark_shrank(&relation.rel);
+            }
+            if answers[at + 3] {
+                work.carry_shrink(&relation.rel);
             }
         }
         work
@@ -135,9 +148,9 @@ impl TickWork {
                 .collect()
         };
         TickWork {
-            moved_at: std::cell::RefCell::new(
-                names().into_iter().map(|rel| (rel, 1u64)).collect(),
-            ),
+            moved_at: std::cell::RefCell::new(names().into_iter().map(|rel| (rel, 1u64)).collect()),
+            shrank_at: std::cell::RefCell::new(HashMap::new()),
+            grew_at: std::cell::RefCell::new(HashMap::new()),
             clock: std::cell::Cell::new(1),
             ran_at: std::cell::RefCell::new(HashMap::new()),
             ungated: true,
@@ -158,13 +171,23 @@ impl TickWork {
     pub fn mark(&self, rel: &str) {
         let clock = self.clock.get() + 1;
         self.clock.set(clock);
-        let mut moved_at = self.moved_at.borrow_mut();
-        match moved_at.get_mut(rel) {
-            Some(at) => *at = clock,
-            None => {
-                moved_at.insert(rel.to_string(), clock);
-            }
-        }
+        stamp(&self.moved_at, rel, clock);
+    }
+
+    pub fn mark_shrank(&self, rel: &str) {
+        self.mark(rel);
+        stamp(&self.shrank_at, rel, self.clock.get());
+    }
+
+    pub fn mark_grew(&self, rel: &str) {
+        self.mark(rel);
+        stamp(&self.grew_at, rel, self.clock.get());
+    }
+
+    fn carry_shrink(&self, rel: &str) {
+        let clock = self.clock.get() + 1;
+        self.clock.set(clock);
+        stamp(&self.shrank_at, rel, clock);
     }
 
     pub fn moved(&self, rel: &str) -> bool {
@@ -220,6 +243,19 @@ impl TickWork {
         fresh
     }
 
+    fn recount_needed(&self, reads: &LevelSources) -> bool {
+        if self.ungated || reads.recount_always {
+            return true;
+        }
+        let shrank_at = self.shrank_at.borrow();
+        let grew_at = self.grew_at.borrow();
+        reads.positive.iter().any(|rel| shrank_at.contains_key(rel))
+            || reads
+                .negated
+                .iter()
+                .any(|rel| grew_at.contains_key(rel) || shrank_at.contains_key(rel))
+    }
+
     fn note_run(&self, head: &str, phase: LevelPhase) {
         if self.ungated {
             return;
@@ -234,6 +270,15 @@ impl TickWork {
     }
 }
 
+fn stamp(table: &std::cell::RefCell<HashMap<String, u64>>, rel: &str, clock: u64) {
+    let mut table = table.borrow_mut();
+    match table.get_mut(rel) {
+        Some(at) => *at = clock,
+        None => {
+            table.insert(rel.to_string(), clock);
+        }
+    }
+}
 
 /// Rows dedup by an index, never by scanning what is already collected. The
 /// counter is what a COUNT test reads: one probe per row, never one per pair.
@@ -540,7 +585,10 @@ pub fn stage_events(
         return Ok(());
     }
     for event in events {
-        work.mark(&event.rel);
+        match event.sign {
+            -1 => work.mark_shrank(&event.rel),
+            _ => work.mark_grew(&event.rel),
+        }
     }
     let relation_by_name: HashMap<&str, &IncrementalRelationPlan> =
         relations.iter().map(|r| (r.rel.as_str(), r)).collect();
@@ -1263,6 +1311,9 @@ fn to_statements(texts: &[String]) -> Vec<SqlStatement> {
 #[derive(Clone)]
 pub struct LevelSources {
     pub rels: Vec<String>,
+    pub positive: Vec<String>,
+    pub negated: Vec<String>,
+    pub recount_always: bool,
     pub always: bool,
     /// The head reads its own frontier, directly or around a cycle, so the rows
     /// one round stages are the next round's input rather than its output.
@@ -1320,6 +1371,42 @@ fn quoted_tables(sql: &str) -> Vec<&str> {
     names
 }
 
+fn negated_spans(sql: &str) -> Option<Vec<std::ops::Range<usize>>> {
+    let bytes = sql.as_bytes();
+    let mut spans = Vec::new();
+    for (at, _) in sql.match_indices("NOT EXISTS") {
+        let mut cursor = at + "NOT EXISTS".len();
+        while bytes.get(cursor) == Some(&b' ') {
+            cursor += 1;
+        }
+        if bytes.get(cursor) != Some(&b'(') {
+            continue;
+        }
+        let open = cursor;
+        let mut depth = 0usize;
+        let mut quoted = false;
+        while cursor < bytes.len() {
+            match bytes[cursor] {
+                b'\'' => quoted = !quoted,
+                b'(' if !quoted => depth += 1,
+                b')' if !quoted => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            cursor += 1;
+        }
+        if depth != 0 {
+            return None;
+        }
+        spans.push(open..cursor + 1);
+    }
+    Some(spans)
+}
+
 /// Every table name a rel owns, so a level's read of any of them counts as a
 /// read of that rel.
 fn table_owners(relations: &[IncrementalRelationPlan]) -> HashMap<String, &str> {
@@ -1367,6 +1454,9 @@ pub fn level_sources(
             .entry(statement.head_rel.clone())
             .or_insert_with(|| LevelSources {
                 rels: Vec::new(),
+                positive: Vec::new(),
+                negated: Vec::new(),
+                recount_always: false,
                 always: false,
                 self_feeding,
             });
@@ -1381,6 +1471,26 @@ pub fn level_sources(
         }
         entry.rels.sort();
         entry.rels.dedup();
+        if let Some(rederive) = statement.support_sql.as_ref().and_then(|sql| sql.get(1)) {
+            let Some(spans) = negated_spans(rederive) else {
+                entry.recount_always = true;
+                continue;
+            };
+            for relation in relations {
+                let table = quote_identifier(&relation.table_name);
+                for (at, _) in rederive.match_indices(&table) {
+                    if spans.iter().any(|span| span.contains(&at)) {
+                        entry.negated.push(relation.rel.clone());
+                    } else {
+                        entry.positive.push(relation.rel.clone());
+                    }
+                }
+            }
+        }
+        entry.positive.sort();
+        entry.positive.dedup();
+        entry.negated.sort();
+        entry.negated.dedup();
     }
     sources
 }
@@ -1401,6 +1511,22 @@ fn level_runs_this_tick(
     }
 }
 
+fn recount_runs_this_tick(
+    sources: &HashMap<String, LevelSources>,
+    statement: &crate::types::IncrementalLevelStatement,
+    work: &TickWork,
+) -> bool {
+    let head = statement.head_rel.as_str();
+    let runs = std::env::var_os("DL_NO_SHRINK_GATE").is_some()
+        || match sources.get(head) {
+            Some(reads) => work.recount_needed(reads),
+            None => true,
+        };
+    if runs {
+        work.note_run(head, LevelPhase::Recount);
+    }
+    runs
+}
 
 /// The rows a run stages are its own output, so the reading it records is taken
 /// after it. Only a head reading its own frontier takes them back as input.
@@ -1933,7 +2059,10 @@ impl EdgeSink<'_> {
             ),
             EdgeSink::Collect(collected) => {
                 for event in &events {
-                    work.mark(&event.rel);
+                    match event.sign {
+                        -1 => work.mark_shrank(&event.rel),
+                        _ => work.mark_grew(&event.rel),
+                    }
                 }
                 collected.extend(events);
                 Ok(())
@@ -2313,7 +2442,8 @@ fn apply_sequenced_edges(
         // it, so the whole projection pass precedes the whole write pass.
         let mut projected: Vec<(usize, Row)> = Vec::new();
         for (index, statement) in statements.iter().enumerate() {
-            if statement.trigger_rel != occurrence.rel || statement.trigger_kind != occurrence.kind {
+            if statement.trigger_rel != occurrence.rel || statement.trigger_kind != occurrence.kind
+            {
                 continue;
             }
             let relation = plan_for(
@@ -2325,7 +2455,8 @@ fn apply_sequenced_edges(
                 .occurrence_project_sql
                 .as_ref()
                 .expect("sequenced arm without an occurrence projection");
-            let mut scope = crate::trace::Scope::verb("edge_project", &statement.head_rel, strategy);
+            let mut scope =
+                crate::trace::Scope::verb("edge_project", &statement.head_rel, strategy);
             let result = intern_then_execute(
                 seam,
                 statement.occurrence_intern_sql.as_ref(),
@@ -2382,7 +2513,10 @@ fn write_occurrence(
             );
             match keyed.get(&key) {
                 Some(prior) if *prior != row => {
-                    panic!("keyed conflict in one occurrence for {}", statement.head_rel)
+                    panic!(
+                        "keyed conflict in one occurrence for {}",
+                        statement.head_rel
+                    )
                 }
                 Some(_) => {}
                 None => {
@@ -2456,7 +2590,8 @@ pub fn apply_edges(
         if Some(index) == sequenced_at {
             apply_sequenced_edges(seam, &sequenced, relations, &plans, work)?;
         }
-        if statement.schedule == crate::types::ArmSchedule::Sequenced || !arm_has_work(statement, work)
+        if statement.schedule == crate::types::ArmSchedule::Sequenced
+            || !arm_has_work(statement, work)
         {
             continue;
         }
@@ -2478,7 +2613,15 @@ pub fn apply_edges(
         let rows = result_rows(&result, &statement.head_columns, &relation.column_types)?;
         scope.rows(rows.len());
         drop(scope);
-        write_head_rows(seam, statement, relation, &rows, 0, &mut EdgeSink::Stage, work)?;
+        write_head_rows(
+            seam,
+            statement,
+            relation,
+            &rows,
+            0,
+            &mut EdgeSink::Stage,
+            work,
+        )?;
     }
     Ok(())
 }
@@ -2530,8 +2673,15 @@ pub fn apply_levels_after_edges(
         if !level_runs_this_tick(sources, statement, work, LevelPhase::Insert) {
             return Ok(0);
         }
-        let moved =
-            apply_level_statement(seam, statement, relations, &plans, true, &mut next_sequence, work)?;
+        let moved = apply_level_statement(
+            seam,
+            statement,
+            relations,
+            &plans,
+            true,
+            &mut next_sequence,
+            work,
+        )?;
         settle_level_run(sources, statement, work, LevelPhase::Insert);
         Ok(moved)
     })
@@ -2561,7 +2711,7 @@ pub fn recompute_levels_before_edges(
     let plans = plan_index(relations);
     let reconcile = |seam: &SqliteSeam| -> BoundaryResult<()> {
         sequence_level_rounds(&ref_count_statements, |statement| {
-            if !level_runs_this_tick(sources, statement, work, LevelPhase::Recount) {
+            if !recount_runs_this_tick(sources, statement, work) {
                 return Ok(0);
             }
             let relation = plan_for(
@@ -2703,11 +2853,10 @@ fn reconcile_ref_count_statement(
         let results = seam.batch(&head).expect("reconcile batch failed");
         let offset = 2 + support_interns.len();
         let fresh = moved_rows(&results, offset + fill_new_index);
-        let moved = fresh + moved_rows(&results, offset + collect_zero_index);
+        let retracted = moved_rows(&results, offset + collect_zero_index);
+        let moved = fresh + retracted;
         scope.rows(moved);
-        if moved > 0 {
-            work.mark(&statement.head_rel);
-        }
+        mark_reconciled(work, &statement.head_rel, fresh, retracted);
         // The frontier arms of the tail read `__new_`, so they wrote exactly
         // when the fill did.
         if fresh > 0 {
@@ -2779,15 +2928,23 @@ fn reconcile_ref_count_statement(
     });
     let results = seam.batch(&close).expect("expand close batch failed");
     let fresh = moved_rows(&results, fill_new_index);
-    let moved = fresh + moved_rows(&results, collect_zero_index);
+    let retracted = moved_rows(&results, collect_zero_index);
+    let moved = fresh + retracted;
     scope.rows(moved);
-    if moved > 0 {
-        work.mark(&statement.head_rel);
-    }
+    mark_reconciled(work, &statement.head_rel, fresh, retracted);
     if fresh > 0 {
         note_frontier_copies(relation, frontier_copies, work);
     }
     Ok(moved)
+}
+
+fn mark_reconciled(work: &TickWork, head: &str, fresh: usize, retracted: usize) {
+    if retracted > 0 {
+        work.mark_shrank(head);
+    }
+    if fresh > 0 {
+        work.mark_grew(head);
+    }
 }
 
 fn moved_rows(results: &[crate::types::QueryResult], index: usize) -> usize {
@@ -2822,7 +2979,11 @@ pub fn recompute_levels_after_edges(
         };
         let ordered: Vec<&crate::types::IncrementalLevelStatement> = statements.iter().collect();
         sequence_level_rounds(&ordered, |statement| {
-            if !level_runs_this_tick(sources, statement, work, LevelPhase::Recount) {
+            let runs = match &statement.aggregate_sql {
+                Some(_) => level_runs_this_tick(sources, statement, work, LevelPhase::Recount),
+                None => recount_runs_this_tick(sources, statement, work),
+            };
+            if !runs {
                 return Ok(0);
             }
             let relation = plan_for(
@@ -2846,7 +3007,8 @@ pub fn recompute_levels_after_edges(
                 settle_level_run(sources, statement, work, LevelPhase::Recount);
                 return Ok(0);
             }
-            let moved = reconcile_ref_count_statement(seam, statement, relations, &plans, &[], work)?;
+            let moved =
+                reconcile_ref_count_statement(seam, statement, relations, &plans, &[], work)?;
             settle_level_run(sources, statement, work, LevelPhase::Recount);
             Ok(moved)
         })

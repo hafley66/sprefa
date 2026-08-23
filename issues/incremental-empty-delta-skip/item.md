@@ -3,7 +3,7 @@ created: 2026-08-23
 updated: 2026-08-23
 type: improvement
 reporter: hafley66
-status: open
+status: in-progress
 priority: high
 related: ['@one-tick-path', '@ordered-tick-recompute']
 labels: [engine, performance]

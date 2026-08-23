@@ -17,7 +17,10 @@ impl SoopyWatchExecutor {
     }
 
     /// Every tracked file the glob names, worktree revision, blob digest.
-    pub fn enumerate_glob(root: &std::path::Path, glob: &str) -> Result<Vec<(String, String)>, String> {
+    pub fn enumerate_glob(
+        root: &std::path::Path,
+        glob: &str,
+    ) -> Result<Vec<(String, String)>, String> {
         let repository = soopy::discover(root)
             .map_err(|error| format!("open a repository at {}: {error}", root.display()))?;
         let entries = soopy::enumerate(
@@ -31,7 +34,9 @@ impl SoopyWatchExecutor {
         entries
             .into_iter()
             .map(|entry| match &entry.content {
-                soopy::ContentId::GitBlob(oid) => Ok((entry.source.path.0.to_string(), oid.0.to_string())),
+                soopy::ContentId::GitBlob(oid) => {
+                    Ok((entry.source.path.0.to_string(), oid.0.to_string()))
+                }
                 other => Err(format!(
                     "tracked file {} carries {other:?}, not a git blob",
                     entry.source.path.0

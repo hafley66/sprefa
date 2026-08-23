@@ -68,8 +68,12 @@ fn namespace_of(full_name: &str) -> (&'static str, &str) {
 fn snapshot_rows(host: &str, root: &std::path::Path) -> Result<Vec<HostRow>, HostError> {
     let span = tracing::info_span!("git_refs", repo = %root.display());
     let _entered = span.enter();
-    let repository = soopy::discover(root.to_path_buf())
-        .map_err(|error| stop(host, format!("open a repository at {}: {error}", root.display())))?;
+    let repository = soopy::discover(root.to_path_buf()).map_err(|error| {
+        stop(
+            host,
+            format!("open a repository at {}: {error}", root.display()),
+        )
+    })?;
     let identity = repository.identity.clone();
     let refs = soopy::Refs::open(repository);
     // An empty namespace with no name and no pattern is every ref the store
@@ -80,9 +84,12 @@ fn snapshot_rows(host: &str, root: &std::path::Path) -> Result<Vec<HostRow>, Hos
         name: None,
         pattern: None,
     };
-    let snapshot = refs
-        .snapshot(&query)
-        .map_err(|error| stop(host, format!("enumerate refs in {}: {error}", root.display())))?;
+    let snapshot = refs.snapshot(&query).map_err(|error| {
+        stop(
+            host,
+            format!("enumerate refs in {}: {error}", root.display()),
+        )
+    })?;
     let mut rows: Vec<HostRow> = Vec::with_capacity(snapshot.refs.len() * 2 + 1);
     for observation in &snapshot.refs {
         let full_name = observation.name.as_ref();

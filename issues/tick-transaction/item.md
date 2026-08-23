@@ -3,10 +3,14 @@ created: 2026-08-23
 updated: 2026-08-23
 type: improvement
 reporter: hafley66
-status: open
+status: done
 priority: high
 related: ['@ordered-tick-recompute']
 labels: [engine]
+closed: 2026-08-23
+commits:
+- hash: 7552eda18
+  summary: 'merge #428 tick-transaction'
 ---
 
 # One transaction per tick: a SIGKILL mid-tick leaves a level stale until a read rel moves

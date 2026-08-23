@@ -169,13 +169,24 @@ pub fn report() {
     let unscoped = wall_nanos.saturating_sub(scoped_nanos.max(sqlite_nanos));
     for (name, value) in [
         ("TOTAL sqlite", sqlite_nanos),
-        ("TOTAL rust in scopes", scoped_nanos.saturating_sub(sqlite_nanos)),
+        (
+            "TOTAL rust in scopes",
+            scoped_nanos.saturating_sub(sqlite_nanos),
+        ),
         ("TOTAL rust unscoped", unscoped),
         ("TOTAL wall", wall_nanos),
     ] {
         out.push_str(&format!(
             "{:>10} {:>10} {:>10} {:>5.1}% {:>8} {:>9} {:>9}  {:<16} {}\n",
-            value / 1_000, "", "", percent(value, wall_nanos), "", "", "", name, ""
+            value / 1_000,
+            "",
+            "",
+            percent(value, wall_nanos),
+            "",
+            "",
+            "",
+            name,
+            ""
         ));
     }
     // @eprintln-ok: the summary is one block of text, and it has to survive a
