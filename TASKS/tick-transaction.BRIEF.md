@@ -33,3 +33,6 @@ No `eprintln!`; `tracing` only. Comments state only constraints the code cannot 
 
 Done: `boop beep hail sprefa-coordinator --from <your lane> --body "PR #<n>: <numbers>"`; if refused, message the session named sprefa-* over the cross-session socket.
 Blocked or brief wrong: one line, stop.
+
+## Continue, do not restart
+The branch `origin/fix/tick-transaction` exists with the work done through item 4 (head da9d4b44b, PR #428 open). Check it out, `git merge origin/main` (main moved three times: #427 deleted ordered.rs, #429, #430), resolve, re-run the seven gates, push, update the PR body with the numbers and the RSS gate window old/new with the measured RSS series, hail.
