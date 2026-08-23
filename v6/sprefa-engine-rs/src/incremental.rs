@@ -2144,6 +2144,7 @@ fn stage_collected_events(
             &additions,
         )?)
         .expect("sequenced frontier staging failed");
+        work.note_frontier_write(&relation.rel, true);
     }
     Ok(())
 }
