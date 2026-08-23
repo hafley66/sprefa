@@ -39,7 +39,9 @@
                 catalog_all_rows/10,
                 plan_rule_level_statements/2,
                 program_text_intern_plan/3,
-                json_capture_json_type/2 ]).
+                json_capture_json_type/2,
+                audit_scan_index_pairs/5, audit_scan_index_ddls/5,
+                audit_scan_index_ddl/3 ]).
 :- use_module('../../analyze',
               [ check_supported_subset/1, literal_witness/1, snake_name/2 ]).
 :- use_module('../../0_rel_record',
@@ -404,6 +406,62 @@ test(a_struct_column_declares_its_type_name_and_stores_a_ref) :-
     relplan_column_types(RelPlans, finding/2, [text, ref(span)]).
 
 :- end_tests(rel_record).
+
+% issues/inner-scan-audit: audit_scan_index_pairs/5 derives (rel, column)
+% pairs from a rule body, no rel name lives in the compiler. Each case
+% compiles a tiny inline program through lower_program/2 and reads the
+% real Ddl list, matching by `__scan_` suffix so a fixture's storage-name
+% hash never enters the assertion.
+
+:- begin_tests(audit_scan_index_ddl).
+
+scan_index_ddls_for(Label, Prog, ScanDdl) :-
+    once(( program_plan(fixture(Label, Prog, [], [], [])-[], Plan),
+           lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+           include([D]>>sub_atom(D, _, _, _, '__scan_'), Ddl, ScanDdl) )).
+
+% A non-leading column an `==` guard filters earns a dedicated index.
+test(a_non_leading_column_filtered_by_a_guard_earns_an_index) :-
+    scan_index_ddls_for(a_guard_filter,
+        prog([ kind(widget_a/2, set), col_type(widget_a/2, tag, text),
+               col_type(widget_a/2, status, int) ],
+             [ (echo_a(Tag) <- widget_a(Tag, Status), Status == 200) ]),
+        ScanDdl),
+    ScanDdl = [Ddl],
+    once(sub_atom(Ddl, _, _, _, '__scan_status" ON ')),
+    sub_atom(Ddl, _, 11, 0, ' ("status")').
+
+% An inline literal argument (`widget_d(Tag, 1)`) is the same equality
+% filter compile_atom_args turns into a WHERE clause as a guard.
+test(a_non_leading_column_bound_to_an_inline_literal_earns_an_index) :-
+    scan_index_ddls_for(an_inline_literal,
+        prog([ kind(widget_d/2, set), col_type(widget_d/2, tag, text),
+               col_type(widget_d/2, flag, int) ],
+             [ (echo_d(Tag) <- widget_d(Tag, 1)) ]),
+        ScanDdl),
+    ScanDdl = [Ddl],
+    once(sub_atom(Ddl, _, _, _, '__scan_flag" ON ')),
+    sub_atom(Ddl, _, 9, 0, ' ("flag")').
+
+% The LEADING key column earns nothing: it already seeks through the
+% composite UNIQUE index, filtered or not.
+test(a_leading_key_column_earns_nothing) :-
+    scan_index_ddls_for(a_leading_filter,
+        prog([ kind(widget_b/2, set), col_type(widget_b/2, tag, text),
+               col_type(widget_b/2, status, int) ],
+             [ (echo_b(Status) <- widget_b(Tag, Status), Tag == foo) ]),
+        []).
+
+% An ordered comparison (`>`) is not the identity family: SQLite can range-
+% scan an index on it, but this predicate only names the `==` shape.
+test(an_ordered_comparison_earns_nothing) :-
+    scan_index_ddls_for(an_ordered_filter,
+        prog([ kind(widget_c/2, set), col_type(widget_c/2, tag, text),
+               col_type(widget_c/2, level, int) ],
+             [ (echo_c(Tag) <- widget_c(Tag, Level), Level > 50) ]),
+        []).
+
+:- end_tests(audit_scan_index_ddl).
 
 % ═══════════════════════════════════════════════════════════════════════════
 % RELATION IDENTITY TARGETS (relplan_reference_target(s)/2)
