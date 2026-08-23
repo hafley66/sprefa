@@ -965,7 +965,7 @@ task(shared_frontier_guard_lift, unbuilt, [shared_frontier_lowering]). % THE REA
 task(shared_frontier_default_flip, unbuilt, [shared_frontier_guard_lift, shared_frontier_view_inflation]). % Plan step 6. Deliberately NOT this arc's: the default cannot move to shared while the option reaches no program a user runs, and the flip would trade a measured -26% statements per tick against a measured +14.8% DDL bytes with no program able to show both at once. Blocked on both rows above, in that order.
 task(one_tick_path, done, []). % LANDED 2026-08-23 (c36e7ef9): ordered_program/1 and ordered.rs are DELETED.
 
-task(delta_arm_subset_expansion, unbuilt, []). % The recount gate keeps negated-body losses eligible until this task emits the missing insert arm. `callgraph_unused_inverts_with_the_call_set` tick 4 pins the dependency: retracting call(b.rs, main) must add unused(main). Issue `delta-arm-subset-expansion` owns lower.pl.
+task(delta_arm_subset_expansion, done, []). % BUILT 2026-08-23 (PR #435): ordered plain-join delta identity, one current-state transition arm per optional item, and signed-loss insert arms for shrinking negated inputs. page_response 248,015 bytes/256 arms/64 clauses -> 7,548/7/1; callgraph tick 4 adds unused(main); grade 445/341 and ghcache tick log byte-identical.
 
 roadmap :-
     findall(Name-Needs, task(Name, _, Needs), Pairs),
