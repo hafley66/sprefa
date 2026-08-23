@@ -3,10 +3,14 @@ created: 2026-08-23
 updated: 2026-08-23
 type: improvement
 reporter: hafley66
-status: open
+status: done
 priority: high
 related: ['@engine-tick-trace']
 labels: [engine, performance]
+closed: 2026-08-23
+commits:
+- hash: 30fbd3669
+  summary: 'Merge PR #423 ordered tick dirty set'
 ---
 
 # Ordered tick recomputes every level and snapshots every rel: O(rels) SQL per tick, not O(change)

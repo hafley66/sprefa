@@ -45,3 +45,9 @@ prints the `== DL_TRACE_SUMMARY ==` table on stderr. Release, 11 ticks: wall 366
 ## Out of scope
 
 Reducing the statement count. That is @ordered-tick-recompute.
+
+## Comments
+
+### 2026-08-23T06:18:45Z · @sprefa-coordinator
+
+Items 1, 4 (wall row only), 5 landed in PR #424 (cb72bce75). Items 2 (Scope::verb in ordered.rs) landed in PR #423 (30fbd3669). Item 3 (the _recent GraphQL selection, pr_transition open->merged) is PR 2, in flight on lane fix-engine-tick-trace.
