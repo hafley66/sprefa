@@ -1,0 +1,321 @@
+rel source_0(name: text, weight: int).
+rel source_1(name: text, weight: int).
+rel source_2(name: text, weight: int).
+rel source_3(name: text, weight: int).
+rel source_4(name: text, weight: int).
+rel source_5(name: text, weight: int).
+rel source_6(name: text, weight: int).
+rel source_7(name: text, weight: int).
+rel source_8(name: text, weight: int).
+rel source_9(name: text, weight: int).
+rel source_10(name: text, weight: int).
+rel source_11(name: text, weight: int).
+rel source_12(name: text, weight: int).
+rel source_13(name: text, weight: int).
+rel source_14(name: text, weight: int).
+rel source_15(name: text, weight: int).
+rel source_16(name: text, weight: int).
+rel source_17(name: text, weight: int).
+rel source_18(name: text, weight: int).
+rel source_19(name: text, weight: int).
+rel source_20(name: text, weight: int).
+rel source_21(name: text, weight: int).
+rel source_22(name: text, weight: int).
+rel source_23(name: text, weight: int).
+rel source_24(name: text, weight: int).
+rel source_25(name: text, weight: int).
+rel source_26(name: text, weight: int).
+rel source_27(name: text, weight: int).
+rel source_28(name: text, weight: int).
+rel source_29(name: text, weight: int).
+rel source_30(name: text, weight: int).
+rel source_31(name: text, weight: int).
+rel source_32(name: text, weight: int).
+rel source_33(name: text, weight: int).
+rel source_34(name: text, weight: int).
+rel source_35(name: text, weight: int).
+rel source_36(name: text, weight: int).
+rel source_37(name: text, weight: int).
+rel source_38(name: text, weight: int).
+rel source_39(name: text, weight: int).
+rel source_40(name: text, weight: int).
+rel source_41(name: text, weight: int).
+rel source_42(name: text, weight: int).
+rel source_43(name: text, weight: int).
+rel source_44(name: text, weight: int).
+rel source_45(name: text, weight: int).
+rel source_46(name: text, weight: int).
+rel source_47(name: text, weight: int).
+rel source_48(name: text, weight: int).
+rel source_49(name: text, weight: int).
+rel source_50(name: text, weight: int).
+rel source_51(name: text, weight: int).
+rel source_52(name: text, weight: int).
+rel source_53(name: text, weight: int).
+rel source_54(name: text, weight: int).
+rel source_55(name: text, weight: int).
+rel source_56(name: text, weight: int).
+rel source_57(name: text, weight: int).
+rel source_58(name: text, weight: int).
+rel source_59(name: text, weight: int).
+rel source_60(name: text, weight: int).
+rel source_61(name: text, weight: int).
+rel source_62(name: text, weight: int).
+rel source_63(name: text, weight: int).
+
+heavy_0(Name) <-
+  source_0(Name, Weight),
+  Weight >= 10.
+
+heavy_1(Name) <-
+  source_1(Name, Weight),
+  Weight >= 10.
+
+heavy_2(Name) <-
+  source_2(Name, Weight),
+  Weight >= 10.
+
+heavy_3(Name) <-
+  source_3(Name, Weight),
+  Weight >= 10.
+
+heavy_4(Name) <-
+  source_4(Name, Weight),
+  Weight >= 10.
+
+heavy_5(Name) <-
+  source_5(Name, Weight),
+  Weight >= 10.
+
+heavy_6(Name) <-
+  source_6(Name, Weight),
+  Weight >= 10.
+
+heavy_7(Name) <-
+  source_7(Name, Weight),
+  Weight >= 10.
+
+heavy_8(Name) <-
+  source_8(Name, Weight),
+  Weight >= 10.
+
+heavy_9(Name) <-
+  source_9(Name, Weight),
+  Weight >= 10.
+
+heavy_10(Name) <-
+  source_10(Name, Weight),
+  Weight >= 10.
+
+heavy_11(Name) <-
+  source_11(Name, Weight),
+  Weight >= 10.
+
+heavy_12(Name) <-
+  source_12(Name, Weight),
+  Weight >= 10.
+
+heavy_13(Name) <-
+  source_13(Name, Weight),
+  Weight >= 10.
+
+heavy_14(Name) <-
+  source_14(Name, Weight),
+  Weight >= 10.
+
+heavy_15(Name) <-
+  source_15(Name, Weight),
+  Weight >= 10.
+
+heavy_16(Name) <-
+  source_16(Name, Weight),
+  Weight >= 10.
+
+heavy_17(Name) <-
+  source_17(Name, Weight),
+  Weight >= 10.
+
+heavy_18(Name) <-
+  source_18(Name, Weight),
+  Weight >= 10.
+
+heavy_19(Name) <-
+  source_19(Name, Weight),
+  Weight >= 10.
+
+heavy_20(Name) <-
+  source_20(Name, Weight),
+  Weight >= 10.
+
+heavy_21(Name) <-
+  source_21(Name, Weight),
+  Weight >= 10.
+
+heavy_22(Name) <-
+  source_22(Name, Weight),
+  Weight >= 10.
+
+heavy_23(Name) <-
+  source_23(Name, Weight),
+  Weight >= 10.
+
+heavy_24(Name) <-
+  source_24(Name, Weight),
+  Weight >= 10.
+
+heavy_25(Name) <-
+  source_25(Name, Weight),
+  Weight >= 10.
+
+heavy_26(Name) <-
+  source_26(Name, Weight),
+  Weight >= 10.
+
+heavy_27(Name) <-
+  source_27(Name, Weight),
+  Weight >= 10.
+
+heavy_28(Name) <-
+  source_28(Name, Weight),
+  Weight >= 10.
+
+heavy_29(Name) <-
+  source_29(Name, Weight),
+  Weight >= 10.
+
+heavy_30(Name) <-
+  source_30(Name, Weight),
+  Weight >= 10.
+
+heavy_31(Name) <-
+  source_31(Name, Weight),
+  Weight >= 10.
+
+heavy_32(Name) <-
+  source_32(Name, Weight),
+  Weight >= 10.
+
+heavy_33(Name) <-
+  source_33(Name, Weight),
+  Weight >= 10.
+
+heavy_34(Name) <-
+  source_34(Name, Weight),
+  Weight >= 10.
+
+heavy_35(Name) <-
+  source_35(Name, Weight),
+  Weight >= 10.
+
+heavy_36(Name) <-
+  source_36(Name, Weight),
+  Weight >= 10.
+
+heavy_37(Name) <-
+  source_37(Name, Weight),
+  Weight >= 10.
+
+heavy_38(Name) <-
+  source_38(Name, Weight),
+  Weight >= 10.
+
+heavy_39(Name) <-
+  source_39(Name, Weight),
+  Weight >= 10.
+
+heavy_40(Name) <-
+  source_40(Name, Weight),
+  Weight >= 10.
+
+heavy_41(Name) <-
+  source_41(Name, Weight),
+  Weight >= 10.
+
+heavy_42(Name) <-
+  source_42(Name, Weight),
+  Weight >= 10.
+
+heavy_43(Name) <-
+  source_43(Name, Weight),
+  Weight >= 10.
+
+heavy_44(Name) <-
+  source_44(Name, Weight),
+  Weight >= 10.
+
+heavy_45(Name) <-
+  source_45(Name, Weight),
+  Weight >= 10.
+
+heavy_46(Name) <-
+  source_46(Name, Weight),
+  Weight >= 10.
+
+heavy_47(Name) <-
+  source_47(Name, Weight),
+  Weight >= 10.
+
+heavy_48(Name) <-
+  source_48(Name, Weight),
+  Weight >= 10.
+
+heavy_49(Name) <-
+  source_49(Name, Weight),
+  Weight >= 10.
+
+heavy_50(Name) <-
+  source_50(Name, Weight),
+  Weight >= 10.
+
+heavy_51(Name) <-
+  source_51(Name, Weight),
+  Weight >= 10.
+
+heavy_52(Name) <-
+  source_52(Name, Weight),
+  Weight >= 10.
+
+heavy_53(Name) <-
+  source_53(Name, Weight),
+  Weight >= 10.
+
+heavy_54(Name) <-
+  source_54(Name, Weight),
+  Weight >= 10.
+
+heavy_55(Name) <-
+  source_55(Name, Weight),
+  Weight >= 10.
+
+heavy_56(Name) <-
+  source_56(Name, Weight),
+  Weight >= 10.
+
+heavy_57(Name) <-
+  source_57(Name, Weight),
+  Weight >= 10.
+
+heavy_58(Name) <-
+  source_58(Name, Weight),
+  Weight >= 10.
+
+heavy_59(Name) <-
+  source_59(Name, Weight),
+  Weight >= 10.
+
+heavy_60(Name) <-
+  source_60(Name, Weight),
+  Weight >= 10.
+
+heavy_61(Name) <-
+  source_61(Name, Weight),
+  Weight >= 10.
+
+heavy_62(Name) <-
+  source_62(Name, Weight),
+  Weight >= 10.
+
+heavy_63(Name) <-
+  source_63(Name, Weight),
+  Weight >= 10.
+

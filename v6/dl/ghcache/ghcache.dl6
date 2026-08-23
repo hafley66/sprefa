@@ -34,24 +34,13 @@ rel global_setting(poll_period: int, org_discovery_period: int,
                    rate_warn_threshold: int, rate_stop_threshold: int,
                    warn_stretch: int, heartbeat_ttl: int,
                    sync_notifications: int, staging_folder: text) key(1).
-rel global_setting_seen(poll_period: int, org_discovery_period: int,
-                        rate_warn_threshold: int, rate_stop_threshold: int,
-                        warn_stretch: int, heartbeat_ttl: int,
-                        sync_notifications: int, staging_folder: text).
 
 rel org_config(owner: text, fs_alias: text, sync_prs: int, sync_events: int,
                sync_notifications: int, checkout_on_sync: int,
                checkout_pr_branches: int) key(1).
-rel org_config_seen(owner: text, fs_alias: text, sync_prs: int,
-                    sync_events: int, sync_notifications: int,
-                    checkout_on_sync: int, checkout_pr_branches: int).
 rel repo_config(owner: text, name: text, default_branch: text, sync_prs: int,
                 sync_events: int, sync_notifications: int, sync_branches: text,
                 checkout_on_sync: int, checkout_pr_branches: int) key(1, 2).
-rel repo_config_seen(owner: text, name: text, default_branch: text,
-                     sync_prs: int, sync_events: int, sync_notifications: int,
-                     sync_branches: text, checkout_on_sync: int,
-                     checkout_pr_branches: int).
 rel org_exclude(owner: text, name: text).
 
 rel current_clock(period: int, bucket: int).
@@ -119,11 +108,11 @@ chosen_config(ConfigPath, Doc) <+
   config_present(SearchRank, ConfigPath),
   config_doc(ConfigPath, Doc).
 
-# decode is refused in an edge body (edge_body_needs_json_destructure), so each
-# config shape lands in a level rel first and the keyed fold reads variables.
-global_setting_seen(PollPeriod, OrgDiscoveryPeriod, RateWarnThreshold,
-                    RateStopThreshold, WarnStretch, HeartbeatTtl,
-                    SyncNotifications, StagingFolder) <-
+# The decode lands in the keyed fold itself: the source column is `json`, and
+# that is the only axis decode/2 lowers on.
+global_setting(PollPeriod, OrgDiscoveryPeriod, RateWarnThreshold,
+               RateStopThreshold, WarnStretch, HeartbeatTtl,
+               SyncNotifications, StagingFolder) <+
   chosen_config(Doc),
   decode(Doc, {global: {poll_interval_seconds: PollPeriod: int,
                         org_repo_discovery_interval_seconds: OrgDiscoveryPeriod: int,
@@ -134,15 +123,8 @@ global_setting_seen(PollPeriod, OrgDiscoveryPeriod, RateWarnThreshold,
                         sync_notifications: SyncNotifications: int,
                         staging_folder: StagingFolder: text}}).
 
-global_setting(PollPeriod, OrgDiscoveryPeriod, RateWarnThreshold,
-               RateStopThreshold, WarnStretch, HeartbeatTtl,
-               SyncNotifications, StagingFolder) <+
-  global_setting_seen(PollPeriod, OrgDiscoveryPeriod, RateWarnThreshold,
-                      RateStopThreshold, WarnStretch, HeartbeatTtl,
-                      SyncNotifications, StagingFolder).
-
-org_config_seen(Owner, FsAlias, SyncPrs, SyncEvents, SyncNotifications,
-                CheckoutOnSync, CheckoutPrBranches) <-
+org_config(Owner, FsAlias, SyncPrs, SyncEvents, SyncNotifications,
+           CheckoutOnSync, CheckoutPrBranches) <+
   chosen_config(Doc),
   decode(Doc, {org: [... {owner: Owner: text,
                           fs_alias: FsAlias: text,
@@ -152,14 +134,8 @@ org_config_seen(Owner, FsAlias, SyncPrs, SyncEvents, SyncNotifications,
                           checkout_on_sync: CheckoutOnSync: int,
                           checkout_pr_branches: CheckoutPrBranches: int}]}).
 
-org_config(Owner, FsAlias, SyncPrs, SyncEvents, SyncNotifications,
-           CheckoutOnSync, CheckoutPrBranches) <+
-  org_config_seen(Owner, FsAlias, SyncPrs, SyncEvents, SyncNotifications,
-                  CheckoutOnSync, CheckoutPrBranches).
-
-repo_config_seen(Owner, Name, DefaultBranch, SyncPrs, SyncEvents,
-                 SyncNotifications, SyncBranches, CheckoutOnSync,
-                 CheckoutPrBranches) <-
+repo_config(Owner, Name, DefaultBranch, SyncPrs, SyncEvents, SyncNotifications,
+            SyncBranches, CheckoutOnSync, CheckoutPrBranches) <+
   chosen_config(Doc),
   decode(Doc, {repo: [... {owner: Owner: text,
                            name: Name: text,
@@ -170,12 +146,6 @@ repo_config_seen(Owner, Name, DefaultBranch, SyncPrs, SyncEvents,
                            sync_branches: SyncBranches: text,
                            checkout_on_sync: CheckoutOnSync: int,
                            checkout_pr_branches: CheckoutPrBranches: int}]}).
-
-repo_config(Owner, Name, DefaultBranch, SyncPrs, SyncEvents, SyncNotifications,
-            SyncBranches, CheckoutOnSync, CheckoutPrBranches) <+
-  repo_config_seen(Owner, Name, DefaultBranch, SyncPrs, SyncEvents,
-                   SyncNotifications, SyncBranches, CheckoutOnSync,
-                   CheckoutPrBranches).
 
 # ── the token, read once an hour and carried on every request row ───────────
 
@@ -281,14 +251,14 @@ watched_repo(RepoRef, Owner, Name, DefaultBranch, SyncPrs, SyncEvents,
 # nothing else sources it (issues/ghcache-gh-username-unsourced).
 watched_global("user", 'rest', 'gh_user') <- org_owner(_Owner, _FsAlias).
 
-rel gh_username_seen(login: text).
-gh_username_seen(Login) <-
-  watched_global(endpoint_path: EndpointPath, endpoint_kind: 'gh_user'),
+# An edge trigger atom binds by variable only (trigger_arg_not_var), so the
+# endpoint kind is a guard here and a column pattern in a level body.
+gh_username(Login) <+
+  watched_global(endpoint_path: EndpointPath, endpoint_kind: EndpointKind),
+  EndpointKind == "gh_user",
   rest_response(endpoint_path: EndpointPath, status: RespStatus, body: Body),
   RespStatus == 200,
   decode(Body, {login: Login: text}).
-
-gh_username(Login) <+ gh_username_seen(Login).
 
 watched_global(EndpointPath, 'rest', 'org_repos') <-
   org_owner(Owner),

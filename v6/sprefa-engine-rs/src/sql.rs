@@ -298,6 +298,41 @@ fn statement_shape(sql: &str) -> String {
     )
 }
 
+/// Statements in one execute_batch text. Semicolons inside quoted literals do
+/// not end a statement, so the split cannot be a plain `split(';')`.
+fn batch_statement_count(sql: &str) -> u64 {
+    let mut count = 0u64;
+    let mut in_quote: Option<char> = None;
+    let mut has_content = false;
+    for character in sql.chars() {
+        match in_quote {
+            Some(quote) => {
+                if character == quote {
+                    in_quote = None;
+                }
+            }
+            None => match character {
+                '\'' | '"' => {
+                    in_quote = Some(character);
+                    has_content = true;
+                }
+                ';' => {
+                    if has_content {
+                        count += 1;
+                    }
+                    has_content = false;
+                }
+                other if !other.is_whitespace() => has_content = true,
+                _ => {}
+            },
+        }
+    }
+    if has_content {
+        count += 1;
+    }
+    count
+}
+
 pub static SEAM_TALLY: SeamTally = SeamTally {
     statements: std::sync::atomic::AtomicU64::new(0),
     inert: std::sync::atomic::AtomicU64::new(0),
@@ -448,6 +483,12 @@ impl SqlRunner for SqliteSeam {
         let span = tracing::trace_span!("sql_batch", relation = %label.relation, verb = label.verb);
         let _entered = span.enter();
         self.conn.execute_batch(sql)?;
+        // A batch is N statements, not one: every caller joins with ";\n", and
+        // a tally that charged it 1 hid the per-rel clears entirely.
+        SEAM_TALLY.statements.fetch_add(
+            batch_statement_count(sql),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         crate::trace::record(label, started.elapsed().as_nanos() as u64, 0, 0);
         Ok(())
     }
@@ -651,5 +692,36 @@ mod tests {
             1,
             "the interned text dictionary is shared by every program in the one db"
         );
+    }
+
+    // Pre-fix execute_multiple tallied 0 for any batch, so a per-rel tick and a
+    // shared tick reported the same statement count (docs/failure-modes.md 75).
+    #[test]
+    fn a_batch_counts_every_statement_in_it() {
+        assert_eq!(
+            batch_statement_count(
+                "DELETE FROM \"__delta_a\";\nDELETE FROM \"__next_frontier_a\""
+            ),
+            2
+        );
+        assert_eq!(
+            batch_statement_count("INSERT INTO \"t\" VALUES ('a;b');\nDELETE FROM \"t\""),
+            2,
+            "a semicolon inside a literal does not end a statement"
+        );
+        assert_eq!(batch_statement_count("DELETE FROM \"t\";\n"), 1);
+        assert_eq!(batch_statement_count("  \n ;; \n "), 0);
+    }
+
+    #[test]
+    fn a_batch_reaches_the_seam_tally() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let seam = SqliteSeam::in_memory().expect("seam");
+        seam.run_ddl(&["CREATE TABLE \"t\" (\"v\" INTEGER)".to_string()])
+            .expect("ddl");
+        let before = SEAM_TALLY.statements.load(Relaxed);
+        seam.execute_multiple("INSERT INTO \"t\" VALUES (1);\nDELETE FROM \"t\"")
+            .expect("batch");
+        assert_eq!(SEAM_TALLY.statements.load(Relaxed) - before, 2);
     }
 }

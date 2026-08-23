@@ -6374,6 +6374,86 @@ test(native_json_ground_value_lowers_to_canonical_json) :-
 :- end_tests(json_grammar).
 
 % ═══════════════════════════════════════════════════════════════════════════
+% DECODE IN AN EDGE BODY
+%
+% FAIL-FIRST: analyze.pl fired edge_body_needs_json_destructure off the rule
+% KIND, so a `json` column could only be destructured in a level body and every
+% edge fold needed a `_seen` level twin to host the decode.
+
+:- begin_tests(edge_body_json_decode).
+
+edge_decode_statement(Name, EdgeStatement) :-
+    interning_lowered_in('8_json_flex.pl', direct, Name,
+                         lowered(_, _, _, EdgeStatements, _, _, _, _)),
+    EdgeStatements = [EdgeStatement].
+
+% ONE keyed table and ONE upsert: no level twin, no second storage rel.
+test(an_edge_decode_writes_one_keyed_upsert) :-
+    edge_decode_statement(json_decode_in_an_edge_body_folds_a_keyed_row,
+                          edgestmt(HeadRef, _, HeadColumns, KeyColumns,
+                                   ProjectSql, WriteSql, _, arrival, _)),
+    HeadRef == global_setting/2,
+    HeadColumns == [scope, poll_interval_seconds],
+    KeyColumns == [scope],
+    once(sub_atom(ProjectSql, _, _, _,
+                  'json_extract(?1, \'$."poll_interval_seconds"\')')),
+    WriteSql == 'INSERT INTO "json_decode_in_an_edge_body_folds_a_keyed_row_global_setting" ("scope", "poll_interval_seconds") VALUES (?, ?) ON CONFLICT("scope") DO UPDATE SET "poll_interval_seconds" = excluded."poll_interval_seconds"'.
+
+% SQL states no evaluation order for AND, so the guard only protects the
+% extract beside it when it is written FIRST (lower.pl json_pattern_sql/8).
+test(the_type_guard_precedes_the_extract_in_an_edge_where) :-
+    edge_decode_statement(json_decode_in_an_edge_body_folds_a_keyed_row,
+                          edgestmt(_, _, _, _, ProjectSql, _, _, _, _)),
+    once(sub_atom(ProjectSql, GuardBefore, _, _,
+                  'json_type(?1, \'$."poll_interval_seconds"\') = \'integer\'')),
+    once(sub_atom(ProjectSql, WhereBefore, _, _, ' WHERE ')),
+    once(sub_atom(ProjectSql, ExtractBefore, _, _,
+                  'json_extract(?1, \'$."poll_interval_seconds"\') AS "poll_interval_seconds"')),
+    GuardBefore > WhereBefore,
+    ExtractBefore < WhereBefore.
+
+% The delta arm reads the frontier alias, never the placeholder, and carries
+% the same guards.
+test(the_delta_arm_decodes_the_frontier_row) :-
+    edge_decode_statement(json_decode_in_an_edge_body_folds_a_keyed_row,
+                          edgestmt(_, _, _, _, _, _, DeltaProjectSql, _, _)),
+    once(sub_atom(DeltaProjectSql, _, _, _,
+                  'json_type(d0."doc", \'$."poll_interval_seconds"\') = \'integer\'')),
+    once(sub_atom(DeltaProjectSql, _, _, _,
+                  'json_extract(d0."doc", \'$."scope"\') AS "scope"')).
+
+% A spread is a json_each join in the FROM of both arms.
+test(an_edge_spread_joins_json_each) :-
+    edge_decode_statement(json_decode_spread_in_an_edge_body_folds_many_keyed_rows,
+                          edgestmt(_, _, _, _, ProjectSql, _, DeltaProjectSql, _, _)),
+    once(sub_atom(ProjectSql, _, _, _,
+                  'FROM json_each(json_extract(?1, \'$."pulls"\')) j0')),
+    once(sub_atom(DeltaProjectSql, _, _, _,
+                  ', json_each(json_extract(d0."doc", \'$."pulls"\')) j0')).
+
+% A log head appends, so its write carries no ON CONFLICT at all.
+test(an_edge_decode_into_a_log_head_appends) :-
+    edge_decode_statement(json_decode_in_an_edge_body_appends_to_a_log,
+                          edgestmt(_, _, _, KeyColumns, _, WriteSql, _, _, _)),
+    KeyColumns == [],
+    \+ sub_atom(WriteSql, _, _, _, 'ON CONFLICT').
+
+untyped_edge_decode_program(fixture(untyped_edge_decode, Prog, [], [], [])) :-
+    Prog = prog([ kind(raw/1, log), keep(raw/1, all),
+                  col_type(seen/1, action, text), keyed(seen/1, [1]) ],
+                [ (seen(Action) <+ raw(Doc), decode(Doc, {action: Action})) ]).
+
+% The stop that stays: an untyped column stores a compound as canonical term
+% text, which json1 cannot read (SLOT-TERM-STRUCT).
+test(an_untyped_edge_decode_source_is_still_refused,
+     [throws(unsupported_construct(edge_body_needs_json_destructure(_)))]) :-
+    untyped_edge_decode_program(Program),
+    once(program_plan(Program-[], [intern(direct)], Plan)),
+    lower_program(Plan, _).
+
+:- end_tests(edge_body_json_decode).
+
+% ═══════════════════════════════════════════════════════════════════════════
 % PARSE ERROR POSITIONS
 %
 % The line:column a unsupported construct prints is the MAXIMUM position mark_furthest saw

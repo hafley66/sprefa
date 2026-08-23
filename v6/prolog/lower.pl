@@ -3331,9 +3331,11 @@ dictionary_ref_type(Types, DeclaredType, RefType) :-
 % points at it, so join_column_types_agree/4 sees one domain and the
 % cross-type join guard stays meaningful.
 %
-% Edge bodies keep the unsupported construct (analyze.pl edge_body_needs_json_destructure):
-% a compound value that ARRIVES into an untyped column is stored as canonical
-% term text, and that encoding question is SLOT-TERM-STRUCT's, not this one's.
+% An edge body over a NON-JSON source keeps the stop
+% (check_edge_decode_sources/3, edge_body_needs_json_destructure): a compound
+% ARRIVING into an untyped column is stored as canonical term text, which is
+% SLOT-TERM-STRUCT's encoding question. A `json` source has no such question
+% and takes the level arm's own compile_json_decodes/7.
 
 % Compiler-minted storage tables: no col_type/3 names their columns, so every
 % column is `inferred` however the mirrored type_decl/2 was written.
@@ -3903,6 +3905,7 @@ placeholders(N, ['?' | Rest]) :- N > 0, N1 is N - 1, placeholders(N1, Rest).
 edge_statements_for_rule(Mode, EdgeHeadedRefs, RelPlans, (Head <+ Body),
                          EdgeStatements) :-
     edge_trigger_shape(Body, Shape),
+    check_edge_decode_sources(RelPlans, Body, Shape),
     ( Shape = marked_single(TriggerAtom)
     -> rel_ref(TriggerAtom, TriggerRef),
        ( relplan_kind(RelPlans, TriggerRef, log) -> true
@@ -4015,8 +4018,10 @@ edge_statement_single(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     maplist(pre_atom_use, PreAtoms, PreUses),
     append(OtherUses, PreUses, PositiveUses),
     compile_positive_uses(Mode, RelPlans, PositiveUses, TriggerBound, PositiveBound,
-                          FromParts, PositiveWhereTexts),
-    compile_guard_goals(Mode, GuardGoals, PositiveBound, Bound, GuardWhereTexts),
+                          PositiveFromParts, PositiveWhereTexts),
+    compile_edge_guards(Mode, GuardGoals, PositiveBound, Bound, JsonFromParts,
+                        GuardWhereTexts),
+    append(PositiveFromParts, JsonFromParts, FromParts),
     maplist(negated_atom_use, NegAtoms, NegUses),
     compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
     append([PositiveWhereTexts, GuardWhereTexts, NegWhereTexts], WhereTexts),
@@ -4129,13 +4134,14 @@ edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     append(OtherUses, PreUses, PositiveUses),
     compile_positive_uses(Mode, RelPlans, PositiveUses, TriggerBound, PositiveBound,
                           OtherFromParts, OtherWhereTexts),
-    compile_guard_goals(Mode, GuardGoals, PositiveBound, Bound, GuardWhereTexts),
+    compile_edge_guards(Mode, GuardGoals, PositiveBound, Bound, JsonFromParts,
+                        GuardWhereTexts),
     maplist(negated_atom_use, NegAtoms, NegUses),
     compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
     head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues, ListInterns),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     format(atom(DeltaFrom), '~w ~w', [QuotedFrontierTable, DeltaAlias]),
-    append([DeltaFrom], OtherFromParts, FromParts),
+    append([[DeltaFrom], OtherFromParts, JsonFromParts], FromParts),
     atomic_list_concat(FromParts, ', ', FromSql),
     append([['d0."_phase" >= 0' | TriggerWhereTexts], OtherWhereTexts,
             GuardWhereTexts, NegWhereTexts], WhereTexts),
@@ -4146,6 +4152,52 @@ edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     intern_write_statements(BuiltValues, FromSql, WhereSql, TextInternSqls),
     list_intern_statements(ListInterns, FromSql, WhereSql, ListInternSqls),
     append(TextInternSqls, ListInternSqls, InternSqls).
+
+% THE EDGE ARM'S DECODE DECISION IS THE LEVEL ARM'S: json_decode_goal/3 over
+% the shape's own positive atoms, so a rule KIND never decides it.
+check_edge_decode_sources(RelPlans, Body, Shape) :-
+    conjunction_goals(Body, Goals),
+    include(is_decode_goal, Goals, DecodeGoals),
+    (   DecodeGoals == []
+    ->  true
+    ;   once(edge_shape_positive_atoms(Shape, PositiveAtoms)),
+        forall(member(DecodeGoal, DecodeGoals),
+               (   json_decode_goal(RelPlans, PositiveAtoms, DecodeGoal)
+               ->  true
+               ;   throw(unsupported_construct(
+                             edge_body_needs_json_destructure(Body)))
+               ))
+    ).
+
+% The atoms whose declared columns can bind a decode source. NegAtoms are
+% excluded for check_edge_head_column_types/2's reason: check mode binds none.
+edge_shape_positive_atoms(marked_single(TriggerAtom), [TriggerAtom]).
+edge_shape_positive_atoms(unmarked_conjunction(Atoms), Atoms).
+edge_shape_positive_atoms(sampled_conjunction(TriggerAtoms, SampleAtoms,
+                                              PreAtoms, _, _), Atoms) :-
+    maplist(pre_atom_rel, PreAtoms, PreRelAtoms),
+    append([TriggerAtoms, SampleAtoms, PreRelAtoms], Atoms).
+edge_shape_positive_atoms(departure_trigger(FinalizeAtom, OtherAtoms,
+                                            SampleAtoms, PreAtoms, _, _),
+                          Atoms) :-
+    maplist(pre_atom_rel, PreAtoms, PreRelAtoms),
+    append([[FinalizeAtom], OtherAtoms, SampleAtoms, PreRelAtoms], Atoms).
+% A shape analyze.pl already named unsupported binds nothing, so its decode
+% reaches the named stop below instead of failing this predicate silently.
+edge_shape_positive_atoms(_, []).
+
+pre_atom_rel(pre(Atom, _Seed), Atom) :- !.
+pre_atom_rel(Atom, Atom).
+
+% analyze.pl:edge_sampled_goals/6 buckets decode/2 with the guards; it splits
+% back out here, ahead of them, so a comparison reads what a decode bound.
+compile_edge_guards(Mode, GuardGoals, Bound0, Bound, JsonFromParts, WhereTexts) :-
+    include(is_decode_goal, GuardGoals, DecodeGoals),
+    exclude(is_decode_goal, GuardGoals, PlainGuardGoals),
+    compile_json_decodes(DecodeGoals, 0, _, Bound0, Bound1,
+                         JsonFromParts, DecodeWhereTexts),
+    compile_guard_goals(Mode, PlainGuardGoals, Bound1, Bound, OtherWhereTexts),
+    append(DecodeWhereTexts, OtherWhereTexts, WhereTexts).
 
 excluded_assignment(QuotedColumn, Text) :- format(atom(Text), '~w = excluded.~w', [QuotedColumn, QuotedColumn]).
 
