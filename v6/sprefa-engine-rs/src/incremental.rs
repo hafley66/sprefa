@@ -250,7 +250,10 @@ impl TickWork {
         let shrank_at = self.shrank_at.borrow();
         let grew_at = self.grew_at.borrow();
         reads.positive.iter().any(|rel| shrank_at.contains_key(rel))
-            || reads.negated.iter().any(|rel| grew_at.contains_key(rel))
+            || reads
+                .negated
+                .iter()
+                .any(|rel| grew_at.contains_key(rel) || shrank_at.contains_key(rel))
     }
 
     fn note_run(&self, head: &str, phase: LevelPhase) {
