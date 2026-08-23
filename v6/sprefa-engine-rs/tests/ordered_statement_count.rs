@@ -48,18 +48,17 @@ use sprefa_engine_rs::sql::SEAM_TALLY;
 use sprefa_engine_rs::types::{ArmSchedule, Arrival};
 
 /// A tick with no arrival still empties what the tick before it wrote; the
-/// schedule's one such tick measured 199.
-const ZERO_ARRIVAL_CAP: u64 = 260;
-/// One arrival pays for its own dependency cone. Measured max 1340 on tick 5.
-const ONE_ARRIVAL_CAP: u64 = 1600;
+/// schedule's one such tick measured 163.
+const ZERO_ARRIVAL_CAP: u64 = 200;
+/// One arrival pays for its own dependency cone. Measured max 1386 on tick 6.
+const ONE_ARRIVAL_CAP: u64 = 1450;
 const DRAIN_CAP: usize = 100;
 /// The whole 14-tick fold, the number issues/one-path-busy-tick-cost is about.
-/// Measured 13609 before this arc and 9884 after; the pre-#427 reading the
-/// issue asks for is 7113 and the gap is priced in the PR.
-const FOLD_STATEMENT_CAP: u64 = 10_400;
+/// Measured 9884 before this arc and 7522 after.
+const FOLD_STATEMENT_CAP: u64 = 7_800;
 /// The from-base refcount re-derive, the verb that was half the fold's
-/// statements. 8279 before this arc, 5630 after.
-const RECOUNT_STATEMENT_CAP: u64 = 6_000;
+/// statements. 5630 before this arc, 3268 after.
+const RECOUNT_STATEMENT_CAP: u64 = 3_400;
 
 fn engine_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
