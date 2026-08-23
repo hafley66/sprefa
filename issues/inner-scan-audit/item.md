@@ -3,9 +3,13 @@ created: 2026-08-23
 updated: 2026-08-23
 type: improvement
 reporter: hafley66
-status: open
+status: done
 priority: normal
 labels: [engine, performance]
+closed: 2026-08-23
+commits:
+- hash: 5209db5c8
+  summary: 'Merge PR #429 inner scan audit, 19 guard-column indexes'
 ---
 
 # Inner SCAN audit: DL_EXPLAIN shows 215 distinct statements with a SCAN inside the join on ghcache
