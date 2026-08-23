@@ -554,6 +554,13 @@ test(a_negated_rel_shrink_has_a_same_tick_insert_arm) :-
     NegativeArm ==
       'SELECT DISTINCT b0."name" FROM "__delta_callgraph_unused_inverts_with_the_call_set_call_b9604c3c8a3f" d0, "callgraph_unused_inverts_with_the_call_set_def" b0 WHERE d0."_sign" < 0 AND d0."callee" = b0."name" AND NOT EXISTS (SELECT 1 FROM "callgraph_unused_inverts_with_the_call_set_call_b9604c3c8a3f" n0 WHERE n0."callee" = b0."name") RETURNING "name"'.
 
+test(dictionary_rows_never_read_a_frontier) :-
+    lowered_for('6_relation_depth.pl', relation_depth2_chained_decode,
+                lowered(_, _, _, _, LevelStatements, _, _, _)),
+    forall(member(levelstmt(_, _, _, DeltaInsertSql, _, _, _),
+                  LevelStatements),
+           \+ sub_atom(DeltaInsertSql, _, _, _, '__frontier___ref_')).
+
 % The same head reached through three coalesce goals instead. The clause count
 % is 2^3. Each expanded clause has four source transitions after the negated
 % departure arm is included, for 32 arms total.

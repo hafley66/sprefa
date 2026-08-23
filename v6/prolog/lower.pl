@@ -6457,6 +6457,9 @@ level_positive_delta_arms(Mode, RelPlans, Head, Body, [_ | RestPositions], NegUs
 
 dictionary_use(use(Name/_Arity, _, _, _)) :- sub_atom(Name, 0, _, _, '__ref_').
 
+old_state_use(Use, Use) :-
+    dictionary_use(Use),
+    !.
 old_state_use(use(Ref, Args, pos, Source),
               use(Ref, Args, pos, old_state(Source))).
 
