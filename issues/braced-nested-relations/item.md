@@ -2,12 +2,15 @@
 created: 2026-08-23
 updated: 2026-08-23
 type: feature
-status: open
+status: done
 priority: normal
 labels:
 - area:dl6
 - component:parser
 - intent:syntax
+assignee: codex
+closed: 2026-08-23
+closed_by: codex
 ---
 
 # Add brace syntax for nested relation declarations
@@ -60,7 +63,7 @@ Relevant implementation seams:
 4. A child path is the enclosing path concatenated with the child's authored path. Inside `A`, `rel B.C().` denotes `A.B.C`.
 5. Rules, queries, imports, uses, interfaces, and other statement kinds remain outside relation blocks.
 6. Rules refer to nested relations by their full dotted path, such as `A.B.C(X)`.
-7. The first slice permits concrete relation owners and children, including zero-column declarations, modifiers, keys, relation arrows, and `is` clauses already accepted by the concrete declaration branch.
+7. The first slice permits concrete relation owners and children, including zero-column declarations, modifiers, keys, and relation arrows already accepted by the concrete declaration branch.
 8. Enum declarations, generic relation templates, and arrival/host declarations do not own or appear as children in this slice. A brace after one receives a named refusal or a parse error pinned by a test.
 9. The canonical printer emits dotted declarations. Preserving brace layout requires syntax provenance that the semantic program currently discards and stays outside this issue.
 
@@ -137,7 +140,7 @@ Brace scope has source-parse lifetime only. It creates no compiler-fixpoint or r
 6. Add a roundtrip receipt showing brace input canonicalizes to dots and reparses to the same program.
 7. Compile equivalent brace and dotted fixtures and compare lowered plans and target artifacts byte-for-byte.
 
-Changes should remain in the parser, printer tests, and fixtures. A required change to `0_dot_expand.pl`, `lower.pl`, emitters, or runtimes indicates that the parser failed to emit the existing dotted representation and must be reported before widening scope.
+Brace lowering remains in the parser. The expanded deep-reference scope also touches qualified relation/type resolution and query preparation so every authored dotted path reaches the same canonical flat identity.
 
 ## Decisions
 
@@ -154,23 +157,33 @@ Rejected alternatives:
 - Implicitly qualifying rules inside blocks adds lexical rule scope and name-resolution behavior to a declaration-sugar issue.
 - Reprinting braces from semantic paths invents author layout after comments and grouping boundaries have been erased.
 
+### 2026-08-24T02:27:03Z · @codex
+
+2026-08-23 scope expansion: verify deep dotted paths in every relation and type reference position, including declarations, rule heads and bodies, column types, constructor applications, relation-valued terms, direct compiler-relation annotation applications, and canonical printing. The superseded `is` surface is outside this feature.
+
+### 2026-08-24T03:03:37Z · @codex
+
+Deep compiler-relation annotations use the ordinary colon type position, for example rel holder(value: namespace.types.identity(int)). The legacy is clause receives no brace or deep-path extension in this issue.
+
+
+
 ## Acceptance Criteria
 
-- [ ] `rel A() { rel B() { rel C(). }. }.` parses successfully.
-- [ ] The three-level brace program and its dotted spelling produce variant-equivalent parsed programs.
-- [ ] Expansion gives `B` a leading `parent: A` reference and `C` a leading `parent: A.B` reference.
-- [ ] Zero-column children retain one implicit parent column.
-- [ ] Child modifiers, authored keys, relation arrows, and `is` clauses retain dotted-syntax behavior.
-- [ ] A dotted local child path appends to its enclosing path.
-- [ ] Flat-name digest collisions produce the same names for equivalent brace and dotted programs.
-- [ ] Rules outside the block can read and contribute to the nested relation through its full dotted path.
-- [ ] A child diagnostic reports the child's source line and column.
-- [ ] Non-relation statements inside a block fail at the contained statement.
-- [ ] Unsupported owner/child declaration forms have pinned failures.
-- [ ] Printing a parsed brace program emits canonical dotted declarations and reparses to a variant of the same program.
-- [ ] Equivalent brace and dotted fixtures produce byte-identical lowered plans and TS, Rust, JSON Schema, and OpenAPI artifacts.
-- [ ] Existing dotted-path tests remain unchanged and green.
-- [ ] No brace-specific term survives parsing.
+- [x] `rel A() { rel B() { rel C(). }. }.` parses successfully.
+- [x] The three-level brace program and its dotted spelling produce variant-equivalent parsed programs.
+- [x] Expansion gives `B` a leading `parent: A` reference and `C` a leading `parent: A.B` reference.
+- [x] Zero-column children retain one implicit parent column.
+- [x] Child modifiers, authored keys, and relation arrows retain dotted-syntax behavior.
+- [x] A dotted local child path appends to its enclosing path.
+- [x] Flat-name digest collisions produce the same names for equivalent brace and dotted programs.
+- [x] Rules outside the block can read and contribute to the nested relation through its full dotted path.
+- [x] A child diagnostic reports the child's source line and column.
+- [x] Non-relation statements inside a block fail at the contained statement.
+- [x] Unsupported owner/child declaration forms have pinned failures.
+- [x] Printing a parsed brace program emits canonical dotted declarations and reparses to a variant of the same program.
+- [x] Equivalent brace and dotted fixtures produce byte-identical lowered plans and TS, Rust, JSON Schema, and OpenAPI artifacts.
+- [x] Existing dotted-path tests remain unchanged and green.
+- [x] No brace-specific term survives parsing.
 
 ## Verification
 
@@ -179,11 +192,13 @@ Focused tests:
 ```bash
 cd v6/prolog/compile
 swipl -q -l test/run_plunit.pl -g "run_tests(module_path_decls)" -t halt
+swipl -q -l test/run_plunit.pl -g "run_tests(braced_nested_relations)" -t halt
 ```
 
 Project gates:
 
 ```bash
+cd v6
 just plunit
 just roundtrip
 just conformance
@@ -194,16 +209,34 @@ CI coverage change: add parser, source-location, canonical-roundtrip, expansion-
 
 ## Tests Run
 
-Planning only. No compiler CI run.
+- `braced_nested_relations`: 26 passed, 0 failed.
+- Relevant deep-path regression units (`module_path_decls`,
+  `annotation_surface`, `anonymous_type_syntax`, `compiler_relations`,
+  `query_order_tail`, `hosts_wiring`, `declaration_query_parity`, and
+  `mount_door`): 177 passed, 0 failed.
+- Full PLUnit: 1,114 passed, 0 failed, 0 timed out.
+- Typegen golden: holds.
+- Conformance: 443 passed and 2 existing Unicode character-count fixtures
+  failed (`reverse_reverses_characters`, `length_counts_characters`).
+- Roundtrip: the feature branch and an archive of base
+  `b37ca81cfd551e16314a1c2189e40ed3add445c0` produced the same 437/445 G1
+  result, the same eight G1 failures, and the same G2 `ghcacher.dl6` parse
+  failure at `use http.`.
 
 ## Implementation Notes
 
-The worktree already contains unrelated changes in generic expansion, compiler relations, lowering, and typegen goldens. Preserve those changes and avoid touching them for this parser-only feature.
+Implementation runs in the isolated `feature/braced-nested-relations` worktree created from `b37ca81cfd551e16314a1c2189e40ed3add445c0`.
 
 ## Staffing
 
-- Implementation: one compiler lane, current worktree, no separate worktree.
-- Base SHA inspected for this plan: `5c767a00bf43e0874377da74873b6baa9d87fb47`.
+- Implementation: isolated compiler worktree at `/private/tmp/sprefa-braced-nested-relations`.
+- Base SHA: `b37ca81cfd551e16314a1c2189e40ed3add445c0`.
 - Focused parser suite budget: 60 seconds.
 - Full PLUnit budget: repository default 600 seconds.
 - Roundtrip, conformance, and typegen gates use their repository-configured budgets.
+
+## Resolution
+
+### 2026-08-24T03:05:33Z · @codex
+
+Brace declarations and deep dotted relation/type references compile through the existing flattened relation identities. All acceptance items are covered by compiler tests.
