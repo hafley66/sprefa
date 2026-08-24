@@ -234,8 +234,23 @@ impl ScalarSeam {
 pub enum BoundaryError {
     ListAtScalarSeam(ScalarSeam),
     BytesAtScalarSeam(ScalarSeam),
-    ListColumnNotAnArray { text: String, detail: String },
-    DivergingMeasureRecursion { rel: String, round_cap: u64 },
+    ListColumnNotAnArray {
+        text: String,
+        detail: String,
+    },
+    DivergingMeasureRecursion {
+        rel: String,
+        round_cap: u64,
+    },
+    /// `phase` names the plan vector and `index` the position inside it: the
+    /// seam reports neither, and a vector holds one statement per rule.
+    AggregateStatementFailed {
+        rel: String,
+        phase: &'static str,
+        index: usize,
+        sql_head: String,
+        detail: String,
+    },
 }
 
 impl std::fmt::Display for BoundaryError {
@@ -255,6 +270,16 @@ impl std::fmt::Display for BoundaryError {
             BoundaryError::DivergingMeasureRecursion { rel, round_cap } => {
                 write!(f, "diverging_measure_recursion({rel}, {round_cap})")
             }
+            BoundaryError::AggregateStatementFailed {
+                rel,
+                phase,
+                index,
+                sql_head,
+                detail,
+            } => write!(
+                f,
+                "aggregate {phase}[{index}] for rel {rel} failed: {detail}\n  sql: {sql_head}"
+            ),
         }
     }
 }

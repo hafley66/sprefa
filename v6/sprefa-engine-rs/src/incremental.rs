@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use crate::sql::{result_rows, SqlRunner, SqliteSeam};
 use crate::types::{
-    Arrival, ArrivalSign, BoundaryError, BoundaryResult, IncrementalRelationPlan, RelationKind,
-    Row, ScalarSeam, ScalarValue, SqlStatement, Value,
+    Arrival, ArrivalSign, BoundaryError, BoundaryResult, IncrementalRelationPlan, QueryResult,
+    RelationKind, Row, ScalarSeam, ScalarValue, SqlStatement, Value,
 };
 use crate::write_verbs::{write_verbs_for, TickBoundary};
 
@@ -66,6 +66,9 @@ pub struct TickWork {
     /// rows between exactly these tables and leave the rest empty.
     staged_current: std::cell::RefCell<std::collections::HashSet<String>>,
     staged_next: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Aggregate heads whose group was two-valued mid-pass because a retraction
+    /// this tick staged has not landed yet. The recount pass owes them a re-run.
+    deferred_aggregates: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 fn probe_columns(relation: &IncrementalRelationPlan) -> [String; PROBE_COLUMNS] {
@@ -86,6 +89,20 @@ fn probe_columns(relation: &IncrementalRelationPlan) -> [String; PROBE_COLUMNS] 
 }
 
 impl TickWork {
+    fn defer_aggregate(&self, head: &str) {
+        self.deferred_aggregates
+            .borrow_mut()
+            .insert(head.to_string());
+    }
+
+    fn aggregate_deferred(&self, head: &str) -> bool {
+        self.deferred_aggregates.borrow().contains(head)
+    }
+
+    fn has_deferred_aggregates(&self) -> bool {
+        !self.deferred_aggregates.borrow().is_empty()
+    }
+
     /// One chunked read at the top of the tick. Nothing but a tick writes these
     /// tables, so one reading holds until this tick's own writes mark.
     pub fn probe(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) -> TickWork {
@@ -103,6 +120,7 @@ impl TickWork {
             departures: std::cell::RefCell::new(std::collections::HashSet::new()),
             staged_current: std::cell::RefCell::new(std::collections::HashSet::new()),
             staged_next: std::cell::RefCell::new(std::collections::HashSet::new()),
+            deferred_aggregates: std::cell::RefCell::new(std::collections::HashSet::new()),
         };
         if relations.is_empty() {
             return work;
@@ -173,6 +191,7 @@ impl TickWork {
             ),
             staged_current: std::cell::RefCell::new(names()),
             staged_next: std::cell::RefCell::new(names()),
+            deferred_aggregates: std::cell::RefCell::new(std::collections::HashSet::new()),
         }
     }
 
@@ -1751,12 +1770,14 @@ fn apply_level_statement(
     );
     LEVEL_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if let Some(aggregate) = &statement.aggregate_sql {
+        // Both callers are additive passes, so an aggregate here is provisional.
         apply_aggregate_level_statement(
             seam,
             statement,
             aggregate,
             relation,
             after_edges,
+            false,
             next_sequence,
             work,
         )?;
@@ -1803,6 +1824,58 @@ fn apply_level_statement(
     Ok(rows.len())
 }
 
+/// lower.pl:6480 spells a `json_object` duplicate key as `json('<this>')`, which
+/// SQLite answers with "malformed JSON": the rejection travels as a SQL failure.
+const JSON_OBJECT_DUP_KEY: &str = "json_object_dup_key";
+
+// A seam failure names only the rusqlite code, so the statement travels by hand;
+// `None` is the dup-key sentinel on a pass the recount pass will redo.
+fn run_aggregate_statement(
+    seam: &SqliteSeam,
+    rel: &str,
+    phase: &'static str,
+    index: usize,
+    sql: &str,
+    settled: bool,
+) -> BoundaryResult<Option<QueryResult>> {
+    match seam.execute(&SqlStatement {
+        sql: sql.to_string(),
+        args: vec![],
+    }) {
+        Ok(result) => Ok(Some(result)),
+        Err(_) if !settled && sql.contains(JSON_OBJECT_DUP_KEY) => {
+            tracing::debug!(rel, phase, index, "aggregate dup key deferred to recount");
+            Ok(None)
+        }
+        Err(error) => Err(BoundaryError::AggregateStatementFailed {
+            rel: rel.to_string(),
+            phase,
+            index,
+            sql_head: sql.chars().take(200).collect(),
+            detail: format!("{error:?}"),
+        }),
+    }
+}
+
+// SqlRunner::batch is a map over execute, so one statement at a time here keeps
+// the same order and the same visibility while naming which one failed.
+fn run_aggregate_phase(
+    seam: &SqliteSeam,
+    rel: &str,
+    phase: &'static str,
+    sqls: &[String],
+    settled: bool,
+) -> BoundaryResult<Option<Vec<QueryResult>>> {
+    let mut results = Vec::with_capacity(sqls.len());
+    for (index, sql) in sqls.iter().enumerate() {
+        match run_aggregate_statement(seam, rel, phase, index, sql, settled)? {
+            Some(result) => results.push(result),
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(results))
+}
+
 // The DELETE and every INSERT return only the rows of the AFFECTED GROUPS, so
 // the head re-derives without a full-table read on either side of the seam.
 fn apply_aggregate_level_statement(
@@ -1811,6 +1884,7 @@ fn apply_aggregate_level_statement(
     aggregate: &crate::types::AggregateLevelPlan,
     relation: &IncrementalRelationPlan,
     after_edges: bool,
+    settled: bool,
     next_sequence: &mut dyn FnMut() -> u64,
     work: &TickWork,
 ) -> BoundaryResult<()> {
@@ -1821,25 +1895,48 @@ fn apply_aggregate_level_statement(
         &statement.head_rel,
         crate::write_verbs::relation_strategy(relation),
     );
-    let mut scope_texts = vec![aggregate.scope_clear_sql.clone()];
-    scope_texts.extend(aggregate.scope_seed_sql.clone());
-    scope_texts.extend(aggregate.intern_sql.clone().unwrap_or_default());
-    seam.batch(&to_statements(&scope_texts))
-        .expect("aggregate scope batch failed");
-    let delete_result = seam
-        .execute(&SqlStatement {
-            sql: aggregate.delete_scoped_sql.clone(),
-            args: vec![],
-        })
-        .expect("aggregate scoped delete failed");
+    let head = statement.head_rel.as_str();
+    // Nothing below the seed has written the head yet, so a deferral here leaves
+    // the head exactly as the previous pass settled it.
+    let scoped = run_aggregate_phase(
+        seam,
+        head,
+        "scope_clear",
+        std::slice::from_ref(&aggregate.scope_clear_sql),
+        settled,
+    )?
+    .and(run_aggregate_phase(
+        seam,
+        head,
+        "scope_seed",
+        &aggregate.scope_seed_sql,
+        settled,
+    )?)
+    .and(match &aggregate.intern_sql {
+        Some(intern) => run_aggregate_phase(seam, head, "intern", intern, settled)?,
+        None => Some(vec![]),
+    });
+    if scoped.is_none() {
+        work.defer_aggregate(head);
+        return Ok(());
+    }
+    let Some(delete_result) = run_aggregate_statement(
+        seam,
+        head,
+        "delete_scoped",
+        0,
+        &aggregate.delete_scoped_sql,
+        settled,
+    )?
+    else {
+        work.defer_aggregate(head);
+        return Ok(());
+    };
     let removed_rows = result_rows(
         &delete_result,
         &statement.head_columns,
         &statement.head_column_types,
     )?;
-    let insert_results = seam
-        .batch(&to_statements(&aggregate.insert_scoped_sql))
-        .expect("aggregate scoped insert failed");
     let mut events: Vec<DeltaEvent> = removed_rows
         .iter()
         .map(|row| DeltaEvent {
@@ -1849,6 +1946,23 @@ fn apply_aggregate_level_statement(
             row: row.clone(),
         })
         .collect();
+    // The DELETE already ran, so the affected groups leave as -1 and the deferred
+    // pass restages them: a retract-then-derive, never a +1 with no -1.
+    let Some(insert_results) = run_aggregate_phase(
+        seam,
+        head,
+        "insert_scoped",
+        &aggregate.insert_scoped_sql,
+        settled,
+    )?
+    else {
+        work.defer_aggregate(head);
+        if !events.is_empty() {
+            let copies = level_frontier_copies(relation, after_edges);
+            stage_events(seam, std::slice::from_ref(relation), &events, &copies, work)?;
+        }
+        return Ok(());
+    };
     for insert_result in &insert_results {
         for row in result_rows(
             insert_result,
@@ -3017,7 +3131,10 @@ pub fn recompute_levels_after_edges(
         let ordered: Vec<&crate::types::IncrementalLevelStatement> = statements.iter().collect();
         sequence_level_rounds(&ordered, |statement| {
             let runs = match &statement.aggregate_sql {
-                Some(_) => level_runs_this_tick(sources, statement, work, LevelPhase::Recount),
+                Some(_) => {
+                    work.aggregate_deferred(&statement.head_rel)
+                        || level_runs_this_tick(sources, statement, work, LevelPhase::Recount)
+                }
                 None => recount_runs_this_tick(sources, statement, work),
             };
             if !runs {
@@ -3029,7 +3146,8 @@ pub fn recompute_levels_after_edges(
                 "incremental level head relation missing",
             );
             if let Some(aggregate) = &statement.aggregate_sql {
-                if aggregate.delta_maintained {
+                let deferred = work.aggregate_deferred(&statement.head_rel);
+                if aggregate.delta_maintained && !deferred {
                     return Ok(0);
                 }
                 apply_aggregate_level_statement(
@@ -3038,6 +3156,7 @@ pub fn recompute_levels_after_edges(
                     aggregate,
                     relation,
                     false,
+                    true,
                     &mut next_sequence,
                     work,
                 )?;
@@ -3064,7 +3183,9 @@ pub fn recompute_levels_after_edges(
     );
     let has_retraction = seam.scalar(&guard).expect("retraction guard read failed") == 1;
     drop(_scope);
-    if has_retraction {
+    // A deferred aggregate is owed its settled re-run whatever the guard says:
+    // this is the only pass that raises the dup-key rejection.
+    if has_retraction || work.has_deferred_aggregates() {
         return reconcile(seam);
     }
     Ok(())

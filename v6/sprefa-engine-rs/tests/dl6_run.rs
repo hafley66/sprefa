@@ -609,3 +609,51 @@ fn a_drain_overflow_names_the_loudest_rels() {
         run.stderr
     );
 }
+
+/// TEST: RESTART DURABILITY. FAIL PRE FIX, measured 2026-08-24: run 2 against
+/// run 1's file db panicked at `incremental.rs:1828` with
+/// `aggregate scope batch failed: SqliteFailure(.., Some("malformed JSON"))`.
+/// The additive level pass re-derives an aggregate group from the FULL base
+/// table while the retraction the tick already staged has not landed, so
+/// `header` is two-valued for one url and lower.pl:6480's `json_object`
+/// duplicate-key sentinel aborts the tick. The recount pass is where the
+/// rejection belongs. Sabotage receipt: pass `true` for `settled` at
+/// `apply_level_statement`'s aggregate arm and run 2 reds with the same
+/// "malformed JSON".
+#[test]
+fn a_restart_tick_defers_a_two_valued_aggregate_group_to_the_recount_pass() {
+    let scratch = Scratch::new();
+    let db = scratch.db();
+
+    let mut first = scratch.dl6();
+    first
+        .arg("run")
+        .arg(fixture("aggregate_restart_scope.dl6"))
+        .arg("--final-only")
+        .args(["--arrive", "clock=now,1"])
+        .args(["--arrive", "poll=u,E,A,1"]);
+    let folded = ok(&finish(&mut first, "first fold"), "first fold");
+    assert!(
+        folded.contains(r#"{\"If-None-Match\":\"A\"}"#),
+        "bucket 1 reads the tag it asked with: {folded}"
+    );
+
+    // A second process over the same file: `clock` is key(1), so the arrival
+    // retracts bucket 1 and the settled `poll` arm becomes derivable.
+    let mut second = scratch.dl6();
+    second
+        .arg("run")
+        .arg(fixture("aggregate_restart_scope.dl6"))
+        .arg("--final-only")
+        .args(["--arrive", "clock=now,2"]);
+    let restarted = ok(&finish(&mut second, "restart fold"), "restart fold");
+    assert!(
+        restarted.contains(r#"{\"If-None-Match\":\"E\"}"#),
+        "the settled group is single-valued and carries the stored tag: {restarted}"
+    );
+    assert_eq!(
+        sqlite(&db, "SELECT count(*) FROM v_headers"),
+        "1\n",
+        "the stale arm's row leaves with the retraction"
+    );
+}
