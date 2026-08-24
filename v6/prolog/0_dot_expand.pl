@@ -55,7 +55,11 @@
             resolve_qualified_types/2,
             % use_resolve.pl reads a mounted subtree's paths off the same
             % projection the scope tree is built from.
-            declared_path/3 ]).
+            declared_path/3,
+            % Query declarations are compiled before the ordinary expansion
+            % fold, so host preparation resolves their path carriers through
+            % the same tree as rule atoms.
+            resolve_relation_paths/3 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -84,6 +88,9 @@ expand_dot_in_context(EnumContext, prog(Decls0, Rules0), prog(Decls, Rules)) :-
 
 resolve_qualified_types(prog(Decls0, Rules), prog(Decls, Rules)) :-
     resolve_qualified_type_paths(Decls0, Decls).
+resolve_qualified_types(program(Decls0, Rules, Queries),
+                        program(Decls, Rules, Queries)) :-
+    resolve_qualified_type_paths(Decls0, Decls).
 
 % Qualified types retain their path until mount_decl/4 supplies scope here.
 % Resolution produces the same flat relation identity as a qualified call.
@@ -97,8 +104,40 @@ resolve_qualified_type_decl(Scopes, col_type(Ref, Column, Type0),
                             col_type(Ref, Column, Type)) :-
     !,
     resolve_qualified_type(Scopes, Type0, Type).
+resolve_qualified_type_decl(Scopes, type_decl(Name, Specs0),
+                            type_decl(Name, Specs)) :-
+    !,
+    resolve_qualified_type(Scopes, Specs0, Specs).
+resolve_qualified_type_decl(Scopes, rel_template(Segments, Parameters0, Specs0),
+                            rel_template(Segments, Parameters, Specs)) :-
+    !,
+    resolve_qualified_type(Scopes, Parameters0, Parameters),
+    resolve_qualified_type(Scopes, Specs0, Specs).
+resolve_qualified_type_decl(Scopes,
+                            rel_template_enum(Segments, Parameters0, Variants0),
+                            rel_template_enum(Segments, Parameters, Variants)) :-
+    !,
+    resolve_qualified_type(Scopes, Parameters0, Parameters),
+    resolve_qualified_type(Scopes, Variants0, Variants).
+resolve_qualified_type_decl(Scopes, enum_decl(Name, Variants0),
+                            enum_decl(Name, Variants)) :-
+    !,
+    resolve_qualified_type(Scopes, Variants0, Variants).
+resolve_qualified_type_decl(Scopes, sh_decl(Name, Inputs0, Outputs0, Template),
+                            sh_decl(Name, Inputs, Outputs, Template)) :-
+    !,
+    resolve_qualified_type(Scopes, Inputs0, Inputs),
+    resolve_qualified_type(Scopes, Outputs0, Outputs).
 resolve_qualified_type_decl(_, Decl, Decl).
 
+resolve_qualified_type(Scopes, type_path_application(Segments, Arguments0),
+                       Type) :-
+    !,
+    (   resolve_path(Scopes, Segments, Name)
+    ->  maplist(resolve_qualified_type(Scopes), Arguments0, Arguments),
+        Type =.. [Name | Arguments]
+    ;   throw(unsupported_construct(unresolvable_type_path(Segments)))
+    ).
 resolve_qualified_type(Scopes, type_path(Segments), Name) :-
     !,
     (   relation_id_path(Scopes, Segments, RelationName)
@@ -140,6 +179,7 @@ resolved_type_decl_name(Type, Name) :-
     column_element_type_name(Type, Name).
 
 qualified_type_path(type_path(Segments), Segments) :- !.
+qualified_type_path(type_path_application(Segments, _), Segments).
 qualified_type_path(Type, Segments) :-
     compound(Type),
     Type =.. [_ | Args],
@@ -186,6 +226,10 @@ resolve_rel_path_rule(Scopes, Rule0, Rule) :-
     ->  rewrite_rel_paths(Scopes, Rule0, Rule)
     ;   Rule = Rule0
     ).
+
+resolve_relation_paths(Decls, Terms0, Terms) :-
+    decl_scope_tree(Decls, Root),
+    maplist(resolve_rel_path_rule([Root]), Terms0, Terms).
 
 contains_rel_path(Term) :-
     sub_term(Sub, Term),
@@ -250,6 +294,12 @@ check_path_collisions([SegmentsA-NameA, SegmentsB-NameB | Rest]) :-
 
 declared_path(Decls, Segments, Name) :-
     member(rel_path_decl(Name/_, Segments), Decls).
+declared_path(Decls, Segments, Name) :-
+    member(rel_template(Segments, _, _), Decls),
+    atomic_list_concat(Segments, '__', Name).
+declared_path(Decls, Segments, Name) :-
+    member(rel_template_enum(Segments, _, _), Decls),
+    atomic_list_concat(Segments, '__', Name).
 declared_path(Decls, [Name], Name) :-
     declared_flat_names(Decls, Names),
     declared_path_names(Decls, PathNames),
@@ -341,7 +391,8 @@ apply_nested_capture(capture(Child, ParentName),
     NewArity is ChildArity + 1,
     maplist(rename_capture_ref(Child/ChildArity, Child/NewArity),
             Decls0, Renamed),
-    insert_parent_column(Child/NewArity, ParentName, Renamed, Decls1),
+    widen_captured_type_decl(Child, ParentName, Renamed, Widened),
+    insert_parent_column(Child/NewArity, ParentName, Widened, Decls1),
     ensure_parent_type_decl(ParentName, ParentSpecs, Decls1, Decls),
     length(ParentSpecs, ParentArity),
     maplist(capture_rule(Child, ChildArity, ParentName, ParentArity),
@@ -381,6 +432,17 @@ rename_capture_ref(Old, New, keyed(Old, Positions), keyed(New, Shifted)) :-
 rename_capture_ref(Old, New, rel_path_decl(Old, Segments),
                    rel_path_decl(New, Segments)) :- !.
 rename_capture_ref(_, _, Decl, Decl).
+
+% resolve_qualified_type_paths/2 may have materialized the child's row type
+% before parent capture because another declaration refers to it. Keep that
+% mirror at the same widened shape as the child's col_type declarations.
+widen_captured_type_decl(Child, ParentName, Decls0, Decls) :-
+    maplist(widen_captured_type_decl_(Child, ParentName), Decls0, Decls).
+
+widen_captured_type_decl_(Child, ParentName, type_decl(Child, Specs),
+                          type_decl(Child, [col(parent, ParentName) | Specs])) :-
+    !.
+widen_captured_type_decl_(_, _, Decl, Decl).
 
 shift_key_position(Position, Shifted) :- Shifted is Position + 1.
 
