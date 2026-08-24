@@ -58,7 +58,7 @@ harness = []
 [dev-dependencies]
 tempfile = "3"
 # tests/dd_oracle_crosscheck.rs only. dbsp 0.337 lost the pick: it ICEs rustc
-# 1.97.0-nightly, the toolchain this crate builds on. Candidate table in PR #NNN.
+# 1.97.0-nightly, the toolchain this crate builds on. Candidate table in PR #438.
 differential-dataflow = "0.25"
 # dd does not re-export timely and the harness drives the worker directly.
 timely = "0.31"
