@@ -179,6 +179,25 @@ the streak to 0. At `miss_threshold(3)`, `endpoint_cooling` anti-joins into
 again pushes the resume bucket out by another cool-off instead of resuming every
 bucket. A permanently dead endpoint costs 3 calls, then 24 a day.
 
+### The match form
+
+Five clause-pairs in this program are `match` blocks, one per branch this arc
+touched. The scrutinee parses as a HEAD atom, so it is full arity or
+`partial_head` (`parse_dl_dcg.pl:1400`); the arm guard is an ordinary body, so
+it carries rel reads, `not(...)` and `:=` beside its comparison.
+
+| scrutinee | arms |
+|---|---|
+| `org_owner` | `watched_global` `org_repos` / `user_repos` |
+| `org_config` | `watched_global` `org_events` / `user_events` |
+| `page_response` | `endpoint_miss` / `endpoint_hit` |
+| `endpoint_miss` | `miss_next`, prior streak / no stored row |
+| `page_response` | `call_candidate`, 304 / not 304 |
+
+Every other branch in the file is left as clauses: this arc did not touch them.
+The `call_candidate` graphql arm stays a clause too, because its scrutinee is
+`pr_batch_response` and a match block has one.
+
 ## Retention
 
 Three telemetry logs are bounded; `pr_transition` is the record of what changed

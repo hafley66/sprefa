@@ -260,15 +260,16 @@ gh_username(Login) <+
   RespStatus == 200,
   decode(Body, {login: Login: text}).
 
-watched_global(EndpointPath, 'rest', 'org_repos') <-
-  org_owner(Owner),
-  not(not_an_org(Owner)),
-  EndpointPath := concat(["orgs/", Owner, "/repos?per_page=100"]).
-
-watched_global(EndpointPath, 'rest', 'user_repos') <-
-  org_owner(Owner),
-  not_an_org(Owner),
-  EndpointPath := concat(["users/", Owner, "/repos?per_page=100"]).
+# A match scrutinee parses as a HEAD atom, so it is full arity or
+# `partial_head` (parse_dl_dcg.pl:1400); the guard is an ordinary body.
+match org_owner(Owner, _FsAlias) (
+  ; not(not_an_org(Owner)),
+    EndpointPath := concat(["orgs/", Owner, "/repos?per_page=100"])
+    |-> watched_global(EndpointPath, 'rest', 'org_repos')
+  ; not_an_org(Owner),
+    EndpointPath := concat(["users/", Owner, "/repos?per_page=100"])
+    |-> watched_global(EndpointPath, 'rest', 'user_repos')
+).
 
 watched_endpoint(EndpointPath, 'rest', 'repo_events', RepoRef) <-
   watched_repo(RepoRef, Owner, Name, SyncEvents),
@@ -282,18 +283,18 @@ watched_endpoint(EndpointPath, 'rest', 'branches', RepoRef) <-
 
 # `users/<me>/events/orgs/<owner>` exists for an ORG account only; the two arms
 # are exclusive on the same 404-sourced `not_an_org` the repos poll turns on.
-watched_global(EndpointPath, 'rest', 'org_events') <-
-  org_config(Owner, SyncEvents),
-  SyncEvents == 1,
-  not(not_an_org(Owner)),
-  gh_username(Username),
-  EndpointPath := concat(["users/", Username, "/events/orgs/", Owner]).
-
-watched_global(EndpointPath, 'rest', 'user_events') <-
-  org_config(Owner, SyncEvents),
-  SyncEvents == 1,
-  not_an_org(Owner),
-  EndpointPath := concat(["users/", Owner, "/events"]).
+match org_config(Owner, _FsAlias, _SyncPrs, SyncEvents, _SyncNotifications,
+                 _CheckoutOnSync, _CheckoutPrBranches) (
+  ; SyncEvents == 1,
+    not(not_an_org(Owner)),
+    gh_username(Username),
+    EndpointPath := concat(["users/", Username, "/events/orgs/", Owner])
+    |-> watched_global(EndpointPath, 'rest', 'org_events')
+  ; SyncEvents == 1,
+    not_an_org(Owner),
+    EndpointPath := concat(["users/", Owner, "/events"])
+    |-> watched_global(EndpointPath, 'rest', 'user_events')
+).
 
 watched_global("notifications", 'rest', 'notifications') <-
   global_setting(SyncNotifications),
@@ -366,33 +367,30 @@ rel endpoint_cooling(endpoint_path: text, bucket: int).
 miss_threshold(3).
 miss_cooloff(60).
 
-# Page 1 IS the endpoint, so the repeated variable is the self-join that keeps a
-# page-walk 404 out of the streak: the endpoint's own existence is the question.
-endpoint_miss(EndpointPath, Bucket) <-
-  page_response(endpoint_path: EndpointPath, page_url: EndpointPath,
-                bucket: Bucket, status: RespStatus),
-  RespStatus == 404.
-
-# The stored-streak guard is what keeps a healthy endpoint off this plane: with
-# no streak to reset, a 200 writes nothing and the reset costs zero statements.
-endpoint_hit(EndpointPath, Bucket) <-
-  page_response(endpoint_path: EndpointPath, page_url: EndpointPath,
-                bucket: Bucket, status: RespStatus),
-  RespStatus != 404,
-  miss_streak(endpoint_path: EndpointPath, misses: Misses),
-  Misses > 0.
+# Page 1 IS the endpoint: the repeated scrutinee variable keeps a page-walk 404
+# out of the streak, and the hit arm's guard keeps a healthy endpoint off here.
+match page_response(EndpointPath, EndpointPath, Bucket, _PrevEtag, RespStatus,
+                    _Etag, _LastModified, _ServerPeriod, _RateRemaining,
+                    _RateReset, _Link, _Bytes) (
+  ; RespStatus == 404
+    |-> endpoint_miss(EndpointPath, Bucket)
+  ; RespStatus != 404,
+    miss_streak(endpoint_path: EndpointPath, misses: Misses),
+    Misses > 0
+    |-> endpoint_hit(EndpointPath, Bucket)
+).
 
 # Two exclusive arms on `at_bucket`, the `page_prev_etag` shape: once this
 # bucket's increment has folded, `at_bucket == Bucket` derives NO row at all.
-miss_next(EndpointPath, NextMisses, Bucket) <-
-  endpoint_miss(EndpointPath, Bucket),
-  miss_streak(endpoint_path: EndpointPath, misses: Misses, at_bucket: AtBucket),
-  AtBucket < Bucket,
-  NextMisses := Misses + 1.
-
-miss_next(EndpointPath, 1, Bucket) <-
-  endpoint_miss(EndpointPath, Bucket),
-  not(miss_streak(EndpointPath)).
+match endpoint_miss(EndpointPath, Bucket) (
+  ; miss_streak(endpoint_path: EndpointPath, misses: Misses,
+                at_bucket: AtBucket),
+    AtBucket < Bucket,
+    NextMisses := Misses + 1
+    |-> miss_next(EndpointPath, NextMisses, Bucket)
+  ; not(miss_streak(EndpointPath))
+    |-> miss_next(EndpointPath, 1, Bucket)
+).
 
 miss_streak(EndpointPath, NextMisses, Bucket) <+
   miss_next(EndpointPath, NextMisses, Bucket).
@@ -678,19 +676,16 @@ rel call_candidate(bucket: int, api_type: text, endpoint_path: text,
 
 # `bucket` rides the level row so an identical answer in a later bucket is still
 # a positive delta, which is the granularity the three arms carried before.
-call_candidate(Bucket, 'rest', PageUrl, Status, RateRemaining, RateReset, Bytes,
-               1) <-
-  page_response(page_url: PageUrl, bucket: Bucket, status: Status,
-                rate_remaining: RateRemaining, rate_reset: RateReset,
-                bytes: Bytes),
-  Status == 304.
-
-call_candidate(Bucket, 'rest', PageUrl, Status, RateRemaining, RateReset, Bytes,
-               0) <-
-  page_response(page_url: PageUrl, bucket: Bucket, status: Status,
-                rate_remaining: RateRemaining, rate_reset: RateReset,
-                bytes: Bytes),
-  Status != 304.
+match page_response(_EndpointPath, PageUrl, Bucket, _PrevEtag, Status, _Etag,
+                    _LastModified, _ServerPeriod, RateRemaining, RateReset,
+                    _Link, Bytes) (
+  ; Status == 304
+    |-> call_candidate(Bucket, 'rest', PageUrl, Status, RateRemaining,
+                       RateReset, Bytes, 1)
+  ; Status != 304
+    |-> call_candidate(Bucket, 'rest', PageUrl, Status, RateRemaining,
+                       RateReset, Bytes, 0)
+).
 
 call_candidate(Bucket, 'graphql', BatchKey, Status, RateRemaining, RateReset,
                Bytes, 0) <-
