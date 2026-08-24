@@ -1,0 +1,29 @@
+# A `json_object` head whose group is two-valued ONLY between the tick staging a
+# keyed arrival's retraction and the recount pass applying it. Run 1 folds
+# `clock("now", 1)` to the file db; run 2 arrives `clock("now", 2)` against that
+# same file, and the additive pass reads the settled `poll` arm alongside the
+# fresh one.
+#
+# rx: header$.pipe(groupBy(h => h.url), mergeMap(g => g.pipe(
+#       reduce((o, h) => ({ ...o, [h.name]: h.value }), {}))))
+
+rel clock(name: text, bucket: int) key(1).
+rel poll(url: text, etag: text, asked: text, at_bucket: int) key(1).
+rel header(url: text, header_name: text, header_value: text).
+rel headers(url: text, headers: text).
+
+# The tag a LATER bucket asks with is the one the answer stored.
+header(Url, "If-None-Match", Etag) <-
+  clock("now", Bucket),
+  poll(url: Url, etag: Etag, at_bucket: AtBucket),
+  AtBucket < Bucket.
+
+# The tag the answering bucket itself keeps reading is the one it ASKED with.
+header(Url, "If-None-Match", Asked) <-
+  clock("now", Bucket),
+  poll(url: Url, asked: Asked, at_bucket: Bucket).
+
+headers(Url, json_object(HeaderName, HeaderValue)) <-
+  header(Url, HeaderName, HeaderValue).
+
+? headers(url, headers) order by url.
