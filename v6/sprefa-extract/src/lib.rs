@@ -58,10 +58,11 @@ pub use family::{
     TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };
 pub use lang::{
-    decode_ast_rule_yaml, query_ast_rule, query_ast_rule_with_content, query_patterns, source_for, sources, AstCaptureFact,
-    AstPatternQuery, AstRule, AstRuleCapture, AstRuleError, AstRuleMatch, AstRuleMutationProposal,
-    AstRuleRequest, AstgrepSource, DataSource, DlSource, GoSource, KotlinSource, MarkdownSource,
-    NamedAstRule, PrologSource, PythonSource, RustSource, StopBy, TsSource,
+    decode_ast_rule_yaml, query_ast_rule, query_ast_rule_with_content, query_patterns, source_for,
+    sources, AstCaptureFact, AstPatternQuery, AstRule, AstRuleCapture, AstRuleError, AstRuleMatch,
+    AstRuleMutationProposal, AstRuleRequest, AstgrepSource, DataSource, DlSource, GoSource,
+    KotlinSource, MarkdownSource, NamedAstRule, PrologSource, PythonSource, RustSource, StopBy,
+    TsSource,
 };
 pub use manifests::{
     fold_package_edges, package_edges, package_edges_jsonl, Manifest, ManifestKind,
@@ -75,8 +76,7 @@ pub use project::{
 pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{
     byte_range, copy_sources, definition_of, join_documents, site_occurrence, Fallback,
-    IndexerSpec, ScipClang,
-    ScipGo, ScipJava, ScipPython, ScipRust, ScipTypescript, Staging,
+    IndexerSpec, ScipClang, ScipGo, ScipJava, ScipPython, ScipRust, ScipTypescript, Staging,
 };
 pub use scip_ensure::{
     default_cache_dir, detect, ensure_index, ensure_index_for_set, external_cache_dir, index_path,

@@ -21,8 +21,8 @@ pub mod rust;
 pub mod ts;
 
 pub use ast_rule::{
-    decode_ast_rule_yaml, query_ast_rule, query_ast_rule_with_content, AstRule, AstRuleCapture, AstRuleError, AstRuleMatch,
-    AstRuleMutationProposal, AstRuleRequest, NamedAstRule, StopBy,
+    decode_ast_rule_yaml, query_ast_rule, query_ast_rule_with_content, AstRule, AstRuleCapture,
+    AstRuleError, AstRuleMatch, AstRuleMutationProposal, AstRuleRequest, NamedAstRule, StopBy,
 };
 pub use astgrep::{
     query_patterns, AstCaptureFact, AstGrepParser, AstPatternQuery, AstgrepSource, CstProjector,

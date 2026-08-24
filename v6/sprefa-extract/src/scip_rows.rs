@@ -315,9 +315,12 @@ fn symbol_rows(info: &ScipSymbolInfo, path: Option<&str>, records: &ScipRecords)
         let bytes = signature.text.as_bytes();
         let lines = LineTable::build(bytes);
         for occurrence in &signature.occurrences {
-            let Some(span) =
-                byte_range_at(bytes, &lines, occurrence.range, PositionEncoding::Unspecified)
-            else {
+            let Some(span) = byte_range_at(
+                bytes,
+                &lines,
+                occurrence.range,
+                PositionEncoding::Unspecified,
+            ) else {
                 continue;
             };
             out.push(FlatFact::ScipSignatureOccurrenceRow {

@@ -23,7 +23,6 @@ use oxc_ast_visit::Visit as OxcVisit;
 use oxc_span::{GetSpan, SourceType};
 
 use super::astgrep::{AstGrepParser, CstProjector};
-use crate::trace;
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
     DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier,
@@ -37,6 +36,7 @@ use crate::seams::{
 };
 use crate::shape::{ContentId, FamilyTag, NameId, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
+use crate::trace;
 use crate::types::ScipIndex;
 use crate::types::{Unresolved, UnresolvedReason};
 

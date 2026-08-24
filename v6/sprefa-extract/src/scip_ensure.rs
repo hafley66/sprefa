@@ -576,7 +576,11 @@ pub fn run_capped(argv: &[&str], cwd: &Path, log_dir: &Path) -> Capped {
             Err(_) => return Capped::NotLaunched,
         }
         if Instant::now() >= deadline {
-            tracing::warn!(pid, secs = budget.secs, "indexer exceeded its budget; sending SIGKILL to its process group");
+            tracing::warn!(
+                pid,
+                secs = budget.secs,
+                "indexer exceeded its budget; sending SIGKILL to its process group"
+            );
             kill_process_group(pid);
             let _ = child.kill();
             let _ = child.wait();

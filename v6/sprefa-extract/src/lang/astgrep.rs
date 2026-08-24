@@ -13,12 +13,12 @@ use ast_grep_core::{AstGrep, Language, Node as SgNode, Pattern};
 use ast_grep_language::SupportLang;
 use serde::Serialize;
 
-use crate::trace;
 use crate::family::{CstEdgeKind, CstF};
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{ParseError, Parser, Project};
 use crate::shape::{NodeRef, Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, Source};
+use crate::trace;
 
 /// The owned ast-grep root: owns its source `String` + the tree-sitter `Tree`.
 /// `Send`; the borrowed `Node<'r>` is not, so projection (which walks it) runs on

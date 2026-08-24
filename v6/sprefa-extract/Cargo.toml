@@ -148,7 +148,7 @@ optional = true
 # a global subscriber steals the choice from whatever links it.
 [dependencies.tracing-subscriber]
 version = "0.3"
-features = ["env-filter"]
+features = ["env-filter", "json"]
 optional = true
 
 [features]

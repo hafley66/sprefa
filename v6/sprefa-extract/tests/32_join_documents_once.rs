@@ -34,7 +34,12 @@ fn index_over(paths: &[&str]) -> ScipIndex {
 fn the_document_join_reads_each_document_once_per_project() {
     let extracted: Vec<(&str, ExtractOutput)> = FILES
         .iter()
-        .map(|(path, text)| (*path, RustSource.extract(path, text.as_bytes(), FamilyMask::ALL)))
+        .map(|(path, text)| {
+            (
+                *path,
+                RustSource.extract(path, text.as_bytes(), FamilyMask::ALL),
+            )
+        })
         .collect();
     let pairs: Vec<_> = extracted
         .iter()

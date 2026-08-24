@@ -5,8 +5,7 @@
 // stay under 2s at these sizes.
 
 use sprefa_extract::{
-    OccurrenceRole, PositionEncoding, ScipDocument, ScipOccurrence, ScipSignature,
-    ScipSymbolInfo,
+    OccurrenceRole, PositionEncoding, ScipDocument, ScipOccurrence, ScipSignature, ScipSymbolInfo,
 };
 
 /// The probe counters are process-wide, so two cases reading them at once
@@ -53,12 +52,17 @@ fn a_call_site_reads_the_document_once_not_once_per_occurrence() {
     let lines = 4_000usize;
     let (doc, content) = document(lines);
     let site = sprefa_extract::Span { start: 0, len: 6 };
-    let _serial = PROBE_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _serial = PROBE_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let before = sprefa_extract::scip::line_reads();
     let started = std::time::Instant::now();
     let hit = sprefa_extract::site_occurrence(&doc, &content, site, "callee");
     let reads = sprefa_extract::scip::line_reads() - before;
-    assert!(hit.is_some(), "the site's own occurrence is in the document");
+    assert!(
+        hit.is_some(),
+        "the site's own occurrence is in the document"
+    );
     assert!(
         reads <= content.len() as u64 + 4 * lines as u64,
         "{reads} document reads for {lines} occurrences over {} bytes is a rescan",
@@ -84,7 +88,9 @@ fn flattening_occurrences_reads_the_document_once() {
         external_symbols: Vec::new(),
     };
     let reader = |_path: &str| -> Option<Vec<u8>> { Some(content.clone()) };
-    let _serial = PROBE_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _serial = PROBE_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let before = sprefa_extract::scip::line_reads();
     let started = std::time::Instant::now();
     let rows = sprefa_extract::flatten_scip_records(
@@ -94,7 +100,11 @@ fn flattening_occurrences_reads_the_document_once() {
         false,
     );
     let reads = sprefa_extract::scip::line_reads() - before;
-    assert!(rows.len() >= lines, "{} rows for {lines} occurrences", rows.len());
+    assert!(
+        rows.len() >= lines,
+        "{} rows for {lines} occurrences",
+        rows.len()
+    );
     assert!(
         reads <= content.len() as u64 + 4 * lines as u64,
         "{reads} document reads for {lines} occurrences over {} bytes is a rescan",
@@ -154,7 +164,9 @@ fn signature_occurrences_read_the_signature_once() {
         external_symbols: Vec::new(),
     };
     let reader = |_path: &str| -> Option<Vec<u8>> { None };
-    let _serial = PROBE_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _serial = PROBE_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let before = sprefa_extract::scip::line_reads();
     let started = std::time::Instant::now();
     let rows = sprefa_extract::flatten_scip_records(

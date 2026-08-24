@@ -620,12 +620,8 @@ fn load_scip(
     // hosts are the callers that mean "index this repository" and they keep
     // `default_cache_dir`.
     let cache = crate::scip_ensure::external_cache_dir(root);
-    let report = crate::scip_ensure::ensure_index_for_set(
-        root,
-        &cache,
-        IndexBudget::from_env(),
-        Some(&set),
-    );
+    let report =
+        crate::scip_ensure::ensure_index_for_set(root, &cache, IndexBudget::from_env(), Some(&set));
     let index_path = report.index.ok_or_else(|| {
         ProjectError::ScipIndexerUnavailable(
             report
@@ -879,11 +875,7 @@ fn call_facts(
         .collect()
 }
 
-fn type_facts(
-    input: &ProjectInput,
-    targets: &TargetIndex<'_>,
-    cx: &ProjectCx,
-) -> Vec<FlatFact> {
+fn type_facts(input: &ProjectInput, targets: &TargetIndex<'_>, cx: &ProjectCx) -> Vec<FlatFact> {
     let Some(types) = input.output.types.as_ref() else {
         return Vec::new();
     };
@@ -894,11 +886,7 @@ fn type_facts(
             let owner = types.node(edge.src).span;
             Some(FlatFact::ResolvedTypeEdge {
                 owner_path: input.path.clone(),
-                owner_name: name_at(
-                    targets.type_names.get(&input.blob),
-                    &input.output,
-                    owner,
-                ),
+                owner_name: name_at(targets.type_names.get(&input.blob), &input.output, owner),
                 owner_start: owner.start,
                 owner_end: owner.end(),
                 target_path: target.path.clone(),

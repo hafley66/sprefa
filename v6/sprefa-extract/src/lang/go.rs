@@ -27,7 +27,6 @@
 use std::collections::BTreeSet;
 
 use super::astgrep::{AstGrepParser, CstProjector};
-use crate::trace;
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
     DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
@@ -41,6 +40,7 @@ use crate::seams::{
 };
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
+use crate::trace;
 use crate::types::ScipIndex;
 
 // ── the tree-sitter-go parse (one parse feeds type/call/df) ──────────────────

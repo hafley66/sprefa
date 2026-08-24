@@ -6,12 +6,12 @@
 //! existing CstF plane and uses the same node/child wire shape as every other
 //! syntax source.
 
-use crate::trace;
 use crate::family::{CstEdgeKind, CstF, TypeF};
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, ProjectCx, Resolve};
 use crate::shape::{NameId, NodeRef, Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, Source};
+use crate::trace;
 use crate::types::{DocNode, DocNodeKind, ProjectEdge, TypeEdgeKind};
 
 #[derive(Default)]
