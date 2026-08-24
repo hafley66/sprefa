@@ -219,7 +219,7 @@ rel watched_repo_seen(repo_ref: repo, owner: text, name: text,
                       checkout_pr_branches: int, fs_alias: text).
 rel org_owner(owner: text, fs_alias: text).
 rel gh_username(login: text) key(1).
-rel not_an_org(owner: text) key(1).
+rel not_an_org(owner: text).
 rel discovered_repo(owner: text, name: text, default_branch: text).
 
 org_owner(Owner, FsAlias) <-
@@ -716,13 +716,17 @@ discovered_repo(Owner, Name, DefaultBranch) <-
   RespStatus == 200,
   decode(Body, [... {name: Name: text, default_branch: DefaultBranch: text}]).
 
-# `rest_response` has a 200 arm and a 304 arm and no other, so reading a 404 off
-# it made this rule statically dead; `endpoint_miss` IS the 404 (sync/mod.rs:78).
-not_an_org(Owner) <+
-  endpoint_miss(EndpointPath, Bucket),
-  watched_global(EndpointPath, ApiType, Kind),
-  Kind == 'org_repos',
-  org_owner(Owner).
+# "this owner is a user, not an org" is a durable fact and `call_log` is its
+# durable record: the level arm derives it from ANY logged 404 on the org-repos
+# path, so a restart re-learns it from history instead of waiting out the next
+# poll period. A live 404 reaches `call_log` the same tick and lands here too.
+not_an_org(Owner) <-
+  call_log(_AtTick, _ApiType, LoggedPath, LoggedStatus, _Remaining, _Reset,
+           _Bytes, _CacheHit),
+  LoggedStatus == 404,
+  org_owner(Owner),
+  OrgReposPath := concat(["orgs/", Owner, "/repos?per_page=100"]),
+  LoggedPath == OrgReposPath.
 
 # ── repo events ─────────────────────────────────────────────────────────────
 
