@@ -152,7 +152,7 @@ tao = "0.35"
 # Span-CLOSE formatting surfaces per-phase durations so hotspots need no recompile.
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-hafley-observe = { path = "../hafley-rs/crates/hafley-observe" }
+hafley-observe = { git = "https://github.com/hafley66/hafley-rs", rev = "ea016d41ced5d337fa26830279286cdeccee2084" }
 # Exact-pinned (not a caret range like the rest of this file): a chrome-trace
 # JSON exporter is a small, rarely-touched vendor surface where an unplanned
 # minor bump changing its Drop/flush timing is a correctness risk (kill-safety
