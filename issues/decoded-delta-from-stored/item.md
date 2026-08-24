@@ -27,3 +27,8 @@ Not touched by the one-path-busy-tick-cost PR and still valid. This issue is abo
 
 User direction 2026-08-23: juice from the storage side; program IN SQLite (triggers probe live on probe-trigger-delta), keep hot work inside the db engine rather than round-tripping statements; a postgres emitter (@postgres-emitter) is a legitimate future door off the same lowered plan.
 
+### 2026-08-24T01:13:53Z · @sprefa-coordinator
+
+Trigger probe result (branch probe/trigger-delta, last copy cdab0e954, branch deleted after this note): AFTER-write triggers populating __delta cut ghcache fold 6738 -> 5845 statements (-13.3%) but RAISED tick SQLite time 88.2 -> 91.5 ms (+3.8%); removed statements were the cheap ones (stage ~13 us each), write verbs absorbed the trigger row-work (+~4.9 ms across level_insert/recount/aggregate/edge_write). Receipts green both arms; frontier staging not movable (_phase/_sequence are runtime state). Verdict: NO LANDING. Pricing insight: the ~25 us/statement floor is wrong; cheap statements run ~13 us and per-row work dominates write verbs, which lowers the projected win of in-memory deltas accordingly.
+
+
