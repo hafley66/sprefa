@@ -172,8 +172,8 @@
         1,
         200,
         "{\"etag\":\"etag-events-1\",\"x-ratelimit-remaining\":4995,\"x-ratelimit-reset\":1000000}",
-        "[]",
-        2
+        "[{\"id\":\"firehose-1\",\"type\":\"WatchEvent\",\"actor\":{\"login\":\"hafley66\"},\"repo\":{\"name\":\"hafley66/ghost\"},\"payload\":{\"action\":\"started\"},\"created_at\":\"2026-08-24T00:00:00Z\"}]",
+        170
       ]
     },
     {
@@ -250,8 +250,8 @@
         2,
         200,
         "{\"etag\":\"etag-events-2\",\"x-ratelimit-remaining\":4991,\"x-ratelimit-reset\":1000000}",
-        "[]",
-        2
+        "[{\"id\":\"firehose-1\",\"type\":\"WatchEvent\",\"actor\":{\"login\":\"hafley66\"},\"repo\":{\"name\":\"hafley66/ghost\"},\"payload\":{\"action\":\"started\"},\"created_at\":\"2026-08-24T00:00:00Z\"}]",
+        170
       ]
     },
     {
@@ -266,8 +266,8 @@
         2,
         200,
         "{\"etag\":\"etag-events-2\",\"x-ratelimit-remaining\":4990,\"x-ratelimit-reset\":1000000}",
-        "[]",
-        2
+        "[{\"id\":\"firehose-1\",\"type\":\"WatchEvent\",\"actor\":{\"login\":\"hafley66\"},\"repo\":{\"name\":\"hafley66/ghost\"},\"payload\":{\"action\":\"started\"},\"created_at\":\"2026-08-24T00:00:00Z\"}]",
+        170
       ]
     },
     {
@@ -328,8 +328,8 @@
         3,
         200,
         "{\"etag\":\"etag-events-3\",\"x-ratelimit-remaining\":4987,\"x-ratelimit-reset\":1000000}",
-        "[]",
-        2
+        "[{\"id\":\"firehose-1\",\"type\":\"WatchEvent\",\"actor\":{\"login\":\"hafley66\"},\"repo\":{\"name\":\"hafley66/ghost\"},\"payload\":{\"action\":\"started\"},\"created_at\":\"2026-08-24T00:00:00Z\"}]",
+        170
       ]
     },
     {
@@ -344,8 +344,8 @@
         3,
         200,
         "{\"etag\":\"etag-events-3\",\"x-ratelimit-remaining\":4986,\"x-ratelimit-reset\":1000000}",
-        "[]",
-        2
+        "[{\"id\":\"firehose-1\",\"type\":\"WatchEvent\",\"actor\":{\"login\":\"hafley66\"},\"repo\":{\"name\":\"hafley66/ghost\"},\"payload\":{\"action\":\"started\"},\"created_at\":\"2026-08-24T00:00:00Z\"}]",
+        170
       ]
     },
     {
@@ -406,8 +406,8 @@
         4,
         200,
         "{\"etag\":\"etag-events-4\",\"x-ratelimit-remaining\":4983,\"x-ratelimit-reset\":1000000}",
-        "[]",
-        2
+        "[{\"id\":\"firehose-1\",\"type\":\"WatchEvent\",\"actor\":{\"login\":\"hafley66\"},\"repo\":{\"name\":\"hafley66/ghost\"},\"payload\":{\"action\":\"started\"},\"created_at\":\"2026-08-24T00:00:00Z\"}]",
+        170
       ]
     },
     {
@@ -422,8 +422,8 @@
         4,
         200,
         "{\"etag\":\"etag-events-4\",\"x-ratelimit-remaining\":4982,\"x-ratelimit-reset\":1000000}",
-        "[]",
-        2
+        "[{\"id\":\"firehose-1\",\"type\":\"WatchEvent\",\"actor\":{\"login\":\"hafley66\"},\"repo\":{\"name\":\"hafley66/ghost\"},\"payload\":{\"action\":\"started\"},\"created_at\":\"2026-08-24T00:00:00Z\"}]",
+        170
       ]
     },
     {
