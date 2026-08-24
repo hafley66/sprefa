@@ -657,3 +657,40 @@ fn a_restart_tick_defers_a_two_valued_aggregate_group_to_the_recount_pass() {
         "the stale arm's row leaves with the retraction"
     );
 }
+
+/// TEST: BARE FILENAME SOURCE. FAIL PRE FIX, measured 2026-08-24: `dl6 run
+/// ghcache.dl6` run from `v6/dl/ghcache` with a bare filename (no directory)
+/// erred in `point_at_adapters` (dl6.rs:434-450) with `read the adapters
+/// directory `. `Path::new("ghcache.dl6").parent()` returns `Some("")`, so
+/// `directory` is the empty path and `"".canonicalize()` fails before the
+/// `unwrap_or_else(|| PathBuf::from("."))` arm can fire, because parent is
+/// `Some`, not `None`. Sabotage receipt: removing the empty-path normalization
+/// in `point_at_adapters` reds this with `read the adapters directory ` on
+/// stderr.
+#[test]
+fn a_bare_filename_source_resolves_its_adapters_directory_to_dot() {
+    let scratch = Scratch::new();
+    let worktree = tempfile::tempdir().expect("temporary run directory");
+    let bare = worktree.path().join("query_order_tail.dl6");
+    std::fs::copy(fixture("query_order_tail.dl6"), &bare).expect("copy the fixture");
+
+    let mut command = scratch.dl6();
+    command
+        .current_dir(worktree.path())
+        .arg("run")
+        .arg("query_order_tail.dl6")
+        .args(["--final-only"]);
+    let run = finish(&mut command, "bare-filename run");
+    assert_eq!(
+        run.code,
+        Some(0),
+        "a bare filename runs from its own directory: {}{}",
+        run.stdout,
+        run.stderr
+    );
+    assert!(
+        !run.stderr.contains("read the adapters directory"),
+        "the bare filename resolves its adapters directory to `.`: {}",
+        run.stderr
+    );
+}
