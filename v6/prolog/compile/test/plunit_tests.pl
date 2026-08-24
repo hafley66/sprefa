@@ -2446,18 +2446,18 @@ test(catalog_rows_remain_dense_while_semantic_ids_are_terms) :-
 
 :- begin_tests(catalog_nested_rows).
 
-% A nested rel parents at its PARENT REL row, not the module row, and its
-% local_name is its own segment so (__rel_parent) is a per-parent child seek.
+% A nested rel's catalog path parents at its enclosing REL row, independent of
+% the authored columns. Its local_name is its own path segment.
 test(catalog_nested_rel_parents_at_the_parent_rel) :-
     inferred_relplans([ rel_spec(orchard/1, set, [orchard_id], none, [int]),
-                        rel_spec(orchard__tree/2, set, [parent, tree_id],
-                                 none, [ref(orchard), int]) ],
+                        rel_spec(orchard__tree/1, set, [tree_id],
+                                 none, [int]) ],
                       RelPlans),
     lower:catalog_decl_rows(catalog_nest, [], RelPlans,
-                            [rel_path_decl(orchard__tree/2, [orchard, tree])],
+                            [rel_path_decl(orchard__tree/1, [orchard, tree])],
                             Rows, _),
     memberchk(row(8, 7, 0, orchard, rel, 0, 1, 7, _, _, _), Rows),
-    memberchk(row(10, 8, 0, tree, rel, 0, 2, 7, _, _, _), Rows).
+    memberchk(row(10, 8, 0, tree, rel, 0, 1, 7, _, _, _), Rows).
 
 % `north` names no decl of its own, so without a minted room row the chain
 % from `tree` upward would point at a rel_id no row carries.
@@ -2488,20 +2488,19 @@ test(catalog_room_rows_do_not_move_the_rel_block) :-
 % Depth 3, every level declared: each rel row parents at the one above it.
 test(catalog_three_declared_levels_chain_the_parent_ids) :-
     inferred_relplans([ rel_spec(orchard/1, set, [orchard_id], none, [int]),
-                        rel_spec(orchard__tree/2, set, [parent, tree_id],
-                                 none, [ref(orchard), int]),
-                        rel_spec(orchard__tree__branch/2,
-                                 set, [parent, branch_id],
-                                 none, [ref(orchard__tree), int]) ],
+                        rel_spec(orchard__tree/1, set, [tree_id],
+                                 none, [int]),
+                        rel_spec(orchard__tree__branch/1,
+                                 set, [branch_id], none, [int]) ],
                       RelPlans),
     lower:catalog_decl_rows(catalog_deep, [], RelPlans,
-                            [ rel_path_decl(orchard__tree/2, [orchard, tree]),
-                              rel_path_decl(orchard__tree__branch/2,
+                            [ rel_path_decl(orchard__tree/1, [orchard, tree]),
+                              rel_path_decl(orchard__tree__branch/1,
                                             [orchard, tree, branch]) ],
                             Rows, _),
     memberchk(row(8, 7, 0, orchard, rel, 0, 1, 7, _, _, _), Rows),
-    memberchk(row(10, 8, 0, tree, rel, 0, 2, 7, _, _, _), Rows),
-    memberchk(row(13, 10, 0, branch, rel, 0, 2, 7, _, _, _), Rows).
+    memberchk(row(10, 8, 0, tree, rel, 0, 1, 7, _, _, _), Rows),
+    memberchk(row(12, 10, 0, branch, rel, 0, 1, 7, _, _, _), Rows).
 
 % A program with no dotted decl emits the ids it always did: the whole nesting
 % path sits behind an empty rel_path_decl set.

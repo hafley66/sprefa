@@ -14,7 +14,7 @@
 :- use_module('../../1_expansion', [expand_program/3]).
 :- use_module('../../1_host_expand', [prepare_program/5]).
 :- use_module('../../use_resolve', [expand_uses/6]).
-:- use_module('../../compile', [program_plan/3]).
+:- use_module('../../compile', [dl6_seeded_form/3, program_plan/3]).
 :- use_module('../../lower',
               [ lower_program/2,
                 boot_statements/7,
@@ -189,11 +189,14 @@ test(outside_rules_read_and_contribute_to_a_brace_declared_child) :-
 test(a_dotted_fact_resolves_to_its_declared_flat_name) :-
     parse_braced_source(
         "rel config() { rel global(poll_period: int). }. config.global(30).",
-        Program, Bindings),
-    program_plan(fixture(braced_dotted_fact, Program, [], [], [])-Bindings,
+        Parsed, Bindings),
+    dl6_seeded_form(Parsed, Initial, Program),
+    Initial == [config__global(30)],
+    Program = prog(_, []),
+    program_plan(fixture(braced_dotted_fact, Program, Initial, [], [])-Bindings,
                  [],
                  plan(_, prog(_, Rules), _, RelPlans, _, _, _, _, _)),
-    Rules =@= [(config__global(30) <- true)],
+    Rules == [],
     memberchk(rel(config__global/1, _, _, _, _), RelPlans).
 
 test(an_explicit_parent_relation_column_uses_ordinary_relation_value_typing) :-
