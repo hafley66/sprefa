@@ -31,4 +31,9 @@ User direction 2026-08-23: juice from the storage side; program IN SQLite (trigg
 
 Trigger probe result (branch probe/trigger-delta, last copy cdab0e954, branch deleted after this note): AFTER-write triggers populating __delta cut ghcache fold 6738 -> 5845 statements (-13.3%) but RAISED tick SQLite time 88.2 -> 91.5 ms (+3.8%); removed statements were the cheap ones (stage ~13 us each), write verbs absorbed the trigger row-work (+~4.9 ms across level_insert/recount/aggregate/edge_write). Receipts green both arms; frontier staging not movable (_phase/_sequence are runtime state). Verdict: NO LANDING. Pricing insight: the ~25 us/statement floor is wrong; cheap statements run ~13 us and per-row work dominates write verbs, which lowers the projected win of in-memory deltas accordingly.
 
+### 2026-08-24T03:44:17Z · @sprefa-coordinator
+
+Both probe arms measured, both NO LANDING (branches deleted; last copies: inmem-carry 89e3074ee, returning 9d6c3a0). RETURNING arm: statements -4.7% but wall +32%; the write re-evaluates the projection per ROW (json CASE + dictionary subqueries) where publish did it per GROUP. INMEM-CARRY arm: correct and cheap but nearly useless as-is; staged rows carry interned INTEGER ids while readers want decoded text, so only provably-empty reads (91, carrying 8 rows) were served from memory. CEILING measurement (undecoded rerun): decode + __txt view = 77% of publish time on ghcache, 65% on wide_64; the true removable per-statement overhead is 4.9-8.9 us, not 25. The design that pays is the issue title literally: move the decode expression and text un-intern into Rust (needs an id->text plane and a v6/prolog contract change). That is language-adjacent; Chris decides before any lane.
+
+
 
