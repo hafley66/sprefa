@@ -747,6 +747,42 @@ repo_event_seen(RepoRef, GhId, EventType, Actor, Payload, CreatedAt) <-
                      actor: {login: Actor: text}, payload: Payload,
                      created_at: CreatedAt: text}]).
 
+# The user/org events firehose polls every bucket (watched_global arms above)
+# and is keyed to no single repo, so each event is routed to the repo its
+# payload names; events naming a repo outside the watched set are dropped by
+# the watched_repo join. gh_id is the same event id the repo poll stores, so
+# the keyed fold at repo_event/1 dedupes a firehose arrival against a poll
+# arrival (comment at 740-741: an identical write is a zero delta).
+repo_event_seen(RepoRef, GhId, EventType, Actor, Payload, CreatedAt) <-
+  watched_global(endpoint_path: EndpointPath, endpoint_kind: EndpointKind),
+  EndpointKind == 'user_events',
+  rest_response(endpoint_path: EndpointPath, status: RespStatus, body: Body),
+  RespStatus == 200,
+  decode(Body, [... {id: GhId: text, type: EventType: text,
+                     actor: {login: Actor: text},
+                     repo: {name: RepoSlug: text},
+                     payload: Payload, created_at: CreatedAt: text}]),
+  SeparatorAt := instr(RepoSlug, '/'),
+  Owner := substr(RepoSlug, 1, SeparatorAt - 1),
+  Name := substr(RepoSlug, SeparatorAt + 1),
+  watched_repo(RepoRef, Owner, Name, _DefaultBranch, _SyncPrs, _SyncEvents,
+               _SyncBranches, _CheckoutOnSync, _CheckoutPrBranches, _FsAlias).
+
+repo_event_seen(RepoRef, GhId, EventType, Actor, Payload, CreatedAt) <-
+  watched_global(endpoint_path: EndpointPath, endpoint_kind: EndpointKind),
+  EndpointKind == 'org_events',
+  rest_response(endpoint_path: EndpointPath, status: RespStatus, body: Body),
+  RespStatus == 200,
+  decode(Body, [... {id: GhId: text, type: EventType: text,
+                     actor: {login: Actor: text},
+                     repo: {name: RepoSlug: text},
+                     payload: Payload, created_at: CreatedAt: text}]),
+  SeparatorAt := instr(RepoSlug, '/'),
+  Owner := substr(RepoSlug, 1, SeparatorAt - 1),
+  Name := substr(RepoSlug, SeparatorAt + 1),
+  watched_repo(RepoRef, Owner, Name, _DefaultBranch, _SyncPrs, _SyncEvents,
+               _SyncBranches, _CheckoutOnSync, _CheckoutPrBranches, _FsAlias).
+
 repo_event(RepoRef, GhId, EventType, Actor, Payload, CreatedAt) <+
   repo_event_seen(RepoRef, GhId, EventType, Actor, Payload, CreatedAt).
 
