@@ -1,5 +1,10 @@
 # Relational Interfaces and Result Arrows
 
+> Superseded on 2026-08-23 by `issues/remove-rel-is/item.md`. The relation
+> conformance suffix and implementation-row model described below were removed.
+> Interface declarations, generic bounds, result arrows, and compiler relation
+> annotations remain.
+
 ## Context
 
 DL6 currently parses interfaces as `interface_decl/2` and implementations as

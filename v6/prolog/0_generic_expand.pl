@@ -35,7 +35,7 @@
 :- use_module('0_annotation_expand', [elaborate_annotation/3]).
 :- use_module('0_type_ids',
               [ decl_id/4, primitive_id/2, param_id/4, member_id/4,
-                constraint_id/3, impl_id/3, app_id/3, arg_id/3,
+                constraint_id/3, app_id/3, arg_id/3,
                 id_kind_name/3 ]).
 :- use_module('0_compiler_relations',
               [ partition_compiler_program/5,
@@ -1285,8 +1285,8 @@ merge_one_enum_template_rows(EnumRows, semantic_type_rows(Rows0),
     sort(Unsorted, Rows).
 merge_one_enum_template_rows(_, Decl, Decl).
 
-% Source terms are accepted here but generic_rel/interface/implementation terms
-% are never constructed; ids derive from labels and ordinals, not source order.
+% Source terms are accepted here, but normalized rows are the only output; ids
+% derive from labels and ordinals, not source order.
 generic_type_ir(Decls, Rows) :-
     normalized_type_rows(Decls, Rows).
 
@@ -1686,11 +1686,9 @@ normalized_type_rows_cached(Decls, Rows) :-
     findall(Row, normalized_member_role_row(Decls, Row), MemberRoleRows),
     findall(Row, normalized_constraint_row(Decls, Row), ConstraintRows),
     normalized_application_rows(Decls, ApplicationRows),
-    findall(Row, normalized_implementation_row(Decls, Row), ImplementationRows),
     normalized_derivation_rows(Decls, ApplicationRows, DerivationRows),
     append([DeclarationRows, ParameterRows, MemberRows, MemberRoleRows,
-            ConstraintRows,
-            ApplicationRows, ImplementationRows, DerivationRows], Unsorted),
+            ConstraintRows, ApplicationRows, DerivationRows], Unsorted),
     sort(Unsorted, Rows).
 
 %! freeze_type_rows(+ExpandedDecls, -FrozenDecls) is det.
@@ -1789,7 +1787,6 @@ canonical_type_row_identity(application(Id, _), application(Id)) :- !.
 canonical_type_row_identity(argument(Id, _, _, _), argument(Id)) :- !.
 canonical_type_row_identity(constraint(Id, _, _), constraint(Id)) :- !.
 canonical_type_row_identity(constraint(Id, _, _, _), constraint(Id)) :- !.
-canonical_type_row_identity(implementation(Id, _, _), implementation(Id)) :- !.
 canonical_type_row_identity(derived_from(Id, Source), derived_from(Id, Source)) :- !.
 canonical_type_row_identity(origin(Id, Source), origin(Id, Source)) :- !.
 canonical_type_row_identity(anonymous(Owner, Path, _), anonymous(Owner, Path)) :- !.
@@ -2032,40 +2029,10 @@ normalized_constraint_row(Decls, constraint(Id, ParameterId, InterfaceId, Patter
     semantic_application_id(Decls, InterfaceId, Patterns, InterfaceApplicationId),
     constraint_id(ParameterId, InterfaceApplicationId, Id).
 
-normalized_implementation_row(Decls,
-                              implementation(Id, Subject, interface_application(InterfaceId))) :-
-    member(rel_is_implementation(Ref, Applications), Decls),
-    ref_name(Ref, SubjectName),
-    semantic_decl_id(Decls, relation, SubjectName, Subject),
-    member(Application, Applications),
-    interface_application_parts(Application, InterfaceName, []),
-    semantic_decl_id(Decls, interface, InterfaceName, InterfaceId),
-    impl_id(Subject, InterfaceId, Id).
-
-normalized_implementation_row(Decls,
-                              implementation(Id, Subject,
-                                            interface_application(InterfaceId,
-                                                                  Arguments))) :-
-    member(rel_is_implementation(Ref, Applications), Decls),
-    ref_name(Ref, SubjectName),
-    semantic_decl_id(Decls, relation, SubjectName, Subject),
-    member(Application, Applications),
-    interface_application_parts(Application, InterfaceName, Arguments),
-    Arguments \== [],
-    semantic_decl_id(Decls, interface, InterfaceName, InterfaceId),
-    semantic_application_id(Decls, InterfaceId, Arguments, InterfaceApplicationId),
-    impl_id(Subject, InterfaceApplicationId, Id).
-
 member_constraint_row(Rows, ParameterId, InterfaceId, []) :-
     member(constraint(_, ParameterId, InterfaceId), Rows).
 member_constraint_row(Rows, ParameterId, InterfaceId, Patterns) :-
     member(constraint(_, ParameterId, InterfaceId, Patterns), Rows).
-
-member_implementation_row(Rows, Id, Subject, InterfaceId, []) :-
-    member(implementation(Id, Subject, interface_application(InterfaceId)), Rows).
-member_implementation_row(Rows, Id, Subject, InterfaceId, Arguments) :-
-    member(implementation(Id, Subject,
-                          interface_application(InterfaceId, Arguments)), Rows).
 
 normalized_application_rows(Decls, Rows) :-
     findall(Application, semantic_application_source(Decls, Application), Found),
@@ -2275,10 +2242,6 @@ validate_type_rows(Rows) :-
     forall(member_constraint_row(Rows, _, InterfaceId, _),
            ( memberchk(declaration(InterfaceId, _, _, interface, _), Rows) -> true
            ; id_kind_name(InterfaceId, interface, InterfaceName),
-             throw(unsupported_construct(interface_unknown(InterfaceName))) )),
-    forall(member_implementation_row(Rows, _, _, InterfaceId, _),
-           ( memberchk(declaration(InterfaceId, _, _, interface, _), Rows) -> true
-           ; id_kind_name(InterfaceId, interface, InterfaceName),
              throw(unsupported_construct(interface_unknown(InterfaceName))) )).
 
 % The source syntax stays in the authored declaration list.  This plane is a
@@ -2300,11 +2263,6 @@ validate_compile_type_plane(Plane) :-
     ( compile_type_query(Plane, duplicate_interface(Name), _)
     -> throw(unsupported_construct(interface_duplicate(Name)))
     ; true
-    ),
-    ( compile_type_query(Plane, duplicate_implementation(Subject, Interface), _)
-    -> throw(unsupported_construct(interface_implementation_duplicate(
-                  Subject-Interface)))
-    ; true
     ).
 
 % Compile-time relation declarations and source facts.
@@ -2312,16 +2270,6 @@ compile_type_relation(type_plane(_, Rows), interface, [Name, Arity]) :-
     member(declaration(InterfaceId, root, Name, interface, compile_time), Rows),
     findall(_, member(parameter(_, InterfaceId, _, _), Rows), Parameters),
     length(Parameters, Arity).
-compile_type_relation(type_plane(_, Rows), implementation,
-                      [SubjectName, InterfaceName, ImplId]) :-
-    member_implementation_row(Rows, ImplId, Subject, InterfaceId, _),
-    id_kind_name(Subject, relation, SubjectName),
-    id_kind_name(InterfaceId, interface, InterfaceName).
-compile_type_relation(type_plane(_, Rows), implementation,
-                      [SubjectName, InterfaceName, Arguments, ImplId]) :-
-    member_implementation_row(Rows, ImplId, Subject, InterfaceId, Arguments),
-    id_kind_name(Subject, relation, SubjectName),
-    id_kind_name(InterfaceId, interface, InterfaceName).
 compile_type_relation(type_plane(Decls, _), named_type, [Name]) :-
     ( member(type_decl(Name, _), Decls)
     ; member(col_type(Name/_, _, _), Decls)
@@ -2336,25 +2284,11 @@ compile_type_relation(type_plane(Decls, _), enum_payload, [Name, Type]) :-
     enum_payload_types(Variants, PayloadTypes),
     member(Type, PayloadTypes).
 
-% One query boundary for duplicate diagnostics, direct conformance facts, and
-% derived conformance rules.  Duplicate checks read authored implementation
-% facts so `sort/2` in the normalized catalog cannot hide a repeated source
-% declaration.
+% One query boundary for interface diagnostics and structural conformance.
 compile_type_query(type_plane(Decls, _), duplicate_interface(Name), duplicate) :-
     findall(InterfaceName, member(interface_decl(InterfaceName, _), Decls), Names),
     select(Name, Names, Rest),
     memberchk(Name, Rest),
-    !.
-compile_type_query(type_plane(Decls, _), duplicate_implementation(Subject, Interface),
-                   duplicate) :-
-    findall(SubjectName-Application,
-            ( member(rel_is_implementation(Ref, Applications), Decls),
-              ref_name(Ref, SubjectName),
-              member(Application, Applications) ),
-            Implementations),
-    select(Subject-Application, Implementations, Rest),
-    memberchk(Subject-Application, Rest),
-    Interface = Application,
     !.
 compile_type_query(Plane, conforms(Type, interface_pattern(InterfaceName, Patterns)), Proof) :-
     compile_type_conformance(Plane, Type,
@@ -2363,25 +2297,7 @@ compile_type_query(Plane, conforms(Type, Interface), Proof) :-
     interface_application_parts(Interface, InterfaceName, Patterns),
     compile_type_conformance(Plane, Type, interface_pattern(InterfaceName, Patterns), [], Proof).
 
-% Direct implementation evidence enters the same set evaluator as authored
-% compiler facts.  Structural json_encodable evidence remains the existing
-% adapter below because its universal field/payload check is not a positive
-% row rule in this first slice.
-compile_type_conformance(Plane, Type, Interface, _, impl(ImplId)) :-
-    atom(Type),
-    Interface = interface_pattern(InterfaceName, Patterns),
-    Plane = type_plane(Decls, _),
-    semantic_type_id(Decls, Type, SubjectId),
-    semantic_decl_id(Decls, interface, InterfaceName, InterfaceId),
-    interface_pattern_type_ids(Decls, Patterns, PatternIds),
-    interface_evidence_closure(Plane, Closure),
-    member(interface_evidence(SubjectId, InterfaceId, ConcreteArgs, ImplId),
-           Closure),
-    interface_arguments_match(PatternIds, ConcreteArgs),
-    !.
-
-% A recursive revisit closes the structural proof after direct implementation
-% facts, preserving authored `is json_encodable` precedence.
+% A recursive revisit closes structural json_encodable proofs.
 compile_type_conformance(_, Type, interface_pattern(json_encodable, []), Seen,
                          structural(Type)) :-
     atom(Type),
@@ -2432,23 +2348,6 @@ compile_type_conformance_with_seen(Plane, Seen, Type) :-
     compile_type_conformance(Plane, Type,
                              interface_pattern(json_encodable, []), Seen, _).
 
-interface_evidence_closure(Plane, Closure) :-
-    Plane = type_plane(Decls, _),
-    findall(interface_evidence(SubjectId, InterfaceId, ArgumentIds, ImplId),
-            ( compile_type_relation(Plane, implementation,
-                                    [Subject, Interface, Arguments, ImplId]),
-              semantic_type_id(Decls, Subject, SubjectId),
-              semantic_decl_id(Decls, interface, Interface, InterfaceId),
-              maplist(semantic_application_argument_id(Decls), Arguments,
-                      ArgumentIds) ),
-            SeedRows),
-    evaluate_compiler_relations(
-        compiler_relations([compiler_relation(interface_evidence/4, 4, [])], []),
-        SeedRows, Closure).
-
-interface_pattern_type_ids(Decls, Patterns, PatternIds) :-
-    maplist(semantic_application_argument_id(Decls), Patterns, PatternIds).
-
 % Checked at the source terms as well as normalized rows: interface application
 % arguments remain visible for arity validation and conformance matching.
 validate_interface_applications(Decls) :-
@@ -2456,10 +2355,6 @@ validate_interface_applications(Decls) :-
             ( member(interface_decl(Name, Parameters), Decls),
               length(Parameters, Arity) ),
             Interfaces),
-    forall(( member(rel_is_implementation(_, Applications), Decls),
-             member(Application, Applications) ),
-           ( validate_interface_application(Application, Interfaces),
-             reject_interface_wildcard(Application) )),
     forall(( member(Template, Decls),
              template_parameters(Template, Parameters),
              member(Parameter, Parameters),
@@ -2491,20 +2386,6 @@ reject_repeated_subject_bound(ParameterName, Constraint) :-
     throw(unsupported_construct(
               repeated_subject_interface_bound(ParameterName, InterfaceName))).
 reject_repeated_subject_bound(_, _).
-
-reject_interface_wildcard(Application) :-
-    interface_application_parts(Application, InterfaceName, Arguments),
-    memberchk(any, Arguments),
-    throw(unsupported_construct(
-              interface_wildcard_outside_bound(InterfaceName))).
-reject_interface_wildcard(Application) :-
-    interface_application_parts(Application, InterfaceName, Arguments),
-    member(Argument, Arguments),
-    compound(Argument),
-    contains_any(Argument),
-    throw(unsupported_construct(
-              interface_wildcard_outside_bound(InterfaceName))).
-reject_interface_wildcard(_).
 
 reject_nested_bound_wildcard(Constraint) :-
     interface_application_parts(Constraint, InterfaceName, Arguments),
@@ -2553,14 +2434,6 @@ interface_application_parts(Application, Name, []) :-
 interface_application_parts(Application, Name, Arguments) :-
     compound(Application),
     Application =.. [Name | Arguments].
-
-interface_arguments_match(Patterns, Arguments) :-
-    same_length(Patterns, Arguments),
-    maplist(interface_argument_matches, Patterns, Arguments).
-
-interface_argument_matches(any, _) :- !.
-interface_argument_matches(any_pattern, _) :- !.
-interface_argument_matches(Pattern, Argument) :- Pattern == Argument.
 
 ref_name(Name/_, Name) :- !.
 ref_name(Name, Name).

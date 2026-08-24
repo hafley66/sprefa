@@ -23,11 +23,11 @@ rel GenericPair(T: json_encodable)(first: T, second: T).
 rel GenericBox(T: json_encodable + addressable)(value: T).
 rel GenericEntry(Key: json_encodable, Value)(key: Key, value: Value).
 rel CodecBox(T: codec(any))(value: T).
-rel CodecDocument(value: json) is codec(json).
-rel AddressValue(value: text) is json_encodable, addressable.
+rel CodecDocument(value: json).
+rel AddressValue(value: text).
 rel GenericUse(pair: GenericPair(int), entry: GenericEntry(text,int)).
 
-rel CapabilityRow(value: text) is json_encodable, container(text).
+rel CapabilityRow(value: text).
 rel Person(name: text).
 rel person(name: text).
 rel Status(ready() ; failed(reason: text)).

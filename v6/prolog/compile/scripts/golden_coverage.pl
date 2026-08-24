@@ -113,7 +113,6 @@ required_spelling(generic_parameter,         "GenericPair(T:").
 required_spelling(generic_multiple_bounds,   "json_encodable + addressable").
 required_spelling(generic_free_parameter,    "GenericEntry(Key: json_encodable, Value)").
 required_spelling(generic_application,       "GenericPair(int)").
-required_spelling(interface_implementation,  " is json_encodable, container(text)").
 required_spelling(capitalized_relation,      "rel Person(").
 required_spelling(case_distinct_relation,    "rel person(").
 required_spelling(dotted_relation,           "rel OrchardRoot.Child(").

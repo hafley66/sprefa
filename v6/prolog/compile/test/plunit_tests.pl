@@ -132,6 +132,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 :- use_module('../../3_clock_check', [clock_boundary/2]).
 :- ensure_loaded('3_clock_check.test.pl').
 :- ensure_loaded('4_braced_nested_relations.test.pl').
+:- ensure_loaded('5_remove_rel_is.test.pl').
 :- ensure_loaded('0_graph.test.pl').
 % The diag channel's plunit receipts live with the module in labs/.
 :- ensure_loaded('diag.test.pl').
@@ -5337,7 +5338,6 @@ test(nested_bounded_generic_application_compiles) :-
                        [column(first, 'T'), column(second, 'T')]),
           type_decl(document, [col(body, json)]),
           col_type(document/1, body, json),
-          rel_is_implementation(document/1, [json_encodable]),
           col_type(index/1, nested, pair(pair(document))) ],
         []),
     expand_generic_program(Program, prog(Decls, [])),
@@ -5355,7 +5355,7 @@ test(nested_bounded_generic_application_compiles) :-
     memberchk(substitution(OuterAppId, _, pair(document)), Rows),
     memberchk(obligation(_, OuterAppId, _, pair(document)), Rows),
     memberchk(resolved_by(_, structural(pair(document))), Rows),
-    memberchk(resolved_by(_, impl(_)), Rows).
+    memberchk(resolved_by(_, structural(document)), Rows).
 
 test_semantic_type_id(Type, Id) :-
     memberchk(Type, [int, text, float, bool, json, bytes]),
@@ -5444,13 +5444,12 @@ test(user_generic_template_mints_one_ground_relation) :-
     \+ member(generic_decl(_, _, _), Decls),
     \+ member(generic_instance(_, _, _), Decls).
 
-test(generic_type_ir_separates_declarations_and_implementations) :-
+test(generic_type_ir_separates_declarations_and_constraints) :-
     Decls = [ rel_template([pair],
                            [type_parameter('T', [json_encodable])],
                            [column(value, 'T')]),
               type_decl(span, [col(value, text)]),
-              interface_decl(json_encodable, []),
-              rel_is_implementation(span/2, [json_encodable]) ],
+              interface_decl(json_encodable, []) ],
     generic_type_ir(Decls, Rows),
     member(declaration(PairId, root, pair, relation, compile_time), Rows),
     member(declaration(InterfaceId, root, json_encodable, interface, compile_time), Rows),
@@ -5458,8 +5457,8 @@ test(generic_type_ir_separates_declarations_and_implementations) :-
     member(member(_, PairId, 1, value,
                   type_ref(parameter(ParameterId))), Rows),
     member(constraint(_, ParameterId, InterfaceId), Rows),
-    member(implementation(_, SubjectId, interface_application(InterfaceId)), Rows),
-    member(declaration(SubjectId, root, span, relation, materialized), Rows).
+    member(declaration(_, root, span, relation, materialized), Rows),
+    \+ member(implementation(_, _, _), Rows).
 
 % A derived conformance is a compile-time relation rule over the normalized
 % type rows and declared field relation.  The proof plane is local to generic
@@ -5473,16 +5472,6 @@ test(compile_time_relation_rule_derives_structural_conformance) :-
     generic_expand:compile_type_plane(Decls, Rows, Plane),
     generic_expand:compile_type_query(Plane, conforms(span, json_encodable),
                                       structural(span)).
-
-test(duplicate_interface_implementation_keeps_its_named_diagnostic) :-
-    Program = prog(
-        [ interface_decl(addressable, []),
-          col_type(file/1, path, text),
-          rel_is_implementation(file/1, [addressable]),
-          rel_is_implementation(file/1, [addressable]) ], []),
-    catch(expand_generic_program(Program, _), Thrown, true),
-    Thrown == unsupported_construct(
-                  interface_implementation_duplicate(file-addressable)).
 
 test(duplicate_interface_declaration_keeps_its_named_diagnostic) :-
     Program = prog(
@@ -5616,19 +5605,6 @@ test(recursive_enum_bound_closes_coinductively) :-
     memberchk(semantic_type_rows(Rows), Decls),
     memberchk(resolved_by(_, structural(tree)), Rows).
 
-test(explicit_implementation_precedes_structural_recursion) :-
-    Program = prog(
-        [ interface_decl(json_encodable, []),
-          enum_decl(tree, node(child:option(tree))),
-          rel_is_implementation(tree/1, [json_encodable]),
-          rel_template([box],
-                       [type_parameter('T', [json_encodable])],
-                       [column(value, 'T')]),
-          col_type(holder/1, value, box(tree)) ], []),
-    expand_generic_program(Program, prog(Decls, [])),
-    memberchk(semantic_type_rows(Rows), Decls),
-    memberchk(resolved_by(_, impl(_)), Rows).
-
 test(an_unknown_interface_is_named_before_expansion) :-
     Program = prog(
         [ rel_template([box],
@@ -5638,37 +5614,22 @@ test(an_unknown_interface_is_named_before_expansion) :-
     catch(expand_generic_program(Program, _), Thrown, true),
     Thrown == unsupported_construct(interface_unknown(missing_capability)).
 
-test(an_explicit_interface_application_arity_mismatch_is_named) :-
+test(an_interface_bound_application_arity_mismatch_is_named) :-
     Program = prog(
         [ interface_decl(addressable, ['T']),
-          type_decl(file, [col(path, text)]),
-          col_type(file/1, path, text),
-          rel_is_implementation(file/1, [addressable(int, int)]) ], []),
+          rel_template([box],
+                       [type_parameter('Value', [addressable(int, int)])],
+                       [column(value, 'Value')]) ], []),
     catch(expand_generic_program(Program, _), Thrown, true),
     Thrown == unsupported_construct(interface_arity(addressable, 1, 2)).
 
-test(an_explicit_interface_application_matching_arity_passes) :-
-    Program = prog(
-        [ interface_decl(addressable, ['T']),
-          type_decl(file, [col(path, text)]),
-          col_type(file/1, path, text),
-          rel_is_implementation(file/1, [addressable(int)]) ], []),
-    expand_generic_program(Program, prog(Decls, [])),
-    memberchk(rel_is_implementation(file/1, [addressable(int)]), Decls).
-
-test(a_declared_marker_interface_satisfies_a_generic_bound) :-
-    Program = prog(
-        [ interface_decl(addressable, []),
-          type_decl(file, [col(path, text)]),
-          col_type(file/1, path, text),
-          rel_is_implementation(file/1, [addressable]),
-          rel_template([box],
-                       [type_parameter('T', [addressable])],
-                       [column(value, 'T')]),
-          col_type(holder/1, value, box(file)) ], []),
-    expand_generic_program(Program, prog(Decls, [])),
-    canonical_type_name(box(file), BoxName),
-    memberchk(type_decl(BoxName, [col(value, file)]), Decls).
+test(an_interface_bound_application_matching_arity_reaches_type_rows) :-
+    Decls = [ interface_decl(addressable, ['T']),
+              rel_template([box],
+                           [type_parameter('Value', [addressable(int)])],
+                           [column(value, 'Value')]) ],
+    generic_type_ir(Decls, Rows),
+    member(constraint(_, _, _, [int]), Rows).
 
 test(an_unimplemented_marker_interface_refuses_a_generic_bound) :-
     Program = prog(
@@ -7450,12 +7411,8 @@ test(a_root_rel_zero_reaches_its_unit_storage_plan) :-
 
 :- end_tests(rel_zero_arity).
 
-% Two rel-declaration spellings whose AST nodes no later phase reads:
-% `rel pair(T)(first: T, second: T).` (curried type parameters) and
-% `rel file(path: text) is addressable.` (interface conformance). The gate
-% these tests hold is that BOTH doors build the node and that a program
-% carrying either emits the same module text as the same program without it.
-:- begin_tests(rel_template_and_is_clause).
+% Generic relation, enum, interface, and parameter-bound declaration surfaces.
+:- begin_tests(rel_template_and_interface_bounds).
 
 surface_decls(Source, Decls) :-
     atom_codes(Source, Codes),
@@ -7701,73 +7658,13 @@ test(an_interface_application_bound_round_trips_with_any_pattern) :-
                   'rel pair(T: json_encodable(any))(value: T).')),
     Program =@= RoundTripped.
 
-test(interface_bound_rows_retain_patterns_and_implementation_arguments) :-
+test(interface_bound_rows_retain_patterns) :-
     Decls = [ interface_decl(codec, ['Format']),
               rel_template([box], [type_parameter('T', [codec(any)])],
-                           [column(value, 'T')]),
-              type_decl(document, [col(body, json)]),
-              rel_is_implementation(document/1, [codec(json)]) ],
+                           [column(value, 'T')]) ],
     generic_type_ir(Decls, Rows),
-    member(constraint(_, _, InterfaceId, [any]), Rows),
-    member(implementation(_, _, interface_application(InterfaceId, [json])), Rows).
-
-test(bare_zero_argument_interface_bound_accepts_and_missing_refuses) :-
-    Accepted = prog(
-        [ interface_decl(comparable, []),
-          type_decl(document, [col(body, json)]),
-          rel_is_implementation(document/1, [comparable]),
-          rel_template([box], [type_parameter('T', [comparable])],
-                       [column(value, 'T')]),
-          col_type(holder/1, value, box(document)) ], []),
-    expand_generic_program(Accepted, _),
-    Missing = prog(
-        [ interface_decl(comparable, []),
-          type_decl(document, [col(body, json)]),
-          rel_template([box], [type_parameter('T', [comparable])],
-                       [column(value, 'T')]),
-          col_type(holder/1, value, box(document)) ], []),
-    catch(expand_generic_program(Missing, _), Error, true),
-    Error = unsupported_construct(generic_bound_unsatisfied(
-                                      document, comparable, _)).
-
-test(wildcard_interface_bound_accepts_and_missing_refuses) :-
-    Accepted = prog(
-        [ interface_decl(codec, ['Format']),
-          type_decl(document, [col(body, json)]),
-          rel_is_implementation(document/1, [codec(json)]),
-          rel_template([box], [type_parameter('T', [codec(any)])],
-                       [column(value, 'T')]),
-          col_type(holder/1, value, box(document)) ], []),
-    expand_generic_program(Accepted, _),
-    Missing = prog(
-        [ interface_decl(codec, ['Format']),
-          type_decl(document, [col(body, json)]),
-          rel_template([box], [type_parameter('T', [codec(any)])],
-                       [column(value, 'T')]),
-          col_type(holder/1, value, box(document)) ], []),
-    catch(expand_generic_program(Missing, _), Error, true),
-    Error = unsupported_construct(generic_bound_unsatisfied(
-                                      document, codec(any), _)).
-
-test(exact_interface_argument_accepts_and_wrong_argument_refuses) :-
-    Accepted = prog(
-        [ interface_decl(codec, ['Format']),
-          type_decl(document, [col(body, json)]),
-          rel_is_implementation(document/1, [codec(text)]),
-          rel_template([box], [type_parameter('T', [codec(text)])],
-                       [column(value, 'T')]),
-          col_type(holder/1, value, box(document)) ], []),
-    expand_generic_program(Accepted, _),
-    Wrong = prog(
-        [ interface_decl(codec, ['Format']),
-          type_decl(document, [col(body, json)]),
-          rel_is_implementation(document/1, [codec(bytes)]),
-          rel_template([box], [type_parameter('T', [codec(text)])],
-                       [column(value, 'T')]),
-          col_type(holder/1, value, box(document)) ], []),
-    catch(expand_generic_program(Wrong, _), Error, true),
-    Error = unsupported_construct(generic_bound_unsatisfied(
-                                      document, codec(text), _)).
+    member(constraint(_, _, _, [any]), Rows),
+    \+ member(implementation(_, _, _), Rows).
 
 test(interface_bound_wrong_arity_is_rejected_before_judgment) :-
     Program = prog(
@@ -7806,75 +7703,9 @@ test(concrete_generic_wildcard_keeps_a_named_refusal) :-
     catch(expand_generic_program(Program, _), Error, true),
     Error == unsupported_construct(interface_wildcard_in_concrete_application(box)).
 
-test(same_subject_interface_applications_coexist_and_select_exactly) :-
-    Decls = [ interface_decl(codec, ['Format']),
-              type_decl(document, [col(body, json)]),
-              rel_is_implementation(document/1, [codec(text), codec(bytes)]) ],
-    generic_type_ir(Decls, Rows),
-    findall(Args,
-            member(implementation(_, _, interface_application(_, Args)), Rows),
-            Args),
-    Args == [[bytes], [text]],
-    generic_expand:compile_type_plane(Decls, Rows, Plane),
-    generic_expand:compile_type_query(Plane, conforms(document, codec(text)),
-                                      impl(_)),
-    generic_expand:compile_type_query(Plane, conforms(document, codec(any)),
-                                      impl(_)),
-    findall(Proof,
-            generic_expand:compile_type_query(Plane,
-                                              conforms(document, codec(any)),
-                                              Proof),
-            Proofs),
-    Proofs = [_].
-
-test(wildcard_and_proof_rows_stay_compiler_local_while_catalog_keeps_args) :-
-    Program = prog(
-        [ interface_decl(codec, ['Format']),
-          type_decl(document, [col(body, json)]),
-          rel_is_implementation(document/1, [codec(text), codec(bytes)]),
-          rel_template([box], [type_parameter('T', [codec(any)])],
-                       [column(value, 'T')]),
-          col_type(holder/1, value, box(document)) ], []),
-    expand_generic_program(Program, prog(Decls, [])),
-    memberchk(semantic_type_rows(Rows), Decls),
-    member(implementation(_, _, interface_application(_, [bytes])), Rows),
-    member(implementation(_, _, interface_application(_, [text])), Rows),
-    member(constraint(_, _, _, [any]), Rows),
-    member(resolved_by(_, impl(_)), Rows),
-    \+ member(constraint(_, _, _, _), Decls),
-    \+ member(implementation(_, _, _), Decls).
-
 test(an_interface_declaration_parses_to_one_record) :-
     surface_decls('interface json_encodable.', Decls),
     Decls == [interface_decl(json_encodable, [])].
-
-test(an_is_clause_rides_beside_the_ordinary_column_entries) :-
-    surface_decls('rel file(path: text, digest: text) is addressable.', Decls),
-    Decls == [ col_type(file/2, path, text),
-               col_type(file/2, digest, text),
-               rel_is_implementation(file/2, [addressable]) ].
-
-test(an_is_clause_round_trips_after_every_modifier) :-
-    surface_round_trip(
-        'rel file(path: text) key(1) is addressable, container(text).',
-        Program, RoundTripped, Text),
-    once(sub_atom(Text, _, _, _,
-                  'rel file(path: text) key(1) is addressable, container(text).')),
-    Program =@= RoundTripped.
-
-test(an_is_clause_on_a_column_less_rel_round_trips) :-
-    surface_round_trip('rel unit() is addressable.',
-                       Program, RoundTripped, Text),
-    once(sub_atom(Text, _, _, _, 'rel unit() is addressable.')),
-    Program =@= RoundTripped.
-
-% A rel named in column-type position prints from its type_decl entry, which
-% is a different decl_line/5 clause; the `is` clause has to survive that one too.
-test(an_is_clause_survives_the_type_decl_print_path) :-
-    surface_round_trip('rel point(x: int) is addressable.\nrel line(a: point).',
-                       Program, RoundTripped, Text),
-    once(sub_atom(Text, _, _, _, 'rel point(x: int) is addressable.')),
-    Program =@= RoundTripped.
 
 test(the_zero_parameter_declaration_keeps_its_shape) :-
     surface_decls('rel point(x: int, y: int).', Decls),
@@ -7887,9 +7718,8 @@ test(the_zero_parameter_declaration_keeps_its_shape) :-
 test(both_doors_build_the_same_nodes) :-
     forall(member(Source, ['rel pair(T)(first: T, second: T).',
                            'rel shapes.pair(Left, Right)(head: Left).',
-                           'rel file(path: text, digest: text) is addressable.',
-                           'rel file(path: text) key(1) is addressable, container(text).',
-                           'rel unit() is addressable.',
+                           'interface addressable.',
+                           'interface codec(Format). rel box(T: codec(any))(value: T).',
                            'rel point(x: int, y: int).']),
            ( atom_codes(Source, Codes),
              once(parse_dl(Codes, Classic, _, _)),
@@ -7903,14 +7733,6 @@ test(both_doors_build_the_same_nodes) :-
 test(a_duplicate_type_parameter_is_a_named_surface_finding) :-
     surface_findings('rel pair(T, T)(first: T, second: T).', Findings),
     Findings == [unsupported_surface(duplicate_generic_parameter('T'))].
-
-% DEFERRED: the single-pass parser holds no interface declaration when the
-% clause runs, so an argument count is checked by a later phase, not here.
-test(a_type_application_argument_count_is_not_checked_at_parse) :-
-    surface_decls('rel file(path: text) is container(text, int).', Decls),
-    memberchk(rel_is_implementation(file/1, [container(text, int)]), Decls),
-    surface_findings('rel file(path: text) is container(text, int).', Findings),
-    Findings == [].
 
 % DEFERRED: a bare identifier in type position is a relation reference, and
 % nothing at parse time separates one from a stray parameter name. The
@@ -7944,23 +7766,11 @@ test(a_ground_template_application_reaches_the_text_door) :-
     once(sub_atom(Emitted, _, _, _, '"first" INTEGER NOT NULL')),
     once(sub_atom(Emitted, _, _, _, '"second" INTEGER NOT NULL')).
 
-test(an_is_clause_emits_interface_catalog_metadata) :-
-    door_emitted_text(with,
-        'interface addressable.\nrel file(path: text, digest: text) is addressable.\nrel seen(n: int).\n',
-        WithClause),
-    door_emitted_text(without,
-        'rel file(path: text, digest: text).\nrel seen(n: int).\n',
-        WithoutClause),
-    WithClause \== WithoutClause,
-    once(sub_atom(WithClause, _, _, _, 'implementation')).
-
-% Compile-time interface relation declarations, facts, and proofs are erased
-% before the emitted SQLite/DD program.  The runtime catalog may retain its
-% existing author-facing `implementation` metadata, but never any proof-plane
-% relation name.
+% Compile-time interface relation declarations and structural proofs are
+% erased before the emitted SQLite/DD program.
 test(interface_proof_plane_has_no_runtime_artifacts) :-
     door_emitted_text(proof_plane,
-        'interface json_encodable.\nrel document(body: json) is json_encodable.\nrel evidence(document: document).\nrel box(T: json_encodable)(value: T).\nrel holder(value: box(document)).\n',
+        'interface json_encodable.\nrel evidence(document: text).\nrel box(T: json_encodable)(value: T).\nrel holder(value: box(text)).\n',
         Emitted),
     forall(member(Name, ['$type', 'compile_type_', 'type_plane', 'type_proof']),
            \+ sub_atom(Emitted, _, _, _, Name)).
@@ -8056,7 +7866,7 @@ test(a_bounded_template_reaches_the_text_door) :-
     format(atom(TableNeedle), 'CREATE TABLE "probe_~w"', [PairName]),
     once(sub_atom(Emitted, _, _, _, TableNeedle)).
 
-:- end_tests(rel_template_and_is_clause).
+:- end_tests(rel_template_and_interface_bounds).
 
 fact_probe_text("rel max_run(limit_lines: int).
 rel doubled_limit(limit_doubled: int).
