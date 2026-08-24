@@ -658,3 +658,60 @@ fn git_worktree_stage_and_commit_use_the_worktree_identity() {
         b"created by source_stage\n"
     );
 }
+
+/// The executor mints the root identity when a program omits it, so a datalog
+/// program never has to spell the blake3 DirectoryId/RepositoryId/WorktreeId.
+/// A git checkout derives a GitWorktree root and a Create carries no git ids,
+/// so this is the minimal assertion the root-fill contract keeps.
+#[test]
+fn stage_with_omitted_root_derives_git_worktree_and_stages() {
+    let root = TempDir::new().expect("target root");
+    let state = TempDir::new().expect("state root");
+    git_init(root.path());
+    let request = serde_json::json!({
+        "schema_version": 1,
+        "actions": [
+            {
+                "kind": "create",
+                "path": {"kind": "git", "path": "derived-root-created.txt"},
+                "bytes": b"created by derived-root stage\n".to_vec(),
+            }
+        ]
+    })
+    .to_string();
+    let staged = run(
+        "soopy__stage",
+        &[
+            ("root", text(root.path().display().to_string())),
+            ("state", text(state.path().display().to_string())),
+            ("request", request),
+        ],
+    );
+    assert_eq!(staged["outcome"], "staged");
+    let previews = staged["document"]
+        .as_array()
+        .expect("document is the preview array");
+    assert_eq!(previews.len(), 1);
+    assert!(
+        !root.path().join("derived-root-created.txt").exists(),
+        "staging must not mutate the target root"
+    );
+}
+
+fn git_init(dir: &std::path::Path) {
+    let run = |args: &[&str]| {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .status()
+            .expect("git command");
+        assert!(status.success(), "git {args:?} failed");
+    };
+    run(&["init", "-q"]);
+    std::fs::write(dir.join("seed.txt"), "seed\n").unwrap();
+    run(&["add", "seed.txt"]);
+    run(&[
+        "-c", "user.name=test", "-c", "user.email=test@test", "commit", "-qm", "seed",
+    ]);
+}

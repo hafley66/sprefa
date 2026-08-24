@@ -1,0 +1,432 @@
+# rehome.dl6 -- the v6/prolog re-home as a datalog program.
+#
+# Reads the prolog module graph through the extractor, computes the reading
+# order (topo rank over the import closure), derives every move and every shim,
+# and hands ONE StageRequest to soopy. Staging is the dry run: soopy writes
+# previews into a state dir, never into the repo. Commit happens only when an
+# approval fact exists.
+#
+# rx: files$ -> mergeMap(extract) -> scan(graph) -> map(plan) -> switchMap(stage) ;
+#     approval$ -> withLatestFrom(stage) -> commit
+
+use extract.
+use soopy.
+
+# ── seeds ────────────────────────────────────────────────────────────────────
+# root: the absolute repo root, seeded via `dl6 run --arrive root=<abs>`.
+# state_dir: an existing durable scratch directory OUTSIDE root, seeded the
+# same way. The executor refuses a state root inside the target root.
+rel root(path: text).
+rel state_dir(path: text).
+
+# Hand facts: which pipeline phase a file belongs to. The `glob` column is an
+# exact repo-relative path, so a file matches at most one fact; the reading
+# order within a folder is computed, never hand-picked.
+rel phase(folder: text, glob: text, rank: int).
+phase("0_parse", "v6/prolog/compile/parse_dl_dcg.pl", 0).
+phase("0_parse", "v6/prolog/compile/registry.pl", 0).
+phase("0_parse", "v6/prolog/use_resolve.pl", 0).
+phase("1_expand", "v6/prolog/0_annotation_expand.pl", 1).
+phase("1_expand", "v6/prolog/0_anonymous_expand.pl", 1).
+phase("1_expand", "v6/prolog/0_ast_expand.pl", 1).
+phase("1_expand", "v6/prolog/0_coalesce_expand.pl", 1).
+phase("1_expand", "v6/prolog/0_compiler_relations.pl", 1).
+phase("1_expand", "v6/prolog/0_dot_expand.pl", 1).
+phase("1_expand", "v6/prolog/0_enum_expand.pl", 1).
+phase("1_expand", "v6/prolog/0_generic_expand.pl", 1).
+phase("1_expand", "v6/prolog/0_match_expand.pl", 1).
+phase("1_expand", "v6/prolog/0_negated_guard_expand.pl", 1).
+phase("1_expand", "v6/prolog/0_option_expand.pl", 1).
+phase("1_expand", "v6/prolog/0_relation_edge_expand.pl", 1).
+phase("1_expand", "v6/prolog/0_seq_expand.pl", 1).
+phase("1_expand", "v6/prolog/1_expansion.pl", 1).
+phase("1_expand", "v6/prolog/1_host_expand.pl", 1).
+phase("2_analyze", "v6/prolog/analyze.pl", 2).
+phase("2_analyze", "v6/prolog/0_body_walk.pl", 2).
+phase("2_analyze", "v6/prolog/0_cst_query.pl", 2).
+phase("2_analyze", "v6/prolog/0_graph.pl", 2).
+phase("2_analyze", "v6/prolog/0_program_check.pl", 2).
+phase("2_analyze", "v6/prolog/0_rel_record.pl", 2).
+phase("2_analyze", "v6/prolog/0_relation_pattern.pl", 2).
+phase("2_analyze", "v6/prolog/0_type_ids.pl", 2).
+phase("2_analyze", "v6/prolog/0_type_plane.pl", 2).
+phase("2_analyze", "v6/prolog/0_unsupported_messages.pl", 2).
+phase("2_analyze", "v6/prolog/2_subscribe.pl", 2).
+phase("2_analyze", "v6/prolog/3_clock_check.pl", 2).
+phase("2_analyze", "v6/prolog/cpg_edge_vocab.pl", 2).
+phase("2_analyze", "v6/prolog/strat.pl", 2).
+phase("3_lower", "v6/prolog/lower.pl", 3).
+phase("4_emit", "v6/prolog/emit_rust.pl", 4).
+phase("4_emit", "v6/prolog/emit_ts.pl", 4).
+phase("4_emit", "v6/prolog/compile/1_emit_registry_docs.pl", 4).
+phase("4_emit", "v6/prolog/compile/2_emit_cli_inventory.pl", 4).
+phase("4_emit", "v6/prolog/compile/3_emit_trace_schema.pl", 4).
+phase("4_emit", "v6/prolog/compile/4_emit_jsonschema.pl", 4).
+phase("4_emit", "v6/prolog/compile/5_emit_openapi.pl", 4).
+phase("4_emit", "v6/prolog/compile/7_emit_ts_types.pl", 4).
+phase("4_emit", "v6/prolog/compile/8_emit_rust_types.pl", 4).
+phase("4_emit", "v6/prolog/compile/9_emit_type_artifact.pl", 4).
+phase("4_emit", "v6/prolog/compile/typegen_export.pl", 4).
+phase("5_driver", "v6/prolog/compile.pl", 5).
+phase("5_driver", "v6/prolog/dl6c.pl", 5).
+phase("5_driver", "v6/prolog/sweep.pl", 5).
+phase("5_driver", "v6/prolog/sweep_timings.pl", 5).
+phase("5_driver", "v6/prolog/diag.pl", 5).
+phase("5_driver", "v6/prolog/print_dl.pl", 5).
+phase("5_driver", "v6/prolog/ARCH.pl", 5).
+phase("5_driver", "v6/prolog/6_profile.pl", 5).
+phase("5_driver", "v6/prolog/compile/0_trace.pl", 5).
+phase("5_driver", "v6/prolog/compile/6_isolated_compiler_dd.pl", 5).
+phase("5_driver", "v6/prolog/compile/debug_dbg.pl", 5).
+phase("5_driver", "v6/prolog/compile/oracle_dump.pl", 5).
+phase("5_driver", "v6/prolog/compile_messages.pl", 5).
+phase("5_driver", "v6/prolog/executor_modules.pl", 5).
+
+# ABSENT by default; a row is the commit demand for that exact stage id.
+rel approval(stage_id: text).
+
+# ── string/order machinery ───────────────────────────────────────────────────
+# dl6's `<` is number-only, so path-text tiebreaks need a lexical compare built
+# from a char->code table. `position` bounds the scan; all pipeline paths are
+# shorter than 40 chars.
+rel position(pos: int).
+position(1). position(2). position(3). position(4). position(5). position(6).
+position(7). position(8). position(9). position(10). position(11). position(12).
+position(13). position(14). position(15). position(16). position(17). position(18).
+position(19). position(20). position(21). position(22). position(23). position(24).
+position(25). position(26). position(27). position(28). position(29). position(30).
+position(31). position(32). position(33). position(34). position(35). position(36).
+position(37). position(38). position(39). position(40).
+
+rel char_code(ch: text, code: int).
+char_code(".", 46). char_code("/", 47).
+char_code("0", 48). char_code("1", 49). char_code("2", 50). char_code("3", 51).
+char_code("4", 52). char_code("5", 53). char_code("6", 54). char_code("7", 55).
+char_code("8", 56). char_code("9", 57).
+char_code("A", 65). char_code("C", 67). char_code("H", 72). char_code("R", 82).
+char_code("_", 95).
+char_code(" ", 32). char_code("\n", 10). char_code("'", 39).
+char_code("(", 40). char_code(")", 41). char_code(",", 44). char_code("-", 45).
+char_code(":", 58). char_code("[", 91). char_code("]", 93).
+char_code("a", 97). char_code("b", 98). char_code("c", 99). char_code("d", 100).
+char_code("e", 101). char_code("f", 102). char_code("g", 103). char_code("h", 104).
+char_code("i", 105). char_code("j", 106). char_code("k", 107). char_code("l", 108).
+char_code("m", 109). char_code("n", 110). char_code("o", 111). char_code("p", 112).
+char_code("q", 113). char_code("r", 114). char_code("s", 115). char_code("t", 116).
+char_code("u", 117). char_code("v", 118). char_code("w", 119). char_code("x", 120).
+char_code("y", 121). char_code("z", 122).
+
+# int -> text, for embedding dense ordinals in a path.
+rel int_text(n: int, t: text).
+int_text(0, "0"). int_text(1, "1"). int_text(2, "2"). int_text(3, "3").
+int_text(4, "4"). int_text(5, "5"). int_text(6, "6"). int_text(7, "7").
+int_text(8, "8"). int_text(9, "9"). int_text(10, "10"). int_text(11, "11").
+int_text(12, "12"). int_text(13, "13"). int_text(14, "14"). int_text(15, "15").
+int_text(16, "16"). int_text(17, "17"). int_text(18, "18"). int_text(19, "19").
+int_text(20, "20"). int_text(21, "21"). int_text(22, "22"). int_text(23, "23").
+int_text(24, "24"). int_text(25, "25"). int_text(26, "26"). int_text(27, "27").
+int_text(28, "28"). int_text(29, "29"). int_text(30, "30"). int_text(31, "31").
+int_text(32, "32"). int_text(33, "33"). int_text(34, "34"). int_text(35, "35").
+int_text(36, "36"). int_text(37, "37"). int_text(38, "38"). int_text(39, "39").
+int_text(40, "40"). int_text(41, "41"). int_text(42, "42"). int_text(43, "43").
+int_text(44, "44"). int_text(45, "45"). int_text(46, "46"). int_text(47, "47").
+int_text(48, "48"). int_text(49, "49"). int_text(50, "50"). int_text(51, "51").
+int_text(52, "52"). int_text(53, "53"). int_text(54, "54"). int_text(55, "55").
+int_text(56, "56"). int_text(57, "57"). int_text(58, "58"). int_text(59, "59").
+int_text(60, "60").
+
+# ── extraction ───────────────────────────────────────────────────────────────
+rel files(glob: text) -> (path: text, digest: text).
+rel specifier_at(path: text, digest: text, families: text) -> (record: text, family: text, module: text, name: text, kind: text) key(1, 3).
+
+# The pipeline and its include parts, excluding scratch and generated dirs.
+rel excluded_prefix(prefix: text).
+excluded_prefix("v6/prolog/conformance/").
+excluded_prefix("v6/prolog/compile/test/").
+excluded_prefix("v6/prolog/compile/out/").
+excluded_prefix("v6/prolog/compile/scripts/").
+excluded_prefix("v6/prolog/labs/").
+excluded_prefix("v6/prolog/examples/").
+excluded_prefix("v6/prolog/src/").
+excluded_prefix("v6/prolog/tools/").
+
+rel excluded_path(path: text).
+excluded_path(Path) <- all_file(Path, _Digest), excluded_prefix(Prefix), substr(Path, 1, length(Prefix)) == Prefix.
+
+rel want(glob: text).
+
+rel all_file(path: text, digest: text).
+all_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
+
+rel source_file(path: text, digest: text).
+source_file(Path, Digest) <- all_file(Path, Digest), not(excluded_path(Path)).
+
+rel spec(path: text, module: text, name: text, kind: text).
+spec(Path, Module, Name, Kind) <-
+  source_file(Path, Digest),
+  specifier_at(Path, Digest, "call", 'specifier', 'call', Module, Name, Kind).
+
+# A file's own module name rides the module/2 export rows (kind reexport).
+rel module_file(path: text, module: text).
+module_file(Path, Module) <- spec(Path, Module, _Name, "reexport").
+
+# The import/include target text is the `module` column: the single-argument
+# form falls back to the name (the path), the two-argument form carries the path.
+rel import_text(path: text, target_text: text).
+import_text(Path, Module) <- spec(Path, Module, _Name, "side_effect").
+import_text(Path, Module) <- spec(Path, Module, _Name, "named").
+import_text(Path, Module) <- spec(Path, Module, _Name, "reexport_module").
+
+rel include_text(path: text, part_text: text).
+include_text(Path, Name) <- spec(Path, _Module, Name, "include").
+
+# ── relative path resolution ─────────────────────────────────────────────────
+rel source_dir(path: text, dir: text).
+source_dir(Path, Dir) <- source_file(Path, _), instr(reverse(Path), '/') > 0,
+                          Dir := substr(Path, 1, length(Path) - instr(reverse(Path), '/')).
+
+rel parent_dir(dir: text, parent: text).
+parent_dir(Dir, Parent) <- all_dir(Dir), instr(reverse(Dir), '/') > 0,
+                            Parent := substr(Dir, 1, length(Dir) - instr(reverse(Dir), '/')).
+
+rel all_raw(raw: text).
+all_raw(Raw) <- import_text(_Path, Raw).
+all_raw(Raw) <- include_text(_Path, Raw).
+
+rel unquoted(raw: text, out: text).
+unquoted(Raw, Raw) <- all_raw(Raw), substr(Raw, 1, 1) \== "'".
+unquoted(Raw, Out) <- all_raw(Raw), substr(Raw, 1, 1) == "'", L := length(Raw), L >= 2, Out := substr(Raw, 2, L - 2).
+
+rel import_target(path: text, target: text).
+import_target(Path, Target) <- import_text(Path, Raw), unquoted(Raw, Target).
+
+rel include_target(path: text, target: text).
+include_target(Path, Target) <- include_text(Path, Raw), unquoted(Raw, Target).
+
+rel all_target(target: text).
+all_target(T) <- import_target(_Path, T).
+all_target(T) <- include_target(_Path, T).
+
+# The split/resolve helpers are driven by positive rels, because a dl6 head
+# variable must be bound by a positive atom, never only by a comparison guard.
+rel split_target(target: text, ups: int, tail: text).
+split_target(T, 0, T) <- all_target(T), substr(T, 1, 2) \== '../', substr(T, 1, 1) \== '.'.
+split_target(T, 0, Tail) <- all_target(T), substr(T, 1, 2) == './', Tail := substr(T, 3).
+split_target(T, 1, Tail) <- all_target(T), substr(T, 1, 3) == '../', substr(T, 4, 3) \== '../', Tail := substr(T, 4).
+split_target(T, 2, Tail) <- all_target(T), substr(T, 1, 6) == '../../', Tail := substr(T, 7).
+
+rel all_tail(tail: text).
+all_tail(Tail) <- split_target(_Target, _Ups, Tail).
+
+rel ensure_pl(tail: text, out: text).
+ensure_pl(T, T) <- all_tail(T), substr(T, length(T) - 2) == '.pl'.
+ensure_pl(T, Out) <- all_tail(T), substr(T, length(T) - 2) \== '.pl', Out := concat([T, '.pl']).
+
+rel all_dir(dir: text).
+all_dir(Dir) <- source_dir(_Path, Dir).
+
+rel resolve_base(dir: text, ups: int, base: text).
+resolve_base(Dir, 0, Dir) <- all_dir(Dir).
+resolve_base(Dir, 1, Parent) <- all_dir(Dir), parent_dir(Dir, Parent).
+resolve_base(Dir, 2, Grand) <- all_dir(Dir), parent_dir(Dir, Parent), parent_dir(Parent, Grand).
+
+rel resolve_base_dir(path: text, ups: int, base: text).
+resolve_base_dir(Path, Ups, Base) <- source_dir(Path, Dir), resolve_base(Dir, Ups, Base).
+
+rel import_candidate(path: text, candidate: text).
+import_candidate(Path, Candidate) <-
+  import_target(Path, Target),
+  split_target(Target, Ups, Tail),
+  ensure_pl(Tail, TailPl),
+  resolve_base_dir(Path, Ups, Base),
+  Candidate := concat([Base, '/', TailPl]).
+
+rel include_candidate(path: text, candidate: text).
+include_candidate(Path, Candidate) <-
+  include_target(Path, Target),
+  split_target(Target, Ups, Tail),
+  ensure_pl(Tail, TailPl),
+  resolve_base_dir(Path, Ups, Base),
+  Candidate := concat([Base, '/', TailPl]).
+
+# ── graph ────────────────────────────────────────────────────────────────────
+rel imports(path: text, target_path: text).
+imports(Path, Candidate) <- import_candidate(Path, Candidate), source_file(Candidate, _).
+
+rel unresolved_import(path: text, name: text).
+unresolved_import(Path, Name) <- import_text(Path, Name), not(import_resolved(Path)).
+rel import_resolved(path: text).
+import_resolved(Path) <- imports(Path, _).
+
+rel includes(path: text, part_path: text).
+includes(Path, Candidate) <- include_candidate(Path, Candidate), source_file(Candidate, _).
+
+rel reaches(path: text, dep_path: text).
+reaches(Path, Dep) <- imports(Path, Dep).
+reaches(Path, Dep) <- reaches(Path, Mid), imports(Mid, Dep).
+
+rel reach_counted(path: text, deps: int).
+reach_counted(Path, count(Dep)) <- reaches(Path, Dep).
+
+rel reach_count(path: text, deps: int).
+reach_count(Path, Deps) <- reach_counted(Path, Deps).
+reach_count(Path, 0) <- source_file(Path, _), not(reach_counted(Path, _Dep)).
+
+rel cycle(path: text, dep_path: text).
+cycle(Path, Dep) <- reaches(Path, Dep), reaches(Dep, Path), Path \== Dep.
+
+# ── plan ─────────────────────────────────────────────────────────────────────
+rel file_phase(path: text, folder: text, rank: int).
+file_phase(Path, Folder, Rank) <- source_file(Path, _), phase(Folder, Path, Rank).
+
+rel part_of(module_path: text, part_path: text).
+part_of(ModulePath, PartPath) <- includes(ModulePath, PartPath).
+rel part_path(path: text).
+part_path(PartPath) <- part_of(_ModulePath, PartPath).
+
+# lexical path order, non-recursive: A < B when their first differing char has
+# the lower code, or A is a proper prefix of B.
+rel char_at(s: text, pos: int, c: text).
+char_at(S, Pos, C) <- source_file(S, _), position(Pos), Pos <= length(S), C := substr(S, Pos, 1).
+
+rel differ_at(a: text, b: text, p: int).
+differ_at(A, B, P) <- position(P), char_at(A, P, CA), char_at(B, P, CB), CA \== CB.
+
+rel earlier_diff(a: text, b: text, p: int).
+earlier_diff(A, B, P) <- position(P), position(Q), Q < P, differ_at(A, B, Q).
+
+rel less_at(a: text, b: text, p: int).
+less_at(A, B, P) <- position(P), char_at(A, P, CA), char_at(B, P, CB), CA \== CB,
+                     char_code(CA, CAC), char_code(CB, CBC), CAC < CBC.
+
+rel less(a: text, b: text).
+less(A, B) <- source_file(A, _), source_file(B, _), less_at(A, B, P), not(earlier_diff(A, B, P)).
+less(A, B) <- source_file(A, _), source_file(B, _), LA := length(A), LB := length(B),
+              LA < LB, substr(B, 1, LA) == A.
+
+# Dense ordinal within a folder, ordered by (reach_count asc, path asc).
+rel before(path: text, other: text).
+before(Path, Other) <- file_phase(Path, Folder, _), file_phase(Other, Folder, _),
+                        reach_count(Path, Deps), reach_count(Other, OtherDeps), OtherDeps < Deps.
+before(Path, Other) <- file_phase(Path, Folder, _), file_phase(Other, Folder, _),
+                        reach_count(Path, Deps), reach_count(Other, Deps), less(Other, Path).
+
+rel comes_before(path: text, folder: text, other: text).
+comes_before(Path, Folder, Other) <- file_phase(Path, Folder, _), before(Path, Other).
+
+rel file_order_counted(path: text, folder: text, ordinal: int).
+file_order_counted(Path, Folder, count(Other)) <- comes_before(Path, Folder, Other).
+
+rel file_order(path: text, folder: text, ordinal: int).
+file_order(Path, Folder, Ordinal) <- file_order_counted(Path, Folder, Ordinal).
+file_order(Path, Folder, 0) <- file_phase(Path, Folder, _), not(file_order_counted(Path, Folder, _)).
+
+# stem: basename with .pl and any leading `digit_` prefix removed.
+rel basename(path: text, base: text).
+basename(Path, Base) <- source_dir(Path, Dir), Base := substr(Path, length(Dir) + 2).
+
+rel base_noext(path: text, base: text).
+base_noext(Path, BaseNoExt) <- basename(Path, Base), LB := length(Base), LB > 3,
+                                substr(Base, LB - 2) == '.pl', BaseNoExt := substr(Base, 1, LB - 3).
+
+rel digit_char(c: text).
+digit_char("0"). digit_char("1"). digit_char("2"). digit_char("3"). digit_char("4").
+digit_char("5"). digit_char("6"). digit_char("7"). digit_char("8"). digit_char("9").
+
+rel digit_underscore(base: text).
+digit_underscore(B) <- base_noext(_Path, B), Ch := substr(B, 1, 1), digit_char(Ch), substr(B, 2, 1) == "_".
+
+rel stem(path: text, stem: text).
+stem(Path, Stem) <- base_noext(Path, B), not(digit_underscore(B)), Stem := B.
+stem(Path, Stem) <- base_noext(Path, B), digit_underscore(B), Stem := substr(B, 3).
+
+# next_path: flat rehome path for ordinary files, folder path for include parts.
+rel next_path(path: text, next_path: text).
+next_path(Path, Next) <- file_order(Path, Folder, Ordinal), int_text(Ordinal, OrdText),
+                          not(part_path(Path)), stem(Path, Stem),
+                          Next := concat(["v6/prolog/next/", Folder, "/", OrdText, "_", Stem, ".pl"]).
+next_path(PartPath, Next) <- part_of(ModulePath, PartPath), file_order(ModulePath, Folder, Ordinal),
+                              int_text(Ordinal, OrdText), stem(ModulePath, Stem),
+                              basename(PartPath, PartBase),
+                              Next := concat(["v6/prolog/next/", Folder, "/", OrdText, "_", Stem, "/", PartBase]).
+
+# ── shims ────────────────────────────────────────────────────────────────────
+# Every module file gets a shim at its old path that reexports the new path.
+rel shim_text(path: text, text: text).
+shim_text(Path, Text) <- module_file(Path, Module), next_path(Path, Next),
+                          NotPl := substr(Next, 1, length(Next) - 3),
+                          Text := concat([":- module(", Module, "_shim, []).\n",
+                                          ":- reexport('", NotPl, "').\n"]).
+
+# ── actions ──────────────────────────────────────────────────────────────────
+# Move every module file and every part first, then Create one shim per module
+# file at the old path. Paths are repo-relative; the executor fills the git
+# source identities the Move sources carry. A global request key orders moves
+# before creates: moves sort by (phase rank, folder ordinal), creates sit after.
+rel move_key(path: text, key: int).
+move_key(Path, Key) <- file_order(Path, Folder, Ordinal), file_phase(Path, Folder, Rank), not(part_path(Path)),
+                        Key := Rank * 100 + Ordinal.
+move_key(PartPath, Key) <- part_of(ModulePath, PartPath), file_order(ModulePath, Folder, Ordinal),
+                            file_phase(ModulePath, Folder, Rank), Key := Rank * 100 + Ordinal.
+
+rel create_key(path: text, key: int).
+create_key(Path, Key) <- shim_text(Path, _), file_order(Path, Folder, Ordinal), file_phase(Path, Folder, Rank),
+                          Key := 1000 + Rank * 100 + Ordinal.
+
+rel action(ordinal: int, action: json).
+action(Key, {kind: "move",
+             source: {kind: "git", source: {repository: "", revision: "", path: SourcePath}},
+             expected: {GitBlob: Digest},
+             destination: {kind: "git", path: Destination}})
+  <- move_key(Path, Key), source_file(Path, Digest), next_path(Path, Destination),
+     SourcePath := Path.
+action(Key, {kind: "create",
+             path: {kind: "git", path: Path},
+             bytes: Bytes})
+  <- create_key(Path, Key), shim_text(Path, _), shim_byte_array(Path, Bytes).
+
+# The shim text as a byte array (the Create action's `bytes` is Vec<u8>), built
+# from the char->code table in position order.
+rel shim_byte(path: text, pos: int, byte: int).
+shim_byte(Path, Pos, Byte) <- shim_text(Path, Text), position(Pos), Pos <= length(Text),
+                               Ch := substr(Text, Pos, 1), char_code(Ch, Byte).
+rel shim_byte_array(path: text, bytes: json).
+shim_byte_array(Path, json_group_array(Byte, Pos)) <- shim_byte(Path, Pos, Byte).
+
+rel request(text: text).
+request(T) <- action_array(A), T := {schema_version: 1, actions: A}.
+rel action_array(json: json).
+action_array(json_group_array(Action, Ordinal)) <- action(Ordinal, Action).
+
+# ── stage = dry run; commit = apply ──────────────────────────────────────────
+rel stage(root: text, state: text, request: text) -> (stage_id: text, outcome: text, detail: text, document: json).
+
+rel stage_demand(root: text, state: text, request: text).
+stage_demand(Root, State, Request) <- root(Root), state_dir(State), request(Request).
+
+rel plan_stage(stage_id: text, outcome: text, detail: text).
+plan_stage(StageId, Outcome, Detail) <- stage_demand(Root, State, Request),
+                                         stage(Root, State, Request, StageId, Outcome, Detail, _).
+
+rel plan_preview(stage_id: text, path_before: text, path_after: text, summary: text).
+plan_preview(StageId, Before, After, Summary) <-
+  stage_demand(_Root, _State, _Request),
+  stage(_Root, _State, _Request, StageId, "staged", _Detail, Document),
+  decode(Document, [... {path_before: {path: Before: text}, path_after: {path: After: text}, summary: Summary: text}]).
+
+rel commit(root: text, state: text, stage_id: text) -> (outcome: text, detail: text, document: json).
+
+rel plan_commit(stage_id: text, outcome: text, detail: text).
+plan_commit(StageId, Outcome, Detail) <-
+  root(Root), state_dir(State),
+  plan_stage(StageId, "staged", _Detail),
+  approval(StageId),
+  commit(Root, State, StageId, Outcome, Detail, _Document).
+
+? file_order(path, folder, ordinal).
+? next_path(path, next_path).
+? cycle(path, dep_path).
+? unresolved_import(path, name).
+? plan_stage(stage_id, outcome, detail).
+? plan_preview(stage_id, path_before, path_after, summary).
+? plan_commit(stage_id, outcome, detail).
