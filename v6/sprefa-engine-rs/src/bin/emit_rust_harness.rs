@@ -96,14 +96,31 @@ fn main() {
     // stdout is the tick log and is byte-diffed against the oracle, so every
     // span goes to stderr. Silent unless RUST_LOG asks:
     //   RUST_LOG=sprefa_engine_rs=info emit_rust_harness ...
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("off")),
-        )
-        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
+    let observability = hafley_observe::Config::from_env(
+        "sprefa-engine-emit-rust-harness",
+        env!("CARGO_PKG_VERSION"),
+        "off",
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+    )
+    .expect("observability configuration");
+    let filter = hafley_observe::env_filter(observability.default_filter);
+    let format = hafley_observe::format_layer(
+        hafley_observe::FormatConfig {
+            format: observability.format,
+            ansi: observability.ansi,
+            target: true,
+            thread_names: false,
+            span_events: tracing_subscriber::fmt::format::FmtSpan::CLOSE,
+        },
+        tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::stderr),
+    );
+    use tracing_subscriber::layer::SubscriberExt as _;
+    use tracing_subscriber::util::SubscriberInitExt as _;
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(format)
         .init();
+    hafley_observe::startup(&observability);
     let mut args: Vec<String> = env::args().collect();
     let live_hosts = take_switch(&mut args, "--live-hosts");
     let socket = flag_value(&mut args, "--socket");

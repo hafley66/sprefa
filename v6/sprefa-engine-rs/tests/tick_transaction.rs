@@ -24,8 +24,8 @@ use std::sync::Mutex;
 use sprefa_engine_rs::driver::{drive_tick, drive_tick_transacted, run_schedule};
 use sprefa_engine_rs::program::run_boot;
 use sprefa_engine_rs::run::open_seam;
-use sprefa_engine_rs::sql::{SqlRunner, SqliteSeam, SEAM_TALLY};
 use sprefa_engine_rs::serve::{arrival_batch, ArrivalDto};
+use sprefa_engine_rs::sql::{SqlRunner, SqliteSeam, SEAM_TALLY};
 use sprefa_engine_rs::types::{Arrival, ArrivalSign, BoundaryError, ProgramJson, Value};
 use sprefa_engine_rs::GenProgram;
 
@@ -179,8 +179,7 @@ async fn a_tick_transaction_costs_exactly_begin_and_commit() {
     let plain_statements = SEAM_TALLY.statements.load(Relaxed) - before_plain;
 
     let transacted = SqliteSeam::in_memory().expect("seam");
-    transacted
-        .size_statement_cache(program.stable_sql_count() + 64);
+    transacted.size_statement_cache(program.stable_sql_count() + 64);
     transacted
         .run_program_ddl(&program.ddl, &program.queries)
         .expect("ddl");

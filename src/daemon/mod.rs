@@ -415,12 +415,24 @@ fn init_daemon_tracing() {
     let spec = stderr_filter_spec(dl_log_env.as_deref());
     let filter = tracing_subscriber::EnvFilter::try_new(&spec)
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-    let stderr_layer = tracing_subscriber::fmt::layer()
-        .with_writer(std::io::stderr)
-        .with_thread_names(true)
-        .with_target(false)
-        .compact()
-        .with_filter(filter);
+    let observability = hafley_observe::Config::from_env(
+        "sprefa-daemon",
+        env!("CARGO_PKG_VERSION"),
+        "warn",
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+    )
+    .expect("observability configuration");
+    let stderr_layer = hafley_observe::format_layer(
+        hafley_observe::FormatConfig {
+            format: observability.format,
+            ansi: observability.ansi,
+            target: false,
+            thread_names: true,
+            span_events: tracing_subscriber::fmt::format::FmtSpan::NONE,
+        },
+        tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::stderr),
+    )
+    .with_filter(filter);
     let home = daemon_home();
     // The event trail (`src/eventlog.rs`) is only ever installed HERE: ticks
     // happen in the daemon, not in one-shot CLI runs, and `set_home` must land
@@ -441,6 +453,7 @@ fn init_daemon_tracing() {
         .with(crate::trace::chrome_layer())
         .with(crate::eventlog::EventLayer)
         .try_init();
+    hafley_observe::startup(&observability);
 }
 
 /// Pure decision behind `init_daemon_tracing`'s stderr filter: `DL_LOG` unset

@@ -51,7 +51,7 @@ fn no_rust_log_means_no_stderr_byte() {
 fn json_format_emits_service_version_and_process_identity() {
     let output = Command::new(BIN)
         .args(["--family", "call", FIXTURE])
-        .env("RUST_LOG", "sprefa_extract=debug")
+        .env("RUST_LOG", "sprefa_extract=debug,hafley_observe=debug")
         .env("HAFLEY_LOG_FORMAT", "json")
         .env_remove("DL_TRACE_SUMMARY")
         .output()

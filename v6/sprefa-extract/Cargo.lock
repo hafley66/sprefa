@@ -505,6 +505,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hafley-observe"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1480,6 +1488,7 @@ dependencies = [
  "basic-toml",
  "clap",
  "gomod-parser",
+ "hafley-observe",
  "memchr",
  "oxc_allocator",
  "oxc_ast",

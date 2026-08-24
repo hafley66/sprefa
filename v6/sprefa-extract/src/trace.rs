@@ -51,7 +51,7 @@ mod sink {
     use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
     use tracing_subscriber::registry::LookupSpan;
     use tracing_subscriber::util::SubscriberInitExt;
-    use tracing_subscriber::{filter::EnvFilter, fmt, Registry};
+    use tracing_subscriber::{filter::EnvFilter, Registry};
 
     /// One (lang, family) row of the exit table.
     #[derive(Default)]
@@ -254,21 +254,24 @@ mod sink {
     pub fn install() -> Option<Arc<SummaryState>> {
         let want_summary = matches!(std::env::var("DL_TRACE_SUMMARY").as_deref(), Ok("1"));
         let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("off"));
-        let format = std::env::var("HAFLEY_LOG_FORMAT").unwrap_or_else(|_| "human".to_string());
-        let printer = match format.as_str() {
-            "human" | "text" => fmt::layer()
-                .with_writer(std::io::stderr)
-                .with_span_events(fmt::format::FmtSpan::CLOSE)
-                .with_filter(filter)
-                .boxed(),
-            "json" => fmt::layer()
-                .json()
-                .with_writer(std::io::stderr)
-                .with_span_events(fmt::format::FmtSpan::CLOSE)
-                .with_filter(filter)
-                .boxed(),
-            value => panic!("unknown HAFLEY_LOG_FORMAT {value:?}; expected human or json"),
-        };
+        let observability = hafley_observe::Config::from_env(
+            "sprefa-extract",
+            env!("CARGO_PKG_VERSION"),
+            "off",
+            false,
+        )
+        .expect("observability configuration");
+        let printer = hafley_observe::format_layer(
+            hafley_observe::FormatConfig {
+                format: observability.format,
+                ansi: observability.ansi,
+                target: true,
+                thread_names: false,
+                span_events: tracing_subscriber::fmt::format::FmtSpan::CLOSE,
+            },
+            tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::stderr),
+        )
+        .with_filter(filter);
         let (summary, state) = if want_summary {
             let state = Arc::new(SummaryState::new());
             let layer = SummaryLayer::new(Arc::clone(&state))
@@ -278,13 +281,7 @@ mod sink {
             (None, None)
         };
         Registry::default().with(printer).with(summary).init();
-        tracing::debug!(
-            service.name = "sprefa-extract",
-            service.version = env!("CARGO_PKG_VERSION"),
-            process.pid = std::process::id(),
-            log.format = format,
-            "observability initialized"
-        );
+        hafley_observe::startup(&observability);
         state
     }
 }
