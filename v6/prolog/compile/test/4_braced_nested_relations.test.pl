@@ -12,6 +12,7 @@
                 resolve_qualified_types/2
               ]).
 :- use_module('../../1_expansion', [expand_program/3]).
+:- use_module('../../0_generic_expand', [type_projection_targets/2]).
 :- use_module('../../1_host_expand', [prepare_program/5]).
 :- use_module('../../use_resolve', [expand_uses/6]).
 :- use_module('../../compile', [dl6_seeded_form/3, program_plan/3]).
@@ -114,6 +115,52 @@ test(a_zero_column_brace_child_stays_zero_arity) :-
     once(expand_program(Program, prog(Decls, _), _)),
     memberchk(rel_path_decl(orchard__flag/0, [orchard, flag]), Decls),
     \+ memberchk(col_type(orchard__flag/_, _, _), Decls).
+
+test(a_member_and_nested_relation_with_different_targets_refuse,
+     [throws(unsupported_construct(
+                 ambiguous_type_projection(
+                     named(local, relation, a),
+                     x,
+                     [ primitive(text),
+                       named(local, relation, a__x)
+                     ])))]) :-
+    parse_braced_source(
+        "rel a(x: text) { rel x(value: int). }.",
+        Program, _),
+    once(expand_program(Program, _, _)).
+
+test(a_projection_collision_diagnostic_names_both_targets) :-
+    Reason = ambiguous_type_projection(
+                 named(local, relation, a),
+                 x,
+                 [primitive(text), named(local, relation, a__x)]),
+    message_to_string(unsupported_construct(Reason), Text),
+    Text == "rule-index unavailable: unsupported_construct: compiler refused projection 'a.x': name resolves to [text, a__x] (ambiguous_type_projection)".
+
+test(a_member_and_nested_relation_with_one_target_collapse_to_one_projection) :-
+    parse_braced_source(
+        "rel a(x: a.x) { rel x(value: int). }.",
+        Program, _),
+    once(expand_program(Program, prog(Decls, _), _)),
+    type_projection_targets(Decls, Targets),
+    findall(Target,
+            member(type_projection(named(local, relation, a), x, Target),
+                   Targets),
+            XTargets),
+    XTargets == [named(local, relation, a__x)].
+
+test(an_inline_sum_contributes_one_member_projection_and_no_nested_x_edge) :-
+    parse_braced_source(
+        "rel a(x: (left(); right())).",
+        Program, _),
+    once(expand_program(Program, prog(Decls, _), _)),
+    type_projection_targets(Decls, Targets),
+    findall(Target,
+            member(type_projection(named(local, relation, a), x, Target),
+                   Targets),
+            XTargets),
+    XTargets = [named(local, enum, AnonymousEnum)],
+    sub_atom(AnonymousEnum, 0, _, _, '__anon_a_x_').
 
 test(a_nested_declaration_keeps_its_own_source_line) :-
     source_text(

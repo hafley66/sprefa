@@ -9,7 +9,9 @@ expand_generic_program(Program, Expanded) :-
 
 expand_generic_program_with_bindings(prog(Decls0, Rules0), Bindings,
                                      Expanded) :-
-    type_apply_refreeze(Decls0, Rules0, Bindings, [], none, 0, Expanded).
+    resolve_relation_paths(Decls0, Rules0, ResolvedRules),
+    type_apply_refreeze(Decls0, ResolvedRules, Bindings, [], none, 0,
+                        Expanded).
 
 type_apply_refreeze(Decls0, Rules0, Bindings, Seen0, PreviousRows, Round,
                     prog(Decls, Rules)) :-

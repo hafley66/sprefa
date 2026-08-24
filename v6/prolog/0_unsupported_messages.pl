@@ -57,6 +57,15 @@ specific_reason_text(ReasonName, Reason, Text) :-
     !,
     format(atom(Text), "compiler refused surface '~w' (~w)",
            [Signature, ReasonName]).
+specific_reason_text(ambiguous_type_projection,
+                     ambiguous_type_projection(Owner, Name, Targets), Text) :-
+    !,
+    projection_type_label(Owner, OwnerLabel),
+    maplist(projection_type_label, Targets, TargetLabels),
+    atomic_list_concat(TargetLabels, ', ', TargetList),
+    format(atom(Text),
+           "compiler refused projection '~w.~w': name resolves to [~w] (ambiguous_type_projection)",
+           [OwnerLabel, Name, TargetList]).
 specific_reason_text(ReasonName, Reason, Text) :-
     reason_subject_text(Reason, Subject),
     ( Subject == ''
@@ -65,6 +74,18 @@ specific_reason_text(ReasonName, Reason, Text) :-
     ;  format(atom(Text), "compiler refused rule '~w'~w (~w)",
                [ReasonName, Subject, ReasonName])
     ).
+
+projection_type_label(primitive(Name), Name) :- !.
+projection_type_label(named(_, _, Name), Name) :- !.
+projection_type_label(parameter(_, _, Name), Name) :- !.
+projection_type_label(application(Constructor, Arguments), Text) :-
+    !,
+    projection_type_label(Constructor, ConstructorLabel),
+    maplist(projection_type_label, Arguments, ArgumentLabels),
+    atomic_list_concat(ArgumentLabels, ', ', ArgumentList),
+    format(atom(Text), '~w(~w)', [ConstructorLabel, ArgumentList]).
+projection_type_label(Type, Text) :-
+    format(atom(Text), '~w', [Type]).
 
 % One line per removed word. The catch-all keeps a word that loses its row
 % before it gains a sentence here from printing a dangling comma.
