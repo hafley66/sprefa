@@ -123,13 +123,9 @@ fixture(module_path_and_option_column_coexist,
         ticks(2)
     ]).
 
-% ── nesting: the implicit leading parent reference ───────────────────────────
+% ── nesting: name paths preserve authored relation shapes ────────────────────
 
-% A dotted decl whose PARENT carries a decl of its own gains a LEADING column
-% typed ref(Parent), stored as the parent row's integer id.
-% rx: child$ = parent$.pipe(groupBy(row => row.parent)); one inner stream per
-% parent row, and the head's parent term is the join that picks the group.
-fixture(nested_child_carries_the_parent_reference,
+fixture(nested_child_uses_its_authored_arity,
     prog(
         [ col_type(orchard/1, orchard_id, int),
           col_type(orchard__tree/1, tree_id, int),
@@ -145,14 +141,11 @@ fixture(nested_child_carries_the_parent_reference,
     ],
     [
         final(orchard/1, [orchard(1)]),
-        final(orchard__tree/2, [orchard__tree(obj([orchard_id-1]), 7)]),
+        final(orchard__tree/1, [orchard__tree(7)]),
         ticks(1)
     ]).
 
-% COUNT receipt, not end-state equality alone: two parent rows partition the
-% child stream, and the per-parent count is 2 and 1, never one flat 3.
-% rx: groupBy(row => row.parent) then count() inside each inner stream.
-fixture(nested_two_parent_rows_partition_the_child,
+fixture(nested_two_parent_rows_share_the_flat_child_relation,
     prog(
         [ col_type(orchard/1, orchard_id, int),
           col_type(orchard__tree/1, tree_id, int),
@@ -172,17 +165,13 @@ fixture(nested_two_parent_rows_partition_the_child,
     ],
     [
         final(orchard/1, [orchard(1), orchard(2)]),
-        final(orchard__tree/2, [orchard__tree(obj([orchard_id-1]), 7),
-                                orchard__tree(obj([orchard_id-1]), 8),
-                                orchard__tree(obj([orchard_id-2]), 9)]),
+        final(orchard__tree/1, [orchard__tree(7), orchard__tree(8),
+                                orchard__tree(9)]),
         final(per_orchard/2, [per_orchard(1, 2), per_orchard(2, 1)]),
         ticks(1)
     ]).
 
-% Reference is by IDENTITY, never by instance: the ref column compiles with
-% the parent holding zero rows, and the child is EMPTY rather than refused.
-% rx: an empty parent$ makes every groupBy inner stream absent, not an error.
-fixture(nested_parent_with_no_rows_yields_an_empty_child,
+fixture(nested_parent_rows_do_not_gate_the_child,
     prog(
         [ col_type(orchard/1, orchard_id, int),
           col_type(orchard__tree/1, tree_id, int),
@@ -193,21 +182,18 @@ fixture(nested_parent_with_no_rows_yields_an_empty_child,
           col_type(seeded/2, tree_id, int)
         ],
         [ (orchard(OrchardId) <- planted(OrchardId, _)),
-          (orchard__tree(TreeId) <- orchard(Oid), seeded(Oid, TreeId)) ]),
+          (orchard__tree(TreeId) <- seeded(_, TreeId)) ]),
     [],
     [
         [+seeded(1, 7)]
     ],
     [
         final(orchard/1, []),
-        final(orchard__tree/2, []),
+        final(orchard__tree/1, [orchard__tree(7)]),
         ticks(1)
     ]).
 
-% A BODY atom short by one reads across every partition, so each occurrence
-% takes its own leading variable and nothing couples two parents.
-% rx: mergeAll() over the grouped stream, the partition key discarded.
-fixture(nested_body_atom_reads_every_partition,
+fixture(nested_body_atom_uses_its_authored_arity,
     prog(
         [ col_type(orchard/1, orchard_id, int),
           col_type(orchard__tree/1, tree_id, int),
@@ -228,9 +214,7 @@ fixture(nested_body_atom_reads_every_partition,
         ticks(1)
     ]).
 
-% The contribution rule needs the parent in its own body to join through; a
-% head short by one with no parent atom has no ref to resolve.
-fixture(nested_head_without_a_parent_atom_refuses,
+fixture(nested_head_without_a_parent_binding_derives,
     prog(
         [ col_type(orchard/1, orchard_id, int),
           col_type(orchard__tree/1, tree_id, int),
@@ -241,15 +225,15 @@ fixture(nested_head_without_a_parent_atom_refuses,
         [ (orchard(OrchardId) <- planted(OrchardId, _)),
           (orchard__tree(TreeId) <- planted(_, TreeId)) ]),
     [],
-    [],
     [
-        throws(unsupported_construct(nested_parent_unbound(orchard__tree)))
+        [+planted(1, 7)]
+    ],
+    [
+        final(orchard__tree/1, [orchard__tree(7)]),
+        ticks(1)
     ]).
 
-% Depth 3: `tree` references `orchard`, `branch` references `tree`, so the
-% child's own parent value is itself a relation value one level down.
-% rx: groupBy nested twice, the inner key read off the outer group's row.
-fixture(nested_three_levels_chain_the_references,
+fixture(nested_three_levels_keep_authored_arities,
     prog(
         [ col_type(orchard/1, orchard_id, int),
           col_type(orchard__tree/1, tree_id, int),
@@ -271,17 +255,12 @@ fixture(nested_three_levels_chain_the_references,
         [+grew(1, 7, 21)]
     ],
     [
-        final(orchard__tree/2, [orchard__tree(obj([orchard_id-1]), 7)]),
-        final(orchard__tree__branch/2,
-              [orchard__tree__branch(obj([parent-obj([orchard_id-1]),
-                                          tree_id-7]), 21)]),
+        final(orchard__tree/1, [orchard__tree(7)]),
+        final(orchard__tree__branch/1, [orchard__tree__branch(21)]),
         ticks(1)
     ]).
 
-% The option phase runs at 5 and the capture at 44, so the companion is named
-% off the mangle and the parent reference lands beside the desugared column.
-% rx: the tag join reads the option instance id; the partition key is separate.
-fixture(nested_child_and_an_option_column_coexist,
+fixture(nested_child_and_an_option_column_keep_authored_shape,
     prog(
         [ col_type(orchard/1, orchard_id, int),
           col_type(orchard__tree/2, tree_id, int),
@@ -308,10 +287,7 @@ fixture(nested_child_and_an_option_column_coexist,
         ticks(2)
     ]).
 
-% A child declaring NO columns still captures: the parent ref is its only
-% column, so the marker is one row per parent row and never one row total.
-% rx: distinct-by-parent, the degenerate groupBy where each group holds one.
-fixture(nested_zero_column_child_is_one_row_per_parent,
+fixture(nested_zero_column_child_is_one_flat_marker,
     prog(
         [ col_type(orchard/1, orchard_id, int),
           rel_path_decl(orchard__flag/0, [orchard, flag]),
@@ -328,8 +304,7 @@ fixture(nested_zero_column_child_is_one_row_per_parent,
         [+planted(1, 7), +planted(1, 8), +planted(2, 9)]
     ],
     [
-        final(orchard__flag/1, [orchard__flag(obj([orchard_id-1])),
-                                orchard__flag(obj([orchard_id-2]))]),
+        final(orchard__flag/0, [orchard__flag]),
         final(flagged/1, [flagged(1)]),
         ticks(1)
     ]).

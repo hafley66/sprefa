@@ -2066,11 +2066,11 @@ plane_kind(expand). plane_kind(dred). plane_kind(avg_accumulator).
 % Step 4's families, counted across the same corpus the name rail walks. The
 % six level-statement families must mint in step with their DDL mint sites, so
 % the count is the rail's twin, not a fresh check over different rows.
-% Re-measured each time against the OLD fixture file (40/293/293, then
-% 41/309/309), so every move is a new fixture and never a lowering that grew.
+% Re-measured against the fixture corpus after each fixture change. Name-path
+% nesting removes four implicit parent-reference planes (192/1636/1636).
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-192, refcount-1640, refcount_staging-1640,
+    Counts = [scope-192, refcount-1636, refcount_staging-1636,
               expand-56, dred-84, avg_accumulator-8].
 
 corpus_plane_kind_counts(Counts) :-
@@ -7074,90 +7074,70 @@ test(a_dotted_decl_prints_back_at_its_path) :-
     once(parse_dl(PrintedCodes, RoundTripped, _, [])),
     Program =@= RoundTripped.
 
-% ── nesting: the implicit leading parent reference ──────────────────────────
+% ── nesting: dotted paths preserve authored relation shapes ─────────────────
 
-% A dotted decl whose PARENT carries a decl of its own gains a leading column
-% typed ref(Parent), which lower.pl:column_def/3 stores as INTEGER NOT NULL.
-test(a_nested_decl_gains_the_leading_parent_reference) :-
+test(a_nested_decl_keeps_its_authored_columns) :-
     parsed_module_path_program(
         'rel orchard(orchard_id: int).\nrel orchard.tree(tree_id: int).',
         Decls, Rules),
     expand_program(prog(Decls, Rules), prog(Expanded, _), _),
-    memberchk(col_type(orchard__tree/2, parent, orchard), Expanded),
-    memberchk(col_type(orchard__tree/2, tree_id, int), Expanded),
-    memberchk(rel_path_decl(orchard__tree/2, [orchard, tree]), Expanded),
-    memberchk(type_decl(orchard, [col(orchard_id, int)]), Expanded).
+    memberchk(col_type(orchard__tree/1, tree_id, int), Expanded),
+    memberchk(rel_path_decl(orchard__tree/1, [orchard, tree]), Expanded),
+    \+ memberchk(col_type(orchard__tree/_, parent, _), Expanded).
 
-% Reference is by IDENTITY: a parent with no decl of its own is an interior
-% room, not a target, so the child keeps the arity it was written with.
-test(a_parent_with_no_decl_captures_nothing) :-
+test(an_interior_path_segment_does_not_change_child_arity) :-
     parsed_module_path_program(
         'rel orchard.north.tree(tree_id: int).', Decls, Rules),
     expand_program(prog(Decls, Rules), prog(Expanded, _), _),
     memberchk(col_type(orchard__north__tree/1, tree_id, int), Expanded),
     \+ memberchk(col_type(orchard__north__tree/_, parent, _), Expanded).
 
-% THE CONTRIBUTION RULE: a head short by one takes the body's own parent atom
-% as its leading argument, which is the term bind_reference_target_identity/6
-% compiles to the joined row's `__id`.
-test(a_contribution_head_resolves_the_parent_by_natural_join) :-
+test(a_dotted_contribution_head_uses_its_authored_arity) :-
     parsed_module_path_program(
         'rel orchard(orchard_id: int).\nrel orchard.tree(tree_id: int).\nrel planted(orchard_id: int, tree_id: int).\norchard.tree(TreeId) <- orchard(OrchardId), planted(OrchardId, TreeId).',
         Decls, Rules),
     expand_program(prog(Decls, Rules), prog(_, Expanded), _),
-    Expanded =@= [(orchard__tree(orchard(OrchardId), TreeId) <-
+    Expanded =@= [(orchard__tree(TreeId) <-
                       (orchard(OrchardId), planted(OrchardId, TreeId)))].
 
-% A BODY atom short by one reads across every partition, so each occurrence
-% takes its own leading variable rather than coupling two parents.
-test(a_body_atom_short_by_one_reads_every_partition) :-
+test(a_dotted_body_atom_uses_its_authored_arity) :-
     parsed_module_path_program(
         'rel orchard(orchard_id: int).\nrel orchard.tree(tree_id: int).\nrel any_tree(tree_id: int).\nany_tree(TreeId) <- orchard.tree(TreeId).',
         Decls, Rules),
     expand_program(prog(Decls, Rules), prog(_, Expanded), _),
-    Expanded =@= [(any_tree(TreeId) <- orchard__tree(_Partition, TreeId))].
+    Expanded =@= [(any_tree(TreeId) <- orchard__tree(TreeId))].
 
-% Fork F-A: the captured ref claims position 1, so an author's own key
-% positions all move one right.
-test(the_captured_reference_shifts_the_authors_key_positions) :-
+test(a_dotted_child_key_keeps_its_authored_positions) :-
     parsed_module_path_program(
         'rel orchard(orchard_id: int).\nrel orchard.tree(tree_id: int, picked: int) key(1).',
         Decls, Rules),
     expand_program(prog(Decls, Rules), prog(Expanded, _), _),
-    memberchk(keyed(orchard__tree/3, [2]), Expanded).
+    memberchk(keyed(orchard__tree/2, [1]), Expanded).
 
-test(a_contribution_head_with_no_parent_atom_refuses_by_name) :-
+test(a_dotted_head_needs_no_implicit_parent_binding) :-
     parsed_module_path_program(
         'rel orchard(orchard_id: int).\nrel orchard.tree(tree_id: int).\nrel planted(orchard_id: int, tree_id: int).\norchard.tree(TreeId) <- planted(_, TreeId).',
         Decls, Rules),
-    catch(( expand_program(prog(Decls, Rules), _, _), Refusal = none ),
-          unsupported_construct(Caught),
-          Refusal = Caught),
-    Refusal == nested_parent_unbound(orchard__tree).
+    expand_program(prog(Decls, Rules), prog(_, Expanded), _),
+    Expanded =@= [(orchard__tree(TreeId) <- planted(_, TreeId))].
 
-% Two distinct parent atoms give the natural join two answers, and picking
-% either silently would put the child row under the wrong parent.
-test(a_contribution_head_with_two_parent_atoms_refuses_by_name) :-
+test(a_dotted_head_allows_ordinary_multiple_body_atoms) :-
     parsed_module_path_program(
         'rel orchard(orchard_id: int).\nrel orchard.tree(tree_id: int).\nrel planted(orchard_id: int, tree_id: int).\norchard.tree(TreeId) <- orchard(A), orchard(B), planted(A, TreeId), planted(B, TreeId).',
         Decls, Rules),
-    catch(( expand_program(prog(Decls, Rules), _, _), Refusal = none ),
-          unsupported_construct(Caught),
-          Refusal = Caught),
-    Refusal == nested_parent_ambiguous(orchard__tree).
+    expand_program(prog(Decls, Rules), prog(_, Expanded), _),
+    Expanded =@= [(orchard__tree(TreeId) <-
+                      (orchard(A), orchard(B),
+                       planted(A, TreeId), planted(B, TreeId)))].
 
-% FAIL-FIRST RECEIPT, measured before 0_option_expand.pl carried
-% rel_path_decl/2 through shrink_parent_ref/5: the companion split left
-% rel_path_decl(orchard__tree/2) beside col_type(orchard__tree/1), so the dot
-% phase read an arity no other decl carried and the child SILENTLY lost its
-% parent reference -- no `parent` column, no type_decl, no refusal.
-test(a_reference_option_on_a_nested_rel_keeps_its_path) :-
+test(an_option_on_a_nested_rel_keeps_its_path_and_authored_shape) :-
     parsed_module_path_program(
         'rel orchard(orchard_id: int).\nrel swatch(name: text).\nrel orchard.tree(tree_id: int, label: option(swatch)).',
         Decls, Rules),
     expand_program(prog(Decls, Rules), prog(Expanded, _), _),
-    memberchk(rel_path_decl(orchard__tree/2, [orchard, tree]), Expanded),
-    memberchk(col_type(orchard__tree/2, parent, orchard), Expanded),
+    memberchk(rel_path_decl(orchard__tree/1, [orchard, tree]), Expanded),
+    \+ memberchk(col_type(orchard__tree/_, parent, _), Expanded),
+    memberchk(option_column(orchard__tree/2, label, swatch), Expanded),
     memberchk(col_type(orchard__tree__label/2, orchard__tree_id, int),
               Expanded).
 
@@ -7288,25 +7268,23 @@ test(named_and_punned_arguments_are_independent_of_source_order) :-
 
 % ── the zero-column child ───────────────────────────────────────────────────
 
-% A child declaring no columns still captures: the parent ref IS its only
-% column, which makes a marker rel one row per parent row.
-test(a_zero_column_child_takes_the_parent_ref_as_its_only_column) :-
+test(a_zero_column_child_stays_zero_arity) :-
     parsed_module_path_program(
         'rel orchard(orchard_id: int).\nrel orchard.flag().\nrel planted(orchard_id: int).\norchard.flag() <- orchard(OrchardId), planted(OrchardId).',
         Decls, Rules),
     expand_program(prog(Decls, Rules), prog(ExpandedDecls, Expanded), _),
-    memberchk(col_type(orchard__flag/1, parent, orchard), ExpandedDecls),
-    memberchk(rel_path_decl(orchard__flag/1, [orchard, flag]), ExpandedDecls),
-    Expanded =@= [(orchard__flag(orchard(OrchardId)) <-
+    memberchk(rel_path_decl(orchard__flag/0, [orchard, flag]), ExpandedDecls),
+    \+ memberchk(col_type(orchard__flag/_, _, _), ExpandedDecls),
+    Expanded =@= [(orchard__flag <-
                       (orchard(OrchardId), planted(OrchardId)))].
 
-test(a_zero_column_child_read_in_a_body_spans_every_partition) :-
+test(a_zero_column_child_read_in_a_body_stays_a_zero_arity_atom) :-
     parsed_module_path_program(
         'rel orchard(orchard_id: int).\nrel orchard.flag().\nrel planted(orchard_id: int).\nrel lit(seen: int).\norchard.flag() <- orchard(OrchardId), planted(OrchardId).\nlit(1) <- orchard.flag().',
         Decls, Rules),
     expand_program(prog(Decls, Rules), prog(_, Expanded), _),
     Expanded = [_, (lit(1) <- Read)],
-    Read =@= orchard__flag(_Partition).
+    Read == orchard__flag.
 
 % The zero-column child is a bare ATOM, and an atom is a legal data value, so
 % the rewrite matches goal positions and never a head argument.
