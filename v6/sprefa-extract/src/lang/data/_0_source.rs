@@ -6,11 +6,11 @@
 
 use serde_json::{Map, Value};
 
-use crate::trace;
 use crate::lang::astgrep::AstgrepSource;
 use crate::rows::FamilyBundle;
 use crate::shape::{Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, Source};
+use crate::trace;
 use crate::types::{DataDoc, DataF, DataFAux, DataFormat, DataValueKind, DataValueRow};
 
 #[derive(Default)]
@@ -55,11 +55,7 @@ impl Source for DataSource {
 
 /// One file's data plane. None when the bytes are not utf-8 or the grammar
 /// refuses to load; an unparseable document is an ERROR tree, which still walks.
-fn data_bundle(
-    path: &str,
-    content: &[u8],
-    strings: &mut Strings,
-) -> Option<FamilyBundle<DataF>> {
+fn data_bundle(path: &str, content: &[u8], strings: &mut Strings) -> Option<FamilyBundle<DataF>> {
     let text = std::str::from_utf8(content).ok()?;
     let format = DataFormat::of_path(path);
     let mut aux = DataFAux {
@@ -101,7 +97,10 @@ fn collect_single(
 ) -> Option<()> {
     let tree = parse(language_of(format), text)?;
     let src = text.as_bytes();
-    for (ordinal, root) in root_values(format, tree.root_node()).into_iter().enumerate() {
+    for (ordinal, root) in root_values(format, tree.root_node())
+        .into_iter()
+        .enumerate()
+    {
         let ordinal = ordinal as u32;
         aux.docs.push(DataDoc {
             ordinal,
@@ -412,15 +411,11 @@ fn kind_of(format: DataFormat, node: tree_sitter::Node, src: &[u8]) -> DataValue
         DataFormat::Yaml => match node.kind() {
             "block_mapping" | "flow_mapping" => DataValueKind::Object,
             "block_sequence" | "flow_sequence" => DataValueKind::Array,
-            "double_quote_scalar" | "single_quote_scalar" | "block_scalar" => {
-                DataValueKind::String
-            }
+            "double_quote_scalar" | "single_quote_scalar" | "block_scalar" => DataValueKind::String,
             _ => plain_scalar_kind(&yaml_scalar_text(node, src)),
         },
         DataFormat::Toml => match node.kind() {
-            "document" | "table" | "table_array_element" | "inline_table" => {
-                DataValueKind::Object
-            }
+            "document" | "table" | "table_array_element" | "inline_table" => DataValueKind::Object,
             "array" => DataValueKind::Array,
             "integer" | "float" => DataValueKind::Number,
             "boolean" => DataValueKind::Boolean,
@@ -547,7 +542,9 @@ fn push_path(map: &mut Map<String, Value>, segments: &[String], value: Value) {
     if !slot.is_array() {
         *slot = Value::Array(Vec::new());
     }
-    slot.as_array_mut().expect("just made it an array").push(value);
+    slot.as_array_mut()
+        .expect("just made it an array")
+        .push(value);
 }
 
 // ── json ────────────────────────────────────────────────────────────────────
@@ -658,8 +655,7 @@ fn toml_key_node<'a>(node: tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a
 /// Key text split into path segments: `a.b."c d"` -> ["a", "b", "c d"].
 fn toml_key_segs(key: tree_sitter::Node, src: &[u8]) -> Vec<String> {
     let part = |node: tree_sitter::Node| {
-        let raw =
-            String::from_utf8_lossy(&src[node.start_byte()..node.end_byte()]).into_owned();
+        let raw = String::from_utf8_lossy(&src[node.start_byte()..node.end_byte()]).into_owned();
         if node.kind() == "quoted_key" {
             toml_unquote(&raw)
         } else {
@@ -694,9 +690,7 @@ fn toml_unquote(text: &str) -> String {
         ("\"", "\""),
         ("'", "'"),
     ] {
-        if text.len() >= open.len() + close.len()
-            && text.starts_with(open)
-            && text.ends_with(close)
+        if text.len() >= open.len() + close.len() && text.starts_with(open) && text.ends_with(close)
         {
             let inner = &text[open.len()..text.len() - close.len()];
             return if open.starts_with('"') {

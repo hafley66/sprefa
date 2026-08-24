@@ -31,6 +31,7 @@ fn no_rust_log_means_no_stderr_byte() {
         .args(["--family", "call", FIXTURE])
         .env_remove("RUST_LOG")
         .env_remove("DL_TRACE_SUMMARY")
+        .env_remove("HAFLEY_LOG_FORMAT")
         .output()
         .expect("run extract");
     assert!(output.status.success(), "extract failed: {output:?}");
@@ -44,6 +45,44 @@ fn no_rust_log_means_no_stderr_byte() {
         "stderr must be empty with RUST_LOG unset, got {}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn json_format_emits_service_version_and_process_identity() {
+    let output = Command::new(BIN)
+        .args(["--family", "call", FIXTURE])
+        .env("RUST_LOG", "sprefa_extract=debug")
+        .env("HAFLEY_LOG_FORMAT", "json")
+        .env_remove("DL_TRACE_SUMMARY")
+        .output()
+        .expect("run extract");
+    assert!(output.status.success(), "extract failed: {output:?}");
+    let values = String::from_utf8(output.stderr)
+        .expect("JSON log is UTF-8")
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line).expect("one JSON event per line")
+        })
+        .collect::<Vec<_>>();
+    let startup = values
+        .iter()
+        .find(|value| value["fields"]["message"] == "observability initialized")
+        .expect("startup event");
+    assert_eq!(
+        serde_json::json!({
+            "service.name": startup["fields"]["service.name"],
+            "service.version": startup["fields"]["service.version"],
+            "process.pid": startup["fields"]["process.pid"],
+            "log.format": startup["fields"]["log.format"],
+        }),
+        serde_json::json!({
+            "service.name": "sprefa-extract",
+            "service.version": env!("CARGO_PKG_VERSION"),
+            "process.pid": startup["fields"]["process.pid"],
+            "log.format": "json",
+        })
+    );
+    assert!(startup["fields"]["process.pid"].as_u64().is_some());
 }
 
 #[test]

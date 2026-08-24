@@ -66,11 +66,19 @@ struct Row {
 }
 
 const fn per_file(v5: &'static str, record: &'static str) -> Row {
-    Row { v5, record, per_file: true }
+    Row {
+        v5,
+        record,
+        per_file: true,
+    }
 }
 
 const fn project(v5: &'static str, record: &'static str) -> Row {
-    Row { v5, record, per_file: false }
+    Row {
+        v5,
+        record,
+        per_file: false,
+    }
 }
 
 const MATRIX: &[Row] = &[
@@ -173,7 +181,10 @@ const EMISSION_FIXTURES: &[(&str, FamilyMask)] = &[
     ("tests/fixtures/ts/lambdas.ts", FamilyMask::ALL),
     ("tests/fixtures/df_loops/sample.ts", FamilyMask::ALL),
     ("tests/fixtures/df_loops/sample.rs", FamilyMask::ALL),
-    ("tests/fixtures/ts_unresolved/unresolved.ts", FamilyMask::ALL),
+    (
+        "tests/fixtures/ts_unresolved/unresolved.ts",
+        FamilyMask::ALL,
+    ),
     ("tests/fixtures/markdown/doc_node.md", TYPES_ONLY),
 ];
 
@@ -181,8 +192,8 @@ fn record_tags_over(fixtures: &[(&str, FamilyMask)]) -> BTreeSet<String> {
     let mut seen = BTreeSet::new();
     for (relative, mask) in fixtures {
         let path = repo_file(relative);
-        let content = std::fs::read(&path)
-            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        let content =
+            std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
         let Some(out) = dispatch(relative, &content, *mask) else {
             panic!("no Source claimed {relative}");
         };
@@ -232,11 +243,23 @@ const V5_ORACLE_LANGS: &[(&str, &str)] = &[
 
 /// Languages with NO v5 twin, each with the reason written down.
 const V6_ONLY_LANGS: &[(&str, &str)] = &[
-    ("markdown", "v5 had no markdown front-end; doc_node/doc_ref were engine-side"),
+    (
+        "markdown",
+        "v5 had no markdown front-end; doc_node/doc_ref were engine-side",
+    ),
     ("prolog", "v5 had no prolog front-end at all"),
-    ("data", "v5 answered json/yaml/toml through the `json`/`jsonp` OPS, not a language"),
-    ("dl6", "v5's `dl` grammar was cst-only; the type/call planes are v6-native"),
-    ("astgrep", "the cst-only fallback; v5's `sg` roster has no per-language oracle"),
+    (
+        "data",
+        "v5 answered json/yaml/toml through the `json`/`jsonp` OPS, not a language",
+    ),
+    (
+        "dl6",
+        "v5's `dl` grammar was cst-only; the type/call planes are v6-native",
+    ),
+    (
+        "astgrep",
+        "the cst-only fallback; v5's `sg` roster has no per-language oracle",
+    ),
 ];
 
 #[test]
@@ -245,7 +268,10 @@ fn every_roster_source_is_graded_or_waived() {
     let waived: BTreeSet<&str> = V6_ONLY_LANGS.iter().map(|(name, _)| *name).collect();
 
     let overlap: Vec<&&str> = graded.intersection(&waived).collect();
-    assert!(overlap.is_empty(), "a Source is both graded and waived: {overlap:?}");
+    assert!(
+        overlap.is_empty(),
+        "a Source is both graded and waived: {overlap:?}"
+    );
 
     let unclassified: Vec<&'static str> = sources()
         .iter()
@@ -275,12 +301,7 @@ fn every_graded_lang_has_a_captured_v5_oracle() {
         let captures = std::fs::read_dir(&fixtures)
             .unwrap_or_else(|error| panic!("read {}: {error}", fixtures.display()))
             .filter_map(Result::ok)
-            .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .ends_with(".v5.jsonl")
-            })
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".v5.jsonl"))
             .count();
         if captures == 0 {
             empty.push(format!("{name}: no *.v5.jsonl under tests/fixtures/{dir}"));

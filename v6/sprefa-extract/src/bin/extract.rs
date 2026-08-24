@@ -508,7 +508,7 @@ fn parse_arms(families: &[String]) -> Result<ResolveArms, String> {
                 return Err(format!(
                     "--family '{other}' is not a resolve arm; under --resolve only \
                      'call', 'type' and 'flow' are meaningful"
-                ))
+                ));
             }
         }
     }
@@ -534,7 +534,7 @@ fn parse_mask(families: &[String]) -> Result<FamilyMask, String> {
                 return Err(format!(
                     "--family '{other}' is not a mask family; per-file families are \
                      cst, type, call, df, data, cfg"
-                ))
+                ));
             }
         }
     }

@@ -244,7 +244,8 @@ mod sink {
                 return;
             };
             let axis = counts.axis();
-            self.state.fold(counts.lang, axis, counts.busy, counts.facts);
+            self.state
+                .fold(counts.lang, axis, counts.busy, counts.facts);
         }
     }
 
@@ -252,12 +253,22 @@ mod sink {
     /// to stderr, and stderr stays empty unless RUST_LOG or DL_TRACE_SUMMARY asks.
     pub fn install() -> Option<Arc<SummaryState>> {
         let want_summary = matches!(std::env::var("DL_TRACE_SUMMARY").as_deref(), Ok("1"));
-        let printer = fmt::layer()
-            .with_writer(std::io::stderr)
-            .with_span_events(fmt::format::FmtSpan::CLOSE)
-            .with_filter(
-                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("off")),
-            );
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("off"));
+        let format = std::env::var("HAFLEY_LOG_FORMAT").unwrap_or_else(|_| "human".to_string());
+        let printer = match format.as_str() {
+            "human" | "text" => fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_span_events(fmt::format::FmtSpan::CLOSE)
+                .with_filter(filter)
+                .boxed(),
+            "json" => fmt::layer()
+                .json()
+                .with_writer(std::io::stderr)
+                .with_span_events(fmt::format::FmtSpan::CLOSE)
+                .with_filter(filter)
+                .boxed(),
+            value => panic!("unknown HAFLEY_LOG_FORMAT {value:?}; expected human or json"),
+        };
         let (summary, state) = if want_summary {
             let state = Arc::new(SummaryState::new());
             let layer = SummaryLayer::new(Arc::clone(&state))
@@ -267,6 +278,13 @@ mod sink {
             (None, None)
         };
         Registry::default().with(printer).with(summary).init();
+        tracing::debug!(
+            service.name = "sprefa-extract",
+            service.version = env!("CARGO_PKG_VERSION"),
+            process.pid = std::process::id(),
+            log.format = format,
+            "observability initialized"
+        );
         state
     }
 }

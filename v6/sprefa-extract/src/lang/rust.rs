@@ -32,7 +32,6 @@ use syn::{
 };
 
 use super::astgrep::{AstGrepParser, CstProjector};
-use crate::trace;
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
     DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, MethodOwner, ProjectEdge, SigSlot,
@@ -46,8 +45,9 @@ use crate::seams::{
 };
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
-use crate::types::{CfgScope, TestOnlyCall};
+use crate::trace;
 use crate::types::ScipIndex;
+use crate::types::{CfgScope, TestOnlyCall};
 
 // ── span bridge: proc_macro2 line/col -> v6 byte Span ───────────────────────
 

@@ -22,13 +22,13 @@
 
 use std::collections::BTreeSet;
 
-use crate::trace;
 use crate::family::{CallF, CallKind, CallSite, CstF, SigSlot, TypeEntityKind, TypeF, TypeSig};
 use crate::lang::{AstGrepParser, CstProjector};
 use crate::rows::{FamilyBundle, Node};
 use crate::seams::{Parser, Project};
 use crate::shape::{Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, Source};
+use crate::trace;
 
 // ── the tree-sitter-python parse (one parse feeds type/call) ─────────────────
 

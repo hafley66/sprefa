@@ -37,7 +37,6 @@
 use std::collections::BTreeSet;
 
 use super::astgrep::{AstGrepParser, CstProjector};
-use crate::trace;
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
     DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
@@ -47,6 +46,7 @@ use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, covering_def, def_named, DefIndex, Parser, Project, Resolve};
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
+use crate::trace;
 
 // ── the tree-sitter-kotlin parse (one parse feeds type/call/df) ─────────────
 

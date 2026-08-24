@@ -8,7 +8,6 @@
 
 use std::collections::BTreeSet;
 
-use crate::trace;
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, Family, ProjectEdge, SigSlot,
     Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
@@ -17,6 +16,7 @@ use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, covering_def, own_blob, ProjectCx, Resolve};
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, Source};
+use crate::trace;
 
 #[derive(Default)]
 pub struct DlSource;

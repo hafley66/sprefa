@@ -451,7 +451,12 @@ pub fn fold_unresolved(
         stops.insert((row.from_path, row.module, policy.as_str()));
     }
     for (src, module, reason) in &stops {
-        tracing::warn!(src, module, reason, "module specifier resolved to no corpus file");
+        tracing::warn!(
+            src,
+            module,
+            reason,
+            "module specifier resolved to no corpus file"
+        );
     }
     stops
         .into_iter()

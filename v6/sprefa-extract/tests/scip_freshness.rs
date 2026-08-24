@@ -29,7 +29,8 @@ fn temp_root(name: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|since| since.as_nanos())
         .unwrap_or(0);
-    let root = std::env::temp_dir().join(format!("scip-fresh-{name}-{}-{nanos}", std::process::id()));
+    let root =
+        std::env::temp_dir().join(format!("scip-fresh-{name}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&root).expect("temp root");
     root
 }
@@ -180,7 +181,11 @@ fn slow_indexer_is_a_named_skip_not_a_wait() {
         .skips
         .iter()
         .any(|skip| matches!(skip.reason, SkipReason::TimedOut { secs: 1 }));
-    assert!(timed_out, "expected a named TimedOut skip, got {:?}", report.skips);
+    assert!(
+        timed_out,
+        "expected a named TimedOut skip, got {:?}",
+        report.skips
+    );
     assert!(
         waited.as_secs() < 30,
         "the budget bounded the wait: {waited:?}"
@@ -237,7 +242,10 @@ fn a_persistent_stage_drops_a_source_the_corpus_deleted() {
     sprefa_extract::copy_sources(&root, &stage, &["rs"], &[]).expect("second stage");
 
     assert!(stage.join("src/a.rs").is_file());
-    assert!(!stage.join("src/b.rs").exists(), "a deleted source is pruned");
+    assert!(
+        !stage.join("src/b.rs").exists(),
+        "a deleted source is pruned"
+    );
     assert!(
         stage.join("target/debug/marker.rs").is_file(),
         "the warm target is what the persistent stage exists to keep"
