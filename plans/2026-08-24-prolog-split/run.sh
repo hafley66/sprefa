@@ -14,3 +14,5 @@ for c in cuts/*.cuts.json; do
 done
 cat reports/*.md > receipts.md
 echo "receipts.md $(wc -l < receipts.md) lines"
+python3 mkheads.py > heads.md
+echo "heads.md $(wc -l < heads.md) lines"

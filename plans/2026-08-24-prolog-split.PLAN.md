@@ -36,20 +36,33 @@ modules, no export changes, no clause text changes, no clause order changes.
 | `v6/prolog/lower.pl` | 7795 | 35 | 66-573 | 154 | 1..215 | 4 | none |
 | `v6/prolog/emit_ts.pl` | 2786 | 15 | 50-482 | 34 | 1..37 | 0 | none |
 | `v6/prolog/analyze.pl` | 1891 | 14 | 43-308 | 38 | 1..52 | 1 | none |
-| `v6/prolog/compile/parse_dl_dcg.pl` | 1776 | 11 | 42-447 | 26 | 1..46 | 0 | `lex_token/2` |
+| `v6/prolog/compile/parse_dl_dcg.pl` | 1776 | 11 | 40-447 | 26 | 1..43 | 0 | none |
 | `v6/prolog/0_type_plane.pl` | 1037 | 6 | 99-284 | 15 | 1..66 | 0 | none |
 | `v6/prolog/ARCH.pl` | 1026 | 6 | 56-288 | 2 | 1..149 | 5 | none |
 | `v6/prolog/compile.pl` | 997 | 8 | 39-219 | 13 | 1..79 | 1 | none |
-| `v6/prolog/0_program_check.pl` | 985 | 5 | 62-359 | 11 | 1..38 | 0 | `program_violation/3` |
+| `v6/prolog/0_program_check.pl` | 985 | 5 | 62-586 | 11 | 1..37 | 0 | none |
 | `v6/prolog/print_dl.pl` | 905 | 8 | 53-145 | 10 | 1..47 | 0 | none |
 | `v6/prolog/0_dot_expand.pl` | 835 | 6 | 74-168 | 6 | 1..76 | 0 | none |
 
-114 parts. Largest is 573 lines (`lower/28_fixpoint_ir.pl`), smallest 39
-(`compile_pl/3_fixture_entry.pl`). Nothing over 700.
+114 parts. Largest is 586 lines (`0_program_check/1_violations.pl`), smallest
+39 (`compile_pl/3_fixture_entry.pl`). Nothing over 700.
 
-Both predicates that go discontiguous across parts already carry the directive
-that permits it: `compile/parse_dl_dcg.pl:42` `:- discontiguous lex_token/2.`
-and `0_program_check.pl:33` `:- discontiguous program_violation/3.`
+**No predicate's clauses land in two parts, in any of the ten files** (user
+2026-08-24). Two would have under the first cut, and both are fixed by moving
+lines rather than by a directive. Both `:- discontiguous` directives that
+covered them are deleted:
+
+| file | predicate | relocation | directive deleted |
+|---|---|---|---|
+| `compile/parse_dl_dcg.pl` | `lex_token/2` | lines 1163-1164 move to sit under the clause at `:476` | `:42` `:- discontiguous lex_token/2.`, plus its two-line comment at `:40-41` |
+| `0_program_check.pl` | `program_violation/3` | four helper groups move out of the clause run, `:230-234`, `:275-334`, `:365-375`, `:413-421` | `:33` `:- discontiguous program_violation/3.` |
+
+One `:- discontiguous` stays and it is not an across-parts one:
+`compile/parse_dl_dcg.pl:43` `:- discontiguous type_base/3.` covers
+`type_base/3`'s five clauses interleaving with `type_argument/3` at `:853-886`,
+entirely inside `4_rel_decl.pl`. Relocating `type_argument/3`'s five lines out
+of the middle would kill that directive too; the plan leaves it alone because
+the interleave predates the split and crosses no part boundary.
 
 ---
 
@@ -70,6 +83,7 @@ to infer it:
 | rule | why |
 |---|---|
 | parts are included in the same order the clauses had in the original file | `include` splices terms at the directive, so clause order is file order; a reordered include list changes first-solution semantics for `program_violation/3`, `lex_token/2`, `compiler_unsupported/3` and every other first-match predicate |
+| a relocation moves whole clauses and keeps their order relative to each other | the two relocations above move a clause run to a new home; within `lex_token/2` the three rows stay first, second, third, and the 38 `program_violation/3` clauses never move at all, only the helpers between them do |
 | a part carries clauses only, never a directive | see the hoist column above; each hoisted directive moves verbatim into the head, above the includes |
 | `:- op` and `:- set_prolog_flag` stay in the head, above every include | later parts do not parse without them: `compile/parse_dl_dcg.pl:14` sets `back_quotes` to `codes` and `:22-28` declares `<-`, `<+`, `:=` and the `# @ ~` sigils |
 | the folder is named after the file, minus `.pl` | Chris's word, and the precedent |
@@ -199,10 +213,10 @@ Everything under `plans/2026-08-24-prolog-split/`.
 | `predmap.pl` | reads one source with `read_term/3` + `subterm_positions`, so heads come from SWI's own parser and never a regex; character offsets become lines through a binary search over the file's newline table; executes the file's own `op/3` and `set_prolog_flag/2` as it reads, because later terms do not parse otherwise; emits JSON with every term, every predicate's clause spans, and the in-file functors each body mentions |
 | `partition.py outline <predmap>` | prints the ordered predicate list with line spans and clause counts; this is what the cuts were designed against |
 | `partition.py report <cuts>` | resolves anchors to line ranges, assigns every clause term to a part, and prints the part table, the over-700 check, the split-predicate list, the hoist list, the cross-part call edges and the ownership table |
-| `cuts/<name>.cuts.json` | the cut itself: folder, module, and per part a file name, an ANCHOR predicate and one sentence of ownership |
+| `cuts/<name>.cuts.json` | the cut itself: folder, module, per part a file name, an ANCHOR predicate and one sentence of ownership, and an optional `relocations` list naming the line runs that move and where they land |
 | `reports/<name>.md` | the graded output, one per target |
 | `receipts.md` | all ten reports concatenated |
-| `heads.md` | the exact include block for each module head |
+| `mkheads.py` -> `heads.md` | the exact include block for each module head |
 | `modsnap.pl` | the byte-identical receipt described in section 3 |
 | `run.sh` | regenerates every predmap, every report and `receipts.md` from the tree |
 | `<name>.predmap.json` | the raw structural map, checked in so a reviewer can re-derive any number in this plan |
@@ -210,7 +224,12 @@ Everything under `plans/2026-08-24-prolog-split/`.
 A part is anchored by the name/arity of its FIRST predicate, never by a hand
 typed line number. `partition.py` derives the range, so a cut cannot drift out
 of agreement with the source, and re-running `run.sh` on a changed tree
-re-grades the whole plan.
+re-grades the whole plan. A part with no anchor exists only to receive
+relocated runs; `2_violation_helpers.pl` is the one such part.
+
+The straddle table is the gate on the user's no-discontiguous rule. It reads
+`none` for all ten files, and `run.sh` re-derives it from the source every
+time, so a cut that reintroduces a straddle cannot pass unnoticed.
 
 Two limits stated rather than hidden. `calls[]` is functor-name matching over
 the whole clause body, arguments included, so a data term wearing a predicate's
@@ -230,9 +249,9 @@ One PR per file. Smallest risk first, `lower.pl` last.
 | 2 | `0_dot_expand.pl` | 6 parts, max 168, zero straddles, zero hoists | nothing |
 | 3 | `0_type_plane.pl` | 6 parts, max 284, zero straddles, zero hoists | nothing |
 | 4 | `compile.pl` | 8 parts, one `meta_predicate` to hoist, and the ONE folder-name collision | nothing; needs the user's word on the folder name, see section 9 |
-| 5 | `0_program_check.pl` | 5 parts, `program_violation/3` goes discontiguous on purpose | nothing |
+| 5 | `0_program_check.pl` | 5 parts, and the only one carrying a multi-run relocation | nothing |
 | 6 | `analyze.pl` | 14 parts, one `:- table` to hoist | nothing |
-| 7 | `compile/parse_dl_dcg.pl` | 11 parts, `lex_token/2` goes discontiguous, and four ops plus a `back_quotes` flag must sit above every include | nothing |
+| 7 | `compile/parse_dl_dcg.pl` | 11 parts, one two-line relocation, and four ops plus a `back_quotes` flag that must sit above every include | nothing |
 | 8 | `ARCH.pl` | 6 parts, five directives to hoist, one of which is the `prolog_load_context` hazard | nothing |
 | 9 | `emit_ts.pl` | LOWEST priority. The TypeScript door is paused (user 2026-08-21) and takes no new work; the split adds no feature but does need the emitted-bytes receipt of section 3 | do it only if the user wants it; the door being paused is an argument for leaving the file alone entirely |
 | 10 | `lower.pl` | 35 parts, the biggest surgery, and the file most likely to be edited under you | Chris's main tree has uncommitted `lower.pl` work; this PR opens only after that commits |
@@ -344,29 +363,40 @@ exists and holds `parse_dl_dcg.pl`, `registry.pl`, `test/`, `out/` and more, so
 
 ### 7.5 0_program_check.pl
 
-Head keeps lines 1..38: module at `0_program_check.pl:9-17`, five `use_module`
-at `:19-28`, two ops at `:30-31`, and `:- discontiguous program_violation/3.`
-at `:33`.
+Head keeps lines 1..38 minus one deleted line, so 37: module at
+`0_program_check.pl:9-17`, five `use_module` at `:19-28`, two ops at `:30-31`.
+`:- discontiguous program_violation/3.` at `:33` is DELETED, because after the
+relocations below the predicate is contiguous and the directive is dead.
 
 | part | lines | span | owns |
 |---|---:|---|---|
 | `0_lookups.pl` | 62 | 39-100 | `first_violation/3` and the small decl readers the violation clauses all call |
-| `1_violations_decls.pl` | 312 | 101-412 | the violation clauses about declarations and patterns, with the cst regexp and ast capture helpers only they use |
-| `2_violations_rules.pl` | 359 | 413-771 | the violation clauses about rules, reserved carriers and column type conflicts |
+| `1_violations.pl` | 586 | 101-771 minus the relocations | every `program_violation/3` clause, all 38, and nothing else |
+| `2_violation_helpers.pl` | 85 | the four relocated runs | the cst regexp, ast capture, anonymous column type and `declared_ref/2` helpers that used to sit between the violation clauses |
 | `3_aggregates_and_types.pl` | 104 | 772-875 | numeric aggregate operands, the implemented aggregate roster, declared column type uses and the rule atom readers |
 | `4_column_variables.pl` | 111 | 876-986 | the declared column table, head and body column variables, storage assignability and relation argument violations |
 
-`program_violation/3` has 38 clauses spread over `:101-770` with helper
-predicates interleaved at `:230`, `:275-333`, `:365-374` and `:413-420`. That
-is why `:- discontiguous program_violation/3.` is already at `:33`. The cut
-puts clauses 1..26 in `1_violations_decls.pl` and clauses 27..38 in
-`2_violations_rules.pl`, in file order, so `first_violation/3` at `:39-42`
-still finds the same first solution.
+**The `program_violation/3` relocation.** The predicate has 38 clauses spread
+over `:101-770`, and four groups of helper predicates sit between them. Those
+four groups move out, in file order, into `2_violation_helpers.pl`:
 
-Alternative if the user prefers one predicate in one file: a single part
-spanning `:101-771`, 671 lines. Under the 700 cap, no discontiguity introduced,
-and outside the 200-500 target band. The plan takes the two-part cut; the
-one-part cut is a one-line edit to `cuts/0_program_check.cuts.json`.
+| lines | what moves | leaves behind |
+|---|---|---:|
+| `:230-234` | `cst_regexp_pattern/2` | 5 |
+| `:275-334` | `ast_capture_names/2` through `regexp_pattern_pcre_error/2`, nine predicates | 60 |
+| `:365-375` | `anonymous_column_type/1` and `declared_template_application/2` | 11 |
+| `:413-421` | `declared_ref/2` | 9 |
+
+85 lines move. The 38 `program_violation/3` clauses do not move at all, so
+their order is untouched and `first_violation/3` at `:39-42` still finds the
+same first solution. What is left in `1_violations.pl` is one predicate, 586
+lines, contiguous, and the directive at `:33` has nothing left to declare.
+
+The cheaper alternative, kept for the record: one part spanning `:101-771`,
+671 lines, no relocations, and `:- discontiguous program_violation/3.` stays
+because the helpers still interleave inside that part. It satisfies the
+no-straddle rule too. The plan takes the relocating cut because it also
+shrinks the biggest part by 85 lines and retires a directive.
 
 ### 7.6 analyze.pl
 
@@ -396,10 +426,13 @@ Hoist: `analyze.pl:109` `:- table body_ref_uses/2.` moves into the head. A
 
 ### 7.7 compile/parse_dl_dcg.pl
 
-Head keeps lines 1..46: module at `parse_dl_dcg.pl:1-11`,
-`:- set_prolog_flag(back_quotes, codes).` at `:14`, three `use_module` at
-`:17-19`, four ops at `:22-28`, `thread_local` at `:30-33`, and both
-`discontiguous` directives at `:42-43`.
+Head keeps lines 1..46 minus three deleted lines, so 43: module at
+`parse_dl_dcg.pl:1-11`, `:- set_prolog_flag(back_quotes, codes).` at `:14`,
+three `use_module` at `:17-19`, four ops at `:22-28`, `thread_local` at
+`:30-33`, and `:- discontiguous type_base/3.` at `:43`. The comment at `:40-41`
+and `:- discontiguous lex_token/2.` at `:42` are DELETED: after the relocation
+the three `lex_token/2` rows are adjacent and the comment's claim that they
+"are spread across the file on purpose" is no longer true.
 
 The flag and the ops are the reason the head order matters more here than
 anywhere else. Every part after `2_lexer.pl` uses `` ~`use` ``,
@@ -410,25 +443,44 @@ head's `:14` and `:22-28` do not run before the first include.
 |---|---:|---|---|
 | `0_cst_shapes.pl` | 62 | 47-108 | the editor CST shape and origin tables, and the thread-local recorders the passes write into |
 | `1_entry.pl` | 271 | 109-379 | the four entry points, the two-pass driver, parse marks, line/column reporting for a reason, statement source refs, and host path flattening |
-| `2_lexer.pl` | 138 | 380-517 | whitespace and comments, the `@ ~ #` sigil operators, identifiers, int/float/atom/string literals, escape decoding, and variable holes |
+| `2_lexer.pl` | 140 | 380-517 plus the relocation | whitespace and comments, the `@ ~ #` sigil operators, identifiers, int/float/atom/string literals, escape decoding, variable holes, and all three `lex_token/2` rows |
 | `3_use_and_router.pl` | 56 | 518-573 | use/import items and `statement//5`, the router that picks rel, query, match or rule |
 | `4_rel_decl.pl` | 447 | 574-1020 | the whole rel declaration grammar: nested rels, arrival tails, generic parameters, interfaces, type expressions, enums, keep/key clauses and the decl-b column tail |
 | `5_name_resolution.pl` | 115 | 1021-1135 | the post-parse name passes: module path collisions, reserved names, minted names, relation-value decl normalization |
-| `6_host_and_template.pl` | 42 | 1136-1177 | the removed `sh`/`bind` statements, host output column specs, and template literals |
+| `6_host_and_template.pl` | 40 | 1136-1177 minus the relocation | the removed `sh`/`bind` statements, host output column specs, and template literals |
 | `7_query_and_match.pl` | 63 | 1178-1240 | the `?` query statement with its order tail, and match statements with their arms |
 | `8_rule_and_args.pl` | 153 | 1241-1393 | rule statements, head atoms, and named/positional argument resolution including keyword puns |
 | `9_body.pl` | 200 | 1394-1593 | rule bodies: body items, cst query items, balanced-bracket scanning, rel atom terms and infix items |
 | `10_expr.pl` | 184 | 1594-1777 | the arithmetic tier expression grammar, json literals, dotted and slash paths, brace terms and list terms |
 
-`lex_token/2` splits across `2_lexer.pl` (clauses at `:475`, `:476`, the quoted
-and atom literal patterns) and `6_host_and_template.pl` (the clause at `:1164`,
-the template literal pattern). The comment at `:41` says the rows sit beside
-their decoders on purpose, and `:- discontiguous lex_token/2.` at `:42` is
-already in the head.
+**The `lex_token/2` relocation.** The predicate has three clauses: the string
+and atom literal patterns at `:475-476`, and the template literal pattern at
+`:1164` with its own blank line at `:1163`. Under the span cut those land in
+two parts. The fix is a two-line move, not a directive:
+
+```
+before                              after
+:474  % quoted//4 decodes ...       :474  % the three raw spans an editor wants
+:475  lex_token(string_lit/1, ...)  :475  lex_token(string_lit/1, ...)
+:476  lex_token(atom_lit/1, ...)    :476  lex_token(atom_lit/1, ...)
+:477  (blank)                       :477  lex_token(template_lit/1, ...)
+ ...                                :478  (blank)
+:1163 (blank)                        ...
+:1164 lex_token(template_lit/1,...) :1162 specs_to_columns(...)
+:1165 (blank)                       :1163 (blank)
+:1166 template_lit(Template) -->    :1164 template_lit(Template) -->
+```
+
+Clause order inside `lex_token/2` is unchanged: string, atom, template, first
+to third. The comment at `:474` widens to cover three rows. All three rows land
+in `2_lexer.pl`, `6_host_and_template.pl` loses two lines, and the directive at
+`:42` plus its comment at `:40-41` are deleted.
 
 `type_base/3` and `type_argument/3` interleave at `:853-886` and both land
-inside `4_rel_decl.pl`, so no new discontiguity there;
-`:- discontiguous type_base/3.` at `:43` stays regardless.
+inside `4_rel_decl.pl`, so nothing crosses a part boundary there.
+`:- discontiguous type_base/3.` at `:43` stays. Relocating `type_argument/3`'s
+five lines at `:857-861` out of the middle would let it go too, and the plan
+does not do that because the interleave crosses no part.
 
 ### 7.8 ARCH.pl
 
@@ -613,10 +665,9 @@ mechanism, same receipts, ~2987 lines total.
    folder, reads oddly), or rename `compile.pl` itself. Pick one before PR 4.
 2. **`emit_ts.pl`: split it at all?** The door is paused. The plan is written
    and gradeable; the recommendation is to skip it.
-3. **`0_program_check.pl`: two parts or one?** The two-part cut lands 312 and
-   359 lines and makes `program_violation/3` discontiguous across parts, which
-   the existing `:33` directive already permits. The one-part cut is 671 lines
-   and keeps the predicate whole. Section 7.5 has both.
+3. **`compile/parse_dl_dcg.pl:43` `:- discontiguous type_base/3.`** stays,
+   because its interleave sits inside one part. Killing it too is a five-line
+   relocation of `type_argument/3` at `:857-861`. Say the word and it goes.
 4. **The part-size ceiling.** This plan capped at 700 and targeted 200-500.
    `lower/28_fixpoint_ir.pl` at 573 and `lower/30_aggregate_heads.pl` at 519
    are the only two over 500. Tightening to 500 costs four more cuts in

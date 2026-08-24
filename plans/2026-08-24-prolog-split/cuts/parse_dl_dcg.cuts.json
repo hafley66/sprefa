@@ -4,16 +4,71 @@
   "folder": "v6/prolog/compile/parse_dl_dcg",
   "module": "parse_dl_dcg",
   "parts": [
-    {"file": "0_cst_shapes.pl", "anchor": "cst_shape/2", "owns": "the editor CST shape and origin tables, and the thread-local recorders the passes write into"},
-    {"file": "1_entry.pl", "anchor": "parse_dl_file/4", "owns": "the four entry points, the two-pass driver, parse marks, line/column reporting for a reason, statement source refs, and host path flattening"},
-    {"file": "2_lexer.pl", "anchor": "cst_extra/2", "owns": "whitespace and comments, the @ ~ # sigil operators, identifiers, int/float/atom/string literals, escape decoding, and variable holes"},
-    {"file": "3_use_and_router.pl", "anchor": "use_item/3", "owns": "use/import items and statement//5, the router that picks rel, query, match or rule"},
-    {"file": "4_rel_decl.pl", "anchor": "rel_stmt/3", "owns": "the whole rel declaration grammar: nested rels, arrival tails, generic parameters, interfaces, type expressions, enums, keep/key clauses and the decl-b column tail"},
-    {"file": "5_name_resolution.pl", "anchor": "resolve_module_path_collisions/2", "owns": "the post-parse name passes: module path collisions, reserved names, minted names, relation-value decl normalization"},
-    {"file": "6_host_and_template.pl", "anchor": "removed_world_decl_stmt/3", "owns": "the removed sh/bind statements, host output column specs, and template literals"},
-    {"file": "7_query_and_match.pl", "anchor": "query_stmt/3", "owns": "the ? query statement with its order tail, and match statements with their arms"},
-    {"file": "8_rule_and_args.pl", "anchor": "rule_stmt/3", "owns": "rule statements, head atoms, and named/positional argument resolution including keyword puns"},
-    {"file": "9_body.pl", "anchor": "body/3", "owns": "rule bodies: body items, cst query items, balanced-bracket scanning, rel atom terms and infix items"},
-    {"file": "10_expr.pl", "anchor": "expr/3", "owns": "the arithmetic tier expression grammar, json literals, dotted and slash paths, brace terms and list terms"}
+    {
+      "file": "0_cst_shapes.pl",
+      "anchor": "cst_shape/2",
+      "owns": "the editor CST shape and origin tables, and the thread-local recorders the passes write into"
+    },
+    {
+      "file": "1_entry.pl",
+      "anchor": "parse_dl_file/4",
+      "owns": "the four entry points, the two-pass driver, parse marks, line/column reporting for a reason, statement source refs, and host path flattening"
+    },
+    {
+      "file": "2_lexer.pl",
+      "anchor": "cst_extra/2",
+      "owns": "whitespace and comments, the @ ~ # sigil operators, identifiers, int/float/atom/string literals, escape decoding, variable holes, and all three lex_token/2 rows"
+    },
+    {
+      "file": "3_use_and_router.pl",
+      "anchor": "use_item/3",
+      "owns": "use/import items and statement//5, the router that picks rel, query, match or rule"
+    },
+    {
+      "file": "4_rel_decl.pl",
+      "anchor": "rel_stmt/3",
+      "owns": "the whole rel declaration grammar: nested rels, arrival tails, generic parameters, interfaces, type expressions, enums, keep/key clauses and the decl-b column tail"
+    },
+    {
+      "file": "5_name_resolution.pl",
+      "anchor": "resolve_module_path_collisions/2",
+      "owns": "the post-parse name passes: module path collisions, reserved names, minted names, relation-value decl normalization"
+    },
+    {
+      "file": "6_host_and_template.pl",
+      "anchor": "removed_world_decl_stmt/3",
+      "owns": "the removed sh/bind statements, host output column specs, and template literals"
+    },
+    {
+      "file": "7_query_and_match.pl",
+      "anchor": "query_stmt/3",
+      "owns": "the ? query statement with its order tail, and match statements with their arms"
+    },
+    {
+      "file": "8_rule_and_args.pl",
+      "anchor": "rule_stmt/3",
+      "owns": "rule statements, head atoms, and named/positional argument resolution including keyword puns"
+    },
+    {
+      "file": "9_body.pl",
+      "anchor": "body/3",
+      "owns": "rule bodies: body items, cst query items, balanced-bracket scanning, rel atom terms and infix items"
+    },
+    {
+      "file": "10_expr.pl",
+      "anchor": "expr/3",
+      "owns": "the arithmetic tier expression grammar, json literals, dotted and slash paths, brace terms and list terms"
+    }
+  ],
+  "relocations": [
+    {
+      "predicate": "lex_token/2",
+      "lines": [
+        1163,
+        1164
+      ],
+      "to": "2_lexer.pl",
+      "after": "the lex_token/2 clause at :476, keeping the three rows in file order"
+    }
   ]
 }

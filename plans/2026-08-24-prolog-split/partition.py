@@ -59,14 +59,17 @@ def resolve(pm, cuts):
     for pred in pm["predicates"]:
         first_line[pred["key"]] = pred["first"]
 
+    anchored = [p for p in cuts["parts"] if p.get("anchor")]
+    virtual = [p for p in cuts["parts"] if not p.get("anchor")]
+
     anchors = []
-    for part in cuts["parts"]:
+    for part in anchored:
         anchor = part["anchor"]
         if anchor not in first_line:
             raise SystemExit("anchor %s not defined in %s" % (anchor, cuts["file"]))
         anchors.append((first_line[anchor], part))
     anchors.sort(key=lambda pair: pair[0])
-    if [a[1] for a in anchors] != cuts["parts"]:
+    if [a[1] for a in anchors] != anchored:
         raise SystemExit("parts are not listed in file order")
 
     bounds = []
@@ -74,32 +77,60 @@ def resolve(pm, cuts):
         end = anchors[index + 1][0] - 1 if index + 1 < len(anchors) else pm["lines"]
         bounds.append({"part": part, "start": line, "end": end,
                        "defs": {}, "terms": 0, "calls": set()})
+    for part in virtual:
+        seat = [b["part"]["file"] for b in bounds].index(part["after"]) + 1
+        bounds.insert(seat, {"part": part, "start": None, "end": None,
+                             "defs": {}, "terms": 0, "calls": set()})
 
-    head = [t for t in pm["terms"] if t["end"] < bounds[0]["start"]]
+    floor = min(b["start"] for b in bounds if b["start"])
+    head = [t for t in pm["terms"] if t["end"] < floor]
     stray = [t for t in head if t["kind"] != "directive"]
     for term in pm["terms"]:
-        if term["kind"] != "directive" or term["end"] < bounds[0]["start"]:
+        if term["kind"] != "directive" or term["end"] < floor:
             continue
         for bound in bounds:
-            if bound["start"] <= term["start"] <= bound["end"]:
+            if bound["start"] and bound["start"] <= term["start"] <= bound["end"]:
                 bound.setdefault("inner", []).append(term)
                 break
 
+    by_file = {b["part"]["file"]: b for b in bounds}
+    moved = {}
+    for move in cuts.get("relocations", []):
+        lo, hi = move["lines"]
+        for line in range(lo, hi + 1):
+            moved[line] = move
+        target = by_file[move["to"]]
+        target["lines_moved_in"] = target.get("lines_moved_in", 0) + (hi - lo + 1)
+
     for term in clause_terms(pm):
+        home = None
+        if term["start"] in moved:
+            home = by_file[moved[term["start"]]["to"]]
+        else:
+            for bound in bounds:
+                if bound["start"] and bound["start"] <= term["start"] <= bound["end"]:
+                    home = bound
+                    break
+        if home is None:
+            continue
+        key = key_of(term)
+        home["defs"].setdefault(key, 0)
+        home["defs"][key] += 1
+        home["terms"] += 1
+        home["calls"].update(term["calls"])
+
+    for move in cuts.get("relocations", []):
+        lo, hi = move["lines"]
         for bound in bounds:
-            if bound["start"] <= term["start"] <= bound["end"]:
-                key = key_of(term)
-                bound["defs"].setdefault(key, 0)
-                bound["defs"][key] += 1
-                bound["terms"] += 1
-                bound["calls"].update(term["calls"])
-                break
-    return bounds, head, stray
+            if bound["start"] and bound["start"] <= lo <= bound["end"]:
+                bound["lines_moved_out"] = (bound.get("lines_moved_out", 0)
+                                            + (hi - lo + 1))
+    return bounds, head, stray, floor
 
 
 def report(cuts):
     pm = load(HERE / cuts["predmap"])
-    bounds, head, stray = resolve(pm, cuts)
+    bounds, head, stray, floor = resolve(pm, cuts)
     in_file = {p["key"] for p in pm["predicates"]}
     owner = {}
     split = {}
@@ -114,20 +145,35 @@ def report(cuts):
     print("# %s -> %s/" % (name, cuts["folder"]))
     print()
     print("module head keeps lines 1..%d (%d lines): %d directives, %d stray clauses"
-          % (bounds[0]["start"] - 1, bounds[0]["start"] - 1, len(head), len(stray)))
+          % (floor - 1, floor - 1, len(head), len(stray)))
     print()
     print("| part | lines | span | clauses | predicates |")
     print("|---|---:|---|---:|---:|")
     total = 0
     for bound in bounds:
-        size = bound["end"] - bound["start"] + 1
+        base = (bound["end"] - bound["start"] + 1) if bound["start"] else 0
+        size = base + bound.get("lines_moved_in", 0) - bound.get("lines_moved_out", 0)
+        bound["size"] = size
         total += size
-        print("| `%s` | %d | %d-%d | %d | %d |"
-              % (bound["part"]["file"], size, bound["start"], bound["end"],
+        span = "%d-%d" % (bound["start"], bound["end"]) if bound["start"] else "relocated"
+        if bound.get("lines_moved_in") or bound.get("lines_moved_out"):
+            span += " *"
+        print("| `%s` | %d | %s | %d | %d |"
+              % (bound["part"]["file"], size, span,
                  bound["terms"], len(bound["defs"])))
     print("| **total** | **%d** | | | |" % total)
     print()
-    over = [b for b in bounds if b["end"] - b["start"] + 1 > 700]
+    if cuts.get("relocations"):
+        print("`*` = the span plus or minus a relocation:")
+        print()
+        print("| predicate | lines | moves to | lands after |")
+        print("|---|---|---|---|")
+        for move in cuts["relocations"]:
+            print("| `%s` | %d-%d | `%s` | %s |"
+                  % (move["predicate"], move["lines"][0], move["lines"][1],
+                     move["to"], move["after"]))
+        print()
+    over = [b for b in bounds if b["size"] > 700]
     print("parts over 700 lines: %s"
           % (", ".join(b["part"]["file"] for b in over) if over else "none"))
     print()

@@ -40,11 +40,23 @@ the way `0_generic_expand.pl` already does.
 | 0_type_plane | 1037 | 6 pieces | 284 |
 | ARCH | 1026 | 6 pieces | 288 |
 | compile | 997 | 8 pieces | 219 |
-| 0_program_check | 985 | 5 pieces | 359 |
+| 0_program_check | 985 | 5 pieces | 586 |
 | print_dl | 905 | 8 pieces | 145 |
 | 0_dot_expand | 835 | 6 pieces | 168 |
 
 114 pieces. Nothing over 700 lines. Nothing thousands-scale left.
+
+No predicate ends up with its clauses in two pieces, anywhere. Two would have,
+and both are fixed by moving lines instead of by a directive:
+
+| file | predicate | the move | the directive that dies |
+|---|---|---|---|
+| parse_dl_dcg | lex_token | two lines from the bottom of the file up beside its two siblings | yes, plus the comment that explained why they were apart |
+| 0_program_check | program_violation | four helper groups move out from between its 38 clauses | yes |
+
+One directive survives, in parse_dl_dcg, for a predicate whose clauses
+interleave inside a single piece. Killing that one too is a five-line move; say
+the word.
 
 ## What order to land them
 
@@ -101,7 +113,9 @@ parent file. I measured this rather than guessed it.
 **Two.** Pieces must be included in the same order the clauses had. Three
 predicates in this tree answer with their first matching clause, so a
 reordered include list would silently change which reason a bad program
-reports.
+reports. The two relocations keep clause order too: lex_token's three rows stay
+first, second, third, and program_violation's 38 clauses do not move at all,
+only the helpers between them do.
 
 ---
 
@@ -193,22 +207,20 @@ emitters both read.
 
 ```mermaid
 flowchart LR
-  L["0 lookups"] --> D["1 violations, decls"]
-  L --> R["2 violations, rules"]
-  D --> L
-  D --> R
-  D --> A["3 aggregates and types"]
-  D --> C["4 column variables"]
-  R --> L
-  R --> A
-  R --> C
+  L["0 lookups"] --> V["1 violations<br/>38 clauses, 586 lines"]
+  V --> L
+  V --> H["2 violation helpers<br/>85 lines, relocated"]
+  V --> A["3 aggregates and types"]
+  V --> C["4 column variables"]
+  H --> L
+  H --> A
   C --> A
 ```
 
-One predicate holds every violation clause and runs 670 lines. I cut it in the
-middle, which is allowed because the file already declares that predicate as
-spread out. If you would rather keep it whole, it becomes one 671-line piece
-and the plan changes by one line.
+One predicate holds every violation clause. Four groups of helpers used to sit
+between its clauses; they move out into their own piece, which leaves the
+violations piece as one contiguous predicate at 586 lines and retires the
+directive that used to excuse the gaps.
 
 ### analyze, 14 parts
 
@@ -294,6 +306,11 @@ flowchart LR
 The rel declaration grammar is the biggest piece at 447 lines, and it is the
 piece everything else reaches into. The lexer and the shape tables sit at the
 bottom.
+
+The one line-move in this file: `lex_token` has three rows, two near the top
+and one 690 lines further down. The lone one comes up to join its siblings, and
+the directive that used to declare them "spread across the file on purpose"
+goes away with it.
 
 ### ARCH, 6 parts
 
@@ -464,9 +481,11 @@ called by 14 pieces. Write verbs is the end of the road.
    file. The plan currently says `compile_pl`.
 2. **Split `emit_ts` at all?** The door is paused and takes no new work. The
    plan exists if you want it; my read is skip it.
-3. **Keep the 700 ceiling, or tighten to 500?** Two pieces of `lower` sit at
-   573 and 519 and everything else is under 500. Tightening costs four more
-   cuts in `lower` and one in `emit_ts`.
+3. **Keep the 700 ceiling, or tighten to 500?** Three pieces sit over 500:
+   0_program_check's violations piece at 586, and two of `lower` at 573 and
+   519. Everything else is under 500. Tightening costs four more cuts in
+   `lower` and one in `emit_ts`; the violations piece cannot go lower without
+   splitting one predicate, which your rule forbids.
 
 One more thing, not a question: the prolog-lint leg is red on the base commit
 at 18 findings while the known-red file records 14. Not caused by this work,

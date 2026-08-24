@@ -6,24 +6,28 @@ module head keeps lines 1..46 (46 lines): 12 directives, 0 stray clauses
 |---|---:|---|---:|---:|
 | `0_cst_shapes.pl` | 62 | 47-108 | 48 | 7 |
 | `1_entry.pl` | 271 | 109-379 | 49 | 31 |
-| `2_lexer.pl` | 138 | 380-517 | 39 | 28 |
+| `2_lexer.pl` | 140 | 380-517 * | 40 | 28 |
 | `3_use_and_router.pl` | 56 | 518-573 | 8 | 7 |
 | `4_rel_decl.pl` | 447 | 574-1020 | 82 | 55 |
 | `5_name_resolution.pl` | 115 | 1021-1135 | 17 | 13 |
-| `6_host_and_template.pl` | 42 | 1136-1177 | 13 | 9 |
+| `6_host_and_template.pl` | 40 | 1136-1177 * | 12 | 8 |
 | `7_query_and_match.pl` | 63 | 1178-1240 | 11 | 9 |
 | `8_rule_and_args.pl` | 153 | 1241-1393 | 29 | 19 |
 | `9_body.pl` | 200 | 1394-1593 | 48 | 27 |
 | `10_expr.pl` | 184 | 1594-1777 | 42 | 28 |
 | **total** | **1731** | | | |
 
+`*` = the span plus or minus a relocation:
+
+| predicate | lines | moves to | lands after |
+|---|---|---|---|
+| `lex_token/2` | 1163-1164 | `2_lexer.pl` | the lex_token/2 clause at :476, keeping the three rows in file order |
+
 parts over 700 lines: none
 
 ## clauses of one predicate landing in two parts
 
-| predicate | parts |
-|---|---|
-| `lex_token/2` | 2_lexer.pl, 6_host_and_template.pl |
+none
 
 ## directives sitting below the first anchor
 
@@ -68,7 +72,7 @@ none
 |---|---|
 | `0_cst_shapes.pl` | the editor CST shape and origin tables, and the thread-local recorders the passes write into |
 | `1_entry.pl` | the four entry points, the two-pass driver, parse marks, line/column reporting for a reason, statement source refs, and host path flattening |
-| `2_lexer.pl` | whitespace and comments, the @ ~ # sigil operators, identifiers, int/float/atom/string literals, escape decoding, and variable holes |
+| `2_lexer.pl` | whitespace and comments, the @ ~ # sigil operators, identifiers, int/float/atom/string literals, escape decoding, variable holes, and all three lex_token/2 rows |
 | `3_use_and_router.pl` | use/import items and statement//5, the router that picks rel, query, match or rule |
 | `4_rel_decl.pl` | the whole rel declaration grammar: nested rels, arrival tails, generic parameters, interfaces, type expressions, enums, keep/key clauses and the decl-b column tail |
 | `5_name_resolution.pl` | the post-parse name passes: module path collisions, reserved names, minted names, relation-value decl normalization |
