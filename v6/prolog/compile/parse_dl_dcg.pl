@@ -37,12 +37,7 @@
 % each erase the other's findings. The plunit battery runs units on parallel
 % workers, and every unit parses.
 
-% lex_token/2 rows sit beside the escape decoders they mirror, so the clauses
-% are spread across the file on purpose.
 :- discontiguous type_base/3.
-
-% Editor CST boundaries this parser erases: Nonterminal -> Node-FieldNames,
-% bare = shape from clauses, ref = name only, repeat = item only, '-' = unnamed.
 
 :- include('parse_dl_dcg/0_cst_shapes.pl').
 

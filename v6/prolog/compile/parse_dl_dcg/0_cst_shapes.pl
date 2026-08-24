@@ -1,3 +1,5 @@
+% Editor CST boundaries this parser erases: Nonterminal -> Node-FieldNames,
+% bare = shape from clauses, ref = name only, repeat = item only, '-' = unnamed.
 cst_shape(decl_a_column/1,  declaration_parameter-[name, type]).
 cst_shape(enum_variants/1,  enum_variants-[]).
 cst_shape(rel_modifiers/2,  repeat(relation_modifier)-[]).
