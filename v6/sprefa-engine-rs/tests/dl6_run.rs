@@ -657,3 +657,29 @@ fn a_restart_tick_defers_a_two_valued_aggregate_group_to_the_recount_pass() {
         "the stale arm's row leaves with the retraction"
     );
 }
+
+/// TEST: FAIL PRE FIX, resident relaunch crash 1 measured 2026-08-24. A bare
+/// `dl6 run ghcache.dl6` (source named with no directory) died at
+/// `point_at_adapters` with `read the adapters directory `. `Path::new("x.dl6")
+/// .parent()` is `Some("")`, so the empty path reaches `.canonicalize()` and the
+/// `None` arm (the one that maps to `.`) never fires because parent is `Some`.
+/// Sabotage receipt: dropping the empty-path-to-`.` mapping in `point_at_adapters`
+/// reds this with the same error text.
+#[test]
+fn a_bare_source_filename_resolves_its_adapters_directory_to_the_cwd() {
+    let scratch = Scratch::new();
+    let bare = "query_order_tail.dl6";
+    std::fs::copy(fixture(bare), scratch.home.path().join(bare)).expect("copy the fixture");
+    let mut command = scratch.dl6();
+    command
+        .arg("run")
+        .arg(bare)
+        .current_dir(scratch.home.path());
+    let run = finish(&mut command, "bare filename run");
+    ok(&run, "bare filename run");
+    assert!(
+        !run.stderr.contains("read the adapters directory"),
+        "a bare filename must resolve its adapters directory to the cwd, got: {}",
+        run.stderr
+    );
+}
