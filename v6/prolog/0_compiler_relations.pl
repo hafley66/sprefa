@@ -17,17 +17,19 @@
 %! partition_compiler_relations(+Decls, -CompilerDecls, -RuntimeDecls) is det.
 %
 % A relation is compiler-plane when a declared column has the `type` value
-% domain.  Every column in that relation must then have that domain.  The
-% returned compiler declaration is deliberately small: runtime-only modifiers
-% have no compiler meaning except `keyed/2`, whose positions state functional
-% compiler outputs.
+% domain.  Its remaining columns are compile-time values, including scalar and
+% declared enum domains.  The returned compiler declaration is deliberately
+% small: runtime-only modifiers have no compiler meaning except `keyed/2`,
+% whose positions state functional compiler outputs.
 partition_compiler_relations(Decls, compiler_relations(Relations, []), RuntimeDecls) :-
     declared_relation_refs(Decls, Refs),
     maplist(classify_relation(Decls), Refs, Classifications),
     include(compiler_classification, Classifications, CompilerClasses),
     pairs_values(CompilerClasses, Relations),
     pairs_keys(CompilerClasses, CompilerRefs),
-    exclude(compiler_runtime_decl(CompilerRefs), Decls, RuntimeDecls).
+    compiler_only_enum_domains(Decls, CompilerRefs, CompilerEnumDomains),
+    exclude(compiler_runtime_decl(CompilerRefs, CompilerEnumDomains), Decls,
+            RuntimeDecls).
 
 declared_relation_refs(Decls, Refs) :-
     findall(Ref, member(col_type(Ref, _, _), Decls), Refs0),
@@ -41,24 +43,64 @@ classify_relation(Decls, Ref, Ref-compiler_relation(Ref, Arity, Keys)) :-
     ( memberchk(keyed(Ref, Keys0), Decls) -> Keys = Keys0 ; Keys = [] ).
 classify_relation(_, Ref, Ref-runtime).
 
-% The original type-only relations remain compiler relations.  An arrow
-% result `return: type` additionally admits ordinary compile-time inputs such
-% as `Value: int`; annotation signature validation owns their meaning.
+% A `type` column marks the phase boundary. Other columns are typed and
+% elaborated by the compiler plane before the relation is erased.
 compiler_relation_columns(_, Columns) :-
-    memberchk(return-type, Columns),
-    !.
-compiler_relation_columns(_, Columns) :-
-    member(_-type, Columns),
-    forall(member(_-Type, Columns), Type == type).
-compiler_relation_columns(Ref, Columns) :-
-    member(_-type, Columns),
-    throw(unsupported_construct(compiler_relation_mixed_domain(Ref))).
+    member(_-type, Columns).
 
 compiler_classification(_-compiler_relation(_, _, _)).
 
-compiler_runtime_decl(CompilerRefs, Decl) :-
+compiler_runtime_decl(CompilerRefs, _, Decl) :-
     declaration_ref(Decl, Ref),
     memberchk(Ref, CompilerRefs).
+compiler_runtime_decl(_, CompilerEnumDomains, enum_decl(Name, _)) :-
+    memberchk(Name, CompilerEnumDomains).
+
+% An enum used only as a compiler-relation value domain disappears with those
+% relations. Its frozen semantic rows remain available to compiler metadata,
+% while enum expansion never creates runtime variant tables for it.
+compiler_only_enum_domains(Decls, CompilerRefs, Domains) :-
+    findall(Name,
+            ( member(enum_decl(Name, _), Decls),
+              compiler_domain_reachable(Decls, CompilerRefs, Name),
+              \+ runtime_domain_reachable(Decls, CompilerRefs, Name) ),
+            Domains0),
+    sort(Domains0, Domains).
+
+compiler_domain_reachable(Decls, CompilerRefs, Name) :-
+    member(col_type(Ref, _, Type), Decls),
+    memberchk(Ref, CompilerRefs),
+    compiler_domain_reaches_enum(Decls, Type, Name, []).
+
+runtime_domain_reachable(Decls, CompilerRefs, Name) :-
+    member(col_type(Ref, _, Type), Decls),
+    \+ memberchk(Ref, CompilerRefs),
+    compiler_domain_reaches_enum(Decls, Type, Name, []).
+
+compiler_domain_reaches_enum(_, Type, Name, _) :-
+    atom(Type),
+    Type == Name,
+    !.
+compiler_domain_reaches_enum(Decls, Type, Name, Seen) :-
+    atom(Type),
+    \+ memberchk(Type, Seen),
+    member(enum_decl(Type, Variants), Decls),
+    compiler_enum_field_type(Variants, FieldType),
+    compiler_domain_reaches_enum(Decls, FieldType, Name, [Type | Seen]).
+compiler_domain_reaches_enum(Decls, Type, Name, Seen) :-
+    compound(Type),
+    Type =.. [_ | Arguments],
+    member(Argument, Arguments),
+    compiler_domain_reaches_enum(Decls, Argument, Name, Seen).
+
+compiler_enum_field_type((Left ; Right), Type) :-
+    !,
+    ( compiler_enum_field_type(Left, Type)
+    ; compiler_enum_field_type(Right, Type) ).
+compiler_enum_field_type(Variant, Type) :-
+    compound(Variant),
+    Variant =.. [_ | Fields],
+    member(_Name:Type, Fields).
 
 declaration_ref(col_type(Ref, _, _), Ref).
 declaration_ref(kind(Ref, _), Ref).

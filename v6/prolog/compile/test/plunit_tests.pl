@@ -141,6 +141,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 :- ensure_loaded('emit_type_renderers.test.pl').
 :- ensure_loaded('type_relation_ir.test.pl').
 :- ensure_loaded('compiler_relations.test.pl').
+:- ensure_loaded('compiler_relations/0_value_domains.test.pl').
 :- ensure_loaded('anonymous_type_syntax.test.pl').
 :- ensure_loaded('annotation_surface.test.pl').
 :- ensure_loaded('anonymous_product_values.test.pl').
