@@ -40,6 +40,7 @@
 
 :- use_module(library(lists)).
 :- use_module('0_unsupported_messages', []).
+:- use_module('0_dot_expand', [resolve_relation_paths/3]).
 :- use_module('1_expansion',
               [ expand_program/3, expand_program_with_bindings/4 ]).
 :- use_module('1_host_expand', [prepare_program/5, query_decl/3]).
@@ -738,12 +739,28 @@ dl6_seeded_form(Prog, [], Prog).
 
 partition_dl6_facts(_, [], [], []).
 partition_dl6_facts(Decls, [Rule | Rules], [Fact | Facts], Rest) :-
-    dl6_fact(Rule, Fact),
+    dl6_fact_in_decls(Decls, Rule, Fact),
     \+ compiler_type_fact(Decls, Fact),
     !,
     partition_dl6_facts(Decls, Rules, Facts, Rest).
 partition_dl6_facts(Decls, [Rule | Rules], Facts, [Rule | Rest]) :-
     partition_dl6_facts(Decls, Rules, Facts, Rest).
+
+dl6_fact_in_decls(_, Rule, Fact) :-
+    dl6_fact(Rule, Fact),
+    !.
+dl6_fact_in_decls(Decls, (Head0 <- true), Fact) :-
+    ground(Head0),
+    dotted_relation_head(Head0),
+    resolve_relation_paths(Decls, [(Head0 <- true)], [ResolvedRule]),
+    dl6_fact(ResolvedRule, Fact).
+
+dotted_relation_head(rel_path(Segments, Args)) :-
+    is_list(Segments),
+    is_list(Args).
+dotted_relation_head(Head) :-
+    compound(Head),
+    functor(Head, '.', 2).
 
 compiler_type_fact(Decls, Fact) :-
     compound(Fact),

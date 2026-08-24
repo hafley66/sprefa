@@ -366,6 +366,16 @@ elaborate_compiler_argument(_, _, bool, bool_lit(Argument), Argument) :-
     memberchk(Argument, [true, false]), !.
 elaborate_compiler_argument(_, _, float, Argument, Argument) :- float(Argument), !.
 elaborate_compiler_argument(_, _, float, float_lit(Argument), Argument) :- float(Argument), !.
+elaborate_compiler_argument(Decls, Bindings, Domain, Argument, Elaborated) :-
+    atom(Domain),
+    member(enum_decl(Domain, Variants), Decls),
+    !,
+    ( elaborate_compiler_enum_value(Decls, Bindings, Variants, Argument,
+                                    Elaborated)
+    -> true
+    ;  throw(unsupported_construct(
+           compiler_relation_argument_type(Domain, Argument)))
+    ).
 elaborate_compiler_argument(_, _, semantic, Argument, Argument) :- ground(Argument), !.
 elaborate_compiler_argument(Decls, Bindings, semantic_type_ids, Arguments0,
                             Arguments) :-
@@ -379,6 +389,31 @@ elaborate_compiler_argument(Decls, Bindings, relation_value, Argument,
     !.
 elaborate_compiler_argument(_, _, Type, Argument, _) :-
     throw(unsupported_construct(compiler_relation_argument_type(Type, Argument))).
+
+elaborate_compiler_enum_value(Decls, Bindings, Variants, Argument,
+                             Elaborated) :-
+    compiler_enum_variant(Variants, Variant),
+    same_enum_variant_shape(Variant, Argument, Fields, Arguments),
+    maplist(compiler_enum_field_type, Fields, Domains),
+    maplist(elaborate_compiler_argument(Decls, Bindings), Domains, Arguments,
+            ElaboratedArguments),
+    Variant =.. [Name | _],
+    Elaborated =.. [Name | ElaboratedArguments],
+    !.
+
+compiler_enum_variant((Left ; Right), Variant) :-
+    !,
+    ( compiler_enum_variant(Left, Variant)
+    ; compiler_enum_variant(Right, Variant) ).
+compiler_enum_variant(Variant, Variant).
+
+same_enum_variant_shape(Variant, Argument, Fields, Arguments) :-
+    nonvar(Argument),
+    Variant =.. [Name | Fields],
+    Argument =.. [Name | Arguments],
+    same_length(Fields, Arguments).
+
+compiler_enum_field_type(_Name:Type, Type).
 
 elaborate_compiler_semantic_type_id(_, _, Value, Value) :- var(Value), !.
 elaborate_compiler_semantic_type_id(Decls, Bindings, Value0, Value) :-

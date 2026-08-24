@@ -113,10 +113,13 @@ test(partition_erases_compiler_declarations_from_runtime) :-
     Relations = [compiler_relation(codec/2, 2, [1])],
     Runtime == [col_type(runtime/1, value, text)].
 
-test(mixed_value_domains_are_refused,
-     [throws(unsupported_construct(compiler_relation_mixed_domain(codec/2)))]) :-
+test(mixed_scalar_domains_are_compiler_values) :-
     partition_compiler_relations(
-        [col_type(codec/2, self, type), col_type(codec/2, label, text)], _, _).
+        [ col_type(codec/2, self, type),
+          col_type(codec/2, label, text),
+          col_type(runtime/1, value, text) ],
+        compiler_relations([compiler_relation(codec/2, 2, [])], []),
+        [col_type(runtime/1, value, text)]).
 
 test(recursive_positive_rules_reach_a_set_fixpoint) :-
     Decls = [ compiler_relation(parent/2, 2, []),

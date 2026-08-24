@@ -14,7 +14,7 @@
 :- use_module('../../1_expansion', [expand_program/3]).
 :- use_module('../../1_host_expand', [prepare_program/5]).
 :- use_module('../../use_resolve', [expand_uses/6]).
-:- use_module('../../compile', [program_plan/3]).
+:- use_module('../../compile', [dl6_seeded_form/3, program_plan/3]).
 :- use_module('../../lower',
               [ lower_program/2,
                 boot_statements/7,
@@ -92,7 +92,7 @@ test(an_empty_block_is_the_same_declaration_as_a_period) :-
     parse_braced_source("rel orchard(orchard_id: int).", DottedProgram, _),
     BraceProgram =@= DottedProgram.
 
-test(brace_children_reuse_parent_capture_and_key_shifting) :-
+test(brace_children_keep_authored_columns_and_key_positions) :-
     source_text(
         [ "rel orchard(orchard_id: int) {",
           "    rel tree(tree_id: int) key(1) {",
@@ -102,16 +102,18 @@ test(brace_children_reuse_parent_capture_and_key_shifting) :-
         Source),
     parse_braced_source(Source, Program, _),
     once(expand_program(Program, prog(Decls, _), _)),
-    memberchk(col_type(orchard__tree/2, parent, orchard), Decls),
-    memberchk(keyed(orchard__tree/2, [2]), Decls),
-    memberchk(col_type(orchard__tree__branch/2, parent, orchard__tree), Decls).
+    memberchk(col_type(orchard__tree/1, tree_id, int), Decls),
+    memberchk(keyed(orchard__tree/1, [1]), Decls),
+    memberchk(col_type(orchard__tree__branch/1, branch_id, int), Decls),
+    \+ memberchk(col_type(orchard__tree/_, parent, _), Decls),
+    \+ memberchk(col_type(orchard__tree__branch/_, parent, _), Decls).
 
-test(a_zero_column_brace_child_has_one_parent_column) :-
+test(a_zero_column_brace_child_stays_zero_arity) :-
     parse_braced_source("rel orchard(orchard_id: int) { rel flag(). }.",
                         Program, _),
     once(expand_program(Program, prog(Decls, _), _)),
-    memberchk(col_type(orchard__flag/1, parent, orchard), Decls),
-    memberchk(rel_path_decl(orchard__flag/1, [orchard, flag]), Decls).
+    memberchk(rel_path_decl(orchard__flag/0, [orchard, flag]), Decls),
+    \+ memberchk(col_type(orchard__flag/_, _, _), Decls).
 
 test(a_nested_declaration_keeps_its_own_source_line) :-
     source_text(
@@ -164,10 +166,10 @@ test(child_modifiers_and_arrow_match_dotted_declarations) :-
     parse_braced_source(Dotted, DottedProgram, _),
     BraceProgram =@= DottedProgram,
     once(expand_program(BraceProgram, prog(Decls, _), _)),
-    memberchk(kind(root__child/3, log), Decls),
-    memberchk(keep(root__child/3, all), Decls),
-    memberchk(keyed(root__child/3, [2]), Decls),
-    memberchk(keep(root__child__leaf/2, count(2)), Decls).
+    memberchk(kind(root__child/2, log), Decls),
+    memberchk(keep(root__child/2, all), Decls),
+    memberchk(keyed(root__child/2, [1]), Decls),
+    memberchk(keep(root__child__leaf/1, count(2)), Decls).
 
 test(outside_rules_read_and_contribute_to_a_brace_declared_child) :-
     source_text(
@@ -180,9 +182,41 @@ test(outside_rules_read_and_contribute_to_a_brace_declared_child) :-
     parse_braced_source(Source, Program, _),
     once(expand_program(Program, prog(_, Rules), _)),
     Rules =@=
-        [ (orchard__tree(orchard(OrchardId), TreeId) <-
+        [ (orchard__tree(TreeId) <-
               (orchard(OrchardId), planted(OrchardId, TreeId))),
-          (any_tree(TreeId) <- orchard__tree(_Parent, TreeId)) ].
+          (any_tree(TreeId) <- orchard__tree(TreeId)) ].
+
+test(a_dotted_fact_resolves_to_its_declared_flat_name) :-
+    parse_braced_source(
+        "rel config() { rel global(poll_period: int). }. config.global(30).",
+        Parsed, Bindings),
+    dl6_seeded_form(Parsed, Initial, Program),
+    Initial == [config__global(30)],
+    Program = prog(_, []),
+    program_plan(fixture(braced_dotted_fact, Program, Initial, [], [])-Bindings,
+                 [],
+                 plan(_, prog(_, Rules), _, RelPlans, _, _, _, _, _)),
+    Rules == [],
+    memberchk(rel(config__global/1, _, _, _, _), RelPlans).
+
+test(an_explicit_parent_relation_column_uses_ordinary_relation_value_typing) :-
+    source_text(
+        [ "rel orchard(orchard_id: int) {",
+          "    rel tree(orchard: orchard, tree_id: int).",
+          "}.",
+          "rel planted(orchard_id: int, tree_id: int).",
+          "orchard.tree(orchard(OrchardId), TreeId) <-",
+          "    orchard(OrchardId), planted(OrchardId, TreeId)." ],
+        Source),
+    parse_braced_source(Source, Program, Bindings),
+    program_plan(fixture(braced_explicit_parent, Program, [], [], [])-Bindings,
+                 [],
+                 plan(_, prog(Decls, Rules), _, RelPlans, _, _, _, _, _)),
+    memberchk(col_type(orchard__tree/2, orchard, orchard), Decls),
+    memberchk(col_type(orchard__tree/2, tree_id, int), Decls),
+    memberchk(rel(orchard__tree/2, _, _, _, _), RelPlans),
+    Rules =@= [(orchard__tree(orchard(OrchardId), TreeId) <-
+                   (orchard(OrchardId), planted(OrchardId, TreeId)))].
 
 test(flat_name_collision_digest_matches_the_dotted_spelling) :-
     Brace = "rel orchard__tree(flat: int). rel orchard(id: int) { rel tree(nested: int, other: text). }.",
@@ -300,19 +334,15 @@ test(deep_bare_wrapped_identity_and_host_types_resolve) :-
                       [col(input, namespace__entity)],
                       [col(output, namespace__entity)], _), Decls).
 
-test(nested_relations_used_as_types_keep_each_captured_parent_shape) :-
+test(nested_relations_used_as_types_keep_their_authored_shape) :-
     source_text(
         [ "rel orchard(orchard_id: int) { rel tree(tree_id: int) { rel branch(branch_id: int). }. }.",
           "rel grove(tree: orchard.tree, branch: orchard.tree.branch)." ],
         Source),
     parse_braced_source(Source, Program, _),
     once(expand_program(Program, prog(Decls, _), _)),
-    memberchk(type_decl(orchard__tree,
-                        [col(parent, orchard), col(tree_id, int)]),
-              Decls),
-    memberchk(type_decl(orchard__tree__branch,
-                        [col(parent, orchard__tree), col(branch_id, int)]),
-              Decls),
+    memberchk(type_decl(orchard__tree, [col(tree_id, int)]), Decls),
+    memberchk(type_decl(orchard__tree__branch, [col(branch_id, int)]), Decls),
     memberchk(col_type(grove/2, tree, orchard__tree), Decls),
     memberchk(col_type(grove/2, branch, orchard__tree__branch), Decls).
 
