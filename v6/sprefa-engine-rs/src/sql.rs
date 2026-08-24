@@ -5,7 +5,9 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use regex::Regex;
 use rusqlite::functions::FunctionFlags;
@@ -17,6 +19,41 @@ use crate::types::{BoundaryError, BoundaryResult, QueryResult, ScalarValue, SqlS
 /// rusqlite's own default is 16, which a program with more statements than
 /// that would evict on every tick.
 const DEFAULT_STATEMENT_CACHE: usize = 256;
+
+/// The 10-second law at the SQL seam: no single statement runs longer.
+/// `DL_STATEMENT_BUDGET_MS` moves it; a fold that trips it fails with the
+/// statement named rather than running unbounded.
+const DEFAULT_STATEMENT_BUDGET: Duration = Duration::from_secs(10);
+
+/// VM instructions between deadline checks: cheap enough that the check is
+/// free against any real scan, coarse enough not to show in the tally.
+const BUDGET_CHECK_EVERY_OPS: std::os::raw::c_int = 10_000;
+
+fn process_epoch() -> Instant {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    *EPOCH.get_or_init(Instant::now)
+}
+
+fn millis_since_epoch() -> u64 {
+    process_epoch().elapsed().as_millis() as u64
+}
+
+fn statement_budget_from_env() -> Duration {
+    std::env::var("DL_STATEMENT_BUDGET_MS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_STATEMENT_BUDGET)
+}
+
+/// Whether a seam error is the budget valve firing.
+pub fn statement_budget_exceeded(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::SqliteFailure(failure, _)
+            if failure.code == rusqlite::ErrorCode::OperationInterrupted
+    )
+}
 
 pub type Error = rusqlite::Error;
 pub type Result<T> = std::result::Result<T, Error>;
@@ -41,6 +78,10 @@ pub struct SqliteSeam {
     cache_capacity: Cell<usize>,
     /// True between `begin_tick()` and its matching commit/rollback.
     in_tick: Cell<bool>,
+    /// Deadline of the statement in flight, millis past `process_epoch`; the
+    /// progress handler reads it, `arm_statement` writes it.
+    deadline_ms: Arc<AtomicU64>,
+    budget: Cell<Duration>,
 }
 
 /// `begin_tick()` called while a tick transaction is already open: a driver
@@ -91,6 +132,8 @@ impl SqliteSeam {
     fn wrap(conn: Connection) -> Result<Self> {
         install_scalars(&conn)?;
         apply_pragmas(&conn)?;
+        let deadline_ms = Arc::new(AtomicU64::new(u64::MAX));
+        install_statement_budget(&conn, Arc::clone(&deadline_ms))?;
         Ok(SqliteSeam {
             conn,
             prepared: RefCell::new(HashSet::new()),
@@ -98,7 +141,47 @@ impl SqliteSeam {
             dispatches: Cell::new(0),
             cache_capacity: Cell::new(DEFAULT_STATEMENT_CACHE),
             in_tick: Cell::new(false),
+            deadline_ms,
+            budget: Cell::new(statement_budget_from_env()),
         })
+    }
+
+    /// Moves the per-statement budget; tests use it to trip the valve fast.
+    pub fn set_statement_budget(&self, budget: Duration) {
+        self.budget.set(budget);
+    }
+
+    pub fn statement_budget(&self) -> Duration {
+        self.budget.get()
+    }
+
+    /// Every seam entry point calls this before stepping SQLite. The handler
+    /// aborts the statement once the wall clock passes the deadline.
+    fn arm_statement(&self) {
+        let deadline = millis_since_epoch().saturating_add(self.budget.get().as_millis() as u64);
+        self.deadline_ms.store(deadline, Ordering::Relaxed);
+    }
+
+    /// Names the statement and the budget in the error the valve raises;
+    /// every other error passes through untouched.
+    fn budget_error(&self, error: rusqlite::Error, sql: &str) -> rusqlite::Error {
+        if !statement_budget_exceeded(&error) {
+            return error;
+        }
+        let rusqlite::Error::SqliteFailure(failure, _) = error else {
+            return error;
+        };
+        let label = crate::trace::current_label();
+        rusqlite::Error::SqliteFailure(
+            failure,
+            Some(format!(
+                "statement exceeded its {} ms budget (DL_STATEMENT_BUDGET_MS) at {}/{}: {}",
+                self.budget.get().as_millis(),
+                label.relation,
+                label.verb,
+                statement_shape(sql)
+            )),
+        )
     }
 
     /// Arms the prepare counters for a COUNT test; off on the fold path.
@@ -165,6 +248,7 @@ impl SqliteSeam {
     /// Whether the db already carries this exact table, whitespace-normalized:
     /// `sqlite_master.sql` is the CREATE as it was executed.
     fn table_shape_stands(&self, name: &str, statement: &str) -> Result<bool> {
+        self.arm_statement();
         let standing: Option<String> = self
             .conn
             .query_row(
@@ -211,6 +295,13 @@ impl SqliteSeam {
 // Every scalar the compile/registry.pl text_scalar rows can render that core
 // SQLite does not ship. libsql carries `reverse` for the TypeScript door;
 // rusqlite links plain SQLite, which does not.
+fn install_statement_budget(conn: &Connection, deadline_ms: Arc<AtomicU64>) -> Result<()> {
+    conn.progress_handler(
+        BUDGET_CHECK_EVERY_OPS,
+        Some(move || millis_since_epoch() > deadline_ms.load(Ordering::Relaxed)),
+    )
+}
+
 fn install_scalars(conn: &Connection) -> Result<()> {
     install_reverse(conn)?;
     install_regexp(conn)
@@ -544,6 +635,7 @@ impl SqlRunner for SqliteSeam {
             }
         }
         explain_once(&self.conn, &statement.sql);
+        self.arm_statement();
         let mut cached;
         let mut fresh;
         let stmt: &mut rusqlite::Statement = if statement_cache_wanted() {
@@ -566,9 +658,15 @@ impl SqlRunner for SqliteSeam {
             .take(stmt.parameter_count())
             .map(to_param)
             .collect();
-        let mut rows = stmt.query(params_from_iter(params.iter()))?;
+        let mut rows = stmt
+            .query(params_from_iter(params.iter()))
+            .map_err(|error| self.budget_error(error, &statement.sql))?;
         let mut out_rows = Vec::new();
-        while let Some(row) = rows.next()? {
+        loop {
+            let next = rows
+                .next()
+                .map_err(|error| self.budget_error(error, &statement.sql))?;
+            let Some(row) = next else { break };
             out_rows.push(row_to_values(row, &columns));
         }
         let rows_affected = self.conn.changes() as i64;
@@ -639,7 +737,10 @@ impl SqlRunner for SqliteSeam {
         let label = crate::trace::current_label();
         let span = tracing::trace_span!("sql_batch", relation = %label.relation, verb = label.verb);
         let _entered = span.enter();
-        self.conn.execute_batch(sql)?;
+        self.arm_statement();
+        self.conn
+            .execute_batch(sql)
+            .map_err(|error| self.budget_error(error, sql))?;
         // A batch is N statements, not one: every caller joins with ";\n", and
         // a tally that charged it 1 hid the per-rel clears entirely.
         SEAM_TALLY.statements.fetch_add(
@@ -656,7 +757,12 @@ impl SqlRunner for SqliteSeam {
         let span =
             tracing::trace_span!("sql_scalar", relation = %label.relation, verb = label.verb);
         let _entered = span.enter();
-        let value = self.conn.query_row(sql, [], |row| row.get(0)).optional()?;
+        self.arm_statement();
+        let value = self
+            .conn
+            .query_row(sql, [], |row| row.get(0))
+            .optional()
+            .map_err(|error| self.budget_error(error, sql))?;
         crate::trace::record(label, started.elapsed().as_nanos() as u64, 1, 0);
         Ok(value.unwrap_or(0))
     }

@@ -10,7 +10,7 @@ description = "Rust runtime the emit_rust emitter lowers against: the IGenProgra
 anyhow = "1"
 # The `dl6` bin's option table; already in the lock through soopy.
 clap = { version = "4", features = ["derive"] }
-rusqlite = { version = "0.40", features = ["bundled", "functions", "limits"] }
+rusqlite = { version = "0.40", features = ["bundled", "functions", "limits", "hooks"] }
 regex = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "signal", "time"] }
 # 0.8 is the version whose `tokio::net::UnixListener` implements
