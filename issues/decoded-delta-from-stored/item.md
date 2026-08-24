@@ -22,3 +22,8 @@ After #423 a one-arrival ghcache tick is ~367 statements (cap 450); the widest a
 ### 2026-08-23T17:51:11Z · @one-path-busy-tick-cost
 
 Not touched by the one-path-busy-tick-cost PR and still valid. This issue is about read_snapshot reading each moved rel twice on ordered.rs, which #427 deleted; the equivalent double read on the one path is enum_plane::decode_deltas over read_boundary's output, which is a different seam. Needs re-measuring against the current path before it is worth pricing: on the ghcache fold after this PR, decode is 0 us and publish is 9.5 ms over 316 calls, so the double read this issue names is no longer where the money is.
+
+### 2026-08-24T01:10:57Z · @sprefa-coordinator
+
+User direction 2026-08-23: juice from the storage side; program IN SQLite (triggers probe live on probe-trigger-delta), keep hot work inside the db engine rather than round-tripping statements; a postgres emitter (@postgres-emitter) is a legitimate future door off the same lowered plan.
+
