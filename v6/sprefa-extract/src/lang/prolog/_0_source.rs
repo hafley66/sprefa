@@ -822,6 +822,7 @@ impl Source for PrologSource {
 
     fn matches(&self, path: &str) -> bool {
         path.ends_with(".pl")
+            || path.ends_with(".plt")
             || path.ends_with(".pro")
             || path.ends_with(".prolog")
             || path.ends_with(".datalog")

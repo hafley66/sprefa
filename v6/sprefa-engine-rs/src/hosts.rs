@@ -577,6 +577,10 @@ fn source_stage_response(
             )
         }
     };
+    // The program emits a Create action's shim body as `text`; the executor
+    // rewrites it to the `bytes` a canonical StageRequest carries (UTF-8), so a
+    // datalog program never has to build a byte array.
+    fill_create_text(&mut request_value);
     let state_root = match mutation_state_root(&target_root, &state_root) {
         Ok(state_root) => state_root,
         Err(detail) => return mutation_row("", "refused", detail, serde_json::json!([])),
@@ -707,6 +711,29 @@ fn fill_git_action_sources(
             "head": serde_json::Value::Null,
             "dirty": false,
         });
+    }
+}
+
+/// Rewrite every Create action's `text` body to the `bytes` a canonical
+/// StageRequest carries. The program emits the shim body as UTF-8 text; this
+/// is the one boundary where a byte array is spelled.
+fn fill_create_text(request: &mut serde_json::Value) {
+    let Some(actions) = request.get_mut("actions").and_then(|a| a.as_array_mut()) else {
+        return;
+    };
+    for action in actions {
+        let Some(text) = action.get_mut("text") else {
+            continue;
+        };
+        let Some(text) = text.as_str() else {
+            continue;
+        };
+        action["bytes"] = serde_json::Value::Array(
+            text.as_bytes().iter().map(|byte| serde_json::json!(byte)).collect(),
+        );
+        if let Some(object) = action.as_object_mut() {
+            object.remove("text");
+        }
     }
 }
 

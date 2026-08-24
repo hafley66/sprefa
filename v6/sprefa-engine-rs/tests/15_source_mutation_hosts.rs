@@ -661,20 +661,43 @@ fn git_worktree_stage_and_commit_use_the_worktree_identity() {
 
 /// The executor mints the root identity when a program omits it, so a datalog
 /// program never has to spell the blake3 DirectoryId/RepositoryId/WorktreeId.
-/// A git checkout derives a GitWorktree root and a Create carries no git ids,
-/// so this is the minimal assertion the root-fill contract keeps.
+/// A git checkout derives a GitWorktree root. A Create carries its shim body as
+/// `text` (the executor rewrites it to `bytes`), and a Move carries a source
+/// path plus a committed-file `expected` digest, so the derived revision object
+/// is proven to pass plan_mutations.
 #[test]
 fn stage_with_omitted_root_derives_git_worktree_and_stages() {
     let root = TempDir::new().expect("target root");
     let state = TempDir::new().expect("state root");
     git_init(root.path());
+    let blob = String::from_utf8(
+        Command::new("git")
+            .arg("-C")
+            .arg(root.path())
+            .args(["rev-parse", "HEAD:seed.txt"])
+            .output()
+            .expect("blob oid of the committed seed")
+            .stdout,
+    )
+    .expect("utf8 blob oid")
+    .trim()
+    .to_string();
     let request = serde_json::json!({
         "schema_version": 1,
         "actions": [
             {
                 "kind": "create",
                 "path": {"kind": "git", "path": "derived-root-created.txt"},
-                "bytes": b"created by derived-root stage\n".to_vec(),
+                "text": "created by derived-root stage\n",
+            },
+            {
+                "kind": "move",
+                "source": {
+                    "kind": "git",
+                    "source": {"repository": "", "revision": "", "path": "seed.txt"},
+                },
+                "expected": {"GitBlob": blob},
+                "destination": {"kind": "git", "path": "next/seed.txt"},
             }
         ]
     })
@@ -691,9 +714,27 @@ fn stage_with_omitted_root_derives_git_worktree_and_stages() {
     let previews = staged["document"]
         .as_array()
         .expect("document is the preview array");
-    assert_eq!(previews.len(), 1);
+    assert_eq!(previews.len(), 2);
+    let created = previews
+        .iter()
+        .find(|preview| preview["path_after"]["path"] == "derived-root-created.txt")
+        .expect("create preview");
+    assert_eq!(
+        created["after_bytes"],
+        serde_json::json!("created by derived-root stage\n".as_bytes().len()),
+        "the host rewrote the Create `text` body into previewed bytes"
+    );
+    let moved = previews
+        .iter()
+        .find(|preview| preview["path_before"]["path"] == "seed.txt")
+        .expect("move preview");
+    assert_eq!(moved["path_after"]["path"], "next/seed.txt");
     assert!(
         !root.path().join("derived-root-created.txt").exists(),
+        "staging must not mutate the target root"
+    );
+    assert!(
+        !root.path().join("next/seed.txt").exists(),
         "staging must not mutate the target root"
     );
 }
