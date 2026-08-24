@@ -443,6 +443,11 @@ fn point_at_adapters(args: &ProgramArgs) -> Result<()> {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from(".")),
     };
+    let directory = if directory.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        directory
+    };
     let absolute = directory
         .canonicalize()
         .with_context(|| format!("read the adapters directory {}", directory.display()))?;
