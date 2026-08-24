@@ -51,14 +51,26 @@ pub fn init(is_daemon_foreground: bool) {
         return;
     }
     let home = crate::daemon::daemon_home();
+    let observability = hafley_observe::Config::from_env(
+        "sprefa",
+        env!("CARGO_PKG_VERSION"),
+        "off",
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+    )
+    .expect("observability configuration");
     // Warn/error always reach stderr so tracing-converted anomalies remain
     // user-visible even without DL_TRACE/RUST_LOG.
-    let stderr_warn_layer = fmt::layer()
-        .with_target(false)
-        .with_writer(std::io::stderr)
-        .with_span_events(fmt::format::FmtSpan::CLOSE)
-        .compact()
-        .with_filter(tracing::level_filters::LevelFilter::WARN);
+    let stderr_warn_layer = hafley_observe::format_layer(
+        hafley_observe::FormatConfig {
+            format: observability.format,
+            ansi: observability.ansi,
+            target: false,
+            thread_names: false,
+            span_events: fmt::format::FmtSpan::CLOSE,
+        },
+        fmt::writer::BoxMakeWriter::new(std::io::stderr),
+    )
+    .with_filter(tracing::level_filters::LevelFilter::WARN);
     let registry = tracing_subscriber::registry()
         .with(dl_log_layer(&home))
         .with(error_log_layer(&home))
@@ -66,6 +78,7 @@ pub fn init(is_daemon_foreground: bool) {
     if std::env::var_os("RUST_LOG").is_none() && std::env::var_os("DL_TRACE").is_none() {
         // No extra verbosity requested: file layers + stderr warn/error only.
         let _ = registry.with(chrome_layer()).try_init();
+        hafley_observe::startup(&observability);
         return;
     }
     // DL_TRACE seeds the filter when RUST_LOG is unset, so the project keeps its
@@ -75,13 +88,19 @@ pub fn init(is_daemon_foreground: bool) {
             EnvFilter::try_new(&std::env::var("DL_TRACE").unwrap_or_else(|_| "off".into()))
         })
         .unwrap_or_else(|_| EnvFilter::new("off"));
-    let stderr_layer = fmt::layer()
-        .with_target(false)
-        .with_writer(std::io::stderr)
-        .with_span_events(fmt::format::FmtSpan::CLOSE)
-        .compact()
-        .with_filter(filter);
+    let stderr_layer = hafley_observe::format_layer(
+        hafley_observe::FormatConfig {
+            format: observability.format,
+            ansi: observability.ansi,
+            target: false,
+            thread_names: false,
+            span_events: fmt::format::FmtSpan::CLOSE,
+        },
+        fmt::writer::BoxMakeWriter::new(std::io::stderr),
+    )
+    .with_filter(filter);
     let _ = registry.with(stderr_layer).with(chrome_layer()).try_init();
+    hafley_observe::startup(&observability);
 }
 
 /// The chrome-trace layer's `FlushGuard`, stashed process-globally rather than

@@ -189,12 +189,11 @@ struct Panel {
 }
 
 fn load_panel() -> Panel {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../prolog/conformance/dd_panel.json");
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../prolog/conformance/dd_panel.json");
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-    serde_json::from_str(&text)
-        .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
+    serde_json::from_str(&text).unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
 }
 
 // ═══ the tick stream comparison ═════════════════════════════════════════════
@@ -219,7 +218,13 @@ fn render(tick: &Tick) -> String {
         return "(empty)".to_string();
     }
     tick.iter()
-        .map(|(row, weight)| format!("{}{row} x{}", if *weight < 0 { "-" } else { "+" }, weight.abs()))
+        .map(|(row, weight)| {
+            format!(
+                "{}{row} x{}",
+                if *weight < 0 { "-" } else { "+" },
+                weight.abs()
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -265,10 +270,7 @@ fn compare_streams(dd: &[Tick], oracle: &[Tick]) -> Result<(), String> {
 /// time i+1 is the fixture's delta tick i.
 fn oracle_stream(program: &Program) -> Vec<Tick> {
     let mut stream = vec![tick_from(
-        program
-            .seed_state
-            .iter()
-            .map(|row| (row.clone(), 1isize)),
+        program.seed_state.iter().map(|row| (row.clone(), 1isize)),
     )];
     for delta in &program.deltas {
         stream.push(tick_from(delta.iter().map(|signed| signed.split())));
@@ -339,8 +341,9 @@ fn build_circuit<'scope>(
         "recount_retraction_reaches_two_heads_same_tick" => circuit_recount(arrivals),
         // One fixture program, two schedules; the panel grades both streams
         // through this one body.
-        "coalesce_defaults_the_absent_row"
-        | "coalesce_default_returns_when_source_retracts" => circuit_coalesce(arrivals),
+        "coalesce_defaults_the_absent_row" | "coalesce_default_returns_when_source_retracts" => {
+            circuit_coalesce(arrivals)
+        }
         other => panic!("no hand circuit for panel program {other}"),
     }
 }
@@ -350,17 +353,19 @@ fn circuit_float_avg_is_grouped<'scope>(arrivals: &Arrivals<'scope>) -> Derived<
     let score = base(arrivals, "score", 2);
     let mean = score
         .map(|row| (column(&row, 0), column(&row, 1)))
-        .reduce(|_group, input: &[(&Value, isize)], output: &mut Vec<(Value, isize)>| {
-            let count: i64 = input.iter().map(|(_, weight)| *weight as i64).sum();
-            if count <= 0 {
-                return;
-            }
-            let total: f64 = input
-                .iter()
-                .map(|(value, weight)| value.as_real() * (*weight as f64))
-                .sum();
-            output.push((Value::real(total / count as f64), 1));
-        })
+        .reduce(
+            |_group, input: &[(&Value, isize)], output: &mut Vec<(Value, isize)>| {
+                let count: i64 = input.iter().map(|(_, weight)| *weight as i64).sum();
+                if count <= 0 {
+                    return;
+                }
+                let total: f64 = input
+                    .iter()
+                    .map(|(value, weight)| value.as_real() * (*weight as f64))
+                    .sum();
+                output.push((Value::real(total / count as f64), 1));
+            },
+        )
         .map(|(group, mean)| Row::new("mean", vec![group, mean]));
     passthrough(arrivals).concat(mean).consolidate()
 }
@@ -425,7 +430,10 @@ fn circuit_callgraph_calls<'scope>(arrivals: &Arrivals<'scope>) -> Derived<'scop
         .filter(|(callee, caller)| caller != callee)
         .map(|(callee, caller)| Row::new("calls", vec![caller, callee]))
         .distinct();
-    passthrough(arrivals).concat(def).concat(calls).consolidate()
+    passthrough(arrivals)
+        .concat(def)
+        .concat(calls)
+        .consolidate()
 }
 
 /// unused(Name) <- def(_, Name, _), not(call(_, Name))
@@ -484,9 +492,8 @@ fn circuit_leg_total<'scope>(arrivals: &Arrivals<'scope>) -> Derived<'scope> {
         .concat(reached)
         .distinct()
     });
-    let leg_total = totals.map(|(leg, dispatch, kilos)| {
-        Row::new("leg_total", vec![leg, dispatch, kilos])
-    });
+    let leg_total =
+        totals.map(|(leg, dispatch, kilos)| Row::new("leg_total", vec![leg, dispatch, kilos]));
     passthrough(arrivals).concat(leg_total).consolidate()
 }
 
@@ -616,14 +623,7 @@ fn run_program(program: &Program, sabotage: Sabotage) -> Vec<Tick> {
 
     let guard = captured.lock().unwrap();
     (0..=tick_count as u64)
-        .map(|time| {
-            tick_from(
-                guard
-                    .get(&time)
-                    .cloned()
-                    .unwrap_or_default(),
-            )
-        })
+        .map(|time| tick_from(guard.get(&time).cloned().unwrap_or_default()))
         .collect()
 }
 
@@ -714,8 +714,8 @@ fn sabotage_flipped_sign_is_caught() {
     compare_streams(&clean, &oracle).expect("the unsabotaged circuit agrees");
 
     let flipped = run_program(program, Sabotage::NegateMirror);
-    let report = compare_streams(&flipped, &oracle)
-        .expect_err("a negated head must not read as agreement");
+    let report =
+        compare_streams(&flipped, &oracle).expect_err("a negated head must not read as agreement");
     assert!(
         report.contains("tick 1:") && report.contains("mirror(alpha)"),
         "the diff named neither the tick nor the row:\n{report}"

@@ -589,13 +589,14 @@ fn ctrlc_flag(stop: tokio::sync::watch::Sender<bool>) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-        )
-        .init();
+    let observability = hafley_observe::Config::from_env(
+        "sprefa-engine-dl6",
+        env!("CARGO_PKG_VERSION"),
+        "warn",
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+    )?;
+    hafley_observe::init(observability)
+        .map_err(|error| anyhow::anyhow!("initialise tracing subscriber: {error}"))?;
     match Cli::parse().verb {
         Verb::Build(args) => build(args),
         Verb::Run(args) => run(args),

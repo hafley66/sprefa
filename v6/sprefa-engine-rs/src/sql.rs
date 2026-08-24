@@ -55,7 +55,10 @@ impl std::fmt::Display for TickTransactionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TickTransactionError::NestedBegin => {
-                write!(f, "begin_tick called while a tick transaction was already open")
+                write!(
+                    f,
+                    "begin_tick called while a tick transaction was already open"
+                )
             }
             TickTransactionError::Sql(error) => write!(f, "{error}"),
         }
