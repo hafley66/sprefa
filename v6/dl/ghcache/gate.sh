@@ -74,4 +74,73 @@ fail=0
 [ "$transitions" = 1 ] || { echo "FAIL open -> merged should record exactly once, got $transitions"; fail=1; }
 [ "$fail" = 0 ] || exit 1
 
-echo "GHCACHE_RUST_DOOR_HOLDS ticks=$ticks"
+# RETENTION RECEIPT: three bounded logs reach the emitted program as prune SQL,
+# and pr_transition stays keep(all) so it carries none.
+for bound in 'ghcache_call_log\\" ORDER BY rowid DESC LIMIT 16500' \
+             'ghcache_change_log\\" ORDER BY rowid DESC LIMIT 34000' \
+             'ghcache_engine_tick_cost\\" ORDER BY rowid DESC LIMIT 140000'; do
+  grep -q "$bound" "$scratch/ghcache.rs" || { echo "FAIL missing prune SQL: $bound"; fail=1; }
+done
+grep -q 'ghcache_pr_transition\\" ORDER BY rowid DESC LIMIT' "$scratch/ghcache.rs" \
+  && { echo "FAIL pr_transition must stay keep(all)"; fail=1; }
+[ "$fail" = 0 ] || exit 1
+echo "retention: call_log=16500 change_log=34000 engine_tick_cost=140000 pr_transition=all"
+
+# ── leg 2: the account-type split and the 404 backoff ───────────────────────
+#
+# @comment-ok: the fail-pre-fix numbers, and the one doc site for this leg.
+# FAIL PRE FIX, measured in ~/.agent/dl6.db 2026-08-24 over 1427 minute buckets
+# (23.8 h): `users/hafley66/events/orgs/hafley66` answered 404 1422 times, one
+# per poll cycle, authenticated, decrementing the REST pool, because hafley66 is
+# a USER account. `orgs/hafley66/repos` added 24 more, and `not_an_org` /
+# `discovered_repo` were BOTH EMPTY: `rest_response` carries a 200 arm and a 304
+# arm only, so the org-to-user fallback rule was statically dead. Nothing backed
+# a permanently-404 endpoint off: 404, re-demand next bucket, forever.
+started=$(date +%s)
+DL_ADAPTERS_DIR="$here" RUST_LOG=sprefa_engine_rs=info \
+  timeout "$fold_budget" "$harness" "$scratch/ghcache.rs" \
+  "$here/ghcache.account.schedule.json" --final \
+  >"$scratch/acct" 2>"$scratch/acct.err"
+acct_code=$?
+acct_wall=$(( $(date +%s) - started ))
+
+if [ "$acct_code" != 0 ]; then
+  echo "FAIL ghcache account fold exited $acct_code after ${acct_wall}s"
+  { grep -m1 -A1 'panicked at' "$scratch/acct.err" || tail -n 3 "$scratch/acct.err"; }
+  exit 1
+fi
+
+acct_ticks=$(grep -c '^{"tick"' "$scratch/acct")
+calls_for() {
+  jq -c 'select(.rel == "call_log")' "$scratch/acct" | tail -n 1 \
+    | jq --arg url "$1" '[.rows[] | select(.[2] == $url)] | length'
+}
+due_for() {
+  jq -c 'select(.rel == "due")' "$scratch/acct" | tail -n 1 \
+    | jq --arg url "$1" '[.rows[] | select(.[0] == $url)] | length'
+}
+org_events_calls=$(calls_for "users/hafley66/events/orgs/hafley66")
+user_events_calls=$(calls_for "users/hafley66/events")
+ghost_calls=$(calls_for "repos/hafley66/ghost/events")
+ghost_404=$(jq -c 'select(.rel == "call_log")' "$scratch/acct" | tail -n 1 \
+  | jq '[.rows[] | select(.[2] == "repos/hafley66/ghost/events" and .[3] == 404)] | length')
+ghost_due=$(due_for "repos/hafley66/ghost/events")
+org_repos_due=$(due_for "orgs/hafley66/repos?per_page=100")
+user_repos_due=$(due_for "users/hafley66/repos?per_page=100")
+printf 'account: %s ticks, org_events=%s user_events=%s ghost_calls=%s ghost_404=%s ghost_due=%s org_repos_due=%s user_repos_due=%s\n' \
+  "$acct_ticks" "$org_events_calls" "$user_events_calls" "$ghost_calls" \
+  "$ghost_404" "$ghost_due" "$org_repos_due" "$user_repos_due"
+
+# A user account never spells the org events endpoint: 1422 a day becomes zero.
+[ "$org_events_calls" = 0 ] || { echo "FAIL the org events endpoint is org-only, got $org_events_calls calls"; fail=1; }
+[ "$user_events_calls" = 7 ] || { echo "FAIL a user account polls users/<owner>/events, got $user_events_calls calls"; fail=1; }
+# miss_threshold(3): three 404s, then miss_cooloff(60) buckets of silence.
+[ "$ghost_calls" = 3 ] || { echo "FAIL the backoff stops a 404 endpoint after 3, got $ghost_calls calls"; fail=1; }
+[ "$ghost_404" = 3 ] || { echo "FAIL every ghost call is a 404, got $ghost_404"; fail=1; }
+[ "$ghost_due" = 0 ] || { echo "FAIL a cooling endpoint derives no due row, got $ghost_due"; fail=1; }
+# not_an_org is sourced off endpoint_miss now, so the fallback actually fires.
+[ "$org_repos_due" = 0 ] || { echo "FAIL a user account stops asking /orgs, got $org_repos_due due rows"; fail=1; }
+[ "$user_repos_due" = 1 ] || { echo "FAIL the /users repos fallback must appear once, got $user_repos_due"; fail=1; }
+[ "$fail" = 0 ] || exit 1
+
+echo "GHCACHE_RUST_DOOR_HOLDS ticks=$ticks account_ticks=$acct_ticks"

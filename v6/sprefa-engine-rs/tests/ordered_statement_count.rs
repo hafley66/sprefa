@@ -54,11 +54,16 @@ const ZERO_ARRIVAL_CAP: u64 = 200;
 const ONE_ARRIVAL_CAP: u64 = 1450;
 const DRAIN_CAP: usize = 100;
 /// The whole 14-tick fold, the number issues/one-path-busy-tick-cost is about.
-/// Measured 6886 before null design lowering and 6730 after.
-const FOLD_STATEMENT_CAP: u64 = 6_800;
+/// Measured 6886 before null design lowering and 6730 after. 6955 once
+/// `call_log` took `keep(count)`: `retention_head_conflict_risk` refuses two or
+/// more `<+` arms on a bounded log head, so its three fold through one
+/// `call_candidate` level rel, 9 extra delta rows at ~24 statements each.
+const FOLD_STATEMENT_CAP: u64 = 7_050;
 /// The from-base refcount re-derive, the verb that was half the fold's
-/// statements. 3268 before null design lowering, 3244 after.
-const RECOUNT_STATEMENT_CAP: u64 = 3_300;
+/// statements. 3268 before null design lowering, 3244 after, 3358 once
+/// `call_candidate` joined the level plane: it retires with `page_response`
+/// every tick, so its shrink is genuine recount traffic.
+const RECOUNT_STATEMENT_CAP: u64 = 3_400;
 
 fn engine_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

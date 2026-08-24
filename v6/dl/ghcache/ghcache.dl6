@@ -260,14 +260,16 @@ gh_username(Login) <+
   RespStatus == 200,
   decode(Body, {login: Login: text}).
 
-watched_global(EndpointPath, 'rest', 'org_repos') <-
-  org_owner(Owner),
-  EndpointPath := concat(["orgs/", Owner, "/repos?per_page=100"]).
-
-watched_global(EndpointPath, 'rest', 'user_repos') <-
-  org_owner(Owner),
-  not_an_org(Owner),
-  EndpointPath := concat(["users/", Owner, "/repos?per_page=100"]).
+# A match scrutinee parses as a HEAD atom, so it is full arity or
+# `partial_head` (parse_dl_dcg.pl:1400); the guard is an ordinary body.
+match org_owner(Owner, _FsAlias) (
+  ; not(not_an_org(Owner)),
+    EndpointPath := concat(["orgs/", Owner, "/repos?per_page=100"])
+    |-> watched_global(EndpointPath, 'rest', 'org_repos')
+  ; not_an_org(Owner),
+    EndpointPath := concat(["users/", Owner, "/repos?per_page=100"])
+    |-> watched_global(EndpointPath, 'rest', 'user_repos')
+).
 
 watched_endpoint(EndpointPath, 'rest', 'repo_events', RepoRef) <-
   watched_repo(RepoRef, Owner, Name, SyncEvents),
@@ -279,11 +281,20 @@ watched_endpoint(EndpointPath, 'rest', 'branches', RepoRef) <-
   SyncBranches != "",
   EndpointPath := concat(["repos/", Owner, "/", Name, "/branches?per_page=100"]).
 
-watched_global(EndpointPath, 'rest', 'org_events') <-
-  org_config(Owner, SyncEvents),
-  SyncEvents == 1,
-  gh_username(Username),
-  EndpointPath := concat(["users/", Username, "/events/orgs/", Owner]).
+# `users/<me>/events/orgs/<owner>` exists for an ORG account only; the two arms
+# are exclusive on the same 404-sourced `not_an_org` the repos poll turns on.
+match org_config(Owner, _FsAlias, _SyncPrs, SyncEvents, _SyncNotifications,
+                 _CheckoutOnSync, _CheckoutPrBranches) (
+  ; SyncEvents == 1,
+    not(not_an_org(Owner)),
+    gh_username(Username),
+    EndpointPath := concat(["users/", Username, "/events/orgs/", Owner])
+    |-> watched_global(EndpointPath, 'rest', 'org_events')
+  ; SyncEvents == 1,
+    not_an_org(Owner),
+    EndpointPath := concat(["users/", Owner, "/events"])
+    |-> watched_global(EndpointPath, 'rest', 'user_events')
+).
 
 watched_global("notifications", 'rest', 'notifications') <-
   global_setting(SyncNotifications),
@@ -343,6 +354,62 @@ period_candidate(EndpointPath, PeriodTicks) <-
 endpoint_period(EndpointPath, max(PeriodTicks)) <-
   period_candidate(EndpointPath, PeriodTicks).
 
+# ── the 404 backoff, as rules (rx retryWhen with a delay) ───────────────────
+
+rel miss_threshold(misses: int).
+rel miss_cooloff(period_ticks: int).
+rel endpoint_miss(endpoint_path: text, bucket: int).
+rel endpoint_hit(endpoint_path: text, bucket: int).
+rel miss_streak(endpoint_path: text, misses: int, at_bucket: int) key(1).
+rel miss_next(endpoint_path: text, misses: int, at_bucket: int).
+rel endpoint_cooling(endpoint_path: text, bucket: int).
+
+miss_threshold(3).
+miss_cooloff(60).
+
+# Page 1 IS the endpoint: the repeated scrutinee variable keeps a page-walk 404
+# out of the streak, and the hit arm's guard keeps a healthy endpoint off here.
+match page_response(EndpointPath, EndpointPath, Bucket, _PrevEtag, RespStatus,
+                    _Etag, _LastModified, _ServerPeriod, _RateRemaining,
+                    _RateReset, _Link, _Bytes) (
+  ; RespStatus == 404
+    |-> endpoint_miss(EndpointPath, Bucket)
+  ; RespStatus != 404,
+    miss_streak(endpoint_path: EndpointPath, misses: Misses),
+    Misses > 0
+    |-> endpoint_hit(EndpointPath, Bucket)
+).
+
+# Two exclusive arms on `at_bucket`, the `page_prev_etag` shape: once this
+# bucket's increment has folded, `at_bucket == Bucket` derives NO row at all.
+match endpoint_miss(EndpointPath, Bucket) (
+  ; miss_streak(endpoint_path: EndpointPath, misses: Misses,
+                at_bucket: AtBucket),
+    AtBucket < Bucket,
+    NextMisses := Misses + 1
+    |-> miss_next(EndpointPath, NextMisses, Bucket)
+  ; not(miss_streak(EndpointPath))
+    |-> miss_next(EndpointPath, 1, Bucket)
+).
+
+miss_streak(EndpointPath, NextMisses, Bucket) <+
+  miss_next(EndpointPath, NextMisses, Bucket).
+
+# Any non-404 answer resets the streak, so a flaky endpoint never cools.
+miss_streak(EndpointPath, 0, Bucket) <+
+  endpoint_hit(EndpointPath, Bucket).
+
+# The cool-off is measured from the LAST miss, so a probe that 404s again pushes
+# the resume bucket out by another cool-off rather than resuming every bucket.
+endpoint_cooling(EndpointPath, Bucket) <-
+  current_clock(60, Bucket),
+  miss_streak(EndpointPath, Misses, AtBucket),
+  miss_threshold(Threshold),
+  Misses >= Threshold,
+  miss_cooloff(CoolOff),
+  ResumeBucket := AtBucket + CoolOff,
+  Bucket < ResumeBucket.
+
 # ── the poll, one demand row per PAGE ───────────────────────────────────────
 
 rel due(endpoint_path: text, bucket: int, api_type: text).
@@ -366,6 +433,7 @@ due(EndpointPath, Bucket, ApiType) <-
   endpoint_period(EndpointPath, PeriodTicks),
   api_token(TokenValue),
   not(over_budget(ApiType, Bucket)),
+  not(endpoint_cooling(EndpointPath, Bucket)),
   PhaseSlot := Bucket mod PeriodTicks,
   PhaseSlot == 0.
 
@@ -595,31 +663,41 @@ poll_state(PageUrl, Etag, LastModified, ServerPeriod, LastPolled,
 
 # ── the call log ────────────────────────────────────────────────────────────
 
+# 10.71 rows per minute bucket MEASURED over 1427 buckets; 16500 is 25.7 h.
 rel call_log(at_tick: int, api_type: text, endpoint_path: text, status: int,
              rate_remaining: int, rate_reset: int, bytes: int,
-             cache_hit: int) log keep(all).
+             cache_hit: int) log keep(count(16500)).
 
-call_log(AtTick, ApiType, PageUrl, Status, RateRemaining, RateReset, Bytes,
-         CacheHit) <+
-  page_response(PageUrl, Status, RateRemaining, RateReset, Bytes),
-  Status == 304,
-  ApiType := 'rest',
-  CacheHit := 1,
-  now(AtTick).
+# ONE edge arm: retention_head_conflict_risk (0_program_check.pl:666) refuses
+# keep(count(N)) on a log head carrying two or more `<+` arms.
+rel call_candidate(bucket: int, api_type: text, endpoint_path: text,
+                   status: int, rate_remaining: int, rate_reset: int,
+                   bytes: int, cache_hit: int).
 
-call_log(AtTick, ApiType, PageUrl, Status, RateRemaining, RateReset, Bytes,
-         CacheHit) <+
-  page_response(PageUrl, Status, RateRemaining, RateReset, Bytes),
-  Status != 304,
-  ApiType := 'rest',
-  CacheHit := 0,
-  now(AtTick).
+# `bucket` rides the level row so an identical answer in a later bucket is still
+# a positive delta, which is the granularity the three arms carried before.
+match page_response(_EndpointPath, PageUrl, Bucket, _PrevEtag, Status, _Etag,
+                    _LastModified, _ServerPeriod, RateRemaining, RateReset,
+                    _Link, Bytes) (
+  ; Status == 304
+    |-> call_candidate(Bucket, 'rest', PageUrl, Status, RateRemaining,
+                       RateReset, Bytes, 1)
+  ; Status != 304
+    |-> call_candidate(Bucket, 'rest', PageUrl, Status, RateRemaining,
+                       RateReset, Bytes, 0)
+).
 
-call_log(AtTick, ApiType, BatchKey, Status, RateRemaining, RateReset, Bytes,
+call_candidate(Bucket, 'graphql', BatchKey, Status, RateRemaining, RateReset,
+               Bytes, 0) <-
+  pr_batch_response(batch_key: BatchKey, bucket: Bucket, status: Status,
+                    rate_remaining: RateRemaining, rate_reset: RateReset,
+                    bytes: Bytes).
+
+call_log(AtTick, ApiType, EndpointPath, Status, RateRemaining, RateReset, Bytes,
          CacheHit) <+
-  pr_batch_response(BatchKey, Status, RateRemaining, RateReset, Bytes),
-  ApiType := 'graphql',
-  CacheHit := 0,
+  call_candidate(api_type: ApiType, endpoint_path: EndpointPath, status: Status,
+                 rate_remaining: RateRemaining, rate_reset: RateReset,
+                 bytes: Bytes, cache_hit: CacheHit),
   now(AtTick).
 
 # ── org discovery ───────────────────────────────────────────────────────────
@@ -638,14 +716,13 @@ discovered_repo(Owner, Name, DefaultBranch) <-
   RespStatus == 200,
   decode(Body, [... {name: Name: text, default_branch: DefaultBranch: text}]).
 
-# A 404 on /orgs marks the owner a user; the fallback endpoint appears in
-# `watched_global` on the next tick (sync/mod.rs:78-79).
+# `rest_response` has a 200 arm and a 304 arm and no other, so reading a 404 off
+# it made this rule statically dead; `endpoint_miss` IS the 404 (sync/mod.rs:78).
 not_an_org(Owner) <+
+  endpoint_miss(EndpointPath, Bucket),
   watched_global(EndpointPath, ApiType, Kind),
   Kind == 'org_repos',
-  org_owner(Owner),
-  rest_response(endpoint_path: EndpointPath, status: RespStatus),
-  RespStatus == 404.
+  org_owner(Owner).
 
 # ── repo events ─────────────────────────────────────────────────────────────
 
@@ -1269,8 +1346,9 @@ repo_checkout(RepoRef, DefaultBranch, CheckoutPath, HeadSha, Bucket) <+
 
 # ── change_log, the delta rel ───────────────────────────────────────────────
 
+# 22.29 rows per minute bucket MEASURED over 1427 buckets; 34000 is 25.4 h.
 rel change_log(at_tick: int, entity_type: text, entity_key: text,
-               repo_slug: text) log keep(all).
+               repo_slug: text) log keep(count(34000)).
 rel change_candidate(entity_type: text, entity_key: text, repo_slug: text).
 
 # change_candidate is a LEVEL rel, so the edge rule below fires on its POSITIVE
@@ -1356,8 +1434,10 @@ measured(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <-
   current_clock(60, Bucket),
   tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb).
 
+# 93.23 rows per minute bucket MEASURED over 1422 buckets, 243 executors;
+# 140000 is 25.0 h, and its prune DELETE measures 59 ms at that depth.
 rel engine_tick_cost(bucket: int, executor: text, wall_ms: int, sqlite_ms: int,
-              calls: int, rows_out: int, bytes: int, rss_kb: int) log keep(all).
+       calls: int, rows_out: int, bytes: int, rss_kb: int) log keep(count(140000)).
 engine_tick_cost(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb) <+
   measured(Bucket, Executor, WallMs, SqliteMs, Calls, RowsOut, Bytes, RssKb).
 

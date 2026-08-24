@@ -1,0 +1,462 @@
+[
+  [
+    {
+      "rel": "__host_response_clock__tick",
+      "sign": "add",
+      "row": [
+        "witness|clock__tick|every:int=3600",
+        0,
+        3600,
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_toml__json",
+      "sign": "add",
+      "row": [
+        "witness|toml__json|config_path:text=ghcache.toml|bucket:int=0",
+        0,
+        "ghcache.toml",
+        0,
+        {
+          "global": {
+            "poll_interval_seconds": 60,
+            "org_repo_discovery_interval_seconds": 3600,
+            "rate_warn_threshold": 200,
+            "rate_stop_threshold": 100,
+            "warn_stretch_multiplier": 2,
+            "heartbeat_ttl_seconds": 0,
+            "sync_notifications": 0,
+            "staging_folder": ""
+          },
+          "org": [
+            {
+              "owner": "hafley66",
+              "fs_alias": "hafley66",
+              "sync_prs": 0,
+              "sync_events": 1,
+              "sync_notifications": 0,
+              "checkout_on_sync": 0,
+              "checkout_pr_branches": 0
+            }
+          ],
+          "repo": [
+            {
+              "owner": "hafley66",
+              "name": "ghost",
+              "default_branch": "main",
+              "sync_prs": 0,
+              "sync_events": 1,
+              "sync_notifications": 0,
+              "sync_branches": "",
+              "checkout_on_sync": 0,
+              "checkout_pr_branches": 0
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_env__var",
+      "sign": "add",
+      "row": [
+        "witness|env__var|name:text=GITHUB_TOKEN|bucket=0",
+        0,
+        "GITHUB_TOKEN",
+        "scripted-token"
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_clock__tick",
+      "sign": "add",
+      "row": [
+        "witness|clock__tick|every:int=60",
+        0,
+        60,
+        0
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=orgs/hafley66/repos?per_page=100|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\"}|prev_etag:text=|bucket:int=0",
+        0,
+        "orgs/hafley66/repos?per_page=100",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\"}",
+        "",
+        0,
+        404,
+        "{\"etag\":\"\",\"x-ratelimit-remaining\":4999,\"x-ratelimit-reset\":1000000}",
+        "null",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=repos/hafley66/ghost/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\"}|prev_etag:text=|bucket:int=0",
+        0,
+        "repos/hafley66/ghost/events",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\"}",
+        "",
+        0,
+        404,
+        "{\"etag\":\"\",\"x-ratelimit-remaining\":4998,\"x-ratelimit-reset\":1000000}",
+        "null",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=user|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\"}|prev_etag:text=|bucket:int=0",
+        0,
+        "user",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\"}",
+        "",
+        0,
+        200,
+        "{\"etag\":\"etag-user-0\",\"x-ratelimit-remaining\":4997,\"x-ratelimit-reset\":1000000}",
+        "{\"login\":\"hafley66\"}",
+        20
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_clock__tick",
+      "sign": "add",
+      "row": [
+        "witness|clock__tick|every:int=60",
+        1,
+        60,
+        1
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=repos/hafley66/ghost/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\"}|prev_etag:text=|bucket:int=1",
+        0,
+        "repos/hafley66/ghost/events",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\"}",
+        "",
+        1,
+        404,
+        "{\"etag\":\"\",\"x-ratelimit-remaining\":4996,\"x-ratelimit-reset\":1000000}",
+        "null",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\"}|prev_etag:text=|bucket:int=1",
+        0,
+        "users/hafley66/events",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\"}",
+        "",
+        1,
+        200,
+        "{\"etag\":\"etag-events-1\",\"x-ratelimit-remaining\":4995,\"x-ratelimit-reset\":1000000}",
+        "[]",
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=user|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-0\"}|prev_etag:text=etag-user-0|bucket:int=1",
+        0,
+        "user",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-0\"}",
+        "etag-user-0",
+        1,
+        200,
+        "{\"etag\":\"etag-user-1\",\"x-ratelimit-remaining\":4994,\"x-ratelimit-reset\":1000000}",
+        "{\"login\":\"hafley66\"}",
+        20
+      ]
+    },
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=user|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-0\"}|prev_etag:text=|bucket:int=1",
+        0,
+        "user",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-0\"}",
+        "",
+        1,
+        200,
+        "{\"etag\":\"etag-user-1\",\"x-ratelimit-remaining\":4993,\"x-ratelimit-reset\":1000000}",
+        "{\"login\":\"hafley66\"}",
+        20
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_clock__tick",
+      "sign": "add",
+      "row": [
+        "witness|clock__tick|every:int=60",
+        2,
+        60,
+        2
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=repos/hafley66/ghost/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\"}|prev_etag:text=|bucket:int=2",
+        0,
+        "repos/hafley66/ghost/events",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\"}",
+        "",
+        2,
+        404,
+        "{\"etag\":\"\",\"x-ratelimit-remaining\":4992,\"x-ratelimit-reset\":1000000}",
+        "null",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-1\"}|prev_etag:text=etag-events-1|bucket:int=2",
+        0,
+        "users/hafley66/events",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-1\"}",
+        "etag-events-1",
+        2,
+        200,
+        "{\"etag\":\"etag-events-2\",\"x-ratelimit-remaining\":4991,\"x-ratelimit-reset\":1000000}",
+        "[]",
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-1\"}|prev_etag:text=|bucket:int=2",
+        0,
+        "users/hafley66/events",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-1\"}",
+        "",
+        2,
+        200,
+        "{\"etag\":\"etag-events-2\",\"x-ratelimit-remaining\":4990,\"x-ratelimit-reset\":1000000}",
+        "[]",
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=user|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-1\"}|prev_etag:text=etag-user-1|bucket:int=2",
+        0,
+        "user",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-1\"}",
+        "etag-user-1",
+        2,
+        200,
+        "{\"etag\":\"etag-user-2\",\"x-ratelimit-remaining\":4989,\"x-ratelimit-reset\":1000000}",
+        "{\"login\":\"hafley66\"}",
+        20
+      ]
+    },
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=user|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-1\"}|prev_etag:text=|bucket:int=2",
+        0,
+        "user",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-1\"}",
+        "",
+        2,
+        200,
+        "{\"etag\":\"etag-user-2\",\"x-ratelimit-remaining\":4988,\"x-ratelimit-reset\":1000000}",
+        "{\"login\":\"hafley66\"}",
+        20
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_clock__tick",
+      "sign": "add",
+      "row": [
+        "witness|clock__tick|every:int=60",
+        3,
+        60,
+        3
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-2\"}|prev_etag:text=etag-events-2|bucket:int=3",
+        0,
+        "users/hafley66/events",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-2\"}",
+        "etag-events-2",
+        3,
+        200,
+        "{\"etag\":\"etag-events-3\",\"x-ratelimit-remaining\":4987,\"x-ratelimit-reset\":1000000}",
+        "[]",
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-2\"}|prev_etag:text=|bucket:int=3",
+        0,
+        "users/hafley66/events",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-2\"}",
+        "",
+        3,
+        200,
+        "{\"etag\":\"etag-events-3\",\"x-ratelimit-remaining\":4986,\"x-ratelimit-reset\":1000000}",
+        "[]",
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=user|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-2\"}|prev_etag:text=etag-user-2|bucket:int=3",
+        0,
+        "user",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-2\"}",
+        "etag-user-2",
+        3,
+        200,
+        "{\"etag\":\"etag-user-3\",\"x-ratelimit-remaining\":4985,\"x-ratelimit-reset\":1000000}",
+        "{\"login\":\"hafley66\"}",
+        20
+      ]
+    },
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=user|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-2\"}|prev_etag:text=|bucket:int=3",
+        0,
+        "user",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-2\"}",
+        "",
+        3,
+        200,
+        "{\"etag\":\"etag-user-3\",\"x-ratelimit-remaining\":4984,\"x-ratelimit-reset\":1000000}",
+        "{\"login\":\"hafley66\"}",
+        20
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_clock__tick",
+      "sign": "add",
+      "row": [
+        "witness|clock__tick|every:int=60",
+        4,
+        60,
+        4
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-3\"}|prev_etag:text=etag-events-3|bucket:int=4",
+        0,
+        "users/hafley66/events",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-3\"}",
+        "etag-events-3",
+        4,
+        200,
+        "{\"etag\":\"etag-events-4\",\"x-ratelimit-remaining\":4983,\"x-ratelimit-reset\":1000000}",
+        "[]",
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-3\"}|prev_etag:text=|bucket:int=4",
+        0,
+        "users/hafley66/events",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-3\"}",
+        "",
+        4,
+        200,
+        "{\"etag\":\"etag-events-4\",\"x-ratelimit-remaining\":4982,\"x-ratelimit-reset\":1000000}",
+        "[]",
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=user|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-3\"}|prev_etag:text=etag-user-3|bucket:int=4",
+        0,
+        "user",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-3\"}",
+        "etag-user-3",
+        4,
+        200,
+        "{\"etag\":\"etag-user-4\",\"x-ratelimit-remaining\":4981,\"x-ratelimit-reset\":1000000}",
+        "{\"login\":\"hafley66\"}",
+        20
+      ]
+    },
+    {
+      "rel": "__host_response_http__get",
+      "sign": "add",
+      "row": [
+        "witness|http__get|url:text=user|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-3\"}|prev_etag:text=|bucket:int=4",
+        0,
+        "user",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-user-3\"}",
+        "",
+        4,
+        200,
+        "{\"etag\":\"etag-user-4\",\"x-ratelimit-remaining\":4980,\"x-ratelimit-reset\":1000000}",
+        "{\"login\":\"hafley66\"}",
+        20
+      ]
+    }
+  ]
+]

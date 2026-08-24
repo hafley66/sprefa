@@ -11,6 +11,8 @@ their own section with a throw site each.
 - [The one transport](#the-one-transport)
 - [How to run it](#how-to-run-it)
 - [The rate budget](#the-rate-budget-the-whole-point)
+- [The account type, and backing off a 404](#the-account-type-and-backing-off-a-404)
+- [Retention](#retention)
 - [Ability map](#ability-map)
 - [The 16 tables](#the-16-tables)
 - [Storage law](#storage-law)
@@ -27,6 +29,7 @@ their own section with a throw site each.
 | `src/executors/{fetch,graphql,pulls,repos}.rs` | DELETED; `http.rs` is the whole transport |
 | the six `v6/dl/ghcacher` goldens | on `http.get`, gate green, `goldens=6` |
 | simulated schedule through the Rust door | `GHCACHE_RUST_DOOR_HOLDS ticks=14`, `pr_transition_open_merged=1`, COUNT receipt below |
+| the account-type split and the 404 backoff | `account_ticks=14`, `org_events=0 user_events=7 ghost_calls=3 ghost_due=0 user_repos_due=1`, gate leg 2 |
 | live `dl6 run` against `hafley66` (instant, sprefa, hafley-rs, hafley-rxjs) | ONE call per endpoint per bucket; a quiet bucket is 9 x 304 / bytes=0 |
 | kill + restart, first poll | 8 x 304, bytes=0, out of 8 stored ETags and 8 stored bodies |
 | the GraphQL pull-request batch | live: `ghcache_pull_request` holds every open PR of the four repos, `_recent` selection (#425) sees merges |
@@ -145,6 +148,78 @@ tick 2000 not over_budget                 due resumes
    the warn-band stretch can only SLOW polling. No rule can shorten a period
    below the configured floor, because a shorter candidate loses the max.
 
+## The account type, and backing off a 404
+
+An `[[org]]` config row names an OWNER, and GitHub answers a different endpoint
+set depending on whether that owner is an org or a user. Two endpoint families
+differ by account type, and until 2026-08-24 only one of them knew it.
+
+| family | org account | user account |
+|---|---|---|
+| repo discovery | `orgs/<owner>/repos` | `users/<owner>/repos` |
+| the events firehose | `users/<me>/events/orgs/<owner>` | `users/<owner>/events` |
+
+`not_an_org(owner) key(1)` is the switch, folded from the `/orgs` 404 and never
+retired. Both families read it, in exclusive arms, so the watched SET is
+untouched: hafley66 stays watched whole and only the spelling adapts.
+
+Two defects, both measured in `~/.agent/dl6.db` over 1,427 minute buckets:
+
+| what | rows | why |
+|---|---|---|
+| `users/hafley66/events/orgs/hafley66` 404 | 1,422 | the events family had no user-account arm |
+| `orgs/hafley66/repos?per_page=100` 404 | 24 | `not_an_org` read its 404 off `rest_response`, which has a 200 arm and a 304 arm and NO OTHER, so the rule was statically dead and `ghcache_not_an_org` was empty |
+
+The backoff is `retryWhen` with a delay, spelled as rels. `miss_streak` counts
+consecutive 404s on PAGE 1 of an endpoint, keyed on the endpoint; the two
+`miss_prior` arms are exclusive on `at_bucket`, the `page_prev_etag` shape, so a
+bucket's extra drain ticks cannot run the counter up. Any non-404 answer resets
+the streak to 0. At `miss_threshold(3)`, `endpoint_cooling` anti-joins into
+`due` until `miss_cooloff(60)` buckets past the LAST miss, so a probe that 404s
+again pushes the resume bucket out by another cool-off instead of resuming every
+bucket. A permanently dead endpoint costs 3 calls, then 24 a day.
+
+### The match form
+
+Five clause-pairs in this program are `match` blocks, one per branch this arc
+touched. The scrutinee parses as a HEAD atom, so it is full arity or
+`partial_head` (`parse_dl_dcg.pl:1400`); the arm guard is an ordinary body, so
+it carries rel reads, `not(...)` and `:=` beside its comparison.
+
+| scrutinee | arms |
+|---|---|
+| `org_owner` | `watched_global` `org_repos` / `user_repos` |
+| `org_config` | `watched_global` `org_events` / `user_events` |
+| `page_response` | `endpoint_miss` / `endpoint_hit` |
+| `endpoint_miss` | `miss_next`, prior streak / no stored row |
+| `page_response` | `call_candidate`, 304 / not 304 |
+
+Every other branch in the file is left as clauses: this arc did not touch them.
+The `call_candidate` graphql arm stays a clause too, because its scrutinee is
+`pr_batch_response` and a match block has one.
+
+## Retention
+
+Three telemetry logs are bounded; `pr_transition` is the record of what changed
+and stays `keep(all)`. The Ns are one measured rate times 1,440 buckets.
+
+| rel | rows/bucket measured | keep | hours |
+|---|---:|---:|---:|
+| `engine_tick_cost` | 93.23 (243 executors) | 140000 | 25.0 |
+| `change_log` | 22.29 | 34000 | 25.4 |
+| `call_log` | 10.71 | 16500 | 25.7 |
+
+`call_log` had three `<+` arms and `retention_head_conflict_risk`
+(`0_program_check.pl:666`) refuses two or more on a bounded log head, so the
+three fold into a `call_candidate` LEVEL rel first and one edge arm stamps it.
+`call_candidate` carries `bucket`, which is the granularity the three arms
+already had through `page_response`, so an identical answer in a later bucket is
+still a positive delta and still one log row.
+
+The prune is `DELETE ... WHERE rowid NOT IN (SELECT rowid ... ORDER BY rowid
+DESC LIMIT N) RETURNING`, run at tick end. MEASURED at the `engine_tick_cost`
+bound: 59 ms at 150,093 rows deleting 93, against a tick interval of ~13 s.
+
 ## Ability map
 
 ### the conditional GET and its bookkeeping
@@ -187,7 +262,9 @@ tick 2000 not over_budget                 due resumes
 | ghcacher | dl6 |
 |---|---|
 | `sync/mod.rs:43-104` `discover_org_repos` | `watched_global(_, _, 'org_repos')` + `discovered_repo/3` |
-| `sync/mod.rs:66-90` the `/orgs` 404 -> `/users` fallback | `not_an_org/1`, minted from a 404 response |
+| `sync/mod.rs:66-90` the `/orgs` 404 -> `/users` fallback | `not_an_org/1`, minted from `endpoint_miss/2` |
+| `sync/events.rs:117-225` the org-events endpoint, per account type | `watched_global(_, _, 'org_events')` and `watched_global(_, _, 'user_events')`, exclusive on `not_an_org/1` |
+| `gh.rs` had no equivalent: a 404 repeated forever | `miss_streak/3` + `endpoint_cooling/2`, anti-joined into `due/3` |
 | `sync/mod.rs:114-131` `org_to_repos` | the second `watched_repo_seen` rule |
 | `sync/mod.rs:196-199` configured then discovered | two `watched_repo_seen` rules, union |
 | `sync/mod.rs:242-248` full sweep vs targeted | `pr_due/2`'s two arms |
@@ -251,8 +328,8 @@ tick 2000 not over_budget                 due resumes
 | 8 | `pr_requested_reviewer` | `pr_requested_reviewer/3` | `key(1, 2, 3)` |
 | 9 | `repo_event` | `repo_event/6` | `key(1, 2)` |
 | 10 | `notification` | `notification/11` | `key(1)` |
-| 11 | `call_log` | `call_log/8` | `log keep(all)` |
-| 12 | `change_log` | `change_log/4` | `log keep(all)` |
+| 11 | `call_log` | `call_log/8` | `log keep(count(16500))` |
+| 12 | `change_log` | `change_log/4` | `log keep(count(34000))` |
 | 13 | `poll_state` | five keyed projections + `poll_state/6` view | `key(1)` each |
 | 14 | `checkout` | `checkout/5` | `key(1, 2)` |
 | 15 | `worktree` | NOT CARRIED, see below | |
