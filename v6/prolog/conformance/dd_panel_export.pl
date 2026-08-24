@@ -6,9 +6,14 @@
 % the stream below. Correctness only; nothing here times anything.
 %
 % Run (writes conformance/dd_panel.json):
-%   cd v6/prolog/conformance && swipl -q -l dd_panel_export.pl -g go -t halt
+%   cd v6/prolog/conformance
+%   swipl -q -l dd_panel_export.pl -g dd_panel_export:go -t halt
 % Check the committed file is current (exit 1 on drift):
-%   cd v6/prolog/conformance && swipl -q -l dd_panel_export.pl -g check -t halt
+%   swipl -q -l dd_panel_export.pl -g dd_panel_export:check -t halt
+%
+% The entry points are module-qualified rather than exported: nothing in the
+% tree calls them, and prolog-lint.sh reads a bare export no caller reaches as
+% an unused_export_candidate finding.
 %
 % WHY A SEPARATE SEED STATE. run_program/5 returns exactly one delta tick per
 % SCHEDULE tick; rows derived from the fixture's Initial seed appear in no delta
@@ -24,7 +29,7 @@
 % column value ships as {"t":"int"|"real"|"text","v":...} so the Rust side
 % decodes into one Ord row type with no per-column type table.
 
-:- module(dd_panel_export, [ panel_program/2, panel_dict/1, go/0, check/0 ]).
+:- module(dd_panel_export, []).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
