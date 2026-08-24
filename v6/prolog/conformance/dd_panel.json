@@ -1,0 +1,1414 @@
+{
+  "programs": [
+    {
+      "deltas": [],
+      "final": [
+	{
+	  "arity":2,
+	  "rel":"mean",
+	  "values": [ {"t":"text","v":"a"},  {"t":"real","v":1.0} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"mean",
+	  "values": [ {"t":"text","v":"b"},  {"t":"real","v":0.25} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"score",
+	  "values": [ {"t":"text","v":"a"},  {"t":"real","v":0.5} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"score",
+	  "values": [ {"t":"text","v":"a"},  {"t":"real","v":1.5} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"score",
+	  "values": [ {"t":"text","v":"b"},  {"t":"real","v":0.25} ]
+	}
+      ],
+      "name":"float_avg_is_grouped",
+      "note":"aggregate: avg over a float column, grouped",
+      "rels": [
+	{
+	  "arity":2,
+	  "columns": [
+	    {"name":"group","type":"text"},
+	    {"name":"value","type":"float"}
+	  ],
+	  "name":"mean"
+	},
+	{
+	  "arity":2,
+	  "columns": [
+	    {"name":"group","type":"text"},
+	    {"name":"value","type":"float"}
+	  ],
+	  "name":"score"
+	}
+      ],
+      "schedule": [],
+      "seed_arrivals": [
+	{
+	  "arity":2,
+	  "rel":"score",
+	  "values": [ {"t":"text","v":"a"},  {"t":"real","v":0.5} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"score",
+	  "values": [ {"t":"text","v":"a"},  {"t":"real","v":1.5} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"score",
+	  "values": [ {"t":"text","v":"b"},  {"t":"real","v":0.25} ]
+	}
+      ],
+      "seed_state": [
+	{
+	  "arity":2,
+	  "rel":"mean",
+	  "values": [ {"t":"text","v":"a"},  {"t":"real","v":1.0} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"mean",
+	  "values": [ {"t":"text","v":"b"},  {"t":"real","v":0.25} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"score",
+	  "values": [ {"t":"text","v":"a"},  {"t":"real","v":0.5} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"score",
+	  "values": [ {"t":"text","v":"a"},  {"t":"real","v":1.5} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"score",
+	  "values": [ {"t":"text","v":"b"},  {"t":"real","v":0.25} ]
+	}
+      ]
+    },
+    {
+      "deltas": [],
+      "final": [
+	{"arity":1,"rel":"matched","values": [ {"t":"text","v":"beta"} ]},
+	{
+	  "arity":2,
+	  "rel":"left",
+	  "values": [ {"t":"text","v":"alpha"},  {"t":"real","v":0.3} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"left",
+	  "values": [ {"t":"text","v":"beta"},  {"t":"real","v":0.30000000000000004} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"right",
+	  "values": [ {"t":"text","v":"alpha"},  {"t":"real","v":0.30000000000000004} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"right",
+	  "values": [ {"t":"text","v":"beta"},  {"t":"real","v":0.30000000000000004} ]
+	}
+      ],
+      "name":"float_exact_join_has_no_epsilon",
+      "note":"two-way join whose key is an exact float bit pattern",
+      "rels": [
+	{
+	  "arity":2,
+	  "columns": [ {"name":"name","type":"text"},  {"name":"value","type":"float"} ],
+	  "name":"left"
+	},
+	{
+	  "arity":1,
+	  "columns": [ {"name":"name","type":"text"} ],
+	  "name":"matched"
+	},
+	{
+	  "arity":2,
+	  "columns": [ {"name":"name","type":"text"},  {"name":"value","type":"float"} ],
+	  "name":"right"
+	}
+      ],
+      "schedule": [],
+      "seed_arrivals": [
+	{
+	  "arity":2,
+	  "rel":"left",
+	  "values": [ {"t":"text","v":"alpha"},  {"t":"real","v":0.3} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"left",
+	  "values": [ {"t":"text","v":"beta"},  {"t":"real","v":0.30000000000000004} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"right",
+	  "values": [ {"t":"text","v":"alpha"},  {"t":"real","v":0.30000000000000004} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"right",
+	  "values": [ {"t":"text","v":"beta"},  {"t":"real","v":0.30000000000000004} ]
+	}
+      ],
+      "seed_state": [
+	{"arity":1,"rel":"matched","values": [ {"t":"text","v":"beta"} ]},
+	{
+	  "arity":2,
+	  "rel":"left",
+	  "values": [ {"t":"text","v":"alpha"},  {"t":"real","v":0.3} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"left",
+	  "values": [ {"t":"text","v":"beta"},  {"t":"real","v":0.30000000000000004} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"right",
+	  "values": [ {"t":"text","v":"alpha"},  {"t":"real","v":0.30000000000000004} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"right",
+	  "values": [ {"t":"text","v":"beta"},  {"t":"real","v":0.30000000000000004} ]
+	}
+      ]
+    },
+    {
+      "deltas": [
+	[
+	  {
+	    "arity":1,
+	    "rel":"mirror",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"alpha"} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"mirror",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"beta"} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"source_row",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"alpha"} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"source_row",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"beta"} ]
+	  }
+	],
+	[
+	  {
+	    "arity":1,
+	    "rel":"mirror",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"alpha"} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"mirror",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"beta"} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"source_row",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"alpha"} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"source_row",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"beta"} ]
+	  }
+	]
+      ],
+      "final": [],
+      "name":"retraction_only_tick_retracts_level_view",
+      "note":"a tick that only retracts, and the level view follows",
+      "rels": [
+	{"arity":1,"columns": [],"name":"mirror"},
+	{"arity":1,"columns": [],"name":"source_row"}
+      ],
+      "schedule": [
+	[
+	  {
+	    "arity":1,
+	    "rel":"source_row",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"alpha"} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"source_row",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"beta"} ]
+	  }
+	],
+	[
+	  {
+	    "arity":1,
+	    "rel":"source_row",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"alpha"} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"source_row",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"beta"} ]
+	  }
+	]
+      ],
+      "seed_arrivals": [],
+      "seed_state": []
+    },
+    {
+      "deltas": [
+	[
+	  {
+	    "arity":3,
+	    "rel":"def",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"helper"},
+	      {"t":"text","v":"method"}
+	    ]
+	  },
+	  {
+	    "arity":3,
+	    "rel":"def",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"main"},
+	      {"t":"text","v":"function"}
+	    ]
+	  },
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"node"},
+	      {"t":"text","v":"function"},
+	      {"t":"text","v":"main"}
+	    ]
+	  },
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"node"},
+	      {"t":"text","v":"method"},
+	      {"t":"text","v":"helper"}
+	    ]
+	  },
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"specifier"},
+	      {"t":"text","v":"named"},
+	      {"t":"text","v":"helper"}
+	    ]
+	  }
+	],
+	[
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"a.rs"},  {"t":"text","v":"helper"} ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"a.rs"},  {"t":"text","v":"missing"} ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"calls",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"main"},  {"t":"text","v":"helper"} ]
+	  }
+	],
+	[
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"b.rs"},  {"t":"text","v":"main"} ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"calls",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"helper"},  {"t":"text","v":"main"} ]
+	  },
+	  {
+	    "arity":3,
+	    "rel":"def",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"b.rs"},
+	      {"t":"text","v":"helper"},
+	      {"t":"text","v":"function"}
+	    ]
+	  },
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"b.rs"},
+	      {"t":"text","v":"node"},
+	      {"t":"text","v":"function"},
+	      {"t":"text","v":"helper"}
+	    ]
+	  }
+	],
+	[
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"b.rs"},  {"t":"text","v":"main"} ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"calls",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"helper"},  {"t":"text","v":"main"} ]
+	  }
+	]
+      ],
+      "final": [
+	{
+	  "arity":2,
+	  "rel":"call",
+	  "values": [ {"t":"text","v":"a.rs"},  {"t":"text","v":"helper"} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"call",
+	  "values": [ {"t":"text","v":"a.rs"},  {"t":"text","v":"missing"} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"calls",
+	  "values": [ {"t":"text","v":"main"},  {"t":"text","v":"helper"} ]
+	},
+	{
+	  "arity":3,
+	  "rel":"def",
+	  "values": [
+	    {"t":"text","v":"a.rs"},
+	    {"t":"text","v":"helper"},
+	    {"t":"text","v":"method"}
+	  ]
+	},
+	{
+	  "arity":3,
+	  "rel":"def",
+	  "values": [
+	    {"t":"text","v":"a.rs"},
+	    {"t":"text","v":"main"},
+	    {"t":"text","v":"function"}
+	  ]
+	},
+	{
+	  "arity":3,
+	  "rel":"def",
+	  "values": [
+	    {"t":"text","v":"b.rs"},
+	    {"t":"text","v":"helper"},
+	    {"t":"text","v":"function"}
+	  ]
+	},
+	{
+	  "arity":4,
+	  "rel":"node_fact",
+	  "values": [
+	    {"t":"text","v":"a.rs"},
+	    {"t":"text","v":"node"},
+	    {"t":"text","v":"function"},
+	    {"t":"text","v":"main"}
+	  ]
+	},
+	{
+	  "arity":4,
+	  "rel":"node_fact",
+	  "values": [
+	    {"t":"text","v":"a.rs"},
+	    {"t":"text","v":"node"},
+	    {"t":"text","v":"method"},
+	    {"t":"text","v":"helper"}
+	  ]
+	},
+	{
+	  "arity":4,
+	  "rel":"node_fact",
+	  "values": [
+	    {"t":"text","v":"a.rs"},
+	    {"t":"text","v":"specifier"},
+	    {"t":"text","v":"named"},
+	    {"t":"text","v":"helper"}
+	  ]
+	},
+	{
+	  "arity":4,
+	  "rel":"node_fact",
+	  "values": [
+	    {"t":"text","v":"b.rs"},
+	    {"t":"text","v":"node"},
+	    {"t":"text","v":"function"},
+	    {"t":"text","v":"helper"}
+	  ]
+	}
+      ],
+      "name":"callgraph_derivation_over_extraction",
+      "note":"three-way join with an inequality, plus a join retraction",
+      "rels": [
+	{
+	  "arity":2,
+	  "columns": [ {"name":"path","type":"text"},  {"name":"callee","type":"text"} ],
+	  "name":"call"
+	},
+	{
+	  "arity":2,
+	  "columns": [
+	    {"name":"caller","type":"text"},
+	    {"name":"callee","type":"text"}
+	  ],
+	  "name":"calls"
+	},
+	{
+	  "arity":3,
+	  "columns": [
+	    {"name":"path","type":"text"},
+	    {"name":"name","type":"text"},
+	    {"name":"kind","type":"text"}
+	  ],
+	  "name":"def"
+	},
+	{
+	  "arity":4,
+	  "columns": [
+	    {"name":"path","type":"text"},
+	    {"name":"record","type":"text"},
+	    {"name":"kind","type":"text"},
+	    {"name":"name","type":"text"}
+	  ],
+	  "name":"node_fact"
+	}
+      ],
+      "schedule": [
+	[
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"node"},
+	      {"t":"text","v":"function"},
+	      {"t":"text","v":"main"}
+	    ]
+	  },
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"node"},
+	      {"t":"text","v":"method"},
+	      {"t":"text","v":"helper"}
+	    ]
+	  },
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"specifier"},
+	      {"t":"text","v":"named"},
+	      {"t":"text","v":"helper"}
+	    ]
+	  }
+	],
+	[
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"a.rs"},  {"t":"text","v":"helper"} ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"a.rs"},  {"t":"text","v":"missing"} ]
+	  }
+	],
+	[
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"b.rs"},
+	      {"t":"text","v":"node"},
+	      {"t":"text","v":"function"},
+	      {"t":"text","v":"helper"}
+	    ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"b.rs"},  {"t":"text","v":"main"} ]
+	  }
+	],
+	[
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"b.rs"},  {"t":"text","v":"main"} ]
+	  }
+	]
+      ],
+      "seed_arrivals": [],
+      "seed_state": []
+    },
+    {
+      "deltas": [
+	[
+	  {
+	    "arity":1,
+	    "rel":"unused",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"helper"} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"unused",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"main"} ]
+	  },
+	  {
+	    "arity":3,
+	    "rel":"def",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"helper"},
+	      {"t":"text","v":"method"}
+	    ]
+	  },
+	  {
+	    "arity":3,
+	    "rel":"def",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"main"},
+	      {"t":"text","v":"function"}
+	    ]
+	  },
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"node"},
+	      {"t":"text","v":"function"},
+	      {"t":"text","v":"main"}
+	    ]
+	  },
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"node"},
+	      {"t":"text","v":"method"},
+	      {"t":"text","v":"helper"}
+	    ]
+	  },
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"specifier"},
+	      {"t":"text","v":"named"},
+	      {"t":"text","v":"helper"}
+	    ]
+	  }
+	],
+	[
+	  {
+	    "arity":1,
+	    "rel":"unused",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"helper"} ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"a.rs"},  {"t":"text","v":"helper"} ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"a.rs"},  {"t":"text","v":"missing"} ]
+	  }
+	],
+	[
+	  {
+	    "arity":1,
+	    "rel":"unused",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"main"} ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"b.rs"},  {"t":"text","v":"main"} ]
+	  },
+	  {
+	    "arity":3,
+	    "rel":"def",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"b.rs"},
+	      {"t":"text","v":"helper"},
+	      {"t":"text","v":"function"}
+	    ]
+	  },
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"b.rs"},
+	      {"t":"text","v":"node"},
+	      {"t":"text","v":"function"},
+	      {"t":"text","v":"helper"}
+	    ]
+	  }
+	],
+	[
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"b.rs"},  {"t":"text","v":"main"} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"unused",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"main"} ]
+	  }
+	],
+	[
+	  {
+	    "arity":1,
+	    "rel":"unused",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"main"} ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"a.rs"},  {"t":"text","v":"main"} ]
+	  }
+	]
+      ],
+      "final": [
+	{
+	  "arity":2,
+	  "rel":"call",
+	  "values": [ {"t":"text","v":"a.rs"},  {"t":"text","v":"helper"} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"call",
+	  "values": [ {"t":"text","v":"a.rs"},  {"t":"text","v":"main"} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"call",
+	  "values": [ {"t":"text","v":"a.rs"},  {"t":"text","v":"missing"} ]
+	},
+	{
+	  "arity":3,
+	  "rel":"def",
+	  "values": [
+	    {"t":"text","v":"a.rs"},
+	    {"t":"text","v":"helper"},
+	    {"t":"text","v":"method"}
+	  ]
+	},
+	{
+	  "arity":3,
+	  "rel":"def",
+	  "values": [
+	    {"t":"text","v":"a.rs"},
+	    {"t":"text","v":"main"},
+	    {"t":"text","v":"function"}
+	  ]
+	},
+	{
+	  "arity":3,
+	  "rel":"def",
+	  "values": [
+	    {"t":"text","v":"b.rs"},
+	    {"t":"text","v":"helper"},
+	    {"t":"text","v":"function"}
+	  ]
+	},
+	{
+	  "arity":4,
+	  "rel":"node_fact",
+	  "values": [
+	    {"t":"text","v":"a.rs"},
+	    {"t":"text","v":"node"},
+	    {"t":"text","v":"function"},
+	    {"t":"text","v":"main"}
+	  ]
+	},
+	{
+	  "arity":4,
+	  "rel":"node_fact",
+	  "values": [
+	    {"t":"text","v":"a.rs"},
+	    {"t":"text","v":"node"},
+	    {"t":"text","v":"method"},
+	    {"t":"text","v":"helper"}
+	  ]
+	},
+	{
+	  "arity":4,
+	  "rel":"node_fact",
+	  "values": [
+	    {"t":"text","v":"a.rs"},
+	    {"t":"text","v":"specifier"},
+	    {"t":"text","v":"named"},
+	    {"t":"text","v":"helper"}
+	  ]
+	},
+	{
+	  "arity":4,
+	  "rel":"node_fact",
+	  "values": [
+	    {"t":"text","v":"b.rs"},
+	    {"t":"text","v":"node"},
+	    {"t":"text","v":"function"},
+	    {"t":"text","v":"helper"}
+	  ]
+	}
+      ],
+      "name":"callgraph_unused_inverts_with_the_call_set",
+      "note":"negation, anti-monotone in both directions across five ticks",
+      "rels": [
+	{
+	  "arity":2,
+	  "columns": [ {"name":"path","type":"text"},  {"name":"callee","type":"text"} ],
+	  "name":"call"
+	},
+	{
+	  "arity":3,
+	  "columns": [
+	    {"name":"path","type":"text"},
+	    {"name":"name","type":"text"},
+	    {"name":"kind","type":"text"}
+	  ],
+	  "name":"def"
+	},
+	{
+	  "arity":4,
+	  "columns": [
+	    {"name":"path","type":"text"},
+	    {"name":"record","type":"text"},
+	    {"name":"kind","type":"text"},
+	    {"name":"name","type":"text"}
+	  ],
+	  "name":"node_fact"
+	},
+	{
+	  "arity":1,
+	  "columns": [ {"name":"name","type":"text"} ],
+	  "name":"unused"
+	}
+      ],
+      "schedule": [
+	[
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"node"},
+	      {"t":"text","v":"function"},
+	      {"t":"text","v":"main"}
+	    ]
+	  },
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"node"},
+	      {"t":"text","v":"method"},
+	      {"t":"text","v":"helper"}
+	    ]
+	  },
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"a.rs"},
+	      {"t":"text","v":"specifier"},
+	      {"t":"text","v":"named"},
+	      {"t":"text","v":"helper"}
+	    ]
+	  }
+	],
+	[
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"a.rs"},  {"t":"text","v":"helper"} ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"a.rs"},  {"t":"text","v":"missing"} ]
+	  }
+	],
+	[
+	  {
+	    "arity":4,
+	    "rel":"node_fact",
+	    "sign":1,
+	    "values": [
+	      {"t":"text","v":"b.rs"},
+	      {"t":"text","v":"node"},
+	      {"t":"text","v":"function"},
+	      {"t":"text","v":"helper"}
+	    ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"b.rs"},  {"t":"text","v":"main"} ]
+	  }
+	],
+	[
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"b.rs"},  {"t":"text","v":"main"} ]
+	  }
+	],
+	[
+	  {
+	    "arity":2,
+	    "rel":"call",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"a.rs"},  {"t":"text","v":"main"} ]
+	  }
+	]
+      ],
+      "seed_arrivals": [],
+      "seed_state": []
+    },
+    {
+      "deltas": [
+	[
+	  {
+	    "arity":3,
+	    "rel":"leg_total",
+	    "sign":1,
+	    "values": [ {"t":"int","v":11},  {"t":"int","v":1},  {"t":"int","v":2} ]
+	  },
+	  {
+	    "arity":4,
+	    "rel":"dispatch_leg",
+	    "sign":1,
+	    "values": [
+	      {"t":"int","v":11},
+	      {"t":"int","v":1},
+	      {"t":"int","v":0},
+	      {"t":"int","v":2}
+	    ]
+	  }
+	],
+	[
+	  {
+	    "arity":3,
+	    "rel":"leg_total",
+	    "sign":1,
+	    "values": [ {"t":"int","v":12},  {"t":"int","v":1},  {"t":"int","v":5} ]
+	  },
+	  {
+	    "arity":4,
+	    "rel":"dispatch_leg",
+	    "sign":1,
+	    "values": [
+	      {"t":"int","v":12},
+	      {"t":"int","v":1},
+	      {"t":"int","v":11},
+	      {"t":"int","v":3}
+	    ]
+	  }
+	],
+	[
+	  {
+	    "arity":3,
+	    "rel":"leg_total",
+	    "sign":1,
+	    "values": [ {"t":"int","v":13},  {"t":"int","v":1},  {"t":"int","v":9} ]
+	  },
+	  {
+	    "arity":4,
+	    "rel":"dispatch_leg",
+	    "sign":1,
+	    "values": [
+	      {"t":"int","v":13},
+	      {"t":"int","v":1},
+	      {"t":"int","v":12},
+	      {"t":"int","v":4}
+	    ]
+	  }
+	]
+      ],
+      "final": [
+	{
+	  "arity":3,
+	  "rel":"leg_total",
+	  "values": [ {"t":"int","v":11},  {"t":"int","v":1},  {"t":"int","v":2} ]
+	},
+	{
+	  "arity":3,
+	  "rel":"leg_total",
+	  "values": [ {"t":"int","v":12},  {"t":"int","v":1},  {"t":"int","v":5} ]
+	},
+	{
+	  "arity":3,
+	  "rel":"leg_total",
+	  "values": [ {"t":"int","v":13},  {"t":"int","v":1},  {"t":"int","v":9} ]
+	},
+	{
+	  "arity":4,
+	  "rel":"dispatch_leg",
+	  "values": [
+	    {"t":"int","v":11},
+	    {"t":"int","v":1},
+	    {"t":"int","v":0},
+	    {"t":"int","v":2}
+	  ]
+	},
+	{
+	  "arity":4,
+	  "rel":"dispatch_leg",
+	  "values": [
+	    {"t":"int","v":12},
+	    {"t":"int","v":1},
+	    {"t":"int","v":11},
+	    {"t":"int","v":3}
+	  ]
+	},
+	{
+	  "arity":4,
+	  "rel":"dispatch_leg",
+	  "values": [
+	    {"t":"int","v":13},
+	    {"t":"int","v":1},
+	    {"t":"int","v":12},
+	    {"t":"int","v":4}
+	  ]
+	}
+      ],
+      "name":"ordered_program_level_fold_reaches_three_links",
+      "note":"recursion: a self-referential level head folding a three-link chain",
+      "rels": [
+	{"arity":4,"columns": [],"name":"dispatch_leg"},
+	{"arity":3,"columns": [],"name":"leg_total"}
+      ],
+      "schedule": [
+	[
+	  {
+	    "arity":4,
+	    "rel":"dispatch_leg",
+	    "sign":1,
+	    "values": [
+	      {"t":"int","v":11},
+	      {"t":"int","v":1},
+	      {"t":"int","v":0},
+	      {"t":"int","v":2}
+	    ]
+	  }
+	],
+	[
+	  {
+	    "arity":4,
+	    "rel":"dispatch_leg",
+	    "sign":1,
+	    "values": [
+	      {"t":"int","v":12},
+	      {"t":"int","v":1},
+	      {"t":"int","v":11},
+	      {"t":"int","v":3}
+	    ]
+	  }
+	],
+	[
+	  {
+	    "arity":4,
+	    "rel":"dispatch_leg",
+	    "sign":1,
+	    "values": [
+	      {"t":"int","v":13},
+	      {"t":"int","v":1},
+	      {"t":"int","v":12},
+	      {"t":"int","v":4}
+	    ]
+	  }
+	]
+      ],
+      "seed_arrivals": [],
+      "seed_state": []
+    },
+    {
+      "deltas": [
+	[
+	  {
+	    "arity":1,
+	    "rel":"clock",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"go"} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"even",
+	    "sign":1,
+	    "values": [ {"t":"int","v":0} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"even",
+	    "sign":1,
+	    "values": [ {"t":"int","v":3} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"odd",
+	    "sign":1,
+	    "values": [ {"t":"int","v":0} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"odd",
+	    "sign":1,
+	    "values": [ {"t":"int","v":3} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"seed",
+	    "sign":1,
+	    "values": [ {"t":"int","v":0} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"seed",
+	    "sign":1,
+	    "values": [ {"t":"int","v":3} ]
+	  }
+	]
+      ],
+      "final": [
+	{"arity":1,"rel":"clock","values": [ {"t":"text","v":"go"} ]},
+	{"arity":1,"rel":"even","values": [ {"t":"int","v":0} ]},
+	{"arity":1,"rel":"even","values": [ {"t":"int","v":3} ]},
+	{"arity":1,"rel":"odd","values": [ {"t":"int","v":0} ]},
+	{"arity":1,"rel":"odd","values": [ {"t":"int","v":3} ]},
+	{"arity":1,"rel":"seed","values": [ {"t":"int","v":0} ]},
+	{"arity":1,"rel":"seed","values": [ {"t":"int","v":3} ]}
+      ],
+      "name":"mutual_recursion_matches_oracle",
+      "note":"mutual recursion, and one row derived two ways",
+      "rels": [
+	{"arity":1,"columns": [],"name":"clock"},
+	{"arity":1,"columns": [],"name":"even"},
+	{"arity":1,"columns": [],"name":"odd"},
+	{"arity":1,"columns": [],"name":"seed"}
+      ],
+      "schedule": [
+	[
+	  {
+	    "arity":1,
+	    "rel":"clock",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"go"} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"seed",
+	    "sign":1,
+	    "values": [ {"t":"int","v":0} ]
+	  },
+	  {
+	    "arity":1,
+	    "rel":"seed",
+	    "sign":1,
+	    "values": [ {"t":"int","v":3} ]
+	  }
+	]
+      ],
+      "seed_arrivals": [],
+      "seed_state": []
+    },
+    {
+      "deltas": [
+	[
+	  {"arity":1,"rel":"a","sign":1,"values": [ {"t":"int","v":1} ]},
+	  {"arity":1,"rel":"b","sign":1,"values": [ {"t":"int","v":1} ]},
+	  {"arity":1,"rel":"c","sign":1,"values": [ {"t":"int","v":1} ]}
+	],
+	[
+	  {"arity":1,"rel":"a","sign":-1,"values": [ {"t":"int","v":1} ]},
+	  {"arity":1,"rel":"b","sign":-1,"values": [ {"t":"int","v":1} ]},
+	  {"arity":1,"rel":"c","sign":-1,"values": [ {"t":"int","v":1} ]}
+	]
+      ],
+      "final": [],
+      "name":"recount_retraction_reaches_two_heads_same_tick",
+      "note":"retraction cascade reaching two derived heads in one tick",
+      "rels": [
+	{"arity":1,"columns": [],"name":"a"},
+	{"arity":1,"columns": [],"name":"b"},
+	{"arity":1,"columns": [],"name":"c"}
+      ],
+      "schedule": [
+	[ {"arity":1,"rel":"a","sign":1,"values": [ {"t":"int","v":1} ]} ],
+	[ {"arity":1,"rel":"a","sign":-1,"values": [ {"t":"int","v":1} ]} ]
+      ],
+      "seed_arrivals": [],
+      "seed_state": []
+    },
+    {
+      "deltas": [],
+      "final": [
+	{"arity":1,"rel":"repo","values": [ {"t":"text","v":"alpha"} ]},
+	{"arity":1,"rel":"repo","values": [ {"t":"text","v":"beta"} ]},
+	{
+	  "arity":2,
+	  "rel":"latest_commit",
+	  "values": [ {"t":"text","v":"alpha"},  {"t":"text","v":"sha-1"} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"repo_latest",
+	  "values": [ {"t":"text","v":"alpha"},  {"t":"text","v":"sha-1"} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"repo_latest",
+	  "values": [ {"t":"text","v":"beta"},  {"t":"text","v":"absent"} ]
+	}
+      ],
+      "name":"coalesce_defaults_the_absent_row",
+      "note":"coalesce: present and absent rows in one answer, seed only",
+      "rels": [
+	{
+	  "arity":2,
+	  "columns": [ {"name":"name","type":"text"},  {"name":"commit","type":"text"} ],
+	  "name":"latest_commit"
+	},
+	{
+	  "arity":1,
+	  "columns": [ {"name":"name","type":"text"} ],
+	  "name":"repo"
+	},
+	{
+	  "arity":2,
+	  "columns": [ {"name":"name","type":"text"},  {"name":"commit","type":"text"} ],
+	  "name":"repo_latest"
+	}
+      ],
+      "schedule": [],
+      "seed_arrivals": [
+	{"arity":1,"rel":"repo","values": [ {"t":"text","v":"alpha"} ]},
+	{"arity":1,"rel":"repo","values": [ {"t":"text","v":"beta"} ]},
+	{
+	  "arity":2,
+	  "rel":"latest_commit",
+	  "values": [ {"t":"text","v":"alpha"},  {"t":"text","v":"sha-1"} ]
+	}
+      ],
+      "seed_state": [
+	{"arity":1,"rel":"repo","values": [ {"t":"text","v":"alpha"} ]},
+	{"arity":1,"rel":"repo","values": [ {"t":"text","v":"beta"} ]},
+	{
+	  "arity":2,
+	  "rel":"latest_commit",
+	  "values": [ {"t":"text","v":"alpha"},  {"t":"text","v":"sha-1"} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"repo_latest",
+	  "values": [ {"t":"text","v":"alpha"},  {"t":"text","v":"sha-1"} ]
+	},
+	{
+	  "arity":2,
+	  "rel":"repo_latest",
+	  "values": [ {"t":"text","v":"beta"},  {"t":"text","v":"absent"} ]
+	}
+      ]
+    },
+    {
+      "deltas": [
+	[
+	  {
+	    "arity":2,
+	    "rel":"repo_latest",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"alpha"},  {"t":"text","v":"absent"} ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"latest_commit",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"alpha"},  {"t":"text","v":"sha-1"} ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"repo_latest",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"alpha"},  {"t":"text","v":"sha-1"} ]
+	  }
+	],
+	[
+	  {
+	    "arity":2,
+	    "rel":"latest_commit",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"alpha"},  {"t":"text","v":"sha-1"} ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"repo_latest",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"alpha"},  {"t":"text","v":"sha-1"} ]
+	  },
+	  {
+	    "arity":2,
+	    "rel":"repo_latest",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"alpha"},  {"t":"text","v":"absent"} ]
+	  }
+	]
+      ],
+      "final": [
+	{"arity":1,"rel":"repo","values": [ {"t":"text","v":"alpha"} ]},
+	{
+	  "arity":2,
+	  "rel":"repo_latest",
+	  "values": [ {"t":"text","v":"alpha"},  {"t":"text","v":"absent"} ]
+	}
+      ],
+      "name":"coalesce_default_returns_when_source_retracts",
+      "note":"coalesce: the default leaves and comes back over two ticks",
+      "rels": [
+	{
+	  "arity":2,
+	  "columns": [ {"name":"name","type":"text"},  {"name":"commit","type":"text"} ],
+	  "name":"latest_commit"
+	},
+	{
+	  "arity":1,
+	  "columns": [ {"name":"name","type":"text"} ],
+	  "name":"repo"
+	},
+	{
+	  "arity":2,
+	  "columns": [ {"name":"name","type":"text"},  {"name":"commit","type":"text"} ],
+	  "name":"repo_latest"
+	}
+      ],
+      "schedule": [
+	[
+	  {
+	    "arity":2,
+	    "rel":"latest_commit",
+	    "sign":1,
+	    "values": [ {"t":"text","v":"alpha"},  {"t":"text","v":"sha-1"} ]
+	  }
+	],
+	[
+	  {
+	    "arity":2,
+	    "rel":"latest_commit",
+	    "sign":-1,
+	    "values": [ {"t":"text","v":"alpha"},  {"t":"text","v":"sha-1"} ]
+	  }
+	]
+      ],
+      "seed_arrivals": [ {"arity":1,"rel":"repo","values": [ {"t":"text","v":"alpha"} ]} ],
+      "seed_state": [
+	{"arity":1,"rel":"repo","values": [ {"t":"text","v":"alpha"} ]},
+	{
+	  "arity":2,
+	  "rel":"repo_latest",
+	  "values": [ {"t":"text","v":"alpha"},  {"t":"text","v":"absent"} ]
+	}
+      ]
+    }
+  ]
+}
