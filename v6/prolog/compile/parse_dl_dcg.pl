@@ -617,12 +617,11 @@ rel_stmt_in(Prefix, Decls, [decl_site(Rem, OwnDecls) | ChildSites]) -->
              ws,
              { typed_decl_entries(Ref, ArrowSpecs, Typed) },
              rel_modifiers(Ref, Mods),
-             is_clause(Ref, Conformance),
              { module_path_decls(Segs, Ref, PathDecls),
                arrow_return_alias_decl(Ref, ReturnAlias, AliasDecls),
                column_less_decls(Ref, ArrowSpecs, Mods, UnitDecls),
-               append([Typed, Mods, PathDecls, AliasDecls, UnitDecls,
-                       Conformance], OwnDecls) },
+               append([Typed, Mods, PathDecls, AliasDecls, UnitDecls],
+                      OwnDecls) },
              rel_decl_end(Segs, ChildDecls, ChildSites)
           )
       )
@@ -812,15 +811,6 @@ interface_stmt(interface_decl(Name, Parameters)) -->
     ;  { Parameters = [] }
     ),
     #`.`.
-
-% Arity and interface existence are NOT checked here: the single-pass parser
-% holds no other declaration when this clause runs.
-is_clause(Ref, Decls) -->
-    ( ~`is`
-    -> ws, sep(type_application, Applications),
-       { Decls = [rel_is_implementation(Ref, Applications)] }
-    ;  { Decls = [] }
-    ).
 
 type_application(Application) -->
     dotted_path(Segs), ws,

@@ -47,6 +47,7 @@ PINNED=(
   "rust-associated-outputs:$V6_DIR/dl/fixtures/rust-associated-outputs.dl6"
   "type-annotation-ci:$V6_DIR/dl/fixtures/type-annotation-ci.dl6"
   "type-reflection:$V6_DIR/dl/fixtures/0_type-reflection.dl6"
+  "compiler-derived-relation:$V6_DIR/dl/fixtures/0_compiler-derived-relation.dl6"
 )
 
 # Constructs the current type-plane door mints for no fixture; rows checked in
@@ -309,6 +310,13 @@ judge_source() { # name -> parity and target compilation for a real .dl6 source
     FAILED=1
     return
   fi
+  if [ -f "$GOLDEN_DIR/$name.types.ts" ] &&
+     ! diff -u "$GOLDEN_DIR/$name.types.ts" "$WORK/$name.types.ts" >"$WORK/$name.ts.diff" 2>&1; then
+    echo "FAIL  $name: generated TypeScript differs from golden"
+    cat "$WORK/$name.ts.diff"
+    FAILED=1
+    return
+  fi
   if ! compile_ts "$name"; then
     echo "FAIL  $name: generated TypeScript did not compile"
     FAILED=1
@@ -325,6 +333,13 @@ judge_source() { # name -> parity and target compilation for a real .dl6 source
     FAILED=1
     return
   fi
+  if [ -f "$GOLDEN_DIR/$name.types.rs" ] &&
+     ! diff -u "$GOLDEN_DIR/$name.types.rs" "$WORK/$name.types.rs" >"$WORK/$name.rust.diff" 2>&1; then
+    echo "FAIL  $name: generated Rust differs from golden"
+    cat "$WORK/$name.rust.diff"
+    FAILED=1
+    return
+  fi
   if ! compile_rust "$name"; then
     echo "FAIL  $name: generated Rust temporary crate did not test"
     FAILED=1
@@ -332,6 +347,13 @@ judge_source() { # name -> parity and target compilation for a real .dl6 source
   fi
   if ! render_prolog_schema "$name" || ! validate_schema "$name" "$kind"; then
     echo "FAIL  $name: generated JSON Schema did not validate"
+    FAILED=1
+    return
+  fi
+  if [ -f "$GOLDEN_DIR/$name.schema.json" ] &&
+     ! diff -u "$GOLDEN_DIR/$name.schema.json" "$WORK/$name.schema.json" >"$WORK/$name.schema.diff" 2>&1; then
+    echo "FAIL  $name: generated JSON Schema differs from golden"
+    cat "$WORK/$name.schema.diff"
     FAILED=1
     return
   fi

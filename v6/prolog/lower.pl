@@ -1921,14 +1921,11 @@ catalog_type_metadata_rows(Decls, ModuleId, RelIdMap, ListIdMap, Id0, Rows,
     metadata_instance_rows(Instances, GenericMap, RelIdMap, ListIdMap, Id4a,
                            InstanceRows, Id5),
     metadata_anonymous_rows(SemanticRows, RelIdMap, Id5, AnonymousRows, Id6),
-    findall(implementation(Ref, Application),
-            ( member(rel_is_implementation(Ref, Applications), Decls),
-              member(Application, Applications) ), Implementations),
-    metadata_implementation_rows(Implementations, InterfaceMap, RelIdMap, Id6,
-                                 ImplementationRows, IdFinal),
+    metadata_derived_relation_rows(SemanticRows, RelIdMap, Id6,
+                                   DerivedRelationRows, IdFinal),
     append([InterfaceRows, GenericRows, InterfaceParameterRows,
             GenericParameterRows, GenericColumnRows, InstanceRows,
-            AnonymousRows, ImplementationRows], RawRows),
+            AnonymousRows, DerivedRelationRows], RawRows),
     annotate_catalog_semantic_ids(RawRows, RawRows, SemanticRows, Rows).
 
 semantic_rows_from_decls(Decls, Rows) :-
@@ -2030,15 +2027,6 @@ catalog_semantic_id(row(_, ParameterId, _, Name, constraint, _, _, _, _, _, Patt
     ( Patterns == [], member(constraint(Id, Parameter, Interface), Rows)
     ; member(constraint(Id, Parameter, Interface, Patterns), Rows)
     ), !.
-catalog_semantic_id(row(_, SubjectId, _, Interface, implementation, _, _, _, _, _, Arguments),
-                    AllRows, Rows, Id) :-
-    semantic_relation_id(SubjectId, AllRows, Rows, Subject),
-    id_kind_name(InterfaceId, interface, Interface),
-    ( Arguments == [],
-      member(implementation(Id, Subject, interface_application(InterfaceId)), Rows)
-    ; member(implementation(Id, Subject,
-                            interface_application(InterfaceId, Arguments)), Rows)
-    ), !.
 catalog_semantic_id(row(_, _, _, Name, concrete_type, _, _, _, _, _, _), _, Rows, Id) :-
     member(declaration(Id, _, Name, relation, materialized), Rows), !.
 catalog_semantic_id(_, _, _, '').
@@ -2054,10 +2042,6 @@ semantic_parameter_id(CatalogId, AllRows, Rows, SemanticId) :-
     member(row(CatalogId, OwnerId, Ordinal, Name, type_parameter, _, _, _, _, _, _), AllRows),
     semantic_owner_id(OwnerId, AllRows, Rows, Owner),
     member(parameter(SemanticId, Owner, Ordinal, Name), Rows), !.
-
-semantic_relation_id(CatalogId, AllRows, Rows, SemanticId) :-
-    member(row(CatalogId, _, _, Name, rel, _, _, _, _, _, _), AllRows),
-    member(declaration(SemanticId, _, Name, relation, _), Rows), !.
 
 metadata_named_rows([], _, _, Id, [], [], Id).
 metadata_named_rows([Name-_ | Rest], Kind, ModuleId, Id0,
@@ -2191,6 +2175,34 @@ metadata_anonymous_rows_([Name | Rest], RelIdMap, Id0,
 metadata_anonymous_rows_([_Name | Rest], RelIdMap, Id0, Rows, IdFinal) :-
     metadata_anonymous_rows_(Rest, RelIdMap, Id0, Rows, IdFinal).
 
+% A compiler-derived relation is a concrete application whose constructor is
+% identified by a return member. Its generated name uses the same helper
+% prefix as generic instances, so target renderers need the concrete marker.
+metadata_derived_relation_rows(SemanticRows, RelIdMap, Id0, Rows, IdFinal) :-
+    findall(Name,
+            ( member(derived_from(ConcreteId, ApplicationId), SemanticRows),
+              member(application(ApplicationId, ConstructorId), SemanticRows),
+              member(declaration(ConcreteId, _, Name, relation, materialized),
+                     SemanticRows),
+              member(member(ReturnMemberId, ConstructorId, _, return, _),
+                     SemanticRows),
+              member(member_role(ReturnMemberId, return), SemanticRows) ),
+            Names0),
+    sort(Names0, Names),
+    metadata_derived_relation_rows_(Names, RelIdMap, Id0, Rows, IdFinal).
+
+metadata_derived_relation_rows_([], _, Id, [], Id).
+metadata_derived_relation_rows_([Name | Rest], RelIdMap, Id0,
+                                [row(Id0, RelId, 0, Name, concrete_type,
+                                     0, 0, 0, '', '', '') | Rows],
+                                IdFinal) :-
+    rel_row_id(RelIdMap, Name, RelId),
+    !,
+    Id1 is Id0 + 1,
+    metadata_derived_relation_rows_(Rest, RelIdMap, Id1, Rows, IdFinal).
+metadata_derived_relation_rows_([_ | Rest], RelIdMap, Id0, Rows, IdFinal) :-
+    metadata_derived_relation_rows_(Rest, RelIdMap, Id0, Rows, IdFinal).
+
 catalog_source_type_id(json_list(Element), _RelIdMap, ListIdMap, TypeId) :- !,
     ( list_row_id(ListIdMap, json_list(Element), TypeId) -> true ; TypeId = 0 ).
 catalog_source_type_id(list(Element), _RelIdMap, ListIdMap, TypeId) :- !,
@@ -2203,19 +2215,6 @@ catalog_source_type_id(Type, RelIdMap, _ListIdMap, TypeId) :-
 catalog_source_type_id(Application, RelIdMap, _ListIdMap, TypeId) :-
     canonical_type_name(Application, Concrete),
     ( rel_row_id(RelIdMap, Concrete, TypeId) -> true ; TypeId = 0 ).
-
-metadata_implementation_rows([], _, _, Id, [], Id).
-metadata_implementation_rows([implementation(Name/_, Application) | Rest],
-                             InterfaceMap, RelIdMap, Id0,
-                             [row(Id0, SubjectId, 0, Interface, implementation,
-                                  InterfaceId, 0, 0, '', '', Arguments) | Rows],
-                             IdFinal) :-
-    interface_application_parts(Application, Interface, Arguments),
-    ( memberchk(Interface-InterfaceId, InterfaceMap) -> true ; InterfaceId = 0 ),
-    ( rel_row_id(RelIdMap, Name, SubjectId) -> true ; SubjectId = 0 ),
-    Id1 is Id0 + 1,
-    metadata_implementation_rows(Rest, InterfaceMap, RelIdMap, Id1, Rows,
-                                 IdFinal).
 
 catalog_rel_plans(Decls, RelPlans, CatalogRelPlans, CatalogRelModules) :-
     module_rel_columns(Decls, ModuleRelColumns),

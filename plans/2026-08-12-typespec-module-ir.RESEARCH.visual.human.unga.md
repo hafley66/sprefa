@@ -1,5 +1,8 @@
 # Module and visibility choices, in plain words
 
+> Historical research. `issues/remove-rel-is/item.md` removed the relation
+> conformance suffix used in examples below on 2026-08-23.
+
 ## TOC
 
 1. [What exists](#what-exists)

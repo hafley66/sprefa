@@ -78,18 +78,30 @@ partition_compiler_program(Decls, Rules, compiler_relations(Relations, CompilerR
     partition_compiler_relations(Decls,
                                  compiler_relations(DeclaredRelations, _),
                                  RuntimeDecls),
-    compiler_builtin_relations(Rules, BuiltinRelations),
+    compiler_builtin_relations(Decls, Rules, BuiltinRelations),
     compiler_builtin_declaration_collisions(Decls, BuiltinRelations),
     append(DeclaredRelations, BuiltinRelations, Relations),
     relation_refs(Relations, CompilerRefs),
     partition_rules(Rules, CompilerRefs, CompilerRules, RuntimeRules).
 
-compiler_builtin_relations(Rules, Relations) :-
+compiler_builtin_relations(Decls, Rules, Relations) :-
     findall(compiler_relation(Ref, Arity, []),
             ( compiler_builtin_ref(Ref),
               Ref = _/Arity,
-              rule_contains_ref(Rules, Ref) ),
+              compiler_builtin_is_used(Decls, Rules, Ref) ),
             Relations).
+
+compiler_builtin_is_used(_, Rules, Ref) :- rule_contains_ref(Rules, Ref), !.
+compiler_builtin_is_used(Decls, Rules, type_apply/3) :-
+    member(Rule, Rules),
+    rule_head(Rule, Head),
+    atom_ref(Head, Ref),
+    findall(Type, member(col_type(Ref, _, Type), Decls), Types),
+    Head =.. [_ | Arguments],
+    nth1(Position, Types, type),
+    nth1(Position, Arguments, Argument),
+    compound(Argument),
+    !.
 
 compiler_builtin_ref(type_decl/4).
 compiler_builtin_ref(type_member/5).
@@ -98,6 +110,16 @@ compiler_builtin_ref(type_application/2).
 compiler_builtin_ref(type_argument/4).
 compiler_builtin_ref(type_application_site/4).
 compiler_builtin_ref(type_apply/3).
+compiler_builtin_ref(type_requested/3).
+compiler_builtin_ref(type_field/5).
+compiler_builtin_ref(type_field_count/2).
+compiler_builtin_ref(derived_relation_request/4).
+compiler_builtin_ref(derived_member_request/4).
+compiler_builtin_ref(derived_member_role_request/4).
+
+compiler_request_ref(derived_relation_request/4).
+compiler_request_ref(derived_member_request/4).
+compiler_request_ref(derived_member_role_request/4).
 
 compiler_builtin_declaration_collisions(_, []) :- !.
 compiler_builtin_declaration_collisions(Decls,
@@ -128,7 +150,11 @@ relation_refs([compiler_relation(Ref, _, _) | Rest], [Ref | Refs]) :-
 partition_rules([], _, [], []).
 partition_rules([Rule | Rest], CompilerRefs, CompilerRules, RuntimeRules) :-
     rule_head_ref(Rule, HeadRef),
-    ( compiler_builtin_ref(HeadRef)
+    ( compiler_request_ref(HeadRef)
+    -> validate_compiler_rule_refs(Rule, CompilerRefs),
+       CompilerRules = [Rule | MoreCompiler],
+       partition_rules(Rest, CompilerRefs, MoreCompiler, RuntimeRules)
+    ; compiler_builtin_ref(HeadRef)
     -> throw(unsupported_construct(compiler_relation_builtin_head(HeadRef)))
     ; memberchk(HeadRef, CompilerRefs)
     -> validate_compiler_rule_refs(Rule, CompilerRefs),

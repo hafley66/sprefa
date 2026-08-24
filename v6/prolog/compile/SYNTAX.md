@@ -16,10 +16,10 @@ rel text_box(T: json_encodable(text))(value: T).
 
 `T` is the implementing type. `any` is a wildcard for one complete
 interface argument. Bare `T: comparable` remains a zero-argument bound.
-Implementations use `rel document(...) is json_encodable(json).`; matching
-checks interface name, arity, and argument patterns. Patterns and compiler
+Bounds check interface name, arity, and argument patterns. Structural compiler
 proofs are erased before runtime lowering, while ordered arguments remain in
-type metadata.
+type metadata. Relation declarations carry compiler annotations through
+ordinary type applications such as `key(int)`.
 
 ## Ruling that reframes this whole document (relayed mid-flight)
 

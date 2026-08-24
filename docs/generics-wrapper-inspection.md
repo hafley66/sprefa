@@ -57,7 +57,7 @@ every caller that uses that walk.
 | `name(Arg, ...)` | a template application (`parse_dl_dcg.pl:585-590`) |
 | `rel pair(T: iface)(first: T, second: T).` | `rel_template/3` (`parse_dl_dcg.pl:477`) |
 | `interface json_encodable.` | `interface_decl/2` (`parse_dl_dcg.pl:524`) |
-| `rel r(...) is iface(...)` | `rel_is_implementation/2` (`parse_dl_dcg.pl:534`) |
+| `rel r(...) is iface(...)` | rejected with `dl_parse_error(statement, ...)` |
 
 `acyclic(...)` has no DCG production: grep of `compile/parse_dl_dcg.pl` for
 `acyclic` returns nothing. It is a term-door spelling only, and the fixture
@@ -199,16 +199,14 @@ parameter names. A generic bound names an interface application:
 `rel box(T: json_encodable(any))(value: T).` keeps `T` as the implementing
 type and treats `any` as a wildcard for one complete interface argument.
 `rel text_box(T: encodable_as(text))(value: T).` requires the exact argument.
-Bare interfaces remain zero-argument shorthand. Implementations use the same
-application spelling in `rel ... is Name(...)`; implementation rows with
-different arguments coexist, while duplicate full applications are refused.
-The patterns and proofs live in the compiler `$type` plane and are erased
-before runtime declarations; ordered application arguments remain in catalog
-metadata for type generation.
+Bare interfaces remain zero-argument shorthand. Bounds use the same
+application spelling. Structural proofs live in the
+compiler `$type` plane and are erased before runtime declarations; ordered
+application arguments remain in catalog metadata for type generation.
 
 The type IR leaving expansion is `semantic_type_rows/1`, one sorted set of
 `declaration/5`, `parameter/4`, `member/5`, `constraint/3`, application,
-`implementation/3`, `derived_from/2`, and judgment rows
+`derived_from/2`, and judgment rows
 (`0_generic_expand.pl:140-150`, `0_generic_expand.pl:402-406`). Ids come from
 `0_type_ids.pl` labels and ordinals, never source order.
 
@@ -292,7 +290,6 @@ manifest bucket `unsupported`.
 | `option_companion_name_collision/3` | `0_option_expand.pl:134` | `option_companion_name_collision_is_named` |
 | `interface_unknown(N)` | `0_generic_expand.pl:340,344,380` | `unknown_bound_interface_is_named` |
 | `interface_duplicate(N)` | `0_generic_expand.pl:349` | none in manifest |
-| `interface_implementation_duplicate(I)` | `0_generic_expand.pl:357` | none in manifest |
 | `generic_template_arity/3` | `0_generic_expand.pl:497` | none in manifest |
 | `generic_bound_unsatisfied/3` | `0_generic_expand.pl:552` | `unsatisfied_bound_names_the_path` |
 | `generic_generated_name_collision(N)` | `0_generic_expand.pl:680` | none in manifest |

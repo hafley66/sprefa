@@ -1,5 +1,8 @@
 # TypeSpec parity: module, visibility, and nominal type IR research
 
+> Historical research. `issues/remove-rel-is/item.md` removed the relation
+> conformance suffix used in examples below on 2026-08-23.
+
 ## TOC
 
 1. [Context and receipts](#context-and-receipts)

@@ -1,5 +1,8 @@
 # Type-system unity: the prolog compiler refactor that makes codegen a fold
 
+> Historical plan. `issues/remove-rel-is/item.md` removed relation conformance
+> suffixes, implementation rows, and implementation semantic IDs on 2026-08-23.
+
 ## TOC
 - North star and the one invariant
 - Current chain (measured, cited)

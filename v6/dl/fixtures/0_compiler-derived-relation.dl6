@@ -1,0 +1,22 @@
+# A compiler relation computes Partial(Source) from Source's frozen members.
+# Holder requests Partial(User), so only that closed application materializes.
+rel User(id: key(int), name: text).
+
+rel Partial(Source: type) -> type.
+
+rel Holder(value: Partial(User)).
+
+Partial(Source, Partial(Source)) <-
+  type_requested(_, Partial, [Source]).
+
+derived_relation_request(PartialType, Partial, [Source], Count) <-
+  type_requested(PartialType, Partial, [Source]),
+  type_field_count(Source, Count).
+
+derived_member_request(PartialType, Position, Name, option(MemberType)) <-
+  type_requested(PartialType, Partial, [Source]),
+  type_field(_, Source, Position, Name, MemberType).
+
+derived_member_role_request(PartialType, Position, 'optionalized', '') <-
+  type_requested(PartialType, Partial, [Source]),
+  type_field(_, Source, Position, _, _).

@@ -77,6 +77,8 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-08-13-soopy-source-mechanics-boundary.md:226 — Define whether `RepositoryId` identifies a checkout, shared Git object database, or configured logical repository, then test linked-worktree identity.
 - `decision` plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:627 — Select contextual construction and matching semantics for anonymous product values.
 - `decision` plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:628 — Select ID-valued or tagged runtime ingress and egress for anonymous sums.
+- `decision` plans/2026-08-23-relational-history-annotations.md:413 — Choose the logical timestamp type and physical unit for recorded_at; preserve tick as the deterministic ordering field.
+- `decision` plans/2026-08-23-relational-history-annotations.md:414 — Specify the durable commit identity or idempotency witness used to prevent version duplication across restart and replay.
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:105 — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:106 — comment_node.text strips comment tokens — state it in the relations table row, not only the buried authoring bullet
@@ -152,10 +154,18 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:630 — Add owner-scoped anonymous product and sum type literals.
 - `feature` plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:631 — Represent type-valued capability and functional-output relations over semantic type IDs.
 - `feature` plans/2026-08-18-typescript-shaped-interface-bounds.md:202 — Implement TypeScript-shaped interface bounds with `any` argument patterns.
-- `feature` plans/2026-08-19-applicative-type-annotations.md:149 — Parse and print direct compiler-relation type applications, update the CST, and elaborate nested calls.
-- `feature` plans/2026-08-19-applicative-type-annotations.md:150 — Execute typed annotator relations, retain site evidence, and feed key evidence into existing key normalization.
-- `feature` plans/2026-08-19-applicative-type-annotations.md:151 — Prove annotation composition and key parity through the authored DL6, TS, Rust, JSON Schema, and ProgramJson CI paths.
-- `feature` plans/2026-08-19-applicative-type-annotations.md:152 — Define explicit mixed-stage relation parameters and comptime-elision rules after annotation composition establishes the first compile-time invocation model.
+- `feature` plans/2026-08-19-applicative-type-annotations.md:165 — Parse and print direct compiler-relation type applications, update the CST, and elaborate nested calls.
+- `feature` plans/2026-08-19-applicative-type-annotations.md:166 — Execute typed annotator relations, retain site evidence, and feed key evidence into existing key normalization.
+- `feature` plans/2026-08-19-applicative-type-annotations.md:167 — Prove annotation composition and key parity through the authored DL6, TS, Rust, JSON Schema, and ProgramJson CI paths.
+- `feature` plans/2026-08-19-applicative-type-annotations.md:168 — Define explicit mixed-stage relation parameters and comptime-elision rules after annotation composition establishes the first compile-time invocation model.
+- `feature` plans/2026-08-23-compiler-derived-relation-construction.md:453 — Lower functional type terms in compiler heads into explicit type_apply body goals.
+- `feature` plans/2026-08-23-compiler-derived-relation-construction.md:454 — Add demand-driven complete derived relation request rows with deterministic validation and named diagnostics.
+- `feature` plans/2026-08-23-compiler-derived-relation-construction.md:455 — Materialize validated compiler-derived relation shapes through existing carriers and bounded refreeze.
+- `feature` plans/2026-08-23-compiler-derived-relation-construction.md:456 — Prove Partial(User) through canonical rows, compiler reflection, transport erasure, and cross-target monomorphization.
+- `feature` plans/2026-08-23-relational-history-annotations.md:415 — Add canonical generated relation request rows and validate complete declaration/member/property graphs before refreeze.
+- `feature` plans/2026-08-23-relational-history-annotations.md:416 — Implement the history(Source) derived constructor using canonical source key and member rows.
+- `feature` plans/2026-08-23-relational-history-annotations.md:417 — Add atomic commit-boundary history capture with per-identity versions, ticks, recorded time, put/delete operations, and replay safety.
+- `feature` plans/2026-08-23-relational-history-annotations.md:418 — Prove one composite-key history timeline through Prolog, TS plus SQLite, Rust plus SQLite, typegen, and catalog artifacts.
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:189 — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:190 — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
@@ -362,11 +372,21 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:631 `feature` — Represent type-valued capability and functional-output relations over semantic type IDs.
 - plans/2026-08-18-typescript-shaped-interface-bounds.md:202 `feature` — Implement TypeScript-shaped interface bounds with `any` argument patterns.
 - plans/2026-08-18-typescript-shaped-interface-bounds.md:203 `docs` — Document interface applications, exact arguments, and wildcard arguments in the DL6 syntax reference.
-- plans/2026-08-19-applicative-type-annotations.md:149 `feature` — Parse and print direct compiler-relation type applications, update the CST, and elaborate nested calls.
-- plans/2026-08-19-applicative-type-annotations.md:150 `feature` — Execute typed annotator relations, retain site evidence, and feed key evidence into existing key normalization.
-- plans/2026-08-19-applicative-type-annotations.md:151 `feature` — Prove annotation composition and key parity through the authored DL6, TS, Rust, JSON Schema, and ProgramJson CI paths.
-- plans/2026-08-19-applicative-type-annotations.md:152 `feature` — Define explicit mixed-stage relation parameters and comptime-elision rules after annotation composition establishes the first compile-time invocation model.
+- plans/2026-08-19-applicative-type-annotations.md:165 `feature` — Parse and print direct compiler-relation type applications, update the CST, and elaborate nested calls.
+- plans/2026-08-19-applicative-type-annotations.md:166 `feature` — Execute typed annotator relations, retain site evidence, and feed key evidence into existing key normalization.
+- plans/2026-08-19-applicative-type-annotations.md:167 `feature` — Prove annotation composition and key parity through the authored DL6, TS, Rust, JSON Schema, and ProgramJson CI paths.
+- plans/2026-08-19-applicative-type-annotations.md:168 `feature` — Define explicit mixed-stage relation parameters and comptime-elision rules after annotation composition establishes the first compile-time invocation model.
 - plans/2026-08-19-shared-sqlite-frontier.md:187 `perf` — Replace relation-specific transient SQLite plans with shared frontier and support state while preserving one typed durable table per materialized relation.
+- plans/2026-08-23-compiler-derived-relation-construction.md:453 `feature` — Lower functional type terms in compiler heads into explicit type_apply body goals.
+- plans/2026-08-23-compiler-derived-relation-construction.md:454 `feature` — Add demand-driven complete derived relation request rows with deterministic validation and named diagnostics.
+- plans/2026-08-23-compiler-derived-relation-construction.md:455 `feature` — Materialize validated compiler-derived relation shapes through existing carriers and bounded refreeze.
+- plans/2026-08-23-compiler-derived-relation-construction.md:456 `feature` — Prove Partial(User) through canonical rows, compiler reflection, transport erasure, and cross-target monomorphization.
+- plans/2026-08-23-relational-history-annotations.md:413 `decision` — Choose the logical timestamp type and physical unit for recorded_at; preserve tick as the deterministic ordering field.
+- plans/2026-08-23-relational-history-annotations.md:414 `decision` — Specify the durable commit identity or idempotency witness used to prevent version duplication across restart and replay.
+- plans/2026-08-23-relational-history-annotations.md:415 `feature` — Add canonical generated relation request rows and validate complete declaration/member/property graphs before refreeze.
+- plans/2026-08-23-relational-history-annotations.md:416 `feature` — Implement the history(Source) derived constructor using canonical source key and member rows.
+- plans/2026-08-23-relational-history-annotations.md:417 `feature` — Add atomic commit-boundary history capture with per-identity versions, ticks, recorded time, put/delete operations, and replay safety.
+- plans/2026-08-23-relational-history-annotations.md:418 `feature` — Prove one composite-key history timeline through Prolog, TS plus SQLite, Rust plus SQLite, typegen, and catalog artifacts.
 <!-- END: plans-by-plan -->
 
 ## By code file

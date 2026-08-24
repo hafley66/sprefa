@@ -170,14 +170,6 @@ test(ordinary_relation_does_not_require_self) :-
               member(named(local, relation, person), 2, name)],
     Keys = [member(named(local, relation, person), 1, id)].
 
-test(ordinary_interface_implementation_does_not_require_self) :-
-    Decls = [type_decl(document, [col(id, int)]),
-             rel_is_implementation(document/1, [codec])],
-    catch(type_relation_rows(Decls, Rows), Error, true),
-    var(Error),
-    once(member(type_relation(named(local, relation, document), none,
-                              [_], none, []), Rows)), !.
-
 test(anonymous_owner_role_retains_path) :-
     Decls = [type_decl(outer,
                        [col(value, anonymous_product(path, text))])],
@@ -205,8 +197,7 @@ test(trait_relation_projects_self_inputs_return_and_keys) :-
     InputId = member(Owner, 2, 'Input').
 
 test(type_relation_without_self_remains_metadata) :-
-    Decls = [type_decl('Convert', [col('Input', type)]),
-             rel_is_implementation('Convert'/1, [codec])],
+    Decls = [type_decl('Convert', [col('Input', type)])],
     type_relation_rows(Decls, Rows),
     member(type_relation(_, none, [_], none, []), Rows).
 

@@ -1,0 +1,57 @@
+{
+  "$defs": {
+    "Holder": {
+      "additionalProperties":false,
+      "properties": {"value": {"$ref":"#/$defs/__gen__Partial_User_9d7a703929b72789"}},
+      "required": ["value" ],
+      "type":"object"
+    },
+    "User": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"name": {"type":"string"}},
+      "required": ["id", "name" ],
+      "type":"object"
+    },
+    "__gen__Partial_User_9d7a703929b72789": {
+      "additionalProperties":false,
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"none"}},
+              "required": ["tag" ],
+              "type":"object"
+            },
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"some"},"value": {"type":"integer"}},
+              "required": ["tag", "value" ],
+              "type":"object"
+            }
+          ]
+        },
+        "name": {
+          "anyOf": [
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"none"}},
+              "required": ["tag" ],
+              "type":"object"
+            },
+            {
+              "additionalProperties":false,
+              "properties": {"tag": {"const":"some"},"value": {"type":"string"}},
+              "required": ["tag", "value" ],
+              "type":"object"
+            }
+          ]
+        }
+      },
+      "required": ["id", "name" ],
+      "type":"object"
+    }
+  },
+  "$id":"compiler-derived-relation#",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

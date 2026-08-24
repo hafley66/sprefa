@@ -300,9 +300,8 @@ decl_line(Decls, _, _, type_decl(Name, Specs), Line) :-
     atomic_list_concat(ColumnTexts, ', ', ColumnsText),
     length(Specs, Arity),
     decl_modifiers_text(Decls, Name/Arity, Sep, ModifiersText),
-    is_clause_text(Decls, Name/Arity, ConformanceText),
-    format(atom(Line), "rel ~w(~w)~w~w~w.~n",
-           [Name, ColumnsText, Sep, ModifiersText, ConformanceText]).
+    format(atom(Line), "rel ~w(~w)~w~w.~n",
+           [Name, ColumnsText, Sep, ModifiersText]).
 % Arrival rel spelling (ruling arrival_arrow_spelling); the template is not
 % printed, so a non-empty term-door template deliberately does not round-trip.
 decl_line(Decls, _, _, sh_decl(Name, Inputs, Outputs, template(_)), Line) :-
@@ -323,9 +322,8 @@ decl_line(Decls, _Rules, _Bindings, Name/0, Line) :-
     !,
     decl_ref_spelling(Decls, Name/0, Spelling),
     decl_modifiers_text(Decls, Name/0, Sep, ModifiersText),
-    is_clause_text(Decls, Name/0, ConformanceText),
-    format(atom(Line), "rel ~w()~w~w~w.~n",
-           [Spelling, Sep, ModifiersText, ConformanceText]).
+    format(atom(Line), "rel ~w()~w~w.~n",
+           [Spelling, Sep, ModifiersText]).
 decl_line(Decls, Rules, Bindings, Ref, Line) :-
     decl_ref_spelling(Decls, Ref, Name),
     rel_columns(Decls, Rules, Bindings, Ref, Columns),
@@ -333,9 +331,8 @@ decl_line(Decls, Rules, Bindings, Ref, Line) :-
     maplist(print_decl_column(Decls, Ref), PrintedColumns, ColumnTexts),
     atomic_list_concat(ColumnTexts, ', ', ColsText),
     decl_modifiers_text(Decls, Ref, Sep, ModifiersText),
-    is_clause_text(Decls, Ref, ConformanceText),
-    format(atom(Line), "rel ~w(~w)~w~w~w~w.~n",
-           [Name, ColsText, ArrowText, Sep, ModifiersText, ConformanceText]).
+    format(atom(Line), "rel ~w(~w)~w~w~w.~n",
+           [Name, ColsText, ArrowText, Sep, ModifiersText]).
 
 relation_arrow_columns(Decls, Ref, Columns, InputColumns, ArrowText) :-
     memberchk(return_alias(Ref, Position), Decls),
@@ -353,16 +350,6 @@ decl_modifiers_text(Decls, Ref, Sep, ModifiersText) :-
     (   ModifierTexts == []
     ->  ModifiersText = '', Sep = ''
     ;   atomic_list_concat(ModifierTexts, ' ', ModifiersText), Sep = ' '
-    ).
-
-% The `is` clause follows every modifier, so it prints as one suffix rather
-% than joining the modifier list.
-is_clause_text(Decls, Ref, Text) :-
-    (   memberchk(rel_is_implementation(Ref, Applications), Decls)
-    ->  maplist(print_type_application, Applications, ApplicationTexts),
-        atomic_list_concat(ApplicationTexts, ', ', ApplicationsText),
-        format(atom(Text), " is ~w", [ApplicationsText])
-    ;   Text = ''
     ).
 
 print_type_application(Application, Text) :-

@@ -5,6 +5,7 @@
                 partition_compiler_program/5,
                 evaluate_compiler_relations/3 ]).
 :- use_module('../../0_generic_expand', [ expand_generic_program_with_bindings/3,
+                                          canonical_type_name/2,
                                           type_relation_rows/2 ]).
 :- use_module('../../1_expansion', [expand_program/3]).
 :- use_module('../../compile', [program_plan/2, compile_dl6/2]).
@@ -22,6 +23,89 @@ compiler_decls([
     keyed(codec/2, [1]),
     col_type(runtime/1, value, text)
 ]).
+
+partial_derived_source(Codes) :-
+    string_codes(
+        "rel User(id: key(int), name: text).\n\c
+         rel Partial(Source: type) -> type.\n\c
+         rel Holder(value: Partial(User)).\n\c
+         Partial(Source, Partial(Source)) <- type_requested(_, Partial, [Source]).\n\c
+         derived_relation_request(PartialType, Partial, [Source], Count) <- type_requested(PartialType, Partial, [Source]), type_field_count(Source, Count).\n\c
+         derived_member_request(PartialType, Position, Name, option(MemberType)) <- type_requested(PartialType, Partial, [Source]), type_field(_, Source, Position, Name, MemberType).\n\c
+         derived_member_role_request(PartialType, Position, 'optionalized', '') <- type_requested(PartialType, Partial, [Source]), type_field(_, Source, Position, _, _).\n",
+        Codes).
+
+derived_shape_result(Closure, Result) :-
+    catch(( generic_expand:compiler_derived_relation_shapes(Closure, Shapes),
+            Result = shapes(Shapes) ),
+          Error,
+          Result = throws(Error)).
+
+compiler_derived_fixture_plan(Plan) :-
+    predicate_property(plunit_compiler_relations:compiler_decls(_),
+                       file(ThisFile)),
+    file_directory_name(ThisFile, TestDir),
+    absolute_file_name(
+        '../../../dl/fixtures/0_compiler-derived-relation.dl6', Fixture,
+        [relative_to(TestDir), access(read)]),
+    expand_uses(Fixture, [], [], _, Program, _, Bindings, []),
+    compile:dl6_seeded_form(Program, Initial, Seeded),
+    program_plan(
+        fixture('compiler-derived-relation', Seeded, Initial, [], [])-Bindings,
+        Plan).
+
+test(functional_type_heads_lower_to_explicit_type_apply_ir) :-
+    partial_derived_source(Codes),
+    parse_dl(Codes, prog(Decls, Rules), Bindings, []),
+    partition_compiler_program(
+        Decls, Rules, compiler_relations(_, CompilerRules0), _, _),
+    generic_expand:elaborate_compiler_rules(
+        Decls, Bindings, CompilerRules0, CompilerRules, []),
+    nth1(1, CompilerRules, PartialRule),
+    nth1(3, CompilerRules, MemberRule),
+    copy_term([PartialRule, MemberRule], Lowered),
+    numbervars(Lowered, 0, _),
+    Lowered ==
+    [ ('Partial'('$VAR'(0), '$VAR'(1)) <-
+          ( type_requested('$VAR'(2), named(local, relation, 'Partial'),
+                           ['$VAR'(0)]),
+            type_apply(named(local, relation, 'Partial'), ['$VAR'(0)],
+                       '$VAR'(1)) )),
+      (derived_member_request('$VAR'(3), '$VAR'(4), '$VAR'(5), '$VAR'(6)) <-
+          ( ( type_requested('$VAR'(3), named(local, relation, 'Partial'),
+                             ['$VAR'(7)]),
+              type_field('$VAR'(8), '$VAR'(7), '$VAR'(4), '$VAR'(5),
+                         '$VAR'(9)) ),
+            type_apply(named(local, relation, option), ['$VAR'(9)],
+                       '$VAR'(6)) )) ].
+
+test(functional_head_reuses_erased_generic_constructor_arity) :-
+    string_codes(
+        "rel Box(T)(value: T).\nrel seed(Source: type).\nrel output(Source: type, Result: type).\nseed(int).\noutput(Source, Box(Source)) <- seed(Source).\n",
+        Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expand_generic_program_with_bindings(Program, Bindings, prog(Decls, [])),
+    Application = application(named(local, relation, 'Box'), [primitive(int)]),
+    member(compiler_type_metadata(_, Closure), Decls),
+    memberchk(output(primitive(int), Application), Closure).
+
+test(nested_functional_head_terms_lower_inside_out) :-
+    Decls = [col_type(seed/1, value, type),
+             col_type(output/1, value, type)],
+    Rules = [output(option(list(Type))) <- seed(Type)],
+    partition_compiler_program(
+        Decls, Rules, compiler_relations(_, CompilerRules0), _, _),
+    generic_expand:elaborate_compiler_rules(
+        Decls, [], CompilerRules0, CompilerRules, []),
+    copy_term(CompilerRules, Lowered),
+    numbervars(Lowered, 0, _),
+    Lowered ==
+    [ (output('$VAR'(0)) <-
+          ( seed('$VAR'(1)),
+            ( type_apply(named(local, relation, list), ['$VAR'(1)],
+                         '$VAR'(2)),
+              type_apply(named(local, relation, option), ['$VAR'(2)],
+                         '$VAR'(0)) ) )) ].
 
 test(partition_erases_compiler_declarations_from_runtime) :-
     compiler_decls(Decls),
@@ -185,6 +269,250 @@ test(type_apply_existing_application_reuses_canonical_identity) :-
     include(=(App), Applications, [App]),
     \+ member(compiler_type_apply_request_rows(_), Decls),
     \+ member(compiler_type_apply_request(_), Decls).
+
+test(type_apply_only_demand_materializes_derived_relation) :-
+    Program = prog(
+        [ col_type(user/2, id, int), col_type(user/2, name, text),
+          col_type(partial/2, source, type), col_type(partial/2, return, type),
+          col_type(seed/1, source, type),
+          col_type(request/1, application, type) ],
+        [ seed(user),
+          request(Application) <-
+              ( seed(Source), type_apply(partial, [Source], Application) ),
+          derived_relation_request(Application, partial, [Source], Count) <-
+              ( type_requested(Application, partial, [Source]),
+                type_field_count(Source, Count) ),
+          derived_member_request(Application, Position, Name, Optional) <-
+              ( type_requested(Application, partial, [Source]),
+                type_field(_, Source, Position, Name, MemberType),
+                type_apply(option, [MemberType], Optional) ) ]),
+    expand_generic_program_with_bindings(Program, [], prog(Decls, [])),
+    User = named(local, relation, user),
+    Constructor = named(local, relation, partial),
+    Application = application(Constructor, [User]),
+    canonical_type_name(partial(user), GeneratedName),
+    Generated = named(local, relation, GeneratedName),
+    Option = named(local, relation, option),
+    member(compiler_type_metadata(_, Closure), Decls),
+    memberchk(request(Application), Closure),
+    member(semantic_type_rows(Rows), Decls),
+    memberchk(derived_from(Generated, Application), Rows),
+    memberchk(member(member(Generated, 1, id), Generated, 1, id,
+                     type_ref(application(
+                         application(Option, [primitive(int)])))), Rows),
+    memberchk(member(member(Generated, 2, name), Generated, 2, name,
+                     type_ref(application(
+                         application(Option, [primitive(text)])))), Rows),
+    \+ member(compiler_derived_type_demand(_), Decls),
+    \+ member(compiler_derived_type_application(_), Decls).
+
+test(zero_member_derived_relation_materializes) :-
+    Program = prog(
+        [ type_decl(empty, []),
+          col_type(partial/2, source, type), col_type(partial/2, return, type),
+          col_type(seed/1, source, type),
+          col_type(request/1, application, type) ],
+        [ seed(empty),
+          request(Application) <-
+              ( seed(Source), type_apply(partial, [Source], Application) ),
+          derived_relation_request(Application, partial, [Source], Count) <-
+              ( type_requested(Application, partial, [Source]),
+                type_field_count(Source, Count) ) ]),
+    expand_generic_program_with_bindings(Program, [], prog(Decls, [])),
+    Empty = named(local, relation, empty),
+    Constructor = named(local, relation, partial),
+    Application = application(Constructor, [Empty]),
+    canonical_type_name(partial(empty), GeneratedName),
+    Generated = named(local, relation, GeneratedName),
+    member(semantic_type_rows(Rows), Decls),
+    memberchk(declaration(Generated, root, GeneratedName, relation,
+                          materialized), Rows),
+    memberchk(derived_from(Generated, Application), Rows),
+    \+ member(member(_, Generated, _, _, _), Rows).
+
+test(functional_type_head_builds_demanded_partial_relation) :-
+    partial_derived_source(Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expand_generic_program_with_bindings(Program, Bindings, prog(Decls, [])),
+    User = named(local, relation, 'User'),
+    Constructor = named(local, relation, 'Partial'),
+    Application = application(Constructor, [User]),
+    canonical_type_name('Partial'('User'), GeneratedName),
+    Generated = named(local, relation, GeneratedName),
+    Option = named(local, relation, option),
+    OptionInt = application(Option, [primitive(int)]),
+    OptionText = application(Option, [primitive(text)]),
+    memberchk(col_type('Holder'/1, value, GeneratedName), Decls),
+    ( member(compiler_type_metadata(_, Closure, _), Decls)
+    ; member(compiler_type_metadata(_, Closure), Decls) ),
+    memberchk('Partial'(User, Application), Closure),
+    findall(Arguments,
+            member(type_requested(application(Constructor, Arguments),
+                                  Constructor, Arguments), Closure),
+            PartialDemands),
+    PartialDemands == [[User]],
+    member(semantic_type_rows(Rows), Decls),
+    memberchk(application(Application, Constructor), Rows),
+    memberchk(derived_from(Generated, Application), Rows),
+    memberchk(member(member(Generated, 1, id), Generated, 1, id,
+                     type_ref(application(OptionInt))), Rows),
+    memberchk(member(member(Generated, 2, name), Generated, 2, name,
+                     type_ref(application(OptionText))), Rows),
+    memberchk(member_role(member(Generated, 1, id), optionalized), Rows),
+    memberchk(member_role(member(Generated, 2, name), optionalized), Rows),
+    \+ member(member_role(member(Generated, 1, id), key), Rows),
+    \+ member(compiler_type_apply_request_rows(_), Decls),
+    \+ member(compiler_type_apply_request(_), Decls),
+    \+ member(compiler_derived_relation_request_rows(_), Decls),
+    \+ member(compiler_derived_member_role(_, _, _, _), Decls),
+    \+ member(compiler_derived_type_application(_), Decls).
+
+test(compiler_derived_relation_reaches_catalog_and_sqlite) :-
+    compiler_derived_fixture_plan(Plan),
+    Generated = '__gen__Partial_User_9d7a703929b72789',
+    GeneratedTable =
+        '0_compiler_derived_relation___gen__Partial_User_9d7a703929b72789',
+    Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
+    include([rel(Name/_, _, _, _, _)]>>
+                memberchk(Name, ['Holder', 'User', Generated]),
+            RelPlans, PublicPlans),
+    PublicPlans ==
+    [ rel('Holder'/1,
+          '0_compiler_derived_relation_Holder_b505f3e9a0ba', set,
+          [col(value, declared(Generated), ref(Generated))], none),
+      rel('User'/2,
+          '0_compiler_derived_relation_User_a429a5abde3f', set,
+          [col(id, declared(int), int), col(name, declared(text), text)],
+          key([1])),
+      rel(Generated/2, GeneratedTable, set,
+          [col(id, declared(int), int), col(name, declared(int), int)], none) ],
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    format(atom(GeneratedDdl),
+           'CREATE TABLE "~w" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "name" INTEGER NOT NULL, UNIQUE ("id", "name"))',
+           [GeneratedTable]),
+    memberchk(GeneratedDdl, Ddl),
+    process_create(path(sqlite3), [':memory:'],
+                   [stdin(pipe(Input)), stdout(pipe(Output)), process(Pid)]),
+    forall(member(Sql, Ddl), format(Input, '~w;~n', [Sql])),
+    format(Input,
+           'SELECT name FROM sqlite_master WHERE type = ''table'' AND name = ''~w'';~n',
+           [GeneratedTable]),
+    close(Input),
+    read_string(Output, _, Text),
+    close(Output),
+    process_wait(Pid, exit(0)),
+    format(string(Expected), '~w\n', [GeneratedTable]),
+    Text == Expected.
+
+test(repeated_and_nested_derived_applications_deduplicate) :-
+    Program = prog(
+        [ col_type(user/1, id, int),
+          col_type(partial/2, source, type),
+          col_type(partial/2, return, type),
+          col_type(seed/1, source, type),
+          col_type(request/1, application, type) ],
+        [ seed(user),
+          request(Inner) <-
+              ( seed(Source), type_apply(partial, [Source], Inner) ),
+          request(Inner) <-
+              ( seed(Source), type_apply(partial, [Source], Inner) ),
+          request(Outer) <-
+              ( seed(Source),
+                type_apply(partial, [Source], Inner),
+                type_apply(partial, [Inner], Outer) ),
+          derived_relation_request(Application, partial, [Source], Count) <-
+              ( type_requested(Application, partial, [Source]),
+                type_field_count(Source, Count) ),
+          derived_member_request(Application, Position, Name, Optional) <-
+              ( type_requested(Application, partial, [Source]),
+                type_field(_, Source, Position, Name, MemberType),
+                type_apply(option, [MemberType], Optional) ) ]),
+    expand_generic_program_with_bindings(Program, [], prog(Decls, [])),
+    User = named(local, relation, user),
+    Partial = named(local, relation, partial),
+    Inner = application(Partial, [User]),
+    Outer = application(Partial, [Inner]),
+    canonical_type_name(partial(user), InnerName),
+    canonical_type_name(partial(partial(user)), OuterName),
+    InnerGenerated = named(local, relation, InnerName),
+    OuterGenerated = named(local, relation, OuterName),
+    member(semantic_type_rows(Rows), Decls),
+    findall(Application,
+            member(application(Application, Partial), Rows),
+            PartialApplications),
+    sort([Inner, Outer], ExpectedApplications),
+    PartialApplications == ExpectedApplications,
+    findall(Generated-Application,
+            ( member(derived_from(Generated, Application), Rows),
+              memberchk(Application, [Inner, Outer]) ),
+            DerivedPairs),
+    DerivedPairs ==
+        [OuterGenerated-Outer, InnerGenerated-Inner].
+
+test(derived_relation_request_validation_matrix) :-
+    Constructor = named(local, relation, partial),
+    Int = primitive(int),
+    Application = application(Constructor, [Int]),
+    Demand = type_requested(Application, Constructor, [Int]),
+    Header0 = derived_relation_request(Application, Constructor, [Int], 0),
+    Header1 = derived_relation_request(Application, Constructor, [Int], 1),
+    Header2 = derived_relation_request(Application, Constructor, [Int], 2),
+    Member1 = derived_member_request(Application, 1, value, Int),
+    derived_shape_result([Demand, Header0], Zero),
+    derived_shape_result([Demand, Header1, Member1, Member1], Deduplicated),
+    derived_shape_result([Demand, Member1], MissingHeader),
+    derived_shape_result([Demand, Header0, Header1], HeaderConflict),
+    derived_shape_result([Demand, Header1], Incomplete),
+    derived_shape_result(
+        [Demand, Header1,
+         derived_member_request(Application, 2, value, Int)], Positions),
+    derived_shape_result(
+        [Demand, Header2,
+         derived_member_request(Application, 1, same, Int),
+         derived_member_request(Application, 2, same, primitive(text))],
+        NameConflict),
+    derived_shape_result(
+        [Demand, Header1,
+         derived_member_request(Application, 1, value, bogus)], InvalidType),
+    derived_shape_result(
+        [Demand, Header0,
+         derived_member_role_request(Application, 1, key, '')], InvalidRole),
+    derived_shape_result(
+        [Demand, Header1, Member1,
+         derived_member_role_request(Application, 1, indexed, a),
+         derived_member_role_request(Application, 1, indexed, b)],
+        RoleConflict),
+    derived_shape_result([Header0], MissingDemand),
+    [Zero, Deduplicated, MissingHeader, HeaderConflict, Incomplete, Positions,
+     NameConflict, InvalidType, InvalidRole, RoleConflict, MissingDemand] ==
+    [ shapes([derived_relation_shape(Application, Constructor, [Int], 0,
+                                     [], [])]),
+      shapes([derived_relation_shape(Application, Constructor, [Int], 1,
+                                     [member(1, value, Int)], [])]),
+      throws(unsupported_construct(
+          derived_relation_request_missing_header(Application))),
+      throws(unsupported_construct(
+          derived_relation_request_header_conflict(
+              Application,
+              [header(Constructor, [Int], 0),
+               header(Constructor, [Int], 1)]))),
+      throws(unsupported_construct(
+          derived_relation_request_incomplete(
+              Application, expected(1), found(0)))),
+      throws(unsupported_construct(
+          derived_relation_request_positions(
+              Application, expected([1]), found([2])))),
+      throws(unsupported_construct(
+          derived_relation_request_name_conflict(Application, [same, same]))),
+      throws(unsupported_construct(
+          derived_relation_request_type(Application, bogus))),
+      throws(unsupported_construct(
+          derived_relation_request_role(Application, 1, key, ''))),
+      throws(unsupported_construct(
+          derived_relation_request_role_conflict(
+              Application, 1, indexed, [a, b]))),
+      throws(unsupported_construct(
+          derived_relation_request_without_demand(Application))) ].
 
 test(type_apply_unknown_constructor_is_named,
      [throws(unsupported_construct(

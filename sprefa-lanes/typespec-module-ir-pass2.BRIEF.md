@@ -1,5 +1,8 @@
 # BRIEF: pass 2. rel-as-interface, conformance links, and generic rel args.
 
+> Historical brief. `issues/remove-rel-is/item.md` removed the relation
+> conformance suffix used below on 2026-08-23.
+
 ## Base
 Confirm the base with `git log --oneline -1` before your first commit. The spawn
 printed the sha; that is your base. The ordering is not a gate. If a procedural

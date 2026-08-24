@@ -7,7 +7,6 @@
             param_id/4,
             member_id/4,
             constraint_id/3,
-            impl_id/3,
             arg_id/3,
             id_kind_name/3,
             semantic_type_id_text/2
@@ -33,9 +32,6 @@ member_id(Owner, Ordinal, Name, member(Owner, Ordinal, Name)).
 
 %! constraint_id(+SubjectNodeId, +InterfaceApplicationId, -SemanticNodeId) is det.
 constraint_id(Subject, InterfaceApplication, constraint(Subject, InterfaceApplication)).
-
-%! impl_id(+SubjectId, +InterfaceApplicationId, -SemanticNodeId) is det.
-impl_id(Subject, InterfaceApplication, implementation(Subject, InterfaceApplication)).
 
 %! arg_id(+ApplicationId, +Ordinal, -SemanticNodeId) is det.
 arg_id(Application, Ordinal, argument(Application, Ordinal)).
@@ -92,11 +88,6 @@ semantic_type_id_encoding(constraint(Subject, Interface), Encoding) :-
     semantic_type_id_encoding(Subject, SubjectEncoding),
     semantic_type_id_encoding(Interface, InterfaceEncoding),
     string_concat("C", SubjectEncoding, A),
-    string_concat(A, InterfaceEncoding, Encoding).
-semantic_type_id_encoding(implementation(Subject, Interface), Encoding) :-
-    semantic_type_id_encoding(Subject, SubjectEncoding),
-    semantic_type_id_encoding(Interface, InterfaceEncoding),
-    string_concat("I", SubjectEncoding, A),
     string_concat(A, InterfaceEncoding, Encoding).
 semantic_type_id_encoding(argument(Application, Ordinal), Encoding) :-
     semantic_type_id_encoding(Application, ApplicationEncoding),

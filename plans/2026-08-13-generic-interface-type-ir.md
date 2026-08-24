@@ -1,5 +1,9 @@
 # Generic and interface semantics over the DL6 type IR
 
+> Historical plan. `issues/remove-rel-is/item.md` removed relation conformance
+> suffixes and implementation rows on 2026-08-23. Declaration, parameter,
+> member, constraint, application, argument, and derivation rows remain.
+
 ## Context
 
 DL6 currently has four representations that must remain separate:

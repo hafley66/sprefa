@@ -169,11 +169,11 @@ language_views: "2. Cross-language mechanics and convergence" {
   substitution: "Substitution\nreplace each parameter with its argument\n[G1]" {class: operation}
   obligations: "Instantiated obligations\nbounds after substitution\n[R1 · G1]" {class: semantic}
   satisfaction: "Constraint satisfaction\nfind evidence or derive compatibility" {class: junction}
-  evidence: "Resolved evidence\nimplementation + proof path" {class: proof}
+  evidence: "Resolved evidence\ncompiler proof path" {class: proof}
   reachable: "Reachable instance graph\napplications closed to a fixpoint" {class: operation}
   representation: "Target representation policy" {class: policy}
 
-  explicit: "Explicit nominal evidence\nRust impl · Flix instance · current DL6 is" {class: junction}
+  explicit: "Explicit nominal evidence\nRust impl · Flix instance" {class: junction}
   structural: "Structural satisfaction\nGo method set · TypeScript object shape" {class: junction}
   type_set: "Admissible type set\nGo constraint interface" {class: junction}
   row_kind: "Open schema composition\nFlix SchemaRow remainder\n[F1 · F3]" {class: junction}
@@ -242,7 +242,7 @@ cross_language_matrix: "3. What DL6 takes, in compiler sequence" {
   apply: "3 · Build applications\nconstructor identity + ordered type arguments\n[G1]" {class: operation}
   substitute: "4 · Substitute arguments\nσ(parameter) = argument\n[G1]" {class: operation}
   require: "5 · Produce obligations\ncapability<argument>\n[R1 · R2]" {class: operation}
-  resolve: "6 · Resolve evidence\nexplicit implementation first\noptional structural derivation at declared borders\n[R2 · F2 · TS1]" {class: operation}
+  resolve: "6 · Resolve evidence\ncompiler relations derive structural proofs\n[R2 · F2 · TS1]" {class: operation}
   close: "7 · Close reachable applications\nfixed point over nested constructors\n[R3]" {class: operation}
   lower: "8 · Select representation by target" {class: operation}
 
@@ -251,7 +251,6 @@ cross_language_matrix: "3. What DL6 takes, in compiler sequence" {
   member_rows: "member rows" {class: semantic}
   application_rows: "application + argument rows" {class: semantic}
   constraint_rows: "constraint rows" {class: semantic}
-  implementation_rows: "implementation rows\nRust / Flix contribution" {class: semantic}
   proof_rows: "resolved_by rows\nretain diagnostic path" {class: proof}
   derivation_rows: "derived_from rows" {class: semantic}
 
@@ -270,7 +269,6 @@ cross_language_matrix: "3. What DL6 takes, in compiler sequence" {
   bind -> kind_rows
   apply -> application_rows
   require -> constraint_rows
-  resolve -> implementation_rows
   resolve -> proof_rows
   close -> derivation_rows
 
@@ -287,7 +285,6 @@ cross_language_matrix: "3. What DL6 takes, in compiler sequence" {
   closed_relations -> json_target: "concrete shapes"
   stable_identity -> ir_target: "cross-revision references"
 
-  implementation_rows -> resolve: "candidate evidence"
   constraint_rows -> resolve: "obligations"
   derivation_rows -> lower: "reachable instances"
 }
@@ -313,8 +310,9 @@ rel pair(T: json_encodable)(
 | {
       class: source
     }
-    implementation: |text
-rel document(...) is json_encodable.
+    annotation: |text
+rel key(Target: type) -> Target.
+rel document(id: key(int)).
 | {
       class: source
     }
@@ -329,7 +327,7 @@ rel envelope(value: pair(document)).
     direction: right
     interface: "interface_decl(Name, Parameters)" {class: semantic}
     generic: "rel_template(Segments, Parameters, Columns)" {class: semantic}
-    implementation: "rel_is_implementation(Ref, Applications)" {class: semantic}
+    annotation: "col_type(document/1, id, key(int))" {class: semantic}
     application: "pair(document)\nas a compound type term" {class: semantic}
   }
 
@@ -340,14 +338,13 @@ rel envelope(value: pair(document)).
     member: "member(Id, Owner, Ordinal, Name, TypeRef)" {class: semantic}
     bound_row: "constraint(Id, ParameterId, InterfaceId)" {class: semantic}
     application: "application(Id, ConstructorId)\nargument(Id, ApplicationId, Ordinal, Type)" {class: semantic}
-    implementation: "implementation(Id, SubjectId, interface_application(InterfaceId))" {class: semantic}
     derivation: "derived_from(ConcreteId, ApplicationId)" {class: semantic}
   }
 
   compile: "Compile-time closure" {
     direction: right
     discover: "Discover ground applications" {class: operation}
-    validate: "Validate arity, names, duplicate evidence, bounds" {class: operation}
+    validate: "Validate arity, names, and bounds" {class: operation}
     fixpoint: "Repeat until nested applications stop producing instances" {class: operation}
     mint: "Mint concrete relation declarations" {class: operation}
     replace: "Replace generic type applications with concrete names" {class: operation}
@@ -368,7 +365,7 @@ rel envelope(value: pair(document)).
   surface.generic -> parser.generic -> normalized.parameter
   parser.generic -> normalized.member
   normalized.parameter -> normalized.bound_row
-  surface.implementation -> parser.implementation -> normalized.implementation
+  surface.annotation -> parser.annotation -> compile.discover
   surface.application -> parser.application -> normalized.application
   normalized.application -> normalized.derivation
 
@@ -376,7 +373,6 @@ rel envelope(value: pair(document)).
   normalized.parameter -> compile.discover
   normalized.member -> compile.discover
   normalized.bound_row -> compile.validate
-  normalized.implementation -> compile.validate
   normalized.application -> compile.discover
   normalized.derivation -> compile.mint
 
@@ -417,8 +413,9 @@ interface json_encodable<T>.
 | {
       class: source
     }
-    evidence: |text
-document is json_encodable<document>.
+    annotation: |text
+rel key(Target: type) -> Target.
+rel document(id: key(int)).
 | {
       class: source
     }
@@ -437,12 +434,12 @@ rel envelope(
     parameter: "parameter\nkind = Type | RecordRow | SchemaRow | Type → Type" {class: semantic}
     member: "member\ncolumn | operation | associated_type" {class: semantic}
     bound_edge: "constraint\nsubject parameter + capability application" {class: semantic}
-    evidence: "implementation\nsubject type + capability application + members" {class: semantic}
+    annotation: "compiler application\nmember site + constructor + arguments" {class: semantic}
     application: "application\nconstructor + ordered arguments" {class: semantic}
     declaration -> parameter
     declaration -> member
     parameter -> bound_edge
-    declaration -> evidence
+    member -> annotation
     declaration -> application
   }
 
@@ -451,7 +448,7 @@ rel envelope(
     wf: "well_formed(Application)\nconstructor arity and kinds agree" {class: operation}
     subst: "substitution(Application, Parameter, Argument)\nσ(P) = A" {class: operation}
     obligation: "obligation(Application, Capability<Argument>)\nσ(C(P)) = C(A)" {class: operation}
-    resolution: "resolved_by(Obligation, Implementation)" {class: operation}
+    resolution: "proved_by(Obligation, CompilerProof)" {class: operation}
     concrete: "specialization(Application, ConcreteDeclaration)" {class: operation}
     wf -> subst -> obligation -> resolution -> concrete
   }
@@ -459,13 +456,13 @@ rel envelope(
   surface.plain -> unification.declaration
   surface.generic -> unification.parameter
   surface.capability -> unification.declaration
-  surface.evidence -> unification.evidence
+  surface.annotation -> unification.annotation
   surface.use -> unification.application
 
   unification.application -> formulas.wf
   unification.parameter -> formulas.subst
   unification.bound_edge -> formulas.obligation
-  unification.evidence -> formulas.resolution
+  unification.annotation -> formulas.wf
   unification.member -> formulas.concrete
 }
 
@@ -489,9 +486,9 @@ phases: "6. Capability phases and target borders" {
   phase_1: "Phase 1\nEvidence and composition" {
     direction: down
     p1a: "Generic interfaces: Interface<T>"
-    p1b: "Recursive evidence: list<T> satisfies C when T satisfies C"
+    p1b: "Recursive proof: list<T> satisfies C when T satisfies C"
     p1c: "Multiple bounds and superinterfaces"
-    p1d: "Coherence: one applicable implementation per obligation"
+    p1d: "Determinism: one selected proof per obligation"
     p1e: "Diagnostics retain declaration, application, and proof path"
     p1a -> p1b -> p1c -> p1d -> p1e
   }
@@ -509,11 +506,11 @@ phases: "6. Capability phases and target borders" {
   phase_3: "Phase 3\nLowering policy" {
     direction: down
     p3a: "Analyze reachable applications per target"
-    p3b: "TS: retain declarations, erase runtime evidence"
+    p3b: "TS: retain declarations, erase runtime proofs"
     p3c: "Rust source: retain generics or specialize by policy"
     p3d: "SQLite / Soufflé-like plane: require closed concrete relations"
     p3e: "JSON Schema: specialize reachable closed shapes"
-    p3f: "IR: serialize applications, constraints, and resolved evidence"
+    p3f: "IR: serialize applications, constraints, and resolved proofs"
     p3a -> p3b
     p3a -> p3c
     p3a -> p3d
@@ -522,7 +519,7 @@ phases: "6. Capability phases and target borders" {
   }
 
   phase_0 -> phase_1: "stable declaration graph"
-  phase_1 -> phase_2: "evidence model established"
+  phase_1 -> phase_2: "proof model established"
   phase_2 -> phase_3: "kinds make target legality explicit"
 }
 
@@ -535,9 +532,9 @@ decision_points: "7. Decisions kept visible in the graph" {
 
   structural_nominal: "Capability satisfaction" {
     direction: down
-    question: "Explicit implementation rows, structural derivation, or both?" {class: boundary}
-    current: "Current DL6: explicit rel ... is ... rows" {class: semantic}
-    rust_flix: "Rust / Flix contribution: coherent explicit evidence" {class: note}
+    question: "Which compiler relations may prove capability satisfaction?" {class: boundary}
+    current: "Current DL6: structural json_encodable proof plus generic bounds" {class: semantic}
+    rust_flix: "Rust / Flix prior art: coherent explicit evidence" {class: note}
     go_ts: "Go / TS contribution: derived compatibility at selected borders" {class: note}
     question -> current
     rust_flix -> current

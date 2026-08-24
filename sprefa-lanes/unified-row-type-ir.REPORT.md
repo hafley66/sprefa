@@ -4,6 +4,9 @@
 
 The shared worktree has the implementation changes. No commit was created.
 
+Historical report. `issues/remove-rel-is/item.md` removed relation conformance
+suffixes and implementation rows on 2026-08-23.
+
 ## Normalized row signatures
 
 ```prolog
