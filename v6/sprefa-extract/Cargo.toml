@@ -136,7 +136,7 @@ quick_cache = "0.7"
 # and versions the engine crate carries (sprefa-engine-rs/Cargo.toml:36-37), so
 # one process linking both installs one subscriber that sees both crates.
 tracing = "0.1"
-hafley-observe = { path = "../../../hafley-rs/crates/hafley-observe", optional = true }
+hafley-observe = { git = "https://github.com/hafley66/hafley-rs", rev = "ea016d41ced5d337fa26830279286cdeccee2084", optional = true }
 
 # clap is BIN-only: gated behind `cli` so `cargo tree --lib` stays free of it.
 # The bin adds only clap; the lib never touches it.
