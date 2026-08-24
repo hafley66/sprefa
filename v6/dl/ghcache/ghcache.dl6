@@ -360,7 +360,6 @@ rel miss_cooloff(period_ticks: int).
 rel endpoint_miss(endpoint_path: text, bucket: int).
 rel endpoint_hit(endpoint_path: text, bucket: int).
 rel miss_streak(endpoint_path: text, misses: int, at_bucket: int) key(1).
-rel miss_prior(endpoint_path: text, bucket: int, misses: int).
 rel miss_next(endpoint_path: text, misses: int, at_bucket: int).
 rel endpoint_cooling(endpoint_path: text, bucket: int).
 
@@ -374,25 +373,26 @@ endpoint_miss(EndpointPath, Bucket) <-
                 bucket: Bucket, status: RespStatus),
   RespStatus == 404.
 
+# The stored-streak guard is what keeps a healthy endpoint off this plane: with
+# no streak to reset, a 200 writes nothing and the reset costs zero statements.
 endpoint_hit(EndpointPath, Bucket) <-
   page_response(endpoint_path: EndpointPath, page_url: EndpointPath,
                 bucket: Bucket, status: RespStatus),
-  RespStatus != 404.
+  RespStatus != 404,
+  miss_streak(endpoint_path: EndpointPath, misses: Misses),
+  Misses > 0.
 
 # Two exclusive arms on `at_bucket`, the `page_prev_etag` shape: once this
-# bucket's increment has folded, `at_bucket == Bucket` derives NO prior row.
-miss_prior(EndpointPath, Bucket, Misses) <-
+# bucket's increment has folded, `at_bucket == Bucket` derives NO row at all.
+miss_next(EndpointPath, NextMisses, Bucket) <-
   endpoint_miss(EndpointPath, Bucket),
   miss_streak(endpoint_path: EndpointPath, misses: Misses, at_bucket: AtBucket),
-  AtBucket < Bucket.
+  AtBucket < Bucket,
+  NextMisses := Misses + 1.
 
-miss_prior(EndpointPath, Bucket, 0) <-
+miss_next(EndpointPath, 1, Bucket) <-
   endpoint_miss(EndpointPath, Bucket),
   not(miss_streak(EndpointPath)).
-
-miss_next(EndpointPath, NextMisses, Bucket) <-
-  miss_prior(EndpointPath, Bucket, Misses),
-  NextMisses := Misses + 1.
 
 miss_streak(EndpointPath, NextMisses, Bucket) <+
   miss_next(EndpointPath, NextMisses, Bucket).
