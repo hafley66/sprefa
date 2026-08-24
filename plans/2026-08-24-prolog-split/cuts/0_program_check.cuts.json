@@ -1,0 +1,13 @@
+{
+  "file": "v6/prolog/0_program_check.pl",
+  "predmap": "0_program_check.predmap.json",
+  "folder": "v6/prolog/0_program_check",
+  "module": "program_check",
+  "parts": [
+    {"file": "0_lookups.pl", "anchor": "first_violation/3", "owns": "first_violation/3 and the small decl readers the violation clauses all call"},
+    {"file": "1_violations_decls.pl", "anchor": "program_violation/3", "owns": "the violation clauses about declarations and patterns, with the cst regexp and ast capture helpers only they use"},
+    {"file": "2_violations_rules.pl", "anchor": "declared_ref/2", "owns": "the violation clauses about rules, reserved carriers and column type conflicts"},
+    {"file": "3_aggregates_and_types.pl", "anchor": "numeric_aggregate_operand/3", "owns": "numeric aggregate operands, the implemented aggregate roster, declared column type uses and the rule atom readers"},
+    {"file": "4_column_variables.pl", "anchor": "declared_column_table/4", "owns": "the declared column table, head and body column variables, storage assignability and relation argument violations"}
+  ]
+}
