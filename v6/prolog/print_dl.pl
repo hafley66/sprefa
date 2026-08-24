@@ -366,7 +366,14 @@ is_clause_text(Decls, Ref, Text) :-
     ).
 
 print_type_application(Application, Text) :-
-    (   compound(Application)
+    (   Application = type_path_application(Segments, Arguments)
+    ->  atomic_list_concat(Segments, '.', Name),
+        maplist(print_column_type, Arguments, ArgumentTexts),
+        atomic_list_concat(ArgumentTexts, ', ', ArgumentsText),
+        format(atom(Text), "~w(~w)", [Name, ArgumentsText])
+    ;   Application = type_path(Segments)
+    ->  atomic_list_concat(Segments, '.', Text)
+    ;   compound(Application)
     ->  Application =.. [Name | Arguments],
         maplist(print_column_type, Arguments, ArgumentTexts),
         atomic_list_concat(ArgumentTexts, ', ', ArgumentsText),
@@ -455,6 +462,12 @@ print_column_type(sum_type(Variants), Text) :-
 print_column_type(type_path(Segments), Text) :-
     !,
     atomic_list_concat(Segments, '.', Text).
+print_column_type(type_path_application(Segments, Arguments), Text) :-
+    !,
+    atomic_list_concat(Segments, '.', Name),
+    maplist(print_type_argument, Arguments, ArgumentTexts),
+    atomic_list_concat(ArgumentTexts, ', ', ArgumentsText),
+    format(atom(Text), "~w(~w)", [Name, ArgumentsText]).
 print_column_type(Type, Text) :-
     compound(Type),
     Type =.. [Name | Arguments],

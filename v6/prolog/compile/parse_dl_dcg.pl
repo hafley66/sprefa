@@ -352,13 +352,24 @@ statements(Decls, Rules, Queries) -->
     ws, here(S1),
     ( { S1 == [] }
     -> { Decls = [], Rules = [], Queries = [] }
-    ; ( statement(Kind, Item)
-      -> { length(S1, Rem), record_statement(Kind, Item, Rem) }
+    ; ( statement(Kind, Item, Sites)
+      -> { length(S1, Rem),
+           record_statement_sites(Kind, Item, Rem, Sites) }
       ; { parse_failure(statement) }
       ),
       statements(Decls1, Rules1, Queries1),
       { attach(Kind, Item, Decls1, Rules1, Queries1, Decls, Rules, Queries) }
     ).
+
+record_statement_sites(decl_list, _, _, Sites) :-
+    Sites = [_ | _],
+    !,
+    maplist(record_decl_site, Sites).
+record_statement_sites(Kind, Item, Rem, _) :-
+    record_statement(Kind, Item, Rem).
+
+record_decl_site(decl_site(Rem, Decls)) :-
+    record_statement(decl_list, Decls, Rem).
 
 attach(decl_list, I, Ds, Rs, Qs, Ds2, Rs, Qs) :- append(I, Ds, Ds2).
 attach(rule, I, Ds, Rs, Qs, Ds, [I | Rs], Qs).
@@ -534,15 +545,21 @@ import_stmt(import_decl(File, Line, Col, EndLine, EndCol)) -->
       ; EndLine is L2 - 1, EndCol is C2 - 1 ) }.
 
 
-statement(Kind, Item) -->
+statement(Kind, Item, Sites) -->
     ws,
-    ( removed_world_decl_stmt(Ds) -> { Kind = decl_list, Item = Ds }
-    ; interface_stmt(D) -> { Kind = decl_list, Item = [D] }
-    ; rel_stmt(Ds) -> { Kind = decl_list, Item = Ds }
-    ; import_stmt(D) -> { Kind = decl_list, Item = [D] }
-    ; query_stmt(Q) -> { Kind = query, Item = Q }
+    ( removed_world_decl_stmt(Ds)
+    -> { Kind = decl_list, Item = Ds, Sites = [] }
+    ; interface_stmt(D)
+    -> { Kind = decl_list, Item = [D], Sites = [] }
+    ; rel_stmt(Ds, Sites)
+    -> { Kind = decl_list, Item = Ds }
+    ; import_stmt(D)
+    -> { Kind = decl_list, Item = [D], Sites = [] }
+    ; query_stmt(Q)
+    -> { Kind = query, Item = Q, Sites = [] }
     ; ( match_stmt(R) -> [] ; rule_stmt(R) -> [] ),
-      { Kind = rule, b_getval(dl_vars, Vars), annotate_cst_item(Vars, R, Item) }
+      { Kind = rule, Sites = [],
+        b_getval(dl_vars, Vars), annotate_cst_item(Vars, R, Item) }
     ).
 
 
@@ -554,46 +571,87 @@ args(P, Xs) --> ws, ( peek(0')) -> { Xs = [] } ; sep(P, Xs) ).
 #Cs --> ws, @Cs.
 
 
-rel_stmt(Decls) -->
+rel_stmt(Decls) --> rel_stmt(Decls, _).
+
+rel_stmt(Decls, Sites) --> rel_stmt_in([], Decls, Sites).
+
+rel_stmt_in(Prefix, Decls, [decl_site(Rem, OwnDecls) | ChildSites]) -->
+    here(Start),
     ~`rel`, ws,
-    ( ident(Name), #`(`, enum_variants(Variants), #`)`, #`.`,
-      { Decls = [enum_decl(Name, Variants)],
+    ( { Prefix == [] },
+      ident(Name), #`(`, enum_variants(Variants), #`)`, #`.`,
+      { OwnDecls = [enum_decl(Name, Variants)],
+        ChildDecls = [], ChildSites = [],
         record_enum_column_orders(Name, Variants) }
-    ; dotted_path(Segs),
+    ; dotted_path(LocalSegs),
+      { append(Prefix, LocalSegs, Segs) },
       (   generic_parameters(Parameters), #`(`,
           (   enum_variants(Variants), #`)`, #`.`,
               % A parameterized enum: the first group is generic type
               % parameters, the second the mutually-exclusive variant set.
               % Minted like a rel template but into enum_decl terms, so the
               % enum lowering phase owns the sum.
-              { Decls = [rel_template_enum(Segs, Parameters, Variants)] }
+              { Prefix == [],
+                OwnDecls = [rel_template_enum(Segs, Parameters, Variants)],
+                ChildDecls = [], ChildSites = [] }
           ;   args(decl_a_column, Specs), #`)`,
               relation_arrow_output(Segs, Specs, ArrowSpecs, _ReturnAlias), #`.`,
               % A template mints no col_type/kind entry: this ONE term is
               % the record. No Ref exists yet to hang an alias decl on.
-              { Decls = [rel_template(Segs, Parameters, ArrowSpecs)] }
+              { Prefix == [],
+                OwnDecls = [rel_template(Segs, Parameters, ArrowSpecs)],
+                ChildDecls = [], ChildSites = [] }
           )
       ;   #`(`,
           args(decl_a_column, Specs), #`)`,
-          arrival_decl_tail(Segs, Specs, Decls)
-      ;   #`(`,
-          args(decl_a_column, Specs), #`)`,
-          relation_arrow_output(Segs, Specs, ArrowSpecs, ReturnAlias),
-          { length(ArrowSpecs, Arity),
-            module_path_name(Segs, Name),
-            Ref = Name/Arity,
-            record_spec_names(Name, ArrowSpecs) },
-          ws,
-          { typed_decl_entries(Ref, ArrowSpecs, Typed) },
-          rel_modifiers(Ref, Mods),
-          is_clause(Ref, Conformance),
-          { module_path_decls(Segs, Ref, PathDecls),
-            arrow_return_alias_decl(Ref, ReturnAlias, AliasDecls),
-            column_less_decls(Ref, ArrowSpecs, Mods, UnitDecls),
-            append([Typed, Mods, PathDecls, AliasDecls, UnitDecls, Conformance], Decls) },
-          #`.`
+          here(AfterInputs),
+          ( { arrival_arrow_ahead(AfterInputs) }
+          -> { Prefix == [] },
+             arrival_decl_tail(Segs, Specs, OwnDecls),
+             { ChildDecls = [], ChildSites = [] }
+          ;  relation_arrow_output(Segs, Specs, ArrowSpecs, ReturnAlias),
+             { length(ArrowSpecs, Arity),
+               module_path_name(Segs, Name),
+               Ref = Name/Arity,
+               record_spec_names(Name, ArrowSpecs) },
+             ws,
+             { typed_decl_entries(Ref, ArrowSpecs, Typed) },
+             rel_modifiers(Ref, Mods),
+             is_clause(Ref, Conformance),
+             { module_path_decls(Segs, Ref, PathDecls),
+               arrow_return_alias_decl(Ref, ReturnAlias, AliasDecls),
+               column_less_decls(Ref, ArrowSpecs, Mods, UnitDecls),
+               append([Typed, Mods, PathDecls, AliasDecls, UnitDecls,
+                       Conformance], OwnDecls) },
+             rel_decl_end(Segs, ChildDecls, ChildSites)
+          )
       )
-    ; decl_b_tail(Decls)
+    ; { Prefix == [] },
+      decl_b_tail(OwnDecls),
+      { ChildDecls = [], ChildSites = [] }
+    ),
+    { length(Start, Rem),
+      append(OwnDecls, ChildDecls, Decls) }.
+
+% A block is declaration path scope. It emits the same flat declaration list
+% as the dotted spelling, and its punctuation is consumed before any later
+% compiler phase sees the program.
+rel_decl_end(_, [], []) --> #`.`.
+rel_decl_end(Path, ChildDecls, ChildSites) -->
+    #`{`,
+    nested_rel_stmts(Path, ChildDecls, ChildSites),
+    #`}`, #`.`.
+
+nested_rel_stmts(ParentPath, Decls, Sites) -->
+    ws,
+    ( peek(0'})
+    -> { Decls = [], Sites = [] }
+    ; ( rel_stmt_in(ParentPath, OwnDecls, OwnSites)
+      -> nested_rel_stmts(ParentPath, RestDecls, RestSites),
+         { append(OwnDecls, RestDecls, Decls),
+           append(OwnSites, RestSites, Sites) }
+      ;  { parse_failure(nested_relation_declaration) }
+      )
     ).
 
 % Relation arrows are declaration-only sugar. The output is represented by
@@ -643,6 +701,11 @@ response_column_group_ahead([0'( | Rest]) :-
     identifier_run(More, After),
     whitespace_tail(After, [0':, Next | _]),
     Next =\= 0':.
+
+arrival_arrow_ahead(Input) :-
+    whitespace_tail(Input, [0'-, 0'> | AfterArrow]),
+    whitespace_tail(AfterArrow, Response),
+    response_column_group_ahead(Response).
 
 identifier_run([Code | Rest], After) :-
     ( code_type(Code, alnum) ; Code =:= 0'_ ),
@@ -760,11 +823,11 @@ is_clause(Ref, Decls) -->
     ).
 
 type_application(Application) -->
-    ident(Name), ws,
+    dotted_path(Segs), ws,
     ( @`(`
     -> ws, sep(type_expr, Arguments), #`)`,
-       { Application =.. [Name | Arguments] }
-    ;  { Application = Name }
+       { type_path_application(Segs, Arguments, Application) }
+    ;  { type_path_name(Segs, Application) }
     ).
 
 column_less_decls(Ref, Specs, Mods, Decls) :-
@@ -816,9 +879,8 @@ type_base(T) -->
 type_base(Type) -->
     dotted_path(Segs), ws,
     ( @`(`
-    -> { Segs = [Name] },
-       ws, sep(type_argument, Arguments), #`)`,
-       { Type =.. [Name | Arguments] }
+    -> ws, sep(type_argument, Arguments), #`)`,
+       { type_path_application(Segs, Arguments, Type) }
     ;  { type_path_name(Segs, Type) }
     ).
 % Anonymous product and sum literals: `(a: int, b: text)` and
@@ -877,6 +939,12 @@ sum_variant(variant(Name, Fields)) -->
 % can use the same declared_path/3 lookup as a relation call.
 type_path_name([Name], Name).
 type_path_name(Segs, type_path(Segs)).
+
+type_path_application([Name], Arguments, Type) :-
+    !,
+    Type =.. [Name | Arguments].
+type_path_application(Segments, Arguments,
+                      type_path_application(Segments, Arguments)).
 
 enum_variants((First ; Rest)) -->
     enum_variant(First), #`;`, ws, enum_variants(Rest).
@@ -1118,11 +1186,11 @@ template_codes([C | Cs]) --> [C], template_codes(Cs).
 
 % A tail-free `?` keeps the query/1 term, so its emitted bytes cannot move.
 query_stmt(Query) -->
-    @`?`, ws, ident(Name), #`(`,
+    @`?`, ws, dotted_path(Segs), #`(`,
     head_args(Args), #`)`,
+    { module_path_name(Segs, Name) },
     order_tail(Name, Args, OrderCols), #`.`,
-    { resolve_named_args(head, Name, Args, Pos),
-      Atom =.. [Name | Pos],
+    { path_atom(head, Segs, Args, Atom),
       ( OrderCols == [] -> Query = query(Atom)
       ; Query = query(Atom, order(OrderCols)) ) }.
 
@@ -1359,9 +1427,9 @@ body_item(Name) -->
 body_item(Item) --> infix_item(infix_op(bind), Item), !.
 body_item(Item) --> infix_item(cmp_op, Item), !.
 body_item(not(Atom)) -->
-    @`!`, ident(Name), #`(`,
-    args(expr, Args), #`)`, !,
-    { Atom =.. [Name | Args] }.
+    @`!`, dotted_path(Segs), #`(`,
+    head_args(Args), #`)`, !,
+    { path_atom(body, Segs, Args, Atom) }.
 body_item(Item) --> relatom_item(Item).
 
 
@@ -1637,13 +1705,19 @@ bool_lit(bool_lit(B)) -->
 wildcard_var(_) --> ~`_`.
 
 compound_or_var(E) -->
-    ident(Name), here(S1), ws,
-    ( peek(0'()
+    here(Start),
+    ( dotted_path(Segs), ws, peek(0'()
     -> @`(`, args(expr, Args), #`)`,
-       { E =.. [Name | Args] }
-    ; { get_or_make_var(Name, Rec) },
-      back(S1), dot_chain(Rec, E)
+       { expression_path_application(Segs, Args, E) }
+    ; back(Start), ident(Name), here(AfterName), ws,
+      { get_or_make_var(Name, Rec) },
+      back(AfterName), dot_chain(Rec, E)
     ).
+
+expression_path_application([Name], Args, E) :-
+    !,
+    E =.. [Name | Args].
+expression_path_application(Segs, Args, rel_path(Segs, Args)).
 
 % Slash and dot are one path spelling (ruling executor_modules_use_import) and
 % both reach module_path_name/2's `__` join, as `use soopy.` plus a leaf does.

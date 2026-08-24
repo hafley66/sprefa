@@ -131,6 +131,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 :- use_module('../../1_host_expand', [ body_goals/2 ]).
 :- use_module('../../3_clock_check', [clock_boundary/2]).
 :- ensure_loaded('3_clock_check.test.pl').
+:- ensure_loaded('4_braced_nested_relations.test.pl').
 :- ensure_loaded('0_graph.test.pl').
 % The diag channel's plunit receipts live with the module in labs/.
 :- ensure_loaded('diag.test.pl').

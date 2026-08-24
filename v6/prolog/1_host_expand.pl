@@ -36,6 +36,7 @@
                 host_input_roles/3
               ]).
 :- use_module('0_cst_query', [ serialize_ts_query/2 ]).
+:- use_module('0_dot_expand', [resolve_relation_paths/3]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -43,6 +44,7 @@
 
 prepare_program(Input, prog(Decls, Rules), HostPlans, [], QueryPlans) :-
     program_parts(Input, RawDecls, RawRules, Queries),
+    resolve_relation_paths(RawDecls, Queries, ResolvedQueries),
     maplist(normalize_rule, RawRules, NormalizedRules),
     findall(HostPlan,
             ( member(Decl, RawDecls),
@@ -53,11 +55,11 @@ prepare_program(Input, prog(Decls, Rules), HostPlans, [], QueryPlans) :-
     no_duplicate_host_names(HostPlans),
     no_host_rel_name_collisions(HostPlans, RawDecls),
     no_host_rule_heads(HostPlans, NormalizedRules),
-    maplist(compile_query, Queries, QueryPlans),
+    maplist(compile_query, ResolvedQueries, QueryPlans),
     expand_probe_rules(NormalizedRules, HostPlans, RawDecls,
                        ExpandedRules, GeneratedDecls),
     unprobed_host_decls(HostPlans, GeneratedDecls, UnprobedDecls),
-    append([RawDecls, Queries, GeneratedDecls, UnprobedDecls],
+    append([RawDecls, ResolvedQueries, GeneratedDecls, UnprobedDecls],
            Decls0),
     dedupe_terms(Decls0, Decls),
     append(ExpandedRules, [], Rules).
