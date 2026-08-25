@@ -1,6 +1,6 @@
 ---
 created: 2026-08-24
-updated: 2026-08-24
+updated: 2026-08-25
 type: epic
 owner: chris
 status: open
@@ -94,8 +94,8 @@ Existing blockers remain authoritative: `@canonical-type-reflection`, `@canonica
 - [x] @temporal-v2-salvage
 - [x] @typegraph-node-edge-view
 - [x] @typegraph-member-planes
-- [ ] @type-pattern-lowering
-- [ ] @compiler-plane-expression-parity
+- [x] @type-pattern-lowering
+- [x] @compiler-plane-expression-parity
 - [x] @dot-brace-nesting
 - [ ] @userland-dot-projection
 - [ ] @anonymous-sum-dot-projection
@@ -104,7 +104,7 @@ Existing blockers remain authoritative: `@canonical-type-reflection`, `@canonica
 - [ ] @userland-temporal-annotations
 - [ ] @remove-temporal-suffix
 - [ ] @quoted-sqlite-storage-names
-- [ ] @userland-type-operators
+- [x] @userland-type-operators
 - [ ] @retire-type-specialcases
 - [ ] @userland-typegraph-golden
 
