@@ -1470,12 +1470,14 @@ dependencies = [
  "diffy",
  "fs4",
  "globset",
+ "hafley-observe",
  "ignore",
  "notify",
  "notify-debouncer-full",
  "serde",
  "serde_json",
  "sysinfo",
+ "tracing",
 ]
 
 [[package]]
