@@ -40,7 +40,7 @@ Move compile-time type, projection, constraint, temporal, and storage-name seman
 | Members | Authored and rewritten storage members shared one plane-bearing compiler view. | `type.member/5` exposes one canonical semantic member; physical storage projection stays target-specific and keyed by member identity. | @typegraph-member-planes, @remove-type-member-plane |
 | Type terms | Functional heads construct canonical applications; structural type-pattern matching is absent. | Construction and matching lower to safe explicit Datalog operations. | @type-pattern-lowering |
 | Brace nesting | Argument-bearing brace parents can inject parent capture and shift child keys. | Braces contribute name prefixes; parent links are explicit typed columns. | @dot-brace-nesting |
-| Dot projection | Projection lives in the PL experiment pass. | `$type.project` is derived by user-land DL6 over canonical graph rows. | @userland-dot-projection |
+| Dot projection | Projection lived in a PL experiment pass and compiler builtin source. | Imported DL6 declares keyed `type.project/3` and derives it from canonical graph edges. | @userland-dot-projection |
 | Anonymous sums | A member-owned anonymous sum lacks the complete `A.x.variant` projection contract. | Owner, member, and variant paths resolve with deterministic collision rules. | @anonymous-sum-dot-projection |
 | Keys and constraints | Key wrappers are interpreted through feature-specific compiler behavior. | Primary, unique, index, and foreign-key groups are first-class compiler rows. | @userland-constraint-graph, @sqlite-constraint-emitter |
 | Temporal schema | Temporal requests use compiler builtins and retain the legacy suffix surface. | DL6 annotations derive storage rows; call syntax replaces the suffix after parity. | @userland-temporal-annotations, @remove-temporal-suffix |
@@ -98,7 +98,7 @@ Existing blockers remain authoritative: `@canonical-type-reflection`, `@canonica
 - [x] @type-pattern-lowering
 - [x] @compiler-plane-expression-parity
 - [x] @dot-brace-nesting
-- [ ] @userland-dot-projection
+- [x] @userland-dot-projection
 - [ ] @anonymous-sum-dot-projection
 - [ ] @userland-constraint-graph
 - [ ] @sqlite-constraint-emitter

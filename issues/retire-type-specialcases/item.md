@@ -28,7 +28,7 @@ Remove feature-specific compiler semantics after their DL6 replacements and targ
 ## Candidate Removals
 
 - Temporal request builtin handling.
-- PL projection grouping after user-land projection.
+- Nested-path collision validation after a generic user-land diagnostic mechanism; projection row grouping and source seeding were removed by `@userland-dot-projection`.
 - Key wrapper collection superseded by constraint rows.
 - Dead transport declarations, diagnostics, and tests.
 
