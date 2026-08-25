@@ -69,7 +69,12 @@ fn every_lang_name_round_trips_through_the_yaml_spelling() {
         ExtractLang::Markdown,
         ExtractLang::MarkdownInline,
     ];
-    langs.extend(SupportLang::all_langs().iter().copied().map(ExtractLang::Sg));
+    langs.extend(
+        SupportLang::all_langs()
+            .iter()
+            .copied()
+            .map(ExtractLang::Sg),
+    );
     for lang in langs {
         assert_eq!(ExtractLang::parse_name(&lang.name()), Some(lang));
     }
@@ -115,7 +120,11 @@ fn pre_process_pattern_matches_the_ast_grep_rewrite() {
         "$$$",
     ] {
         let ours = ExtractLang::Sg(SupportLang::Rust).pre_process_pattern(query);
-        assert_eq!(ours, SupportLang::Rust.pre_process_pattern(query), "{query}");
+        assert_eq!(
+            ours,
+            SupportLang::Rust.pre_process_pattern(query),
+            "{query}"
+        );
     }
     assert_eq!(ExtractLang::Dl6.pre_process_pattern("seen($T)"), "seen(_T)");
     assert_eq!(ExtractLang::Dl6.pre_process_pattern("f($$$A)"), "f(___A)");
@@ -148,7 +157,10 @@ fn dl6_ast_pattern_matches_rule_head_and_body() {
         .find(|fact| fact.capture == "BODY")
         .expect("a BODY capture");
     let text = String::from_utf8(content.clone()).expect("utf8 fixture");
-    assert_eq!(&text[first.start as usize..first.end as usize], "edge(X, Y)");
+    assert_eq!(
+        &text[first.start as usize..first.end as usize],
+        "edge(X, Y)"
+    );
     assert_eq!(
         &text[first.match_start as usize..first.match_end as usize],
         "path(X, Y) <- edge(X, Y)."
@@ -220,10 +232,7 @@ fn prolog_ast_pattern_matches_a_directive_goal() {
     )
     .expect("prolog pattern query");
     assert_eq!(captured(&facts, "MODULE"), vec!["'../shared/graph'"]);
-    assert_eq!(
-        captured(&facts, "IMPORTS"),
-        vec!["[reachable/2, walk//1]"]
-    );
+    assert_eq!(captured(&facts, "IMPORTS"), vec!["[reachable/2, walk//1]"]);
     let text = String::from_utf8(content).expect("utf8 fixture");
     let only = facts.first().expect("one match");
     assert_eq!(
@@ -347,4 +356,47 @@ fn the_cli_ast_pattern_door_reaches_dl6_prolog_and_markdown() {
             "{path} stdout: {stdout}"
         );
     }
+}
+
+const DL6_UNDERSCORE: &str = "rel seen(node: text).\nseen(_Target) <- edge(_Target, Other).\nseen(Plain) <- edge(Plain, Other).\n";
+
+/// The expando is `_`, and ast-grep only reads expando + an ALL-CAPS name as a
+/// metavar. So in a PATTERN `_Target` stays a literal variable (one match) while
+/// `_TARGET` is a metavar (both rules match). SOURCE text is never rewritten.
+#[test]
+fn an_underscore_variable_in_a_dl6_pattern_is_literal_unless_all_caps() {
+    let literal = query_patterns(
+        "underscore.dl6",
+        DL6_UNDERSCORE.as_bytes(),
+        &[query(
+            "literal",
+            "seen(_Target) <- edge(_Target, $O).",
+            None,
+            &["O"],
+        )],
+    )
+    .expect("dl6 literal query");
+    assert_eq!(captured(&literal, "O"), vec!["Other"]);
+
+    let metavar = query_patterns(
+        "underscore.dl6",
+        DL6_UNDERSCORE.as_bytes(),
+        &[query(
+            "metavar",
+            "seen(_TARGET) <- edge(_TARGET, $O).",
+            None,
+            &["O"],
+        )],
+    )
+    .expect("dl6 metavar query");
+    assert_eq!(captured(&metavar, "O"), vec!["Other", "Other"]);
+
+    // Source side: a `$X` metavar binds the literal `_Target` text unchanged.
+    let facts = query_patterns(
+        "underscore.dl6",
+        DL6_UNDERSCORE.as_bytes(),
+        &[query("bind", "seen($X) <- edge($X, Other).", None, &["X"])],
+    )
+    .expect("dl6 bind query");
+    assert_eq!(captured(&facts, "X"), vec!["_Target", "Plain"]);
 }

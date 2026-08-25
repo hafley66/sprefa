@@ -8,9 +8,9 @@
 //! `src/cst.rs::walk_cst`, iterative pre-order DFS, named nodes only, unnamed
 //! nodes reparenting their named descendants to the nearest named ancestor.
 
+use crate::lang::extract_lang::ExtractLang;
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{AstGrep, Node as SgNode, Pattern};
-use crate::lang::extract_lang::ExtractLang;
 use serde::Serialize;
 
 use crate::family::{CstEdgeKind, CstF};
