@@ -19,7 +19,7 @@
               [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
                 program_uses_tick/2, listened_departure_refs/2,
                 level_body_pre_ref/2, rel_rule_observers_map/2 ]).
-:- use_module(strat, [recursive_stratum_groups/2, cyclic_head_groups/2]).
+:- use_module('next/2_lower/strat', [recursive_stratum_groups/2, cyclic_head_groups/2]).
 :- use_module('next/1_expand/1_host_expand', [compile_host_decl/2, compile_query/2,
                                 query_decl/3, host_plan_contract/2]).
 % bind_executor/2 left the registry with the bind surface; pinned here so the
