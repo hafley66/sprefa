@@ -69,4 +69,4 @@
 
 :- include('generic_expand/8_type_rewrite.pl').
 
-:- include('../0_generic_expand/8a_key_wrappers.pl').
+:- include('generic_expand/8a_key_wrappers.pl').
