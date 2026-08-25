@@ -2067,10 +2067,10 @@ plane_kind(expand). plane_kind(dred). plane_kind(avg_accumulator).
 % six level-statement families must mint in step with their DDL mint sites, so
 % the count is the rail's twin, not a fresh check over different rows.
 % Re-measured against the fixture corpus after each fixture change. Name-path
-% nesting removes four implicit parent-reference planes (192/1636/1636).
+% nesting removes four implicit parent-reference planes (192/1652/1652).
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-192, refcount-1636, refcount_staging-1636,
+    Counts = [scope-192, refcount-1652, refcount_staging-1652,
               expand-56, dred-84, avg_accumulator-8].
 
 corpus_plane_kind_counts(Counts) :-
@@ -3182,6 +3182,36 @@ test(mod_lowers_to_the_floored_correction) :-
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     memberchk(levelstmt(probe/3, _, [InsertSql], _, _, _, _), LevelStatements),
     once(sub_atom(InsertSql, _, _, _, '% b0."denominator") + b0."denominator") % b0."denominator")')).
+
+% FAIL-PRE-FIX: the two operands read `(SELECT "__id" ... WHERE "content" = X)`
+% on both sides, and `IS` matched the NULL a missing dictionary row leaves.
+test(computed_text_and_literal_compare_characters) :-
+    interning_lowered_in('text_identity_literal.pl', dict,
+                         text_identity_unstated_literal_matches_no_computed_text,
+                         Lowered),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    memberchk(levelstmt(relative/1, _, [InsertSql], _, _, _, _), LevelStatements),
+    once(sub_atom(InsertSql, _, _, _,
+                  'WHERE (substr((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text_value"), 1, 3) IS \'../\')')).
+
+% Both ids are total, so the id compare stays: it reads one column each.
+test(two_stored_text_columns_compare_dictionary_ids) :-
+    interning_lowered_in('3_flagship_callgraph.pl', dict,
+                         callgraph_derivation_over_extraction, Lowered),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    memberchk(levelstmt(calls/2, _, [InsertSql], _, _, _, _), LevelStatements),
+    once(sub_atom(InsertSql, _, _, _, '(b0."name" IS NOT b1."callee")')).
+
+% FAIL-PRE-FIX: the seed read the literal back out of the emitted SQL and
+% halved nothing, so it stored the two characters `''` and the head id was NULL.
+test(a_quote_literal_seeds_the_character_it_spells) :-
+    interning_lowered_in('text_identity_literal.pl', dict,
+                         text_identity_quote_literal_reaches_a_head_column,
+                         Lowered),
+    Lowered = lowered(_, Ddl, _, _, _, _, _, _),
+    once(( member(Seed, Ddl),
+           sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__str"') )),
+    assertion(Seed == 'INSERT OR IGNORE INTO "__str" ("content") VALUES (\'\'\'\')').
 
 expressions_fixture_file(File) :-
     test_dir_fact(Here),
