@@ -49,7 +49,7 @@
 
 :- include('generic_expand/0_expand.pl').
 
-:- include('../0_generic_expand/0a_type_apply_requests.pl').
+:- include('generic_expand/0a_type_apply_requests.pl').
 
 :- include('../0_generic_expand/0b_expansion_pipeline.pl').
 
