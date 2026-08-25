@@ -2562,14 +2562,9 @@ test(declaring_the_catalog_rel_refuses_by_name) :-
 
 :- begin_tests(surface_spelling_in_the_rel_record).
 
-% GAP PINNED, NOT FIXED. 0_rel_record.pl's header promises the declared slot
-% holds the column's SURFACE spelling, and for option and enum columns it does
-% not: phase 5 rewrites option(text) to the `__opt_text` enum and phase 10
-% rewrites the enum column to int, both BEFORE the record snapshot, so
-% declared(int) is all that survives and an option column is indistinguishable
-% from a real int one. Flipping these two to declared(option(text)) and
-% declared(color) is the fix's target; it needs the record built before the
-% sugar phases, which is not a small change.
+% Canonical member rows supply the declared logical spelling while canonical
+% storage rows supply the third slot. Wrapper and enum columns therefore keep
+% their authored type beside the integer SQLite representation.
 record_columns_of(Name, Prog, Ref, Cols) :-
     once(program_plan(fixture(Name, Prog, [], [], [])-[], [intern(dict)],
                       Plan)),
@@ -2577,7 +2572,7 @@ record_columns_of(Name, Prog, Ref, Cols) :-
     relplan_of(RelPlans, Ref, RelPlan),
     ( RelPlan = rel(Ref, _, _, Cols, _) ; RelPlan = rel(Ref, _, Cols, _) ).
 
-test(an_option_column_loses_its_surface_spelling) :-
+test(an_option_column_keeps_its_surface_spelling) :-
     record_columns_of(
         option_surface,
         prog([col_type(tree/2, tree_id, int),
@@ -2585,9 +2580,9 @@ test(an_option_column_loses_its_surface_spelling) :-
              [(tree(TreeId, Label) <- raw(TreeId, Label))]),
         tree/2, Cols),
     Cols == [col(tree_id, declared(int), int),
-             col(label, declared(int), int)].
+             col(label, declared(option(text)), int)].
 
-test(an_enum_column_loses_its_surface_spelling) :-
+test(an_enum_column_keeps_its_surface_spelling) :-
     record_columns_of(
         enum_surface,
         prog([enum_decl(color, (red ; green)),
@@ -2596,10 +2591,8 @@ test(an_enum_column_loses_its_surface_spelling) :-
              [(tree(TreeId, Shade) <- raw(TreeId, Shade))]),
         tree/2, Cols),
     Cols == [col(tree_id, declared(int), int),
-             col(shade, declared(int), int)].
+             col(shade, declared(color), int)].
 
-% The promise HOLDS for a struct column, which is what makes the two above a
-% gap rather than the record's design.
 test(a_relation_valued_column_keeps_its_surface_spelling) :-
     record_columns_of(
         struct_surface,

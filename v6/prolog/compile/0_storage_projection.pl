@@ -17,7 +17,7 @@
 :- use_module('../0_rel_record',
               [ relplan_parts/6,
                 relplan_storage_name/2,
-                inferred_cols/3 ]).
+                rel_cols/4 ]).
 
 %! derive_storage_rows(+Decls, +RelPlans, -Rows) is det.
 %  Canonical owners receive physical relation, column, and key rows. A rel/5
@@ -312,9 +312,9 @@ project_storage_relplan(Decls, SemanticRows, StorageRows, Module, RelPlan0,
     ( catalog_storage_owner(Decls, SemanticRows, Module, Name, Arity, Owner),
       memberchk(storage_relation(Owner, TableName, Kind), StorageRows)
     -> storage_owner_columns(SemanticRows, StorageRows, Owner, Columns,
-                             StorageTypes),
+                             Origins, StorageTypes),
        require_projected_arity(Owner, Arity, Columns),
-       inferred_cols(Columns, StorageTypes, Cols),
+       rel_cols(Columns, Origins, StorageTypes, Cols),
        storage_owner_key(SemanticRows, StorageRows, Owner, KeyOrNone),
        RelPlan = rel(Name/Arity, TableName, Kind, Cols, KeyOrNone)
     ;  RelPlan = RelPlan0
@@ -336,17 +336,26 @@ catalog_storage_owner(_, Rows, module(Hash), Name, Arity, Owner) :- !,
 catalog_storage_owner(Decls, Rows, _, Name, Arity, Owner) :-
     canonical_storage_owner(Decls, Rows, Name, Arity, Owner).
 
-storage_owner_columns(SemanticRows, StorageRows, Owner, Columns,
+storage_owner_columns(SemanticRows, StorageRows, Owner, Columns, Origins,
                       StorageTypes) :-
-    findall(Position-(Name-StorageType),
-            ( member(member(MemberId, Owner, Position, Name, _), SemanticRows),
+    findall(Position-storage_col(Name, Origin, StorageType),
+            ( member(member(MemberId, Owner, Position, Name, TypeRef),
+                     SemanticRows),
               memberchk(storage_column(MemberId, CanonicalStorage),
                         StorageRows),
+              logical_member_origin(TypeRef, Origin),
               relplan_storage_type(CanonicalStorage, StorageType) ),
             Pairs0),
     keysort(Pairs0, Pairs),
-    pairs_values(Pairs, NameStoragePairs),
-    pairs_keys_values(NameStoragePairs, Columns, StorageTypes).
+    pairs_values(Pairs, Shapes),
+    maplist(storage_col_parts, Shapes, Columns, Origins, StorageTypes).
+
+logical_member_origin(type_ref(TypeRef), declared(SurfaceType)) :-
+    semantic_type_ref_target(TypeRef, Target),
+    semantic_storage_type(Target, SurfaceType).
+
+storage_col_parts(storage_col(Name, Origin, StorageType), Name, Origin,
+                  StorageType).
 
 relplan_storage_type(primitive(Type), Type) :- !.
 relplan_storage_type(reference(Target), ref(Name)) :- !,
