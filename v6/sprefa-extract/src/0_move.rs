@@ -131,16 +131,25 @@ impl Plan {
         let mut edits: BTreeMap<String, Vec<(usize, usize, String)>> = BTreeMap::new();
         let mut module_name: Option<String> = None;
 
+        let mut parsed = 0usize;
+        let mut skipped = 0usize;
+
         for file in &corpus {
             let Ok(bytes) = std::fs::read(file) else {
                 continue;
             };
+            let is_old = *file == old;
+            // `old` is parsed unconditionally: its own module name is read off it.
+            if !is_old && !carries_specifier(&bytes) {
+                skipped += 1;
+                continue;
+            }
             let Ok(text) = String::from_utf8(bytes) else {
                 continue;
             };
+            parsed += 1;
             let rows = specifiers(file, &text);
             let dir = file.parent().unwrap_or(&root).to_path_buf();
-            let is_old = *file == old;
             if is_old {
                 module_name = rows.module.clone();
             }
@@ -171,6 +180,7 @@ impl Plan {
                     .push((spec.start, spec.end, replacement));
             }
         }
+        tracing::debug!(parsed, skipped, corpus = corpus.len(), "move prescan");
         if cli.shim {
             edits.retain(|rel, _| rel == &old_rel);
         }
@@ -206,6 +216,26 @@ impl Plan {
             stages,
         })
     }
+}
+
+/// The directive names that can carry a file spec, matching the extractor's own
+/// arm list (`lang/prolog/_0_source.rs:379-383`). A file naming none of them
+/// yields no specifier row, so its parse buys nothing. Bare words, not
+/// `include(`: a quoted-atom call (`'include'(...)`) still has to match, and a
+/// missed rewrite is a silently broken import. Measured cost of the wider net on
+/// the repo corpus is 10 files out of 284.
+const SPEC_NEEDLES: [&str; 5] = [
+    "use_module",
+    "ensure_loaded",
+    "consult",
+    "include",
+    "reexport",
+];
+
+fn carries_specifier(bytes: &[u8]) -> bool {
+    SPEC_NEEDLES
+        .iter()
+        .any(|needle| memchr::memmem::find(bytes, needle.as_bytes()).is_some())
 }
 
 /// One file-spec occurrence, with the byte range of the term as written.
