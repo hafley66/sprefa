@@ -1,0 +1,88 @@
+# The prolog module graph as edges, resolved to files, from one entry file.
+# rx: files$.pipe(mergeMap(extractSpecifiers), map(resolveToPath), filter(reachableFromEntry))
+
+use extract.
+use soopy.
+
+rel span(start: int, end: int).
+rel files(glob: text) -> (path: text, digest: text).
+rel specifier_at(path: text, digest: text, families: text) -> (record: text, family: text, span: span, module: text, name: text, kind: text) key(1, 3).
+
+rel want(glob: text).
+rel entry(path: text).
+
+rel source_file(path: text, digest: text).
+source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
+
+# One row per load directive: use_module/1,2, include/1, reexport/1,2.
+rel load_text(path: text, start: int, raw: text).
+load_text(Path, Start, Raw) <- source_file(Path, Digest),
+  specifier_at(Path, Digest, "call", "specifier", _, span(Start, _), Module, _Name, "named"), Raw := Module.
+load_text(Path, Start, Raw) <- source_file(Path, Digest),
+  specifier_at(Path, Digest, "call", "specifier", _, span(Start, _), _, Name, Kind),
+  Kind \== "named", Kind \== "reexport", Raw := Name.
+
+rel unquoted(raw: text, target: text).
+# Quote and `../` tests are integer `instr` positions on purpose: a computed
+# text compared against a literal with `==` reads through `__str` ids and a
+# value the dictionary never saw compares as NULL (issues/open/text-compare-uninterned).
+unquoted(Raw, Raw) <- load_text(_, _, Raw), Quote := instr(Raw, "'"), Quote \== 1, Lib := instr(Raw, "library("), Lib == 0.
+unquoted(Raw, Target) <- load_text(_, _, Raw), Quote := instr(Raw, "'"), Quote == 1, Len := length(Raw), Target := substr(Raw, 2, Len - 2).
+
+# dir of a path: everything up to the last '/', found through reverse+instr.
+# Three levels, unrolled: a recursive head may not build text.
+rel dir0(path: text, dir: text).
+dir0(Path, Dir) <- source_file(Path, _), Rev := reverse(Path), Cut := instr(Rev, "/"), Cut > 0, Dir := substr(Path, 1, length(Path) - Cut).
+rel dir1(path: text, dir: text).
+dir1(Path, Dir) <- dir0(_, Path), Rev := reverse(Path), Cut := instr(Rev, "/"), Cut > 0, Dir := substr(Path, 1, length(Path) - Cut).
+rel dir2(path: text, dir: text).
+dir2(Path, Dir) <- dir1(_, Path), Rev := reverse(Path), Cut := instr(Rev, "/"), Cut > 0, Dir := substr(Path, 1, length(Path) - Cut).
+rel dir_of(path: text, dir: text).
+dir_of(Path, Dir) <- dir0(Path, Dir).
+dir_of(Path, Dir) <- dir1(Path, Dir).
+dir_of(Path, Dir) <- dir2(Path, Dir).
+
+# up to three `../` hops, unrolled: a recursive head may not build text.
+rel hop0(path: text, raw: text, dir: text, rest: text).
+hop0(Path, Raw, Dir, Target) <- load_text(Path, _, Raw), unquoted(Raw, Target), dir_of(Path, Dir).
+rel hop1(path: text, raw: text, dir: text, rest: text).
+hop1(Path, Raw, Up, Rest) <- hop0(Path, Raw, Dir, Rest0), Up0 := instr(Rest0, "../"), Up0 == 1, Rest := substr(Rest0, 4), dir_of(Dir, Up).
+rel hop2(path: text, raw: text, dir: text, rest: text).
+hop2(Path, Raw, Up, Rest) <- hop1(Path, Raw, Dir, Rest0), Up0 := instr(Rest0, "../"), Up0 == 1, Rest := substr(Rest0, 4), dir_of(Dir, Up).
+rel hop3(path: text, raw: text, dir: text, rest: text).
+hop3(Path, Raw, Up, Rest) <- hop2(Path, Raw, Dir, Rest0), Up0 := instr(Rest0, "../"), Up0 == 1, Rest := substr(Rest0, 4), dir_of(Dir, Up).
+rel hop(path: text, raw: text, dir: text, rest: text).
+hop(Path, Raw, Dir, Rest) <- hop0(Path, Raw, Dir, Rest).
+hop(Path, Raw, Dir, Rest) <- hop1(Path, Raw, Dir, Rest).
+hop(Path, Raw, Dir, Rest) <- hop2(Path, Raw, Dir, Rest).
+hop(Path, Raw, Dir, Rest) <- hop3(Path, Raw, Dir, Rest).
+rel candidate(path: text, raw: text, target: text).
+candidate(Path, Raw, Target) <- hop(Path, Raw, Dir, Rest), Up0 := instr(Rest, "../"), Up0 \== 1,
+  Target := concat([Dir, "/", Rest, ".pl"]).
+candidate(Path, Raw, Target) <- hop(Path, Raw, Dir, Rest), Up0 := instr(Rest, "../"), Up0 \== 1,
+  Target := concat([Dir, "/", Rest]).
+
+rel edge(from_path: text, ordinal: int, to_path: text).
+edge(From, Start, To) <- load_text(From, Start, Raw), candidate(From, Raw, To), source_file(To, _), From \== To.
+
+rel unresolved(path: text, raw: text).
+unresolved(Path, Raw) <- load_text(Path, _, Raw), unquoted(Raw, _), Lib := instr(Raw, "library("), Lib == 0, not(edge_for(Path, Raw)).
+rel edge_for(path: text, raw: text).
+edge_for(Path, Raw) <- load_text(Path, Start, Raw), edge(Path, Start, _).
+
+rel reaches(path: text).
+reaches(Path) <- entry(Path).
+reaches(To) <- reaches(From), edge(From, _, To).
+
+rel reach_edge(from_path: text, ordinal: int, to_path: text).
+reach_edge(From, Ordinal, To) <- reaches(From), edge(From, Ordinal, To).
+
+rel dep_count(path: text, deps: int).
+dep_count(Path, count(Dep)) <- reaches(Path), deep(Path, Dep).
+rel deep(path: text, dep: text).
+deep(Path, Dep) <- edge(Path, _, Dep).
+deep(Path, Dep) <- deep(Path, Mid), edge(Mid, _, Dep).
+
+? reach_edge(from_path, ordinal, to_path).
+? dep_count(path, deps).
+? unresolved(path, raw).

@@ -1295,7 +1295,15 @@ impl IHostExecutor for SprefaExtractExecutor {
         let _entered = span.enter();
         let mut rows: Vec<HostRow> = Vec::new();
         if let Some(out) = sprefa_extract::dispatch(&path, &content, mask) {
-            for fact in sprefa_extract::flatten(&out) {
+            for mut fact in sprefa_extract::flatten(&out) {
+                // A one-argument load (`use_module(lower)`, `include(...)`)
+                // names no module; the path IS the module, as source_bind
+                // already reads it, so a `module: text` column keeps the row.
+                if let sprefa_extract::FlatFact::Specifier { module, name, .. } = &mut fact {
+                    if module.is_none() {
+                        *module = Some(name.clone());
+                    }
+                }
                 rows.push(fact_row(&named, &fact)?);
             }
         }
