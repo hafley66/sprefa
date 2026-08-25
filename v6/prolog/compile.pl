@@ -56,7 +56,7 @@
               [ arrival_column_types/4, schedule_value/5 ]).
 :- use_module('7_lower/use_resolve', [expand_uses/8, short_hash/2]).
 :- use_module(library(http/json), [json_read_dict/3]).
-:- use_module('diag', [emit_diag_file/2]).
+:- use_module('10_diag/diag', [emit_diag_file/2]).
 :- use_module('0_dot_expand/0_type_plane',
               [world_row_shape_violation/3, type_definitions/2]).
 :- use_module('3_analyze/0_rel_record', [rel_cols/4]).
