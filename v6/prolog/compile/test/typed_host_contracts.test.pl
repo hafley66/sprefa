@@ -2,7 +2,7 @@
 :- module(typed_host_contracts_tests, []).
 
 :- use_module(library(plunit)).
-:- use_module('../../1_host_expand',
+:- use_module('../../next/1_expand/1_host_expand',
               [ compile_host_decl/2, host_plan_contract/2 ]).
 :- use_module('../../emit_ts', []).
 :- use_module('../registry', [host_execution/3]).

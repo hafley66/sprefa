@@ -78,7 +78,7 @@
               ]).
 :- use_module('../next/1_expand/0_relation_pattern', [expand_relation_values/2]).
 :- use_module('../next/1_expand/0_option_expand', [acyclic_companion/5]).
-:- use_module('../1_host_expand', [prepare_program/5, query_decl/3]).
+:- use_module('../next/1_expand/1_host_expand', [prepare_program/5, query_decl/3]).
 :- use_module(rulings).
 :- use_module(body).
 :- use_module(level_eval).

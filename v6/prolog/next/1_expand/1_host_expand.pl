@@ -30,13 +30,13 @@
 
 :- use_module(library(lists)).
 :- use_module(library(pairs)).
-:- use_module('next/1_expand/0_body_walk', [body_conjunction_goals/3]).
-:- use_module('compile/registry',
+:- use_module('0_body_walk', [body_conjunction_goals/3]).
+:- use_module('../../compile/registry',
               [ arrival_roles/3,
                 host_input_roles/3
               ]).
-:- use_module('next/0_parse/0_cst_query', [ serialize_ts_query/2 ]).
-:- use_module('next/1_expand/0_dot_expand', [resolve_relation_paths/3]).
+:- use_module('../0_parse/0_cst_query', [ serialize_ts_query/2 ]).
+:- use_module('0_dot_expand', [resolve_relation_paths/3]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

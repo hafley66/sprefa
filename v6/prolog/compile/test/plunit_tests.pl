@@ -89,7 +89,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
                 % syntax off the same projection the walk reads it off,
                 % rather than restating the three lowering shapes.
                 body_surface_for_term/6 ]).
-:- use_module('../../1_host_expand',
+:- use_module('../../next/1_expand/1_host_expand',
               [ prepare_program/5, compile_host_decl/2, compile_ts_query/2,
                 reserved_host_column/1 ]).
 :- use_module('../../emit_ts',
@@ -128,7 +128,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 :- use_module('../../conformance/body',
               [ body_atoms/2, comparison_goal/1, json_capture_type/2,
                 json_scalar_value/3, eval_expr/2, json_canon/2 ]).
-:- use_module('../../1_host_expand', [ body_goals/2 ]).
+:- use_module('../../next/1_expand/1_host_expand', [ body_goals/2 ]).
 :- use_module('../../3_clock_check', [clock_boundary/2]).
 :- ensure_loaded('3_clock_check.test.pl').
 :- ensure_loaded('4_braced_nested_relations.test.pl').
