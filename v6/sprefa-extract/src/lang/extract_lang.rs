@@ -106,6 +106,8 @@ impl Language for ExtractLang {
     /// while `_T` is a plain `variable` in each. That is the C/C++/CSS sigil
     /// (ast-grep-language lib.rs:186-190), not the `µ` of lib.rs:196-211.
     /// Markdown keeps `µ` because `_` is emphasis syntax there.
+    /// Pattern side only: a PATTERN variable spelled `_ALLCAPS` is read as a
+    /// metavar; `_Mixed` stays literal, and SOURCE text is never rewritten.
     /// @comment-ok: the sigil per grammar is the one fact the code cannot show
     fn expando_char(&self) -> char {
         match self {

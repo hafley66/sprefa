@@ -30,8 +30,8 @@ pub use astgrep::{
     SgRoot,
 };
 pub use data::DataSource;
-pub use extract_lang::ExtractLang;
 pub use dl6::DlSource;
+pub use extract_lang::ExtractLang;
 pub use go::GoSource;
 pub use kotlin::KotlinSource;
 pub use markdown::MarkdownSource;
