@@ -40,7 +40,7 @@
 
 :- use_module(library(lists)).
 :- use_module('0_unsupported_messages', []).
-:- use_module('0_dot_expand', [resolve_relation_paths/3]).
+:- use_module('0_dot_expand/0_dot_expand', [resolve_relation_paths/3]).
 :- use_module('1_expansion',
               [ expand_program/3, expand_program_with_bindings/4 ]).
 :- use_module('1_host_expand', [prepare_program/5, query_decl/3]).

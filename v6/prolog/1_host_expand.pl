@@ -36,7 +36,7 @@
                 host_input_roles/3
               ]).
 :- use_module('0_cst_query', [ serialize_ts_query/2 ]).
-:- use_module('0_dot_expand', [resolve_relation_paths/3]).
+:- use_module('0_dot_expand/0_dot_expand', [resolve_relation_paths/3]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
