@@ -11,7 +11,7 @@
 :- use_module('../../compile', [program_plan/2, compile_dl6/2]).
 :- use_module('../../lower', [lower_program/2]).
 :- use_module('../parse_dl_dcg', [parse_dl/4]).
-:- use_module('../../use_resolve', [expand_uses/8]).
+:- use_module('../../next/0_parse/use_resolve', [expand_uses/8]).
 :- use_module(library(process)).
 :- use_module(library(readutil)).
 

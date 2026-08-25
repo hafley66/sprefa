@@ -5,7 +5,7 @@
 
 :- use_module(library(plunit)).
 :- use_module('../parse_dl_dcg', [parse_dl_dcg_entry/5]).
-:- use_module('../../use_resolve', [expand_uses/8]).
+:- use_module('../../next/0_parse/use_resolve', [expand_uses/8]).
 :- use_module('../registry',
               [ host_input_contract/3,
                 host_output_contract/3,

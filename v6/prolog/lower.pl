@@ -179,7 +179,7 @@
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
 :- use_module(analyze).
-:- use_module(use_resolve, [short_hash/2]).
+:- use_module('next/0_parse/use_resolve', [short_hash/2]).
 :- use_module('0_rel_record').
 :- use_module('0_generic_expand', [canonical_type_name/2,
                                    type_relation_rows/2,

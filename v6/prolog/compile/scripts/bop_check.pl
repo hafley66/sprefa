@@ -52,7 +52,7 @@
 :- module(bop_check, [bop_check/1, bop_check_env/0]).
 
 :- use_module('../../compile', [compile_program/6, throw_text_door_error/2, dl6_seeded_form/3]).
-:- use_module('../../use_resolve', [expand_uses/8]).
+:- use_module('../../next/0_parse/use_resolve', [expand_uses/8]).
 :- use_module('../../compile_messages', []).
 :- use_module(library(lists)).
 

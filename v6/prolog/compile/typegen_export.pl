@@ -39,7 +39,7 @@
 :- use_module('7_emit_ts_types', [ ts_types_text/3 ]).
 :- use_module('8_emit_rust_types', [ rust_type_relation_impl_texts/2,
                                       rust_type_relation_owner_name/3 ]).
-:- use_module('../use_resolve', [ expand_uses/8 ]).
+:- use_module('../next/0_parse/use_resolve', [ expand_uses/8 ]).
 
 %! dump_type_rows(+CompiledProgram, +JsonlPath) is det.
 %   CompiledProgram = plan(Name, prog(Decls, Rules), _, RelPlans, _, _, _, _, Mode).

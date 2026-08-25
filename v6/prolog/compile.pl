@@ -54,7 +54,7 @@
 :- use_module('compile/parse_dl_dcg', [ parse_dl_line_for_reason/2 ]).
 :- use_module('compile/scripts/0_json_arrival',
               [ arrival_column_types/4, schedule_value/5 ]).
-:- use_module('use_resolve', [expand_uses/8, short_hash/2]).
+:- use_module('next/0_parse/use_resolve', [expand_uses/8, short_hash/2]).
 :- use_module(library(http/json), [json_read_dict/3]).
 :- use_module('diag', [emit_diag_file/2]).
 :- use_module('0_type_plane',
