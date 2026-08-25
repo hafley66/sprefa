@@ -32,7 +32,7 @@
               [ walk_body/3,
                 body_conjunction_goals/3, body_wrapper_refs/4,
                 body_reserved_word/4 ]).
-:- use_module('0_program_check',
+:- use_module('next/2_lower/0_program_check',
               [ first_violation/3, relation_kind/3, declared_key/3 ]).
 :- use_module('0_type_plane',
               [ type_definitions/2, type_definition/4, column_storage/3,

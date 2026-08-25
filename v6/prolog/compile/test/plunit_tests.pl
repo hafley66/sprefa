@@ -81,7 +81,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 :- use_module('../../next/0_parse/0_cst_query', [ parse_cst_query/2 ]).
 :- use_module('../../next/1_expand/0_body_walk', [ relation_atom_wrapper/1 ]).
 :- use_module('../../0_type_plane', [ type_definitions/2, column_storage/3 ]).
-:- use_module('../../0_program_check', [ program_violation/3 ]).
+:- use_module('../../next/2_lower/0_program_check', [ program_violation/3 ]).
 :- use_module('../../print_dl', [ print_dl_program/3, print_term/5 ]).
 :- use_module('../registry',
               [ surface/5, expression/5, host_execution/3,

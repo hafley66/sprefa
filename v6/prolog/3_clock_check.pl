@@ -24,7 +24,7 @@
                 declared_refs/2, program_refs/2, rule_head_ref/2,
                 rule_is_edge/1, rule_is_level/1 ]).
 :- use_module('compile/registry', [ body_surface_for_term/6, clock_role/4 ]).
-:- use_module('0_program_check', [relation_kind/3]).
+:- use_module('next/2_lower/0_program_check', [relation_kind/3]).
 :- use_module('conformance/body', [rel_ref/2]).
 :- use_module('next/2_lower/0_graph', [ graph_from_edges/3, graph_cyclic_components/2 ]).
 
