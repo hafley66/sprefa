@@ -3,7 +3,7 @@ created: 2026-08-25
 updated: 2026-08-25
 type: task
 reporter: hafley66
-status: open
+status: testing
 priority: normal
 epic: extract-astgrep-soopy
 labels:

@@ -126,6 +126,15 @@ soopy = { path = "../../../hafley-rs/crates/soopy" }
 # file) - the prost-build route was measured to fork `cargo tree -d` with
 # build-kind dup groups (bitflags/regex/prost via tempfile/prost-build).
 prost = "0.13"
+# @comment-ok: build-vs-buy candidate table, the law this file's every dep
+# comment already carries.
+# The read side of the dl6 store, behind `FactMatcher`. Same 0.40 pin and
+# `bundled` build sprefa-engine-rs carries (its Cargo.toml:13), so one process
+# linking both gets one SQLite. REJECTED: that crate's own `SqliteSeam`
+# (run.rs:289) - it already depends on this one (its Cargo.toml:31), so reuse is
+# a cycle; sprefa-store's sea-orm/sqlx reader - async, banned above the SqlRunner
+# seam. `trace` is what the once-per-run statement count is measured on.
+rusqlite = { version = "0.40", features = ["bundled", "trace"] }
 # rayon drives the per-file extraction pool. A dedicated pool (never the global
 # one) so nothing else in the process inherits the cap.
 rayon = "1"

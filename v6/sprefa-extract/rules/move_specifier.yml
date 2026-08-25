@@ -1,0 +1,22 @@
+# The file spec a prolog load directive names: the FIRST argument of
+# use_module/1,2, ensure_loaded/1, consult/1, include/1 or reexport/1,2, as
+# written, quotes and all. The same five functors `0_move.rs` needle-filters on
+# and the same arm list the prolog extractor keeps (lang/prolog/_0_source.rs:379).
+#
+# `follows` walks tree-sitter siblings, which include the unnamed `(` and `,`
+# tokens, so reaching the functor takes `stopBy: end` and pinning the match to
+# argument ONE takes the comma test: a second argument's immediate previous
+# sibling is `,`, a first argument's is `(`.
+# @comment-ok: the sibling shape is the one fact the rule text cannot show
+id: move-specifier
+rule:
+  all:
+    - kind: atom
+    - inside:
+        kind: compound_term
+    - follows:
+        regex: ^(use_module|ensure_loaded|consult|include|reexport)$
+        stopBy: end
+    - not:
+        follows:
+          regex: ^,$
