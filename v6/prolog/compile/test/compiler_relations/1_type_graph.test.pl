@@ -183,6 +183,31 @@ test(structural_type_patterns_construct_heads_and_match_bodies) :-
     \+ member(col_type(type__node/3, _, _), Decls),
     \+ member(col_type(type__edge/6, _, _), Decls).
 
+test(grouped_count_construction_refreezes_and_erases) :-
+    Source = "rel Box(T)(value: T).\n\c
+              rel source_member(Owner: type, Position: int).\n\c
+              source_member(int, 1).\n\c
+              rel normalized_member(Owner: type, Position: int).\n\c
+              normalized_member(Owner, Position) <- source_member(Owner, Position).\n\c
+              rel member_count(Owner: type, Total: int).\n\c
+              member_count(Owner, count(Position)) <- normalized_member(Owner, Position).\n\c
+              rel request(Type: type).\n\c
+              request(Box(Owner)) <- member_count(Owner, Total), Total >= 1.\n\c
+              rel observed(Type: type).\n\c
+              observed(Type) <- request(Type), type.node(Type, 'application', '').\n",
+    expand_type_graph_source(Source, Decls),
+    memberchk(compiler_type_metadata(_, Closure), Decls),
+    BoxInt = application(named(local, relation, 'Box'), [primitive(int)]),
+    memberchk(member_count(primitive(int), 1), Closure),
+    memberchk(request(BoxInt), Closure),
+    memberchk(observed(BoxInt), Closure),
+    memberchk(semantic_type_rows(SemanticRows), Decls),
+    memberchk(application(BoxInt, named(local, relation, 'Box')), SemanticRows),
+    \+ member(col_type(source_member/2, _, _), Decls),
+    \+ member(col_type(member_count/2, _, _), Decls),
+    \+ member(col_type(request/1, _, _), Decls),
+    \+ member(col_type(observed/1, _, _), Decls).
+
 test(non_ground_structural_type_fact_has_named_diagnostic,
      [throws(unsupported_construct(
          compiler_relation_non_ground_type_pattern(primitive(_))))]) :-

@@ -16,6 +16,7 @@
 :- use_module(library(readutil)).
 
 :- op(1150, xfx, <-).
+:- op(700, xfx, :=).
 
 compiler_decls([
     col_type(codec/2, self, type),
@@ -142,6 +143,73 @@ test(recursive_positive_rules_reach_a_set_fixpoint) :-
     evaluate_compiler_relations(compiler_relations(Decls, Rules), Seeds, Closure),
     Closure == [ancestor(a, b), ancestor(a, c), ancestor(b, c),
                 parent(a, b), parent(b, c)].
+
+test(scalar_bind_and_comparison_share_runtime_expression_semantics) :-
+    Relations = [ compiler_relation(source_position/3, 3, []),
+                  compiler_relation(shifted_position/3, 3, []) ],
+    Rules = [ shifted_position(Owner, Next, Label) <-
+                  ( source_position(Owner, Position, RawLabel),
+                    Next := Position + 1,
+                    Label := upper(RawLabel),
+                    Next > Position ) ],
+    Seeds = [source_position(item, 1, lower)],
+    evaluate_compiler_relations(compiler_relations(Relations, Rules), Seeds,
+                                Closure),
+    Closure == [shifted_position(item, 2, 'LOWER'),
+                source_position(item, 1, lower)].
+
+test(expression_reads_follow_authored_body_order,
+     [throws(unsupported_construct(compiler_expression_non_ground(_)))]) :-
+    Relations = [ compiler_relation(source_position/2, 2, []),
+                  compiler_relation(shifted_position/2, 2, []) ],
+    Rules = [ shifted_position(Owner, Next) <-
+                  ( Next := Position + 1,
+                    source_position(Owner, Position) ) ],
+    evaluate_compiler_relations(compiler_relations(Relations, Rules), [], _).
+
+test(comparisons_require_prior_ground_bindings,
+     [throws(unsupported_construct(compiler_comparison_non_ground(_)))]) :-
+    Relations = [ compiler_relation(source_position/2, 2, []),
+                  compiler_relation(positive_position/1, 1, []) ],
+    Rules = [ positive_position(Owner) <-
+                  ( Position > 0,
+                    source_position(Owner, Position) ) ],
+    evaluate_compiler_relations(compiler_relations(Relations, Rules), [], _).
+
+test(grouped_count_reads_a_completed_lower_stratum) :-
+    Relations = [ compiler_relation(source_member/3, 3, []),
+                  compiler_relation(normalized_member/3, 3, []),
+                  compiler_relation(member_count/2, 2, []),
+                  compiler_relation(complete_owner/1, 1, []) ],
+    Rules = [ normalized_member(Owner, Position, Name) <-
+                  source_member(Owner, Position, Name),
+              member_count(Owner, count(Position)) <-
+                  normalized_member(Owner, Position, _),
+              complete_owner(Owner) <-
+                  ( member_count(Owner, Count), Count =:= 2 ) ],
+    Seeds = [ source_member(a, 1, first),
+              source_member(a, 2, second),
+              source_member(b, 1, only) ],
+    evaluate_compiler_relations(compiler_relations(Relations, Rules), Seeds,
+                                Closure),
+    Closure == [ complete_owner(a),
+                member_count(a, 2),
+                member_count(b, 1),
+                normalized_member(a, 1, first),
+                normalized_member(a, 2, second),
+                normalized_member(b, 1, only),
+                source_member(a, 1, first),
+                source_member(a, 2, second),
+                source_member(b, 1, only) ].
+
+test(aggregate_dependency_cycle_has_named_diagnostic,
+     [throws(unsupported_construct(compiler_aggregate_not_stratified))]) :-
+    Relations = [ compiler_relation(member_count/2, 2, []),
+                  compiler_relation(expanded_member/2, 2, []) ],
+    Rules = [ member_count(Owner, count(Member)) <-
+                  expanded_member(Owner, Member),
+              expanded_member(Owner, Member) <- member_count(Owner, Member) ],
+    evaluate_compiler_relations(compiler_relations(Relations, Rules), [], _).
 
 test(keyed_functional_conflict_is_refused,
      [throws(unsupported_construct(

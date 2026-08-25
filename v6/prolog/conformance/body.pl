@@ -5,7 +5,8 @@
 
 :- module(body,
           [ rel_ref/2, solve/2, rows_index/2, body_atoms/2, eval_expr/2, eval_head/2,
-            json_canon/2, comparison_goal/1, substitute_goal/3,
+            json_canon/2, comparison_goal/1, solve_comparison/1,
+            substitute_goal/3,
             % Exported for the json_typed_capture agreement unit: this table
             % has a clause-for-clause twin in lower.pl and the two doors
             % drifting apart is not something a byte-diff can catch (the

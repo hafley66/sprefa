@@ -225,6 +225,10 @@ compiler_argument_domain_or_self(Domain0, Domain) :-
     ;  Domain = Domain0
     ).
 
+elaborate_compiler_head_argument(_, _, Domain, Argument, Argument, []) :-
+    compiler_aggregate_result_domain(Argument, Domain),
+    !.
+
 elaborate_compiler_head_argument(Decls, Bindings, type, Argument0, Argument,
                                  Goals) :-
     structural_type_pattern(Argument0),
@@ -274,9 +278,20 @@ elaborate_compiler_body(_, _, true, true) :- !.
 elaborate_compiler_body(Decls, Bindings, (Left0, Right0), (Left, Right)) :- !,
     elaborate_compiler_body(Decls, Bindings, Left0, Left),
     elaborate_compiler_body(Decls, Bindings, Right0, Right).
+elaborate_compiler_body(_, _, Goal, Goal) :-
+    compiler_expression_goal(Goal),
+    !.
 elaborate_compiler_body(Decls, Bindings, Atom0, Body) :-
     elaborate_compiler_body_atom(Decls, Bindings, Atom0, Atom, PatternGoals),
     append_compiler_body_goals(Atom, PatternGoals, Body).
+
+compiler_expression_goal(Goal) :-
+    body_surface_for_term(Goal, _, Axis, no_refs, infix(_), _),
+    memberchk(Axis, [bind, guard]).
+
+compiler_aggregate_result_domain(Argument, int) :-
+    nonvar(Argument),
+    surface_for_term(Argument, count/1, aggregate, no_refs, head(_), _).
 
 elaborate_compiler_body_atom(Decls, Bindings, Atom0, Atom, Goals) :-
     Atom0 =.. [Name | Arguments0],

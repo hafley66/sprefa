@@ -12,9 +12,14 @@
 :- use_module(library(ordsets)).
 :- use_module(library(pairs)).
 :- use_module(library(gensym)).
+:- use_module('conformance/body',
+              [ eval_expr/2, comparison_goal/1, solve_comparison/1 ]).
+:- use_module('compile/registry',
+              [ body_surface_for_term/6, surface_for_term/6 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
+:- op(700, xfx, :=).
 
 :- table compiler_proves/2.
 :- thread_local compiler_eval_seed/2.
@@ -318,19 +323,16 @@ validate_compiler_rule_refs(Rule, CompilerRefs) :-
 validate_compiler_rule_plane(Rule, CompilerRefs) :-
     validate_compiler_rule_refs(Rule, CompilerRefs),
     rule_body(Rule, Body),
-    body_atoms(Body, Atoms),
+    compiler_body_goals(Body, Goals),
+    validate_compiler_goal_sequence(Goals, [], BoundVariables),
     rule_head(Rule, Head),
     term_variables(Head, HeadVariables),
-    term_variables(Atoms, BodyVariables),
     rule_head_ref(Rule, HeadRef),
     forall(member(Variable, HeadVariables),
-           ( member_variable(Variable, BodyVariables)
+           ( member_variable(Variable, BoundVariables)
            -> true
            ; throw(unsupported_construct(compiler_relation_unsafe_rule(HeadRef)))
            )).
-
-member_variable(Variable, [Candidate | _]) :- Variable == Candidate, !.
-member_variable(Variable, [_ | Rest]) :- member_variable(Variable, Rest).
 
 named_negation_ref(not(Atom), Ref) :- !,
     ( atom_ref(Atom, Ref) -> true ; Ref = not ).
@@ -357,25 +359,23 @@ rule_body((_ <- Body), Body) :- !.
 rule_body((_ <+ Body), Body) :- !.
 rule_body(_, true).
 
-body_atoms(true, []) :- !.
-body_atoms((Left, Right), Atoms) :- !,
-    body_atoms(Left, LeftAtoms),
-    body_atoms(Right, RightAtoms),
-    append(LeftAtoms, RightAtoms, Atoms).
-body_atoms(Atom, [Atom]).
+:- include('0_compiler_relations/0_goals.pl').
+
+:- include('0_compiler_relations/1_aggregates.pl').
 
 %! evaluate_compiler_relations(+CompilerDecls, +SeedRows, -ClosureRows) is det.
 %
-% Positive safe rules use ordinary Datalog joins.  Every round is sorted before
-% comparison, yielding deterministic set semantics independently of rule or
-% fact source order.  Functional keys are checked after the complete closure.
+% Positive safe rules use ordinary Datalog joins. Scalar goals execute in body
+% order. Aggregate heads read a completed lower stratum before their consumers
+% enter another tabled positive closure. Every row set is sorted before use.
 evaluate_compiler_relations(compiler_relations(Relations, Rules), SeedRows,
                             ClosureRows) :-
     maplist(validate_compiler_seed(Relations), SeedRows),
     maplist(validate_compiler_rule_plane_with_relations(Relations), Rules),
     validate_type_apply_recursive_construction(Rules),
+    validate_compiler_aggregate_heads(Rules),
     sort(SeedRows, SeedSet),
-    tabled_compiler_closure(Rules, SeedSet, Closure0),
+    evaluate_compiler_strata(Rules, SeedSet, Closure0),
     validate_functional_rows(Relations, Closure0),
     ClosureRows = Closure0.
 
@@ -486,6 +486,15 @@ satisfy_tabled_compiler_body(_, type_apply(Constructor, Arguments,
     ;  throw(unsupported_construct(type_apply_non_ground_application(
                                        application(Constructor, Arguments))))
     ).
+satisfy_tabled_compiler_body(_, Goal) :-
+    compiler_bind_goal(Goal, Variable, Expression),
+    !,
+    eval_ground_expression(Expression, Value),
+    Variable = Value.
+satisfy_tabled_compiler_body(_, Goal) :-
+    comparison_goal(Goal),
+    !,
+    holds_ground_comparison(Goal).
 satisfy_tabled_compiler_body(EvalId, Goal) :-
     compiler_proves(EvalId, Goal).
 
@@ -500,6 +509,15 @@ satisfy_compiler_body(_, type_apply(Constructor, Arguments, Application)) :-
     ; throw(unsupported_construct(type_apply_non_ground_application(
                 type_apply(Constructor, Arguments, Application))))
     ).
+satisfy_compiler_body(_, Goal) :-
+    compiler_bind_goal(Goal, Variable, Expression),
+    !,
+    eval_ground_expression(Expression, Value),
+    Variable = Value.
+satisfy_compiler_body(_, Goal) :-
+    comparison_goal(Goal),
+    !,
+    holds_ground_comparison(Goal).
 satisfy_compiler_body(Rows, Goal) :- member(Row, Rows), Row = Goal.
 
 validate_functional_rows([], _).
