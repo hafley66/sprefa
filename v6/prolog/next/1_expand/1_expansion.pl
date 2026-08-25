@@ -13,22 +13,22 @@
           ]).
 
 :- use_module(library(lists)).
-:- use_module('next/1_expand/0_enum_expand', [enum_context/2,
+:- use_module('0_enum_expand', [enum_context/2,
                                 merge_enum_type_rows/3,
                                 merge_option_type_rows/2,
                                 drop_minted_keyed_on_derived/3]).
-:- use_module('next/1_expand/0_generic_expand', [expand_generic_program/2, freeze_type_rows/2,
+:- use_module('0_generic_expand', [expand_generic_program/2, freeze_type_rows/2,
                                    reset_type_row_memo/0]).
-:- use_module('next/1_expand/0_match_expand', []).
-:- use_module('next/1_expand/0_seq_expand', []).
-:- use_module('next/1_expand/0_coalesce_expand', []).
-:- use_module('next/1_expand/0_dot_expand', []).
-:- use_module('next/1_expand/0_negated_guard_expand', []).
-:- use_module('next/1_expand/0_relation_edge_expand', []).
-:- use_module('next/1_expand/0_ast_expand', []).
-:- use_module(compile_messages,
+:- use_module('0_match_expand', []).
+:- use_module('0_seq_expand', []).
+:- use_module('0_coalesce_expand', []).
+:- use_module('0_dot_expand', []).
+:- use_module('0_negated_guard_expand', []).
+:- use_module('0_relation_edge_expand', []).
+:- use_module('0_ast_expand', []).
+:- use_module('../../compile_messages',
               [ dl6_debug/3, dl6_debugging/1, dl6_program_sizes/3 ]).
-:- use_module('compile/0_trace', [run_compile_step/4]).
+:- use_module('../../compile/0_trace', [run_compile_step/4]).
 
 % ── the order, stated once ───────────────────────────────────────────────────
 

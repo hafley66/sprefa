@@ -11,7 +11,7 @@
               [ expand_dot_in_context/3,
                 resolve_qualified_types/2
               ]).
-:- use_module('../../1_expansion', [expand_program/3]).
+:- use_module('../../next/1_expand/1_expansion', [expand_program/3]).
 :- use_module('../../1_host_expand', [prepare_program/5]).
 :- use_module('../../next/0_parse/use_resolve', [expand_uses/6]).
 :- use_module('../../compile', [dl6_seeded_form/3, program_plan/3]).

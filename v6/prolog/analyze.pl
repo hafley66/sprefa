@@ -27,7 +27,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
-:- use_module('1_expansion', [expand_program/3]).
+:- use_module('next/1_expand/1_expansion', [expand_program/3]).
 :- use_module('next/1_expand/0_body_walk',
               [ walk_body/3,
                 body_conjunction_goals/3, body_wrapper_refs/4,
