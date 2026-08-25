@@ -37,6 +37,9 @@ use help::{
 #[path = "../0_query.rs"]
 mod query;
 
+#[path = "../0_move.rs"]
+mod source_move;
+
 #[derive(Parser)]
 #[command(
     name = "extract",
@@ -278,6 +281,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().nth(1).as_deref() == Some("query") {
         if let Err(error) = query::run(std::env::args().skip(1)) {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return Ok(());
+    }
+    if std::env::args().nth(1).as_deref() == Some("move") {
+        if let Err(error) = source_move::run(std::env::args().skip(1)) {
             eprintln!("{error}");
             std::process::exit(2);
         }
