@@ -11,7 +11,7 @@
                 host_output_contract/3,
                 scip_namespace_host/3
               ]).
-:- use_module('../../1_host_expand', [compile_host_decl/2]).
+:- use_module('../../2_host_expand/1_host_expand', [compile_host_decl/2]).
 
 :- begin_tests(scip_namespaces).
 
