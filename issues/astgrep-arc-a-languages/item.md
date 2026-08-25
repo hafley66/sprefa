@@ -3,11 +3,15 @@ created: 2026-08-25
 updated: 2026-08-25
 type: task
 reporter: hafley66
-status: testing
+status: done
 priority: high
 epic: extract-astgrep-soopy
 labels:
 - pkg:extract
+closed: 2026-08-25
+commits:
+- hash: PR#472
+  summary: merged
 ---
 
 # Arc A: ExtractLang implements ast-grep Language for dl6, prolog, markdown

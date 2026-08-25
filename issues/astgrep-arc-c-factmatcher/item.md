@@ -3,12 +3,16 @@ created: 2026-08-25
 updated: 2026-08-25
 type: task
 reporter: hafley66
-status: testing
+status: done
 priority: normal
 epic: extract-astgrep-soopy
 labels:
 - pkg:extract
 related: ['@astgrep-arc-a-languages', '@astgrep-arc-b-drain']
+closed: 2026-08-25
+commits:
+- hash: PR#475
+  summary: merged
 ---
 
 # Arc C: FactMatcher over dl6.db and extract move as one YAML rule
