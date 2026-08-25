@@ -7,7 +7,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
-:- use_module(analyze, [ rule_is_level/1, rule_head_ref/2, body_ref_uses/2,
+:- use_module('3_analyze/analyze', [ rule_is_level/1, rule_head_ref/2, body_ref_uses/2,
                          rule_is_aggregate/1 ]).
 
 :- op(1150, xfx, <-).

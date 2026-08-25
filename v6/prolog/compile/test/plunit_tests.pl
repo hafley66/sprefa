@@ -42,7 +42,7 @@
                 json_capture_json_type/2,
                 audit_scan_index_pairs/5, audit_scan_index_ddls/5,
                 audit_scan_index_ddl/3 ]).
-:- use_module('../../analyze',
+:- use_module('../../3_analyze/analyze',
               [ check_supported_subset/1, literal_witness/1, snake_name/2 ]).
 :- use_module('../../0_rel_record',
               [ inferred_cols/3, relplan_parts/6, relplan_shape/6,
@@ -110,7 +110,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 % several of them are the same predicate written twice. Each of these was
 % added to its module's export list for exactly this test rather than being
 % called as a private qualified goal, which `just prolog-lint` refuses.
-:- use_module('../../analyze',
+:- use_module('../../3_analyze/analyze',
               [ body_ref_uses/2, conjunction_goals/2,
                 level_body_latest_ref/2, level_body_pre_ref/2,
                 listened_departure_refs/2, rel_rule_observers/3,

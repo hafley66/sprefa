@@ -19,7 +19,7 @@
 :- use_module(library(lists)).
 :- use_module(library(assoc)).
 :- use_module(library(pairs)).
-:- use_module(analyze,
+:- use_module('3_analyze/analyze',
               [ conjunction_goals/2, edge_headed_refs/2,
                 declared_refs/2, program_refs/2, rule_head_ref/2,
                 rule_is_edge/1, rule_is_level/1 ]).

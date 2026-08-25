@@ -178,7 +178,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
-:- use_module(analyze).
+:- use_module('3_analyze/analyze').
 :- use_module(use_resolve, [short_hash/2]).
 :- use_module('0_rel_record').
 :- use_module('1_expansion/0_generic_expand', [canonical_type_name/2,

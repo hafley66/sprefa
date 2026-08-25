@@ -27,7 +27,7 @@
 :- use_module('../../lower',
               [ lower_program/2, boot_statements/7, catalog_decl_rows/6 ]).
 :- use_module('../../emit_ts', [ emit_program/5 ]).
-:- use_module('../../analyze', [ declared_refs/2, program_refs/2,
+:- use_module('../../3_analyze/analyze', [ declared_refs/2, program_refs/2,
                                  seeded_refs/2, snake_name/2 ]).
 :- use_module('../../0_dot_expand/body', [ rel_ref/2 ]).
 :- use_module('../../0_rel_record', [ relplan_column_types/3 ]).
