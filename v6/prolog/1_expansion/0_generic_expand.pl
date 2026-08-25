@@ -55,7 +55,7 @@
 
 :- include('generic_expand/1_annotations.pl').
 
-:- include('../0_generic_expand/2_compiler_plane.pl').
+:- include('generic_expand/2_compiler_plane.pl').
 
 :- include('../0_generic_expand/3_enum_templates.pl').
 
