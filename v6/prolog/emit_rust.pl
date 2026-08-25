@@ -19,7 +19,7 @@
                        struct_type_plans/3, struct_type_plans/4, fixpoint_round_cap/1,
                        query_order_by_map/3 ]).
 :- use_module(strat, [cyclic_head_groups/2]).
-:- use_module('0_rel_record').
+:- use_module('3_analyze/0_rel_record').
 :- use_module('3_analyze/analyze', [ body_ref_uses/2, level_body_pre_ref/2, rule_head_ref/2,
                          listened_departure_refs/2, program_uses_tick/2 ]).
 :- use_module('2_host_expand/1_host_expand', [compile_host_decl/3, query_decl/3,

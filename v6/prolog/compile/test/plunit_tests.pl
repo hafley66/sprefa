@@ -44,7 +44,7 @@
                 audit_scan_index_ddl/3 ]).
 :- use_module('../../3_analyze/analyze',
               [ check_supported_subset/1, literal_witness/1, snake_name/2 ]).
-:- use_module('../../0_rel_record',
+:- use_module('../../3_analyze/0_rel_record',
               [ inferred_cols/3, relplan_parts/6, relplan_shape/6,
                 relplan_storage_name/2, relplan_storage_name/3,
                 relplan_columns/3, relplan_column_types/3, relplan_of/3,

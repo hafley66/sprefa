@@ -41,7 +41,7 @@
 :- use_module('compile/7_emit_ts_types', [ ts_types_text/3 ]).
 :- use_module('compile/8_emit_rust_types', [ rust_types_text/3 ]).
 :- use_module('0_dot_expand/body', [ rel_ref/2 ]).
-:- use_module('0_rel_record', [ relplan_column_types/3 ]).
+:- use_module('3_analyze/0_rel_record', [ relplan_column_types/3 ]).
 :- use_module('1_expansion/compile_messages', [dl6_debug/3]).
 :- use_module('0_dot_expand/0_type_plane',
               [ type_canonical_json/4,

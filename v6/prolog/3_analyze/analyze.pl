@@ -38,7 +38,7 @@
               [ type_definitions/2, type_definition/4, column_storage/3,
                 declared_type_name/2 ]).
 :- use_module('../0_dot_expand/body', [rel_ref/2]).
-:- use_module('../0_rel_record', [relplan_column_types/3]).
+:- use_module('0_rel_record', [relplan_column_types/3]).
 :- use_module('../0_dot_expand/registry',
               [ surface_for_term/6,
                 body_surface_for_term/6,

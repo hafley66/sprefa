@@ -14,7 +14,7 @@
                        departure_read_sql/3, struct_type_plans/3, struct_type_plans/4,
                        program_text_intern_plan/3,
                        statement_rule_ids/3, fixpoint_round_cap/1 ]).
-:- use_module('0_rel_record').
+:- use_module('3_analyze/0_rel_record').
 :- use_module('3_analyze/analyze',
               [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
                 program_uses_tick/2, listened_departure_refs/2,

@@ -59,7 +59,7 @@
 :- use_module('diag', [emit_diag_file/2]).
 :- use_module('0_dot_expand/0_type_plane',
               [world_row_shape_violation/3, type_definitions/2]).
-:- use_module('0_rel_record', [rel_cols/4]).
+:- use_module('3_analyze/0_rel_record', [rel_cols/4]).
 :- use_module('1_expansion/0_trace',
               [ dl6_trace_on/0, reset_step_trace/0, record_step/3,
                 write_step_trace/2, run_compile_step/4,

@@ -14,7 +14,7 @@
                                lower_program/2 ]).
 :- use_module('../../compile', [ program_plan/2 ]).
 :- use_module('../../compile', [ compile_dl6/2 ]).
-:- use_module('../../0_rel_record', [ relplan_shape/6 ]).
+:- use_module('../../3_analyze/0_rel_record', [ relplan_shape/6 ]).
 :- use_module('../../compile/parse_dl_dcg', [ parse_dl/4 ]).
 :- use_module('../../print_dl', [ print_dl_program/3 ]).
 :- use_module('../../1_expansion/1_expansion', [ expand_program/3 ]).

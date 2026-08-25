@@ -38,7 +38,7 @@
 :- use_module(library(http/json)).
 :- use_module('../../compile', [ read_fixture_term/4, program_plan/2 ]).
 :- use_module('../../lower', [ lower_program/2, boot_statements/7 ]).
-:- use_module('../../0_rel_record',
+:- use_module('../../3_analyze/0_rel_record',
               [ relplan_parts/6, relplan_of/3, relplan_columns/3 ]).
 
 :- op(1150, xfx, <-).
