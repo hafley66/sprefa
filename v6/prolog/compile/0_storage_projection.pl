@@ -92,13 +92,19 @@ storage_plan_row(Rows, Owner, _, _, Columns, _, key(KeyPositions),
     nth1(Position, Columns, Name),
     canonical_storage_member(Rows, Owner, Position, Name, MemberId, _).
 
-canonical_storage_member(Rows, Owner, Position, Name, MemberId, TypeRef) :-
-    ( member(member(MemberId, Owner, Position, Name, TypeRef), Rows)
+canonical_storage_member(Rows, Owner, Position, PhysicalName, MemberId,
+                         TypeRef) :-
+    ( member(member(MemberId, Owner, Position, _, TypeRef), Rows)
     -> true
     ;  throw(unsupported_construct(
-                   canonical_storage_member_missing(Owner, Position, Name)))
+                   canonical_storage_member_missing(Owner, Position,
+                                                    PhysicalName)))
     ).
 
+canonical_storage_type(_, _, TypeRef, primitive(Type)) :-
+    semantic_type_ref_target(TypeRef, primitive(Type)),
+    canonical_storage_primitive(Type),
+    !.
 canonical_storage_type(_, int, _, primitive(int)) :- !.
 canonical_storage_type(_, text, _, primitive(text)) :- !.
 canonical_storage_type(_, float, _, primitive(float)) :- !.
@@ -115,6 +121,13 @@ canonical_storage_type(_, json_list(_), TypeRef, json_list(Element)) :- !,
     semantic_list_element(TypeRef, Element).
 canonical_storage_type(_, StorageType, _, _) :-
     throw(unsupported_construct(canonical_storage_type_unknown(StorageType))).
+
+canonical_storage_primitive(int).
+canonical_storage_primitive(text).
+canonical_storage_primitive(float).
+canonical_storage_primitive(bool).
+canonical_storage_primitive(json).
+canonical_storage_primitive(bytes).
 
 canonical_reference_target(Rows, Name, TypeRef, Target) :-
     semantic_type_ref_target(TypeRef, LogicalTarget),

@@ -61,6 +61,19 @@ test(undeclared_idb_stays_on_the_relplan_compatibility_path) :-
     storage_rows_from_decls(Decls, StorageRows),
     \+ member(storage_relation(named(_, relation, derived), _, _), StorageRows).
 
+test(nested_generic_arrow_uses_canonical_member_ids) :-
+    Source = "rel Box(T)(value: T).\n\c
+              rel Pets(boxed: Box(((id: int) -> text))).\n",
+    storage_plan(Source, plan(_, prog(Decls, _), _, _, _, _, _, _, _)),
+    memberchk(semantic_type_rows(SemanticRows), Decls),
+    storage_rows_from_decls(Decls, StorageRows),
+    once(member(derived_from(ArrowId, anonymous(_, _, arrow_type(_, _))),
+                SemanticRows)),
+    memberchk(member(IdMember, ArrowId, 1, id, _), SemanticRows),
+    memberchk(member(ReturnMember, ArrowId, 2, return, _), SemanticRows),
+    memberchk(storage_column(IdMember, primitive(int)), StorageRows),
+    memberchk(storage_column(ReturnMember, primitive(text)), StorageRows).
+
 test(catalog_type_rows_read_canonical_physical_rows) :-
     Source = "rel item(id: key(int), name: text).\n",
     storage_plan(Source,
