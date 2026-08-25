@@ -6,7 +6,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use clap::Parser;
-use sprefa_extract::{FamilyMask, PrologSource, Source, SpecifierKind};
+use rayon::prelude::*;
+use sprefa_extract::{extract_pool, FamilyMask, PrologSource, Source, SpecifierKind};
 
 const PRODUCER: &str = "extract-move";
 
@@ -131,20 +132,48 @@ impl Plan {
         let mut edits: BTreeMap<String, Vec<(usize, usize, String)>> = BTreeMap::new();
         let mut module_name: Option<String> = None;
 
-        for file in &corpus {
-            let Ok(bytes) = std::fs::read(file) else {
-                continue;
+        // Read and parse fan out; the merge below stays sequential over `corpus`
+        // in path order, so the action order and the previews do not move.
+        let scanned: Vec<Scanned> = extract_pool().install(|| {
+            corpus
+                .par_iter()
+                .map(|file| {
+                    let Ok(bytes) = std::fs::read(file) else {
+                        return Scanned::Unreadable;
+                    };
+                    // `old` is parsed unconditionally: its module name is read off it.
+                    if *file != old && !carries_specifier(&bytes) {
+                        return Scanned::NoDirective;
+                    }
+                    let Ok(text) = String::from_utf8(bytes) else {
+                        return Scanned::Unreadable;
+                    };
+                    Scanned::Rows(specifiers(file, &text))
+                })
+                .collect()
+        });
+
+        let mut parsed = 0usize;
+        let mut skipped = 0usize;
+
+        for (file, scan) in corpus.iter().zip(&scanned) {
+            let rows = match scan {
+                Scanned::Rows(rows) => {
+                    parsed += 1;
+                    rows
+                }
+                Scanned::NoDirective => {
+                    skipped += 1;
+                    continue;
+                }
+                Scanned::Unreadable => continue,
             };
-            let Ok(text) = String::from_utf8(bytes) else {
-                continue;
-            };
-            let rows = specifiers(file, &text);
             let dir = file.parent().unwrap_or(&root).to_path_buf();
             let is_old = *file == old;
             if is_old {
                 module_name = rows.module.clone();
             }
-            for spec in rows.paths {
+            for spec in &rows.paths {
                 let Some(target) = resolve(&dir, &spec.raw) else {
                     continue;
                 };
@@ -171,6 +200,7 @@ impl Plan {
                     .push((spec.start, spec.end, replacement));
             }
         }
+        tracing::debug!(parsed, skipped, corpus = corpus.len(), "move prescan");
         if cli.shim {
             edits.retain(|rel, _| rel == &old_rel);
         }
@@ -206,6 +236,34 @@ impl Plan {
             stages,
         })
     }
+}
+
+/// One file's prescan outcome, kept aligned to the corpus so the merge keeps
+/// path order.
+enum Scanned {
+    Rows(SpecRows),
+    NoDirective,
+    Unreadable,
+}
+
+/// The directive names that can carry a file spec, matching the extractor's own
+/// arm list (`lang/prolog/_0_source.rs:379-383`). A file naming none of them
+/// yields no specifier row, so its parse buys nothing. Bare words, not
+/// `include(`: a quoted-atom call (`'include'(...)`) still has to match, and a
+/// missed rewrite is a silently broken import. Measured cost of the wider net on
+/// the repo corpus is 10 files out of 284.
+const SPEC_NEEDLES: [&str; 5] = [
+    "use_module",
+    "ensure_loaded",
+    "consult",
+    "include",
+    "reexport",
+];
+
+fn carries_specifier(bytes: &[u8]) -> bool {
+    SPEC_NEEDLES
+        .iter()
+        .any(|needle| memchr::memmem::find(bytes, needle.as_bytes()).is_some())
 }
 
 /// One file-spec occurrence, with the byte range of the term as written.
