@@ -26,7 +26,7 @@
 
 :- ensure_loaded(go).   % pulls in engine.pl + every fixtures/*.pl, unedited
 :- use_module(body, [json_canon/2, rel_ref/2]).   % read-only reuse; body.pl is untouched
-:- use_module('../0_type_plane', [js_float_text/2]).
+:- use_module('../0_dot_expand/0_type_plane', [js_float_text/2]).
 
 % The perturbed schedule uses the same program and initial rows with one extra
 % arrival, so deltas are computed from the rules.

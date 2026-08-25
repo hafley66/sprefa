@@ -8,7 +8,7 @@
 :- use_module('../../compile', [ program_plan/2 ]).
 :- use_module('../../compile/parse_dl_dcg', [ parse_dl/4 ]).
 :- use_module('../../1_expansion', [ expand_program_with_bindings/4 ]).
-:- use_module('../../0_type_plane', [ relation_value_object/4 ]).
+:- use_module('../../0_dot_expand/0_type_plane', [ relation_value_object/4 ]).
 :- use_module('../../conformance/engine', [ run_program/5 ]).
 :- use_module('../../lower', [ lower_program/2, boot_statements/7,
                                 catalog_type_rows/6 ]).

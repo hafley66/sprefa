@@ -59,7 +59,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
-:- use_module('conformance/body', [json_canon/2]).
+:- use_module('../conformance/body', [json_canon/2]).
 
 % ── the type table ───────────────────────────────────────────────────────────
 

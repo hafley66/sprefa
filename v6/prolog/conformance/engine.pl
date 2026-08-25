@@ -71,7 +71,7 @@
 :- use_module('../0_program_check',
               [ first_violation/3, relation_kind/3, declared_key/3 ]).
 :- use_module('../3_clock_check', [clock_violation/2]).
-:- use_module('../0_type_plane',
+:- use_module('../0_dot_expand/0_type_plane',
               [ world_row_shape_violation/3,
                 canonicalize_world_rows/3,
                 normalize_relation_reference_rows/3

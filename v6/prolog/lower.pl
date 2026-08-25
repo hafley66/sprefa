@@ -188,7 +188,7 @@
 :- use_module('0_option_expand', [acyclic_companion/5]).
 :- use_module('1_host_expand', [query_decl/3]).
 :- use_module('0_dot_expand/registry', [expression/5, surface/5, body_surface_for_term/6]).
-:- use_module('0_type_plane',
+:- use_module('0_dot_expand/0_type_plane',
               [ type_definition/4, column_storage/3,
                 type_topological_order/2, type_canonical_json/4,
                 type_field_values/4, declared_type_name/2,

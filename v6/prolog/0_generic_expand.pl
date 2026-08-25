@@ -30,7 +30,7 @@
 :- use_module('compile/0_trace', [run_compile_step/4]).
 :- use_module('0_option_expand', [expand_option_decls/2, scalar_element/1]).
 :- use_module('0_enum_expand', [enum_type_rows/2]).
-:- use_module('0_type_plane', [unwrapped_column_type/2]).
+:- use_module('0_dot_expand/0_type_plane', [unwrapped_column_type/2]).
 :- use_module('0_anonymous_expand', [expand_anonymous_decls/2]).
 :- use_module('0_annotation_expand', [elaborate_annotation/3]).
 :- use_module('0_type_ids',

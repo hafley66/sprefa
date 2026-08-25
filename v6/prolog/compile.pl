@@ -57,7 +57,7 @@
 :- use_module('use_resolve', [expand_uses/8, short_hash/2]).
 :- use_module(library(http/json), [json_read_dict/3]).
 :- use_module('diag', [emit_diag_file/2]).
-:- use_module('0_type_plane',
+:- use_module('0_dot_expand/0_type_plane',
               [world_row_shape_violation/3, type_definitions/2]).
 :- use_module('0_rel_record', [rel_cols/4]).
 :- use_module('compile/0_trace',
