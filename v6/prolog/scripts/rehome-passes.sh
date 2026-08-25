@@ -28,8 +28,6 @@ moves=(
 "$P/0_generic_expand/3_enum_templates.pl $P/1_expansion/generic_expand/3_enum_templates.pl"
 "$P/0_generic_expand/4_type_views.pl $P/1_expansion/generic_expand/4_type_views.pl"
 "$P/0_generic_expand/5_type_freeze.pl $P/1_expansion/generic_expand/5_type_freeze.pl"
-"$P/0_generic_expand/5a_type_projection.pl $P/1_expansion/generic_expand/5a_type_projection.pl"
-"$P/0_generic_expand/5b_type_graph.pl $P/1_expansion/generic_expand/5b_type_graph.pl"
 "$P/0_generic_expand/6_type_conformance.pl $P/1_expansion/generic_expand/6_type_conformance.pl"
 "$P/0_generic_expand/7_generic_instances.pl $P/1_expansion/generic_expand/7_generic_instances.pl"
 "$P/0_generic_expand/8_type_rewrite.pl $P/1_expansion/generic_expand/8_type_rewrite.pl"
