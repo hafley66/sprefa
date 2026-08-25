@@ -9,8 +9,8 @@
 //! nodes reparenting their named descendants to the nearest named ancestor.
 
 use ast_grep_core::tree_sitter::StrDoc;
-use ast_grep_core::{AstGrep, Language, Node as SgNode, Pattern};
-use ast_grep_language::SupportLang;
+use ast_grep_core::{AstGrep, Node as SgNode, Pattern};
+use crate::lang::extract_lang::ExtractLang;
 use serde::Serialize;
 
 use crate::family::{CstEdgeKind, CstF};
@@ -23,8 +23,8 @@ use crate::trace;
 /// The owned ast-grep root: owns its source `String` + the tree-sitter `Tree`.
 /// `Send`; the borrowed `Node<'r>` is not, so projection (which walks it) runs on
 /// the thread that owns the root. (v5 `src/sg.rs`: `type SgRoot =
-/// AstGrep<StrDoc<SupportLang>>`.)
-pub type SgRoot = AstGrep<StrDoc<SupportLang>>;
+/// AstGrep<StrDoc<ExtractLang>>`.)
+pub type SgRoot = AstGrep<StrDoc<ExtractLang>>;
 
 /// One generic ast-grep pattern and the single-node captures the caller wants
 /// flattened. Query identity belongs to the caller's program; the extractor
@@ -61,7 +61,7 @@ pub fn query_patterns(
     queries: &[AstPatternQuery],
 ) -> Result<Vec<AstCaptureFact>, ParseError> {
     let lang =
-        SupportLang::from_path(path).ok_or_else(|| ParseError::NoGrammar(path.to_string()))?;
+        ExtractLang::from_path(path).ok_or_else(|| ParseError::NoGrammar(path.to_string()))?;
     let source =
         std::str::from_utf8(content).map_err(|error| ParseError::Utf8(error.to_string()))?;
     let root = AstGrep::new(source, lang);
@@ -142,7 +142,7 @@ impl Parser for AstGrepParser {
     }
 
     fn matches(&self, path: &str) -> bool {
-        SupportLang::from_path(path).is_some()
+        ExtractLang::from_path(path).is_some()
     }
 
     fn make_arena(&self) {}
@@ -154,7 +154,7 @@ impl Parser for AstGrepParser {
         content: &'a [u8],
     ) -> Result<SgRoot, ParseError> {
         let lang =
-            SupportLang::from_path(path).ok_or_else(|| ParseError::NoGrammar(path.to_string()))?;
+            ExtractLang::from_path(path).ok_or_else(|| ParseError::NoGrammar(path.to_string()))?;
         let src = std::str::from_utf8(content).map_err(|err| ParseError::Utf8(err.to_string()))?;
         Ok(AstGrep::new(src, lang))
     }
@@ -174,7 +174,7 @@ impl Project<CstF> for CstProjector {
         // nodes emit no row but pass `nearest_named` through so their named
         // descendants attach to the nearest named ancestor. Children are pushed
         // in reverse so they pop in source order. (Port of v5 walk_cst.)
-        let mut stack: Vec<(SgNode<StrDoc<SupportLang>>, Option<NodeRef>)> =
+        let mut stack: Vec<(SgNode<StrDoc<ExtractLang>>, Option<NodeRef>)> =
             vec![(root.root(), None)];
         while let Some((node, nearest_named)) = stack.pop() {
             let my_named = if node.is_named() {

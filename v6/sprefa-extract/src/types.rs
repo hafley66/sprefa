@@ -2541,6 +2541,23 @@ pub enum FlatFact {
 // (KotlinSource precedes TsSource: "x.kts".ends_with(".ts") routes .kts to kotlin.)
 
 // ════════════════════════════════════════════════════════════════════════════
+// AST-GREP LANGUAGE  (lang/extract_lang.rs) - the L in StrDoc<L>
+// ════════════════════════════════════════════════════════════════════════════
+// @comment-ok: this module mirrors every lang/*.rs shape as a commented sketch
+//
+// pub enum ExtractLang { Sg(SupportLang), Dl6, Prolog, Markdown, MarkdownInline }
+// impl ExtractLang {
+//     pub fn from_path(path: &str) -> Option<Self>;  // .dl6/.pl/.md, else SupportLang
+//     pub fn name(&self) -> Cow<'static, str>;       // the YAML `language:` spelling
+//     pub fn parse_name(name: &str) -> Option<Self>;
+// }
+// impl Language for ExtractLang      // expando_char '_' for dl6/prolog, 'µ' for md
+// impl LanguageExt for ExtractLang   // get_ts_language: the linked LANGUAGE consts
+//
+// SgRoot = AstGrep<StrDoc<ExtractLang>> (lang/astgrep.rs), so --ast-pattern and
+// the YAML rule door reach every grammar in the roster, not just ast-grep's own.
+
+// ════════════════════════════════════════════════════════════════════════════
 // STATUS  (flip a cell when it ships; [x] = ported + parity-green)
 // ════════════════════════════════════════════════════════════════════════════
 //
