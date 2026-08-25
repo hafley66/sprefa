@@ -13,7 +13,7 @@ labels:
 - blocked-by:temporal-v2
 - size:med
 - model:medium
-epic: userland-type-graph
+epic: relational-semantic-planes
 lane: dot-path
 lane_seq: 10
 collision: [parser-paths, generic-type-core]

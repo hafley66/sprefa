@@ -1,11 +1,11 @@
 ---
 created: 2026-08-24
-updated: 2026-08-24
+updated: 2026-08-25
 type: task
 assignee: terra
 status: open
 priority: high
-epic: userland-type-graph
+epic: relational-semantic-planes
 labels:
 - area:dl6
 - area:compiler
@@ -16,38 +16,55 @@ size: M
 lane: temporal
 lane_seq: 20
 collision: [generic-type-core, compiler-oracle]
-blocked_by: ['@temporal-v2-salvage', '@userland-constraint-graph', '@typed-annotation-corrections']
+blocked_by: ['@userland-integrity-graph', '@userland-flow-graph', '@userland-materialization-graph']
 ---
 
-# Derive temporal relation schemas from user-land annotations
+# Derive temporal semantics from user-land annotations
 
 ## Description
 
-Replace `relation_kind_request/2` and `relation_keep_request/2` builtins with ordinary DL6 annotation and target-schema rows. Preserve temporal-v2 parity before old syntax removal.
+Replace temporal request builtins with ordinary call-form DL6 annotations that derive Flow Graph and Materialization Graph rows. Preserve temporal-v2 behavior before suffix removal.
 
-## Provisional Outputs
+## Surface Sketch
 
 ```dl6
-$storage.relation_kind(TargetId, log).
-$storage.relation_keep(TargetId, all).
-$storage.relation_keep(TargetId, count, Count).
+temporal.log(Event).
+temporal.keep(Event, all).
+temporal.history(Entity).
 ```
 
-`history(Target)` derives log plus keep-all. Generic targets use existing canonical application demand.
+## Lowering Sketch
+
+```text
+annotation application
+  -> flow occurrence and retention facts
+  -> storage requirements
+  -> target plans
+```
+
+`history` must follow the selected whole-state, delta, causal-event, identity, sequence, and timestamp rulings.
+
+## Lifetime
+
+Annotation and derived semantic rows exist during compiler refreeze. Retained runtime records follow the derived policy. Reclamation emits a minus occurrence when the selected ruling requires it.
+
+## Storage And Uniqueness
+
+Event occurrence identity and retained-record identity are separate. History identity includes the entity key plus sequence/version; timestamps are data and ordering evidence according to the selected contract.
 
 ## Acceptance Criteria
 
-- [ ] `log`, `keep`, and `history` are DL6 library relations and rules.
-- [ ] Temporal request builtins are gone.
-- [ ] Ordinary and generic targets lower through canonical IDs.
+- [ ] `log`, `keep`, and `history` are ordinary DL6 declarations and rules.
+- [ ] Temporal request builtins are removed after parity.
+- [ ] Flow and storage rows contain no target name.
 - [ ] Invalid targets, policies, and conflicts retain diagnostics.
-- [ ] Call syntax matches legacy runtime declarations, SQL, SQLite, and timelines.
-- [ ] Compiler-only retention variants create no runtime tables.
+- [ ] Call syntax matches legacy runtime declarations and timelines.
+- [ ] Compiler-only semantic rows create no runtime tables.
 
 ## Tests Run
 
-Temporal test module, full compiler suite, typegen golden, SQLite retention.
+Temporal compiler tests, runtime timelines, retention, history identity, target plan snapshots.
 
 ## Implementation Notes
 
-Execution tier: Medium, size `M`, label `size:med`. Native Terra-high with Boop completion hail. Blocked by temporal salvage, constraint rows, and typed annotation corrections.
+Execution tier: Medium, size `M`, model `medium`. Native Terra-high with Boop completion notification.

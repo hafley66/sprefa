@@ -4,7 +4,7 @@ updated: 2026-08-25
 type: task
 status: done
 priority: high
-epic: userland-type-graph
+epic: relational-semantic-planes
 labels:
 - area:dl6
 - area:compiler

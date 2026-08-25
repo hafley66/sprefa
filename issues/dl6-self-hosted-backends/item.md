@@ -1,11 +1,11 @@
 ---
 created: 2026-08-24
-updated: 2026-08-24
+updated: 2026-08-25
 type: epic
 owner: chris
 status: deferred
 priority: low
-related: ['@userland-type-graph']
+related: ['@relational-semantic-planes']
 labels:
 - area:dl6
 - area:compiler
@@ -60,7 +60,7 @@ module labs -> measured boundary matrix -> load/reload/cache contract
 ```
 
 `@compiler-plane-expression-parity` is a reused foundation. This epic adds no
-blocker to `@userland-type-graph`.
+blocker to `@relational-semantic-planes`.
 
 ## Acceptance Criteria
 

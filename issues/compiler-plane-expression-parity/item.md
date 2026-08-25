@@ -5,7 +5,7 @@ type: task
 assignee: codex
 status: done
 priority: high
-epic: userland-type-graph
+epic: relational-semantic-planes
 labels:
 - area:dl6
 - area:compiler

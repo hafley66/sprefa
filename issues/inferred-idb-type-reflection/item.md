@@ -5,7 +5,7 @@ type: feature
 assignee: codex
 status: open
 priority: low
-epic: userland-type-graph
+epic: relational-semantic-planes
 labels:
 - area:dl6
 - area:compiler

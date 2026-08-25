@@ -1,11 +1,11 @@
 ---
 created: 2026-08-24
-updated: 2026-08-24
+updated: 2026-08-25
 type: task
 assignee: terra
 status: open
 priority: normal
-epic: userland-type-graph
+epic: relational-semantic-planes
 labels:
 - area:dl6
 - area:compiler
@@ -13,37 +13,39 @@ labels:
 - size:med
 - model:medium
 size: M
-lane: typegraph-core
-lane_seq: 60
+lane: semantic-cleanup
+lane_seq: 10
 collision: [generic-type-core, storage-lowering]
-blocked_by: ['@userland-dot-projection', '@userland-constraint-graph', '@userland-temporal-annotations', '@userland-type-operators']
+blocked_by: ['@member-edge-relational-view', '@relation-application-semantics', '@userland-integrity-graph', '@userland-flow-graph', '@userland-materialization-graph', '@userland-temporal-annotations']
 ---
 
-# Retire superseded host compiler type special cases
+# Retire superseded host compiler semantic special cases
 
 ## Description
 
-Remove feature-specific compiler semantics after their DL6 replacements and target rows are proven. Every removed predicate requires a reference-count receipt.
+Remove feature-specific host semantics after user-land replacements and target plans have parity. Every removal requires before and after reference counts.
 
 ## Candidate Removals
 
 - Temporal request builtin handling.
-- Nested-path collision validation after a generic user-land diagnostic mechanism; projection row grouping and source seeding were removed by `@userland-dot-projection`.
-- Key wrapper collection superseded by constraint rows.
-- Dead transport declarations, diagnostics, and tests.
+- Key-wrapper collection superseded by Integrity Graph rules.
+- Private clock discovery inputs superseded by Flow Graph projection.
+- Plane-bearing storage interpretation superseded by Materialization Graph rules.
+- Compatibility type carriers selected for retirement by the rulings card.
+- Dead declarations, diagnostics, and fixtures.
 
 ## Acceptance Criteria
 
-- [ ] Every candidate has before and after call-site counts.
-- [ ] DL6 owns temporal, projection, constraints, and type operators.
-- [ ] Host PL retains only approved generic mechanisms.
+- [ ] Every candidate has before and after definition and call-site counts.
+- [ ] Replacement relations have focused parity tests.
+- [ ] Host PL retains only approved generic fixpoint, interning, diagnostics, and lowering mechanisms.
 - [ ] Migrated fixtures keep runtime and generated artifact equality.
-- [ ] No hidden compatibility shim restores removed semantics.
+- [ ] No compatibility shim recreates removed feature semantics.
 
 ## Tests Run
 
-Complete PLUnit, typegen golden, fixture matrix, TS/Rust execution, SQLite timelines.
+Complete PLUnit compiler suite, fixture matrix, SQLite execution, Rust execution, generated artifact snapshots. TypeScript-v2 tests are excluded.
 
 ## Implementation Notes
 
-Execution tier: Medium, size `M`, label `size:med`. Native Terra-high with Boop completion hail. Deletion starts after all replacement cards.
+Execution tier: Medium, size `M`, model `medium`. Native Terra-high with Boop completion notification. Deletion begins only after all replacement cards are complete.
