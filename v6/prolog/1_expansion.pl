@@ -13,7 +13,7 @@
           ]).
 
 :- use_module(library(lists)).
-:- use_module('0_enum_expand', [enum_context/2,
+:- use_module('next/1_expand/0_enum_expand', [enum_context/2,
                                 merge_enum_type_rows/3,
                                 merge_option_type_rows/2,
                                 drop_minted_keyed_on_derived/3]).
