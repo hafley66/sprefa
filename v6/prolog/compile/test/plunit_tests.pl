@@ -140,6 +140,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 :- ensure_loaded('6_isolated_compiler_dd.test.pl').
 :- ensure_loaded('emit_type_renderers.test.pl').
 :- ensure_loaded('type_relation_ir.test.pl').
+:- ensure_loaded('0_storage_projection.test.pl').
 :- ensure_loaded('compiler_relations.test.pl').
 :- ensure_loaded('compiler_relations/0_value_domains.test.pl').
 :- ensure_loaded('compiler_relations/1_type_graph.test.pl').

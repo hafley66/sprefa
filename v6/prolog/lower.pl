@@ -181,6 +181,9 @@
 :- use_module(analyze).
 :- use_module(use_resolve, [short_hash/2]).
 :- use_module('0_rel_record').
+:- use_module('compile/0_storage_projection',
+              [ project_storage_relplans/3,
+                project_catalog_relplans/4 ]).
 :- use_module('0_generic_expand', [canonical_type_name/2,
                                    type_relation_rows/2,
                                    schema_member_transport_rows/3]).
@@ -1476,8 +1479,9 @@ plan_rule_level_statements_in_context(
 % DDL never created.
 catalog_all_rows(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
                  Types, RuleLevelStatements, Decls, AllRows) :-
-    with_storage_context(RelPlans,
-        catalog_all_rows_in_context(Mode, ModuleName, Rules, RelPlans,
+    project_storage_relplans(Decls, RelPlans, PhysicalRelPlans),
+    with_storage_context(PhysicalRelPlans,
+        catalog_all_rows_in_context(Mode, ModuleName, Rules, PhysicalRelPlans,
                                     DepartureRefs, PreRefs, Types,
                                     RuleLevelStatements, Decls, AllRows)).
 
@@ -1494,9 +1498,10 @@ catalog_all_rows_in_context(Mode, ModuleName, Rules, RelPlans, DepartureRefs,
 % and a ref deliberately share the target relation's type_id. Their storage
 % child is therefore the semantic discriminator kept beside the type rows.
 catalog_type_rows(Mode, ModuleName, Rules, RelPlans, Decls, Rows) :-
-    catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, DeclRows,
+    project_storage_relplans(Decls, RelPlans, PhysicalRelPlans),
+    catalog_decl_rows(ModuleName, Rules, PhysicalRelPlans, Decls, DeclRows,
                       ctx(Modules, RelIdMap, _ListIdMap, StartId)),
-    catalog_storage_rows(Mode, RelPlans, RelIdMap, Modules, StartId,
+    catalog_storage_rows(Mode, PhysicalRelPlans, RelIdMap, Modules, StartId,
                          StorageRows, _),
     append(DeclRows, StorageRows, Rows).
 
@@ -1870,7 +1875,9 @@ catalog_rows(ModuleName, Rules, RelPlans, AllRows) :-
 %   the id one past the last decl row).
 catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, AllRows, Context) :-
     short_hash(ModuleName, ModuleHash),
-    catalog_rel_plans(Decls, RelPlans, CatalogRelPlans, CatalogRelModules),
+    catalog_rel_plans(Decls, RelPlans, CatalogRelPlans0, CatalogRelModules),
+    project_catalog_relplans(Decls, CatalogRelPlans0, CatalogRelModules,
+                             CatalogRelPlans),
     rule_bodies_map(Rules, BodiesMap),
     catalog_primitive_rows(1, PrimitiveRows),
     length(PrimitiveRows, PrimitiveCount),
