@@ -22,6 +22,7 @@ pub mod cpg_decode;
 pub mod cpg_types;
 pub mod deps;
 pub mod dispatch;
+pub mod drain;
 pub mod family;
 pub mod lang;
 pub mod manifests;
@@ -51,6 +52,10 @@ pub use cpg_types::{
 };
 pub use deps::{resolve_specifier, Policy, TsconfigPaths};
 pub use dispatch::dispatch;
+pub use drain::{
+    bind_action, directory_path, directory_source, drain_edits, replace_action, source_rel,
+    stage_edits, BoundEdit, PendingReplaceDoc,
+};
 pub use family::{
     flow_edges, CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfArg, DfEdgeKind, DfF,
     DfFAux, DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, Family, FlowEdge, FlowEdgeKind,

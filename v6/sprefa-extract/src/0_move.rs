@@ -3,11 +3,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
 
 use clap::Parser;
 use rayon::prelude::*;
-use sprefa_extract::{extract_pool, FamilyMask, PrologSource, Source, SpecifierKind};
+use sprefa_extract::{
+    bind_action, directory_path, directory_source, extract_pool, replace_action, source_rel,
+    FamilyMask, PrologSource, Source, SpecifierKind,
+};
 
 const PRODUCER: &str = "extract-move";
 
@@ -68,36 +70,11 @@ where
 
 /// Soopy accepts ONE operation per source file (`_7d_mutation_plan.rs`
 /// `insert_non_replace`), so edits, the Move, and the shim Create are separate stages.
-enum Act {
-    Replace {
-        rel: String,
-        edits: Vec<(usize, usize, String)>,
-    },
-    Move {
-        from: String,
-        to: String,
-    },
-    Create {
-        rel: String,
-        bytes: Vec<u8>,
-    },
-}
-
-impl Act {
-    fn source_rel(&self) -> Option<&str> {
-        match self {
-            Act::Replace { rel, .. } => Some(rel),
-            Act::Move { from, .. } => Some(from),
-            Act::Create { .. } => None,
-        }
-    }
-}
-
 struct Plan {
     root: PathBuf,
     old_rel: String,
     new_rel: String,
-    stages: Vec<Vec<Act>>,
+    stages: Vec<Vec<soopy::SourceAction>>,
 }
 
 impl Plan {
@@ -210,27 +187,48 @@ impl Plan {
             edits.retain(|rel, _| rel == &old_rel);
         }
 
+        // Every action is planned against the real root; `bind_action` re-aims it
+        // at the root that actually stages it, and re-reads `expected` there.
+        let identity = soopy::SourceRoot::open_directory(&root)
+            .map_err(|error| format!("open root {}: {error}", root.display()))?
+            .directory()
+            .identity
+            .clone();
+
         let mut edit_stage = Vec::new();
-        for (rel, mut spans) in edits {
-            spans.sort_by_key(|(start, end, _)| (*start, *end));
-            spans.dedup();
-            edit_stage.push(Act::Replace { rel, edits: spans });
+        for (rel, spans) in edits {
+            let source = directory_source(&identity, &rel);
+            let text_edits = spans
+                .into_iter()
+                .map(|(start, end, replacement)| soopy::TextEdit {
+                    range: soopy::ActionSpan {
+                        source: source.clone(),
+                        start: start as u64,
+                        end: end as u64,
+                    },
+                    replacement: replacement.into_bytes(),
+                    producer: soopy::ActionProducer::unordered(PRODUCER),
+                })
+                .collect();
+            let expected = content_id(&root.join(&rel))?;
+            edit_stage.push(replace_action(source, expected, text_edits));
         }
 
         let mut stages = Vec::new();
         if !edit_stage.is_empty() {
             stages.push(edit_stage);
         }
-        stages.push(vec![Act::Move {
-            from: old_rel.clone(),
-            to: new_rel.clone(),
+        stages.push(vec![soopy::SourceAction::Move {
+            source: directory_source(&identity, &old_rel),
+            expected: content_id(&root.join(&old_rel))?,
+            destination: directory_path(&new_rel),
         }]);
         if cli.shim {
             let module = module_name.unwrap_or_else(|| stem(&old));
             let target = spec_text(&old_dir, &new, "''");
             let body = format!(":- module({module}_shim, []).\n:- reexport({target}).\n");
-            stages.push(vec![Act::Create {
-                rel: old_rel.clone(),
+            stages.push(vec![soopy::SourceAction::Create {
+                path: directory_path(&old_rel),
                 bytes: body.into_bytes(),
             }]);
         }
@@ -550,7 +548,7 @@ fn stage_into<S: soopy::StageStore>(
 fn stage_and_commit(
     root: &Path,
     state: &Path,
-    acts: &[Act],
+    actions: &[soopy::SourceAction],
     durability: soopy::Durability,
 ) -> Result<(String, Vec<soopy::FilePreview>), String> {
     let mut source_root = soopy::SourceRoot::open_directory(root)
@@ -559,11 +557,11 @@ fn stage_and_commit(
     let root_id = soopy::SourceRootId::Directory {
         directory: identity.clone(),
     };
-    let mut actions = Vec::with_capacity(acts.len());
-    for act in acts {
-        actions.push(action(root, &identity, act)?);
+    let mut bound = Vec::with_capacity(actions.len());
+    for action in actions {
+        bound.push(bind_action(root, &identity, action)?);
     }
-    let request = soopy::StageRequest::new(root_id, actions);
+    let request = soopy::StageRequest::new(root_id, bound);
     // A dry run stages in memory and commits without device flushes: the mirror
     // is discarded whole, so durability would buy nothing.
     let stage = match durability {
@@ -588,55 +586,10 @@ fn stage_and_commit(
     Ok((stage.id.to_string(), stage.previews))
 }
 
-fn action(
-    root: &Path,
-    identity: &soopy::DirectoryId,
-    act: &Act,
-) -> Result<soopy::SourceAction, String> {
-    let path = |rel: &str| soopy::SourcePath::Directory {
-        path: soopy::RootPath(Arc::from(rel)),
-    };
-    let source = |rel: &str| soopy::ActionSource::Directory {
-        file: soopy::FileRef {
-            directory: identity.clone(),
-            path: soopy::RootPath(Arc::from(rel)),
-        },
-    };
-    let expected = |rel: &str| -> Result<soopy::ContentId, String> {
-        let bytes = std::fs::read(root.join(rel))
-            .map_err(|error| format!("read {}: {error}", root.join(rel).display()))?;
-        Ok(soopy::ContentId::blake3(&bytes))
-    };
-    Ok(match act {
-        Act::Create { rel, bytes } => soopy::SourceAction::Create {
-            path: path(rel),
-            bytes: bytes.clone(),
-        },
-        Act::Move { from, to } => soopy::SourceAction::Move {
-            source: source(from),
-            expected: expected(from)?,
-            destination: path(to),
-        },
-        Act::Replace { rel, edits } => {
-            let source = source(rel);
-            soopy::SourceAction::Replace {
-                source: source.clone(),
-                expected: expected(rel)?,
-                edits: edits
-                    .iter()
-                    .map(|(start, end, replacement)| soopy::TextEdit {
-                        range: soopy::ActionSpan {
-                            source: source.clone(),
-                            start: *start as u64,
-                            end: *end as u64,
-                        },
-                        replacement: replacement.clone().into_bytes(),
-                        producer: soopy::ActionProducer::unordered(PRODUCER),
-                    })
-                    .collect(),
-            }
-        }
-    })
+fn content_id(path: &Path) -> Result<soopy::ContentId, String> {
+    let bytes =
+        std::fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    Ok(soopy::ContentId::blake3(&bytes))
 }
 
 fn print_previews(previews: &[soopy::FilePreview]) {
@@ -684,8 +637,8 @@ impl Mirror {
             .map_err(|error| format!("create mirror {}: {error}", root.display()))?;
         let mut copied = BTreeSet::new();
         for stage in &plan.stages {
-            for act in stage {
-                let Some(rel) = act.source_rel() else {
+            for action in stage {
+                let Some(rel) = source_rel(action) else {
                     continue;
                 };
                 if !copied.insert(rel.to_string()) {
