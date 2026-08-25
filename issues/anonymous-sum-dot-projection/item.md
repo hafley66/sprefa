@@ -1,9 +1,9 @@
 ---
 created: 2026-08-24
-updated: 2026-08-24
+updated: 2026-08-25
 type: task
-assignee: terra
-status: open
+assignee: codex
+status: in-progress
 priority: normal
 epic: userland-type-graph
 labels:
@@ -49,3 +49,9 @@ Anonymous syntax/value tests, dot-reference matrix, and cross-target type genera
 ## Implementation Notes
 
 Execution tier: Medium, size `M`, label `size:med`. Native Terra-high with Boop completion hail. Blocked by `@userland-dot-projection`.
+
+## Decisions
+
+### 2026-08-25T13:36:23Z · @codex
+
+Implementation contract: preserve anonymous(Owner, SitePath, Shape) identity and all generated storage names. Before strict qualified-type resolution, derive rel_path_decl aliases only for directly declared member sums whose internal type paths resolve against authored declarations. Add aliases for OwnerPath + SitePath and each generated variant. Project type.path rows by prefixing every anonymous SitePath with each declared owner path, then append variant labels. Reuse existing path-collision validation. No undeclared relation inference and no emitter-specific behavior.
