@@ -125,7 +125,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
                 run_program/5 ]).
 :- use_module('../../conformance/level_eval',
               [ goal_rel_refs/3, split_rules/4 ]).
-:- use_module('../../conformance/body',
+:- use_module('../../0_dot_expand/body',
               [ body_atoms/2, comparison_goal/1, json_capture_type/2,
                 json_scalar_value/3, eval_expr/2, json_canon/2 ]).
 :- use_module('../../1_host_expand', [ body_goals/2 ]).

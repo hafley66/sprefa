@@ -57,7 +57,7 @@
             body_latest_ref/2, body_pre_ref/2,
             check_program/1,
             rel_kind/3, decl_key/3 ]).
-:- reexport(body, [json_canon/2]).
+:- reexport('../0_dot_expand/body', [json_canon/2]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -80,7 +80,7 @@
 :- use_module('../0_option_expand', [acyclic_companion/5]).
 :- use_module('../1_host_expand', [prepare_program/5, query_decl/3]).
 :- use_module(rulings).
-:- use_module(body).
+:- use_module('../0_dot_expand/body').
 :- use_module(level_eval).
 
 :- op(1150, xfx, <-).

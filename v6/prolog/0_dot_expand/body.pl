@@ -24,7 +24,7 @@
 :- use_module(library(assoc)).
 :- use_module(library(pcre)).
 :- use_module('../0_body_walk', [walk_body/3]).
-:- use_module('../0_dot_expand/registry',
+:- use_module('registry',
               [expression/5, expression_for_term/5, surface_for_term/6]).
 
 :- op(700, xfx, :=).

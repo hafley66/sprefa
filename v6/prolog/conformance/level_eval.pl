@@ -14,7 +14,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
-:- use_module(body).
+:- use_module('../0_dot_expand/body').
 :- use_module('../0_dot_expand/registry', [surface_for_term/6]).
 :- use_module('../0_dot_expand/0_type_plane', [canonical_json_text/2]).
 :- use_module('../0_generic_expand', [canonical_type_name/2]).

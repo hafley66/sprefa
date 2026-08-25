@@ -29,7 +29,7 @@
 :- use_module('../../emit_ts', [ emit_program/5 ]).
 :- use_module('../../analyze', [ declared_refs/2, program_refs/2,
                                  seeded_refs/2, snake_name/2 ]).
-:- use_module('../../conformance/body', [ rel_ref/2 ]).
+:- use_module('../../0_dot_expand/body', [ rel_ref/2 ]).
 :- use_module('../../0_rel_record', [ relplan_column_types/3 ]).
 :- use_module('../../0_dot_expand/0_type_plane',
               [ type_canonical_json/4, canonical_json_text/2,
