@@ -185,7 +185,6 @@ fn project_calls(
         walk_head_refs(head, src, strings, sink);
         if let Some(body) = body {
             walk_goals(body, src, dcg, strings, sink, None);
-            walk_goals_refs(body, src, strings, sink);
         }
     }
 }
@@ -565,6 +564,8 @@ fn collect_predicate_indicators(
     }
 }
 
+/// One spine pass pushing both `aux.sites` and `aux.refs`, replacing two
+/// walks. Directives keep their own refs-only walk below.
 fn walk_goals(
     node: tree_sitter::Node,
     src: &[u8],
@@ -580,9 +581,16 @@ fn walk_goals(
             }
         }
         "unary_operation" => {
-            if operator(node, src) == "\\+" {
+            let op = operator(node, src);
+            if op == "\\+" {
                 if let Some(operand) = field(node, "operand") {
                     walk_goals(operand, src, dcg, strings, sink, module);
+                }
+            } else {
+                // A prefix-operator goal (dynamic/1, initialization/1, ...).
+                push_ref(node, &format!("{op}/1"), RefPosition::Goal, strings, sink);
+                if let Some(operand) = field(node, "operand") {
+                    walk_data_refs(operand, RefPosition::TermArg, src, strings, sink);
                 }
             }
         }
@@ -604,19 +612,41 @@ fn walk_goals(
                     }
                 }
                 ":-" | "-->" | "::" => {}
-                _ => push_site(node, op, 2, false, strings, sink, module),
+                _ => {
+                    push_site(node, op, 2, false, strings, sink, module);
+                    push_ref(node, &format!("{op}/2"), RefPosition::Goal, strings, sink);
+                    for child in named_children(node) {
+                        walk_data_refs(child, RefPosition::TermArg, src, strings, sink);
+                    }
+                }
             }
         }
         "compound_term" => {
             if let Some((name, arity)) = callable_name_arity(node, src) {
                 push_site(node, &name, arity, dcg, strings, sink, module);
+                push_ref(
+                    node,
+                    &predicate_key(&name, arity, false),
+                    RefPosition::Goal,
+                    strings,
+                    sink,
+                );
+            }
+            let mut cursor = node.walk();
+            for arg in node.children_by_field_name("argument", &mut cursor) {
+                walk_data_refs(arg, RefPosition::TermArg, src, strings, sink);
             }
         }
         "atom" | "unquoted_atom" | "quoted_atom" | "operator_atom" => {
-            push_site(node, &atom_text(node, src), 0, dcg, strings, sink, module);
+            let name = atom_text(node, src);
+            push_site(node, &name, 0, dcg, strings, sink, module);
+            push_ref(node, &format!("{name}/0"), RefPosition::Goal, strings, sink);
         }
-        "cut" => push_site(node, "!", 0, false, strings, sink, module),
-        _ => {}
+        "cut" => {
+            push_site(node, "!", 0, false, strings, sink, module);
+            push_ref(node, "!/0", RefPosition::Goal, strings, sink);
+        }
+        _ => walk_data_refs(node, RefPosition::TermArg, src, strings, sink),
     }
 }
 
