@@ -53,7 +53,7 @@
 
 :- include('generic_expand/0b_expansion_pipeline.pl').
 
-:- include('../0_generic_expand/1_annotations.pl').
+:- include('generic_expand/1_annotations.pl').
 
 :- include('../0_generic_expand/2_compiler_plane.pl').
 
