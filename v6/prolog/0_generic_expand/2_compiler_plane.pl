@@ -278,6 +278,14 @@ elaborate_compiler_body(_, _, true, true) :- !.
 elaborate_compiler_body(Decls, Bindings, (Left0, Right0), (Left, Right)) :- !,
     elaborate_compiler_body(Decls, Bindings, Left0, Left),
     elaborate_compiler_body(Decls, Bindings, Right0, Right).
+elaborate_compiler_body(Decls, Bindings, not(Atom0), not(Atom)) :-
+    !,
+    elaborate_compiler_body_atom(Decls, Bindings, Atom0, Atom, PatternGoals),
+    ( PatternGoals == []
+    -> true
+    ; throw(unsupported_construct(
+          compiler_negation_structural_pattern_unsupported(Atom0)))
+    ).
 elaborate_compiler_body(_, _, Goal, Goal) :-
     compiler_expression_goal(Goal),
     !.

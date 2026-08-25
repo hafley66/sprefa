@@ -1,6 +1,6 @@
-% Finite compiler-plane aggregation. Count heads read completed lower strata;
-% their consumers enter the positive tabled closure only after those rows are
-% fixed.
+% Compiler-plane strata. Count heads and negated body goals read completed
+% lower strata; their consumers enter the positive tabled closure only after
+% those rows are fixed.
 
 validate_compiler_aggregate_heads([]).
 validate_compiler_aggregate_heads([Rule | Rest]) :-
@@ -19,9 +19,9 @@ validate_compiler_aggregate_head(Head) :-
            )).
 
 %! evaluate_compiler_strata(+Rules, +Seeds, -Rows) is det.
-%  A strict dependency edge enters each count-headed rule. The completed rows
-%  below a stratum feed its counts once; ordinary rules in that stratum then
-%  close under the existing tabled evaluator.
+%  A strict dependency edge enters each count-headed rule and each negated
+%  relation goal. The completed rows below a stratum feed counts and anti-joins
+%  once; ordinary rules in that stratum then close under the tabled evaluator.
 evaluate_compiler_strata(Rules, Seeds, Rows) :-
     compiler_rule_strata(Rules, Strata),
     evaluate_compiler_strata_groups(Strata, Seeds, Rows).
@@ -36,20 +36,21 @@ evaluate_compiler_strata_groups([RuleGroup | Rest], Rows0, Rows) :-
             AggregateRows),
     append(Rows0, AggregateRows, StratumSeeds0),
     sort(StratumSeeds0, StratumSeeds),
-    tabled_compiler_closure(PlainRules, StratumSeeds, StratumRows),
+    tabled_compiler_closure(PlainRules, Rows0, StratumSeeds, StratumRows),
     evaluate_compiler_strata_groups(Rest, StratumRows, Rows).
 
 compiler_rule_strata([], []).
 compiler_rule_strata(Rules, Strata) :-
     findall(Ref, ( member(Rule, Rules), rule_head_ref(Rule, Ref) ), Refs0),
     sort(Refs0, DerivedRefs),
-    findall(HeadRef-constraint(BodyRef, Gap),
+    findall(HeadRef-constraint(BodyRef, Gap, Reason),
             ( member(Rule, Rules),
               rule_head_ref(Rule, HeadRef),
               rule_body(Rule, Body),
-              compiler_rule_constraint(Rule, Body, BodyRef, Gap),
+              compiler_rule_constraint(Rule, Body, BodyRef, Gap, Reason),
               memberchk(BodyRef, DerivedRefs) ),
             Constraints),
+    validate_compiler_stratification(Constraints),
     length(DerivedRefs, DerivedCount),
     Cap is DerivedCount + 1,
     findall(Ref-0, member(Ref, DerivedRefs), Strata0),
@@ -63,15 +64,39 @@ compiler_rule_strata(Rules, Strata) :-
     group_pairs_by_key(Sorted, Grouped),
     pairs_values(Grouped, Strata).
 
-compiler_rule_constraint(Rule, Body, BodyRef, Gap) :-
-    body_atoms(Body, Atoms),
-    member(Atom, Atoms),
+compiler_rule_constraint(Rule, Body, BodyRef, Gap, Reason) :-
+    body_relation_goal(Body, Polarity, Atom),
     atom_ref(Atom, BodyRef),
-    ( compiler_aggregate_rule(Rule) -> Gap = 1 ; Gap = 0 ).
+    compiler_dependency_gap(Rule, Polarity, Gap, Reason).
+
+compiler_dependency_gap(_, negative, 1, negation) :- !.
+compiler_dependency_gap(Rule, positive, 1, aggregate) :-
+    compiler_aggregate_rule(Rule),
+    !.
+compiler_dependency_gap(_, positive, 0, positive).
+
+validate_compiler_stratification(Constraints) :-
+    ( strict_dependency_cycle(Constraints, negation)
+    -> throw(unsupported_construct(compiler_negation_not_stratified))
+    ; strict_dependency_cycle(Constraints, aggregate)
+    -> throw(unsupported_construct(compiler_aggregate_not_stratified))
+    ; true
+    ).
+
+strict_dependency_cycle(Constraints, Reason) :-
+    member(Head-constraint(Body, 1, Reason), Constraints),
+    dependency_constraint_path(Constraints, Body, Head, [Body]),
+    !.
+
+dependency_constraint_path(_, Current, Target, _) :- Current == Target, !.
+dependency_constraint_path(Constraints, Current, Target, Seen) :-
+    member(Current-constraint(Next, _, _), Constraints),
+    \+ memberchk(Next, Seen),
+    dependency_constraint_path(Constraints, Next, Target, [Next | Seen]).
 
 relax_compiler_strata(Constraints, Cap, Strata0, Strata) :-
     findall(changed,
-            ( member(HeadRef-constraint(BodyRef, Gap), Constraints),
+            ( member(HeadRef-constraint(BodyRef, Gap, _), Constraints),
               memberchk(HeadRef-HeadStratum, Strata0),
               memberchk(BodyRef-BodyStratum, Strata0),
               HeadStratum < BodyStratum + Gap ),
@@ -81,14 +106,14 @@ relax_compiler_strata(Constraints, Cap, Strata0, Strata) :-
     ; findall(Ref-Number,
               ( member(Ref-Current, Strata0),
                 findall(Needed,
-                        ( member(Ref-constraint(BodyRef, Gap), Constraints),
+                        ( member(Ref-constraint(BodyRef, Gap, _), Constraints),
                           memberchk(BodyRef-BodyStratum, Strata0),
                           Needed is BodyStratum + Gap ),
                         Neededs),
                 max_list([Current | Neededs], Number) ),
               Strata1),
       ( member(_-Number, Strata1), Number > Cap
-      -> throw(unsupported_construct(compiler_aggregate_not_stratified))
+      -> throw(unsupported_construct(compiler_stratification_internal_limit))
       ; relax_compiler_strata(Constraints, Cap, Strata1, Strata)
       )
     ).

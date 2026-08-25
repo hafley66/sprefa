@@ -39,6 +39,13 @@ validate_compiler_goal(Goal, Bound, Bound) :-
     -> true
     ; throw(unsupported_construct(compiler_comparison_non_ground(Goal)))
     ).
+validate_compiler_goal(not(Goal), Bound, Bound) :-
+    !,
+    term_variables(Goal, Variables),
+    ( variables_are_bound(Variables, Bound)
+    -> true
+    ; throw(unsupported_construct(compiler_negation_non_ground(Goal)))
+    ).
 validate_compiler_goal(Goal, Bound0, Bound) :-
     add_term_variables(Goal, Bound0, Bound).
 
@@ -67,9 +74,21 @@ body_atoms((Left, Right), Atoms) :- !,
     body_atoms(Left, LeftAtoms),
     body_atoms(Right, RightAtoms),
     append(LeftAtoms, RightAtoms, Atoms).
+body_atoms(not(Atom), [Atom]) :- !.
 body_atoms(Goal, []) :- compiler_bind_goal(Goal, _, _), !.
 body_atoms(Goal, []) :- comparison_goal(Goal), !.
 body_atoms(Atom, [Atom]).
+
+body_relation_goal((Left, Right), Polarity, Goal) :-
+    !,
+    ( body_relation_goal(Left, Polarity, Goal)
+    ; body_relation_goal(Right, Polarity, Goal)
+    ).
+body_relation_goal(not(Goal), negative, Goal) :- !.
+body_relation_goal(Goal, _, _) :- compiler_bind_goal(Goal, _, _), !, fail.
+body_relation_goal(Goal, _, _) :- comparison_goal(Goal), !, fail.
+body_relation_goal(true, _, _) :- !, fail.
+body_relation_goal(Goal, positive, Goal).
 
 compiler_bind_goal(Goal, Variable, Expression) :-
     body_surface_for_term(Goal, _, bind, no_refs, infix(_), _),

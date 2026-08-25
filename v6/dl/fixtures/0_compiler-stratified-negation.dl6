@@ -1,0 +1,14 @@
+# Compiler relations use stratified negation over the frozen type graph.
+# Every compiler relation and rule erases before runtime planning.
+
+rel Candidate(value: type).
+rel Blocked(value: type).
+rel Serializable(value: type).
+
+rel Document(id: int).
+
+Candidate(Document).
+
+Serializable(Type) <-
+  Candidate(Type),
+  not(Blocked(Type)).

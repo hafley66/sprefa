@@ -211,6 +211,75 @@ test(aggregate_dependency_cycle_has_named_diagnostic,
               expanded_member(Owner, Member) <- member_count(Owner, Member) ],
     evaluate_compiler_relations(compiler_relations(Relations, Rules), [], _).
 
+test(stratified_negation_reads_recursive_lower_fixpoint) :-
+    Relations = [ compiler_relation(candidate/1, 1, []),
+                  compiler_relation(type_edge/2, 2, []),
+                  compiler_relation(unsupported/1, 1, []),
+                  compiler_relation(blocked/1, 1, []),
+                  compiler_relation(serializable/1, 1, []) ],
+    Rules = [ blocked(Type) <- unsupported(Type),
+              blocked(Owner) <- (type_edge(Owner, Target), blocked(Target)),
+              serializable(Type) <-
+                  (candidate(Type), not(blocked(Type))) ],
+    Seeds = [ candidate(cycle_a), candidate(cycle_b), candidate(bad),
+              candidate(unsupported_leaf),
+              type_edge(cycle_a, cycle_b), type_edge(cycle_b, cycle_a),
+              type_edge(bad, unsupported_leaf),
+              unsupported(unsupported_leaf) ],
+    evaluate_compiler_relations(compiler_relations(Relations, Rules), Seeds,
+                                Closure),
+    sort([ blocked(bad), blocked(unsupported_leaf),
+           candidate(bad), candidate(cycle_a), candidate(cycle_b),
+           candidate(unsupported_leaf),
+           serializable(cycle_a), serializable(cycle_b),
+           type_edge(bad, unsupported_leaf), type_edge(cycle_a, cycle_b),
+           type_edge(cycle_b, cycle_a), unsupported(unsupported_leaf) ],
+         Expected),
+    Closure == Expected.
+
+test(negation_and_count_share_completed_strata) :-
+    Relations = [ compiler_relation(source_member/3, 3, []),
+                  compiler_relation(normalized_member/3, 3, []),
+                  compiler_relation(excluded/1, 1, []),
+                  compiler_relation(member_count/2, 2, []),
+                  compiler_relation(eligible/2, 2, []) ],
+    Rules = [ normalized_member(Owner, Position, Name) <-
+                  source_member(Owner, Position, Name),
+              excluded(Owner) <- source_member(Owner, _, blocked),
+              member_count(Owner, count(Position)) <-
+                  normalized_member(Owner, Position, _),
+              eligible(Owner, Count) <-
+                  ( member_count(Owner, Count),
+                    Count > 0,
+                    not(excluded(Owner)) ) ],
+    Seeds = [ source_member(a, 1, first),
+              source_member(a, 2, second),
+              source_member(b, 1, blocked) ],
+    evaluate_compiler_relations(compiler_relations(Relations, Rules), Seeds,
+                                Closure),
+    memberchk(eligible(a, 2), Closure),
+    \+ memberchk(eligible(b, 1), Closure),
+    memberchk(excluded(b), Closure),
+    memberchk(member_count(a, 2), Closure),
+    memberchk(member_count(b, 1), Closure).
+
+test(negated_dependency_cycle_has_named_diagnostic,
+     [throws(unsupported_construct(compiler_negation_not_stratified))]) :-
+    Relations = [ compiler_relation(seed/1, 1, []),
+                  compiler_relation(left/1, 1, []),
+                  compiler_relation(right/1, 1, []) ],
+    Rules = [ left(Value) <- (seed(Value), not(right(Value))),
+              right(Value) <- (seed(Value), not(left(Value))) ],
+    evaluate_compiler_relations(compiler_relations(Relations, Rules),
+                                [seed(value)], _).
+
+test(negated_goal_requires_prior_bindings,
+     [throws(unsupported_construct(compiler_negation_non_ground(_)))]) :-
+    Relations = [ compiler_relation(blocked/1, 1, []),
+                  compiler_relation(serializable/1, 1, []) ],
+    Rules = [serializable(Type) <- not(blocked(Type))],
+    evaluate_compiler_relations(compiler_relations(Relations, Rules), [], _).
+
 test(keyed_functional_conflict_is_refused,
      [throws(unsupported_construct(
          compiler_relation_functional_conflict(codec/2, [named(local, relation, document)])))]) :-
@@ -220,12 +289,18 @@ test(keyed_functional_conflict_is_refused,
         [ codec(named(local, relation, document), primitive(json)),
           codec(named(local, relation, document), primitive(text)) ], _).
 
-test(named_negation_is_refused,
-     [throws(unsupported_construct(compiler_relation_negation_unsupported(codec/2)))]) :-
-    Decls = [col_type(codec/2, self, type), col_type(codec/2, format, type)],
-    partition_compiler_program(Decls,
-                               [codec(X, Y) <- not(codec(X, Y))],
-                               _, _, _).
+test(named_negation_stays_in_the_compiler_plane) :-
+    Decls = [ col_type(candidate/1, self, type),
+              col_type(blocked/1, self, type),
+              col_type(serializable/1, self, type) ],
+    Rules = [serializable(Type) <-
+                 (candidate(Type), not(blocked(Type)))],
+    partition_compiler_program(
+        Decls, Rules,
+        compiler_relations(_, CompilerRules), RuntimeDecls, RuntimeRules),
+    CompilerRules == Rules,
+    RuntimeDecls == [],
+    RuntimeRules == [].
 
 test(runtime_rule_with_compiler_ref_under_negation_is_refused,
      [throws(unsupported_construct(compiler_relation_negation_unsupported(codec/2)))]) :-
@@ -671,6 +746,33 @@ test(real_dl6_fixture_reaches_compiler_erasure) :-
         ( compile_dl6(Fixture, Out),
           read_file_to_string(Out, Text, []),
           \+ sub_string(Text, _, _, _, 'Capability') ),
+        ( exists_file(Out) -> delete_file(Out) ; true )).
+
+test(authored_negation_reaches_closure_and_erases_before_runtime) :-
+    predicate_property(plunit_compiler_relations:compiler_decls(_),
+                       file(ThisFile)),
+    file_directory_name(ThisFile, TestDir),
+    absolute_file_name(
+        '../../../dl/fixtures/0_compiler-stratified-negation.dl6', Fixture,
+        [relative_to(TestDir), access(read)]),
+    expand_uses(Fixture, [], [], _, Program, _, Bindings, Findings),
+    Findings == [],
+    expand_generic_program_with_bindings(Program, Bindings,
+                                         prog(Decls, Rules)),
+    Rules == [],
+    member(compiler_type_metadata(_, Closure), Decls),
+    Document = named(_, relation, 'Document'),
+    memberchk('Candidate'(Document), Closure),
+    memberchk('Serializable'(Document), Closure),
+    \+ memberchk('Blocked'(Document), Closure),
+    Out = '/private/tmp/compiler-stratified-negation.types.ts',
+    setup_call_cleanup(
+        true,
+        ( compile_dl6(Fixture, Out),
+          read_file_to_string(Out, Text, []),
+          \+ sub_string(Text, _, _, _, 'Candidate'),
+          \+ sub_string(Text, _, _, _, 'Blocked'),
+          \+ sub_string(Text, _, _, _, 'Serializable') ),
         ( exists_file(Out) -> delete_file(Out) ; true )).
 
 test(authored_rules_query_the_frozen_canonical_type_graph) :-

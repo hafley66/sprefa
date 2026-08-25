@@ -24,6 +24,7 @@
 :- table compiler_proves/2.
 :- thread_local compiler_eval_seed/2.
 :- thread_local compiler_eval_rule/2.
+:- thread_local compiler_eval_lower/2.
 
 %! partition_compiler_relations(+Decls, -CompilerDecls, -RuntimeDecls) is det.
 %
@@ -307,10 +308,6 @@ body_compiler_ref(Body, CompilerRefs, Ref) :-
 
 validate_compiler_rule_refs(Rule, CompilerRefs) :-
     rule_body(Rule, Body),
-    ( named_negation_compiler_ref(Body, CompilerRefs, Ref)
-    -> throw(unsupported_construct(compiler_relation_negation_unsupported(Ref)))
-    ; true
-    ),
     body_atoms(Body, Atoms),
     forall(member(Atom, Atoms),
            ( atom_ref(Atom, Ref),
@@ -333,12 +330,6 @@ validate_compiler_rule_plane(Rule, CompilerRefs) :-
            -> true
            ; throw(unsupported_construct(compiler_relation_unsafe_rule(HeadRef)))
            )).
-
-named_negation_ref(not(Atom), Ref) :- !,
-    ( atom_ref(Atom, Ref) -> true ; Ref = not ).
-named_negation_ref(Body, Ref) :-
-    nonvar(Body), Body = (Left, Right),
-    ( named_negation_ref(Left, Ref) ; named_negation_ref(Right, Ref) ).
 
 named_negation_compiler_ref(Term, CompilerRefs, Ref) :-
     nonvar(Term),
@@ -366,8 +357,9 @@ rule_body(_, true).
 %! evaluate_compiler_relations(+CompilerDecls, +SeedRows, -ClosureRows) is det.
 %
 % Positive safe rules use ordinary Datalog joins. Scalar goals execute in body
-% order. Aggregate heads read a completed lower stratum before their consumers
-% enter another tabled positive closure. Every row set is sorted before use.
+% order. Aggregate heads and negated relation goals read completed lower
+% strata before their consumers enter another tabled positive closure. Every
+% row set is sorted before use.
 evaluate_compiler_relations(compiler_relations(Relations, Rules), SeedRows,
                             ClosureRows) :-
     maplist(validate_compiler_seed(Relations), SeedRows),
@@ -443,24 +435,28 @@ validate_compiler_rule_plane_with_relations(Relations, Rule) :-
     relation_refs(Relations, Refs),
     validate_compiler_rule_plane(Rule, Refs).
 
-%! tabled_compiler_closure(+Rules, +Seeds, -Rows) is det.
+%! tabled_compiler_closure(+Rules, +LowerRows, +Seeds, -Rows) is det.
 %  One unique table namespace belongs to one compiler round.  The rules and
 %  seeds are immutable while SLG evaluation closes recursive positive goals.
-tabled_compiler_closure(Rules, Seeds, Rows) :-
+%  Negated goals consult only LowerRows, which were completed before this
+%  stratum began.
+tabled_compiler_closure(Rules, LowerRows, Seeds, Rows) :-
     gensym(compiler_eval_, EvalId),
     setup_call_cleanup(
-        install_compiler_eval(EvalId, Rules, Seeds),
+        install_compiler_eval(EvalId, Rules, LowerRows, Seeds),
         ( findall(Row, compiler_proves(EvalId, Row), Rows0),
           sort(Rows0, Rows) ),
         cleanup_compiler_eval(EvalId)).
 
-install_compiler_eval(EvalId, Rules, Seeds) :-
+install_compiler_eval(EvalId, Rules, LowerRows, Seeds) :-
     forall(member(Rule, Rules), assertz(compiler_eval_rule(EvalId, Rule))),
+    forall(member(Row, LowerRows), assertz(compiler_eval_lower(EvalId, Row))),
     forall(member(Seed, Seeds), assertz(compiler_eval_seed(EvalId, Seed))).
 
 cleanup_compiler_eval(EvalId) :-
     abolish_table_subgoals(compiler_proves(EvalId, _)),
     retractall(compiler_eval_rule(EvalId, _)),
+    retractall(compiler_eval_lower(EvalId, _)),
     retractall(compiler_eval_seed(EvalId, _)).
 
 compiler_proves(EvalId, Row) :-
@@ -478,6 +474,9 @@ satisfy_tabled_compiler_body(_, true) :- !.
 satisfy_tabled_compiler_body(EvalId, (Left, Right)) :- !,
     satisfy_tabled_compiler_body(EvalId, Left),
     satisfy_tabled_compiler_body(EvalId, Right).
+satisfy_tabled_compiler_body(EvalId, not(Goal)) :-
+    !,
+    \+ compiler_eval_lower(EvalId, Goal).
 satisfy_tabled_compiler_body(_, type_apply(Constructor, Arguments,
                                             Application)) :-
     !,
@@ -502,6 +501,9 @@ satisfy_compiler_body(_, true) :- !.
 satisfy_compiler_body(Rows, (Left, Right)) :- !,
     satisfy_compiler_body(Rows, Left),
     satisfy_compiler_body(Rows, Right).
+satisfy_compiler_body(Rows, not(Goal)) :-
+    !,
+    \+ ( member(Row, Rows), Row = Goal ).
 satisfy_compiler_body(_, type_apply(Constructor, Arguments, Application)) :-
     !,
     ( ground(Constructor), is_list(Arguments), maplist(ground, Arguments)
