@@ -78,7 +78,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
               [ expand_uses/6, expand_uses/8, include_roots/2, resolve_use_path/3,
                 reset_parse_counts/0, parse_count/2 ]).
 :- use_module('../../executor_modules', [ executor_family_export/3 ]).
-:- use_module('../../0_cst_query', [ parse_cst_query/2 ]).
+:- use_module('../../2_host_expand/0_cst_query', [ parse_cst_query/2 ]).
 :- use_module('../../0_dot_expand/0_body_walk', [ relation_atom_wrapper/1 ]).
 :- use_module('../../0_dot_expand/0_type_plane', [ type_definitions/2, column_storage/3 ]).
 :- use_module('../../1_expansion/0_program_check', [ program_violation/3 ]).

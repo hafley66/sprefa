@@ -7,7 +7,7 @@
 :- use_module(library(lists)).
 :- use_module('1_expansion/0_program_check',
               [ first_violation/3, ast_capture_names/2 ]).
-:- use_module('0_cst_query', [ serialize_ts_query/2 ]).
+:- use_module('2_host_expand/0_cst_query', [ serialize_ts_query/2 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
