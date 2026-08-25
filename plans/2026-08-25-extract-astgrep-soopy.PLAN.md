@@ -120,18 +120,20 @@ Body (pseudo-code, per `impl_lang_expando!`, ast-grep-language `lib.rs:102-133`)
 ```rust
 // expando_char: the tree-sitter grammars for the three reject '$' as an
 // identifier lead (dl6 variable = [A-Z][A-Za-z0-9_]* grammar.js:129; prolog
-// unquoted_atom = [a-z].../variable = [A-Z_]... grammar.js:204,207). Use 'z'
-// following Html (html.rs:13-15). Sg(_) delegates to SupportLang (lib.rs:434-435).
+// unquoted_atom = [a-z].../variable = [A-Z_]... grammar.js:204,207). Use 'µ'
+// following ast-grep-language's own convention for every language whose $
+// is taken (lib.rs:196-211); 'µ' is a Unicode XID_Start letter the grammars
+// do not use, unlike 'z' which collides with lowercase identifiers.
 match self {
     ExtractLang::Sg(sg) => sg.expando_char(),
-    _ => 'z',
+    _ => 'µ',
 }
 
 // pre_process_pattern: '$' + [A-Z_]/$$$ -> expando. Copy of the private fn
 // ast-grep-language lib.rs:79-98; the crate does not export it.
 fn pre_process_pattern(&self, q: &'q str) -> Cow<'q, str> {
     let sigil = self.expando_char();
-    rewrite_dollar(q, sigil) // $X -> zX, $$$ -> zzz
+    rewrite_dollar(q, sigil) // $X -> µX, $$$ -> µµµ
 }
 
 // kind_to_id / field_to_id / build_pattern: delegate get_ts_language like the
@@ -163,7 +165,7 @@ MarkdownInline=> tree_sitter::Language::new(tree_sitter_md::INLINE_LANGUAGE).int
 language itself. ast-grep's default metavar char is also `$` (language.rs:21-22).
 If the Dl6 impl kept `$` as `expando_char`, an ast-grep pattern `$X` and a dl6
 source hole `$X` would be textually identical and indistinguishable. Overriding
-`expando_char` to `'z'` (so `$X` becomes `zX` at pattern-build time, and `zX`
+`expando_char` to `'µ'` (so `$X` becomes `µX` at pattern-build time, and `µX`
 is the expando metavar recognized at match time) separates the two namespaces.
 
 ### Instance lifetimes (Arc A)
@@ -229,10 +231,10 @@ cargo test --features cli            # per extract AGENTS.md gate
 
 | risk | citation that raises it | mitigation |
 |---|---|---|
-| `$` collision between ast-grep metavar and dl6 hole | parse_dl_dcg.pl:1688-1690 vs language.rs:21-22 | `expando_char='z'`, citation in code |
+| `$` collision between ast-grep metavar and dl6 hole | parse_dl_dcg.pl:1688-1690 vs language.rs:21-22 | `expando_char='µ'`, citation in code |
 | tree-sitter-dl6 grammar may not parse a `.dl6` file that contains `$X` holes (the grammar has no `$` rule; only the prolog compiler does) | tree-sitter-dl6/grammar.js:129 (variable = `[A-Z]...`, no `$`) vs parse_dl_dcg.pl:1688 | gate a real `.dl6` fixture through `--ast-pattern`; if holes do not parse, flag for human, do not paper over |
 | markdown is text-heavy; expando `z` inside inline text can collide with real lowercase-`z`+uppercase runs | markdown/_0_source.rs:83-103, html.rs:13-15 | test real `.md` headings; accept if matches are correct on fixtures |
-| prolog `variable` is `[A-Z_]...`, so `zX` (expando) parses as an atom, not a variable | tree-sitter-prolog/grammar.js:204,207 | verify pattern still matches; atom vs variable is fine for a single-node metavar |
+| prolog `variable` is `[A-Z_]...`, so `µX` (expando) parses as an atom, not a variable | tree-sitter-prolog/grammar.js:204,207 | verify pattern still matches; atom vs variable is fine for a single-node metavar |
 | `pre_process_pattern` is private in ast-grep-language | ast-grep-language lib.rs:79-98 | vendor a small copy into extract_lang.rs, pinned by a unit test |
 
 ## Arc B: `From<Edit<String>>` + the pending-action `Doc`

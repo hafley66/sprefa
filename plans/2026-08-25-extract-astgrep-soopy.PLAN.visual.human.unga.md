@@ -60,8 +60,8 @@ parses a pattern.
 
 ```mermaid
 flowchart LR
-    P["$X in a pattern"] --> REWRITE["zX (expando 'z')"]
-    REWRITE --> GRAM["grammar parses zX as a node"]
+    P["$X in a pattern"] --> REWRITE["µX (expando 'µ')"]
+    REWRITE --> GRAM["grammar parses µX as a node"]
     GRAM --> META["matched as a metavar"]
     SRC["source has a hole $X"] --> COLLIDE["kept as literal text, not a metavar"]
 ```
