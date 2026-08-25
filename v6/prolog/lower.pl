@@ -181,7 +181,7 @@
 :- use_module(analyze).
 :- use_module('next/0_parse/use_resolve', [short_hash/2]).
 :- use_module('0_rel_record').
-:- use_module('0_generic_expand', [canonical_type_name/2,
+:- use_module('next/1_expand/0_generic_expand', [canonical_type_name/2,
                                    type_relation_rows/2,
                                    schema_member_transport_rows/3]).
 :- use_module('0_type_ids', [id_kind_name/3, semantic_type_id_text/2]).
