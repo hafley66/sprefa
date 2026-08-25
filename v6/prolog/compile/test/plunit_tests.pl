@@ -66,7 +66,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 :- use_module('../../0_ast_expand',
               [ expand_ast_program/2,
                 expand_ast_program_with_bindings/3 ]).
-:- use_module('../../1_expansion',
+:- use_module('../../1_expansion/1_expansion',
               [ expansion_phase/3, expand_program/3,
                 expand_program_with_bindings/4 ]).
 % remaining_line_column/3 is exported for the parse_error_positions unit, which

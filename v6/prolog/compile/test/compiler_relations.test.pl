@@ -7,7 +7,7 @@
 :- use_module('../../0_generic_expand', [ expand_generic_program_with_bindings/3,
                                           canonical_type_name/2,
                                           type_relation_rows/2 ]).
-:- use_module('../../1_expansion', [expand_program/3]).
+:- use_module('../../1_expansion/1_expansion', [expand_program/3]).
 :- use_module('../../compile', [program_plan/2, compile_dl6/2]).
 :- use_module('../../lower', [lower_program/2]).
 :- use_module('../parse_dl_dcg', [parse_dl/4]).

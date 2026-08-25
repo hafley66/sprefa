@@ -17,7 +17,7 @@
 :- use_module('../../0_rel_record', [ relplan_shape/6 ]).
 :- use_module('../../compile/parse_dl_dcg', [ parse_dl/4 ]).
 :- use_module('../../print_dl', [ print_dl_program/3 ]).
-:- use_module('../../1_expansion', [ expand_program/3 ]).
+:- use_module('../../1_expansion/1_expansion', [ expand_program/3 ]).
 :- use_module('../../conformance/engine', [ run_program/5 ]).
 :- use_module('../../compile/typegen_export', []).
 :- use_module('../../compile/8_emit_rust_types', [ rust_types_text/3 ]).

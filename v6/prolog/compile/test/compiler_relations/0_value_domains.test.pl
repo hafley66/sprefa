@@ -4,7 +4,7 @@
               [ partition_compiler_relations/3 ]).
 :- use_module('../../../0_generic_expand',
               [ expand_generic_program_with_bindings/3 ]).
-:- use_module('../../../1_expansion',
+:- use_module('../../../1_expansion/1_expansion',
               [ expand_program_with_bindings/4 ]).
 :- use_module('../../parse_dl_dcg', [parse_dl/4]).
 

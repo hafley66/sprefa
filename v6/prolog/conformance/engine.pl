@@ -63,7 +63,7 @@
 :- use_module(library(apply)).
 :- use_module(library(ordsets)).
 :- use_module(library(pairs)).
-:- use_module('../1_expansion', [expand_program/3]).
+:- use_module('../1_expansion/1_expansion', [expand_program/3]).
 :- use_module('../0_dot_expand/0_body_walk', [walk_body/3, body_wrapper_refs/4]).
 % Shared with the compiler, the 1_host_expand.pl precedent: one module both
 % doors call, so the cone cannot fork into two analyses.
