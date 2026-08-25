@@ -59,7 +59,7 @@
 
 :- include('generic_expand/3_enum_templates.pl').
 
-:- include('../0_generic_expand/4_type_views.pl').
+:- include('generic_expand/4_type_views.pl').
 
 :- include('../0_generic_expand/5_type_freeze.pl').
 
