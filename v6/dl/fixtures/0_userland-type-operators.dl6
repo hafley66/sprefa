@@ -34,5 +34,5 @@ derive_serializable(BlockedNode).
 rel has_text_member(Owner: type).
 
 has_text_member(Owner) <-
-  type.member(_, Owner, 'logical', _, _, Target),
+  type.member(_, Owner, _, _, Target),
   type.node(Target, 'primitive', 'text').

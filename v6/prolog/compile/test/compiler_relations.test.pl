@@ -797,8 +797,7 @@ test(authored_rules_query_the_frozen_canonical_type_graph) :-
     member(reflected(Host, 2, 'MaybeValue', _, _, Host), Closure),
     member(reflected(Host, 3, 'KeyedList', _, KeyedMember, Host), Closure),
     member(reflected_role(KeyedMember, key, '', KeyedMember), Closure),
-    member(reflected(Host, 4, 'Inline', type_ref(declaration(Inline)), _, Host),
-           Closure),
+    member(reflected(Host, 4, 'Inline', Inline, _, Host), Closure),
     member(reflected(Inline, 1, 'InnerValue', _, _, Inline), Closure),
     member(reflected(Inline, 2, 'ExactCase', _, _, Inline), Closure),
     member(reflected_application(Application, Constructor, Application), Closure),
@@ -822,6 +821,14 @@ test(authored_type_reflection_has_compiler_oracle_parity) :-
                  plan(_, prog(CompilerDecls, _), _, _, _, _, _, _, _)),
     member(compiler_type_metadata(_, CompilerClosure), CompilerDecls),
     CompilerClosure == OracleClosure.
+
+test(type_member_is_keyed_by_canonical_member_identity) :-
+    partition_compiler_program(
+        [ col_type(project/2, source, type),
+          col_type(project/2, return, type) ],
+        [project(Owner, Owner) <- type_member(_, Owner, _, _, _)],
+        compiler_relations(Relations, _), _, _),
+    memberchk(compiler_relation(type_member/5, 5, [1]), Relations).
 
 test(authored_relation_cannot_shadow_a_type_reflection_source,
      [throws(unsupported_construct(

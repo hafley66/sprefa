@@ -516,9 +516,6 @@ compiler_type_source_signature(type_decl/4,
                                [semantic, text, text, text]).
 compiler_type_source_signature(type_member/5,
                                [semantic, semantic, int, text, semantic]).
-compiler_type_source_signature(type_member/6,
-                               [semantic, semantic, semantic, int, text,
-                                semantic]).
 compiler_type_source_signature(type_member_role/3,
                                [semantic, text, text]).
 compiler_type_source_signature(type_application/2,
@@ -682,13 +679,9 @@ compiler_type_source_row(Rows, type__named/4,
                          type__named(Id, Module, Kind, Name)) :-
     member(declaration(Id, _, Name, Kind, _), Rows),
     Id = named(Module, Kind, Name).
-compiler_type_source_row(Rows, type_member/5, Row) :-
-    member(Row0, Rows),
-    Row0 = member(MemberId, OwnerId, Position, Name, TypeRef),
-    Row = type_member(MemberId, OwnerId, Position, Name, TypeRef).
-compiler_type_source_row(Rows, type_member/6,
-                         type_member(MemberId, OwnerId, logical, Position,
-                                     Name, Target)) :-
+compiler_type_source_row(Rows, type_member/5,
+                         type_member(MemberId, OwnerId, Position, Name,
+                                     Target)) :-
     member(member(MemberId, OwnerId, Position, Name, type_ref(TypeRef)), Rows),
     projection_type_ref_target(TypeRef, Target).
 compiler_type_source_row(Rows, type_member_role/3,

@@ -6,7 +6,6 @@
           [ derive_storage_rows/3,
             replace_storage_type_rows/3,
             storage_rows_from_decls/2,
-            member_plane_rows/3,
             project_storage_relplans/3,
             project_catalog_relplans/4
           ]).
@@ -260,29 +259,6 @@ is_storage_type_rows(storage_type_rows(_)).
 
 storage_rows_from_decls(Decls, Rows) :-
     ( member(storage_type_rows(Rows0), Decls) -> Rows = Rows0 ; Rows = [] ).
-
-%! member_plane_rows(+Decls, ?Backend, -Rows) is det.
-%  Logical rows preserve canonical authored targets. Storage rows join the
-%  physical target through MemberId and therefore copy no owner, position, or
-%  name into storage_type_rows/1. The current executable backend is SQLite.
-member_plane_rows(Decls, Backend, Rows) :-
-    canonical_storage_backend(Backend),
-    semantic_rows(Decls, SemanticRows),
-    storage_rows_from_decls(Decls, StorageRows),
-    findall(type_member(MemberId, Owner, logical, Position, Name, Target),
-            ( member(member(MemberId, Owner, Position, Name,
-                            type_ref(TypeRef)), SemanticRows),
-              semantic_type_ref_target(TypeRef, Target) ),
-            LogicalRows),
-    findall(type_member(MemberId, Owner, storage(Backend), Position, Name,
-                        StorageType),
-            ( member(member(MemberId, Owner, Position, Name, _), SemanticRows),
-              memberchk(storage_column(MemberId, StorageType), StorageRows) ),
-            StoragePlaneRows),
-    append(LogicalRows, StoragePlaneRows, Rows0),
-    sort(Rows0, Rows).
-
-canonical_storage_backend(sqlite).
 
 %! project_storage_relplans(+Decls, +RelPlans0, -RelPlans) is det.
 %  Preserve plan order. Canonical relations rebuild physical fields from the

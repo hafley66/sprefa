@@ -15,11 +15,11 @@ derived_relation_request(PartialType, Partial, [Source], Count) <-
 
 derived_member_request(PartialType, Position, Name, option(MemberType)) <-
   type.requested(PartialType, Partial, [Source]),
-  type.member(_, Source, 'logical', Position, Name, MemberType).
+  type.member(_, Source, Position, Name, MemberType).
 
 derived_member_role_request(PartialType, Position, 'optionalized', '') <-
   type.requested(PartialType, Partial, [Source]),
-  type.member(_, Source, 'logical', Position, _, _).
+  type.member(_, Source, Position, _, _).
 
 # concat(Left, Right) materializes Left's members followed by Right's members.
 # The generic derived-relation validator rejects duplicate member names.
@@ -36,23 +36,23 @@ derived_relation_request(Output, concat, [Left, Right], Count) <-
 
 derived_member_request(Output, Position, Name, MemberType) <-
   type.requested(Output, concat, [Left, _]),
-  type.member(_, Left, 'logical', Position, Name, MemberType).
+  type.member(_, Left, Position, Name, MemberType).
 
 derived_member_request(Output, OutputPosition, Name, MemberType) <-
   type.requested(Output, concat, [Left, Right]),
   type_field_count(Left, LeftCount),
-  type.member(_, Right, 'logical', Position, Name, MemberType),
+  type.member(_, Right, Position, Name, MemberType),
   OutputPosition := LeftCount + Position.
 
 derived_member_role_request(Output, Position, Role, Argument) <-
   type.requested(Output, concat, [Left, _]),
-  type.member(Member, Left, 'logical', Position, _, _),
+  type.member(Member, Left, Position, _, _),
   type_member_role(Member, Role, Argument).
 
 derived_member_role_request(Output, OutputPosition, Role, Argument) <-
   type.requested(Output, concat, [Left, Right]),
   type_field_count(Left, LeftCount),
-  type.member(Member, Right, 'logical', Position, _, _),
+  type.member(Member, Right, Position, _, _),
   type_member_role(Member, Role, Argument),
   OutputPosition := LeftCount + Position.
 
@@ -99,7 +99,7 @@ serialization_candidate(Type) <-
 
 serialization_candidate(Target) <-
   serialization_candidate(Owner),
-  type.member(_, Owner, 'logical', _, _, Target).
+  type.member(_, Owner, _, _, Target).
 
 serialization_candidate(Target) <-
   serialization_candidate(Application),
@@ -120,7 +120,7 @@ serialization_blocked(Type) <-
 
 serialization_blocked(Owner) <-
   serialization_candidate(Owner),
-  type.member(_, Owner, 'logical', _, _, Target),
+  type.member(_, Owner, _, _, Target),
   serialization_blocked(Target).
 
 serialization_blocked(Application) <-
