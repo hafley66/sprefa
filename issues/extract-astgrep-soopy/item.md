@@ -12,3 +12,18 @@ priority: high
 ## Description
 
 One owner per layer: tree-sitter grammars, ast-grep match/rules/fix, extract facts + dl6, soopy staging and atomic commit. Plan: plans/2026-08-25-extract-astgrep-soopy.PLAN.md and the .visual.human.unga.md twin. Three arcs, A and B parallel, C after both.
+
+## Goal
+
+`extract` owns facts and file selection; ast-grep owns matching, pattern syntax, YAML rules and fix generation; soopy owns staging, the expected-hash guard and the atomic commit. No second rewrite engine.
+
+## Issues
+
+- [ ] @astgrep-arc-a-languages: `ExtractLang` implements `Language` for dl6, prolog, markdown
+- [ ] @astgrep-arc-b-drain: `Edit` drains into soopy `SourceAction`, `Act` deleted
+- [ ] @astgrep-arc-c-factmatcher: `FactMatcher` over dl6.db, `extract move` as one YAML rule (after A and B)
+
+## Phases
+
+1. A and B in parallel, disjoint files (A: `src/lang/**`; B: `src/0_move.rs`, `src/drain.rs`, `tests/1_move.rs`).
+2. C after both merge.
