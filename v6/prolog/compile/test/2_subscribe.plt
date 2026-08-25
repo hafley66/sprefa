@@ -12,7 +12,7 @@
 :- use_module('../../lower', [ lower_program/2, boot_statements/7 ]).
 :- use_module('../../emit_ts', [ emit_program/5 ]).
 :- use_module('../../next/0_parse/parse_dl_dcg', [ parse_dl/4, parse_dl_file/4 ]).
-:- use_module('../../analyze', [ declared_refs/2 ]).
+:- use_module('../../next/2_lower/analyze', [ declared_refs/2 ]).
 :- use_module('../../0_rel_record', [ relplan_parts/6 ]).
 :- use_module('../../next/1_expand/0_body_walk',
               [ body_relation_atoms/4, body_wrapper_refs/4 ]).

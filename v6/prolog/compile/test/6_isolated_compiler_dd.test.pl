@@ -2,7 +2,7 @@
 
 :- use_module('../6_isolated_compiler_dd', [dd_plan_text/2, fixture_dd_plan_text/3, fixture_dd_plan_json_text/3]).
 :- use_module('../../compile', [program_plan/2, read_fixture_term/4, compile_dl6/3]).
-:- use_module('../../analyze', [body_ref_uses/2]).
+:- use_module('../../next/2_lower/analyze', [body_ref_uses/2]).
 :- use_module('../../lower', [lower_program/2]).
 :- use_module(library(http/json), [json_read_dict/3]).
 

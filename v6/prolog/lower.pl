@@ -178,7 +178,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
-:- use_module(analyze).
+:- use_module('next/2_lower/analyze').
 :- use_module('next/0_parse/use_resolve', [short_hash/2]).
 :- use_module('0_rel_record').
 :- use_module('next/1_expand/0_generic_expand', [canonical_type_name/2,
