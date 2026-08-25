@@ -21,6 +21,7 @@
 use std::fmt;
 use std::marker::PhantomData;
 
+use ast_grep_core::tree_sitter::LanguageExt;
 use serde::Serialize;
 
 pub use soopy::ContentId;
@@ -2522,6 +2523,107 @@ pub enum FlatFact {
 }
 
 // flatten / flatten_jsonl live in wire.rs (the logic, not the types).
+
+// ════════════════════════════════════════════════════════════════════════════
+// SOURCE-ACTION DRAIN  (drain.rs) - ast-grep edits -> soopy staged mutations
+// ════════════════════════════════════════════════════════════════════════════
+// @comment-ok: section banner, the same shape as the S1..S6 banners above
+
+/// One ast-grep `Edit` plus what soopy needs and ast-grep never knows: which
+/// file the byte offsets index, and which producer emitted them.
+pub struct BoundEdit {
+    pub source: soopy::ActionSource,
+    pub producer: soopy::ActionProducer,
+    pub edit: ast_grep_core::source::Edit<String>,
+}
+
+/// A `Doc` whose `do_edit` appends a soopy `TextEdit` instead of mutating the
+/// string, so one matcher walk collects every edit against ONE frozen parse.
+#[derive(Clone)]
+pub struct PendingReplaceDoc<L: LanguageExt> {
+    src: String,
+    lang: L,
+    tree: tree_sitter::Tree,
+    source: soopy::ActionSource,
+    expected: ContentId,
+    producer: soopy::ActionProducer,
+    edits: Vec<soopy::TextEdit>,
+}
+
+impl<L: LanguageExt> PendingReplaceDoc<L> {
+    /// Parse once. `expected` is the hash of these exact bytes, so a file that
+    /// changes under the walk is refused at stage time, not silently rewritten.
+    pub fn open(
+        src: &str,
+        lang: L,
+        source: soopy::ActionSource,
+        producer: soopy::ActionProducer,
+    ) -> Result<Self, String> {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&lang.get_ts_language())
+            .map_err(|error| error.to_string())?;
+        let tree = parser
+            .parse(src.as_bytes(), None)
+            .ok_or_else(|| "tree-sitter returned no tree".to_string())?;
+        Ok(Self {
+            src: src.to_string(),
+            lang,
+            tree,
+            source,
+            expected: ContentId::blake3(src.as_bytes()),
+            producer,
+            edits: Vec::new(),
+        })
+    }
+
+    pub fn lang(&self) -> &L {
+        &self.lang
+    }
+
+    pub fn tree(&self) -> &tree_sitter::Tree {
+        &self.tree
+    }
+
+    pub fn source_text(&self) -> &String {
+        &self.src
+    }
+
+    pub fn expected(&self) -> &ContentId {
+        &self.expected
+    }
+
+    pub fn edits(&self) -> &[soopy::TextEdit] {
+        &self.edits
+    }
+
+    pub fn append(&mut self, edit: &ast_grep_core::source::Edit<String>) {
+        self.edits.push(
+            BoundEdit {
+                source: self.source.clone(),
+                producer: self.producer.clone(),
+                edit: ast_grep_core::source::Edit {
+                    position: edit.position,
+                    deleted_length: edit.deleted_length,
+                    inserted_text: edit.inserted_text.clone(),
+                },
+            }
+            .into(),
+        );
+    }
+
+    /// None when nothing matched: a Replace with no edits is a staged no-op.
+    pub fn into_action(self) -> Option<soopy::SourceAction> {
+        if self.edits.is_empty() {
+            return None;
+        }
+        Some(crate::drain::replace_action(
+            self.source,
+            self.expected,
+            self.edits,
+        ))
+    }
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // LANGUAGE ROSTER  (lang/mod.rs) - first-match by extension
