@@ -27,7 +27,7 @@ Move compile-time type, projection, constraint, temporal, and storage-name seman
 - Dots address semantic paths and projections in every reference-bearing position.
 - Functional terms may appear in compiler rule heads when they lower to explicit Datalog operations.
 - Surface syntax uses calls, parentheses, colons, commas, arrows, and dots. The old `is` form is gone. Space-delimited `log keep` is removed after call-form parity.
-- Canonical members require explicit logical/authored versus physical/storage roles.
+- Canonical `type.member/5` rows expose semantic targets. Physical storage rows remain separate target-plan data keyed by member identity.
 - Higher-kinded type flow is outside this epic.
 - Any implementation choice outside this contract stops and asks Chris before mutation.
 
@@ -37,7 +37,7 @@ Move compile-time type, projection, constraint, temporal, and storage-name seman
 |---|---|---|---|
 | Integration | Temporal, projection, and generic compiler changes share one dirty worktree. | Every hunk has keep, move, replace, or discard ownership and a merge order. | @typegraph-integration-plan, @temporal-v2-salvage |
 | Type graph | Compiler relations expose specialized canonical facts without one stable user-land node/edge view. | DL6 can query canonical nodes and typed edges during compiler refreeze. | @typegraph-node-edge-view |
-| Members | Authored and rewritten storage members can share owner, position, and name with different target types. | Logical and storage member planes are explicit. | @typegraph-member-planes |
+| Members | Authored and rewritten storage members shared one plane-bearing compiler view. | `type.member/5` exposes one canonical semantic member; physical storage projection stays target-specific and keyed by member identity. | @typegraph-member-planes, @remove-type-member-plane |
 | Type terms | Functional heads construct canonical applications; structural type-pattern matching is absent. | Construction and matching lower to safe explicit Datalog operations. | @type-pattern-lowering |
 | Brace nesting | Argument-bearing brace parents can inject parent capture and shift child keys. | Braces contribute name prefixes; parent links are explicit typed columns. | @dot-brace-nesting |
 | Dot projection | Projection lives in the PL experiment pass. | `$type.project` is derived by user-land DL6 over canonical graph rows. | @userland-dot-projection |
@@ -94,6 +94,7 @@ Existing blockers remain authoritative: `@canonical-type-reflection`, `@canonica
 - [x] @temporal-v2-salvage
 - [x] @typegraph-node-edge-view
 - [x] @typegraph-member-planes
+- [x] @remove-type-member-plane
 - [x] @type-pattern-lowering
 - [x] @compiler-plane-expression-parity
 - [x] @dot-brace-nesting
@@ -111,7 +112,7 @@ Existing blockers remain authoritative: `@canonical-type-reflection`, `@canonica
 ## Acceptance Criteria
 
 - [ ] Projection, constraint, temporal, and type-operator rows are derived by user-land DL6.
-- [ ] Canonical node, edge, member-plane, application, and annotation rows are queryable during the compiler fixpoint.
+- [ ] Canonical node, edge, member, application, and annotation rows are queryable during the compiler fixpoint.
 - [ ] Composite and alternate SQL constraints lower from first-class rows.
 - [ ] SQLite storage names preserve approved punctuation through correct identifier quoting.
 - [ ] Anonymous member sums follow the approved dot projection model.
@@ -125,3 +126,9 @@ Pending child-card completion.
 ## Implementation Notes
 
 Related foundations: `@relational-type-schema`, `@applicative-type-annotations`, and `@compiler-derived-relation-construction`. Decision context: `@comptime-type-model` and `@type-plane-design`.
+
+## Decisions
+
+### 2026-08-25T13:11:35Z · @codex
+
+Canonical type.member/5 exposes semantic member targets. Target-specific storage rows remain outside the compiler relation and join through member identity.
