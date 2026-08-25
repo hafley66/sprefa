@@ -129,7 +129,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
               [ body_atoms/2, comparison_goal/1, json_capture_type/2,
                 json_scalar_value/3, eval_expr/2, json_canon/2 ]).
 :- use_module('../../2_host_expand/1_host_expand', [ body_goals/2 ]).
-:- use_module('../../3_clock_check', [clock_boundary/2]).
+:- use_module('../../4_clock_check/3_clock_check', [clock_boundary/2]).
 :- ensure_loaded('3_clock_check.test.pl').
 :- ensure_loaded('4_braced_nested_relations.test.pl').
 :- ensure_loaded('5_remove_rel_is.test.pl').

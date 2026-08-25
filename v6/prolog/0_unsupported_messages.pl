@@ -17,7 +17,7 @@
           ]).
 
 :- use_module('0_dot_expand/registry', [surface/5]).
-:- use_module('3_clock_check', [clock_unsupported_reason/1]).
+:- use_module('4_clock_check/3_clock_check', [clock_unsupported_reason/1]).
 
 :- multifile prolog:message//1.
 

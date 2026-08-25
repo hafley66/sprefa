@@ -45,7 +45,7 @@
               [ expand_program/3, expand_program_with_bindings/4 ]).
 :- use_module('2_host_expand/1_host_expand', [prepare_program/5, query_decl/3]).
 :- use_module('3_analyze/analyze').
-:- use_module('3_clock_check', [check_clock_program/1]).
+:- use_module('4_clock_check/3_clock_check', [check_clock_program/1]).
 :- use_module('2_subscribe', [subscribed_rels/4]).
 :- use_module(strat).
 :- use_module(lower).

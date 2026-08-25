@@ -70,7 +70,7 @@
 :- use_module('../2_subscribe', [subscribed_rels/4]).
 :- use_module('../1_expansion/0_program_check',
               [ first_violation/3, relation_kind/3, declared_key/3 ]).
-:- use_module('../3_clock_check', [clock_violation/2]).
+:- use_module('../4_clock_check/3_clock_check', [clock_violation/2]).
 :- use_module('../0_dot_expand/0_type_plane',
               [ world_row_shape_violation/3,
                 canonicalize_world_rows/3,
