@@ -47,7 +47,7 @@
 :- use_module('3_analyze/analyze').
 :- use_module('4_clock_check/3_clock_check', [check_clock_program/1]).
 :- use_module('5_subscribe/2_subscribe', [subscribed_rels/4]).
-:- use_module(strat).
+:- use_module('6_strat/strat').
 :- use_module(lower).
 :- use_module(emit_ts).
 :- use_module(library(tableutil), [table_statistics/2]).

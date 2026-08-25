@@ -26,7 +26,7 @@
                 compiler_owned_contract/1 ]).
 :- use_module('../../0_unsupported_messages',
               [ unsupported_inventory/1, unsupported_message_clause_count/1 ]).
-:- use_module('../../strat', [ stratum_groups/2 ]).
+:- use_module('../../6_strat/strat', [ stratum_groups/2 ]).
 :- use_module('../../lower',
               [ lower_program/2, compile_expr/7, compile_comparison/4,
                 canonical_column_expr/2, level_ref_count_sql/5,
