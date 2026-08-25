@@ -3,7 +3,7 @@ created: 2026-08-25
 updated: 2026-08-25
 type: task
 assignee: codex
-status: in-progress
+status: done
 priority: high
 epic: userland-type-graph
 labels:
@@ -13,6 +13,13 @@ labels:
 - size:large
 - model:large
 size: L
+closed: 2026-08-25
+closed_by: codex
+commits:
+- hash: a9698a39f
+  summary: schedule compiler stratified negation
+- hash: 58d25cec5
+  summary: evaluate stratified negation
 ---
 
 # Stratified negation in compiler-plane DL6
@@ -56,14 +63,14 @@ keys and set semantics continue to determine uniqueness.
 
 ## Acceptance Criteria
 
-- [ ] Compiler relations accept `not(Relation(...))` after its variables are bound.
-- [ ] Negated dependencies require a completed lower stratum.
-- [ ] Positive recursion below a negated consumer reaches its complete fixpoint.
-- [ ] Cycles containing a negated dependency receive a named diagnostic.
-- [ ] Unbound variables inside negation receive a named safety diagnostic.
-- [ ] Negation and grouped count share one deterministic stratum schedule.
-- [ ] Compiler negation rows and rules erase before runtime planning.
-- [ ] No type-operator-specific host builtin is added.
+- [x] Compiler relations accept `not(Relation(...))` after its variables are bound.
+- [x] Negated dependencies require a completed lower stratum.
+- [x] Positive recursion below a negated consumer reaches its complete fixpoint.
+- [x] Cycles containing a negated dependency receive a named diagnostic.
+- [x] Unbound variables inside negation receive a named safety diagnostic.
+- [x] Negation and grouped count share one deterministic stratum schedule.
+- [x] Compiler negation rows and rules erase before runtime planning.
+- [x] No type-operator-specific host builtin is added.
 
 ## Tests Run
 
@@ -76,3 +83,15 @@ Execution tier: Large. Current Codex owns the compiler-semantic work directly.
 The first consumer is `@userland-type-operators`, whose serializability rule can
 compute positive `serialization_blocked` reachability and then take a stratified
 complement over the finite frozen type graph.
+
+## Agent Runs
+
+### 2026-08-25T04:48:19Z · @codex
+
+Implemented on feature/compiler-plane-stratified-negation. Added authored not(Relation(...)) elaboration, prior-binding safety, strict negative dependency edges, negative-cycle diagnostics, completed-lower-row anti-joins, and shared scheduling with grouped count. Focused compiler_relations gate: 48/48. Complete Prolog gate: 1,109/1,109 in 16.2 seconds. No TypeScript suite run.
+
+## Resolution
+
+### 2026-08-25T04:48:20Z · @codex
+
+Safe compiler-plane negation now reads completed lower strata, rejects negative dependency cycles, composes with grouped count, and erases before runtime planning.
