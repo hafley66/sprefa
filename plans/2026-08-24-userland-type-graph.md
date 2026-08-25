@@ -1,5 +1,12 @@
 # User-land type graph integration plan
 
+> Reconciliation notice, 2026-08-25: completed Type Graph implementation
+> history remains authoritative here. Integrity, Flow, Materialization, CSP,
+> clock-proof, member-edge, and application planning moved to
+> `plans/2026-08-25-relational-semantic-planes.md`. Provisional constraint,
+> temporal, storage, `MemberId`, and application signatures below must be read
+> through that newer plan.
+
 ## Status
 
 - Issue: `@typegraph-integration-plan`

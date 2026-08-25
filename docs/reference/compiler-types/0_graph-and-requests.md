@@ -1,5 +1,11 @@
 # Compiler types as relations
 
+> Status, 2026-08-25: request-row implementation notes remain useful. The
+> document's member-node, synthetic member identity, generic application, and
+> constraint sections predate the held relational model. Use
+> `plans/2026-08-25-relational-semantic-planes.md` for current semantics until
+> this reference is rewritten.
+
 This document describes the V6 compiler type graph and the request relations
 used to construct derived relation types. It distinguishes the relational
 language model from the current internal carrier terms.
