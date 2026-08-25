@@ -21,7 +21,7 @@
                                    reset_type_row_memo/0]).
 :- use_module('0_match_expand', []).
 :- use_module('0_seq_expand', []).
-:- use_module('0_coalesce_expand', []).
+:- use_module('next/1_expand/0_coalesce_expand', []).
 :- use_module('0_dot_expand', []).
 :- use_module('0_negated_guard_expand', []).
 :- use_module('0_relation_edge_expand', []).
