@@ -64,7 +64,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(occurs), [sub_term/2]).
-:- use_module('compile/registry', [surface/5]).
+:- use_module('next/registry', [surface/5]).
 :- use_module('0_type_plane',
               [ column_element_type_name/2,
                 type_definitions/2, type_definition/4, declared_type_name/2,

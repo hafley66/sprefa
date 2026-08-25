@@ -10,7 +10,7 @@
             emit_host_contract_docs/0
           ]).
 
-:- use_module(registry,
+:- use_module('../next/registry',
               [ surface/5, cli_command/3,
                 arrival_executor/2,
                 host_input_contract/3,
