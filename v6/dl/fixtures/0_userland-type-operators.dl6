@@ -1,0 +1,38 @@
+use "../type/0_operators.dl6".
+
+rel User(id: key(int), name: text).
+rel UserPatch(active: bool).
+
+rel PartialHolder(value: Partial(User)).
+
+rel concat_seed(Left: type, Right: type).
+rel concat_output(Output: type).
+
+concat_seed(User, UserPatch).
+concat_output(concat(Left, Right)) <-
+  concat_seed(Left, Right).
+
+rel Base(id: int).
+rel Middle(id: int).
+rel Leaf(id: int).
+rel Interface(id: int).
+rel ParentInterface(id: int).
+
+extends(Middle, Base).
+extends(Leaf, Middle).
+extends(Interface, ParentInterface).
+impl(Base, Interface).
+
+rel RecursiveNode(value: text, children: list(RecursiveNode)).
+rel Opaque(T)(value: T).
+rel BlockedNode(value: Opaque(text)).
+
+derive_serializable(RecursiveNode).
+derive_serializable(BlockedNode).
+
+# A sixth operator demonstrates that canonical rows remain open to user code.
+rel has_text_member(Owner: type).
+
+has_text_member(Owner) <-
+  type.member(_, Owner, 'logical', _, _, Target),
+  type.node(Target, 'primitive', 'text').

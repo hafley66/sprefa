@@ -1,0 +1,11 @@
+use "../type/0_operators.dl6".
+
+rel Left(value: int).
+rel Right(value: text).
+
+rel concat_seed(Left: type, Right: type).
+rel concat_output(Output: type).
+
+concat_seed(Left, Right).
+concat_output(concat(LeftType, RightType)) <-
+  concat_seed(LeftType, RightType).

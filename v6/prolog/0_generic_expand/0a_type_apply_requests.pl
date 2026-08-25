@@ -24,7 +24,9 @@ type_apply_requests(SourceDecls, Decls, Requests) :-
               derived_relation_shape_carrier(SourceDecls, Shape, Carrier) ),
             DerivedCarriers),
     append(TypeApplyRequests, DerivedCarriers, Requests0),
-    sort(Requests0, Requests).
+    % Shape members arrive in declared position order. Preserve that order while
+    % removing duplicate carrier rows so concat-like derivations stay positional.
+    list_to_set(Requests0, Requests).
 
 request_rows(Decls, Rows) :-
     member(compiler_type_apply_request_rows(Rows), Decls),

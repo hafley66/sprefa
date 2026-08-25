@@ -1,0 +1,133 @@
+# Reusable compiler-plane type operators. Every relation below is erased before
+# runtime planning because each declaration carries at least one type column.
+
+# Partial(Source) materializes one optional logical member per source member.
+# Source key roles do not transfer because an optional member cannot preserve
+# the source relation's identity contract.
+rel Partial(Source: type) -> type.
+
+Partial(Source, Partial(Source)) <-
+  type.requested(_, Partial, [Source]).
+
+derived_relation_request(PartialType, Partial, [Source], Count) <-
+  type.requested(PartialType, Partial, [Source]),
+  type_field_count(Source, Count).
+
+derived_member_request(PartialType, Position, Name, option(MemberType)) <-
+  type.requested(PartialType, Partial, [Source]),
+  type.member(_, Source, 'logical', Position, Name, MemberType).
+
+derived_member_role_request(PartialType, Position, 'optionalized', '') <-
+  type.requested(PartialType, Partial, [Source]),
+  type.member(_, Source, 'logical', Position, _, _).
+
+# concat(Left, Right) materializes Left's members followed by Right's members.
+# The generic derived-relation validator rejects duplicate member names.
+rel concat(Left: type, Right: type) -> type.
+
+concat(Left, Right, concat(Left, Right)) <-
+  type.requested(_, concat, [Left, Right]).
+
+derived_relation_request(Output, concat, [Left, Right], Count) <-
+  type.requested(Output, concat, [Left, Right]),
+  type_field_count(Left, LeftCount),
+  type_field_count(Right, RightCount),
+  Count := LeftCount + RightCount.
+
+derived_member_request(Output, Position, Name, MemberType) <-
+  type.requested(Output, concat, [Left, _]),
+  type.member(_, Left, 'logical', Position, Name, MemberType).
+
+derived_member_request(Output, OutputPosition, Name, MemberType) <-
+  type.requested(Output, concat, [Left, Right]),
+  type_field_count(Left, LeftCount),
+  type.member(_, Right, 'logical', Position, Name, MemberType),
+  OutputPosition := LeftCount + Position.
+
+derived_member_role_request(Output, Position, Role, Argument) <-
+  type.requested(Output, concat, [Left, _]),
+  type.member(Member, Left, 'logical', Position, _, _),
+  type_member_role(Member, Role, Argument).
+
+derived_member_role_request(Output, OutputPosition, Role, Argument) <-
+  type.requested(Output, concat, [Left, Right]),
+  type_field_count(Left, LeftCount),
+  type.member(Member, Right, 'logical', Position, _, _),
+  type_member_role(Member, Role, Argument),
+  OutputPosition := LeftCount + Position.
+
+# Direct extends and impl facts share their relations with positive transitive
+# rules. Set semantics collapse duplicate paths.
+rel extends(Child: type, Parent: type).
+
+extends(Child, Ancestor) <-
+  extends(Child, Parent),
+  extends(Parent, Ancestor).
+
+rel impl(Type: type, Interface: type).
+
+impl(Type, Interface) <-
+  extends(Type, Parent),
+  impl(Parent, Interface).
+
+impl(Type, Ancestor) <-
+  impl(Type, Interface),
+  extends(Interface, Ancestor).
+
+# derive_serializable(Type) scopes the closed graph check. Supported leaves and
+# constructors are ordinary facts, so a program can define another policy by
+# copying these rules and changing only those facts.
+rel derive_serializable(Type: type).
+rel serialization_candidate(Type: type).
+rel serialization_shape(Type: type).
+rel serialization_constructor(Type: type).
+rel serialization_blocked(Type: type).
+rel serializable(Type: type).
+
+serialization_shape(int).
+serialization_shape(float).
+serialization_shape(bool).
+serialization_shape(text).
+serialization_shape(bytes).
+serialization_shape(json).
+
+serialization_constructor(option).
+serialization_constructor(list).
+
+serialization_candidate(Type) <-
+  derive_serializable(Type).
+
+serialization_candidate(Target) <-
+  serialization_candidate(Owner),
+  type.member(_, Owner, 'logical', _, _, Target).
+
+serialization_candidate(Target) <-
+  serialization_candidate(Application),
+  type.edge(_, Application, 'argument', _, _, Target).
+
+serialization_shape(Type) <-
+  serialization_candidate(Type),
+  type.node(Type, 'declaration', _).
+
+serialization_shape(Application) <-
+  serialization_candidate(Application),
+  type.edge(_, Application, 'constructor', 0, '', Constructor),
+  serialization_constructor(Constructor).
+
+serialization_blocked(Type) <-
+  serialization_candidate(Type),
+  not(serialization_shape(Type)).
+
+serialization_blocked(Owner) <-
+  serialization_candidate(Owner),
+  type.member(_, Owner, 'logical', _, _, Target),
+  serialization_blocked(Target).
+
+serialization_blocked(Application) <-
+  serialization_candidate(Application),
+  type.edge(_, Application, 'argument', _, _, Target),
+  serialization_blocked(Target).
+
+serializable(Type) <-
+  serialization_candidate(Type),
+  not(serialization_blocked(Type)).
