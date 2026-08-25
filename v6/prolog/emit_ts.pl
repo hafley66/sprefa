@@ -26,7 +26,7 @@
 % (now unreachable) bind_plan_json path stays byte-identical.
 bind_executor(interval, live_interval).
 bind_executor(watch,    live_watch).
-:- use_module('0_option_expand', [option_enum_name/2]).
+:- use_module('next/1_expand/0_option_expand', [option_enum_name/2]).
 :- use_module('compile/registry', [host_execution/3]).
 
 :- op(1150, xfx, <-).
