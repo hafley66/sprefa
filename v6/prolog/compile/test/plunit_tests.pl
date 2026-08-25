@@ -83,7 +83,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 :- use_module('../../0_type_plane', [ type_definitions/2, column_storage/3 ]).
 :- use_module('../../0_program_check', [ program_violation/3 ]).
 :- use_module('../../print_dl', [ print_dl_program/3, print_term/5 ]).
-:- use_module('../registry',
+:- use_module('../../0_dot_expand/registry',
               [ surface/5, expression/5, host_execution/3,
                 % The reserved-body-word sweep reads which rows are BODY
                 % syntax off the same projection the walk reads it off,

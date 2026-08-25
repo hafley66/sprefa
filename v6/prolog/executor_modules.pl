@@ -32,7 +32,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(pairs), [pairs_keys/2]).
-:- use_module('compile/registry', [arrival_executor/2]).
+:- use_module('0_dot_expand/registry', [arrival_executor/2]).
 
 %! executor_family_export(?Family, ?Segments, ?Canonical) is nondet.
 %  A roster row with no `__` names no module and exports nothing.

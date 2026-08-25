@@ -5,7 +5,7 @@
 :- use_module('../../1_host_expand',
               [ compile_host_decl/2, host_plan_contract/2 ]).
 :- use_module('../../emit_ts', []).
-:- use_module('../registry', [host_execution/3]).
+:- use_module('../../0_dot_expand/registry', [host_execution/3]).
 
 :- begin_tests(typed_host_contracts).
 

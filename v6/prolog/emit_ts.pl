@@ -27,7 +27,7 @@
 bind_executor(interval, live_interval).
 bind_executor(watch,    live_watch).
 :- use_module('0_option_expand', [option_enum_name/2]).
-:- use_module('compile/registry', [host_execution/3]).
+:- use_module('0_dot_expand/registry', [host_execution/3]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
