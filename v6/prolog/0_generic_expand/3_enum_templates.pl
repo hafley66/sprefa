@@ -129,7 +129,7 @@ enum_template_derived_rows(Decls, Instances, MintedEnums, Rows) :-
             Found),
     sort(Found, Rows).
 
-merge_enum_template_rows([], Decls, Decls).
+merge_enum_template_rows([], Decls, Decls) :- !.
 merge_enum_template_rows(Rows, Decls0, Decls) :-
     (   memberchk(semantic_type_rows(_), Decls0)
     ->  maplist(merge_one_enum_template_rows(Rows), Decls0, Decls)
