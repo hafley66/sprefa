@@ -2,7 +2,7 @@
 
 :- use_module('../parse_dl_dcg', [parse_dl/4]).
 :- use_module('../../print_dl', [print_dl_program/3]).
-:- use_module('../../0_generic_expand',
+:- use_module('../../1_expansion/0_generic_expand',
               [ expand_generic_program/2,
                 generic_type_ir/2
               ]).

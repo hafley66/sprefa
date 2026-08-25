@@ -1,7 +1,7 @@
 :- begin_tests(annotation_surface).
 
 :- use_module('../../print_dl', [print_dl_program/3]).
-:- use_module('../../0_generic_expand', [expand_generic_program/2]).
+:- use_module('../../1_expansion/0_generic_expand', [expand_generic_program/2]).
 :- use_module('../parse_dl_dcg', [parse_dl/4]).
 
 parse_text(Text, Program, Bindings) :-

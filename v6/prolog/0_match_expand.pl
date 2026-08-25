@@ -16,7 +16,7 @@
                                 merge_enum_type_rows/3,
                                 merge_option_type_rows/2,
                                 drop_minted_keyed_on_derived/3]).
-:- use_module('0_generic_expand', [freeze_type_rows/2]).
+:- use_module('1_expansion/0_generic_expand', [freeze_type_rows/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

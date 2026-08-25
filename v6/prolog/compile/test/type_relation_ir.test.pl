@@ -3,7 +3,7 @@
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
 
-:- use_module('../../0_generic_expand',
+:- use_module('../../1_expansion/0_generic_expand',
               [ schema_member_rows/2, type_relation_rows/2,
                 expand_generic_program/2, expand_generic_program_raw/2,
                 expand_generic_program_with_bindings/3,
