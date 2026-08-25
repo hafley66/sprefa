@@ -6,7 +6,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use clap::Parser;
-use sprefa_extract::{FamilyMask, PrologSource, Source, SpecifierKind};
+use rayon::prelude::*;
+use sprefa_extract::{extract_pool, FamilyMask, PrologSource, Source, SpecifierKind};
 
 const PRODUCER: &str = "extract-move";
 
@@ -131,29 +132,48 @@ impl Plan {
         let mut edits: BTreeMap<String, Vec<(usize, usize, String)>> = BTreeMap::new();
         let mut module_name: Option<String> = None;
 
+        // Read and parse fan out; the merge below stays sequential over `corpus`
+        // in path order, so the action order and the previews do not move.
+        let scanned: Vec<Scanned> = extract_pool().install(|| {
+            corpus
+                .par_iter()
+                .map(|file| {
+                    let Ok(bytes) = std::fs::read(file) else {
+                        return Scanned::Unreadable;
+                    };
+                    // `old` is parsed unconditionally: its module name is read off it.
+                    if *file != old && !carries_specifier(&bytes) {
+                        return Scanned::NoDirective;
+                    }
+                    let Ok(text) = String::from_utf8(bytes) else {
+                        return Scanned::Unreadable;
+                    };
+                    Scanned::Rows(specifiers(file, &text))
+                })
+                .collect()
+        });
+
         let mut parsed = 0usize;
         let mut skipped = 0usize;
 
-        for file in &corpus {
-            let Ok(bytes) = std::fs::read(file) else {
-                continue;
+        for (file, scan) in corpus.iter().zip(&scanned) {
+            let rows = match scan {
+                Scanned::Rows(rows) => {
+                    parsed += 1;
+                    rows
+                }
+                Scanned::NoDirective => {
+                    skipped += 1;
+                    continue;
+                }
+                Scanned::Unreadable => continue,
             };
-            let is_old = *file == old;
-            // `old` is parsed unconditionally: its own module name is read off it.
-            if !is_old && !carries_specifier(&bytes) {
-                skipped += 1;
-                continue;
-            }
-            let Ok(text) = String::from_utf8(bytes) else {
-                continue;
-            };
-            parsed += 1;
-            let rows = specifiers(file, &text);
             let dir = file.parent().unwrap_or(&root).to_path_buf();
+            let is_old = *file == old;
             if is_old {
                 module_name = rows.module.clone();
             }
-            for spec in rows.paths {
+            for spec in &rows.paths {
                 let Some(target) = resolve(&dir, &spec.raw) else {
                     continue;
                 };
@@ -216,6 +236,14 @@ impl Plan {
             stages,
         })
     }
+}
+
+/// One file's prescan outcome, kept aligned to the corpus so the merge keeps
+/// path order.
+enum Scanned {
+    Rows(SpecRows),
+    NoDirective,
+    Unreadable,
 }
 
 /// The directive names that can carry a file spec, matching the extractor's own

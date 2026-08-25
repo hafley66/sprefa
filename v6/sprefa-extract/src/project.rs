@@ -496,6 +496,12 @@ static EXTRACT_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
         .expect("extract thread pool builds")
 });
 
+/// The extraction pool, for corpus walks outside this module. Handed out so no
+/// caller reaches for rayon's global pool and escapes the cap.
+pub fn extract_pool() -> &'static rayon::ThreadPool {
+    &EXTRACT_POOL
+}
+
 /// Flatten per-path results in path order, dropping the skipped files and
 /// surfacing the first error by path order.
 fn flatten_inputs(
