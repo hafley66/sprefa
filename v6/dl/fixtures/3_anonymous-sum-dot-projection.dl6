@@ -1,0 +1,22 @@
+use "../type/1_projection.dl6".
+
+rel Event(payload: (created(value: int); deleted(reason: text))).
+
+rel Envelope(payload: Event.payload).
+
+rel CreatedReference(value: Event.payload.created).
+
+rel seen_project(Owner: type, Name: text, Target: type).
+
+rel seen_path(Node: type, Path: semantic).
+
+rel seen_created(id: int, value: int).
+
+seen_project(Owner, Name, Target) <-
+  type.project(Owner, Name, Target).
+
+seen_path(Node, Path) <-
+  type.path(Node, Path).
+
+seen_created(Id, Value) <-
+  Event.payload.created(Id, Value).

@@ -230,10 +230,23 @@ type_graph_paths(Decls, SemanticRows, Paths) :-
 type_graph_path(Decls, Rows, Id, Path) :-
     declared_path(Decls, Path, Name),
     member(declaration(Id, _, Name, _, _), Rows).
-type_graph_path(_, Rows, anonymous(Owner, Path, Shape), Path) :-
-    member(anonymous(Owner, Path, Shape), Rows).
-type_graph_path(_, Rows, Materialized, Path) :-
-    member(derived_from(Materialized, anonymous(Owner, Path, Shape)), Rows),
-    member(anonymous(Owner, Path, Shape), Rows).
+type_graph_path(Decls, Rows, Anonymous, Path) :-
+    anonymous_type_graph_path(Decls, Rows, Anonymous, _, Path).
+type_graph_path(Decls, Rows, Materialized, Path) :-
+    anonymous_type_graph_path(Decls, Rows, _, Materialized, Path).
+type_graph_path(Decls, Rows, Variant, VariantPath) :-
+    anonymous_type_graph_path(Decls, Rows, _, Materialized, Path),
+    member(declaration(Materialized, _, _, enum, _), Rows),
+    member(member(_, Materialized, _, VariantName, TypeRef), Rows),
+    canonical_type_ref_target(TypeRef, Variant),
+    append(Path, [VariantName], VariantPath).
 type_graph_path(Decls, _, SiteId, Site) :-
     type_graph_annotation_site(Decls, SiteId, _, Site, _, _).
+
+anonymous_type_graph_path(Decls, Rows, Anonymous, Materialized, Path) :-
+    Anonymous = anonymous(Owner, SitePath, _Shape),
+    member(Anonymous, Rows),
+    member(derived_from(Materialized, Anonymous), Rows),
+    member(declaration(Owner, _, OwnerName, _, _), Rows),
+    declared_path(Decls, OwnerPath, OwnerName),
+    append(OwnerPath, SitePath, Path).

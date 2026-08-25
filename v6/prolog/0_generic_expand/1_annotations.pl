@@ -8,7 +8,12 @@ merge_anonymous_enum_type_rows(Decls0, Decls) :-
             ( member(anonymous_generated_decl(Name), Decls0),
               member(enum_decl(Name, Variants), Decls0) ),
             AnonymousEnums),
-    enum_type_rows(AnonymousEnums, EnumRows),
+    findall(semantic_decl_module(enum, Name, ModuleHash),
+            ( member(anonymous_generated_decl(Name), Decls0),
+              member(semantic_decl_module(enum, Name, ModuleHash), Decls0) ),
+            AnonymousEnumModules),
+    append(AnonymousEnums, AnonymousEnumModules, AnonymousEnumDecls),
+    enum_type_rows(AnonymousEnumDecls, EnumRows),
     (   EnumRows == []
     ->  Decls = Decls0
     ;   memberchk(semantic_type_rows(_), Decls0)

@@ -21,6 +21,7 @@
             expand_enum_in_context/3,
             enum_context/2,
             tag_rel_name/2,
+            variant_rel_name/3,
             enum_type_rows/2,
             merge_enum_type_rows/3,
             merge_option_type_rows/2,

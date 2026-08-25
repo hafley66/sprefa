@@ -20,13 +20,15 @@
 
 :- module(anonymous_expand,
           [ expand_anonymous_decls/2,
-            anonymous_owner_path/2 ]).
+            anonymous_owner_path/2,
+            materialized_sum_path_decls/6 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(crypto)).
 :- use_module('0_type_ids',
               [ decl_id/4, id_kind_name/3, semantic_type_id_text/2 ]).
+:- use_module('0_enum_expand', [variant_rel_name/3]).
 
 :- op(1150, xfx, <-).
 
@@ -271,6 +273,29 @@ path_component_stem(N, Stem) :-
     number_codes(N, Codes),
     atom_codes(Stem, Codes).
 path_component_stem(A, A).
+
+% materialized_sum_path_decls(+Decls, +OwnerName, +OwnerPath, +SitePath,
+%                             +ResolvedShape, -PathDecls)
+%
+% A member-owned sum has one source path and ordinary generated declarations.
+% The path resolver needs aliases before the later anonymous minting pass, so
+% this predicate computes the same generated names from the same semantic
+% identity without changing the declaration or storage representation.
+materialized_sum_path_decls(Decls, OwnerName, OwnerPath, SitePath,
+                            sum_type(Variants), PathDecls) :-
+    semantic_owner_id(Decls, OwnerName, Owner),
+    Shape = sum_type(Variants),
+    anonymous_type_name(Owner, SitePath, Shape, GeneratedName),
+    append(OwnerPath, SitePath, SumPath),
+    findall(type_path_alias(VariantRef, VariantPath),
+            ( member(variant(VariantName, Fields), Variants),
+              variant_rel_name(GeneratedName, VariantName, VariantName0),
+              length(Fields, ContentArity),
+              VariantArity is ContentArity + 1,
+              VariantRef = VariantName0/VariantArity,
+              append(SumPath, [VariantName], VariantPath) ),
+            VariantPaths),
+    PathDecls = [type_path_alias(GeneratedName/0, SumPath) | VariantPaths].
 
 % ═══ helpers ═════════════════════════════════════════════════════════════════
 

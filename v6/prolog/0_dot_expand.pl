@@ -59,7 +59,11 @@
             % Query declarations are compiled before the ordinary expansion
             % fold, so host preparation resolves their path carriers through
             % the same tree as rule atoms.
-            resolve_relation_paths/3 ]).
+            resolve_relation_paths/3,
+            % Enum and other expansion phases may create a relation after its
+            % qualified name was used in column position.
+            refresh_relation_type_decls/2,
+            erase_type_path_aliases/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -69,6 +73,7 @@
               [ column_element_type_name/2,
                 type_definitions/2, type_definition/4, declared_type_name/2,
                 relation_columns_and_types/5 ]).
+:- use_module('0_anonymous_expand', [materialized_sum_path_decls/6]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -95,10 +100,46 @@ resolve_qualified_types(program(Decls0, Rules, Queries),
 % Qualified types retain their path until mount_decl/4 supplies scope here.
 % Resolution produces the same flat relation identity as a qualified call.
 resolve_qualified_type_paths(Decls0, Decls) :-
-    decl_scope_tree(Decls0, Root),
-    qualified_type_names([Root], Decls0, Names),
-    maplist(resolve_qualified_type_decl([Root]), Decls0, Decls1),
+    decl_scope_tree(Decls0, AuthoredRoot),
+    anonymous_sum_path_aliases(Decls0, AuthoredRoot, AnonymousAliases),
+    append(Decls0, AnonymousAliases, PathDecls),
+    decl_scope_tree(PathDecls, Root),
+    qualified_type_names([Root], PathDecls, Names),
+    maplist(resolve_qualified_type_decl([Root]), PathDecls, Decls1),
     foldl(ensure_type_decl, Names, Decls1, Decls).
+
+anonymous_sum_path_aliases(Decls, Root, AliasDecls) :-
+    findall(AliasDecl,
+            ( member(col_type(OwnerName/_, Column, Shape0), Decls),
+              Shape0 = sum_type(_),
+              resolve_qualified_type([Root], Shape0, Shape),
+              declared_path(Decls, OwnerPath, OwnerName),
+              materialized_sum_path_decls(Decls, OwnerName, OwnerPath,
+                                          [Column], Shape, SumAliasDecls),
+              member(AliasDecl, SumAliasDecls) ),
+            AliasDecls0),
+    sort(AliasDecls0, AliasDecls).
+
+% refresh_relation_type_decls(+Program0, -Program)
+%
+% The parser mirrors authored relation-valued columns immediately. A qualified
+% path can resolve to a relation that an expansion phase materializes later,
+% such as an anonymous enum variant. Re-run that same mirror rule after all
+% declaration-producing phases, when stored columns and wrapper rewrites are
+% final.
+refresh_relation_type_decls(prog(Decls0, Rules), prog(Decls, Rules)) :-
+    findall(Name,
+            ( member(col_type(_, _, Type), Decls0),
+              column_element_type_name(Type, Name),
+              member(col_type(Name/_, _, _), Decls0) ),
+            Names0),
+    sort(Names0, Names),
+    foldl(ensure_type_decl, Names, Decls0, Decls).
+
+erase_type_path_aliases(prog(Decls0, Rules), prog(Decls, Rules)) :-
+    exclude(is_type_path_alias, Decls0, Decls).
+
+is_type_path_alias(type_path_alias(_, _)).
 
 resolve_qualified_type_decl(Scopes, col_type(Ref, Column, Type0),
                             col_type(Ref, Column, Type)) :-
@@ -295,6 +336,8 @@ check_path_collisions([SegmentsA-NameA, SegmentsB-NameB | Rest]) :-
 declared_path(Decls, Segments, Name) :-
     member(rel_path_decl(Name/_, Segments), Decls).
 declared_path(Decls, Segments, Name) :-
+    member(type_path_alias(Name/_, Segments), Decls).
+declared_path(Decls, Segments, Name) :-
     member(rel_template(Segments, _, _), Decls),
     atomic_list_concat(Segments, '__', Name).
 declared_path(Decls, Segments, Name) :-
@@ -316,7 +359,10 @@ declared_flat_names(Decls, Names) :-
     sort(Names0, Names).
 
 declared_path_names(Decls, Names) :-
-    findall(Name, member(rel_path_decl(Name/_, _), Decls), Names0),
+    findall(Name,
+            ( member(rel_path_decl(Name/_, _), Decls)
+            ; member(type_path_alias(Name/_, _), Decls) ),
+            Names0),
     sort(Names0, Names).
 
 declared_flat_name_raw(Decls, Name) :- member(col_type(Name/_, _, _), Decls).
