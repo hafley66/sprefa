@@ -6,7 +6,7 @@
 :- use_module('../../7_lower/lower', [catalog_decl_rows/6]).
 :- use_module('../../7_lower/lower', [lower_program/2, boot_statements/7]).
 :- use_module('../../emit_rust', [emit_program/5]).
-:- use_module('../../emit_ts', [emit_program/5 as emit_ts_program]).
+:- use_module('../../8_emit_ts/emit_ts', [emit_program/5 as emit_ts_program]).
 :- use_module('../4_emit_jsonschema', [option_rows/3, jsonschema_text/3]).
 :- use_module('../7_emit_ts_types', [ts_types_text/3]).
 :- use_module('../8_emit_rust_types', [rust_types_text/3]).

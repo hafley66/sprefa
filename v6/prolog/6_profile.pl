@@ -25,7 +25,7 @@
               ]).
 :- use_module('7_lower/use_resolve', [expand_uses/8]).
 :- use_module('7_lower/lower', [lower_program/2, boot_statements/7]).
-:- use_module(emit_ts, [emit_program/5]).
+:- use_module('8_emit_ts/emit_ts', [emit_program/5]).
 
 compile_dl6_profiled(File, OutFile) :-
     getenv('DL_PERF_LOG', LogFile),

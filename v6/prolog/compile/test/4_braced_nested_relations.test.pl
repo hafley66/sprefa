@@ -20,7 +20,7 @@
                 boot_statements/7,
                 catalog_decl_rows/6
               ]).
-:- use_module('../../emit_ts', [emit_program/5]).
+:- use_module('../../8_emit_ts/emit_ts', [emit_program/5]).
 :- use_module('../../emit_rust', [emit_program/5 as emit_rust_program]).
 :- use_module('../4_emit_jsonschema', [jsonschema_text/3]).
 :- use_module('../5_emit_openapi', [openapi_text/3]).

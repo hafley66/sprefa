@@ -49,7 +49,7 @@
 :- use_module('5_subscribe/2_subscribe', [subscribed_rels/4]).
 :- use_module('6_strat/strat').
 :- use_module('7_lower/lower').
-:- use_module(emit_ts).
+:- use_module('8_emit_ts/emit_ts').
 :- use_module(library(tableutil), [table_statistics/2]).
 :- use_module('7_lower/parse_dl_dcg', [ parse_dl_line_for_reason/2 ]).
 :- use_module('compile/scripts/0_json_arrival',

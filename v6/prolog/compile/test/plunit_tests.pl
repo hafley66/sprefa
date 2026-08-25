@@ -92,7 +92,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 :- use_module('../../2_host_expand/1_host_expand',
               [ prepare_program/5, compile_host_decl/2, compile_ts_query/2,
                 reserved_host_column/1 ]).
-:- use_module('../../emit_ts',
+:- use_module('../../8_emit_ts/emit_ts',
               [ emit_program/5,
                 % The emitter-mode seam (rank R8): which statement family a
                 % plan compiles to, asserted by the incremental_mode unit.

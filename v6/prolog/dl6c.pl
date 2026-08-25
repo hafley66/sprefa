@@ -25,7 +25,7 @@
 :- use_module(library(filesex), [directory_file_path/3, make_directory_path/1]).
 :- use_module(compile, [compile_dl6/3]).
 :- use_module('1_expansion/compile_messages', []).
-:- use_module(emit_ts, []).
+:- use_module('8_emit_ts/emit_ts', []).
 :- use_module(emit_rust, []).
 
 % Stamped by dl6c_save/1 from DL6C_BUILD_SHA into the saved state; an unsaved

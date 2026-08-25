@@ -10,24 +10,24 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(assoc)).
-:- use_module('7_lower/lower', [ departure_frontier_table_name/2,
+:- use_module('../7_lower/lower', [ departure_frontier_table_name/2,
                        departure_read_sql/3, struct_type_plans/3, struct_type_plans/4,
                        program_text_intern_plan/3,
                        statement_rule_ids/3, fixpoint_round_cap/1 ]).
-:- use_module('3_analyze/0_rel_record').
-:- use_module('3_analyze/analyze',
+:- use_module('../3_analyze/0_rel_record').
+:- use_module('../3_analyze/analyze',
               [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
                 program_uses_tick/2, listened_departure_refs/2,
                 level_body_pre_ref/2, rel_rule_observers_map/2 ]).
-:- use_module('6_strat/strat', [recursive_stratum_groups/2, cyclic_head_groups/2]).
-:- use_module('2_host_expand/1_host_expand', [compile_host_decl/2, compile_query/2,
+:- use_module('../6_strat/strat', [recursive_stratum_groups/2, cyclic_head_groups/2]).
+:- use_module('../2_host_expand/1_host_expand', [compile_host_decl/2, compile_query/2,
                                 query_decl/3, host_plan_contract/2]).
 % bind_executor/2 left the registry with the bind surface; pinned here so the
 % (now unreachable) bind_plan_json path stays byte-identical.
 bind_executor(interval, live_interval).
 bind_executor(watch,    live_watch).
-:- use_module('1_expansion/0_option_expand', [option_enum_name/2]).
-:- use_module('0_dot_expand/registry', [host_execution/3]).
+:- use_module('../1_expansion/0_option_expand', [option_enum_name/2]).
+:- use_module('../0_dot_expand/registry', [host_execution/3]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
