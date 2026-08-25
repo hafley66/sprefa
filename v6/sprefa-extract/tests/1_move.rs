@@ -137,7 +137,10 @@ fn dry_run_plans_one_move_and_two_replaces_and_writes_nothing() {
     assert_eq!(git(&fixture.root, &["status", "--porcelain"]), "");
     assert!(fixture.root.join("lib/b.pl").is_file());
     assert!(!fixture.root.join("core/b.pl").exists());
-    assert_eq!(std::fs::read_to_string(fixture.root.join("a.pl")).unwrap(), A_PL);
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.join("a.pl")).unwrap(),
+        A_PL
+    );
 }
 
 #[test]
