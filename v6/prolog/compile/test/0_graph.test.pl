@@ -22,7 +22,7 @@
 :- use_module(library(ugraphs)).
 :- use_module(library(ordsets)).
 :- use_module(library(lists)).
-:- use_module('../../0_graph',
+:- use_module('../../next/2_lower/0_graph',
               [ graph_from_edges/2, graph_from_edges/3, graph_nodes/2,
                 graph_closure/2, graph_reaches/3, graph_components/2,
                 graph_cyclic_components/2, graph_component_of/3,
