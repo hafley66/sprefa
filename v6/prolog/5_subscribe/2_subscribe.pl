@@ -20,8 +20,8 @@
           [ subscribed_rels/4, op(1150, xfx, <-), op(1150, xfx, <+) ]).
 
 :- use_module(library(lists)).
-:- use_module('0_dot_expand/0_body_walk', [body_relation_atoms/4]).
-:- use_module('2_host_expand/1_host_expand', [host_relation_refs/3]).
+:- use_module('../0_dot_expand/0_body_walk', [body_relation_atoms/4]).
+:- use_module('../2_host_expand/1_host_expand', [host_relation_refs/3]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

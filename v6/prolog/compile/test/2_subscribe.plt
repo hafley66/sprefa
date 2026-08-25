@@ -7,7 +7,7 @@
 
 :- use_module(library(plunit)).
 :- use_module(library(lists)).
-:- use_module('../../2_subscribe', [ subscribed_rels/4 ]).
+:- use_module('../../5_subscribe/2_subscribe', [ subscribed_rels/4 ]).
 :- use_module('../../compile', [ program_plan/2 ]).
 :- use_module('../../lower', [ lower_program/2, boot_statements/7 ]).
 :- use_module('../../emit_ts', [ emit_program/5 ]).

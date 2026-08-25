@@ -67,7 +67,7 @@
 :- use_module('../0_dot_expand/0_body_walk', [walk_body/3, body_wrapper_refs/4]).
 % Shared with the compiler, the 1_host_expand.pl precedent: one module both
 % doors call, so the cone cannot fork into two analyses.
-:- use_module('../2_subscribe', [subscribed_rels/4]).
+:- use_module('../5_subscribe/2_subscribe', [subscribed_rels/4]).
 :- use_module('../1_expansion/0_program_check',
               [ first_violation/3, relation_kind/3, declared_key/3 ]).
 :- use_module('../4_clock_check/3_clock_check', [clock_violation/2]).
