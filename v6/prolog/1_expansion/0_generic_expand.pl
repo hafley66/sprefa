@@ -63,7 +63,7 @@
 
 :- include('generic_expand/5_type_freeze.pl').
 
-:- include('../0_generic_expand/6_type_conformance.pl').
+:- include('generic_expand/6_type_conformance.pl').
 
 :- include('../0_generic_expand/7_generic_instances.pl').
 
