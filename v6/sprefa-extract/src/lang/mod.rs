@@ -13,6 +13,7 @@ pub mod astgrep;
 pub mod data;
 pub mod dl6;
 pub mod extract_lang;
+pub mod fact;
 pub mod go;
 pub mod kotlin;
 pub mod markdown;
@@ -32,6 +33,10 @@ pub use astgrep::{
 pub use data::DataSource;
 pub use dl6::DlSource;
 pub use extract_lang::ExtractLang;
+pub use fact::{
+    dl6_db_path, open_dl6_readonly, open_readonly, FactError, FactMatcher, FactSet,
+    DL6_DB_RELATIVE_PATH,
+};
 pub use go::GoSource;
 pub use kotlin::KotlinSource;
 pub use markdown::MarkdownSource;

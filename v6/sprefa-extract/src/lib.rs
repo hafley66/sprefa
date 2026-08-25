@@ -63,11 +63,12 @@ pub use family::{
     TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };
 pub use lang::{
-    decode_ast_rule_yaml, query_ast_rule, query_ast_rule_with_content, query_patterns, source_for,
-    sources, AstCaptureFact, AstPatternQuery, AstRule, AstRuleCapture, AstRuleError, AstRuleMatch,
-    AstRuleMutationProposal, AstRuleRequest, AstgrepSource, DataSource, DlSource, ExtractLang,
-    GoSource, KotlinSource, MarkdownSource, NamedAstRule, PrologSource, PythonSource, RustSource,
-    StopBy, TsSource,
+    decode_ast_rule_yaml, dl6_db_path, open_dl6_readonly, open_readonly, query_ast_rule,
+    query_ast_rule_with_content, query_patterns, source_for, sources, AstCaptureFact,
+    AstPatternQuery, AstRule, AstRuleCapture, AstRuleError, AstRuleMatch, AstRuleMutationProposal,
+    AstRuleRequest, AstgrepSource, DataSource, DlSource, ExtractLang, FactError, FactMatcher,
+    FactSet, GoSource, KotlinSource, MarkdownSource, NamedAstRule, PrologSource, PythonSource,
+    RustSource, StopBy, TsSource, DL6_DB_RELATIVE_PATH,
 };
 pub use manifests::{
     fold_package_edges, package_edges, package_edges_jsonl, Manifest, ManifestKind,
