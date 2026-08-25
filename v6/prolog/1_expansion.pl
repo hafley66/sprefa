@@ -24,7 +24,7 @@
 :- use_module('next/1_expand/0_coalesce_expand', []).
 :- use_module('next/1_expand/0_dot_expand', []).
 :- use_module('next/1_expand/0_negated_guard_expand', []).
-:- use_module('0_relation_edge_expand', []).
+:- use_module('next/1_expand/0_relation_edge_expand', []).
 :- use_module('next/1_expand/0_ast_expand', []).
 :- use_module(compile_messages,
               [ dl6_debug/3, dl6_debugging/1, dl6_program_sizes/3 ]).
