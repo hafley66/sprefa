@@ -27,7 +27,7 @@ struct MoveCli {
     /// Soopy state root. Must sit outside the corpus root.
     #[arg(long)]
     state: Option<PathBuf>,
-    /// Apply the plan to the real tree instead of rehearsing it.
+    /// Apply the plan to the real tree instead of dry running it.
     #[arg(long)]
     commit: bool,
     /// Leave a reexport shim behind at `old` instead of rewriting importers.
@@ -49,16 +49,18 @@ where
 
     if cli.commit {
         for stage in &plan.stages {
-            let (id, previews) = stage_and_commit(&plan.root, &state, stage)?;
+            let (id, previews) =
+                stage_and_commit(&plan.root, &state, stage, soopy::Durability::Durable)?;
             print_previews(&previews);
             println!("stage {id} committed");
         }
     } else {
         let mirror = Mirror::build(&plan)?;
         for stage in &plan.stages {
-            let (id, previews) = stage_and_commit(mirror.root(), &state, stage)?;
+            let (id, previews) =
+                stage_and_commit(mirror.root(), &state, stage, soopy::Durability::DryRun)?;
             print_previews(&previews);
-            println!("stage {id} rehearsed (dry run, tree untouched)");
+            println!("stage {id} dry run, tree untouched");
         }
     }
     Ok(())
@@ -121,7 +123,10 @@ impl Plan {
             .map_err(|error| format!("canonicalize root {}: {error}", root.display()))?;
         let new = canonical_unborn(&absolute(&cli.new)?);
         if new.exists() {
-            return Err(format!("move destination already exists: {}", new.display()));
+            return Err(format!(
+                "move destination already exists: {}",
+                new.display()
+            ));
         }
         let old_rel = within_root(&root, &old)?;
         let new_rel = within_root(&root, &new)?;
@@ -284,7 +289,10 @@ fn specifiers(path: &Path, text: &str) -> SpecRows {
     let display = path.display().to_string();
     // Only the call family carries specifier rows; the cst, type and df
     // projections cost a third of the corpus wall and feed nothing here.
-    let mask = FamilyMask { call: true, ..FamilyMask::NONE };
+    let mask = FamilyMask {
+        call: true,
+        ..FamilyMask::NONE
+    };
     let output = PrologSource.extract(&display, text.as_bytes(), mask);
     let mut paths: Vec<PathSpec> = Vec::new();
     let mut module = None;
@@ -526,10 +534,24 @@ fn state_root(requested: Option<&Path>) -> Result<PathBuf, String> {
         .map_err(|error| format!("canonicalize state root {}: {error}", root.display()))
 }
 
+fn stage_into<S: soopy::StageStore>(
+    source_root: &mut soopy::SourceRoot,
+    request: &soopy::StageRequest,
+    store: &mut S,
+) -> Result<soopy::StagedSourceTransaction, String> {
+    let sealed = soopy::stage_mutations(source_root, request, store)
+        .map_err(|refusal| format!("stage refused: {refusal}"))?;
+    // `save` returns the manifest; only `load` rehydrates the blobs commit writes.
+    soopy::show_stage(store, sealed.id)
+        .map_err(|error| format!("load stage {}: {error}", sealed.id))?
+        .ok_or_else(|| format!("stage {} vanished from the store", sealed.id))
+}
+
 fn stage_and_commit(
     root: &Path,
     state: &Path,
     acts: &[Act],
+    durability: soopy::Durability,
 ) -> Result<(String, Vec<soopy::FilePreview>), String> {
     let mut source_root = soopy::SourceRoot::open_directory(root)
         .map_err(|error| format!("open root {}: {error}", root.display()))?;
@@ -542,16 +564,24 @@ fn stage_and_commit(
         actions.push(action(root, &identity, act)?);
     }
     let request = soopy::StageRequest::new(root_id, actions);
-    let mut store = soopy::DurableStageStore::open(state.join("stages"))
-        .map_err(|error| format!("open stage store: {error}"))?;
-    let sealed = soopy::stage_mutations(&mut source_root, &request, &mut store)
-        .map_err(|refusal| format!("stage refused: {refusal}"))?;
-    // `save` returns the manifest; only `load` rehydrates the blobs commit writes.
-    let stage = soopy::show_stage(&store, sealed.id)
-        .map_err(|error| format!("load stage {}: {error}", sealed.id))?
-        .ok_or_else(|| format!("stage {} vanished from the store", sealed.id))?;
-    let engine = soopy::CommitEngine::open(root, state.join("commits"))
-        .map_err(|error| format!("open commit engine: {error}"))?;
+    // A dry run stages in memory and commits without device flushes: the mirror
+    // is discarded whole, so durability would buy nothing.
+    let stage = match durability {
+        soopy::Durability::Durable => {
+            let mut store = soopy::DurableStageStore::open(state.join("stages"))
+                .map_err(|error| format!("open stage store: {error}"))?;
+            stage_into(&mut source_root, &request, &mut store)?
+        }
+        soopy::Durability::DryRun => {
+            let mut store = soopy::InMemoryStageStore::new();
+            stage_into(&mut source_root, &request, &mut store)?
+        }
+    };
+    let engine = match durability {
+        soopy::Durability::Durable => soopy::CommitEngine::open(root, state.join("commits")),
+        soopy::Durability::DryRun => soopy::CommitEngine::open_dry_run(root, state.join("commits")),
+    }
+    .map_err(|error| format!("open commit engine: {error}"))?;
     engine
         .commit(&stage)
         .map_err(|refusal| format!("commit refused: {refusal}"))?;
@@ -634,7 +664,7 @@ fn preview_path(path: Option<&soopy::SourcePath>) -> String {
     }
 }
 
-/// A temp root carrying only the files the plan touches. The rehearsal commits
+/// A temp root carrying only the files the plan touches. The dry run commits
 /// into it, so a dry run walks the same soopy path a real run does.
 struct Mirror {
     root: PathBuf,
