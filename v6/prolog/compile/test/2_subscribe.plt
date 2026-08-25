@@ -14,7 +14,7 @@
 :- use_module('../parse_dl_dcg', [ parse_dl/4, parse_dl_file/4 ]).
 :- use_module('../../analyze', [ declared_refs/2 ]).
 :- use_module('../../0_rel_record', [ relplan_parts/6 ]).
-:- use_module('../../0_body_walk',
+:- use_module('../../0_dot_expand/0_body_walk',
               [ body_relation_atoms/4, body_wrapper_refs/4 ]).
 
 :- op(1150, xfx, <+).

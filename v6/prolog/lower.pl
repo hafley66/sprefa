@@ -194,7 +194,7 @@
                 type_field_values/4, declared_type_name/2,
                 relation_columns_and_types/5, relation_value_shape/3,
                 relation_value_term/4, canonical_json_text/2 ]).
-:- use_module('0_body_walk', [walk_body/3, body_relation_atoms/4]).
+:- use_module('0_dot_expand/0_body_walk', [walk_body/3, body_relation_atoms/4]).
 :- use_module('0_dot_expand/body', [rel_ref/2]).
 % run_compile_step/4 lives in 0_trace, never compile.pl: compile.pl imports
 % this module, so importing it from there is a cycle.

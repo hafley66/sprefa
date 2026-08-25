@@ -24,7 +24,7 @@
               [ type_definitions/2, declared_type_name/2,
                 relation_columns_and_types/5, relation_value_object/4 ]).
 :- use_module('0_dot_expand/registry', [body_surface_for_term/6]).
-:- use_module('0_body_walk', [relation_atom_wrapper/1]).
+:- use_module('0_dot_expand/0_body_walk', [relation_atom_wrapper/1]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

@@ -18,7 +18,7 @@
 
 :- use_module(library(lists)).
 :- use_module(library(pcre)).
-:- use_module('0_body_walk',
+:- use_module('0_dot_expand/0_body_walk',
               [ body_wrapper_refs/4, walk_body/3, body_relation_atoms/4,
                 event_relation_atom/2, body_reserved_word/4 ]).
 :- use_module('0_dot_expand/0_type_plane',
