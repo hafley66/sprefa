@@ -10,7 +10,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(assoc)).
-:- use_module(lower, [ departure_frontier_table_name/2,
+:- use_module('7_lower/lower', [ departure_frontier_table_name/2,
                        departure_read_sql/3, struct_type_plans/3, struct_type_plans/4,
                        program_text_intern_plan/3,
                        statement_rule_ids/3, fixpoint_round_cap/1 ]).

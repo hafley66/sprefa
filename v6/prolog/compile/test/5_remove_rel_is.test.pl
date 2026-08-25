@@ -7,7 +7,7 @@
                 generic_type_ir/2
               ]).
 :- use_module('../../compile', [program_plan/3]).
-:- use_module('../../lower', [catalog_decl_rows/6]).
+:- use_module('../../7_lower/lower', [catalog_decl_rows/6]).
 :- use_module('../../0_dot_expand/registry', [surface/5]).
 
 parse_remove_rel_is(Text, Program, Bindings) :-

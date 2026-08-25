@@ -31,7 +31,7 @@
 
 :- use_module('../compile', [ program_plan/3 ]).
 :- use_module('../compile', [ dl6_seeded_form/3 ]).
-:- use_module('../lower', [ catalog_type_rows/6,
+:- use_module('../7_lower/lower', [ catalog_type_rows/6,
                             catalog_type_transport_rows/4,
                             catalog_type_relation_rows/3 ]).
 :- use_module('../1_expansion/0_type_ids', [ semantic_type_id_text/2 ]).

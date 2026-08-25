@@ -15,7 +15,7 @@
 :- use_module('../../2_host_expand/1_host_expand', [prepare_program/5]).
 :- use_module('../../use_resolve', [expand_uses/6]).
 :- use_module('../../compile', [dl6_seeded_form/3, program_plan/3]).
-:- use_module('../../lower',
+:- use_module('../../7_lower/lower',
               [ lower_program/2,
                 boot_statements/7,
                 catalog_decl_rows/6

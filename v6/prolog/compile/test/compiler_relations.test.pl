@@ -9,7 +9,7 @@
                                           type_relation_rows/2 ]).
 :- use_module('../../1_expansion/1_expansion', [expand_program/3]).
 :- use_module('../../compile', [program_plan/2, compile_dl6/2]).
-:- use_module('../../lower', [lower_program/2]).
+:- use_module('../../7_lower/lower', [lower_program/2]).
 :- use_module('../parse_dl_dcg', [parse_dl/4]).
 :- use_module('../../use_resolve', [expand_uses/8]).
 :- use_module(library(process)).

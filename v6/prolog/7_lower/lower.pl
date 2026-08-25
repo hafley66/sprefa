@@ -178,27 +178,27 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
-:- use_module('3_analyze/analyze').
-:- use_module(use_resolve, [short_hash/2]).
-:- use_module('3_analyze/0_rel_record').
-:- use_module('1_expansion/0_generic_expand', [canonical_type_name/2,
+:- use_module('../3_analyze/analyze').
+:- use_module('../use_resolve', [short_hash/2]).
+:- use_module('../3_analyze/0_rel_record').
+:- use_module('../1_expansion/0_generic_expand', [canonical_type_name/2,
                                    type_relation_rows/2,
                                    schema_member_transport_rows/3]).
-:- use_module('1_expansion/0_type_ids', [id_kind_name/3, semantic_type_id_text/2]).
-:- use_module('1_expansion/0_option_expand', [acyclic_companion/5]).
-:- use_module('2_host_expand/1_host_expand', [query_decl/3]).
-:- use_module('0_dot_expand/registry', [expression/5, surface/5, body_surface_for_term/6]).
-:- use_module('0_dot_expand/0_type_plane',
+:- use_module('../1_expansion/0_type_ids', [id_kind_name/3, semantic_type_id_text/2]).
+:- use_module('../1_expansion/0_option_expand', [acyclic_companion/5]).
+:- use_module('../2_host_expand/1_host_expand', [query_decl/3]).
+:- use_module('../0_dot_expand/registry', [expression/5, surface/5, body_surface_for_term/6]).
+:- use_module('../0_dot_expand/0_type_plane',
               [ type_definition/4, column_storage/3,
                 type_topological_order/2, type_canonical_json/4,
                 type_field_values/4, declared_type_name/2,
                 relation_columns_and_types/5, relation_value_shape/3,
                 relation_value_term/4, canonical_json_text/2 ]).
-:- use_module('0_dot_expand/0_body_walk', [walk_body/3, body_relation_atoms/4]).
-:- use_module('0_dot_expand/body', [rel_ref/2]).
+:- use_module('../0_dot_expand/0_body_walk', [walk_body/3, body_relation_atoms/4]).
+:- use_module('../0_dot_expand/body', [rel_ref/2]).
 % run_compile_step/4 lives in 0_trace, never compile.pl: compile.pl imports
 % this module, so importing it from there is a cycle.
-:- use_module('1_expansion/0_trace', [run_compile_step/4]).
+:- use_module('../1_expansion/0_trace', [run_compile_step/4]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

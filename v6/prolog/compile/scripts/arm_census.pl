@@ -37,7 +37,7 @@
 :- use_module(library(http/json)).
 
 :- use_module('../../compile', [ program_plan/3, default_intern_mode/1 ]).
-:- use_module('../../lower',
+:- use_module('../../7_lower/lower',
               [ lower_program/2, boot_statements/7, catalog_decl_rows/6 ]).
 :- use_module('../../emit_ts', [ emit_program/5 ]).
 :- use_module('../4_emit_jsonschema', [ jsonschema_text/3, option_rows/3 ]).

@@ -14,7 +14,7 @@
 :- use_module(library(apply)).
 :- use_module(library(json)).
 :- use_module(library(pcre)).
-:- use_module(lower, [ departure_frontier_table_name/2,
+:- use_module('7_lower/lower', [ departure_frontier_table_name/2,
                        program_text_intern_plan/3,
                        struct_type_plans/3, struct_type_plans/4, fixpoint_round_cap/1,
                        query_order_by_map/3 ]).
