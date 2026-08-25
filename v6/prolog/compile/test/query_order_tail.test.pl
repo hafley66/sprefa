@@ -7,7 +7,7 @@
 :- op(1150, xfx, <+).
 :- use_module(library(plunit)).
 :- use_module(library(lists)).
-:- use_module('../parse_dl_dcg', [parse_dl_dcg_entry/5]).
+:- use_module('../../next/0_parse/parse_dl_dcg', [parse_dl_dcg_entry/5]).
 :- use_module('../../print_dl', [print_dl_program/3]).
 :- use_module('../../compile', [read_fixture_term/4, program_plan/2]).
 :- use_module('../../lower', [lower_program/2, query_order_by_map/3]).

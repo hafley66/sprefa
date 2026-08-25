@@ -73,7 +73,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 % checks the line table against a prefix walk at every index of a text; going
 % through parse_dl/4 alone only reaches the positions a unsupported construct happens to land
 % on.
-:- use_module('../../compile/parse_dl_dcg', [ parse_dl/4, remaining_line_column/3, use_item/3 ]).
+:- use_module('../../next/0_parse/parse_dl_dcg', [ parse_dl/4, remaining_line_column/3, use_item/3 ]).
 :- use_module('../../next/0_parse/use_resolve',
               [ expand_uses/6, expand_uses/8, include_roots/2, resolve_use_path/3,
                 reset_parse_counts/0, parse_count/2 ]).

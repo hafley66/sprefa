@@ -15,9 +15,9 @@
 
 % lists/apply/pairs ride SWI autoloading; both module imports take the whole
 % export list because no name here collides with theirs.
-:- use_module(registry).
-:- use_module('../0_cst_query').
-:- use_module('../0_type_plane', [type_wrapper/2, column_element_type_name/2]).
+:- use_module('../../compile/registry').
+:- use_module('../../0_cst_query').
+:- use_module('../../0_type_plane', [type_wrapper/2, column_element_type_name/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

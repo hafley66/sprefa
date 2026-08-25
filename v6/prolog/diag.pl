@@ -36,7 +36,7 @@
 :- use_module(compile_messages, []).
 :- use_module(library(uri), [uri_encoded/3]).
 :- use_module('0_unsupported_messages', []).
-:- use_module('compile/parse_dl_dcg',
+:- use_module('next/0_parse/parse_dl_dcg',
               [ statement_location_for_reason/3 ]).
 
 % ═══ LSP coordinate conversion (ONE predicate, tested) ═════════════════════

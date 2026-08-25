@@ -1,7 +1,7 @@
 :- begin_tests(braced_nested_relations).
 
 :- use_module(library(filesex), [delete_directory_and_contents/1]).
-:- use_module('../parse_dl_dcg',
+:- use_module('../../next/0_parse/parse_dl_dcg',
               [ parse_dl/4,
                 parse_dl_line_for_reason/2,
                 statement_location_for_reference/4
