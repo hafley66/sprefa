@@ -410,12 +410,25 @@ fn import_directive(
         return;
     };
     let module = strings.intern(&module_text);
+    let mut named = 0usize;
     for indicator in predicate_indicators(list, src) {
+        named += 1;
         sink.aux.specifiers.push(Specifier {
             span: indicator.span,
             name: strings.intern(&indicator.key),
             kind: SpecifierKind::Named,
             module: Some(module),
+            imported: None,
+        });
+    }
+    // `use_module(Path, [])` loads the file and imports nothing; without a
+    // row the file-to-file edge is invisible to every consumer.
+    if named == 0 {
+        sink.aux.specifiers.push(Specifier {
+            span: span(source),
+            name: module,
+            kind: SpecifierKind::SideEffect,
+            module: None,
             imported: None,
         });
     }
