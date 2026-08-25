@@ -99,7 +99,7 @@ Existing blockers remain authoritative: `@canonical-type-reflection`, `@canonica
 - [x] @compiler-plane-expression-parity
 - [x] @dot-brace-nesting
 - [x] @userland-dot-projection
-- [ ] @anonymous-sum-dot-projection
+- [x] @anonymous-sum-dot-projection
 - [ ] @userland-constraint-graph
 - [ ] @sqlite-constraint-emitter
 - [ ] @userland-temporal-annotations
@@ -115,7 +115,7 @@ Existing blockers remain authoritative: `@canonical-type-reflection`, `@canonica
 - [ ] Canonical node, edge, member, application, and annotation rows are queryable during the compiler fixpoint.
 - [ ] Composite and alternate SQL constraints lower from first-class rows.
 - [ ] SQLite storage names preserve approved punctuation through correct identifier quoting.
-- [ ] Anonymous member sums follow the approved dot projection model.
+- [x] Anonymous member sums follow the approved dot projection model.
 - [ ] Old temporal suffix syntax and obsolete compiler special cases are removed after parity.
 - [ ] Cross-target gates cover Prolog, SQLite, TypeScript, Rust, ProgramJson, and generated schemas.
 
