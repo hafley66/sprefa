@@ -5,7 +5,7 @@ Date: 2026-08-25
 Status: planning reconciliation after the user-land type graph, integrity,
 temporal history, clock-checker, and CSP discussions.
 
-Issues: `@relational-semantic-planes`, `@member-edge-relational-view`,
+Issues: `@relational-semantic-planes`, `@type-edge-view`,
 `@relation-application-semantics`, `@userland-integrity-graph`,
 `@userland-flow-graph`, `@clock-flow-projection`,
 `@flow-cardinality-proof`, `@userland-materialization-graph`, and
@@ -20,7 +20,7 @@ representation.
 
 ```text
 Type Graph
-  shape and member edges
+  type nodes and primordial edges
         |
         v
 Integrity Graph
@@ -55,11 +55,12 @@ type = rel | primitive
 ```
 
 A relation interface is a type because its return facade is the type exposed
-to another relation member.
+through another relation edge.
 
-### 1.2 Members
+### 1.2 Primordial edges
 
-A member is an edge between type nodes. Its user-land tuple is ordered:
+Each declared relation column contributes an edge between type nodes. Its
+user-land tuple is ordered:
 
 ```text
 (Owner, Name, Target, Index)
@@ -68,7 +69,7 @@ A member is an edge between type nodes. Its user-land tuple is ordered:
 The held declaration shape is:
 
 ```dl6
-rel type.member(
+rel type.edge(
   Owner: key(type),
   Name: key(text),
   Target: type,
@@ -80,9 +81,10 @@ rel type.member(
 data. `Owner.Name` is projection syntax for the pair, not another authored
 identity.
 
-The current compiler exposes `type.member/5` with a synthetic `MemberId` first
-and stores `member(Owner, Position, Name)` as a carrier. That representation is
-an implementation migration concern. It is not the held user-land model.
+The current compiler exposes the legacy `type.member/5` relation with a
+synthetic `MemberId` first and stores `member(Owner, Position, Name)` as a
+carrier. That representation is an implementation migration concern. The held
+user-land graph uses `type.edge/4`.
 
 ### 1.3 `key` is a relation
 
@@ -124,10 +126,11 @@ select return facades.
 
 ### 1.5 Annotations and roles
 
-Annotations are relation applications attached to relation or member edges.
-Current `member_role(...)` rows are compact projections consumed by existing
-code. The general model keeps the annotation application queryable and derives
-specialized classifications from it.
+Annotations are ordinary relation applications. An application such as
+`key(int)` is a type node and can be the target of `type.edge`. A relation-level
+fact such as `serializable(User)` directly relates its annotation relation to
+the `User` node. Current legacy `member_role(...)` rows are compact projections
+consumed by existing code. There is no separate annotation-edge relation.
 
 ### 1.6 Target boundary
 
@@ -141,7 +144,7 @@ Implemented and merged before this plan:
 
 ```text
 canonical type nodes and typed edges
-canonical logical type.member/5
+legacy canonical logical type.member/5
 type.project/3 derived in DL6
 deep dotted paths and brace namespace prefixes
 anonymous A.x and A.x.variant projection
@@ -159,7 +162,7 @@ Current compatibility carriers include:
 
 ```text
 Semantic TypeId terms
-MemberId terms
+legacy MemberId terms
 application(Constructor, Arguments)
 member_role(MemberId, Role)
 keyed(RelationRef, Positions)
@@ -174,12 +177,14 @@ presence does not authorize equivalent user-land IDs.
 
 ## 3. Plane A: Type Graph
 
-### 3.1 Required signatures
+### 3.1 Primordial signatures
 
-Held member edge:
+The complete structural graph substrate is:
 
 ```dl6
-rel type.member(
+rel type.node(Node: key(type)).
+
+rel type.edge(
   Owner: key(type),
   Name: key(text),
   Target: type,
@@ -187,16 +192,13 @@ rel type.member(
 ).
 ```
 
-Provisional annotation edge pending application semantics:
+All other `type.*` relations are derived indexes or algorithm results over
+these facts and declarations. They do not add another graph element category.
 
-```dl6
-rel type.annotation(
-  Owner: key(type),
-  Name: key(text),
-  Ordinal: key(int),
-  Annotation: type
-).
-```
+The edge row is identified by its keyed `(Owner, Name)` columns. The model does
+not introduce a synthetic `EdgeId`. Referring to an edge means referring to the
+keyed `type.edge` row. The exact DL6 surface for an edge-valued argument remains
+an open ruling.
 
 Existing projection remains:
 
@@ -208,39 +210,87 @@ rel type.project(
 ).
 ```
 
-### 3.2 Lowering
+### 3.2 Surface forms over the graph
+
+Every concrete construct below is an authored or compiler-generated relation
+node. A generic parameter is a compile-time placeholder that ranges over those
+nodes. Primitives remain bootstrap leaf nodes.
+
+| Surface form | Canonical graph pattern |
+|---|---|
+| Interface or product relation | Relation node with named outgoing field edges |
+| Enum or sum relation | Relation node with outgoing edges to sibling variant relation nodes |
+| Namespace relation | Relation/module node with outgoing naming edges to nested relation nodes |
+| Generic parameter | Placeholder type node referenced from its declaring relation |
+| Generic application | Application algorithm substitutes parameter nodes and interns a resulting relation node |
+| Anonymous product | Compiler-generated product relation node reached through its owning edge |
+| Anonymous sum | Compiler-generated sum relation node with sibling variant edges |
+
+Product, sum, namespace, parameter, and edge-role classifications are ordinary
+relational facts or typed edge relations over the same graph. The choice
+between those two encodings remains open. Zig makes a similar distinction in
+reflection for struct, enum, union, and opaque while implementing namespaces
+and generics through container and comptime behavior.
+
+Anonymous changes how the compiler derives canonical identity. It does not
+change the node-edge shape:
+
+```text
+A --x--> anonymous product --a--> int
+                         \--b--> text
+
+A --x--> anonymous sum --a--> A.x.a
+                     \--b--> A.x.b
+```
+
+### 3.3 Lowering
 
 ```dl6
 type.project(Owner, Name, Target) <-
-  type.member(Owner, Name, Target, _).
+  type.edge(Owner, Name, Target, _).
 ```
 
 Compatibility pseudocode:
 
 ```text
-for each canonical member carrier:
-  emit type.member(Owner, Name, Target, Index)
+for each canonical legacy member carrier:
+  emit type.edge(Owner, Name, Target, Index)
 
-keep MemberId internally while references remain
-remove MemberId from the public compiler relation
+keep legacy MemberId internally while references remain
+remove MemberId from the public graph relation
 retire the carrier only after reference counts reach zero
 ```
 
-### 3.3 Lifetime
+### 3.4 Lifetime
 
 Authored and generated declared relations enter the immutable compiler type
 graph. Undeclared runtime IDBs remain outside unless the separate backlog card
 `@inferred-idb-type-reflection` receives a later ruling.
 
-### 3.4 Uniqueness
+### 3.5 Uniqueness
 
 ```text
 (Owner, Name) -> (Target, Index)
 (Owner, Index) -> Name
 ```
 
-The first dependency is the natural member identity. The second prevents two
-members from occupying one authored position.
+The first dependency is the natural edge identity. The second prevents two
+edges from occupying one authored position.
+
+### 3.6 Type graph algorithms
+
+```text
+projection/path traversal  follow named edges
+application                resolve a declared relation plus arguments to output nodes
+unification                equate node and edge patterns under substitutions
+annotation lookup          match relation applications used as edge targets or facts over nodes
+reachability               compute transitive paths and recursive containment
+fixpoint closure           repeat derived graph rules until no new facts appear
+canonicalization           intern equal semantic nodes and edge identities
+```
+
+These algorithms consume and derive relations. The structural graph remains
+`type.node` plus `type.edge`.
 
 ## 4. Plane B: Integrity Graph
 
@@ -278,20 +328,19 @@ expressions have a held relational representation.
 
 ### 4.2 First lowering
 
-All `key(T)` member annotations on one owner form the default ordered identity:
+All edges targeting `key(T)` nodes on one owner form the default ordered identity:
 
 ```dl6
 integrity.key(Owner, Name, Index) <-
-  type.member(Owner, Name, _, Index),
-  type.annotation(Owner, Name, _, key(_)).
+  type.edge(Owner, Name, key(_), Index).
 ```
 
 Pseudocode:
 
 ```text
-collect key annotation evidence by Owner
-order members by authored Index
-validate one member per ordinal and one target per Owner/Name
+collect edges targeting key applications by Owner
+order edges by authored Index
+validate one edge per ordinal and one target per Owner/Name
 emit integrity.key rows
 ```
 
@@ -304,13 +353,13 @@ plan is emitted.
 ### 4.4 Uniqueness and diagnostics
 
 ```text
-key member identity       (Owner, Name)
-unique member identity    (Owner, Group, Name)
-reference member identity (Owner, Group, Name)
+key edge identity       (Owner, Name)
+unique edge identity    (Owner, Group, Name)
+reference edge identity (Owner, Group, Name)
 ```
 
 Required diagnostics cover empty groups, duplicate ordinals, duplicate names,
-conflicting target tuples, cross-owner group members, and more than one default
+conflicting target tuples, cross-owner group edges, and more than one default
 identity definition.
 
 Physical indexes are outside the Integrity Graph. An index changes access cost
@@ -420,7 +469,7 @@ rel storage.relation(
   Role: key(storage_role)
 ).
 
-rel storage.member(
+rel storage.column(
   Owner: key(type),
   Role: key(storage_role),
   Name: key(text),
@@ -462,7 +511,7 @@ pre or grade -1 read     -> previous-boundary access
 grade +1 edge            -> carry artifact
 productive delayed SCC   -> retained cycle state
 identity lookup          -> lookup requirement
-history representation   -> history artifact members
+history representation   -> history artifact columns
 retention annotation     -> storage.retention
 ```
 
@@ -471,7 +520,7 @@ Pseudocode:
 ```text
 read accepted integrity and flow facts
 derive required artifacts by semantic role
-derive their semantic members
+derive their semantic columns from type edges
 validate artifact natural keys and target capabilities
 hand the target-independent graph to one emitter
 ```
@@ -486,8 +535,8 @@ not the compiler rows themselves.
 
 ```text
 artifact identity (Owner, Role)
-artifact member   (Owner, Role, Name)
-lookup member     (Owner, Role, Group, Name)
+artifact column   (Owner, Role, Name)
+lookup edge       (Owner, Role, Group, Name)
 ```
 
 The plan must distinguish required artifacts from optimization hints. The
@@ -564,44 +613,54 @@ ordinary flow minus is an explicit open ruling.
 
 Implementation must pause at these decisions:
 
-1. **Return-facade lookup.** Define what `X(User)` selects when `X` has zero,
-   one, or several return members. Define whether partial application exists.
-2. **Carrier retirement.** Decide whether the public relational view is enough
-   while `TypeId`, `MemberId`, and application terms remain internal, or whether
+1. **Node classification.** Decide whether product, sum, namespace, generic
+   parameter, and generated-node classifications are ordinary facts or rel
+   types implementing a common node contract.
+2. **Edge classification.** Decide whether field, variant, contains, parameter,
+   return, and annotation are ordinary facts about `type.edge` rows or distinct
+   rel types implementing a common edge contract.
+3. **Edge references and annotations.** Define DL6 syntax and typing for passing
+   a keyed edge row to an ordinary relation such as `deprecated(Edge)`.
+4. **Anonymous identity.** Define whether an anonymous node is keyed by its
+   owning edge, source identity, canonical structure, or a stated combination.
+5. **Return-facade lookup.** Define what `X(User)` selects when `X` has zero,
+   one, or several outputs. Define whether partial application exists.
+6. **Carrier retirement.** Decide whether the public relational view is enough
+   while `TypeId`, legacy `MemberId`, and application terms remain internal, or whether
    the carriers themselves must disappear.
-3. **Member stability.** `(Owner, Name)` makes reorder stable and rename an
+7. **Edge stability.** `(Owner, Name)` makes reorder stable and rename an
    identity change. Confirm that contract and migration from current
    `(Owner, Position, Name)` IDs.
-4. **Identity reuse across planes.** Decide whether `integrity.key` always
+8. **Identity reuse across planes.** Decide whether `integrity.key` always
    supplies the state replacement key, or whether Flow Graph identity may
    differ from snapshot identity.
-5. **Integrity annotation surface.** Define named unique, reference, and later
+9. **Integrity annotation surface.** Define named unique, reference, and later
    check applications using ordinary relation syntax.
-6. **State/event surface.** Reconcile authored `flow.state/event/history` facts
+10. **State/event surface.** Reconcile authored `flow.state/event/history` facts
    with the held `rel(0)`, `rel(1)`, and `rel` retention ruling, which currently
    says there are no separate state/event kinds.
-7. **History representation.** Define whole-state, delta, and causal-event
-   history and which members are authored versus generated.
-8. **Retention observability.** Decide whether reclaiming a stored record emits
+11. **History representation.** Define whole-state, delta, and causal-event
+   history and which edges are authored versus generated.
+12. **Retention observability.** Decide whether reclaiming a stored record emits
    a flow minus or a separate materialization event.
-9. **Proof enforcement.** Decide which clock and cardinality results are
+13. **Proof enforcement.** Decide which clock and cardinality results are
    refusals, queryable boundaries, or target capability requirements.
-10. **Per-row consumption.** Define the semantic operation that makes worker
-    pools and capacities safe inside one tick without placing consuming reads
-    inside the IDB fixpoint.
-11. **Materialization requirement versus hint.** Define target behavior when a
-    requested lookup, retention, or artifact cannot be represented exactly.
-12. **Artifact roles.** Define the closed rel-enum vocabulary and whether a
-    target may introduce private companion roles.
-13. **Generic backend contract.** Define the minimum capabilities an emitter
-    advertises before it accepts an integrity, flow, or storage fact.
+14. **Per-row consumption.** Define the semantic operation that makes worker
+   pools and capacities safe inside one tick without placing consuming reads
+   inside the IDB fixpoint.
+15. **Materialization requirement versus hint.** Define target behavior when a
+   requested lookup, retention, or artifact cannot be represented exactly.
+16. **Artifact roles.** Define the closed rel-enum vocabulary and whether a
+   target may introduce private companion roles.
+17. **Generic backend contract.** Define the minimum capabilities an emitter
+   advertises before it accepts an integrity, flow, or storage fact.
 
 ## 11. Reconciled task graph
 
 ```text
 completed Type Graph foundation
         |
-        +--> member-edge-relational-view [M]
+        +--> type-edge-view [M]
         |
         +--> relation-application-semantics [L ruling]
         |
@@ -637,7 +696,7 @@ integrity + flow + materialization
 ## 12. Implementation order
 
 1. Record and resolve the open rulings without compiler mutation.
-2. Expose the held member-edge relation while retaining compatibility carriers.
+2. Expose the primordial type-edge relation while retaining compatibility carriers.
 3. Resolve relation application and return-facade semantics.
 4. Implement Integrity Graph key parity first, followed by named unique and
    references.
