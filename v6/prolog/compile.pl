@@ -62,7 +62,8 @@
 :- use_module('0_rel_record', [rel_cols/4]).
 :- use_module('compile/0_storage_projection',
               [ derive_storage_rows/3,
-                replace_storage_type_rows/3 ]).
+                replace_storage_type_rows/3,
+                project_storage_relplans/3 ]).
 :- use_module('compile/0_trace',
               [ dl6_trace_on/0, reset_step_trace/0, record_step/3,
                 write_step_trace/2, run_compile_step/4,
@@ -297,10 +298,15 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
                   ( decl_key(Decls, Ref, Positions) -> KeyOrNone = key(Positions) ; KeyOrNone = none ),
                   maplist(column_origin(Decls, Ref), Columns, Origins),
                   rel_cols(Columns, Origins, ColumnTypes, Cols)
-                ), RelPlans), _),
+                ), CompatibilityRelPlans), _),
     run_compile_step(plan, canonical_storage_rows,
-                     derive_storage_rows(Decls, RelPlans, StorageRows), _),
+                     derive_storage_rows(Decls, CompatibilityRelPlans,
+                                         StorageRows), _),
     replace_storage_type_rows(Decls, StorageRows, PlanDecls),
+    run_compile_step(plan, canonical_storage_relplans,
+                     project_storage_relplans(PlanDecls,
+                                              CompatibilityRelPlans,
+                                              RelPlans), _),
     PlanProg = prog(PlanDecls, Rules),
     % PHASE C2 RULING 1 x RULING 2: this needs RelPlans (ColumnTypes), so it
     % runs here rather than inside check_supported_subset/1 above (which

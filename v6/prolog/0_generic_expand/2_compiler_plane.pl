@@ -318,6 +318,9 @@ compiler_type_source_signature(type_decl/4,
                                [semantic, text, text, text]).
 compiler_type_source_signature(type_member/5,
                                [semantic, semantic, int, text, semantic]).
+compiler_type_source_signature(type_member/6,
+                               [semantic, semantic, semantic, int, text,
+                                semantic]).
 compiler_type_source_signature(type_member_role/3,
                                [semantic, text, text]).
 compiler_type_source_signature(type_application/2,
@@ -345,6 +348,8 @@ compiler_type_source_signature(type__edge/6,
                                 semantic]).
 compiler_type_source_signature(type__path/2,
                                [semantic, semantic]).
+compiler_type_source_signature(type__project/3,
+                               [semantic, text, semantic]).
 
 elaborate_compiler_argument(Decls, Bindings, Domain0, Argument, Elaborated) :-
     compiler_argument_domain(Domain0, Domain),
@@ -477,6 +482,11 @@ compiler_type_source_row(Rows, type_member/5, Row) :-
     member(Row0, Rows),
     Row0 = member(MemberId, OwnerId, Position, Name, TypeRef),
     Row = type_member(MemberId, OwnerId, Position, Name, TypeRef).
+compiler_type_source_row(Rows, type_member/6,
+                         type_member(MemberId, OwnerId, logical, Position,
+                                     Name, Target)) :-
+    member(member(MemberId, OwnerId, Position, Name, type_ref(TypeRef)), Rows),
+    projection_type_ref_target(TypeRef, Target).
 compiler_type_source_row(Rows, type_member_role/3,
                          type_member_role(MemberId, Role, Argument)) :-
     member(member_role(MemberId, RoleTerm), Rows),

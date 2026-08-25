@@ -7,7 +7,8 @@ type_graph_compiler_source_rows(Decls, SemanticRows, Relations, Rows) :-
     requested_type_graph_nodes(Decls, SemanticRows, Relations, NodeRows),
     requested_type_graph_edges(Decls, SemanticRows, Relations, EdgeRows),
     requested_type_graph_paths(Decls, SemanticRows, Relations, PathRows),
-    append([NodeRows, EdgeRows, PathRows], Rows0),
+    requested_type_graph_projects(Decls, Relations, ProjectRows),
+    append([NodeRows, EdgeRows, PathRows, ProjectRows], Rows0),
     sort(Rows0, Rows).
 
 requested_type_graph_nodes(Decls, SemanticRows, Relations, Rows) :-
@@ -34,6 +35,15 @@ requested_type_graph_paths(Decls, SemanticRows, Relations, Rows) :-
     type_graph_paths(Decls, SemanticRows, Paths),
     findall(type__path(Id, Path), member(type_path(Id, Path), Paths), Rows).
 requested_type_graph_paths(_, _, _, []).
+
+requested_type_graph_projects(Decls, Relations, Rows) :-
+    memberchk(compiler_relation(type__project/3, _, _), Relations),
+    !,
+    type_projection_targets(Decls, Targets),
+    findall(type__project(Owner, Name, Target),
+            member(type_projection(Owner, Name, Target), Targets),
+            Rows).
+requested_type_graph_projects(_, _, []).
 
 %! type_graph_nodes(+Decls, +SemanticRows, -Nodes) is det.
 type_graph_nodes(Decls, SemanticRows, Nodes) :-

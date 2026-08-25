@@ -142,6 +142,8 @@ compiler_builtin_relations(Decls, Rules, Relations) :-
 
 compiler_builtin_keys(type__node/3, [1]) :- !.
 compiler_builtin_keys(type__edge/6, [1]) :- !.
+compiler_builtin_keys(type_member/6, [1, 3]) :- !.
+compiler_builtin_keys(type__project/3, [1, 2]) :- !.
 compiler_builtin_keys(_, []).
 
 compiler_builtin_path_decls(Decls) :-
@@ -150,8 +152,10 @@ compiler_builtin_path_decls(Decls) :-
 compiler_builtin_path(type__node/3, [type, node]).
 compiler_builtin_path(type__edge/6, [type, edge]).
 compiler_builtin_path(type__path/2, [type, path]).
+compiler_builtin_path(type__project/3, [type, project]).
 compiler_builtin_path(type_decl/4, [type, declaration]).
 compiler_builtin_path(type_member/5, [type, member]).
+compiler_builtin_path(type_member/6, [type, member]).
 compiler_builtin_path(type_member_role/3, [type, member_role]).
 compiler_builtin_path(type_application/2, [type, application]).
 compiler_builtin_path(type_argument/4, [type, argument]).
@@ -175,6 +179,7 @@ compiler_builtin_is_used(Decls, Rules, type_apply/3) :-
 
 compiler_builtin_ref(type_decl/4).
 compiler_builtin_ref(type_member/5).
+compiler_builtin_ref(type_member/6).
 compiler_builtin_ref(type_member_role/3).
 compiler_builtin_ref(type_application/2).
 compiler_builtin_ref(type_argument/4).
@@ -189,6 +194,7 @@ compiler_builtin_ref(derived_member_role_request/4).
 compiler_builtin_ref(type__node/3).
 compiler_builtin_ref(type__edge/6).
 compiler_builtin_ref(type__path/2).
+compiler_builtin_ref(type__project/3).
 
 compiler_request_ref(derived_relation_request/4).
 compiler_request_ref(derived_member_request/4).

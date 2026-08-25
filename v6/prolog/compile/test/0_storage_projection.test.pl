@@ -3,7 +3,9 @@
 :- use_module('../../compile', [program_plan/2]).
 :- use_module('../parse_dl_dcg', [parse_dl/4]).
 :- use_module('../../lower', [catalog_type_rows/6]).
-:- use_module('../0_storage_projection', [storage_rows_from_decls/2]).
+:- use_module('../0_storage_projection',
+              [ storage_rows_from_decls/2,
+                member_plane_rows/3 ]).
 :- use_module('../../0_rel_record', [relplan_parts/6]).
 
 :- op(1150, xfx, <-).
@@ -51,6 +53,43 @@ test(canonical_ids_key_declared_physical_rows) :-
     forall(member(storage_column(MemberId, _), StorageRows),
            memberchk(member(MemberId, _, _, _, _), SemanticRows)).
 
+test(member_planes_share_identity_across_logical_and_sqlite_storage) :-
+    Source = "rel pair(T)(first: T, second: T).\n\c
+              rel status(ready(); failed()).\n\c
+              rel address(city: text).\n\c
+              rel holder(value: (a: int, b: text)).\n\c
+              rel item(home: address, maybe: option(text), pair_value: pair(int), state: status).\n",
+    storage_plan(Source, plan(_, prog(Decls, _), _, _, _, _, _, _, _)),
+    memberchk(semantic_type_rows(SemanticRows), Decls),
+    member_plane_rows(Decls, sqlite, PlaneRows),
+    Item = named(local, relation, item),
+    Address = named(local, relation, address),
+    Status = named(local, enum, status),
+    Pair = named(local, relation, pair),
+    PairInt = application(Pair, [primitive(int)]),
+    OptionText = application(named(local, relation, option),
+                             [primitive(text)]),
+    memberchk(derived_from(PairStorage, PairInt), SemanticRows),
+    memberchk(type_member(Home, Item, logical, 1, home, Address), PlaneRows),
+    memberchk(type_member(Home, Item, storage(sqlite), 1, home,
+                          reference(Address)), PlaneRows),
+    memberchk(type_member(Maybe, Item, logical, 2, maybe, OptionText),
+              PlaneRows),
+    memberchk(type_member(Maybe, Item, storage(sqlite), 2, maybe,
+                          primitive(int)), PlaneRows),
+    memberchk(type_member(PairMember, Item, logical, 3, pair_value, PairInt),
+              PlaneRows),
+    memberchk(type_member(PairMember, Item, storage(sqlite), 3, pair_value,
+                          reference(PairStorage)), PlaneRows),
+    memberchk(type_member(State, Item, logical, 4, state, Status), PlaneRows),
+    memberchk(type_member(State, Item, storage(sqlite), 4, state,
+                          primitive(int)), PlaneRows),
+    Holder = named(local, relation, holder),
+    memberchk(type_member(Value, Holder, logical, 1, value, Anonymous),
+              PlaneRows),
+    memberchk(type_member(Value, Holder, storage(sqlite), 1, value,
+                          reference(Anonymous)), PlaneRows).
+
 test(undeclared_idb_stays_on_the_relplan_compatibility_path) :-
     Source = "rel seed(value: int).\n\c
               derived(Value) <- seed(Value).\n",
@@ -64,7 +103,8 @@ test(undeclared_idb_stays_on_the_relplan_compatibility_path) :-
 test(nested_generic_arrow_uses_canonical_member_ids) :-
     Source = "rel Box(T)(value: T).\n\c
               rel Pets(boxed: Box(((id: int) -> text))).\n",
-    storage_plan(Source, plan(_, prog(Decls, _), _, _, _, _, _, _, _)),
+    storage_plan(Source,
+                 plan(_, prog(Decls, _), _, RelPlans, _, _, _, _, _)),
     memberchk(semantic_type_rows(SemanticRows), Decls),
     storage_rows_from_decls(Decls, StorageRows),
     once(member(derived_from(ArrowId, anonymous(_, _, arrow_type(_, _))),
@@ -72,7 +112,11 @@ test(nested_generic_arrow_uses_canonical_member_ids) :-
     memberchk(member(IdMember, ArrowId, 1, id, _), SemanticRows),
     memberchk(member(ReturnMember, ArrowId, 2, return, _), SemanticRows),
     memberchk(storage_column(IdMember, primitive(int)), StorageRows),
-    memberchk(storage_column(ReturnMember, primitive(text)), StorageRows).
+    memberchk(storage_column(ReturnMember, primitive(text)), StorageRows),
+    ArrowId = named(_, relation, ArrowName),
+    once(( member(RelPlan, RelPlans),
+           relplan_parts(RelPlan, ArrowName/2, _, [id, return], _,
+                         [int, text]) )).
 
 test(catalog_type_rows_read_canonical_physical_rows) :-
     Source = "rel item(id: key(int), name: text).\n",

@@ -38,6 +38,30 @@ test(dotted_node_edge_and_path_sources_query_canonical_rows) :-
     \+ member(col_type(type__edge/6, _, _), Decls),
     \+ member(col_type(type__path/2, _, _), Decls).
 
+test(dotted_members_and_projection_default_to_the_logical_plane) :-
+    Source = "rel Status(ready(); failed()).\n\c
+              rel Address(city: text).\n\c
+              rel Item(maybe: option(text), status: Status, home: Address).\n\c
+              rel seen_member(Member: type, Owner: type, Plane: semantic, Position: int, Name: text, Target: type).\n\c
+              rel seen_project(Owner: type, Name: text, Target: type).\n\c
+              seen_member(Member, Owner, Plane, Position, Name, Target) <- type.member(Member, Owner, Plane, Position, Name, Target).\n\c
+              seen_project(Owner, Name, Target) <- type.project(Owner, Name, Target).\n",
+    expand_type_graph_source(Source, Decls),
+    memberchk(compiler_type_metadata(_, Closure), Decls),
+    Item = named(local, relation, 'Item'),
+    Maybe = member(Item, 1, maybe),
+    OptionText = application(named(local, relation, option),
+                             [primitive(text)]),
+    Address = named(local, relation, 'Address'),
+    memberchk(seen_member(Maybe, Item, logical, 1, maybe, OptionText),
+              Closure),
+    memberchk(seen_member(member(Item, 3, home), Item, logical, 3, home,
+                          Address), Closure),
+    memberchk(seen_project(Item, maybe, OptionText), Closure),
+    \+ member(seen_member(_, _, storage(_), _, _, _), Closure),
+    \+ member(col_type(type_member/6, _, _), Decls),
+    \+ member(col_type(type__project/3, _, _), Decls).
+
 test(nested_and_enum_edges_have_distinct_roles) :-
     Source = "rel Outer() { rel Child(id: int). }.\n\c
               rel Choice(left(); right()).\n\c
