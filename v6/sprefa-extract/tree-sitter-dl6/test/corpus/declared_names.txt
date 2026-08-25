@@ -1,0 +1,140 @@
+==================
+a variable-cased column name carries its type
+==================
+
+rel shape(Type: type, Name: text).
+
+---
+
+(source_file
+  (statement
+    (relation_declaration
+      (path
+        (identifier))
+      (declaration_parameter
+        (variable)
+        (type
+          (identifier)))
+      (declaration_parameter
+        (variable)
+        (type
+          (identifier))))))
+
+==================
+a variable-cased relation declares an arrow return
+==================
+
+rel Partial(Source: type) -> type.
+
+---
+
+(source_file
+  (statement
+    (relation_declaration
+      (path
+        (variable))
+      (declaration_parameter
+        (variable)
+        (type
+          (identifier)))
+      (type
+        (identifier)))))
+
+==================
+a variable-cased relation heads a rule
+==================
+
+Partial(Source, Partial(Source)) <-
+  type.requested(_, Partial, [Source]).
+
+---
+
+(source_file
+  (statement
+    (rule
+      (atom
+        (path
+          (variable))
+        (expression
+          (variable))
+        (expression
+          (atom
+            (path
+              (variable))
+            (expression
+              (variable)))))
+      (goal_list
+        (expression
+          (atom
+            (path
+              (identifier)
+              (member_access))
+            (expression
+              (variable))
+            (expression
+              (variable))
+            (expression
+              (list
+                (expression
+                  (variable))))))))))
+
+==================
+repeated facts under a variable-cased column
+==================
+
+rel shape(Type: type).
+rel seen(Type: type).
+
+shape(widget).
+shape(gadget).
+
+seen(Type) <-
+  shape(Type).
+
+---
+
+(source_file
+  (statement
+    (relation_declaration
+      (path
+        (identifier))
+      (declaration_parameter
+        (variable)
+        (type
+          (identifier)))))
+  (statement
+    (relation_declaration
+      (path
+        (identifier))
+      (declaration_parameter
+        (variable)
+        (type
+          (identifier)))))
+  (statement
+    (fact
+      (atom
+        (path
+          (identifier))
+        (expression
+          (identifier)))))
+  (statement
+    (fact
+      (atom
+        (path
+          (identifier))
+        (expression
+          (identifier)))))
+  (statement
+    (rule
+      (atom
+        (path
+          (identifier))
+        (expression
+          (variable)))
+      (goal_list
+        (expression
+          (atom
+            (path
+              (identifier))
+            (expression
+              (variable))))))))

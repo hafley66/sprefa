@@ -160,6 +160,10 @@
           {
             "type": "identifier",
             "named": true
+          },
+          {
+            "type": "variable",
+            "named": true
           }
         ]
       },
@@ -250,6 +254,10 @@
           {
             "type": "identifier",
             "named": true
+          },
+          {
+            "type": "variable",
+            "named": true
           }
         ]
       },
@@ -279,6 +287,10 @@
         },
         {
           "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "variable",
           "named": true
         }
       ]
@@ -387,6 +399,10 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "variable",
             "named": true
           }
         ]
@@ -790,6 +806,10 @@
         {
           "type": "member_access",
           "named": true
+        },
+        {
+          "type": "variable",
+          "named": true
         }
       ]
     }
@@ -867,6 +887,16 @@
         "types": [
           {
             "type": "path",
+            "named": true
+          }
+        ]
+      },
+      "return": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "type",
             "named": true
           }
         ]
@@ -1085,6 +1115,10 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "variable",
             "named": true
           }
         ]

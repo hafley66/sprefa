@@ -26,13 +26,13 @@ module.exports = grammar({
     statement: $ => choice($.use_declaration, $.bind_declaration, $.relation_declaration, $.shell_declaration, seq("import", $.string, "."), $.query, $.match_statement, $.rule, $.fact),
 
     use_declaration: $ => seq(field("visibility", optional("pub")), "use", field("path", $.string), optional(seq("as", field("alias", $.identifier))), "."),
-    relation_declaration: $ => seq("rel", field("name", $.path), "(", field("columns", optional(choice($.enum_variants, seq($.declaration_parameter, repeat(seq(",", $.declaration_parameter)))))), ")", field("modifiers", repeat($.relation_modifier)), "."),
+    relation_declaration: $ => seq("rel", field("name", $.path), "(", field("columns", optional(choice($.enum_variants, seq($.declaration_parameter, repeat(seq(",", $.declaration_parameter)))))), ")", optional(seq("->", field("return", $.type))), field("modifiers", repeat($.relation_modifier)), "."),
 
     shell_declaration: $ => seq("sh", field("name", $.path), "(", field("inputs", optional(seq($.column, repeat(seq(",", $.column))))), ")", "->", "(", field("outputs", optional(seq($.column, repeat(seq(",", $.column))))), ")", "=", field("template", $.template), "."),
 
     bind_declaration: $ => seq("bind", field("name", $.identifier), "(", optional(seq($.column, repeat(seq(",", $.column)))), ")", "."),
-    declaration_parameter: $ => seq(field("name", $.identifier), optional(seq(":", field("type", $.type)))),
-    column: $ => seq(field("name", $.identifier), ":", field("type", $.type)),
+    declaration_parameter: $ => seq(field("name", declared_name($)), optional(seq(":", field("type", $.type)))),
+    column: $ => seq(field("name", declared_name($)), ":", field("type", $.type)),
 
     type: $ => choice(
       $.arrow_type,
@@ -48,11 +48,11 @@ module.exports = grammar({
 
     product_type: $ => seq("(", field("fields", commaSep1($.field)), ")"),
     sum_type: $ => seq("(", $.sum_variant, repeat(seq(";", $.sum_variant)), ")"),
-    field: $ => seq(field("name", $.identifier), ":", field("type", $.type)),
-    sum_variant: $ => seq(field("name", $.identifier), "(", optional(commaSep1($.field)), ")"),
+    field: $ => seq(field("name", declared_name($)), ":", field("type", $.type)),
+    sum_variant: $ => seq(field("name", declared_name($)), "(", optional(commaSep1($.field)), ")"),
 
     enum_variants: $ => seq($.enum_variant, repeat(seq(";", $.enum_variant))),
-    enum_variant: $ => seq($.identifier, "(", optional(commaSep1($.column)), ")"),
+    enum_variant: $ => seq(declared_name($), "(", optional(commaSep1($.column)), ")"),
 
     relation_modifier: $ => choice("log", seq("keep", "(", choice("all", seq("count", "(", $.integer, ")")), ")"), seq("key", "(", $.integer, repeat(seq(",", $.integer)), ")"), "set"),
     rule: $ => seq(field("head", $.atom), field("arrow", choice("<-", "<+")), field("body", $.goal_list), "."),
@@ -97,7 +97,7 @@ module.exports = grammar({
     ),
 
     unary_expression: $ => prec(PREC.unary, seq(choice("-", "+"), $.expression)),
-    member_expression: $ => prec(PREC.call, seq(choice($.identifier, $.variable), repeat1($.member_access))),
+    member_expression: $ => prec(PREC.call, seq(declared_name($), repeat1($.member_access))),
     member_access: $ => token.immediate(/\.[A-Za-z_][A-Za-z0-9_]*/),
     parenthesized_expression: $ => seq("(", $.expression, ")"),
 
@@ -116,8 +116,9 @@ module.exports = grammar({
 
     // The DCG accepts a path dot only when an identifier follows it with no
     // gap (parse_dl_dcg.pl dot_then_ident//0), which is what keeps a
-    // clause-terminating "." out of the path.
-    path: $ => seq($.identifier, repeat($.member_access)),
+    // clause-terminating "." out of the path. ident//1 starts on any alpha or
+    // underscore, so a head or a segment may be variable-cased.
+    path: $ => seq(declared_name($), repeat($.member_access)),
     literal: $ => choice($.float, $.integer, $.string, $.quoted_atom, $.boolean),
     integer: $ => /[0-9]+/,
     float: $ => /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?/,
@@ -130,6 +131,14 @@ module.exports = grammar({
     comment: $ => token(/#.*/),
   },
 });
+
+// Every name slot in the DCG goes through ident//1 (parse_dl_dcg.pl:420),
+// which starts on any alpha or underscore, so a column or a relation may be
+// spelled variable-cased.
+function declared_name($) {
+  return choice($.identifier, $.variable);
+}
+
 
 function commaSep1(rule) {
   return seq(rule, repeat(seq(",", rule)));
