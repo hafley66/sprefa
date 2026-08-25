@@ -184,7 +184,7 @@
 :- use_module('0_generic_expand', [canonical_type_name/2,
                                    type_relation_rows/2,
                                    schema_member_transport_rows/3]).
-:- use_module('0_type_ids', [id_kind_name/3, semantic_type_id_text/2]).
+:- use_module('1_expansion/0_type_ids', [id_kind_name/3, semantic_type_id_text/2]).
 :- use_module('1_expansion/0_option_expand', [acyclic_companion/5]).
 :- use_module('1_host_expand', [query_decl/3]).
 :- use_module('0_dot_expand/registry', [expression/5, surface/5, body_surface_for_term/6]).

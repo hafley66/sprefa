@@ -31,7 +31,7 @@
 :- use_module('0_program_check', [level_headed/2]).
 :- use_module('0_option_expand', [companion_rel_name/3, option_enum_name/2,
                                   option_value_element/2, scalar_element/1]).
-:- use_module('../0_type_ids', [decl_id/4, member_id/4]).
+:- use_module('0_type_ids', [decl_id/4, member_id/4]).
 
 :- op(1150, xfx, <-).
 

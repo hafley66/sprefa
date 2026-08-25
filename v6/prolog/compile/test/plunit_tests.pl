@@ -58,7 +58,7 @@
               [ expand_generic_program/2, expand_generic_program_raw/2,
                 canonical_type_name/2, generic_type_ir/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
-:- use_module('../../0_type_ids', [ decl_id/4, app_id/3, id_kind_name/3,
+:- use_module('../../1_expansion/0_type_ids', [ decl_id/4, app_id/3, id_kind_name/3,
                                     primitive_id/2, semantic_type_id_text/2 ]).
 
 % Fixture-only shorthand.  Production code always transports module identity.

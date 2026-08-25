@@ -33,7 +33,7 @@
 :- use_module('0_dot_expand/0_type_plane', [unwrapped_column_type/2]).
 :- use_module('0_anonymous_expand', [expand_anonymous_decls/2]).
 :- use_module('0_annotation_expand', [elaborate_annotation/3]).
-:- use_module('0_type_ids',
+:- use_module('1_expansion/0_type_ids',
               [ decl_id/4, primitive_id/2, param_id/4, member_id/4,
                 constraint_id/3, app_id/3, arg_id/3,
                 id_kind_name/3 ]).

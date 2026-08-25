@@ -25,7 +25,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(crypto)).
-:- use_module('0_type_ids',
+:- use_module('1_expansion/0_type_ids',
               [ decl_id/4, id_kind_name/3, semantic_type_id_text/2 ]).
 
 :- op(1150, xfx, <-).

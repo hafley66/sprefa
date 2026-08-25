@@ -34,7 +34,7 @@
 :- use_module('../lower', [ catalog_type_rows/6,
                             catalog_type_transport_rows/4,
                             catalog_type_relation_rows/3 ]).
-:- use_module('../0_type_ids', [ semantic_type_id_text/2 ]).
+:- use_module('../1_expansion/0_type_ids', [ semantic_type_id_text/2 ]).
 :- use_module('4_emit_jsonschema', [ option_rows/3 ]).
 :- use_module('7_emit_ts_types', [ ts_types_text/3 ]).
 :- use_module('8_emit_rust_types', [ rust_type_relation_impl_texts/2,
