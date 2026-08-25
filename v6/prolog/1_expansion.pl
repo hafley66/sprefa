@@ -20,7 +20,7 @@
 :- use_module('next/1_expand/0_generic_expand', [expand_generic_program/2, freeze_type_rows/2,
                                    reset_type_row_memo/0]).
 :- use_module('next/1_expand/0_match_expand', []).
-:- use_module('0_seq_expand', []).
+:- use_module('next/1_expand/0_seq_expand', []).
 :- use_module('next/1_expand/0_coalesce_expand', []).
 :- use_module('next/1_expand/0_dot_expand', []).
 :- use_module('next/1_expand/0_negated_guard_expand', []).
