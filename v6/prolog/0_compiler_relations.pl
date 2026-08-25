@@ -142,6 +142,7 @@ compiler_builtin_relations(Decls, Rules, Relations) :-
 
 compiler_builtin_keys(type__node/3, [1]) :- !.
 compiler_builtin_keys(type__edge/6, [1]) :- !.
+compiler_builtin_keys(type__named/4, [1]) :- !.
 compiler_builtin_keys(type_member/6, [1, 3]) :- !.
 compiler_builtin_keys(type__project/3, [1, 2]) :- !.
 compiler_builtin_keys(_, []).
@@ -166,6 +167,19 @@ compiler_builtin_path(type_field/5, [type, field]).
 compiler_builtin_path(type_field_count/2, [type, field_count]).
 
 compiler_builtin_is_used(_, Rules, Ref) :- rule_contains_ref(Rules, Ref), !.
+compiler_builtin_is_used(Decls, Rules, type__node/3) :-
+    compiler_rules_contain_functor(Decls, Rules, primitive, 1),
+    !.
+compiler_builtin_is_used(Decls, Rules, type__named/4) :-
+    compiler_rules_contain_functor(Decls, Rules, named, 3),
+    !.
+compiler_builtin_is_used(Decls, Rules, type_requested/3) :-
+    compiler_rules_contain_functor(Decls, Rules, application, 2),
+    !.
+compiler_builtin_is_used(Decls, Rules, type__edge/6) :-
+    ( compiler_rules_contain_functor(Decls, Rules, member, 3)
+    ; compiler_rules_contain_functor(Decls, Rules, variant, 3) ),
+    !.
 compiler_builtin_is_used(Decls, Rules, type_apply/3) :-
     member(Rule, Rules),
     rule_head(Rule, Head),
@@ -176,6 +190,20 @@ compiler_builtin_is_used(Decls, Rules, type_apply/3) :-
     nth1(Position, Arguments, Argument),
     compound(Argument),
     !.
+
+compiler_rules_contain_functor(Decls, Rules, Name, Arity) :-
+    member(Rule, Rules),
+    compiler_pattern_rule(Decls, Rule),
+    sub_term(Term, Rule),
+    compound(Term),
+    functor(Term, Name, Arity),
+    !.
+
+compiler_pattern_rule(Decls, Rule) :-
+    rule_head_ref(Rule, Ref),
+    ( compiler_request_ref(Ref)
+    ; memberchk(col_type(Ref, _, type), Decls)
+    ).
 
 compiler_builtin_ref(type_decl/4).
 compiler_builtin_ref(type_member/5).
@@ -193,6 +221,7 @@ compiler_builtin_ref(derived_member_request/4).
 compiler_builtin_ref(derived_member_role_request/4).
 compiler_builtin_ref(type__node/3).
 compiler_builtin_ref(type__edge/6).
+compiler_builtin_ref(type__named/4).
 compiler_builtin_ref(type__path/2).
 compiler_builtin_ref(type__project/3).
 

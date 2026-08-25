@@ -227,6 +227,12 @@ compiler_argument_domain_or_self(Domain0, Domain) :-
 
 elaborate_compiler_head_argument(Decls, Bindings, type, Argument0, Argument,
                                  Goals) :-
+    structural_type_pattern(Argument0),
+    !,
+    elaborate_structural_type_pattern(Decls, Bindings, Argument0, Argument,
+                                      Goals).
+elaborate_compiler_head_argument(Decls, Bindings, type, Argument0, Argument,
+                                 Goals) :-
     compound(Argument0),
     Argument0 =.. [ConstructorName | Arguments0],
     compiler_type_constructor(Decls, ConstructorName, ExpectedArity),
@@ -268,15 +274,131 @@ elaborate_compiler_body(_, _, true, true) :- !.
 elaborate_compiler_body(Decls, Bindings, (Left0, Right0), (Left, Right)) :- !,
     elaborate_compiler_body(Decls, Bindings, Left0, Left),
     elaborate_compiler_body(Decls, Bindings, Right0, Right).
-elaborate_compiler_body(Decls, Bindings, Atom0, Atom) :-
-    elaborate_compiler_atom(Decls, Bindings, Atom0, Atom).
+elaborate_compiler_body(Decls, Bindings, Atom0, Body) :-
+    elaborate_compiler_body_atom(Decls, Bindings, Atom0, Atom, PatternGoals),
+    append_compiler_body_goals(Atom, PatternGoals, Body).
 
-elaborate_compiler_atom(Decls, Bindings, Atom0, Atom) :-
+elaborate_compiler_body_atom(Decls, Bindings, Atom0, Atom, Goals) :-
     Atom0 =.. [Name | Arguments0],
     length(Arguments0, Arity),
     compiler_relation_signature(Decls, Name/Arity, Types),
-    maplist(elaborate_compiler_argument(Decls, Bindings), Types, Arguments0, Arguments),
+    elaborate_compiler_body_arguments(Decls, Bindings, Types, Arguments0,
+                                      Arguments, Goals),
     Atom =.. [Name | Arguments].
+
+elaborate_compiler_body_arguments(_, _, [], [], [], []).
+elaborate_compiler_body_arguments(Decls, Bindings,
+                                  [Domain0 | Domains], [Argument0 | Rest0],
+                                  [Argument | Rest], Goals) :-
+    compiler_argument_domain_or_self(Domain0, Domain),
+    elaborate_compiler_body_argument(Decls, Bindings, Domain, Argument0,
+                                     Argument, ArgumentGoals),
+    elaborate_compiler_body_arguments(Decls, Bindings, Domains, Rest0, Rest,
+                                      RestGoals),
+    append(ArgumentGoals, RestGoals, Goals).
+
+elaborate_compiler_body_argument(Decls, Bindings, type, Argument0, Argument,
+                                 Goals) :-
+    structural_type_pattern(Argument0),
+    !,
+    elaborate_structural_type_pattern(Decls, Bindings, Argument0, Argument,
+                                      Goals).
+elaborate_compiler_body_argument(Decls, Bindings, type, Argument0, Argument,
+                                 Goals) :-
+    compound(Argument0),
+    Argument0 =.. [ConstructorName | Arguments0],
+    compiler_type_constructor(Decls, ConstructorName, ExpectedArity),
+    !,
+    length(Arguments0, FoundArity),
+    require_type_pattern_arity(Decls, ConstructorName, ExpectedArity,
+                               FoundArity),
+    elaborate_structural_type_arguments(Decls, Bindings, Arguments0,
+                                        Arguments, ArgumentGoals),
+    semantic_type_constructor_id(Decls, ConstructorName, ConstructorId),
+    Goals = [type_requested(Argument, ConstructorId, Arguments) |
+             ArgumentGoals].
+elaborate_compiler_body_argument(Decls, Bindings, Domain, Argument0, Argument,
+                                 []) :-
+    elaborate_compiler_argument(Decls, Bindings, Domain, Argument0, Argument).
+
+structural_type_pattern(Pattern) :-
+    nonvar(Pattern),
+    functor(Pattern, Name, Arity),
+    structural_type_pattern_ref(Name/Arity).
+
+structural_type_pattern_ref(primitive/1).
+structural_type_pattern_ref(named/3).
+structural_type_pattern_ref(application/2).
+structural_type_pattern_ref(member/3).
+structural_type_pattern_ref(variant/3).
+
+elaborate_structural_type_pattern(_, _, primitive(Name), Type,
+                                  [type__node(Type, primitive, Name)]).
+elaborate_structural_type_pattern(_, _, named(Module, Kind, Name), Type,
+                                  [type__named(Type, Module, Kind, Name)]).
+elaborate_structural_type_pattern(Decls, Bindings,
+                                  application(Constructor0, Arguments0), Type,
+                                  Goals) :-
+    elaborate_structural_type_component(Decls, Bindings, Constructor0,
+                                        Constructor, ConstructorGoals),
+    elaborate_structural_type_arguments(Decls, Bindings, Arguments0,
+                                        Arguments, ArgumentGoals),
+    append([type_requested(Type, Constructor, Arguments) | ConstructorGoals],
+           ArgumentGoals, Goals).
+elaborate_structural_type_pattern(Decls, Bindings,
+                                  member(Owner0, Position, Name), Member,
+                                  Goals) :-
+    elaborate_structural_type_component(Decls, Bindings, Owner0, Owner,
+                                        OwnerGoals),
+    Goals = [type__edge(Member, Owner, member, Position, Name, _) |
+             OwnerGoals].
+elaborate_structural_type_pattern(Decls, Bindings,
+                                  variant(Owner0, Position, Name), Variant,
+                                  Goals) :-
+    elaborate_structural_type_component(Decls, Bindings, Owner0, Owner,
+                                        OwnerGoals),
+    Goals = [type__edge(Variant, Owner, variant, Position, Name, _) |
+             OwnerGoals].
+
+elaborate_structural_type_component(Decls, Bindings, Component0, Component,
+                                    Goals) :-
+    structural_type_pattern(Component0),
+    !,
+    elaborate_structural_type_pattern(Decls, Bindings, Component0, Component,
+                                      Goals).
+elaborate_structural_type_component(Decls, Bindings, Component0, Component,
+                                    []) :-
+    elaborate_compiler_argument(Decls, Bindings, type, Component0, Component).
+
+elaborate_structural_type_arguments(_, _, Arguments, Arguments, []) :-
+    var(Arguments),
+    !.
+elaborate_structural_type_arguments(Decls, Bindings, Arguments0, Arguments,
+                                    Goals) :-
+    is_list(Arguments0),
+    !,
+    elaborate_structural_type_argument_list(Decls, Bindings, Arguments0,
+                                            Arguments, Goals).
+elaborate_structural_type_arguments(_, _, Arguments, _, _) :-
+    throw(unsupported_construct(type_pattern_arguments_not_list(Arguments))).
+
+elaborate_structural_type_argument_list(_, _, [], [], []).
+elaborate_structural_type_argument_list(Decls, Bindings,
+                                        [Argument0 | Rest0],
+                                        [Argument | Rest], Goals) :-
+    elaborate_structural_type_component(Decls, Bindings, Argument0, Argument,
+                                        ArgumentGoals),
+    elaborate_structural_type_argument_list(Decls, Bindings, Rest0, Rest,
+                                            RestGoals),
+    append(ArgumentGoals, RestGoals, Goals).
+
+require_type_pattern_arity(_, _, Expected, Found) :-
+    Expected =:= Found,
+    !.
+require_type_pattern_arity(Decls, ConstructorName, Expected, Found) :-
+    semantic_type_constructor_id(Decls, ConstructorName, ConstructorId),
+    throw(unsupported_construct(type_pattern_arity_mismatch(
+                                    ConstructorId, Expected, Found))).
 
 % Fact variables may be source type names captured by the parser bindings.
 % Rule variables remain evaluator joins and are preserved by
@@ -297,6 +419,19 @@ elaborate_compiler_fact_argument(Decls, Bindings, Domain0, Argument,
     elaborate_compiler_fact_argument(Decls, Bindings, Domain, Argument,
                                      Elaborated).
 elaborate_compiler_fact_argument(Decls, Bindings, type, Argument, Elaborated) :-
+    structural_type_pattern(Argument),
+    !,
+    ( ground_structural_type_id(Decls, Bindings, Argument, Elaborated)
+    -> true
+    ;  term_variables(Argument, Variables),
+       ( Variables == []
+       -> throw(unsupported_construct(
+              compiler_relation_type_pattern_unknown(Argument)))
+       ;  throw(unsupported_construct(
+              compiler_relation_non_ground_type_pattern(Argument)))
+       )
+    ).
+elaborate_compiler_fact_argument(Decls, Bindings, type, Argument, Elaborated) :-
     compiler_type_source_term(Decls, Bindings, Argument, Type),
     compiler_declared_type_term(Decls, Type),
     !,
@@ -306,6 +441,46 @@ elaborate_compiler_fact_argument(_, _, type, Argument, _) :-
 elaborate_compiler_fact_argument(Decls, Bindings, Domain, Argument,
                                  Elaborated) :-
     elaborate_compiler_argument(Decls, Bindings, Domain, Argument, Elaborated).
+
+ground_structural_type_id(_, _, primitive(Name), primitive(Name)) :-
+    atom(Name),
+    semantic_primitive(Name).
+ground_structural_type_id(Decls, _, named(Module, Kind, Name), Id) :-
+    Id = named(Module, Kind, Name),
+    ground(Id),
+    compiler_semantic_row(Decls, declaration(Id, _, Name, Kind, _)).
+ground_structural_type_id(Decls, Bindings,
+                          application(Constructor0, Arguments0), Id) :-
+    is_list(Arguments0),
+    ground_fact_type_component(Decls, Bindings, Constructor0, Constructor),
+    maplist(ground_fact_type_component(Decls, Bindings), Arguments0, Arguments),
+    Id = application(Constructor, Arguments),
+    compiler_semantic_row(Decls, application(Id, Constructor)).
+ground_structural_type_id(Decls, Bindings,
+                          member(Owner0, Position, Name), Id) :-
+    ground_fact_type_component(Decls, Bindings, Owner0, Owner),
+    Id = member(Owner, Position, Name),
+    compiler_semantic_row(Decls,
+                          member(Id, Owner, Position, Name, _)).
+ground_structural_type_id(Decls, Bindings,
+                          variant(Owner0, Position, Name), Id) :-
+    ground_structural_type_id(Decls, Bindings,
+                              member(Owner0, Position, Name), Id),
+    compiler_semantic_row(Decls, declaration(Owner, _, _, enum, _)),
+    Id = member(Owner, Position, Name).
+
+ground_fact_type_component(Decls, Bindings, Component0, Component) :-
+    structural_type_pattern(Component0),
+    !,
+    ground_structural_type_id(Decls, Bindings, Component0, Component).
+ground_fact_type_component(Decls, Bindings, Component0, Component) :-
+    compiler_type_source_term(Decls, Bindings, Component0, Type),
+    compiler_declared_type_term(Decls, Type),
+    semantic_type_id(Decls, Type, Component).
+
+compiler_semantic_row(Decls, Row) :-
+    member(semantic_type_rows(Rows), Decls),
+    member(Row, Rows).
 
 compiler_relation_signature(_, Ref, Types) :-
     compiler_type_source_signature(Ref, Types), !.
@@ -343,6 +518,8 @@ compiler_type_source_signature(derived_member_role_request/4,
                                [type, int, text, semantic]).
 compiler_type_source_signature(type__node/3,
                                [semantic, text, semantic]).
+compiler_type_source_signature(type__named/4,
+                               [semantic, semantic, text, text]).
 compiler_type_source_signature(type__edge/6,
                                [semantic, semantic, text, semantic, semantic,
                                 semantic]).
@@ -478,6 +655,10 @@ compiler_type_source_rows(Decls, Relations, Rows) :-
 compiler_type_source_row(Rows, type_decl/4,
                          type_decl(Id, Name, Kind, Phase)) :-
     member(declaration(Id, _, Name, Kind, Phase), Rows).
+compiler_type_source_row(Rows, type__named/4,
+                         type__named(Id, Module, Kind, Name)) :-
+    member(declaration(Id, _, Name, Kind, _), Rows),
+    Id = named(Module, Kind, Name).
 compiler_type_source_row(Rows, type_member/5, Row) :-
     member(Row0, Rows),
     Row0 = member(MemberId, OwnerId, Position, Name, TypeRef),

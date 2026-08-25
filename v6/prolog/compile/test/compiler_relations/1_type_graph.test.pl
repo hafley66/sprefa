@@ -140,4 +140,66 @@ test(type_graph_rows_are_visible_after_a_construction_refreeze) :-
     memberchk(semantic_type_rows(SemanticRows), Decls),
     memberchk(application(ListInt, named(local, relation, list)), SemanticRows).
 
+test(structural_type_patterns_construct_heads_and_match_bodies) :-
+    Source = "rel Item(value: option(text)).\n\c
+              rel Choice(left(); right()).\n\c
+              rel scalar(Name: text, Type: type).\n\c
+              scalar('int', int).\n\c
+              rel primitive_head(Type: type).\n\c
+              rel primitive_body(Type: type, Name: text).\n\c
+              primitive_head(primitive(Name)) <- scalar(Name, _).\n\c
+              primitive_body(int, Name) <- primitive_head(primitive(Name)).\n\c
+              rel named_seed(Type: type).\n\c
+              rel named_body(Type: type, Module: semantic, Kind: text, Name: text).\n\c
+              named_seed(Item).\n\c
+              named_body(Item, Module, Kind, Name) <- named_seed(named(Module, Kind, Name)).\n\c
+              rel application_seed(Type: type).\n\c
+              rel application_body(Constructor: type, Argument: type).\n\c
+              application_seed(option(text)).\n\c
+              application_body(Constructor, Argument) <- application_seed(application(Constructor, [Argument])).\n\c
+              rel member_seed(Node: type).\n\c
+              rel member_body(Owner: type, Position: int, Name: text).\n\c
+              rel rebuilt_member(Node: type).\n\c
+              member_seed(Node) <- type.member(Node, _, logical, _, _, _).\n\c
+              member_body(Owner, Position, Name) <- member_seed(member(Owner, Position, Name)).\n\c
+              rebuilt_member(member(Owner, Position, Name)) <- member_body(Owner, Position, Name).\n\c
+              rel variant_seed(Node: type).\n\c
+              rel variant_body(Owner: type, Position: int, Name: text).\n\c
+              variant_seed(Node) <- type.edge(Node, _, variant, _, _, _).\n\c
+              variant_body(Owner, Position, Name) <- variant_seed(variant(Owner, Position, Name)).\n",
+    expand_type_graph_source(Source, Decls),
+    memberchk(compiler_type_metadata(_, Closure), Decls),
+    Item = named(local, relation, 'Item'),
+    Choice = named(local, enum, 'Choice'),
+    Option = named(local, relation, option),
+    memberchk(primitive_head(primitive(int)), Closure),
+    memberchk(primitive_body(primitive(int), int), Closure),
+    memberchk(named_body(Item, local, relation, 'Item'), Closure),
+    memberchk(application_body(Option, primitive(text)), Closure),
+    memberchk(member_body(Item, 1, value), Closure),
+    memberchk(rebuilt_member(member(Item, 1, value)), Closure),
+    memberchk(variant_body(Choice, 1, left), Closure),
+    \+ member(col_type(type__named/4, _, _), Decls),
+    \+ member(col_type(type__node/3, _, _), Decls),
+    \+ member(col_type(type__edge/6, _, _), Decls).
+
+test(non_ground_structural_type_fact_has_named_diagnostic,
+     [throws(unsupported_construct(
+         compiler_relation_non_ground_type_pattern(primitive(_))))]) :-
+    Source = "rel bad(Type: type).\nbad(primitive(Name)).\n",
+    string_codes(Source, Codes),
+    once(parse_dl(Codes, Program, Bindings, [])),
+    expand_generic_program_with_bindings(Program, Bindings, _).
+
+test(surface_constructor_body_pattern_arity_has_named_diagnostic,
+     [throws(unsupported_construct(
+         type_pattern_arity_mismatch(named(local, relation, option), 1, 2)))]) :-
+    Source = "rel seed(Type: type).\n\c
+              rel seen(Type: type).\n\c
+              seed(option(int)).\n\c
+              seen(Type) <- seed(option(Type, text)).\n",
+    string_codes(Source, Codes),
+    once(parse_dl(Codes, Program, Bindings, [])),
+    expand_generic_program_with_bindings(Program, Bindings, _).
+
 :- end_tests(compiler_type_graph).

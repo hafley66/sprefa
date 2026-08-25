@@ -121,6 +121,18 @@ test(mixed_scalar_domains_are_compiler_values) :-
         compiler_relations([compiler_relation(codec/2, 2, [])], []),
         [col_type(runtime/1, value, text)]).
 
+test(runtime_structural_terms_do_not_activate_compiler_pattern_sources) :-
+    Decls = [ col_type(source/1, value, text),
+              col_type(output/1, value, any) ],
+    Rules = [output(primitive(Value)) <- source(Value)],
+    partition_compiler_program(
+        Decls, Rules, compiler_relations(Relations, CompilerRules),
+        RuntimeDecls, RuntimeRules),
+    Relations == [],
+    CompilerRules == [],
+    RuntimeDecls == Decls,
+    RuntimeRules == Rules.
+
 test(recursive_positive_rules_reach_a_set_fixpoint) :-
     Decls = [ compiler_relation(parent/2, 2, []),
               compiler_relation(ancestor/2, 2, []) ],
