@@ -233,7 +233,7 @@ cargo test --features cli            # per extract AGENTS.md gate
 |---|---|---|
 | `$` collision between ast-grep metavar and dl6 hole | parse_dl_dcg.pl:1688-1690 vs language.rs:21-22 | `expando_char='µ'`, citation in code |
 | tree-sitter-dl6 grammar may not parse a `.dl6` file that contains `$X` holes (the grammar has no `$` rule; only the prolog compiler does) | tree-sitter-dl6/grammar.js:129 (variable = `[A-Z]...`, no `$`) vs parse_dl_dcg.pl:1688 | gate a real `.dl6` fixture through `--ast-pattern`; if holes do not parse, flag for human, do not paper over |
-| markdown is text-heavy; expando `z` inside inline text can collide with real lowercase-`z`+uppercase runs | markdown/_0_source.rs:83-103, html.rs:13-15 | test real `.md` headings; accept if matches are correct on fixtures |
+| markdown is text-heavy; expando `µ` inside inline text cannot collide with ASCII identifiers | markdown/_0_source.rs:83-103, html.rs:13-15 | test real `.md` headings; accept if matches are correct on fixtures |
 | prolog `variable` is `[A-Z_]...`, so `µX` (expando) parses as an atom, not a variable | tree-sitter-prolog/grammar.js:204,207 | verify pattern still matches; atom vs variable is fine for a single-node metavar |
 | `pre_process_pattern` is private in ast-grep-language | ast-grep-language lib.rs:79-98 | vendor a small copy into extract_lang.rs, pinned by a unit test |
 
