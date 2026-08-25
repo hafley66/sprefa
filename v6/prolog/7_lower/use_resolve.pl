@@ -19,7 +19,7 @@
 :- use_module(library(readutil), [read_file_to_string/3]).
 :- use_module('parse_dl_dcg', [use_item/3, parse_dl_dcg_entry/5]).
 :- use_module('../0_dot_expand/0_dot_expand', [declared_path/3]).
-:- use_module('../executor_modules',
+:- use_module('executor_modules',
               [split_use_specs/3, bind_executor_modules/3]).
 :- use_module('../1_expansion/0_trace', [run_compile_step/4]).
 
