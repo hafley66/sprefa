@@ -1,6 +1,6 @@
 ---
 created: 2026-08-24
-updated: 2026-08-24
+updated: 2026-08-25
 type: task
 assignee: terra
 status: open
@@ -16,7 +16,7 @@ size: M
 lane: typegraph-core
 lane_seq: 50
 collision: [generic-type-core]
-blocked_by: ['@typegraph-node-edge-view', '@typegraph-member-planes', '@type-pattern-lowering', '@compiler-plane-expression-parity']
+blocked_by: ['@typegraph-node-edge-view', '@typegraph-member-planes', '@type-pattern-lowering', '@compiler-plane-expression-parity', '@compiler-stratified-negation']
 ---
 
 # Define impl concat inherit and extends as user-land relations
