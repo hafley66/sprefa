@@ -17,7 +17,7 @@
                               aggregate_head_template/2]).
 :- use_module('../next/2_lower/strat', [recursive_stratum_groups/2]).
 :- use_module('../0_rel_record', [relplan_parts/6, relplan_columns/3]).
-:- use_module('../lower', [lower_program/2]).
+:- use_module('../next/2_lower/lower', [lower_program/2]).
 :- use_module(library(http/json), [json_write_dict/3]).
 
 fixture_dd_plan_text(FixtureFile, Name, Text) :-

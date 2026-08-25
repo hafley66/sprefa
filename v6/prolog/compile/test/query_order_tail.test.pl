@@ -10,7 +10,7 @@
 :- use_module('../../next/0_parse/parse_dl_dcg', [parse_dl_dcg_entry/5]).
 :- use_module('../../print_dl', [print_dl_program/3]).
 :- use_module('../../compile', [read_fixture_term/4, program_plan/2]).
-:- use_module('../../lower', [lower_program/2, query_order_by_map/3]).
+:- use_module('../../next/2_lower/lower', [lower_program/2, query_order_by_map/3]).
 
 :- dynamic(order_tail_test_dir/1).
 :- prolog_load_context(directory, Here), assertz(order_tail_test_dir(Here)).

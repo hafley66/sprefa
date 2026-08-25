@@ -27,7 +27,7 @@
 :- use_module('../../0_unsupported_messages',
               [ unsupported_inventory/1, unsupported_message_clause_count/1 ]).
 :- use_module('../../next/2_lower/strat', [ stratum_groups/2 ]).
-:- use_module('../../lower',
+:- use_module('../../next/2_lower/lower',
               [ lower_program/2, compile_expr/7, compile_comparison/4,
                 canonical_column_expr/2, level_ref_count_sql/5,
                 column_def/4, ir_column_class/4, uniform_text_encoding/1,
@@ -98,7 +98,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
                 % plan compiles to, asserted by the incremental_mode unit.
                 reconcile_every_tick/2,
                 derived_edge_carry_required/3, retraction_guard/2 ]).
-:- use_module('../../lower', [ boot_statements/7 ]).
+:- use_module('../../next/2_lower/lower', [ boot_statements/7 ]).
 :- use_module('../../compile/4_emit_jsonschema', [ jsonschema_text/3, jsonschema_document/3, option_rows/3 ]).
 :- use_module('../../compile/5_emit_openapi', [ openapi_text/3 ]).
 :- use_module('../../compile/7_emit_ts_types', [ ts_types_text/3 ]).

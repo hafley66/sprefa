@@ -3,8 +3,8 @@
 :- begin_tests(anonymous_sum_values).
 
 :- use_module('../../compile', [program_plan/3]).
-:- use_module('../../lower', [catalog_decl_rows/6]).
-:- use_module('../../lower', [lower_program/2, boot_statements/7]).
+:- use_module('../../next/2_lower/lower', [catalog_decl_rows/6]).
+:- use_module('../../next/2_lower/lower', [lower_program/2, boot_statements/7]).
 :- use_module('../../emit_rust', [emit_program/5]).
 :- use_module('../../emit_ts', [emit_program/5 as emit_ts_program]).
 :- use_module('../4_emit_jsonschema', [option_rows/3, jsonschema_text/3]).

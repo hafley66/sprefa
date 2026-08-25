@@ -14,7 +14,7 @@
 :- use_module(library(lists)).
 :- use_module('../../compile',
               [ read_fixture_term/4, program_plan/3, program_plan/2 ]).
-:- use_module('../../lower', [ lower_program/2, boot_statements/7 ]).
+:- use_module('../../next/2_lower/lower', [ lower_program/2, boot_statements/7 ]).
 :- use_module('../../emit_rust', [ emit_program/5 ]).
 
 :- dynamic(emit_test_dir/1).

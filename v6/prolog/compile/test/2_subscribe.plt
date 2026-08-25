@@ -9,7 +9,7 @@
 :- use_module(library(lists)).
 :- use_module('../../2_subscribe', [ subscribed_rels/4 ]).
 :- use_module('../../compile', [ program_plan/2 ]).
-:- use_module('../../lower', [ lower_program/2, boot_statements/7 ]).
+:- use_module('../../next/2_lower/lower', [ lower_program/2, boot_statements/7 ]).
 :- use_module('../../emit_ts', [ emit_program/5 ]).
 :- use_module('../../next/0_parse/parse_dl_dcg', [ parse_dl/4, parse_dl_file/4 ]).
 :- use_module('../../next/2_lower/analyze', [ declared_refs/2 ]).

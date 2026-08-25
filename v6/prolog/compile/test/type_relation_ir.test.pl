@@ -8,7 +8,7 @@
                 expand_generic_program/2, expand_generic_program_raw/2,
                 expand_generic_program_with_bindings/3,
                 freeze_type_rows/2, normalize_key_wrappers/2 ]).
-:- use_module('../../lower', [ catalog_type_rows/6,
+:- use_module('../../next/2_lower/lower', [ catalog_type_rows/6,
                                catalog_type_relation_rows/3,
                                catalog_type_transport_rows/4,
                                lower_program/2 ]).

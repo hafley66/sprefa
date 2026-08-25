@@ -24,7 +24,7 @@
 
 :- use_module('../../compile', [ program_plan/3, default_intern_mode/1,
                                  read_fixture_term/4 ]).
-:- use_module('../../lower',
+:- use_module('../../next/2_lower/lower',
               [ lower_program/2, boot_statements/7, catalog_decl_rows/6 ]).
 :- use_module('../../emit_ts', [ emit_program/5 ]).
 :- use_module('../../next/2_lower/analyze', [ declared_refs/2, program_refs/2,
