@@ -565,6 +565,8 @@ pub enum SpecifierKind {
     Namespace,
     SideEffect,
     Reexport,
+    Include,
+    ReexportModule,
 }
 
 impl SpecifierKind {
@@ -575,6 +577,8 @@ impl SpecifierKind {
             SpecifierKind::Namespace => "namespace",
             SpecifierKind::SideEffect => "side_effect",
             SpecifierKind::Reexport => "reexport",
+            SpecifierKind::Include => "include",
+            SpecifierKind::ReexportModule => "reexport_module",
         }
     }
 }

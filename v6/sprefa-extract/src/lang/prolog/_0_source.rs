@@ -379,6 +379,8 @@ fn project_directive(
     match name.as_str() {
         "use_module" | "ensure_loaded" | "consult" => import_directive(operand, src, strings, sink),
         "module" => module_declaration(operand, src, strings, sink),
+        "include" => include_directive(operand, src, strings, sink),
+        "reexport" => reexport_directive(operand, src, strings, sink),
         _ => (),
     }
 }
@@ -413,6 +415,67 @@ fn import_directive(
             span: indicator.span,
             name: strings.intern(&indicator.key),
             kind: SpecifierKind::Named,
+            module: Some(module),
+            imported: None,
+        });
+    }
+}
+
+// `include(Path)` pulls file text into the enclosing module at load time. The
+// path IS the specifier and rides `name` with no module (an include names a
+// part, never a module interface).
+fn include_directive(
+    operand: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let mut cursor = operand.walk();
+    let mut arguments = operand.children_by_field_name("argument", &mut cursor);
+    let Some(source) = arguments.next() else {
+        return;
+    };
+    sink.aux.specifiers.push(Specifier {
+        span: span(source),
+        name: strings.intern(text(source, src)),
+        kind: SpecifierKind::Include,
+        module: None,
+        imported: None,
+    });
+}
+
+// `reexport(Path)` loads another module's exported interface; `reexport(Path,
+// List)` narrows that to the named predicates. The one-argument form names no
+// predicate, so the path IS the specifier and rides `name` with no module; the
+// two-argument form keys on (module, name) like a module import.
+fn reexport_directive(
+    operand: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let mut cursor = operand.walk();
+    let mut arguments = operand.children_by_field_name("argument", &mut cursor);
+    let Some(source) = arguments.next() else {
+        return;
+    };
+    let path_text = text(source, src).to_string();
+    let Some(list) = arguments.next() else {
+        sink.aux.specifiers.push(Specifier {
+            span: span(source),
+            name: strings.intern(&path_text),
+            kind: SpecifierKind::ReexportModule,
+            module: None,
+            imported: None,
+        });
+        return;
+    };
+    let module = strings.intern(&path_text);
+    for indicator in predicate_indicators(list, src) {
+        sink.aux.specifiers.push(Specifier {
+            span: indicator.span,
+            name: strings.intern(&indicator.key),
+            kind: SpecifierKind::ReexportModule,
             module: Some(module),
             imported: None,
         });
@@ -759,6 +822,7 @@ impl Source for PrologSource {
 
     fn matches(&self, path: &str) -> bool {
         path.ends_with(".pl")
+            || path.ends_with(".plt")
             || path.ends_with(".pro")
             || path.ends_with(".prolog")
             || path.ends_with(".datalog")
