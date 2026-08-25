@@ -10,7 +10,7 @@
 ## Status
 
 - Issue: `@typegraph-integration-plan`
-- Epic: `@userland-type-graph`
+- Epic: `@relational-semantic-planes`
 - Main at reconnaissance: `2c366a932b8bb18f2a417bd140e8ca4ff87855d1`
 - Temporal source worktree: `/private/tmp/sprefa-temporal-v2`
 - Temporal branch and base: `feature/temporal-relations-v2` at `9e4b468157bb2a189960b8ec69daad10af372862`
@@ -974,7 +974,7 @@ their PL feature semantics do not merge as final architecture.
 
 6. Parallel feature libraries
    member planes + dot-brace -> @userland-dot-projection [medium]
-   member planes + typed annotations -> @userland-constraint-graph [medium]
+   member planes + typed annotations -> @userland-integrity-graph [medium]
    node/edge + member planes + patterns + expression parity
      -> @userland-type-operators [medium]
    integration plan + storage projection -> @quoted-sqlite-storage-names [medium]
@@ -983,14 +983,14 @@ their PL feature semantics do not merge as final architecture.
 
 7. Leaf implementations
    dot projection -> @anonymous-sum-dot-projection [medium]
-   constraint graph -> @sqlite-constraint-emitter [small]
+   integrity graph -> @sqlite-integrity-emitter [small]
    temporal annotations -> @remove-temporal-suffix [small]
 
 8. @retire-type-specialcases [medium]
    remove only predicates whose DL6 replacement has parity receipts
    record before/after call-site counts for every deletion
 
-9. @userland-typegraph-golden [small]
+9. @relational-semantic-planes-golden [small]
    run the complete cross-target fixture and compiler-row erasure gate
 ```
 

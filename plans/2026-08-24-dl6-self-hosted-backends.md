@@ -4,7 +4,7 @@
 
 - Epic: `@dl6-self-hosted-backends`
 - State: deferred research
-- Related foundation: `@userland-type-graph`
+- Related foundation: `@relational-semantic-planes`
 - Implementation authorization: none
 - Current compiler seam: `plan/9 -> lowered/8 + bootstmt/3 -> emit_program/5`
 
@@ -227,4 +227,4 @@ module labs --> measured boundary matrix --> load/reload/cache contract
 - Database migration behavior across dynamically loaded program versions.
 - Trust and sandbox policy for compiler-time DL6 emitter packages.
 
-This epic is research-only and does not block `@userland-type-graph`.
+This epic is research-only and does not block `@relational-semantic-planes`.

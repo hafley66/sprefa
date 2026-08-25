@@ -18,7 +18,7 @@ Current implementation status:
 | User-land derived type construction | implemented | the three `derived_*_request` relations |
 | Canonical compiler storage | implemented internal carrier | `declaration(...)`, `member(...)`, `member_role(...)`, and related rows inside `semantic_type_rows` |
 | Runtime planning | implemented internal carrier | `rel/5` and its column plans |
-| Schema constraint graph | planned by `userland-constraint-graph` | `schema.constraint` and `schema.constraint_member` |
+| Integrity Graph | planned by `relational-semantic-planes` | `integrity.key`, `integrity.unique`, and `integrity.reference` |
 
 The language-facing direction is that every non-primitive construct is
 queryable as relations, nodes, edges, members, and applications. Some compiler
