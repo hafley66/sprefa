@@ -12,7 +12,7 @@
               [ clock_dependencies/2, clock_dependency/8, inferred_clock/4,
                 clock_fact/5, clock_scc/3, clock_violation/2,
                 clock_boundary/2, check_clock_program/1 ]).
-:- use_module('../registry', [clock_role/4]).
+:- use_module('../../next/registry', [clock_role/4]).
 :- use_module('../../compile', [program_plan/2]).
 :- use_module('../../conformance/engine', [check_program/1, run_program/5]).
 :- use_module('3_clock_history',
