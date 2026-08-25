@@ -1,6 +1,6 @@
 :- begin_tests(compiler_relation_value_domains).
 
-:- use_module('../../../0_compiler_relations',
+:- use_module('../../../1_expansion/0_compiler_relations',
               [ partition_compiler_relations/3 ]).
 :- use_module('../../../1_expansion/0_generic_expand',
               [ expand_generic_program_with_bindings/3 ]).

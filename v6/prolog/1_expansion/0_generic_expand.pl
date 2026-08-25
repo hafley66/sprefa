@@ -37,7 +37,7 @@
               [ decl_id/4, primitive_id/2, param_id/4, member_id/4,
                 constraint_id/3, app_id/3, arg_id/3,
                 id_kind_name/3 ]).
-:- use_module('../0_compiler_relations',
+:- use_module('0_compiler_relations',
               [ partition_compiler_program/5,
                 evaluate_compiler_relations/3,
                 compiler_type_apply_requests/3 ]).

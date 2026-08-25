@@ -1,6 +1,6 @@
 :- begin_tests(compiler_relations).
 
-:- use_module('../../0_compiler_relations',
+:- use_module('../../1_expansion/0_compiler_relations',
               [ partition_compiler_relations/3,
                 partition_compiler_program/5,
                 evaluate_compiler_relations/3 ]).
