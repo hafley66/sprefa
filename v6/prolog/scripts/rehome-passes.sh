@@ -57,7 +57,7 @@ for m in "${moves[@]}"; do
   out=$(timeout 60 extract move "$src" "$dst" --commit --state "$STATE" 2>&1); rc=$?
   reps=$(grep -c "^replace" <<<"$out")
   if [ $rc -ne 0 ]; then echo "MOVE $n FAIL rc=$rc $src: $(tail -3 <<<"$out")"; git reset -q --hard $good; git clean -qfd v6/prolog; exit 1; fi
-  load=$(cd v6/prolog && { timeout 60 swipl -g halt -t halt -l compile.pl -l emit_rust.pl 2>&1; timeout 60 swipl -g halt -t halt -l compile.pl -l emit_ts.pl 2>&1; timeout 60 swipl -g halt -t halt -l print_dl.pl -l ARCH.pl 2>&1; } | grep -E "ERROR|Warning" | head -5)
+  load=$(cd v6/prolog && { timeout 60 swipl -g halt -t halt -l compile.pl -l emit_rust.pl 2>&1; timeout 60 swipl -g halt -t halt -l compile.pl -l 8_emit_ts/emit_ts.pl 2>&1; timeout 60 swipl -g halt -t halt -l print_dl.pl -l ARCH.pl 2>&1; } | grep -E "ERROR|Warning" | head -5)
   if [ -n "$load" ]; then echo "MOVE $n LOAD FAIL $src -> $dst (replaces=$reps)"; echo "$load"; git reset -q --hard $good; git clean -qfd v6/prolog; exit 1; fi
   [ -f "$dst" ] || { echo "MOVE $n NO FILE at $dst"; git reset -q --hard $good; git clean -qfd v6/prolog; exit 1; }
   git add -A v6/prolog >/dev/null && git commit -qm "rehome($n): $src -> $dst ($reps importers), by extract move" && echo "MOVE $n ok $src -> $dst replaces=$reps $(git rev-parse --short HEAD)"
