@@ -26,7 +26,7 @@
 :- use_module('../0_negated_guard_expand', []).
 :- use_module('../0_relation_edge_expand', []).
 :- use_module('../0_ast_expand', []).
-:- use_module('../compile_messages',
+:- use_module('compile_messages',
               [ dl6_debug/3, dl6_debugging/1, dl6_program_sizes/3 ]).
 :- use_module('0_trace', [run_compile_step/4]).
 

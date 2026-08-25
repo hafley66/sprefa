@@ -66,7 +66,7 @@
                 capture_phase_measurement/2, statistics_snapshot/1,
                 zero_phase_measurement/1 ]).
 :- use_module('1_expansion/0_generic_expand', [generated_generic_name/1]).
-:- use_module(compile_messages,
+:- use_module('1_expansion/compile_messages',
               [ dl6_debug/3, dl6_debugging/1, dl6_reset_checkpoint/0,
                 dl6_last_checkpoint/1, dl6_program_sizes/3 ]).
 

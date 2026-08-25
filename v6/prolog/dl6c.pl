@@ -24,7 +24,7 @@
 :- use_module(library(lists), [memberchk/2]).
 :- use_module(library(filesex), [directory_file_path/3, make_directory_path/1]).
 :- use_module(compile, [compile_dl6/3]).
-:- use_module(compile_messages, []).
+:- use_module('1_expansion/compile_messages', []).
 :- use_module(emit_ts, []).
 :- use_module(emit_rust, []).
 
