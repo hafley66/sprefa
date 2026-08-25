@@ -48,7 +48,7 @@ Prove common type operators can be ordinary DL6 libraries over canonical graph r
 
 ## Tests Run
 
-Compiler fixpoint, generated relation, recursive graph, and cross-target tests.
+Compiler fixpoint, generated relation, recursive graph, conflict diagnostic, and complete Prolog regression tests.
 
 ## Implementation Notes
 
