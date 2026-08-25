@@ -9,7 +9,7 @@
 
 :- begin_tests(anonymous_type_syntax).
 
-:- use_module('../../compile/parse_dl_dcg', [ parse_dl/4 ]).
+:- use_module('../../7_lower/parse_dl_dcg', [ parse_dl/4 ]).
 :- use_module('../../print_dl', [ print_dl_program/3 ]).
 :- use_module('../../1_expansion/1_expansion', [ expand_program_with_bindings/4 ]).
 :- use_module('../../1_expansion/0_anonymous_expand', [ expand_anonymous_decls/2 ]).

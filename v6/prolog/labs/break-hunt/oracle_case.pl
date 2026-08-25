@@ -10,7 +10,7 @@
 % Run: swipl -q -l oracle_case.pl -g "oracle_case('p.dl6','s.json')" -g halt
 
 :- ensure_loaded('../../conformance/ticklog').
-:- use_module('../../compile/parse_dl_dcg', [parse_dl_file/4]).
+:- use_module('../../7_lower/parse_dl_dcg', [parse_dl_file/4]).
 :- use_module('../../compile/scripts/0_json_arrival', [arrival_column_types/4, schedule_value/5]).
 
 oracle_case(Dl6File, ScheduleFile) :-

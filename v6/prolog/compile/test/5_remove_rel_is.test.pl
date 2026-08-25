@@ -1,6 +1,6 @@
 :- begin_tests(remove_rel_is).
 
-:- use_module('../parse_dl_dcg', [parse_dl/4]).
+:- use_module('../../7_lower/parse_dl_dcg', [parse_dl/4]).
 :- use_module('../../print_dl', [print_dl_program/3]).
 :- use_module('../../1_expansion/0_generic_expand',
               [ expand_generic_program/2,

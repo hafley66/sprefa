@@ -4,7 +4,7 @@
 :- module(scip_namespaces_tests, []).
 
 :- use_module(library(plunit)).
-:- use_module('../parse_dl_dcg', [parse_dl_dcg_entry/5]).
+:- use_module('../../7_lower/parse_dl_dcg', [parse_dl_dcg_entry/5]).
 :- use_module('../../7_lower/use_resolve', [expand_uses/8]).
 :- use_module('../../0_dot_expand/registry',
               [ host_input_contract/3,
