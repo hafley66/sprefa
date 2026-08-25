@@ -45,7 +45,6 @@ moves=(
 "$P/use_resolve.pl $P/7_lower/use_resolve.pl"
 "$P/compile/parse_dl_dcg.pl $P/7_lower/parse_dl_dcg.pl"
 "$P/executor_modules.pl $P/7_lower/executor_modules.pl"
-"$P/compile/0_storage_projection.pl $P/7_lower/0_storage_projection.pl"
 "$P/emit_ts.pl $P/8_emit_ts/emit_ts.pl"
 "$P/compile/scripts/0_json_arrival.pl $P/9_json_arrival/0_json_arrival.pl"
 "$P/diag.pl $P/10_diag/diag.pl"
