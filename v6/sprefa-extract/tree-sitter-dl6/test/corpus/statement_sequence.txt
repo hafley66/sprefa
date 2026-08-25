@@ -1,0 +1,116 @@
+==================
+repeated facts keep the rule that follows them
+==================
+
+shape(widget).
+shape(gadget).
+
+seen(Type) <-
+  shape(Type).
+
+---
+
+(source_file
+  (statement
+    (fact
+      (atom
+        (path
+          (identifier))
+        (expression
+          (identifier)))))
+  (statement
+    (fact
+      (atom
+        (path
+          (identifier))
+        (expression
+          (identifier)))))
+  (statement
+    (rule
+      (atom
+        (path
+          (identifier))
+        (expression
+          (variable)))
+      (goal_list
+        (expression
+          (atom
+            (path
+              (identifier))
+            (expression
+              (variable))))))))
+
+==================
+a dotted relation path reads as one call
+==================
+
+derived(Name) <-
+  type.member(_, Source, Name).
+
+---
+
+(source_file
+  (statement
+    (rule
+      (atom
+        (path
+          (identifier))
+        (expression
+          (variable)))
+      (goal_list
+        (expression
+          (atom
+            (path
+              (identifier)
+              (member_access))
+            (expression
+              (variable))
+            (expression
+              (variable))
+            (expression
+              (variable))))))))
+
+==================
+a fact carries a dotted path argument
+==================
+
+type.member(widget.size).
+
+---
+
+(source_file
+  (statement
+    (fact
+      (atom
+        (path
+          (identifier)
+          (member_access))
+        (expression
+          (member_expression
+            (identifier)
+            (member_access)))))))
+
+==================
+a clause terminator never joins two paths
+==================
+
+edge(left).
+edge(right).
+
+---
+
+(source_file
+  (statement
+    (fact
+      (atom
+        (path
+          (identifier))
+        (expression
+          (identifier)))))
+  (statement
+    (fact
+      (atom
+        (path
+          (identifier))
+        (expression
+          (identifier))))))

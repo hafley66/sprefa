@@ -14,12 +14,6 @@ module.exports = grammar({
   word: $ => $.identifier,
 
   conflicts: $ => [
-    [$.fact, $.expression],
-    [$.named_argument, $.object_pair],
-    [$.path, $.atom],
-    [$.field, $.column],
-    [$.field, $.named_argument],
-    [$.sum_variant, $.atom],
     [$.object_pattern, $.json_object],
     [$.list, $.json_array],
     [$.json_value, $.literal],
@@ -76,6 +70,7 @@ module.exports = grammar({
       $.unary_expression,
       $.member_expression,
       $.atom,
+      $.identifier,
       $.json_literal,
       $.object_pattern,
       $.list,
@@ -102,7 +97,7 @@ module.exports = grammar({
     ),
 
     unary_expression: $ => prec(PREC.unary, seq(choice("-", "+"), $.expression)),
-    member_expression: $ => prec(PREC.call, seq($.variable, repeat1($.member_access))),
+    member_expression: $ => prec(PREC.call, seq(choice($.identifier, $.variable), repeat1($.member_access))),
     member_access: $ => token.immediate(/\.[A-Za-z_][A-Za-z0-9_]*/),
     parenthesized_expression: $ => seq("(", $.expression, ")"),
 
@@ -119,7 +114,10 @@ module.exports = grammar({
     list: $ => seq("[", optional(choice($.spread_element, seq($.expression, repeat(seq(",", $.expression))))), "]"),
     spread_element: $ => seq("...", $.expression),
 
-    path: $ => seq($.identifier, repeat(seq(".", $.identifier))),
+    // The DCG accepts a path dot only when an identifier follows it with no
+    // gap (parse_dl_dcg.pl dot_then_ident//0), which is what keeps a
+    // clause-terminating "." out of the path.
+    path: $ => seq($.identifier, repeat($.member_access)),
     literal: $ => choice($.float, $.integer, $.string, $.quoted_atom, $.boolean),
     integer: $ => /[0-9]+/,
     float: $ => /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?/,
