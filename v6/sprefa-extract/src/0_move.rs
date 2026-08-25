@@ -224,7 +224,10 @@ struct SpecRows {
 /// `module`, so that range is recovered by scanning back for the last whole token.
 fn specifiers(path: &Path, text: &str) -> SpecRows {
     let display = path.display().to_string();
-    let output = PrologSource.extract(&display, text.as_bytes(), FamilyMask::ALL);
+    // Only the call family carries specifier rows; the cst, type and df
+    // projections cost a third of the corpus wall and feed nothing here.
+    let mask = FamilyMask { call: true, ..FamilyMask::NONE };
+    let output = PrologSource.extract(&display, text.as_bytes(), mask);
     let mut paths: Vec<PathSpec> = Vec::new();
     let mut module = None;
     let Some(call) = output.call.as_ref() else {
