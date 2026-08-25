@@ -2067,10 +2067,12 @@ plane_kind(expand). plane_kind(dred). plane_kind(avg_accumulator).
 % six level-statement families must mint in step with their DDL mint sites, so
 % the count is the rail's twin, not a fresh check over different rows.
 % Re-measured against the fixture corpus after each fixture change. Name-path
-% nesting removes four implicit parent-reference planes (192/1636/1636).
+% nesting removes four implicit parent-reference planes; lowering the rel/0
+% fixture adds its unit-row refcount planes in every corpus mode
+% (192/1648/1648).
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-192, refcount-1636, refcount_staging-1636,
+    Counts = [scope-192, refcount-1648, refcount_staging-1648,
               expand-56, dred-84, avg_accumulator-8].
 
 corpus_plane_kind_counts(Counts) :-
@@ -7371,12 +7373,11 @@ test(a_column_less_nested_rel_prints_at_its_path) :-
     once(sub_atom(Text, _, _, _, 'rel orchard.flag().')),
     Program =@= RoundTripped.
 
-% A root rel/0 now reaches analysis and receives its unit-row table plan. The
-% remaining runtime SQL work is pinned at the lowering boundary: delta and
-% frontier statements still need their zero-payload spellings.
+% A root rel/0 reaches analysis and lowers its logical unit tuple through the
+% base, delta, frontier, and final-select storage paths.
 % rx: a rel/0 is a proposition, so its stream carries the unit tuple and reads
 % as isEmpty()/defaultIfEmpty() rather than as a row set.
-test(a_root_rel_zero_reaches_its_unit_storage_plan) :-
+test(a_root_rel_zero_lowers_its_unit_storage_plan) :-
     parsed_zero_arity_program(
         'rel foo().\nrel seed(n: int).\nfoo() <- seed(1).', Decls, Rules),
     memberchk(kind(foo/0, set), Decls),
@@ -7385,7 +7386,78 @@ test(a_root_rel_zero_reaches_its_unit_storage_plan) :-
     Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
     relplan_of(RelPlans, foo/0, rel(foo/0, _, set, [], none)),
     analyze:rel_columns(Rules, [], foo/0, []),
-    \+ lower_program(Plan, _).
+    once(lower_program(Plan,
+        lowered(_, Ddl, _, _, LevelStatements, DeltaStatements, _, _))),
+    memberchk('CREATE TABLE "root_rel_zero_foo" ("__id" INTEGER PRIMARY KEY, "__unit" INTEGER NOT NULL DEFAULT 1 CHECK ("__unit" = 1), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("__unit"))', Ddl),
+    memberchk(levelstmt(foo/0, _, Inserts, IncrementalInsert, _, _, _),
+              LevelStatements),
+    Inserts == ['INSERT OR IGNORE INTO "root_rel_zero_foo" ("__unit") SELECT 1 AS "__unit" FROM "root_rel_zero_seed_3338e489bec5" b0 WHERE b0."n" = 1'],
+    IncrementalInsert == 'INSERT OR IGNORE INTO "root_rel_zero_foo" ("__unit") SELECT DISTINCT 1 AS "__unit" FROM "__frontier_root_rel_zero_seed_3338e489bec5" d0 WHERE d0."_phase" >= 0 AND d0."n" = 1 RETURNING "__unit"',
+    memberchk(deltastmt(foo/0,
+                        'SELECT t."__unit" FROM "root_rel_zero_foo" t',
+                        '__delta_root_rel_zero_foo', _, _),
+              DeltaStatements).
+
+test(a_root_rel_zero_has_complete_arrival_sql) :-
+    parsed_zero_arity_program('rel foo().', Decls, Rules),
+    once(program_plan(
+        fixture(zero_rel_doors, prog(Decls, Rules), [foo],
+                [[+foo], [-foo]], [])-[],
+        [intern(dict)], Plan)),
+    Plan = plan(_, _, Types, RelPlans, _, _, _, _, Mode),
+    once(lower_program(Plan,
+        lowered(_, _, ArrivalStatements, _, LevelStatements, _, _, _))),
+    ArrivalStatements ==
+        [arrivalstmt(foo/0, set,
+          'INSERT OR IGNORE INTO "zero_rel_doors_foo_28ed6a9b36dd" ("__unit") VALUES (1)',
+          'DELETE FROM "zero_rel_doors_foo_28ed6a9b36dd" WHERE "__unit" = 1',
+          'INSERT OR IGNORE INTO "zero_rel_doors_foo_28ed6a9b36dd" ("__unit") SELECT 1 FROM json_each(?) RETURNING "__unit"',
+          'DELETE FROM "zero_rel_doors_foo_28ed6a9b36dd" WHERE "__unit" = 1 AND EXISTS (SELECT 1 FROM json_each(?)) RETURNING "__unit"')],
+    once(boot_statements(Mode, Decls, Types, RelPlans, [foo], LevelStatements,
+                         BootStatements)),
+    BootStatements ==
+        [bootstmt(foo,
+          'INSERT OR IGNORE INTO "zero_rel_doors_foo_28ed6a9b36dd" ("__unit") VALUES (1)',
+          [])].
+
+test(a_root_log_rel_zero_has_complete_arrival_sql) :-
+    Decls = [kind(foo/0, log), keep(foo/0, all)],
+    once(program_plan(
+        fixture(arrival_log_rel_zero, prog(Decls, []), [foo],
+                [[+foo]], [])-[],
+        [intern(dict)], Plan)),
+    Plan = plan(_, _, Types, RelPlans, _, _, _, _, Mode),
+    once(lower_program(Plan,
+        lowered(_, _, ArrivalStatements, _, LevelStatements, _, _, _))),
+    ArrivalStatements ==
+        [arrivalstmt(foo/0, log,
+          'INSERT INTO "arrival_log_rel_zero_foo_63d9a9624323" ("__unit") VALUES (1)',
+          none,
+          'INSERT INTO "arrival_log_rel_zero_foo_63d9a9624323" ("__unit") SELECT 1 FROM json_each(?) RETURNING "__unit"',
+          none)],
+    once(boot_statements(Mode, Decls, Types, RelPlans, [foo], LevelStatements,
+                         BootStatements)),
+    BootStatements ==
+        [bootstmt(foo,
+          'INSERT INTO "arrival_log_rel_zero_foo_63d9a9624323" ("__unit") VALUES (1)',
+          [])].
+
+test(a_root_rel_zero_edge_head_uses_the_unit_payload) :-
+    parsed_zero_arity_program(
+        'rel trigger(n: int) log keep(all).\nrel foo().\nfoo() <+ trigger(N).',
+        Decls, Rules),
+    once(program_plan(
+        fixture(edge_rel_zero, prog(Decls, Rules), [],
+                [[+trigger(1)]], [])-[],
+        [intern(dict)], Plan)),
+    once(lower_program(Plan,
+        lowered(_, _, _, EdgeStatements, _, _, _, _))),
+    EdgeStatements ==
+        [edgestmt(foo/0, trigger/1, [], [],
+          'SELECT 1 AS "__unit"',
+          'INSERT OR IGNORE INTO "edge_rel_zero_foo" ("__unit") VALUES (1)',
+          'SELECT 1 AS "__unit" FROM "__frontier_edge_rel_zero_trigger_791227a13df6" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"',
+          arrival, edgeinterns([], []))].
 
 :- end_tests(rel_zero_arity).
 

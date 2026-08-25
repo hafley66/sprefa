@@ -1429,7 +1429,8 @@ incremental_level_statement_entry_line(RelPlans, CyclicHeadGroups,
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     quoted_string_array_text(HeadColumns, ColumnsText),
     optional_sql_template(DeltaInsertSql, DeltaInsertTemplate),
-    maplist(quote_ident_local, HeadColumns, QuotedHeadColumns),
+    emitted_storage_columns(HeadColumns, StorageHeadColumns),
+    maplist(quote_ident_local, StorageHeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
     format(atom(SelectSql), 'SELECT ~w FROM "~w"', [HeadColumnsSql, HeadStorageName]),
     js_template(SelectSql, SelectTemplate),
@@ -1452,6 +1453,9 @@ incremental_level_statement_entry_line(RelPlans, CyclicHeadGroups,
             SelectTemplate, RecomputeTemplate, RefCountText, ExpandText,
             DredText, FixpointIrText, AggregateText, InternField,
             SupportInternField, SupportCountField, RecursionGroupField]).
+
+emitted_storage_columns([], ['__unit']) :- !.
+emitted_storage_columns(Columns, Columns).
 
 % Absent under frontier(per_rel), so the field itself never renders and a
 % per-rel module keeps its bytes.

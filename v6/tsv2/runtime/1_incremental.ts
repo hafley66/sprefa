@@ -204,6 +204,9 @@ function keyed_rows_sql(
   statement: IIncrementalEdgeStatement,
   row_count: number,
 ): string {
+  if (statement.head_columns.length === 0) {
+    return `SELECT "__unit" FROM ${quote_identifier(statement.head_table_name)} WHERE "__unit" = 1`;
+  }
   const columns = statement.head_columns.map(quote_identifier);
   const key_columns = statement.key_indices.map((index) => columns[index]!);
   return `SELECT ${columns.join(", ")} FROM ${quote_identifier(statement.head_table_name)} WHERE (${key_columns.join(", ")}) IN (${values_sql(row_count, key_columns.length)})`;
@@ -229,6 +232,12 @@ function keyed_write_statement(
   statement: IIncrementalEdgeStatement,
   rows: readonly IRow[],
 ): SqlStatement {
+  if (statement.head_columns.length === 0) {
+    return {
+      sql: `INSERT OR IGNORE INTO ${quote_identifier(statement.head_table_name)} ("__unit") VALUES (1)`,
+      args: [],
+    };
+  }
   const columns = statement.head_columns.map(quote_identifier);
   const key_columns = statement.key_indices.map((index) => columns[index]!);
   const key_index_set = new Set(statement.key_indices);
@@ -248,6 +257,12 @@ function log_write_statement(
   statement: IIncrementalEdgeStatement,
   rows: readonly IRow[],
 ): SqlStatement {
+  if (statement.head_columns.length === 0) {
+    return {
+      sql: `INSERT INTO ${quote_identifier(statement.head_table_name)} ("__unit") VALUES ${rows.map(() => "(1)").join(", ")}`,
+      args: [],
+    };
+  }
   const columns = statement.head_columns.map(quote_identifier);
   return {
     sql: `INSERT INTO ${quote_identifier(statement.head_table_name)} (${columns.join(", ")}) VALUES ${values_sql(rows.length, columns.length)}`,

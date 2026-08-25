@@ -289,8 +289,9 @@ shared_frontier_view_ddl(Ref, Columns, [FrontierView, NextFrontierView]) :-
     quote_ident(FrontierName, QuotedFrontierName),
     next_frontier_table_name(Ref, NextName),
     quote_ident(NextName, QuotedNextName),
+    storage_row_columns(Columns, StorageColumns),
     findall(Part,
-            ( member(Column, Columns),
+            ( member(Column, StorageColumns),
               quote_ident(Column, QuotedColumn),
               format(atom(Part), 't.~w AS ~w', [QuotedColumn, QuotedColumn]) ),
             Parts),
@@ -304,6 +305,16 @@ shared_frontier_view_ddl(Ref, Columns, [FrontierView, NextFrontierView]) :-
 
 table_name(Ref, Table) :-
     ( physical_storage_name(Ref, Table) -> true ; Ref = Table/_ ).
+
+% A rel/0 carries one logical value: the unit tuple. SQLite requires every
+% stored row and every SELECT projection to have a physical column, so the
+% lowering plane represents that tuple with one compiler-owned integer. The
+% runtime still receives Columns=[] and maps each returned physical row to [].
+storage_row_columns([], ['__unit']) :- !.
+storage_row_columns(Columns, Columns).
+
+storage_row_types([], [int]) :- !.
+storage_row_types(Types, Types).
 
 delta_table_name(Ref, DeltaTable) :-
     table_name(Ref, Table),
@@ -345,7 +356,8 @@ trigger_read_mode(_, Mode, Mode).
 departure_read_sql(Ref, Columns, Sql) :-
     departure_frontier_table_name(Ref, DepartureTable),
     quote_ident(DepartureTable, QuotedDepartureTable),
-    maplist(quote_ident, Columns, QuotedColumns),
+    storage_row_columns(Columns, StorageColumns),
+    maplist(quote_ident, StorageColumns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
     format(atom(Sql), 'SELECT ~w FROM ~w ORDER BY "_phase", "_sequence"',
            [ColumnsSql, QuotedDepartureTable]).
@@ -2770,9 +2782,13 @@ head_select_list(Mode, ColumnTypes, Head, Bound, ColumnAliases, SelectExprs,
             InternGroups),
     append(InternGroups, Interns),
     partition_head_interns(Interns, BuiltValues, ListInterns),
-    ( is_list(ColumnAliases)
-    -> maplist(alias_select_expr, SelectExprs0, ColumnAliases, SelectExprs)
-    ; SelectExprs = SelectExprs0
+    (   Args == []
+    ->  UnitExprs = ['1'], UnitAliases = ['__unit']
+    ;   UnitExprs = SelectExprs0, UnitAliases = ColumnAliases
+    ),
+    ( is_list(UnitAliases)
+    -> maplist(alias_select_expr, UnitExprs, UnitAliases, SelectExprs)
+    ; SelectExprs = UnitExprs
     ).
 
 head_column_expr(Mode, Bound, Arg, ColumnType, SelectExpr, Interns) :-
@@ -3100,8 +3116,10 @@ rel_ddl(Mode, _, _, _, _, RelPlan, Ddls) :-
     relplan_parts(RelPlan, Ref, log, Columns, _, ColumnTypes),
     !,
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
-    maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
+    storage_row_columns(Columns, StorageColumns),
+    storage_row_types(ColumnTypes, StorageColumnTypes),
+    maplist(quote_ident, StorageColumns, QuotedColumns),
+    maplist(column_def(Mode), QuotedColumns, StorageColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     % Plain rowid table (no PK, no WITHOUT ROWID): a Log rel's duplicate rows
     % are distinct occurrences (engine.pl q1) and must physically coexist as
@@ -3113,12 +3131,14 @@ rel_ddl(Mode, Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
         RelPlan, Ddls) :-
     relplan_parts(RelPlan, Ref, set, Columns, KeyOrNone, ColumnTypes),
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
-    maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
+    storage_row_columns(Columns, StorageColumns),
+    storage_row_types(ColumnTypes, StorageColumnTypes),
+    maplist(quote_ident, StorageColumns, QuotedColumns),
+    maplist(column_def(Mode), QuotedColumns, StorageColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     atomic_list_concat(QuotedColumns, ', ', SelectColumnsSql),
     ( set_rel_pk_sql(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs,
-                     Columns, PkSql) ),
+                     StorageColumns, PkSql) ),
     ( memberchk(Ref, LevelHeadedRefs)
     -> RefCountColumn = ', "__refcount" INTEGER NOT NULL DEFAULT 1',
        RefCountPassThrough = ['__refcount']
@@ -3157,6 +3177,8 @@ rel_ddl(Mode, Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
 % so it always falls through to text here, matching the ruling's flat-punt:
 % compound-term columns stay inline-flat text, never their own storage
 % type).
+column_def(_, '"__unit"', int,
+           '"__unit" INTEGER NOT NULL DEFAULT 1 CHECK ("__unit" = 1)') :- !.
 column_def(_, QuotedColumn, int, Def) :- !,
     atomic_list_concat([QuotedColumn, ' INTEGER NOT NULL'], Def).
 column_def(_, QuotedColumn, bool, Def) :- !,
@@ -3960,6 +3982,15 @@ incremental_json_select_exprs_from(N, Index, [Expr | More]) :-
 
 arrival_statement(RelPlan,
                   arrivalstmt(Ref, log, AddSql, none, IncrementalAddSql, none)) :-
+    relplan_parts(RelPlan, Ref, log, [], _, _),
+    !,
+    table_name(Ref, Table), quote_ident(Table, QuotedTable),
+    format(atom(AddSql), 'INSERT INTO ~w ("__unit") VALUES (1)', [QuotedTable]),
+    format(atom(IncrementalAddSql),
+           'INSERT INTO ~w ("__unit") SELECT 1 FROM json_each(?) RETURNING "__unit"',
+           [QuotedTable]).
+arrival_statement(RelPlan,
+                  arrivalstmt(Ref, log, AddSql, none, IncrementalAddSql, none)) :-
     relplan_parts(RelPlan, Ref, log, Columns, _, _),
     !,
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
@@ -3971,6 +4002,21 @@ arrival_statement(RelPlan,
                         ') VALUES (', PlaceholdersSql, ')'], AddSql),
     incremental_arrival_add_sql('INSERT INTO', '', QuotedTable, ColumnsSql, QuotedColumns,
                                 IncrementalAddSql).
+arrival_statement(RelPlan,
+                  arrivalstmt(Ref, set, AddSql, DelSql, IncrementalAddSql, IncrementalDelSql)) :-
+    relplan_parts(RelPlan, Ref, set, [], _, _),
+    !,
+    table_name(Ref, Table), quote_ident(Table, QuotedTable),
+    format(atom(AddSql),
+           'INSERT OR IGNORE INTO ~w ("__unit") VALUES (1)',
+           [QuotedTable]),
+    format(atom(DelSql), 'DELETE FROM ~w WHERE "__unit" = 1', [QuotedTable]),
+    format(atom(IncrementalAddSql),
+           'INSERT OR IGNORE INTO ~w ("__unit") SELECT 1 FROM json_each(?) RETURNING "__unit"',
+           [QuotedTable]),
+    format(atom(IncrementalDelSql),
+           'DELETE FROM ~w WHERE "__unit" = 1 AND EXISTS (SELECT 1 FROM json_each(?)) RETURNING "__unit"',
+           [QuotedTable]).
 arrival_statement(RelPlan,
                   arrivalstmt(Ref, set, AddSql, DelSql, IncrementalAddSql, IncrementalDelSql)) :-
     relplan_parts(RelPlan, Ref, set, Columns, KeyOrNone, _),
@@ -4162,8 +4208,10 @@ edge_statement_single(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     rel_ref(TriggerAtom, TriggerRef),
     rel_ref(Head, HeadRef),
     relplan_kind(RelPlans, HeadRef, HeadKind),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
     ( HeadKind == set
-    -> ( relplan_key(RelPlans, HeadRef, key(KeyPositions)) -> true
+    -> ( HeadColumns == [] -> KeyPositions = []
+       ; relplan_key(RelPlans, HeadRef, key(KeyPositions)) -> true
        ; throw(unsupported_construct(edge_into_unkeyed_set(HeadRef))) )
     ; true  % log: no key concept, KeyPositions unused below
     ),
@@ -4194,7 +4242,6 @@ edge_statement_single(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     append([PositiveWhereTexts, GuardWhereTexts, NegWhereTexts], WhereTexts),
     ( FromParts == [] -> FromSql = none ; from_parts_sql(FromParts, FromSql) ),
     ( WhereTexts == [] -> WhereSql = none ; atomic_list_concat(WhereTexts, ' AND ', WhereSql) ),
-    relplan_columns(RelPlans, HeadRef, HeadColumns),
     relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
     % Aliased AS HeadColumns (not `none`, unlike a level rule's SELECT,
     % which has an explicit INSERT column list and does not need aliases):
@@ -4228,7 +4275,16 @@ edge_statement_single(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
     length(HeadColumns, ColumnCount), placeholders(ColumnCount, ValuePlaceholders),
     atomic_list_concat(ValuePlaceholders, ', ', ValuePlaceholdersSql),
-    ( HeadKind == log
+    ( HeadColumns == [], HeadKind == log
+    -> KeyColumns = [],
+       format(atom(WriteSql), 'INSERT INTO ~w ("__unit") VALUES (1)',
+              [QuotedHeadTable])
+    ; HeadColumns == []
+    -> KeyColumns = [],
+       format(atom(WriteSql),
+              'INSERT OR IGNORE INTO ~w ("__unit") VALUES (1)',
+              [QuotedHeadTable])
+    ; HeadKind == log
     -> KeyColumns = [],
        format(atom(WriteSql), 'INSERT INTO ~w (~w) VALUES (~w)',
               [QuotedHeadTable, HeadColumnsSql, ValuePlaceholdersSql])
@@ -5032,7 +5088,8 @@ level_ref_count_sql(Mode, RelPlans, HeadRef, Rules,
     quote_ident(FrontierTable, QuotedFrontierTable),
     next_frontier_table_name(HeadRef, NextFrontierTable),
     quote_ident(NextFrontierTable, QuotedNextFrontierTable),
-    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    relplan_columns(RelPlans, HeadRef, LogicalHeadColumns),
+    storage_row_columns(LogicalHeadColumns, HeadColumns),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
     qualified_column_list(HeadColumns, n, NewColumnsSql),
@@ -5966,7 +6023,10 @@ level_ref_count_arm(Mode, RelPlans, Rule, RefCountArm, InternSqls) :-
 % (scoped-delta insert + recompute) so the SQLite grammar fact lives once.
 ref_count_group_exprs(Mode, Head, Bound, GroupExprs) :-
     Head =.. [_ | Args],
-    maplist(group_expr(Mode, Bound), Args, GroupExprs).
+    (   Args == []
+    ->  GroupExprs = ['(1 + 0)']
+    ;   maplist(group_expr(Mode, Bound), Args, GroupExprs)
+    ).
 
 group_expr(Mode, Bound, Arg, GroupExpr) :-
     compile_expr(Mode, identity, Arg, Bound, Sql, _Type, _Encoding),
@@ -6000,7 +6060,8 @@ level_insert_statements(Mode, RelPlans, HeadRef, Rule, Statements) :-
 
 level_insert_sql(Mode, RelPlans, HeadRef, (Head <- Body), InsertSql, InternSqls) :-
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
-    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    relplan_columns(RelPlans, HeadRef, LogicalHeadColumns),
+    storage_row_columns(LogicalHeadColumns, HeadColumns),
     relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
     body_ref_uses(Body, Uses),
     include(is_positive_use, Uses, PosUses),
@@ -6547,7 +6608,8 @@ aggregate_group_positions(Template, Positions) :-
 level_delta_insert_sql(Mode, RelPlans, HeadRef, Rules, DeltaInsertSql, InternSqls) :-
     table_name(HeadRef, HeadTable),
     quote_ident(HeadTable, QuotedHeadTable),
-    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    relplan_columns(RelPlans, HeadRef, LogicalHeadColumns),
+    storage_row_columns(LogicalHeadColumns, HeadColumns),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
     level_rules_delta_arms(Mode, RelPlans, Rules, 0, DeltaArms, CteSqls,
@@ -6889,10 +6951,13 @@ is_negative_use(use(_, _, neg, _)).
 delta_statement(Mode, RelPlan,
                 deltastmt(Ref, SelectSql, DeltaTable, BoundarySql, StoredSelectSql)) :-
     relplan_parts(RelPlan, Ref, _Kind, Columns, _, ColumnTypes),
+    storage_row_columns(Columns, StorageColumns),
+    storage_row_types(ColumnTypes, StorageColumnTypes),
     table_name(Ref, Table),
     text_read_table(Mode, Table, ColumnTypes, ReadTable),
     quote_ident(ReadTable, QuotedTable),
-    maplist(canonical_column_expr, Columns, ColumnTypes, ColumnExprs),
+    maplist(canonical_column_expr, StorageColumns, StorageColumnTypes,
+            ColumnExprs),
     atomic_list_concat(ColumnExprs, ', ', ColumnsSql),
     % Alias `t`: canonical_column_expr/3's render subqueries qualify the outer
     % row with it, so both reads below must supply it.
@@ -6902,14 +6967,14 @@ delta_statement(Mode, RelPlan,
     delta_table_name(Ref, DeltaTable),
     text_read_table(Mode, DeltaTable, ColumnTypes, DeltaReadTable),
     quote_ident(DeltaReadTable, QuotedDeltaTable),
-    maplist(quote_ident, Columns, QuotedColumns),
+    maplist(quote_ident, StorageColumns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', GroupColumnsSql),
     quote_ident(Table, QuotedStoredTable),
     format(atom(StoredSelectSql), 'SELECT ~w FROM ~w',
            [GroupColumnsSql, QuotedStoredTable]),
     % The joined view carries its own "list_id", so the grouping columns and
     % the sign name the outer row explicitly.
-    maplist(qualified_outer_column, Columns, QualifiedColumns),
+    maplist(qualified_outer_column, StorageColumns, QualifiedColumns),
     atomic_list_concat(QualifiedColumns, ', ', QualifiedGroupSql),
     format(atom(BoundarySql),
            'SELECT ~w, t."_sign" AS "__sign", count(*) AS "__count" FROM ~w t~w WHERE t."_sign" IN (-1, 1) GROUP BY ~w, t."_sign"',
@@ -7093,8 +7158,11 @@ departure_frontier_ddl(Ref, Columns, ColumnTypes, [TableDdl]) :-
     departure_frontier_table_name(Ref, DepartureTable),
     quote_ident(DepartureTable, QuotedDepartureTable),
     trigger_read_mode(departure, dict, FrontierMode),
-    maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def(FrontierMode), QuotedColumns, ColumnTypes, ColumnDefs),
+    storage_row_columns(Columns, StorageColumns),
+    storage_row_types(ColumnTypes, StorageColumnTypes),
+    maplist(quote_ident, StorageColumns, QuotedColumns),
+    maplist(column_def(FrontierMode), QuotedColumns, StorageColumnTypes,
+            ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     format(atom(TableDdl),
            'CREATE TEMP TABLE ~w ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
@@ -7124,8 +7192,10 @@ delta_ddl(Mode, RelPlan, Ddls) :-
     relplan_parts(RelPlan, Ref, _Kind, Columns, _, ColumnTypes),
     delta_table_name(Ref, DeltaTable),
     quote_ident(DeltaTable, QuotedDeltaTable),
-    maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
+    storage_row_columns(Columns, StorageColumns),
+    storage_row_types(ColumnTypes, StorageColumnTypes),
+    maplist(quote_ident, StorageColumns, QuotedColumns),
+    maplist(column_def(Mode), QuotedColumns, StorageColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     atomic_list_concat(['CREATE TEMP TABLE ', QuotedDeltaTable,
                         ' ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ',
@@ -7226,8 +7296,10 @@ ref_count_head_ddl(Mode, RelPlans, HeadRef, [Ddl, NewDdl, ZeroIndexDdl]) :-
     quote_ident(HeadTable, QuotedHeadTable),
     relplan_columns(RelPlans, HeadRef, Columns),
     relplan_column_types(RelPlans, HeadRef, ColumnTypes),
-    maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
+    storage_row_columns(Columns, StorageColumns),
+    storage_row_types(ColumnTypes, StorageColumnTypes),
+    maplist(quote_ident, StorageColumns, QuotedColumns),
+    maplist(column_def(Mode), QuotedColumns, StorageColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     atomic_list_concat(QuotedColumns, ', ', PrimaryKeySql),
     format(atom(Ddl),
@@ -7370,6 +7442,11 @@ boot_rows_statements(Mode, Decls, Types, Insert, Ref, Columns, ColumnTypes, Init
 % ref parameter is a `SELECT "__id" ... WHERE <declared key>` subquery rather
 % than a bind. Arrivals take the same shape at runtime; this is the same plan
 % with the values known at compile time.
+boot_row_statements(_, _, _, Insert, Ref, [], [], [],
+                    [bootstmt(Sql, [])]) :-
+    !,
+    table_name(Ref, Table), quote_ident(Table, QuotedTable),
+    format(atom(Sql), '~w ~w ("__unit") VALUES (1)', [Insert, QuotedTable]).
 boot_row_statements(Mode, Decls, Types, Insert, Ref, Columns, ColumnTypes, Values, Statements) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
