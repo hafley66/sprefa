@@ -29,7 +29,7 @@
 % term-door bind_decl path the resident runtime still walks keeps its executor.
 bind_executor(interval, live_interval).
 bind_executor(watch,    live_watch).
-:- use_module('0_option_expand', [option_enum_name/2]).
+:- use_module('1_expansion/0_option_expand', [option_enum_name/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

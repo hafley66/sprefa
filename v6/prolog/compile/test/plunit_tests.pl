@@ -53,7 +53,7 @@
                 relplan_reference_targets/2 ]).
 :- use_module('../../0_dot_expand/0_dot_expand', [ expand_dot_in_context/3 ]).
 :- use_module('../../1_expansion/0_enum_expand', [ expand_enum_program/2 ]).
-:- use_module('../../0_option_expand', [ expand_option_program/2 ]).
+:- use_module('../../1_expansion/0_option_expand', [ expand_option_program/2 ]).
 :- use_module('../../0_generic_expand',
               [ expand_generic_program/2, expand_generic_program_raw/2,
                 canonical_type_name/2, generic_type_ir/2 ]).
