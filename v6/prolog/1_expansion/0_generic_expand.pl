@@ -65,7 +65,7 @@
 
 :- include('generic_expand/6_type_conformance.pl').
 
-:- include('../0_generic_expand/7_generic_instances.pl').
+:- include('generic_expand/7_generic_instances.pl').
 
 :- include('../0_generic_expand/8_type_rewrite.pl').
 
