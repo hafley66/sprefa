@@ -338,6 +338,13 @@ compiler_type_source_signature(derived_member_request/4,
                                [type, int, text, type]).
 compiler_type_source_signature(derived_member_role_request/4,
                                [type, int, text, semantic]).
+compiler_type_source_signature(type__node/3,
+                               [semantic, text, semantic]).
+compiler_type_source_signature(type__edge/6,
+                               [semantic, semantic, text, semantic, semantic,
+                                semantic]).
+compiler_type_source_signature(type__path/2,
+                               [semantic, semantic]).
 
 elaborate_compiler_argument(Decls, Bindings, Domain0, Argument, Elaborated) :-
     compiler_argument_domain(Domain0, Domain),
@@ -458,7 +465,9 @@ compiler_type_source_rows(Decls, Relations, Rows) :-
             ( member(compiler_relation(Ref, _, _), Relations),
               compiler_type_transport_source_row(Decls, Ref, Row) ),
             TransportRows),
-    append(CanonicalRows, TransportRows, Rows0),
+    type_graph_compiler_source_rows(Decls, SemanticRows, Relations,
+                                    TypeGraphRows),
+    append([CanonicalRows, TransportRows, TypeGraphRows], Rows0),
     sort(Rows0, Rows).
 
 compiler_type_source_row(Rows, type_decl/4,

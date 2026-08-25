@@ -9,7 +9,9 @@ expand_generic_program(Program, Expanded) :-
 
 expand_generic_program_with_bindings(prog(Decls0, Rules0), Bindings,
                                      Expanded) :-
-    resolve_relation_paths(Decls0, Rules0, ResolvedRules),
+    compiler_builtin_path_decls(BuiltinPathDecls),
+    append(Decls0, BuiltinPathDecls, ResolutionDecls),
+    resolve_relation_paths(ResolutionDecls, Rules0, ResolvedRules),
     type_apply_refreeze(Decls0, ResolvedRules, Bindings, [], none, 0,
                         Expanded).
 

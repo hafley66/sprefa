@@ -4,15 +4,21 @@
           [ partition_compiler_relations/3,
             partition_compiler_program/5,
             evaluate_compiler_relations/3,
-            compiler_type_apply_requests/3
+            compiler_type_apply_requests/3,
+            compiler_builtin_path_decls/1
           ]).
 
 :- use_module(library(lists)).
 :- use_module(library(ordsets)).
 :- use_module(library(pairs)).
+:- use_module(library(gensym)).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
+
+:- table compiler_proves/2.
+:- thread_local compiler_eval_seed/2.
+:- thread_local compiler_eval_rule/2.
 
 %! partition_compiler_relations(+Decls, -CompilerDecls, -RuntimeDecls) is det.
 %
@@ -127,11 +133,33 @@ partition_compiler_program(Decls, Rules, compiler_relations(Relations, CompilerR
     partition_rules(Rules, CompilerRefs, CompilerRules, RuntimeRules).
 
 compiler_builtin_relations(Decls, Rules, Relations) :-
-    findall(compiler_relation(Ref, Arity, []),
+    findall(compiler_relation(Ref, Arity, Keys),
             ( compiler_builtin_ref(Ref),
               Ref = _/Arity,
-              compiler_builtin_is_used(Decls, Rules, Ref) ),
+              compiler_builtin_is_used(Decls, Rules, Ref),
+              compiler_builtin_keys(Ref, Keys) ),
             Relations).
+
+compiler_builtin_keys(type__node/3, [1]) :- !.
+compiler_builtin_keys(type__edge/6, [1]) :- !.
+compiler_builtin_keys(_, []).
+
+compiler_builtin_path_decls(Decls) :-
+    findall(rel_path_decl(Ref, Path), compiler_builtin_path(Ref, Path), Decls).
+
+compiler_builtin_path(type__node/3, [type, node]).
+compiler_builtin_path(type__edge/6, [type, edge]).
+compiler_builtin_path(type__path/2, [type, path]).
+compiler_builtin_path(type_decl/4, [type, declaration]).
+compiler_builtin_path(type_member/5, [type, member]).
+compiler_builtin_path(type_member_role/3, [type, member_role]).
+compiler_builtin_path(type_application/2, [type, application]).
+compiler_builtin_path(type_argument/4, [type, argument]).
+compiler_builtin_path(type_application_site/4, [type, application_site]).
+compiler_builtin_path(type_apply/3, [type, apply]).
+compiler_builtin_path(type_requested/3, [type, requested]).
+compiler_builtin_path(type_field/5, [type, field]).
+compiler_builtin_path(type_field_count/2, [type, field_count]).
 
 compiler_builtin_is_used(_, Rules, Ref) :- rule_contains_ref(Rules, Ref), !.
 compiler_builtin_is_used(Decls, Rules, type_apply/3) :-
@@ -158,6 +186,9 @@ compiler_builtin_ref(type_field_count/2).
 compiler_builtin_ref(derived_relation_request/4).
 compiler_builtin_ref(derived_member_request/4).
 compiler_builtin_ref(derived_member_role_request/4).
+compiler_builtin_ref(type__node/3).
+compiler_builtin_ref(type__edge/6).
+compiler_builtin_ref(type__path/2).
 
 compiler_request_ref(derived_relation_request/4).
 compiler_request_ref(derived_member_request/4).
@@ -309,7 +340,7 @@ evaluate_compiler_relations(compiler_relations(Relations, Rules), SeedRows,
     maplist(validate_compiler_rule_plane_with_relations(Relations), Rules),
     validate_type_apply_recursive_construction(Rules),
     sort(SeedRows, SeedSet),
-    compiler_fixpoint(Rules, SeedSet, Closure0),
+    tabled_compiler_closure(Rules, SeedSet, Closure0),
     validate_functional_rows(Relations, Closure0),
     ClosureRows = Closure0.
 
@@ -377,22 +408,51 @@ validate_compiler_rule_plane_with_relations(Relations, Rule) :-
     relation_refs(Relations, Refs),
     validate_compiler_rule_plane(Rule, Refs).
 
-compiler_fixpoint(Rules, Rows0, Rows) :-
-    findall(Row,
-            ( member(Rule, Rules),
-              derive_compiler_row(Rows0, Rule, Row) ),
-            Derived),
-    append(Rows0, Derived, Next0),
-    sort(Next0, Next),
-    ( Next == Rows0 -> Rows = Rows0 ; compiler_fixpoint(Rules, Next, Rows) ).
+%! tabled_compiler_closure(+Rules, +Seeds, -Rows) is det.
+%  One unique table namespace belongs to one compiler round.  The rules and
+%  seeds are immutable while SLG evaluation closes recursive positive goals.
+tabled_compiler_closure(Rules, Seeds, Rows) :-
+    gensym(compiler_eval_, EvalId),
+    setup_call_cleanup(
+        install_compiler_eval(EvalId, Rules, Seeds),
+        ( findall(Row, compiler_proves(EvalId, Row), Rows0),
+          sort(Rows0, Rows) ),
+        cleanup_compiler_eval(EvalId)).
 
-derive_compiler_row(Rows, Rule0, Row) :-
+install_compiler_eval(EvalId, Rules, Seeds) :-
+    forall(member(Rule, Rules), assertz(compiler_eval_rule(EvalId, Rule))),
+    forall(member(Seed, Seeds), assertz(compiler_eval_seed(EvalId, Seed))).
+
+cleanup_compiler_eval(EvalId) :-
+    abolish_table_subgoals(compiler_proves(EvalId, _)),
+    retractall(compiler_eval_rule(EvalId, _)),
+    retractall(compiler_eval_seed(EvalId, _)).
+
+compiler_proves(EvalId, Row) :-
+    compiler_eval_seed(EvalId, Row).
+compiler_proves(EvalId, Row) :-
+    compiler_eval_rule(EvalId, Rule0),
     copy_term(Rule0, Rule),
     rule_head(Rule, Head),
     rule_body(Rule, Body),
-    satisfy_compiler_body(Rows, Body),
+    satisfy_tabled_compiler_body(EvalId, Body),
     ground(Head),
     Row = Head.
+
+satisfy_tabled_compiler_body(_, true) :- !.
+satisfy_tabled_compiler_body(EvalId, (Left, Right)) :- !,
+    satisfy_tabled_compiler_body(EvalId, Left),
+    satisfy_tabled_compiler_body(EvalId, Right).
+satisfy_tabled_compiler_body(_, type_apply(Constructor, Arguments,
+                                            Application)) :-
+    !,
+    ( ground(Constructor), is_list(Arguments), maplist(ground, Arguments)
+    -> Application = application(Constructor, Arguments)
+    ;  throw(unsupported_construct(type_apply_non_ground_application(
+                                       application(Constructor, Arguments))))
+    ).
+satisfy_tabled_compiler_body(EvalId, Goal) :-
+    compiler_proves(EvalId, Goal).
 
 satisfy_compiler_body(_, true) :- !.
 satisfy_compiler_body(Rows, (Left, Right)) :- !,

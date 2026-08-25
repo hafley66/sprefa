@@ -191,6 +191,10 @@ normalized_declaration_row(Decls, declaration(Id, root, ConcreteName, relation, 
 normalized_declaration_row(Decls, declaration(Id, root, OwnerName, relation, materialized)) :-
     plain_relation_specs(Decls, OwnerName, _),
     semantic_decl_id(Decls, relation, OwnerName, Id).
+normalized_declaration_row(Decls, declaration(Id, root, Name, relation,
+                                              materialized)) :-
+    member(kind(Name/0, _), Decls),
+    semantic_decl_id(Decls, relation, Name, Id).
 
 normalized_parameter_row(Decls, parameter(Id, Owner, Ordinal, Name)) :-
     generic_owner_parameters(Decls, OwnerName, Parameters),

@@ -3,8 +3,7 @@
 %   (OwnerType, Name) -> TargetType
 %
 % Members and explicitly nested relations contribute to the same view.  The
-% view stays compiler-internal for this experiment, so target emitters and the
-% serialized semantic row contract do not move.
+% dependent generic graph projection lives in 5b_type_graph.pl.
 
 %! type_projection_targets(+Decls, -Targets) is det.
 %  Targets is the deduplicated canonical view after semantic type freeze:

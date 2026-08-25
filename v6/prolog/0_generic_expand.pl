@@ -42,7 +42,8 @@
 :- use_module('0_compiler_relations',
               [ partition_compiler_program/5,
                 evaluate_compiler_relations/3,
-                compiler_type_apply_requests/3 ]).
+                compiler_type_apply_requests/3,
+                compiler_builtin_path_decls/1 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -66,6 +67,8 @@
 :- include('0_generic_expand/5_type_freeze.pl').
 
 :- include('0_generic_expand/5a_type_projection.pl').
+
+:- include('0_generic_expand/5b_type_graph.pl').
 
 :- include('0_generic_expand/6_type_conformance.pl').
 

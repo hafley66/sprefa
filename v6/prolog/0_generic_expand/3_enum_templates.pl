@@ -142,3 +142,10 @@ merge_one_enum_template_rows(EnumRows, semantic_type_rows(Rows0),
     append(Rows0, EnumRows, Unsorted),
     sort(Unsorted, Rows).
 merge_one_enum_template_rows(_, Decl, Decl).
+
+% Surface enum rows must be present before compiler-plane evaluation so the
+% generic graph exposes variant edges during the same immutable round.  The
+% later enum phase merges the same canonical rows idempotently.
+merge_surface_enum_type_rows(SourceDecls, Decls0, Decls) :-
+    enum_type_rows(SourceDecls, Rows),
+    merge_enum_template_rows(Rows, Decls0, Decls).
