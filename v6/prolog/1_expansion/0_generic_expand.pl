@@ -61,7 +61,7 @@
 
 :- include('generic_expand/4_type_views.pl').
 
-:- include('../0_generic_expand/5_type_freeze.pl').
+:- include('generic_expand/5_type_freeze.pl').
 
 :- include('../0_generic_expand/6_type_conformance.pl').
 
