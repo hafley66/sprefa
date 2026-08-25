@@ -12,6 +12,7 @@ pub mod ast_rule;
 pub mod astgrep;
 pub mod data;
 pub mod dl6;
+pub mod extract_lang;
 pub mod go;
 pub mod kotlin;
 pub mod markdown;
@@ -29,6 +30,7 @@ pub use astgrep::{
     SgRoot,
 };
 pub use data::DataSource;
+pub use extract_lang::ExtractLang;
 pub use dl6::DlSource;
 pub use go::GoSource;
 pub use kotlin::KotlinSource;

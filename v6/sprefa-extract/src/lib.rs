@@ -60,7 +60,8 @@ pub use family::{
 pub use lang::{
     decode_ast_rule_yaml, query_ast_rule, query_ast_rule_with_content, query_patterns, source_for,
     sources, AstCaptureFact, AstPatternQuery, AstRule, AstRuleCapture, AstRuleError, AstRuleMatch,
-    AstRuleMutationProposal, AstRuleRequest, AstgrepSource, DataSource, DlSource, GoSource,
+    AstRuleMutationProposal, AstRuleRequest, AstgrepSource, DataSource, DlSource, ExtractLang,
+    GoSource,
     KotlinSource, MarkdownSource, NamedAstRule, PrologSource, PythonSource, RustSource, StopBy,
     TsSource,
 };
