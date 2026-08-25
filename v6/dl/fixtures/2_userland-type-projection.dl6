@@ -1,0 +1,20 @@
+use "../type/1_projection.dl6".
+
+rel Status(ready(); failed()).
+
+rel Address(city: text).
+
+rel Item(maybe: option(text), status: Status, home: Address) {
+  rel Audit(at: int).
+}.
+
+rel Same(child: Same.child) {
+  rel child(value: int).
+}.
+
+rel Inline(value: (left(); right())).
+
+rel seen_project(Owner: type, Name: text, Target: type).
+
+seen_project(Owner, Name, Target) <-
+  type.project(Owner, Name, Target).

@@ -9,7 +9,7 @@ freeze_type_rows(Decls0, Decls) :-
     validate_type_row_identities(RebuiltRows),
     merge_frozen_type_rows(ExistingRows, RebuiltRows, Rows),
     validate_type_application_closure(Rows),
-    validate_type_projection_targets(Decls0, Rows),
+    validate_nested_type_path_targets(Decls0, Rows),
     replace_semantic_type_rows(Decls0, Rows, Decls).
 
 semantic_rows_in_decls(Decls, Rows) :-

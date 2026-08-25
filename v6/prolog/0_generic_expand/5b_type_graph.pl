@@ -2,13 +2,49 @@
 % Specialized rows remain the authority and runtime planning sees none of the
 % node, edge, or path relations below.
 
+canonical_type_ref_target(declaration(Id), Id) :- !.
+canonical_type_ref_target(application(Id), Id) :- !.
+canonical_type_ref_target(parameter(Id), Id) :- !.
+canonical_type_ref_target(Target, Target).
+
+nested_type_edge(Decls, Rows, Owner, Name, Child, ChildPath) :-
+    member(rel_path_decl(ChildName/_, ChildPath), Decls),
+    append(ParentPath, [Name], ChildPath),
+    ParentPath \== [],
+    declared_path(Decls, ParentPath, ParentName),
+    member(declaration(Owner, _, ParentName, relation, _), Rows),
+    member(declaration(Child, _, ChildName, relation, _), Rows).
+
+%! validate_nested_type_path_targets(+Decls, +Rows) is det.
+%  A nested declaration and a same-named member occupy one semantic path. The
+%  path may be contributed twice when both edges reach the same target.
+validate_nested_type_path_targets(Decls, Rows) :-
+    findall((Owner-Name)-edge(Role, Target),
+            ( type_graph_edge(Decls, Rows, _, Owner, Role, _, Name, Target),
+              memberchk(Role, [member, variant, nested]) ),
+            Pairs0),
+    keysort(Pairs0, Pairs),
+    group_pairs_by_key(Pairs, Groups),
+    maplist(validate_nested_type_path_group, Groups).
+
+validate_nested_type_path_group((Owner-Name)-Edges) :-
+    ( member(edge(nested, _), Edges)
+    -> findall(Target, member(edge(_, Target), Edges), Targets0),
+       sort(Targets0, Targets),
+       ( Targets = [_]
+       -> true
+       ;  throw(unsupported_construct(
+                     ambiguous_type_projection(Owner, Name, Targets)))
+       )
+    ;  true
+    ).
+
 %! type_graph_compiler_source_rows(+Decls, +SemanticRows, +Relations, -Rows)
 type_graph_compiler_source_rows(Decls, SemanticRows, Relations, Rows) :-
     requested_type_graph_nodes(Decls, SemanticRows, Relations, NodeRows),
     requested_type_graph_edges(Decls, SemanticRows, Relations, EdgeRows),
     requested_type_graph_paths(Decls, SemanticRows, Relations, PathRows),
-    requested_type_graph_projects(Decls, Relations, ProjectRows),
-    append([NodeRows, EdgeRows, PathRows, ProjectRows], Rows0),
+    append([NodeRows, EdgeRows, PathRows], Rows0),
     sort(Rows0, Rows).
 
 requested_type_graph_nodes(Decls, SemanticRows, Relations, Rows) :-
@@ -35,15 +71,6 @@ requested_type_graph_paths(Decls, SemanticRows, Relations, Rows) :-
     type_graph_paths(Decls, SemanticRows, Paths),
     findall(type__path(Id, Path), member(type_path(Id, Path), Paths), Rows).
 requested_type_graph_paths(_, _, _, []).
-
-requested_type_graph_projects(Decls, Relations, Rows) :-
-    memberchk(compiler_relation(type__project/3, _, _), Relations),
-    !,
-    type_projection_targets(Decls, Targets),
-    findall(type__project(Owner, Name, Target),
-            member(type_projection(Owner, Name, Target), Targets),
-            Rows).
-requested_type_graph_projects(_, _, []).
 
 %! type_graph_nodes(+Decls, +SemanticRows, -Nodes) is det.
 type_graph_nodes(Decls, SemanticRows, Nodes) :-
@@ -122,7 +149,7 @@ type_graph_edges(Decls, SemanticRows, Edges) :-
 
 type_graph_edge(_, Rows, MemberId, Owner, Role, Position, Name, Target) :-
     member(member(MemberId, Owner, Position, Name, type_ref(TypeRef)), Rows),
-    projection_type_ref_target(TypeRef, Target),
+    canonical_type_ref_target(TypeRef, Target),
     member_edge_role(Rows, Owner, Role).
 type_graph_edge(_, Rows, ArgumentId, Application, argument, Position, '',
                 Target) :-
@@ -137,7 +164,7 @@ type_graph_edge(_, Rows, derivation(Materialized, Source), Materialized,
     member(derived_from(Materialized, Source), Rows).
 type_graph_edge(Decls, Rows, nested(Owner, Name, Child), Owner, nested, 0,
                 Name, Child) :-
-    nested_type_projection(Decls, Rows, Owner, Name, Child, _).
+    nested_type_edge(Decls, Rows, Owner, Name, Child, _).
 type_graph_edge(Decls, _, annotation_edge(SiteId), Member, annotation,
                 Ordinal, Annotator, SiteId) :-
     type_graph_annotation_site(Decls, SiteId, Member, _, Ordinal, Annotator).

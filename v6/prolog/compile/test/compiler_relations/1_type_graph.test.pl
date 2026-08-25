@@ -38,14 +38,12 @@ test(dotted_node_edge_and_path_sources_query_canonical_rows) :-
     \+ member(col_type(type__edge/6, _, _), Decls),
     \+ member(col_type(type__path/2, _, _), Decls).
 
-test(dotted_members_and_projection_share_canonical_targets) :-
+test(dotted_members_expose_canonical_targets) :-
     Source = "rel Status(ready(); failed()).\n\c
               rel Address(city: text).\n\c
               rel Item(maybe: option(text), status: Status, home: Address).\n\c
               rel seen_member(Member: type, Owner: type, Position: int, Name: text, Target: type).\n\c
-              rel seen_project(Owner: type, Name: text, Target: type).\n\c
-              seen_member(Member, Owner, Position, Name, Target) <- type.member(Member, Owner, Position, Name, Target).\n\c
-              seen_project(Owner, Name, Target) <- type.project(Owner, Name, Target).\n",
+              seen_member(Member, Owner, Position, Name, Target) <- type.member(Member, Owner, Position, Name, Target).\n",
     expand_type_graph_source(Source, Decls),
     memberchk(compiler_type_metadata(_, Closure), Decls),
     Item = named(local, relation, 'Item'),
@@ -56,9 +54,8 @@ test(dotted_members_and_projection_share_canonical_targets) :-
     memberchk(seen_member(Maybe, Item, 1, maybe, OptionText), Closure),
     memberchk(seen_member(member(Item, 3, home), Item, 3, home, Address),
               Closure),
-    memberchk(seen_project(Item, maybe, OptionText), Closure),
     \+ member(col_type(type_member/5, _, _), Decls),
-    \+ member(col_type(type__project/3, _, _), Decls).
+    \+ member(col_type(seen_member/5, _, _), Decls).
 
 test(nested_and_enum_edges_have_distinct_roles) :-
     Source = "rel Outer() { rel Child(id: int). }.\n\c

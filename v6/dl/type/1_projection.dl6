@@ -1,0 +1,13 @@
+# Canonical semantic projections. type.project/3 is a compiler relation keyed
+# by (Owner, Name); equal paths deduplicate and conflicting targets refuse.
+
+rel type.project(Owner: type, Name: text, Target: type) key(1, 2).
+
+type.project(Owner, Name, Target) <-
+  type.edge(_, Owner, 'member', _, Name, Target).
+
+type.project(Owner, Name, Target) <-
+  type.edge(_, Owner, 'variant', _, Name, Target).
+
+type.project(Owner, Name, Target) <-
+  type.edge(_, Owner, 'nested', _, Name, Target).

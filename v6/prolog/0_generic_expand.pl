@@ -14,7 +14,6 @@
             generic_type_ir/2,
             freeze_type_rows/2,
             normalize_key_wrappers/2,
-            type_projection_targets/2,
             schema_member_rows/2,
             compiler_type_source_rows/3,
             type_relation_rows/2,
@@ -67,8 +66,6 @@
 :- include('0_generic_expand/4_type_views.pl').
 
 :- include('0_generic_expand/5_type_freeze.pl').
-
-:- include('0_generic_expand/5a_type_projection.pl').
 
 :- include('0_generic_expand/5b_type_graph.pl').
 
