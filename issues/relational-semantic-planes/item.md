@@ -28,7 +28,7 @@ The reconciled contract is recorded in `plans/2026-08-25-relational-semantic-pla
 ```text
 Type Graph             Integrity Graph       Flow Graph
 type.*                 integrity.*           flow.*
-nodes and member edges keys/references/check occurrence, sign, delay,
+nodes and typed edges  keys/references/check occurrence, sign, delay,
                                               retention, replacement
          \                  |                 /
           \                 |                /
@@ -44,7 +44,10 @@ nodes and member edges keys/references/check occurrence, sign, delay,
 ```
 
 - A type node is a relation or primitive.
-- A member is an edge `(Owner, Name, Target, Index)`.
+- The Type Graph consists of relation or primitive nodes and primordial named edges `(Owner, Name, Target, Index)`.
+- Interfaces, enums, namespaces, generic applications, and anonymous products or sums are relation nodes with different relational classifiers and lowering algorithms.
+- Generic parameters are compile-time placeholder nodes ranging over relation or primitive nodes.
+- Projection, application, unification, annotation lookup, reachability, and fixpoint closure are algorithms over that graph.
 - `key` is an ordinary relation applied to a target type.
 - Relation application uses the declared relation signature and return facade.
 - A relation occurrence and a retained record are separate concepts.
@@ -57,9 +60,9 @@ nodes and member edges keys/references/check occurrence, sign, delay,
 completed type foundations
   +-> semantic-plane-rulings [L]
   +-> relation-application-semantics [L]
-  +-> member-edge-relational-view [M]
+  +-> type-edge-view [M]
 
-rulings + application + member view
+rulings + application + edge view
   +-> userland-integrity-graph [M]
   +-> userland-flow-graph [L]
         +-> clock-flow-projection [M]
@@ -84,7 +87,7 @@ integrity
 
 - [ ] @semantic-plane-rulings
 - [ ] @relation-application-semantics
-- [ ] @member-edge-relational-view
+- [ ] @type-edge-view
 - [ ] @userland-integrity-graph
 - [ ] @sqlite-integrity-emitter
 - [ ] @userland-flow-graph
@@ -101,7 +104,7 @@ integrity
 ## Acceptance Criteria
 
 - [ ] The four semantic planes have stable user-land signatures and uniqueness rules.
-- [ ] Relation application semantics cover zero, one, and many return members.
+- [ ] Relation application semantics cover zero, one, and many outputs.
 - [ ] Integrity facts lower independently of any target emitter.
 - [ ] Flow facts feed the clock checker without backend vocabulary.
 - [ ] Materialization facts distinguish logical identity from physical layout.

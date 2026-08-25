@@ -21,16 +21,16 @@ collision: [compiler-plans, generic-type-core]
 
 ## Description
 
-# Resolve semantic plane contracts
-
-## Description
-
 Record the contracts that change representation, identity, or target boundaries before implementation. Use `plans/2026-08-25-relational-semantic-planes.md` as the decision ledger.
 
 ## Rulings
 
-- Carrier retirement scope for internal `TypeId`, `MemberId`, `application(...)`, `member_role`, and `rel/5` compatibility rows.
-- Member identity and migration from `(Owner, Position, Name)` toward `(Owner, Name)`.
+- Node classification for product, sum, namespace, generic parameter, and generated anonymous relation nodes.
+- Edge classification for field, variant, contains, parameter, return, and annotation roles.
+- Edge-valued reference and annotation syntax for keyed `type.edge` rows.
+- Canonical identity for anonymous product and sum relation nodes.
+- Carrier retirement scope for internal `TypeId`, legacy `MemberId`, `application(...)`, `member_role`, and `rel/5` compatibility rows.
+- Edge identity and migration from legacy `(Owner, Position, Name)` toward `(Owner, Name)`.
 - Integrity identity versus flow replacement identity.
 - User-land surfaces for unique, reference, and check annotations.
 - State, event, history, and retention vocabulary after the prior `rel(0)`, `rel(1)`, `rel` ruling.

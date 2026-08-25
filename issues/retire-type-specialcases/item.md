@@ -16,7 +16,7 @@ size: M
 lane: semantic-cleanup
 lane_seq: 10
 collision: [generic-type-core, storage-lowering]
-blocked_by: ['@member-edge-relational-view', '@relation-application-semantics', '@userland-integrity-graph', '@userland-flow-graph', '@userland-materialization-graph', '@userland-temporal-annotations']
+blocked_by: ['@type-edge-view', '@relation-application-semantics', '@userland-integrity-graph', '@userland-flow-graph', '@userland-materialization-graph', '@userland-temporal-annotations']
 ---
 
 # Retire superseded host compiler semantic special cases

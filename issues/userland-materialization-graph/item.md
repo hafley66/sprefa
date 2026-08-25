@@ -23,18 +23,14 @@ blocked_by: ['@userland-integrity-graph', '@userland-flow-graph', '@canonical-st
 
 ## Description
 
-# Derive target-neutral materialization requirements
-
-## Description
-
 Derive the logical storage needed to execute Flow Graph semantics. Keep target spelling and target capabilities in target plans.
 
 ## Provisional Signatures
 
 ```dl6
 rel storage.relation(Relation: key(type), Purpose: key(type), Shape: type).
-rel storage.column(Storage: key(type), Member: key(type), Target: type, Index: int).
-rel storage.key(Storage: key(type), Group: key(type), Member: type, Index: int).
+rel storage.column(Storage: key(type), Edge: type.edge, Target: type, Index: int).
+rel storage.key(Storage: key(type), Group: key(type), Edge: type.edge, Index: int).
 rel storage.retention(Storage: key(type), Policy: type).
 ```
 

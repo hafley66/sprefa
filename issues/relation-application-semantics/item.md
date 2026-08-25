@@ -22,11 +22,9 @@ collision: [generic-type-core, compiler-oracle]
 
 ## Description
 
-# Define ordinary relation application semantics
-
-## Description
-
 Specify how a declared relation is applied in type position. Construction uses the declared inputs and return facade. No undeclared relation is inferred.
+
+Generic parameters are placeholder type nodes. Applying a generic substitutes argument nodes for those placeholders and interns the resulting relation node and edges.
 
 ## Signatures
 
@@ -39,9 +37,9 @@ rel X(Input: type, Return: type).
 
 ## Cases
 
-- Zero return members: application has no type result and receives a diagnostic where a type is required.
-- One return member: `X(Arg)` resolves to that return target.
-- Multiple return members: the application resolves to a declared relation-shaped return facade.
+- Zero outputs: application has no type result and receives a diagnostic where a type is required.
+- One output: `X(Arg)` resolves to that return target.
+- Multiple outputs: the application resolves to a declared relation-shaped return facade.
 - Partial application: syntax, arity, and resulting identity require an explicit ruling before support.
 
 ## Lifetime
@@ -54,10 +52,11 @@ The logical key is the declared relation identity plus ordered argument IDs. Exi
 
 ## Acceptance Criteria
 
-- [ ] Zero, one, and many return-member behavior is specified and tested.
+- [ ] Zero, one, and many-output behavior is specified and tested.
 - [ ] Undeclared constructors fail instead of creating inferred declarations.
 - [ ] Groundness and arity diagnostics are deterministic.
 - [ ] Existing generic construction and head-term lowering retain parity.
+- [ ] A generic application produces a canonical relation node rather than a separate foundational graph category.
 - [ ] Partial application is either specified or diagnosed as unsupported.
 
 ## Tests Run

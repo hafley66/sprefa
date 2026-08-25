@@ -23,10 +23,6 @@ blocked_by: ['@semantic-plane-rulings', '@relation-application-semantics']
 
 ## Description
 
-# Expose target-neutral flow semantics
-
-## Description
-
 Represent relation occurrences, signs, timing, replacement, and retention as ordinary DL6 facts consumed by the clock checker and materialization rules.
 
 ## Provisional Signatures
@@ -35,7 +31,7 @@ Represent relation occurrences, signs, timing, replacement, and retention as ord
 rel flow.occurrence(Relation: key(type), Sign: sign, Clock: clock, Grade: grade).
 rel flow.dependency(Reader: key(type), Writer: key(type), Sign: sign,
                     Delay: delay, Grade: grade, Role: role).
-rel flow.identity(Relation: key(type), Group: key(type), Member: type.member, Index: int).
+rel flow.identity(Relation: key(type), Group: key(type), Edge: type.edge, Index: int).
 rel flow.retention(Relation: key(type), Policy: type).
 ```
 

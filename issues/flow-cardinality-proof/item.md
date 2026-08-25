@@ -23,10 +23,6 @@ blocked_by: ['@clock-flow-projection', '@userland-integrity-graph']
 
 ## Description
 
-# Prove flow cardinality and cycle safety
-
-## Description
-
 Add the proof relations needed to answer whether a dependency cycle can produce a next value, whether a combine is deterministic, and whether a protocol has zero, one, or many producers or consumers.
 
 ## Provisional Signatures
@@ -34,7 +30,7 @@ Add the proof relations needed to answer whether a dependency cycle can produce 
 ```dl6
 rel flow.cardinality(Relation: key(type), Boundary: clock, Minimum: int, Maximum: type).
 rel flow.determinism(Relation: key(type), Mode: type).
-rel flow.cycle(Scc: key(type), Member: type, Delay: delay).
+rel flow.cycle(Scc: key(type), Node: type, Delay: delay).
 rel flow.refusal(Subject: key(type), Reason: type).
 ```
 

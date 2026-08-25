@@ -27,7 +27,7 @@ Add one authored fixture that crosses the Type, Integrity, Flow, Materialization
 ## Fixture Coverage
 
 - Relation and primitive type nodes.
-- Member edges and relation applications.
+- Type edges and relation applications.
 - Composite primary and alternate unique integrity.
 - Event occurrence, state replacement, retention, and history.
 - B, N, Z, boundary, carry, and delayed flow evidence.
