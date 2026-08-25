@@ -5,7 +5,7 @@ TSV2="$(cd "$(dirname "$0")/.." && pwd)"
 V6="$(cd "$TSV2/.." && pwd)"
 P="$(cd "$V6/.." && pwd)"
 PROLOG="$V6/prolog"
-DCG="$PROLOG/compile/parse_dl_dcg.pl"
+DCG="$PROLOG/7_lower/parse_dl_dcg.pl"
 COMPILE_SH="$PROLOG/compile/scripts/compile_dl6.sh"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/import-hover.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT

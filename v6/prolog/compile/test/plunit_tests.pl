@@ -2360,14 +2360,19 @@ test(no_decl_id_reverse_parse_outside_the_id_module) :-
 
 test(the_id_module_uses_structural_inverse) :-
     test_dir_fact(Here),
-    atomic_list_concat([Here, '/../../0_type_ids.pl'], Path),
+    atomic_list_concat([Here, '/../../1_expansion/0_type_ids.pl'], Path),
     read_file_to_string(Path, Text, []),
     type_id_rail_occurrences(Text, Count),
     Count =:= 0.
 
 type_id_rail_source(Path) :-
     test_dir_fact(Here),
-    member(Relative, ['/../..', '/../../compile', '/../../conformance', '/..']),
+    member(Relative, ['/../..', '/../../compile', '/../../conformance', '/..',
+                      '/../../0_dot_expand', '/../../1_expansion',
+                      '/../../1_expansion/generic_expand', '/../../2_host_expand',
+                      '/../../3_analyze', '/../../4_clock_check', '/../../5_subscribe',
+                      '/../../6_strat', '/../../7_lower', '/../../8_emit_ts',
+                      '/../../9_json_arrival', '/../../10_diag']),
     atomic_list_concat([Here, Relative], Dir),
     directory_files(Dir, Entries),
     msort(Entries, Ordered),

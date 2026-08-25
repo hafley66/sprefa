@@ -16,7 +16,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const BOP_TS = fileURLToPath(new URL("../cli/bop.ts", import.meta.url));
-const REGISTRY_PL = fileURLToPath(new URL("../../prolog/compile/registry.pl", import.meta.url));
+const REGISTRY_PL = fileURLToPath(new URL("../../prolog/0_dot_expand/registry.pl", import.meta.url));
 const EMITTER_PL = fileURLToPath(new URL("../../prolog/compile/2_emit_cli_inventory.pl", import.meta.url));
 const INVENTORY_TS = fileURLToPath(new URL("../cli/0_inventory.ts", import.meta.url));
 

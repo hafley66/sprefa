@@ -161,7 +161,7 @@ def g(glob, pat):
     out = subprocess.run(["python3", grep, "WORK", glob, pat], cwd=repo,
                          capture_output=True, text=True).stdout
     return [json.loads(line) for line in out.splitlines()]
-surface = {r["g1"]: r["g3"] for r in g("v6/prolog/compile/registry.pl",
+surface = {r["g1"]: r["g3"] for r in g("v6/prolog/0_dot_expand/registry.pl",
     r"^surface[(]([^,]+)[ ]*,[ ]*([a-z_]+)[ ]*,.*,[ ]*([a-z]+)[)][.][ ]*$")}
 world   = {r["g2"] for r in g("v6/dl/fixtures/*.dl6", r"^(sh|bind) ([a-z_][a-z_0-9]*)[(]")}
 program = {r["g1"] for r in g("v6/dl/fixtures/*.dl6", r"^rel ([a-z_][a-z_0-9]*)[(]")}

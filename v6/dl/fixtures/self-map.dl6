@@ -72,8 +72,8 @@
 rel watch(glob: text, path: text, digest: text).
 
 rel source(path: text, digest: text).
-source(path, digest) <- watch('v6/prolog/compile/registry.pl', path, digest).
-source(path, digest) <- watch('v6/prolog/1_expansion.pl', path, digest).
+source(path, digest) <- watch('v6/prolog/0_dot_expand/registry.pl', path, digest).
+source(path, digest) <- watch('v6/prolog/1_expansion/1_expansion.pl', path, digest).
 source(path, digest) <- watch('v6/prolog/ARCH.pl', path, digest).
 source(path, digest) <- watch('v6/dl/fixtures/self-map.dl6', path, digest).
 
@@ -356,8 +356,8 @@ map_line('header', 30,
   'Every fact below travelled through the served tsv2 engine. `v6/dl/fixtures/self-map.dl6` declares the sources as `bind watch` globs and one `sh` host with six projections; the derivations -- ready vs blocked, wired vs unwired, all-live axis, sink rel, every count -- are ordinary dl6 rules in that file. The document is assembled by ordered `group_concat` folds in the same file.') <- map_seed(_).
 map_line('header', 40, '| watched source | authority | what it says |') <- map_seed(_).
 map_line('header', 50, '|---|---|---|') <- map_seed(_).
-map_line('header', 60, '| `v6/prolog/compile/registry.pl` | `surface/5` | the construct inventory |') <- map_seed(_).
-map_line('header', 70, '| `v6/prolog/1_expansion.pl` | `expansion_phase/3` | the declared sugar order |') <- map_seed(_).
+map_line('header', 60, '| `v6/prolog/0_dot_expand/registry.pl` | `surface/5` | the construct inventory |') <- map_seed(_).
+map_line('header', 70, '| `v6/prolog/1_expansion/1_expansion.pl` | `expansion_phase/3` | the declared sugar order |') <- map_seed(_).
 map_line('header', 80, '| `v6/prolog/ARCH.pl` | `task/3` | the build DAG |') <- map_seed(_).
 map_line('header', 90, "| `v6/dl/fixtures/self-map.dl6` | `analyze.pl` | this program own rel graph |") <- map_seed(_).
 
@@ -383,7 +383,7 @@ phase_unwired_join(group_concat(text, ', ')) <- phase_unwired_text(text).
 
 map_line('phases', 10, '## 1. Surface sugar expands in a declared order') <- map_seed(_).
 map_line('phases', 20,
-  '`expansion_phase/3` in `v6/prolog/1_expansion.pl`, read by the compiler and the oracle both. Arrows are the computed successor (the smallest order strictly greater), not the literal numbers, so a phase landing between two existing ones redraws correctly. Dashed = declared slot with no expander.') <- map_seed(_).
+  '`expansion_phase/3` in `v6/prolog/1_expansion/1_expansion.pl`, read by the compiler and the oracle both. Arrows are the computed successor (the smallest order strictly greater), not the literal numbers, so a phase landing between two existing ones redraws correctly. Dashed = declared slot with no expander.') <- map_seed(_).
 map_line('phases', 30, '```mermaid') <- map_seed(_).
 map_line('phases', 40, 'flowchart TD') <- map_seed(_).
 
@@ -474,7 +474,7 @@ registry_table_rows(group_concat(line_text, '\n')) <- registry_table_row(line_te
 
 map_line('registry', 10, '## 2. The writable surface, by axis') <- map_seed(_).
 map_line('registry', 20,
-  '`surface/5` in `v6/prolog/compile/registry.pl` is the single inventory the parser, printer, analyzer and supported-subset gate all project from, so this is the whole writable language and not a selection from it. An axis whose every row is `live` is drawn solid; an axis still carrying a reserved or refused row is dashed.') <- map_seed(_).
+  '`surface/5` in `v6/prolog/0_dot_expand/registry.pl` is the single inventory the parser, printer, analyzer and supported-subset gate all project from, so this is the whole writable language and not a selection from it. An axis whose every row is `live` is drawn solid; an axis still carrying a reserved or refused row is dashed.') <- map_seed(_).
 map_line('registry', 30, '```mermaid') <- map_seed(_).
 map_line('registry', 40, 'flowchart TD') <- map_seed(_).
 map_line('registry', 50, text) <- registry_axes_text(text).

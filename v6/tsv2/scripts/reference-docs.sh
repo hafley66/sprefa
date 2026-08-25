@@ -42,7 +42,7 @@ command -v swipl >/dev/null || die "swipl is not on PATH"
 command -v jq >/dev/null || die "jq is not on PATH"
 [ -x "$DL_EXTRACT_BIN" ] || die "extractor is not executable: $DL_EXTRACT_BIN"
 
-for source_path in v6/prolog/compile/registry.pl; do
+for source_path in v6/prolog/0_dot_expand/registry.pl; do
   ( cd "$ROOT" && git ls-files --error-unmatch -- "$source_path" ) >/dev/null 2>&1 \
     || die "watched source is not tracked by git: $source_path"
 done

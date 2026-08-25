@@ -170,7 +170,7 @@ fn json_number(number: &serde_json::Number) -> String {
     number.to_string()
 }
 
-// js_float_text ports v6/prolog/0_type_plane.pl:js_float_text/2 so the Rust arm
+// js_float_text ports v6/prolog/0_dot_expand/0_type_plane.pl:js_float_text/2 so the Rust arm
 // renders f64s byte-identically to the oracle (and to JS JSON.stringify).
 pub fn js_float_text(value: f64) -> String {
     if value == 0.0 {

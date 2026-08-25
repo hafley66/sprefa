@@ -38,7 +38,7 @@ use extract.
 rel watch(glob: text, path: text, digest: text).
 
 rel source(path: text, digest: text).
-source(path, digest) <- watch('v6/prolog/compile/registry.pl', path, digest).
+source(path, digest) <- watch('v6/prolog/0_dot_expand/registry.pl', path, digest).
 
 rel comment_fact(path: text, digest: text, families: text)
   -> (line: int, end_line: int, kind: text, comment_text: text) key(1, 3).

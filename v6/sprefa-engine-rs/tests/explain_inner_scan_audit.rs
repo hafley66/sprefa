@@ -1,7 +1,7 @@
 // issues/inner-scan-audit: three ghcache.dl6 rels EXPLAINed as a real inner
 // SCAN after a join on a non-leading UNIQUE-key column. lower.pl's
 // audit_scan_index_ddl/3 adds one dedicated index per column
-// (v6/prolog/lower.pl, grep audit_scan_index); each assertion here pins the
+// (v6/prolog/7_lower/lower.pl, grep audit_scan_index); each assertion here pins the
 // exact DDL text and checks EXPLAIN QUERY PLAN reads SEARCH, not SCAN.
 
 use sprefa_engine_rs::sql::{SqlRunner, SqliteSeam};
