@@ -198,7 +198,7 @@
 :- use_module('0_dot_expand/body', [rel_ref/2]).
 % run_compile_step/4 lives in 0_trace, never compile.pl: compile.pl imports
 % this module, so importing it from there is a cycle.
-:- use_module('compile/0_trace', [run_compile_step/4]).
+:- use_module('1_expansion/0_trace', [run_compile_step/4]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

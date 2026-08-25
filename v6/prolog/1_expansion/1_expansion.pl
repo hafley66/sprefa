@@ -28,7 +28,7 @@
 :- use_module('../0_ast_expand', []).
 :- use_module('../compile_messages',
               [ dl6_debug/3, dl6_debugging/1, dl6_program_sizes/3 ]).
-:- use_module('../compile/0_trace', [run_compile_step/4]).
+:- use_module('0_trace', [run_compile_step/4]).
 
 % ── the order, stated once ───────────────────────────────────────────────────
 

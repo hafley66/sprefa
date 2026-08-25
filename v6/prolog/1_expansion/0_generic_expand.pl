@@ -27,7 +27,7 @@
 :- use_module(library(pairs), [group_pairs_by_key/2]).
 :- use_module(library(crypto)).
 :- use_module(library(lists)).
-:- use_module('../compile/0_trace', [run_compile_step/4]).
+:- use_module('0_trace', [run_compile_step/4]).
 :- use_module('0_option_expand', [expand_option_decls/2, scalar_element/1]).
 :- use_module('0_enum_expand', [enum_type_rows/2]).
 :- use_module('../0_dot_expand/0_type_plane', [unwrapped_column_type/2]).
