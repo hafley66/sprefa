@@ -63,7 +63,7 @@
 
 % Fixture-only shorthand.  Production code always transports module identity.
 decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
-:- use_module('../../0_ast_expand',
+:- use_module('../../next/1_expand/0_ast_expand',
               [ expand_ast_program/2,
                 expand_ast_program_with_bindings/3 ]).
 :- use_module('../../1_expansion',

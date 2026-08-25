@@ -5,9 +5,9 @@
           ]).
 
 :- use_module(library(lists)).
-:- use_module('0_program_check',
+:- use_module('../../0_program_check',
               [ first_violation/3, ast_capture_names/2 ]).
-:- use_module('next/0_parse/0_cst_query', [ serialize_ts_query/2 ]).
+:- use_module('../0_parse/0_cst_query', [ serialize_ts_query/2 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
