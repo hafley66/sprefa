@@ -306,3 +306,35 @@ hello.
         ]
     );
 }
+
+/// FAIL PRE FIX: `use_module('part', [])` produced zero specifier rows, so
+/// `extract move` never rewrote `1_expansion.pl:28` and the moved module was
+/// unreachable (lab/rehome-passes move 8, 2026-08-24). An empty import list
+/// is a load edge and rides `side_effect` like the one-argument form.
+#[test]
+fn prolog_empty_import_list_is_a_side_effect_load() {
+    let source: &[u8] = b"\
+:- module(empty_list, []).
+:- use_module('part', []).
+:- use_module(other).
+hello.
+";
+    let output = PrologSource.extract(PATH, source, FamilyMask::ALL);
+    let facts = flatten(&output);
+    let specifiers: Vec<(&str, Option<&str>, &str)> = facts
+        .iter()
+        .filter_map(|fact| match fact {
+            sprefa_extract::FlatFact::Specifier {
+                kind, module, name, ..
+            } => Some((kind.as_str(), module.as_deref(), name.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        specifiers,
+        [
+            ("side_effect", None, "'part'"),
+            ("side_effect", None, "other"),
+        ]
+    );
+}
