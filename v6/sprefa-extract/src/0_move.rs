@@ -1,17 +1,39 @@
 //! `extract move <old.pl> <new.pl>`: rehome one prolog file and repair every
 //! specifier that named it, through soopy's staged mutation boundary.
+//! @comment-ok: module header, the seam list every bin arm opens with
+//!
+//! ast-grep finds the specifiers (`rules/move_specifier.yml`), a `FactMatcher`
+//! over the run's `move_candidate` rel says which of them name the moved file,
+//! and arc B's drain folds the resulting edits into one soopy Replace per file.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
+use ast_grep_config::{from_yaml_string, GlobalRules, RuleConfig};
+use ast_grep_core::meta_var::Underlying;
+use ast_grep_core::ops::{Any, Op};
+use ast_grep_core::replacer::Replacer;
+use ast_grep_core::source::Doc;
+use ast_grep_core::{AstGrep, NodeMatch, Pattern};
 use clap::Parser;
 use rayon::prelude::*;
+use rusqlite::Connection;
 use sprefa_extract::{
-    bind_action, directory_path, directory_source, extract_pool, replace_action, source_rel,
-    FamilyMask, PrologSource, Source, SpecifierKind,
+    bind_action, directory_path, directory_source, drain_edits, extract_pool, replace_action,
+    source_rel, BoundEdit, ExtractLang, FactSet, PendingReplaceDoc,
 };
 
 const PRODUCER: &str = "extract-move";
+
+/// The rule is data, next to the code, and rides in the binary so a move needs
+/// no file beside it.
+const MOVE_SPECIFIER_RULE: &str = include_str!("../rules/move_specifier.yml");
+
+/// The one rel this run asks the store about, and the column holding the spec
+/// text as written. Same grain as the live `import_graph_candidate`.
+const CANDIDATE_REL: &str = "move_candidate";
+const CANDIDATE_COLUMN: &str = "raw";
 
 #[derive(Parser)]
 #[command(
@@ -111,7 +133,7 @@ impl Plan {
         let old_dir = old.parent().unwrap_or(&root).to_path_buf();
 
         let corpus = prolog_files(&root);
-        let mut edits: BTreeMap<String, Vec<(usize, usize, String)>> = BTreeMap::new();
+        let rule = specifier_rule()?;
         let mut module_name: Option<String> = None;
 
         // Read and parse fan out; the merge below stays sequential over `corpus`
@@ -130,13 +152,17 @@ impl Plan {
                     let Ok(text) = String::from_utf8(bytes) else {
                         return Scanned::Unreadable;
                     };
-                    Scanned::Rows(specifiers(file, &text))
+                    Scanned::Rows(specifiers(&rule, &text))
                 })
                 .collect()
         });
 
         let mut parsed = 0usize;
         let mut skipped = 0usize;
+        // rel -> raw spec text -> what it becomes. One rewrite per raw: a spec
+        // written twice in one file resolves to one replacement.
+        let mut rewrites: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+        let mut candidates: Vec<CandidateRow> = Vec::new();
 
         for (file, scan) in corpus.iter().zip(&scanned) {
             let rows = match scan {
@@ -155,8 +181,8 @@ impl Plan {
             if is_old {
                 module_name = rows.module.clone();
             }
-            for spec in &rows.paths {
-                let Some(target) = resolve(&dir, &spec.raw) else {
+            for raw in &rows.paths {
+                let Some(target) = resolve(&dir, raw) else {
                     continue;
                 };
                 // Inside the moved file every relative spec is re-aimed from the
@@ -165,26 +191,32 @@ impl Plan {
                     if target == old {
                         continue;
                     }
-                    (new_dir.as_path(), target)
+                    (new_dir.as_path(), target.clone())
                 } else if target == old {
                     (dir.as_path(), new.clone())
                 } else {
                     continue;
                 };
-                let replacement = spec_text(from_dir, &aimed, &spec.raw);
-                if replacement == spec.raw {
+                let replacement = spec_text(from_dir, &aimed, raw);
+                if &replacement == raw {
                     continue;
                 }
                 let rel = within_root(&root, file)?;
-                edits
+                candidates.push(CandidateRow {
+                    path: rel.clone(),
+                    raw: raw.clone(),
+                    target: target.display().to_string(),
+                });
+                rewrites
                     .entry(rel)
                     .or_default()
-                    .push((spec.start, spec.end, replacement));
+                    .insert(raw.clone(), replacement);
             }
         }
         tracing::debug!(parsed, skipped, corpus = corpus.len(), "move prescan");
         if cli.shim {
-            edits.retain(|rel, _| rel == &old_rel);
+            rewrites.retain(|rel, _| rel == &old_rel);
+            candidates.retain(|row| row.path == old_rel);
         }
 
         // Every action is planned against the real root; `bind_action` re-aims it
@@ -195,23 +227,20 @@ impl Plan {
             .identity
             .clone();
 
+        // ONE read of the run's candidate rel, grouped by the file that wrote
+        // each spec: the store, not the scan, says which nodes a file rewrites.
+        let store = candidate_store(&candidates)?;
+        let named = FactSet::load_by(&store, CANDIDATE_REL, "path", CANDIDATE_COLUMN)
+            .map_err(|error| error.to_string())?;
+
         let mut edit_stage = Vec::new();
-        for (rel, spans) in edits {
-            let source = directory_source(&identity, &rel);
-            let text_edits = spans
-                .into_iter()
-                .map(|(start, end, replacement)| soopy::TextEdit {
-                    range: soopy::ActionSpan {
-                        source: source.clone(),
-                        start: start as u64,
-                        end: end as u64,
-                    },
-                    replacement: replacement.into_bytes(),
-                    producer: soopy::ActionProducer::unordered(PRODUCER),
-                })
-                .collect();
-            let expected = content_id(&root.join(&rel))?;
-            edit_stage.push(replace_action(source, expected, text_edits));
+        for (rel, facts) in &named {
+            let source = directory_source(&identity, rel);
+            let by_raw = rewrites.get(rel).cloned().unwrap_or_default();
+            let Some(action) = drain_file(&root, rel, &rule, facts, &by_raw, source)? else {
+                continue;
+            };
+            edit_stage.push(action);
         }
 
         let mut stages = Vec::new();
@@ -269,91 +298,163 @@ fn carries_specifier(bytes: &[u8]) -> bool {
         .any(|needle| memchr::memmem::find(bytes, needle.as_bytes()).is_some())
 }
 
-/// One file-spec occurrence, with the byte range of the term as written.
-struct PathSpec {
-    raw: String,
-    start: usize,
-    end: usize,
-}
-
 struct SpecRows {
-    paths: Vec<PathSpec>,
+    paths: Vec<String>,
     module: Option<String>,
 }
 
-/// `use_module(Path, [f/1])` spans the indicator and carries the path on
-/// `module`, so that range is recovered by scanning back for the last whole token.
-fn specifiers(path: &Path, text: &str) -> SpecRows {
-    let display = path.display().to_string();
-    // Only the call family carries specifier rows; the cst, type and df
-    // projections cost a third of the corpus wall and feed nothing here.
-    let mask = FamilyMask {
-        call: true,
-        ..FamilyMask::NONE
-    };
-    let output = PrologSource.extract(&display, text.as_bytes(), mask);
-    let mut paths: Vec<PathSpec> = Vec::new();
-    let mut module = None;
-    let Some(call) = output.call.as_ref() else {
-        return SpecRows { paths, module };
-    };
-    for spec in &call.aux.specifiers {
-        let start = spec.span.start as usize;
-        let end = start + spec.span.len as usize;
-        match (spec.kind, spec.module) {
-            (SpecifierKind::Reexport, Some(name)) => {
-                module.get_or_insert_with(|| output.strings.lookup(name).to_string());
-            }
-            (SpecifierKind::SideEffect | SpecifierKind::Include, _)
-            | (SpecifierKind::ReexportModule, None) => {
-                if end <= text.len() {
-                    paths.push(PathSpec {
-                        raw: output.strings.lookup(spec.name).to_string(),
-                        start,
-                        end,
-                    });
-                }
-            }
-            (SpecifierKind::Named | SpecifierKind::ReexportModule, Some(name)) => {
-                let raw = output.strings.lookup(name).to_string();
-                if let Some((start, end)) = last_token_before(text, &raw, start) {
-                    paths.push(PathSpec { raw, start, end });
-                }
-            }
-            _ => {}
-        }
-    }
-    paths.sort_by_key(|spec| (spec.start, spec.end));
-    paths.dedup_by(|left, right| left.start == right.start && left.end == right.end);
-    SpecRows { paths, module }
+/// One row of the rel the fact matcher reads: which file wrote which spec, and
+/// which file that spec names.
+struct CandidateRow {
+    path: String,
+    raw: String,
+    target: String,
 }
 
-fn last_token_before(text: &str, needle: &str, limit: usize) -> Option<(usize, usize)> {
-    if needle.is_empty() {
-        return None;
-    }
-    let window = text.get(..limit.min(text.len()))?;
-    let mut found = None;
-    let mut from = 0usize;
-    while let Some(offset) = window[from..].find(needle) {
-        let start = from + offset;
-        let end = start + needle.len();
-        if !is_word_byte(window.as_bytes(), start.checked_sub(1))
-            && !is_word_byte(window.as_bytes(), Some(end))
-        {
-            found = Some((start, end));
-        }
-        from = start + 1;
-    }
-    found
+/// `language:` is not a field the rule file carries: the grammar is the
+/// caller's, so it is supplied here.
+fn specifier_rule() -> Result<RuleConfig<ExtractLang>, String> {
+    let yaml = format!("language: prolog\n{MOVE_SPECIFIER_RULE}");
+    from_yaml_string(&yaml, &GlobalRules::default())
+        .map_err(|error| format!("rules/move_specifier.yml: {error}"))?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "rules/move_specifier.yml holds no rule".to_string())
 }
 
-fn is_word_byte(bytes: &[u8], index: Option<usize>) -> bool {
-    match index {
-        Some(index) => bytes
-            .get(index)
-            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_'),
-        None => false,
+/// Every spec the rule finds, in source order, plus the file's own module name.
+/// A spec is kept as written; resolution and re-aiming are the caller's.
+fn specifiers(rule: &RuleConfig<ExtractLang>, text: &str) -> SpecRows {
+    let root = AstGrep::new(text, ExtractLang::Prolog);
+    let mut paths: Vec<String> = root
+        .root()
+        .find_all(&rule.matcher)
+        .map(|matched| matched.text().to_string())
+        .collect();
+    paths.dedup();
+    SpecRows {
+        paths,
+        module: module_name(&root),
+    }
+}
+
+/// Unquoted the way the extractor reads it (`lang/prolog/_0_source.rs:505`,
+/// `atom_text`), off the same parse the specifiers came from.
+fn module_name(root: &AstGrep<ast_grep_core::tree_sitter::StrDoc<ExtractLang>>) -> Option<String> {
+    let pattern = Pattern::contextual(
+        "module($NAME, $EXPORTS)",
+        "compound_term",
+        ExtractLang::Prolog,
+    )
+    .ok()?;
+    let matched = root.root().find(&pattern)?;
+    let name = matched.get_env().get_match("NAME")?.text().to_string();
+    let (_, bare) = unquote(&name);
+    Some(bare.to_string())
+}
+
+/// The store's shape: `__str` UNIQUE on the natural key, the rel surrogate-keyed
+/// against it. One prepared statement per table, one transaction.
+fn candidate_store(rows: &[CandidateRow]) -> Result<Connection, String> {
+    let mut store = Connection::open_in_memory().map_err(|error| error.to_string())?;
+    store
+        .execute_batch(&format!(
+            "CREATE TABLE \"__str\" (\"__id\" INTEGER PRIMARY KEY, \"content\" TEXT NOT NULL UNIQUE);
+             CREATE TABLE \"{CANDIDATE_REL}\" (\"__id\" INTEGER PRIMARY KEY,
+                \"path\" INTEGER NOT NULL, \"{CANDIDATE_COLUMN}\" INTEGER NOT NULL,
+                \"target\" INTEGER NOT NULL,
+                UNIQUE (\"path\", \"{CANDIDATE_COLUMN}\", \"target\"));"
+        ))
+        .map_err(|error| error.to_string())?;
+    let transaction = store.transaction().map_err(|error| error.to_string())?;
+    {
+        let mut intern = transaction
+            .prepare("INSERT OR IGNORE INTO \"__str\" (\"content\") VALUES (?1)")
+            .map_err(|error| error.to_string())?;
+        for row in rows {
+            for value in [&row.path, &row.raw, &row.target] {
+                intern.execute([value]).map_err(|error| error.to_string())?;
+            }
+        }
+        let mut insert = transaction
+            .prepare(&format!(
+                "INSERT OR IGNORE INTO \"{CANDIDATE_REL}\"
+                    (\"path\", \"{CANDIDATE_COLUMN}\", \"target\")
+                 SELECT p.\"__id\", r.\"__id\", t.\"__id\"
+                 FROM \"__str\" p, \"__str\" r, \"__str\" t
+                 WHERE p.\"content\" = ?1 AND r.\"content\" = ?2 AND t.\"content\" = ?3"
+            ))
+            .map_err(|error| error.to_string())?;
+        for row in rows {
+            insert
+                .execute([&row.path, &row.raw, &row.target])
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    transaction.commit().map_err(|error| error.to_string())?;
+    Ok(store)
+}
+
+/// One file's Replace, drained out of ONE frozen parse: the rule finds every
+/// spec, the fact matchers keep the ones the store names.
+fn drain_file(
+    root: &Path,
+    rel: &str,
+    rule: &RuleConfig<ExtractLang>,
+    facts: &Arc<sprefa_extract::FactSet>,
+    by_raw: &BTreeMap<String, String>,
+    source: soopy::ActionSource,
+) -> Result<Option<soopy::SourceAction>, String> {
+    let path = root.join(rel);
+    let text = std::fs::read_to_string(&path)
+        .map_err(|error| format!("read {}: {error}", path.display()))?;
+    let producer = soopy::ActionProducer::unordered(PRODUCER);
+    let pending = PendingReplaceDoc::open(
+        &text,
+        ExtractLang::Prolog,
+        source.clone(),
+        producer.clone(),
+    )?;
+    let expected = pending.expected().clone();
+    let named = Any::new(facts.values().map(|raw| facts.matcher(raw)).collect::<Vec<_>>());
+    let matcher = Op::every(&rule.matcher).and(named);
+    let rewrite = SpecifierRewrite {
+        by_raw: by_raw.clone(),
+    };
+
+    let grep = AstGrep::doc(pending);
+    let edits = drain_edits(&grep.root(), &matcher, &rewrite);
+    tracing::debug!(rel, edits = edits.len(), named = facts.len(), "move drain");
+    if edits.is_empty() {
+        return Ok(None);
+    }
+    let text_edits = edits
+        .into_iter()
+        .map(|edit| {
+            BoundEdit {
+                source: source.clone(),
+                producer: producer.clone(),
+                edit,
+            }
+            .into()
+        })
+        .collect();
+    Ok(Some(replace_action(source, expected, text_edits)))
+}
+
+/// The replacement for one matched spec, keyed on the spec as written. ONE
+/// rewrite per raw text, so a file that names the moved file twice re-aims both.
+struct SpecifierRewrite {
+    by_raw: BTreeMap<String, String>,
+}
+
+impl<D: Doc<Source = String>> Replacer<D> for SpecifierRewrite {
+    fn generate_replacement(&self, matched: &NodeMatch<'_, D>) -> Underlying<D> {
+        let raw = matched.text();
+        self.by_raw
+            .get(raw.as_ref())
+            .map(|replacement| replacement.as_bytes().to_vec())
+            .unwrap_or_else(|| raw.as_bytes().to_vec())
     }
 }
 

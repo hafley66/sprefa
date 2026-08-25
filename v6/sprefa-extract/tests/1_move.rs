@@ -19,6 +19,17 @@ struct Fixture {
 }
 
 fn fixture(label: &str) -> Fixture {
+    fixture_of(
+        label,
+        &[
+            ("a.pl", A_PL),
+            ("lib/b.pl", B_PL),
+            ("lib/b_part.pl", B_PART_PL),
+        ],
+    )
+}
+
+fn fixture_of(label: &str, files: &[(&str, &str)]) -> Fixture {
     let base = std::env::temp_dir().join(format!(
         "extract_move_{label}_{}_{}",
         std::process::id(),
@@ -29,11 +40,12 @@ fn fixture(label: &str) -> Fixture {
     ));
     let root = base.join("repo");
     let state = base.join("state");
-    std::fs::create_dir_all(root.join("lib")).unwrap();
     std::fs::create_dir_all(&state).unwrap();
-    std::fs::write(root.join("a.pl"), A_PL).unwrap();
-    std::fs::write(root.join("lib/b.pl"), B_PL).unwrap();
-    std::fs::write(root.join("lib/b_part.pl"), B_PART_PL).unwrap();
+    for (rel, body) in files {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, body).unwrap();
+    }
     git(&root, &["init", "-q", "."]);
     git(&root, &["add", "-A"]);
     git(
@@ -178,5 +190,53 @@ fn shim_leaves_a_reexport_behind_and_swipl_still_loads() {
         A_PL,
         "a shim run leaves every importer alone"
     );
+    loads_clean(&fixture.root);
+}
+
+// The specifier rule and the fact gate, on the three shapes the hand-built walk
+// used to reach through the prolog extractor's specifier kinds.
+const WIDE_A_PL: &str = ":- module(a, [check/0]).\n:- use_module('lib/b', [b_fact/1]).\n:- use_module(library(lists)).\n\ncheck :- b_fact(1).\n";
+const WIDE_C_PL: &str = ":- module(c, []).\n:- use_module('lib/b').\n";
+const WIDE_SUB_B_PL: &str = ":- module(sub_b, []).\n";
+
+fn wide_fixture(label: &str) -> Fixture {
+    fixture_of(
+        label,
+        &[
+            ("a.pl", WIDE_A_PL),
+            ("lib/b.pl", B_PL),
+            ("lib/b_part.pl", B_PART_PL),
+            ("sub/c.pl", WIDE_C_PL),
+            ("sub/lib/b.pl", WIDE_SUB_B_PL),
+        ],
+    )
+}
+
+#[test]
+fn the_two_argument_form_is_re_aimed_and_a_library_alias_is_left_alone() {
+    let fixture = wide_fixture("twoarg");
+    let table = move_verb(&fixture, &["--commit"]);
+
+    assert_eq!(kind_count(&table, "move"), 1, "table:\n{table}");
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.join("a.pl")).unwrap(),
+        ":- module(a, [check/0]).\n:- use_module('core/b', [b_fact/1]).\n:- use_module(library(lists)).\n\ncheck :- b_fact(1).\n",
+        "the import list rides along and `library(lists)` names no file"
+    );
+}
+
+#[test]
+fn the_same_spec_text_elsewhere_naming_another_file_is_left_alone() {
+    let fixture = wide_fixture("samename");
+    let table = move_verb(&fixture, &["--commit"]);
+
+    // `sub/c.pl` writes the SAME raw spec, `'lib/b'`, and it resolves to
+    // `sub/lib/b.pl`. The gate is per file, never per spelling.
+    assert_eq!(kind_count(&table, "replace"), 2, "table:\n{table}");
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.join("sub/c.pl")).unwrap(),
+        WIDE_C_PL
+    );
+    assert!(fixture.root.join("sub/lib/b.pl").is_file());
     loads_clean(&fixture.root);
 }
