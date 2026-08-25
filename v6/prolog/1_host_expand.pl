@@ -31,7 +31,7 @@
 :- use_module(library(lists)).
 :- use_module(library(pairs)).
 :- use_module('0_body_walk', [body_conjunction_goals/3]).
-:- use_module('next/registry',
+:- use_module('compile/registry',
               [ arrival_roles/3,
                 host_input_roles/3
               ]).

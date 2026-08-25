@@ -52,7 +52,7 @@
           ]).
 
 :- use_module(library(lists)).
-:- use_module('next/registry', [body_surface_for_term/6]).
+:- use_module('compile/registry', [body_surface_for_term/6]).
 
 % ── the walk ─────────────────────────────────────────────────────────────────
 

@@ -9,7 +9,7 @@
             trace_schema_text/1
           ]).
 
-:- use_module('../next/registry', [trace_event/2]).
+:- use_module(registry, [trace_event/2]).
 
 :- dynamic(compile_dir/1).
 :- prolog_load_context(directory, Here), assertz(compile_dir(Here)).

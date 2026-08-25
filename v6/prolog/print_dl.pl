@@ -31,7 +31,7 @@
 :- use_module(library(apply)).
 :- use_module(analyze, [ rel_columns/5, declared_refs/2 ]).
 :- use_module('0_rel_record', [ relplan_shape/6 ]).
-:- use_module('next/registry',
+:- use_module('compile/registry',
               [ body_surface_for_term/6,
                 wrapper_lower_role/3,
                 expression/5,

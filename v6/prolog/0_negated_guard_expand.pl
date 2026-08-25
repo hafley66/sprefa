@@ -6,7 +6,7 @@
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
-:- use_module('next/registry', [expression/5]).
+:- use_module('compile/registry', [expression/5]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

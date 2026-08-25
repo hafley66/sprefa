@@ -29,7 +29,7 @@
 % Run: swipl -q -l golden_coverage.pl -g run -g halt
 %      exit 0 = covered, exit 1 = a named construct is missing.
 
-:- use_module('../../next/registry', [surface/5, expression/5]).
+:- use_module('../registry', [surface/5, expression/5]).
 :- use_module('../../use_resolve', [expand_uses/8]).
 
 % Resolved at LOAD time (prolog_load_context/2 is a read-time-only predicate),
