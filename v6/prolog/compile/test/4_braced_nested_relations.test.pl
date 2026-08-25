@@ -7,7 +7,7 @@
                 statement_location_for_reference/4
               ]).
 :- use_module('../../print_dl', [print_dl_program/3]).
-:- use_module('../../0_dot_expand',
+:- use_module('../../next/1_expand/0_dot_expand',
               [ expand_dot_in_context/3,
                 resolve_qualified_types/2
               ]).
