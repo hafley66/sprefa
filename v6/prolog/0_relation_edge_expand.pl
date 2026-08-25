@@ -21,7 +21,7 @@
 :- use_module('0_type_plane',
               [type_definitions/2, type_definition/4,
                declared_type_name/2]).
-:- use_module('0_body_walk', [walk_body/3]).
+:- use_module('next/1_expand/0_body_walk', [walk_body/3]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
