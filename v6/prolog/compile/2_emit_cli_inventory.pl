@@ -9,7 +9,7 @@
             cli_inventory_text/1
           ]).
 
-:- use_module('../next/registry', [cli_command/3, http_route/3]).
+:- use_module(registry, [cli_command/3, http_route/3]).
 
 :- dynamic(compile_dir/1).
 :- prolog_load_context(directory, Here), assertz(compile_dir(Here)).

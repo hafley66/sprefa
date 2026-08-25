@@ -24,7 +24,7 @@
                          listened_departure_refs/2, program_uses_tick/2 ]).
 :- use_module('1_host_expand', [compile_host_decl/3, query_decl/3,
                                 host_plan_contract/2]).
-:- use_module('next/registry', [host_execution/3]).
+:- use_module('compile/registry', [host_execution/3]).
 % bind_executor/2 left the registry with the bind surface; pinned here so the
 % term-door bind_decl path the resident runtime still walks keeps its executor.
 bind_executor(interval, live_interval).

@@ -25,7 +25,7 @@
               [ type_definitions/2, type_cycle_witness/2, declared_type_name/2,
                 type_definition/4, relation_columns_and_types/5, column_storage/3,
                 relation_value_shape/3, relation_value_term/4 ]).
-:- use_module('next/registry', [surface_for_term/6, surface/5]).
+:- use_module('compile/registry', [surface_for_term/6, surface/5]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

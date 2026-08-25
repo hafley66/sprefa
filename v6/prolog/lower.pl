@@ -187,7 +187,7 @@
 :- use_module('0_type_ids', [id_kind_name/3, semantic_type_id_text/2]).
 :- use_module('0_option_expand', [acyclic_companion/5]).
 :- use_module('1_host_expand', [query_decl/3]).
-:- use_module('next/registry', [expression/5, surface/5, body_surface_for_term/6]).
+:- use_module('compile/registry', [expression/5, surface/5, body_surface_for_term/6]).
 :- use_module('0_type_plane',
               [ type_definition/4, column_storage/3,
                 type_topological_order/2, type_canonical_json/4,

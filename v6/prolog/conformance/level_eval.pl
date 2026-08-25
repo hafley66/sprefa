@@ -15,7 +15,7 @@
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
 :- use_module(body).
-:- use_module('../next/registry', [surface_for_term/6]).
+:- use_module('../compile/registry', [surface_for_term/6]).
 :- use_module('../0_type_plane', [canonical_json_text/2]).
 :- use_module('../0_generic_expand', [canonical_type_name/2]).
 

@@ -16,7 +16,7 @@
             unsupported_renderer_counts/2
           ]).
 
-:- use_module('next/registry', [surface/5]).
+:- use_module('compile/registry', [surface/5]).
 :- use_module('3_clock_check', [clock_unsupported_reason/1]).
 
 :- multifile prolog:message//1.
