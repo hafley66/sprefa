@@ -3,10 +3,12 @@
 # written, quotes and all. The same five functors `0_move.rs` needle-filters on
 # and the same arm list the prolog extractor keeps (lang/prolog/_0_source.rs:379).
 #
+# Every leg is a bounded walk. `inside` defaults to the immediate parent, and
+# `compound_term` carries a `functor` field (tree-sitter-prolog node-types.json),
+# so the directive test is a field-child read rather than a sibling scan.
 # `follows` walks tree-sitter siblings, which include the unnamed `(` and `,`
-# tokens, so reaching the functor takes `stopBy: end` and pinning the match to
-# argument ONE takes the comma test: a second argument's immediate previous
-# sibling is `,`, a first argument's is `(`.
+# tokens: argument ONE is the argument whose immediate previous sibling is `(`,
+# and the functor itself has no previous sibling.
 # @comment-ok: the sibling shape is the one fact the rule text cannot show
 id: move-specifier
 rule:
@@ -14,9 +16,9 @@ rule:
     - kind: atom
     - inside:
         kind: compound_term
+        has:
+          field: functor
+          regex: ^(use_module|ensure_loaded|consult|include|reexport)$
     - follows:
-        regex: ^(use_module|ensure_loaded|consult|include|reexport)$
-        stopBy: end
-    - not:
-        follows:
-          regex: ^,$
+        regex: ^\($
+        stopBy: neighbor

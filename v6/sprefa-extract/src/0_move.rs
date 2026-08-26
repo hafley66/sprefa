@@ -21,7 +21,7 @@ use rayon::prelude::*;
 use rusqlite::Connection;
 use sprefa_extract::{
     bind_action, directory_path, directory_source, drain_edits, extract_pool, replace_action,
-    source_rel, BoundEdit, ExtractLang, FactSet, PendingReplaceDoc,
+    source_rel, BoundEdit, ExtractLang, FactSet,
 };
 
 const PRODUCER: &str = "extract-move";
@@ -134,6 +134,7 @@ impl Plan {
 
         let corpus = prolog_files(&root);
         let rule = specifier_rule()?;
+        let old_stem = stem(&old);
         let mut module_name: Option<String> = None;
 
         // Read and parse fan out; the merge below stays sequential over `corpus`
@@ -146,13 +147,13 @@ impl Plan {
                         return Scanned::Unreadable;
                     };
                     // `old` is parsed unconditionally: its module name is read off it.
-                    if *file != old && !carries_specifier(&bytes) {
+                    if *file != old && !carries_specifier(&bytes, &old_stem) {
                         return Scanned::NoDirective;
                     }
                     let Ok(text) = String::from_utf8(bytes) else {
                         return Scanned::Unreadable;
                     };
-                    Scanned::Rows(specifiers(&rule, &text))
+                    Scanned::Rows(specifiers(&rule, text))
                 })
                 .collect()
         });
@@ -163,6 +164,8 @@ impl Plan {
         // written twice in one file resolves to one replacement.
         let mut rewrites: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
         let mut candidates: Vec<CandidateRow> = Vec::new();
+        // The parse the drain reads back, so no file is parsed twice in one run.
+        let mut parses: BTreeMap<String, &Parsed> = BTreeMap::new();
 
         for (file, scan) in corpus.iter().zip(&scanned) {
             let rows = match scan {
@@ -207,6 +210,7 @@ impl Plan {
                     raw: raw.clone(),
                     target: target.display().to_string(),
                 });
+                parses.insert(rel.clone(), &rows.parse);
                 rewrites
                     .entry(rel)
                     .or_default()
@@ -233,15 +237,27 @@ impl Plan {
         let named = FactSet::load_by(&store, CANDIDATE_REL, "path", CANDIDATE_COLUMN)
             .map_err(|error| error.to_string())?;
 
-        let mut edit_stage = Vec::new();
-        for (rel, facts) in &named {
-            let source = directory_source(&identity, rel);
-            let by_raw = rewrites.get(rel).cloned().unwrap_or_default();
-            let Some(action) = drain_file(&root, rel, &rule, facts, &by_raw, source)? else {
-                continue;
-            };
-            edit_stage.push(action);
-        }
+        // The fact-gated scan fans out; `named` is a BTreeMap and an indexed
+        // rayon collect keeps its order, so the staged action order is rel order.
+        let files: Vec<(&String, &Arc<FactSet>)> = named.iter().collect();
+        let drained: Vec<Option<soopy::SourceAction>> = extract_pool().install(|| {
+            files
+                .into_par_iter()
+                .map(|(rel, facts)| {
+                    let parse = parses.get(rel)?;
+                    let source = directory_source(&identity, rel);
+                    let by_raw = rewrites.get(rel).cloned().unwrap_or_default();
+                    drain_file(rel, parse, &rule, facts, &by_raw, source)
+                })
+                .collect()
+        });
+
+        let edit_stage: Vec<soopy::SourceAction> = drained.into_iter().flatten().collect();
+        tracing::debug!(
+            files = named.len(),
+            staged = edit_stage.len(),
+            "move drain done"
+        );
 
         let mut stages = Vec::new();
         if !edit_stage.is_empty() {
@@ -292,15 +308,24 @@ const SPEC_NEEDLES: [&str; 5] = [
     "reexport",
 ];
 
-fn carries_specifier(bytes: &[u8]) -> bool {
+/// `resolve` never invents a filename, so a spec naming the moved file carries
+/// its stem verbatim and the moved file is admitted by its own stem.
+fn carries_specifier(bytes: &[u8], stem: &str) -> bool {
+    if stem.is_empty() || memchr::memmem::find(bytes, stem.as_bytes()).is_none() {
+        return false;
+    }
     SPEC_NEEDLES
         .iter()
         .any(|needle| memchr::memmem::find(bytes, needle.as_bytes()).is_some())
 }
 
+/// One prolog file's frozen parse, read by the prescan and again by the drain.
+type Parsed = AstGrep<ast_grep_core::tree_sitter::StrDoc<ExtractLang>>;
+
 struct SpecRows {
     paths: Vec<String>,
     module: Option<String>,
+    parse: Parsed,
 }
 
 /// One row of the rel the fact matcher reads: which file wrote which spec, and
@@ -324,23 +349,25 @@ fn specifier_rule() -> Result<RuleConfig<ExtractLang>, String> {
 
 /// Every spec the rule finds, in source order, plus the file's own module name.
 /// A spec is kept as written; resolution and re-aiming are the caller's.
-fn specifiers(rule: &RuleConfig<ExtractLang>, text: &str) -> SpecRows {
-    let root = AstGrep::new(text, ExtractLang::Prolog);
-    let mut paths: Vec<String> = root
+fn specifiers(rule: &RuleConfig<ExtractLang>, text: String) -> SpecRows {
+    let parse = AstGrep::new(text, ExtractLang::Prolog);
+    let mut paths: Vec<String> = parse
         .root()
         .find_all(&rule.matcher)
         .map(|matched| matched.text().to_string())
         .collect();
     paths.dedup();
+    let module = module_name(&parse);
     SpecRows {
         paths,
-        module: module_name(&root),
+        module,
+        parse,
     }
 }
 
 /// Unquoted the way the extractor reads it (`lang/prolog/_0_source.rs:505`,
 /// `atom_text`), off the same parse the specifiers came from.
-fn module_name(root: &AstGrep<ast_grep_core::tree_sitter::StrDoc<ExtractLang>>) -> Option<String> {
+fn module_name(root: &Parsed) -> Option<String> {
     let pattern = Pattern::contextual(
         "module($NAME, $EXPORTS)",
         "compound_term",
@@ -395,38 +422,29 @@ fn candidate_store(rows: &[CandidateRow]) -> Result<Connection, String> {
     Ok(store)
 }
 
-/// One file's Replace, drained out of ONE frozen parse: the rule finds every
-/// spec, the fact matchers keep the ones the store names.
+/// One file's Replace off the ONE parse the prescan made. The fact matchers keep
+/// the specs the store names; `expected` hashes the bytes that parse came from.
 fn drain_file(
-    root: &Path,
     rel: &str,
+    parse: &Parsed,
     rule: &RuleConfig<ExtractLang>,
     facts: &Arc<sprefa_extract::FactSet>,
     by_raw: &BTreeMap<String, String>,
     source: soopy::ActionSource,
-) -> Result<Option<soopy::SourceAction>, String> {
-    let path = root.join(rel);
-    let text = std::fs::read_to_string(&path)
-        .map_err(|error| format!("read {}: {error}", path.display()))?;
+) -> Option<soopy::SourceAction> {
     let producer = soopy::ActionProducer::unordered(PRODUCER);
-    let pending = PendingReplaceDoc::open(
-        &text,
-        ExtractLang::Prolog,
-        source.clone(),
-        producer.clone(),
-    )?;
-    let expected = pending.expected().clone();
+    let root = parse.root();
+    let expected = soopy::ContentId::blake3(root.text().as_bytes());
     let named = Any::new(facts.values().map(|raw| facts.matcher(raw)).collect::<Vec<_>>());
     let matcher = Op::every(&rule.matcher).and(named);
     let rewrite = SpecifierRewrite {
         by_raw: by_raw.clone(),
     };
 
-    let grep = AstGrep::doc(pending);
-    let edits = drain_edits(&grep.root(), &matcher, &rewrite);
+    let edits = drain_edits(&root, &matcher, &rewrite);
     tracing::debug!(rel, edits = edits.len(), named = facts.len(), "move drain");
     if edits.is_empty() {
-        return Ok(None);
+        return None;
     }
     let text_edits = edits
         .into_iter()
@@ -439,7 +457,7 @@ fn drain_file(
             .into()
         })
         .collect();
-    Ok(Some(replace_action(source, expected, text_edits)))
+    Some(replace_action(source, expected, text_edits))
 }
 
 /// The replacement for one matched spec, keyed on the spec as written. ONE
