@@ -21,6 +21,7 @@ pub mod prolog;
 pub mod python;
 pub mod rust;
 pub mod ts;
+pub mod ts_paths;
 pub mod ts_resolve;
 pub mod ts_walk;
 

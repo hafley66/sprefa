@@ -15,6 +15,7 @@ use ast_grep_core::{AstGrep, NodeMatch, Pattern};
 use clap::Parser;
 use rayon::prelude::*;
 use rusqlite::Connection;
+use sprefa_extract::lang::ts_paths::{ts_path_literals, TsPathLiteral};
 use sprefa_extract::{
     bind_action, corpus_lang, directory_path, directory_source, drain_edits, extract_pool,
     is_ts_family, replace_action, respell, source_rel, ts_corpus, ts_specifiers, BoundEdit,
@@ -917,12 +918,92 @@ fn ts_file_edits(
             .into(),
         );
     }
+    // A moved file's path constants ride in the SAME Replace as its specifier
+    // re-aims: soopy takes one operation per source file.
+    if destination.is_some() {
+        for literal in ts_path_literals(&file.to_string_lossy(), &text).unwrap_or_default() {
+            let Some(replacement) = ts_path_replacement(dir, from_dir, moved, &literal) else {
+                continue;
+            };
+            edits.push(
+                BoundEdit {
+                    source: source.clone(),
+                    producer: producer.clone(),
+                    edit: ast_grep_core::source::Edit {
+                        position: literal.span.start as usize,
+                        deleted_length: literal.span.len as usize,
+                        inserted_text: replacement.into_bytes(),
+                    },
+                }
+                .into(),
+            );
+        }
+    }
     tracing::debug!(rel, edits = edits.len(), "move ts drain");
     if edits.is_empty() {
         return None;
     }
     let expected = soopy::ContentId::blake3(text.as_bytes());
     Some(replace_action(source, expected, edits))
+}
+
+/// The quoted replacement for one relative path constant a moved file writes, or
+/// None when the text it already carries still names the same file.
+fn ts_path_replacement(
+    old_dir: &Path,
+    new_dir: &Path,
+    moved: &BTreeMap<PathBuf, PathBuf>,
+    literal: &TsPathLiteral,
+) -> Option<String> {
+    let target = normalize(&old_dir.join(&literal.text));
+    let aimed = moved
+        .get(&target)
+        .cloned()
+        .or_else(|| moved_directory(&target, moved))
+        .unwrap_or(target);
+    let mut relative = relative_from(new_dir, &aimed);
+    if relative.is_empty() {
+        relative = ".".to_string();
+    } else if !relative.starts_with("..") {
+        relative = format!("./{relative}");
+    }
+    if literal.text.ends_with('/') && !relative.ends_with('/') {
+        relative.push('/');
+    }
+    (relative != literal.text).then(|| {
+        let quote = literal.quote;
+        format!("{quote}{relative}{quote}")
+    })
+}
+
+/// Where a directory lands, when every move under it keeps its relative suffix
+/// and they all agree on one destination. Disagreement means it did not move.
+fn moved_directory(target: &Path, moved: &BTreeMap<PathBuf, PathBuf>) -> Option<PathBuf> {
+    let mut mapped: Option<PathBuf> = None;
+    for (old, new) in moved {
+        let Ok(suffix) = old.strip_prefix(target) else {
+            continue;
+        };
+        let directory = strip_path_suffix(new, suffix)?;
+        match &mapped {
+            Some(seen) if *seen != directory => return None,
+            Some(_) => {}
+            None => mapped = Some(directory),
+        }
+    }
+    mapped.filter(|directory| directory != target)
+}
+
+/// `path` with `suffix`'s components taken off its tail, or None when the tail
+/// is something else: the move renamed the file, so it maps no directory.
+fn strip_path_suffix(path: &Path, suffix: &Path) -> Option<PathBuf> {
+    let full: Vec<Component> = path.components().collect();
+    let tail: Vec<Component> = suffix.components().collect();
+    if tail.is_empty() || tail.len() > full.len() {
+        return None;
+    }
+    let split = full.len() - tail.len();
+    (full[split..] == tail[..]).then(|| full[..split].iter().collect())
 }
 
 /// The quoted replacement for one specifier row, or None when the row names no
