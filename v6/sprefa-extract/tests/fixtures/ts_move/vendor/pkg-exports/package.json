@@ -1,0 +1,10 @@
+{
+  "name": "pkg-exports",
+  "version": "1.0.0",
+  "exports": {
+    ".": {
+      "import": "./lib/main.js"
+    }
+  },
+  "main": "./lib/fallback.js"
+}

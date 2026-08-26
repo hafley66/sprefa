@@ -149,19 +149,18 @@ fn stream_matches(query: &Query, root: tree_sitter::Node<'_>, source: &[u8]) -> 
             let text = node
                 .utf8_text(source)
                 .map_err(|error| format!("query capture text: {error}"))?;
-            captures.insert(name.to_string(), text.to_string());
+            captures.insert(name.to_string(), Value::String(text.to_string()));
             line = line.min(node.start_position().row as i64 + 1);
             end_line = end_line.max(node.end_position().row as i64 + 1);
         }
-        let mut object = Map::new();
-        for (name, text) in captures {
-            object.insert(name, Value::String(text));
-        }
-        object.insert(
+        captures.insert(
             "line".to_string(),
             Value::from(if line == i64::MAX { 1 } else { line }),
         );
-        object.insert("end_line".to_string(), Value::from(end_line));
+        captures.insert("end_line".to_string(), Value::from(end_line));
+        // Sorted through the BTreeMap, never through `Map`: a dependency turning
+        // `serde_json/preserve_order` on otherwise reorders every row.
+        let object: Map<String, Value> = captures.into_iter().collect();
         println!("{}", Value::Object(object));
     }
     Ok(())

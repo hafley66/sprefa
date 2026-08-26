@@ -21,6 +21,7 @@ pub mod prolog;
 pub mod python;
 pub mod rust;
 pub mod ts;
+pub mod ts_resolve;
 pub mod ts_walk;
 
 pub use ast_rule::{
@@ -47,6 +48,7 @@ pub use rust::RustSource;
 pub use ts::{
     ts_specifiers, CallProjector, DfProjector, OxcParser, TsSource, TsSpecifier, TypeProjector,
 };
+pub use ts_resolve::{respell, TsResolver};
 pub use ts_walk::{corpus_lang, is_ts_family, specifier_corpus, ts_corpus, CorpusLang, SKIP_DIRS};
 
 use crate::source::Source;

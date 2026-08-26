@@ -43,6 +43,14 @@ oxc_ast = "0.135"
 oxc_ast_visit = "0.135"
 oxc_span = "0.135"
 oxc_syntax = "0.135"
+# @comment-ok: build-vs-buy candidate table, the law every dep comment here carries.
+# The ESM/CJS + tsconfig resolution algorithm the `move` verb needs: extension
+# aliases (`./x.js` naming `x.ts`), `index`, package `exports`/`main`, tsconfig
+# `paths`/`baseUrl`/`extends`/`references`. Same oxc project family; the
+# alternatives measured are in `lang/ts_resolve.rs` and the arc-3 plan table
+# (swc's resolver is not a standalone crate; the `tsconfig` crates parse config
+# without resolving; a hand-rolled probe re-derives a tested algorithm).
+oxc_resolver = "11.24"
 # syn is the Rust AST front-end v5 carried (src/graph/typegraph/rust). The
 # `full` feature parses Item::*; `visit` drives the call-site/call-def walks;
 # `extra-traits` for derive Eq on AST nodes some helpers pattern-match. Ported
