@@ -568,6 +568,12 @@ pub enum SpecifierKind {
     Reexport,
     Include,
     ReexportModule,
+    /// `import('./m')`. Nothing enters scope by name, so `name` is the module
+    /// path, the same seat the path-only forms use.
+    DynamicImport,
+    /// `require('./m')` and `import x = require('./m')`. `name` is the bound
+    /// name when the form has one, else the module path.
+    Require,
 }
 
 impl SpecifierKind {
@@ -580,6 +586,8 @@ impl SpecifierKind {
             SpecifierKind::Reexport => "reexport",
             SpecifierKind::Include => "include",
             SpecifierKind::ReexportModule => "reexport_module",
+            SpecifierKind::DynamicImport => "dynamic_import",
+            SpecifierKind::Require => "require",
         }
     }
 }

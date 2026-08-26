@@ -1153,128 +1153,191 @@ impl Project<CallF> for CallProjector<'_> {
 // them identically) and export-FROM re-exports (`export {a} from`,
 // `export * from`, `export * as ns from`). NOT covered (no row, matches v5's
 // binding table): `export {a}` without a source (a local export marker, no
-// module specifier), `require(...)`, and `import x = require(...)`.
+// module specifier). The runtime forms (`import()`, `require`) DO carry a row;
+// a non-literal path has none to record and stays in `CallFAux.unresolved`.
 fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut FamilyBundle<CallF>) {
+    for row in scan_module_specifiers(program) {
+        sink.aux.specifiers.push(Specifier {
+            span: to_span(row.span),
+            name: strings.intern(row.name),
+            kind: row.kind,
+            module: Some(strings.intern(row.module)),
+            imported: row.imported.map(|text| strings.intern(text)),
+        });
+    }
+}
+
+/// One module specifier off the oxc walk, before interning. `span` is the seat
+/// the `Specifier` row keeps; `module_span` is the literal a rewrite edits.
+struct ScannedSpecifier<'a> {
+    span: oxc_span::Span,
+    name: &'a str,
+    kind: SpecifierKind,
+    module: &'a str,
+    module_span: oxc_span::Span,
+    imported: Option<&'a str>,
+}
+
+/// Every module specifier one program writes, in source order. The sort is
+/// stable over already-ascending static rows, so their order does not move.
+fn scan_module_specifiers<'a>(program: &Program<'a>) -> Vec<ScannedSpecifier<'a>> {
+    let mut rows = Vec::new();
     for stmt in &program.body {
         match stmt {
-            ts::Statement::ImportDeclaration(import) => match &import.specifiers {
-                // `import './m'`: path-only form — name = the module path.
-                None => push_specifier(
-                    sink,
-                    strings,
-                    import.source.span,
-                    &import.source.value,
-                    SpecifierKind::SideEffect,
-                    &import.source.value,
-                    None,
-                ),
-                Some(specs) => {
-                    let module = import.source.value.as_str();
-                    for spec in specs {
-                        match spec {
-                            ts::ImportDeclarationSpecifier::ImportSpecifier(named) => {
-                                let imported = module_export_name(&named.imported);
-                                push_specifier(
-                                    sink,
-                                    strings,
-                                    named.span,
-                                    &named.local.name,
-                                    SpecifierKind::Named,
-                                    module,
-                                    renamed(&imported, &named.local.name),
-                                )
-                            }
-                            ts::ImportDeclarationSpecifier::ImportDefaultSpecifier(default) => {
-                                push_specifier(
-                                    sink,
-                                    strings,
+            ts::Statement::ImportDeclaration(import) => {
+                let module = import.source.value.as_str();
+                let module_span = import.source.span;
+                match &import.specifiers {
+                    // `import './m'`: path-only form — name = the module path.
+                    None => rows.push(ScannedSpecifier {
+                        span: module_span,
+                        name: module,
+                        kind: SpecifierKind::SideEffect,
+                        module,
+                        module_span,
+                        imported: None,
+                    }),
+                    Some(specs) => {
+                        for spec in specs {
+                            let (span, name, kind, imported) = match spec {
+                                ts::ImportDeclarationSpecifier::ImportSpecifier(named) => {
+                                    let local = named.local.name.as_str();
+                                    (
+                                        named.span,
+                                        local,
+                                        SpecifierKind::Named,
+                                        renamed(module_export_name(&named.imported), local),
+                                    )
+                                }
+                                ts::ImportDeclarationSpecifier::ImportDefaultSpecifier(
+                                    default,
+                                ) => (
                                     default.span,
-                                    &default.local.name,
+                                    default.local.name.as_str(),
                                     SpecifierKind::Default,
-                                    module,
                                     Some("default"),
-                                )
-                            }
-                            ts::ImportDeclarationSpecifier::ImportNamespaceSpecifier(ns) => {
-                                push_specifier(
-                                    sink,
-                                    strings,
+                                ),
+                                ts::ImportDeclarationSpecifier::ImportNamespaceSpecifier(ns) => (
                                     ns.span,
-                                    &ns.local.name,
+                                    ns.local.name.as_str(),
                                     SpecifierKind::Namespace,
-                                    module,
                                     None,
-                                )
-                            }
+                                ),
+                            };
+                            rows.push(ScannedSpecifier {
+                                span,
+                                name,
+                                kind,
+                                module,
+                                module_span,
+                                imported,
+                            });
                         }
                     }
                 }
-            },
+            }
             ts::Statement::ExportNamedDeclaration(export) => {
                 // `export {a} from './m'` only; `export {a}` (no source) is a
                 // local export marker, not a module specifier.
                 if let Some(source) = &export.source {
                     for spec in &export.specifiers {
                         let name = module_export_name(&spec.exported);
-                        let inner = module_export_name(&spec.local);
-                        push_specifier(
-                            sink,
-                            strings,
-                            spec.span,
-                            &name,
-                            SpecifierKind::Reexport,
-                            &source.value,
-                            renamed(&inner, &name),
-                        );
+                        rows.push(ScannedSpecifier {
+                            span: spec.span,
+                            name,
+                            kind: SpecifierKind::Reexport,
+                            module: source.value.as_str(),
+                            module_span: source.span,
+                            imported: renamed(module_export_name(&spec.local), name),
+                        });
                     }
                 }
             }
-            ts::Statement::ExportAllDeclaration(export) => match &export.exported {
-                // `export * as ns from './m'`: the bound name is the alias.
-                Some(exported) => {
-                    let name = module_export_name(exported);
-                    push_specifier(
-                        sink,
-                        strings,
-                        exported.span(),
-                        &name,
-                        SpecifierKind::Reexport,
-                        &export.source.value,
-                        None,
-                    );
-                }
-                // `export * from './m'`: path-only form — name = the module path.
-                None => push_specifier(
-                    sink,
-                    strings,
-                    export.source.span,
-                    &export.source.value,
-                    SpecifierKind::Reexport,
-                    &export.source.value,
-                    None,
-                ),
-            },
+            ts::Statement::ExportAllDeclaration(export) => {
+                let module = export.source.value.as_str();
+                let module_span = export.source.span;
+                // `export * as ns from './m'` binds the alias; `export * from
+                // './m'` is a path-only form — name = the module path.
+                let (span, name) = match &export.exported {
+                    Some(exported) => (exported.span(), module_export_name(exported)),
+                    None => (module_span, module),
+                };
+                rows.push(ScannedSpecifier {
+                    span,
+                    name,
+                    kind: SpecifierKind::Reexport,
+                    module,
+                    module_span,
+                    imported: None,
+                });
+            }
             _ => {}
         }
     }
+    let mut runtime = RuntimeModuleWalker { out: Vec::new() };
+    runtime.visit_program(program);
+    rows.extend(runtime.out);
+    rows.sort_by_key(|row| row.span.start);
+    rows
 }
 
-fn push_specifier(
-    sink: &mut FamilyBundle<CallF>,
-    strings: &mut Strings,
-    span: oxc_span::Span,
-    name: &str,
-    kind: SpecifierKind,
-    module: &str,
-    imported: Option<&str>,
-) {
-    sink.aux.specifiers.push(Specifier {
-        span: to_span(span),
-        name: strings.intern(name),
-        kind,
-        module: Some(strings.intern(module)),
-        imported: imported.map(|text| strings.intern(text)),
-    });
+/// The runtime module references anywhere in the tree. Only a string-literal
+/// path becomes a row; a computed one has no path to record.
+struct RuntimeModuleWalker<'a> {
+    out: Vec<ScannedSpecifier<'a>>,
+}
+
+impl<'a> OxcVisit<'a> for RuntimeModuleWalker<'a> {
+    fn visit_import_expression(&mut self, it: &ts::ImportExpression<'a>) {
+        if let ts::Expression::StringLiteral(lit) = &it.source {
+            let module = lit.value.as_str();
+            self.out.push(ScannedSpecifier {
+                span: lit.span,
+                name: module,
+                kind: SpecifierKind::DynamicImport,
+                module,
+                module_span: lit.span,
+                imported: None,
+            });
+        }
+        oxc_ast_visit::walk::walk_import_expression(self, it);
+    }
+
+    fn visit_call_expression(&mut self, it: &ts::CallExpression<'a>) {
+        if let ts::Expression::Identifier(callee) = &it.callee {
+            if callee.name == "require" {
+                if let Some(ts::Expression::StringLiteral(lit)) =
+                    it.arguments.first().and_then(|arg| arg.as_expression())
+                {
+                    let module = lit.value.as_str();
+                    self.out.push(ScannedSpecifier {
+                        span: lit.span,
+                        name: module,
+                        kind: SpecifierKind::Require,
+                        module,
+                        module_span: lit.span,
+                        imported: None,
+                    });
+                }
+            }
+        }
+        oxc_ast_visit::walk::walk_call_expression(self, it);
+    }
+
+    fn visit_ts_import_equals_declaration(&mut self, it: &ts::TSImportEqualsDeclaration<'a>) {
+        if let ts::TSModuleReference::ExternalModuleReference(reference) = &it.module_reference {
+            let module = reference.expression.value.as_str();
+            self.out.push(ScannedSpecifier {
+                span: it.id.span,
+                name: it.id.name.as_str(),
+                kind: SpecifierKind::Require,
+                module,
+                module_span: reference.expression.span,
+                imported: None,
+            });
+        }
+        oxc_ast_visit::walk::walk_ts_import_equals_declaration(self, it);
+    }
 }
 
 /// The source module's name for a binding, kept only when it differs from the
@@ -1284,11 +1347,51 @@ fn renamed<'a>(imported: &'a str, local: &str) -> Option<&'a str> {
 }
 
 /// A `ModuleExportName`'s text as written (identifier or string-literal name).
-fn module_export_name(name: &ts::ModuleExportName) -> String {
+fn module_export_name<'a>(name: &ts::ModuleExportName<'a>) -> &'a str {
     match name {
-        ts::ModuleExportName::IdentifierName(id) => id.name.to_string(),
-        ts::ModuleExportName::IdentifierReference(id) => id.name.to_string(),
-        ts::ModuleExportName::StringLiteral(s) => s.value.to_string(),
+        ts::ModuleExportName::IdentifierName(id) => id.name.as_str(),
+        ts::ModuleExportName::IdentifierReference(id) => id.name.as_str(),
+        ts::ModuleExportName::StringLiteral(s) => s.value.as_str(),
+    }
+}
+
+// ── the move's per-file specifier rows (arc 2) ──────────────────────────────
+
+/// A module specifier as written. `module_span` covers the whole string literal
+/// including quotes; `module` is the parsed path, so a re-aim re-quotes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TsSpecifier {
+    pub module_span: Span,
+    pub module: String,
+    pub kind: SpecifierKind,
+    /// The quote character the literal was written with, preserved by a re-aim.
+    pub quote: char,
+}
+
+/// Every module specifier one TS/JS file writes, in source order, off the one
+/// oxc parse: the move's rewrite targets, with no second front end for TS.
+pub fn ts_specifiers(path: &str, content: &str) -> Result<Vec<TsSpecifier>, ParseError> {
+    let parser = OxcParser;
+    let arena = parser.make_arena();
+    let program = parser.parse(&arena, path, content.as_bytes())?;
+    Ok(scan_module_specifiers(&program)
+        .into_iter()
+        .map(|row| TsSpecifier {
+            module_span: to_span(row.module_span),
+            module: row.module.to_string(),
+            kind: row.kind,
+            quote: quote_at(content, row.module_span),
+        })
+        .collect())
+}
+
+/// A literal's opening quote. Anything else at the span start means the caller
+/// paired a parse with different text; `"` keeps the replacement well formed.
+fn quote_at(content: &str, span: oxc_span::Span) -> char {
+    match content.as_bytes().get(span.start as usize) {
+        Some(b'\'') => '\'',
+        Some(b'`') => '`',
+        _ => '"',
     }
 }
 

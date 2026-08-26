@@ -159,7 +159,8 @@ KIND VOCABULARIES (the `kind` field)
   const kind  lit (cooked literal) | template (raw source slice, holes intact)
   sig slot    param | ret
   unresolved reason  dynamic-import | computed-member-call | spread-call-args
-  specifier kind    named | default | namespace | side_effect | reexport
+  specifier kind    named | default | namespace | side_effect | reexport |
+                    include | reexport_module | dynamic_import | require
   file_edge kind    the specifier kind that bound the crossing, or `unknown`
                     under --scip-deps: an index records resolved occurrences,
                     never the import statement that bound the name, so the form

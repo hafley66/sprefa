@@ -21,6 +21,8 @@ pub mod prolog;
 pub mod python;
 pub mod rust;
 pub mod ts;
+pub mod ts_resolve;
+pub mod ts_walk;
 
 pub use ast_rule::{
     decode_ast_rule_yaml, query_ast_rule, query_ast_rule_with_content, AstRule, AstRuleCapture,
@@ -43,7 +45,11 @@ pub use markdown::MarkdownSource;
 pub use prolog::PrologSource;
 pub use python::PythonSource;
 pub use rust::RustSource;
-pub use ts::{CallProjector, DfProjector, OxcParser, TsSource, TypeProjector};
+pub use ts::{
+    ts_specifiers, CallProjector, DfProjector, OxcParser, TsSource, TsSpecifier, TypeProjector,
+};
+pub use ts_resolve::{respell, TsResolver};
+pub use ts_walk::{corpus_lang, is_ts_family, specifier_corpus, ts_corpus, CorpusLang, SKIP_DIRS};
 
 use crate::source::Source;
 

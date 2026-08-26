@@ -54,6 +54,25 @@ pub fn flatten(out: &ExtractOutput) -> Vec<FlatFact> {
     facts
 }
 
+/// Object keys sorted, so the wire does not inherit whichever map `serde_json`
+/// was built with: `preserve_order` (oxc_resolver's) flips every `data_doc`.
+fn key_sorted(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut sorted: std::collections::BTreeMap<String, serde_json::Value> =
+                std::collections::BTreeMap::new();
+            for (key, inner) in map {
+                sorted.insert(key.clone(), key_sorted(inner));
+            }
+            serde_json::Value::Object(sorted.into_iter().collect())
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(key_sorted).collect())
+        }
+        other => other.clone(),
+    }
+}
+
 /// `doc` on a document row is the whole document as a json value, so a consumer
 /// declaring only that column reads documents and skips every value row.
 fn flatten_data(bundle: &FamilyBundle<DataF>, strings: &Strings) -> Vec<FlatFact> {
@@ -65,7 +84,7 @@ fn flatten_data(bundle: &FamilyBundle<DataF>, strings: &Strings) -> Vec<FlatFact
             ordinal: doc.ordinal,
             span: SpanOut::new(doc.span.start, doc.span.end()),
             format: format.as_str().to_string(),
-            doc: doc.value.clone(),
+            doc: key_sorted(&doc.value),
         });
     }
     for row in &bundle.aux.values {
