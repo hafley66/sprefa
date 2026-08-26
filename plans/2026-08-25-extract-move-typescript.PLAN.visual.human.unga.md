@@ -6,8 +6,8 @@ For Chris. Plain words, no citations.
 
 1. The job
 2. Corpus walk
-3. The rule
-4. Path resolution
+3. Specifier sources (from the oxc parse)
+4. Path resolution (bought)
 5. Batch list
 6. What is off-limits
 
@@ -42,48 +42,43 @@ flowchart TD
     W -.skip.-> ND[node_modules .git .boop-worktrees]
 ```
 
-## 3. The rule
+## 3. Specifier sources
 
-A separate rule file per language (the prolog one stays; a new TS one). The TS
-rule matches the whole string literal of an import/export source, and the string
-argument of any call (dynamic `import()` and `require()` both land here). A
-database lookup keeps only the strings that actually name a moved file, so a
-`"hello"` literal is never touched and the quotes are preserved.
+Nothing is reinvented. The TS parser (oxc) is already in the crate and already
+reads static imports and re-exports, each with its byte span. The move reads
+those rows. The two cases oxc does not yet tag, dynamic `import()` and
+`require()`, are added to the same visitor as new row kinds with byte spans.
+Those spans feed the staging pipe directly.
 
 ```mermaid
 flowchart TD
-    N[string literal] --> SRC{is it a module source?}
-    SRC -- import source --> M
-    SRC -- export source --> M
-    SRC -- call arg (import/require) --> M
-    M --> G{does it name a moved file?}
-    G -- no --> SKIP
-    G -- yes --> R[rewrite path, keep quotes]
+    OXC[oxc parse] --> ROWS[Specifier rows, each with byte span]
+    ROWS --> STATIC[static import / export-from]
+    ROWS --> DYN[dynamic import() + require() new rows]
+    STATIC --> SPAN[span -> replacement]
+    DYN --> SPAN
+    SPAN --> STAGE[soopy stage]
 ```
 
 ## 4. Path resolution
 
-The move only asks one question: does this specifier name a file being moved?
-That is a file-existence probe, not a bundler load. Relative specifiers are the
-only ones that can name a moved file (bare package names live in
-`node_modules`). So v1 hand-rolls the relative probe, mirroring the existing
-prolog resolver and the repo's own TS extension table.
+Resolution is bought, not built. `oxc_resolver` (the same project family as the
+parser) handles extensionless paths, `index` files, ESM style `.js` written for
+a `.ts`, tsconfig `paths` aliases, and package `exports`. One resolver per run.
 
 ```mermaid
 flowchart LR
-    S["./x"] --> P1[x.ts x.tsx ...]
-    P1 --> P2[x/index.ts ...]
-    P2 --> ESM["./x.js" -> x.ts]
-    ESM --> OUT[new relative path, same ext style]
+    S["./x"] --> R[oxc_resolver]
+    R --> P[extension / index / .js->.ts / paths]
+    P --> OUT[new relative path, same ext style]
+    OUT --> ROOT{inside root?}
+    ROOT -- no (node_modules) --> SKIP
+    ROOT -- yes --> RE[rewrite]
 ```
 
 The tricky bit: ESM style writes `.js` for a `.ts` file, so
 `./0_benchProtocol.js` moved into a folder becomes `./0_bench/0_protocol.js`,
 keeping the `.js` and the quote.
-
-The one case the probe cannot handle is tsconfig `paths` aliases. That is
-deferred to a v2 arm using the `oxc_resolver` library (the tsconfig-paths
-algorithm is exactly what it implements); it is not needed for the corpus.
 
 ## 5. Batch list
 
@@ -110,7 +105,8 @@ another move's source, or repeats another destination is a hard error.
 ## 6. What is off-limits
 
 - The soopy crate (it already stages everything, no changes).
-- The TS extractor's own specifier rows (the move does not read them; it scans
-  on its own, so it works on any tree).
+- No tree-sitter TS rule and no new rule YAML for TS; the oxc rows carry the
+  specifiers. ast-grep stays for prolog only.
 - The prolog rule file and the rehome script.
-- No new dependency in v1; `oxc_resolver` stays a documented v2 arm.
+- The one new dependency is `oxc_resolver`; nothing is hand-rolled for
+  resolution.

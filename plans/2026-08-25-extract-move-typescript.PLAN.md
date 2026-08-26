@@ -3,9 +3,7 @@
 Auditor copy. Every claim carries `path:line`. Design decided 2026-08-25, not
 re-litigated. No Rust written in this lane; signatures live here only.
 
-<!-- todo(feature): the move's TS arm reads ~/.agent/dl6.db? it does not; it self-builds move_candidate from its own ast-grep scan, same as the prolog arm (0_move.rs candidate_store). The oxc Specifier rows (ts.rs:1271) are background, not the source of the move's facts. -->
-
-<!-- todo(feature): alias / tsconfig paths / package.json exports resolution is out of scope for v1; oxc_resolver documented as the buy candidate for a v2 alias arm (risk table row). -->
+<!-- todo(triage): resolve_file on a bare specifier that aliases into the source tree is a move target; a bare specifier resolving to node_modules is not. The within_root gate decides. -->
 
 ## Context
 
@@ -19,29 +17,28 @@ with `language: prolog` prepended by the caller (`0_move.rs:316-325`).
 `lang/ts.rs` already emits `Specifier` rows for ES static imports and export-FROM
 re-exports via oxc (`ts.rs:1143-1273`, `module_specifiers`), but nothing
 consumes them and they exclude `require(...)` and `import x = require(...)`
-(`ts.rs:1149-1152`). The oxc rows are not the move's fact source: arc C decided
-the move self-builds its `move_candidate` rel from its own ast-grep scan so a
-move is correct on any root (`plans/2026-08-25-extract-astgrep-soopy.PLAN.md`,
-deviation 1 in PR #475).
+(`ts.rs:1149-1152`). For TS the move reads these rows and their byte spans
+directly; the prolog arm keeps its self-built `move_candidate` rel from its own
+ast-grep scan (arc C, `0_move.rs:358-395`).
 
 Missing for TS: a `.ts/.tsx/.mts/.cts` corpus walk, TS path resolution
 (extensionless, `index.ts`, `.js` written for `.ts`, package.json `exports`/
-`main`, tsconfig `paths`/`baseUrl`), a second language arm in the specifier
-rule, and a batch form `--list <tsv>` that stages every move and every importer
+`main`, tsconfig `paths`/`baseUrl`), dynamic `import()`/`require()` as specifier
+rows, and a batch form `--list <tsv>` that stages every move and every importer
 rewrite in one soopy transaction. First real corpus: hafley-rxjs grapht layout
 (38 files into 4 folders), done by hand in another session. This plan builds on
 the merged arcs A (#472), B (#473), C (#475).
 
-The ast-grep surface the move uses is generic over `ExtractLang`
-(`lang/extract_lang.rs`), so a TS arm is one more grammar selected by
-`ExtractLang::Sg(SupportLang::TypeScript|Tsx)`; `SupportLang::TypeScript` covers
-`.ts/.cts/.mts` and `Tsx` covers `.tsx` (ast-grep-language `lib.rs:485-486`).
+Nothing is reinvented: syn parses rust, oxc parses ts, and tree-sitter fills
+gaps (prolog, dl6, markdown); the move reads module specifiers from the oxc
+parse it already runs and only ast-grep matches where oxc has no node.
 
 ## The four decisions
 
 The issue lists four decision areas. Each is an arc below: corpus walk (arc 1),
-the TS specifier rule (arc 2), path resolution (arc 3), batch `--list` (arc 4).
-Arcs 1-3 are the single-move TS arm; arc 4 generalizes the plan to many moves.
+the TS specifier sources (arc 2), path resolution (arc 3), batch `--list`
+(arc 4). Arcs 1-3 are the single-move TS arm; arc 4 generalizes the plan to
+many moves.
 
 ## Arc 1: the TS corpus walk
 
@@ -72,11 +69,12 @@ which for a monorepo is the repo root; the walker skips `node_modules` and
 
 ```rust
 // v6/sprefa-extract/src/0_move.rs (generalize prolog_files)
-/// A corpus file plus the grammar that parses it. The rule body is shared
-/// between TypeScript and Tsx; only the language name differs (extract_lang.rs name()).
+/// A corpus file plus which front end reads its specifiers. Prolog files go
+/// through the ast-grep rule; TS-family files go through the oxc Specifier rows
+/// (arc 2). CorpusLang only classifies the walker; it is not an ast-grep grammar.
 enum CorpusLang { Prolog, Ts, Tsx }
 
-/// Files that can carry a module specifier, in path order, each with its grammar.
+/// Files that can carry a module specifier, in path order, each with its front end.
 fn specifier_corpus(root: &Path) -> Vec<(PathBuf, CorpusLang)>;
 
 /// The per-grammar extension membership test.
@@ -90,37 +88,38 @@ fn specifier_corpus(root: &Path) -> Vec<(PathBuf, CorpusLang)> {
     // BFS from root, skip [.git target node_modules .boop-worktrees] (mirror
     // 0_move.rs:463); collect files by extension:
     //   .pl/.plt -> Prolog
-    //   .ts/.cts/.mts/.js/.mjs/.cjs -> Ts     (SupportLang::TypeScript, lib.rs:485)
-    //   .tsx/.jsx -> Tsx                      (SupportLang::Tsx, lib.rs:486)
+    //   .ts/.cts/.mts/.js/.mjs/.cjs -> Ts      (oxc SourceType, ts.rs:89-99)
+    //   .tsx/.jsx -> Tsx                       (oxc SourceType, ts.rs:89-99)
     // sort by path (preserve the merge-order guarantee, 0_move.rs:139)
 }
 ```
 
 ### Instance lifetimes
 
-`CorpusLang` is a `Copy` token; the per-file value lives for the parse call and
-is moved into the `ExtractLang`/`StrDoc` (`extract_lang.rs` `build_pattern`).
-The `Vec<(PathBuf, CorpusLang)>` lives for `Plan::build`, parallel-scanned by
-the rayon pool (`0_move.rs:141-155`).
+`CorpusLang` is a `Copy` token; the per-file value lives for the parse call. A
+Prolog file is parsed by ast-grep with `ExtractLang::Prolog`
+(`extract_lang.rs` `build_pattern`); a TS-family file is parsed by oxc through
+the existing `TsSource` (`lang/ts.rs:19-81`). The `Vec<(PathBuf, CorpusLang)>`
+lives for `Plan::build`, parallel-scanned by the rayon pool (`0_move.rs:141-155`).
 
 ### Storage layout
 
 None new. Read sequence: root -> walk -> per-file `(path, lang)` -> bytes ->
-`ExtractLang::Sg(SupportLang::...)` -> ast-grep parse -> `Vec<SpecRows>`.
+(oxc parse for TS, ast-grep rule for prolog) -> the file's specifier rows.
 Uniqueness: one `(path, lang)` per file, first extension match wins.
 
 ### Files touched (Arc 1)
 
 - `v6/sprefa-extract/src/0_move.rs`: replace `prolog_files` with
-  `specifier_corpus`; thread the per-file `CorpusLang` into the rule load and
-  the drain.
+  `specifier_corpus`; thread the per-file `CorpusLang` into the oxc parse (TS)
+  or the ast-grep rule (prolog).
 - `v6/sprefa-extract/src/lang/mod.rs`: no change (TS already routes via
-  `SupportLang`, `mod.rs:59-71`).
+  `TsSource`, `mod.rs:59-71`).
 
 ### Files forbidden (Arc 1)
 
-- `src/lang/ts.rs` projection logic (the oxc `Specifier` emission stays; the
-  move does not read it).
+- `src/lang/ts.rs` projection logic (the oxc `Specifier` emission is extended in
+  arc 2, not rewritten here).
 - `v6/prolog/**`, the soopy crate.
 
 ### Tests to add (Arc 1)
@@ -143,201 +142,234 @@ cargo test --release --features cli --test 1_move
 | `.js`/`.jsx` carriers double-count when a `.js` re-exports a `.ts` | ts.rs:1149-1152 (extractor omits some) vs the move's own scan | the move scans every carrier independently; a `.js` that names a moved `.ts` is a real importer to rewrite |
 | monorepo walk cost on a large tree | 0_move.rs:461-487 BFS | skip list already drops `node_modules`/`.boop-worktrees`; corpus scale is the move's existing bound |
 
-## Arc 2: the TS specifier rule
+## Arc 2: the TS specifier sources
 
-### Decision: one rule file per language arm, matched node is the whole `string`
+### Decision: read the move's specifier rows off the oxc parse, no TS rule
 
-The prolog rule matches the `atom` node including its quotes and the replacer
-re-quotes (`0_move.rs:447-470`, `unquote`/`requote`). The TS analogue matches
-the whole `string` node (`string` = `'"'` + fragment + `'"'`, tree-sitter-
-javascript `grammar.js:932-951`), and rewrites its full text preserving the
-quote char. Matching the whole `string` keeps one replacer shape for both
-languages and never has to splice a `string_fragment` (the inner content,
-`grammar.js:955-958`).
+The oxc parse already runs for every TS file (`lang/ts.rs:19-81`, oxc_parser +
+oxc_ast + oxc_ast_visit, `Cargo.toml:40-45`), and `module_specifiers`
+(`ts.rs:1143-1273`) already emits a `Specifier` row per static import and
+export-FROM re-export, each carrying a byte span (`push_specifier`,
+`ts.rs:1265-1273`). The move feeds those spans straight into the arc B drain as
+`BoundEdit` (`types.rs:2527`, `drain.rs:17-30`); no tree-sitter-typescript
+matching, no `rules/move_specifier.typescript.yml`. ast-grep stays for the
+prolog arm only (`0_move.rs:316-325`).
 
-One rule file per language, not one file with two arms: `ast_grep_config`
-`SerializableRuleConfig` carries a single `language: L` field
-(`rule_config.rs:74`), and the caller prepends it (`0_move.rs:316-325`), so a
-single YAML file cannot hold two different rule bodies for two grammars.
-Existing `rules/move_specifier.yml` stays the prolog arm; add
-`rules/move_specifier.typescript.yml` for the TS family. The `.tsx` file routes
-through the same rule body with `language: tsx` prepended.
+The gap: `module_specifiers` covers static `import` and `export ... from`
+(`ts.rs:1143-1254`), but not dynamic `import()` or `require()` (`ts.rs:1149-1152`
+names them as NOT covered). Those land as new rows in the SAME oxc visitor, with
+byte spans, cited to the oxc node types.
 
-### The rule body
+### The new specifier rows
 
-The `string` node must be a module source. tree-sitter-typescript fields the
-source on `import_statement` (`common/define-grammar.js:308-316`,
-`field('source', $.string)`), on `export_statement` via the hidden `_from_clause`
-(`javascript/grammar.js:217-219`, `define-grammar.js:320-328`), and on dynamic
-`import()` as a `call_expression` argument (`javascript/grammar.js:785-792`).
-ast-grep's `inside` accepts a `field` key and matches a node that is the field
-child of an ancestor of the given kind (`relational_rule.rs:68-91`).
+Dynamic `import()` is an `ImportExpression` with a `source: Expression`
+(`oxc_ast-0.135.0/src/ast/js.rs:124-125, 2516-2520`). `require()` is a
+`CallExpression` with a `callee` naming `require` and an `arguments` vec whose
+first element is a `StringLiteral` (`js.rs:613-625`, `StringLiteral` at
+`literal.rs:84-100`). Both carry `Span` (`js.rs:617, 2518`). The visitor adds a
+row per module path:
 
-```yaml
-# rules/move_specifier.typescript.yml
-# The string literal that names a module: the `source` field of a static
-# import/export, or a string argument of any call (dynamic import(), require()).
-# language: is prepended by the caller, prolog-arm precedent 0_move.rs:316-325.
-id: move-specifier-ts
-rule:
-  any:
-    - kind: string
-      inside:
-        kind: import_statement
-        field: source
-    - kind: string
-      inside:
-        kind: export_statement
-        field: source
-    - kind: string
-      inside:
-        kind: call_expression
-        field: arguments
+```rust
+// v6/sprefa-extract/src/lang/ts.rs, in module_specifiers (the same oxc Program walk)
+match stmt {
+    ts::Statement::ExpressionStatement(expr) => match &expr.expression {
+        // import('./m') -> ImportExpression.source is a StringLiteral (js.rs:2516-2520)
+        ts::Expression::ImportExpression(imp) => {
+            if let ts::Expression::StringLiteral(lit) = &imp.source {
+                push_specifier(sink, strings, lit.span, &lit.value, SpecifierKind::Dynamic, &lit.value, None);
+            }
+        }
+        // require('./m') -> CallExpression, callee name "require" (js.rs:613-625)
+        ts::Expression::CallExpression(call) => {
+            if call.callee_name() == Some("require")
+               && let Some(ts::Argument::StringLiteral(lit)) = call.arguments.first() {
+                push_specifier(sink, strings, lit.span, &lit.value, SpecifierKind::CommonJS, &lit.value, None);
+            }
+        }
+        _ => {}
+    },
+    _ => {}
+}
 ```
 
-The third arm deliberately matches any call with a string argument, not only
-`import(...)`: the `FactMatcher` gate (`fact.rs:238-250`) fires only on strings
-whose value names a moved file, so `require('./moved')` and `import('./moved')`
-both re-aim, and an unrelated `readFile('./moved')` also re-aims, which is
-correct. Narrowing to `import(...)` alone would need a pattern pin on the
-function being the `import` keyword, which YAML relations cannot express; the
-value gate is the precise filter. This is a documented widening over the issue's
-`call_expression (dynamic import())` list, with the citation that forces it.
+`SpecifierKind` gains `Dynamic` and `CommonJS` variants; the existing
+`Named`/`Default`/`Namespace`/`SideEffect`/`Reexport`/`Include`/`ReexportModule`
+set (`types.rs:563-570`, `ts.rs:1167-1254`) is untouched. The `name` column is
+the module path and `module` is the same value, matching the path-only forms
+(`ts.rs:1162-1171`, `1271-1273`).
 
-The `specifiers()` reader (`0_move.rs:327-340`) is unchanged: `matched.text()`
-for a `string` node includes the quotes, so `raw` is the full quoted spec and
-`by_raw` keys on it, exactly like the prolog atom.
+### Feeding the drain
+
+`push_specifier` already interns the span into the row (`ts.rs:1271`). The
+drain's `SpecifierRewrite` (`0_move.rs:447-470`) is replaced by a TS rewrite
+that maps a `Specifier` span to its replacement text: a spec names a moved file
+when `resolve` (arc 3) maps its `value` to a moved `old`; the replacement is the
+re-aimed path (`spec_text_ts`, arc 3). `BoundEdit` carries the span + producer
+(`types.rs:2527`, `drain.rs:17-30`), so the arc B `drain_edits`/`replace_action`
+(`drain.rs:63-97`) fold the spans into one soopy `Replace` per file unchanged.
 
 ### Type signatures
 
 ```rust
+// v6/sprefa-extract/src/lang/ts.rs
+/// The per-file specifier rows for the move: every static import/export-FROM
+/// (existing) plus dynamic import() and require() (new).
+fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut FamilyBundle<CallF>);
+
 // v6/sprefa-extract/src/0_move.rs
-/// Load the rule body for a corpus language, prepending its grammar name
-/// (mirror specifier_rule, 0_move.rs:316-325).
-fn specifier_rule_for(lang: CorpusLang) -> Result<RuleConfig<ExtractLang>, String>;
+/// The one-per-file map the move rewrites by: span -> replacement text, for
+/// the specs that resolve to a moved file. The span is the oxc row's byte span.
+fn ts_rewrites(
+    rows: &[Specifier],          // from ts.rs module_specifiers output
+    moved: &BTreeMap<String, String>, // old_rel -> new_rel (arc 4)
+    dir: &Path, root: &Path,
+) -> BTreeMap<(usize, usize), String>; // (start, end) -> replacement bytes
 ```
 
 Body (pseudo-code):
 
 ```rust
-fn specifier_rule_for(lang: CorpusLang) -> ... {
-    let (yaml, name) = match lang {
-        Prolog => (MOVE_SPECIFIER_RULE, "prolog"),
-        Ts | Tsx => (MOVE_SPECIFIER_TS_RULE, if Ts {"typescript"} else {"tsx"}),
-    };
-    from_yaml_string(&format!("language: {name}\n{yaml}"), &GlobalRules::default())?
-        .into_iter().next()
+fn ts_rewrites(rows, moved, dir, root) -> BTreeMap<(usize,usize), String> {
+    let mut out = BTreeMap::new();
+    for row in rows {
+        let Some(target) = resolve(&dir, row.value) else { continue };   // arc 3
+        let Some(new_rel) = moved.get(target_rel(root, &target)) else { continue };
+        let replacement = spec_text_ts(dir, root.join(new_rel), row.value); // arc 3
+        out.insert((row.span.start, row.span.end), replacement);           // to_span, ts.rs:45-51
+    }
+    out
 }
 ```
 
 ### Instance lifetimes
 
-The `RuleConfig<ExtractLang>` is built once per corpus language per run and
-shared across the parallel scan (`0_move.rs:141-155`); `ExtractLang` is `Copy`.
+The oxc `Program` lives for the parse call (`ts.rs:19-81`, arena-mastered);
+the `Specifier` rows borrow its interned strings. The span -> replacement map
+lives for `Plan::build` and is folded into `BoundEdit`s (`types.rs:2527`).
+`Specifier` is `Clone` (`types.rs`), so the map can outlive the parse.
 
 ### Storage layout
 
-None new. Read sequence: rule file bytes (compile-time `include_str!`) ->
-`RuleConfig` -> ast-grep `find_all` per file. Uniqueness: one rule body per
-grammar.
+Input: the oxc `Program` (already parsed for the type/call families). Read
+sequence: parse -> `module_specifiers` -> `Vec<Specifier>` -> resolve (arc 3)
+-> span map -> `BoundEdit` -> soopy `Replace`. Uniqueness: one edit per span,
+deduped by `(start, end)` (`drain.rs:84-97`).
 
 ### Files touched (Arc 2)
 
-- `v6/sprefa-extract/rules/move_specifier.typescript.yml` (new).
-- `v6/sprefa-extract/src/0_move.rs`: `specifier_rule_for`, thread the rule into
-  `Plan::build` and `drain_file`.
+- `v6/sprefa-extract/src/lang/ts.rs`: `module_specifiers` gains the
+  dynamic-import/require arms; `SpecifierKind` gains `Dynamic`/`CommonJS`.
+- `v6/sprefa-extract/src/types.rs`: `SpecifierKind` enum gains the two variants
+  (declared with the other kinds, `types.rs`).
+- `v6/sprefa-extract/src/0_move.rs`: `ts_rewrites`, drop the ast-grep TS path.
 
 ### Files forbidden (Arc 2)
 
-- `v6/sprefa-extract/rules/move_specifier.yml` (the prolog arm, unchanged).
-- `src/lang/1_ast_rule.rs` (its `RuleCore` construction stays private;
-  `from_yaml_string` is the move's door, arc C precedent).
+- No `rules/move_specifier.typescript.yml`; no tree-sitter-typescript matching
+  for TS. `rules/move_specifier.yml` stays the prolog arm (`0_move.rs:316-325`).
+- `src/lang/1_ast_rule.rs` (untouched; ast-grep stays prolog-only for the move).
 
 ### Tests to add (Arc 2)
 
-- `ts_rule_finds_import_export_and_dynamic_import_sources` (tests/37_fact_matcher.rs
-  style): run the TS rule body over a fixture with `import './a'`,
-  `import {x} from './b'`, `export {y} from './c'`, `export * from './d'`,
-  `import('./e')`, and one non-source string (`const s = "hello"`); assert the
-  rule matches the five sources and not the plain string. Breaks if the `inside
-  field: source` wiring is wrong.
-- `ts_rule_preserves_quote_style` (tests/1_move.rs): a single-quoted and a
-  double-quoted source both re-aim and keep their quote. Breaks if the replacer
-  hardcodes a quote.
+- `module_specifiers_emits_dynamic_import_and_require_rows` (tests/1_move.rs or a
+  ts.rs unit test): a fixture with `import './a'`, `import {x} from './b'`,
+  `export {y} from './c'`, `import('./d')`, `require('./e')`; assert a
+  `Specifier` row per module path with the right `SpecifierKind` and a nonzero
+  byte span. Breaks if the new visitor arms miss a node or produce a wrong kind.
+- `ts_move_rewrites_via_oxc_spans_not_ast_grep` (tests/1_move.rs): move a TS
+  file; assert the importer's rewrite lands at the oxc span (byte-exact) with no
+  tree-sitter rule in the run. Breaks if the move falls back to ast-grep.
+- `ts_require_and_dynamic_import_reaim` (tests/1_move.rs): `import('./b')` and
+  `require('./b')` in an importer both re-aim after `b` moves. Breaks if the new
+  rows are not fed to the drain.
+- `ts_plain_string_literal_is_untouched` (tests/1_move.rs): `const s = "hello"`;
+  `readFile("./b")` with `b` NOT moved stays byte-identical. Breaks if the move
+  rewrites a non-source string.
 
 ### Gate command (Arc 2)
 
 ```sh
-cargo test --release --features cli --test 37_fact_matcher --test 1_move
+cargo test --release --features cli --test 1_move
 ```
 
 ### Risk table (Arc 2)
 
 | risk | citation that raises it | mitigation |
 |---|---|---|
-| the `source` field is defined inside a hidden `_from_clause`, so `child_by_field_id(source)` on the statement must still return the string | javascript/grammar.js:217-219, 932-951 (hidden rules inline in tree-sitter) | gate a static and a re-export fixture; if the field walk misses, fall back to `inside { kind: string }` under the statement kinds and filter by "has a sibling `from`" |
-| the `call_expression` arm over-rewrites non-path string args | relational_rule.rs:68-91 (inside matches any call) | value gate (FactMatcher) fires only on moved-target strings; test that a `"hello"` literal is untouched |
-| TSX uses the same grammar but a different `language:` name | ast-grep-language lib.rs:485-486 | prepend `language: tsx` for `.tsx`; one rule body shared |
+| `callee_name()` on `require` returns the right ident | ast_impl/js.rs:751 (`callee_name`) | gate a `require('./x')` fixture; if the helper differs, match `call.callee` against an identifier named `require` |
+| `import` may be `Expression::ImportExpression` or a bare `CallExpression` in some versions | js.rs:124-125 vs 613-625 | match both arms; the ImportExpression arm is the spec'd one |
+| `require` with a non-literal first arg (a variable) | js.rs:690-696 Argument enum | only `Argument::StringLiteral` becomes a row; a variable arg is skipped |
+| the span is the oxc byte span, soopy needs the same | ts.rs:45-51 (`to_span`) | feed `row.span` directly into `BoundEdit`; no re-encode |
 
 ## Arc 3: TS path resolution
 
-### Build-vs-buy: the resolution engine
+### Decision: resolution is bought, `oxc_resolver` is TAKEN for v1
 
-The move resolves a specifier only to answer one question: does it name a file
-being moved? That is a file-existence probe, not a bundler load. Candidates,
-measured against the crate's existing dependency set (`v6/sprefa-extract/
-Cargo.toml`):
+`oxc_resolver` 11.24.2 (vendored under
+`~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/oxc_resolver-11.24.2`)
+resolves the module question with the tsconfig-paths and ESM/CJS algorithm the
+move needs. It is the buy. The hand-rolled relative probe is REJECTED: it
+would re-derive extension, index, and extension-alias logic that the library
+already implements and tests (its own test suite is the ESM/CJS + tsconfig
+ports, README "Tests"), and v6 rule 1 requires a written excuse for hand-rolling
+a common-shaped problem (`v6/README.md`). No such excuse holds here.
 
 | candidate | what it resolves | deps | verdict |
 |---|---|---|---|
-| `oxc_resolver` 11.24 | ESM/CJS, extensionless, `index.ts`, `.js`->`.ts` (extensionAlias), tsconfig `paths`/`baseUrl` incl. extends/references, package.json `exports`/`main`, node_modules, in-memory `FileSystem` trait | oxc project family (serde/serde_json already present), rust 1.95 | DEFERRED to v2 alias arm (below) |
+| `oxc_resolver` 11.24.2 | ESM/CJS, extensionless, `index`, `.js`->`.ts` (extension_alias), tsconfig `paths`/`baseUrl` incl. extends/references, package.json `exports`/`main`, node_modules | oxc project family, serde/serde_json (already in the crate), `FileSystem` trait for in-memory | TAKEN for v1 |
 | `swc` resolver | module resolution inside its transform pipeline, no standalone ergonomic crate | `swc_ecma_*` | REJECTED: no clean standalone crate |
 | `tsconfig` / `tsconfig-resolver` crates | parse tsconfig only, no resolution | serde_json | REJECTED: partial, resolution absent |
-| hand-rolled relative probe | relative extensionless / `index.ts` / `.js`->`.ts` | none | TAKEN for v1 |
+| hand-rolled relative probe | relative extensionless / `index` / `.js`->`.ts` | none | REJECTED: re-derives the library's algorithm; v6 rule 1 |
 
-Why the hand-rolled relative probe is taken and `oxc_resolver` deferred, with a
-written excuse (v6 rule 1, `v6/README.md`):
+### The `ResolveOptions` the move sets
 
-1. A bare specifier (`zod`, `rxjs`) resolves into `node_modules` and can never
-   name a file the move relocates inside the root, so package.json
-   `exports`/`main` resolution is moot for the move's question. The only
-   specifiers that can name a moved file are relative (`./`, `../`) or a
-   tsconfig-path alias into the source tree.
-2. The acceptance corpus (grapht) writes only relative ESM-style specifiers
-   (`from "./0_benchProtocol.js"`, `~/projects/hafley-rxjs/packages/grapht/src/
-   index.ts:12-40`) and its `tsconfig.json` has no `paths`/`baseUrl`
-   (`packages/grapht/tsconfig.json:1-19`). Relative resolution is the whole job.
-3. The relative probe mirrors the existing prolog `resolve` (`0_move.rs:490-501`)
-   and the repo's own TS `source_type_for` extension table (`ts.rs:89-99`), so
-   it is a copy of in-repo precedent, not bespoke logic.
-4. tsconfig-path alias resolution is the one genuinely nontrivial case (extends,
-   references, `${configDir}`, `*` wildcards) and is exactly what `oxc_resolver`
-   implements; that is a v2 arm behind a `cli` feature, not a v1 need.
+`ResolverGeneric::new` takes a `ResolveOptions` (`lib.rs:162-168`, `new` /
+`new_with_file_system` at `lib.rs:162,175`). The move configures it for the
+ESM-style TS corpus, per the option struct (`src/options.rs`):
 
-### The resolution algorithm
+| option | value | citation |
+|---|---|---|
+| `extensions` | `[".ts", ".tsx", ".mts", ".cts", ".d.ts", ".js", ".jsx", ".mjs", ".cjs"]` | `options.rs:93-106` (leading dots required); order follows the repo's `source_type_for` table (`ts.rs:89-99`) |
+| `extension_alias` | `[(".js", [".ts", ".tsx", ".d.ts"])]` | `options.rs:83-91` (the `.js` written for `.ts` case, dominant in grapht) |
+| `main_files` | `["index"]` | `options.rs:115-117` (index resolution) |
+| `condition_names` | `["node", "import"]` | `options.rs:48-56` (ESM condition set; the README "ESM" example) |
+| `main_fields` | `["module", "main"]` | `options.rs:110-113` (module-first for ESM-style packages) |
+| `exports_fields` | default `[["exports"]]` | `options.rs:70-72` |
+| `tsconfig` | `TsconfigDiscovery::Auto` for `resolve_file`; else `Manual(TsconfigOptions)` | `options.rs:527-549`; `Auto` only works through `resolve_file` (`lib.rs:250-252`) |
+| `symlinks` | default `true` | `options.rs:171-186` |
 
-Relative specifier `./x` in loading dir `D`:
+The `tsconfig` discovery: `TsconfigDiscovery::Auto` needs `resolve_file`
+(`lib.rs:250-252`), which discovers the tsconfig by walking parents from the
+file and honors `paths`/`baseUrl`/`references`/`extends` (`tsconfig.rs:853-868`,
+README "tsconfig-paths-webpack-plugin"). The move calls `resolve_file` with the
+importing file's path, so a `.tsx` and a `.ts` under the same project resolve
+against the same discovered tsconfig.
 
-1. If the spec starts with `./` or `../` (or is an absolute path): resolve
-   against `D`, else skip (bare/alias = not a move target).
-2. Strip quotes. Normalize `D + bare`.
-3. Probe in order, first existing file wins:
-   - exact `D/bare` (already a file, or the moved file's old path),
-   - `bare.ts`, `bare.tsx`, `bare.mts`, `bare.cts`, `bare.d.ts`,
-     `bare.js`, `bare.jsx`, `bare.mjs`, `bare.cjs` (ESM-style `.js` for `.ts`),
-   - `bare/index.ts`, `bare/index.tsx`, `bare/index.d.ts`,
-     `bare/index.js`, `bare/index.mjs`, `bare/index.cjs`.
+### The resolution call
 
-The probe extension order reuses `source_type_for`'s table (`ts.rs:89-99`).
+For an importer at path `P` writing spec `S`:
+
+```rust
+let resolver = Resolver::new(options);                 // lib.rs:162, one per run
+match resolver.resolve_file(&P, &S) {                  // lib.rs:258-268 (resolve_file)
+    Ok(resolution) => resolution.path(),               // resolution.rs:64-68, strips query/fragment
+    Err(_) => continue,                                // bare package / alias / missing: not a move target
+}
+```
+
+A bare specifier (`zod`) that resolves into `node_modules` returns a path
+outside the root, so it is a move target only if it lands under the root (an
+internal alias). The result path, compared against the moved `old` paths, says
+whether to rewrite. `resolve_file` takes a file path (not a directory), so the
+`TsconfigDiscovery::Auto` branch works (`lib.rs:258-268`).
 
 ### The replacement (re-aim)
 
-For an importer at path `P` writing spec `S` (quote `q`, bare `b`) that resolves
-to moved file `M` now at `M'`:
+For a spec `S` (quote `q`, value `v`) that resolves to moved file `M` now at `M'`:
 
 ```
 relative = relative_from(dir(P), M')        // 0_move.rs:544-558, existing helper
-replacement = requote(q, with_ext_style(relative, b))
+replacement = requote(q, with_ext_style(relative, v))
 ```
 
 `with_ext_style` maps the relative path's extension to match the original
@@ -351,9 +383,12 @@ the moved file's new directory (the `is_old` branch, `0_move.rs:180-215`).
 
 ```rust
 // v6/sprefa-extract/src/0_move.rs
-/// Resolve a TS specifier written in dir to a file path, or None (not a move
-/// target: bare package, alias, unresolvable).
-fn resolve_ts(dir: &Path, raw: &str) -> Option<PathBuf>;
+/// One resolver for the whole run, built once with the TS ResolveOptions.
+struct TsResolver { inner: oxc_resolver::Resolver }
+
+/// Resolve a TS specifier written by `file`; None if it resolves outside the
+/// root or fails (bare package, alias, missing).
+fn resolve_ts(&self, file: &Path, raw: &str) -> Option<PathBuf>;
 
 /// The replacement spec preserving quote and extension style.
 fn spec_text_ts(from_dir: &Path, target: &Path, original: &str) -> String;
@@ -362,63 +397,70 @@ fn spec_text_ts(from_dir: &Path, target: &Path, original: &str) -> String;
 Body (pseudo-code):
 
 ```rust
-fn resolve_ts(dir, raw) -> Option<PathBuf> {
-    let (_, bare) = unquote_ts(raw);                       // strip ' or "
-    if bare.is_empty() || !(bare.starts_with("./") || bare.starts_with("../")
-        || Path::new(bare).is_absolute()) { return None; } // bare/alias skip
-    let joined = normalize(&dir.join(bare));               // 0_move.rs:560
-    for probe in ts_probe_paths(&joined) {                 // extless, .ts.., index
-        if probe.is_file() { return Some(probe); }
-    }
-    None
+fn resolve_ts(&self, file, raw) -> Option<PathBuf> {
+    let (_, value) = unquote_ts(raw);              // strip ' or "
+    let res = self.inner.resolve_file(file, value).ok()?;
+    let path = res.path();                         // resolution.rs:64-68
+    within_root(&root, path).ok()?;                // only internal paths are move targets
+    Some(path.to_path_buf())
 }
 
 fn spec_text_ts(from_dir, target, original) -> String {
-    let (q, bare) = unquote_ts(original);
-    let rel = relative_from(from_dir, target);             // 0_move.rs:544-558
-    let rel = with_ext_style(&rel, bare);                  // .js stays .js, etc.
-    requote_ts(q, &rel)                                    // keep ' or "
+    let (q, value) = unquote_ts(original);
+    let rel = relative_from(from_dir, target);     // 0_move.rs:544-558
+    let rel = with_ext_style(&rel, value);         // .js stays .js, etc.
+    requote_ts(q, &rel)                            // keep ' or "
 }
 ```
 
 ### Instance lifetimes
 
-`resolve_ts`/`spec_text_ts` are pure, no state. The resolver runs inside the
-parallel prescan (`0_move.rs:141-155`) and the sequential merge
-(`0_move.rs:139-220`).
+`TsResolver` is built ONCE per run (one `Resolver` holding the `ResolveOptions`,
+`lib.rs:162`) and shared by reference across the parallel prescan
+(`0_move.rs:141-155`) and the sequential merge (`0_move.rs:139-220`). `Resolver`
+is `Send + Sync` (it caches internally), so the rayon pool can share it.
+`Resolution` values are transient per specifier; only `path()` is kept.
 
 ### Storage layout
 
 Input: the corpus file paths (read for parse) and the moved `old`/`new` paths.
-Read sequence: spec -> resolve probe (filesystem stat) -> target; replacement =
-pure path math. Uniqueness: one rewrite per raw spec text per file
-(`rewrites: BTreeMap<rel, BTreeMap<raw, replacement>>`, `0_move.rs:164`).
+Read sequence: spec -> `resolve_file` (filesystem probe + tsconfig discovery) ->
+target; replacement = pure path math. Uniqueness: one rewrite per raw spec text
+per file (`rewrites: BTreeMap<rel, BTreeMap<raw, replacement>>`, `0_move.rs:164`).
 
 ### Files touched (Arc 3)
 
-- `v6/sprefa-extract/src/0_move.rs`: `resolve_ts`, `spec_text_ts`, `unquote_ts`,
-  `requote_ts`, `ts_probe_paths`, `with_ext_style`.
+- `v6/sprefa-extract/Cargo.toml`: add `oxc_resolver = "11.24"` (vendored
+  11.24.2; oxc family already in the crate, `Cargo.toml:40-45`).
+- `v6/sprefa-extract/src/0_move.rs`: `TsResolver`, `resolve_ts`, `spec_text_ts`,
+  `unquote_ts`, `requote_ts`, `with_ext_style`.
 
 ### Files forbidden (Arc 3)
 
-- No new `Cargo.toml` dependency in v1 (the hand-rolled probe uses only `std`).
-  `oxc_resolver` is documented for v2, not added here.
+- No hand-rolled extension/index/extension-alias probe (that logic is the
+  library's). The `relative_from`/`normalize` path helpers stay (they are
+  soopy-relative path math, `0_move.rs:544-571`, not resolution).
+- `src/lang/ts.rs` resolution logic (the oxc extractor stays extraction-only).
 
 ### Tests to add (Arc 3)
 
 - `ts_fixture_relative_index_extensionless_and_js_for_ts` (tests/1_move.rs, the
   issue's receipt): a fixture repo under `tests/fixtures/ts_move/` with four
   cases: relative with extension (`from './b.ts'`), extensionless
-  (`from './b'` -> `./b.ts`), `index.ts` (`from './dir'` -> `./dir/index.ts`),
+  (`from './b'` -> `./b.ts`), `index` (`from './dir'` -> `./dir/index.ts`),
   and ESM-style (`from './b.js'` -> `./b.ts`). Move `b.ts` into a subdir and
-  assert every importer re-aims and every probe resolves. Breaks if any probe
-  order or the re-aim extension mapping is wrong.
+  assert every importer re-aims and every resolve lands. Breaks if the options
+  or the re-aim extension mapping is wrong.
 - `ts_moved_file_reaims_its_own_relative_imports` (tests/1_move.rs): the moved
   file imports a sibling that also moves; both land correctly from the new dir.
   Breaks if the `is_old` new-dir re-aim is wrong.
-- `ts_bare_and_alias_specifiers_are_untouched` (tests/1_move.rs): `import "zod"`
-  and a `@/x` alias stay byte-identical. Breaks if resolution wrongly treats a
-  bare/alias spec as a move target.
+- `ts_bare_specifier_is_untouched` (tests/1_move.rs): `import "zod"` stays
+  byte-identical (resolves to `node_modules`, outside the root). Breaks if a
+  bare spec is treated as a move target.
+- `ts_paths_alias_in_tsconfig_resolves` (tests/1_move.rs): a fixture with a
+  `tsconfig.json` declaring `compilerOptions.paths` (`@/*` -> `./src/*`); a
+  moved file referenced through the alias re-aims. Breaks if `TsconfigDiscovery`
+  is not wired or the alias is missed.
 
 ### Gate command (Arc 3)
 
@@ -432,10 +474,11 @@ cargo test --release --features cli --test 1_move
 
 | risk | citation that raises it | mitigation |
 |---|---|---|
-| extensionless `./b` resolves differently than the bundler would | ts.rs:89-99 extension table | probe order matches `source_type_for`; gate the index/extensionless fixtures |
-| ESM `.js` written for `.ts` is the dominant grapht style | index.ts:12-40 (`from "./0_benchProtocol.js"`) | `ts_probe_paths` tries `bare.js`; `with_ext_style` keeps `.js` on the way out |
-| tsconfig `paths` aliases can name moved files | oxc_resolver README (the tsconfig-paths feature) | out of scope v1, documented; v2 buys `oxc_resolver` behind `cli` |
-| package.json `exports`/`main` never name an internal moved file | resolution semantics | bare specifiers resolve to `node_modules`, skipped by `resolve_ts`'s relative-only gate |
+| `.js` written for `.ts` must map back to the `.ts` source | `options.rs:83-91` extension_alias | `extension_alias: [(".js", [".ts",".tsx",".d.ts"])]`; gate the ESM fixture |
+| tsconfig `paths`/`baseUrl` need the right discovery | `options.rs:527-549`, `lib.rs:250-252` | use `resolve_file` so `TsconfigDiscovery::Auto` walks parents; gate the alias fixture |
+| a bare specifier resolving to `node_modules` | `options.rs:110-117` main/module fields | `within_root` gate drops it; test `import "zod"` untouched |
+| one resolver per run vs per file | `lib.rs:162` (Resolver holds options + cache) | build once in `Plan::build`, share by reference; `Send + Sync` |
+| an alias into the source tree is a real move target | tsconfig.rs:853-868 (paths resolve) | `within_root` accepts it when the path lands inside the root; gate the alias fixture |
 
 ## Arc 4: batch `--list <tsv>`
 
@@ -542,7 +585,7 @@ then stage 2 `Move`s through soopy (`drain::stage_edits` / `stage_and_commit`,
 ### Files forbidden (Arc 4)
 
 - The soopy crate (one-op-per-file and `StageRequest` are already sufficient).
-- `src/lang/**` beyond `0_move.rs` and the new rule file.
+- `src/lang/**` beyond `0_move.rs` and the `ts.rs`/`types.rs` edits of arc 2.
 
 ### Tests to add (Arc 4)
 
@@ -579,8 +622,10 @@ cargo test --release --features cli --test 1_move
 ## Sequencing
 
 Arc 1 -> Arc 2 -> Arc 3 -> Arc 4. Arc 1 is the walker every later arc consumes;
-Arc 2 is the rule that names the nodes; Arc 3 resolves and re-aims; Arc 4 lifts
-the single-move plan to a batch. Each arc ends green on its gate.
+Arc 2 extends the oxc visitor with the specifier rows (dynamic import/require)
+and maps their spans to rewrites; Arc 3 buys `oxc_resolver` to resolve and
+re-aims; Arc 4 lifts the single-move plan to a batch. Each arc ends green on
+its gate.
 
 ## Verification
 
@@ -603,23 +648,23 @@ the single-move plan to a batch. Each arc ends green on its gate.
 - Implements in `v6/sprefa-extract` on a worktree off this branch. Base SHA:
   `4e478c60725d3d4cf8d86f2674af4c44b5723a81` (merged ff-only into this branch;
   PRs #472 #473 #475 already merged).
-- No soopy changes. No new `Cargo.toml` dependency in v1 (`oxc_resolver` is a
-  documented v2 arm behind `cli`).
+- No soopy changes. One new dependency, `oxc_resolver` (vendored 11.24.2, oxc
+  family already in the crate, `Cargo.toml:40-45`). No tree-sitter TS rule; no
+  `rules/move_specifier.typescript.yml`.
 - Gate per arc as above; CI = build + `cargo test --features cli`. No Rust
   written in this plan lane; signatures live in this doc.
 
 ## Build-vs-buy paragraph
 
-The one new library question is path resolution. The move needs a resolution
-only to answer "does this specifier name a file being moved", which is a
-file-existence probe, and only relative specifiers can name a moved file (bare
-specifiers resolve into `node_modules`, out of the root). So the hand-rolled
-relative probe is taken for v1: it mirrors the in-repo prolog `resolve`
-(`0_move.rs:490-501`) and the in-repo TS extension table (`ts.rs:89-99`), and
-the acceptance corpus writes only relative ESM-style specifiers
-(`index.ts:12-40`, `tsconfig.json:1-19`). `oxc_resolver` is the buy candidate
-for the one case the probe cannot handle, tsconfig `paths`/`baseUrl` alias
-resolution (extends, references, wildcards, `${configDir}`); it is documented,
-not added, so v1 keeps a zero-dependency diff. `swc`'s resolver is rejected
-because it is not a standalone crate, and the `tsconfig` crates are rejected
-because they parse config without resolving.
+The one new library question is path resolution, and it is bought: `oxc_resolver`
+11.24.2 (vendored under the registry) is taken for v1 with the ESM-style
+`ResolveOptions` (`extension_alias` for `.js`->`.ts`, `main_files` for `index`,
+tsconfig `paths`/`baseUrl`/extends/references via `TsconfigDiscovery`, ESM
+`condition_names`) built once per run. It re-uses the oxc project family the
+crate already links (`Cargo.toml:40-45`). The hand-rolled relative probe is
+rejected: it would re-derive the library's tested algorithm and v6 rule 1
+(`v6/README.md`) requires a written excuse for hand-rolling a common-shaped
+problem, which does not exist. `swc`'s resolver is rejected because it is not a
+standalone crate, and the `tsconfig` crates are rejected because they parse
+config without resolving. The oxc parser (already in the crate) is the source of
+the move's specifier rows and spans, so nothing in the TS arm is reinvented.
