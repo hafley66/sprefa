@@ -137,7 +137,8 @@ pub fn source_rel(action: &soopy::SourceAction) -> Option<&str> {
 }
 
 /// Re-aim a planned action at the root staging it: `DirectoryId` is blake3 of
-/// the canonical root path, `expected` hashes what that stage will read.
+/// the canonical root path. A Replace keeps the `expected` its edits were cut
+/// against; a Move re-reads, since an earlier stage may have edited it.
 pub fn bind_action(
     root: &Path,
     identity: &soopy::DirectoryId,
@@ -164,8 +165,10 @@ pub fn bind_action(
             source,
             destination: destination.clone(),
         },
-        soopy::SourceAction::Replace { edits, .. } => soopy::SourceAction::Replace {
-            expected: expected(rel)?,
+        soopy::SourceAction::Replace {
+            edits, expected, ..
+        } => soopy::SourceAction::Replace {
+            expected: expected.clone(),
             edits: edits
                 .iter()
                 .map(|edit| soopy::TextEdit {

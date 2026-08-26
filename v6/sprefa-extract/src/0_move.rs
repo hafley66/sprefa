@@ -1,10 +1,6 @@
-//! `extract move <old.pl> <new.pl>`: rehome one prolog file and repair every
-//! specifier that named it, through soopy's staged mutation boundary.
+//! `extract move <old> <new>` and `--list <tsv>`: rehome files and repair every
+//! specifier that named them, through soopy's staged mutation boundary.
 //! @comment-ok: module header, the seam list every bin arm opens with
-//!
-//! ast-grep finds the specifiers (`rules/move_specifier.yml`), a `FactMatcher`
-//! over the run's `move_candidate` rel says which of them name the moved file,
-//! and arc B's drain folds the resulting edits into one soopy Replace per file.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -20,8 +16,9 @@ use clap::Parser;
 use rayon::prelude::*;
 use rusqlite::Connection;
 use sprefa_extract::{
-    bind_action, directory_path, directory_source, drain_edits, extract_pool, replace_action,
-    source_rel, BoundEdit, ExtractLang, FactSet,
+    bind_action, corpus_lang, directory_path, directory_source, drain_edits, extract_pool,
+    is_ts_family, replace_action, respell, source_rel, ts_corpus, ts_specifiers, BoundEdit,
+    CorpusLang, ExtractLang, FactSet, TsResolver, TsSpecifier,
 };
 
 const PRODUCER: &str = "extract-move";
@@ -38,14 +35,18 @@ const CANDIDATE_COLUMN: &str = "raw";
 #[derive(Parser)]
 #[command(
     name = "extract move",
-    about = "move one prolog file and repair every specifier that named it"
+    about = "move a file and repair every specifier that named it"
 )]
 struct MoveCli {
-    /// The file to rehome.
-    old: PathBuf,
+    /// The file to rehome. Omitted when `--list` carries the moves.
+    old: Option<PathBuf>,
     /// Where it lands.
-    new: PathBuf,
-    /// Corpus root. Defaults to the git root containing `old`.
+    new: Option<PathBuf>,
+    /// A tsv of `old<TAB>new` rows, one move per line. Blank lines and lines
+    /// opening with `#` are skipped; relative paths read against the cwd.
+    #[arg(long)]
+    list: Option<PathBuf>,
+    /// Corpus root. Defaults to the git root containing the first `old`.
     #[arg(long)]
     root: Option<PathBuf>,
     /// Soopy state root. Must sit outside the corpus root.
@@ -69,7 +70,9 @@ where
     let state = state_root(cli.state.as_deref())?;
 
     println!("root {}", plan.root.display());
-    println!("plan {} -> {}", plan.old_rel, plan.new_rel);
+    for spec in &plan.moves {
+        println!("plan {} -> {}", spec.old_rel, spec.new_rel);
+    }
 
     if cli.commit {
         for stage in &plan.stages {
@@ -90,200 +93,367 @@ where
     Ok(())
 }
 
-/// Soopy accepts ONE operation per source file (`_7d_mutation_plan.rs`
-/// `insert_non_replace`), so edits, the Move, and the shim Create are separate stages.
-struct Plan {
-    root: PathBuf,
+/// One move: the canonical source, its unborn destination, and the arm that
+/// reads the corpus for it.
+struct MoveSpec {
+    old: PathBuf,
+    new: PathBuf,
     old_rel: String,
     new_rel: String,
+    lang: CorpusLang,
+}
+
+/// Soopy accepts ONE operation per source file (`_7d_mutation_plan.rs`
+/// `insert_non_replace`), so edits, Moves and the shim Create are separate stages.
+struct Plan {
+    root: PathBuf,
+    moves: Vec<MoveSpec>,
     stages: Vec<Vec<soopy::SourceAction>>,
 }
 
 impl Plan {
     fn build(cli: &MoveCli) -> Result<Self, String> {
-        let old = absolute(&cli.old)?;
-        if !old.is_file() {
-            return Err(format!("move source is not a file: {}", old.display()));
-        }
-        let old = old
-            .canonicalize()
-            .map_err(|error| format!("canonicalize {}: {error}", old.display()))?;
-        let root = match cli.root.as_deref() {
-            Some(root) => absolute(root)?,
-            None => {
-                let parent = old.parent().unwrap_or(&old);
-                soopy::discover(parent)
-                    .map_err(|error| format!("discover root for {}: {error}", old.display()))?
-                    .root
-            }
-        };
-        let root = root
-            .canonicalize()
-            .map_err(|error| format!("canonicalize root {}: {error}", root.display()))?;
-        let new = canonical_unborn(&absolute(&cli.new)?);
-        if new.exists() {
-            return Err(format!(
-                "move destination already exists: {}",
-                new.display()
-            ));
-        }
-        let old_rel = within_root(&root, &old)?;
-        let new_rel = within_root(&root, &new)?;
-        let new_dir = new.parent().unwrap_or(&root).to_path_buf();
-        let old_dir = old.parent().unwrap_or(&root).to_path_buf();
-
-        let corpus = prolog_files(&root);
-        let rule = specifier_rule()?;
-        let old_stem = stem(&old);
-        let mut module_name: Option<String> = None;
-
-        // Read and parse fan out; the merge below stays sequential over `corpus`
-        // in path order, so the action order and the previews do not move.
-        let scanned: Vec<Scanned> = extract_pool().install(|| {
-            corpus
-                .par_iter()
-                .map(|file| {
-                    let Ok(bytes) = std::fs::read(file) else {
-                        return Scanned::Unreadable;
-                    };
-                    // `old` is parsed unconditionally: its module name is read off it.
-                    if *file != old && !carries_specifier(&bytes, &old_stem) {
-                        return Scanned::NoDirective;
-                    }
-                    let Ok(text) = String::from_utf8(bytes) else {
-                        return Scanned::Unreadable;
-                    };
-                    Scanned::Rows(specifiers(&rule, text))
-                })
-                .collect()
-        });
-
-        let mut parsed = 0usize;
-        let mut skipped = 0usize;
-        // rel -> raw spec text -> what it becomes. One rewrite per raw: a spec
-        // written twice in one file resolves to one replacement.
-        let mut rewrites: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
-        let mut candidates: Vec<CandidateRow> = Vec::new();
-        // The parse the drain reads back, so no file is parsed twice in one run.
-        let mut parses: BTreeMap<String, &Parsed> = BTreeMap::new();
-
-        for (file, scan) in corpus.iter().zip(&scanned) {
-            let rows = match scan {
-                Scanned::Rows(rows) => {
-                    parsed += 1;
-                    rows
-                }
-                Scanned::NoDirective => {
-                    skipped += 1;
-                    continue;
-                }
-                Scanned::Unreadable => continue,
-            };
-            let dir = file.parent().unwrap_or(&root).to_path_buf();
-            let is_old = *file == old;
-            if is_old {
-                module_name = rows.module.clone();
-            }
-            for raw in &rows.paths {
-                let Some(target) = resolve(&dir, raw) else {
-                    continue;
-                };
-                // Inside the moved file every relative spec is re-aimed from the
-                // destination dir; elsewhere only the ones naming the moved file.
-                let (from_dir, aimed) = if is_old {
-                    if target == old {
-                        continue;
-                    }
-                    (new_dir.as_path(), target.clone())
-                } else if target == old {
-                    (dir.as_path(), new.clone())
-                } else {
-                    continue;
-                };
-                let replacement = spec_text(from_dir, &aimed, raw);
-                if &replacement == raw {
-                    continue;
-                }
-                let rel = within_root(&root, file)?;
-                candidates.push(CandidateRow {
-                    path: rel.clone(),
-                    raw: raw.clone(),
-                    target: target.display().to_string(),
-                });
-                parses.insert(rel.clone(), &rows.parse);
-                rewrites
-                    .entry(rel)
-                    .or_default()
-                    .insert(raw.clone(), replacement);
-            }
-        }
-        tracing::debug!(parsed, skipped, corpus = corpus.len(), "move prescan");
+        let requested = requested_moves(cli)?;
+        let root = plan_root(cli, &requested[0].0)?;
+        let moves = validated_moves(&root, requested)?;
         if cli.shim {
-            rewrites.retain(|rel, _| rel == &old_rel);
-            candidates.retain(|row| row.path == old_rel);
+            if moves.len() > 1 {
+                return Err("--shim rehomes one file; drop --list".to_string());
+            }
+            if moves[0].lang != CorpusLang::Prolog {
+                return Err(format!(
+                    "--shim writes a prolog reexport; {} is not prolog",
+                    moves[0].old_rel
+                ));
+            }
         }
+        let moved: BTreeMap<PathBuf, PathBuf> = moves
+            .iter()
+            .map(|spec| (spec.old.clone(), spec.new.clone()))
+            .collect();
 
         // Every action is planned against the real root; `bind_action` re-aims it
-        // at the root that actually stages it, and re-reads `expected` there.
+        // at the root that actually stages it.
         let identity = soopy::SourceRoot::open_directory(&root)
             .map_err(|error| format!("open root {}: {error}", root.display()))?
             .directory()
             .identity
             .clone();
 
-        // ONE read of the run's candidate rel, grouped by the file that wrote
-        // each spec: the store, not the scan, says which nodes a file rewrites.
-        let store = candidate_store(&candidates)?;
-        let named = FactSet::load_by(&store, CANDIDATE_REL, "path", CANDIDATE_COLUMN)
-            .map_err(|error| error.to_string())?;
-
-        // The fact-gated scan fans out; `named` is a BTreeMap and an indexed
-        // rayon collect keeps its order, so the staged action order is rel order.
-        let files: Vec<(&String, &Arc<FactSet>)> = named.iter().collect();
-        let drained: Vec<Option<soopy::SourceAction>> = extract_pool().install(|| {
-            files
-                .into_par_iter()
-                .map(|(rel, facts)| {
-                    let parse = parses.get(rel)?;
-                    let source = directory_source(&identity, rel);
-                    let by_raw = rewrites.get(rel).cloned().unwrap_or_default();
-                    drain_file(rel, parse, &rule, facts, &by_raw, source)
-                })
-                .collect()
-        });
-
-        let edit_stage: Vec<soopy::SourceAction> = drained.into_iter().flatten().collect();
-        tracing::debug!(
-            files = named.len(),
-            staged = edit_stage.len(),
-            "move drain done"
-        );
+        let mut edit_stage: Vec<soopy::SourceAction> = Vec::new();
+        let mut modules: BTreeMap<String, String> = BTreeMap::new();
+        if moves.iter().any(|spec| spec.lang == CorpusLang::Prolog) {
+            let (actions, names) = prolog_edits(&root, &moved, &identity, cli.shim)?;
+            edit_stage.extend(actions);
+            modules = names;
+        }
+        if moves.iter().any(|spec| is_ts(spec.lang)) {
+            edit_stage.extend(ts_edits(&root, &moved, &identity)?);
+        }
+        // One arm reads `.pl`, the other the TS family, so no rel is written
+        // twice; the sort states the stage order for a mixed list.
+        edit_stage.sort_by(|left, right| source_rel(left).cmp(&source_rel(right)));
 
         let mut stages = Vec::new();
         if !edit_stage.is_empty() {
             stages.push(edit_stage);
         }
-        stages.push(vec![soopy::SourceAction::Move {
-            source: directory_source(&identity, &old_rel),
-            expected: content_id(&root.join(&old_rel))?,
-            destination: directory_path(&new_rel),
-        }]);
+        let mut move_stage = Vec::with_capacity(moves.len());
+        for spec in &moves {
+            move_stage.push(soopy::SourceAction::Move {
+                source: directory_source(&identity, &spec.old_rel),
+                expected: content_id(&root.join(&spec.old_rel))?,
+                destination: directory_path(&spec.new_rel),
+            });
+        }
+        stages.push(move_stage);
         if cli.shim {
-            let module = module_name.unwrap_or_else(|| stem(&old));
-            let target = spec_text(&old_dir, &new, "''");
+            let spec = &moves[0];
+            let module = modules
+                .get(&spec.old_rel)
+                .cloned()
+                .unwrap_or_else(|| stem(&spec.old));
+            let old_dir = spec.old.parent().unwrap_or(&root).to_path_buf();
+            let target = spec_text(&old_dir, &spec.new, "''");
             let body = format!(":- module({module}_shim, []).\n:- reexport({target}).\n");
             stages.push(vec![soopy::SourceAction::Create {
-                path: directory_path(&old_rel),
+                path: directory_path(&spec.old_rel),
                 bytes: body.into_bytes(),
             }]);
         }
         Ok(Plan {
             root,
-            old_rel,
-            new_rel,
+            moves,
             stages,
         })
     }
+}
+
+/// The `(old, new)` pairs the invocation asks for, from the positionals or from
+/// the `--list` tsv. The two forms are exclusive.
+fn requested_moves(cli: &MoveCli) -> Result<Vec<(PathBuf, PathBuf)>, String> {
+    match (&cli.list, &cli.old, &cli.new) {
+        (Some(list), None, None) => read_move_list(list),
+        (Some(_), _, _) => Err("--list carries the moves; drop <old> and <new>".to_string()),
+        (None, Some(old), Some(new)) => Ok(vec![(old.clone(), new.clone())]),
+        (None, _, _) => Err("extract move takes <old> <new>, or --list <tsv>".to_string()),
+    }
+}
+
+/// `old<TAB>new` per line. A row with no tab is an error, never a silent skip:
+/// a dropped row is a move that never happens.
+fn read_move_list(path: &Path) -> Result<Vec<(PathBuf, PathBuf)>, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("read move list {}: {error}", path.display()))?;
+    let mut rows = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let number = index + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let (old, new) = line.split_once('\t').ok_or_else(|| {
+            format!(
+                "{}:{number}: a move list row is `old<TAB>new`",
+                path.display()
+            )
+        })?;
+        let (old, new) = (old.trim(), new.trim());
+        if old.is_empty() || new.is_empty() {
+            return Err(format!(
+                "{}:{number}: both sides of a move list row are required",
+                path.display()
+            ));
+        }
+        rows.push((PathBuf::from(old), PathBuf::from(new)));
+    }
+    if rows.is_empty() {
+        return Err(format!("{} names no moves", path.display()));
+    }
+    Ok(rows)
+}
+
+/// The corpus root: as asked, else the git root holding the first move's source.
+fn plan_root(cli: &MoveCli, first: &Path) -> Result<PathBuf, String> {
+    let root = match cli.root.as_deref() {
+        Some(root) => absolute(root)?,
+        None => {
+            let old = absolute(first)?;
+            if !old.is_file() {
+                return Err(format!("move source is not a file: {}", old.display()));
+            }
+            let old = old
+                .canonicalize()
+                .map_err(|error| format!("canonicalize {}: {error}", old.display()))?;
+            let parent = old.parent().unwrap_or(&old).to_path_buf();
+            soopy::discover(&parent)
+                .map_err(|error| format!("discover root for {}: {error}", old.display()))?
+                .root
+        }
+    };
+    root.canonicalize()
+        .map_err(|error| format!("canonicalize root {}: {error}", root.display()))
+}
+
+/// Every validation a batch needs, all of it before any stage is built: a
+/// missing source, a live destination, or a destination written twice ends the run.
+fn validated_moves(
+    root: &Path,
+    requested: Vec<(PathBuf, PathBuf)>,
+) -> Result<Vec<MoveSpec>, String> {
+    let mut moves: Vec<MoveSpec> = Vec::with_capacity(requested.len());
+    let mut olds: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut news: BTreeSet<PathBuf> = BTreeSet::new();
+    for (old, new) in requested {
+        let old = absolute(&old)?;
+        if !old.is_file() {
+            return Err(format!("move source is not a file: {}", old.display()));
+        }
+        let old = old
+            .canonicalize()
+            .map_err(|error| format!("canonicalize {}: {error}", old.display()))?;
+        let new = canonical_unborn(&absolute(&new)?);
+        if new.exists() {
+            return Err(format!(
+                "move destination already exists: {}",
+                new.display()
+            ));
+        }
+        let old_rel = within_root(root, &old)?;
+        let new_rel = within_root(root, &new)?;
+        let lang = corpus_lang(&old_rel)
+            .ok_or_else(|| format!("extract move reads prolog and the TS family: {old_rel}"))?;
+        let destination = corpus_lang(&new_rel)
+            .ok_or_else(|| format!("move destination has no known extension: {new_rel}"))?;
+        if is_ts(lang) != is_ts(destination) {
+            return Err(format!("{old_rel} -> {new_rel} crosses languages"));
+        }
+        if !olds.insert(old.clone()) {
+            return Err(format!("{old_rel} is moved twice"));
+        }
+        if !news.insert(new.clone()) {
+            return Err(format!("{new_rel} is the destination of two moves"));
+        }
+        moves.push(MoveSpec {
+            old,
+            new,
+            old_rel,
+            new_rel,
+            lang,
+        });
+    }
+    Ok(moves)
+}
+
+fn is_ts(lang: CorpusLang) -> bool {
+    matches!(lang, CorpusLang::Ts | CorpusLang::Tsx)
+}
+
+// ── the prolog arm ──────────────────────────────────────────────────────────
+
+/// Every prolog importer's Replace, plus the module name each moved prolog file
+/// declares (the shim's header reads it off the same parse).
+fn prolog_edits(
+    root: &Path,
+    moved: &BTreeMap<PathBuf, PathBuf>,
+    identity: &soopy::DirectoryId,
+    shim: bool,
+) -> Result<(Vec<soopy::SourceAction>, BTreeMap<String, String>), String> {
+    let corpus = prolog_files(root);
+    let rule = specifier_rule()?;
+    let stems: BTreeSet<String> = moved
+        .keys()
+        .filter(|path| corpus_lang(&path.to_string_lossy()) == Some(CorpusLang::Prolog))
+        .map(|path| stem(path))
+        .filter(|stem| !stem.is_empty())
+        .collect();
+
+    // Read and parse fan out; the merge below stays sequential over `corpus`
+    // in path order, so the action order and the previews do not move.
+    let scanned: Vec<Scanned> = extract_pool().install(|| {
+        corpus
+            .par_iter()
+            .map(|file| {
+                let Ok(bytes) = std::fs::read(file) else {
+                    return Scanned::Unreadable;
+                };
+                // A moved file is parsed unconditionally: its module name is read off it.
+                if !moved.contains_key(file) && !carries_specifier(&bytes, &stems) {
+                    return Scanned::NoDirective;
+                }
+                let content = soopy::ContentId::blake3(&bytes);
+                let Ok(text) = String::from_utf8(bytes) else {
+                    return Scanned::Unreadable;
+                };
+                Scanned::Rows(specifiers(&rule, text, content))
+            })
+            .collect()
+    });
+
+    let mut parsed = 0usize;
+    let mut skipped = 0usize;
+    // rel -> raw spec text -> what it becomes. One rewrite per raw: a spec
+    // written twice in one file resolves to one replacement.
+    let mut rewrites: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    let mut candidates: Vec<CandidateRow> = Vec::new();
+    // The parse the drain reads back, so no file is parsed twice in one run,
+    // paired with the hash of the bytes that parse came from.
+    let mut parses: BTreeMap<String, (&Parsed, soopy::ContentId)> = BTreeMap::new();
+    let mut modules: BTreeMap<String, String> = BTreeMap::new();
+
+    for (file, scan) in corpus.iter().zip(&scanned) {
+        let rows = match scan {
+            Scanned::Rows(rows) => {
+                parsed += 1;
+                rows
+            }
+            Scanned::NoDirective => {
+                skipped += 1;
+                continue;
+            }
+            Scanned::Unreadable => continue,
+        };
+        let dir = file.parent().unwrap_or(root).to_path_buf();
+        let rel = within_root(root, file)?;
+        let destination = moved.get(file);
+        if destination.is_some() {
+            if let Some(module) = rows.module.clone() {
+                modules.insert(rel.clone(), module);
+            }
+        }
+        for raw in &rows.paths {
+            let Some(target) = resolve(&dir, raw) else {
+                continue;
+            };
+            // Inside a moved file every relative spec is re-aimed from the
+            // destination dir; elsewhere only the ones naming a moved file.
+            let (from_dir, aimed) = match destination {
+                Some(new) => {
+                    if target == *file {
+                        continue;
+                    }
+                    let from = new.parent().unwrap_or(root);
+                    (from, moved.get(&target).unwrap_or(&target).clone())
+                }
+                None => match moved.get(&target) {
+                    Some(new) => (dir.as_path(), new.clone()),
+                    None => continue,
+                },
+            };
+            let replacement = spec_text(from_dir, &aimed, raw);
+            if &replacement == raw {
+                continue;
+            }
+            candidates.push(CandidateRow {
+                path: rel.clone(),
+                raw: raw.clone(),
+                target: target.display().to_string(),
+            });
+            parses.insert(rel.clone(), (&rows.parse, rows.content.clone()));
+            rewrites
+                .entry(rel.clone())
+                .or_default()
+                .insert(raw.clone(), replacement);
+        }
+    }
+    tracing::debug!(parsed, skipped, corpus = corpus.len(), "move prescan");
+    if shim {
+        let moved_rels: BTreeSet<String> = moved
+            .keys()
+            .filter_map(|path| within_root(root, path).ok())
+            .collect();
+        rewrites.retain(|rel, _| moved_rels.contains(rel));
+        candidates.retain(|row| moved_rels.contains(&row.path));
+    }
+
+    // ONE read of the run's candidate rel, grouped by the file that wrote
+    // each spec: the store, not the scan, says which nodes a file rewrites.
+    let store = candidate_store(&candidates)?;
+    let named = FactSet::load_by(&store, CANDIDATE_REL, "path", CANDIDATE_COLUMN)
+        .map_err(|error| error.to_string())?;
+
+    // The fact-gated scan fans out; `named` is a BTreeMap and an indexed
+    // rayon collect keeps its order, so the staged action order is rel order.
+    let files: Vec<(&String, &Arc<FactSet>)> = named.iter().collect();
+    let drained: Vec<Option<soopy::SourceAction>> = extract_pool().install(|| {
+        files
+            .into_par_iter()
+            .map(|(rel, facts)| {
+                let (parse, content) = parses.get(rel)?;
+                let source = directory_source(identity, rel);
+                let by_raw = rewrites.get(rel).cloned().unwrap_or_default();
+                drain_file(rel, parse, content.clone(), &rule, facts, &by_raw, source)
+            })
+            .collect()
+    });
+
+    let actions: Vec<soopy::SourceAction> = drained.into_iter().flatten().collect();
+    tracing::debug!(
+        files = named.len(),
+        staged = actions.len(),
+        "move drain done"
+    );
+    Ok((actions, modules))
 }
 
 /// One file's prescan outcome, kept aligned to the corpus so the merge keeps
@@ -308,10 +478,13 @@ const SPEC_NEEDLES: [&str; 5] = [
     "reexport",
 ];
 
-/// `resolve` never invents a filename, so a spec naming the moved file carries
-/// its stem verbatim and the moved file is admitted by its own stem.
-fn carries_specifier(bytes: &[u8], stem: &str) -> bool {
-    if stem.is_empty() || memchr::memmem::find(bytes, stem.as_bytes()).is_none() {
+/// `resolve` never invents a filename, so a spec naming a moved file carries
+/// that file's stem verbatim and a moved file is admitted by its own stem.
+fn carries_specifier(bytes: &[u8], stems: &BTreeSet<String>) -> bool {
+    if !stems
+        .iter()
+        .any(|stem| memchr::memmem::find(bytes, stem.as_bytes()).is_some())
+    {
         return false;
     }
     SPEC_NEEDLES
@@ -326,6 +499,9 @@ struct SpecRows {
     paths: Vec<String>,
     module: Option<String>,
     parse: Parsed,
+    /// The bytes on disk, not the parse's text: a tree-sitter root node spans
+    /// its first token to its last, so trailing bytes are outside `root().text()`.
+    content: soopy::ContentId,
 }
 
 /// One row of the rel the fact matcher reads: which file wrote which spec, and
@@ -349,7 +525,11 @@ fn specifier_rule() -> Result<RuleConfig<ExtractLang>, String> {
 
 /// Every spec the rule finds, in source order, plus the file's own module name.
 /// A spec is kept as written; resolution and re-aiming are the caller's.
-fn specifiers(rule: &RuleConfig<ExtractLang>, text: String) -> SpecRows {
+fn specifiers(
+    rule: &RuleConfig<ExtractLang>,
+    text: String,
+    content: soopy::ContentId,
+) -> SpecRows {
     let parse = AstGrep::new(text, ExtractLang::Prolog);
     let mut paths: Vec<String> = parse
         .root()
@@ -362,6 +542,7 @@ fn specifiers(rule: &RuleConfig<ExtractLang>, text: String) -> SpecRows {
         paths,
         module,
         parse,
+        content,
     }
 }
 
@@ -424,9 +605,11 @@ fn candidate_store(rows: &[CandidateRow]) -> Result<Connection, String> {
 
 /// One file's Replace off the ONE parse the prescan made. The fact matchers keep
 /// the specs the store names; `expected` hashes the bytes that parse came from.
+#[allow(clippy::too_many_arguments)]
 fn drain_file(
     rel: &str,
     parse: &Parsed,
+    expected: soopy::ContentId,
     rule: &RuleConfig<ExtractLang>,
     facts: &Arc<sprefa_extract::FactSet>,
     by_raw: &BTreeMap<String, String>,
@@ -434,7 +617,6 @@ fn drain_file(
 ) -> Option<soopy::SourceAction> {
     let producer = soopy::ActionProducer::unordered(PRODUCER);
     let root = parse.root();
-    let expected = soopy::ContentId::blake3(root.text().as_bytes());
     let named = Any::new(facts.values().map(|raw| facts.matcher(raw)).collect::<Vec<_>>());
     let matcher = Op::every(&rule.matcher).and(named);
     let rewrite = SpecifierRewrite {
@@ -558,6 +740,275 @@ fn is_plain_atom(text: &str) -> bool {
     chars.next().is_some_and(|first| first.is_ascii_lowercase())
         && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
+
+// ── the TypeScript arm ──────────────────────────────────────────────────────
+
+/// Every TS importer's Replace, off the oxc parse's module-literal spans
+/// (`lang/ts.rs`) and `oxc_resolver` (`lang/ts_resolve.rs`). No rule file.
+fn ts_edits(
+    root: &Path,
+    moved: &BTreeMap<PathBuf, PathBuf>,
+    identity: &soopy::DirectoryId,
+) -> Result<Vec<soopy::SourceAction>, String> {
+    let resolver = TsResolver::new(root)?;
+    let names = moved_names(moved);
+    let corpus = ts_corpus(root);
+    // An indexed rayon collect keeps corpus order, and corpus order is rel order.
+    let planned: Vec<Option<soopy::SourceAction>> = extract_pool().install(|| {
+        corpus
+            .par_iter()
+            .map(|file| ts_file_edits(root, file, &resolver, moved, &names, identity))
+            .collect()
+    });
+    let actions: Vec<soopy::SourceAction> = planned.into_iter().flatten().collect();
+    tracing::debug!(
+        corpus = corpus.len(),
+        staged = actions.len(),
+        "move ts drain done"
+    );
+    Ok(actions)
+}
+
+/// One TS file's Replace, or None when nothing it writes names a moved file.
+fn ts_file_edits(
+    root: &Path,
+    file: &Path,
+    resolver: &TsResolver,
+    moved: &BTreeMap<PathBuf, PathBuf>,
+    names: &BTreeSet<String>,
+    identity: &soopy::DirectoryId,
+) -> Option<soopy::SourceAction> {
+    let text = std::fs::read_to_string(file).ok()?;
+    let destination = moved.get(file);
+    let rows = ts_specifiers(&file.to_string_lossy(), &text).ok()?;
+    let dir = file.parent()?;
+    let from_dir = match destination {
+        Some(new) => new.parent()?,
+        None => dir,
+    };
+    let rel = within_root(root, file).ok()?;
+    let source = directory_source(identity, &rel);
+    let producer = soopy::ActionProducer::unordered(PRODUCER);
+    let mut edits: Vec<soopy::TextEdit> = Vec::new();
+    for row in &rows {
+        let Some(replacement) = ts_replacement(
+            resolver,
+            root,
+            file,
+            from_dir,
+            destination.is_some(),
+            moved,
+            names,
+            row,
+        ) else {
+            continue;
+        };
+        let start = row.module_span.start as usize;
+        let end = start + row.module_span.len as usize;
+        if text.get(start..end) == Some(replacement.as_str()) {
+            continue;
+        }
+        edits.push(
+            BoundEdit {
+                source: source.clone(),
+                producer: producer.clone(),
+                edit: ast_grep_core::source::Edit {
+                    position: start,
+                    deleted_length: row.module_span.len as usize,
+                    inserted_text: replacement.into_bytes(),
+                },
+            }
+            .into(),
+        );
+    }
+    tracing::debug!(rel, edits = edits.len(), "move ts drain");
+    if edits.is_empty() {
+        return None;
+    }
+    let expected = soopy::ContentId::blake3(text.as_bytes());
+    Some(replace_action(source, expected, edits))
+}
+
+/// The quoted replacement for one specifier row, or None when the row names no
+/// moved file and needs no re-aim.
+#[allow(clippy::too_many_arguments)]
+fn ts_replacement(
+    resolver: &TsResolver,
+    root: &Path,
+    file: &Path,
+    from_dir: &Path,
+    is_moved: bool,
+    moved: &BTreeMap<PathBuf, PathBuf>,
+    names: &BTreeSet<String>,
+    row: &TsSpecifier,
+) -> Option<String> {
+    let relative_spec = row.module.starts_with('.');
+    // A relative spec spells its target's own name; a bare or alias spec spells a
+    // package or a tsconfig path, and only the resolver says what it reaches.
+    if !is_moved && relative_spec && !spec_may_name(&row.module, names) {
+        return None;
+    }
+    let target = resolver.resolve(file, &row.module)?;
+    if target == *file {
+        return None;
+    }
+    let aimed = match moved.get(&target) {
+        Some(new) => new.clone(),
+        // A file that stays put is re-aimed only for a relative spec in a moving
+        // importer: a tsconfig path and a package name anchor to the root.
+        None if is_moved && relative_spec && target.starts_with(root) => target.clone(),
+        None => return None,
+    };
+    if !relative_spec {
+        let alias = alias_respell(
+            resolver,
+            file,
+            root,
+            &row.module,
+            &target,
+            &aimed,
+            row.quote,
+        );
+        if alias.is_some() {
+            return alias;
+        }
+    }
+    Some(respell(&relative_from(from_dir, &aimed), &row.module, row.quote))
+}
+
+/// The file names a batch can be reached by: every moved file's stem, plus the
+/// directory name of a moved `index`, which is what a directory-form spec spells.
+fn moved_names(moved: &BTreeMap<PathBuf, PathBuf>) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for old in moved.keys() {
+        if !is_ts_family(&old.to_string_lossy()) {
+            continue;
+        }
+        let own = stem(old);
+        if own == "index" {
+            if let Some(parent) = old.parent() {
+                names.insert(stem(parent));
+            }
+        }
+        names.insert(own);
+    }
+    names
+}
+
+/// Whether a relative spec's last segment can name one of the moved files. A
+/// spec with no readable last segment is never gated out.
+fn spec_may_name(module: &str, names: &BTreeSet<String>) -> bool {
+    let last = module.rsplit('/').next().unwrap_or(module);
+    let stem = last.split('.').next().unwrap_or(last);
+    stem.is_empty() || names.contains(stem)
+}
+
+/// An alias keeps its alias when the prefix it resolved through still covers the
+/// destination, re-probed against a file already there. Else: a relative path.
+#[allow(clippy::too_many_arguments)]
+fn alias_respell(
+    resolver: &TsResolver,
+    from: &Path,
+    root: &Path,
+    original: &str,
+    old_target: &Path,
+    new_target: &Path,
+    quote: char,
+) -> Option<String> {
+    let old_rel = within_root(root, old_target).ok()?;
+    let (prefix, mapped) = alias_prefix(original, &old_rel)?;
+    let directory = root.join(&mapped);
+    if !new_target.starts_with(&directory) {
+        return None;
+    }
+    let witness = alias_witness(&directory, new_target, old_target)?;
+    let witness_rel = relative_from(&directory, &witness);
+    let stripped = witness_rel
+        .rsplit_once('.')
+        .map(|(head, _)| head)
+        .unwrap_or(&witness_rel);
+    let probe = resolver.resolve(from, &format!("{prefix}/{stripped}"));
+    if probe.as_deref() != Some(witness.as_path()) {
+        return None;
+    }
+    // `respell` writes a `./`-led relative path with the original's extension
+    // style; the alias prefix replaces that lead.
+    let spelled = respell(&relative_from(&directory, new_target), original, quote);
+    let tail = spelled.trim_matches(quote).strip_prefix("./")?.to_string();
+    Some(format!("{quote}{prefix}/{tail}{quote}"))
+}
+
+/// The alias prefix and the directory it maps to, read off one resolution: a
+/// `paths` entry splices text, so the spec's tail is the resolved path's tail.
+fn alias_prefix(original: &str, target_rel: &str) -> Option<(String, String)> {
+    let spec: Vec<&str> = original.split('/').filter(|part| !part.is_empty()).collect();
+    let mut path: Vec<&str> = target_rel.split('/').filter(|part| !part.is_empty()).collect();
+    let spec_last = segment_stem(spec.last()?);
+    if segment_stem(path.last()?) == "index" && spec_last != "index" {
+        path.pop();
+    }
+    let mut shared = 0;
+    while shared + 1 < spec.len() && shared < path.len() {
+        let left = spec[spec.len() - 1 - shared];
+        let right = path[path.len() - 1 - shared];
+        let same = if shared == 0 {
+            segment_stem(left) == segment_stem(right)
+        } else {
+            left == right
+        };
+        if !same {
+            break;
+        }
+        shared += 1;
+    }
+    if shared == 0 {
+        return None;
+    }
+    Some((
+        spec[..spec.len() - shared].join("/"),
+        path[..path.len() - shared].join("/"),
+    ))
+}
+
+fn segment_stem(segment: &str) -> &str {
+    segment.split('.').next().unwrap_or(segment)
+}
+
+/// The deepest existing file under both the mapped directory and the
+/// destination's ancestry. The moved file is the last resort: it proves least.
+fn alias_witness(directory: &Path, new_target: &Path, old_target: &Path) -> Option<PathBuf> {
+    let mut probe = new_target.parent()?;
+    loop {
+        if probe.starts_with(directory) && probe.is_dir() {
+            let mut found: Option<PathBuf> = None;
+            let mut entries: Vec<PathBuf> = std::fs::read_dir(probe)
+                .ok()?
+                .flatten()
+                .map(|entry| entry.path())
+                .collect();
+            entries.sort();
+            for entry in entries {
+                if !entry.is_file() || !is_ts_family(&entry.to_string_lossy()) {
+                    continue;
+                }
+                if entry == old_target {
+                    found = found.or(Some(entry));
+                    continue;
+                }
+                return Some(entry);
+            }
+            if let Some(entry) = found {
+                return Some(entry);
+            }
+        }
+        if probe == directory {
+            return None;
+        }
+        probe = probe.parent()?;
+    }
+}
+
+// ── paths, roots and the soopy boundary ─────────────────────────────────────
 
 fn relative_from(from_dir: &Path, target: &Path) -> String {
     let from: Vec<_> = from_dir.components().collect();
