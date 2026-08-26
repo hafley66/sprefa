@@ -1,5 +1,5 @@
-//! `extract move <old> <new>`: rehome a file and repair every specifier that
-//! named it, through soopy's staged mutation boundary.
+//! `extract move <old> <new>` and `--list <tsv>`: rehome files and repair every
+//! specifier that named them, through soopy's staged mutation boundary.
 //! @comment-ok: module header, the seam list every bin arm opens with
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -38,10 +38,14 @@ const CANDIDATE_COLUMN: &str = "raw";
     about = "move a file and repair every specifier that named it"
 )]
 struct MoveCli {
-    /// The file to rehome.
-    old: PathBuf,
+    /// The file to rehome. Omitted when `--list` carries the moves.
+    old: Option<PathBuf>,
     /// Where it lands.
-    new: PathBuf,
+    new: Option<PathBuf>,
+    /// A tsv of `old<TAB>new` rows, one move per line. Blank lines and lines
+    /// opening with `#` are skipped; relative paths read against the cwd.
+    #[arg(long)]
+    list: Option<PathBuf>,
     /// Corpus root. Defaults to the git root containing the first `old`.
     #[arg(long)]
     root: Option<PathBuf>,
@@ -112,11 +116,16 @@ impl Plan {
         let requested = requested_moves(cli)?;
         let root = plan_root(cli, &requested[0].0)?;
         let moves = validated_moves(&root, requested)?;
-        if cli.shim && moves[0].lang != CorpusLang::Prolog {
-            return Err(format!(
-                "--shim writes a prolog reexport; {} is not prolog",
-                moves[0].old_rel
-            ));
+        if cli.shim {
+            if moves.len() > 1 {
+                return Err("--shim rehomes one file; drop --list".to_string());
+            }
+            if moves[0].lang != CorpusLang::Prolog {
+                return Err(format!(
+                    "--shim writes a prolog reexport; {} is not prolog",
+                    moves[0].old_rel
+                ));
+            }
         }
         let moved: BTreeMap<PathBuf, PathBuf> = moves
             .iter()
@@ -180,10 +189,48 @@ impl Plan {
     }
 }
 
-/// The `(old, new)` pairs the invocation asks for. One row today; the batch
-/// door lands on top of this seat.
+/// The `(old, new)` pairs the invocation asks for, from the positionals or from
+/// the `--list` tsv. The two forms are exclusive.
 fn requested_moves(cli: &MoveCli) -> Result<Vec<(PathBuf, PathBuf)>, String> {
-    Ok(vec![(cli.old.clone(), cli.new.clone())])
+    match (&cli.list, &cli.old, &cli.new) {
+        (Some(list), None, None) => read_move_list(list),
+        (Some(_), _, _) => Err("--list carries the moves; drop <old> and <new>".to_string()),
+        (None, Some(old), Some(new)) => Ok(vec![(old.clone(), new.clone())]),
+        (None, _, _) => Err("extract move takes <old> <new>, or --list <tsv>".to_string()),
+    }
+}
+
+/// `old<TAB>new` per line. A row with no tab is an error, never a silent skip:
+/// a dropped row is a move that never happens.
+fn read_move_list(path: &Path) -> Result<Vec<(PathBuf, PathBuf)>, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("read move list {}: {error}", path.display()))?;
+    let mut rows = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let number = index + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let (old, new) = line.split_once('\t').ok_or_else(|| {
+            format!(
+                "{}:{number}: a move list row is `old<TAB>new`",
+                path.display()
+            )
+        })?;
+        let (old, new) = (old.trim(), new.trim());
+        if old.is_empty() || new.is_empty() {
+            return Err(format!(
+                "{}:{number}: both sides of a move list row are required",
+                path.display()
+            ));
+        }
+        rows.push((PathBuf::from(old), PathBuf::from(new)));
+    }
+    if rows.is_empty() {
+        return Err(format!("{} names no moves", path.display()));
+    }
+    Ok(rows)
 }
 
 /// The corpus root: as asked, else the git root holding the first move's source.

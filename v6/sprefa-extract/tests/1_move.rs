@@ -225,6 +225,60 @@ fn the_two_argument_form_is_re_aimed_and_a_library_alias_is_left_alone() {
     );
 }
 
+/// The batch door and the positional door plan the same thing for one prolog
+/// move: same previews, same diffs, same stage count.
+#[test]
+fn a_one_row_list_plans_what_the_positional_form_plans() {
+    let positional = fixture("listone_positional");
+    let batch = fixture("listone_batch");
+
+    let list = batch.state.join("moves.tsv");
+    std::fs::write(
+        &list,
+        format!(
+            "# one move, through the batch door\n\n{}\t{}\n",
+            batch.root.join("lib/b.pl").display(),
+            batch.root.join("core/b.pl").display()
+        ),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_extract"))
+        .arg("move")
+        .arg("--list")
+        .arg(&list)
+        .arg("--root")
+        .arg(&batch.root)
+        .arg("--state")
+        .arg(&batch.state)
+        .output()
+        .expect("extract binary runs");
+    assert!(
+        output.status.success(),
+        "extract move --list exited {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let batched = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+
+    assert_eq!(
+        normalize(&move_verb(&positional, &[]), &positional.root),
+        normalize(&batched, &batch.root)
+    );
+}
+
+/// The fixture root and the stage ids are per run; everything else is the plan.
+fn normalize(table: &str, root: &Path) -> String {
+    table
+        .replace(&root.display().to_string(), "<root>")
+        .lines()
+        .map(|line| match line.strip_prefix("stage ") {
+            Some(rest) => format!("stage <id>{}", &rest[rest.find(' ').unwrap_or(rest.len())..]),
+            None => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn the_same_spec_text_elsewhere_naming_another_file_is_left_alone() {
     let fixture = wide_fixture("samename");
