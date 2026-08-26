@@ -74,12 +74,22 @@ where
         println!("plan {} -> {}", spec.old_rel, spec.new_rel);
     }
 
+    // Read off the pre-move tree, before any stage runs: once the Moves commit,
+    // an emptied directory is indistinguishable from one that was already empty.
+    let emptied = emptied_directories(&plan.root, &plan.moves);
+
     if cli.commit {
         for stage in &plan.stages {
             let (id, previews) =
                 stage_and_commit(&plan.root, &state, stage, soopy::Durability::Durable)?;
             print_previews(&previews);
             println!("stage {id} committed");
+        }
+        for directory in &emptied {
+            let rel = within_root(&plan.root, directory)?;
+            std::fs::remove_dir(directory)
+                .map_err(|error| format!("remove empty directory {rel}: {error}"))?;
+            println!("rmdir {rel}");
         }
     } else {
         let mirror = Mirror::build(&plan)?;
@@ -89,8 +99,93 @@ where
             print_previews(&previews);
             println!("stage {id} dry run, tree untouched");
         }
+        for directory in &emptied {
+            println!(
+                "rmdir {} dry run, tree untouched",
+                within_root(&plan.root, directory)?
+            );
+        }
     }
     Ok(())
+}
+
+// ── the emptied-directory sweep ─────────────────────────────────────────────
+
+/// Every directory this run's moves empty, deepest first. soopy's `SourceAction`
+/// has no directory arm (`soopy/src/_7b_source_actions.rs:182-201`).
+fn emptied_directories(root: &Path, moves: &[MoveSpec]) -> Vec<PathBuf> {
+    let olds: BTreeSet<PathBuf> = moves.iter().map(|spec| spec.old.clone()).collect();
+    let news: BTreeSet<PathBuf> = moves.iter().map(|spec| spec.new.clone()).collect();
+    // Ancestors of a moved file, in path order, so a parent is tried before the
+    // children it already covers.
+    let mut candidates: BTreeSet<PathBuf> = BTreeSet::new();
+    for spec in moves {
+        let mut probe = spec.old.parent();
+        while let Some(directory) = probe {
+            if directory == root || !directory.starts_with(root) {
+                break;
+            }
+            candidates.insert(directory.to_path_buf());
+            probe = directory.parent();
+        }
+    }
+    let mut removals = Vec::new();
+    let mut covered: Vec<PathBuf> = Vec::new();
+    for directory in &candidates {
+        if covered.iter().any(|done| directory.starts_with(done)) {
+            continue;
+        }
+        let mut nested = Vec::new();
+        if empties(directory, &olds, &news, &mut nested) {
+            covered.push(directory.clone());
+            removals.extend(nested);
+        }
+    }
+    removals
+}
+
+/// Whether `directory` holds nothing after the moves land, appending what to
+/// remove under it. Already empty answers false: this run emptied nothing there.
+fn empties(
+    directory: &Path,
+    olds: &BTreeSet<PathBuf>,
+    news: &BTreeSet<PathBuf>,
+    out: &mut Vec<PathBuf>,
+) -> bool {
+    if news.iter().any(|new| new.starts_with(directory)) {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return false;
+    };
+    let mut children = Vec::new();
+    let mut held = 0usize;
+    for entry in entries.flatten() {
+        held += 1;
+        let Ok(kind) = entry.file_type() else {
+            return false;
+        };
+        // `file_type` reads the entry itself, so a symlink is neither dir nor
+        // file here and stops the sweep: nothing follows one.
+        if kind.is_dir() {
+            children.push(entry.path());
+        } else if !(kind.is_file() && olds.contains(&entry.path())) {
+            return false;
+        }
+    }
+    if held == 0 {
+        return false;
+    }
+    children.sort();
+    let mut nested = Vec::new();
+    for child in &children {
+        if !empties(child, olds, news, &mut nested) {
+            return false;
+        }
+    }
+    out.extend(nested);
+    out.push(directory.to_path_buf());
+    true
 }
 
 /// One move: the canonical source, its unborn destination, and the arm that
@@ -525,11 +620,7 @@ fn specifier_rule() -> Result<RuleConfig<ExtractLang>, String> {
 
 /// Every spec the rule finds, in source order, plus the file's own module name.
 /// A spec is kept as written; resolution and re-aiming are the caller's.
-fn specifiers(
-    rule: &RuleConfig<ExtractLang>,
-    text: String,
-    content: soopy::ContentId,
-) -> SpecRows {
+fn specifiers(rule: &RuleConfig<ExtractLang>, text: String, content: soopy::ContentId) -> SpecRows {
     let parse = AstGrep::new(text, ExtractLang::Prolog);
     let mut paths: Vec<String> = parse
         .root()
@@ -617,7 +708,12 @@ fn drain_file(
 ) -> Option<soopy::SourceAction> {
     let producer = soopy::ActionProducer::unordered(PRODUCER);
     let root = parse.root();
-    let named = Any::new(facts.values().map(|raw| facts.matcher(raw)).collect::<Vec<_>>());
+    let named = Any::new(
+        facts
+            .values()
+            .map(|raw| facts.matcher(raw))
+            .collect::<Vec<_>>(),
+    );
     let matcher = Op::every(&rule.matcher).and(named);
     let rewrite = SpecifierRewrite {
         by_raw: by_raw.clone(),
@@ -873,7 +969,11 @@ fn ts_replacement(
             return alias;
         }
     }
-    Some(respell(&relative_from(from_dir, &aimed), &row.module, row.quote))
+    Some(respell(
+        &relative_from(from_dir, &aimed),
+        &row.module,
+        row.quote,
+    ))
 }
 
 /// The file names a batch can be reached by: every moved file's stem, plus the
@@ -941,8 +1041,14 @@ fn alias_respell(
 /// The alias prefix and the directory it maps to, read off one resolution: a
 /// `paths` entry splices text, so the spec's tail is the resolved path's tail.
 fn alias_prefix(original: &str, target_rel: &str) -> Option<(String, String)> {
-    let spec: Vec<&str> = original.split('/').filter(|part| !part.is_empty()).collect();
-    let mut path: Vec<&str> = target_rel.split('/').filter(|part| !part.is_empty()).collect();
+    let spec: Vec<&str> = original
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    let mut path: Vec<&str> = target_rel
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
     let spec_last = segment_stem(spec.last()?);
     if segment_stem(path.last()?) == "index" && spec_last != "index" {
         path.pop();
@@ -1157,8 +1263,7 @@ fn stage_and_commit(
 }
 
 fn content_id(path: &Path) -> Result<soopy::ContentId, String> {
-    let bytes =
-        std::fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let bytes = std::fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
     Ok(soopy::ContentId::blake3(&bytes))
 }
 

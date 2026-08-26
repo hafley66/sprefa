@@ -101,6 +101,41 @@ fn move_verb(fixture: &Fixture, extra: &[&str]) -> String {
     String::from_utf8(output.stdout).expect("stdout is UTF-8")
 }
 
+/// The batch door over rows named relative to the fixture root, so a test states
+/// its moves the way the tree spells them.
+fn move_list(fixture: &Fixture, rows: &[(&str, &str)], extra: &[&str]) -> String {
+    let list = fixture.state.join("moves.tsv");
+    let body: String = rows
+        .iter()
+        .map(|(old, new)| {
+            format!(
+                "{}\t{}\n",
+                fixture.root.join(old).display(),
+                fixture.root.join(new).display()
+            )
+        })
+        .collect();
+    std::fs::write(&list, body).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_extract"))
+        .arg("move")
+        .arg("--list")
+        .arg(&list)
+        .arg("--root")
+        .arg(&fixture.root)
+        .arg("--state")
+        .arg(&fixture.state)
+        .args(extra)
+        .output()
+        .expect("extract binary runs");
+    assert!(
+        output.status.success(),
+        "extract move --list {extra:?} exited {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("stdout is UTF-8")
+}
+
 fn kind_count(table: &str, kind: &str) -> usize {
     table
         .lines()
@@ -272,7 +307,10 @@ fn normalize(table: &str, root: &Path) -> String {
         .replace(&root.display().to_string(), "<root>")
         .lines()
         .map(|line| match line.strip_prefix("stage ") {
-            Some(rest) => format!("stage <id>{}", &rest[rest.find(' ').unwrap_or(rest.len())..]),
+            Some(rest) => format!(
+                "stage <id>{}",
+                &rest[rest.find(' ').unwrap_or(rest.len())..]
+            ),
             None => line.to_string(),
         })
         .collect::<Vec<_>>()
@@ -293,4 +331,76 @@ fn the_same_spec_text_elsewhere_naming_another_file_is_left_alone() {
     );
     assert!(fixture.root.join("sub/lib/b.pl").is_file());
     loads_clean(&fixture.root);
+}
+
+// ── the emptied-directory sweep ─────────────────────────────────────────────
+
+const HELPER_ONE_MJS: &str = "export const one = 1\n";
+const HELPER_TWO_MJS: &str = "export const two = 2\n";
+const KEEPER_MJS: &str = "export const keeper = 3\n";
+
+/// The grapht `tests/helpers` shape: a nested directory whose whole contents
+/// move to a sibling, with the parent still holding a file of its own.
+fn helpers_fixture(label: &str) -> Fixture {
+    fixture_of(
+        label,
+        &[
+            ("tests/helpers/one.mjs", HELPER_ONE_MJS),
+            ("tests/helpers/two.mjs", HELPER_TWO_MJS),
+            ("tests/0_keeper.test.mjs", KEEPER_MJS),
+        ],
+    )
+}
+
+const HELPER_MOVES: [(&str, &str); 2] = [
+    (
+        "tests/helpers/one.mjs",
+        "tests/3_integration/helpers/one.mjs",
+    ),
+    (
+        "tests/helpers/two.mjs",
+        "tests/3_integration/helpers/two.mjs",
+    ),
+];
+
+#[test]
+fn a_directory_this_run_empties_is_removed_and_its_still_full_parent_is_not() {
+    let fixture = helpers_fixture("rmdir_commit");
+    let table = move_list(&fixture, &HELPER_MOVES, &["--commit"]);
+
+    assert_eq!(kind_count(&table, "rmdir"), 1, "table:\n{table}");
+    assert!(
+        table.contains("rmdir tests/helpers"),
+        "the sweep names the directory it removed:\n{table}"
+    );
+    assert!(
+        !fixture.root.join("tests/helpers").exists(),
+        "the emptied directory is gone"
+    );
+    assert!(
+        fixture.root.join("tests/0_keeper.test.mjs").is_file(),
+        "the parent still holds a file of its own"
+    );
+    assert!(fixture.root.join("tests").is_dir(), "so the parent stays");
+    assert!(fixture
+        .root
+        .join("tests/3_integration/helpers/one.mjs")
+        .is_file());
+}
+
+#[test]
+fn a_dry_run_names_the_directory_it_would_remove_and_leaves_it_there() {
+    let fixture = helpers_fixture("rmdir_dry");
+    let table = move_list(&fixture, &HELPER_MOVES, &[]);
+
+    assert_eq!(kind_count(&table, "rmdir"), 1, "table:\n{table}");
+    assert!(
+        table.contains("rmdir tests/helpers dry run, tree untouched"),
+        "the dry run names what it would remove:\n{table}"
+    );
+    assert!(
+        fixture.root.join("tests/helpers/one.mjs").is_file(),
+        "a dry run writes nothing"
+    );
+    assert_eq!(git(&fixture.root, &["status", "--porcelain"]), "");
 }
