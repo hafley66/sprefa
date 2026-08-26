@@ -234,15 +234,27 @@ impl Plan {
         let named = FactSet::load_by(&store, CANDIDATE_REL, "path", CANDIDATE_COLUMN)
             .map_err(|error| error.to_string())?;
 
+        // Read, parse and scan fan out; `named` is a BTreeMap and an indexed
+        // rayon collect keeps its order, so the staged action order is rel order.
+        let files: Vec<(&String, &Arc<FactSet>)> = named.iter().collect();
+        let drained: Vec<Result<Option<soopy::SourceAction>, String>> = extract_pool().install(|| {
+            files
+                .into_par_iter()
+                .map(|(rel, facts)| {
+                    let source = directory_source(&identity, rel);
+                    let by_raw = rewrites.get(rel).cloned().unwrap_or_default();
+                    drain_file(&root, rel, &rule, facts, &by_raw, source)
+                })
+                .collect()
+        });
+
         let mut edit_stage = Vec::new();
-        for (rel, facts) in &named {
-            let source = directory_source(&identity, rel);
-            let by_raw = rewrites.get(rel).cloned().unwrap_or_default();
-            let Some(action) = drain_file(&root, rel, &rule, facts, &by_raw, source)? else {
-                continue;
-            };
-            edit_stage.push(action);
+        for action in drained {
+            if let Some(action) = action? {
+                edit_stage.push(action);
+            }
         }
+        tracing::debug!(files = named.len(), staged = edit_stage.len(), "move drain done");
 
         let mut stages = Vec::new();
         if !edit_stage.is_empty() {
