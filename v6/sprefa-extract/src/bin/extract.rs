@@ -40,6 +40,9 @@ mod query;
 #[path = "../0_move.rs"]
 mod source_move;
 
+#[path = "../1_move_manifest.rs"]
+mod move_manifest;
+
 #[derive(Parser)]
 #[command(
     name = "extract",
@@ -287,7 +290,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     if std::env::args().nth(1).as_deref() == Some("move") {
-        if let Err(error) = source_move::run(std::env::args().skip(1)) {
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        if let Err(error) = source_move::run(argv.clone()) {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        if let Err(error) = move_manifest::run(argv) {
             eprintln!("{error}");
             std::process::exit(2);
         }
