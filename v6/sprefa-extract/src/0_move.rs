@@ -134,6 +134,7 @@ impl Plan {
 
         let corpus = prolog_files(&root);
         let rule = specifier_rule()?;
+        let old_stem = stem(&old);
         let mut module_name: Option<String> = None;
 
         // Read and parse fan out; the merge below stays sequential over `corpus`
@@ -146,7 +147,7 @@ impl Plan {
                         return Scanned::Unreadable;
                     };
                     // `old` is parsed unconditionally: its module name is read off it.
-                    if *file != old && !carries_specifier(&bytes) {
+                    if *file != old && !carries_specifier(&bytes, &old_stem) {
                         return Scanned::NoDirective;
                     }
                     let Ok(text) = String::from_utf8(bytes) else {
@@ -292,7 +293,12 @@ const SPEC_NEEDLES: [&str; 5] = [
     "reexport",
 ];
 
-fn carries_specifier(bytes: &[u8]) -> bool {
+/// `resolve` never invents a filename, so a spec naming the moved file carries
+/// its stem verbatim and the moved file is admitted by its own stem.
+fn carries_specifier(bytes: &[u8], stem: &str) -> bool {
+    if stem.is_empty() || memchr::memmem::find(bytes, stem.as_bytes()).is_none() {
+        return false;
+    }
     SPEC_NEEDLES
         .iter()
         .any(|needle| memchr::memmem::find(bytes, needle.as_bytes()).is_some())
