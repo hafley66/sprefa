@@ -3,11 +3,17 @@ created: 2026-08-25
 updated: 2026-08-25
 type: task
 reporter: hafley66
-status: testing
+status: done
 priority: normal
 epic: extract-astgrep-soopy
 labels:
 - pkg:extract
+closed: 2026-08-25
+commits:
+- hash: PR#481
+  summary: arcs 1-3
+- hash: PR#482
+  summary: arc 4
 ---
 
 # extract move for TypeScript: corpus walk, path resolution, batch list

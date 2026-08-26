@@ -22,7 +22,8 @@ One owner per layer: tree-sitter grammars, ast-grep match/rules/fix, extract fac
 - [x] @astgrep-arc-a-languages (#472, #474): `ExtractLang` implements `Language` for dl6, prolog, markdown
 - [x] @astgrep-arc-b-drain (#473): `Edit` drains into soopy `SourceAction`, `Act` deleted
 - [x] @astgrep-arc-c-factmatcher (#475): `FactMatcher` over dl6.db, `extract move` as one YAML rule (after A and B)
-- [ ] @extract-move-typescript: the move verb walks .ts/.tsx, resolves TS paths, takes a batch list
+- [x] @extract-move-typescript (#481, #482): TS arm on oxc rows + oxc_resolver, --list batch in one soopy StageRequest
+- [x] @move-rule-perf (#480): 0.36 -> 0.18 s, byte-identical
 
 ## Phases
 

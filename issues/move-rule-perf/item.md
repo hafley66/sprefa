@@ -3,11 +3,15 @@ created: 2026-08-25
 updated: 2026-08-25
 type: improvement
 reporter: hafley66
-status: testing
+status: done
 priority: high
 epic: extract-astgrep-soopy
 labels:
 - pkg:extract
+closed: 2026-08-25
+commits:
+- hash: PR#480
+  summary: merged
 ---
 
 # extract move dry run 0.12 s -> 0.35 s after the YAML rule path
