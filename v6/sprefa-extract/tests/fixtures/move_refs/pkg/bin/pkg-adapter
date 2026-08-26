@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+import { browserMain } from "../dist/27_browser.js"
+
+process.exitCode = await browserMain()

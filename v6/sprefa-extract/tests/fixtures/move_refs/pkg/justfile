@@ -1,0 +1,2 @@
+scenario-tests:
+    pnpm exec vitest run tests/1_scenarios.test.ts

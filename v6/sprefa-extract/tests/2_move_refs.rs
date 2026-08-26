@@ -1,14 +1,20 @@
-//! `extract move`'s manifest pass (arc 3), over `tests/fixtures/move_refs`:
-//! one moved file, one package.json naming its compiled image across `main`,
-//! `types`, `bin`, and a nested `exports` block, and a second package.json
-//! naming nothing moved.
+//! `extract move`'s manifest pass (arc 3) and `--text-refs` report (arc 4),
+//! over `tests/fixtures/move_refs`: two moves, one package.json naming a
+//! moved file's compiled image, a second package.json naming nothing moved,
+//! and three text files (a bin script, a justfile, a markdown doc) each
+//! naming an old path in one of the spellings the report scans for.
 //!
 //! @comment-ok: sabotage receipt, repo law keeps these in TEST headers.
-//! SABOTAGE: `manifest_commit_rewrites_exact_bytes_and_leaves_pkg2_alone`
+//! SABOTAGE (arc 3): `manifest_commit_rewrites_exact_bytes_and_leaves_pkg2_alone`
 //! measured PASS -> FAIL with `write_manifest`'s trailing-newline guard
 //! dropped: `left == right` failed, `right` (expected) carrying a trailing
-//! `\n` the `left` (actual) output lacked. Byte-exact assertion catches a
-//! round-trip a "still valid JSON" check would have passed.
+//! `\n` the `left` (actual) output lacked.
+//! SABOTAGE (arc 4): `text_refs_report_prints_golden_sorted_rows_and_touches_no_bytes`
+//! measured PASS -> FAIL with `segment_pairs` proposing off `new_segments[0..]`
+//! instead of `new_segments[dropped..]`: the PROTOCOL.md and justfile rows'
+//! `proposed` side kept the dropped leading segments (`pkg/src/browser.ts`,
+//! `pkg/tests/0_bench/1_scenarios.test.ts`) instead of matching the matched
+//! side's own anchor depth.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -80,7 +86,8 @@ fn git(root: &Path, args: &[&str]) -> String {
     String::from_utf8(output.stdout).expect("git stdout is UTF-8")
 }
 
-const MOVES: &str = "pkg/src/27_browser.ts\tpkg/src/browser.ts\n";
+const MOVES: &str =
+    "pkg/src/27_browser.ts\tpkg/src/browser.ts\npkg/tests/1_scenarios.test.ts\tpkg/tests/0_bench/1_scenarios.test.ts\n";
 
 fn write_list(fixture: &Fixture) -> PathBuf {
     let path = fixture.state.join("moves.tsv");
@@ -125,8 +132,7 @@ fn read(root: &Path, rel: &str) -> String {
     std::fs::read_to_string(root.join(rel)).unwrap_or_else(|error| panic!("read {rel}: {error}"))
 }
 
-const PKG2_ORIGINAL: &str =
-    "{\n  \"name\": \"pkg2\",\n  \"main\": \"./dist/other.js\",\n  \"types\": \"./dist/other.d.ts\"\n}\n";
+const PKG2_ORIGINAL: &str = "{\n  \"name\": \"pkg2\",\n  \"main\": \"./dist/other.js\",\n  \"types\": \"./dist/other.d.ts\"\n}\n";
 
 #[test]
 fn manifest_dry_run_prints_receipt_and_writes_nothing() {
@@ -171,4 +177,52 @@ fn manifest_commit_rewrites_exact_bytes_and_leaves_pkg2_alone() {
         PKG2_ORIGINAL,
         "a package.json naming no moved file is never opened for writing"
     );
+}
+
+#[test]
+fn text_refs_absent_prints_nothing() {
+    let fixture = fixture("absent");
+    let table = planned(&fixture, &[]);
+
+    assert!(
+        lines_with_prefix(&table, "text-ref ").is_empty(),
+        "table:\n{table}"
+    );
+}
+
+#[test]
+fn text_refs_report_prints_golden_sorted_rows_and_touches_no_bytes() {
+    let fixture = fixture("report");
+    let table = planned(&fixture, &["--text-refs"]);
+
+    let rows = lines_with_prefix(&table, "text-ref ");
+    assert_eq!(
+        rows,
+        vec![
+            "text-ref pkg/PROTOCOL.md:3 src/27_browser.ts -> src/browser.ts",
+            "text-ref pkg/bin/pkg-adapter:2 ../dist/27_browser.js -> ../dist/browser.js",
+            "text-ref pkg/justfile:2 tests/1_scenarios.test.ts -> tests/0_bench/1_scenarios.test.ts",
+        ],
+        "table:\n{table}"
+    );
+
+    for rel in [
+        "pkg/PROTOCOL.md",
+        "pkg/bin/pkg-adapter",
+        "pkg/justfile",
+        "pkg/README.md",
+        "pkg/package.json",
+        "pkg2/package.json",
+    ] {
+        assert_eq!(
+            read(&fixture.root, rel),
+            std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/move_refs")
+                    .join(rel)
+            )
+            .unwrap(),
+            "{rel} must be byte-identical after a report-only run"
+        );
+    }
 }
