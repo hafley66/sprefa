@@ -404,3 +404,161 @@ fn a_dry_run_names_the_directory_it_would_remove_and_leaves_it_there() {
     );
     assert_eq!(git(&fixture.root, &["status", "--porcelain"]), "");
 }
+
+// ── the relative path constants a moved TS file writes ──────────────────────
+
+/// A fixture tree copied off `tests/fixtures/<rel>`, so a TS corpus states
+/// itself as files rather than as string constants.
+fn fixture_tree(label: &str, rel: &str) -> Fixture {
+    let base = std::env::temp_dir().join(format!(
+        "extract_move_{label}_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let root = base.join("repo");
+    let state = base.join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(rel),
+        &root,
+    );
+    git(&root, &["init", "-q", "."]);
+    git(&root, &["add", "-A"]);
+    git(
+        &root,
+        &[
+            "-c",
+            "user.email=extract@move.test",
+            "-c",
+            "user.name=extract-move",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+    );
+    Fixture {
+        root: root.canonicalize().unwrap(),
+        state,
+    }
+}
+
+fn copy_tree(source: &Path, target: &Path) {
+    std::fs::create_dir_all(target).expect("create target dir");
+    for entry in std::fs::read_dir(source).expect("read fixture dir") {
+        let entry = entry.expect("fixture entry");
+        let to = target.join(entry.file_name());
+        if entry.file_type().expect("file type").is_dir() {
+            copy_tree(&entry.path(), &to);
+        } else {
+            std::fs::copy(entry.path(), &to).expect("copy fixture file");
+        }
+    }
+}
+
+fn read(root: &Path, rel: &str) -> String {
+    std::fs::read_to_string(root.join(rel)).unwrap_or_else(|error| panic!("read {rel}: {error}"))
+}
+
+const PATH_MOVES: [(&str, &str); 3] = [
+    (
+        "tests/0_moved.test.ts",
+        "tests/3_integration/0_moved.test.ts",
+    ),
+    (
+        "tests/1_helpers.test.ts",
+        "tests/3_integration/1_helpers.test.ts",
+    ),
+    (
+        "tests/helpers/one.mjs",
+        "tests/3_integration/helpers/one.mjs",
+    ),
+];
+
+#[test]
+fn a_moved_file_re_aims_every_relative_path_constant_it_writes() {
+    let fixture = fixture_tree("ts_paths", "ts_move/paths");
+    move_list(&fixture, &PATH_MOVES, &["--commit"]);
+    let moved = read(&fixture.root, "tests/3_integration/0_moved.test.ts");
+
+    for (before, after) in [
+        (
+            "new URL(\"../results/4_fixture_memory.json\"",
+            "new URL(\"../../results/4_fixture_memory.json\"",
+        ),
+        (
+            "new URL(\"../fixtures/sequence/\"",
+            "new URL(\"../../fixtures/sequence/\"",
+        ),
+        (
+            "resolve(import.meta.dirname, \"../fixtures/sequence\")",
+            "resolve(import.meta.dirname, \"../../fixtures/sequence\")",
+        ),
+        (
+            "fileURLToPath(import.meta.url)), \"..\")",
+            "fileURLToPath(import.meta.url)), \"../..\")",
+        ),
+        ("new URL(\"../bin\"", "new URL(\"../../bin\""),
+    ] {
+        assert!(moved.contains(after), "{before} becomes {after}:\n{moved}");
+    }
+    assert!(
+        moved.contains("const greeting = \"hello\""),
+        "a string under no path callee is left alone:\n{moved}"
+    );
+    assert!(
+        moved.contains("readFile(\"./b\")"),
+        "`readFile` is not a path builder:\n{moved}"
+    );
+    assert!(
+        moved.contains("source(\"grapht\", \"./15_sequenceGeometry.ts\")"),
+        "a user function's argument is not a path constant:\n{moved}"
+    );
+}
+
+/// @comment-ok: sabotage receipt, repo law keeps these in TEST headers.
+/// SABOTAGE: the first build of the class took every `join` argument, and the
+/// grapht trial measured `issue.path.join(".")` rewritten to `join("..")` in
+/// `src/0_bench/0_protocol.ts` and `6_record.ts`. A separator is not a path.
+#[test]
+fn an_array_separator_is_not_a_path_segment() {
+    let fixture = fixture_tree("ts_paths_separator", "ts_move/paths");
+    move_list(&fixture, &PATH_MOVES, &["--commit"]);
+    let moved = read(&fixture.root, "tests/3_integration/0_moved.test.ts");
+
+    for kept in [
+        "issue.path.join(\".\")",
+        "segments.join(\"..\")",
+        "[\"a\", \"b\"].join(\"./\")",
+    ] {
+        assert!(moved.contains(kept), "{kept} is left alone:\n{moved}");
+    }
+}
+
+/// Depth-delta arithmetic gets this wrong. The literal names a directory that
+/// moved WITH the file, so resolving through the moves map is what holds it.
+#[test]
+fn a_literal_naming_a_co_moving_directory_comes_out_byte_identical() {
+    let fixture = fixture_tree("ts_paths_comove", "ts_move/paths");
+    let before = read(&fixture.root, "tests/1_helpers.test.ts");
+    move_list(&fixture, &PATH_MOVES, &["--commit"]);
+
+    assert_eq!(
+        read(&fixture.root, "tests/3_integration/1_helpers.test.ts"),
+        before,
+        "`./helpers` and `./helpers/one.mjs` still name the same files"
+    );
+}
+
+#[test]
+fn an_unmoved_file_writing_the_same_constructs_is_left_alone() {
+    let fixture = fixture_tree("ts_paths_unmoved", "ts_move/paths");
+    let before = read(&fixture.root, "tests/2_unmoved.test.ts");
+    move_list(&fixture, &PATH_MOVES, &["--commit"]);
+
+    assert_eq!(read(&fixture.root, "tests/2_unmoved.test.ts"), before);
+}
