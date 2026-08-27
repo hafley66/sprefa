@@ -627,7 +627,11 @@ fn verify_false_rolls_the_tree_back_byte_identical() {
                 HELPER_MOVES
                     .iter()
                     .map(|(old, new)| {
-                        format!("{}\t{}\n", fixture.root.join(old).display(), fixture.root.join(new).display())
+                        format!(
+                            "{}\t{}\n",
+                            fixture.root.join(old).display(),
+                            fixture.root.join(new).display()
+                        )
                     })
                     .collect::<String>(),
             )
@@ -698,4 +702,227 @@ fn dry_run_never_runs_verify() {
         output.status
     );
     assert!(!marker.exists(), "the dry run ran the command");
+}
+
+// ── --root repeatable: one MoveCx per root ──────────────────────────────────
+
+const MULTI_ALPHA_A: &str =
+    ":- module(a, [check/0]).\n:- use_module('lib/b').\n\ncheck :- b_fact(1).\n";
+const MULTI_ALPHA_B: &str = ":- module(b, [b_fact/1]).\nb_fact(1).\n";
+const MULTI_BETA_M: &str = ":- module(m, [go/0]).\n:- use_module('lib/c').\n\ngo :- c_fact(2).\n";
+const MULTI_BETA_C: &str = ":- module(c, [c_fact/1]).\nc_fact(2).\n";
+
+struct MultiFixture {
+    base: PathBuf,
+    alpha: PathBuf,
+    beta: PathBuf,
+    state: PathBuf,
+}
+
+/// Two sibling git roots, each a tiny prolog corpus, plus a rogue file outside
+/// both for the under-no-root error.
+fn multi_root_fixture(label: &str) -> MultiFixture {
+    let base = std::env::temp_dir().join(format!(
+        "extract_move_{label}_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let alpha = base.join("alpha");
+    let beta = base.join("beta");
+    for (root, files) in [
+        (
+            &alpha,
+            [("a.pl", MULTI_ALPHA_A), ("lib/b.pl", MULTI_ALPHA_B)],
+        ),
+        (&beta, [("m.pl", MULTI_BETA_M), ("lib/c.pl", MULTI_BETA_C)]),
+    ] {
+        for (rel, body) in files {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, body).unwrap();
+        }
+        git(&base, &["init", "-q", root.to_str().unwrap()]);
+        git(
+            root,
+            &[
+                "-c",
+                "user.email=extract@move.test",
+                "-c",
+                "user.name=extract-move",
+                "add",
+                "-A",
+            ],
+        );
+    }
+    let state = base.join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    MultiFixture {
+        base,
+        alpha,
+        beta,
+        state,
+    }
+}
+
+fn multi_move_roots(
+    fixture: &MultiFixture,
+    roots: &[&Path],
+    rows: &[(&Path, &str, &str)],
+    extra: &[&str],
+) -> std::process::Output {
+    let list = fixture.state.join("moves.tsv");
+    let body: String = rows
+        .iter()
+        .map(|(root, old, new)| {
+            format!(
+                "{}\t{}\n",
+                root.join(old).display(),
+                root.join(new).display()
+            )
+        })
+        .collect();
+    std::fs::write(&list, body).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_extract"));
+    command.arg("move").arg("--list").arg(&list);
+    for root in roots {
+        command.arg("--root").arg(root);
+    }
+    command
+        .arg("--state")
+        .arg(&fixture.state)
+        .args(extra)
+        .output()
+        .expect("extract binary runs")
+}
+
+fn stdout_lossy(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+fn stderr_lossy(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+#[test]
+fn two_roots_each_rewrite_their_own_importers() {
+    let fixture = multi_root_fixture("multi_commit");
+    let output = multi_move_roots(
+        &fixture,
+        &[&fixture.alpha, &fixture.beta],
+        &[
+            (&fixture.alpha, "lib/b.pl", "core/b.pl"),
+            (&fixture.beta, "lib/c.pl", "core/c.pl"),
+        ],
+        &["--commit"],
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", stderr_lossy(&output));
+    let stdout = stdout_lossy(&output);
+    assert!(
+        stdout.contains("[root "),
+        "multi-root output is prefixed:\n{stdout}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fixture.alpha.join("a.pl")).unwrap(),
+        ":- module(a, [check/0]).\n:- use_module('core/b').\n\ncheck :- b_fact(1).\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fixture.beta.join("m.pl")).unwrap(),
+        ":- module(m, [go/0]).\n:- use_module('core/c').\n\ngo :- c_fact(2).\n"
+    );
+    assert!(!fixture.alpha.join("lib/b.pl").exists());
+    assert!(fixture.alpha.join("core/b.pl").is_file());
+    assert!(!fixture.beta.join("lib/c.pl").exists());
+    assert!(fixture.beta.join("core/c.pl").is_file());
+}
+
+/// A row under no `--root` is a named error before any stage runs; both roots
+/// come out byte-identical.
+#[test]
+fn a_move_under_no_root_is_a_named_error_with_zero_edits() {
+    let fixture = multi_root_fixture("multi_noroot");
+    let rogue = fixture.base.join("rogue");
+    std::fs::create_dir_all(&rogue).unwrap();
+    std::fs::write(rogue.join("x.pl"), ":- module(x, []).\n").unwrap();
+    let before_alpha = snapshot(&fixture.alpha);
+    let before_beta = snapshot(&fixture.beta);
+
+    let output = multi_move_roots(
+        &fixture,
+        &[&fixture.alpha, &fixture.beta],
+        &[(&rogue, "x.pl", "y.pl")],
+        &[],
+    );
+    assert_eq!(output.status.code(), Some(2), "{}", stderr_lossy(&output));
+    let stderr = stderr_lossy(&output);
+    assert!(stderr.contains("is under none of the roots"), "{stderr}");
+    assert!(stderr.contains("x.pl"), "{stderr}");
+    assert_eq!(snapshot(&fixture.alpha), before_alpha, "zero edits");
+    assert_eq!(snapshot(&fixture.beta), before_beta, "zero edits");
+}
+
+#[test]
+fn verify_failure_rolls_back_every_root() {
+    let fixture = multi_root_fixture("multi_rollback");
+    let before_alpha = snapshot(&fixture.alpha);
+    let before_beta = snapshot(&fixture.beta);
+
+    let output = multi_move_roots(
+        &fixture,
+        &[&fixture.alpha, &fixture.beta],
+        &[
+            (&fixture.alpha, "lib/b.pl", "core/b.pl"),
+            (&fixture.beta, "lib/c.pl", "core/c.pl"),
+        ],
+        &["--commit", "--verify", "false"],
+    );
+    assert_eq!(output.status.code(), Some(3), "{}", stderr_lossy(&output));
+    let stdout = stdout_lossy(&output);
+    assert!(
+        stdout.contains("verify failed (rc=1): rolled back"),
+        "{stdout}"
+    );
+
+    for (label, before, after) in [
+        ("alpha", &before_alpha, &snapshot(&fixture.alpha)),
+        ("beta", &before_beta, &snapshot(&fixture.beta)),
+    ] {
+        let differing: Vec<&String> = before
+            .keys()
+            .chain(after.keys())
+            .filter(|rel| before.get(*rel) != after.get(*rel))
+            .collect();
+        assert!(
+            differing.is_empty(),
+            "{label} rolled back byte-identical: {differing:?}"
+        );
+    }
+}
+
+#[test]
+fn no_root_flag_is_byte_identical_to_before() {
+    let without = fixture("multi_norootflag_without");
+    let with = fixture("multi_norootflag_with");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_extract"))
+        .arg("move")
+        .arg(without.root.join("lib/b.pl"))
+        .arg(without.root.join("core/b.pl"))
+        .arg("--state")
+        .arg(&without.state)
+        .output()
+        .expect("extract binary runs");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let derived = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+
+    assert_eq!(
+        normalize(&derived, &without.root),
+        normalize(&move_verb(&with, &[]), &with.root)
+    );
 }
