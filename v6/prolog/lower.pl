@@ -657,18 +657,24 @@ positive_use_from(Source, RelPlans, Ref, Alias, From) :-
 old_state_relation_sql(Source, RelPlans, Ref, RelationSql) :-
     positive_use_table(Source, RelPlans, Ref, Table),
     quote_ident(Table, QuotedTable),
-    frontier_table_name(Ref, FrontierTable),
-    quote_ident(FrontierTable, QuotedFrontierTable),
     relplan_columns(RelPlans, Ref, Columns),
-    qualified_equalities(Columns, old_delta, old_row, FrontierEqualities),
     old_state_projection_columns(Source, RelPlans, Ref, Columns,
                                  ProjectionColumns),
     qualified_column_list(ProjectionColumns, old_row, SelectedColumns),
-    old_state_frontier_where(FrontierEqualities, FrontierWhere),
-    format(atom(RelationSql),
-           '(SELECT ~w FROM ~w old_row GROUP BY ~w HAVING count(*) > (SELECT count(*) FROM ~w old_delta WHERE old_delta."_phase" >= 0 AND ~w))',
-           [SelectedColumns, QuotedTable, SelectedColumns,
-            QuotedFrontierTable, FrontierWhere]).
+    (   frontier_mode(shared)
+    ->  shared_frontier_relation_id(Ref, RelationId),
+        format(atom(RelationSql),
+               '(SELECT ~w FROM ~w old_row WHERE old_row."__id" NOT IN (SELECT old_delta."row_id" FROM "__frontier" old_delta WHERE old_delta."relation_id" = ~w AND old_delta."_phase" >= 0))',
+               [SelectedColumns, QuotedTable, RelationId])
+    ;   frontier_table_name(Ref, FrontierTable),
+        quote_ident(FrontierTable, QuotedFrontierTable),
+        qualified_equalities(Columns, old_delta, old_row, FrontierEqualities),
+        old_state_frontier_where(FrontierEqualities, FrontierWhere),
+        format(atom(RelationSql),
+               '(SELECT ~w FROM ~w old_row GROUP BY ~w HAVING count(*) > (SELECT count(*) FROM ~w old_delta WHERE old_delta."_phase" >= 0 AND ~w))',
+               [SelectedColumns, QuotedTable, SelectedColumns,
+                QuotedFrontierTable, FrontierWhere])
+    ).
 
 old_state_frontier_where([], '1').
 old_state_frontier_where(Equalities, Where) :-
