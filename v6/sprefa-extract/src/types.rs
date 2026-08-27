@@ -2004,6 +2004,14 @@ pub trait Rehome: Source + Sync + Send {
     fn text_spellings(&self, _cx: &MoveCx, _old: &str, _new: &str) -> Vec<(String, String)> {
         Vec::new()
     }
+
+    /// Reasons this language cannot plan `cx`'s batch at all (a destination
+    /// with no parent module, a layout that disagrees with a declaration).
+    /// Any row stops the run before a stage is built; the core never sees a
+    /// panic from an arm.
+    fn plan_errors(&self, _cx: &MoveCx) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
