@@ -40,9 +40,6 @@ mod query;
 #[path = "../0_move.rs"]
 mod source_move;
 
-#[path = "../1_move_manifest.rs"]
-mod move_manifest;
-
 #[path = "../2_move_text.rs"]
 mod move_text;
 
@@ -294,20 +291,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if std::env::args().nth(1).as_deref() == Some("move") {
         let argv: Vec<String> = std::env::args().skip(1).collect();
-        let for_move: Vec<String> = argv
-            .iter()
-            .filter(|arg| arg.as_str() != "--text-refs")
-            .cloned()
-            .collect();
-        if let Err(error) = source_move::run(for_move) {
-            eprintln!("{error}");
-            std::process::exit(2);
-        }
-        if let Err(error) = move_manifest::run(argv.clone()) {
-            eprintln!("{error}");
-            std::process::exit(2);
-        }
-        if let Err(error) = move_text::run(argv) {
+        if let Err(error) = source_move::run(argv) {
             eprintln!("{error}");
             std::process::exit(2);
         }

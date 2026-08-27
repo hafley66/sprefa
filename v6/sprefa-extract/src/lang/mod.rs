@@ -22,8 +22,8 @@ pub mod python;
 pub mod rust;
 pub mod ts;
 pub mod ts_paths;
+pub mod ts_rehome;
 pub mod ts_resolve;
-pub mod ts_walk;
 
 pub use ast_rule::{
     decode_ast_rule_yaml, query_ast_rule, query_ast_rule_with_content, AstRule, AstRuleCapture,
@@ -49,10 +49,11 @@ pub use rust::RustSource;
 pub use ts::{
     ts_specifiers, CallProjector, DfProjector, OxcParser, TsSource, TsSpecifier, TypeProjector,
 };
+pub use ts_rehome::{build_paths, compiled_spellings, BuildPaths};
 pub use ts_resolve::{respell, TsResolver};
-pub use ts_walk::{corpus_lang, is_ts_family, specifier_corpus, ts_corpus, CorpusLang, SKIP_DIRS};
 
 use crate::source::Source;
+use crate::types::Rehome;
 
 /// The first-match roster. Order matters: the lang-specific `Source`s precede the
 /// ast-grep CST fallback (v5 `type_langs()` convention). RustSource is first so a
@@ -80,4 +81,19 @@ pub fn sources() -> &'static [&'static dyn Source] {
 /// The first `Source` whose `matches(path)` is true, else None.
 pub fn source_for(path: &str) -> Option<&'static dyn Source> {
     sources().iter().copied().find(|src| src.matches(path))
+}
+
+/// The `Rehome` roster: one impl per language `extract move` can rehome, in
+/// `sources()` order. A language with no impl here is a named stop, never a
+/// `match` arm in the move core.
+pub fn rehomes() -> &'static [&'static dyn Rehome] {
+    &[&PrologSource, &TsSource]
+}
+
+/// The `Rehome` that owns `path`, under the SAME first-match law `sources()`
+/// states: `"x.kts".ends_with(".ts")` is true, so `TsSource` matches a kotlin
+/// script too and only `source_for`'s own winner may claim it.
+pub fn rehome_for(path: &str) -> Option<&'static dyn Rehome> {
+    let owner = source_for(path)?.name();
+    rehomes().iter().copied().find(|arm| arm.name() == owner)
 }

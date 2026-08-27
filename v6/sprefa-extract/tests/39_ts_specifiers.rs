@@ -5,8 +5,7 @@
 use std::path::PathBuf;
 
 use sprefa_extract::{
-    corpus_lang, is_ts_family, specifier_corpus, ts_corpus, ts_specifiers, CorpusLang, FamilyMask,
-    Source, TsSource,
+    rehome_for, ts_specifiers, FamilyMask, MoveCx, PrologSource, Source, TsSource,
 };
 
 const PATH: &str = "tests/fixtures/ts_move/src/index.ts";
@@ -124,26 +123,28 @@ fn extractor_rows_include_the_runtime_forms() {
     );
 }
 
-/// `.kts` is Kotlin, which `ends_with(".ts")` cannot say; `.d.ts` is TS.
+/// `.kts` is Kotlin, which `ends_with(".ts")` cannot say, so the roster's own
+/// first-match law is the only thing that may hand a path to a `Rehome` arm.
 #[test]
-fn ts_family_membership_is_by_extension() {
-    assert!(is_ts_family("a/b.ts"));
-    assert!(is_ts_family("a/b.d.ts"));
-    assert!(is_ts_family("a/b.mjs"));
-    assert!(!is_ts_family("a/b.kts"));
-    assert!(!is_ts_family("a/b.pl"));
-    assert!(!is_ts_family("a/ts"));
-    assert!(!is_ts_family("a.ts/b"));
-    assert_eq!(corpus_lang("a/b.plt"), Some(CorpusLang::Prolog));
-    assert_eq!(corpus_lang("a/b.tsx"), Some(CorpusLang::Tsx));
-    assert_eq!(corpus_lang("a/b.cjs"), Some(CorpusLang::Ts));
-    assert_eq!(corpus_lang("a/b.kt"), None);
+fn rehome_ownership_follows_the_roster_first_match_law() {
+    let arm = |path: &str| rehome_for(path).map(|arm| arm.name());
+    assert_eq!(arm("a/b.ts"), Some("ts"));
+    assert_eq!(arm("a/b.d.ts"), Some("ts"));
+    assert_eq!(arm("a/b.mjs"), Some("ts"));
+    assert_eq!(arm("a/b.tsx"), Some("ts"));
+    assert_eq!(arm("a/b.cjs"), Some("ts"));
+    assert_eq!(arm("a/b.pl"), Some("prolog"));
+    assert_eq!(arm("a/b.plt"), Some("prolog"));
+    assert_eq!(arm("a/b.kts"), None, "a kotlin script is not a TS move");
+    assert_eq!(arm("a/b.kt"), None);
+    assert_eq!(arm("a/ts"), None);
+    assert_eq!(arm("a.ts/b"), None);
 }
 
 /// SABOTAGE RECEIPT: dropping `node_modules` from `SKIP_DIRS` adds
 /// `node_modules/dep/index.js` to the corpus and this test fails on length.
 #[test]
-fn corpus_walk_takes_carriers_and_skips_vendor_trees() {
+fn corpus_walk_takes_every_file_and_skips_vendor_trees() {
     let root = temp_root("corpus-walk");
     for rel in [
         "a.ts",
@@ -166,47 +167,44 @@ fn corpus_walk_takes_carriers_and_skips_vendor_trees() {
     ] {
         write(&root, rel, "export const x = 1;\n");
     }
-
-    let corpus: Vec<(String, CorpusLang)> = specifier_corpus(&root)
-        .into_iter()
-        .map(|(path, lang)| {
-            (
-                path.strip_prefix(&root)
-                    .expect("under root")
-                    .to_string_lossy()
-                    .to_string(),
-                lang,
-            )
-        })
-        .collect();
+    let cx = MoveCx::open(&root).expect("walk the corpus");
 
     assert_eq!(
-        corpus,
+        cx.files(),
         [
-            ("a.ts".to_string(), CorpusLang::Ts),
-            ("c.cts".to_string(), CorpusLang::Ts),
-            ("cjs.cjs".to_string(), CorpusLang::Ts),
-            ("esm.mjs".to_string(), CorpusLang::Ts),
-            ("legacy.js".to_string(), CorpusLang::Ts),
-            ("legacy.jsx".to_string(), CorpusLang::Tsx),
-            ("m.mts".to_string(), CorpusLang::Ts),
-            ("rule.pl".to_string(), CorpusLang::Prolog),
-            ("rule.plt".to_string(), CorpusLang::Prolog),
-            ("ui/a.tsx".to_string(), CorpusLang::Tsx),
+            "a.ts",
+            "c.cts",
+            "cjs.cjs",
+            "dist/a.js",
+            "esm.mjs",
+            "legacy.js",
+            "legacy.jsx",
+            "m.mts",
+            "notes.md",
+            "rule.pl",
+            "rule.plt",
+            "script.kts",
+            "ui/a.tsx",
         ]
     );
 
-    let ts: Vec<String> = ts_corpus(&root)
-        .into_iter()
-        .map(|path| {
-            path.strip_prefix(&root)
-                .expect("under root")
-                .to_string_lossy()
-                .to_string()
-        })
-        .collect();
-    assert!(!ts.iter().any(|rel| rel.ends_with(".pl")));
-    assert_eq!(ts.len(), 8);
+    // `dist` stays in the walk (a `dist/package.json` is still a manifest); the
+    // TS arm drops it from its own parse.
+    assert_eq!(
+        cx.files_of(&TsSource),
+        [
+            "a.ts",
+            "c.cts",
+            "cjs.cjs",
+            "dist/a.js",
+            "esm.mjs",
+            "legacy.js",
+            "legacy.jsx",
+            "m.mts",
+            "ui/a.tsx",
+        ]
+    );
+    assert_eq!(cx.files_of(&PrologSource), ["rule.pl", "rule.plt"]);
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -224,17 +222,12 @@ fn corpus_walk_spans_workspace_packages() {
     ] {
         write(&root, rel, "export const x = 1;\n");
     }
+    let cx = MoveCx::open(&root).expect("walk the corpus");
 
-    let corpus: Vec<String> = ts_corpus(&root)
-        .into_iter()
-        .map(|path| {
-            path.strip_prefix(&root)
-                .expect("under root")
-                .to_string_lossy()
-                .to_string()
-        })
-        .collect();
-    assert_eq!(corpus, ["packages/one/src/a.ts", "packages/two/src/b.ts"]);
+    assert_eq!(
+        cx.files_of(&TsSource),
+        ["packages/one/src/a.ts", "packages/two/src/b.ts"]
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }

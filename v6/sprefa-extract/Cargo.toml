@@ -27,6 +27,13 @@ features = ["cli"]
 # The newline scan behind the per-document line table. Already unified in the
 # workspace lock through regex/aho-corasick, so this pins no new copy.
 memchr = "2"
+# @comment-ok: build-vs-buy candidate table, the law every dep comment here carries.
+# The directory walker soopy itself uses (`soopy/src/_3a_files.rs:6`), already in
+# this lock as an ast-grep transitive, so the pin adds no copy. soopy's own
+# `DirectoryRoot::snapshot` hashes every file it visits, which a path-only move
+# corpus scan must not pay; `walkdir` is `ignore`'s own dependency with no
+# filter_entry-by-name convenience. The move corpus walk is the one caller.
+ignore = "0.4"
 # ast-grep-language ships the tree-sitter grammars for rust/ts/tsx/js/go in ONE
 # dep; ast-grep-core is the parse + Node API. v5 carried these v0 -> v6 (src/sg.rs).
 # Ported verbatim, not relitigated.

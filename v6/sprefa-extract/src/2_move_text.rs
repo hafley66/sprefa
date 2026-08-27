@@ -1,61 +1,44 @@
 //! `extract move ... --text-refs`: report-only scan for old-path spellings a
-//! move leaves behind in non-TS text. Manifests and script strings are out of
-//! scope for the move verb per
-//! `plans/2026-08-25-extract-move-typescript.PLAN.md:642-644`; this pass
-//! never writes a byte, only names the rows a human still has to fix.
-//! @comment-ok: module header, the seam this pass and `1_move_manifest.rs` share
+//! move leaves behind in plain text. Rewriting text carriers is out of scope for
+//! the move verb (`plans/2026-08-25-extract-move-typescript.PLAN.md:642-644`);
+//! this pass never writes a byte, only names the rows a human still has to fix.
+//! @comment-ok: module header, the seam list every move file opens with
 
-use std::path::Path;
+use std::collections::BTreeSet;
 
-use sprefa_extract::is_ts_family;
+use sprefa_extract::{rehome_for, rehomes, MoveCx};
 
-use crate::move_manifest::{
-    build_paths, compiled_spellings, dirname, owning_package, package_manifests, parse_run,
-    rel_string, walk_root, MoveRow,
-};
-
-pub fn run<I>(args: I) -> Result<(), String>
-where
-    I: IntoIterator,
-    I::Item: Into<std::ffi::OsString> + Clone,
-{
-    let plan = parse_run(args)?;
-    if !plan.text_refs {
-        return Ok(());
-    }
-    let manifests = package_manifests(&plan.root);
-    let package_dirs: Vec<String> = manifests.iter().map(|rel| dirname(rel)).collect();
-    let per_move: Vec<Vec<(String, String)>> = plan
-        .moves
+/// Every leftover spelling this run's batch can leave in a file no `Rehome` arm
+/// owns, sorted by (file, line, matched).
+pub fn report(cx: &MoveCx) {
+    // A manifest is a carrier its own arm already rewrote through a Replace.
+    let carriers: BTreeSet<String> = rehomes().iter().flat_map(|arm| arm.manifests(cx)).collect();
+    let per_move: Vec<Vec<(String, String)>> = cx
+        .moved()
         .iter()
-        .map(|mv| candidates(&plan.root, &package_dirs, mv))
+        .map(|(old, new)| candidates(cx, old, new))
         .collect();
-    for hit in scan(&plan.root, &per_move) {
+    for hit in scan(cx, &carriers, &per_move) {
         println!(
             "text-ref {}:{} {} -> {}",
             hit.file, hit.line, hit.matched, hit.proposed
         );
     }
-    Ok(())
 }
 
-/// Every spelling this move can leave behind, longest first (a scan line
-/// matches the most specific one and stops).
-fn candidates(root: &Path, package_dirs: &[String], mv: &MoveRow) -> Vec<(String, String)> {
-    let mut out = segment_pairs(&mv.old_rel, &mv.new_rel);
-    if let Some(dir) = owning_package(package_dirs, &mv.old_rel) {
-        let build = build_paths(&root.join(dir));
-        for (old_c, new_c) in compiled_spellings(dir, &build, &mv.old_rel, &mv.new_rel) {
-            out.push((format!("../{old_c}"), format!("../{new_c}")));
-            out.push((old_c, new_c));
-        }
+/// Every spelling one move can leave behind, longest first (a scan line matches
+/// the most specific one and stops).
+fn candidates(cx: &MoveCx, old: &str, new: &str) -> Vec<(String, String)> {
+    let mut out = segment_pairs(old, new);
+    if let Some(arm) = rehome_for(old) {
+        out.extend(arm.text_spellings(cx, old, new));
     }
     out.sort_by(|left, right| right.0.len().cmp(&left.0.len()));
     out
 }
 
-/// `old_rel` suffixes down to two segments, paired with `new_rel`'s suffix
-/// after dropping the same leading segment count.
+/// `old` suffixes down to two segments, paired with `new`'s suffix after
+/// dropping the same leading segment count.
 fn segment_pairs(old_rel: &str, new_rel: &str) -> Vec<(String, String)> {
     let old_segments: Vec<&str> = old_rel.split('/').collect();
     let new_segments: Vec<&str> = new_rel.split('/').collect();
@@ -82,16 +65,13 @@ struct Hit {
     proposed: String,
 }
 
-fn scan(root: &Path, per_move: &[Vec<(String, String)>]) -> Vec<Hit> {
+fn scan(cx: &MoveCx, carriers: &BTreeSet<String>, per_move: &[Vec<(String, String)>]) -> Vec<Hit> {
     let mut hits = Vec::new();
-    for path in walk_root(root) {
-        let Some(rel) = rel_string(root, &path) else {
-            continue;
-        };
-        if rel == "package.json" || rel.ends_with("/package.json") || is_ts_family(&rel) {
+    for rel in cx.files() {
+        if carriers.contains(rel) || rehome_for(rel).is_some() {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Some(text) = cx.text(rel) else {
             continue;
         };
         for (line_number, line) in text.lines().enumerate() {

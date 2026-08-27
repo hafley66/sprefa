@@ -26,6 +26,8 @@ pub mod drain;
 pub mod family;
 pub mod lang;
 pub mod manifests;
+pub mod move_cx;
+pub mod move_stage;
 pub mod project;
 pub mod rows;
 pub mod schema;
@@ -63,17 +65,18 @@ pub use family::{
     TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };
 pub use lang::{
-    corpus_lang, decode_ast_rule_yaml, dl6_db_path, is_ts_family, open_dl6_readonly, open_readonly,
-    query_ast_rule, query_ast_rule_with_content, query_patterns, respell, source_for, sources,
-    specifier_corpus, ts_corpus, ts_specifiers, AstCaptureFact, AstPatternQuery, AstRule,
+    build_paths, compiled_spellings, decode_ast_rule_yaml, dl6_db_path, open_dl6_readonly,
+    open_readonly, query_ast_rule, query_ast_rule_with_content, query_patterns, rehome_for,
+    rehomes, respell, source_for, sources, ts_specifiers, AstCaptureFact, AstPatternQuery, AstRule,
     AstRuleCapture, AstRuleError, AstRuleMatch, AstRuleMutationProposal, AstRuleRequest,
-    AstgrepSource, CorpusLang, DataSource, DlSource, ExtractLang, FactError, FactMatcher, FactSet,
+    AstgrepSource, BuildPaths, DataSource, DlSource, ExtractLang, FactError, FactMatcher, FactSet,
     GoSource, KotlinSource, MarkdownSource, NamedAstRule, PrologSource, PythonSource, RustSource,
-    StopBy, TsResolver, TsSource, TsSpecifier, DL6_DB_RELATIVE_PATH, SKIP_DIRS,
+    StopBy, TsResolver, TsSource, TsSpecifier, DL6_DB_RELATIVE_PATH,
 };
 pub use manifests::{
     fold_package_edges, package_edges, package_edges_jsonl, Manifest, ManifestKind,
 };
+pub use move_cx::{dirname, join_rel, normalize, relative_between, MoveCx, SKIP_DIRS};
 pub use project::{
     diet_scip, diet_scip_jsonl, extract_pool, resolve_project, resolve_project_jsonl, scip_facts,
     scip_facts_jsonl, scip_family, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
@@ -108,7 +111,7 @@ pub use soopy::{
     SourceEntry, SourceRef,
 };
 pub use source::{ExtractOutput, FamilyMask, Source};
-pub use types::{CfgEdgeKind, CfgF, CfgNodeKind};
+pub use types::{CfgEdgeKind, CfgF, CfgNodeKind, ImportRef, Rehome, Respell};
 pub use wire::{
     file_fact, flatten, flatten_cfg, flatten_flow, flatten_jsonl, flatten_scip, scip_file_edges,
     FlatFact, SpanOut, SCHEMA,
