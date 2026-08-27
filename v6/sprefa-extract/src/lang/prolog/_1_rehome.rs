@@ -20,7 +20,7 @@ use crate::lang::extract_lang::ExtractLang;
 use crate::lang::fact::FactSet;
 use crate::move_cx::{dirname, join_rel, relative_between, MoveCx};
 use crate::project::extract_pool;
-use crate::types::{ImportRef, Rehome, Respell, Span};
+use crate::types::{ImportRef, ImportRefKind, Rehome, Respell, Span};
 
 /// The rule is data, next to the code, and rides in the binary so a move needs
 /// no file beside it.
@@ -51,7 +51,7 @@ impl Rehome for PrologSource {
             .moved()
             .keys()
             .filter(|rel| crate::move_cx::owned_by(rel, self))
-            .map(|rel| stem(rel))
+            .map(|rel| crate::move_cx::stem(rel))
             .filter(|stem| !stem.is_empty())
             .collect();
 
@@ -167,7 +167,7 @@ impl Rehome for PrologSource {
     fn shim(&self, cx: &MoveCx, old: &str, new: &str) -> Option<String> {
         let text = cx.text(old)?;
         let parse = AstGrep::new(text, ExtractLang::Prolog);
-        let module = module_name(&parse).unwrap_or_else(|| stem(old));
+        let module = module_name(&parse).unwrap_or_else(|| crate::move_cx::stem(old));
         let target = spec_text(dirname(old), new, "''");
         Some(format!(
             ":- module({module}_shim, []).\n:- reexport({target}).\n"
@@ -348,7 +348,7 @@ fn drain_refs(
                 },
                 text,
                 target,
-                kind: "import",
+                kind: ImportRefKind::Import,
             })
         })
         .collect()
@@ -419,12 +419,4 @@ fn is_plain_atom(text: &str) -> bool {
     let mut chars = text.chars();
     chars.next().is_some_and(|first| first.is_ascii_lowercase())
         && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-fn stem(rel: &str) -> String {
-    let name = rel.rsplit('/').next().unwrap_or(rel);
-    name.rsplit_once('.')
-        .map(|(head, _)| head)
-        .unwrap_or(name)
-        .to_string()
 }

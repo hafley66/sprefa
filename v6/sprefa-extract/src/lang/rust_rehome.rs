@@ -30,9 +30,9 @@ use rayon::prelude::*;
 use syn::spanned::Spanned;
 
 use super::rust::{build_line_starts, syn_span, RustSource};
-use crate::move_cx::{dirname, join_rel, relative_between, MoveCx};
+use crate::move_cx::{dirname, join_rel, relative_between, stem, MoveCx};
 use crate::project::extract_pool;
-use crate::types::{ImportRef, Rehome, Respell, Span};
+use crate::types::{ImportRef, ImportRefKind, LangKind, Rehome, Respell, Span};
 
 /// The macros whose first argument names a file, resolved against the directory
 /// of the file that writes them.
@@ -42,10 +42,48 @@ const INCLUDE_MACROS: [&str; 3] = ["include", "include_str", "include_bytes"];
 /// it names a directory whose `Cargo.toml` no `.rs`-only move can carry along.
 const TARGET_TABLES: [&str; 5] = ["lib", "bin", "test", "bench", "example"];
 
+/// The kinds only this language constructs.
+pub const INCLUDE: ImportRefKind = ImportRefKind::Ext(LangKind {
+    lang: "rust",
+    tag: "include",
+});
+pub const USE_PATH: ImportRefKind = ImportRefKind::Ext(LangKind {
+    lang: "rust",
+    tag: "use_path",
+});
+pub const PATH_ATTR: ImportRefKind = ImportRefKind::Ext(LangKind {
+    lang: "rust",
+    tag: "path_attr",
+});
+pub const MOD_DECL: ImportRefKind = ImportRefKind::Ext(LangKind {
+    lang: "rust",
+    tag: "mod_decl",
+});
+pub const MOD_PATH: ImportRefKind = ImportRefKind::Ext(LangKind {
+    lang: "rust",
+    tag: "mod_path",
+});
+pub const MOD_RELOCATE_OUT: ImportRefKind = ImportRefKind::Ext(LangKind {
+    lang: "rust",
+    tag: "mod_relocate_out",
+});
+pub const MOD_RELOCATE_IN: ImportRefKind = ImportRefKind::Ext(LangKind {
+    lang: "rust",
+    tag: "mod_relocate_in",
+});
+pub const WIDEN_VIS: ImportRefKind = ImportRefKind::Ext(LangKind {
+    lang: "rust",
+    tag: "widen_vis",
+});
+
 impl Rehome for RustSource {
+    fn directory_stem(&self) -> Option<&'static str> {
+        Some("mod")
+    }
+
     fn import_refs(&self, cx: &MoveCx) -> Vec<ImportRef> {
         let roots = crate_roots(cx);
-        let names = moved_names(cx, self);
+        let names = self.moved_names(cx);
         let corpus = cx.files_of(self);
 
         // Read and parse fan out; the merge below stays sequential over `corpus`
@@ -117,7 +155,7 @@ impl Rehome for RustSource {
                     literal: include.span,
                     text: include.text.clone(),
                     target,
-                    kind: "include",
+                    kind: INCLUDE,
                 });
             }
             for item in &scan.uses {
@@ -135,7 +173,7 @@ impl Rehome for RustSource {
                     literal: item.span,
                     text: item.text.clone(),
                     target: target.clone(),
-                    kind: "use_path",
+                    kind: USE_PATH,
                 });
             }
         }
@@ -145,13 +183,13 @@ impl Rehome for RustSource {
 
     fn respell(&self, cx: &MoveCx, reference: &ImportRef) -> Option<Respell> {
         let (text, receipt) = match reference.kind {
-            "mod_decl" | "path_attr" => (mod_respell(cx, reference)?, None),
-            "include" => (include_respell(cx, reference)?, None),
+            MOD_DECL | PATH_ATTR => (mod_respell(cx, reference)?, None),
+            INCLUDE => (include_respell(cx, reference)?, None),
             // The module tree names a module, never its path on disk, and this
             // arm keeps that tree by writing `#[path]`, never by re-parenting.
-            "use_path" => return None,
-            "manifest_target" => manifest_respell(cx, reference)?,
-            "mod_relocate_out" | "mod_relocate_in" | "mod_path" | "widen_vis" => {
+            USE_PATH => return None,
+            ImportRefKind::ManifestTarget => manifest_respell(cx, reference)?,
+            MOD_RELOCATE_OUT | MOD_RELOCATE_IN | MOD_PATH | WIDEN_VIS => {
                 let edit = relocate_plan(cx)
                     .edits
                     .get(&(reference.importer.clone(), reference.literal.start))?;
@@ -197,7 +235,7 @@ impl Rehome for RustSource {
                     literal: leaf.span,
                     text: leaf.literal,
                     target: leaf.field,
-                    kind: "manifest_target",
+                    kind: ImportRefKind::ManifestTarget,
                 });
             }
         }
@@ -706,14 +744,14 @@ fn decl_ref(rel: &str, decl: &ModDecl, target: &str) -> ImportRef {
             literal: *span,
             text: slice_of(&decl.text, decl.item, *span),
             target: target.to_string(),
-            kind: "path_attr",
+            kind: PATH_ATTR,
         },
         None => ImportRef {
             importer: rel.to_string(),
             literal: decl.item,
             text: decl.text.clone(),
             target: target.to_string(),
-            kind: "mod_decl",
+            kind: MOD_DECL,
         },
     }
 }
@@ -748,7 +786,7 @@ fn mod_respell(cx: &MoveCx, reference: &ImportRef) -> Option<String> {
     let target = cx.after(&reference.target);
     let aimed = relative_between(&attr_base(importer, &decl.chain, roots), target);
     match reference.kind {
-        "path_attr" => Some(format!("\"{aimed}\"")),
+        PATH_ATTR => Some(format!("\"{aimed}\"")),
         _ => match natural_paths(&decl_base(importer, &decl.chain, roots), &decl.name)
             .contains(&target.to_string())
         {
@@ -811,7 +849,7 @@ struct RelocateEdit {
     span: Span,
     text: String,
     target: String,
-    kind: &'static str,
+    kind: ImportRefKind,
     replacement: String,
     receipt: Option<String>,
 }
@@ -904,7 +942,7 @@ fn build_relocate_plan(cx: &MoveCx) -> RelocatePlan {
                     span,
                     text: written,
                     target,
-                    kind: "mod_path",
+                    kind: MOD_PATH,
                     replacement,
                     receipt: None,
                 },
@@ -920,7 +958,7 @@ fn build_relocate_plan(cx: &MoveCx) -> RelocatePlan {
                 span: relocation.decl,
                 text: relocation.decl_text.clone(),
                 target: target.clone(),
-                kind: "mod_relocate_out",
+                kind: MOD_RELOCATE_OUT,
                 replacement: String::new(),
                 receipt: None,
             },
@@ -973,7 +1011,7 @@ fn widen_privates(
                     span: item.kw_span,
                     text: item.kw.to_string(),
                     target: target.clone(),
-                    kind: "widen_vis",
+                    kind: WIDEN_VIS,
                     replacement: format!("pub(crate) {}", item.kw),
                     receipt: Some(format!("widen {target}:{line} {} -> pub(crate)", item.name)),
                 },
@@ -1051,7 +1089,7 @@ fn insert_decls(
                     },
                     text: String::new(),
                     target,
-                    kind: "mod_relocate_in",
+                    kind: MOD_RELOCATE_IN,
                     replacement: body,
                     receipt: Some(receipt),
                 },
@@ -1528,35 +1566,10 @@ fn auto_crate_root(rel: &str) -> bool {
     }
 }
 
-/// The names a batch can be reached by: every moved file's stem, plus the
-/// directory name of a moved `mod.rs`, which is the module name a decl spells.
-fn moved_names(cx: &MoveCx, rehome: &dyn Rehome) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
-    for old in cx.moved().keys() {
-        if !crate::move_cx::owned_by(old, rehome) {
-            continue;
-        }
-        let own = stem(old);
-        if own == "mod" {
-            names.insert(stem(dirname(old)));
-        }
-        names.insert(own);
-    }
-    names
-}
-
 /// Whether a file can name the batch at all. A superset filter: it never drops a
 /// file that references a moved one, and a short module name admits most files.
 fn carries_name(bytes: &[u8], names: &BTreeSet<String>) -> bool {
     names
         .iter()
         .any(|name| memchr::memmem::find(bytes, name.as_bytes()).is_some())
-}
-
-fn stem(rel: &str) -> String {
-    let name = rel.rsplit('/').next().unwrap_or(rel);
-    name.rsplit_once('.')
-        .map(|(head, _)| head)
-        .unwrap_or(name)
-        .to_string()
 }

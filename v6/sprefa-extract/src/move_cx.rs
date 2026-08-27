@@ -17,7 +17,7 @@ use ignore::WalkBuilder;
 use crate::types::Rehome;
 
 /// Whether the roster hands `rel` to `rehome`.
-pub fn owned_by(rel: &str, rehome: &dyn Rehome) -> bool {
+pub fn owned_by<R: Rehome + ?Sized>(rel: &str, rehome: &R) -> bool {
     crate::lang::rehome_for(rel).is_some_and(|owner| owner.name() == rehome.name())
 }
 
@@ -181,6 +181,15 @@ pub fn relative_between(from_dir: &str, target: &str) -> String {
 /// The directory part of a root-relative path, `""` for a file at the root.
 pub fn dirname(rel: &str) -> &str {
     rel.rsplit_once('/').map(|(dir, _)| dir).unwrap_or("")
+}
+
+/// File name without directory or extension: "src/a/b.rs" -> "b".
+pub(crate) fn stem(rel: &str) -> String {
+    let name = rel.rsplit('/').next().unwrap_or(rel);
+    name.rsplit_once('.')
+        .map(|(head, _)| head)
+        .unwrap_or(name)
+        .to_string()
 }
 
 /// `dir` joined with `rel`, both root-relative and forward-slashed, with `.`
