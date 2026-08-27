@@ -22,8 +22,11 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use ast_grep_core::tree_sitter::LanguageExt;
+use ast_grep_core::Language;
+use ast_grep_language::SupportLang;
 use serde::Serialize;
 
+use crate::lang::extract_lang::ExtractLang;
 use crate::move_cx::MoveCx;
 
 pub use soopy::ContentId;
@@ -197,32 +200,44 @@ impl Family for CstF {
 #[derive(Default, Copy, Clone, Debug)]
 pub struct TypeF;
 
-/// type_entity kind. 9 variants. Struct/Trait are Rust-only; TS emits the rest.
+/// One language's own kind, carried by the `Ext` variant of a kind enum. The
+/// tag is the language's own snake_case string; it must never equal a core tag
+/// of that enum (railed in tests/6_kind_vocab.rs), so `as_str` stays injective
+/// and the wire keeps one vocabulary.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct LangKind {
+    pub lang: &'static str,
+    pub tag: &'static str,
+}
+
+/// type_entity kind. Core = every variant at least two languages construct
+/// today; a kind one language owns lives in that language's file as an
+/// `Ext(LangKind)` constant (rust.rs `TRAIT`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TypeEntityKind {
     Struct,
     Enum,
-    Trait,
     Class,
     Interface,
     Alias,
     Function,
     Method,
     Const,
+    Ext(LangKind),
 }
 
 impl TypeEntityKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             TypeEntityKind::Struct => "struct",
             TypeEntityKind::Enum => "enum",
-            TypeEntityKind::Trait => "trait",
             TypeEntityKind::Class => "class",
             TypeEntityKind::Interface => "interface",
             TypeEntityKind::Alias => "alias",
             TypeEntityKind::Function => "function",
             TypeEntityKind::Method => "method",
             TypeEntityKind::Const => "const",
+            TypeEntityKind::Ext(ext) => ext.tag,
         }
     }
 }
@@ -243,7 +258,7 @@ pub enum TypeEdgeKind {
 }
 
 impl TypeEdgeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             TypeEdgeKind::Field => "field",
             TypeEdgeKind::Variant => "variant",
@@ -276,7 +291,7 @@ pub enum SigSlot {
 }
 
 impl SigSlot {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             SigSlot::Param => "param",
             SigSlot::Ret => "ret",
@@ -303,7 +318,7 @@ pub enum ConstKind {
 }
 
 impl ConstKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             ConstKind::Lit => "lit",
             ConstKind::Template => "template",
@@ -365,7 +380,7 @@ pub enum DocNodeKind {
 }
 
 impl DocNodeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             DocNodeKind::Heading => "heading",
             DocNodeKind::CodeBlock => "code_block",
@@ -400,7 +415,9 @@ impl Family for TypeF {
 #[derive(Default, Copy, Clone, Debug)]
 pub struct CallF;
 
-/// The call-def node shape. `Free` wires as "function" (v5 parity).
+/// The call-def node shape. `Free` wires as "function" (v5 parity). Every
+/// variant is constructed by four or more languages today; `Ext` is the door a
+/// language uses when it needs a kind the core lacks.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CallKind {
     /// A free function. Wire tag is "function" (v5 CallKind::Free.tag()).
@@ -409,14 +426,16 @@ pub enum CallKind {
     Method,
     /// An anonymous callable from the df lift (emitted by the DfF pass).
     Lambda,
+    Ext(LangKind),
 }
 
 impl CallKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             CallKind::Free => "function",
             CallKind::Method => "method",
             CallKind::Lambda => "lambda",
+            CallKind::Ext(ext) => ext.tag,
         }
     }
 }
@@ -435,7 +454,7 @@ pub enum CallEdgeKind {
 }
 
 impl CallEdgeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             CallEdgeKind::NameResolve => "name_resolve",
             CallEdgeKind::ScipOverride => "scip_override",
@@ -488,7 +507,7 @@ pub enum RefPosition {
 }
 
 impl RefPosition {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             RefPosition::Goal => "goal",
             RefPosition::HeadArg => "head_arg",
@@ -550,7 +569,7 @@ pub enum UnresolvedReason {
 }
 
 impl UnresolvedReason {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             UnresolvedReason::DynamicImport => "dynamic-import",
             UnresolvedReason::ComputedMemberCall => "computed-member-call",
@@ -579,7 +598,7 @@ pub enum SpecifierKind {
 }
 
 impl SpecifierKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             SpecifierKind::Named => "named",
             SpecifierKind::Default => "default",
@@ -779,7 +798,10 @@ pub fn compute_nests(nodes: &[Node<DfF>], loops: &[DfLoop]) -> Vec<DfNest> {
     out
 }
 
-/// df_node kind. 23 variants.
+/// df_node kind. Core = every variant at least two languages construct today
+/// (or none yet: `Try`); a kind one language owns lives in that language's
+/// file as an `Ext(LangKind)` constant (rust.rs BORROW/MATCH/BLOCK/BREAK,
+/// ts.rs COND/CONCAT/TEMPLATE).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum DfNodeKind {
     Param,
@@ -791,25 +813,19 @@ pub enum DfNodeKind {
     New,
     Member,
     Ret,
-    Borrow,
     Binop,
     Unop,
     Loop,
     If,
-    Match,
-    Block,
     Closure,
     Try,
-    Break,
     Expr,
-    Cond,
     Logic,
-    Concat,
-    Template,
+    Ext(LangKind),
 }
 
 impl DfNodeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             DfNodeKind::Param => "param",
             DfNodeKind::LetBind => "let_bind",
@@ -820,21 +836,15 @@ impl DfNodeKind {
             DfNodeKind::New => "new",
             DfNodeKind::Member => "member",
             DfNodeKind::Ret => "ret",
-            DfNodeKind::Borrow => "borrow",
             DfNodeKind::Binop => "binop",
             DfNodeKind::Unop => "unop",
             DfNodeKind::Loop => "loop",
             DfNodeKind::If => "if",
-            DfNodeKind::Match => "match",
-            DfNodeKind::Block => "block",
             DfNodeKind::Closure => "closure",
             DfNodeKind::Try => "try",
-            DfNodeKind::Break => "break",
             DfNodeKind::Expr => "expr",
-            DfNodeKind::Cond => "cond",
             DfNodeKind::Logic => "logic",
-            DfNodeKind::Concat => "concat",
-            DfNodeKind::Template => "template",
+            DfNodeKind::Ext(ext) => ext.tag,
         }
     }
 }
@@ -848,7 +858,7 @@ pub enum DfEdgeKind {
 }
 
 impl DfEdgeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             DfEdgeKind::Direct => "direct",
         }
@@ -885,7 +895,7 @@ pub enum FlowEdgeKind {
 }
 
 impl FlowEdgeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             FlowEdgeKind::ArgToParam => "arg_to_param",
             FlowEdgeKind::RetToCallRes => "ret_to_call_res",
@@ -1035,7 +1045,7 @@ pub enum CfgNodeKind {
 }
 
 impl CfgNodeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             CfgNodeKind::Entry => "entry",
             CfgNodeKind::Exit => "exit",
@@ -1062,7 +1072,7 @@ pub enum CfgEdgeKind {
 }
 
 impl CfgEdgeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             CfgEdgeKind::Next => "next",
             CfgEdgeKind::Arm => "arm",
@@ -1109,7 +1119,7 @@ impl DataFormat {
         }
     }
 
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             DataFormat::Json => "json",
             DataFormat::Jsonl => "jsonl",
@@ -1131,7 +1141,7 @@ pub enum DataValueKind {
 }
 
 impl DataValueKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             DataValueKind::Object => "object",
             DataValueKind::Array => "array",
@@ -1943,6 +1953,12 @@ pub trait Source: Sync + Send {
     /// One parse per backing engine, masked projections. Owns the arena(s)
     /// internally; returns owned output (no borrowed parse crosses the seam).
     fn extract(&self, path: &str, content: &[u8], mask: FamilyMask) -> ExtractOutput;
+    /// The `ExtractLang` this source parses `path` with. Default: the ast-grep
+    /// shim (its `SupportLang` picks the grammar from the path); a language
+    /// with its own grammar overrides.
+    fn extract_lang(&self, path: &str) -> Option<ExtractLang> {
+        SupportLang::from_path(path).map(ExtractLang::Sg)
+    }
 }
 
 // ── the Rehome seam: what one language answers when a file moves ────────────

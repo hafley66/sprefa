@@ -26,25 +26,11 @@ pub enum ExtractLang {
 }
 
 impl ExtractLang {
-    /// The arms mirror the `Source` roster's own tests (dl6/_0_source.rs:395,
-    /// prolog/_0_source.rs:867-873, markdown/_0_source.rs:112).
+    /// Routed through the `Source` roster: each `Source` answers
+    /// `extract_lang(path)`; the ast-grep shim is the roster's default. No
+    /// path-suffix switch lives here.
     pub fn from_path(path: &str) -> Option<Self> {
-        if path.ends_with(".dl6") {
-            return Some(Self::Dl6);
-        }
-        if path.ends_with(".pl")
-            || path.ends_with(".plt")
-            || path.ends_with(".pro")
-            || path.ends_with(".prolog")
-            || path.ends_with(".datalog")
-            || path.ends_with(".horn")
-        {
-            return Some(Self::Prolog);
-        }
-        if path.ends_with(".md") || path.ends_with(".markdown") {
-            return Some(Self::Markdown);
-        }
-        SupportLang::from_path(path).map(Self::Sg)
+        crate::lang::source_for(path).and_then(|source| source.extract_lang(path))
     }
 
     /// The ast-grep YAML `language:` field's spelling; inverse of `parse_name`.
