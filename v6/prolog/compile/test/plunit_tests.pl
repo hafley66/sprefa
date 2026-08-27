@@ -41,7 +41,8 @@
                 program_text_intern_plan/3,
                 json_capture_json_type/2,
                 audit_scan_index_pairs/5, audit_scan_index_ddls/5,
-                audit_scan_index_ddl/3 ]).
+                audit_scan_index_ddl/3,
+                with_frontier_mode/2 ]).
 :- use_module('../../analyze',
               [ check_supported_subset/1, literal_witness/1, snake_name/2 ]).
 :- use_module('../../0_rel_record',
@@ -197,6 +198,12 @@ lowered_for(Base, Name, Lowered) :-
            read_fixture_term(File, Name, Term, Bindings),
            program_plan(Term-Bindings, Plan),
            lower_program(Plan, Lowered) )).
+
+lowered_shared_for(Base, Name, Lowered) :-
+    once(( fixture_file(Base, File),
+           read_fixture_term(File, Name, Term, Bindings),
+           program_plan(Term-Bindings, Plan),
+           with_frontier_mode(shared, lower_program(Plan, Lowered)) )).
 
 % Mode-pinned twins of the two above: a snapshot that spells one encoding's SQL
 % must name that encoding, never inherit compile.pl's build default.
@@ -571,11 +578,12 @@ test(dictionary_rows_never_read_a_frontier) :-
            \+ sub_atom(DeltaInsertSql, _, _, _, '__frontier___ref_')).
 
 test(old_state_rows_keep_the_internal_identity_used_by_relation_joins) :-
-    lowered_for('6_relation_depth.pl', relation_depth2_chained_decode,
-                lowered(_, _, _, _, LevelStatements, _, _, _)),
+    lowered_shared_for('6_relation_depth.pl', relation_depth2_chained_decode,
+                       lowered(_, _, _, _, LevelStatements, _, _, _)),
     forall(( member(levelstmt(_, _, _, DeltaInsertSql, _, _, _),
                     LevelStatements),
-             sub_atom(DeltaInsertSql, _, _, _, ' old_row GROUP BY ') ),
+             sub_atom(DeltaInsertSql, _, _, _,
+                      ' old_row WHERE old_row."__id" NOT IN (') ),
            sub_atom(DeltaInsertSql, _, _, _,
                     '(SELECT old_row."__id",')).
 
@@ -10714,6 +10722,49 @@ member_rel_name(MemberName) :-
                         '__member'], MemberName).
 
 :- end_tests(list_value_position).
+
+% The old-state arm of a delta rule reads the stored table once per level
+% insert. Under the shared frontier it must anti-join "__frontier" by row_id;
+% grouping the stored rows (the per-rel spelling) sorts every json-sized
+% column on every insert.
+:- begin_tests(old_state_arm_plan).
+
+% FAIL-PRE-FIX: with the GROUP BY spelling in shared mode the test failed on
+% the arm-shape assertion (the delta insert carried
+% `... FROM "..." old_row GROUP BY old_row."key", old_row."payload" HAVING
+% count(*) > (SELECT count(*) ...)`), and EXPLAIN QUERY PLAN on that insert
+% opened with
+%   `SCAN old_row USING COVERING INDEX sqlite_autoindex_osj_head_a_..._1`
+% plus a `CORRELATED SCALAR SUBQUERY 1` recounting the frontier per row.
+old_state_json_program(
+    prog([ kind(driver/1, set), col_type(driver/1, key, text),
+           kind(head_a/2, set), col_type(head_a/2, key, text),
+           col_type(head_a/2, payload, json),
+           col_type(totalled/2, key, text),
+           col_type(totalled/2, payload, json) ],
+         [ (totalled(Key, Payload) <-
+                driver(Key),
+                head_a(Key, Payload)) ])).
+
+old_state_shared_shape(Prog, Ddl, DeltaInsertSql) :-
+    program_plan(fixture(old_state_json_anti_join, Prog, [], [], [])-[], Plan),
+    with_frontier_mode(shared,
+        lower_program(Plan, lowered(_, Ddl, _, _, LevelStatements, _, _, _))),
+    memberchk(levelstmt(totalled/2, _, _, DeltaInsertSql, _, _, _),
+              LevelStatements).
+
+test(old_state_arm_never_sorts_the_table) :-
+    old_state_json_program(Prog),
+    old_state_shared_shape(Prog, Ddl, DeltaInsertSql),
+    sub_atom(DeltaInsertSql, _, _, _,
+             ' old_row WHERE old_row."__id" NOT IN ('),
+    explain_query_plan(Ddl, DeltaInsertSql, Plan),
+    \+ sub_atom(Plan, _, _, _, 'USE TEMP B-TREE FOR GROUP BY'),
+    (   sub_atom(Plan, _, _, _, 'SCAN old_row')
+    ->  once(sub_atom(Plan, _, _, _, 'SEARCH old_delta'))
+    ;   true ).
+
+:- end_tests(old_state_arm_plan).
 
 % A list column's DECLARED spelling is what the type plane and the boundary
 % read; its STORAGE is the entity id. Both survive to the relplan.
