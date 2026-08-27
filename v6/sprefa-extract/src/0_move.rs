@@ -8,15 +8,24 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use sprefa_extract::move_stage::{
-    content_id, print_previews, run_verify_command, stage_and_commit, state_root,
-    VerifyJournal, Mirror,
+    content_id, print_previews, run_verify_command, stage_and_commit, state_root, Mirror,
+    VerifyJournal,
 };
 use sprefa_extract::{
-    directory_path, directory_source, dirname, normalize, rehome_for, rehomes, replace_action,
-    MoveCx, Respell,
+    directory_path, directory_source, dirname, drain::source_rel, normalize, rehome_for, rehomes,
+    replace_action, MoveCx, Respell,
 };
 
 const PRODUCER: &str = "extract-move";
+
+/// One plan per root: a single root (zero or one `--root`) keeps the one-plan
+/// shape, more than one gets a plan batch in root order.
+fn plan_of(cli: &MoveCli) -> Result<Vec<Plan>, String> {
+    match cli.root.len() {
+        0 | 1 => Ok(vec![Plan::build(cli)?]),
+        _ => Plan::build_multi(cli),
+    }
+}
 
 #[derive(Parser)]
 #[command(
@@ -32,9 +41,14 @@ struct MoveCli {
     /// opening with `#` are skipped; relative paths read against the cwd.
     #[arg(long)]
     list: Option<PathBuf>,
-    /// Corpus root. Defaults to the git root containing the first `old`.
+    /// Corpus root. Repeatable: every move must sit under exactly one given
+    /// root, and each root gets its own plan and stage batch. Defaults to the
+    /// git root containing the first `old`.
     #[arg(long)]
-    root: Option<PathBuf>,
+    root: Vec<PathBuf>,
+    /// Directory the `--verify` command runs in. Defaults to the first root.
+    #[arg(long = "verify-cwd")]
+    verify_cwd: Option<PathBuf>,
     /// Soopy state root. Must sit outside the corpus root.
     #[arg(long)]
     state: Option<PathBuf>,
@@ -65,86 +79,141 @@ where
     let cli = MoveCli::try_parse_from(args).map_err(|error| error.to_string())?;
     if cli.verify.is_some() && !cli.commit {
         return Err(
-            "--verify runs the command only after --commit; a dry run never runs it"
-                .to_string(),
+            "--verify runs the command only after --commit; a dry run never runs it".to_string(),
         );
     }
-    let plan = Plan::build(&cli)?;
+    let plan = plan_of(&cli)?;
     let state = state_root(cli.state.as_deref())?;
+    let multi = plan.len() > 1;
+    let prefix = |plan: &Plan| root_prefix(multi, &plan.root);
+    let mut swept_per_root: Vec<Vec<String>> = Vec::with_capacity(plan.len());
 
-    println!("root {}", plan.root.display());
-    for (old, new) in &plan.moves {
-        println!("plan {old} -> {new}");
-    }
-    for receipt in &plan.receipts {
-        println!("{receipt}");
+    for plan in &plan {
+        let prefix = prefix(plan);
+        println!("{prefix}root {}", plan.root.display());
+        for (old, new) in &plan.moves {
+            println!("{prefix}plan {old} -> {new}");
+        }
+        for receipt in &plan.receipts {
+            println!("{prefix}{receipt}");
+        }
     }
 
     // Read off the pre-move file set: once the Moves commit, an emptied
     // directory is indistinguishable from one that was already empty.
-    let emptied = emptied_directories(&plan.cx);
+    let emptied: Vec<Vec<String>> = plan
+        .iter()
+        .map(|plan| emptied_directories(&plan.cx))
+        .collect();
 
     if cli.commit {
-        let journal = VerifyJournal::capture(
-            &plan.root,
-            &plan.moves,
-            &shim_paths(&plan, cli.shim),
+        let journals = plan
+            .iter()
+            .map(|plan| {
+                VerifyJournal::capture(
+                    &plan.root,
+                    &plan.moves,
+                    &shim_paths(plan, cli.shim),
+                    &touched_files(plan),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for (index, plan) in plan.iter().enumerate() {
+            let prefix = prefix(plan);
+            for stage in &plan.stages {
+                let (id, previews) =
+                    stage_and_commit(&plan.root, &state, stage, soopy::Durability::Durable)?;
+                print_previews(&previews, &prefix);
+                println!("{prefix}stage {id} committed");
+            }
+            let mut swept = Vec::new();
+            for directory in &emptied[index] {
+                std::fs::remove_dir(plan.cx.abs(directory))
+                    .map_err(|error| format!("remove empty directory {directory}: {error}"))?;
+                swept.push(directory.clone());
+                println!("{prefix}rmdir {directory}");
+            }
+            swept_per_root.push(swept);
+        }
+        verify_after_commit(
+            &plan,
+            &state,
+            cli.verify.as_deref(),
+            &journals,
+            &swept_per_root,
+            &cli.verify_cwd,
         )?;
-        for stage in &plan.stages {
-            let (id, previews) =
-                stage_and_commit(&plan.root, &state, stage, soopy::Durability::Durable)?;
-            print_previews(&previews);
-            println!("stage {id} committed");
-        }
-        let mut swept = Vec::new();
-        for directory in &emptied {
-            std::fs::remove_dir(plan.cx.abs(directory))
-                .map_err(|error| format!("remove empty directory {directory}: {error}"))?;
-            swept.push(directory.clone());
-            println!("rmdir {directory}");
-        }
-        verify_after_commit(&plan, &state, cli.verify.as_deref(), &journal, &swept)?;
     } else {
-        let mirror = Mirror::build(&plan.root, &plan.stages)?;
-        for stage in &plan.stages {
-            let (id, previews) =
-                stage_and_commit(mirror.root(), &state, stage, soopy::Durability::DryRun)?;
-            print_previews(&previews);
-            println!("stage {id} dry run, tree untouched");
-        }
-        for directory in &emptied {
-            println!("rmdir {directory} dry run, tree untouched");
+        for (index, plan) in plan.iter().enumerate() {
+            let prefix = prefix(plan);
+            let mirror = Mirror::build(&plan.root, &plan.stages)?;
+            for stage in &plan.stages {
+                let (id, previews) =
+                    stage_and_commit(mirror.root(), &state, stage, soopy::Durability::DryRun)?;
+                print_previews(&previews, &prefix);
+                println!("{prefix}stage {id} dry run, tree untouched");
+            }
+            for directory in &emptied[index] {
+                println!("{prefix}rmdir {directory} dry run, tree untouched");
+            }
         }
     }
-    if cli.text_refs {
-        crate::move_text::report(&plan.cx);
+    for plan in &plan {
+        if cli.text_refs {
+            crate::move_text::report(&plan.cx);
+        }
     }
     Ok(())
 }
 
-/// Keep-if-pass: a checker run in the move root judges the committed tree. A
-/// non-zero or timed-out checker rolls every touched path back and exits 3.
+/// The per-root print tag. A single-root run prints byte-identical to the
+/// one-root shape; only a multi-root run needs roots told apart.
+fn root_prefix(multi: bool, root: &Path) -> String {
+    match multi {
+        true => format!("[root {}] ", root.display()),
+        false => String::new(),
+    }
+}
+
+/// Keep-if-pass: a checker run judges every committed root together. A non-zero
+/// or timed-out checker rolls every root back, last root first, and exits 3.
 fn verify_after_commit(
-    plan: &Plan,
+    plans: &[Plan],
     state: &Path,
     command: Option<&str>,
-    journal: &VerifyJournal,
-    swept: &[String],
+    journals: &[VerifyJournal],
+    swept: &[Vec<String>],
+    verify_cwd: &Option<PathBuf>,
 ) -> Result<(), String> {
     let Some(command) = command else {
         return Ok(());
     };
-    match run_verify_command(&plan.root, command)? {
+    let cwd = match verify_cwd {
+        Some(dir) => {
+            let dir = absolute(dir)?;
+            if !dir.is_dir() {
+                return Err(format!(
+                    "--verify-cwd is not a directory: {}",
+                    dir.display()
+                ));
+            }
+            dir.canonicalize()
+                .map_err(|error| format!("canonicalize {}: {error}", dir.display()))?
+        }
+        None => plans[0].root.clone(),
+    };
+    match run_verify_command(&cwd, command)? {
         Some(0) => println!("verify ok"),
         code => {
             let reason = match code {
                 None => "timeout".to_string(),
                 Some(rc) => rc.to_string(),
             };
-            let count = journal.restore(&plan.root, state, swept)?;
-            println!(
-                "verify failed (rc={reason}): rolled back {count} files",
-            );
+            let mut count = 0usize;
+            for index in (0..plans.len()).rev() {
+                count += journals[index].restore(&plans[index].root, state, &swept[index])?;
+            }
+            println!("verify failed (rc={reason}): rolled back {count} files");
             std::process::exit(3);
         }
     }
@@ -154,10 +223,23 @@ fn verify_after_commit(
 /// The paths a `--shim` stage creates. The shim sits at the moved file's old
 /// path, so rollback deletes it before walking the move back.
 fn shim_paths(plan: &Plan, shim: bool) -> Vec<String> {
-    match shim {
-        true => vec![plan.moves[0].0.clone()],
-        false => Vec::new(),
+    match (shim, plan.moves.first()) {
+        (true, Some((old, _))) => vec![old.clone()],
+        _ => Vec::new(),
     }
+}
+
+/// Every file a plan's stages read or edit, so a verify rollback can restore
+/// the byte content an importer rewrite overwrote.
+fn touched_files(plan: &Plan) -> Vec<String> {
+    plan.stages
+        .iter()
+        .flatten()
+        .filter_map(source_rel)
+        .map(String::from)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 /// Soopy accepts ONE operation per source file (`_7d_mutation_plan.rs`
@@ -173,7 +255,77 @@ struct Plan {
 impl Plan {
     fn build(cli: &MoveCli) -> Result<Self, String> {
         let requested = requested_moves(cli)?;
-        let root = plan_root(cli, &requested[0].0)?;
+        let root = plan_root(cli.root.first(), &requested[0].0)?;
+        Self::build_for(root, requested, cli)
+    }
+
+    /// One plan per requested root: every move sits under exactly one root, a
+    /// row under none or under two is a named error before any stage is built.
+    fn build_multi(cli: &MoveCli) -> Result<Vec<Self>, String> {
+        let requested = requested_moves(cli)?;
+        let roots = cli
+            .root
+            .iter()
+            .map(|root| absolute(root).and_then(canonical_directory))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut per_root: Vec<Vec<(PathBuf, PathBuf)>> = vec![Vec::new(); roots.len()];
+        for (old, new) in requested {
+            let old = absolute(&old)?;
+            if !old.is_file() {
+                return Err(format!("move source is not a file: {}", old.display()));
+            }
+            let old = old
+                .canonicalize()
+                .map_err(|error| format!("canonicalize {}: {error}", old.display()))?;
+            let holders: Vec<usize> = roots
+                .iter()
+                .enumerate()
+                .filter(|(_, root)| old.starts_with(root))
+                .map(|(index, _)| index)
+                .collect();
+            match holders.as_slice() {
+                [] => {
+                    return Err(format!(
+                        "move {} is under none of the roots: {}",
+                        old.display(),
+                        spell_roots(&roots)
+                    ));
+                }
+                [index] => {
+                    let new = canonical_unborn(&absolute(&new)?);
+                    if !new.starts_with(&roots[*index]) {
+                        return Err(format!(
+                            "move destination {} is outside root {}",
+                            new.display(),
+                            roots[*index].display()
+                        ));
+                    }
+                    per_root[*index].push((old, new));
+                }
+                _ => {
+                    return Err(format!(
+                        "move {} is under more than one root: {}",
+                        old.display(),
+                        spell_roots(&roots)
+                    ))
+                }
+            }
+        }
+        if cli.shim && per_root.iter().map(Vec::len).sum::<usize>() > 1 {
+            return Err("--shim rehomes one file; drop --list".to_string());
+        }
+        roots
+            .into_iter()
+            .zip(per_root)
+            .map(|(root, moves)| Self::build_for(root, moves, cli))
+            .collect()
+    }
+
+    fn build_for(
+        root: PathBuf,
+        requested: Vec<(PathBuf, PathBuf)>,
+        cli: &MoveCli,
+    ) -> Result<Self, String> {
         let cx = MoveCx::open(&root)?;
         let moves = validated_moves(&cx, &root, requested)?;
         if cli.shim && moves.len() > 1 {
@@ -415,8 +567,8 @@ fn read_move_list(path: &Path) -> Result<Vec<(PathBuf, PathBuf)>, String> {
 }
 
 /// The corpus root: as asked, else the git root holding the first move's source.
-fn plan_root(cli: &MoveCli, first: &Path) -> Result<PathBuf, String> {
-    let root = match cli.root.as_deref() {
+fn plan_root(requested: Option<&PathBuf>, first: &Path) -> Result<PathBuf, String> {
+    let root = match requested {
         Some(root) => absolute(root)?,
         None => {
             let old = absolute(first)?;
@@ -531,4 +683,22 @@ fn within_root(root: &Path, path: &Path) -> Result<String, String> {
     path.strip_prefix(root)
         .map(|relative| relative.to_string_lossy().replace('\\', "/"))
         .map_err(|_| format!("{} is outside root {}", path.display(), root.display()))
+}
+
+/// Roots exist and are directories; the canonical form is what row assignment
+/// prefixes against.
+fn canonical_directory(root: PathBuf) -> Result<PathBuf, String> {
+    if !root.is_dir() {
+        return Err(format!("--root is not a directory: {}", root.display()));
+    }
+    root.canonicalize()
+        .map_err(|error| format!("canonicalize root {}: {error}", root.display()))
+}
+
+fn spell_roots(roots: &[PathBuf]) -> String {
+    roots
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
