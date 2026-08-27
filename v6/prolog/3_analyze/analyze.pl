@@ -27,19 +27,19 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
-:- use_module('1_expansion', [expand_program/3]).
-:- use_module('0_body_walk',
+:- use_module('../1_expansion/1_expansion', [expand_program/3]).
+:- use_module('../0_dot_expand/0_body_walk',
               [ walk_body/3,
                 body_conjunction_goals/3, body_wrapper_refs/4,
                 body_reserved_word/4 ]).
-:- use_module('0_program_check',
+:- use_module('../1_expansion/0_program_check',
               [ first_violation/3, relation_kind/3, declared_key/3 ]).
-:- use_module('0_type_plane',
+:- use_module('../0_dot_expand/0_type_plane',
               [ type_definitions/2, type_definition/4, column_storage/3,
                 declared_type_name/2 ]).
-:- use_module('conformance/body', [rel_ref/2]).
+:- use_module('../0_dot_expand/body', [rel_ref/2]).
 :- use_module('0_rel_record', [relplan_column_types/3]).
-:- use_module('compile/registry',
+:- use_module('../0_dot_expand/registry',
               [ surface_for_term/6,
                 body_surface_for_term/6,
                 expression/5

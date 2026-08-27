@@ -1,7 +1,7 @@
 % Step-level compile trace: the ledger, the two sinks, and the law that an
 % untraced compile's stderr and emitted program are unchanged by either.
 
-:- use_module('../0_trace',
+:- use_module('../../1_expansion/0_trace',
               [ dl6_trace_mode/1, reset_step_trace/0, record_step/3,
                 collected_steps/1 ]).
 

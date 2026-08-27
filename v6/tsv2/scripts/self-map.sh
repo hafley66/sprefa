@@ -27,7 +27,7 @@
 #
 # ── SABOTAGE RECEIPTS (run 2026-07-30, both reverted; tree clean after) ───────
 #
-#   (1) registry row. Appended to v6/prolog/compile/registry.pl:
+#   (1) registry row. Appended to v6/prolog/0_dot_expand/registry.pl:
 #         surface(fake_rail_probe/2, sabotage, no_refs,
 #                 wrapper(rel_atom, lower), reserved).
 #       ARCH-MAP.md diff, exactly (lines 95-154):
@@ -105,8 +105,8 @@ command -v jq >/dev/null || die "jq is not on PATH; the rail receipt cannot insp
 # bind's boot enumeration. An untracked source is invisible to the rail and
 # would show up as a silently empty diagram, so it is refused by name here.
 for source_path in \
-  v6/prolog/compile/registry.pl \
-  v6/prolog/1_expansion.pl \
+  v6/prolog/0_dot_expand/registry.pl \
+  v6/prolog/1_expansion/1_expansion.pl \
   v6/prolog/ARCH.pl \
   v6/dl/fixtures/self-map.dl6; do
   ( cd "$ROOT" && git ls-files --error-unmatch -- "$source_path" ) >/dev/null 2>&1 \
@@ -229,7 +229,7 @@ report_shape
 #            subprocess, so an absence assertion has to WAIT for absence.
 if [ "${SELF_MAP_WATCH:-0}" = 1 ]; then
   say "SELF MAP WATCHING (ctrl-c to stop); sources:"
-  say "  v6/prolog/compile/registry.pl v6/prolog/1_expansion.pl v6/prolog/ARCH.pl v6/dl/fixtures/self-map.dl6"
+  say "  v6/prolog/0_dot_expand/registry.pl v6/prolog/1_expansion/1_expansion.pl v6/prolog/ARCH.pl v6/dl/fixtures/self-map.dl6"
   while kill -0 "$SERVER_PID" 2>/dev/null; do
     sleep 1
     fetch_all "$WORK/rows.json" || continue

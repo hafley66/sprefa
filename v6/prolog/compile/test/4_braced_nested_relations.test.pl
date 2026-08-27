@@ -1,26 +1,26 @@
 :- begin_tests(braced_nested_relations).
 
 :- use_module(library(filesex), [delete_directory_and_contents/1]).
-:- use_module('../parse_dl_dcg',
+:- use_module('../../7_lower/parse_dl_dcg',
               [ parse_dl/4,
                 parse_dl_line_for_reason/2,
                 statement_location_for_reference/4
               ]).
 :- use_module('../../print_dl', [print_dl_program/3]).
-:- use_module('../../0_dot_expand',
+:- use_module('../../0_dot_expand/0_dot_expand',
               [ expand_dot_in_context/3,
                 resolve_qualified_types/2
               ]).
-:- use_module('../../1_expansion', [expand_program/3]).
-:- use_module('../../1_host_expand', [prepare_program/5]).
-:- use_module('../../use_resolve', [expand_uses/6]).
+:- use_module('../../1_expansion/1_expansion', [expand_program/3]).
+:- use_module('../../2_host_expand/1_host_expand', [prepare_program/5]).
+:- use_module('../../7_lower/use_resolve', [expand_uses/6]).
 :- use_module('../../compile', [dl6_seeded_form/3, program_plan/3]).
-:- use_module('../../lower',
+:- use_module('../../7_lower/lower',
               [ lower_program/2,
                 boot_statements/7,
                 catalog_decl_rows/6
               ]).
-:- use_module('../../emit_ts', [emit_program/5]).
+:- use_module('../../8_emit_ts/emit_ts', [emit_program/5]).
 :- use_module('../../emit_rust', [emit_program/5 as emit_rust_program]).
 :- use_module('../4_emit_jsonschema', [jsonschema_text/3]).
 :- use_module('../5_emit_openapi', [openapi_text/3]).

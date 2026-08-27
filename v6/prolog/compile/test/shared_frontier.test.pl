@@ -7,7 +7,7 @@
 
 :- use_module(library(plunit)).
 
-:- use_module('../../lower',
+:- use_module('../../7_lower/lower',
               [ frontier_mode/1, with_frontier_mode/2,
                 shared_frontier_relation_id/3, lowered_program_data/2,
                 write_verb/1, lower_program/2 ]).

@@ -254,7 +254,7 @@ rail_usage_count(thing, count(path)) <- rail_use(thing, path).
 # refusal is honest rather than silent. NAMED in the receipt.
 rel v6_surface(signature: text, axis: text, status: text).
 v6_surface(signature, axis, status) <-
-  go(_), grep_at('WORK', 'v6/prolog/compile/registry.pl',
+  go(_), grep_at('WORK', 'v6/prolog/0_dot_expand/registry.pl',
                  "^surface[(]([^,]+)[ ]*,[ ]*([a-z_]+)[ ]*,.*,[ ]*([a-z]+)[)][.][ ]*$",
                  _, _, signature, axis, status).
 

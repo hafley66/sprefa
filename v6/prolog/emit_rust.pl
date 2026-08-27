@@ -14,22 +14,22 @@
 :- use_module(library(apply)).
 :- use_module(library(json)).
 :- use_module(library(pcre)).
-:- use_module(lower, [ departure_frontier_table_name/2,
+:- use_module('7_lower/lower', [ departure_frontier_table_name/2,
                        program_text_intern_plan/3,
                        struct_type_plans/3, struct_type_plans/4, fixpoint_round_cap/1,
                        query_order_by_map/3 ]).
-:- use_module(strat, [cyclic_head_groups/2]).
-:- use_module('0_rel_record').
-:- use_module(analyze, [ body_ref_uses/2, level_body_pre_ref/2, rule_head_ref/2,
+:- use_module('6_strat/strat', [cyclic_head_groups/2]).
+:- use_module('3_analyze/0_rel_record').
+:- use_module('3_analyze/analyze', [ body_ref_uses/2, level_body_pre_ref/2, rule_head_ref/2,
                          listened_departure_refs/2, program_uses_tick/2 ]).
-:- use_module('1_host_expand', [compile_host_decl/3, query_decl/3,
+:- use_module('2_host_expand/1_host_expand', [compile_host_decl/3, query_decl/3,
                                 host_plan_contract/2]).
-:- use_module('compile/registry', [host_execution/3]).
+:- use_module('0_dot_expand/registry', [host_execution/3]).
 % bind_executor/2 left the registry with the bind surface; pinned here so the
 % term-door bind_decl path the resident runtime still walks keeps its executor.
 bind_executor(interval, live_interval).
 bind_executor(watch,    live_watch).
-:- use_module('0_option_expand', [option_enum_name/2]).
+:- use_module('1_expansion/0_option_expand', [option_enum_name/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

@@ -29,15 +29,15 @@
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
-:- use_module(analyze, [ rel_columns/5, declared_refs/2 ]).
-:- use_module('0_rel_record', [ relplan_shape/6 ]).
-:- use_module('compile/registry',
+:- use_module('3_analyze/analyze', [ rel_columns/5, declared_refs/2 ]).
+:- use_module('3_analyze/0_rel_record', [ relplan_shape/6 ]).
+:- use_module('0_dot_expand/registry',
               [ body_surface_for_term/6,
                 wrapper_lower_role/3,
                 expression/5,
                 host_input_contract/3
               ]).
-:- use_module('0_cst_query', [ serialize_ts_query/2 ]).
+:- use_module('2_host_expand/0_cst_query', [ serialize_ts_query/2 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

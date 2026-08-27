@@ -6,13 +6,13 @@
 :- begin_tests(anonymous_product_values).
 
 :- use_module('../../compile', [ program_plan/2 ]).
-:- use_module('../../compile/parse_dl_dcg', [ parse_dl/4 ]).
-:- use_module('../../1_expansion', [ expand_program_with_bindings/4 ]).
-:- use_module('../../0_type_plane', [ relation_value_object/4 ]).
+:- use_module('../../7_lower/parse_dl_dcg', [ parse_dl/4 ]).
+:- use_module('../../1_expansion/1_expansion', [ expand_program_with_bindings/4 ]).
+:- use_module('../../0_dot_expand/0_type_plane', [ relation_value_object/4 ]).
 :- use_module('../../conformance/engine', [ run_program/5 ]).
-:- use_module('../../lower', [ lower_program/2, boot_statements/7,
+:- use_module('../../7_lower/lower', [ lower_program/2, boot_statements/7,
                                 catalog_type_rows/6 ]).
-:- use_module('../../emit_ts', [ emit_program/5 ]).
+:- use_module('../../8_emit_ts/emit_ts', [ emit_program/5 ]).
 :- use_module('../../emit_rust', [ emit_program/5 as emit_rust_program ]).
 :- use_module('../../compile/4_emit_jsonschema',
               [ jsonschema_text/3, option_rows/3 ]).

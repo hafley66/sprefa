@@ -1,7 +1,7 @@
 /**
  * The two arms' DDL.
  *
- * Arm A statement text is copied from `v6/prolog/lower.pl`:
+ * Arm A statement text is copied from `v6/prolog/7_lower/lower.pl`:
  *   durable set rel   lower.pl:996-998   set_rel_table_ddl/5
  *   __frontier_<rel>  lower.pl:6347-6349 delta_ddl/3
  *   its _phase index  lower.pl:6352-6354 delta_ddl/3

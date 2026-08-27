@@ -13,10 +13,10 @@
 :- use_module(library(plunit)).
 :- use_module(library(http/json)).
 
-:- use_module('../../diag',
+:- use_module('../../10_diag/diag',
               [ lsp_position/4, diag_record/3, diag_position/3, diag_uri/2 ]).
 :- use_module('../../0_unsupported_messages', [ unsupported_inventory/1 ]).
-:- use_module('../parse_dl_dcg', [ parse_dl/4 ]).
+:- use_module('../../7_lower/parse_dl_dcg', [ parse_dl/4 ]).
 
 :- begin_tests(diag_channel).
 

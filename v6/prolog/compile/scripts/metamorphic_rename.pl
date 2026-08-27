@@ -24,14 +24,14 @@
 
 :- use_module('../../compile', [ program_plan/3, default_intern_mode/1,
                                  read_fixture_term/4 ]).
-:- use_module('../../lower',
+:- use_module('../../7_lower/lower',
               [ lower_program/2, boot_statements/7, catalog_decl_rows/6 ]).
-:- use_module('../../emit_ts', [ emit_program/5 ]).
-:- use_module('../../analyze', [ declared_refs/2, program_refs/2,
+:- use_module('../../8_emit_ts/emit_ts', [ emit_program/5 ]).
+:- use_module('../../3_analyze/analyze', [ declared_refs/2, program_refs/2,
                                  seeded_refs/2, snake_name/2 ]).
-:- use_module('../../conformance/body', [ rel_ref/2 ]).
-:- use_module('../../0_rel_record', [ relplan_column_types/3 ]).
-:- use_module('../../0_type_plane',
+:- use_module('../../0_dot_expand/body', [ rel_ref/2 ]).
+:- use_module('../../3_analyze/0_rel_record', [ relplan_column_types/3 ]).
+:- use_module('../../0_dot_expand/0_type_plane',
               [ type_canonical_json/4, canonical_json_text/2,
                 escape_json_codes/2 ]).
 :- use_module('../4_emit_jsonschema', [ jsonschema_text/3, option_rows/3 ]).

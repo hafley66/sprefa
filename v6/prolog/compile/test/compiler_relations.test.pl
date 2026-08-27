@@ -1,17 +1,17 @@
 :- begin_tests(compiler_relations).
 
-:- use_module('../../0_compiler_relations',
+:- use_module('../../1_expansion/0_compiler_relations',
               [ partition_compiler_relations/3,
                 partition_compiler_program/5,
                 evaluate_compiler_relations/3 ]).
-:- use_module('../../0_generic_expand', [ expand_generic_program_with_bindings/3,
+:- use_module('../../1_expansion/0_generic_expand', [ expand_generic_program_with_bindings/3,
                                           canonical_type_name/2,
                                           type_relation_rows/2 ]).
-:- use_module('../../1_expansion', [expand_program/3]).
+:- use_module('../../1_expansion/1_expansion', [expand_program/3]).
 :- use_module('../../compile', [program_plan/2, compile_dl6/2]).
-:- use_module('../../lower', [lower_program/2]).
-:- use_module('../parse_dl_dcg', [parse_dl/4]).
-:- use_module('../../use_resolve', [expand_uses/8]).
+:- use_module('../../7_lower/lower', [lower_program/2]).
+:- use_module('../../7_lower/parse_dl_dcg', [parse_dl/4]).
+:- use_module('../../7_lower/use_resolve', [expand_uses/8]).
 :- use_module(library(process)).
 :- use_module(library(readutil)).
 

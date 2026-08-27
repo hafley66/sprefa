@@ -40,33 +40,33 @@
 
 :- use_module(library(lists)).
 :- use_module('0_unsupported_messages', []).
-:- use_module('0_dot_expand', [resolve_relation_paths/3]).
-:- use_module('1_expansion',
+:- use_module('0_dot_expand/0_dot_expand', [resolve_relation_paths/3]).
+:- use_module('1_expansion/1_expansion',
               [ expand_program/3, expand_program_with_bindings/4 ]).
-:- use_module('1_host_expand', [prepare_program/5, query_decl/3]).
-:- use_module(analyze).
-:- use_module('3_clock_check', [check_clock_program/1]).
-:- use_module('2_subscribe', [subscribed_rels/4]).
-:- use_module(strat).
-:- use_module(lower).
-:- use_module(emit_ts).
+:- use_module('2_host_expand/1_host_expand', [prepare_program/5, query_decl/3]).
+:- use_module('3_analyze/analyze').
+:- use_module('4_clock_check/3_clock_check', [check_clock_program/1]).
+:- use_module('5_subscribe/2_subscribe', [subscribed_rels/4]).
+:- use_module('6_strat/strat').
+:- use_module('7_lower/lower').
+:- use_module('8_emit_ts/emit_ts').
 :- use_module(library(tableutil), [table_statistics/2]).
-:- use_module('compile/parse_dl_dcg', [ parse_dl_line_for_reason/2 ]).
-:- use_module('compile/scripts/0_json_arrival',
+:- use_module('7_lower/parse_dl_dcg', [ parse_dl_line_for_reason/2 ]).
+:- use_module('9_json_arrival/0_json_arrival',
               [ arrival_column_types/4, schedule_value/5 ]).
-:- use_module('use_resolve', [expand_uses/8, short_hash/2]).
+:- use_module('7_lower/use_resolve', [expand_uses/8, short_hash/2]).
 :- use_module(library(http/json), [json_read_dict/3]).
-:- use_module('diag', [emit_diag_file/2]).
-:- use_module('0_type_plane',
+:- use_module('10_diag/diag', [emit_diag_file/2]).
+:- use_module('0_dot_expand/0_type_plane',
               [world_row_shape_violation/3, type_definitions/2]).
-:- use_module('0_rel_record', [rel_cols/4]).
-:- use_module('compile/0_trace',
+:- use_module('3_analyze/0_rel_record', [rel_cols/4]).
+:- use_module('1_expansion/0_trace',
               [ dl6_trace_on/0, reset_step_trace/0, record_step/3,
                 write_step_trace/2, run_compile_step/4,
                 capture_phase_measurement/2, statistics_snapshot/1,
                 zero_phase_measurement/1 ]).
-:- use_module('0_generic_expand', [generated_generic_name/1]).
-:- use_module(compile_messages,
+:- use_module('1_expansion/0_generic_expand', [generated_generic_name/1]).
+:- use_module('1_expansion/compile_messages',
               [ dl6_debug/3, dl6_debugging/1, dl6_reset_checkpoint/0,
                 dl6_last_checkpoint/1, dl6_program_sizes/3 ]).
 

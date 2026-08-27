@@ -57,30 +57,30 @@
             body_latest_ref/2, body_pre_ref/2,
             check_program/1,
             rel_kind/3, decl_key/3 ]).
-:- reexport(body, [json_canon/2]).
+:- reexport('../0_dot_expand/body', [json_canon/2]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(ordsets)).
 :- use_module(library(pairs)).
-:- use_module('../1_expansion', [expand_program/3]).
-:- use_module('../0_body_walk', [walk_body/3, body_wrapper_refs/4]).
+:- use_module('../1_expansion/1_expansion', [expand_program/3]).
+:- use_module('../0_dot_expand/0_body_walk', [walk_body/3, body_wrapper_refs/4]).
 % Shared with the compiler, the 1_host_expand.pl precedent: one module both
 % doors call, so the cone cannot fork into two analyses.
-:- use_module('../2_subscribe', [subscribed_rels/4]).
-:- use_module('../0_program_check',
+:- use_module('../5_subscribe/2_subscribe', [subscribed_rels/4]).
+:- use_module('../1_expansion/0_program_check',
               [ first_violation/3, relation_kind/3, declared_key/3 ]).
-:- use_module('../3_clock_check', [clock_violation/2]).
-:- use_module('../0_type_plane',
+:- use_module('../4_clock_check/3_clock_check', [clock_violation/2]).
+:- use_module('../0_dot_expand/0_type_plane',
               [ world_row_shape_violation/3,
                 canonicalize_world_rows/3,
                 normalize_relation_reference_rows/3
               ]).
 :- use_module('../0_relation_pattern', [expand_relation_values/2]).
-:- use_module('../0_option_expand', [acyclic_companion/5]).
-:- use_module('../1_host_expand', [prepare_program/5, query_decl/3]).
+:- use_module('../1_expansion/0_option_expand', [acyclic_companion/5]).
+:- use_module('../2_host_expand/1_host_expand', [prepare_program/5, query_decl/3]).
 :- use_module(rulings).
-:- use_module(body).
+:- use_module('../0_dot_expand/body').
 :- use_module(level_eval).
 
 :- op(1150, xfx, <-).

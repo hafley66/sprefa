@@ -3,7 +3,7 @@
             schedule_value/5
           ]).
 
-:- use_module('../../analyze', [rel_columns/5]).
+:- use_module('../3_analyze/analyze', [rel_columns/5]).
 :- use_module(library(http/json)).
 :- use_module(library(pcre)).
 

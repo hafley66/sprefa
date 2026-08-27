@@ -9,10 +9,10 @@
 
 :- begin_tests(anonymous_type_syntax).
 
-:- use_module('../../compile/parse_dl_dcg', [ parse_dl/4 ]).
+:- use_module('../../7_lower/parse_dl_dcg', [ parse_dl/4 ]).
 :- use_module('../../print_dl', [ print_dl_program/3 ]).
-:- use_module('../../1_expansion', [ expand_program_with_bindings/4 ]).
-:- use_module('../../0_anonymous_expand', [ expand_anonymous_decls/2 ]).
+:- use_module('../../1_expansion/1_expansion', [ expand_program_with_bindings/4 ]).
+:- use_module('../../1_expansion/0_anonymous_expand', [ expand_anonymous_decls/2 ]).
 :- use_module('../typegen_export', [ dump_dl6_rows/3 ]).
 :- use_module('../7_emit_ts_types', [ ts_types_text/3 ]).
 :- use_module('../8_emit_rust_types', [ rust_types_text/3 ]).

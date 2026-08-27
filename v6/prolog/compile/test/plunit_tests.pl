@@ -26,8 +26,8 @@
                 compiler_owned_contract/1 ]).
 :- use_module('../../0_unsupported_messages',
               [ unsupported_inventory/1, unsupported_message_clause_count/1 ]).
-:- use_module('../../strat', [ stratum_groups/2 ]).
-:- use_module('../../lower',
+:- use_module('../../6_strat/strat', [ stratum_groups/2 ]).
+:- use_module('../../7_lower/lower',
               [ lower_program/2, compile_expr/7, compile_comparison/4,
                 canonical_column_expr/2, level_ref_count_sql/5,
                 column_def/4, ir_column_class/4, uniform_text_encoding/1,
@@ -42,23 +42,23 @@
                 json_capture_json_type/2,
                 audit_scan_index_pairs/5, audit_scan_index_ddls/5,
                 audit_scan_index_ddl/3 ]).
-:- use_module('../../analyze',
+:- use_module('../../3_analyze/analyze',
               [ check_supported_subset/1, literal_witness/1, snake_name/2 ]).
-:- use_module('../../0_rel_record',
+:- use_module('../../3_analyze/0_rel_record',
               [ inferred_cols/3, relplan_parts/6, relplan_shape/6,
                 relplan_storage_name/2, relplan_storage_name/3,
                 relplan_columns/3, relplan_column_types/3, relplan_of/3,
                 relplan_declared/2, relplan_declared_types/3,
                 relplan_origins/2,
                 relplan_reference_targets/2 ]).
-:- use_module('../../0_dot_expand', [ expand_dot_in_context/3 ]).
-:- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
-:- use_module('../../0_option_expand', [ expand_option_program/2 ]).
-:- use_module('../../0_generic_expand',
+:- use_module('../../0_dot_expand/0_dot_expand', [ expand_dot_in_context/3 ]).
+:- use_module('../../1_expansion/0_enum_expand', [ expand_enum_program/2 ]).
+:- use_module('../../1_expansion/0_option_expand', [ expand_option_program/2 ]).
+:- use_module('../../1_expansion/0_generic_expand',
               [ expand_generic_program/2, expand_generic_program_raw/2,
                 canonical_type_name/2, generic_type_ir/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
-:- use_module('../../0_type_ids', [ decl_id/4, app_id/3, id_kind_name/3,
+:- use_module('../../1_expansion/0_type_ids', [ decl_id/4, app_id/3, id_kind_name/3,
                                     primitive_id/2, semantic_type_id_text/2 ]).
 
 % Fixture-only shorthand.  Production code always transports module identity.
@@ -66,39 +66,39 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 :- use_module('../../0_ast_expand',
               [ expand_ast_program/2,
                 expand_ast_program_with_bindings/3 ]).
-:- use_module('../../1_expansion',
+:- use_module('../../1_expansion/1_expansion',
               [ expansion_phase/3, expand_program/3,
                 expand_program_with_bindings/4 ]).
 % remaining_line_column/3 is exported for the parse_error_positions unit, which
 % checks the line table against a prefix walk at every index of a text; going
 % through parse_dl/4 alone only reaches the positions a unsupported construct happens to land
 % on.
-:- use_module('../../compile/parse_dl_dcg', [ parse_dl/4, remaining_line_column/3, use_item/3 ]).
-:- use_module('../../use_resolve',
+:- use_module('../../7_lower/parse_dl_dcg', [ parse_dl/4, remaining_line_column/3, use_item/3 ]).
+:- use_module('../../7_lower/use_resolve',
               [ expand_uses/6, expand_uses/8, include_roots/2, resolve_use_path/3,
                 reset_parse_counts/0, parse_count/2 ]).
-:- use_module('../../executor_modules', [ executor_family_export/3 ]).
-:- use_module('../../0_cst_query', [ parse_cst_query/2 ]).
-:- use_module('../../0_body_walk', [ relation_atom_wrapper/1 ]).
-:- use_module('../../0_type_plane', [ type_definitions/2, column_storage/3 ]).
-:- use_module('../../0_program_check', [ program_violation/3 ]).
+:- use_module('../../7_lower/executor_modules', [ executor_family_export/3 ]).
+:- use_module('../../2_host_expand/0_cst_query', [ parse_cst_query/2 ]).
+:- use_module('../../0_dot_expand/0_body_walk', [ relation_atom_wrapper/1 ]).
+:- use_module('../../0_dot_expand/0_type_plane', [ type_definitions/2, column_storage/3 ]).
+:- use_module('../../1_expansion/0_program_check', [ program_violation/3 ]).
 :- use_module('../../print_dl', [ print_dl_program/3, print_term/5 ]).
-:- use_module('../registry',
+:- use_module('../../0_dot_expand/registry',
               [ surface/5, expression/5, host_execution/3,
                 % The reserved-body-word sweep reads which rows are BODY
                 % syntax off the same projection the walk reads it off,
                 % rather than restating the three lowering shapes.
                 body_surface_for_term/6 ]).
-:- use_module('../../1_host_expand',
+:- use_module('../../2_host_expand/1_host_expand',
               [ prepare_program/5, compile_host_decl/2, compile_ts_query/2,
                 reserved_host_column/1 ]).
-:- use_module('../../emit_ts',
+:- use_module('../../8_emit_ts/emit_ts',
               [ emit_program/5,
                 % The emitter-mode seam (rank R8): which statement family a
                 % plan compiles to, asserted by the incremental_mode unit.
                 reconcile_every_tick/2,
                 derived_edge_carry_required/3, retraction_guard/2 ]).
-:- use_module('../../lower', [ boot_statements/7 ]).
+:- use_module('../../7_lower/lower', [ boot_statements/7 ]).
 :- use_module('../../compile/4_emit_jsonschema', [ jsonschema_text/3, jsonschema_document/3, option_rows/3 ]).
 :- use_module('../../compile/5_emit_openapi', [ openapi_text/3 ]).
 :- use_module('../../compile/7_emit_ts_types', [ ts_types_text/3 ]).
@@ -110,7 +110,7 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
 % several of them are the same predicate written twice. Each of these was
 % added to its module's export list for exactly this test rather than being
 % called as a private qualified goal, which `just prolog-lint` refuses.
-:- use_module('../../analyze',
+:- use_module('../../3_analyze/analyze',
               [ body_ref_uses/2, conjunction_goals/2,
                 level_body_latest_ref/2, level_body_pre_ref/2,
                 listened_departure_refs/2, rel_rule_observers/3,
@@ -125,11 +125,11 @@ decl_id(Kind, Name, Id) :- decl_id(local, Kind, Name, Id).
                 run_program/5 ]).
 :- use_module('../../conformance/level_eval',
               [ goal_rel_refs/3, split_rules/4 ]).
-:- use_module('../../conformance/body',
+:- use_module('../../0_dot_expand/body',
               [ body_atoms/2, comparison_goal/1, json_capture_type/2,
                 json_scalar_value/3, eval_expr/2, json_canon/2 ]).
-:- use_module('../../1_host_expand', [ body_goals/2 ]).
-:- use_module('../../3_clock_check', [clock_boundary/2]).
+:- use_module('../../2_host_expand/1_host_expand', [ body_goals/2 ]).
+:- use_module('../../4_clock_check/3_clock_check', [clock_boundary/2]).
 :- ensure_loaded('3_clock_check.test.pl').
 :- ensure_loaded('4_braced_nested_relations.test.pl').
 :- ensure_loaded('5_remove_rel_is.test.pl').
@@ -2360,14 +2360,19 @@ test(no_decl_id_reverse_parse_outside_the_id_module) :-
 
 test(the_id_module_uses_structural_inverse) :-
     test_dir_fact(Here),
-    atomic_list_concat([Here, '/../../0_type_ids.pl'], Path),
+    atomic_list_concat([Here, '/../../1_expansion/0_type_ids.pl'], Path),
     read_file_to_string(Path, Text, []),
     type_id_rail_occurrences(Text, Count),
     Count =:= 0.
 
 type_id_rail_source(Path) :-
     test_dir_fact(Here),
-    member(Relative, ['/../..', '/../../compile', '/../../conformance', '/..']),
+    member(Relative, ['/../..', '/../../compile', '/../../conformance', '/..',
+                      '/../../0_dot_expand', '/../../1_expansion',
+                      '/../../1_expansion/generic_expand', '/../../2_host_expand',
+                      '/../../3_analyze', '/../../4_clock_check', '/../../5_subscribe',
+                      '/../../6_strat', '/../../7_lower', '/../../8_emit_ts',
+                      '/../../9_json_arrival', '/../../10_diag']),
     atomic_list_concat([Here, Relative], Dir),
     directory_files(Dir, Entries),
     msort(Entries, Ordered),

@@ -8,11 +8,11 @@
 :- create_prolog_flag(dl6_clock_path_walk, false, [type(boolean), keep(true)]).
 :- set_prolog_flag(dl6_clock_path_walk, true).
 :- use_module(library(plunit)).
-:- use_module('../../3_clock_check',
+:- use_module('../../4_clock_check/3_clock_check',
               [ clock_dependencies/2, clock_dependency/8, inferred_clock/4,
                 clock_fact/5, clock_scc/3, clock_violation/2,
                 clock_boundary/2, check_clock_program/1 ]).
-:- use_module('../registry', [clock_role/4]).
+:- use_module('../../0_dot_expand/registry', [clock_role/4]).
 :- use_module('../../compile', [program_plan/2]).
 :- use_module('../../conformance/engine', [check_program/1, run_program/5]).
 :- use_module('3_clock_history',

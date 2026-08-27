@@ -29,8 +29,8 @@
 % Run: swipl -q -l golden_coverage.pl -g run -g halt
 %      exit 0 = covered, exit 1 = a named construct is missing.
 
-:- use_module('../registry', [surface/5, expression/5]).
-:- use_module('../../use_resolve', [expand_uses/8]).
+:- use_module('../../0_dot_expand/registry', [surface/5, expression/5]).
+:- use_module('../../7_lower/use_resolve', [expand_uses/8]).
 
 % Resolved at LOAD time (prolog_load_context/2 is a read-time-only predicate),
 % so the gate runs from any cwd -- the same fix `just arch` needed.

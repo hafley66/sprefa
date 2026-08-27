@@ -4,7 +4,7 @@
             emit_jsonschema/5
           ]).
 
-:- use_module('../lower', [ catalog_type_rows/6,
+:- use_module('../7_lower/lower', [ catalog_type_rows/6,
                             catalog_type_relation_rows/3,
                             catalog_type_transport_rows/4 ]).
 :- use_module('4_emit_jsonschema', [ jsonschema_text/3, option_rows/3 ]).

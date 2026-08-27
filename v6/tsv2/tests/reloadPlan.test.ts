@@ -3,7 +3,7 @@
  * catalogs (the running program's rows against a freshly compiled module's).
  *
  * KEYED BY the parent local_name chain, NOT by h_id and NOT by module_id.
- * rel_h_id hashes the module hash, the name AND the arity (v6/prolog/lower.pl
+ * rel_h_id hashes the module hash, the name AND the arity (v6/prolog/7_lower/lower.pl
  * rel_h_id/4), so adding a column moves h_id. Keying on h_id therefore read a
  * column addition as "the old rel vanished, a stranger arrived": a unsupported
  * construct plus a create, for a routine edit. module_id is positional in the

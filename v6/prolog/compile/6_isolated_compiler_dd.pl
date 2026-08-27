@@ -12,12 +12,12 @@
 :- op(1150, xfx, <+).
 
 :- use_module('../compile', [read_fixture_term/4, program_plan/2, dd_compile_context/2]).
-:- use_module('../analyze', [body_ref_uses/2, rule_head_ref/2,
+:- use_module('../3_analyze/analyze', [body_ref_uses/2, rule_head_ref/2,
                               rule_is_aggregate/1,
                               aggregate_head_template/2]).
-:- use_module('../strat', [recursive_stratum_groups/2]).
-:- use_module('../0_rel_record', [relplan_parts/6, relplan_columns/3]).
-:- use_module('../lower', [lower_program/2]).
+:- use_module('../6_strat/strat', [recursive_stratum_groups/2]).
+:- use_module('../3_analyze/0_rel_record', [relplan_parts/6, relplan_columns/3]).
+:- use_module('../7_lower/lower', [lower_program/2]).
 :- use_module(library(http/json), [json_write_dict/3]).
 
 fixture_dd_plan_text(FixtureFile, Name, Text) :-

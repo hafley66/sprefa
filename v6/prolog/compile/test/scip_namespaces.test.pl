@@ -4,14 +4,14 @@
 :- module(scip_namespaces_tests, []).
 
 :- use_module(library(plunit)).
-:- use_module('../parse_dl_dcg', [parse_dl_dcg_entry/5]).
-:- use_module('../../use_resolve', [expand_uses/8]).
-:- use_module('../registry',
+:- use_module('../../7_lower/parse_dl_dcg', [parse_dl_dcg_entry/5]).
+:- use_module('../../7_lower/use_resolve', [expand_uses/8]).
+:- use_module('../../0_dot_expand/registry',
               [ host_input_contract/3,
                 host_output_contract/3,
                 scip_namespace_host/3
               ]).
-:- use_module('../../1_host_expand', [compile_host_decl/2]).
+:- use_module('../../2_host_expand/1_host_expand', [compile_host_decl/2]).
 
 :- begin_tests(scip_namespaces).
 
