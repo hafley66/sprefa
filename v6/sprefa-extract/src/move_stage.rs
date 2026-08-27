@@ -3,10 +3,11 @@
 //! and plan-free; it takes actions and returns previews.
 //! @comment-ok: module header, the seam list every move file opens with
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
-use crate::drain::{bind_action, source_rel};
+use crate::drain::{bind_action, directory_path, directory_source, source_rel};
 
 /// `--state` as asked, else `$HOME/.agent/soopy-state`.
 pub fn state_root(requested: Option<&Path>) -> Result<PathBuf, String> {
@@ -77,6 +78,148 @@ pub fn stage_and_commit(
         .commit(&stage)
         .map_err(|refused| format!("commit refused: {refused}"))?;
     Ok((stage.id.to_string(), stage.previews))
+}
+
+/// A hard ceiling on a `--verify` command, per the move-verify brief.
+pub const VERIFY_TIMEOUT_SECS: u64 = 300;
+
+/// Run `<cmd>` through `sh -c` in `root`, output inherited. `None` on timeout.
+pub fn run_verify_command(root: &Path, command: &str) -> Result<Option<i32>, String> {
+    let mut child = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(root)
+        .spawn()
+        .map_err(|error| format!("spawn verify command: {error}"))?;
+    let deadline = Instant::now() + Duration::from_secs(VERIFY_TIMEOUT_SECS);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status.code()),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Ok(None);
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => return Err(format!("wait verify command: {error}")),
+        }
+    }
+}
+
+/// The pre-run state a `--verify` rollback undoes to: every path the committed
+/// move touches, captured before any stage commits. Byte restores go through
+/// soopy Replace, never `git checkout` (the root may not be a git tree).
+pub struct VerifyJournal {
+    moves: Vec<(String, String)>,
+    shims: Vec<String>,
+    existing: BTreeMap<String, Vec<u8>>,
+}
+
+impl VerifyJournal {
+    /// Pre-run bytes of every moved file plus every shim path. A shim sits at an
+    /// old path, so it is both a delete-before-move-back and a byte restore.
+    pub fn capture(
+        root: &Path,
+        moves: &[(String, String)],
+        shims: &[String],
+    ) -> Result<Self, String> {
+        let mut existing = BTreeMap::new();
+        for rel in moves
+            .iter()
+            .flat_map(|(old, _)| [old])
+            .chain(shims.iter())
+        {
+            let path = root.join(rel);
+            if !path.is_file() {
+                continue;
+            }
+            let bytes = std::fs::read(&path).map_err(|error| format!("read {rel}: {error}"))?;
+            existing.insert(rel.clone(), bytes);
+        }
+        Ok(Self {
+            moves: moves.to_vec(),
+            shims: shims.to_vec(),
+            existing,
+        })
+    }
+
+    /// The inverse stage sequence: shims deleted, moves walked back, pre-run
+    /// bytes restored over whole files. Swept directories re-created first, so
+    /// a move-back has somewhere to land. Returns the count of restored paths.
+    pub fn restore(
+        &self,
+        root: &Path,
+        state: &Path,
+        swept: &[String],
+    ) -> Result<usize, String> {
+        for directory in swept {
+            std::fs::create_dir_all(root.join(directory)).map_err(|error| {
+                format!("re-create {directory}: {error}")
+            })?;
+        }
+        let identity = soopy::SourceRoot::open_directory(root)
+            .map_err(|error| format!("open root {}: {error}", root.display()))?
+            .directory()
+            .identity
+            .clone();
+        let mut undo: Vec<Vec<soopy::SourceAction>> = Vec::new();
+        let mut deletions: Vec<soopy::SourceAction> = Vec::new();
+        for rel in &self.shims {
+            if !root.join(rel).is_file() {
+                continue;
+            }
+            deletions.push(soopy::SourceAction::Delete {
+                source: directory_source(&identity, rel),
+                expected: content_id(root, rel)?,
+            });
+        }
+        if !deletions.is_empty() {
+            undo.push(deletions);
+        }
+        let mut back = Vec::new();
+        for (old, new) in &self.moves {
+            if !root.join(new).is_file() {
+                continue;
+            }
+            back.push(soopy::SourceAction::Move {
+                source: directory_source(&identity, new),
+                expected: content_id(root, new)?,
+                destination: directory_path(old),
+            });
+        }
+        if !back.is_empty() {
+            undo.push(back);
+        }
+        let producer = soopy::ActionProducer::unordered("extract-move");
+        for (rel, pre) in &self.existing {
+            let Ok(current) = std::fs::read(root.join(rel)) else {
+                continue;
+            };
+            if current == *pre {
+                continue;
+            }
+            let source = directory_source(&identity, rel);
+            undo.push(vec![soopy::SourceAction::Replace {
+                source,
+                expected: soopy::ContentId::blake3(&current),
+                edits: vec![soopy::TextEdit {
+                    range: soopy::ActionSpan {
+                        source: directory_source(&identity, rel),
+                        start: 0,
+                        end: current.len() as u64,
+                    },
+                    replacement: pre.clone(),
+                    producer: producer.clone(),
+                }],
+            }]);
+        }
+        for stage in &undo {
+            stage_and_commit(root, state, stage, soopy::Durability::Durable)?;
+        }
+        Ok(self.existing.len())
+    }
 }
 
 /// The identity of the file at `root/rel`, as soopy hashes it.
