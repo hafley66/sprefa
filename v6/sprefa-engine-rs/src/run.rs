@@ -2,7 +2,7 @@
 // and emit_rust_harness; the one doc site for their shape.
 
 // `watch` stays resident on the program's OWN continuing executors: a rel
-// routed to `/soopy/watch` or `/clock/tick`, `ExecutorCadence::Continuing`.
+// routed to `/soopy/watch` or `/clock/tick`, a continuing executor.
 
 // `stays_resident` reads that routing. One external batch is one tick.
 
@@ -20,7 +20,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use crate::driver::{drive_tick_transacted, format_deltas, run_schedule, run_schedule_live};
 use crate::executors::clock::ClockExecutor;
 use crate::executors::watch::SoopyWatchExecutor;
-use crate::hosts::{self, ExecutorCadence, HostLiveRunner};
+use crate::hosts::{self, HostLiveRunner};
 use crate::program::{run_boot, GenProgram};
 use crate::sql::{SqlRunner, SqliteSeam};
 use crate::types::{
@@ -794,7 +794,7 @@ fn continuing_plans<'p>(
     program
         .host_plans
         .iter()
-        .filter(|plan| hosts::cadence_for_plan(plan, adapter_rows) == ExecutorCadence::Continuing)
+        .filter(|plan| hosts::plan_is_continuing(plan, adapter_rows))
         .collect()
 }
 

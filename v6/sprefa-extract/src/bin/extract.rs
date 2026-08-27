@@ -395,11 +395,7 @@ fn scip_request(cli: &Cli) -> Result<ResolveRequest<'_>, String> {
     Ok(ResolveRequest {
         paths: &cli.paths,
         arms: ResolveArms::default(),
-        scip: match (&cli.scip_index, cli.scip_build) {
-            (Some(path), _) => ScipMode::Load(path),
-            (None, true) => ScipMode::Build,
-            (None, false) => ScipMode::Off,
-        },
+        scip: ScipMode::from_flags(cli.scip_index.as_deref(), cli.scip_build),
         project_root: cli.project_root.as_deref(),
         scip_records: match &cli.scip_record {
             Some(spec) => ScipRecords::parse(spec)?,

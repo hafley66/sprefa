@@ -1,6 +1,9 @@
 // TEST: one case per linked executor, every one against a local listener.
 // Sabotage receipt: dropping the `headers` loop in `http::send` turns
 // `every_request_header_comes_from_the_row` red on the Authorization assertion.
+// Sabotage receipt for the cadence cases: routing `/clock/tick` to a `Once`
+// executor (or flattening `plan_is_continuing` to `true`) turns
+// `continuing_plans_come_from_the_executor_answer` red on the extract leg.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -13,7 +16,9 @@ use sprefa_engine_rs::executors::http::{send_all, Method, Request};
 use sprefa_engine_rs::executors::{
     EnvExecutor, HttpGetExecutor, HttpPostExecutor, SoopyCheckoutExecutor, TomlJsonExecutor,
 };
-use sprefa_engine_rs::hosts::IHostExecutor;
+use sprefa_engine_rs::hosts::{plan_is_continuing, IHostExecutor};
+use sprefa_engine_rs::types::{HostAdapterRow, HostPlanData};
+use sprefa_extract::ScipMode;
 
 /// `std::env::set_var` mutates one process table, so the two cases that touch
 /// it never run beside each other.
@@ -410,5 +415,52 @@ fn eight_endpoints_against_a_slow_listener_answer_under_four_seconds() {
     assert!(
         wall < Duration::from_secs(4),
         "8 endpoints against a 3s listener took {wall:?}; serial would be 24s"
+    );
+}
+
+#[test]
+fn scip_mode_from_flags_covers_all_three_arms() {
+    let index = PathBuf::from("index.scip");
+    assert!(matches!(
+        ScipMode::from_flags(Some(index.as_path()), false),
+        ScipMode::Load(path) if path == index.as_path()
+    ));
+    assert!(matches!(
+        ScipMode::from_flags(None, true),
+        ScipMode::Build
+    ));
+    assert!(matches!(ScipMode::from_flags(None, false), ScipMode::Off));
+    assert!(matches!(
+        ScipMode::from_flags(Some(index.as_path()), true),
+        ScipMode::Load(path) if path == index.as_path()
+    ));
+}
+
+fn cadence_plan(execution: &str) -> HostPlanData {
+    HostPlanData {
+        name: format!("plan_{execution}"),
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        template: String::new(),
+        demand_rel: "demand_test".to_string(),
+        response_rel: "response_test".to_string(),
+        execution: execution.to_string(),
+        request_type: None,
+        response_type: None,
+    }
+}
+
+#[test]
+fn continuing_plans_come_from_the_executor_answer() {
+    let clock_plan = cadence_plan("/clock/tick");
+    let extract_plan = cadence_plan("/extract/call_node");
+    let adapter_rows: Vec<HostAdapterRow> = Vec::new();
+    assert!(
+        plan_is_continuing(&clock_plan, &adapter_rows),
+        "a plan routed to the clock executor is continuing"
+    );
+    assert!(
+        !plan_is_continuing(&extract_plan, &adapter_rows),
+        "a plan routed to an extract executor answers once"
     );
 }
