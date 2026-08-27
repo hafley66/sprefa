@@ -72,6 +72,18 @@ pub enum ScipMode<'a> {
     Build,
 }
 
+impl<'a> ScipMode<'a> {
+    /// The one place a (index path, build flag) pair becomes a mode. An
+    /// explicit index wins over the build flag.
+    pub fn from_flags(index: Option<&'a Path>, build: bool) -> ScipMode<'a> {
+        match index {
+            Some(path) => ScipMode::Load(path),
+            None if build => ScipMode::Build,
+            None => ScipMode::Off,
+        }
+    }
+}
+
 /// One whole-project resolve. `paths` is the resolution universe: a name that
 /// resolves outside it is simply not emitted.
 pub struct ResolveRequest<'a> {

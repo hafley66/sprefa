@@ -157,10 +157,10 @@ fn executor_for_plan(
 
 /// `run.rs`'s resident loop reads this to decide which routed rels are its own
 /// continuing sources, and never invokes `IHostExecutor::run` for anything else.
-pub fn cadence_for_plan(plan: &HostPlanData, adapter_rows: &[HostAdapterRow]) -> ExecutorCadence {
+pub fn plan_is_continuing(plan: &HostPlanData, adapter_rows: &[HostAdapterRow]) -> bool {
     executor_for_plan(plan, adapter_rows)
-        .map(IHostExecutor::cadence)
-        .unwrap_or(ExecutorCadence::Once)
+        .map(|executor| executor.cadence() == ExecutorCadence::Continuing)
+        .unwrap_or(false)
 }
 
 fn is_applicative(execution: &str) -> bool {
@@ -947,6 +947,25 @@ impl ScipNamespaceExecutor {
     }
 }
 
+/// The one scip resolve request shape in this crate. The mode is always
+/// extract-built: this host either runs the name-match leg (no index) or loads
+/// the index `ensure_index_for_set` produced.
+fn resolve_request<'a>(
+    paths: &'a [PathBuf],
+    arms: sprefa_extract::ResolveArms,
+    root: &'a Path,
+    index: Option<&'a Path>,
+) -> sprefa_extract::ResolveRequest<'a> {
+    sprefa_extract::ResolveRequest {
+        paths,
+        arms,
+        scip: <sprefa_extract::ScipMode>::from_flags(index, false),
+        project_root: Some(root),
+        scip_records: sprefa_extract::ScipRecords::all(),
+        occurrence_text: false,
+    }
+}
+
 /// The one place a scip fold is computed: an index build plus a resolve, or the
 /// name-match resolve alone.
 fn build_scip_fold(
@@ -973,15 +992,8 @@ fn build_scip_fold(
         ScipEvidence::Diet => {
             let span = tracing::info_span!("scip_diet", files = paths.len());
             let _entered = span.enter();
-            sprefa_extract::resolve_project(&sprefa_extract::ResolveRequest {
-                paths: &paths,
-                arms,
-                scip: sprefa_extract::ScipMode::Off,
-                project_root: Some(root),
-                scip_records: sprefa_extract::ScipRecords::all(),
-                occurrence_text: false,
-            })
-            .map_err(|error| named(format!("diet resolve: {error}")))?
+            sprefa_extract::resolve_project(&resolve_request(&paths, arms, root, None))
+                .map_err(|error| named(format!("diet resolve: {error}")))?
         }
         ScipEvidence::Index => {
             let cache = sprefa_extract::default_cache_dir(root);
@@ -1016,15 +1028,8 @@ fn build_scip_fold(
             };
             let span = tracing::info_span!("scip_resolve", files = paths.len());
             let _entered = span.enter();
-            sprefa_extract::resolve_project(&sprefa_extract::ResolveRequest {
-                paths: &paths,
-                arms,
-                scip: sprefa_extract::ScipMode::Load(&index),
-                project_root: Some(root),
-                scip_records: sprefa_extract::ScipRecords::all(),
-                occurrence_text: false,
-            })
-            .map_err(|error| named(format!("index resolve: {error}")))?
+            sprefa_extract::resolve_project(&resolve_request(&paths, arms, root, Some(&index)))
+                .map_err(|error| named(format!("index resolve: {error}")))?
         }
     };
     for fact in &facts {
