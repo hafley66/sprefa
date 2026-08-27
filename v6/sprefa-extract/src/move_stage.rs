@@ -118,18 +118,22 @@ pub struct VerifyJournal {
 }
 
 impl VerifyJournal {
-    /// Pre-run bytes of every moved file plus every shim path. A shim sits at an
-    /// old path, so it is both a delete-before-move-back and a byte restore.
+    /// Pre-run bytes of every moved file, every shim path, and every file a
+    /// respell edit touches. A shim sits at an old path, so it is both a
+    /// delete-before-move-back and a byte restore; an edited importer only
+    /// needs its bytes back.
     pub fn capture(
         root: &Path,
         moves: &[(String, String)],
         shims: &[String],
+        edited: &[String],
     ) -> Result<Self, String> {
         let mut existing = BTreeMap::new();
         for rel in moves
             .iter()
             .flat_map(|(old, _)| [old])
             .chain(shims.iter())
+            .chain(edited.iter())
         {
             let path = root.join(rel);
             if !path.is_file() {
@@ -148,16 +152,10 @@ impl VerifyJournal {
     /// The inverse stage sequence: shims deleted, moves walked back, pre-run
     /// bytes restored over whole files. Swept directories re-created first, so
     /// a move-back has somewhere to land. Returns the count of restored paths.
-    pub fn restore(
-        &self,
-        root: &Path,
-        state: &Path,
-        swept: &[String],
-    ) -> Result<usize, String> {
+    pub fn restore(&self, root: &Path, state: &Path, swept: &[String]) -> Result<usize, String> {
         for directory in swept {
-            std::fs::create_dir_all(root.join(directory)).map_err(|error| {
-                format!("re-create {directory}: {error}")
-            })?;
+            std::fs::create_dir_all(root.join(directory))
+                .map_err(|error| format!("re-create {directory}: {error}"))?;
         }
         let identity = soopy::SourceRoot::open_directory(root)
             .map_err(|error| format!("open root {}: {error}", root.display()))?
@@ -229,18 +227,18 @@ pub fn content_id(root: &Path, rel: &str) -> Result<soopy::ContentId, String> {
     Ok(soopy::ContentId::blake3(&bytes))
 }
 
-pub fn print_previews(previews: &[soopy::FilePreview]) {
+pub fn print_previews(previews: &[soopy::FilePreview], prefix: &str) {
     for preview in previews {
         let before = preview_path(preview.path_before.as_ref());
         let after = preview_path(preview.path_after.as_ref());
         println!(
-            "{:<7} {before} -> {after}  {}",
+            "{prefix}{:<7} {before} -> {after}  {}",
             format!("{:?}", preview.kind).to_lowercase(),
             preview.summary
         );
         if let Some(unified) = preview.unified.as_ref().filter(|text| text.contains("@@")) {
             for line in unified.lines() {
-                println!("    {line}");
+                println!("{prefix}    {line}");
             }
         }
     }
