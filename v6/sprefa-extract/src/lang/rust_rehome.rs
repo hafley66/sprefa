@@ -21,6 +21,22 @@
 //! `pub use` reexport left at the old path is expressible and is NOT built) and
 //! `text_spellings` (a `target/` compiled path is a build's, not a spelling the
 //! corpus carries, so the `--text-refs` scan has nothing stable to look for).
+//!
+//! OPT-IN STRATEGY, `cx.relocate_mod()` (v5 `src/rspath.rs` +
+//! `lib.rs:1676 rust_mod_surgery`; v1 `crates/rs/src/lib.rs:270`). When the flag
+//! is off, every answer below is byte-identical to the pre-flag impl. When it
+//! is on, a moved file-level module whose stem survives and whose decl sits at
+//! the top level of an unmoved parent: the `mod` decl is CUT from the old
+//! parent, `pub mod a;` (or `mod a;`, when every referencing file ends up
+//! inside the new directory) lands sorted among the new parent's own `mod`
+//! items through a composed whole-file rewrite, and the direct-child spellings
+//! `crate::a::...` / `super::a::...` grow the intermediate segment
+//! (`util::`). Bare relative paths (`a::f()` inside the old parent) name the
+//! child by shorthand and are NOT rewritten; an inline-block or renamed-file
+//! move falls back to the `#[path]` default. The trait has no error channel,
+//! so the missing-parent case exits through a plan-time panic carrying
+//! `--relocate-mod`: planning completes before any soopy stage runs, so the
+//! failure never lands a partial edit.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -83,6 +99,10 @@ impl Rehome for RustSource {
         }
 
         let mut refs = Vec::new();
+        // `(file, span)` names ONE replacement, and the slot scan can reach the
+        // same byte twice (an expression nested in a type path), so the
+        // relocate refs claim their spans once.
+        let mut seen: BTreeSet<(String, u32)> = BTreeSet::new();
         for (rel, decl, target) in &resolved {
             if cx.destination(target).is_none() && cx.destination(rel).is_none() {
                 continue;
@@ -97,6 +117,7 @@ impl Rehome for RustSource {
                 if !cx.contains(&target) || (!moving && cx.destination(&target).is_none()) {
                     continue;
                 }
+                seen.insert((rel.to_string(), include.span.start));
                 refs.push(ImportRef {
                     importer: rel.to_string(),
                     literal: include.span,
@@ -123,12 +144,71 @@ impl Rehome for RustSource {
                     kind: "use_path",
                 });
             }
+            for slot in scan.slots.iter().filter(|_| cx.relocate_mod()) {
+                let Some(target) = moved_modules.get(&slot.module) else {
+                    continue;
+                };
+                let dir = dirname(cx.after(target));
+                // A file that ends up inside the new directory keeps its
+                // spelling; one outside needs the intermediate segment.
+                if dir.is_empty() || module_dir(dirname(cx.after(rel)), roots) == dir {
+                    continue;
+                }
+                if !seen.insert((rel.to_string(), slot.span.start)) {
+                    continue;
+                }
+                refs.push(ImportRef {
+                    importer: rel.to_string(),
+                    literal: slot.span,
+                    text: String::new(),
+                    target: cx.after(target).to_string(),
+                    kind: "relocate_slot",
+                });
+            }
+        }
+        if cx.relocate_mod() {
+            relocate_plan(cx, &roots, &resolved, &refs);
+            // One composed-rewrite ref per touched file: it claims the whole
+            // file, so nothing else on that file survives.
+            let changed: Vec<String> = view_relocations(cx, |plan| {
+                plan.rewrites
+                    .iter()
+                    .filter(|(file, text)| cx.text(file).as_deref().is_some_and(|c| c != *text))
+                    .map(|(file, _)| file.clone())
+                    .collect()
+            });
+            for file in changed {
+                refs.push(ImportRef {
+                    importer: file,
+                    literal: Span { start: 0, len: 0 },
+                    text: String::new(),
+                    target: String::new(),
+                    kind: "relocate_insert",
+                });
+            }
+            suppress_in_rewritten(cx, &mut refs);
         }
         tracing::debug!(corpus = corpus.len(), refs = refs.len(), "move rust refs");
         refs
     }
 
     fn respell(&self, cx: &MoveCx, reference: &ImportRef) -> Option<Respell> {
+        match reference.kind {
+            // The composed rewrite is planned as one whole-file edit; the cut
+            // and the landing line can share the file the bounded spans of
+            // other arms would collide with.
+            "relocate_insert" => return insert_respell(cx, reference),
+            "relocate_slot" => return slot_respell(reference),
+            "mod_decl" | "path_attr" if cx.relocate_mod() => {
+                if let Some(cut) = removal_respell(cx, reference) {
+                    return Some(cut);
+                }
+                if relocated_files(cx).contains(&reference.importer) {
+                    return None;
+                }
+            }
+            _ => {}
+        }
         let (text, receipt) = match reference.kind {
             "mod_decl" | "path_attr" => (mod_respell(cx, reference)?, None),
             "include" => (include_respell(cx, reference)?, None),
@@ -187,6 +267,17 @@ struct FileScan {
     decls: Vec<ModDecl>,
     includes: Vec<IncludeLit>,
     uses: Vec<UseItem>,
+    slots: Vec<PathSlot>,
+}
+
+/// One mid-path position a `--relocate-mod` respell may fill: the segment
+/// directly after a crate- or super-rooted head (`crate::|a`, here), wherever
+/// the path sits — a `use` tree, an expression, or a type.
+struct PathSlot {
+    module: String,
+    /// Zero-length at the segment's first byte; the respell splices
+    /// `<intermediate>::` in front of it.
+    span: Span,
 }
 
 /// One `mod name;` declaration. `item` covers the whole item, attributes
@@ -231,6 +322,11 @@ fn scan_file(text: &str) -> Option<FileScan> {
     };
     syn::visit::Visit::visit_file(&mut includes, &parsed);
     scan.includes = includes.out;
+    let mut segments = SegmentScan {
+        line_starts: &line_starts,
+        out: &mut scan.slots,
+    };
+    syn::visit::Visit::visit_file(&mut segments, &parsed);
     Some(scan)
 }
 
@@ -272,6 +368,7 @@ fn collect_items(
                 };
                 let mut segments = BTreeSet::new();
                 use_segments(&use_item.tree, &mut segments);
+                collect_use_slots(&use_item.tree, &[], line_starts, &mut out.slots);
                 out.uses.push(UseItem {
                     span,
                     text,
@@ -333,6 +430,84 @@ fn use_segments(tree: &syn::UseTree, out: &mut BTreeSet<String>) {
             out.insert(leaf.ident.to_string());
         }
         syn::UseTree::Glob(_) => {}
+    }
+}
+
+/// The crate- or super-rooted direct-child segments of one `use` tree. A glob
+/// or leaf binds no mid-path position.
+fn collect_use_slots(
+    tree: &syn::UseTree,
+    prefix: &[String],
+    line_starts: &[u32],
+    out: &mut Vec<PathSlot>,
+) {
+    match tree {
+        syn::UseTree::Path(segment) => {
+            if matches!(prefix, [head] if head == "crate" || head == "super") {
+                // Zero-length at the ident's first byte: the respell splices
+                // ahead of it.
+                let start = syn_span(line_starts, segment.ident.span());
+                out.push(PathSlot {
+                    module: segment.ident.to_string(),
+                    span: Span {
+                        start: start.start,
+                        len: 0,
+                    },
+                });
+            }
+            let mut deeper = prefix.to_vec();
+            deeper.push(segment.ident.to_string());
+            collect_use_slots(&segment.tree, &deeper, line_starts, out);
+        }
+        syn::UseTree::Group(group) => {
+            for member in &group.items {
+                collect_use_slots(member, prefix, line_starts, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The same positions in expression and type paths: a bare visit reaches both,
+/// and macro token streams expand to nothing a visitor can see.
+struct SegmentScan<'a> {
+    line_starts: &'a [u32],
+    out: &'a mut Vec<PathSlot>,
+}
+
+impl SegmentScan<'_> {
+    fn consider(&mut self, path: &syn::Path) {
+        if path.segments.len() < 2 {
+            return;
+        }
+        let head = path.segments[0].ident.to_string();
+        if head != "crate" && head != "super" {
+            return;
+        }
+        let recorded = syn_span(self.line_starts, path.segments[1].ident.span());
+        self.out.push(PathSlot {
+            module: path.segments[1].ident.to_string(),
+            span: Span {
+                start: recorded.start,
+                len: 0,
+            },
+        });
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for SegmentScan<'_> {
+    fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
+        if node.qself.is_none() {
+            self.consider(&node.path);
+        }
+        syn::visit::visit_expr_path(self, node);
+    }
+
+    fn visit_type_path(&mut self, node: &'ast syn::TypePath) {
+        if node.qself.is_none() {
+            self.consider(&node.path);
+        }
+        syn::visit::visit_type_path(self, node);
     }
 }
 
@@ -514,6 +689,293 @@ fn manifest_respell(cx: &MoveCx, reference: &ImportRef) -> Option<(String, Optio
         reference.importer, reference.target
     );
     Some((format!("{quote}{aimed}{quote}"), Some(receipt)))
+}
+
+// ── the --relocate-mod strategy ─────────────────────────────────────────────
+
+/// One composed rewrite per touched file plus, separately, the top-level
+/// decls whose bytes a cut removes from a file that gets no rewrite. When one
+/// file is both a departure and a destination the cut folds into the rewrite,
+/// and every other ref into that file is suppressed in exchange. Process-local
+/// because the roster impl carries no state of its own (`crate_roots` above is
+/// the same precedent).
+#[derive(Default)]
+struct Relocations {
+    cuts: BTreeMap<String, BTreeSet<u32>>,
+    rewrites: BTreeMap<String, String>,
+}
+
+fn edit_relocations<R>(cx: &MoveCx, f: impl FnOnce(&mut Relocations) -> R) -> R {
+    static PLANS: OnceLock<Mutex<BTreeMap<PathBuf, Relocations>>> = OnceLock::new();
+    let plans = PLANS.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let mut held = match plans.lock() {
+        Ok(held) => held,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    f(held.entry(cx.root().to_path_buf()).or_default())
+}
+
+fn view_relocations<R>(cx: &MoveCx, read: impl FnOnce(&Relocations) -> R) -> R {
+    edit_relocations(cx, |plan| read(plan))
+}
+
+fn relocated_files(cx: &MoveCx) -> Vec<String> {
+    view_relocations(cx, |plan| plan.rewrites.keys().cloned().collect())
+}
+
+/// Decides the whole strategy up front, at plan time: which decls leave, where
+/// each lands, and the one whole-file rewrite per touched file that carries
+/// both. The slot refs are already on `refs`, so a module referenced from
+/// outside its new directory reads as public.
+fn relocate_plan(
+    cx: &MoveCx,
+    roots: &BTreeSet<String>,
+    resolved: &[(&str, &ModDecl, String)],
+    refs: &[ImportRef],
+) {
+    let outward: BTreeSet<String> = refs
+        .iter()
+        .filter(|reference| reference.kind == "relocate_slot")
+        .map(|reference| stem(&reference.target))
+        .collect();
+
+    // file -> (departure cut ranges, landing lines into its mod items)
+    let mut work: BTreeMap<String, (Vec<(u32, u32)>, Vec<(String, bool)>)> = BTreeMap::new();
+    for (rel, decl, target) in resolved {
+        let Some(dest) = cx.destination(target) else {
+            continue;
+        };
+        let Some(landing) = landing_of(cx, roots, rel, decl, dest) else {
+            continue;
+        };
+        work.entry(rel.to_string())
+            .or_default()
+            .0
+            .push((decl.item.start, extended_end(cx, rel, &decl.item)));
+        let dir = dirname(dest);
+        let Some(parent) = parent_decl_file(cx, dir) else {
+            panic!(
+                "--relocate-mod: no parent module file for {dest}; expected {} or {}",
+                join_rel(dir, "mod.rs"),
+                join_rel(
+                    dirname(dir),
+                    &format!("{}.rs", dir.rsplit('/').next().unwrap_or(dir))
+                )
+            );
+        };
+        let visible = outward.contains(&landing);
+        work.entry(parent).or_default().1.push((landing, visible));
+    }
+
+    edit_relocations(cx, |plan| {
+        for (file, (cuts, landings)) in work {
+            let Some(source) = cx.text(&file) else {
+                continue;
+            };
+            // A departure that also receives landings folds into the whole-file
+            // rewrite; every other ref into the file gives way to it.
+            match (!cuts.is_empty(), !landings.is_empty()) {
+                (_, true) => {
+                    let text = place_landings(&compose_cuts(source.clone(), &cuts), &landings);
+                    if text != source {
+                        plan.rewrites.insert(file, text);
+                    }
+                }
+                (true, false) => {
+                    let starts: BTreeSet<u32> = cuts.into_iter().map(|(start, _)| start).collect();
+                    plan.cuts.insert(file, starts);
+                }
+                (false, false) => {}
+            }
+        }
+    });
+}
+
+fn landing_of(
+    cx: &MoveCx,
+    roots: &BTreeSet<String>,
+    rel: &str,
+    decl: &ModDecl,
+    dest: &str,
+) -> Option<String> {
+    let name = stem(dest);
+    if name != decl.name || name == "mod" || !decl.chain.is_empty() || !basename_is_rust_file(dest)
+    {
+        // An inline block, a rename, or a `mod.rs` destination keeps the
+        // `#[path]` default.
+        return None;
+    }
+    if cx.destination(rel).is_some() {
+        return None;
+    }
+    if natural_paths(&decl_base(rel, &decl.chain, roots), &decl.name).contains(&dest.to_string()) {
+        return None;
+    }
+    Some(decl.name.clone())
+}
+
+fn basename_is_rust_file(path: &str) -> bool {
+    matches!(path.rsplit('/').next(), Some(name) if name.ends_with(".rs") && name != "mod.rs")
+}
+
+/// Cut bytes with one trailing newline folded in, so the item's blank line
+/// leaves with it.
+fn extended_end(cx: &MoveCx, file: &str, span: &Span) -> u32 {
+    let end = span.start + span.len;
+    match std::fs::read(cx.abs(file))
+        .ok()
+        .and_then(|bytes| bytes.get(end as usize).copied())
+    {
+        Some(b'\n') => end + 1,
+        _ => end,
+    }
+}
+
+/// Removes the cut ranges from a copy of the source, deepest range last.
+fn compose_cuts(mut source: String, cuts: &[(u32, u32)]) -> String {
+    let mut sorted = cuts.to_vec();
+    sorted.sort();
+    for (start, end) in sorted.into_iter().rev() {
+        source.replace_range(start as usize..end as usize, "");
+    }
+    source
+}
+
+/// `pub mod a;` / `mod a;`, by the visibility decision made at plan time.
+fn landing_line(name: &str, visible: bool) -> String {
+    format!("{}mod {name};", if visible { "pub " } else { "" })
+}
+
+/// Splices each landing line before the first surviving `mod` item that sorts
+/// after it; names greater than everything on file go to the end, so the
+/// landing lines stay sorted among the existing items.
+fn place_landings(source: &str, landings: &[(String, bool)]) -> String {
+    let Some(scan) = scan_file(source) else {
+        return source.to_string();
+    };
+    let mut items: Vec<&ModDecl> = scan.decls.iter().filter(|d| d.chain.is_empty()).collect();
+    items.sort_by_key(|item| item.item.start);
+    let pending = &mut landings.to_vec();
+    pending.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut out = String::with_capacity(source.len() + 64);
+    let mut cursor = 0usize;
+    for item in items {
+        let taken = pending.partition_point(|(name, _)| *name < item.name);
+        if taken > 0 {
+            out.push_str(&source[cursor..item.item.start as usize]);
+            for (name, visible) in &pending[..taken] {
+                out.push_str(&landing_line(name, *visible));
+                out.push('\n');
+            }
+            cursor = item.item.start as usize;
+            pending.drain(..taken);
+        }
+    }
+    out.push_str(&source[cursor..]);
+    if !pending.is_empty() {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        for (name, visible) in pending {
+            out.push_str(&landing_line(name, *visible));
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The corpus file whose children resolve against `dir`: its own `mod.rs`,
+/// else any crate-root shape rustc puts there (`lib.rs`, `main.rs`), else the
+/// unique remaining owner — two owning files would not compile anyway.
+fn parent_decl_file(cx: &MoveCx, dir: &str) -> Option<String> {
+    let direct = join_rel(dir, "mod.rs");
+    if cx.contains(&direct) {
+        return Some(direct);
+    }
+    let roots = crate_roots(cx);
+    let mut owners: Vec<String> = cx
+        .files()
+        .iter()
+        .filter(|rel| module_dir(rel, roots) == dir)
+        .map(|rel| rel.to_string())
+        .collect();
+    owners.sort_by_key(|rel| match basename(rel).as_str() {
+        "lib.rs" => 0,
+        "main.rs" => 1,
+        _ => 2,
+    });
+    match owners.len() {
+        1 => owners.pop(),
+        _ => None,
+    }
+}
+
+fn basename(rel: &str) -> String {
+    rel.rsplit('/').next().unwrap_or(rel).to_string()
+}
+
+/// A file carrying a composed rewrite keeps every other ref out: no bounded
+/// span can share a file with the whole-file Replace.
+fn suppress_in_rewritten(cx: &MoveCx, refs: &mut Vec<ImportRef>) {
+    let files = relocated_files(cx);
+    if files.is_empty() {
+        return;
+    }
+    refs.retain(|reference| {
+        reference.kind == "relocate_insert" || !files.contains(&reference.importer)
+    });
+}
+
+/// The composed rewrite consumes every other claim on the file, so it answers
+/// once per surviving ref.
+fn insert_respell(cx: &MoveCx, reference: &ImportRef) -> Option<Respell> {
+    view_relocations(cx, |plan| {
+        let written = plan.rewrites.get(&reference.importer)?;
+        let current = cx.text(&reference.importer)?;
+        (written != &current).then(|| Respell {
+            file: reference.importer.clone(),
+            span: Span {
+                start: 0,
+                len: current.len() as u32,
+            },
+            text: written.clone(),
+            receipt: None,
+        })
+    })
+}
+
+/// `<intermediate>::` spliced at the recorded segment start.
+fn slot_respell(reference: &ImportRef) -> Option<Respell> {
+    let segment = dirname(&reference.target).rsplit('/').next()?;
+    Some(Respell {
+        file: reference.importer.clone(),
+        span: reference.literal,
+        text: format!("{segment}::"),
+        receipt: None,
+    })
+}
+
+/// A cut-listed decl leaves through one Replace spanning it plus its newline.
+/// Returns None when this decl was planned otherwise or left alone, so the
+/// caller falls through to the `#[path]` default.
+fn removal_respell(cx: &MoveCx, reference: &ImportRef) -> Option<Respell> {
+    view_relocations(cx, |plan| {
+        let starts = plan.cuts.get(&reference.importer)?;
+        let decl = decl_at(cx, reference)?;
+        if !starts.contains(&decl.item.start) {
+            return None;
+        }
+        let end = extended_end(cx, &reference.importer, &decl.item);
+        Some(Respell {
+            file: reference.importer.clone(),
+            span: Span {
+                start: decl.item.start,
+                len: end - decl.item.start,
+            },
+            text: String::new(),
+            receipt: None,
+        })
+    })
 }
 
 // ── Cargo.toml targets ──────────────────────────────────────────────────────
