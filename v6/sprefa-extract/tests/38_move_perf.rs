@@ -22,7 +22,10 @@ const BIN: &str = env!("CARGO_BIN_EXE_extract");
 const FILES: [(&str, &str); 6] = [
     ("a.pl", ":- module(a, []).\n:- use_module('lib/target').\n"),
     ("b.pl", ":- module(b, []).\n:- use_module('lib/other').\n"),
-    ("d.pl", ":- module(d, []).\n:- ensure_loaded('lib/other').\n"),
+    (
+        "d.pl",
+        ":- module(d, []).\n:- ensure_loaded('lib/other').\n",
+    ),
     ("e.pl", "% target lives in lib/target.pl\nnothing_here.\n"),
     ("lib/target.pl", ":- module(target, []).\n"),
     ("lib/other.pl", ":- module(other, []).\n"),

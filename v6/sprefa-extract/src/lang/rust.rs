@@ -53,7 +53,7 @@ use crate::types::{CfgScope, TestOnlyCall};
 
 /// Byte offset of the start of each 1-based line: line N starts at `out[N-1]`.
 /// Mirrors v5_normalize's `line_starts`; built once per file in `extract`.
-fn build_line_starts(src: &str) -> Vec<u32> {
+pub(crate) fn build_line_starts(src: &str) -> Vec<u32> {
     let mut out = vec![0u32];
     for (byte_off, byte) in src.bytes().enumerate() {
         if byte == b'\n' {
@@ -77,7 +77,7 @@ fn line_col_to_byte(line_starts: &[u32], line: u32, col: u32) -> u32 {
 
 /// A proc_macro2 span -> v6 byte Span. Used for entity/def spans where a real
 /// length is kept (joins + future resolution); df nodes use start-only anchors.
-fn syn_span(line_starts: &[u32], span: proc_macro2::Span) -> Span {
+pub(crate) fn syn_span(line_starts: &[u32], span: proc_macro2::Span) -> Span {
     let start = span.start();
     let end = span.end();
     let start_byte = line_col_to_byte(line_starts, start.line as u32, start.column as u32);

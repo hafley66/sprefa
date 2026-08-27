@@ -1209,14 +1209,14 @@ fn scan_module_specifiers<'a>(program: &Program<'a>) -> Vec<ScannedSpecifier<'a>
                                         renamed(module_export_name(&named.imported), local),
                                     )
                                 }
-                                ts::ImportDeclarationSpecifier::ImportDefaultSpecifier(
-                                    default,
-                                ) => (
-                                    default.span,
-                                    default.local.name.as_str(),
-                                    SpecifierKind::Default,
-                                    Some("default"),
-                                ),
+                                ts::ImportDeclarationSpecifier::ImportDefaultSpecifier(default) => {
+                                    (
+                                        default.span,
+                                        default.local.name.as_str(),
+                                        SpecifierKind::Default,
+                                        Some("default"),
+                                    )
+                                }
                                 ts::ImportDeclarationSpecifier::ImportNamespaceSpecifier(ns) => (
                                     ns.span,
                                     ns.local.name.as_str(),

@@ -131,10 +131,7 @@ fn replace_all_drains_into_one_replace_action_per_file() {
     assert_eq!(expected, &soopy::ContentId::blake3(SRC.as_bytes()));
     assert_eq!(
         spans(&action),
-        vec![
-            (12, 17, "bar()".to_string()),
-            (19, 24, "bar()".to_string()),
-        ],
+        vec![(12, 17, "bar()".to_string()), (19, 24, "bar()".to_string()),],
         "src: {SRC:?}"
     );
 }
@@ -187,7 +184,10 @@ fn pending_doc_appends_edits_without_mutating_the_source() {
     let source = directory_source(&detached_identity(), REL);
     let pending =
         PendingReplaceDoc::open(SRC, SupportLang::Rust, source.clone(), producer()).unwrap();
-    assert_eq!(pending.expected(), &soopy::ContentId::blake3(SRC.as_bytes()));
+    assert_eq!(
+        pending.expected(),
+        &soopy::ContentId::blake3(SRC.as_bytes())
+    );
 
     let mut root = AstGrep::doc(pending);
     assert!(root.replace("foo()", "bar()").unwrap());
@@ -205,8 +205,7 @@ fn pending_doc_appends_edits_without_mutating_the_source() {
 #[test]
 fn pending_doc_with_no_match_stages_nothing() {
     let source = directory_source(&detached_identity(), REL);
-    let pending =
-        PendingReplaceDoc::open(SRC, SupportLang::Rust, source, producer()).unwrap();
+    let pending = PendingReplaceDoc::open(SRC, SupportLang::Rust, source, producer()).unwrap();
     assert!(pending.into_action().is_none());
 }
 

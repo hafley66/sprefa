@@ -171,7 +171,10 @@ fn a_batch_dry_run_prints_one_plan_and_writes_nothing() {
     assert_eq!(kind_count(&table, "replace"), 2, "table:\n{table}");
     assert_eq!(table.matches("dry run, tree untouched").count(), 2);
     assert_eq!(
-        table.lines().filter(|line| line.starts_with("plan ")).count(),
+        table
+            .lines()
+            .filter(|line| line.starts_with("plan "))
+            .count(),
         3,
         "one plan line per move:\n{table}"
     );
@@ -189,7 +192,10 @@ fn a_mixed_list_picks_an_arm_per_row_by_extension() {
             ("a.pl", MIXED_A_PL),
             ("lib/b.pl", ":- module(b, []).\n"),
             ("src/x.ts", "export const x = 'x';\n"),
-            ("src/user.ts", "import { x } from './x';\n\nexport const user = x;\n"),
+            (
+                "src/user.ts",
+                "import { x } from './x';\n\nexport const user = x;\n",
+            ),
         ],
     );
     let list = write_list(&fixture, "lib/b.pl\tcore/b.pl\nsrc/x.ts\tsrc/deep/x.ts\n");
@@ -216,8 +222,7 @@ fn a_destination_that_another_row_still_reads_from_ends_the_run() {
     let message = refused(&fixture, &list);
 
     assert!(
-        message.contains("move destination already exists")
-            && message.ends_with("src/a.ts\n"),
+        message.contains("move destination already exists") && message.ends_with("src/a.ts\n"),
         "stderr:\n{message}"
     );
     assert_eq!(git(&fixture.root, &["status", "--porcelain"]), "");
@@ -242,7 +247,10 @@ fn a_row_with_no_tab_ends_the_run_instead_of_being_skipped() {
     let list = write_list(&fixture, "src/a.ts lib/a.ts\n");
     let message = refused(&fixture, &list);
 
-    assert!(message.contains(":1: a move list row is"), "stderr:\n{message}");
+    assert!(
+        message.contains(":1: a move list row is"),
+        "stderr:\n{message}"
+    );
 }
 
 #[test]
@@ -264,7 +272,10 @@ fn the_list_and_the_positional_form_are_exclusive() {
 
     assert!(!output.status.success());
     let message = String::from_utf8_lossy(&output.stderr).to_string();
-    assert!(message.contains("--list carries the moves"), "stderr:\n{message}");
+    assert!(
+        message.contains("--list carries the moves"),
+        "stderr:\n{message}"
+    );
 }
 
 /// The guard `bind_action` carries: a Replace states the bytes its offsets were
