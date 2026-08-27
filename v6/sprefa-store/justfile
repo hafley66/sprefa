@@ -71,9 +71,3 @@ vibes:
 	@echo "--- recent commits ---"
 	@git log --oneline -8
 
-# next dispatchable steps: the DONE bar + open cells in tasks.rs (the mind)
-plan:
-	@echo "== DONE bar (tasks.rs) =="
-	@grep -A6 'DONE bar' src/tasks.rs
-	@echo "== open cells =="
-	@grep -nE '❌|🧪|GAP|TODO' src/tasks.rs || echo "(none open)"

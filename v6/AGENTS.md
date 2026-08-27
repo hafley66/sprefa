@@ -9,10 +9,6 @@ current numbers, **run a command**, do not read a report.
 rxjs lowering (the next arc) composes its RelStore knobs + reads the same SQLite.
 Plan: `v6/plans/2026-07-23-v6-rxjs-lowering-and-ts-port.md`; pin: `v6/DECISIONS.md`.
 
-**The mind is `src/tasks.rs`** — the parity trait surface (Reach / Cascade /
-Reconcile / GraphStore) and the `GraphStorePlan` inference chain. `just plan`
-reads its open cells. Go there for what is done and what is next.
-
 ## just — run the lab (`cd v6/sprefa-store`, then `just` for the full list)
 
 | command | does |
@@ -28,7 +24,6 @@ reads its open cells. Go there for what is done and what is next.
 | `just storage` | split-vs-collapsed on-disk bytes (the verdict run; `L W` args scale it, multi-GB, heap ≈ 0) |
 | `just map` | crate map: modules / src / tests / examples |
 | `just vibes` | current state: working tree + recent commits |
-| `just plan` | next dispatchable steps, read out of `src/tasks.rs` |
 
 ## The one pattern (do not re-derive — DECISIONS.md is the pin)
 
@@ -49,8 +44,7 @@ resident 36 GB swap). Keys are surrogate ints, never hashed strings (D1).
 
 `lib.rs` Store+ingest · `spine.rs` data model · `engine.rs` the cascade ·
 `measure.rs` golden harness · `oracle.rs` dd/salsa/rust oracles ·
-`algo.rs` the real `Reach` trait (parity with the oracle, production) ·
-`tasks.rs` **the mind**: parity surface + the `GraphStorePlan` inference chain.
+`algo.rs` the real `Reach` trait (parity with the oracle, production).
 
 ## Commit format (every commit)
 
