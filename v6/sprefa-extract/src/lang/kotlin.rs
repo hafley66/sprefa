@@ -55,7 +55,7 @@ use crate::trace;
 /// 0.25's `Language::new` wraps the `LanguageFn` tree-sitter-kotlin-sg 0.4
 /// exports as `LANGUAGE`; the versions unify with what ast-grep-language
 /// already transitively pulls (one copy, 0.4.1).
-fn kt_parse(content: &str) -> Option<tree_sitter::Tree> {
+pub(crate) fn kt_parse(content: &str) -> Option<tree_sitter::Tree> {
     let mut parser = tree_sitter::Parser::new();
     let lang = tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE);
     parser.set_language(&lang).ok()?;
@@ -63,7 +63,7 @@ fn kt_parse(content: &str) -> Option<tree_sitter::Tree> {
 }
 
 /// UTF-8 text of a tree-sitter node. Port of v5's inline `utf8_text` calls.
-fn kt_text<'a>(node: tree_sitter::Node, src: &'a [u8]) -> &'a str {
+pub(crate) fn kt_text<'a>(node: tree_sitter::Node, src: &'a [u8]) -> &'a str {
     node.utf8_text(src).unwrap_or("")
 }
 
@@ -76,7 +76,10 @@ fn node_span(node: tree_sitter::Node) -> Span {
 }
 
 /// The first direct child of `node` with `kind`. Port of v5 `kt_first_child`.
-fn kt_first_child<'a>(node: tree_sitter::Node<'a>, kind: &str) -> Option<tree_sitter::Node<'a>> {
+pub(crate) fn kt_first_child<'a>(
+    node: tree_sitter::Node<'a>,
+    kind: &str,
+) -> Option<tree_sitter::Node<'a>> {
     let mut cursor = node.walk();
     let kids: Vec<tree_sitter::Node<'a>> = node.children(&mut cursor).collect();
     kids.into_iter().find(|c| c.kind() == kind)
@@ -626,7 +629,7 @@ fn kt_module_specifiers(
 }
 
 /// Recurse the tree for every `import_header` node, appending one row each.
-fn kt_walk_import_headers(
+pub(crate) fn kt_walk_import_headers(
     node: tree_sitter::Node,
     src: &[u8],
     strings: &mut Strings,
@@ -667,7 +670,10 @@ fn kt_walk_import_headers(
 }
 
 /// The first named child of `node` with `kind`.
-fn kt_child_kind<'a>(node: tree_sitter::Node<'a>, kind: &str) -> Option<tree_sitter::Node<'a>> {
+pub(crate) fn kt_child_kind<'a>(
+    node: tree_sitter::Node<'a>,
+    kind: &str,
+) -> Option<tree_sitter::Node<'a>> {
     node.named_children(&mut node.walk())
         .find(|child| child.kind() == kind)
 }

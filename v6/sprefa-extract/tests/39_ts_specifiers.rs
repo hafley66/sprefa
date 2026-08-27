@@ -135,8 +135,12 @@ fn rehome_ownership_follows_the_roster_first_match_law() {
     assert_eq!(arm("a/b.cjs"), Some("ts"));
     assert_eq!(arm("a/b.pl"), Some("prolog"));
     assert_eq!(arm("a/b.plt"), Some("prolog"));
-    assert_eq!(arm("a/b.kts"), None, "a kotlin script is not a TS move");
-    assert_eq!(arm("a/b.kt"), None);
+    assert_eq!(
+        arm("a/b.kts"),
+        Some("kotlin"),
+        "a kotlin script is not a TS move"
+    );
+    assert_eq!(arm("a/b.kt"), Some("kotlin"));
     assert_eq!(arm("a/ts"), None);
     assert_eq!(arm("a.ts/b"), None);
 }
