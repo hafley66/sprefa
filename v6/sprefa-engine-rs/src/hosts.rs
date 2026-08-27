@@ -1862,7 +1862,16 @@ impl<'p> HostLiveRunner<'p> {
                 .iter()
                 .zip(crate::executors::http::send_all(&transport_requests))
             {
-                transported.insert(*index, vec![answered?]);
+                // A transport failure is a bucket with no answer, never a dead
+                // process; the program's phase re-asks the endpoint later.
+                let rows = match answered {
+                    Ok(row) => vec![row],
+                    Err(failure) => {
+                        tracing::warn!(host = %failure.host, error = %failure.message, "transport failed, zero rows this bucket");
+                        Vec::new()
+                    }
+                };
+                transported.insert(*index, rows);
             }
         }
         for (index, group) in groups.into_iter().enumerate() {
