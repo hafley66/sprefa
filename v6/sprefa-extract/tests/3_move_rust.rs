@@ -18,6 +18,10 @@ struct Fixture {
 /// A fixture tree copied off `tests/fixtures/<rel>`, so a Rust corpus states
 /// itself as files rather than as string constants.
 fn fixture(label: &str) -> Fixture {
+    corpus("basic", label)
+}
+
+fn corpus(name: &str, label: &str) -> Fixture {
     let base = std::env::temp_dir().join(format!(
         "extract_move_rust_{label}_{}_{}",
         std::process::id(),
@@ -30,7 +34,7 @@ fn fixture(label: &str) -> Fixture {
     let state = base.join("state");
     std::fs::create_dir_all(&state).unwrap();
     copy_tree(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rust_move/basic"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/rust_move/{name}")),
         &root,
     );
     git(&root, &["init", "-q", "."]);
@@ -83,6 +87,19 @@ fn git(root: &Path, args: &[&str]) -> String {
 /// The batch door over rows named relative to the fixture root, so a test states
 /// its moves the way the tree spells them.
 fn move_files(fixture: &Fixture, rows: &[(&str, &str)], extra: &[&str]) -> String {
+    let output = try_move(fixture, rows, extra);
+    assert!(
+        output.status.success(),
+        "extract move --list {extra:?} exited {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("stdout is UTF-8")
+}
+
+/// The same door with the exit code left to the caller, for the runs a test
+/// expects to end in an error.
+fn try_move(fixture: &Fixture, rows: &[(&str, &str)], extra: &[&str]) -> std::process::Output {
     let list = fixture.state.join("moves.tsv");
     let body: String = rows
         .iter()
@@ -95,7 +112,7 @@ fn move_files(fixture: &Fixture, rows: &[(&str, &str)], extra: &[&str]) -> Strin
         })
         .collect();
     std::fs::write(&list, body).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_extract"))
+    Command::new(env!("CARGO_BIN_EXE_extract"))
         .arg("move")
         .arg("--list")
         .arg(&list)
@@ -105,14 +122,7 @@ fn move_files(fixture: &Fixture, rows: &[(&str, &str)], extra: &[&str]) -> Strin
         .arg(&fixture.state)
         .args(extra)
         .output()
-        .expect("extract binary runs");
-    assert!(
-        output.status.success(),
-        "extract move --list {extra:?} exited {}: {}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).expect("stdout is UTF-8")
+        .expect("extract binary runs")
 }
 
 fn kind_count(table: &str, kind: &str) -> usize {
@@ -239,6 +249,115 @@ fn dry_run_prints_every_respell_and_touches_nothing() {
     assert_eq!(git(&fixture.root, &["status", "--porcelain"]), "");
     assert!(fixture.root.join("src/a.rs").is_file());
     assert!(!fixture.root.join("src/util/a.rs").exists());
+}
+
+// ── --relocate-mod ──────────────────────────────────────────────────────────
+//
+// @comment-ok: fail-first receipt, repo law keeps these in TEST headers.
+// FAIL-FIRST against 2b89314ee, where `--relocate-mod` reached `MoveCx` and no
+// arm read it: the two relocate asserts failed on `src/util/mod.rs` still
+// spelling `mod helper;` alone, the error assert on the run exiting 0.
+// `default_strategy_is_unchanged` and the cargo-check oracle pass either way by
+// design: they pin what the flag must NOT disturb.
+
+const INTO_UTIL: [(&str, &str); 1] = [("src/a.rs", "src/util/a.rs")];
+
+#[test]
+fn relocate_mod_moves_the_decl_into_the_new_parent() {
+    let fixture = corpus("relocate", "relocate_decl");
+    let table = move_files(&fixture, &INTO_UTIL, &["--commit", "--relocate-mod"]);
+
+    assert_eq!(
+        read(&fixture.root, "src/util/mod.rs"),
+        "pub mod a;\nmod helper;\n\npub fn size() -> u32 {\n    helper::size()\n}\n",
+        "the decl lands sorted among the parent's own `mod` items:\n{table}"
+    );
+    assert!(
+        !read(&fixture.root, "src/lib.rs").contains("mod a;"),
+        "and the old parent no longer declares it:\n{}",
+        read(&fixture.root, "src/lib.rs")
+    );
+    assert!(
+        table.contains("relocate mod a: src/lib.rs -> src/util/mod.rs"),
+        "the run names the decl it lifted:\n{table}"
+    );
+}
+
+/// The module path changes, so every spelling of it changes: the `use`, the bare
+/// path in the file that declared it, and the `super::` reach from a sibling.
+#[test]
+fn relocate_mod_respells_use_paths_crate_wide() {
+    let fixture = corpus("relocate", "relocate_uses");
+    move_files(&fixture, &INTO_UTIL, &["--commit", "--relocate-mod"]);
+    let lib = read(&fixture.root, "src/lib.rs");
+
+    assert!(lib.contains("use crate::util::a::f;"), "lib.rs:\n{lib}");
+    assert!(lib.contains("util::a::g()"), "lib.rs:\n{lib}");
+    assert!(
+        read(&fixture.root, "src/other.rs").contains("super::util::a::f()"),
+        "a sibling reaching through `super`:\n{}",
+        read(&fixture.root, "src/other.rs")
+    );
+}
+
+#[test]
+fn relocate_mod_with_no_parent_module_is_a_named_error() {
+    let fixture = corpus("relocate", "relocate_no_parent");
+    let output = try_move(
+        &fixture,
+        &[("src/other.rs", "src/nope/other.rs")],
+        &["--commit", "--relocate-mod"],
+    );
+
+    assert!(!output.status.success(), "the run ends in an error");
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        said.contains("has no parent module file"),
+        "and names why:\n{said}"
+    );
+    assert_eq!(
+        git(&fixture.root, &["status", "--porcelain"]),
+        "",
+        "with no partial edit"
+    );
+}
+
+/// Without the flag the module tree stays put, so the decl grows a `#[path]` and
+/// every `use` that named the module is left alone.
+#[test]
+fn default_strategy_is_unchanged() {
+    let fixture = corpus("relocate", "relocate_default");
+    let before = read(&fixture.root, "src/util/mod.rs");
+    let table = move_files(&fixture, &INTO_UTIL, &["--commit"]);
+    let lib = read(&fixture.root, "src/lib.rs");
+
+    assert!(
+        lib.contains("#[path = \"util/a.rs\"] mod a;"),
+        "lib.rs:\n{lib}"
+    );
+    assert!(lib.contains("use crate::a::f;"), "lib.rs:\n{lib}");
+    assert!(lib.contains("a::g()"), "lib.rs:\n{lib}");
+    assert_eq!(read(&fixture.root, "src/util/mod.rs"), before);
+    assert_eq!(kind_count(&table, "replace"), 1, "table:\n{table}");
+}
+
+/// rustc judges the relocated tree, not an assertion. MEASURED 2026-08-27 on a
+/// warm toolchain; the cap is the repo's ten seconds.
+#[test]
+fn relocate_mod_leaves_the_fixture_compiling() {
+    let fixture = corpus("relocate", "relocate_check");
+    move_files(&fixture, &INTO_UTIL, &["--commit", "--relocate-mod"]);
+
+    let check = Command::new("cargo")
+        .args(["check", "--offline"])
+        .current_dir(&fixture.root)
+        .output()
+        .expect("cargo runs");
+    assert!(
+        check.status.success(),
+        "cargo check on the relocated fixture: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
 }
 
 // ── the self-move oracle ────────────────────────────────────────────────────
