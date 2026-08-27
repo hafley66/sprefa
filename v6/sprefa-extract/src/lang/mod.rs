@@ -16,6 +16,7 @@ pub mod extract_lang;
 pub mod fact;
 pub mod go;
 pub mod kotlin;
+pub mod kotlin_rehome;
 pub mod markdown;
 pub mod prolog;
 pub mod python;
@@ -88,7 +89,7 @@ pub fn source_for(path: &str) -> Option<&'static dyn Source> {
 /// `sources()` order. A language with no impl here is a named stop, never a
 /// `match` arm in the move core.
 pub fn rehomes() -> &'static [&'static dyn Rehome] {
-    &[&RustSource, &PrologSource, &TsSource]
+    &[&RustSource, &KotlinSource, &PrologSource, &TsSource]
 }
 
 /// The `Rehome` that owns `path`, under the SAME first-match law `sources()`
