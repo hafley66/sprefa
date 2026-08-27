@@ -3,10 +3,11 @@ created: 2026-08-27
 updated: 2026-08-27
 type: feature
 assignee: chris
-status: open
+status: done
 priority: high
 epic: extract-move-parity
 labels: [extract, refactor, rust]
+closed: 2026-08-27
 ---
 
 # extract move --relocate-mod: Rust use-path re-pathing when a module changes parent

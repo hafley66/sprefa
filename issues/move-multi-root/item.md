@@ -3,10 +3,11 @@ created: 2026-08-27
 updated: 2026-08-27
 type: feature
 assignee: chris
-status: open
+status: done
 priority: low
 epic: extract-move-parity
 labels: [extract, refactor, core]
+closed: 2026-08-27
 ---
 
 # extract move --root repeatable: one MoveCx per root

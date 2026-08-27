@@ -3,10 +3,11 @@ created: 2026-08-27
 updated: 2026-08-27
 type: feature
 assignee: chris
-status: open
+status: done
 priority: normal
 epic: extract-move-parity
 labels: [extract, refactor, scip]
+closed: 2026-08-27
 ---
 
 # extract move: verify Rehome import refs against a SCIP index

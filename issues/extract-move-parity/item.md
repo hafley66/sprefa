@@ -3,9 +3,10 @@ created: 2026-08-27
 updated: 2026-08-27
 type: epic
 owner: chris
-status: open
+status: done
 priority: normal
 labels: [extract, refactor]
+closed: 2026-08-27
 ---
 
 # extract move: parity with v1-v5 ports

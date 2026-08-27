@@ -3,10 +3,11 @@ created: 2026-08-27
 updated: 2026-08-27
 type: task
 assignee: chris
-status: open
+status: done
 priority: low
 epic: extract-move-parity
 labels: [extract, refactor]
+closed: 2026-08-27
 ---
 
 # extract rename: plan doc before any code

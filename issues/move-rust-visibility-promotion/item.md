@@ -3,10 +3,11 @@ created: 2026-08-27
 updated: 2026-08-27
 type: feature
 assignee: chris
-status: open
+status: done
 priority: normal
 epic: extract-move-parity
 labels: [extract, refactor, rust]
+closed: 2026-08-27
 ---
 
 # extract move: private -> pub(crate) promotion when a moved item leaves its module scope
