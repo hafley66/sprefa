@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use sprefa_extract::move_stage::{
-    content_id, print_previews, stage_and_commit, state_root, Mirror,
+    content_id, print_previews, run_verify_command, stage_and_commit, state_root,
+    VerifyJournal, Mirror,
 };
 use sprefa_extract::{
     directory_path, directory_source, dirname, normalize, rehome_for, rehomes, replace_action,
@@ -47,6 +48,10 @@ struct MoveCli {
     /// and respell `use` paths, instead of adding `#[path]`.
     #[arg(long = "relocate-mod")]
     relocate_mod: bool,
+    /// Run this shell command in the move root after `--commit`; a non-zero or
+    /// timed-out run rolls every touched path back to its pre-run state.
+    #[arg(long = "verify")]
+    verify: Option<String>,
     /// Report the old-path spellings this move leaves behind in plain text.
     #[arg(long = "text-refs")]
     text_refs: bool,
@@ -58,6 +63,12 @@ where
     I::Item: Into<std::ffi::OsString> + Clone,
 {
     let cli = MoveCli::try_parse_from(args).map_err(|error| error.to_string())?;
+    if cli.verify.is_some() && !cli.commit {
+        return Err(
+            "--verify runs the command only after --commit; a dry run never runs it"
+                .to_string(),
+        );
+    }
     let plan = Plan::build(&cli)?;
     let state = state_root(cli.state.as_deref())?;
 
@@ -74,17 +85,25 @@ where
     let emptied = emptied_directories(&plan.cx);
 
     if cli.commit {
+        let journal = VerifyJournal::capture(
+            &plan.root,
+            &plan.moves,
+            &shim_paths(&plan, cli.shim),
+        )?;
         for stage in &plan.stages {
             let (id, previews) =
                 stage_and_commit(&plan.root, &state, stage, soopy::Durability::Durable)?;
             print_previews(&previews);
             println!("stage {id} committed");
         }
+        let mut swept = Vec::new();
         for directory in &emptied {
             std::fs::remove_dir(plan.cx.abs(directory))
                 .map_err(|error| format!("remove empty directory {directory}: {error}"))?;
+            swept.push(directory.clone());
             println!("rmdir {directory}");
         }
+        verify_after_commit(&plan, &state, cli.verify.as_deref(), &journal, &swept)?;
     } else {
         let mirror = Mirror::build(&plan.root, &plan.stages)?;
         for stage in &plan.stages {
@@ -101,6 +120,44 @@ where
         crate::move_text::report(&plan.cx);
     }
     Ok(())
+}
+
+/// Keep-if-pass: a checker run in the move root judges the committed tree. A
+/// non-zero or timed-out checker rolls every touched path back and exits 3.
+fn verify_after_commit(
+    plan: &Plan,
+    state: &Path,
+    command: Option<&str>,
+    journal: &VerifyJournal,
+    swept: &[String],
+) -> Result<(), String> {
+    let Some(command) = command else {
+        return Ok(());
+    };
+    match run_verify_command(&plan.root, command)? {
+        Some(0) => println!("verify ok"),
+        code => {
+            let reason = match code {
+                None => "timeout".to_string(),
+                Some(rc) => rc.to_string(),
+            };
+            let count = journal.restore(&plan.root, state, swept)?;
+            println!(
+                "verify failed (rc={reason}): rolled back {count} files",
+            );
+            std::process::exit(3);
+        }
+    }
+    Ok(())
+}
+
+/// The paths a `--shim` stage creates. The shim sits at the moved file's old
+/// path, so rollback deletes it before walking the move back.
+fn shim_paths(plan: &Plan, shim: bool) -> Vec<String> {
+    match shim {
+        true => vec![plan.moves[0].0.clone()],
+        false => Vec::new(),
+    }
 }
 
 /// Soopy accepts ONE operation per source file (`_7d_mutation_plan.rs`
