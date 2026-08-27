@@ -418,6 +418,17 @@ impl Plan {
 fn respells(cx: &MoveCx) -> Result<Vec<Respell>, String> {
     let mut claimed: BTreeMap<(String, u32), (&'static str, String)> = BTreeMap::new();
     let mut out: Vec<Respell> = Vec::new();
+    let errors: Vec<String> = rehomes()
+        .iter()
+        .flat_map(|arm| {
+            arm.plan_errors(cx)
+                .into_iter()
+                .map(move |reason| format!("{}: {reason}", arm.name()))
+        })
+        .collect();
+    if !errors.is_empty() {
+        return Err(errors.join("\n"));
+    }
     for arm in rehomes() {
         let mut refs = arm.import_refs(cx);
         refs.extend(arm.manifest_refs(cx));
