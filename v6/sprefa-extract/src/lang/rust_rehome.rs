@@ -151,7 +151,7 @@ impl Rehome for RustSource {
             // arm keeps that tree by writing `#[path]`, never by re-parenting.
             "use_path" => return None,
             "manifest_target" => manifest_respell(cx, reference)?,
-            "mod_relocate_out" | "mod_relocate_in" | "mod_path" => {
+            "mod_relocate_out" | "mod_relocate_in" | "mod_path" | "widen_vis" => {
                 let edit = relocate_plan(cx)
                     .edits
                     .get(&(reference.importer.clone(), reference.literal.start))?;
@@ -212,6 +212,9 @@ struct FileScan {
     decls: Vec<ModDecl>,
     includes: Vec<IncludeLit>,
     uses: Vec<UseItem>,
+    /// Private, named, width-able items written in a module body. A `pub` item
+    /// never lands here: nothing wider than `pub(crate)` is ever planned.
+    items: Vec<OwnItem>,
     /// Where the file's first item opens, attributes included. Inner attributes
     /// and `//!` docs sit above it, so it is the first offset an item may take.
     first_item: Option<u32>,
@@ -241,6 +244,16 @@ struct UseItem {
     span: Span,
     text: String,
     segments: BTreeSet<String>,
+}
+
+/// One private item a `pub(crate)` promotion could widen, named and located by
+/// the keyword it would grow the visibility onto.
+struct OwnItem {
+    name: String,
+    kw: &'static str,
+    kw_span: Span,
+    /// The inline `mod x { .. }` blocks enclosing the item, outermost first.
+    chain: Vec<String>,
 }
 
 fn scan_file(text: &str) -> Option<FileScan> {
@@ -295,27 +308,33 @@ fn collect_items(
 ) {
     for item in items {
         match item {
-            syn::Item::Mod(mod_item) => match &mod_item.content {
-                Some((_, inner)) => {
-                    chain.push(mod_item.ident.to_string());
-                    collect_items(inner, source, line_starts, chain, out);
-                    chain.pop();
+            syn::Item::Mod(mod_item) => {
+                if let Some(own) = own_item(item, source, line_starts, chain) {
+                    out.items.push(own);
                 }
-                None => {
-                    let span = syn_span(line_starts, mod_item.span());
-                    let Some(text) = slice(source, span).filter(|text| text.contains("mod")) else {
-                        continue;
-                    };
-                    out.decls.push(ModDecl {
-                        item: span,
-                        text,
-                        name: mod_item.ident.to_string(),
-                        chain: chain.clone(),
-                        attr: path_attr(&mod_item.attrs, source, line_starts),
-                        vis: vis_text(&mod_item.vis, source, line_starts),
-                    });
+                match &mod_item.content {
+                    Some((_, inner)) => {
+                        chain.push(mod_item.ident.to_string());
+                        collect_items(inner, source, line_starts, chain, out);
+                        chain.pop();
+                    }
+                    None => {
+                        let span = syn_span(line_starts, mod_item.span());
+                        let Some(text) = slice(source, span).filter(|text| text.contains("mod"))
+                        else {
+                            continue;
+                        };
+                        out.decls.push(ModDecl {
+                            item: span,
+                            text,
+                            name: mod_item.ident.to_string(),
+                            chain: chain.clone(),
+                            attr: path_attr(&mod_item.attrs, source, line_starts),
+                            vis: vis_text(&mod_item.vis, source, line_starts),
+                        });
+                    }
                 }
-            },
+            }
             syn::Item::Use(use_item) => {
                 let span = syn_span(line_starts, use_item.span());
                 let Some(text) = slice(source, span) else {
@@ -329,9 +348,61 @@ fn collect_items(
                     segments,
                 });
             }
-            _ => {}
+            _ => {
+                if let Some(own) = own_item(item, source, line_starts, chain) {
+                    out.items.push(own);
+                }
+            }
         }
     }
+}
+
+/// A private, named item this move can widen: fn, struct, enum, const, static,
+/// type, trait or mod. The span covers the kind keyword alone, attributes and
+/// docs excluded, so the respell writes `pub(crate) <keyword>` over exactly
+/// those bytes.
+fn own_item(
+    item: &syn::Item,
+    source: &str,
+    line_starts: &[u32],
+    chain: &[String],
+) -> Option<OwnItem> {
+    let (kw, name, vis, attrs) = match item {
+        syn::Item::Fn(it) => ("fn", it.sig.ident.to_string(), &it.vis, &it.attrs),
+        syn::Item::Struct(it) => ("struct", it.ident.to_string(), &it.vis, &it.attrs),
+        syn::Item::Enum(it) => ("enum", it.ident.to_string(), &it.vis, &it.attrs),
+        syn::Item::Union(it) => ("union", it.ident.to_string(), &it.vis, &it.attrs),
+        syn::Item::Const(it) => ("const", it.ident.to_string(), &it.vis, &it.attrs),
+        syn::Item::Static(it) => ("static", it.ident.to_string(), &it.vis, &it.attrs),
+        syn::Item::Type(it) => ("type", it.ident.to_string(), &it.vis, &it.attrs),
+        syn::Item::Trait(it) => ("trait", it.ident.to_string(), &it.vis, &it.attrs),
+        syn::Item::Mod(it) => ("mod", it.ident.to_string(), &it.vis, &it.attrs),
+        _ => return None,
+    };
+    if !matches!(vis, syn::Visibility::Inherited) {
+        return None;
+    }
+    let bytes = source.as_bytes();
+    // Docs and attributes precede the keyword as written; `syn` reports them as
+    // spans too, so their last byte is where the keyword scan may start.
+    let mut offset = syn_span(line_starts, item.span()).start as usize;
+    for attr in attrs {
+        let end = syn_span(line_starts, attr.span());
+        offset = offset.max(end.start as usize + end.len as usize);
+    }
+    while offset < source.len() && bytes[offset].is_ascii_whitespace() {
+        offset += 1;
+    }
+    let len = kw.len();
+    (source.get(offset..offset + len) == Some(kw)).then(|| OwnItem {
+        name,
+        kw,
+        kw_span: Span {
+            start: offset as u32,
+            len: len as u32,
+        },
+        chain: chain.to_vec(),
+    })
 }
 
 /// `#[path = "x.rs"]` as (literal span, value). The span covers the quotes, so a
@@ -855,8 +926,67 @@ fn build_relocate_plan(cx: &MoveCx) -> RelocatePlan {
             },
         );
     }
+    widen_privates(cx, &roots, &moves, &scanned, &mut plan);
     insert_decls(cx, &moves, &outside, &mut plan);
     plan
+}
+
+/// The private items of each relocated module that an outside reference reaches:
+/// one Replace on their keyword writes `pub(crate)`. A reference from inside the
+/// module's new subtree leaves its target alone; nothing is widened past
+/// `pub(crate)`.
+fn widen_privates(
+    cx: &MoveCx,
+    roots: &BTreeSet<String>,
+    moves: &BTreeMap<String, Relocation>,
+    scanned: &[(String, String, FileScan, Vec<SegRun>)],
+    plan: &mut RelocatePlan,
+) {
+    for (target, relocation) in moves {
+        let Some((_, text, scan, _)) = scanned.iter().find(|(rel, ..)| rel == target) else {
+            continue;
+        };
+        for item in &scan.items {
+            let home: Vec<String> = relocation
+                .new_path
+                .iter()
+                .chain(item.chain.iter())
+                .cloned()
+                .collect();
+            let reached_outside = scanned.iter().any(|(rel, _, _, runs)| {
+                runs.iter().any(|run| {
+                    run.idents.iter().any(|ident| ident == &item.name)
+                        && !here_after(cx, roots, rel).is_some_and(|here| here.starts_with(&home))
+                })
+            });
+            if !reached_outside {
+                continue;
+            }
+            let line = 1 + text.as_bytes()[..item.kw_span.start as usize]
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count();
+            plan.edits.insert(
+                (target.clone(), item.kw_span.start),
+                RelocateEdit {
+                    importer: target.clone(),
+                    span: item.kw_span,
+                    text: item.kw.to_string(),
+                    target: target.clone(),
+                    kind: "widen_vis",
+                    replacement: format!("pub(crate) {}", item.kw),
+                    receipt: Some(format!("widen {target}:{line} {} -> pub(crate)", item.name)),
+                },
+            );
+        }
+    }
+}
+
+/// The module path a file answers to once the batch lands: its destination when
+/// it moves, otherwise where it already sits.
+fn here_after(cx: &MoveCx, roots: &BTreeSet<String>, rel: &str) -> Option<Vec<String>> {
+    let laid = cx.destination(rel).unwrap_or(rel);
+    module_path(laid, roots).map(|(_, path)| path)
 }
 
 /// The `mod` lines the new parents gain. Two modules landing at one offset merge

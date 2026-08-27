@@ -360,7 +360,81 @@ fn relocate_mod_leaves_the_fixture_compiling() {
     );
 }
 
-// ── the self-move oracle ────────────────────────────────────────────────────
+// ── private -> pub(crate) promotion ─────────────────────────────────────────
+//
+// @comment-ok: fail-first receipt, repo law keeps these in TEST headers.
+// FAIL-FIRST against b913779ff, where `--relocate-mod` re-pathed the tree and
+// left every item's visibility as written: the `pub(crate)` asserts failed on
+// rustc's expected E0603 at commit time, and the run-table assert on a table
+// with no `widen` line. The untouched assertions pass either way by design:
+// they pin what must NOT widen.
+
+#[test]
+fn a_private_fn_used_by_a_sibling_after_relocation_becomes_pub_crate() {
+    let fixture = corpus("visibility", "visibility_widen");
+    let table = move_files(&fixture, &INTO_UTIL, &["--commit", "--relocate-mod"]);
+    let moved = read(&fixture.root, "src/util/a.rs");
+
+    assert!(
+        moved.contains("pub(crate) fn handed_off"),
+        "the sibling's reach out of the new subtree widens the fn:\n{moved}\n{table}"
+    );
+    assert!(
+        table.contains("widen src/a.rs:") && table.contains("-> pub(crate)"),
+        "the run names each widening it planned:\n{table}"
+    );
+}
+
+#[test]
+fn a_private_fn_used_only_inside_its_module_stays_private() {
+    let fixture = corpus("visibility", "visibility_local");
+    move_files(&fixture, &INTO_UTIL, &["--commit", "--relocate-mod"]);
+    let moved = read(&fixture.root, "src/util/a.rs");
+
+    assert!(
+        moved.contains("\nfn local_warmup()"),
+        "an internal caller is no reason to widen:\n{moved}"
+    );
+    assert!(!moved.contains("pub(crate) fn local_warmup"), "{moved}");
+}
+
+#[test]
+fn an_already_pub_item_is_untouched() {
+    let fixture = corpus("visibility", "visibility_pub");
+    move_files(&fixture, &INTO_UTIL, &["--commit", "--relocate-mod"]);
+    let moved = read(&fixture.root, "src/util/a.rs");
+
+    assert!(moved.contains("pub fn f()"), "{moved}");
+    assert!(!moved.contains("pub(crate) fn f"), "{moved}");
+}
+
+#[test]
+fn without_relocate_mod_nothing_is_widened() {
+    let fixture = corpus("visibility", "visibility_off");
+    move_files(&fixture, &INTO_UTIL, &["--commit"]);
+    let moved = read(&fixture.root, "src/util/a.rs");
+
+    assert!(!moved.contains("pub(crate)"), "{moved}");
+}
+
+/// rustc judges the promoted tree, not an assertion. MEASURED by hand for the
+/// PR body before posting; the cap is the repo's ten seconds.
+#[test]
+fn relocate_promotion_leaves_the_fixture_compiling() {
+    let fixture = corpus("visibility", "visibility_check");
+    move_files(&fixture, &INTO_UTIL, &["--commit", "--relocate-mod"]);
+
+    let check = Command::new("cargo")
+        .args(["check", "--offline"])
+        .current_dir(&fixture.root)
+        .output()
+        .expect("cargo runs");
+    assert!(
+        check.status.success(),
+        "cargo check on the promoted fixture: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+}
 
 /// The verb run against this crate's own tree, judged by rustc, not by an
 /// assertion. MEASURED 2026-08-26: 20.2 s, over the 10-second cap, so it runs by
