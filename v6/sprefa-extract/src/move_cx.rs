@@ -36,6 +36,7 @@ pub struct MoveCx {
     present: BTreeSet<String>,
     moved: BTreeMap<String, String>,
     shim: bool,
+    relocate_mod: bool,
 }
 
 impl MoveCx {
@@ -71,6 +72,7 @@ impl MoveCx {
             present,
             moved: BTreeMap::new(),
             shim: false,
+            relocate_mod: false,
         })
     }
 
@@ -80,6 +82,17 @@ impl MoveCx {
         self.moved = moved;
         self.shim = shim;
         self
+    }
+
+    /// Opt in to relocating a moved Rust module's `mod` declaration into its
+    /// new parent and respelling `use` paths, instead of a `#[path]` attribute.
+    pub fn with_relocate_mod(mut self, relocate_mod: bool) -> Self {
+        self.relocate_mod = relocate_mod;
+        self
+    }
+
+    pub fn relocate_mod(&self) -> bool {
+        self.relocate_mod
     }
 
     pub fn root(&self) -> &Path {

@@ -43,6 +43,10 @@ struct MoveCli {
     /// Leave a reexport shim behind at `old` instead of rewriting importers.
     #[arg(long)]
     shim: bool,
+    /// Relocate a moved Rust module's `mod` declaration into its new parent
+    /// and respell `use` paths, instead of adding `#[path]`.
+    #[arg(long = "relocate-mod")]
+    relocate_mod: bool,
     /// Report the old-path spellings this move leaves behind in plain text.
     #[arg(long = "text-refs")]
     text_refs: bool,
@@ -118,7 +122,9 @@ impl Plan {
         if cli.shim && moves.len() > 1 {
             return Err("--shim rehomes one file; drop --list".to_string());
         }
-        let cx = cx.with_batch(moves.iter().cloned().collect(), cli.shim);
+        let cx = cx
+            .with_batch(moves.iter().cloned().collect(), cli.shim)
+            .with_relocate_mod(cli.relocate_mod);
 
         let shim_body = match cli.shim {
             true => {
