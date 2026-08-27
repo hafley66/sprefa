@@ -11,7 +11,8 @@ use sprefa_extract::{respell, ts_specifiers, TsResolver};
 /// `node_modules/`: this repository gitignores that name at any depth
 /// (`.gitignore:107`), so the package cannot be committed under it.
 fn stage(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("sprefa-ts-resolve-{name}-{}", std::process::id()));
+    let root =
+        std::env::temp_dir().join(format!("sprefa-ts-resolve-{name}-{}", std::process::id()));
     std::fs::remove_dir_all(&root).ok();
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ts_move");
     copy_tree(&source, &root);

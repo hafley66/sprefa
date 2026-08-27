@@ -39,7 +39,10 @@ fn seeded(values: &[&str]) -> Connection {
         .expect("schema");
     for value in values {
         store
-            .execute("INSERT OR IGNORE INTO \"__str\" (\"content\") VALUES (?1)", [value])
+            .execute(
+                "INSERT OR IGNORE INTO \"__str\" (\"content\") VALUES (?1)",
+                [value],
+            )
             .expect("intern");
         store
             .execute(
@@ -58,9 +61,7 @@ fn rust() -> ExtractLang {
 
 #[test]
 fn present_value_matches_the_node_and_absent_one_does_not() {
-    let facts = Arc::new(
-        FactSet::load(&seeded(&["beta", "gamma"]), REL, COLUMN).expect("preload"),
-    );
+    let facts = Arc::new(FactSet::load(&seeded(&["beta", "gamma"]), REL, COLUMN).expect("preload"));
     assert_eq!(facts.rel(), REL);
     assert_eq!(facts.column(), COLUMN);
     assert_eq!(facts.len(), 2, "the dictionary join returned the text");
@@ -104,15 +105,20 @@ fn narrows_a_pattern_to_the_stored_names() {
     );
     let narrowed: Vec<_> = root
         .root()
-        .find_all(&ast_grep_core::ops::Op::every(&pattern).and(ast_grep_core::ops::Any::new([
-            facts.matcher("beta()"),
-            facts.matcher("gamma()"),
-            facts.matcher("delta()"),
-        ])))
+        .find_all(
+            &ast_grep_core::ops::Op::every(&pattern).and(ast_grep_core::ops::Any::new([
+                facts.matcher("beta()"),
+                facts.matcher("gamma()"),
+                facts.matcher("delta()"),
+            ])),
+        )
         .map(|node| node.text().to_string())
         .collect();
     assert_eq!(narrowed, vec!["beta()", "gamma()"]);
-    assert!(narrowed.len() < before, "{before} matches narrowed to {narrowed:?}");
+    assert!(
+        narrowed.len() < before,
+        "{before} matches narrowed to {narrowed:?}"
+    );
 }
 
 static TRACED: AtomicUsize = AtomicUsize::new(0);
@@ -174,7 +180,10 @@ fn the_live_store_opens_read_only_and_preloads_once() {
     };
     let store = sprefa_extract::open_readonly(&path).expect("the live store opens read-only");
     let refused = store
-        .execute("CREATE TABLE \"__arc_c_probe\" (\"__id\" INTEGER PRIMARY KEY)", [])
+        .execute(
+            "CREATE TABLE \"__arc_c_probe\" (\"__id\" INTEGER PRIMARY KEY)",
+            [],
+        )
         .expect_err("a read-only connection cannot write the one server's db");
     assert!(
         refused.to_string().contains("readonly"),
@@ -217,14 +226,17 @@ fn the_move_rule_finds_every_spec_and_the_facts_keep_one() {
         "the rule reaches the one- and two-argument forms and `include`"
     );
 
-    let facts = Arc::new(
-        FactSet::load(&seeded(&["'lib/b'"]), REL, COLUMN).expect("preload"),
-    );
+    let facts = Arc::new(FactSet::load(&seeded(&["'lib/b'"]), REL, COLUMN).expect("preload"));
     let kept: Vec<_> = root
         .root()
-        .find_all(&ast_grep_core::ops::Op::every(&rule.matcher).and(
-            ast_grep_core::ops::Any::new(facts.values().map(|raw| facts.matcher(raw)).collect::<Vec<_>>()),
-        ))
+        .find_all(
+            &ast_grep_core::ops::Op::every(&rule.matcher).and(ast_grep_core::ops::Any::new(
+                facts
+                    .values()
+                    .map(|raw| facts.matcher(raw))
+                    .collect::<Vec<_>>(),
+            )),
+        )
         .map(|node| node.text().to_string())
         .collect();
     assert_eq!(kept, vec!["'lib/b'"], "3 specs, 1 candidate");

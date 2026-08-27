@@ -20,6 +20,7 @@ pub mod markdown;
 pub mod prolog;
 pub mod python;
 pub mod rust;
+pub mod rust_rehome;
 pub mod ts;
 pub mod ts_paths;
 pub mod ts_rehome;
@@ -87,7 +88,7 @@ pub fn source_for(path: &str) -> Option<&'static dyn Source> {
 /// `sources()` order. A language with no impl here is a named stop, never a
 /// `match` arm in the move core.
 pub fn rehomes() -> &'static [&'static dyn Rehome] {
-    &[&PrologSource, &TsSource]
+    &[&RustSource, &PrologSource, &TsSource]
 }
 
 /// The `Rehome` that owns `path`, under the SAME first-match law `sources()`

@@ -26,8 +26,14 @@ pub const DL6_DB_RELATIVE_PATH: &str = ".agent/dl6.db";
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FactError {
     NoHome,
-    Open { path: PathBuf, message: String },
-    Query { statement: String, message: String },
+    Open {
+        path: PathBuf,
+        message: String,
+    },
+    Query {
+        statement: String,
+        message: String,
+    },
     /// A rel or column name that cannot be a SQL identifier here. The names
     /// reach this crate from a program, so the shape is checked, not escaped.
     Name(String),
@@ -36,7 +42,10 @@ pub enum FactError {
 impl std::fmt::Display for FactError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NoHome => write!(formatter, "HOME is unset, so {DL6_DB_RELATIVE_PATH} has no path"),
+            Self::NoHome => write!(
+                formatter,
+                "HOME is unset, so {DL6_DB_RELATIVE_PATH} has no path"
+            ),
             Self::Open { path, message } => {
                 write!(formatter, "open {} read-only: {message}", path.display())
             }
@@ -213,7 +222,11 @@ impl FactMatcher {
     pub fn new(set: Arc<FactSet>, value: impl Into<String>) -> Self {
         let value = value.into();
         let present = set.contains(&value);
-        Self { set, value, present }
+        Self {
+            set,
+            value,
+            present,
+        }
     }
 
     pub fn rel(&self) -> &str {
