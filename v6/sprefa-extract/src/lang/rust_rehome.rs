@@ -82,12 +82,27 @@ impl Rehome for RustSource {
             }
         }
 
+        let plan = relocate_plan(cx);
         let mut refs = Vec::new();
         for (rel, decl, target) in &resolved {
+            // A relocated decl is lifted, never re-aimed, so the `#[path]` arm
+            // never sees it.
+            if plan.relocated.contains(target) {
+                continue;
+            }
             if cx.destination(target).is_none() && cx.destination(rel).is_none() {
                 continue;
             }
             refs.push(decl_ref(rel, decl, target));
+        }
+        for edit in plan.edits.values() {
+            refs.push(ImportRef {
+                importer: edit.importer.clone(),
+                literal: edit.span,
+                text: edit.text.clone(),
+                target: edit.target.clone(),
+                kind: edit.kind,
+            });
         }
         for (rel, scan) in corpus.iter().zip(&scans) {
             let Some(scan) = scan else { continue };
@@ -136,6 +151,12 @@ impl Rehome for RustSource {
             // arm keeps that tree by writing `#[path]`, never by re-parenting.
             "use_path" => return None,
             "manifest_target" => manifest_respell(cx, reference)?,
+            "mod_relocate_out" | "mod_relocate_in" | "mod_path" => {
+                let edit = relocate_plan(cx)
+                    .edits
+                    .get(&(reference.importer.clone(), reference.literal.start))?;
+                (edit.replacement.clone(), edit.receipt.clone())
+            }
             _ => return None,
         };
         (text != reference.text).then(|| Respell {
@@ -144,6 +165,10 @@ impl Rehome for RustSource {
             text,
             receipt,
         })
+    }
+
+    fn plan_errors(&self, cx: &MoveCx) -> Vec<String> {
+        relocate_plan(cx).errors.clone()
     }
 
     fn manifests(&self, cx: &MoveCx) -> Vec<String> {
@@ -187,6 +212,9 @@ struct FileScan {
     decls: Vec<ModDecl>,
     includes: Vec<IncludeLit>,
     uses: Vec<UseItem>,
+    /// Where the file's first item opens, attributes included. Inner attributes
+    /// and `//!` docs sit above it, so it is the first offset an item may take.
+    first_item: Option<u32>,
 }
 
 /// One `mod name;` declaration. `item` covers the whole item, attributes
@@ -199,6 +227,8 @@ struct ModDecl {
     chain: Vec<String>,
     /// The `#[path = ".."]` literal's span and value, when the decl carries one.
     attr: Option<(Span, String)>,
+    /// The visibility as written, `""` for a private decl.
+    vis: String,
 }
 
 struct IncludeLit {
@@ -214,6 +244,12 @@ struct UseItem {
 }
 
 fn scan_file(text: &str) -> Option<FileScan> {
+    scan_with(text, false).map(|(scan, _)| scan)
+}
+
+/// ONE parse. `runs` adds the crate-wide path walk `--relocate-mod` needs and
+/// every other caller pays nothing for it.
+fn scan_with(text: &str, runs: bool) -> Option<(FileScan, Vec<SegRun>)> {
     let parsed = syn::parse_file(text).ok()?;
     let line_starts = build_line_starts(text);
     let mut scan = FileScan::default();
@@ -224,6 +260,10 @@ fn scan_file(text: &str) -> Option<FileScan> {
         &mut Vec::new(),
         &mut scan,
     );
+    scan.first_item = parsed
+        .items
+        .first()
+        .map(|item| syn_span(&line_starts, item.span()).start);
     let mut includes = IncludeScan {
         source: text,
         line_starts: &line_starts,
@@ -231,7 +271,17 @@ fn scan_file(text: &str) -> Option<FileScan> {
     };
     syn::visit::Visit::visit_file(&mut includes, &parsed);
     scan.includes = includes.out;
-    Some(scan)
+    if !runs {
+        return Some((scan, Vec::new()));
+    }
+    let mut paths = PathScan {
+        source: text,
+        line_starts: &line_starts,
+        depth: 0,
+        out: Vec::new(),
+    };
+    syn::visit::Visit::visit_file(&mut paths, &parsed);
+    Some((scan, paths.out))
 }
 
 /// Descends into inline `mod name { .. }` bodies, carrying the block names: a
@@ -262,6 +312,7 @@ fn collect_items(
                         name: mod_item.ident.to_string(),
                         chain: chain.clone(),
                         attr: path_attr(&mod_item.attrs, source, line_starts),
+                        vis: vis_text(&mod_item.vis, source, line_starts),
                     });
                 }
             },
@@ -312,6 +363,19 @@ fn path_attr(
 /// proc_macro2 CHAR column, so a non-ASCII byte earlier on the line shifts it.
 fn is_literal(source: &str, span: Span) -> bool {
     slice(source, span).is_some_and(|text| text.starts_with('"') || text.starts_with('r'))
+}
+
+/// `pub`, `pub(crate)`, `pub(in path)` as written; `""` for a private decl.
+fn vis_text(vis: &syn::Visibility, source: &str, line_starts: &[u32]) -> String {
+    match vis {
+        syn::Visibility::Inherited => String::new(),
+        written => {
+            let span = syn_span(line_starts, written.span());
+            slice(source, span)
+                .filter(|text| text.starts_with("pub"))
+                .unwrap_or_else(|| "pub".to_string())
+        }
+    }
 }
 
 /// Every module segment a `use` tree names. A glob binds no segment of its own.
@@ -372,6 +436,137 @@ fn slice(source: &str, span: Span) -> Option<String> {
     source
         .get(start..start + span.len as usize)
         .map(str::to_string)
+}
+
+/// One `::`-joined run of path segments as written, `idents` and `spans` lined
+/// up. A `use` tree branch and an expression/type path both flatten to this.
+struct SegRun {
+    idents: Vec<String>,
+    spans: Vec<Span>,
+    /// A `use` may name a module with nothing after it; an expression never can,
+    /// so a bare trailing segment there is a value or a type, not a module.
+    from_use: bool,
+    /// Written inside an inline `mod x { .. }`, which re-bases `self` and `super`.
+    in_block: bool,
+}
+
+/// Every path a file writes, `use` trees included. `crate::a::f` in expression
+/// position and `use crate::a::f;` reach `--relocate-mod` the same way.
+struct PathScan<'a> {
+    source: &'a str,
+    line_starts: &'a [u32],
+    depth: usize,
+    out: Vec<SegRun>,
+}
+
+impl PathScan<'_> {
+    /// Drops a run whose spans do not slice back to their own idents:
+    /// `syn_span` bridges a CHAR column, so a non-ASCII byte shifts the line.
+    fn push(&mut self, idents: Vec<String>, spans: Vec<Span>, from_use: bool) {
+        if idents.is_empty() || idents.len() != spans.len() {
+            return;
+        }
+        let honest = idents
+            .iter()
+            .zip(&spans)
+            .all(|(ident, span)| slice(self.source, *span).as_deref() == Some(ident.as_str()));
+        if !honest {
+            return;
+        }
+        self.out.push(SegRun {
+            idents,
+            spans,
+            from_use,
+            in_block: self.depth > 0,
+        });
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for PathScan<'_> {
+    fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
+        match node.content.is_some() {
+            true => {
+                self.depth += 1;
+                syn::visit::visit_item_mod(self, node);
+                self.depth -= 1;
+            }
+            false => syn::visit::visit_item_mod(self, node),
+        }
+    }
+
+    fn visit_item_use(&mut self, node: &'ast syn::ItemUse) {
+        // `use ::krate::..` names an extern crate, never a module of this one.
+        if node.leading_colon.is_some() {
+            return;
+        }
+        let mut branches = Vec::new();
+        use_runs(&node.tree, self.line_starts, &mut Vec::new(), &mut branches);
+        for (idents, spans) in branches {
+            self.push(idents, spans, true);
+        }
+    }
+
+    fn visit_path(&mut self, node: &'ast syn::Path) {
+        if node.leading_colon.is_none() {
+            let mut idents = Vec::new();
+            let mut spans = Vec::new();
+            for segment in &node.segments {
+                idents.push(segment.ident.to_string());
+                spans.push(syn_span(self.line_starts, segment.ident.span()));
+            }
+            self.push(idents, spans, false);
+        }
+        syn::visit::visit_path(self, node);
+    }
+}
+
+/// One flattened branch per bound name: a `Group` forks, a `Glob` ends the run
+/// at the module it stars.
+fn use_runs(
+    tree: &syn::UseTree,
+    line_starts: &[u32],
+    prefix: &mut Vec<(String, Span)>,
+    out: &mut Vec<(Vec<String>, Vec<Span>)>,
+) {
+    let mut emit = |prefix: &Vec<(String, Span)>, leaf: Option<(String, Span)>| {
+        let mut idents: Vec<String> = prefix.iter().map(|(ident, _)| ident.clone()).collect();
+        let mut spans: Vec<Span> = prefix.iter().map(|(_, span)| *span).collect();
+        if let Some((ident, span)) = leaf {
+            idents.push(ident);
+            spans.push(span);
+        }
+        out.push((idents, spans));
+    };
+    match tree {
+        syn::UseTree::Path(segment) => {
+            prefix.push((
+                segment.ident.to_string(),
+                syn_span(line_starts, segment.ident.span()),
+            ));
+            use_runs(&segment.tree, line_starts, prefix, out);
+            prefix.pop();
+        }
+        syn::UseTree::Group(group) => {
+            for member in &group.items {
+                use_runs(member, line_starts, prefix, out);
+            }
+        }
+        syn::UseTree::Name(leaf) => emit(
+            prefix,
+            Some((
+                leaf.ident.to_string(),
+                syn_span(line_starts, leaf.ident.span()),
+            )),
+        ),
+        syn::UseTree::Rename(leaf) => emit(
+            prefix,
+            Some((
+                leaf.ident.to_string(),
+                syn_span(line_starts, leaf.ident.span()),
+            )),
+        ),
+        syn::UseTree::Glob(_) => emit(prefix, None),
+    }
 }
 
 // ── rustc's module-file law ─────────────────────────────────────────────────
@@ -514,6 +709,511 @@ fn manifest_respell(cx: &MoveCx, reference: &ImportRef) -> Option<(String, Optio
         reference.importer, reference.target
     );
     Some((format!("{quote}{aimed}{quote}"), Some(receipt)))
+}
+
+// ── --relocate-mod: the module tree follows the file ────────────────────────
+
+/// One module whose declaring parent changes when the batch lands: the default
+/// arm holds the tree still and writes `#[path]`, this one moves the tree.
+struct Relocation {
+    name: String,
+    /// Module path from the crate root, before and after the batch.
+    old_path: Vec<String>,
+    new_path: Vec<String>,
+    /// Pre-move rels. Every edit stages ahead of the Moves (`0_move.rs`), so a
+    /// parent this same batch creates is edited at the path it still wears.
+    old_parent: String,
+    new_parent: String,
+    /// The decl to lift, grown to whole lines, and the bytes it spans.
+    decl: Span,
+    decl_text: String,
+    vis: String,
+    /// The `#[path = ".."] ` the new parent needs when the destination file's
+    /// name is not the module's; empty when rustc's own probe finds it.
+    aim: String,
+}
+
+/// The ref `import_refs` publishes and the bytes `respell` answers it with. A
+/// zero-length span is an insertion, which soopy plans.
+struct RelocateEdit {
+    importer: String,
+    span: Span,
+    text: String,
+    target: String,
+    kind: &'static str,
+    replacement: String,
+    receipt: Option<String>,
+}
+
+#[derive(Default)]
+struct RelocatePlan {
+    /// Moved files whose decl this strategy owns, so the `#[path]` arm drops them.
+    relocated: BTreeSet<String>,
+    /// Keyed by (file, offset), which is exactly the key the core claims.
+    edits: BTreeMap<(String, u32), RelocateEdit>,
+    /// Reasons this batch cannot be planned, answered by `Rehome::plan_errors`.
+    errors: Vec<String>,
+}
+
+/// The plan, built once per root per process. A run carries ONE batch, so the
+/// key `crate_roots` already caches by is the key this caches by too.
+fn relocate_plan(cx: &MoveCx) -> &'static RelocatePlan {
+    static CACHE: OnceLock<Mutex<BTreeMap<PathBuf, &'static RelocatePlan>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let mut held = match cache.lock() {
+        Ok(held) => held,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some(existing) = held.get(cx.root()) {
+        return existing;
+    }
+    let leaked: &'static RelocatePlan = Box::leak(Box::new(build_relocate_plan(cx)));
+    held.insert(cx.root().to_path_buf(), leaked);
+    leaked
+}
+
+fn build_relocate_plan(cx: &MoveCx) -> RelocatePlan {
+    let mut plan = RelocatePlan::default();
+    if !cx.relocate_mod() {
+        return plan;
+    }
+    let roots = crate_roots(cx);
+    let scanned = relocate_scan(cx);
+
+    let mut moves: BTreeMap<String, Relocation> = BTreeMap::new();
+    for (rel, text, scan, _) in &scanned {
+        for decl in &scan.decls {
+            // A `#[path]` decl and one inside an inline block both spell a module
+            // tree the file layout does not, and the arithmetic here reads layout.
+            if decl.attr.is_some() || !decl.chain.is_empty() {
+                continue;
+            }
+            let Some(target) = resolve_decl(cx, roots, rel, decl) else {
+                continue;
+            };
+            match plan_relocation(cx, roots, rel, text, decl, &target) {
+                Ok(Some(relocation)) => {
+                    moves.insert(target, relocation);
+                }
+                Ok(None) => {}
+                Err(reason) => plan.errors.push(reason),
+            }
+        }
+    }
+    // A batch this arm cannot plan whole is planned not at all: `plan_errors`
+    // stops the run before any stage is built.
+    if moves.is_empty() || !plan.errors.is_empty() {
+        return plan;
+    }
+    plan.relocated = moves.keys().cloned().collect();
+
+    // Every path that named a relocated module, and whether anything reaches it
+    // from outside the module it lands in: that is the whole visibility question.
+    let mut outside: BTreeSet<String> = BTreeSet::new();
+    for (rel, text, _, runs) in &scanned {
+        let moving = cx.destination(rel).is_some();
+        let Some((_, here)) = module_path(rel, roots) else {
+            continue;
+        };
+        for run in runs {
+            let Some((target, span, written, replacement)) =
+                run_edit(&moves, moving, &here, run, text)
+            else {
+                continue;
+            };
+            let relocation = &moves[&target];
+            let landing = &relocation.new_path[..relocation.new_path.len() - 1];
+            if !here.starts_with(landing) {
+                outside.insert(target.clone());
+            }
+            plan.edits.insert(
+                (rel.clone(), span.start),
+                RelocateEdit {
+                    importer: rel.clone(),
+                    span,
+                    text: written,
+                    target,
+                    kind: "mod_path",
+                    replacement,
+                    receipt: None,
+                },
+            );
+        }
+    }
+
+    for (target, relocation) in &moves {
+        plan.edits.insert(
+            (relocation.old_parent.clone(), relocation.decl.start),
+            RelocateEdit {
+                importer: relocation.old_parent.clone(),
+                span: relocation.decl,
+                text: relocation.decl_text.clone(),
+                target: target.clone(),
+                kind: "mod_relocate_out",
+                replacement: String::new(),
+                receipt: None,
+            },
+        );
+    }
+    insert_decls(cx, &moves, &outside, &mut plan);
+    plan
+}
+
+/// The `mod` lines the new parents gain. Two modules landing at one offset merge
+/// into ONE insertion: the core gives an offset a single claimant.
+fn insert_decls(
+    cx: &MoveCx,
+    moves: &BTreeMap<String, Relocation>,
+    outside: &BTreeSet<String>,
+    plan: &mut RelocatePlan,
+) {
+    let mut by_parent: BTreeMap<&String, Vec<(&String, &Relocation)>> = BTreeMap::new();
+    for (target, relocation) in moves {
+        by_parent
+            .entry(&relocation.new_parent)
+            .or_default()
+            .push((target, relocation));
+    }
+    for (parent, group) in by_parent {
+        let Some(text) = cx.text(parent) else {
+            continue;
+        };
+        let Some(scan) = scan_file(&text) else {
+            continue;
+        };
+        let mut lines: BTreeMap<u32, Vec<String>> = BTreeMap::new();
+        let mut owners: BTreeMap<u32, (String, String)> = BTreeMap::new();
+        for (target, relocation) in group {
+            let vis = match (relocation.vis.is_empty(), outside.contains(target)) {
+                (false, _) => format!("{} ", relocation.vis),
+                (true, true) => "pub ".to_string(),
+                (true, false) => String::new(),
+            };
+            let offset = insertion_offset(&text, &scan, &relocation.name);
+            lines
+                .entry(offset)
+                .or_default()
+                .push(format!("{}{vis}mod {};\n", relocation.aim, relocation.name));
+            owners.entry(offset).or_insert_with(|| {
+                (
+                    target.clone(),
+                    format!(
+                        "relocate mod {}: {} -> {parent}",
+                        relocation.name, relocation.old_parent
+                    ),
+                )
+            });
+        }
+        for (offset, mut written) in lines {
+            written.sort();
+            let mut body: String = written.concat();
+            if offset as usize == text.len() && !text.is_empty() && !text.ends_with('\n') {
+                body.insert(0, '\n');
+            }
+            let (target, receipt) = owners.remove(&offset).unwrap_or_default();
+            plan.edits.insert(
+                (parent.clone(), offset),
+                RelocateEdit {
+                    importer: parent.clone(),
+                    span: Span {
+                        start: offset,
+                        len: 0,
+                    },
+                    text: String::new(),
+                    target,
+                    kind: "mod_relocate_in",
+                    replacement: body,
+                    receipt: Some(receipt),
+                },
+            );
+        }
+    }
+}
+
+/// Every owned file, read and parsed once with the path walk on. The read and
+/// parse fan out; the result stays in path order.
+fn relocate_scan(cx: &MoveCx) -> Vec<(String, String, FileScan, Vec<SegRun>)> {
+    let corpus = cx.files_of(&RustSource);
+    let scans: Vec<Option<(String, FileScan, Vec<SegRun>)>> = extract_pool().install(|| {
+        corpus
+            .par_iter()
+            .map(|rel| {
+                let text = String::from_utf8(cx.read(rel)?).ok()?;
+                let (scan, runs) = scan_with(&text, true)?;
+                Some((text, scan, runs))
+            })
+            .collect()
+    });
+    corpus
+        .into_iter()
+        .zip(scans)
+        .filter_map(|(rel, scan)| {
+            scan.map(|(text, scan, runs)| (rel.to_string(), text, scan, runs))
+        })
+        .collect()
+}
+
+/// The relocation one decl asks for, or None when its parent module is unchanged
+/// and the default `#[path]` arm still answers. Err when there is nowhere to
+/// write the lifted decl, which stops the whole run.
+fn plan_relocation(
+    cx: &MoveCx,
+    roots: &BTreeSet<String>,
+    parent_rel: &str,
+    parent_text: &str,
+    decl: &ModDecl,
+    target: &str,
+) -> Result<Option<Relocation>, String> {
+    let Some(new_target) = cx.destination(target) else {
+        return Ok(None);
+    };
+    let Some((_, old_path)) = module_path(target, roots) else {
+        return Ok(None);
+    };
+    let Some((root, new_path)) = module_path(new_target, roots) else {
+        return Err(no_parent_module(target, new_target, &[]));
+    };
+    if old_path.is_empty() || new_path.is_empty() {
+        return Ok(None);
+    }
+    if old_path[..old_path.len() - 1] == new_path[..new_path.len() - 1] {
+        return Ok(None);
+    }
+    let candidates = parent_files(&root, &new_path[..new_path.len() - 1]);
+    let Some((edit_at, lands_at)) = candidates
+        .iter()
+        .find_map(|candidate| editable(cx, candidate).map(|pre| (pre, candidate.clone())))
+    else {
+        return Err(no_parent_module(target, new_target, &candidates));
+    };
+    let aim = match natural_paths(&module_dir(&lands_at, roots), &decl.name)
+        .contains(&new_target.to_string())
+    {
+        true => String::new(),
+        false => format!(
+            "#[path = \"{}\"] ",
+            relative_between(dirname(&lands_at), new_target)
+        ),
+    };
+    let Some((span, text)) = whole_lines(parent_text, decl.item) else {
+        return Ok(None);
+    };
+    Ok(Some(Relocation {
+        name: decl.name.clone(),
+        old_path,
+        new_path,
+        old_parent: parent_rel.to_string(),
+        new_parent: edit_at,
+        decl: span,
+        decl_text: text,
+        vis: decl.vis.clone(),
+        aim,
+    }))
+}
+
+/// The decl goes into the module owning the destination directory; with no file
+/// for that module there is nowhere to write it.
+fn no_parent_module(target: &str, new_target: &str, candidates: &[String]) -> String {
+    let named = match candidates.is_empty() {
+        true => "the destination sits under no crate root".to_string(),
+        false => format!("expected {}", candidates.join(" or ")),
+    };
+    format!(
+        "--relocate-mod: {target} -> {new_target} has no parent module file ({named}); \
+         create one in the same batch or drop --relocate-mod"
+    )
+}
+
+/// The replacement one written path run asks for: the target it names, the bytes
+/// it covers, and the path it becomes.
+fn run_edit(
+    moves: &BTreeMap<String, Relocation>,
+    moving: bool,
+    here: &[String],
+    run: &SegRun,
+    source: &str,
+) -> Option<(String, Span, String, String)> {
+    let (steps, eaten, absolute) = qualifier_of(&run.idents);
+    // `super`, `self` and a bare name read against the file's OWN module, which
+    // an inline block re-bases and a moving file re-parents. `crate` does not.
+    if !absolute && (moving || run.in_block) {
+        return None;
+    }
+    let base: Vec<String> = match absolute {
+        true => Vec::new(),
+        false => here.get(..here.len().checked_sub(steps)?)?.to_vec(),
+    };
+    for (target, relocation) in moves {
+        let wanted = relocation.old_path.len();
+        // The run spells nothing of the module path when the base already covers
+        // it: the file sits inside the module that moved, which is its own batch.
+        if base.len() >= wanted {
+            continue;
+        }
+        let cut = eaten + (wanted - base.len());
+        if cut > run.idents.len() || (!run.from_use && cut == run.idents.len()) {
+            continue;
+        }
+        if base[..] != relocation.old_path[..base.len()]
+            || run.idents[eaten..cut] != relocation.old_path[base.len()..]
+        {
+            continue;
+        }
+        let start = run.spans[0].start;
+        let last = run.spans[cut - 1];
+        let span = Span {
+            start,
+            len: last.start + last.len - start,
+        };
+        let written = slice(source, span)?;
+        // The same qualifier re-spells the new path when it can still reach it;
+        // otherwise the only spelling every module shares is `crate`.
+        let (head, tail) = match relocation.new_path.starts_with(&base) {
+            true => (
+                run.idents[..eaten].join("::"),
+                relocation.new_path[base.len()..].join("::"),
+            ),
+            false => ("crate".to_string(), relocation.new_path.join("::")),
+        };
+        let replacement = match head.is_empty() {
+            true => tail,
+            false => format!("{head}::{tail}"),
+        };
+        return Some((target.clone(), span, written, replacement));
+    }
+    None
+}
+
+/// The leading `crate` / `self` / `super`*: how many steps it climbs, how many
+/// idents that eats, and whether it reads from the crate root wherever written.
+fn qualifier_of(idents: &[String]) -> (usize, usize, bool) {
+    match idents.first().map(String::as_str) {
+        Some("crate") => (0, 1, true),
+        Some("self") => (0, 1, false),
+        Some("super") => {
+            let steps = idents
+                .iter()
+                .take_while(|ident| ident.as_str() == "super")
+                .count();
+            (steps, steps, false)
+        }
+        _ => (0, 0, false),
+    }
+}
+
+/// A file's crate root and its module path from that root, by file layout alone.
+/// A `#[path]` decl breaks that reading, so only natural decls reach here.
+fn module_path(rel: &str, roots: &BTreeSet<String>) -> Option<(String, Vec<String>)> {
+    let root = owning_root(rel, roots)?;
+    if rel == root {
+        return Some((root, Vec::new()));
+    }
+    let base = dirname(&root);
+    let tail = match base.is_empty() {
+        true => rel,
+        false => rel.strip_prefix(&format!("{base}/"))?,
+    };
+    let mut parts: Vec<String> = tail.split('/').map(str::to_string).collect();
+    let name = parts.pop()?;
+    let name = name.strip_suffix(".rs")?;
+    if name != "mod" {
+        parts.push(name.to_string());
+    }
+    Some((root, parts))
+}
+
+/// The crate root `rel` answers to: the one whose directory is its deepest
+/// ancestor, and itself when it is a root.
+fn owning_root(rel: &str, roots: &BTreeSet<String>) -> Option<String> {
+    roots
+        .iter()
+        .filter(|root| rel == root.as_str() || under(rel, dirname(root)))
+        .max_by_key(|root| (rel == root.as_str(), dirname(root).len()))
+        .cloned()
+}
+
+/// The two files rustc accepts for the module path `path` under `root`'s crate,
+/// or the crate root itself when `path` is the root module.
+fn parent_files(root: &str, path: &[String]) -> Vec<String> {
+    if path.is_empty() {
+        return vec![root.to_string()];
+    }
+    let base = dirname(root);
+    let joined = path.join("/");
+    vec![
+        join_rel(base, &format!("{joined}.rs")),
+        join_rel(base, &format!("{joined}/mod.rs")),
+    ]
+}
+
+/// The pre-move rel to edit for a file that exists once the batch lands: itself
+/// when it stays, its source when this same batch moves it there.
+fn editable(cx: &MoveCx, rel: &str) -> Option<String> {
+    if let Some((old, _)) = cx.moved().iter().find(|(_, new)| new.as_str() == rel) {
+        return Some(old.clone());
+    }
+    (cx.contains(rel) && cx.destination(rel).is_none()).then(|| rel.to_string())
+}
+
+/// `span` grown to the whole lines it sits on, so lifting an item leaves no
+/// blank remainder. A line carrying other code keeps its own bytes.
+fn whole_lines(text: &str, span: Span) -> Option<(Span, String)> {
+    let start = span.start as usize;
+    let end = start + span.len as usize;
+    let opens = line_start(text, start);
+    let from = match text.get(opens..start)?.trim().is_empty() {
+        true => opens,
+        false => start,
+    };
+    let closes = line_after(text, end);
+    let to = match text.get(end..closes)?.trim().is_empty() {
+        true => closes,
+        false => end,
+    };
+    Some((
+        Span {
+            start: from as u32,
+            len: (to - from) as u32,
+        },
+        text.get(from..to)?.to_string(),
+    ))
+}
+
+/// Where a new `mod name;` goes: sorted among the file-level `mod` items, after
+/// the last of them, or above the first item when the file declares none.
+fn insertion_offset(text: &str, scan: &FileScan, name: &str) -> u32 {
+    let siblings: Vec<&ModDecl> = scan
+        .decls
+        .iter()
+        .filter(|decl| decl.chain.is_empty())
+        .collect();
+    for decl in &siblings {
+        if decl.name.as_str() > name {
+            return line_start(text, decl.item.start as usize) as u32;
+        }
+    }
+    if let Some(last) = siblings.last() {
+        return line_after(text, (last.item.start + last.item.len) as usize) as u32;
+    }
+    match scan.first_item {
+        Some(at) => line_start(text, at as usize) as u32,
+        None => text.len() as u32,
+    }
+}
+
+fn line_start(text: &str, at: usize) -> usize {
+    text.get(..at)
+        .and_then(|head| head.rfind('\n'))
+        .map(|found| found + 1)
+        .unwrap_or(0)
+}
+
+/// The offset just past the newline ending the line `at` sits on.
+fn line_after(text: &str, at: usize) -> usize {
+    text.get(at..)
+        .and_then(|tail| tail.find('\n'))
+        .map(|found| at + found + 1)
+        .unwrap_or(text.len())
 }
 
 // ── Cargo.toml targets ──────────────────────────────────────────────────────
