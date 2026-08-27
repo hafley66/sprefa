@@ -562,3 +562,156 @@ fn an_unmoved_file_writing_the_same_constructs_is_left_alone() {
 
     assert_eq!(read(&fixture.root, "tests/2_unmoved.test.ts"), before);
 }
+
+// ── verify-and-rollback (--verify '<cmd>') ──────────────────────────────────
+
+/// The batch door returning the full Output, so a non-zero rollback exit is
+/// asserted rather than assumed to succeed.
+fn move_output(fixture: &Fixture, extra: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_extract"))
+        .arg("move")
+        .arg(fixture.root.join("lib/b.pl"))
+        .arg(fixture.root.join("core/b.pl"))
+        .arg("--root")
+        .arg(&fixture.root)
+        .arg("--state")
+        .arg(&fixture.state)
+        .args(extra)
+        .output()
+        .expect("extract binary runs")
+}
+
+fn move_list_output(
+    fixture: &Fixture,
+    rows: &[(&str, &str)],
+    extra: &[&str],
+) -> std::process::Output {
+    let list = fixture.state.join("moves.tsv");
+    let body: String = rows
+        .iter()
+        .map(|(old, new)| {
+            format!(
+                "{}\t{}\n",
+                fixture.root.join(old).display(),
+                fixture.root.join(new).display()
+            )
+        })
+        .collect();
+    std::fs::write(&list, body).unwrap();
+    Command::new(env!("CARGO_BIN_EXE_extract"))
+        .arg("move")
+        .arg("--list")
+        .arg(&list)
+        .arg("--root")
+        .arg(&fixture.root)
+        .arg("--state")
+        .arg(&fixture.state)
+        .args(extra)
+        .output()
+        .expect("extract binary runs")
+}
+
+/// Every file under `root`, keyed by root-relative path to its bytes.
+fn tree(root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("read dir") {
+            let entry = entry.expect("dir entry");
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                let rel = path
+                    .strip_prefix(root)
+                    .expect("under root")
+                    .to_string_lossy()
+                    .into_owned();
+                out.insert(rel, std::fs::read(&path).expect("read file"));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn verify_true_keeps_the_committed_move() {
+    let fixture = fixture("verify_true");
+    let output = move_output(&fixture, &["--commit", "--verify", "true"]);
+    let stdout = String::from_utf8(output.stdout).expect("utf-8");
+    assert!(
+        output.status.success(),
+        "verify true exits 0: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("verify ok"), "stdout:\n{stdout}");
+    assert!(!fixture.root.join("lib/b.pl").exists());
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.join("a.pl")).unwrap(),
+        ":- module(a, [check/0]).\n:- use_module('core/b').\n\ncheck :- b_fact(1).\n"
+    );
+    loads_clean(&fixture.root);
+}
+
+#[test]
+fn verify_false_rolls_the_tree_back_byte_identical() {
+    let fixture = fixture("verify_false");
+    let before = tree(&fixture.root);
+    let output = move_output(&fixture, &["--commit", "--verify", "false"]);
+    let stdout = String::from_utf8(output.stdout).expect("utf-8");
+    assert_eq!(output.status.code(), Some(3), "rollback exits 3: {stdout}");
+    assert!(
+        stdout.contains("verify failed (rc=1)"),
+        "names the failing rc: {stdout}"
+    );
+    assert_eq!(tree(&fixture.root), before, "every file byte-identical");
+
+    let helpers = helpers_fixture("verify_false_rmdir");
+    let before = tree(&helpers.root);
+    let output = move_list_output(&helpers, &HELPER_MOVES, &["--commit", "--verify", "false"]);
+    let stdout = String::from_utf8(output.stdout).expect("utf-8");
+    assert_eq!(output.status.code(), Some(3), "rollback exits 3: {stdout}");
+    assert_eq!(
+        tree(&helpers.root),
+        before,
+        "a moved-out subtree returns byte-identical"
+    );
+    assert!(
+        helpers.root.join("tests/helpers").is_dir(),
+        "the directory the sweep removed is recreated"
+    );
+}
+
+#[test]
+fn verify_without_commit_is_an_error() {
+    let fixture = fixture("verify_no_commit");
+    let output = move_output(&fixture, &["--verify", "true"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a missing --commit is an error: {stderr}"
+    );
+    assert!(
+        stderr.contains("--verify") && stderr.contains("--commit"),
+        "the error names both flags: {stderr}"
+    );
+    assert!(fixture.root.join("lib/b.pl").is_file());
+    assert!(!fixture.root.join("core/b.pl").exists());
+    assert_eq!(git(&fixture.root, &["status", "--porcelain"]), "");
+}
+
+#[test]
+fn dry_run_never_runs_verify() {
+    let fixture = fixture("verify_dry");
+    let marker = fixture.root.join("marker");
+    let output = move_output(&fixture, &["--verify", "touch marker"]);
+    assert!(
+        !marker.exists(),
+        "a non-commit run never executes the verify command"
+    );
+    assert!(fixture.root.join("lib/b.pl").is_file());
+    assert!(!fixture.root.join("core/b.pl").exists());
+    assert_eq!(git(&fixture.root, &["status", "--porcelain"]), "");
+    let _ = output;
+}

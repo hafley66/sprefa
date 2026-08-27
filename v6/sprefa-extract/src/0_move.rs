@@ -40,6 +40,11 @@ struct MoveCli {
     /// Apply the plan to the real tree instead of dry running it.
     #[arg(long)]
     commit: bool,
+    /// Run `<command>` with `sh -c` in the move root after committing, and roll
+    /// the move back unless it exits 0. Requires `--commit`; never runs on a
+    /// dry run.
+    #[arg(long)]
+    verify: Option<String>,
     /// Leave a reexport shim behind at `old` instead of rewriting importers.
     #[arg(long)]
     shim: bool,
@@ -58,6 +63,11 @@ where
     I::Item: Into<std::ffi::OsString> + Clone,
 {
     let cli = MoveCli::try_parse_from(args).map_err(|error| error.to_string())?;
+    if cli.verify.is_some() && !cli.commit {
+        return Err(
+            "--verify needs --commit; pass both to run a checker after the move".to_string(),
+        );
+    }
     let plan = Plan::build(&cli)?;
     let state = state_root(cli.state.as_deref())?;
 
@@ -74,6 +84,9 @@ where
     let emptied = emptied_directories(&plan.cx);
 
     if cli.commit {
+        // Every file the edit stage re-spells, with its pre-run bytes: the
+        // rollback that follows a failed verify restores these verbatim.
+        let prebytes = plan.prebytes()?;
         for stage in &plan.stages {
             let (id, previews) =
                 stage_and_commit(&plan.root, &state, stage, soopy::Durability::Durable)?;
@@ -84,6 +97,9 @@ where
             std::fs::remove_dir(plan.cx.abs(directory))
                 .map_err(|error| format!("remove empty directory {directory}: {error}"))?;
             println!("rmdir {directory}");
+        }
+        if let Some(command) = &cli.verify {
+            verify_and_maybe_rollback(&plan, &state, &emptied, command, prebytes)?;
         }
     } else {
         let mirror = Mirror::build(&plan.root, &plan.stages)?;
@@ -103,6 +119,154 @@ where
     Ok(())
 }
 
+// ── the verify-and-rollback transaction ─────────────────────────────────────
+
+/// The checker's verdict: `Pass` exits 0, `Fail` carries a process exit code.
+enum CheckerOutcome {
+    Pass,
+    Fail(i32),
+}
+
+/// Run the checker after the commit. On any failure the whole move is rolled
+/// back through the inverse soopy stage; the process exits 3 either way the
+/// tree is restored.
+fn verify_and_maybe_rollback(
+    plan: &Plan,
+    state: &Path,
+    emptied: &[String],
+    command: &str,
+    prebytes: BTreeMap<String, Vec<u8>>,
+) -> Result<(), String> {
+    let outcome = run_checker(&plan.root, command)?;
+    match outcome {
+        CheckerOutcome::Pass => {
+            println!("verify ok");
+            Ok(())
+        }
+        CheckerOutcome::Fail(rc) => {
+            let count = rollback(plan, state, emptied, &prebytes)?;
+            println!("verify failed (rc={rc}): rolled back {count} files");
+            std::process::exit(3);
+        }
+    }
+}
+
+/// `sh -c` the command in the move root with a 300 s hard timeout. Stdout and
+/// stderr pass through. A process killed by the timeout reports `Fail(124)`.
+fn run_checker(root: &Path, command: &str) -> Result<CheckerOutcome, String> {
+    let mut child = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(root)
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .map_err(|error| format!("spawn verify command: {error}"))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("wait on verify command: {error}"))?
+        {
+            if status.success() {
+                return Ok(CheckerOutcome::Pass);
+            }
+            return Ok(CheckerOutcome::Fail(status.code().unwrap_or(-1)));
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(CheckerOutcome::Fail(124));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// Undo the committed move, in reverse stage order: delete the shim, move each
+/// file back, restore every edited file to its pre-run bytes, then recreate any
+/// directory the emptied-dir sweep removed. Returns the number of distinct
+/// paths the tree returns to.
+fn rollback(
+    plan: &Plan,
+    state: &Path,
+    emptied: &[String],
+    prebytes: &BTreeMap<String, Vec<u8>>,
+) -> Result<usize, String> {
+    let root = &plan.root;
+    let identity = soopy::SourceRoot::open_directory(root)
+        .map_err(|error| format!("open root {}: {error}", root.display()))?
+        .directory()
+        .identity
+        .clone();
+
+    // Delete the reexport shim the move created.
+    if plan.shim {
+        let old = &plan.moves[0].0;
+        stage_and_commit(
+            root,
+            state,
+            &[soopy::SourceAction::Delete {
+                source: directory_source(&identity, old),
+                expected: content_id(root, old)?,
+            }],
+            soopy::Durability::Durable,
+        )?;
+    }
+
+    // Move each file back to its pre-move location.
+    let mut move_back = Vec::new();
+    for (old, new) in &plan.moves {
+        move_back.push(soopy::SourceAction::Move {
+            source: directory_source(&identity, new),
+            expected: content_id(root, new)?,
+            destination: directory_path(old),
+        });
+    }
+    stage_and_commit(root, state, &move_back, soopy::Durability::Durable)?;
+
+    // Restore every edited file to its pre-run bytes.
+    let producer = soopy::ActionProducer::unordered(PRODUCER);
+    let mut restore = Vec::new();
+    for (rel, original) in prebytes {
+        let path = root.join(rel);
+        let current = std::fs::read(&path).map_err(|error| format!("read {rel}: {error}"))?;
+        let length = current.len() as u64;
+        let source = directory_source(&identity, rel);
+        restore.push(soopy::SourceAction::Replace {
+            source: source.clone(),
+            expected: soopy::ContentId::blake3(&current),
+            edits: vec![soopy::TextEdit {
+                range: soopy::ActionSpan {
+                    source,
+                    start: 0,
+                    end: length,
+                },
+                replacement: original.clone(),
+                producer: producer.clone(),
+            }],
+        });
+    }
+    stage_and_commit(root, state, &restore, soopy::Durability::Durable)?;
+
+    // Recreate any directory the emptied-dir sweep removed.
+    for directory in emptied {
+        std::fs::create_dir_all(plan.cx.abs(directory))
+            .map_err(|error| format!("recreate directory {directory}: {error}"))?;
+    }
+
+    let mut touched: BTreeSet<String> = BTreeSet::new();
+    for (old, _) in &plan.moves {
+        touched.insert(old.clone());
+    }
+    for rel in &plan.edited {
+        touched.insert(rel.clone());
+    }
+    if plan.shim {
+        touched.insert(plan.moves[0].0.clone());
+    }
+    Ok(touched.len())
+}
+
 /// Soopy accepts ONE operation per source file (`_7d_mutation_plan.rs`
 /// `insert_non_replace`), so edits, Moves and the shim Create are separate stages.
 struct Plan {
@@ -111,6 +275,10 @@ struct Plan {
     moves: Vec<(String, String)>,
     stages: Vec<Vec<soopy::SourceAction>>,
     receipts: Vec<String>,
+    /// Files the edit stage re-spells, in their pre-move locations.
+    edited: Vec<String>,
+    /// Whether a reexport shim is created at `moves[0].0`.
+    shim: bool,
 }
 
 impl Plan {
@@ -170,7 +338,9 @@ impl Plan {
                 });
         }
         let mut edit_stage: Vec<soopy::SourceAction> = Vec::new();
+        let mut edited = Vec::new();
         for (rel, edits) in by_file {
+            edited.push(rel.clone());
             let source = directory_source(&identity, &rel);
             edit_stage.push(replace_action(source, content_id(&root, &rel)?, edits));
         }
@@ -200,7 +370,21 @@ impl Plan {
             moves,
             stages,
             receipts,
+            edited,
+            shim: cli.shim,
         })
+    }
+
+    /// Every file the edit stage re-spells, read at its pre-move path. These
+    /// bytes are what a failed verify restores.
+    fn prebytes(&self) -> Result<BTreeMap<String, Vec<u8>>, String> {
+        let mut out = BTreeMap::new();
+        for rel in &self.edited {
+            let bytes = std::fs::read(self.root.join(rel))
+                .map_err(|error| format!("read {rel} for rollback: {error}"))?;
+            out.insert(rel.clone(), bytes);
+        }
+        Ok(out)
     }
 }
 
