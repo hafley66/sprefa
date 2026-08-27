@@ -37,6 +37,7 @@ use crate::seams::{
 use crate::shape::{ContentId, FamilyTag, NameId, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
+use crate::types::LangKind;
 use crate::types::ScipIndex;
 use crate::types::{Unresolved, UnresolvedReason};
 
@@ -2424,7 +2425,7 @@ fn df_flow_expr(
             let left = df_flow_expr(&binary.left, file, fn_sym, strings, scope, sink);
             let right = df_flow_expr(&binary.right, file, fn_sym, strings, scope, sink);
             let kind = if binary.operator == ts::BinaryOperator::Addition {
-                DfNodeKind::Concat
+                CONCAT
             } else {
                 DfNodeKind::Binop
             };
@@ -2536,7 +2537,7 @@ fn df_flow_expr(
             let _test = df_flow_expr(&cond.test, file, fn_sym, strings, scope, sink);
             let consequent = df_flow_expr(&cond.consequent, file, fn_sym, strings, scope, sink);
             let alternate = df_flow_expr(&cond.alternate, file, fn_sym, strings, scope, sink);
-            let node = df_push(sink, strings, span, DfNodeKind::Cond, None);
+            let node = df_push(sink, strings, span, COND, None);
             df_edge(sink, consequent, node);
             df_edge(sink, alternate, node);
             node
@@ -2565,7 +2566,7 @@ fn df_flow_expr(
         // `` `hello ${name}` ``: each interpolation flows into a `template` node;
         // the raw source slice is the `df_lit` text.
         E::TemplateLiteral(template) => {
-            let node = df_push(sink, strings, span, DfNodeKind::Template, None);
+            let node = df_push(sink, strings, span, TEMPLATE, None);
             for sub in &template.expressions {
                 let value = df_flow_expr(sub, file, fn_sym, strings, scope, sink);
                 df_edge(sink, value, node);
@@ -2577,7 +2578,7 @@ fn df_flow_expr(
         }
         E::TaggedTemplateExpression(tagged) => {
             let _tag = df_flow_expr(&tagged.tag, file, fn_sym, strings, scope, sink);
-            let node = df_push(sink, strings, span, DfNodeKind::Template, None);
+            let node = df_push(sink, strings, span, TEMPLATE, None);
             for sub in &tagged.quasi.expressions {
                 let value = df_flow_expr(sub, file, fn_sym, strings, scope, sink);
                 df_edge(sink, value, node);
@@ -2987,6 +2988,20 @@ pub(crate) fn collect_const_facts(
 /// (.ts/.tsx/.mts/.cts/.js/.jsx/.mjs/.cjs).
 #[derive(Default)]
 pub struct TsSource;
+
+/// Kinds only TS constructs: the core enums do not carry them (tests/6_kind_vocab.rs).
+pub const COND: DfNodeKind = DfNodeKind::Ext(LangKind {
+    lang: "ts",
+    tag: "cond",
+});
+pub const CONCAT: DfNodeKind = DfNodeKind::Ext(LangKind {
+    lang: "ts",
+    tag: "concat",
+});
+pub const TEMPLATE: DfNodeKind = DfNodeKind::Ext(LangKind {
+    lang: "ts",
+    tag: "template",
+});
 
 impl Source for TsSource {
     fn name(&self) -> &'static str {

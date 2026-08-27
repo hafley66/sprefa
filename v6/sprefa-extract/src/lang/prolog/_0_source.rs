@@ -11,6 +11,7 @@ use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfEdgeKind, DfF, DfNodeKind,
     ProjectEdge, RefPosition, Reference, Specifier, SpecifierKind, TypeEntityKind, TypeF,
 };
+use crate::lang::extract_lang::ExtractLang;
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, covering_def, ProjectCx, Resolve};
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings};
@@ -870,6 +871,10 @@ impl Source for PrologSource {
             || path.ends_with(".prolog")
             || path.ends_with(".datalog")
             || path.ends_with(".horn")
+    }
+
+    fn extract_lang(&self, _path: &str) -> Option<ExtractLang> {
+        Some(ExtractLang::Prolog)
     }
 
     fn extract(&self, _path: &str, content: &[u8], mask: FamilyMask) -> ExtractOutput {

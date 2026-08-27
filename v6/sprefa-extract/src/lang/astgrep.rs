@@ -10,7 +10,9 @@
 
 use crate::lang::extract_lang::ExtractLang;
 use ast_grep_core::tree_sitter::StrDoc;
+use ast_grep_core::Language as _;
 use ast_grep_core::{AstGrep, Node as SgNode, Pattern};
+use ast_grep_language::SupportLang;
 use serde::Serialize;
 
 use crate::family::{CstEdgeKind, CstF};
@@ -142,7 +144,10 @@ impl Parser for AstGrepParser {
     }
 
     fn matches(&self, path: &str) -> bool {
-        ExtractLang::from_path(path).is_some()
+        // SupportLang directly: the roster's per-grammar Sources answer ahead of
+        // this fallback, and ExtractLang::from_path routes through the roster,
+        // so asking it here would recurse.
+        SupportLang::from_path(path).is_some()
     }
 
     fn make_arena(&self) {}

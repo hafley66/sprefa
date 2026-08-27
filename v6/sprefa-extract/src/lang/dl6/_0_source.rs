@@ -12,6 +12,7 @@ use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, Family, ProjectEdge, SigSlot,
     Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
+use crate::lang::extract_lang::ExtractLang;
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, covering_def, own_blob, ProjectCx, Resolve};
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings};
@@ -393,6 +394,10 @@ impl Source for DlSource {
 
     fn matches(&self, path: &str) -> bool {
         path.ends_with(".dl6")
+    }
+
+    fn extract_lang(&self, _path: &str) -> Option<ExtractLang> {
+        Some(ExtractLang::Dl6)
     }
 
     fn extract(&self, _path: &str, content: &[u8], mask: FamilyMask) -> ExtractOutput {

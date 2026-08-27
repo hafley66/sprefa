@@ -46,6 +46,7 @@ use crate::seams::{
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
+use crate::types::LangKind;
 use crate::types::ScipIndex;
 use crate::types::{CfgScope, TestOnlyCall};
 
@@ -291,7 +292,7 @@ fn item_entity(
                 line_starts,
                 t.ident.span(),
                 &t.ident.to_string(),
-                TypeEntityKind::Trait,
+                TRAIT,
             );
             // Only default methods (a body inside the trait block) get an entity
             // row; a bare signature has no code to hang a node on. Port of v5.
@@ -2152,14 +2153,7 @@ fn flow_expr(
                 sink,
                 loop_breaks,
             );
-            let node = df_push(
-                sink,
-                strings,
-                line_starts,
-                node_span,
-                DfNodeKind::Borrow,
-                None,
-            );
+            let node = df_push(sink, strings, line_starts, node_span, BORROW, None);
             df_edge(sink, inner, node);
             node
         }
@@ -2246,14 +2240,7 @@ fn flow_expr(
         // frame it targets; `Expr::Loop` drains its frame's tails into edges on
         // its own node.
         syn::Expr::Break(break_expr) => {
-            let node = df_push(
-                sink,
-                strings,
-                line_starts,
-                node_span,
-                DfNodeKind::Break,
-                None,
-            );
+            let node = df_push(sink, strings, line_starts, node_span, BREAK, None);
             if let Some(value_expr) = &break_expr.expr {
                 let value = flow_expr(
                     value_expr,
@@ -2468,14 +2455,7 @@ fn flow_expr(
                     loop_breaks,
                 ));
             }
-            let node = df_push(
-                sink,
-                strings,
-                line_starts,
-                node_span,
-                DfNodeKind::Match,
-                None,
-            );
+            let node = df_push(sink, strings, line_starts, node_span, MATCH, None);
             for tail in arm_tails {
                 df_edge(sink, tail, node);
             }
@@ -2492,14 +2472,7 @@ fn flow_expr(
                 sink,
                 loop_breaks,
             );
-            let node = df_push(
-                sink,
-                strings,
-                line_starts,
-                node_span,
-                DfNodeKind::Block,
-                None,
-            );
+            let node = df_push(sink, strings, line_starts, node_span, BLOCK, None);
             if let Some((tail, _)) = tail {
                 df_edge(sink, tail, node);
             }
@@ -2727,6 +2700,28 @@ fn df_edge(sink: &mut FamilyBundle<DfF>, src: NodeRef, dst: NodeRef) {
 /// grammar; type/call/df/const via one `syn::parse_file`.
 #[derive(Default)]
 pub struct RustSource;
+
+/// Kinds only Rust constructs: the core enums do not carry them (tests/6_kind_vocab.rs).
+pub const TRAIT: TypeEntityKind = TypeEntityKind::Ext(LangKind {
+    lang: "rust",
+    tag: "trait",
+});
+pub const BORROW: DfNodeKind = DfNodeKind::Ext(LangKind {
+    lang: "rust",
+    tag: "borrow",
+});
+pub const BREAK: DfNodeKind = DfNodeKind::Ext(LangKind {
+    lang: "rust",
+    tag: "break",
+});
+pub const MATCH: DfNodeKind = DfNodeKind::Ext(LangKind {
+    lang: "rust",
+    tag: "match",
+});
+pub const BLOCK: DfNodeKind = DfNodeKind::Ext(LangKind {
+    lang: "rust",
+    tag: "block",
+});
 
 impl Source for RustSource {
     fn name(&self) -> &'static str {
