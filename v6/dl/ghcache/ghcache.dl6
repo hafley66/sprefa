@@ -436,6 +436,15 @@ due(EndpointPath, Bucket, ApiType) <-
   not(endpoint_cooling(EndpointPath, Bucket)),
   PhaseSlot := Bucket mod PeriodTicks,
   PhaseSlot == 0.
+# An endpoint with no page_ordinal row has never been asked; it is due on its
+# first bucket whatever its phase. Page 1's url IS the endpoint path.
+due(EndpointPath, Bucket, ApiType) <-
+  current_clock(60, Bucket),
+  poll_endpoint(EndpointPath, ApiType),
+  api_token(_TokenValue),
+  not(over_budget(ApiType, Bucket)),
+  not(endpoint_cooling(EndpointPath, Bucket)),
+  not(page_ordinal(page_url: EndpointPath)).
 
 # Page 1 is the endpoint; a later page is queued through a keyed rel so the
 # walk carries ONE tick offset rather than a cycle through the transport.
