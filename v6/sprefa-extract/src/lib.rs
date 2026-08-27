@@ -27,6 +27,7 @@ pub mod family;
 pub mod lang;
 pub mod manifests;
 pub mod move_cx;
+pub mod move_scip;
 pub mod move_stage;
 pub mod project;
 pub mod rows;
@@ -77,6 +78,10 @@ pub use manifests::{
     fold_package_edges, package_edges, package_edges_jsonl, Manifest, ManifestKind,
 };
 pub use move_cx::{dirname, join_rel, normalize, relative_between, MoveCx, SKIP_DIRS};
+pub use move_scip::{
+    scip_import_sites, verify_import_refs, ScipDisagreement, ScipSite, MISSED_BY_IMPL,
+    UNKNOWN_TO_SCIP,
+};
 pub use project::{
     diet_scip, diet_scip_jsonl, extract_pool, resolve_project, resolve_project_jsonl, scip_facts,
     scip_facts_jsonl, scip_family, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
