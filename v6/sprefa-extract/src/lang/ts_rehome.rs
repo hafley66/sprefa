@@ -16,7 +16,7 @@ use crate::lang::ts_paths::{ts_path_literals, TsPathLiteral};
 use crate::lang::ts_resolve::{respell, TsResolver};
 use crate::move_cx::{dirname, join_rel, relative_between, MoveCx};
 use crate::project::extract_pool;
-use crate::types::{ImportRef, Rehome, Respell, Span};
+use crate::types::{ImportRef, ImportRefKind, Rehome, Respell, Span};
 
 /// Emitted output whose specifiers mirror the source tree's. The corpus walk
 /// keeps it (a `dist/package.json` is still a manifest); the parse does not.
@@ -26,11 +26,15 @@ const EMITTED_DIR: &str = "dist";
 const CANDIDATE_FIELDS: [&str; 6] = ["main", "module", "types", "browser", "bin", "exports"];
 
 impl Rehome for TsSource {
+    fn directory_stem(&self) -> Option<&'static str> {
+        Some("index")
+    }
+
     fn import_refs(&self, cx: &MoveCx) -> Vec<ImportRef> {
         let Ok(resolver) = resolver(cx.root()) else {
             return Vec::new();
         };
-        let names = moved_names(cx, self);
+        let names = self.moved_names(cx);
         let corpus: Vec<&str> = cx
             .files_of(self)
             .into_iter()
@@ -50,15 +54,15 @@ impl Rehome for TsSource {
 
     fn respell(&self, cx: &MoveCx, reference: &ImportRef) -> Option<Respell> {
         let text = match reference.kind {
-            "import" => import_respell(cx, reference)?,
-            "path_literal" => literal_respell(cx, reference)?,
-            "manifest_target" => manifest_respell(cx, reference)?,
+            ImportRefKind::Import => import_respell(cx, reference)?,
+            ImportRefKind::PathLiteral => literal_respell(cx, reference)?,
+            ImportRefKind::ManifestTarget => manifest_respell(cx, reference)?,
             _ => return None,
         };
         if text == reference.text {
             return None;
         }
-        let receipt = (reference.kind == "manifest_target").then(|| {
+        let receipt = (reference.kind == ImportRefKind::ManifestTarget).then(|| {
             format!(
                 "manifest {}: {} {} -> {}",
                 reference.importer,
@@ -103,7 +107,7 @@ impl Rehome for TsSource {
                     literal: leaf.span,
                     text: leaf.literal,
                     target: leaf.field_path,
-                    kind: "manifest_target",
+                    kind: ImportRefKind::ManifestTarget,
                 });
             }
         }
@@ -188,7 +192,7 @@ fn specifier_ref(
         literal: row.module_span,
         text: text.get(start..end)?.to_string(),
         target,
-        kind: "import",
+        kind: ImportRefKind::Import,
     })
 }
 
@@ -203,7 +207,7 @@ fn literal_ref(rel: &str, text: &str, literal: &TsPathLiteral) -> ImportRef {
             .map(str::to_string)
             .unwrap_or_else(|| format!("{}{}{}", literal.quote, literal.text, literal.quote)),
         target: literal.text.clone(),
-        kind: "path_literal",
+        kind: ImportRefKind::PathLiteral,
     }
 }
 
@@ -389,37 +393,12 @@ fn within(outer: &str, inner: &str) -> bool {
     outer.is_empty() || inner == outer || inner.starts_with(&format!("{outer}/"))
 }
 
-/// The file names a batch can be reached by: every moved file's stem, plus the
-/// directory name of a moved `index`, which is what a directory-form spec spells.
-fn moved_names(cx: &MoveCx, rehome: &dyn Rehome) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
-    for old in cx.moved().keys() {
-        if !crate::move_cx::owned_by(old, rehome) {
-            continue;
-        }
-        let own = stem(old);
-        if own == "index" {
-            names.insert(stem(dirname(old)));
-        }
-        names.insert(own);
-    }
-    names
-}
-
 /// Whether a relative spec's last segment can name one of the moved files. A
 /// spec with no readable last segment is never gated out.
 fn spec_may_name(module: &str, names: &BTreeSet<String>) -> bool {
     let last = module.rsplit('/').next().unwrap_or(module);
     let stem = last.split('.').next().unwrap_or(last);
     stem.is_empty() || names.contains(stem)
-}
-
-fn stem(rel: &str) -> String {
-    let name = rel.rsplit('/').next().unwrap_or(rel);
-    name.rsplit_once('.')
-        .map(|(head, _)| head)
-        .unwrap_or(name)
-        .to_string()
 }
 
 fn is_ts_file(rel: &str) -> bool {

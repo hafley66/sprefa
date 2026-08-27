@@ -116,7 +116,7 @@ pub use soopy::{
     SourceEntry, SourceRef,
 };
 pub use source::{ExtractOutput, FamilyMask, Source};
-pub use types::{CfgEdgeKind, CfgF, CfgNodeKind, ImportRef, Rehome, Respell};
+pub use types::{CfgEdgeKind, CfgF, CfgNodeKind, ImportRef, ImportRefKind, Rehome, Respell};
 pub use wire::{
     file_fact, flatten, flatten_cfg, flatten_flow, flatten_jsonl, flatten_scip, scip_file_edges,
     FlatFact, SpanOut, SCHEMA,

@@ -174,7 +174,9 @@ pub fn verify_import_refs(
                 kind: UNKNOWN_TO_SCIP,
                 detail: format!(
                     "{} {} -> {}",
-                    reference.kind, reference.text, reference.target
+                    reference.kind.as_str(),
+                    reference.text,
+                    reference.target
                 ),
             }),
         }

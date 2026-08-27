@@ -16,8 +16,8 @@
 use std::path::{Path, PathBuf};
 
 use sprefa_extract::{
-    scip_import_sites, verify_import_refs, ImportRef, MoveCx, Rehome, ScipIndex, ScipSource,
-    ScipTypescript, Span, TsSource, MISSED_BY_IMPL, UNKNOWN_TO_SCIP,
+    scip_import_sites, verify_import_refs, ImportRef, ImportRefKind, MoveCx, Rehome, ScipIndex,
+    ScipSource, ScipTypescript, Span, TsSource, MISSED_BY_IMPL, UNKNOWN_TO_SCIP,
 };
 
 const MOVED: &str = "src/util.ts";
@@ -169,7 +169,7 @@ fn a_ref_no_occurrence_covers_reads_as_unknown_to_scip() {
         literal: Span { start: 0, len: 6 },
         text: "\"./ghost\"".to_string(),
         target: MOVED.to_string(),
-        kind: "import",
+        kind: ImportRefKind::Import,
     });
 
     let disagreements = verify_import_refs(&cx, &index, &refs);

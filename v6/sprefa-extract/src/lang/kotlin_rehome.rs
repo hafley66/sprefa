@@ -33,12 +33,13 @@ use crate::family::SpecifierKind;
 use crate::move_cx::{dirname, owned_by, MoveCx};
 use crate::project::extract_pool;
 use crate::shape::Strings;
-use crate::types::{ImportRef, Rehome, Respell, Span};
+use crate::types::{ImportRef, ImportRefKind, LangKind, Rehome, Respell, Span};
 
-/// An explicit `import a.b.Decl`, with or without an `as` alias.
-const IMPORT: &str = "import";
-/// The moved file's own `package a.b` declaration.
-const PACKAGE_DECL: &str = "package_decl";
+/// The moved file's own `package a.b` declaration, a kind only Kotlin constructs.
+pub const PACKAGE_DECL: ImportRefKind = ImportRefKind::Ext(LangKind {
+    lang: "kotlin",
+    tag: "package_decl",
+});
 
 impl Rehome for KotlinSource {
     fn import_refs(&self, cx: &MoveCx) -> Vec<ImportRef> {
@@ -108,7 +109,7 @@ impl Rehome for KotlinSource {
                         },
                         text: row.path.clone(),
                         target: plan.old_rel.clone(),
-                        kind: IMPORT,
+                        kind: ImportRefKind::Import,
                     });
                 }
             }
@@ -137,7 +138,7 @@ impl Rehome for KotlinSource {
         let plan = plan_move(cx, &reference.target, cx.destination(&reference.target)?).ok()?;
         let text = match reference.kind {
             PACKAGE_DECL => plan.new_package.clone(),
-            IMPORT => rewrite(&plan, &reference.text)?,
+            ImportRefKind::Import => rewrite(&plan, &reference.text)?,
             _ => return None,
         };
         (text != reference.text).then(|| Respell {

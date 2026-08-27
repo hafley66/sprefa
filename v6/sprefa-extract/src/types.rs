@@ -18,6 +18,7 @@
 //! family. The sketch below stays as the shape a revival would take.
 // @comment-ok: the module header is a crate-level doc block predating the rail
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -1973,8 +1974,34 @@ pub struct ImportRef {
     pub text: String,
     /// Project-relative path the reference names, pre-move.
     pub target: String,
-    /// `"import"` | `"path_literal"` | `"manifest_target"` | a language's own.
-    pub kind: &'static str,
+    pub kind: ImportRefKind,
+}
+
+/// The vocabulary of one `ImportRef`. Core = the kinds two or more languages
+/// construct today; a kind one language owns lives in that language's rehome
+/// file as an `Ext(LangKind)` constant, so a new language never edits this list.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ImportRefKind {
+    /// A module import (`use`, `import`, `:- use_module`).
+    Import,
+    /// A quoted path literal outside an import form.
+    PathLiteral,
+    /// A package.json / Cargo.toml target line.
+    ManifestTarget,
+    /// A kind one language owns; tag never equals a core tag (railed in
+    /// tests/7_import_ref_kind.rs), so `as_str` stays injective.
+    Ext(LangKind),
+}
+
+impl ImportRefKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ImportRefKind::Import => "import",
+            ImportRefKind::PathLiteral => "path_literal",
+            ImportRefKind::ManifestTarget => "manifest_target",
+            ImportRefKind::Ext(ext) => ext.tag,
+        }
+    }
 }
 
 /// One respelled literal: the bytes soopy's Replace writes.
@@ -2027,6 +2054,30 @@ pub trait Rehome: Source + Sync + Send {
     /// panic from an arm.
     fn plan_errors(&self, _cx: &MoveCx) -> Vec<String> {
         Vec::new()
+    }
+
+    /// The file name whose stem stands for its directory ("mod" for Rust,
+    /// "index" for TS). None: no directory-standing file in this language.
+    fn directory_stem(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// The names a batch can be reached by: every moved file's stem, plus the
+    /// directory name of a moved directory-standing file, which is the module
+    /// name a decl (or a directory-form specifier) spells.
+    fn moved_names(&self, cx: &MoveCx) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        for old in cx.moved().keys() {
+            if !crate::move_cx::owned_by(old, self) {
+                continue;
+            }
+            let own = crate::move_cx::stem(old);
+            if Some(own.as_str()) == self.directory_stem() {
+                names.insert(crate::move_cx::stem(crate::move_cx::dirname(old)));
+            }
+            names.insert(own);
+        }
+        names
     }
 }
 
