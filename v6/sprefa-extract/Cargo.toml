@@ -169,6 +169,20 @@ version = "4"
 features = ["derive"]
 optional = true
 
+# @comment-ok: build-vs-buy candidate table, the law this file's every dep
+# comment already carries.
+# The wall cap `extract move --verify` puts on its checker process. BIN-only
+# like clap. Deps libc alone, already in this lock, so it adds one crate; unix
+# side it blocks on SIGCHLD rather than polling. REJECTED: tokio::process +
+# timeout (an async runtime inside a crate whose header reads "Sync,
+# rayon-parallel ... No async"); subprocess 0.2 (a whole Popen reimplementation
+# for one wait, +2 crates); duct (no timeout API, its docs hand the caller a
+# reader thread); a std `try_wait` sleep loop (ten lines, but it trades a signal
+# for a poll interval and re-derives a tested wait).
+[dependencies.wait-timeout]
+version = "0.2"
+optional = true
+
 # The subscriber is BIN-only for the same reason clap is: a library that installs
 # a global subscriber steals the choice from whatever links it.
 [dependencies.tracing-subscriber]
@@ -177,7 +191,12 @@ features = ["env-filter", "json"]
 optional = true
 
 [features]
-cli = ["dep:clap", "dep:tracing-subscriber", "dep:hafley-observe"]
+cli = [
+    "dep:clap",
+    "dep:tracing-subscriber",
+    "dep:hafley-observe",
+    "dep:wait-timeout",
+]
 
 [[bin]]
 name = "extract"

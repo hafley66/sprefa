@@ -562,3 +562,196 @@ fn an_unmoved_file_writing_the_same_constructs_is_left_alone() {
 
     assert_eq!(read(&fixture.root, "tests/2_unmoved.test.ts"), before);
 }
+
+// ── --verify and its rollback ───────────────────────────────────────────────
+
+/// The batch door without the success assertion: a `--verify` run that rolls
+/// back exits 3, and a `--verify` without `--commit` exits 2.
+fn move_list_out(fixture: &Fixture, rows: &[(&str, &str)], extra: &[&str]) -> std::process::Output {
+    let list = fixture.state.join("moves.tsv");
+    let body: String = rows
+        .iter()
+        .map(|(old, new)| {
+            format!(
+                "{}\t{}\n",
+                fixture.root.join(old).display(),
+                fixture.root.join(new).display()
+            )
+        })
+        .collect();
+    std::fs::write(&list, body).unwrap();
+    Command::new(env!("CARGO_BIN_EXE_extract"))
+        .arg("move")
+        .arg("--list")
+        .arg(&list)
+        .arg("--root")
+        .arg(&fixture.root)
+        .arg("--state")
+        .arg(&fixture.state)
+        .args(extra)
+        .output()
+        .expect("extract binary runs")
+}
+
+/// The positional door without the success assertion, for the same reason.
+fn move_verb_out(fixture: &Fixture, extra: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_extract"))
+        .arg("move")
+        .arg(fixture.root.join("lib/b.pl"))
+        .arg(fixture.root.join("core/b.pl"))
+        .arg("--root")
+        .arg(&fixture.root)
+        .arg("--state")
+        .arg(&fixture.state)
+        .args(extra)
+        .output()
+        .expect("extract binary runs")
+}
+
+/// Every file under `root` as rel -> bytes, git's own store left out. Bytes
+/// rather than a digest: equality on this map IS byte-identity.
+fn tree_bytes(root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let mut out = std::collections::BTreeMap::new();
+    collect_bytes(root, root, &mut out);
+    out
+}
+
+fn collect_bytes(
+    root: &Path,
+    directory: &Path,
+    out: &mut std::collections::BTreeMap<String, Vec<u8>>,
+) {
+    for entry in std::fs::read_dir(directory).expect("read tree dir") {
+        let entry = entry.expect("tree entry");
+        if entry.file_name() == ".git" {
+            continue;
+        }
+        let path = entry.path();
+        if entry.file_type().expect("file type").is_dir() {
+            collect_bytes(root, &path, out);
+            continue;
+        }
+        let rel = path
+            .strip_prefix(root)
+            .expect("under root")
+            .to_string_lossy();
+        out.insert(
+            rel.into_owned(),
+            std::fs::read(&path).expect("read tree file"),
+        );
+    }
+}
+
+#[test]
+fn verify_true_keeps_the_committed_move() {
+    let fixture = fixture("verify_true");
+    let table = move_verb(&fixture, &["--commit", "--verify", "true"]);
+
+    assert!(table.contains("verify ok"), "table:\n{table}");
+    assert!(!fixture.root.join("lib/b.pl").exists());
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.join("a.pl")).unwrap(),
+        ":- module(a, [check/0]).\n:- use_module('core/b').\n\ncheck :- b_fact(1).\n"
+    );
+    loads_clean(&fixture.root);
+}
+
+/// The one fixture carrying all three rollback shapes at once: edits to respell,
+/// three moves to undo, and a directory the sweep removes.
+#[test]
+fn verify_false_rolls_the_tree_back_byte_identical() {
+    let fixture = fixture_tree("verify_false", "ts_move/paths");
+    let before = tree_bytes(&fixture.root);
+    let output = move_list_out(&fixture, &PATH_MOVES, &["--commit", "--verify", "false"]);
+    let table = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+
+    assert_eq!(output.status.code(), Some(3), "table:\n{table}");
+    assert!(
+        table.contains("rmdir tests/helpers"),
+        "the run this rolls back did remove the directory:\n{table}"
+    );
+    let line = table
+        .lines()
+        .find(|line| line.starts_with("verify failed"))
+        .unwrap_or_else(|| panic!("the failure is reported:\n{table}"));
+    let count: usize = line
+        .strip_prefix("verify failed (rc=1): rolled back ")
+        .and_then(|tail| tail.strip_suffix(" files"))
+        .unwrap_or_else(|| panic!("the failure names the rc and the count: {line}"))
+        .parse()
+        .expect("the count is a number");
+    assert!(count >= PATH_MOVES.len(), "every moved file counts: {line}");
+    assert_eq!(tree_bytes(&fixture.root), before, "every byte is back");
+    assert!(
+        fixture.root.join("tests/helpers").is_dir(),
+        "the directory the sweep removed is back"
+    );
+    assert!(
+        !fixture.root.join("tests/3_integration").exists(),
+        "the directory the moves minted is gone"
+    );
+    assert_eq!(git(&fixture.root, &["status", "--porcelain"]), "");
+}
+
+/// The shim is the one path a rollback DELETES, and it lands on the move's old
+/// path, so the moves back cannot run until it is gone.
+#[test]
+fn verify_false_deletes_the_shim_it_rolled_back() {
+    let fixture = fixture("verify_shim");
+    let before = tree_bytes(&fixture.root);
+    let output = move_verb_out(&fixture, &["--commit", "--shim", "--verify", "false"]);
+    let table = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+
+    assert_eq!(output.status.code(), Some(3), "table:\n{table}");
+    assert_eq!(
+        kind_count(&table, "create"),
+        1,
+        "a shim was written:\n{table}"
+    );
+    assert_eq!(tree_bytes(&fixture.root), before, "every byte is back");
+    assert!(
+        !fixture.root.join("core").exists(),
+        "the directory the move minted is gone"
+    );
+    assert_eq!(git(&fixture.root, &["status", "--porcelain"]), "");
+    loads_clean(&fixture.root);
+}
+
+#[test]
+fn verify_without_commit_is_an_error() {
+    let fixture = fixture("verify_no_commit");
+    let output = move_list_out(
+        &fixture,
+        &[("lib/b.pl", "core/b.pl")],
+        &["--verify", "true"],
+    );
+    let complaint = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+
+    assert_eq!(output.status.code(), Some(2), "complaint: {complaint}");
+    for flag in ["--verify", "--commit"] {
+        assert!(complaint.contains(flag), "{flag} is named: {complaint}");
+    }
+}
+
+#[test]
+fn dry_run_never_runs_verify() {
+    let fixture = fixture("verify_dry");
+    let output = move_list_out(
+        &fixture,
+        &[("lib/b.pl", "core/b.pl")],
+        &["--verify", "touch marker"],
+    );
+
+    let complaint = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+
+    assert_eq!(output.status.code(), Some(2), "complaint: {complaint}");
+    assert!(
+        !complaint.contains("unexpected argument"),
+        "the flag parses; the commit gate is what stops it: {complaint}"
+    );
+    assert!(
+        !fixture.root.join("marker").exists(),
+        "a dry run spawns no checker"
+    );
+    assert_eq!(git(&fixture.root, &["status", "--porcelain"]), "");
+}

@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use clap::Parser;
 use sprefa_extract::move_stage::{
@@ -12,8 +13,9 @@ use sprefa_extract::move_stage::{
 };
 use sprefa_extract::{
     directory_path, directory_source, dirname, normalize, rehome_for, rehomes, replace_action,
-    MoveCx, Respell,
+    source_rel, MoveCx, Respell,
 };
+use wait_timeout::ChildExt;
 
 const PRODUCER: &str = "extract-move";
 
@@ -40,6 +42,10 @@ struct MoveCli {
     /// Apply the plan to the real tree instead of dry running it.
     #[arg(long)]
     commit: bool,
+    /// Run this shell command in the root once the move commits. A non-zero
+    /// exit rolls every touched path back and ends the run at 3.
+    #[arg(long)]
+    verify: Option<String>,
     /// Leave a reexport shim behind at `old` instead of rewriting importers.
     #[arg(long)]
     shim: bool,
@@ -58,6 +64,11 @@ where
     I::Item: Into<std::ffi::OsString> + Clone,
 {
     let cli = MoveCli::try_parse_from(args).map_err(|error| error.to_string())?;
+    // Checked before anything is planned: a dry run that spawned the command
+    // would be a dry run with a side effect.
+    if cli.verify.is_some() && !cli.commit {
+        return Err("--verify runs its command after the move lands; pass --commit".to_string());
+    }
     let plan = Plan::build(&cli)?;
     let state = state_root(cli.state.as_deref())?;
 
@@ -74,6 +85,10 @@ where
     let emptied = emptied_directories(&plan.cx);
 
     if cli.commit {
+        let rollback = match cli.verify {
+            Some(_) => Some(Rollback::capture(&plan, &emptied)?),
+            None => None,
+        };
         for stage in &plan.stages {
             let (id, previews) =
                 stage_and_commit(&plan.root, &state, stage, soopy::Durability::Durable)?;
@@ -84,6 +99,9 @@ where
             std::fs::remove_dir(plan.cx.abs(directory))
                 .map_err(|error| format!("remove empty directory {directory}: {error}"))?;
             println!("rmdir {directory}");
+        }
+        if let (Some(command), Some(rollback)) = (cli.verify.as_deref(), rollback) {
+            verify(&plan, &state, command, rollback)?;
         }
     } else {
         let mirror = Mirror::build(&plan.root, &plan.stages)?;
@@ -238,6 +256,208 @@ fn respells(cx: &MoveCx) -> Result<Vec<Respell>, String> {
             .then(left.span.start.cmp(&right.span.start))
     });
     Ok(out)
+}
+
+// ── the verify checker and its rollback ─────────────────────────────────────
+
+/// The wall cap on a `--verify` command; v5 armed a watchdog over the same
+/// window (`src/lib.rs:445`). A hung checker must not hold the tree open.
+const VERIFY_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Run the checker over the committed tree. A pass returns; a failure restores
+/// every path the run touched and ends the process at 3.
+fn verify(plan: &Plan, state: &Path, command: &str, rollback: Rollback) -> Result<(), String> {
+    let Some(rc) = run_checker(&plan.root, command)? else {
+        println!("verify ok");
+        return Ok(());
+    };
+    let restored = rollback.restore(&plan.root, state).map_err(|error| {
+        format!("verify failed (rc={rc}) and the rollback did not complete: {error}")
+    })?;
+    println!("verify failed (rc={rc}): rolled back {restored} files");
+    std::process::exit(3);
+}
+
+/// `command` under `sh -c` in `root`, stdout and stderr inherited. None is a
+/// pass; Some carries the `rc=` spelling the failure reports.
+fn run_checker(root: &Path, command: &str) -> Result<Option<String>, String> {
+    let mut child = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(root)
+        .spawn()
+        .map_err(|error| format!("spawn verify command: {error}"))?;
+    let waited = child
+        .wait_timeout(VERIFY_TIMEOUT)
+        .map_err(|error| format!("wait for verify command: {error}"))?;
+    let Some(status) = waited else {
+        child
+            .kill()
+            .map_err(|error| format!("kill the timed-out verify command: {error}"))?;
+        let _ = child.wait();
+        return Ok(Some("timeout".to_string()));
+    };
+    Ok(match status.code() {
+        Some(0) => None,
+        Some(code) => Some(code.to_string()),
+        None => Some("signal".to_string()),
+    })
+}
+
+/// Every path a committed run touches, in its pre-run form. Captured BEFORE the
+/// stages commit: afterwards neither the old bytes nor the old locations exist.
+struct Rollback {
+    moves: Vec<(String, String)>,
+    /// Pre-run bytes, keyed by the path the file held before the run.
+    originals: BTreeMap<String, Vec<u8>>,
+    /// Paths the run writes from nothing, the shim among them.
+    created: Vec<String>,
+    /// Directories the sweep removed.
+    emptied: Vec<String>,
+    /// Directories the destinations mint, deepest first.
+    minted: Vec<String>,
+}
+
+impl Rollback {
+    fn capture(plan: &Plan, emptied: &[String]) -> Result<Self, String> {
+        let mut originals: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+        let mut created = Vec::new();
+        for stage in &plan.stages {
+            for action in stage {
+                if let soopy::SourceAction::Create { path, .. } = action {
+                    created.push(created_rel(path)?);
+                    continue;
+                }
+                let Some(rel) = source_rel(action) else {
+                    continue;
+                };
+                if originals.contains_key(rel) {
+                    continue;
+                }
+                let bytes = std::fs::read(plan.root.join(rel))
+                    .map_err(|error| format!("read {rel} before the verify run: {error}"))?;
+                originals.insert(rel.to_string(), bytes);
+            }
+        }
+        let minted = minted_directories(&plan.root, &plan.moves, &created);
+        Ok(Self {
+            moves: plan.moves.clone(),
+            originals,
+            created,
+            emptied: emptied.to_vec(),
+            minted,
+        })
+    }
+
+    /// Undo a committed run and answer how many paths it put back. Never
+    /// `git checkout`: the move root need not be a git tree.
+    fn restore(&self, root: &Path, state: &Path) -> Result<usize, String> {
+        for directory in &self.emptied {
+            std::fs::create_dir_all(root.join(directory))
+                .map_err(|error| format!("recreate {directory}: {error}"))?;
+        }
+        let identity = soopy::SourceRoot::open_directory(root)
+            .map_err(|error| format!("open root {}: {error}", root.display()))?
+            .directory()
+            .identity
+            .clone();
+
+        let mut deletes = Vec::with_capacity(self.created.len());
+        for rel in &self.created {
+            deletes.push(soopy::SourceAction::Delete {
+                source: directory_source(&identity, rel),
+                expected: content_id(root, rel)?,
+            });
+        }
+        let mut moves = Vec::with_capacity(self.moves.len());
+        for (old, new) in &self.moves {
+            moves.push(soopy::SourceAction::Move {
+                source: directory_source(&identity, new),
+                expected: content_id(root, new)?,
+                destination: directory_path(old),
+            });
+        }
+        // Order is forced twice: the shim sits on a move's old path, and a moved
+        // file only reaches its old path once the Move stage has committed.
+        for stage in [deletes, moves] {
+            if stage.is_empty() {
+                continue;
+            }
+            stage_and_commit(root, state, &stage, soopy::Durability::Durable)?;
+        }
+
+        let producer = soopy::ActionProducer::unordered(PRODUCER);
+        let mut replaces = Vec::new();
+        for (rel, bytes) in &self.originals {
+            let current = std::fs::read(root.join(rel))
+                .map_err(|error| format!("read {rel} during the rollback: {error}"))?;
+            if current == *bytes {
+                continue;
+            }
+            let source = directory_source(&identity, rel);
+            replaces.push(soopy::SourceAction::Replace {
+                expected: soopy::ContentId::blake3(&current),
+                edits: vec![soopy::TextEdit {
+                    range: soopy::ActionSpan {
+                        source: source.clone(),
+                        start: 0,
+                        end: current.len() as u64,
+                    },
+                    replacement: bytes.clone(),
+                    producer: producer.clone(),
+                }],
+                source,
+            });
+        }
+        if !replaces.is_empty() {
+            stage_and_commit(root, state, &replaces, soopy::Durability::Durable)?;
+        }
+
+        // A minted directory the rollback emptied goes too. One the checker
+        // itself wrote into stays, so whatever it left survives to be read.
+        for directory in &self.minted {
+            let path = root.join(directory);
+            if empty_directory(&path) {
+                std::fs::remove_dir(&path)
+                    .map_err(|error| format!("remove minted directory {directory}: {error}"))?;
+            }
+        }
+
+        let mut touched: BTreeSet<&str> = self.originals.keys().map(String::as_str).collect();
+        touched.extend(self.moves.iter().map(|(old, _)| old.as_str()));
+        touched.extend(self.created.iter().map(String::as_str));
+        Ok(touched.len())
+    }
+}
+
+fn empty_directory(path: &Path) -> bool {
+    std::fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_none())
+}
+
+/// The root-relative path a Create writes.
+fn created_rel(path: &soopy::SourcePath) -> Result<String, String> {
+    match path {
+        soopy::SourcePath::Directory { path } => Ok(path.0.to_string()),
+        soopy::SourcePath::Git { path } => Err(format!("a move plans no git Create: {}", path.0)),
+    }
+}
+
+/// Directories this run's destinations need that the pre-run tree does not
+/// hold, deepest first so a parent is tried after the children it holds.
+fn minted_directories(root: &Path, moves: &[(String, String)], created: &[String]) -> Vec<String> {
+    let mut minted: BTreeSet<String> = BTreeSet::new();
+    let destinations = moves
+        .iter()
+        .map(|(_, new)| new.as_str())
+        .chain(created.iter().map(String::as_str));
+    for rel in destinations {
+        let mut probe = dirname(rel);
+        while !probe.is_empty() && !root.join(probe).is_dir() {
+            minted.insert(probe.to_string());
+            probe = dirname(probe);
+        }
+    }
+    minted.into_iter().rev().collect()
 }
 
 // ── the emptied-directory sweep ─────────────────────────────────────────────
