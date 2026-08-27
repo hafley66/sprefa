@@ -54,3 +54,8 @@ resulting formatting in that commit.
 CI means build, compile, and test execution. Report whether new work adds,
 changes, or removes CI coverage. Do not report formatter or linter status.
 Report only current results; omit stale, previous, and baseline-matching data.
+
+## Issues (issuectl)
+
+`issues/` edits made by `issuectl` commit directly on `main`. No branch, no
+PR, no lane for an issue change. Push after committing.
