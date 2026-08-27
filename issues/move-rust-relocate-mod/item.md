@@ -24,18 +24,17 @@ decl into the module owning the destination directory, inserts it sorted among
 that file's own `mod` items, and respells every `crate::` / `super::` / `self::`
 / bare path in the crate through module-path arithmetic on the file layout.
 
+The missing-parent case answers through `Rehome::plan_errors` (PR #500), which
+stops the run before `import_refs` is ever asked: `rust: --relocate-mod: ... has
+no parent module file (expected src/nope.rs or src/nope/mod.rs)`, exit 2, tree
+clean.
+
 Receipts: `tests/3_move_rust.rs` 12 pass / 1 ignored; the fixture's own
 `cargo check` is green in-test; `cargo check --features cli` green after
 relocating this crate's `src/lang/ts_resolve.rs` into `src/lang/prolog/`.
 
 ## Left open
 
-- **The named error is a `panic!`.** `Rehome::respell` returns
-  `Option<Respell>` and `import_refs` returns `Vec<ImportRef>`, so an arm has
-  no channel to end a run. The missing-parent case ends the process before any
-  stage is built (no partial edit), but the message wears a panic frame.
-  `respell -> Result<Option<Respell>, String>` (or a `Rehome::plan_errors`
-  method) in `types.rs` would make it a plain `Plan::build` error.
 - A decl carrying `#[path]`, or one inside an inline `mod x { .. }`, falls back
   to the default `#[path]` arm: both spell a module tree the file layout does
   not, and the arithmetic reads layout.

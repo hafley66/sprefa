@@ -167,6 +167,10 @@ impl Rehome for RustSource {
         })
     }
 
+    fn plan_errors(&self, cx: &MoveCx) -> Vec<String> {
+        relocate_plan(cx).errors.clone()
+    }
+
     fn manifests(&self, cx: &MoveCx) -> Vec<String> {
         cx.files()
             .iter()
@@ -745,8 +749,10 @@ struct RelocateEdit {
 struct RelocatePlan {
     /// Moved files whose decl this strategy owns, so the `#[path]` arm drops them.
     relocated: BTreeSet<String>,
-    /// Keyed by (file, offset), which is exactly the key `0_move.rs:267` claims.
+    /// Keyed by (file, offset), which is exactly the key `0_move.rs` claims.
     edits: BTreeMap<(String, u32), RelocateEdit>,
+    /// Reasons this batch cannot be planned, answered by `Rehome::plan_errors`.
+    errors: Vec<String>,
 }
 
 /// The plan, built once per root per process. A run carries ONE batch, so the
@@ -785,13 +791,18 @@ fn build_relocate_plan(cx: &MoveCx) -> RelocatePlan {
             let Some(target) = resolve_decl(cx, roots, rel, decl) else {
                 continue;
             };
-            let Some(relocation) = plan_relocation(cx, roots, rel, text, decl, &target) else {
-                continue;
-            };
-            moves.insert(target, relocation);
+            match plan_relocation(cx, roots, rel, text, decl, &target) {
+                Ok(Some(relocation)) => {
+                    moves.insert(target, relocation);
+                }
+                Ok(None) => {}
+                Err(reason) => plan.errors.push(reason),
+            }
         }
     }
-    if moves.is_empty() {
+    // A batch this arm cannot plan whole is planned not at all: `plan_errors`
+    // stops the run before `import_refs` is ever asked.
+    if moves.is_empty() || !plan.errors.is_empty() {
         return plan;
     }
     plan.relocated = moves.keys().cloned().collect();
@@ -951,24 +962,28 @@ fn plan_relocation(
     parent_text: &str,
     decl: &ModDecl,
     target: &str,
-) -> Option<Relocation> {
-    let new_target = cx.destination(target)?;
-    let (_, old_path) = module_path(target, roots)?;
+) -> Result<Option<Relocation>, String> {
+    let Some(new_target) = cx.destination(target) else {
+        return Ok(None);
+    };
+    let Some((_, old_path)) = module_path(target, roots) else {
+        return Ok(None);
+    };
     let Some((root, new_path)) = module_path(new_target, roots) else {
-        no_parent_module(target, new_target, &[]);
+        return Err(no_parent_module(target, new_target, &[]));
     };
     if old_path.is_empty() || new_path.is_empty() {
-        return None;
+        return Ok(None);
     }
     if old_path[..old_path.len() - 1] == new_path[..new_path.len() - 1] {
-        return None;
+        return Ok(None);
     }
     let candidates = parent_files(&root, &new_path[..new_path.len() - 1]);
     let Some((edit_at, lands_at)) = candidates
         .iter()
         .find_map(|candidate| editable(cx, candidate).map(|pre| (pre, candidate.clone())))
     else {
-        no_parent_module(target, new_target, &candidates);
+        return Err(no_parent_module(target, new_target, &candidates));
     };
     let aim = match natural_paths(&module_dir(&lands_at, roots), &decl.name)
         .contains(&new_target.to_string())
@@ -979,8 +994,10 @@ fn plan_relocation(
             relative_between(dirname(&lands_at), new_target)
         ),
     };
-    let (span, text) = whole_lines(parent_text, decl.item)?;
-    Some(Relocation {
+    let Some((span, text)) = whole_lines(parent_text, decl.item) else {
+        return Ok(None);
+    };
+    Ok(Some(Relocation {
         name: decl.name.clone(),
         old_path,
         new_path,
@@ -990,20 +1007,20 @@ fn plan_relocation(
         decl_text: text,
         vis: decl.vis.clone(),
         aim,
-    })
+    }))
 }
 
 /// The decl goes into the module owning the destination directory; with no file
-/// for that module there is nowhere to write it, so the run ends before any stage.
-fn no_parent_module(target: &str, new_target: &str, candidates: &[String]) -> ! {
+/// for that module there is nowhere to write it.
+fn no_parent_module(target: &str, new_target: &str, candidates: &[String]) -> String {
     let named = match candidates.is_empty() {
         true => "the destination sits under no crate root".to_string(),
         false => format!("expected {}", candidates.join(" or ")),
     };
-    panic!(
+    format!(
         "--relocate-mod: {target} -> {new_target} has no parent module file ({named}); \
          create one in the same batch or drop --relocate-mod"
-    );
+    )
 }
 
 /// The replacement one written path run asks for: the target it names, the bytes
