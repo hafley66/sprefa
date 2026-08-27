@@ -1710,6 +1710,7 @@ dependencies = [
  "clap",
  "gomod-parser",
  "hafley-observe",
+ "ignore",
  "memchr",
  "oxc_allocator",
  "oxc_ast",

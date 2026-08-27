@@ -24,6 +24,8 @@ use std::marker::PhantomData;
 use ast_grep_core::tree_sitter::LanguageExt;
 use serde::Serialize;
 
+use crate::move_cx::MoveCx;
+
 pub use soopy::ContentId;
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1941,6 +1943,67 @@ pub trait Source: Sync + Send {
     /// One parse per backing engine, masked projections. Owns the arena(s)
     /// internally; returns owned output (no borrowed parse crosses the seam).
     fn extract(&self, path: &str, content: &[u8], mask: FamilyMask) -> ExtractOutput;
+}
+
+// ── the Rehome seam: what one language answers when a file moves ────────────
+
+/// One import-shaped reference a move respells. `literal` and `text` cover it
+/// AS WRITTEN, quotes included: a respell reproduces the quote style.
+pub struct ImportRef {
+    /// Project-relative path of the file that writes the reference.
+    pub importer: String,
+    pub literal: Span,
+    /// The bytes `literal` spans.
+    pub text: String,
+    /// Project-relative path the reference names, pre-move.
+    pub target: String,
+    /// `"import"` | `"path_literal"` | `"manifest_target"` | a language's own.
+    pub kind: &'static str,
+}
+
+/// One respelled literal: the bytes soopy's Replace writes.
+pub struct Respell {
+    pub file: String,
+    pub span: Span,
+    pub text: String,
+    /// The stdout line this respell reports itself with. soopy's own preview
+    /// covers a staged edit, so only a report a preview does not carry is set.
+    pub receipt: Option<String>,
+}
+
+/// What one language answers when a file it owns moves. Held `&'static` in the
+/// `rehomes()` roster beside `sources()`; one impl per language, no mutable state.
+pub trait Rehome: Source + Sync + Send {
+    /// Every reference this language owns that `cx`'s batch can reach, one parse
+    /// per file. Batch-gated: a resolver call is a syscall per specifier.
+    fn import_refs(&self, cx: &MoveCx) -> Vec<ImportRef>;
+
+    /// The literal text for `reference` once `cx`'s batch lands (importer AND
+    /// target may both move). None = unchanged.
+    fn respell(&self, cx: &MoveCx, reference: &ImportRef) -> Option<Respell>;
+
+    /// The manifest carriers this language owns (package.json, Cargo.toml),
+    /// project-relative, in path order.
+    fn manifests(&self, _cx: &MoveCx) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Manifest targets, as `ImportRef`s of kind `"manifest_target"`, so one
+    /// `respell` arm handles them too.
+    fn manifest_refs(&self, _cx: &MoveCx) -> Vec<ImportRef> {
+        Vec::new()
+    }
+
+    /// A reexport shim left at the old path, when this language has one.
+    fn shim(&self, _cx: &MoveCx, _old: &str, _new: &str) -> Option<String> {
+        None
+    }
+
+    /// Extra `(old, new)` spellings of one move that this language's build
+    /// output wears, for the `--text-refs` report to scan plain text for.
+    fn text_spellings(&self, _cx: &MoveCx, _old: &str, _new: &str) -> Vec<(String, String)> {
+        Vec::new()
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

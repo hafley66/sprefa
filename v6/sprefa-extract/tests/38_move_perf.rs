@@ -94,7 +94,7 @@ fn spans(fixture: &Fixture) -> String {
         .arg(&fixture.root)
         .arg("--state")
         .arg(&fixture.state)
-        .env("RUST_LOG", "extract=debug")
+        .env("RUST_LOG", "extract=debug,sprefa_extract=debug")
         .env_remove("DL_TRACE_SUMMARY")
         .env_remove("HAFLEY_LOG_FORMAT")
         .output()
