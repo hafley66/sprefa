@@ -50,6 +50,9 @@ oxc_ast = "0.135"
 oxc_ast_visit = "0.135"
 oxc_span = "0.135"
 oxc_syntax = "0.135"
+# The exact identifier spans `extract rename` needs. Default features empty; +1
+# crate, candidates measured in plans/2026-08-27-extract-rename.PLAN.md:222-251.
+oxc_semantic = "0.135"
 # @comment-ok: build-vs-buy candidate table, the law every dep comment here carries.
 # The ESM/CJS + tsconfig resolution algorithm the `move` verb needs: extension
 # aliases (`./x.js` naming `x.ts`), `index`, package `exports`/`main`, tsconfig

@@ -30,6 +30,7 @@ pub mod move_cx;
 pub mod move_scip;
 pub mod move_stage;
 pub mod project;
+pub mod rename_cx;
 pub mod rows;
 pub mod schema;
 pub mod scip;
@@ -68,11 +69,11 @@ pub use family::{
 pub use lang::{
     build_paths, compiled_spellings, decode_ast_rule_yaml, dl6_db_path, open_dl6_readonly,
     open_readonly, query_ast_rule, query_ast_rule_with_content, query_patterns, rehome_for,
-    rehomes, respell, source_for, sources, ts_specifiers, AstCaptureFact, AstPatternQuery, AstRule,
-    AstRuleCapture, AstRuleError, AstRuleMatch, AstRuleMutationProposal, AstRuleRequest,
-    AstgrepSource, BuildPaths, DataSource, DlSource, ExtractLang, FactError, FactMatcher, FactSet,
-    GoSource, KotlinSource, MarkdownSource, NamedAstRule, PrologSource, PythonSource, RustSource,
-    StopBy, TsResolver, TsSource, TsSpecifier, DL6_DB_RELATIVE_PATH,
+    rehomes, rename_for, renames, respell, source_for, sources, ts_specifiers, AstCaptureFact,
+    AstPatternQuery, AstRule, AstRuleCapture, AstRuleError, AstRuleMatch, AstRuleMutationProposal,
+    AstRuleRequest, AstgrepSource, BuildPaths, DataSource, DlSource, ExtractLang, FactError,
+    FactMatcher, FactSet, GoSource, KotlinSource, MarkdownSource, NamedAstRule, PrologSource,
+    PythonSource, RustSource, StopBy, TsResolver, TsSource, TsSpecifier, DL6_DB_RELATIVE_PATH,
 };
 pub use manifests::{
     fold_package_edges, package_edges, package_edges_jsonl, Manifest, ManifestKind,
@@ -88,6 +89,7 @@ pub use project::{
     FsBlobSource, ProjectError, ResolveArm, ResolveArms, ResolveRequest, ScipFamilyRequest,
     ScipMode, SourceTreeBlobSource, RESOLVE_ARMS,
 };
+pub use rename_cx::{RenameCx, RenameRequest};
 pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{
     byte_range, copy_sources, definition_of, join_documents, site_occurrence, Fallback,
@@ -116,7 +118,10 @@ pub use soopy::{
     SourceEntry, SourceRef,
 };
 pub use source::{ExtractOutput, FamilyMask, Source};
-pub use types::{CfgEdgeKind, CfgF, CfgNodeKind, ImportRef, ImportRefKind, Rehome, Respell};
+pub use types::{
+    CfgEdgeKind, CfgF, CfgNodeKind, ImportRef, ImportRefKind, RefRole, Rehome, Rename, RenameStop,
+    Respell, SymbolRef,
+};
 pub use wire::{
     file_fact, flatten, flatten_cfg, flatten_flow, flatten_jsonl, flatten_scip, scip_file_edges,
     FlatFact, SpanOut, SCHEMA,
