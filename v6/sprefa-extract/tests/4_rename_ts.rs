@@ -22,6 +22,10 @@
 //!         (the stop reported one seat per run)
 //!     tsc_is_clean_on_the_committed_tree ... committed tree failed tsc:
 //!         src/a.ts(1,10): error TS2724: '"./lib"' has no exported member named 'Foo'.
+//! FAIL-FIRST (arc 4), against the arc-3 binary:
+//!     text_refs_reports_the_string_and_the_readme ... exited 2: error: unexpected
+//!         argument '--text-refs' found
+//!     text_refs_never_writes ... exited 2: error: unexpected argument '--text-refs' found
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -419,6 +423,78 @@ fn dry_run_prints_per_file_counts() {
         "dry-run stage line missing:\n{stdout}"
     );
     assert_untouched(&fixture, EXPORTS);
+}
+
+// ── arc 4: the --text-refs report ───────────────────────────────────────────
+
+/// The line of README.md's prose mention, read from the before tree so the
+/// test never hardcodes a number the fixture prose owns.
+fn readme_mention_line(case: &str) -> usize {
+    let text = std::fs::read_to_string(tree(case, "before").join("README.md")).expect("readme");
+    1 + text
+        .lines()
+        .position(|line| line.contains("Foo"))
+        .expect("Foo mention in README")
+}
+
+/// `--text-refs` reports exactly the two text carriers the plan never touches:
+/// the `"Foo"` string in src/e.ts and README's prose mention. Every line the
+/// plan rewrites is excluded, so lib.ts's `makeFoo`, whose name carries `Foo`
+/// as a substring, never becomes a row.
+#[test]
+fn text_refs_reports_the_string_and_the_readme() {
+    let fixture = fixture(EXPORTS, "textrefs");
+    let stdout = rename_verb(
+        &fixture,
+        &format!("{EXPORTS_ANCHOR}#Foo"),
+        "Baz",
+        &["--text-refs"],
+    );
+    let rows: Vec<String> = stdout
+        .lines()
+        .filter(|line| line.starts_with("text-ref "))
+        .map(str::to_string)
+        .collect();
+    let expected = vec![
+        format!(
+            "text-ref README.md:{} Foo -> Baz",
+            readme_mention_line(EXPORTS)
+        ),
+        "text-ref src/e.ts:1 \"Foo\" -> \"Baz\"".to_string(),
+    ];
+    assert_eq!(rows, expected, "exactly the two text carriers:\n{stdout}");
+    assert_untouched(&fixture, EXPORTS);
+}
+
+/// `--commit --text-refs` still writes exactly the plan: the report names the
+/// carriers and rewrites nothing, so src/e.ts and README.md stay byte-identical
+/// to `before/` and the committed tree matches `after/` with zero entries.
+#[test]
+fn text_refs_never_writes() {
+    let fixture = fixture(EXPORTS, "textrefs_commit");
+    rename_verb(
+        &fixture,
+        &format!("{EXPORTS_ANCHOR}#Foo"),
+        "Baz",
+        &["--commit", "--text-refs"],
+    );
+    let entries = diff_rq(&fixture.root, &tree(EXPORTS, "after"));
+    assert!(
+        entries.is_empty(),
+        "the report changed the committed tree:\n{}",
+        entries.join("\n")
+    );
+}
+
+/// Without `--text-refs` the report is silent.
+#[test]
+fn without_the_flag_no_text_ref_rows() {
+    let fixture = fixture(EXPORTS, "textrefs_off");
+    let stdout = rename_verb(&fixture, &format!("{EXPORTS_ANCHOR}#Foo"), "Baz", &[]);
+    assert!(
+        !stdout.contains("text-ref"),
+        "no text-ref row without the flag:\n{stdout}"
+    );
 }
 
 /// The committed tree still typechecks. `diff -rq` judges the bytes; only the

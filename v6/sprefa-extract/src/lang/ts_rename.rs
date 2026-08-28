@@ -95,6 +95,10 @@ impl Rename for TsSource {
             receipt: None,
         })
     }
+
+    fn text_spellings(&self, _cx: &RenameCx, request: &RenameRequest) -> Vec<(String, String)> {
+        vec![(request.old.clone(), request.new.clone())]
+    }
 }
 
 fn not_found(request: &RenameRequest) -> RenameStop {
@@ -108,11 +112,7 @@ fn not_found(request: &RenameRequest) -> RenameStop {
 /// between declarations, the nearest declaration opening at or before it wins,
 /// so an offset anywhere inside a declaration body still selects it. `None`
 /// means the caller reports every candidate as ambiguous.
-fn select_by_at(
-    scoping: &Scoping,
-    candidates: &[SymbolId],
-    at: Option<u32>,
-) -> Option<SymbolId> {
+fn select_by_at(scoping: &Scoping, candidates: &[SymbolId], at: Option<u32>) -> Option<SymbolId> {
     let at = at?;
     let inside: Vec<SymbolId> = candidates
         .iter()
@@ -212,12 +212,7 @@ fn importer_refs(cx: &RenameCx, request: &RenameRequest) -> Vec<SymbolRef> {
 
 /// One importer's seats for `name`, over the import and re-export clauses whose
 /// module specifier sits at one of `sources`.
-fn importer_seats(
-    cx: &RenameCx,
-    rel: &str,
-    sources: &BTreeSet<u32>,
-    name: &str,
-) -> ImporterSeats {
+fn importer_seats(cx: &RenameCx, rel: &str, sources: &BTreeSet<u32>, name: &str) -> ImporterSeats {
     let mut out = ImporterSeats {
         refs: Vec::new(),
         exports: Vec::new(),

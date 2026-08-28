@@ -4,7 +4,7 @@
 //! nothing in this file names one.
 //! @comment-ok: module header, the seam list every bin arm opens with
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -79,6 +79,9 @@ struct RenameCli {
     /// Apply the plan to the real tree instead of dry running it.
     #[arg(long)]
     commit: bool,
+    /// Report the old-name spellings this rename leaves behind in plain text.
+    #[arg(long = "text-refs")]
+    text_refs: bool,
 }
 
 pub fn run<I>(args: I) -> Result<(), RenameError>
@@ -122,6 +125,11 @@ where
             }
         }
     }
+    if cli.text_refs {
+        for request in plan.cx.batch() {
+            crate::move_text::report_rename(&plan.cx, request, &plan.rewritten);
+        }
+    }
     Ok(())
 }
 
@@ -133,6 +141,9 @@ struct Plan {
     /// One occurrence list per `cx.batch()` row, in batch order.
     refs: Vec<Vec<SymbolRef>>,
     stages: Vec<Vec<soopy::SourceAction>>,
+    /// Every (file, line) a staged edit rewrites; the text-refs scan leaves
+    /// those lines alone.
+    rewritten: BTreeSet<(String, usize)>,
     receipts: Vec<String>,
 }
 
@@ -163,6 +174,7 @@ impl Plan {
 
         let mut receipts = Vec::new();
         let respells = respells(&cx, &refs, &mut receipts)?;
+        let rewritten = rewritten_lines(&cx, &respells)?;
         let identity = soopy::SourceRoot::open_directory(&root)
             .map_err(|error| plan_error(format!("open root {}: {error}", root.display())))?
             .directory()
@@ -204,9 +216,33 @@ impl Plan {
             cx,
             refs,
             stages,
+            rewritten,
             receipts,
         })
     }
+}
+
+/// Every (file, line) one respell rewrites. A respell never carries a newline,
+/// so the line numbers hold across the staged write and the post-commit scan.
+fn rewritten_lines(
+    cx: &RenameCx,
+    respells: &[Respell],
+) -> Result<BTreeSet<(String, usize)>, RenameError> {
+    let mut lines = BTreeSet::new();
+    for respell in respells {
+        let text = cx
+            .text(&respell.file)
+            .ok_or_else(|| plan_error(format!("read {}", respell.file)))?;
+        let prefix = text.get(..respell.span.start as usize).ok_or_else(|| {
+            plan_error(format!(
+                "{} byte {} is outside the file",
+                respell.file, respell.span.start
+            ))
+        })?;
+        let line = 1 + prefix.bytes().filter(|byte| *byte == b'\n').count();
+        lines.insert((respell.file.clone(), line));
+    }
+    Ok(lines)
 }
 
 /// Occurrence counts per file for one symbol, in path order.
