@@ -136,7 +136,7 @@ pub fn rehome_for(path: &str) -> Option<&'static RehomeArm> {
 /// The `Rename` roster, in `sources()` order. Membership is "has a scope plane
 /// with exact identifier spans", a different question from `rehomes()`'s.
 pub fn renames() -> &'static [&'static dyn Rename] {
-    &[&TsSource, &RustSource, &KotlinSource]
+    &[&TsSource, &RustSource, &KotlinSource, &PrologSource]
 }
 
 /// The `Rename` that owns `path`, under the SAME first-match law `rehome_for`
