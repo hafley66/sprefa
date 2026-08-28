@@ -59,3 +59,9 @@ Read-only checks. Run no suite.
 
 Hail the parent when a choice changes source syntax or semantic identity and
 two coherent options remain after inspecting prior decisions.
+
+## Agent Runs
+
+### 2026-08-28T04:21:05Z · @codex-v7
+
+2026-08-28: spawned Boop lane chore-dl7-kernel-contract at base a8bcda72c with preset sol/high. Expected report v7/3_TASKS/results/0_KERNEL_CONTRACT.md and at least one commit.

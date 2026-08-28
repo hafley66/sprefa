@@ -1,6 +1,6 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-28, Sol contract launch
+Updated: 2026-08-28, Sol contract running
 
 ## Current state
 
@@ -26,7 +26,9 @@ Updated: 2026-08-28, Sol contract launch
 ## Active
 
 - `@dl7-kernel-contract` is `in-progress`.
-- Launch Sol from the next local main commit containing this status update.
+- Boop lane `chore-dl7-kernel-contract` is running Sol/high from base
+  `a8bcda72c`.
+- Expected output: `v7/3_TASKS/results/0_KERNEL_CONTRACT.md` plus one commit.
 
 ## Hitches
 
