@@ -43,7 +43,7 @@ fn stop_error(stop: RenameStop) -> RenameError {
         RenameStop::Ambiguous { .. } => 3,
         RenameStop::NotFound { .. } => 4,
         RenameStop::Inexact { .. } => 5,
-        RenameStop::Dynamic { .. } => 6,
+        RenameStop::Dynamic(..) => 6,
     };
     RenameError {
         message: stop.to_string(),

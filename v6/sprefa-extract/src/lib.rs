@@ -120,7 +120,7 @@ pub use soopy::{
 pub use source::{ExtractOutput, FamilyMask, Source};
 pub use types::{
     CfgEdgeKind, CfgF, CfgNodeKind, ImportRef, ImportRefKind, RefRole, Rehome, Rename, RenameStop,
-    Respell, SymbolRef,
+    Respell, SymbolRef, SymbolSeat,
 };
 pub use wire::{
     file_fact, flatten, flatten_cfg, flatten_flow, flatten_jsonl, flatten_scip, scip_file_edges,
