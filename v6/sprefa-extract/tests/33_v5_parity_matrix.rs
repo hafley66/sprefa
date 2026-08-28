@@ -25,9 +25,9 @@
 //!  3. ORACLE COVERAGE, enforced against the LIVE roster. Every `Source` in
 //!     `sources()` sits in exactly one of two lists: it is graded against a
 //!     captured v5 oracle, or it is v6-only with a written reason. A new
-//!     `Source` belongs to neither until someone says which, so registering
-//!     `PythonSource` (the one open language gap, @extract-python-arm) cannot
-//!     land without either a captured oracle or a stated waiver.
+//!     `Source` belongs to neither until someone says which, so a new arm
+//!     cannot land without either a captured oracle or a stated waiver
+//!     (`PythonSource` landed graded: `tests/fixtures/python/*.v5.jsonl`).
 //!
 //! SABOTAGE RECEIPTS (all three run 2026-08-21, all three red, then reverted):
 //!  - renaming `df_lit` to `df_literal` in one MATRIX row -> legs 1 and 2 red,
@@ -239,6 +239,7 @@ const V5_ORACLE_LANGS: &[(&str, &str)] = &[
     ("ts", "ts"),
     ("go", "go"),
     ("kotlin", "kotlin"),
+    ("python", "python"),
 ];
 
 /// Languages with NO v5 twin, each with the reason written down.

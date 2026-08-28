@@ -12,7 +12,7 @@
 //!           df_field, df_lit, const_value} — v6 emits these; the test ASSERTS
 //!           their set equals v5's (empty diff = gold). Const entities flow as
 //!           `type_node` kind=const; `const_value` is the resolved-string rows.
-//!   PORTED for ts + go + rust {type_edge} — phase-2 rows: `Resolve<TypeF>`
+//!   PORTED for ts + go + rust + python {type_edge} — phase-2 rows: `Resolve<TypeF>`
 //!           over the fixture corpus, twin-normalized to the oracle's text
 //!           shape (per-lang tests below: 4b-iii ts, 4d-i-go go, 4d-i-rust).
 //!   PORTED for rust {doc} — `rust_doc_parity` below asserts it; the ts, go
@@ -34,7 +34,7 @@ use sprefa_extract::{
     build_def_index, byte_range, containing_def_site, content_id_of, covering_def, definition_of,
     dispatch, flatten, join_documents, site_occurrence, CallEdgeKind, ContentId, ExtractOutput,
     FamilyMask, FamilyTag, FileSet, FlatFact, GoSource, IndexBag, ManifestMap, ProjectCx,
-    ProjectDigest, Resolve, RustSource, ScipGo, ScipRust, ScipSource, ScipTypescript, Span,
+    ProjectDigest, PythonSource, Resolve, RustSource, ScipGo, ScipRust, ScipSource, ScipTypescript, Span,
     TsSource, TypeF, ZERO_CONTENT_ID,
 };
 
@@ -107,6 +107,27 @@ const CASES: &[Case] = &[
         fixture: include_bytes!("fixtures/go/docs.go"),
         baseline: include_str!("fixtures/go/docs.v5.jsonl"),
         fixture_dir: "go",
+    },
+    Case {
+        name: "sample",
+        path: "v6/sprefa-extract/tests/fixtures/python/sample.py",
+        fixture: include_bytes!("fixtures/python/sample.py"),
+        baseline: include_str!("fixtures/python/sample.v5.jsonl"),
+        fixture_dir: "python",
+    },
+    Case {
+        name: "docs",
+        path: "v6/sprefa-extract/tests/fixtures/python/docs.py",
+        fixture: include_bytes!("fixtures/python/docs.py"),
+        baseline: include_str!("fixtures/python/docs.v5.jsonl"),
+        fixture_dir: "python",
+    },
+    Case {
+        name: "flow",
+        path: "v6/sprefa-extract/tests/fixtures/python/flow.py",
+        fixture: include_bytes!("fixtures/python/flow.py"),
+        baseline: include_str!("fixtures/python/flow.v5.jsonl"),
+        fixture_dir: "python",
     },
     Case {
         name: "go_edges",
@@ -570,6 +591,62 @@ fn type_edge_resolve_parity_go() {
     });
 }
 
+/// Python type_edge PARITY: the go test above on the python cases, via
+/// `PythonSource::type_edge_candidates` (impl/field/param/returns/uses).
+#[test]
+fn type_edge_resolve_parity_python() {
+    with_resolve_cx(|cx, corpus| {
+        for (_blob, out, case) in corpus {
+            if case.fixture_dir != "python" {
+                continue;
+            }
+            let edges = Resolve::<TypeF>::resolve(&PythonSource, out, cx);
+            let candidates = PythonSource::type_edge_candidates(out);
+            let mut v6: BTreeSet<String> = edges
+                .iter()
+                .zip(candidates.iter())
+                .map(|(_edge, cand)| {
+                    format!(
+                        "type_edge\t{}\t{}\t{}",
+                        owner_name(out, cand.owner),
+                        out.strings.lookup(cand.to),
+                        cand.kind.as_str()
+                    )
+                })
+                .collect();
+            if edges.len() != candidates.len() {
+                v6.insert(format!(
+                    "ZIP_MISMATCH edges={} candidates={}",
+                    edges.len(),
+                    candidates.len()
+                ));
+            }
+            let v5: BTreeSet<String> = case
+                .baseline
+                .lines()
+                .filter(|line| facet_of(line) == "type_edge")
+                .map(str::to_owned)
+                .collect();
+            let only_v5: Vec<&String> = v5.difference(&v6).collect();
+            let only_v6: Vec<&String> = v6.difference(&v5).collect();
+            assert!(
+                only_v5.is_empty() && only_v6.is_empty(),
+                "[{}] type_edge parity diff vs v5 oracle:\n  missing from v6 ({}):\n{}\n  only in v6 ({}):\n{}",
+                case.name,
+                only_v5.len(),
+                only_v5.iter().map(|s| format!("    {s}")).collect::<Vec<_>>().join("\n"),
+                only_v6.len(),
+                only_v6.iter().map(|s| format!("    {s}")).collect::<Vec<_>>().join("\n"),
+            );
+            eprintln!(
+                "[{}] type_edge parity: {} rows compared, 0 divergence",
+                case.name,
+                v5.len()
+            );
+        }
+    });
+}
+
 /// Rust type_edge PARITY (4d-i-rust): the ts test above, on the rust cases —
 /// `Resolve<TypeF>` over the fixture corpus, twin-normalized to the oracle's
 /// text shape via `RustSource::type_edge_candidates` (the same zip
@@ -634,7 +711,7 @@ fn type_edge_resolve_parity_rust() {
 /// plus type_edge for all three langs (phase-2: 4b-iii ts, 4d-i-go, 4d-i-rust).
 fn is_asserted(case: &Case, facet: &str) -> bool {
     PORTED.contains(&facet)
-        || (matches!(case.fixture_dir, "ts" | "go" | "rust") && facet == "type_edge")
+        || (matches!(case.fixture_dir, "ts" | "go" | "rust" | "python") && facet == "type_edge")
 }
 
 /// The migration ledger: the measured v5-only deferred set + the v6-only CST /

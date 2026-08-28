@@ -1,13 +1,14 @@
 ---
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-28
 type: feature
-status: open
+status: done
 priority: normal
 epic: extract-port-closeout
 labels:
 - pkg:extract
 - size:large
+closed: 2026-08-28
 ---
 
 # python front-end arm: the whole lang, mirroring go
@@ -60,3 +61,8 @@ cargo test --features cli --test golden_parity
 ### 2026-08-17T02:59:16Z · @extract-driver
 
 PARKED by user word 2026-08-16 (relayed via sprefa-coordinator). Stage state at origin/main a4045153e: commits A (6ec7c0212 skeleton, cst via ast-grep + tree-sitter-python parse), B (f684fc89c TypeF entities + arrow-type sigs), C (11b352dbf CallF defs + sites) ARE LANDED; tests/16_python.rs green (7 entities hand-derived from tests/fixtures/python/sample.py). OUTSTANDING: D (DfF, v5 py_dataflow_from), E (type-edge candidates py_edges_from + both Resolve arms), the docs facet (v5 py_docs_from), the module plane (v5 src/graph/modgraph/python.rs), and the roster wiring. Roster wiring has a TRAP nobody has recorded: tests/4_capability_parity.rs:67 uses ROSTER_FIXTURES row ("astgrep", "tests/fixtures/astgrep/sample.py") -- adding PythonSource to lang/mod.rs sources() steals .py from the cst-only fallback and breaks that row, so the astgrep fixture must move to a non-python grammar in the same commit. Deferral ledger the arm keeps on itself: src/lang/python/_0_source.rs:15-19. Not dispatched; card stays open.
+
+### 2026-08-28T04:28:48Z · @sprefa-fable
+
+LANDED 2026-08-28 (branch feat/extract-python-arm): commits D (DfF, byte-exact vs v5 py_dataflow_from), E (type-edge candidates + Resolve<TypeF> + Resolve<CallF>), docs facet (PEP 257 + Sphinx tags, <module> Ext entity for the module docstring), import specifiers (module plane), roster line, RESOLVE_ARMS row, ROSTER_FIXTURES row (astgrep fixture moved to sample.html), V5_ORACLE_LANGS row. Oracles: tests/fixtures/python/{sample,docs,flow}.v5.jsonl via examples/v5_normalize.rs (.py arm added). Gate: 16_python 6/6, golden_parity 10/10, 19_docs_lang_arms 4/4.
+

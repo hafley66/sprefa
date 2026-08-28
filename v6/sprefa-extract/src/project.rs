@@ -27,7 +27,8 @@ use std::sync::{Arc, LazyLock};
 use rayon::prelude::*;
 
 use crate::lang::{
-    source_for, DlSource, GoSource, KotlinSource, MarkdownSource, PrologSource, RustSource,
+    source_for, DlSource, GoSource, KotlinSource, MarkdownSource, PrologSource, PythonSource,
+    RustSource,
     TsSource,
 };
 use crate::rows::FamilyBundle;
@@ -737,6 +738,11 @@ pub static RESOLVE_ARMS: &[ResolveArm] = &[
         name: "prolog",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&PrologSource, out, cx)),
         types: None,
+    },
+    ResolveArm {
+        name: "python",
+        call: Some(|out, cx| Resolve::<CallF>::resolve(&PythonSource, out, cx)),
+        types: Some(|out, cx| Resolve::<TypeF>::resolve(&PythonSource, out, cx)),
     },
     ResolveArm {
         name: "markdown",

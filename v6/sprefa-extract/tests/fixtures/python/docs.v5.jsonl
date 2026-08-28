@@ -1,0 +1,40 @@
+call_def	function	helper	30
+call_def	method	run	20
+call_site	Gear	26
+call_site	Outcome	27
+df_args	6	0	5
+df_edge	444	488
+df_edge	458	444
+df_edge	480	473
+df_edge	488	480
+df_edge	572	565
+df_node	let_bind	local	444
+df_node	lit		351
+df_node	lit		541
+df_node	lit		572
+df_node	new	Gear	458
+df_node	new	Outcome	480
+df_node	param	mode	319
+df_node	param	x	508
+df_node	ret		473
+df_node	ret		565
+df_node	var_read	local	488
+df_param_pos	0	0
+df_param_pos	7	0
+doc	v6/sprefa-extract/tests/fixtures/python/docs.py::class::Engine	11
+doc	v6/sprefa-extract/tests/fixtures/python/docs.py::function::helper	30
+doc	v6/sprefa-extract/tests/fixtures/python/docs.py::method::Engine.run	20
+doc	v6/sprefa-extract/tests/fixtures/python/docs.py::module::<module>	1
+type_edge	Engine	Base	impl
+type_edge	Engine	Speed	field
+type_edge	helper	Engine	returns
+type_edge	run	Gear	uses
+type_edge	run	Mode	param
+type_edge	run	Outcome	returns
+type_node	class	Engine	11
+type_node	function	helper	30
+type_node	method	run	20
+type_node	module	<module>	1
+type_sig	20	param	0	Mode
+type_sig	20	ret	0	Outcome
+type_sig	30	ret	0	Engine
