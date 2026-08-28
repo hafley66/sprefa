@@ -1,6 +1,6 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-28, Sol contract running
+Updated: 2026-08-28 00:24 EDT, Sol contract lane stalled before first turn
 
 ## Current state
 
@@ -26,8 +26,9 @@ Updated: 2026-08-28, Sol contract running
 ## Active
 
 - `@dl7-kernel-contract` is `in-progress`.
-- Boop lane `chore-dl7-kernel-contract` is running Sol/high from base
-  `a8bcda72c`.
+- Boop lane `chore-dl7-kernel-contract` has a live tmux session and supervisor
+  route from base `a8bcda72c`, but its first Sol/high turn has produced no
+  transcript, file change, commit, or result row.
 - Expected output: `v7/3_TASKS/results/0_KERNEL_CONTRACT.md` plus one commit.
 
 ## Hitches
@@ -38,6 +39,14 @@ Updated: 2026-08-28, Sol contract running
   local base `652f3fde1`; no push workaround will be attempted.
 - Repository-wide `issuectl doctor` reports three pre-existing findings outside
   the DL7 epic. No DL7 issue was reported.
+- Sol lane diagnostics at 00:24 EDT:
+  - supervisor opened the Codex ACP session and loaded the 1,508-byte brief;
+  - `boop beep ps` reports PID `0` while tmux still contains the supervisor;
+  - worktree is clean at `a8bcda72c`;
+  - `boop debug` reports no assistant or tool turn;
+  - a resume hail was claimed for the next turn boundary;
+  - a 30-second result wait returned no result.
+- No second worker has been started against the same card.
 
 ## Next DAG edges
 
