@@ -56,8 +56,8 @@ refreeze round consumes (`0a_type_apply_requests.pl`) and that
 ```
 
 ```prolog
-% File: v6/prolog/0_compiler_relations.pl:124
-% Existing comment: facts and rules headed by compiler relations become evaluator input; crossing the phase boundary in either direction has no runtime representation
+% File: v6/prolog/0_compiler_relations.pl:130
+% Existing comment: (comment at :124-129) facts and rules headed by compiler relations become evaluator input; crossing the phase boundary in either direction has no runtime representation
 % Signature: partition_compiler_program(+Decls, +Rules, -CompilerDecls, -RuntimeDecls, -RuntimeRules)
 % Called by: elaborate_and_erase_compiler_relations/4 (0_generic_expand/2_compiler_plane.pl:4), annotation closure path (1_annotations.pl:67), tests
 % Calls: partition_compiler_relations/3, compiler_builtin_relations/3, partition_rules/4
@@ -112,8 +112,8 @@ refreeze round consumes (`0a_type_apply_requests.pl`) and that
 ## 4. Stratification and aggregates (`0_compiler_relations/1_aggregates.pl`)
 
 ```prolog
-% File: v6/prolog/0_compiler_relations/1_aggregates.pl:21
-% Existing comment: strict dependency edge enters each count-headed rule and each negated relation goal; completed rows below a stratum feed counts and anti-joins once, then ordinary rules close under the tabled evaluator
+% File: v6/prolog/0_compiler_relations/1_aggregates.pl:25
+% Existing comment: (comment at :21-24) strict dependency edge enters each count-headed rule and each negated relation goal; completed rows below a stratum feed counts and anti-joins once, then ordinary rules close under the tabled evaluator
 % Signature: evaluate_compiler_strata/3, evaluate_compiler_strata_groups/3, compiler_rule_strata/2, compiler_rule_constraint/5, compiler_dependency_gap/4, validate_compiler_stratification/1, strict_dependency_cycle/2, dependency_constraint_path/4, relax_compiler_strata/4
 % Called by: evaluate_compiler_relations/3
 % Calls: keysort/2, group_pairs_by_key/2, tabled_compiler_closure/4, derive_compiler_aggregate_row/3
@@ -140,8 +140,8 @@ refreeze round consumes (`0a_type_apply_requests.pl`) and that
 ## 5. Evaluator and host boundary (0_compiler_relations.pl, evaluator half)
 
 ```prolog
-% File: v6/prolog/0_compiler_relations.pl:352
-% Existing comment: positive safe rules use ordinary Datalog joins; scalar goals execute in body order; aggregate heads and negated relation goals read completed lower strata; every row set is sorted before use
+% File: v6/prolog/0_compiler_relations.pl:358
+% Existing comment: (comment at :352-357) positive safe rules use ordinary Datalog joins; scalar goals execute in body order; aggregate heads and negated relation goals read completed lower strata; every row set is sorted before use
 % Signature: evaluate_compiler_relations(+CompilerDecls, +SeedRows, -ClosureRows)
 % Called by: elaborate_and_erase_compiler_relations/4, annotation closure (1_annotations.pl:83), tests directly
 % Calls: validate_compiler_seed/2, validate_compiler_rule_plane_with_relations/2, validate_type_apply_recursive_construction/1, validate_compiler_aggregate_heads/1, evaluate_compiler_strata/3
@@ -153,8 +153,8 @@ refreeze round consumes (`0a_type_apply_requests.pl`) and that
 ```
 
 ```prolog
-% File: v6/prolog/0_compiler_relations.pl:433
-% Existing comment: one unique table namespace belongs to one compiler round; rules and seeds are immutable while SLG evaluation closes recursive positive goals; negated goals consult only LowerRows
+% File: v6/prolog/0_compiler_relations.pl:438
+% Existing comment: (comment at :433-437) one unique table namespace belongs to one compiler round; rules and seeds are immutable while SLG evaluation closes recursive positive goals; negated goals consult only LowerRows
 % Signature: tabled_compiler_closure(+Rules, +LowerRows, +Seeds, -Rows) is det
 % Called by: evaluate_compiler_strata_groups/3
 % Calls: gensym/2, setup_call_cleanup/3, assertz/1, abolish_table_subgoals/1, retractall/1
@@ -247,8 +247,8 @@ refreeze round consumes (`0a_type_apply_requests.pl`) and that
 
 ```prolog
 % File: v6/prolog/0_generic_expand/2_compiler_plane.pl:175
-% Existing comment: fact variables may be source type names captured by the parser bindings; rule variables remain evaluator joins
-% Signature: elaborate_compiler_rules/5 plus the elaborate_compiler_* family, compiler_relation_signature/2, compiler_type_source_signature/2, compiler_type_source_rows/3, compiler_annotation_site_rows/3, valid_semantic_type_id/1, compiler_derived_constructor/3, compiler_argument_domain/2
+% Existing comment: none (the comment "fact variables may be source type names captured by the parser bindings; rule variables remain evaluator joins" belongs to elaborate_compiler_fact_atom at :426-428)
+% Signature: elaborate_compiler_rules/5 (with its family: elaborate_compiler_rule/4, elaborate_compiler_head_atom/5, elaborate_compiler_body/4, elaborate_compiler_body_atom/5, elaborate_compiler_fact_atom/3, ground_structural_type_id/4, elaborate_compiler_argument/5), compiler_relation_signature/2, compiler_type_source_signature/2, compiler_type_source_rows/3, compiler_annotation_site_rows/3, valid_semantic_type_id/1, compiler_derived_constructor/3, compiler_argument_domain/2
 % Called by: elaborate_and_erase_compiler_relations/4, compiler_relations.test.pl (functional_type_heads_lower_to_explicit_type_apply_ir)
 % Calls: semantic_type_id/3, semantic_decl_id/3, compiler_declared_type_term/2, structural_type_pattern/1
 % Tests: compiler_relations.test.pl (whole elaboration matrix), fixtures 0_compiler-derived-relation.dl6, 0_compiler-stratified-negation.dl6, 0_type-reflection.dl6
