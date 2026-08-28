@@ -209,18 +209,13 @@ fn extract_lang_has_no_path_switch() {
 fn wire_output_is_byte_identical_to_the_946460d75_golden() {
     let manifest = env!("CARGO_MANIFEST_DIR");
     let exe = env!("CARGO_BIN_EXE_extract");
-    let fixture_root = format!("{manifest}/tests/fixtures");
-    let manifest_prefix = format!("{manifest}/");
-    let mut fixture_files: Vec<String> = walk(&fixture_root)
-        .into_iter()
-        .filter(|path| !path.contains("kind_vocab"))
-        .map(|path| {
-            path.strip_prefix(manifest_prefix.as_str())
-                .unwrap()
-                .to_string()
-        })
-        .collect();
-    fixture_files.sort();
+    // The corpus is the fixture list at 946460d75, pinned in corpus.txt so a
+    // fixture added later never changes the golden.
+    let corpus = std::fs::read_to_string(format!(
+        "{manifest}/tests/fixtures/kind_vocab/corpus.txt"
+    ))
+    .expect("corpus list readable");
+    let fixture_files: Vec<String> = corpus.lines().map(str::to_string).collect();
     assert!(
         fixture_files.len() > 100,
         "fixture files: {}",
