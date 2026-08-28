@@ -286,6 +286,9 @@ pub struct RenameRequest {
     pub old: String,             // the identifier as written today
     pub new: String,             // what it becomes
     pub at: Option<u32>,         // byte offset INSIDE the declaration, when `old` is ambiguous
+                                 // user decision 2026-08-28: a root-scope binding wins without --at;
+                                 // a nested same-name binding shadows its own block only. Ambiguous
+                                 // = 0 or 2+ root bindings. --at still selects among every binding.
 }
 
 /// One `extract rename` run's corpus view. Same walk, same skip set, same

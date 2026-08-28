@@ -9,6 +9,11 @@
 //!     glob_importer_is_a_dynamic_stop ... left: Some(2), right: Some(6)
 //!     self_rename_is_judged_by_rustc ... exited exit status: 2:
 //!         no rename arm for src/rename_cx.rs (extract rename renames ts)
+//! FAIL-FIRST (root wins), against the arc-8 binary:
+//!     shadowed_items_need_no_at ... exited 3: ambiguous Helper in src/util.rs
+//!     renamed_fixture_crate_passes_cargo_check ... passes before: the check
+//!         judges rustc's view of the after tree, which is what makes the diff
+//!         assertion mean something
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -158,6 +163,41 @@ fn glob_importer_is_a_dynamic_stop() {
         entries.is_empty(),
         "the stopped run edited the tree:\n{}",
         entries.join("\n")
+    );
+}
+
+/// A root item plus a function-local struct and a `mod nested` struct of the
+/// same name: the root item wins without `--at`; the other two keep their
+/// spelling and their uses.
+#[test]
+fn shadowed_items_need_no_at() {
+    let fixture = fixture("shadow", "commit");
+    rename_verb(&fixture, &format!("{ANCHOR}#Helper"), "Tool", &["--commit"]);
+    let entries = diff_rq(&fixture.root, &tree("shadow", "after"));
+    assert!(
+        entries.is_empty(),
+        "committed tree differs from after/:\n{}",
+        entries.join("\n")
+    );
+}
+
+/// rustc judges the renamed fixture crate: `cargo check` on the committed
+/// `local` tree exits 0. The crate has no dependencies, so the check is the
+/// fixture's own two files and nothing else.
+#[test]
+fn renamed_fixture_crate_passes_cargo_check() {
+    let fixture = fixture("local", "check");
+    rename_verb(&fixture, &format!("{ANCHOR}#Helper"), "Tool", &["--commit"]);
+    let check = Command::new("cargo")
+        .args(["check", "--offline"])
+        .env("CARGO_TARGET_DIR", fixture.root.join("target"))
+        .current_dir(&fixture.root)
+        .output()
+        .expect("cargo runs");
+    assert!(
+        check.status.success(),
+        "cargo check on the renamed fixture: {}",
+        String::from_utf8_lossy(&check.stderr)
     );
 }
 
