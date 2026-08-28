@@ -16,8 +16,8 @@ Each folder is one experiment variant. Every worker owns exactly one folder and 
 | 2 | `2_cl_gambol` | Prolog library | How much Prolog behavior does `cl-gambol` supply? | completed |
 | 3 | `3_paiprolog` | Prolog compiler | What does the PAIP-derived Prolog compiler supply? | completed |
 | 4 | `4_cl_datalog` | Datalog library | Does `cl-datalog` execute recursive Datalog and terminate on cycles? | completed |
-| 5 | `5_cl_grph` | graph plus Datalog | Can `cl-grph` cover compiler graph queries and recursive rules? | queued |
-| 6 | `6_screamer` | nondeterminism plus constraints | Which SWI search and constraint facilities map to Screamer? | queued |
+| 5 | `5_cl_grph` | graph plus Datalog | Can `cl-grph` cover compiler graph queries and recursive rules? | completed |
+| 6 | `6_screamer` | nondeterminism plus constraints | Which SWI search and constraint facilities map to Screamer? | completed |
 | 7 | `7_reazon_cl` | miniKanren | What relational core, fairness, and constraints does `reazon-cl` supply? | queued |
 | 8 | `8_cl_kanren` | miniKanren | Is `cl-kanren` runnable and materially distinct from `reazon-cl`? | queued |
 | 9 | `9_vivace_graph` | graph database plus Prolog | Can VivaceGraph's query layer cover durable compiler graph queries? | queued |
