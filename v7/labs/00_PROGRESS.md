@@ -1,6 +1,6 @@
 # V7 Common Lisp logic lab progress
 
-Updated: 2026-08-28 11:03 EDT
+Updated: 2026-08-28 14:43 EDT
 
 ## Current state
 
@@ -9,31 +9,41 @@ Updated: 2026-08-28 11:03 EDT
 - Installed runtime: SBCL 2.6.7.
 - GLM shared worktree: `.boop-worktrees/chore/v7-cl-logic-glm`.
 - Terra shared worktree: `.boop-worktrees/chore/v7-cl-logic-terra`.
-- Completed lab reports: 0.
-- Active lab workers: 0.
+- Completed lab reports: 2 (`1_inventory`, `2_cl_gambol`).
+- Active lab workers: 2 (`3_paiprolog`, `4_cl_datalog`).
 
-## Coordination hitch
+## Completed pair
 
-The first two GLM 5.3 Flash coordinators opened ACPX sessions, then their first
-file operation exited with status 5. ACPX defines status 5 as permission denied.
-Boop's coordinator argument construction did not supply an explicit writable
-non-interactive policy.
+- Inventory commits on main: `171b3922c`, `50fc699a1`.
+- Inventory result: 17 repositories, 14 families, 12 runnable systems.
+- Inventory added `16_logadat` and `17_si_kanren`.
+- `cl-gambol` probe covers nested unification, missing occurs check, DFS answer
+  order, DFS starvation, cyclic recursion, fact updates, an external fixpoint
+  sketch, and standalone-image measurement.
+- `cl-gambol` image: 40,179,640 bytes. Generated executable remains outside
+  Git.
+- Luna review blocked the first draft. The corrected probe prints both
+  unification bindings, caps PATH at exactly 100 answers, preserves ORDER,
+  demonstrates starvation, and prints the required BINARY record.
 
-The bug report is committed in `hafley-rs` as `86bd585` under
-`@boop-acpx-permissions`. An isolated Claude Opus 5/high lane named
-`fix-boop-acpx-permissions` is implementing and live-testing the fix. The
-primary Hafley Rust checkout contains no overlapping source diff.
+## Coordination receipt
+
+The first two GLM 5.3 Flash coordinators initially hit ACPX status 5 because
+the coordinator command omitted an explicit writable non-interactive policy.
+The Boop fix landed in `hafley-rs` as `ca26b2b` and the installed binary reports
+`boop 0.0.9 (ca26b2b-dirty)`.
+
+The first coordinators produced both lab folders but emitted no Boop result
+hail and no projected assistant transcript. Filesystem artifacts were reviewed
+directly before commit. The current pair uses the corrected ACPX policy and
+registered as `v7-paiprolog-glm` and `v7-cl-datalog-glm`.
 
 ## Next execution sequence
 
-1. Review the Opus commit, focused test receipt, and live delegated-write proof.
-2. Merge and install the corrected Boop binary.
-3. Start at most two GLM workers in the shared GLM worktree:
-   `1_inventory` and `2_cl_gambol`.
-4. Review both owned folders, then commit the accepted pair on the GLM branch.
-5. Cherry-pick the accepted pair into the Terra worktree and start at most two
-   Terra reviews.
-6. Repeat in pairs through the runnable library labs before starting binary
+1. Review `3_paiprolog` and `4_cl_datalog` when their completion hails arrive.
+2. Commit the accepted pair on the GLM branch and cherry-pick it to main.
+3. Cherry-pick accepted pairs into the Terra worktree for bounded review.
+4. Repeat in pairs through the runnable library labs before starting binary
    packaging.
 
 ## Shared-worktree laws
