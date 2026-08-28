@@ -1,6 +1,6 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-28 00:24 EDT, Sol contract lane stalled before first turn
+Updated: 2026-08-28 00:33 EDT, semantic identity ruling required
 
 ## Current state
 
@@ -26,10 +26,11 @@ Updated: 2026-08-28 00:24 EDT, Sol contract lane stalled before first turn
 ## Active
 
 - `@dl7-kernel-contract` is `in-progress`.
-- Boop lane `chore-dl7-kernel-contract` has a live tmux session and supervisor
-  route from base `a8bcda72c`, but its first Sol/high turn has produced no
-  transcript, file change, commit, or result row.
-- Expected output: `v7/3_TASKS/results/0_KERNEL_CONTRACT.md` plus one commit.
+- Boop lane `chore-dl7-kernel-contract` recovered and edited the contract plan.
+- Sol invoked the card's stop condition before committing because declared-node
+  semantic identity has two coherent donor-backed representations.
+- The lane was told to preserve both choices, write a blocked report, commit
+  documentation only, and stop.
 
 ## Hitches
 
@@ -47,6 +48,15 @@ Updated: 2026-08-28 00:24 EDT, Sol contract lane stalled before first turn
   - a resume hail was claimed for the next turn boundary;
   - a 30-second result wait returned no result.
 - No second worker has been started against the same card.
+- The stalled first turn recovered at 00:26 EDT and began editing the plan.
+- At 00:30 EDT Sol asked for a semantic identity ruling:
+  - A: `named(ModuleHash, Kind, Name)`, preserving the DL6 identity shape and
+    requiring a pinned module-hash input;
+  - B: `named(module(ModulePath), Kind, Name)`, using the V7 file owner and
+    requiring a portable, collision-free definition of `ModulePath`.
+- Selecting either form changes semantic TypeIds. No selection was made.
+- A direct attempt to send a selection was rejected by the approval reviewer
+  because the user's stop rule requires this choice to return to the user.
 
 ## Next DAG edges
 
