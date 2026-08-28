@@ -142,20 +142,10 @@ between `oracle` (the law statements), `adapt` (the value/goal layer), and
 ```
 
 ```prolog
-% File: v6/prolog/conformance/level_eval.pl:56
-% Existing comment: level closure with aggregates; stratified, q7 bag, q9 reserved forms
-% Signature: level_closure(+Decls, +PlainLevel, +AggRules, +Base, +Tick, -Level)
-% Called by: tick/7 (twice: mid and final), run_program/5
-% Calls: aggregate_head/3 (registry surface dispatch), rows_index/2, canonical_json_text/2
-% Tests: 9_ordered_aggregates.pl, ordered_level_fixpoint.pl, json_arm.pl, one_vs_any.pl
-% V7 class: oracle
-% Parser coupling: term-shape (aggregate head functors)
-% Preserved law: L06,L16 (bag multiplicity; plain/aggregate fixpoint alternation; strata)
-% DL7 seam: same shapes, head template re-spelled in DL7 terms.
-```
+% File: v6/prolog/conformance/level_eval.pl:77
 
 ```prolog
-% File: v6/prolog/conformance/ticklog.pl:97
+% File: v6/prolog/conformance/ticklog.pl:78
 % Existing comment: envelope formatting; canonical JSON, clause-twin escape set with 0_type_plane
 % Signature: value_json(+Value, -Json), tick_line(+Tick, +Deltas, -Line)
 % Called by: emit/1,2, emit_perturbed/1 (snapshot minting)
