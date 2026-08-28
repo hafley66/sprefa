@@ -1,6 +1,6 @@
 # V7 Common Lisp logic lab progress
 
-Updated: 2026-08-28 18:01 EDT
+Updated: 2026-08-28 18:19 EDT
 
 ## Current state
 
@@ -9,11 +9,12 @@ Updated: 2026-08-28 18:01 EDT
 - Installed runtime: SBCL 2.6.7.
 - GLM shared worktree: `.boop-worktrees/chore/v7-cl-logic-glm`.
 - Terra shared worktree: `.boop-worktrees/chore/v7-cl-logic-terra`.
-- Completed lab reports: 10 (`1_inventory`, `2_cl_gambol`, `3_paiprolog`,
+- Completed lab reports: 12 (`1_inventory`, `2_cl_gambol`, `3_paiprolog`,
   `4_cl_datalog`, `5_cl_grph`, `6_screamer`, `7_reazon_cl`, `8_cl_kanren`,
-  `9_vivace_graph`, `10_wamcompiler`).
-- Active lab workers: 2 (`11_cl_prolog2`, `12_handwritten_logic`) using native
-  Terra-high workers in the shared lab worktree.
+  `9_vivace_graph`, `10_wamcompiler`, `11_cl_prolog2`,
+  `12_handwritten_logic`).
+- Active lab workers: 0. The next pair is `13_racket_crosswalk` and
+  `14_binary_packaging`.
 
 ## Completed labs
 
@@ -97,6 +98,24 @@ Updated: 2026-08-28 18:01 EDT
 - Luna-high review found 12 concrete issues across labs 9 and 10. Final fixes
   reconciled saved-image execution, runtime provenance wording, persistent
   visited keys, dynamic clause receipts, transcript labels, and measurements.
+- `cl-prolog2` commit on main: `f8c1d18f2`. It emits Prolog source to a
+  temporary file and launches `swipl`; SWI supplies unification, tabling,
+  cyclic completion, negation, and retraction. The bridge returns one stdout
+  string and has no typed query lifecycle or in-process engine.
+- `cl-prolog2` image: 45,554,408 bytes, SHA-256
+  `8d4af37c3a891b73ee969a81de8613917d9a058c24e05a46c93700eed2dac53e`.
+  Full fixture startup samples are 0.11 seconds; peak RSS is 52,690,944 bytes.
+- The handwritten kernel commit on main is `e7cc3723c`. Its 158
+  nonblank/noncomment lines implement persistent substitutions, an occurs
+  check, lazy fair disjunction and conjunction, bounded reification, facts,
+  and Horn-style rules.
+- Handwritten-kernel image: 42,080,472 bytes, SHA-256
+  `be4fc038ee5f3af2e476684d491b717401ed6d550fff69e54acfe923b23c661c`.
+  Startup samples are 0.01 seconds; peak RSS is 46,743,552 bytes.
+- Luna-high reviews reconciled the lab 11 deterministic answer order, r2
+  traces, pin checks, benchmark command, external dependencies, and source
+  versus image receipts. Lab 12 required one source/runtime dependency wording
+  correction.
 
 ## Coordination receipt
 
@@ -119,7 +138,7 @@ contents, so labs 9 and 10 use native Terra-high workers instead.
 
 ## Next execution sequence
 
-1. Run `11_cl_prolog2` and `12_handwritten_logic` in parallel.
+1. Run `13_racket_crosswalk` and `14_binary_packaging` in parallel.
 2. Review, measure, and commit the accepted pair on the shared branch.
 3. Cherry-pick the pair to main and update this progress log.
 4. Repeat in pairs through the runnable library labs before starting binary
