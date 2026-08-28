@@ -1,1 +1,1 @@
-20260824.0.executors-in-dl6-day4-tick-shrink-probes-dd-oracle.md
+20260828.0.extract-rename-six-arcs-landed-grade-green.md
