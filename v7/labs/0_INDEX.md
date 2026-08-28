@@ -25,7 +25,7 @@ Each folder is one experiment variant. Every worker owns exactly one folder and 
 | 11 | `11_cl_prolog2` | external Prolog bridge | How short is the CL-to-SWI path through `cl-prolog2`? | completed |
 | 12 | `12_handwritten_logic` | controlled implementation | What does the smallest CL unification and fair-search kernel require? | completed |
 | 13 | `13_racket_crosswalk` | comparison | Which Racket libraries provide the shortest routes to useful SWI facilities? | queued |
-| 14 | `14_binary_packaging` | deployment | What are the measured executable and distribution shapes? | blocked on runnable CL labs |
+| 14 | `14_binary_packaging` | deployment | What are the measured executable and distribution shapes? | queued |
 | 15 | `15_commercial_common_prolog` | research | What do Allegro Prolog and LispWorks Common Prolog cover? | queued |
 | 16 | `16_logadat` | Datalog library | Does `logadat` (2025) execute recursive Datalog and terminate on cycles? | queued |
 | 17 | `17_si_kanren` | miniKanren plus constraints | Does `si-kanren` supply the constraint store (disequality, `numbero`, `symbolo`, `absento`) on the shared fixture? | queued |
