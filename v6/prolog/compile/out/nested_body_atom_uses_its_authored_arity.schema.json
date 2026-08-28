@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "any_tree": {
+      "additionalProperties":false,
+      "properties": {"tree_id": {"type":"integer"}},
+      "required": ["tree_id" ],
+      "type":"object"
+    },
+    "orchard": {
+      "additionalProperties":false,
+      "properties": {"orchard_id": {"type":"integer"}},
+      "required": ["orchard_id" ],
+      "type":"object"
+    },
+    "orchard.tree": {
+      "additionalProperties":false,
+      "properties": {"tree_id": {"type":"integer"}},
+      "required": ["tree_id" ],
+      "type":"object"
+    },
+    "planted": {
+      "additionalProperties":false,
+      "properties": {"orchard_id": {"type":"integer"},"tree_id": {"type":"integer"}},
+      "required": ["orchard_id", "tree_id" ],
+      "type":"object"
+    }
+  },
+  "$id":"nested_body_atom_uses_its_authored_arity#3f390c79b2576acb",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

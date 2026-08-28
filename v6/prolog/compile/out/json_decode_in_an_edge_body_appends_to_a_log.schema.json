@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "audit": {
+      "additionalProperties":false,
+      "properties": {"action": {"type":"string"}},
+      "required": ["action" ],
+      "type":"object"
+    },
+    "event_doc": {
+      "additionalProperties":false,
+      "properties": {"doc": {}},
+      "required": ["doc" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_decode_in_an_edge_body_appends_to_a_log#c700470d18b27891",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

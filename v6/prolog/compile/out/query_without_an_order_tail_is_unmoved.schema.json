@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "tally": {
+      "additionalProperties":false,
+      "properties": {"player": {"type":"integer"},"points": {"type":"integer"}},
+      "required": ["player", "points" ],
+      "type":"object"
+    }
+  },
+  "$id":"query_without_an_order_tail_is_unmoved#a521914fcf44c363",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

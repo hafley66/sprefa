@@ -1,0 +1,21 @@
+{
+  "$defs": {
+    "config_doc": {
+      "additionalProperties":false,
+      "properties": {"doc": {}},
+      "required": ["doc" ],
+      "type":"object"
+    },
+    "global_setting": {
+      "additionalProperties":false,
+      "properties": {
+        "poll_interval_seconds": {"type":"integer"},
+        "scope": {"type":"string"}
+      },
+      "required": ["scope", "poll_interval_seconds" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_decode_in_an_edge_body_folds_a_keyed_row#153cae7bcc3814ae",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

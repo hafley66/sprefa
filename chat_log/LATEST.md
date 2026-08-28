@@ -1,1 +1,1 @@
-20260828.0.extract-rename-six-arcs-landed-grade-green.md
+20260827.1.extract-rename-landed-main-reconciled-pushed.md

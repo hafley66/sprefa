@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "draft_flag": {
+      "additionalProperties":false,
+      "properties": {"draft": {"type":"boolean"},"number": {"type":"integer"}},
+      "required": ["number", "draft" ],
+      "type":"object"
+    },
+    "event": {
+      "additionalProperties":false,
+      "properties": {"payload": {}},
+      "required": ["payload" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_bool_capture_lands_in_a_bool_column#3f8add0ddc444d31",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

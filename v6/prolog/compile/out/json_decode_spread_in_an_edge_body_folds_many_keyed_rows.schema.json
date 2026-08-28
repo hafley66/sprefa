@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "pull_page": {
+      "additionalProperties":false,
+      "properties": {"doc": {}},
+      "required": ["doc" ],
+      "type":"object"
+    },
+    "pull_state": {
+      "additionalProperties":false,
+      "properties": {"number": {"type":"integer"},"title": {"type":"string"}},
+      "required": ["number", "title" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_decode_spread_in_an_edge_body_folds_many_keyed_rows#35b1d335ddd830d6",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"config_doc":{"add":[[{"poll_interval_seconds":"often","scope":"repo"}],[{"poll_interval_seconds":30,"scope":"global"}]],"del":[]},"global_setting":{"add":[["global",30]],"del":[]}}}
+{"tick":2,"deltas":{}}

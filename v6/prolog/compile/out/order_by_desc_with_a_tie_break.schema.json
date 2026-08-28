@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "module_defs": {
+      "additionalProperties":false,
+      "properties": {"defs": {"type":"integer"},"path": {"type":"string"}},
+      "required": ["path", "defs" ],
+      "type":"object"
+    }
+  },
+  "$id":"order_by_desc_with_a_tie_break#31735378d1f352da",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "orchard": {
+      "additionalProperties":false,
+      "properties": {"orchard_id": {"type":"integer"}},
+      "required": ["orchard_id" ],
+      "type":"object"
+    },
+    "orchard.tree": {
+      "additionalProperties":false,
+      "properties": {"tree_id": {"type":"integer"}},
+      "required": ["tree_id" ],
+      "type":"object"
+    },
+    "per_orchard": {
+      "additionalProperties":false,
+      "properties": {"orchard_id": {"type":"integer"},"trees": {"type":"integer"}},
+      "required": ["orchard_id", "trees" ],
+      "type":"object"
+    },
+    "planted": {
+      "additionalProperties":false,
+      "properties": {"orchard_id": {"type":"integer"},"tree_id": {"type":"integer"}},
+      "required": ["orchard_id", "tree_id" ],
+      "type":"object"
+    }
+  },
+  "$id":"nested_two_parent_rows_share_the_flat_child_relation#31e694f9957d9f23",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"__opt_text_some":{"add":[[801,"gala"]],"del":[]},"__opt_text_tag":{"add":[[801,"some"]],"del":[]}}}
+{"tick":2,"deltas":{"labelled":{"add":[[7,"some"]],"del":[]},"orchard":{"add":[[1]],"del":[]},"orchard__tree":{"add":[[7,801]],"del":[]},"planted":{"add":[[1,7]],"del":[]}}}

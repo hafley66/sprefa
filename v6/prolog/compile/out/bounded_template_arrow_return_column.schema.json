@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "__gen__mapper_int_text_27b8a56119fbf234": {
+      "additionalProperties":false,
+      "properties": {"input": {"type":"integer"},"return": {"type":"string"}},
+      "required": ["input", "return" ],
+      "type":"object"
+    },
+    "carry": {
+      "additionalProperties":false,
+      "properties": {
+        "applied": {"$ref":"#/$defs/__gen__mapper_int_text_27b8a56119fbf234"},
+        "id": {"type":"integer"}
+      },
+      "required": ["id", "applied" ],
+      "type":"object"
+    },
+    "conversion": {
+      "additionalProperties":false,
+      "properties": {
+        "applied": {"$ref":"#/$defs/__gen__mapper_int_text_27b8a56119fbf234"},
+        "id": {"type":"integer"}
+      },
+      "required": ["id", "applied" ],
+      "type":"object"
+    }
+  },
+  "$id":"bounded_template_arrow_return_column#70646cd25f8d0e7e",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

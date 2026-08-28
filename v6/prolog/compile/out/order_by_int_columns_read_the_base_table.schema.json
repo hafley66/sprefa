@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "score": {
+      "additionalProperties":false,
+      "properties": {"player": {"type":"integer"},"points": {"type":"integer"}},
+      "required": ["player", "points" ],
+      "type":"object"
+    }
+  },
+  "$id":"order_by_int_columns_read_the_base_table#77d2aec091a82d66",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

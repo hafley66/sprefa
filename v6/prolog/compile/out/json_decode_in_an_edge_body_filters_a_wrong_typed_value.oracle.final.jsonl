@@ -1,0 +1,1 @@
+{"final":{"config_doc":[[{"poll_interval_seconds":"often","scope":"repo"}],[{"poll_interval_seconds":30,"scope":"global"}]],"global_setting":[["global",30]]}}

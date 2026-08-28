@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"pull_page":{"add":[[{"pulls":[{"number":1,"title":"first"},{"number":2,"title":"second"}]}]],"del":[]},"pull_state":{"add":[[1,"first"],[2,"second"]],"del":[]}}}
+{"tick":2,"deltas":{"pull_page":{"add":[[{"pulls":[{"number":2,"title":"renamed"}]}]],"del":[]},"pull_state":{"add":[[2,"renamed"]],"del":[[2,"second"]]}}}
+{"tick":3,"deltas":{}}

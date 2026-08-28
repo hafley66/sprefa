@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"__gen__mapper_int_text_27b8a56119fbf234":{"add":[[5,"ok"]],"del":[]},"carry":{"add":[[1,{"input":5,"return":"ok"}]],"del":[]},"conversion":{"add":[[1,{"input":5,"return":"ok"}]],"del":[]}}}
+{"tick":2,"deltas":{"carry":{"add":[],"del":[[1,{"input":5,"return":"ok"}]]},"conversion":{"add":[],"del":[[1,{"input":5,"return":"ok"}]]}}}

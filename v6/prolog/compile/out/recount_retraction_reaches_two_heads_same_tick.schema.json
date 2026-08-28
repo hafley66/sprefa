@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "a": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    },
+    "b": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    },
+    "c": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"recount_retraction_reaches_two_heads_same_tick#d8c4759961bfde26",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

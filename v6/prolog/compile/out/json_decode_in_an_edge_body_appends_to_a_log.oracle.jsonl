@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"audit":{"add":[["open"]],"del":[]},"event_doc":{"add":[[{"action":"open"}]],"del":[]}}}
+{"tick":2,"deltas":{"audit":{"add":[["close"],["open"]],"del":[]},"event_doc":{"add":[[{"action":"close"}],[{"action":"open"}]],"del":[]}}}
+{"tick":3,"deltas":{}}
