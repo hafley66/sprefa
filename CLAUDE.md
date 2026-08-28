@@ -144,6 +144,14 @@ a brief is wrong, or when you find a defect outside your ownership. Never spawn
 a lane to carry a message; never edit main to get attention. `boop beep lane
 list` shows your own lane name.
 
+- **Every worktree branches from `origin/main`, never from `HEAD` or local
+  `main`** (`git fetch origin && git worktree add <dir> -b <branch> origin/main`).
+  Local `main` carries other sessions' unpushed commits; PR #524 shipped four
+  foreign commits this way. Before posting a PR, `git diff --stat
+  origin/main...HEAD` lists only the files the brief owns.
+- `bash scripts/fleet-doctor.sh` is the first command of every coordinator
+  session and runs again before each dispatch: disk floor, local-main
+  divergence, dirty or merged worktrees, stale tmux sessions, RSS hogs.
 - Every worktree agent's FIRST action: `git merge --ff-only <sha>`, coordinator
   states the sha. Failure or missing tree = STOP AND REPORT. Working around a
   blocked command (archive/tar, `--no-verify`, copying) is a defect; a
