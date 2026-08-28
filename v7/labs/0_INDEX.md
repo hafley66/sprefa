@@ -12,7 +12,7 @@ Each folder is one experiment variant. Every worker owns exactly one folder and 
 
 | Order | Variant | Category | Initial question | Status |
 | ---: | --- | --- | --- | --- |
-| 1 | `1_inventory` | research | Which Common Lisp logic systems are distinct, available, and lab-worthy? | queued |
+| 1 | `1_inventory` | research | Which Common Lisp logic systems are distinct, available, and lab-worthy? | completed |
 | 2 | `2_cl_gambol` | Prolog library | How much Prolog behavior does `cl-gambol` supply? | queued |
 | 3 | `3_paiprolog` | Prolog compiler | What does the PAIP-derived Prolog compiler supply? | queued |
 | 4 | `4_cl_datalog` | Datalog library | Does `cl-datalog` execute recursive Datalog and terminate on cycles? | queued |
@@ -27,5 +27,7 @@ Each folder is one experiment variant. Every worker owns exactly one folder and 
 | 13 | `13_racket_crosswalk` | comparison | Which Racket libraries provide the shortest routes to useful SWI facilities? | queued |
 | 14 | `14_binary_packaging` | deployment | What are the measured executable and distribution shapes? | blocked on runnable CL labs |
 | 15 | `15_commercial_common_prolog` | research | What do Allegro Prolog and LispWorks Common Prolog cover? | queued |
+| 16 | `16_logadat` | Datalog library | Does `logadat` (2025) execute recursive Datalog and terminate on cycles? | queued |
+| 17 | `17_si_kanren` | miniKanren plus constraints | Does `si-kanren` supply the constraint store (disequality, `numbero`, `symbolo`, `absento`) on the shared fixture? | queued |
 
 The inventory report owns the final candidate count. A repository search result alone does not establish a distinct or runnable library.
