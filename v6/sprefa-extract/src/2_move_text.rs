@@ -14,7 +14,11 @@ use sprefa_extract::{rehome_for, rehomes, rename_for, MoveCx, RenameCx, RenameRe
 /// owns, sorted by (file, line, matched).
 pub fn report(cx: &MoveCx) {
     // A manifest is a carrier its own arm already rewrote through a Replace.
-    let carriers: BTreeSet<String> = rehomes().iter().flat_map(|arm| arm.manifests(cx)).collect();
+    let carriers: BTreeSet<String> = rehomes()
+        .iter()
+        .filter_map(|arm| arm.manifests)
+        .flat_map(|leg| leg.manifests(cx))
+        .collect();
     let per_move: Vec<Vec<(String, String)>> = cx
         .moved()
         .iter()
@@ -67,8 +71,8 @@ const QUOTES: [(&str, &str); 3] = [("\"", "\""), ("'", "'"), ("`", "`")];
 /// the most specific one and stops).
 fn candidates(cx: &MoveCx, old: &str, new: &str) -> Vec<(String, String)> {
     let mut out = segment_pairs(old, new);
-    if let Some(arm) = rehome_for(old) {
-        out.extend(arm.text_spellings(cx, old, new));
+    if let Some(leg) = rehome_for(old).and_then(|arm| arm.text_spellings) {
+        out.extend(leg.text_spellings(cx, old, new));
     }
     out.sort_by(|left, right| right.0.len().cmp(&left.0.len()));
     out

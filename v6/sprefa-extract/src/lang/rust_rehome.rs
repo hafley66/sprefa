@@ -32,7 +32,9 @@ use syn::spanned::Spanned;
 use super::rust::{build_line_starts, syn_span, RustSource};
 use crate::move_cx::{dirname, join_rel, relative_between, stem, MoveCx};
 use crate::project::extract_pool;
-use crate::types::{ImportRef, ImportRefKind, LangKind, Rehome, Respell, Span};
+use crate::types::{
+    ImportRef, ImportRefKind, LangKind, Rehome, RehomeManifests, RehomePlanCheck, Respell, Span,
+};
 
 /// The macros whose first argument names a file, resolved against the directory
 /// of the file that writes them.
@@ -204,11 +206,15 @@ impl Rehome for RustSource {
             receipt,
         })
     }
+}
 
+impl RehomePlanCheck for RustSource {
     fn plan_errors(&self, cx: &MoveCx) -> Vec<String> {
         relocate_plan(cx).errors.clone()
     }
+}
 
+impl RehomeManifests for RustSource {
     fn manifests(&self, cx: &MoveCx) -> Vec<String> {
         cx.files()
             .iter()

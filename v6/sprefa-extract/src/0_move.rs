@@ -340,7 +340,8 @@ impl Plan {
                 let (old, new) = &moves[0];
                 let arm = rehome_for(old).ok_or_else(|| format!("no rehome arm for {old}"))?;
                 Some(
-                    arm.shim(&cx, old, new)
+                    arm.shim
+                        .and_then(|leg| leg.shim(&cx, old, new))
                         .ok_or_else(|| format!("--shim: {} has no shim form", arm.name()))?,
                 )
             }
@@ -421,7 +422,9 @@ fn respells(cx: &MoveCx) -> Result<Vec<Respell>, String> {
     let errors: Vec<String> = rehomes()
         .iter()
         .flat_map(|arm| {
-            arm.plan_errors(cx)
+            arm.plan_check
+                .map(|leg| leg.plan_errors(cx))
+                .unwrap_or_default()
                 .into_iter()
                 .map(move |reason| format!("{}: {reason}", arm.name()))
         })
@@ -430,10 +433,12 @@ fn respells(cx: &MoveCx) -> Result<Vec<Respell>, String> {
         return Err(errors.join("\n"));
     }
     for arm in rehomes() {
-        let mut refs = arm.import_refs(cx);
-        refs.extend(arm.manifest_refs(cx));
+        let mut refs = arm.core.import_refs(cx);
+        if let Some(leg) = arm.manifests {
+            refs.extend(leg.manifest_refs(cx));
+        }
         for reference in &refs {
-            let Some(respell) = arm.respell(cx, reference) else {
+            let Some(respell) = arm.core.respell(cx, reference) else {
                 continue;
             };
             let key = (respell.file.clone(), respell.span.start);

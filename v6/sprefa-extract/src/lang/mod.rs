@@ -57,7 +57,7 @@ pub use ts_rehome::{build_paths, compiled_spellings, BuildPaths};
 pub use ts_resolve::{respell, TsResolver};
 
 use crate::source::Source;
-use crate::types::{Rehome, Rename};
+use crate::types::{RehomeArm, Rename};
 
 /// The first-match roster. Order matters: the lang-specific `Source`s precede the
 /// ast-grep CST fallback (v5 `type_langs()` convention). RustSource is first so a
@@ -90,16 +90,46 @@ pub fn source_for(path: &str) -> Option<&'static dyn Source> {
 /// The `Rehome` roster: one impl per language `extract move` can rehome, in
 /// `sources()` order. A language with no impl here is a named stop, never a
 /// `match` arm in the move core.
-pub fn rehomes() -> &'static [&'static dyn Rehome] {
-    &[&RustSource, &KotlinSource, &PrologSource, &TsSource]
+pub fn rehomes() -> &'static [RehomeArm] {
+    const ROSTER: [RehomeArm; 4] = [
+        RehomeArm {
+            core: &RustSource,
+            manifests: Some(&RustSource),
+            shim: None,
+            text_spellings: None,
+            plan_check: Some(&RustSource),
+        },
+        RehomeArm {
+            core: &KotlinSource,
+            manifests: None,
+            shim: None,
+            text_spellings: None,
+            plan_check: None,
+        },
+        RehomeArm {
+            core: &PrologSource,
+            manifests: None,
+            shim: Some(&PrologSource),
+            text_spellings: None,
+            plan_check: None,
+        },
+        RehomeArm {
+            core: &TsSource,
+            manifests: Some(&TsSource),
+            shim: None,
+            text_spellings: Some(&TsSource),
+            plan_check: None,
+        },
+    ];
+    &ROSTER
 }
 
 /// The `Rehome` that owns `path`, under the SAME first-match law `sources()`
 /// states: `"x.kts".ends_with(".ts")` is true, so `TsSource` matches a kotlin
 /// script too and only `source_for`'s own winner may claim it.
-pub fn rehome_for(path: &str) -> Option<&'static dyn Rehome> {
+pub fn rehome_for(path: &str) -> Option<&'static RehomeArm> {
     let owner = source_for(path)?.name();
-    rehomes().iter().copied().find(|arm| arm.name() == owner)
+    rehomes().iter().find(|arm| arm.name() == owner)
 }
 
 /// The `Rename` roster, in `sources()` order. Membership is "has a scope plane
