@@ -2111,6 +2111,15 @@ pub enum RefRole {
     TypeRef,
 }
 
+/// One occurrence a rename reports and never rewrites: where it sits, and the
+/// form that reaches the symbol there.
+#[derive(Debug)]
+pub struct SymbolSeat {
+    pub file: String,
+    pub span: Span,
+    pub form: &'static str,
+}
+
 /// Why an arm will not plan. A partial rename compiles less often than no
 /// rename at all, so an arm stops instead of emitting a subset.
 #[derive(Debug)]
@@ -2129,13 +2138,9 @@ pub enum RenameStop {
         span: Span,
         why: &'static str,
     },
-    /// A reference reachable only through a runtime form (computed member,
-    /// dynamic import, string key). Reported, never rewritten.
-    Dynamic {
-        file: String,
-        span: Span,
-        form: &'static str,
-    },
+    /// Every reference reachable only through a runtime form (computed member,
+    /// dynamic import, string key). One seat at a time hides the next repair.
+    Dynamic(Vec<SymbolSeat>),
 }
 
 impl fmt::Display for RenameStop {
@@ -2156,12 +2161,17 @@ impl fmt::Display for RenameStop {
             RenameStop::Inexact { file, span, why } => {
                 write!(formatter, "{file} byte {}: {why}", span.start)
             }
-            RenameStop::Dynamic { file, span, form } => {
-                write!(
-                    formatter,
-                    "{file} byte {}: {form} reaches the symbol at runtime",
-                    span.start
-                )
+            RenameStop::Dynamic(seats) => {
+                let lines: Vec<String> = seats
+                    .iter()
+                    .map(|seat| {
+                        format!(
+                            "{} byte {}: {} reaches the symbol at runtime",
+                            seat.file, seat.span.start, seat.form
+                        )
+                    })
+                    .collect();
+                formatter.write_str(&lines.join("\n"))
             }
         }
     }

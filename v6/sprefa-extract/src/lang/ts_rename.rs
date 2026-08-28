@@ -4,18 +4,28 @@
 //! identifier-exact (`plans/2026-08-27-extract-rename.PLAN.md:113`).
 //! @comment-ok: module header, the seam list every lang file opens with
 
+//! The importer graph comes off `TsRehome::import_refs` (`ts_rehome.rs:33`),
+//! which already resolves every specifier through `oxc_resolver`.
+
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+
 use oxc_ast::ast as ts;
 use oxc_ast::ast::Program;
 use oxc_ast_visit::Visit;
-use oxc_semantic::SemanticBuilder;
+use oxc_semantic::{Scoping, Semantic, SemanticBuilder};
 use oxc_span::GetSpan;
 use oxc_syntax::reference::Reference;
 use oxc_syntax::symbol::SymbolId;
 
 use crate::lang::ts::{OxcParser, TsSource};
+use crate::move_cx::MoveCx;
 use crate::rename_cx::{RenameCx, RenameRequest};
 use crate::seams::Parser;
-use crate::types::{RefRole, Rename, RenameStop, Respell, Span, SymbolRef};
+use crate::types::{
+    ImportRefKind, RefRole, Rehome, Rename, RenameStop, Respell, Span, SymbolRef, SymbolSeat,
+};
 
 impl Rename for TsSource {
     fn symbol_refs(
@@ -59,52 +69,30 @@ impl Rename for TsSource {
             return Err(ambiguous(request, sites));
         }
 
-        if let Some((seat, form)) = earliest_dynamic_seat(&program, &request.old) {
-            return Err(RenameStop::Dynamic {
-                file: request.anchor.clone(),
-                span: to_span(seat),
-                form,
-            });
+        let seats = dynamic_seats(&program, &request.anchor, &request.old);
+        if !seats.is_empty() {
+            return Err(RenameStop::Dynamic(seats));
         }
 
-        let mut refs = vec![SymbolRef {
-            file: request.anchor.clone(),
-            span: to_span(scoping.symbol_span(symbol)),
-            role: RefRole::Definition,
-            text: request.old.clone(),
-        }];
-        for reference in scoping.get_resolved_references(symbol) {
-            refs.push(SymbolRef {
-                file: request.anchor.clone(),
-                span: to_span(semantic.nodes().kind(reference.node_id()).span()),
-                role: role_of(reference),
-                text: request.old.clone(),
-            });
+        let mut refs = binding_refs(&semantic, symbol, &request.anchor, &request.old);
+        // A symbol no importer can name is file-local, so the run opens one file.
+        if exports_bare(&program, &request.old) {
+            refs.extend(importer_refs(cx, request));
         }
-        refs.sort_by_key(|reference| reference.span.start);
-        Ok(refs)
+        Ok(settle(refs))
     }
 
     fn respell_symbol(
         &self,
-        cx: &RenameCx,
+        _cx: &RenameCx,
         request: &RenameRequest,
         reference: &SymbolRef,
     ) -> Option<Respell> {
-        // Arc 1 reaches one file, so the exported anchor's importers are still
-        // unrepaired; the definition seat carries that warning once.
-        let receipt = match reference.role == RefRole::Definition && exported(cx, request) {
-            true => Some(format!(
-                "public: {} is exported; importers are arc 3",
-                request.old
-            )),
-            false => None,
-        };
         Some(Respell {
             file: reference.file.clone(),
             span: reference.span,
             text: request.new.clone(),
-            receipt,
+            receipt: None,
         })
     }
 }
@@ -121,7 +109,7 @@ fn not_found(request: &RenameRequest) -> RenameStop {
 /// so an offset anywhere inside a declaration body still selects it. `None`
 /// means the caller reports every candidate as ambiguous.
 fn select_by_at(
-    scoping: &oxc_semantic::Scoping,
+    scoping: &Scoping,
     candidates: &[SymbolId],
     at: Option<u32>,
 ) -> Option<SymbolId> {
@@ -145,15 +133,275 @@ fn select_by_at(
     }
 }
 
+/// One binding's own identifier plus every reference the scope plane resolves to
+/// it, all inside `file`.
+fn binding_refs(
+    semantic: &Semantic<'_>,
+    symbol: SymbolId,
+    file: &str,
+    name: &str,
+) -> Vec<SymbolRef> {
+    let scoping = semantic.scoping();
+    let mut refs = vec![SymbolRef {
+        file: file.to_string(),
+        span: to_span(scoping.symbol_span(symbol)),
+        role: RefRole::Definition,
+        text: name.to_string(),
+    }];
+    for reference in scoping.get_resolved_references(symbol) {
+        refs.push(SymbolRef {
+            file: file.to_string(),
+            span: to_span(semantic.nodes().kind(reference.node_id()).span()),
+            role: role_of(reference),
+            text: name.to_string(),
+        });
+    }
+    refs
+}
+
+/// One seat per `(file, offset)`, in plan order. A bare `import {OLD}` writes
+/// the imported name and the local binding with ONE token, so both walks meet.
+fn settle(mut refs: Vec<SymbolRef>) -> Vec<SymbolRef> {
+    refs.sort_by(|left, right| {
+        left.file
+            .cmp(&right.file)
+            .then(left.span.start.cmp(&right.span.start))
+    });
+    refs.dedup_by(|left, right| left.file == right.file && left.span.start == right.span.start);
+    refs
+}
+
+// ── the importer walk ───────────────────────────────────────────────────────
+
+/// Target module -> importer -> the source-literal offsets reaching it. Keying
+/// on the offset re-uses `oxc_resolver`'s answer instead of resolving twice.
+type ImportGraph = BTreeMap<String, BTreeMap<String, BTreeSet<u32>>>;
+
+/// What one importer answers about a module it imports the symbol from.
+struct ImporterSeats {
+    refs: Vec<SymbolRef>,
+    /// The names this importer re-exports the symbol under, for the next hop.
+    exports: Vec<String>,
+}
+
+/// Every seat outside the anchor, breadth first. A queue entry is a module and
+/// the name it exports the symbol under; an aliasing relay ends that branch.
+fn importer_refs(cx: &RenameCx, request: &RenameRequest) -> Vec<SymbolRef> {
+    let graph = import_graph(cx);
+    let mut refs = Vec::new();
+    let mut queue: VecDeque<(String, String)> = VecDeque::new();
+    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+    seen.insert((request.anchor.clone(), request.old.clone()));
+    queue.push_back((request.anchor.clone(), request.old.clone()));
+    while let Some((module, name)) = queue.pop_front() {
+        let Some(importers) = graph.get(&module) else {
+            continue;
+        };
+        for (importer, sources) in importers {
+            let seats = importer_seats(cx, importer, sources, &name);
+            refs.extend(seats.refs);
+            for exported in seats.exports {
+                if seen.insert((importer.clone(), exported.clone())) {
+                    queue.push_back((importer.clone(), exported));
+                }
+            }
+        }
+    }
+    refs
+}
+
+/// One importer's seats for `name`, over the import and re-export clauses whose
+/// module specifier sits at one of `sources`.
+fn importer_seats(
+    cx: &RenameCx,
+    rel: &str,
+    sources: &BTreeSet<u32>,
+    name: &str,
+) -> ImporterSeats {
+    let mut out = ImporterSeats {
+        refs: Vec::new(),
+        exports: Vec::new(),
+    };
+    let Some(text) = cx.text(rel) else {
+        return out;
+    };
+    let parser = OxcParser;
+    let arena = parser.make_arena();
+    let Ok(program) = parser.parse(&arena, rel, text.as_bytes()) else {
+        return out;
+    };
+    let semantic = SemanticBuilder::new().build(&program).semantic;
+    for statement in &program.body {
+        match statement {
+            ts::Statement::ImportDeclaration(import) => {
+                if !sources.contains(&import.source.span.start) {
+                    continue;
+                }
+                let Some(specifiers) = &import.specifiers else {
+                    continue;
+                };
+                for specifier in specifiers {
+                    let ts::ImportDeclarationSpecifier::ImportSpecifier(named) = specifier else {
+                        continue;
+                    };
+                    import_seat(&semantic, rel, named, name, &mut out);
+                }
+            }
+            ts::Statement::ExportNamedDeclaration(export) => {
+                let Some(source) = &export.source else {
+                    continue;
+                };
+                if !sources.contains(&source.span.start) {
+                    continue;
+                }
+                for specifier in &export.specifiers {
+                    relay_seat(rel, specifier, name, &mut out);
+                }
+            }
+            ts::Statement::ExportAllDeclaration(export) => {
+                if !sources.contains(&export.source.span.start) {
+                    continue;
+                }
+                // `export * as ns from` binds a namespace object: the symbol is
+                // a property at that seat, never an identifier the plane binds.
+                if export.exported.is_none() {
+                    out.exports.push(name.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// One `import { NAME }` / `import { NAME as local }` clause. The aliased form
+/// moves the imported seat alone: `local` is a name this file owns.
+fn import_seat(
+    semantic: &Semantic<'_>,
+    rel: &str,
+    named: &ts::ImportSpecifier<'_>,
+    name: &str,
+    out: &mut ImporterSeats,
+) {
+    if plain_name(&named.imported) != Some(name) {
+        return;
+    }
+    out.refs.push(SymbolRef {
+        file: rel.to_string(),
+        span: to_span(named.imported.span()),
+        role: RefRole::Import,
+        text: name.to_string(),
+    });
+    if !one_token(named.imported.span(), named.local.span) {
+        return;
+    }
+    let local = named.local.name.as_str();
+    if let Some(symbol) = binding_at(semantic.scoping(), named.local.span.start, local) {
+        out.refs.extend(binding_refs(semantic, symbol, rel, name));
+    }
+    if exports_bare(semantic.nodes().program(), local) {
+        out.exports.push(local.to_string());
+    }
+}
+
+/// One `export { NAME } from "./m"` clause. The bare form carries the rename
+/// onward; `export { NAME as other } from` pins `other` and ends the branch.
+fn relay_seat(rel: &str, specifier: &ts::ExportSpecifier<'_>, name: &str, out: &mut ImporterSeats) {
+    if plain_name(&specifier.local) != Some(name) {
+        return;
+    }
+    out.refs.push(SymbolRef {
+        file: rel.to_string(),
+        span: to_span(specifier.local.span()),
+        role: RefRole::Export,
+        text: name.to_string(),
+    });
+    if one_token(specifier.local.span(), specifier.exported.span()) {
+        out.exports.push(name.to_string());
+    }
+}
+
+/// The corpus import graph, off `TsRehome::import_refs`. ONE per root per
+/// process, the law `ts_rehome.rs:435` sets for the resolver behind it.
+fn import_graph(cx: &RenameCx) -> &'static ImportGraph {
+    static CACHE: OnceLock<Mutex<BTreeMap<PathBuf, &'static ImportGraph>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    static EMPTY: OnceLock<ImportGraph> = OnceLock::new();
+    let empty = || EMPTY.get_or_init(ImportGraph::new);
+    let Ok(mut held) = cache.lock() else {
+        return empty();
+    };
+    if let Some(existing) = held.get(cx.root()) {
+        return existing;
+    }
+    let leaked: &'static ImportGraph = Box::leak(Box::new(build_import_graph(cx)));
+    held.insert(cx.root().to_path_buf(), leaked);
+    leaked
+}
+
+/// `import_refs` reports the specifiers a MOVE would re-aim, so the batch maps
+/// every TS file to itself: every file a target, no specifier filtered by name.
+fn build_import_graph(cx: &RenameCx) -> ImportGraph {
+    let Ok(move_cx) = MoveCx::open(cx.root()) else {
+        return ImportGraph::new();
+    };
+    let batch: BTreeMap<String, String> = move_cx
+        .files_of(&TsSource)
+        .into_iter()
+        .map(|rel| (rel.to_string(), rel.to_string()))
+        .collect();
+    let move_cx = move_cx.with_batch(batch, false);
+    let mut graph = ImportGraph::new();
+    for reference in TsSource.import_refs(&move_cx) {
+        if reference.kind != ImportRefKind::Import {
+            continue;
+        }
+        graph
+            .entry(reference.target)
+            .or_default()
+            .entry(reference.importer)
+            .or_default()
+            .insert(reference.literal.start);
+    }
+    graph
+}
+
+/// The binding whose own identifier opens at `start`.
+fn binding_at(scoping: &Scoping, start: u32, name: &str) -> Option<SymbolId> {
+    scoping
+        .scope_descendants_from_root()
+        .flat_map(|scope| scoping.iter_bindings_in(scope))
+        .find(|symbol| {
+            scoping.symbol_span(*symbol).start == start && scoping.symbol_name(*symbol) == name
+        })
+}
+
+/// Whether two module-clause halves are the one written token, which is what
+/// `{NAME}` writes and `{NAME as other}` does not.
+fn one_token(left: oxc_span::Span, right: oxc_span::Span) -> bool {
+    left.start == right.start && left.end == right.end
+}
+
+/// The identifier token a module export name writes. A string-literal name
+/// (`export { "a b" as x }`) is data, so it writes none.
+fn plain_name<'a>(name: &ts::ModuleExportName<'a>) -> Option<&'a str> {
+    match name {
+        ts::ModuleExportName::IdentifierName(id) => Some(id.name.as_str()),
+        ts::ModuleExportName::IdentifierReference(id) => Some(id.name.as_str()),
+        ts::ModuleExportName::StringLiteral(_) => None,
+    }
+}
+
+// ── the runtime seats ───────────────────────────────────────────────────────
+
 /// One runtime-only seat: the bytes, and how they reach the symbol. A seat is
 /// any member access spelling `old` that the scope plane never binds, so a
 /// rename that skipped it could silently miss the real call site.
 type DynamicSeat = (oxc_span::Span, &'static str);
 
-/// The earliest seat in the anchor, if any. `RenameStop::Dynamic` carries one
-/// span, so the stop reports one seat per run; the earliest is the one a
-/// `--at`-style repair would meet first.
-fn earliest_dynamic_seat(program: &Program<'_>, old: &str) -> Option<DynamicSeat> {
+/// Every seat in the anchor, earliest first. Importers are outside this scan: a
+/// property named `old` on any object anywhere would stop every run.
+fn dynamic_seats(program: &Program<'_>, file: &str, old: &str) -> Vec<SymbolSeat> {
     let mut scan = DynamicScan {
         old,
         seats: Vec::new(),
@@ -161,7 +409,14 @@ fn earliest_dynamic_seat(program: &Program<'_>, old: &str) -> Option<DynamicSeat
     scan.visit_program(program);
     let mut seats = scan.seats;
     seats.sort_by_key(|(span, _)| span.start);
-    seats.into_iter().next()
+    seats
+        .into_iter()
+        .map(|(span, form)| SymbolSeat {
+            file: file.to_string(),
+            span: to_span(span),
+            form,
+        })
+        .collect()
 }
 
 struct DynamicScan<'a> {
@@ -209,41 +464,20 @@ fn role_of(reference: &Reference) -> RefRole {
     RefRole::Read
 }
 
-/// Whether the anchor's module surface carries `request.old`: an `export`ed
-/// declaration binding it, or an `export { old }` clause naming it.
-fn exported(cx: &RenameCx, request: &RenameRequest) -> bool {
-    let Some(text) = cx.text(&request.anchor) else {
-        return false;
-    };
-    let parser = OxcParser;
-    let arena = parser.make_arena();
-    let Ok(program) = parser.parse(&arena, &request.anchor, text.as_bytes()) else {
-        return false;
-    };
-    program_exports(&program, &request.old)
-}
-
-fn program_exports(program: &Program<'_>, name: &str) -> bool {
+/// Whether the module surface carries `name` under the SAME token that binds it.
+/// An aliased clause pins the public name, so no importer of it needs repairing.
+fn exports_bare(program: &Program<'_>, name: &str) -> bool {
     program.body.iter().any(|statement| match statement {
-        ts::Statement::ExportNamedDeclaration(export) => {
+        ts::Statement::ExportNamedDeclaration(export) if export.source.is_none() => {
             export
                 .declaration
                 .as_ref()
                 .is_some_and(|declaration| declares(declaration, name))
-                || export
-                    .specifiers
-                    .iter()
-                    .any(|specifier| specifier.local.name() == name)
+                || export.specifiers.iter().any(|specifier| {
+                    plain_name(&specifier.local) == Some(name)
+                        && one_token(specifier.local.span(), specifier.exported.span())
+                })
         }
-        ts::Statement::ExportDefaultDeclaration(export) => match &export.declaration {
-            ts::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
-                class.id.as_ref().is_some_and(|id| id.name == name)
-            }
-            ts::ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
-                func.id.as_ref().is_some_and(|id| id.name == name)
-            }
-            _ => false,
-        },
         _ => false,
     })
 }

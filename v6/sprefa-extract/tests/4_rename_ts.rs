@@ -1,6 +1,7 @@
 //! `extract rename` on the TS arm: arc 1's anchor-file rename over
 //! `tests/fixtures/ts_rename/local`, judged byte-exact against a hand written
-//! `after/` tree, and arc 2's named stops over `tests/fixtures/ts_rename/stops/`.
+//! `after/` tree, arc 2's named stops over `tests/fixtures/ts_rename/stops/`,
+//! and arc 3's importer walk over `tests/fixtures/ts_rename/exports/`.
 //!
 //! @comment-ok: fail-first receipt, repo law keeps these in TEST headers.
 //! FAIL-FIRST (arc 2), against the arc-1 binary:
@@ -12,11 +13,24 @@
 //!         (the stop did not exist)
 //!     inexact_is_unreachable_from_the_ts_arm ... ts_rename.rs constructs Inexact
 //!     unknown_symbol_stops_and_writes_nothing ... left: Some(2), right: Some(4)
+//! FAIL-FIRST (arc 3), against the arc-2 binary:
+//!     exported_symbol_renames_every_importer ... committed tree differs from after/:
+//!         Files .../src/a.ts and .../after/src/a.ts differ (and b, barrel, c, d)
+//!     aliased_import_moves_only_the_imported_seat ... src/b.ts kept `import { Foo as Bar }`
+//!     dry_run_prints_per_file_counts ... missing "  src/a.ts  3 uses"
+//!     dynamic_stop_lists_every_seat ... Dynamic seat offset 108 missing:
+//!         (the stop reported one seat per run)
+//!     tsc_is_clean_on_the_committed_tree ... committed tree failed tsc:
+//!         src/a.ts(1,10): error TS2724: '"./lib"' has no exported member named 'Foo'.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const ANCHOR: &str = "src/app.ts";
+
+/// Arc 3's fixture: `src/lib.ts` exports `Foo`, five importers reach it.
+const EXPORTS: &str = "exports";
+const EXPORTS_ANCHOR: &str = "src/lib.ts";
 
 struct Fixture {
     root: PathBuf,
@@ -279,10 +293,11 @@ fn inexact_is_unreachable_from_the_ts_arm() {
 }
 
 /// `obj["Foo"]` and `import("./m").then(m => m.Foo)` reach the symbol only at
-/// runtime; the run stops with the seat's file and offset, exit 6, and the
-/// tree stays put.
+/// runtime; the run stops with EVERY seat's file and offset, exit 6, and the
+/// tree stays put. One seat per run would leave the second repair invisible
+/// until the first was fixed, so the stop carries the whole list.
 #[test]
-fn dynamic_seats_stop_and_write_nothing() {
+fn dynamic_stop_lists_every_seat() {
     let case = "stops/dynamic";
     let fixture = fixture(case, "stop");
     let stopped = stopped_rename_verb(&fixture, &format!("{ANCHOR}#Foo"), "Bar", &[]);
@@ -298,16 +313,136 @@ fn dynamic_seats_stop_and_write_nothing() {
         .find("[\"Foo\"]")
         .expect("computed seat in fixture")
         + 1;
+    let member_offset = seat_text
+        .find("module.Foo")
+        .expect("member seat in fixture")
+        + "module.".len();
     let stderr = stopped.stderr.replace('\n', " ");
-    assert!(
-        stderr.contains("computed member"),
-        "Dynamic form missing:\n{}",
-        stopped.stderr
-    );
-    assert!(
-        stderr.contains(&format!("{ANCHOR} byte {computed_offset}")),
-        "Dynamic seat offset {computed_offset} missing:\n{}",
-        stopped.stderr
-    );
+    for form in ["computed member", "member access"] {
+        assert!(
+            stderr.contains(form),
+            "Dynamic form {form} missing:\n{}",
+            stopped.stderr
+        );
+    }
+    for offset in [computed_offset, member_offset] {
+        assert!(
+            stderr.contains(&format!("{ANCHOR} byte {offset}")),
+            "Dynamic seat offset {offset} missing:\n{}",
+            stopped.stderr
+        );
+    }
     assert_untouched(&fixture, case);
+}
+
+// ── arc 3: the importer walk ────────────────────────────────────────────────
+
+/// An exported symbol's rename reaches every file the importer graph joins to
+/// the anchor: a bare import, an aliased import, a `export {} from` barrel, a
+/// `export * from` relay and the file importing through it. The committed tree
+/// is the hand-written `after/` tree, byte for byte, which also pins what stays
+/// put: `src/e.ts`'s `"Foo"` string, `src/star.ts`, and `makeFoo`, whose name
+/// carries `Foo` as a substring the scope plane never binds.
+#[test]
+fn exported_symbol_renames_every_importer() {
+    let fixture = fixture(EXPORTS, "commit");
+    rename_verb(
+        &fixture,
+        &format!("{EXPORTS_ANCHOR}#Foo"),
+        "Baz",
+        &["--commit"],
+    );
+    let entries = diff_rq(&fixture.root, &tree(EXPORTS, "after"));
+    assert!(
+        entries.is_empty(),
+        "committed tree differs from after/:\n{}",
+        entries.join("\n")
+    );
+}
+
+/// `import { Foo as Bar }` moves the `Foo` seat alone. `Bar` is a binding this
+/// file owns, so it and its three body uses are outside the rename.
+#[test]
+fn aliased_import_moves_only_the_imported_seat() {
+    let fixture = fixture(EXPORTS, "alias");
+    rename_verb(
+        &fixture,
+        &format!("{EXPORTS_ANCHOR}#Foo"),
+        "Baz",
+        &["--commit"],
+    );
+    let text = std::fs::read_to_string(fixture.root.join("src/b.ts")).expect("committed src/b.ts");
+    assert!(
+        text.contains("import { Baz as Bar }"),
+        "the imported seat did not move:\n{text}"
+    );
+    let body = text.split_once('\n').expect("an import line").1;
+    assert_eq!(
+        body.matches("Bar").count(),
+        3,
+        "the local binding's uses changed:\n{text}"
+    );
+    assert_eq!(
+        body.matches("Baz").count(),
+        0,
+        "the new name leaked into the body:\n{text}"
+    );
+}
+
+/// The dry run prints one count line per touched file and writes nothing. A
+/// file the graph reaches but the symbol never seats in (`src/star.ts`'s
+/// `export *`) and a file that only spells the name in a string (`src/e.ts`)
+/// carry no line at all.
+#[test]
+fn dry_run_prints_per_file_counts() {
+    let fixture = fixture(EXPORTS, "dry");
+    let stdout = rename_verb(&fixture, &format!("{EXPORTS_ANCHOR}#Foo"), "Baz", &[]);
+    for (file, uses) in [
+        ("src/a.ts", 3),
+        ("src/b.ts", 1),
+        ("src/barrel.ts", 1),
+        ("src/c.ts", 2),
+        ("src/d.ts", 2),
+        ("src/lib.ts", 3),
+    ] {
+        let line = format!("  {file}  {uses} uses");
+        assert!(stdout.contains(&line), "missing {line}:\n{stdout}");
+    }
+    for untouched in ["src/star.ts", "src/e.ts"] {
+        assert!(
+            !stdout.contains(untouched),
+            "{untouched} is not touched, so it carries no count line:\n{stdout}"
+        );
+    }
+    assert!(
+        stdout.contains("dry run, tree untouched"),
+        "dry-run stage line missing:\n{stdout}"
+    );
+    assert_untouched(&fixture, EXPORTS);
+}
+
+/// The committed tree still typechecks. `diff -rq` judges the bytes; only the
+/// compiler judges whether the import graph still joins up.
+/// Measured 1.8 s warm, under the 10 s cap; the compiler is fetched by npx, so
+/// a cold cache pays a network round trip once.
+#[test]
+fn tsc_is_clean_on_the_committed_tree() {
+    let fixture = fixture(EXPORTS, "tsc");
+    rename_verb(
+        &fixture,
+        &format!("{EXPORTS_ANCHOR}#Foo"),
+        "Baz",
+        &["--commit"],
+    );
+    let output = Command::new("npx")
+        .args(["--yes", "-p", "typescript", "tsc", "--noEmit", "-p"])
+        .arg(&fixture.root)
+        .output()
+        .expect("npx runs");
+    assert!(
+        output.status.success(),
+        "committed tree failed tsc:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
