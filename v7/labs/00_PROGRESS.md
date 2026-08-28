@@ -1,6 +1,6 @@
 # V7 Common Lisp logic lab progress
 
-Updated: 2026-08-28 16:22 EDT
+Updated: 2026-08-28 17:28 EDT
 
 ## Current state
 
@@ -9,9 +9,9 @@ Updated: 2026-08-28 16:22 EDT
 - Installed runtime: SBCL 2.6.7.
 - GLM shared worktree: `.boop-worktrees/chore/v7-cl-logic-glm`.
 - Terra shared worktree: `.boop-worktrees/chore/v7-cl-logic-terra`.
-- Completed lab reports: 6 (`1_inventory`, `2_cl_gambol`, `3_paiprolog`,
-  `4_cl_datalog`, `5_cl_grph`, `6_screamer`).
-- Active lab workers: 2 (`7_reazon_cl`, `8_cl_kanren`).
+- Completed lab reports: 8 (`1_inventory`, `2_cl_gambol`, `3_paiprolog`,
+  `4_cl_datalog`, `5_cl_grph`, `6_screamer`, `7_reazon_cl`, `8_cl_kanren`).
+- Active lab workers: 2 (`9_vivace_graph`, `10_wamcompiler`).
 
 ## Completed labs
 
@@ -58,6 +58,25 @@ Updated: 2026-08-28 16:22 EDT
 - Final Luna reviews returned PASS for both labs after package provenance,
   external build paths, raw receipts, append, negation, and capability
   vocabulary were reconciled.
+- `reazon-cl` commit on main: `40a13c320`. Native behavior covers first-order
+  unification with a default occurs check, productive stream interleaving,
+  bidirectional append, and ordered answers. Cyclic paths, facts, updates, and
+  bounded negation use adapters.
+- `reazon-cl` image: 44,309,032 bytes, SHA-256
+  `438681574716742538ee8ae756a439d23f992c6a03e470c09ccd1ee803a8ed6f`.
+  Its emitted probe SHA matches the committed `2_PROBE.lisp`. The runtime
+  verifies the clean upstream pin and the Trivia archive and ASDF source.
+- `cl-kanren` commit on main: `de6ff57cd`. Native behavior covers generic
+  first-order unification with an occurs check and lazy `mplus` interleaving.
+  The cyclic fixture needs an answer cap or wall bound; Datalog saturation,
+  dynamic facts, and negation are adapters.
+- `cl-kanren` image: 42,932,568 bytes, SHA-256
+  `b6d24a321b3ccba51ee74373f7bac46ca0970ddeb8187c31437cec8d16e71aea`.
+  Its toplevel starts 13 external SBCL child sections and propagates child
+  failure as exit code 1.
+- Two Luna-high review passes reconciled provenance, dependency hashes,
+  fairness receipts, truth labels, upstream history, child counts, external
+  runtime files, and final image receipts for labs 7 and 8.
 
 ## Coordination receipt
 
@@ -73,13 +92,17 @@ registered as `v7-paiprolog-glm` and `v7-cl-datalog-glm`. The third pair is
 registered as `v7-cl-grph-glm` and `v7-screamer-glm`. Those persistent sessions
 were closed after one queued correction wrote late into the shared worktree.
 Stable files were then re-run and reviewed before commit. The fourth pair is
-registered as `v7-reazon-glm` and `v7-cl-kanren-glm`.
+registered as `v7-reazon-glm` and `v7-cl-kanren-glm`. Five stale ACPX queue
+owners and the old cl-datalog coordinator were terminated after they blocked
+the next pair. Managed approval rejected OpenRouter transmission of repository
+contents, so labs 9 and 10 use native Terra-high workers instead.
 
 ## Next execution sequence
 
-1. Review `7_reazon_cl` and `8_cl_kanren` when their completion hails arrive.
-2. Commit the accepted pair on the GLM branch and cherry-pick it to main.
-3. Run bounded Terra review on the accepted pair.
+1. Review `9_vivace_graph` and `10_wamcompiler` when native completion notices
+   arrive.
+2. Commit the accepted pair on the shared branch and cherry-pick it to main.
+3. Run bounded Luna review on the accepted pair.
 4. Repeat in pairs through the runnable library labs before starting binary
    packaging.
 
