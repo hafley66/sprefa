@@ -1,6 +1,6 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-28 00:39 EDT, Opus ruling review ready to spawn
+Updated: 2026-08-28 00:42 EDT, Opus ruling review running
 
 ## Current state
 
@@ -28,8 +28,10 @@ Updated: 2026-08-28 00:39 EDT, Opus ruling review ready to spawn
 - Sol documentation landed on main as `7e3303be5`.
 - `@dl7-kernel-contract` is `needs-info` and blocked by
   `@dl7-contract-critique`.
-- `@dl7-contract-critique` is the spawnable Opus 5 ruling review on lane
-  `dl7-ruling`.
+- `@dl7-contract-critique` is `in-progress` in Boop lane
+  `chore-dl7-contract-critique`, Opus 5/high, base `7073ffa20`.
+- Expected output: `v7/3_TASKS/results/1_CONTRACT_CRITIQUE.md` plus one
+  documentation commit.
 
 ## Hitches
 
