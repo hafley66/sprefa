@@ -12,8 +12,8 @@ Updated: 2026-08-28 18:01 EDT
 - Completed lab reports: 10 (`1_inventory`, `2_cl_gambol`, `3_paiprolog`,
   `4_cl_datalog`, `5_cl_grph`, `6_screamer`, `7_reazon_cl`, `8_cl_kanren`,
   `9_vivace_graph`, `10_wamcompiler`).
-- Active lab workers: 0. The next pair is `11_cl_prolog2` and
-  `12_handwritten_logic`.
+- Active lab workers: 2 (`11_cl_prolog2`, `12_handwritten_logic`) using native
+  Terra-high workers in the shared lab worktree.
 
 ## Completed labs
 
