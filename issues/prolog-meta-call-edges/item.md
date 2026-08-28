@@ -2,11 +2,16 @@
 created: 2026-08-28
 updated: 2026-08-28
 type: bug
-status: open
+status: fixed
 priority: normal
 labels:
 - sprefa-extract
 - size:med
+closed: 2026-08-28
+closed_by: codex
+commits:
+- hash: aec4ca9a1
+  summary: 'extract: resolve Prolog meta-call edges'
 ---
 
 # Resolve Prolog meta-call edges
@@ -39,12 +44,12 @@ the executable entrypoint therefore terminates early.
 
 ## Acceptance Criteria
 
-- [ ] A derived program or extraction fact represents statically callable
+- [x] A derived program or extraction fact represents statically callable
       Prolog meta-predicate arguments for at least `once/1` and `catch/3`.
-- [ ] The DL7 SWI fixture resolves continuously from `main/0` through
+- [x] The DL7 SWI fixture resolves continuously from `main/0` through
       `read_top_forms/5` and `expand_nodes/3`.
-- [ ] Ordinary non-callable term arguments remain excluded from call edges.
-- [ ] Tests cover direct goals, nested `once/1`, and `catch/3` goal/recovery
+- [x] Ordinary non-callable term arguments remain excluded from call edges.
+- [x] Tests cover direct goals, nested `once/1`, and `catch/3` goal/recovery
       arguments.
 
 ## Tests Run
@@ -57,3 +62,9 @@ The extractor boundary says language semantics can remain a Datalog program
 over emitted facts. The existing `reference(position=term_arg)` rows may be
 sufficient input if meta-predicate argument positions are represented as data
 above extraction.
+
+## Comments
+
+### 2026-08-28T23:51:24Z · @codex
+
+Validated patched extractor across all five v7/0_SWIPL files: 105 resolved edges, 4 cross-file edges, and continuous entrypoint paths from main/0 through read_top_forms/5 and expand_nodes/3. cargo test --features cli passed the extractor and Prolog coverage; the unrelated tsc_is_clean_on_the_committed_tree test failed after 70.93s because npx attempted registry.npmjs.org with DNS unavailable.
