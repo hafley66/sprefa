@@ -7,6 +7,9 @@ The first arc is a predicate-level DL6 reuse audit. Its receipts live under
 `1_AUDIT/`. Source compatibility and a second maintained DL6 frontend are
 outside this arc.
 
+- [Donor audit index](1_AUDIT/results/0_INDEX.md)
+- [Kernel reconciliation](2_DESIGN/0_KERNEL_RECONCILIATION.md)
+
 Initial boundary under examination:
 
 ```text

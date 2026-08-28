@@ -43,7 +43,7 @@ Small blast radius, leak sits in the move/Rehome path or the engine hosts.
 
 1. #6 `ImportRef.kind` stringly kind -> enum. Move path, 3-5 files, L. Gate: `extract move` fixtures + `bash v6/sprefa-engine-rs/grade.sh` untouched.
 2. #20 `moved_names`/`stem` duplication -> `Rehome` default method + one util. Move path, 3 files, L.
-3. #12 split `Rehome` optional methods into per-lang extension traits. Move path, 4-6 files, L.
+3. #12 split `Rehome` optional methods into per-lang extension traits. Move path, 4-6 files, L. DONE 2026-08-28 (branch refactor/rehome-legs): `RehomeManifests`, `RehomeShim`, `RehomeTextSpellings`, `RehomePlanCheck` + `RehomeArm` roster struct in `types.rs`; `rehomes()` returns `&[RehomeArm]`, each `None` leg visible in `lang/mod.rs`.
 4. #15 `ScipMode` cross-crate match out of `hosts.rs:979,1022`. Engine hosts, 2-3 files, L.
 5. #19 `ExecutorCadence` matching out of `run.rs`/scheduler. Engine hosts, 3-4 files, L.
 

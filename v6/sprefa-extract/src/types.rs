@@ -2026,37 +2026,6 @@ pub trait Rehome: Source + Sync + Send {
     /// target may both move). None = unchanged.
     fn respell(&self, cx: &MoveCx, reference: &ImportRef) -> Option<Respell>;
 
-    /// The manifest carriers this language owns (package.json, Cargo.toml),
-    /// project-relative, in path order.
-    fn manifests(&self, _cx: &MoveCx) -> Vec<String> {
-        Vec::new()
-    }
-
-    /// Manifest targets, as `ImportRef`s of kind `"manifest_target"`, so one
-    /// `respell` arm handles them too.
-    fn manifest_refs(&self, _cx: &MoveCx) -> Vec<ImportRef> {
-        Vec::new()
-    }
-
-    /// A reexport shim left at the old path, when this language has one.
-    fn shim(&self, _cx: &MoveCx, _old: &str, _new: &str) -> Option<String> {
-        None
-    }
-
-    /// Extra `(old, new)` spellings of one move that this language's build
-    /// output wears, for the `--text-refs` report to scan plain text for.
-    fn text_spellings(&self, _cx: &MoveCx, _old: &str, _new: &str) -> Vec<(String, String)> {
-        Vec::new()
-    }
-
-    /// Reasons this language cannot plan `cx`'s batch at all (a destination
-    /// with no parent module, a layout that disagrees with a declaration).
-    /// Any row stops the run before a stage is built; the core never sees a
-    /// panic from an arm.
-    fn plan_errors(&self, _cx: &MoveCx) -> Vec<String> {
-        Vec::new()
-    }
-
     /// The file name whose stem stands for its directory ("mod" for Rust,
     /// "index" for TS). None: no directory-standing file in this language.
     fn directory_stem(&self) -> Option<&'static str> {
@@ -2079,6 +2048,55 @@ pub trait Rehome: Source + Sync + Send {
             names.insert(own);
         }
         names
+    }
+}
+
+/// The manifest leg of a move: languages whose package files name paths
+/// (Cargo.toml, package.json).
+pub trait RehomeManifests: Sync + Send {
+    /// The manifest carriers this language owns, project-relative, in path order.
+    fn manifests(&self, cx: &MoveCx) -> Vec<String>;
+
+    /// Manifest targets, as `ImportRef`s of kind `ManifestTarget`, so the one
+    /// `respell` arm handles them too.
+    fn manifest_refs(&self, cx: &MoveCx) -> Vec<ImportRef>;
+}
+
+/// The shim leg of a move: a reexport module left at the old path.
+pub trait RehomeShim: Sync + Send {
+    /// None when `old` cannot be read.
+    fn shim(&self, cx: &MoveCx, old: &str, new: &str) -> Option<String>;
+}
+
+/// The text-refs leg of a move: spellings a build output wears beyond the
+/// source path itself.
+pub trait RehomeTextSpellings: Sync + Send {
+    /// Extra `(old, new)` pairs for the `--text-refs` report to scan plain text for.
+    fn text_spellings(&self, cx: &MoveCx, old: &str, new: &str) -> Vec<(String, String)>;
+}
+
+/// The plan-check leg of a move: reasons a batch cannot be planned at all.
+pub trait RehomePlanCheck: Sync + Send {
+    /// Any row stops the run before a stage is built; the core never sees a
+    /// panic from an arm.
+    fn plan_errors(&self, cx: &MoveCx) -> Vec<String>;
+}
+
+/// One `rehomes()` roster row: the core every language answers, and the legs
+/// only some languages carry. A `None` leg is the language saying "no such
+/// thing here", visible in the roster rather than hidden in a default method.
+#[derive(Clone, Copy)]
+pub struct RehomeArm {
+    pub core: &'static dyn Rehome,
+    pub manifests: Option<&'static dyn RehomeManifests>,
+    pub shim: Option<&'static dyn RehomeShim>,
+    pub text_spellings: Option<&'static dyn RehomeTextSpellings>,
+    pub plan_check: Option<&'static dyn RehomePlanCheck>,
+}
+
+impl RehomeArm {
+    pub fn name(&self) -> &'static str {
+        self.core.name()
     }
 }
 
