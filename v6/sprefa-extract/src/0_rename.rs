@@ -5,6 +5,7 @@
 //! @comment-ok: module header, the seam list every bin arm opens with
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
@@ -13,10 +14,42 @@ use sprefa_extract::move_stage::{
 };
 use sprefa_extract::{
     directory_source, normalize, rename_for, renames, replace_action, RenameCx, RenameRequest,
-    Respell, SymbolRef,
+    RenameStop, Respell, SymbolRef,
 };
 
 const PRODUCER: &str = "extract-rename";
+
+/// A failed rename run: the message and the process exit code. One code per
+/// stop, all distinct from 2 for every plan error:
+/// 2 plan error (usage, no arm, verify, claim conflict) · 3 `Ambiguous`, pass
+/// `--at` · 4 `NotFound` · 5 `Inexact` · 6 `Dynamic`.
+pub struct RenameError {
+    pub message: String,
+    pub exit: i32,
+}
+
+impl fmt::Display for RenameError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+fn plan_error(message: String) -> RenameError {
+    RenameError { message, exit: 2 }
+}
+
+fn stop_error(stop: RenameStop) -> RenameError {
+    let exit = match &stop {
+        RenameStop::Ambiguous { .. } => 3,
+        RenameStop::NotFound { .. } => 4,
+        RenameStop::Inexact { .. } => 5,
+        RenameStop::Dynamic { .. } => 6,
+    };
+    RenameError {
+        message: stop.to_string(),
+        exit,
+    }
+}
 
 #[derive(Parser)]
 #[command(
@@ -39,19 +72,23 @@ struct RenameCli {
     /// Soopy state root. Must sit outside the corpus root.
     #[arg(long)]
     state: Option<PathBuf>,
+    /// Byte offset inside the declaration, when the anchor declares `<OLD>`
+    /// more than once. One rename only; never combined with `--list`.
+    #[arg(long)]
+    at: Option<u32>,
     /// Apply the plan to the real tree instead of dry running it.
     #[arg(long)]
     commit: bool,
 }
 
-pub fn run<I>(args: I) -> Result<(), String>
+pub fn run<I>(args: I) -> Result<(), RenameError>
 where
     I: IntoIterator,
     I::Item: Into<std::ffi::OsString> + Clone,
 {
-    let cli = RenameCli::try_parse_from(args).map_err(|error| error.to_string())?;
+    let cli = RenameCli::try_parse_from(args).map_err(|error| plan_error(error.to_string()))?;
     let plan = Plan::build(&cli)?;
-    let state = state_root(cli.state.as_deref())?;
+    let state = state_root(cli.state.as_deref()).map_err(plan_error)?;
 
     println!("root {}", plan.root.display());
     for (request, refs) in plan.cx.batch().iter().zip(&plan.refs) {
@@ -68,16 +105,18 @@ where
         true => {
             for stage in &plan.stages {
                 let (id, previews) =
-                    stage_and_commit(&plan.root, &state, stage, soopy::Durability::Durable)?;
+                    stage_and_commit(&plan.root, &state, stage, soopy::Durability::Durable)
+                        .map_err(plan_error)?;
                 print_previews(&previews, "");
                 println!("stage {id} committed");
             }
         }
         false => {
-            let mirror = Mirror::build(&plan.root, &plan.stages)?;
+            let mirror = Mirror::build(&plan.root, &plan.stages).map_err(plan_error)?;
             for stage in &plan.stages {
                 let (id, previews) =
-                    stage_and_commit(mirror.root(), &state, stage, soopy::Durability::DryRun)?;
+                    stage_and_commit(mirror.root(), &state, stage, soopy::Durability::DryRun)
+                        .map_err(plan_error)?;
                 print_previews(&previews, "");
                 println!("stage {id} dry run, tree untouched");
             }
@@ -98,16 +137,16 @@ struct Plan {
 }
 
 impl Plan {
-    fn build(cli: &RenameCli) -> Result<Self, String> {
+    fn build(cli: &RenameCli) -> Result<Self, RenameError> {
         let requested = requested_renames(cli)?;
         let root = plan_root(cli.root.as_ref(), &requested[0].0)?;
-        let batch = validated_batch(&root, requested)?;
-        let cx = RenameCx::open(&root)?.with_batch(batch);
+        let batch = validated_batch(&root, requested, cli.at)?;
+        let cx = RenameCx::open(&root).map_err(plan_error)?.with_batch(batch);
 
         let mut refs: Vec<Vec<SymbolRef>> = Vec::with_capacity(cx.batch().len());
         for request in cx.batch() {
             let arm = rename_for(&request.anchor).ok_or_else(|| {
-                format!(
+                plan_error(format!(
                     "no rename arm for {} (extract rename renames {})",
                     request.anchor,
                     renames()
@@ -115,11 +154,9 @@ impl Plan {
                         .map(|arm| arm.name())
                         .collect::<Vec<_>>()
                         .join(", ")
-                )
+                ))
             })?;
-            let found = arm
-                .symbol_refs(&cx, request)
-                .map_err(|stop| stop.to_string())?;
+            let found = arm.symbol_refs(&cx, request).map_err(stop_error)?;
             verify_spans(&cx, &found)?;
             refs.push(found);
         }
@@ -127,7 +164,7 @@ impl Plan {
         let mut receipts = Vec::new();
         let respells = respells(&cx, &refs, &mut receipts)?;
         let identity = soopy::SourceRoot::open_directory(&root)
-            .map_err(|error| format!("open root {}: {error}", root.display()))?
+            .map_err(|error| plan_error(format!("open root {}: {error}", root.display())))?
             .directory()
             .identity
             .clone();
@@ -152,7 +189,11 @@ impl Plan {
         let mut edit_stage: Vec<soopy::SourceAction> = Vec::new();
         for (rel, edits) in by_file {
             let source = directory_source(&identity, &rel);
-            edit_stage.push(replace_action(source, content_id(&root, &rel)?, edits));
+            edit_stage.push(replace_action(
+                source,
+                content_id(&root, &rel).map_err(plan_error)?,
+                edits,
+            ));
         }
         let stages = match edit_stage.is_empty() {
             true => Vec::new(),
@@ -179,21 +220,24 @@ fn uses_per_file(refs: &[SymbolRef]) -> Vec<(&str, usize)> {
 
 /// Every span an arm emitted still holds the old name on disk. A move checks a
 /// whole file's content id; a rename writes interior spans, so each is checked.
-fn verify_spans(cx: &RenameCx, refs: &[SymbolRef]) -> Result<(), String> {
+fn verify_spans(cx: &RenameCx, refs: &[SymbolRef]) -> Result<(), RenameError> {
     for reference in refs {
         let text = cx
             .text(&reference.file)
-            .ok_or_else(|| format!("read {}", reference.file))?;
+            .ok_or_else(|| plan_error(format!("read {}", reference.file)))?;
         let start = reference.span.start as usize;
         let end = reference.span.end() as usize;
-        let found = text
-            .get(start..end)
-            .ok_or_else(|| format!("{} byte {start}..{end} is outside the file", reference.file))?;
+        let found = text.get(start..end).ok_or_else(|| {
+            plan_error(format!(
+                "{} byte {start}..{end} is outside the file",
+                reference.file
+            ))
+        })?;
         if found != reference.text {
-            return Err(format!(
+            return Err(plan_error(format!(
                 "{} byte {start} holds {found:?}, the plan expected {:?}",
                 reference.file, reference.text
-            ));
+            )));
         }
     }
     Ok(())
@@ -205,7 +249,7 @@ fn respells(
     cx: &RenameCx,
     refs: &[Vec<SymbolRef>],
     receipts: &mut Vec<String>,
-) -> Result<Vec<Respell>, String> {
+) -> Result<Vec<Respell>, RenameError> {
     let mut claimed: BTreeMap<(String, u32), (&'static str, String)> = BTreeMap::new();
     let mut out: Vec<Respell> = Vec::new();
     for (request, found) in cx.batch().iter().zip(refs) {
@@ -221,12 +265,12 @@ fn respells(
                 if *other == arm.name() && *text == respell.text {
                     continue;
                 }
-                return Err(format!(
+                return Err(plan_error(format!(
                     "{} byte {} is claimed by both the {other} and the {} rename arms",
                     respell.file,
                     respell.span.start,
                     arm.name()
-                ));
+                )));
             }
             claimed.insert(key, (arm.name(), respell.text.clone()));
             if let Some(receipt) = respell.receipt.clone() {
@@ -247,30 +291,42 @@ fn respells(
 
 /// The `(anchor, old, new)` rows the invocation asks for, from the positionals
 /// or from the `--list` tsv. The two forms are exclusive.
-fn requested_renames(cli: &RenameCli) -> Result<Vec<(PathBuf, String, String)>, String> {
+fn requested_renames(cli: &RenameCli) -> Result<Vec<(PathBuf, String, String)>, RenameError> {
     match (&cli.list, &cli.target, &cli.new) {
-        (Some(list), None, None) => read_rename_list(list),
-        (Some(_), _, _) => {
-            Err("--list carries the renames; drop <FILE>#<OLD> and <NEW>".to_string())
+        (Some(list), None, None) => {
+            if cli.at.is_some() {
+                return Err(plan_error(
+                    "--at disambiguates one rename; drop it when --list carries the renames"
+                        .to_string(),
+                ));
+            }
+            read_rename_list(list)
         }
+        (Some(_), _, _) => Err(plan_error(
+            "--list carries the renames; drop <FILE>#<OLD> and <NEW>".to_string(),
+        )),
         (None, Some(target), Some(new)) => {
-            let (anchor, old) = target
-                .rsplit_once('#')
-                .ok_or_else(|| format!("a rename target is `<FILE>#<OLD>`, not {target}"))?;
+            let (anchor, old) = target.rsplit_once('#').ok_or_else(|| {
+                plan_error(format!("a rename target is `<FILE>#<OLD>`, not {target}"))
+            })?;
             if anchor.is_empty() || old.is_empty() {
-                return Err(format!("a rename target is `<FILE>#<OLD>`, not {target}"));
+                return Err(plan_error(format!(
+                    "a rename target is `<FILE>#<OLD>`, not {target}"
+                )));
             }
             Ok(vec![(PathBuf::from(anchor), old.to_string(), new.clone())])
         }
-        (None, _, _) => Err("extract rename takes <FILE>#<OLD> <NEW>, or --list <tsv>".to_string()),
+        (None, _, _) => Err(plan_error(
+            "extract rename takes <FILE>#<OLD> <NEW>, or --list <tsv>".to_string(),
+        )),
     }
 }
 
 /// `anchor<TAB>old<TAB>new` per line. A short row is an error, never a silent
 /// skip: a dropped row is a rename that never happens.
-fn read_rename_list(path: &Path) -> Result<Vec<(PathBuf, String, String)>, String> {
+fn read_rename_list(path: &Path) -> Result<Vec<(PathBuf, String, String)>, RenameError> {
     let text = std::fs::read_to_string(path)
-        .map_err(|error| format!("read rename list {}: {error}", path.display()))?;
+        .map_err(|error| plan_error(format!("read rename list {}: {error}", path.display())))?;
     let mut rows = Vec::new();
     for (index, line) in text.lines().enumerate() {
         let number = index + 1;
@@ -280,47 +336,51 @@ fn read_rename_list(path: &Path) -> Result<Vec<(PathBuf, String, String)>, Strin
         }
         let fields: Vec<&str> = line.split('\t').map(str::trim).collect();
         let [anchor, old, new] = fields.as_slice() else {
-            return Err(format!(
+            return Err(plan_error(format!(
                 "{}:{number}: a rename list row is `anchor<TAB>old<TAB>new`",
                 path.display()
-            ));
+            )));
         };
         if anchor.is_empty() || old.is_empty() || new.is_empty() {
-            return Err(format!(
+            return Err(plan_error(format!(
                 "{}:{number}: all three fields of a rename list row are required",
                 path.display()
-            ));
+            )));
         }
         rows.push((PathBuf::from(anchor), old.to_string(), new.to_string()));
     }
     if rows.is_empty() {
-        return Err(format!("{} names no renames", path.display()));
+        return Err(plan_error(format!("{} names no renames", path.display())));
     }
     Ok(rows)
 }
 
 /// The corpus root: as asked, else the git root holding the first anchor.
-fn plan_root(requested: Option<&PathBuf>, first: &Path) -> Result<PathBuf, String> {
+fn plan_root(requested: Option<&PathBuf>, first: &Path) -> Result<PathBuf, RenameError> {
     let root = match requested {
         Some(root) => absolute(root)?,
         None => {
             let anchor = anchor_file(first)?;
             let parent = anchor.parent().unwrap_or(&anchor).to_path_buf();
             soopy::discover(&parent)
-                .map_err(|error| format!("discover root for {}: {error}", anchor.display()))?
+                .map_err(|error| {
+                    plan_error(format!("discover root for {}: {error}", anchor.display()))
+                })?
                 .root
         }
     };
     root.canonicalize()
-        .map_err(|error| format!("canonicalize root {}: {error}", root.display()))
+        .map_err(|error| plan_error(format!("canonicalize root {}: {error}", root.display())))
 }
 
 /// Every validation a batch needs, all of it before any arm is asked anything:
 /// a missing anchor, an anchor outside the corpus, or a repeated `(anchor, old)`.
+/// `at` rides on the single positional rename; a list carries no offsets.
 fn validated_batch(
     root: &Path,
     requested: Vec<(PathBuf, String, String)>,
-) -> Result<Vec<RenameRequest>, String> {
+    at: Option<u32>,
+) -> Result<Vec<RenameRequest>, RenameError> {
     let mut batch: Vec<RenameRequest> = Vec::with_capacity(requested.len());
     let mut seen: BTreeMap<(String, String), ()> = BTreeMap::new();
     for (anchor, old, new) in requested {
@@ -330,40 +390,50 @@ fn validated_batch(
         };
         let anchor = within_root(root, &anchor)?;
         if old == new {
-            return Err(format!("{anchor}: {old} renames to itself"));
+            return Err(plan_error(format!("{anchor}: {old} renames to itself")));
         }
         if seen.insert((anchor.clone(), old.clone()), ()).is_some() {
-            return Err(format!("{anchor}: {old} is renamed twice"));
+            return Err(plan_error(format!("{anchor}: {old} is renamed twice")));
         }
         batch.push(RenameRequest {
             anchor,
             old,
             new,
-            at: None,
+            at,
         });
     }
     Ok(batch)
 }
 
-fn anchor_file(path: &Path) -> Result<PathBuf, String> {
+fn anchor_file(path: &Path) -> Result<PathBuf, RenameError> {
     let path = absolute(path)?;
     if !path.is_file() {
-        return Err(format!("rename anchor is not a file: {}", path.display()));
+        return Err(plan_error(format!(
+            "rename anchor is not a file: {}",
+            path.display()
+        )));
     }
     path.canonicalize()
-        .map_err(|error| format!("canonicalize {}: {error}", path.display()))
+        .map_err(|error| plan_error(format!("canonicalize {}: {error}", path.display())))
 }
 
-fn absolute(path: &Path) -> Result<PathBuf, String> {
+fn absolute(path: &Path) -> Result<PathBuf, RenameError> {
     if path.is_absolute() {
         return Ok(normalize(path));
     }
-    let cwd = std::env::current_dir().map_err(|error| format!("current directory: {error}"))?;
+    let cwd = std::env::current_dir()
+        .map_err(|error| plan_error(format!("current directory: {error}")))?;
     Ok(normalize(&cwd.join(path)))
 }
 
-fn within_root(root: &Path, path: &Path) -> Result<String, String> {
+fn within_root(root: &Path, path: &Path) -> Result<String, RenameError> {
     path.strip_prefix(root)
         .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-        .map_err(|_| format!("{} is outside root {}", path.display(), root.display()))
+        .map_err(|_| {
+            plan_error(format!(
+                "{} is outside root {}",
+                path.display(),
+                root.display()
+            ))
+        })
 }
