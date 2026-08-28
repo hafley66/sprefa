@@ -20,8 +20,8 @@ Each folder is one experiment variant. Every worker owns exactly one folder and 
 | 6 | `6_screamer` | nondeterminism plus constraints | Which SWI search and constraint facilities map to Screamer? | completed |
 | 7 | `7_reazon_cl` | miniKanren | What relational core, fairness, and constraints does `reazon-cl` supply? | completed |
 | 8 | `8_cl_kanren` | miniKanren | Is `cl-kanren` runnable and materially distinct from `reazon-cl`? | completed |
-| 9 | `9_vivace_graph` | graph database plus Prolog | Can VivaceGraph's query layer cover durable compiler graph queries? | queued |
-| 10 | `10_wamcompiler` | WAM Prolog | Can the WAM compiler run and produce a usable CL-hosted Prolog engine? | queued |
+| 9 | `9_vivace_graph` | graph database plus Prolog | Can VivaceGraph's query layer cover durable compiler graph queries? | completed |
+| 10 | `10_wamcompiler` | WAM Prolog | Can the WAM compiler run and produce a usable CL-hosted Prolog engine? | completed |
 | 11 | `11_cl_prolog2` | external Prolog bridge | How short is the CL-to-SWI path through `cl-prolog2`? | queued |
 | 12 | `12_handwritten_logic` | controlled implementation | What does the smallest CL unification and fair-search kernel require? | queued |
 | 13 | `13_racket_crosswalk` | comparison | Which Racket libraries provide the shortest routes to useful SWI facilities? | queued |
