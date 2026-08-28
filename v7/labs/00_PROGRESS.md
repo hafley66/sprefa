@@ -13,8 +13,8 @@ Updated: 2026-08-28 18:19 EDT
   `4_cl_datalog`, `5_cl_grph`, `6_screamer`, `7_reazon_cl`, `8_cl_kanren`,
   `9_vivace_graph`, `10_wamcompiler`, `11_cl_prolog2`,
   `12_handwritten_logic`).
-- Active lab workers: 0. The next pair is `13_racket_crosswalk` and
-  `14_binary_packaging`.
+- Active lab workers: 2 (`13_racket_crosswalk`, `14_binary_packaging`) using
+  native Terra-high workers in the shared lab worktree.
 
 ## Completed labs
 
