@@ -10,7 +10,7 @@ Quicklisp 2026-01-01 dist membership (verified by walking `ql-dist:provided-rele
 
 - Gambol family — https://github.com/wmannis/cl-gambol
   - Extraction of the logic-programming portion of the Frolic system (University of Utah). Pure CL, no dependencies. Package `:gambol`; facts/rules via `*-` macro. README states it is nowhere near ISO Prolog and that some operator semantics (e.g. `retract`) differ from compliant Prolog.
-  - Default branch `master`, latest push 2018-02-12T20:41:34Z, 22 stars, license: none on file (GitHub `NOASSERTION`).
+  - Default branch `master`, latest push 2018-02-12T20:41:34Z, 22 stars. GitHub reports `NOASSERTION` and the repository has no standalone license file; the README states BSD terms for the Frolic code and MIT terms for the author's modifications.
   - Sibling copy: https://github.com/olewhalehunter/cl-gambol (created 2018-08-12, latest push 2020-05-11T00:29:02Z, 2 stars, no license file). Same system, treated as one family.
 - PAIP Prolog family — https://github.com/quek/paiprolog
   - Peter Norvig's PAIP Prolog interpreter and compiler (`prolog1/2/3`, `prologc*`) packaged with an ASD (`paiprolog.asd`, `unifgram.asd`). License file present in repo (`license.html`, Norvig's PAIP terms).

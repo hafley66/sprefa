@@ -13,7 +13,7 @@ Each folder is one experiment variant. Every worker owns exactly one folder and 
 | Order | Variant | Category | Initial question | Status |
 | ---: | --- | --- | --- | --- |
 | 1 | `1_inventory` | research | Which Common Lisp logic systems are distinct, available, and lab-worthy? | completed |
-| 2 | `2_cl_gambol` | Prolog library | How much Prolog behavior does `cl-gambol` supply? | queued |
+| 2 | `2_cl_gambol` | Prolog library | How much Prolog behavior does `cl-gambol` supply? | completed |
 | 3 | `3_paiprolog` | Prolog compiler | What does the PAIP-derived Prolog compiler supply? | queued |
 | 4 | `4_cl_datalog` | Datalog library | Does `cl-datalog` execute recursive Datalog and terminate on cycles? | queued |
 | 5 | `5_cl_grph` | graph plus Datalog | Can `cl-grph` cover compiler graph queries and recursive rules? | queued |
