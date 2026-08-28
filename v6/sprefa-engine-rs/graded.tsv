@@ -249,7 +249,7 @@ nested_parent_rows_do_not_gate_the_child	clean	byte-clean
 nested_rel_element_list_round_trips	clean	byte-clean
 nested_three_levels_keep_authored_arities	clean	byte-clean
 nested_two_parent_rows_share_the_flat_child_relation	clean	byte-clean
-nested_zero_column_child_is_one_flat_marker	unsupported	emitter returned false
+nested_zero_column_child_is_one_flat_marker	clean	byte-clean
 new_file_diag_at_hit_line_exact_rows	clean	byte-clean
 new_file_no_exceeded_diag	clean	byte-clean
 new_salt_refires_fresh_stream	clean	byte-clean
