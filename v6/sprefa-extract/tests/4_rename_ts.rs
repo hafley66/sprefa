@@ -26,9 +26,19 @@
 //!     text_refs_reports_the_string_and_the_readme ... exited 2: error: unexpected
 //!         argument '--text-refs' found
 //!     text_refs_never_writes ... exited 2: error: unexpected argument '--text-refs' found
+//! FAIL-FIRST (arc 6), against the arc-5 binary: every case exited 2 with
+//!     `error: unexpected argument '--verify-scip' found`.
+//! SABOTAGE (arc 6): `disagreements=0` is what a leg that read NOTHING prints,
+//!     so the agreeing case is judged by the whole row list and both reporting
+//!     cases assert every row. `anchor_sites` returning an empty set failed
+//!     three of the four; dropping its old-name spelling gate added
+//!     `src/b.ts:16-19,69-72,81-84,87-90 scip-only`, the aliased `Bar` seats
+//!     scip-typescript folds into the imported symbol.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use sprefa_extract::{ScipSource, ScipTypescript};
 
 const ANCHOR: &str = "src/app.ts";
 
@@ -520,5 +530,192 @@ fn tsc_is_clean_on_the_committed_tree() {
         "committed tree failed tsc:\n{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+// ── arc 6: the SCIP verify leg ──────────────────────────────────────────────
+
+/// An importer no `Rename` arm reaches: a namespace import seats the symbol at
+/// a member position, which the scope fence never rewrites and `importer_seats`
+/// (`lang/ts_rename.rs:215`) skips, while scip-typescript binds both `lib.Foo`
+/// seats to the anchor's own symbol. Two seats the index knows and the plan
+/// does not carry.
+const NAMESPACE_IMPORTER: &str = concat!(
+    "import * as lib from \"./lib\";\n",
+    "\n",
+    "export function viaNamespace(): lib.Foo {\n",
+    "  return new lib.Foo();\n",
+    "}\n",
+);
+
+/// Every byte offset `source` spells `needle` at, so no case hardcodes a number
+/// the fixture text owns.
+fn spelled_at(source: &str, needle: &str) -> Vec<usize> {
+    source.match_indices(needle).map(|(at, _)| at).collect()
+}
+
+/// The exports fixture plus one extra file, written before anything reads the
+/// tree so the index and the plan see one corpus.
+fn fixture_plus(label: &str, rel: &str, source: &str) -> Fixture {
+    let fixture = fixture(EXPORTS, label);
+    std::fs::write(fixture.root.join(rel), source).expect("write the extra importer");
+    fixture
+}
+
+/// A fresh index over `root`, through the same `ScipSource` seam the move
+/// verb's verify leg loads through; the output lands in a hermetic temp dir and
+/// the corpus is never written. Measured 0.35 s on this fixture, under the 10 s
+/// cap, so no `#[ignore]`.
+fn scip_index(root: &Path) -> PathBuf {
+    ScipTypescript.build(root).expect("scip-typescript index")
+}
+
+fn index_arg(index: &Path) -> String {
+    index.to_str().expect("the index path is UTF-8").to_string()
+}
+
+fn scip_rows(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .filter(|line| line.starts_with("scip-verify "))
+        .map(str::to_string)
+        .collect()
+}
+
+/// The plan's own lines: what the run renames, the per-file counts, and the
+/// staged diff. The `root` and `stage` lines carry a temp path that differs per
+/// run, so they sit outside any comparison of two runs.
+fn plan_lines(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .filter(|line| line.starts_with("plan ") || line.starts_with("  "))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Arc 3's fixture, indexed fresh: every seat the plan carries is an occurrence
+/// of the anchor's own SCIP symbol, and the index knows no other. `src/b.ts`'s
+/// four `Bar` seats are inside that judgement: scip-typescript folds an aliased
+/// import's local binding into the imported symbol, and a seat spelling a name
+/// this rename never writes is not a seat.
+#[test]
+fn scip_verify_agrees_on_the_exports_fixture() {
+    let fixture = fixture(EXPORTS, "scip_agree");
+    let index = scip_index(&fixture.root);
+    let stdout = rename_verb(
+        &fixture,
+        &format!("{EXPORTS_ANCHOR}#Foo"),
+        "Baz",
+        &["--verify-scip", &index_arg(&index)],
+    );
+    assert_eq!(
+        scip_rows(&stdout),
+        vec!["scip-verify disagreements=0".to_string()],
+        "the index and the plan agree on this fixture:\n{stdout}"
+    );
+    assert_untouched(&fixture, EXPORTS);
+}
+
+/// The second opinion earns its cost: a namespace importer the arm cannot reach
+/// is two `scip-only` rows, one per member seat, and the run still exits zero.
+#[test]
+fn scip_verify_reports_a_missed_seat() {
+    let fixture = fixture_plus("scip_missed", "src/ns.ts", NAMESPACE_IMPORTER);
+    let index = scip_index(&fixture.root);
+    let stdout = rename_verb(
+        &fixture,
+        &format!("{EXPORTS_ANCHOR}#Foo"),
+        "Baz",
+        &["--verify-scip", &index_arg(&index)],
+    );
+    let seats = spelled_at(NAMESPACE_IMPORTER, "Foo");
+    assert_eq!(seats.len(), 2, "the namespace importer seats two members");
+    let mut expected: Vec<String> = seats
+        .into_iter()
+        .map(|at| format!("scip-verify src/ns.ts:{at}-{} scip-only", at + "Foo".len()))
+        .collect();
+    expected.push("scip-verify disagreements=2".to_string());
+    assert_eq!(
+        scip_rows(&stdout),
+        expected,
+        "the index's two member seats are the whole report:\n{stdout}"
+    );
+}
+
+/// `Bar` is a binding `src/b.ts` owns, and scip-typescript 0.4.0 defines it
+/// nowhere: the aliased import's local seat carries the IMPORTED symbol with no
+/// role bits at all. With no definition to anchor on, the leg says so with one
+/// `plan-only` row for the declaration and asks the index nothing further.
+#[test]
+fn scip_verify_reports_a_declaration_the_index_defines_nowhere() {
+    let fixture = fixture(EXPORTS, "scip_alias");
+    let index = scip_index(&fixture.root);
+    let stdout = rename_verb(
+        &fixture,
+        "src/b.ts#Bar",
+        "Qux",
+        &["--verify-scip", &index_arg(&index)],
+    );
+    let source =
+        std::fs::read_to_string(tree(EXPORTS, "before").join("src/b.ts")).expect("fixture text");
+    let at = spelled_at(&source, "Bar")
+        .first()
+        .copied()
+        .expect("the aliased local in the fixture");
+    assert_eq!(
+        scip_rows(&stdout),
+        vec![
+            format!("scip-verify src/b.ts:{at}-{} plan-only", at + "Bar".len()),
+            "scip-verify disagreements=1".to_string(),
+        ],
+        "the unanchored declaration is the whole report:\n{stdout}"
+    );
+    assert_untouched(&fixture, EXPORTS);
+}
+
+/// The flag reports and does nothing else. Two commits over the same tree, one
+/// that DISAGREES, with and without the flag: the plan lines match, the staged
+/// diffs match, and the two committed trees are byte-identical. The exit code
+/// is inside the claim, because `rename_verb` asserts success on both runs.
+#[test]
+fn scip_verify_never_changes_the_plan() {
+    let verified = fixture_plus("scip_same_on", "src/ns.ts", NAMESPACE_IMPORTER);
+    let index = scip_index(&verified.root);
+    let with = rename_verb(
+        &verified,
+        &format!("{EXPORTS_ANCHOR}#Foo"),
+        "Baz",
+        &["--verify-scip", &index_arg(&index), "--commit"],
+    );
+    let plain = fixture_plus("scip_same_off", "src/ns.ts", NAMESPACE_IMPORTER);
+    let without = rename_verb(
+        &plain,
+        &format!("{EXPORTS_ANCHOR}#Foo"),
+        "Baz",
+        &["--commit"],
+    );
+    assert_eq!(
+        plan_lines(&with),
+        plan_lines(&without),
+        "the flag changed the plan:\n{with}\n----\n{without}"
+    );
+    assert_eq!(
+        scip_rows(&with),
+        vec![
+            "scip-verify src/ns.ts:67-70 scip-only".to_string(),
+            "scip-verify src/ns.ts:90-93 scip-only".to_string(),
+            "scip-verify disagreements=2".to_string(),
+        ],
+        "the verified run reported the disagreement:\n{with}"
+    );
+    assert!(
+        scip_rows(&without).is_empty(),
+        "a run without the flag is silent:\n{without}"
+    );
+    let entries = diff_rq(&verified.root, &plain.root);
+    assert!(
+        entries.is_empty(),
+        "the flag changed the committed tree:\n{}",
+        entries.join("\n")
     );
 }

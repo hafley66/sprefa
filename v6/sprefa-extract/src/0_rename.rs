@@ -17,6 +17,9 @@ use sprefa_extract::{
     RenameStop, Respell, SymbolRef,
 };
 
+#[path = "1_rename_verify.rs"]
+mod rename_verify;
+
 const PRODUCER: &str = "extract-rename";
 
 /// A failed rename run: the message and the process exit code. One code per
@@ -82,6 +85,10 @@ struct RenameCli {
     /// Report the old-name spellings this rename leaves behind in plain text.
     #[arg(long = "text-refs")]
     text_refs: bool,
+    /// Cross-check the plan against a prebuilt SCIP index. Reports only: the
+    /// count never changes the plan, the stages, or the exit code.
+    #[arg(long = "verify-scip", value_name = "INDEX")]
+    verify_scip: Option<PathBuf>,
 }
 
 pub fn run<I>(args: I) -> Result<(), RenameError>
@@ -102,6 +109,11 @@ where
     }
     for receipt in &plan.receipts {
         println!("{receipt}");
+    }
+    if let Some(index) = cli.verify_scip.as_deref() {
+        let disagreements =
+            rename_verify::verify_plan(&plan.cx, &plan.refs, index).map_err(plan_error)?;
+        rename_verify::report(&disagreements);
     }
 
     match cli.commit {
