@@ -1,0 +1,144 @@
+:- begin_tests(dl7_reader_foundation).
+
+:- use_module('../1_reader', [read_dl7/5]).
+:- use_module('../4_loader', [load_dl7/3]).
+
+test(standalone_fixture_has_canonical_reader_snapshot) :-
+    load_dl7('v7/0_SWIPL/test/fixtures/0_minimal.dl7',
+             Unit, Diagnostics),
+    unit_snapshot(Unit, Snapshot),
+    expected_snapshot(Expected),
+    Observed = reader_result(Diagnostics, Snapshot),
+    Observed == reader_result([], Expected).
+
+test(malformed_form_returns_one_positioned_diagnostic) :-
+    read_dl7('broken.dl7', "(\n", Forms, SourceRows, Diagnostics),
+    Observed = reader_result(Forms, SourceRows, Diagnostics),
+    Observed ==
+        reader_result(
+            [], [],
+            [ diagnostic(reader, 'broken.dl7',
+                         reader_node('broken.dl7', 0),
+                         unterminated_form,
+                         position(2, 2, 1))
+            ]).
+
+unit_snapshot(
+    dl7_unit(file(_), content_sha256(Digest),
+             Forms, SourceRows, ExpansionRows),
+    Snapshot) :-
+    maplist(snapshot_node, Forms, FormSnapshot),
+    maplist(snapshot_source, SourceRows, SourceSnapshot),
+    Snapshot = reader_snapshot(Digest, FormSnapshot,
+                               SourceSnapshot, ExpansionRows).
+
+snapshot_node(node(reader_node(_, Index), Payload),
+              node(Index, Snapshot)) :-
+    snapshot_payload(Payload, Snapshot).
+
+snapshot_payload(atom(Name), atom(Name)).
+snapshot_payload(literal(Value), literal(Value)).
+snapshot_payload(variable(VariableId, Name),
+                 variable(SnapshotId, Name)) :-
+    snapshot_variable_id(VariableId, SnapshotId).
+snapshot_payload(form(Nodes), form(Snapshots)) :-
+    maplist(snapshot_node, Nodes, Snapshots).
+
+snapshot_variable_id(variable(reader_node(_, Index), Name),
+                     variable(Index, Name)).
+
+snapshot_source(
+    source(reader_node(_, Index), _, StartOffset, EndOffset,
+           StartLine, StartColumn, EndLine, EndColumn),
+    source(Index, StartOffset, EndOffset,
+           StartLine, StartColumn, EndLine, EndColumn)).
+
+expected_snapshot(
+    reader_snapshot(
+        a3956b46bcb3e6c5c0cd1dfb507a274d2e739d9b63f5e6a1dd1b8e05d254a7ca,
+        [ node(0,
+               form(
+                   [ node(1, atom(':')),
+                     node(2, atom('User')),
+                     node(3,
+                          form(
+                              [ node(4, atom('*')),
+                                node(5,
+                                     form(
+                                         [ node(6, atom(':')),
+                                           node(7, atom(id)),
+                                           node(8, atom(int))
+                                         ])),
+                                node(9,
+                                     form(
+                                         [ node(10, atom(':')),
+                                           node(11, atom(name)),
+                                           node(12, atom(text))
+                                         ])),
+                                node(13,
+                                     form(
+                                         [ node(14, atom(':')),
+                                           node(15, atom(note)),
+                                           node(16,
+                                                literal("hello\nworld"))
+                                         ]))
+                              ]))
+                   ])),
+          node(17,
+               form(
+                   [ node(18, atom('<-')),
+                     node(19,
+                          form(
+                              [ node(20, atom(copy)),
+                                node(21,
+                                     variable(variable(17, 'Value'),
+                                              'Value')),
+                                node(22,
+                                     variable(variable(17, 'Value'),
+                                              'Value')),
+                                node(23,
+                                     variable(variable(23, '_'), '_')),
+                                node(24,
+                                     variable(variable(24, '_'), '_'))
+                              ])),
+                     node(25,
+                          form(
+                              [ node(26, atom(source)),
+                                node(27,
+                                     variable(variable(17, 'Value'),
+                                              'Value'))
+                              ]))
+                   ]))
+        ],
+        [ source(0, 27, 103, 3, 1, 6, 32),
+          source(1, 28, 29, 3, 2, 3, 3),
+          source(2, 30, 34, 3, 4, 3, 8),
+          source(3, 38, 102, 4, 4, 6, 31),
+          source(4, 39, 40, 4, 5, 4, 6),
+          source(5, 41, 51, 4, 7, 4, 17),
+          source(6, 42, 43, 4, 8, 4, 9),
+          source(7, 44, 46, 4, 10, 4, 12),
+          source(8, 47, 50, 4, 13, 4, 16),
+          source(9, 58, 71, 5, 7, 5, 20),
+          source(10, 59, 60, 5, 8, 5, 9),
+          source(11, 61, 65, 5, 10, 5, 14),
+          source(12, 66, 70, 5, 15, 5, 19),
+          source(13, 78, 101, 6, 7, 6, 30),
+          source(14, 79, 80, 6, 8, 6, 9),
+          source(15, 81, 85, 6, 10, 6, 14),
+          source(16, 86, 100, 6, 15, 6, 29),
+          source(17, 104, 155, 7, 1, 8, 21),
+          source(18, 105, 107, 7, 2, 7, 4),
+          source(19, 108, 134, 7, 5, 7, 31),
+          source(20, 109, 113, 7, 6, 7, 10),
+          source(21, 114, 120, 7, 11, 7, 17),
+          source(22, 121, 127, 7, 18, 7, 24),
+          source(23, 128, 130, 7, 25, 7, 27),
+          source(24, 131, 133, 7, 28, 7, 30),
+          source(25, 139, 154, 8, 5, 8, 20),
+          source(26, 140, 146, 8, 6, 8, 12),
+          source(27, 147, 153, 8, 13, 8, 19)
+        ],
+        [])).
+
+:- end_tests(dl7_reader_foundation).

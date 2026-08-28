@@ -1,0 +1,8 @@
+
+; shared frontend fixture
+(: User
+   (* (: id int)
+      (: name text)
+      (: note "hello\nworld")))
+(<- (copy ?Value ?Value ?_ ?_)
+    (source ?Value))
