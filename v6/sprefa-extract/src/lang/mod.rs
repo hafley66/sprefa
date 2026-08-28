@@ -22,6 +22,7 @@ pub mod prolog;
 pub mod python;
 pub mod rust;
 pub mod rust_rehome;
+pub mod rust_rename;
 pub mod ts;
 pub mod ts_paths;
 pub mod ts_rehome;
@@ -104,7 +105,7 @@ pub fn rehome_for(path: &str) -> Option<&'static dyn Rehome> {
 /// The `Rename` roster, in `sources()` order. Membership is "has a scope plane
 /// with exact identifier spans", a different question from `rehomes()`'s.
 pub fn renames() -> &'static [&'static dyn Rename] {
-    &[&TsSource]
+    &[&TsSource, &RustSource]
 }
 
 /// The `Rename` that owns `path`, under the SAME first-match law `rehome_for`
