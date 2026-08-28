@@ -1172,6 +1172,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxc_semantic"
+version = "0.135.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6735efd98d54e0f5e8c30a6b17df921085373d54b2b1e10e42d7f4ec8d2597bc"
+dependencies = [
+ "itertools",
+ "memchr",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_ast_visit",
+ "oxc_diagnostics",
+ "oxc_ecmascript",
+ "oxc_index",
+ "oxc_span",
+ "oxc_str",
+ "oxc_syntax",
+ "rustc-hash",
+ "self_cell",
+ "smallvec",
+]
+
+[[package]]
 name = "oxc_span"
 version = "0.135.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1670,6 +1692,9 @@ name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "smawk"
@@ -1717,6 +1742,7 @@ dependencies = [
  "oxc_ast_visit",
  "oxc_parser",
  "oxc_resolver",
+ "oxc_semantic",
  "oxc_span",
  "oxc_syntax",
  "proc-macro2",

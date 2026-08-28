@@ -29,6 +29,7 @@ use serde::Serialize;
 
 use crate::lang::extract_lang::ExtractLang;
 use crate::move_cx::MoveCx;
+use crate::rename_cx::{RenameCx, RenameRequest};
 
 pub use soopy::ContentId;
 
@@ -2078,6 +2079,120 @@ pub trait Rehome: Source + Sync + Send {
             names.insert(own);
         }
         names
+    }
+}
+
+// ── the Rename seam: what one language answers when a symbol is renamed ─────
+
+/// Where one occurrence of a symbol sits. `span` covers EXACTLY the identifier
+/// token: no quotes, no path prefix, no surrounding expression.
+pub struct SymbolRef {
+    /// Project-relative path of the file that writes the occurrence.
+    pub file: String,
+    pub span: Span,
+    pub role: RefRole,
+    /// The bytes at `span` as the arm read them. The core re-reads the tree and
+    /// asserts equality before staging; a mismatch is a plan error, not a skip.
+    pub text: String,
+}
+
+/// What one occurrence does with the symbol. One-for-one with SCIP's
+/// `OccurrenceRole` (:1685), so the verify leg compares without a translation.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RefRole {
+    Definition,
+    /// The imported name in `import {OLD}`.
+    Import,
+    /// The exported name in `export {OLD}` / `export {x as OLD}`.
+    Export,
+    Read,
+    Write,
+    /// A type-position mention; SCIP folds this into READ_ACCESS.
+    TypeRef,
+}
+
+/// Why an arm will not plan. A partial rename compiles less often than no
+/// rename at all, so an arm stops instead of emitting a subset.
+#[derive(Debug)]
+pub enum RenameStop {
+    /// `old` names more than one declaration in `anchor`; `at` disambiguates.
+    Ambiguous {
+        anchor: String,
+        old: String,
+        sites: Vec<Span>,
+    },
+    /// `old` names no declaration in `anchor`.
+    NotFound { anchor: String, old: String },
+    /// A reference the arm found but cannot span exactly.
+    Inexact {
+        file: String,
+        span: Span,
+        why: &'static str,
+    },
+    /// A reference reachable only through a runtime form (computed member,
+    /// dynamic import, string key). Reported, never rewritten.
+    Dynamic {
+        file: String,
+        span: Span,
+        form: &'static str,
+    },
+}
+
+impl fmt::Display for RenameStop {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RenameStop::Ambiguous { anchor, old, sites } => {
+                let offsets: Vec<String> =
+                    sites.iter().map(|site| site.start.to_string()).collect();
+                write!(
+                    formatter,
+                    "{anchor} declares {old} more than once, at bytes {}",
+                    offsets.join(", ")
+                )
+            }
+            RenameStop::NotFound { anchor, old } => {
+                write!(formatter, "{anchor} declares no {old}")
+            }
+            RenameStop::Inexact { file, span, why } => {
+                write!(formatter, "{file} byte {}: {why}", span.start)
+            }
+            RenameStop::Dynamic { file, span, form } => {
+                write!(
+                    formatter,
+                    "{file} byte {}: {form} reaches the symbol at runtime",
+                    span.start
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RenameStop {}
+
+/// What one language answers when a symbol it owns is renamed. Sibling to
+/// `Rehome`, held `&'static` in the `renames()` roster; no mutable state.
+pub trait Rename: Source + Sync + Send {
+    /// Every occurrence of `request`'s symbol this language owns, across
+    /// `cx.files()`. One parse per file that can reach the anchor.
+    fn symbol_refs(
+        &self,
+        cx: &RenameCx,
+        request: &RenameRequest,
+    ) -> Result<Vec<SymbolRef>, RenameStop>;
+
+    /// The replacement bytes for one occurrence. None = unchanged (an aliased
+    /// import `{OLD as local}` leaves `local` alone).
+    fn respell_symbol(
+        &self,
+        cx: &RenameCx,
+        request: &RenameRequest,
+        reference: &SymbolRef,
+    ) -> Option<Respell>;
+
+    /// Spellings of the old name this language's corpus wears outside the scope
+    /// plane, for the `--text-refs` report. NEVER rewritten.
+    fn text_spellings(&self, _cx: &RenameCx, _request: &RenameRequest) -> Vec<(String, String)> {
+        Vec::new()
     }
 }
 

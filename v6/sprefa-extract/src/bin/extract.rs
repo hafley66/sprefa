@@ -43,6 +43,9 @@ mod source_move;
 #[path = "../2_move_text.rs"]
 mod move_text;
 
+#[path = "../0_rename.rs"]
+mod source_rename;
+
 #[derive(Parser)]
 #[command(
     name = "extract",
@@ -292,6 +295,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().nth(1).as_deref() == Some("move") {
         let argv: Vec<String> = std::env::args().skip(1).collect();
         if let Err(error) = source_move::run(argv) {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return Ok(());
+    }
+    if std::env::args().nth(1).as_deref() == Some("rename") {
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        if let Err(error) = source_rename::run(argv) {
             eprintln!("{error}");
             std::process::exit(2);
         }

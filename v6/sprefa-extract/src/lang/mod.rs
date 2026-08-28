@@ -25,6 +25,7 @@ pub mod rust_rehome;
 pub mod ts;
 pub mod ts_paths;
 pub mod ts_rehome;
+pub mod ts_rename;
 pub mod ts_resolve;
 
 pub use ast_rule::{
@@ -55,7 +56,7 @@ pub use ts_rehome::{build_paths, compiled_spellings, BuildPaths};
 pub use ts_resolve::{respell, TsResolver};
 
 use crate::source::Source;
-use crate::types::Rehome;
+use crate::types::{Rehome, Rename};
 
 /// The first-match roster. Order matters: the lang-specific `Source`s precede the
 /// ast-grep CST fallback (v5 `type_langs()` convention). RustSource is first so a
@@ -98,4 +99,17 @@ pub fn rehomes() -> &'static [&'static dyn Rehome] {
 pub fn rehome_for(path: &str) -> Option<&'static dyn Rehome> {
     let owner = source_for(path)?.name();
     rehomes().iter().copied().find(|arm| arm.name() == owner)
+}
+
+/// The `Rename` roster, in `sources()` order. Membership is "has a scope plane
+/// with exact identifier spans", a different question from `rehomes()`'s.
+pub fn renames() -> &'static [&'static dyn Rename] {
+    &[&TsSource]
+}
+
+/// The `Rename` that owns `path`, under the SAME first-match law `rehome_for`
+/// states: only `source_for`'s own winner may claim a path.
+pub fn rename_for(path: &str) -> Option<&'static dyn Rename> {
+    let owner = source_for(path)?.name();
+    renames().iter().copied().find(|arm| arm.name() == owner)
 }
