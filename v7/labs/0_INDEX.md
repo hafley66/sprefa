@@ -22,8 +22,8 @@ Each folder is one experiment variant. Every worker owns exactly one folder and 
 | 8 | `8_cl_kanren` | miniKanren | Is `cl-kanren` runnable and materially distinct from `reazon-cl`? | completed |
 | 9 | `9_vivace_graph` | graph database plus Prolog | Can VivaceGraph's query layer cover durable compiler graph queries? | completed |
 | 10 | `10_wamcompiler` | WAM Prolog | Can the WAM compiler run and produce a usable CL-hosted Prolog engine? | completed |
-| 11 | `11_cl_prolog2` | external Prolog bridge | How short is the CL-to-SWI path through `cl-prolog2`? | queued |
-| 12 | `12_handwritten_logic` | controlled implementation | What does the smallest CL unification and fair-search kernel require? | queued |
+| 11 | `11_cl_prolog2` | external Prolog bridge | How short is the CL-to-SWI path through `cl-prolog2`? | completed |
+| 12 | `12_handwritten_logic` | controlled implementation | What does the smallest CL unification and fair-search kernel require? | completed |
 | 13 | `13_racket_crosswalk` | comparison | Which Racket libraries provide the shortest routes to useful SWI facilities? | queued |
 | 14 | `14_binary_packaging` | deployment | What are the measured executable and distribution shapes? | blocked on runnable CL labs |
 | 15 | `15_commercial_common_prolog` | research | What do Allegro Prolog and LispWorks Common Prolog cover? | queued |
