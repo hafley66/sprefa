@@ -1,8 +1,22 @@
 ## Description
 
-Critique the completed Sol kernel contract for internal contradictions and
-unnecessary machinery. Read the plan, Sol report, and only the donor reports
-needed to verify disputed claims.
+Critique the blocked Sol kernel contract for internal contradictions,
+unnecessary machinery, and the unresolved declared-node identity. Read the
+plan, Sol report, and only the donor reports needed to verify disputed claims.
+
+Keep the identity choice open for the user. Compare both forms using exact
+term shapes, required inputs, collision behavior, rename behavior, artifact
+portability, and downstream signatures.
+
+Audit these observed contract risks:
+
+- compiler ownership inferred from a `primitive(type)` return instead of an
+  explicit stage declaration;
+- lowering that inserts `intern/3` only for type-returning callables;
+- module-unqualified `Name/Arity` relation references;
+- duplicate identity carried by `application/2`, `construction_request/3`,
+  `specialization/3`, and `argument/3`;
+- machinery that can be deleted before the first reader and evaluator proof.
 
 ## Acceptance Criteria
 
@@ -12,6 +26,9 @@ needed to verify disputed claims.
       mechanically different.
 - [ ] Identify any feature outside the overnight ceiling.
 - [ ] Propose deletions before additions.
+- [ ] Compare both module identity forms without selecting one.
+- [ ] Rule on the stage-ownership, inserted-interning, and relation-reference
+      risks with donor file and line receipts.
 - [ ] Write `v7/3_TASKS/results/1_CONTRACT_CRITIQUE.md`.
 - [ ] Modify no implementation file.
 

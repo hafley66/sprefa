@@ -1,6 +1,6 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-28 00:33 EDT, semantic identity ruling required
+Updated: 2026-08-28 00:39 EDT, Opus ruling review ready to spawn
 
 ## Current state
 
@@ -25,12 +25,11 @@ Updated: 2026-08-28 00:33 EDT, semantic identity ruling required
 
 ## Active
 
-- `@dl7-kernel-contract` is `in-progress`.
-- Boop lane `chore-dl7-kernel-contract` recovered and edited the contract plan.
-- Sol invoked the card's stop condition before committing because declared-node
-  semantic identity has two coherent donor-backed representations.
-- The lane was told to preserve both choices, write a blocked report, commit
-  documentation only, and stop.
+- Sol documentation landed on main as `7e3303be5`.
+- `@dl7-kernel-contract` is `needs-info` and blocked by
+  `@dl7-contract-critique`.
+- `@dl7-contract-critique` is the spawnable Opus 5 ruling review on lane
+  `dl7-ruling`.
 
 ## Hitches
 
@@ -57,12 +56,23 @@ Updated: 2026-08-28 00:33 EDT, semantic identity ruling required
 - Selecting either form changes semantic TypeIds. No selection was made.
 - A direct attempt to send a selection was rejected by the approval reviewer
   because the user's stop rule requires this choice to return to the user.
+- Sol committed `297d90b9a`; it was reviewed and cherry-picked as `7e3303be5`.
+  The diff changes only the plan and
+  `v7/3_TASKS/results/0_KERNEL_CONTRACT.md`; `git diff --check` passed.
+- Coordinator review found three claims requiring Opus receipts before a user
+  ruling:
+  - phase ownership is inferred from a `primitive(type)` return;
+  - lowering inserts `intern/3` only for type-returning callables;
+  - normalized `Name/Arity` relation references are module-unqualified.
+- The critique card was moved ahead of the blocked contract and expanded to
+  compare both identity forms without selecting one.
 
 ## Next DAG edges
 
 ```text
-kernel-contract [Sol]
-    -> contract-critique [Opus 5]
+contract-critique and identity ruling [Opus 5]
+    -> user ruling
+    -> kernel-contract resume [Sol]
     -> prefix-reader [GLM53F] || shared-evaluator [Sol]
     -> symbol-graph [GLM53F]
     -> Partial [GLM53F]
