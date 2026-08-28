@@ -969,6 +969,16 @@ task(dd_oracle_crosscheck, done, []). % BUILT 2026-08-23 (PR #438): the real dif
 
 task(delta_arm_subset_expansion, done, []). % BUILT 2026-08-23 (PR #435): ordered plain-join delta identity, one current-state transition arm per optional item, and signed-loss insert arms for shrinking negated inputs. page_response 248,015 bytes/256 arms/64 clauses -> 7,548/7/1; callgraph tick 4 adds unused(main); grade 445/341 and ghcache tick log byte-identical. The runtime compatibility case it left open is retired: a negated input loss no longer makes a head recount-eligible (docs/failure-modes.md 89).
 
+task(extract_rename_arc1_ts_anchor, done, []). % LANDED 2026-08-27 (PR #511): `extract rename <file>#<old> <new>` over oxc_semantic, single TS anchor file, dry run default, --commit writes. v6/sprefa-extract/src/0_rename.rs, lang/ts_rename.rs, tests/4_rename_ts.rs.
+task(extract_rename_arc2_stops, done, [extract_rename_arc1_ts_anchor]). % LANDED 2026-08-27 (PR #514): named RenameStop variants, --at <byte> for a shadowed declaration, exit codes 3-6. Every stop writes nothing.
+task(extract_rename_arc3_ts_crossfile, done, [extract_rename_arc2_stops]). % LANDED 2026-08-27 (PR #516): TS rename follows imports/re-exports across files; RenameStop::Dynamic became Dynamic(Vec<SymbolSeat>) (types.rs, one span under-reported).
+task(extract_rename_arc4_text_refs, done, [extract_rename_arc3_ts_crossfile]). % LANDED 2026-08-27 (PR #517): --text-refs reports old-name spellings in plain text (comments, strings, md) the plan leaves behind; report only. src/2_move_text.rs.
+task(extract_rename_arc5_rust_syn, done, [extract_rename_arc2_stops]). % LANDED 2026-08-27 (PR #518): Rust arm over syn, lang/rust_rename.rs, roster line in lang/mod.rs. Self-rename oracle in tests/5_rename_rust.rs is #[ignore] (25.2 s by hand, passes).
+task(extract_rename_arc6_scip_verify, done, [extract_rename_arc3_ts_crossfile, extract_rename_arc5_rust_syn]). % LANDED 2026-08-27 (PR #519): --verify-scip <index> cross-checks the plan against a prebuilt SCIP index; count only, never changes plan or exit code. scip-typescript 0.4.0 writes DEFINITION roles only.
+task(extract_rename_kotlin_prolog_arms, unbuilt, [extract_rename_arc5_rust_syn]). % One file + one roster line each, brief shape of arc 5.
+task(grade_ratchet_bisect, done, []). % LANDED 2026-08-27 (PR #513, #515): 3-day grade red 345->322 bisected to #481 adding oxc_resolver, whose default features flip serde_json/preserve_order for the unified build graph; ticklog.rs canonical JSON now sorts keys through BTreeMap. docs/failure-modes.md 95. graded.tsv regenerated at 346/449 (65eab58b2).
+task(main_reconcile_codex3, done, []). % LANDED 2026-08-27 (9f61970f5, 6a1fbf0c1): local main (39 codex-3 type-system commits) merged with origin (70). plunit_tests.pl three-way merged, plane count re-measured refcount-1664. Gates on the merge: plunit 1167/0, conformance 449/0, RUST-GRADE 346/449.
+
 roadmap :-
     findall(Name-Needs, task(Name, _, Needs), Pairs),
     topsort(Pairs, [], Order),

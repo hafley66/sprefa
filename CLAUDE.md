@@ -100,9 +100,10 @@ spawn, never `bus dispatch` (that spelling is dead).
 ```bash
 boop beep lane create --branch <kind>/<name> --brief <ABS path> \
   --goal "..." --preset <preset> --base-sha <origin/main sha>
-boop beep lane wait <lane-name> &      # optional backstop; completion also
-                                       # arrives typed into the coordinator pane
 ```
+
+Completion arrives typed into the coordinator pane. `boop beep lane wait` no
+longer exists (rc=2).
 
 Presets live in `~/Library/Application Support/boop/config.json`. The
 `model@effort` suffix sets codex reasoning effort, `low|medium|high` only
@@ -127,8 +128,7 @@ worktree before reporting its result. Verify its gate numbers yourself.
 
 **Coordinator mail is delivered by pane injection** (hafley-rs PR #6,
 2026-08-17): `boop adopt` writes a `kind=coordinator` route and lane-completion
-hails get typed into the coordinator pane, mid-turn or idle; no `lane wait`
-needs arming. `lane wait` remains the blocking/backstop form. Failure-mode 51
+hails get typed into the coordinator pane, mid-turn or idle. Failure-mode 51
 records the era when this leg was unwired and mail queued forever.
 
 **Reaching the coordinator (every lane, every session, kimi included).** The
