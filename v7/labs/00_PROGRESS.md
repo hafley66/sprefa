@@ -1,6 +1,6 @@
 # V7 Common Lisp logic lab progress
 
-Updated: 2026-08-28 17:28 EDT
+Updated: 2026-08-28 18:01 EDT
 
 ## Current state
 
@@ -9,9 +9,11 @@ Updated: 2026-08-28 17:28 EDT
 - Installed runtime: SBCL 2.6.7.
 - GLM shared worktree: `.boop-worktrees/chore/v7-cl-logic-glm`.
 - Terra shared worktree: `.boop-worktrees/chore/v7-cl-logic-terra`.
-- Completed lab reports: 8 (`1_inventory`, `2_cl_gambol`, `3_paiprolog`,
-  `4_cl_datalog`, `5_cl_grph`, `6_screamer`, `7_reazon_cl`, `8_cl_kanren`).
-- Active lab workers: 2 (`9_vivace_graph`, `10_wamcompiler`).
+- Completed lab reports: 10 (`1_inventory`, `2_cl_gambol`, `3_paiprolog`,
+  `4_cl_datalog`, `5_cl_grph`, `6_screamer`, `7_reazon_cl`, `8_cl_kanren`,
+  `9_vivace_graph`, `10_wamcompiler`).
+- Active lab workers: 0. The next pair is `11_cl_prolog2` and
+  `12_handwritten_logic`.
 
 ## Completed labs
 
@@ -77,6 +79,24 @@ Updated: 2026-08-28 17:28 EDT
 - Two Luna-high review passes reconciled provenance, dependency hashes,
   fairness receipts, truth labels, upstream history, child counts, external
   runtime files, and final image receipts for labs 7 and 8.
+- `vivace-graph` commit on main: `20b870074`. Native behavior covers compiled
+  first-order unification with an occurs check, graph transactions, durable
+  indexes, duplicate Prolog proofs, persistence, and retraction. Cyclic
+  closure uses a persistent-node-ID visited-set adapter.
+- `vivace-graph` image: 65,873,672 bytes, SHA-256
+  `a21045518382ad210bd48e76761ad0a08b3edc427b677ce8b348d5e0beadf7b6`.
+  Runtime requires the pinned checkout for commit verification and a fresh
+  graph directory; Quicklisp is not loaded at image startup.
+- `WAMCompiler` commit on main: `800a4284c`. Native behavior covers WAM
+  unification, trail-based depth-first backtracking, cut, lists, negation,
+  clause addition, and first-argument dispatch. It has no occurs check,
+  tabling, finite cyclic closure, or retraction API.
+- `WAMCompiler` image: 40,638,456 bytes, SHA-256
+  `b9c1e669c87f3288010de75f07ddd07960619272bcd33058c4eea48675629df4`.
+  Each isolated image probe section runs in a child copy of the saved image.
+- Luna-high review found 12 concrete issues across labs 9 and 10. Final fixes
+  reconciled saved-image execution, runtime provenance wording, persistent
+  visited keys, dynamic clause receipts, transcript labels, and measurements.
 
 ## Coordination receipt
 
@@ -99,10 +119,9 @@ contents, so labs 9 and 10 use native Terra-high workers instead.
 
 ## Next execution sequence
 
-1. Review `9_vivace_graph` and `10_wamcompiler` when native completion notices
-   arrive.
-2. Commit the accepted pair on the shared branch and cherry-pick it to main.
-3. Run bounded Luna review on the accepted pair.
+1. Run `11_cl_prolog2` and `12_handwritten_logic` in parallel.
+2. Review, measure, and commit the accepted pair on the shared branch.
+3. Cherry-pick the pair to main and update this progress log.
 4. Repeat in pairs through the runnable library labs before starting binary
    packaging.
 
