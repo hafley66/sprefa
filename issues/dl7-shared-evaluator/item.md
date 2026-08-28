@@ -11,7 +11,7 @@ size: L
 lane: dl7-evaluator
 lane_seq: 0
 collision: [v7-evaluator]
-blocked_by: ['@dl7-contract-critique']
+blocked_by: ['@dl7-contract-critique', '@dl7-kernel-contract']
 ---
 
 # Extract one shared compiler and runtime fixpoint evaluator

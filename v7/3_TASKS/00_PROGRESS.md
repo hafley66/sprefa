@@ -1,6 +1,6 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-28 00:42 EDT, Opus ruling review running
+Updated: 2026-08-28 00:52 EDT, stopped for user semantic rulings
 
 ## Current state
 
@@ -28,10 +28,13 @@ Updated: 2026-08-28 00:42 EDT, Opus ruling review running
 - Sol documentation landed on main as `7e3303be5`.
 - `@dl7-kernel-contract` is `needs-info` and blocked by
   `@dl7-contract-critique`.
-- `@dl7-contract-critique` is `in-progress` in Boop lane
-  `chore-dl7-contract-critique`, Opus 5/high, base `7073ffa20`.
-- Expected output: `v7/3_TASKS/results/1_CONTRACT_CRITIQUE.md` plus one
-  documentation commit.
+- Opus report landed on main as `4018330a1` and
+  `@dl7-contract-critique` is `done`.
+- `@dl7-kernel-contract` remains `needs-info`.
+- No reader, evaluator, kernel, prelude, fixture, test, or engine lane has been
+  spawned.
+- Reader and evaluator cards now explicitly depend on the unresolved kernel
+  contract, so issuectl exposes no DL7 implementation head of line.
 
 ## Hitches
 
@@ -68,13 +71,32 @@ Updated: 2026-08-28 00:42 EDT, Opus ruling review running
   - normalized `Name/Arity` relation references are module-unqualified.
 - The critique card was moved ahead of the blocked contract and expanded to
   compare both identity forms without selecting one.
+- The first Opus exit was `rc=4` because the report existed but had not been
+  committed. The lane was revived only to commit the reviewed report as
+  `0ee0597c1`; it was cherry-picked as `4018330a1`.
+- Opus found five contract blockers before code:
+  1. `Partial` cannot request `Option(MemberType)` after `MemberType` becomes
+     ground during evaluation, so its edge rule derives zero rows.
+  2. Automatic `intern/3` insertion runs before its arguments are ground and
+     gives type-returning callables a special lowering path.
+  3. Compiler ownership inferred from the return column misses relations with
+     a type input and scalar output.
+  4. Bare `Name/Arity` relation references collide between the source module
+     and prelude.
+  5. `evaluate/4` emits compiler construction requests, giving the supposedly
+     shared evaluator a compile-time transport behavior.
+- Opus also listed nine deletions for the first proof, including inserted
+  interning, duplicate request rows, stored specialization arity, strata and
+  negation, unlowered sum syntax, and unused graph rows.
+- Full receipts and the identity comparison are in
+  `v7/3_TASKS/results/1_CONTRACT_CRITIQUE.md`.
 
 ## Next DAG edges
 
 ```text
-contract-critique and identity ruling [Opus 5]
-    -> user ruling
-    -> kernel-contract resume [Sol]
+contract critique [done]
+    -> user rulings [STOPPED HERE]
+    -> kernel-contract correction [Sol]
     -> prefix-reader [GLM53F] || shared-evaluator [Sol]
     -> symbol-graph [GLM53F]
     -> Partial [GLM53F]

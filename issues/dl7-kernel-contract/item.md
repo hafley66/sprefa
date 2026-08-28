@@ -14,6 +14,8 @@ collision: [v7-design]
 commits:
 - hash: 7e3303be5
   summary: v7 plan blocked on module identity
+- hash: 4018330a1
+  summary: Opus contract critique report
 blocked_by: ['@dl7-contract-critique']
 ---
 
@@ -71,3 +73,9 @@ two coherent options remain after inspecting prior decisions.
 ### 2026-08-28T04:38:51Z · @codex-v7
 
 2026-08-28: reviewed Sol commit 297d90b9a, cherry-picked as 7e3303be5. Diff contains only the plan and blocked result report; git diff --check passed; production files 0; tests 0. All original acceptance criteria are evidenced. Status is needs-info because declared-node semantic identity remains unresolved between named(ModuleHash, Kind, Name) and named(module(ModulePath), Kind, Name).
+
+## Decisions
+
+### 2026-08-28T04:51:15Z · @codex-v7
+
+2026-08-28: Opus review found the module identity fork is not the only blocker. Before implementation, the contract must also resolve body-position construction demand for Partial, remove automatic type-return intern insertion, define compiler stage ownership, qualify or collision-check relation references, and move construction request extraction outside evaluate/4. Report: v7/3_TASKS/results/1_CONTRACT_CRITIQUE.md at 4018330a1.

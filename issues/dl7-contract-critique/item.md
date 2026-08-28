@@ -3,7 +3,7 @@ created: 2026-08-28
 updated: 2026-08-28
 type: task
 assignee: opus
-status: in-progress
+status: done
 priority: high
 epic: dl7-minimal-kernel
 labels: [dl7, model-opus5]
@@ -11,6 +11,11 @@ size: M
 lane: dl7-ruling
 lane_seq: 0
 collision: [v7-design]
+closed: 2026-08-28
+closed_by: codex-v7
+commits:
+- hash: 4018330a1
+  summary: v7 contract critique report
 ---
 
 # Critique DL7 kernel contract and delete unnecessary machinery
@@ -37,17 +42,17 @@ Audit these observed contract risks:
 
 ## Acceptance Criteria
 
-- [ ] Identify any duplicate representation of bind, edge, call, return, or
+- [x] Identify any duplicate representation of bind, edge, call, return, or
       specialization.
-- [ ] Identify any evaluator branch that makes compile time and runtime
+- [x] Identify any evaluator branch that makes compile time and runtime
       mechanically different.
-- [ ] Identify any feature outside the overnight ceiling.
-- [ ] Propose deletions before additions.
-- [ ] Compare both module identity forms without selecting one.
-- [ ] Rule on the stage-ownership, inserted-interning, and relation-reference
+- [x] Identify any feature outside the overnight ceiling.
+- [x] Propose deletions before additions.
+- [x] Compare both module identity forms without selecting one.
+- [x] Rule on the stage-ownership, inserted-interning, and relation-reference
       risks with donor file and line receipts.
-- [ ] Write `v7/3_TASKS/results/1_CONTRACT_CRITIQUE.md`.
-- [ ] Modify no implementation file.
+- [x] Write `v7/3_TASKS/results/1_CONTRACT_CRITIQUE.md`.
+- [x] Modify no implementation file.
 
 ## Tests Run
 
@@ -58,3 +63,9 @@ Run no suite.
 ### 2026-08-28T04:41:35Z · @codex-v7
 
 2026-08-28: spawned Boop lane chore-dl7-contract-critique from base 7073ffa20 with Opus 5/high. Expected report v7/3_TASKS/results/1_CONTRACT_CRITIQUE.md and at least one documentation commit. Identity choice remains reserved for the user.
+
+## Resolution
+
+### 2026-08-28T04:50:53Z · @codex-v7
+
+Reviewed Opus report and commit 0ee0597c1, cherry-picked as 4018330a1. The report modifies one documentation file, runs no suite, keeps the module identity choice open, and provides source receipts for the blocking Partial demand gap, inserted interning, stage ownership, relation qualification, evaluator request branch, duplicate carriers, and scope deletions.

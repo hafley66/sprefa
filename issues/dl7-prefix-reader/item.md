@@ -11,7 +11,7 @@ size: M
 lane: dl7-reader
 lane_seq: 0
 collision: [v7-reader]
-blocked_by: ['@dl7-contract-critique']
+blocked_by: ['@dl7-contract-critique', '@dl7-kernel-contract']
 ---
 
 # Implement bounded DL7 prefix reader
