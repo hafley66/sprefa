@@ -143,9 +143,13 @@ fn canonical_json_value(value: &serde_json::Value) -> String {
             format!("[{}]", parts.join(","))
         }
         serde_json::Value::Object(map) => {
-            // serde_json's Object is sorted when preserve_order is off.
-            let mut entries = Vec::new();
-            for (key, item) in map {
+            // Sorted here, never through `Map`'s own order: any dependency
+            // turning `serde_json/preserve_order` on would otherwise reorder
+            // every rendered row.
+            let sorted: std::collections::BTreeMap<&String, &serde_json::Value> =
+                map.iter().collect();
+            let mut entries = Vec::with_capacity(sorted.len());
+            for (key, item) in sorted {
                 entries.push(format!(
                     "{}:{}",
                     json_string(key),
@@ -311,4 +315,21 @@ fn push_json_string(out: &mut String, value: &str) {
         }
     }
     out.push('"');
+}
+
+#[cfg(test)]
+mod canonical_key_order_tests {
+    use super::canonical_json_text;
+
+    // Fails pre-fix whenever any crate in the build graph turns
+    // `serde_json/preserve_order` on (oxc_resolver does since #481).
+    #[test]
+    fn object_keys_render_sorted_regardless_of_insertion_order() {
+        let rendered = canonical_json_text(r#"{"zeta":1,"alpha":{"nested_b":2,"nested_a":3},"mid":[{"y":0,"x":1}]}"#)
+            .expect("valid json");
+        assert_eq!(
+            rendered,
+            r#"{"alpha":{"nested_a":3,"nested_b":2},"mid":[{"x":1,"y":0}],"zeta":1}"#
+        );
+    }
 }
