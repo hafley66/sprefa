@@ -17,6 +17,7 @@ pub mod fact;
 pub mod go;
 pub mod kotlin;
 pub mod kotlin_rehome;
+pub mod kotlin_rename;
 pub mod markdown;
 pub mod prolog;
 pub mod python;
@@ -105,7 +106,7 @@ pub fn rehome_for(path: &str) -> Option<&'static dyn Rehome> {
 /// The `Rename` roster, in `sources()` order. Membership is "has a scope plane
 /// with exact identifier spans", a different question from `rehomes()`'s.
 pub fn renames() -> &'static [&'static dyn Rename] {
-    &[&TsSource, &RustSource]
+    &[&TsSource, &RustSource, &KotlinSource]
 }
 
 /// The `Rename` that owns `path`, under the SAME first-match law `rehome_for`
