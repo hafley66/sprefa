@@ -31,7 +31,7 @@
 
 use std::collections::BTreeSet;
 
-use sprefa_v5::graph::typegraph::{GoTypes, KotlinTypes, RustTypes, TsTypes, TypeLang};
+use sprefa_v5::graph::typegraph::{GoTypes, KotlinTypes, PyTypes, RustTypes, TsTypes, TypeLang};
 
 fn main() {
     let path = std::env::args().nth(1).expect("usage: v5_normalize <path>");
@@ -50,6 +50,8 @@ fn main() {
         &GoTypes
     } else if path.ends_with(".kt") || path.ends_with(".kts") {
         &KotlinTypes
+    } else if path.ends_with(".py") {
+        &PyTypes
     } else {
         &TsTypes
     };

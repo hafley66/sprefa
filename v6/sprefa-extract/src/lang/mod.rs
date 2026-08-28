@@ -3,7 +3,8 @@
 //! `RustSource` (cst via ast-grep + type/call/df via syn); a `.go` hits
 //! `GoSource` (cst via ast-grep + type/call/df via tree-sitter-go); a `.kt`/
 //! `.kts` hits `KotlinSource` (cst via ast-grep + type/call/df via
-//! tree-sitter-kotlin); a `.ts` hits `TsSource` (cst via ast-grep +
+//! tree-sitter-kotlin); a `.py`/`.pyi` hits `PythonSource` (cst via ast-grep +
+//! type/call/df via tree-sitter-python); a `.ts` hits `TsSource` (cst via ast-grep +
 //! type/call/df via oxc); anything else with an ast-grep grammar falls to
 //! `AstgrepSource` (cst-only).
 
@@ -76,6 +77,7 @@ pub fn sources() -> &'static [&'static dyn Source] {
         &KotlinSource,
         &MarkdownSource,
         &PrologSource,
+        &PythonSource,
         &DataSource,
         &DlSource,
         &TsSource,

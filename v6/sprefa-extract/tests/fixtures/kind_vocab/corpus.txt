@@ -1,7 +1,7 @@
 tests/fixtures/ast_pattern/0_rtkq.ts
 tests/fixtures/ast_pattern/1_expected.jsonl
 tests/fixtures/ast_pattern/2_rtkq_edited.ts
-tests/fixtures/astgrep/sample.py
+tests/fixtures/astgrep/sample.html
 tests/fixtures/data/goldens/lines.jsonl.jsonl
 tests/fixtures/data/goldens/nested.json.jsonl
 tests/fixtures/data/goldens/pokeapi.operation_ids.jsonl

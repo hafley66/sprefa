@@ -64,10 +64,11 @@ const ROSTER_FIXTURES: &[(&str, &str)] = &[
     ("go", "tests/fixtures/go/sample.go"),
     ("kotlin", "tests/fixtures/kotlin/sample.kt"),
     ("prolog", "tests/fixtures/prolog/0_sample.pl"),
+    ("python", "tests/fixtures/python/sample.py"),
     ("dl6", "tests/fixtures/dl6/0_sample.dl6"),
     ("markdown", "tests/fixtures/markdown/0_sample.md"),
     ("data", "tests/fixtures/data/nested.json"),
-    ("astgrep", "tests/fixtures/astgrep/sample.py"),
+    ("astgrep", "tests/fixtures/astgrep/sample.html"),
 ];
 
 /// Every `Source` in the live roster produces the same facts through the binary

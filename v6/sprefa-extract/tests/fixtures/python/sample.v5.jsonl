@@ -1,0 +1,82 @@
+call_def	function	add	3
+call_def	function	inner	14
+call_def	function	main	19
+call_def	method	bark	13
+call_def	method	speak	8
+call_site	Dog	21
+call_site	add	20
+call_site	bark	22
+call_site	inner	16
+call_site	join	23
+df_args	14	0	12
+df_args	14	1	13
+df_args	19	-1	18
+df_args	24	-1	21
+df_args	24	0	22
+df_args	24	1	23
+df_edge	129	122
+df_edge	19	63
+df_edge	231	224
+df_edge	253	246
+df_edge	297	289
+df_edge	30	67
+df_edge	301	297
+df_edge	304	297
+df_edge	311	325
+df_edge	315	311
+df_edge	325	325
+df_edge	338	338
+df_edge	351	338
+df_edge	356	338
+df_edge	63	56
+df_edge	63	63
+df_edge	67	63
+df_node	binop		63
+df_node	call_res		253
+df_node	call_res		297
+df_node	call_res		325
+df_node	call_res		338
+df_node	let_bind	d	311
+df_node	let_bind	total	289
+df_node	lit		129
+df_node	lit		231
+df_node	lit		301
+df_node	lit		304
+df_node	lit		351
+df_node	lit		356
+df_node	member	path	338
+df_node	new	Dog	315
+df_node	param	a	19
+df_node	param	b	30
+df_node	ret		122
+df_node	ret		224
+df_node	ret		246
+df_node	ret		56
+df_node	var_read	a	63
+df_node	var_read	b	67
+df_node	var_read	d	325
+df_node	var_read	os	338
+df_param_pos	0	0
+df_param_pos	1	1
+type_edge	Dog	Animal	impl
+type_edge	add	Number	param
+type_edge	add	Number	returns
+type_edge	bark	Text	returns
+type_edge	inner	Text	returns
+type_edge	main	Result	returns
+type_edge	speak	Text	returns
+type_node	class	Animal	7
+type_node	class	Dog	12
+type_node	function	add	3
+type_node	function	inner	14
+type_node	function	main	19
+type_node	method	bark	13
+type_node	method	speak	8
+type_node	module	<module>	1
+type_sig	13	ret	0	Text
+type_sig	14	ret	0	Text
+type_sig	19	ret	0	Result
+type_sig	3	param	0	Number
+type_sig	3	param	1	Number
+type_sig	3	ret	0	Number
+type_sig	8	ret	0	Text

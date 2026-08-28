@@ -117,9 +117,9 @@ per-relation reading where it is still true.
 
 The residue is real and smaller:
 
-Every RECORD-seam gap `@extract-port-closeout` opened is closed but three, and
-the three left are all in one arm (python). The extractor is at or past parity
-on facts.
+Every RECORD-seam gap `@extract-port-closeout` opened is closed; the last
+arm (python) landed 2026-08-28 and is graded against three captured v5
+oracles. The extractor is at or past parity on facts.
 
 The DOOR is where v5 is still alive. A `.dl6` program on the Rust runtime can
 declare an `sh` host, and the host's command line is parsed by
@@ -437,25 +437,25 @@ Per-language parity:
 | typescript / js | type, call, df, doc, module, cst | type, call, df, doc, specifier, cst, unresolved | superset |
 | go | type, call, df, doc, module, cst | type, call, df, doc, specifier, cst | identical |
 | kotlin | type, call, df, doc, module, cst | type, call, df, specifier, cst | subset: kotlin has no v5 `doc` oracle and is graded by hand (`tests/19_docs_lang_arms.rs` header) |
-| **python** | **type, call, df, doc, module, cst** | **cst only** | **subset, the one real language gap** |
+| python | type, call, df, doc, module, cst | type, call, df, doc, specifier, cst | identical: `tests/fixtures/python/{sample,docs,flow}.v5.jsonl`, byte-exact df, `type_edge` and `doc` asserted |
 | markdown | cst + `doc_node` | cst + `doc_node` | identical |
 | prolog | cst | cst + `reference` | superset |
 | dl / dl6 | cst | cst, type, call, specifier | superset |
 | the other ~14 ast-grep grammars | cst via `sg`, pattern-queryable | cst via `AstgrepSource`, **not** pattern-queryable from dl6 | subset at the door |
 
-### The python gap
+### The python arm
 
-`PythonSource` EXISTS and is exported (`v6/sprefa-extract/src/lang/python/_0_source.rs:460`,
-re-exported at `lang/mod.rs:31` and `lib.rs:62`). It fills cst, type and call.
-It is **not in `sources()`** (`lang/mod.rs:46-58`), so `source_for("x.py")`
-falls through to `AstgrepSource` and a `.py` file yields cst rows and nothing
-else. `df` is a written follow-up (`_0_source.rs:16`), and there is no
-`tests/fixtures/python/*.v5.jsonl` oracle capture, so nothing grades it against
-v5.
+`PythonSource` (`v6/sprefa-extract/src/lang/python/_0_source.rs`) is in
+`sources()` (`lang/mod.rs`), has a `RESOLVE_ARMS` row (`project.rs`) and a
+`ROSTER_FIXTURES` row (`tests/4_capability_parity.rs`). Planes: cst (ast-grep),
+type entities + sigs + docs (PEP 257 docstrings, Sphinx field tags) + type-edge
+candidates, call defs + sites + import specifiers, df (v5 `py_dataflow_from`
+byte-exact), `Resolve<TypeF>` and `Resolve<CallF>` (name-match with the
+scip-python override leg). One v5-only entity is kept for parity: the
+`<module>` type node (`MODULE`, an `Ext` kind) anchoring the module docstring.
 
-Owed: commits D (df) and E (both `Resolve` arms), the roster line, the
-`ROSTER_FIXTURES` row in `tests/4_capability_parity.rs`, and a captured v5
-oracle. Issue `@extract-python-arm` (open, epic `@extract-port-closeout`).
+Named stop: v5 `count_sys_path_mutators` (a diagnostic line, never a fact) has
+no v6 twin. Issue `@extract-python-arm` closed 2026-08-28.
 
 ## 4. SCIP indexers
 
@@ -502,8 +502,8 @@ Measured, from the sites that carry the numbers.
 |---|---|---|
 | `plans/2026-07-30-v5-parity-table.tsv` | 156 rows, DERIVED by `v6/dl/fixtures/v5-parity.dl6` through the tsv2 served engine | **stale and not regenerable**: it scores `gen`, `closure`, `diag` and every built-in rel `absent`, all of which have landed since; and tsv2 is paused (CLAUDE.md 2026-08-21), so `just v5-parity` cannot be re-run |
 | `v6/dl/fixtures/v5-parity.dl6` | the program that derived it, five mechanical legs, `# @parity` marker comments | keep as a technique fixture; it is the only program that reads v5's own `op_catalog` |
-| `@extract-port-closeout` | 16-row RECORD-seam census | 13 done, 3 open (`@extract-python-arm`, `@extract-module-plane-non-ts`, `@extract-modulef-collapse`) |
-| `v6/sprefa-extract/tests/golden_parity.rs` | the captured v5 oracle, 10 `.v5.jsonl` files over ts/go/rust/kotlin | live; no python capture (see the python gap) |
+| `@extract-port-closeout` | 16-row RECORD-seam census | 14 done, 2 open (`@extract-module-plane-non-ts`, `@extract-modulef-collapse`) |
+| `v6/sprefa-extract/tests/golden_parity.rs` | the captured v5 oracle, 13 `.v5.jsonl` files over ts/go/rust/kotlin/python | live |
 | `v6/sprefa-extract/tests/4_capability_parity.rs` | library-vs-binary reach, compiler-enforced | live; it does NOT cover the dl6 door, which is why this document exists |
 | `chat_log/20260816.2.…:68` | "8/10 scip rels, indexers 3/6" | both numbers stale: 10/10 on the wire, 6/6 indexers |
 
@@ -522,4 +522,4 @@ Measured, from the sites that carry the numbers.
 | 10 | `hover_note` sink | `decls.rs:253` | the v6 native LSP | `plans/2026-08-12-v6-native-lsp.PLAN.md` |
 | 11 | `created` (first-author attribution) | `src/rels/git.rs:494` | a soopy `git log --diff-filter=A` host | — (delete list: zero live consumers) |
 | 12 | `similar` / `node2vec`, `propose_*`, `type_shape` / `type_lgg` | `rels/embed.rs:29`, `rels/propose.rs:28`, `rels/analysis.rs:364` | no plan and no asker since 2026-07-11 | — (delete list) |
-| 13 | python type/call/df/module | `graph/typegraph/python.rs` | commits D+E of the go-shaped arm, plus the roster line | `@extract-python-arm` (open) |
+| 13 | python type/call/df/module | `graph/typegraph/python.rs` | **CLOSED 2026-08-28**: the go-shaped arm end to end, three captured oracles | `@extract-python-arm` (closed) |

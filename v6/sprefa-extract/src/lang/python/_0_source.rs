@@ -1,34 +1,51 @@
-//! The Python extractor arm: tree-sitter-python front-end for type/call, ast-grep
-//! for cst. Mirrors GoSource (same shape, different front-end): cst via ast-grep's
-//! python grammar + one tree-sitter-python parse feeding the type/call
-//! projections.
+//! The Python extractor arm: tree-sitter-python front-end for type/call/df,
+//! ast-grep for cst. Mirrors GoSource (same shape, different front-end): cst via
+//! ast-grep's python grammar + one tree-sitter-python parse feeding the
+//! type/call/df projections, then `Resolve<TypeF>` and `Resolve<CallF>`.
 //!
 //! Span bridge: NONE needed (like go.rs, unlike rust.rs's syn line/col -> byte
 //! table). tree-sitter nodes give raw byte offsets directly (`start_byte`/
 //! `end_byte`), so `Span { start: node.start_byte(), len: end - start }` is the
 //! whole story.
 //!
-//! Commit A (skeleton): PythonSource wires cst via ast-grep + a
-//! tree-sitter-python parse; type/call projections are stubbed empty. Commit B
-//! ports `walk_py_entities` (TypeF nodes + arrow-type sigs); commit C ports
-//! `py_walk_call_defs` + `py_walk_call_sites` (CallF).
+//! v5 twin: `src/graph/typegraph/python.rs` (entities, sigs, edges, docs,
+//! dataflow) and `src/graph/modgraph/python.rs` (import specifiers, read there
+//! with regexes over stripped text; here off the same tree-sitter parse).
 //!
-//! Deferred follow-ups: DfF (`py_dataflow_from`), the docs facet
-//! (`py_docs_from`), type-edge candidates (`py_edges_from`), both `Resolve`
-//! arms, the module plane (src/graph/modgraph/python.rs), and the roster wiring
-//! (roster entry + RESOLVE_ARMS row + ROSTER_FIXTURES entry).
-//!
-//! @comment-ok: the commit-split + deferral ledger mirrors lang/go.rs:1-24.
+//! Named stop against v5: `sys.path` mutation counting (v5
+//! `count_sys_path_mutators`, a diagnostic line, never a fact).
 
 use std::collections::BTreeSet;
 
-use crate::family::{CallF, CallKind, CallSite, CstF, SigSlot, TypeEntityKind, TypeF, TypeSig};
+use crate::family::{
+    CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
+    DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
+    TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
+};
 use crate::lang::{AstGrepParser, CstProjector};
-use crate::rows::{FamilyBundle, Node};
-use crate::seams::{Parser, Project};
-use crate::shape::{Span, Strings};
-use crate::source::{ExtractOutput, FamilyMask, Source};
+use crate::rows::{Edge, FamilyBundle, Node};
+use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
+use crate::seams::{
+    containing_def_site, corpus_defs, covering_def, def_named, own_blob, DefIndex, Parser,
+    Project, Resolve,
+};
+use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
+use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
+use crate::types::{DfLoop, LangKind, ScipIndex};
+
+/// Kinds only Python constructs: the core enums do not carry them
+/// (tests/6_kind_vocab.rs). `cond` is `a if c else b`.
+pub const COND: DfNodeKind = DfNodeKind::Ext(LangKind {
+    lang: "python",
+    tag: "cond",
+});
+/// The file's module scope, one entity named `<module>` over the whole file:
+/// v5 mints it (`EntityKind::Module`) so a module docstring has an anchor.
+pub const MODULE: TypeEntityKind = TypeEntityKind::Ext(LangKind {
+    lang: "python",
+    tag: "module",
+});
 
 // ── the tree-sitter-python parse (one parse feeds type/call) ─────────────────
 
@@ -72,6 +89,11 @@ fn project_types(
     strings: &mut Strings,
     sink: &mut FamilyBundle<TypeF>,
 ) {
+    let module_span = node_span(root);
+    push_entity(sink, strings, module_span, "<module>", MODULE);
+    if let Some(text) = py_docstring_of(root, src) {
+        push_py_doc(sink, strings, module_span, None, &text);
+    }
     walk_py_entities(root, src, strings, sink, None);
 }
 
@@ -93,7 +115,11 @@ fn walk_py_entities(
                     let name = py_text(name_node, src).to_string();
                     let span = node_span(target);
                     push_entity(sink, strings, span, &name, TypeEntityKind::Class);
+                    py_class_candidates(target, span, src, strings, sink);
                     if let Some(body) = target.child_by_field_name("body") {
+                        if let Some(text) = py_docstring_of(body, src) {
+                            push_py_doc(sink, strings, span, None, &text);
+                        }
                         walk_py_entities(body, src, strings, sink, Some(&name));
                     }
                 }
@@ -109,7 +135,11 @@ fn walk_py_entities(
                     let span = node_span(target);
                     push_entity(sink, strings, span, &name, kind);
                     fn_sigs(sink, strings, span, target, src);
+                    py_function_candidates(target, span, src, strings, sink);
                     if let Some(body) = target.child_by_field_name("body") {
+                        if let Some(text) = py_docstring_of(body, src) {
+                            push_py_doc(sink, strings, span, class_owner, &text);
+                        }
                         walk_py_entities(body, src, strings, sink, None);
                     }
                 }
@@ -351,6 +381,7 @@ fn project_call(
 ) {
     py_walk_call_defs(root, src, strings, sink, None, false);
     py_walk_call_sites(root, src, strings, sink);
+    py_module_specifiers(root, src, strings, sink);
 }
 
 /// The def span covers `[decl start, body end)` for span-containment caller
@@ -452,10 +483,1065 @@ fn py_callee(call: tree_sitter::Node, src: &[u8]) -> Option<(String, Span)> {
     Some((callee, span))
 }
 
-// ── PythonSource: cst via ast-grep + type/call via tree-sitter-python ──────
+// ── docs facet (TypeFAux.docs): PEP 257 docstrings + Sphinx field tags ───────
+
+fn push_py_doc(
+    sink: &mut FamilyBundle<TypeF>,
+    strings: &mut Strings,
+    owner: Span,
+    parent: Option<&str>,
+    text: &str,
+) {
+    let tags = py_parse_sphinx_tags(text, strings);
+    sink.aux.docs.push(DocFact {
+        owner,
+        parent: parent.map(|name| strings.intern(name)),
+        text: strings.intern(text),
+        tags,
+    });
+}
+
+/// The docstring at the head of a class/def body block: the block's first
+/// named child must be a bare `string` expression statement. Port of v5
+/// `py_docstring_of`.
+fn py_docstring_of(body: tree_sitter::Node, src: &[u8]) -> Option<String> {
+    let mut cursor = body.walk();
+    let first = body.named_children(&mut cursor).next()?;
+    if first.kind() != "expression_statement" {
+        return None;
+    }
+    let inner = first.named_child(0)?;
+    if inner.kind() != "string" {
+        return None;
+    }
+    Some(py_clean_docstring(py_text(inner, src)))
+}
+
+/// Strip an optional `r`/`b`/`f`/`u` prefix and the enclosing quotes, then
+/// dedent. Escapes are kept as written. Port of v5 `py_clean_docstring`.
+fn py_clean_docstring(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let quote_at = trimmed.find(['"', '\'']).unwrap_or(0);
+    let body = &trimmed[quote_at..];
+    let quote = if body.starts_with("\"\"\"") {
+        "\"\"\""
+    } else if body.starts_with("'''") {
+        "'''"
+    } else if body.starts_with('"') {
+        "\""
+    } else if body.starts_with('\'') {
+        "'"
+    } else {
+        return trimmed.to_string();
+    };
+    let inner = body
+        .strip_prefix(quote)
+        .and_then(|rest| rest.strip_suffix(quote))
+        .unwrap_or(body);
+    py_dedent(inner)
+}
+
+/// PEP 257 dedent: the minimum indent over every non-blank line AFTER the
+/// first is stripped from every subsequent line. Port of v5 `py_dedent`.
+fn py_dedent(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() <= 1 {
+        return text.trim().to_string();
+    }
+    let min_indent = lines
+        .iter()
+        .skip(1)
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.len() - line.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    let mut out = Vec::with_capacity(lines.len());
+    for (index, line) in lines.iter().enumerate() {
+        if index == 0 {
+            out.push(line.trim().to_string());
+        } else {
+            out.push(
+                line.get(min_indent.min(line.len())..)
+                    .unwrap_or("")
+                    .to_string(),
+            );
+        }
+    }
+    out.join("\n").trim().to_string()
+}
+
+/// Sphinx field-list tags: `:param name: text` -> tag `param` arg `name`;
+/// `:return:`/`:returns:` -> tag `returns`, no arg; any other `:tag:` passes
+/// through; a continuation line appends to the previous tag's text.
+/// Google-style `Args:` sections are not recognized (v5 neither). Port of v5
+/// `py_parse_sphinx_tags`.
+fn py_parse_sphinx_tags(text: &str, strings: &mut Strings) -> Vec<DocTag> {
+    let mut out: Vec<(&'static str, String, String)> = Vec::new();
+    let mut owned_tags: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix(':') {
+            if let Some(colon) = rest.find(':') {
+                let head = rest[..colon].trim();
+                let body = rest[colon + 1..].trim().to_string();
+                let mut parts = head.splitn(2, char::is_whitespace);
+                let tag_word = parts.next().unwrap_or("");
+                let head_arg = parts.next().unwrap_or("").trim();
+                let (tag, arg): (&'static str, &str) = match tag_word {
+                    "param" | "parameter" => ("param", head_arg),
+                    "return" | "returns" => ("returns", ""),
+                    other => {
+                        owned_tags.push(other.to_string());
+                        ("", head_arg)
+                    }
+                };
+                out.push((tag, arg.to_string(), body));
+                continue;
+            }
+        }
+        if let Some(last) = out.last_mut() {
+            if !trimmed.is_empty() {
+                if !last.2.is_empty() {
+                    last.2.push(' ');
+                }
+                last.2.push_str(trimmed);
+            }
+        }
+    }
+    let mut owned = owned_tags.into_iter();
+    out.into_iter()
+        .map(|(tag, arg, body)| {
+            let tag_text = if tag.is_empty() {
+                owned.next().unwrap_or_default()
+            } else {
+                tag.to_string()
+            };
+            DocTag {
+                tag: strings.intern(&tag_text),
+                arg: (!arg.is_empty()).then(|| strings.intern(&arg)),
+                text: strings.intern(&body),
+            }
+        })
+        .collect()
+}
+
+// ── type-edge candidates (TypeFAux.candidates, port of v5 `py_edges_from`) ──
+
+fn push_candidate(
+    sink: &mut FamilyBundle<TypeF>,
+    strings: &mut Strings,
+    owner: Span,
+    to: &str,
+    kind: TypeEdgeKind,
+) {
+    sink.aux.candidates.push(TypeEdgeCandidate {
+        owner,
+        to: strings.intern(to),
+        kind,
+    });
+}
+
+/// A class's candidates: each superclass (`impl`; a `metaclass=` keyword arg
+/// is not a base) and each annotated class attribute (`field`). Port of v5
+/// `py_class_edges`.
+fn py_class_candidates(
+    node: tree_sitter::Node,
+    owner: Span,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    let tparams = py_collect_type_params(node, src, "type_parameters");
+    if let Some(supers) = node.child_by_field_name("superclasses") {
+        let mut cursor = supers.walk();
+        for arg in supers.named_children(&mut cursor) {
+            if arg.kind() == "keyword_argument" {
+                continue;
+            }
+            for to in py_type_refs_collect(arg, src, &tparams) {
+                push_candidate(sink, strings, owner, &to, TypeEdgeKind::Impl);
+            }
+        }
+    }
+    if let Some(body) = node.child_by_field_name("body") {
+        let mut cursor = body.walk();
+        for stmt in body.named_children(&mut cursor) {
+            if stmt.kind() != "expression_statement" {
+                continue;
+            }
+            let Some(inner) = stmt.named_child(0) else {
+                continue;
+            };
+            if inner.kind() != "assignment" {
+                continue;
+            }
+            if let Some(ty) = inner.child_by_field_name("type") {
+                for to in py_type_refs_collect(ty, src, &tparams) {
+                    push_candidate(sink, strings, owner, &to, TypeEdgeKind::Field);
+                }
+            }
+        }
+    }
+}
+
+/// A def's candidates: param annotations (`param`, receiver skipped), the
+/// return annotation (`returns`), and every annotated local assignment under
+/// the body, nested defs included (`uses`). Port of v5 `py_function_edges`.
+fn py_function_candidates(
+    node: tree_sitter::Node,
+    owner: Span,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    let tparams = py_collect_type_params(node, src, "type_parameters");
+    if let Some(plist) = node.child_by_field_name("parameters") {
+        let mut cursor = plist.walk();
+        let mut first = true;
+        for param in plist.named_children(&mut cursor) {
+            if matches!(param.kind(), "keyword_separator" | "positional_separator") {
+                continue;
+            }
+            let (name_opt, type_node) = py_param_name_and_type(param, src);
+            if first {
+                first = false;
+                if matches!(name_opt.as_deref(), Some("self") | Some("cls")) {
+                    continue;
+                }
+            }
+            if let Some(ty) = type_node {
+                for to in py_type_refs_collect(ty, src, &tparams) {
+                    push_candidate(sink, strings, owner, &to, TypeEdgeKind::Param);
+                }
+            }
+        }
+    }
+    if let Some(ret) = node.child_by_field_name("return_type") {
+        for to in py_type_refs_collect(ret, src, &tparams) {
+            push_candidate(sink, strings, owner, &to, TypeEdgeKind::Returns);
+        }
+    }
+    if let Some(body) = node.child_by_field_name("body") {
+        let mut uses = Vec::new();
+        py_collect_body_annotation_refs(body, src, &tparams, &mut uses);
+        uses.sort();
+        uses.dedup();
+        for to in uses {
+            push_candidate(sink, strings, owner, &to, TypeEdgeKind::Uses);
+        }
+    }
+}
+
+fn py_collect_body_annotation_refs(
+    node: tree_sitter::Node,
+    src: &[u8],
+    tparams: &BTreeSet<String>,
+    out: &mut Vec<String>,
+) {
+    if node.kind() == "assignment" {
+        if let Some(ty) = node.child_by_field_name("type") {
+            out.extend(py_type_refs_collect(ty, src, tparams));
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        py_collect_body_annotation_refs(child, src, tparams, out);
+    }
+}
+
+// ── module specifiers (CallFAux.specifiers) ─────────────────────────────────
+// @comment-ok: the kind/name/module/imported contract, pinned row-for-row by
+// tests/16_python.rs. `Default`/`Reexport` are unreachable from python.
+//
+// | python source                | kind      | name    | module   | imported |
+// |------------------------------|-----------|---------|----------|----------|
+// | `import os`                  | Named     | os      | None     | None     |
+// | `import os.path as osp`      | Named     | osp     | os.path  | None     |
+// | `from x import a`            | Named     | a       | x        | None     |
+// | `from x import a as b`       | Named     | b       | x        | a        |
+// | `from . import sibling`      | Named     | sibling | .        | None     |
+// | `from .p.q import t as u`    | Named     | u       | .p.q     | t        |
+// | `from x import *`            | Namespace | x       | None     | None     |
+//
+// The path-only form carries the path in `name` with `module` None (the go
+// convention, `src/types.rs` names the path-shaped languages). One row per
+// imported name; a relative module keeps its leading dots in `module` so the
+// resolver can pop directories exactly as v5 `py_resolve_relative` does.
+
+fn py_module_specifiers(
+    root: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let mut rows = Vec::new();
+    py_walk_imports(root, src, strings, &mut rows);
+    sink.aux.specifiers.extend(rows);
+}
+
+fn py_walk_imports(
+    node: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    rows: &mut Vec<Specifier>,
+) {
+    match node.kind() {
+        "import_statement" => {
+            let mut cursor = node.walk();
+            for item in node.named_children(&mut cursor) {
+                let (name, module) = match item.kind() {
+                    "dotted_name" => (py_text(item, src).to_string(), None),
+                    "aliased_import" => {
+                        let path = item
+                            .child_by_field_name("name")
+                            .map(|n| py_text(n, src).to_string())
+                            .unwrap_or_default();
+                        let alias = item
+                            .child_by_field_name("alias")
+                            .map(|n| py_text(n, src).to_string())
+                            .unwrap_or_else(|| path.clone());
+                        (alias, Some(path))
+                    }
+                    _ => continue,
+                };
+                rows.push(Specifier {
+                    span: node_span(item),
+                    name: strings.intern(&name),
+                    kind: SpecifierKind::Named,
+                    module: module.map(|text| strings.intern(&text)),
+                    imported: None,
+                });
+            }
+        }
+        "import_from_statement" => {
+            let module = node
+                .child_by_field_name("module_name")
+                .map(|n| py_text(n, src).to_string())
+                .unwrap_or_default();
+            let mut cursor = node.walk();
+            let mut saw_name = false;
+            for item in node.children_by_field_name("name", &mut cursor) {
+                saw_name = true;
+                let (name, imported) = match item.kind() {
+                    "dotted_name" => (py_text(item, src).to_string(), None),
+                    "aliased_import" => {
+                        let source = item
+                            .child_by_field_name("name")
+                            .map(|n| py_text(n, src).to_string())
+                            .unwrap_or_default();
+                        let alias = item
+                            .child_by_field_name("alias")
+                            .map(|n| py_text(n, src).to_string())
+                            .unwrap_or_else(|| source.clone());
+                        let imported = (alias != source).then_some(source);
+                        (alias, imported)
+                    }
+                    _ => continue,
+                };
+                rows.push(Specifier {
+                    span: node_span(item),
+                    name: strings.intern(&name),
+                    kind: SpecifierKind::Named,
+                    module: Some(strings.intern(&module)),
+                    imported: imported.map(|text| strings.intern(&text)),
+                });
+            }
+            if !saw_name {
+                // `from x import *`: the wildcard is the only nameless form.
+                rows.push(Specifier {
+                    span: node_span(node),
+                    name: strings.intern(&module),
+                    kind: SpecifierKind::Namespace,
+                    module: None,
+                    imported: None,
+                });
+            }
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        py_walk_imports(child, src, strings, rows);
+    }
+}
+
+// ── DfF: intra-procedural value flow (port of v5 `py_dataflow_from`) ────────
+//
+// Same two-rule model as go/kotlin: value-bearing children flow into their
+// parent, and a bound name (assignment target, param, loop variable,
+// comprehension variable, lambda param) registers a scope slot a later read
+// flows from. Every named `def` (top-level, method, nested) is discovered by
+// one full-tree walk and flowed with a FRESH scope; only a `lambda` shares the
+// enclosing scope. `self`/`cls` are skipped as params so `param.pos` aligns
+// with `sig.pos`.
+
+type Scope = std::collections::HashMap<String, NodeRef>;
+
+fn project_df(
+    root: tree_sitter::Node,
+    src: &[u8],
+    file: &str,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    py_walk_fns(root, src, file, strings, sink);
+    sink.aux.nests = crate::types::compute_nests(&sink.nodes, &sink.aux.loops);
+}
+
+fn py_walk_fns(
+    node: tree_sitter::Node,
+    src: &[u8],
+    file: &str,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        let target = py_unwrap_decorated(child);
+        if target.kind() == "function_definition" {
+            py_flow_fn(target, src, file, strings, sink);
+        }
+        py_walk_fns(target, src, file, strings, sink);
+    }
+}
+
+/// Push one df node over its FULL syntactic extent, returning its `NodeRef`.
+/// Port of v5 `push_node` (minus fn_sym/file/aux).
+fn df_push(
+    sink: &mut FamilyBundle<DfF>,
+    strings: &mut Strings,
+    start: u32,
+    end: u32,
+    kind: DfNodeKind,
+    name: Option<&str>,
+) -> NodeRef {
+    let node_ref = NodeRef(sink.nodes.len() as u32);
+    let mut node = Node::new(
+        Span {
+            start,
+            len: end.saturating_sub(start),
+        },
+        kind,
+    );
+    if let Some(name) = name.filter(|candidate| !candidate.is_empty()) {
+        node = node.with_name(strings.intern(name));
+    }
+    sink.nodes.push(node);
+    node_ref
+}
+
+fn df_push_node(
+    sink: &mut FamilyBundle<DfF>,
+    strings: &mut Strings,
+    node: tree_sitter::Node,
+    kind: DfNodeKind,
+    name: Option<&str>,
+) -> NodeRef {
+    df_push(
+        sink,
+        strings,
+        node.start_byte() as u32,
+        node.end_byte() as u32,
+        kind,
+        name,
+    )
+}
+
+fn df_edge(sink: &mut FamilyBundle<DfF>, src: NodeRef, dst: NodeRef) {
+    sink.edges.push(Edge::new(src, dst, DfEdgeKind::Direct));
+}
+
+/// v5 `mint_sym(file, Function, name, None)`: the grouping key a closure's
+/// `lam_sym` chains from. A method mints the same `function` shape (v5
+/// `py_flow_fn`).
+fn py_fn_sym(file: &str, name: &str) -> String {
+    format!("{file}::function::{name}")
+}
+
+/// Seed non-receiver param nodes into a fresh scope, then flow the body. A
+/// Python body has no implicit tail-return: only an explicit `return` reaches
+/// a `ret` node. Port of v5 `py_flow_fn`.
+fn py_flow_fn(
+    node: tree_sitter::Node,
+    src: &[u8],
+    file: &str,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return;
+    };
+    let fn_sym = py_fn_sym(file, py_text(name_node, src));
+    let mut scope = Scope::new();
+    if let Some(params) = node.child_by_field_name("parameters") {
+        let mut cursor = params.walk();
+        let mut pos: u32 = 0;
+        let mut first = true;
+        for param in params.named_children(&mut cursor) {
+            if matches!(param.kind(), "keyword_separator" | "positional_separator") {
+                continue;
+            }
+            let (name_opt, _ty) = py_param_name_and_type(param, src);
+            if first {
+                first = false;
+                if matches!(name_opt.as_deref(), Some("self") | Some("cls")) {
+                    continue;
+                }
+            }
+            if let Some(pname) = name_opt {
+                let node_ref = df_push_node(sink, strings, param, DfNodeKind::Param, Some(&pname));
+                sink.aux.params.push(DfParam { node: node_ref, pos });
+                scope.insert(pname, node_ref);
+                pos += 1;
+            }
+        }
+    }
+    if let Some(body) = node.child_by_field_name("body") {
+        py_flow_stmt(body, src, &fn_sym, strings, &mut scope, sink);
+    }
+}
+
+/// Flow one statement. A nested def/class is SKIPPED here: `py_walk_fns`
+/// discovers and flows it with its own fresh scope. Port of v5 `py_flow_stmt`.
+fn py_flow_stmt(
+    node: tree_sitter::Node,
+    src: &[u8],
+    fn_sym: &str,
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    match node.kind() {
+        "function_definition" | "decorated_definition" | "class_definition" => {}
+        "expression_statement" => {
+            if let Some(inner) = node.named_child(0) {
+                if inner.kind() == "assignment" {
+                    py_flow_assignment(inner, src, fn_sym, strings, scope, sink);
+                } else {
+                    py_flow_expr(inner, src, fn_sym, strings, scope, sink);
+                }
+            }
+        }
+        "assignment" => py_flow_assignment(node, src, fn_sym, strings, scope, sink),
+        "return_statement" => {
+            let ret = df_push_node(sink, strings, node, DfNodeKind::Ret, None);
+            if let Some(value) = node.named_child(0) {
+                let value_ref = py_flow_expr(value, src, fn_sym, strings, scope, sink);
+                df_edge(sink, value_ref, ret);
+            }
+        }
+        "for_statement" => py_flow_for(node, src, fn_sym, strings, scope, sink),
+        "while_statement" => py_flow_while(node, src, fn_sym, strings, scope, sink),
+        _ => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                py_flow_stmt(child, src, fn_sym, strings, scope, sink);
+            }
+        }
+    }
+}
+
+fn py_flow_assignment(
+    node: tree_sitter::Node,
+    src: &[u8],
+    fn_sym: &str,
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    let Some(right) = node.child_by_field_name("right") else {
+        return;
+    };
+    let rhs = py_flow_expr(right, src, fn_sym, strings, scope, sink);
+    if let Some(left) = node.child_by_field_name("left") {
+        py_bind_pattern(left, rhs, src, strings, scope, sink);
+    }
+}
+
+/// `identifier` mints a `let_bind` fed by the rhs; tuple/list unpacking mints
+/// one slot PER identifier, each fed by the SAME rhs; `attribute` and
+/// `subscript` targets track no local binding. Port of v5 `py_bind_pattern`.
+fn py_bind_pattern(
+    node: tree_sitter::Node,
+    rhs: NodeRef,
+    src: &[u8],
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    match node.kind() {
+        "identifier" => {
+            let name = py_text(node, src).to_string();
+            let bind = df_push_node(sink, strings, node, DfNodeKind::LetBind, Some(&name));
+            df_edge(sink, rhs, bind);
+            scope.insert(name, bind);
+        }
+        "tuple_pattern" | "list_pattern" | "pattern_list" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                py_bind_pattern(child, rhs, src, strings, scope, sink);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `(name, identifier node)` for every leaf identifier a for/comprehension
+/// pattern binds. Port of v5 `py_pattern_identifiers`.
+fn py_pattern_identifiers<'t>(
+    node: tree_sitter::Node<'t>,
+    src: &[u8],
+    out: &mut Vec<(String, tree_sitter::Node<'t>)>,
+) {
+    match node.kind() {
+        "identifier" => out.push((py_text(node, src).to_string(), node)),
+        "tuple_pattern" | "list_pattern" | "pattern_list" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                py_pattern_identifiers(child, src, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Bind each pattern identifier to a `let_bind` fed by the iterable's value,
+/// returning the first bound name (the loop's `var`).
+fn py_bind_loop_targets(
+    left: tree_sitter::Node,
+    collection: Option<NodeRef>,
+    src: &[u8],
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) -> Option<String> {
+    let mut names = Vec::new();
+    py_pattern_identifiers(left, src, &mut names);
+    let mut var_name = None;
+    for (name, name_node) in &names {
+        let bind = df_push_node(sink, strings, *name_node, DfNodeKind::LetBind, Some(name));
+        if let Some(collection) = collection {
+            df_edge(sink, collection, bind);
+        }
+        scope.insert(name.clone(), bind);
+        if var_name.is_none() {
+            var_name = Some(name.clone());
+        }
+    }
+    var_name
+}
+
+fn push_loop(sink: &mut FamilyBundle<DfF>, node: tree_sitter::Node, var: Option<String>) {
+    sink.aux.loops.push(DfLoop {
+        span: node_span(node),
+        var,
+        collection: None,
+    });
+}
+
+fn py_flow_for(
+    node: tree_sitter::Node,
+    src: &[u8],
+    fn_sym: &str,
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    let mut cursor = node.walk();
+    let iter_expr = node
+        .children_by_field_name("right", &mut cursor)
+        .find(|n| n.is_named());
+    let collection = iter_expr.map(|expr| py_flow_expr(expr, src, fn_sym, strings, scope, sink));
+    let var = node
+        .child_by_field_name("left")
+        .and_then(|left| py_bind_loop_targets(left, collection, src, strings, scope, sink));
+    push_loop(sink, node, var);
+    if let Some(body) = node.child_by_field_name("body") {
+        py_flow_stmt(body, src, fn_sym, strings, scope, sink);
+    }
+}
+
+fn py_flow_while(
+    node: tree_sitter::Node,
+    src: &[u8],
+    fn_sym: &str,
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    if let Some(cond) = node.child_by_field_name("condition") {
+        py_flow_expr(cond, src, fn_sym, strings, scope, sink);
+    }
+    push_loop(sink, node, None);
+    if let Some(body) = node.child_by_field_name("body") {
+        py_flow_stmt(body, src, fn_sym, strings, scope, sink);
+    }
+}
+
+/// A comprehension walks its `for_in_clause`s and `if_clause`s in the
+/// ENCLOSING scope, binds each loop variable from its iterable, then flows the
+/// body (both halves of a dict comprehension's `pair`) into a `new` node; its
+/// own span is a loop so `nest` counts calls per iteration. Port of v5
+/// `py_comprehension_flow`.
+fn py_comprehension_flow(
+    node: tree_sitter::Node,
+    src: &[u8],
+    fn_sym: &str,
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) -> NodeRef {
+    let mut loop_var: Option<String> = None;
+    let mut cursor = node.walk();
+    let clauses: Vec<tree_sitter::Node> = node.named_children(&mut cursor).collect();
+    for clause in &clauses {
+        match clause.kind() {
+            "for_in_clause" => {
+                let mut right_cursor = clause.walk();
+                let iter_expr = clause
+                    .children_by_field_name("right", &mut right_cursor)
+                    .find(|n| n.is_named());
+                let collection =
+                    iter_expr.map(|expr| py_flow_expr(expr, src, fn_sym, strings, scope, sink));
+                if let Some(left) = clause.child_by_field_name("left") {
+                    let first = py_bind_loop_targets(left, collection, src, strings, scope, sink);
+                    if loop_var.is_none() {
+                        loop_var = first;
+                    }
+                }
+            }
+            "if_clause" => {
+                let mut clause_cursor = clause.walk();
+                for expr in clause.named_children(&mut clause_cursor) {
+                    py_flow_expr(expr, src, fn_sym, strings, scope, sink);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut fill = Vec::new();
+    if node.kind() == "dictionary_comprehension" {
+        if let Some(pair) = node.child_by_field_name("body") {
+            if let Some(key) = pair.child_by_field_name("key") {
+                fill.push(py_flow_expr(key, src, fn_sym, strings, scope, sink));
+            }
+            if let Some(value) = pair.child_by_field_name("value") {
+                fill.push(py_flow_expr(value, src, fn_sym, strings, scope, sink));
+            }
+        }
+    } else if let Some(body) = node.child_by_field_name("body") {
+        fill.push(py_flow_expr(body, src, fn_sym, strings, scope, sink));
+    }
+    let new_node = df_push_node(sink, strings, node, DfNodeKind::New, None);
+    for value in fill {
+        df_edge(sink, value, new_node);
+    }
+    push_loop(sink, node, loop_var);
+    new_node
+}
+
+/// Post-order value flow for one expression, returning the node carrying its
+/// value. Unhandled shapes recurse and surface the last value-bearing child,
+/// or a generic `expr` node. Port of v5 `py_flow_expr`.
+fn py_flow_expr(
+    node: tree_sitter::Node,
+    src: &[u8],
+    fn_sym: &str,
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) -> NodeRef {
+    match node.kind() {
+        "identifier" => {
+            let name = py_text(node, src).to_string();
+            let read = df_push_node(sink, strings, node, DfNodeKind::VarRead, Some(&name));
+            if let Some(binding) = scope.get(&name) {
+                df_edge(sink, *binding, read);
+            }
+            read
+        }
+        "true" | "false" | "none" | "integer" | "float" | "string" | "concatenated_string" => {
+            df_push_node(sink, strings, node, DfNodeKind::Lit, None)
+        }
+        // f(args) / recv.method(args): each positional argument flows into the
+        // call result at its 0-based slot; a keyword argument ALSO lands in
+        // `fields` under its name; a member callee flows the receiver in at
+        // slot -1; a CAPITALIZED bare callee is a constructor (PEP 8), minted
+        // as `new` carrying the type name.
+        "call" => {
+            let func = node.child_by_field_name("function");
+            let mut receiver: Option<NodeRef> = None;
+            let mut callee_name = String::new();
+            match func.map(|f| f.kind()) {
+                Some("identifier") => {
+                    callee_name = py_text(func.unwrap(), src).to_string();
+                }
+                Some("attribute") => {
+                    let attr = func.unwrap();
+                    if let Some(object) = attr.child_by_field_name("object") {
+                        receiver = Some(py_flow_expr(object, src, fn_sym, strings, scope, sink));
+                    }
+                    if let Some(name) = attr.child_by_field_name("attribute") {
+                        callee_name = py_text(name, src).to_string();
+                    }
+                }
+                _ => {
+                    if let Some(f) = func {
+                        py_flow_expr(f, src, fn_sym, strings, scope, sink);
+                    }
+                }
+            }
+            let mut arg_ids: Vec<(Option<String>, NodeRef)> = Vec::new();
+            if let Some(args) = node.child_by_field_name("arguments") {
+                let mut cursor = args.walk();
+                for arg in args.named_children(&mut cursor) {
+                    match arg.kind() {
+                        "keyword_argument" => {
+                            let name = arg
+                                .child_by_field_name("name")
+                                .map(|n| py_text(n, src).to_string());
+                            if let Some(value) = arg.child_by_field_name("value") {
+                                let value_ref =
+                                    py_flow_expr(value, src, fn_sym, strings, scope, sink);
+                                arg_ids.push((name, value_ref));
+                            }
+                        }
+                        "dictionary_splat" | "list_splat" => {
+                            if let Some(inner) = arg.named_child(0) {
+                                let value_ref =
+                                    py_flow_expr(inner, src, fn_sym, strings, scope, sink);
+                                arg_ids.push((None, value_ref));
+                            }
+                        }
+                        _ => {
+                            let value_ref = py_flow_expr(arg, src, fn_sym, strings, scope, sink);
+                            arg_ids.push((None, value_ref));
+                        }
+                    }
+                }
+            }
+            let is_ctor = callee_name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_uppercase());
+            let call_node = if is_ctor {
+                df_push_node(sink, strings, node, DfNodeKind::New, Some(&callee_name))
+            } else {
+                df_push_node(sink, strings, node, DfNodeKind::CallRes, None)
+            };
+            if let Some(receiver) = receiver {
+                df_edge(sink, receiver, call_node);
+                sink.aux.args.push(DfArg {
+                    call: call_node,
+                    pos: -1,
+                    arg: receiver,
+                });
+            }
+            for (pos, (name, value_ref)) in arg_ids.into_iter().enumerate() {
+                df_edge(sink, value_ref, call_node);
+                sink.aux.args.push(DfArg {
+                    call: call_node,
+                    pos: pos as i64,
+                    arg: value_ref,
+                });
+                if let Some(name) = name {
+                    sink.aux.fields.push(DfField {
+                        owner: call_node,
+                        name,
+                        value: value_ref,
+                    });
+                }
+            }
+            call_node
+        }
+        "attribute" => {
+            let object = node
+                .child_by_field_name("object")
+                .map(|o| py_flow_expr(o, src, fn_sym, strings, scope, sink));
+            let name = node
+                .child_by_field_name("attribute")
+                .map(|a| py_text(a, src).to_string())
+                .unwrap_or_default();
+            let member = df_push_node(sink, strings, node, DfNodeKind::Member, Some(&name));
+            if let Some(object) = object {
+                df_edge(sink, object, member);
+            }
+            member
+        }
+        "subscript" => {
+            let value = node
+                .child_by_field_name("value")
+                .map(|v| py_flow_expr(v, src, fn_sym, strings, scope, sink));
+            let mut cursor = node.walk();
+            for sub in node.children_by_field_name("subscript", &mut cursor) {
+                py_flow_expr(sub, src, fn_sym, strings, scope, sink);
+            }
+            let member = df_push_node(sink, strings, node, DfNodeKind::Member, None);
+            if let Some(value) = value {
+                df_edge(sink, value, member);
+            }
+            member
+        }
+        "binary_operator" | "boolean_operator" | "comparison_operator" => {
+            let mut cursor = node.walk();
+            let kids: Vec<tree_sitter::Node> = node.named_children(&mut cursor).collect();
+            let left = kids
+                .first()
+                .map(|n| py_flow_expr(*n, src, fn_sym, strings, scope, sink));
+            let right = kids
+                .last()
+                .map(|n| py_flow_expr(*n, src, fn_sym, strings, scope, sink));
+            let binop = df_push_node(sink, strings, node, DfNodeKind::Binop, None);
+            if let Some(left) = left {
+                df_edge(sink, left, binop);
+            }
+            if let Some(right) = right {
+                df_edge(sink, right, binop);
+            }
+            binop
+        }
+        "not_operator" | "unary_operator" => {
+            let inner = node
+                .named_child(0)
+                .map(|n| py_flow_expr(n, src, fn_sym, strings, scope, sink));
+            let unop = df_push_node(sink, strings, node, DfNodeKind::Unop, None);
+            if let Some(inner) = inner {
+                df_edge(sink, inner, unop);
+            }
+            unop
+        }
+        // `<cons> if <cond> else <alt>`: the value is EITHER branch; the
+        // condition is walked for its own facts, never edged in as a value.
+        "conditional_expression" => {
+            let mut cursor = node.walk();
+            let kids: Vec<tree_sitter::Node> = node.named_children(&mut cursor).collect();
+            let cons = kids
+                .first()
+                .map(|n| py_flow_expr(*n, src, fn_sym, strings, scope, sink));
+            if let Some(cond) = kids.get(1) {
+                py_flow_expr(*cond, src, fn_sym, strings, scope, sink);
+            }
+            let alt = kids
+                .get(2)
+                .map(|n| py_flow_expr(*n, src, fn_sym, strings, scope, sink));
+            let cond_node = df_push_node(sink, strings, node, COND, None);
+            if let Some(cons) = cons {
+                df_edge(sink, cons, cond_node);
+            }
+            if let Some(alt) = alt {
+                df_edge(sink, alt, cond_node);
+            }
+            cond_node
+        }
+        "parenthesized_expression" | "await" => match node.named_child(0) {
+            Some(inner) => py_flow_expr(inner, src, fn_sym, strings, scope, sink),
+            None => df_push_node(sink, strings, node, DfNodeKind::Expr, None),
+        },
+        // `lambda params: body`: its OWN fn scope under `{fn_sym}::closure::
+        // {row}_{col}` (tree-sitter's 0-based start), params + one `ret` at the
+        // lambda's END for the body value; the enclosing scope is shared so
+        // captures resolve. The `closure` VALUE node carries the sym.
+        "lambda" => {
+            let pos = node.start_position();
+            let lam_sym = format!("{fn_sym}::closure::{}_{}", pos.row, pos.column);
+            if let Some(params) = node.child_by_field_name("parameters") {
+                let mut cursor = params.walk();
+                for (index, param) in params.named_children(&mut cursor).enumerate() {
+                    let (name_opt, _ty) = py_param_name_and_type(param, src);
+                    if let Some(pname) = name_opt {
+                        let node_ref =
+                            df_push_node(sink, strings, param, DfNodeKind::Param, Some(&pname));
+                        sink.aux.params.push(DfParam {
+                            node: node_ref,
+                            pos: index as u32,
+                        });
+                        scope.insert(pname, node_ref);
+                    }
+                }
+            }
+            if let Some(body) = node.child_by_field_name("body") {
+                let value = py_flow_expr(body, src, &lam_sym, strings, scope, sink);
+                let end = node.end_byte() as u32;
+                let ret = df_push(sink, strings, end, end, DfNodeKind::Ret, None);
+                df_edge(sink, value, ret);
+            }
+            df_push_node(sink, strings, node, DfNodeKind::Closure, Some(&lam_sym))
+        }
+        "list_comprehension"
+        | "set_comprehension"
+        | "generator_expression"
+        | "dictionary_comprehension" => {
+            py_comprehension_flow(node, src, fn_sym, strings, scope, sink)
+        }
+        "list" | "set" | "tuple" => {
+            let mut cursor = node.walk();
+            let values: Vec<NodeRef> = node
+                .named_children(&mut cursor)
+                .map(|element| py_flow_expr(element, src, fn_sym, strings, scope, sink))
+                .collect();
+            let new_node = df_push_node(sink, strings, node, DfNodeKind::New, None);
+            for value in values {
+                df_edge(sink, value, new_node);
+            }
+            new_node
+        }
+        // `{...}`: each pair's value flows into a `new` node; a plain-string
+        // key is the field name; `**spread` lands under the `..` pseudo-field.
+        "dictionary" => {
+            let mut cursor = node.walk();
+            let mut filled: Vec<(String, NodeRef)> = Vec::new();
+            for child in node.named_children(&mut cursor) {
+                match child.kind() {
+                    "pair" => {
+                        let key = child.child_by_field_name("key");
+                        let value = child
+                            .child_by_field_name("value")
+                            .map(|v| py_flow_expr(v, src, fn_sym, strings, scope, sink));
+                        let name = key
+                            .filter(|k| k.kind() == "string")
+                            .map(|k| py_text(k, src).trim_matches(['"', '\'']).to_string())
+                            .unwrap_or_default();
+                        if let Some(value) = value {
+                            filled.push((name, value));
+                        }
+                    }
+                    "dictionary_splat" => {
+                        if let Some(inner) = child.named_child(0) {
+                            let value = py_flow_expr(inner, src, fn_sym, strings, scope, sink);
+                            filled.push(("..".to_string(), value));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let new_node = df_push_node(sink, strings, node, DfNodeKind::New, None);
+            for (name, value) in filled {
+                df_edge(sink, value, new_node);
+                if !name.is_empty() {
+                    sink.aux.fields.push(DfField {
+                        owner: new_node,
+                        name,
+                        value,
+                    });
+                }
+            }
+            new_node
+        }
+        _ => {
+            let mut cursor = node.walk();
+            let mut last = None;
+            for child in node.named_children(&mut cursor) {
+                last = Some(py_flow_expr(child, src, fn_sym, strings, scope, sink));
+            }
+            last.unwrap_or_else(|| df_push_node(sink, strings, node, DfNodeKind::Expr, None))
+        }
+    }
+}
+
+// ── PythonSource: cst via ast-grep + type/call/df via tree-sitter-python ────
 
 /// `matches` = `.py`/`.pyi` (SupportLang maps both to Python). cst via ast-grep;
-/// type/call via one tree-sitter-python parse.
+/// type/call/df via one tree-sitter-python parse.
 #[derive(Default)]
 pub struct PythonSource;
 
@@ -491,11 +1577,13 @@ impl Source for PythonSource {
             None
         };
 
-        // type/call via ONE tree-sitter-python parse (masked). Byte spans come
-        // straight off the tree-sitter nodes. A failed parse leaves both None.
+        // type/call/df via ONE tree-sitter-python parse (masked). Byte spans
+        // come straight off the tree-sitter nodes. A failed parse leaves all
+        // three None.
         let mut types = None;
         let mut call = None;
-        if mask.types || mask.call {
+        let mut df = None;
+        if mask.types || mask.call || mask.df {
             if let Ok(src) = std::str::from_utf8(content) {
                 let tree = {
                     let span = trace::parse_span("python", "tree-sitter");
@@ -521,6 +1609,14 @@ impl Source for PythonSource {
                         trace::record_bundle(&span, &bundle, bundle.aux.sites.len());
                         call = Some(bundle);
                     }
+                    if mask.df {
+                        let span = trace::family_span("python", "df");
+                        let _entered = span.enter();
+                        let mut bundle = FamilyBundle::<DfF>::default();
+                        project_df(root, src_bytes, path, &mut strings, &mut bundle);
+                        trace::record_bundle(&span, &bundle, 0);
+                        df = Some(bundle);
+                    }
                 }
             }
         }
@@ -530,8 +1626,187 @@ impl Source for PythonSource {
             cst,
             types,
             call,
-            df: None,
+            df,
             data: None,
         }
+    }
+}
+
+// ── Resolve<TypeF>: the go arm's twin. Candidates in, no AST. A `to` naming
+// no corpus node keeps a ZERO dst leg (text stays text); same-file entity
+// first, else a unique corpus site. ─────────────────────────────────────────
+
+impl PythonSource {
+    /// The deduped, deterministically-ordered candidate list; `resolve` emits
+    /// one edge per candidate in EXACTLY this order.
+    pub fn type_edge_candidates(output: &ExtractOutput) -> Vec<TypeEdgeCandidate> {
+        let mut set: BTreeSet<TypeEdgeCandidate> = BTreeSet::new();
+        if let Some(types) = &output.types {
+            for candidate in &types.aux.candidates {
+                set.insert(candidate.clone());
+            }
+        }
+        set.into_iter().collect()
+    }
+}
+
+fn resolve_type_dst(
+    types: &FamilyBundle<TypeF>,
+    strings: &Strings,
+    index: Option<&DefIndex>,
+    name: &str,
+) -> Option<(ContentId, Span)> {
+    let same_file = types
+        .nodes
+        .iter()
+        .find(|node| node.name.is_some_and(|id| strings.lookup(id) == name));
+    if let (Some(node), Some(index)) = (same_file, index) {
+        return corpus_defs(index, name)
+            .iter()
+            .find(|site| site.span == node.span)
+            .map(|site| (site.blob.clone(), site.span));
+    }
+    let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
+    match sites {
+        [only] => Some((only.blob.clone(), only.span)),
+        _ => None,
+    }
+}
+
+impl Resolve<TypeF> for PythonSource {
+    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<TypeF>> {
+        let Some(types) = &output.types else {
+            return Vec::new();
+        };
+        let index = cx.indexes.def_index.get();
+        let mut edges = Vec::new();
+        for candidate in PythonSource::type_edge_candidates(output) {
+            let Some(src_ix) = types
+                .nodes
+                .iter()
+                .position(|node| node.span == candidate.owner)
+            else {
+                continue;
+            };
+            let (dst_blob, dst_span) = resolve_type_dst(
+                types,
+                &output.strings,
+                index,
+                output.strings.lookup(candidate.to),
+            )
+            .unwrap_or((ZERO_CONTENT_ID, Span::empty()));
+            edges.push(ProjectEdge::new(
+                NodeRef(src_ix as u32),
+                dst_blob,
+                dst_span,
+                candidate.kind,
+            ));
+        }
+        edges
+    }
+}
+
+// ── Resolve<CallF>: the go arm's twin. NameResolve (same-file wins, else a
+// unique corpus blob, else no row) with the scip-python override leg when the
+// corpus scip index and a reader are both present. A site outside every def
+// (module level) emits no row. ──────────────────────────────────────────────
+
+impl PythonSource {
+    pub fn call_name_match(
+        output: &ExtractOutput,
+        index: &DefIndex,
+        callee: &str,
+    ) -> Option<(ContentId, Span)> {
+        let call = output.call.as_ref()?;
+        if let Some(r) = def_named(call, &output.strings, callee) {
+            let span = call.node(r).span;
+            if let Some(site) = corpus_defs(index, callee)
+                .iter()
+                .find(|site| site.span == span)
+            {
+                return Some((site.blob.clone(), site.span));
+            }
+        }
+        let sites = corpus_defs(index, callee);
+        let mut blobs: Vec<ContentId> = Vec::new();
+        for site in sites {
+            if !blobs.contains(&site.blob) {
+                blobs.push(site.blob.clone());
+            }
+        }
+        let [blob] = blobs.as_slice() else {
+            return None;
+        };
+        let site = sites
+            .iter()
+            .find(|s| s.family == FamilyTag::Call)
+            .unwrap_or(&sites[0]);
+        Some((blob.clone(), site.span))
+    }
+}
+
+fn scip_call_target<'a>(
+    index: &ScipIndex,
+    joined: &[Option<(ContentId, Vec<u8>)>],
+    doc_ix: usize,
+    site: &CallSite,
+    callee: &str,
+    def_index: &'a DefIndex,
+) -> Option<(ContentId, Span, &'a str)> {
+    let doc = &index.documents[doc_ix];
+    let (_, content) = joined[doc_ix].as_ref()?;
+    let occ = site_occurrence(doc, content, site.span, callee)?;
+    let (def_doc_ix, def_occ) = definition_of(index, doc_ix, &occ.symbol)?;
+    let def_doc = &index.documents[def_doc_ix];
+    let (def_blob, def_content) = joined[def_doc_ix].as_ref()?;
+    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+    let (name, def_site) = containing_def_site(def_index, def_blob.clone(), ident)?;
+    Some((def_blob.clone(), def_site.span, name))
+}
+
+impl Resolve<CallF> for PythonSource {
+    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<CallF>> {
+        let Some(call) = &output.call else {
+            return Vec::new();
+        };
+        let Some(def_index) = cx.indexes.def_index.get() else {
+            return Vec::new();
+        };
+        let scip = cx
+            .indexes
+            .scip_index
+            .get()
+            .zip(cx.reader)
+            .and_then(|(index, reader)| {
+                let joined = cx
+                    .indexes
+                    .joined_documents
+                    .get_or_init(|| join_documents(index, reader));
+                let blob = own_blob(output, def_index)?;
+                let doc_ix = joined
+                    .iter()
+                    .position(|j| j.as_ref().is_some_and(|(b, _)| *b == blob))?;
+                Some((index, joined, doc_ix))
+            });
+        let mut edges = Vec::new();
+        for site in &call.aux.sites {
+            let Some(caller) = covering_def(call, site.span) else {
+                continue;
+            };
+            let callee = output.strings.lookup(site.callee);
+            let name_t = PythonSource::call_name_match(output, def_index, callee);
+            let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
+                scip_call_target(index, joined, *doc_ix, site, callee, def_index)
+            });
+            let ((dst_blob, dst_span), kind) = match (name_t, scip_t) {
+                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => (n, CallEdgeKind::NameResolve),
+                (_, Some(s)) => ((s.0, s.1), CallEdgeKind::ScipOverride),
+                (Some(n), None) => (n, CallEdgeKind::NameResolve),
+                (None, None) => continue,
+            };
+            edges
+                .push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
+        }
+        edges
     }
 }

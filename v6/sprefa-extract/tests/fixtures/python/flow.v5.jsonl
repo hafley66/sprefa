@@ -1,0 +1,171 @@
+call_def	function	inner	20
+call_def	function	total	1
+call_def	function	walk	19
+call_def	lambda		11
+call_site	Box	13
+call_site	double	12
+call_site	inner	22
+df_args	50	0	49
+df_args	54	0	52
+df_args	54	1	53
+df_args	69	0	68
+df_edge	10	168
+df_edge	10	390
+df_edge	10	54
+df_edge	105	105
+df_edge	111	105
+df_edge	124	202
+df_edge	124	230
+df_edge	124	254
+df_edge	124	321
+df_edge	124	340
+df_edge	124	411
+df_edge	130	124
+df_edge	130	130
+df_edge	136	130
+df_edge	142	209
+df_edge	152	142
+df_edge	153	152
+df_edge	153	153
+df_edge	157	153
+df_edge	163	153
+df_edge	163	157
+df_edge	163	177
+df_edge	168	163
+df_edge	17	235
+df_edge	17	261
+df_edge	17	88
+df_edge	177	177
+df_edge	181	177
+df_edge	196	188
+df_edge	202	196
+df_edge	209	196
+df_edge	229	222
+df_edge	230	229
+df_edge	235	229
+df_edge	247	351
+df_edge	254	247
+df_edge	254	254
+df_edge	273	254
+df_edge	288	279
+df_edge	295	298
+df_edge	298	298
+df_edge	298	303
+df_edge	30	75
+df_edge	302	298
+df_edge	314	308
+df_edge	321	314
+df_edge	330	368
+df_edge	336	330
+df_edge	340	336
+df_edge	351	336
+df_edge	36	30
+df_edge	368	361
+df_edge	368	368
+df_edge	390	382
+df_edge	390	390
+df_edge	410	403
+df_edge	411	410
+df_edge	426	491
+df_edge	447	469
+df_edge	46	81
+df_edge	469	462
+df_edge	485	478
+df_edge	491	485
+df_edge	54	46
+df_edge	69	105
+df_edge	69	130
+df_edge	75	69
+df_edge	75	75
+df_edge	81	75
+df_edge	81	81
+df_edge	88	81
+df_fields	31	..	30
+df_fields	31	k	29
+df_fields	54	label	53
+df_loop	v6/sprefa-extract/tests/fixtures/python/flow.py	3
+df_loop	v6/sprefa-extract/tests/fixtures/python/flow.py	5
+df_loop	v6/sprefa-extract/tests/fixtures/python/flow.py	7
+df_nest	v6/sprefa-extract/tests/fixtures/python/flow.py:7	1
+df_node	binop		105
+df_node	binop		130
+df_node	binop		153
+df_node	binop		177
+df_node	binop		298
+df_node	binop		75
+df_node	binop		81
+df_node	call_res		314
+df_node	call_res		485
+df_node	closure	v6/sprefa-extract/tests/fixtures/python/flow.py::function::total::closure::10_13	288
+df_node	cond		254
+df_node	let_bind	acc	124
+df_node	let_bind	acc	30
+df_node	let_bind	acc	69
+df_node	let_bind	box	330
+df_node	let_bind	double	279
+df_node	let_bind	first	382
+df_node	let_bind	item	46
+df_node	let_bind	n	163
+df_node	let_bind	name	361
+df_node	let_bind	out	308
+df_node	let_bind	pair	222
+df_node	let_bind	pick	247
+df_node	let_bind	squares	142
+df_node	let_bind	table	188
+df_node	lit		111
+df_node	lit		136
+df_node	lit		181
+df_node	lit		273
+df_node	lit		302
+df_node	lit		36
+df_node	lit		396
+df_node	member		390
+df_node	member	label	368
+df_node	new		152
+df_node	new		196
+df_node	new		229
+df_node	new	Box	336
+df_node	param	factor	17
+df_node	param	items	10
+df_node	param	node	447
+df_node	param	tree	426
+df_node	param	v	295
+df_node	ret		303
+df_node	ret		403
+df_node	ret		462
+df_node	ret		478
+df_node	unop		410
+df_node	var_read	acc	105
+df_node	var_read	acc	130
+df_node	var_read	acc	202
+df_node	var_read	acc	230
+df_node	var_read	acc	254
+df_node	var_read	acc	321
+df_node	var_read	acc	340
+df_node	var_read	acc	411
+df_node	var_read	acc	75
+df_node	var_read	box	368
+df_node	var_read	factor	235
+df_node	var_read	factor	261
+df_node	var_read	factor	88
+df_node	var_read	item	81
+df_node	var_read	items	168
+df_node	var_read	items	390
+df_node	var_read	items	54
+df_node	var_read	n	153
+df_node	var_read	n	157
+df_node	var_read	n	177
+df_node	var_read	node	469
+df_node	var_read	pick	351
+df_node	var_read	squares	209
+df_node	var_read	tree	491
+df_node	var_read	v	298
+df_param_pos	0	0
+df_param_pos	1	1
+df_param_pos	42	0
+df_param_pos	66	0
+df_param_pos	70	0
+type_node	function	inner	20
+type_node	function	total	1
+type_node	function	walk	19
+type_node	module	<module>	1

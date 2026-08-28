@@ -1,4 +1,4 @@
-//! Doc-facet lang arms: ts/go graded against the captured v5 `doc` oracle rows;
+//! Doc-facet lang arms: ts/go/python graded against the captured v5 `doc` oracle rows;
 //! kotlin has NO v5 oracle doc rows, so it is graded by hand-written assertions.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -79,6 +79,18 @@ fn go_docs_match_v5() {
     // undocumented decl (or a doc separated by a blank line) would add a row.
     assert_eq!(v6, v5, "go docs parity vs v5 oracle");
     assert_eq!(v6.len(), 6, "go emits exactly the 6 oracle doc rows");
+}
+
+#[test]
+fn python_docs_match_v5() {
+    let path = "v6/sprefa-extract/tests/fixtures/python/docs.py";
+    let v6 = doc_rows(path, include_bytes!("fixtures/python/docs.py"));
+    let v5 = oracle_doc_rows(include_str!("fixtures/python/docs.v5.jsonl"));
+    // The module docstring anchors on the `<module>` entity (v5's
+    // EntityKind::Module twin); class, method and function docstrings on their
+    // own entity. Set equality is also the no-spurious-row check.
+    assert_eq!(v6, v5, "python docs parity vs v5 oracle");
+    assert_eq!(v6.len(), 4, "python emits exactly the 4 oracle doc rows");
 }
 
 // ── kotlin: no v5 oracle doc rows, so this is a self-graded fixture. ─────────
