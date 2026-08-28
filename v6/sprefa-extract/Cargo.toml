@@ -27,6 +27,13 @@ features = ["cli"]
 # The newline scan behind the per-document line table. Already unified in the
 # workspace lock through regex/aho-corasick, so this pins no new copy.
 memchr = "2"
+# @comment-ok: build-vs-buy candidate table, the law every dep comment here carries.
+# The directory walker soopy itself uses (`soopy/src/_3a_files.rs:6`), already in
+# this lock as an ast-grep transitive, so the pin adds no copy. soopy's own
+# `DirectoryRoot::snapshot` hashes every file it visits, which a path-only move
+# corpus scan must not pay; `walkdir` is `ignore`'s own dependency with no
+# filter_entry-by-name convenience. The move corpus walk is the one caller.
+ignore = "0.4"
 # ast-grep-language ships the tree-sitter grammars for rust/ts/tsx/js/go in ONE
 # dep; ast-grep-core is the parse + Node API. v5 carried these v0 -> v6 (src/sg.rs).
 # Ported verbatim, not relitigated.
@@ -43,6 +50,17 @@ oxc_ast = "0.135"
 oxc_ast_visit = "0.135"
 oxc_span = "0.135"
 oxc_syntax = "0.135"
+# The exact identifier spans `extract rename` needs. Default features empty; +1
+# crate, candidates measured in plans/2026-08-27-extract-rename.PLAN.md:222-251.
+oxc_semantic = "0.135"
+# @comment-ok: build-vs-buy candidate table, the law every dep comment here carries.
+# The ESM/CJS + tsconfig resolution algorithm the `move` verb needs: extension
+# aliases (`./x.js` naming `x.ts`), `index`, package `exports`/`main`, tsconfig
+# `paths`/`baseUrl`/`extends`/`references`. Same oxc project family; the
+# alternatives measured are in `lang/ts_resolve.rs` and the arc-3 plan table
+# (swc's resolver is not a standalone crate; the `tsconfig` crates parse config
+# without resolving; a hand-rolled probe re-derives a tested algorithm).
+oxc_resolver = "11.24"
 # syn is the Rust AST front-end v5 carried (src/graph/typegraph/rust). The
 # `full` feature parses Item::*; `visit` drives the call-site/call-def walks;
 # `extra-traits` for derive Eq on AST nodes some helpers pattern-match. Ported
@@ -126,6 +144,15 @@ soopy = { path = "../../../hafley-rs/crates/soopy" }
 # file) - the prost-build route was measured to fork `cargo tree -d` with
 # build-kind dup groups (bitflags/regex/prost via tempfile/prost-build).
 prost = "0.13"
+# @comment-ok: build-vs-buy candidate table, the law this file's every dep
+# comment already carries.
+# The read side of the dl6 store, behind `FactMatcher`. Same 0.40 pin and
+# `bundled` build sprefa-engine-rs carries (its Cargo.toml:13), so one process
+# linking both gets one SQLite. REJECTED: that crate's own `SqliteSeam`
+# (run.rs:289) - it already depends on this one (its Cargo.toml:31), so reuse is
+# a cycle; sprefa-store's sea-orm/sqlx reader - async, banned above the SqlRunner
+# seam. `trace` is what the once-per-run statement count is measured on.
+rusqlite = { version = "0.40", features = ["bundled", "trace"] }
 # rayon drives the per-file extraction pool. A dedicated pool (never the global
 # one) so nothing else in the process inherits the cap.
 rayon = "1"

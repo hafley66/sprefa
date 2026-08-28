@@ -157,10 +157,10 @@ fn executor_for_plan(
 
 /// `run.rs`'s resident loop reads this to decide which routed rels are its own
 /// continuing sources, and never invokes `IHostExecutor::run` for anything else.
-pub fn cadence_for_plan(plan: &HostPlanData, adapter_rows: &[HostAdapterRow]) -> ExecutorCadence {
+pub fn plan_is_continuing(plan: &HostPlanData, adapter_rows: &[HostAdapterRow]) -> bool {
     executor_for_plan(plan, adapter_rows)
-        .map(IHostExecutor::cadence)
-        .unwrap_or(ExecutorCadence::Once)
+        .map(|executor| executor.cadence() == ExecutorCadence::Continuing)
+        .unwrap_or(false)
 }
 
 fn is_applicative(execution: &str) -> bool {
@@ -566,8 +566,8 @@ fn source_stage_response(
     let target_root = PathBuf::from(required_input(host, env, "root")?);
     let state_root = PathBuf::from(required_input(host, env, "state")?);
     let request_json = required_input(host, env, "request")?;
-    let request: soopy::StageRequest = match serde_json::from_str(&request_json) {
-        Ok(request) => request,
+    let mut request_value: serde_json::Value = match serde_json::from_str(&request_json) {
+        Ok(value) => value,
         Err(error) => {
             return mutation_row(
                 "",
@@ -577,13 +577,86 @@ fn source_stage_response(
             )
         }
     };
+    // The program emits a Create action's shim body as `text`; the executor
+    // rewrites it to the `bytes` a canonical StageRequest carries (UTF-8), so a
+    // datalog program never has to build a byte array.
+    fill_create_text(&mut request_value);
     let state_root = match mutation_state_root(&target_root, &state_root) {
         Ok(state_root) => state_root,
         Err(detail) => return mutation_row("", "refused", detail, serde_json::json!([])),
     };
-    let mut root = match mutation_root(&target_root, &request) {
-        Ok(root) => root,
-        Err(detail) => return mutation_row("", "refused", detail, serde_json::json!([])),
+    // A dl6 program never spells the derived identity soopy mints from a
+    // canonical path: DirectoryId, RepositoryId and WorktreeId are blake3
+    // hashes no datalog builtin computes. When the request omits `root`, the
+    // executor derives the root from the target path and fills the git
+    // identities the actions' sources carry. A request that spells `root`
+    // keeps the strict path below.
+    let mut root = if request_value.get("root").is_none() {
+        match soopy::SourceRoot::discover_git(&target_root) {
+            Ok(soopy::SourceRoot::GitWorktree(git)) => {
+                let repository = git.repository.identity.clone();
+                let worktree = git.repository.worktree.clone();
+                request_value["root"] = serde_json::json!({
+                    "kind": "git_worktree",
+                    "repository": repository,
+                    "worktree": worktree,
+                });
+                fill_git_action_sources(&mut request_value, &repository, &worktree);
+                soopy::SourceRoot::GitWorktree(git)
+            }
+            Ok(soopy::SourceRoot::Directory(_)) => {
+                unreachable!("discover_git returns a Git root")
+            }
+            Err(_git_error) => {
+                let directory = match soopy::SourceRoot::open_directory(&target_root) {
+                    Ok(soopy::SourceRoot::Directory(directory)) => directory,
+                    Ok(soopy::SourceRoot::GitWorktree(_)) => {
+                        unreachable!("open_directory stays filesystem-only")
+                    }
+                    Err(error) => {
+                        return mutation_row(
+                            "",
+                            "refused",
+                            format!("open mutation root {}: {error}", target_root.display()),
+                            serde_json::json!([]),
+                        )
+                    }
+                };
+                request_value["root"] = serde_json::json!({
+                    "kind": "directory",
+                    "directory": directory.identity,
+                });
+                soopy::SourceRoot::Directory(directory)
+            }
+        }
+    } else {
+        let request: soopy::StageRequest =
+            match serde_json::from_value(request_value.clone()) {
+                Ok(request) => request,
+                Err(error) => {
+                    return mutation_row(
+                        "",
+                        "refused",
+                        format!("decode StageRequest: {error}"),
+                        serde_json::json!([]),
+                    )
+                }
+            };
+        match mutation_root(&target_root, &request) {
+            Ok(root) => root,
+            Err(detail) => return mutation_row("", "refused", detail, serde_json::json!([])),
+        }
+    };
+    let request: soopy::StageRequest = match serde_json::from_value(request_value) {
+        Ok(request) => request,
+        Err(error) => {
+            return mutation_row(
+                "",
+                "refused",
+                format!("decode StageRequest: {error}"),
+                serde_json::json!([]),
+            )
+        }
     };
     let mut store = match soopy::DurableStageStore::open(state_root.join("stages")) {
         Ok(store) => store,
@@ -607,6 +680,60 @@ fn source_stage_response(
             })?,
         ),
         Err(refusal) => mutation_row("", "refused", refusal.to_string(), serde_json::json!([])),
+    }
+}
+
+/// Fill the repository and worktree identities of every Git-kind action source
+/// from the derived root. The program spells only the path; the executor mints
+/// the blake3 identities so a datalog program never has to.
+fn fill_git_action_sources(
+    request: &mut serde_json::Value,
+    repository: &soopy::RepositoryId,
+    worktree: &soopy::WorktreeId,
+) {
+    let Some(actions) = request.get_mut("actions").and_then(|a| a.as_array_mut()) else {
+        return;
+    };
+    for action in actions {
+        let Some(source) = action.get_mut("source") else {
+            continue;
+        };
+        if source.get("kind").and_then(|kind| kind.as_str()) != Some("git") {
+            continue;
+        }
+        let Some(source_ref) = source.get_mut("source") else {
+            continue;
+        };
+        source_ref["repository"] = serde_json::json!(repository);
+        source_ref["revision"] = serde_json::json!({
+            "kind": "worktree",
+            "worktree": worktree,
+            "head": serde_json::Value::Null,
+            "dirty": false,
+        });
+    }
+}
+
+/// Rewrite every Create action's `text` body to the `bytes` a canonical
+/// StageRequest carries. The program emits the shim body as UTF-8 text; this
+/// is the one boundary where a byte array is spelled.
+fn fill_create_text(request: &mut serde_json::Value) {
+    let Some(actions) = request.get_mut("actions").and_then(|a| a.as_array_mut()) else {
+        return;
+    };
+    for action in actions {
+        let Some(text) = action.get_mut("text") else {
+            continue;
+        };
+        let Some(text) = text.as_str() else {
+            continue;
+        };
+        action["bytes"] = serde_json::Value::Array(
+            text.as_bytes().iter().map(|byte| serde_json::json!(byte)).collect(),
+        );
+        if let Some(object) = action.as_object_mut() {
+            object.remove("text");
+        }
     }
 }
 
@@ -820,6 +947,25 @@ impl ScipNamespaceExecutor {
     }
 }
 
+/// The one scip resolve request shape in this crate. The mode is always
+/// extract-built: this host either runs the name-match leg (no index) or loads
+/// the index `ensure_index_for_set` produced.
+fn resolve_request<'a>(
+    paths: &'a [PathBuf],
+    arms: sprefa_extract::ResolveArms,
+    root: &'a Path,
+    index: Option<&'a Path>,
+) -> sprefa_extract::ResolveRequest<'a> {
+    sprefa_extract::ResolveRequest {
+        paths,
+        arms,
+        scip: <sprefa_extract::ScipMode>::from_flags(index, false),
+        project_root: Some(root),
+        scip_records: sprefa_extract::ScipRecords::all(),
+        occurrence_text: false,
+    }
+}
+
 /// The one place a scip fold is computed: an index build plus a resolve, or the
 /// name-match resolve alone.
 fn build_scip_fold(
@@ -846,15 +992,8 @@ fn build_scip_fold(
         ScipEvidence::Diet => {
             let span = tracing::info_span!("scip_diet", files = paths.len());
             let _entered = span.enter();
-            sprefa_extract::resolve_project(&sprefa_extract::ResolveRequest {
-                paths: &paths,
-                arms,
-                scip: sprefa_extract::ScipMode::Off,
-                project_root: Some(root),
-                scip_records: sprefa_extract::ScipRecords::all(),
-                occurrence_text: false,
-            })
-            .map_err(|error| named(format!("diet resolve: {error}")))?
+            sprefa_extract::resolve_project(&resolve_request(&paths, arms, root, None))
+                .map_err(|error| named(format!("diet resolve: {error}")))?
         }
         ScipEvidence::Index => {
             let cache = sprefa_extract::default_cache_dir(root);
@@ -889,15 +1028,8 @@ fn build_scip_fold(
             };
             let span = tracing::info_span!("scip_resolve", files = paths.len());
             let _entered = span.enter();
-            sprefa_extract::resolve_project(&sprefa_extract::ResolveRequest {
-                paths: &paths,
-                arms,
-                scip: sprefa_extract::ScipMode::Load(&index),
-                project_root: Some(root),
-                scip_records: sprefa_extract::ScipRecords::all(),
-                occurrence_text: false,
-            })
-            .map_err(|error| named(format!("index resolve: {error}")))?
+            sprefa_extract::resolve_project(&resolve_request(&paths, arms, root, Some(&index)))
+                .map_err(|error| named(format!("index resolve: {error}")))?
         }
     };
     for fact in &facts {
@@ -1168,7 +1300,15 @@ impl IHostExecutor for SprefaExtractExecutor {
         let _entered = span.enter();
         let mut rows: Vec<HostRow> = Vec::new();
         if let Some(out) = sprefa_extract::dispatch(&path, &content, mask) {
-            for fact in sprefa_extract::flatten(&out) {
+            for mut fact in sprefa_extract::flatten(&out) {
+                // A one-argument load (`use_module(lower)`, `include(...)`)
+                // names no module; the path IS the module, as source_bind
+                // already reads it, so a `module: text` column keeps the row.
+                if let sprefa_extract::FlatFact::Specifier { module, name, .. } = &mut fact {
+                    if module.is_none() {
+                        *module = Some(name.clone());
+                    }
+                }
                 rows.push(fact_row(&named, &fact)?);
             }
         }
@@ -1722,7 +1862,16 @@ impl<'p> HostLiveRunner<'p> {
                 .iter()
                 .zip(crate::executors::http::send_all(&transport_requests))
             {
-                transported.insert(*index, vec![answered?]);
+                // A transport failure is a bucket with no answer, never a dead
+                // process; the program's phase re-asks the endpoint later.
+                let rows = match answered {
+                    Ok(row) => vec![row],
+                    Err(failure) => {
+                        tracing::warn!(host = %failure.host, error = %failure.message, "transport failed, zero rows this bucket");
+                        Vec::new()
+                    }
+                };
+                transported.insert(*index, rows);
             }
         }
         for (index, group) in groups.into_iter().enumerate() {

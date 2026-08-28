@@ -7,6 +7,7 @@
 //! syntax source.
 
 use crate::family::{CstEdgeKind, CstF, TypeF};
+use crate::lang::extract_lang::ExtractLang;
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, ProjectCx, Resolve};
 use crate::shape::{NameId, NodeRef, Span, Strings};
@@ -110,6 +111,10 @@ impl Source for MarkdownSource {
 
     fn matches(&self, path: &str) -> bool {
         path.ends_with(".md") || path.ends_with(".markdown")
+    }
+
+    fn extract_lang(&self, _path: &str) -> Option<ExtractLang> {
+        Some(ExtractLang::Markdown)
     }
 
     fn extract(&self, _path: &str, content: &[u8], mask: FamilyMask) -> ExtractOutput {

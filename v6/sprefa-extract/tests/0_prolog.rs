@@ -267,3 +267,74 @@ fn prolog_module_declaration_and_import_lists() {
         ]
     );
 }
+
+/// The re-home program keys on the include/reexport rows, so this pins their
+/// exact spelling: `include/1` rides `name` with no module, `reexport/1` rides
+/// `name` with no module, and `reexport/2` keys on (module, name) one row per
+/// indicator, mirroring the module-import two-argument form.
+#[test]
+fn prolog_include_and_reexport_directives() {
+    let source: &[u8] = b"\
+:- module(rehome, []).
+:- use_module(library(lists)).
+:- include('part.pl').
+:- reexport('other.pl').
+:- reexport('third.pl', [foo/1, bar//0]).
+hello.
+";
+    let output = PrologSource.extract(PATH, source, FamilyMask::ALL);
+    let facts = flatten(&output);
+
+    let specifiers: Vec<(&str, Option<&str>, &str)> = facts
+        .iter()
+        .filter_map(|fact| match fact {
+            sprefa_extract::FlatFact::Specifier {
+                kind, module, name, ..
+            } => Some((kind.as_str(), module.as_deref(), name.as_str())),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        specifiers,
+        [
+            ("side_effect", None, "library(lists)"),
+            ("include", None, "'part.pl'"),
+            ("reexport_module", None, "'other.pl'"),
+            ("reexport_module", Some("'third.pl'"), "foo/1"),
+            ("reexport_module", Some("'third.pl'"), "bar//0"),
+        ]
+    );
+}
+
+/// FAIL PRE FIX: `use_module('part', [])` produced zero specifier rows, so
+/// `extract move` never rewrote `1_expansion.pl:28` and the moved module was
+/// unreachable (lab/rehome-passes move 8, 2026-08-24). An empty import list
+/// is a load edge and rides `side_effect` like the one-argument form.
+#[test]
+fn prolog_empty_import_list_is_a_side_effect_load() {
+    let source: &[u8] = b"\
+:- module(empty_list, []).
+:- use_module('part', []).
+:- use_module(other).
+hello.
+";
+    let output = PrologSource.extract(PATH, source, FamilyMask::ALL);
+    let facts = flatten(&output);
+    let specifiers: Vec<(&str, Option<&str>, &str)> = facts
+        .iter()
+        .filter_map(|fact| match fact {
+            sprefa_extract::FlatFact::Specifier {
+                kind, module, name, ..
+            } => Some((kind.as_str(), module.as_deref(), name.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        specifiers,
+        [
+            ("side_effect", None, "'part'"),
+            ("side_effect", None, "other"),
+        ]
+    );
+}

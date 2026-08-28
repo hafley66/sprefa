@@ -37,6 +37,15 @@ use help::{
 #[path = "../0_query.rs"]
 mod query;
 
+#[path = "../0_move.rs"]
+mod source_move;
+
+#[path = "../2_move_text.rs"]
+mod move_text;
+
+#[path = "../0_rename.rs"]
+mod source_rename;
+
 #[derive(Parser)]
 #[command(
     name = "extract",
@@ -283,6 +292,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
+    if std::env::args().nth(1).as_deref() == Some("move") {
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        if let Err(error) = source_move::run(argv) {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return Ok(());
+    }
+    if std::env::args().nth(1).as_deref() == Some("rename") {
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        if let Err(error) = source_rename::run(argv) {
+            eprintln!("{error}");
+            std::process::exit(error.exit);
+        }
+        return Ok(());
+    }
     let cli = Cli::parse();
 
     if cli.schema {
@@ -381,11 +406,7 @@ fn scip_request(cli: &Cli) -> Result<ResolveRequest<'_>, String> {
     Ok(ResolveRequest {
         paths: &cli.paths,
         arms: ResolveArms::default(),
-        scip: match (&cli.scip_index, cli.scip_build) {
-            (Some(path), _) => ScipMode::Load(path),
-            (None, true) => ScipMode::Build,
-            (None, false) => ScipMode::Off,
-        },
+        scip: ScipMode::from_flags(cli.scip_index.as_deref(), cli.scip_build),
         project_root: cli.project_root.as_deref(),
         scip_records: match &cli.scip_record {
             Some(spec) => ScipRecords::parse(spec)?,

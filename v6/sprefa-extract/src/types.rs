@@ -18,10 +18,18 @@
 //! family. The sketch below stays as the shape a revival would take.
 // @comment-ok: the module header is a crate-level doc block predating the rail
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::marker::PhantomData;
 
+use ast_grep_core::tree_sitter::LanguageExt;
+use ast_grep_core::Language;
+use ast_grep_language::SupportLang;
 use serde::Serialize;
+
+use crate::lang::extract_lang::ExtractLang;
+use crate::move_cx::MoveCx;
+use crate::rename_cx::{RenameCx, RenameRequest};
 
 pub use soopy::ContentId;
 
@@ -194,32 +202,44 @@ impl Family for CstF {
 #[derive(Default, Copy, Clone, Debug)]
 pub struct TypeF;
 
-/// type_entity kind. 9 variants. Struct/Trait are Rust-only; TS emits the rest.
+/// One language's own kind, carried by the `Ext` variant of a kind enum. The
+/// tag is the language's own snake_case string; it must never equal a core tag
+/// of that enum (railed in tests/6_kind_vocab.rs), so `as_str` stays injective
+/// and the wire keeps one vocabulary.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct LangKind {
+    pub lang: &'static str,
+    pub tag: &'static str,
+}
+
+/// type_entity kind. Core = every variant at least two languages construct
+/// today; a kind one language owns lives in that language's file as an
+/// `Ext(LangKind)` constant (rust.rs `TRAIT`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TypeEntityKind {
     Struct,
     Enum,
-    Trait,
     Class,
     Interface,
     Alias,
     Function,
     Method,
     Const,
+    Ext(LangKind),
 }
 
 impl TypeEntityKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             TypeEntityKind::Struct => "struct",
             TypeEntityKind::Enum => "enum",
-            TypeEntityKind::Trait => "trait",
             TypeEntityKind::Class => "class",
             TypeEntityKind::Interface => "interface",
             TypeEntityKind::Alias => "alias",
             TypeEntityKind::Function => "function",
             TypeEntityKind::Method => "method",
             TypeEntityKind::Const => "const",
+            TypeEntityKind::Ext(ext) => ext.tag,
         }
     }
 }
@@ -240,7 +260,7 @@ pub enum TypeEdgeKind {
 }
 
 impl TypeEdgeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             TypeEdgeKind::Field => "field",
             TypeEdgeKind::Variant => "variant",
@@ -273,7 +293,7 @@ pub enum SigSlot {
 }
 
 impl SigSlot {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             SigSlot::Param => "param",
             SigSlot::Ret => "ret",
@@ -300,7 +320,7 @@ pub enum ConstKind {
 }
 
 impl ConstKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             ConstKind::Lit => "lit",
             ConstKind::Template => "template",
@@ -362,7 +382,7 @@ pub enum DocNodeKind {
 }
 
 impl DocNodeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             DocNodeKind::Heading => "heading",
             DocNodeKind::CodeBlock => "code_block",
@@ -397,7 +417,9 @@ impl Family for TypeF {
 #[derive(Default, Copy, Clone, Debug)]
 pub struct CallF;
 
-/// The call-def node shape. `Free` wires as "function" (v5 parity).
+/// The call-def node shape. `Free` wires as "function" (v5 parity). Every
+/// variant is constructed by four or more languages today; `Ext` is the door a
+/// language uses when it needs a kind the core lacks.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CallKind {
     /// A free function. Wire tag is "function" (v5 CallKind::Free.tag()).
@@ -406,14 +428,16 @@ pub enum CallKind {
     Method,
     /// An anonymous callable from the df lift (emitted by the DfF pass).
     Lambda,
+    Ext(LangKind),
 }
 
 impl CallKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             CallKind::Free => "function",
             CallKind::Method => "method",
             CallKind::Lambda => "lambda",
+            CallKind::Ext(ext) => ext.tag,
         }
     }
 }
@@ -432,7 +456,7 @@ pub enum CallEdgeKind {
 }
 
 impl CallEdgeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             CallEdgeKind::NameResolve => "name_resolve",
             CallEdgeKind::ScipOverride => "scip_override",
@@ -485,7 +509,7 @@ pub enum RefPosition {
 }
 
 impl RefPosition {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             RefPosition::Goal => "goal",
             RefPosition::HeadArg => "head_arg",
@@ -547,7 +571,7 @@ pub enum UnresolvedReason {
 }
 
 impl UnresolvedReason {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             UnresolvedReason::DynamicImport => "dynamic-import",
             UnresolvedReason::ComputedMemberCall => "computed-member-call",
@@ -565,16 +589,28 @@ pub enum SpecifierKind {
     Namespace,
     SideEffect,
     Reexport,
+    Include,
+    ReexportModule,
+    /// `import('./m')`. Nothing enters scope by name, so `name` is the module
+    /// path, the same seat the path-only forms use.
+    DynamicImport,
+    /// `require('./m')` and `import x = require('./m')`. `name` is the bound
+    /// name when the form has one, else the module path.
+    Require,
 }
 
 impl SpecifierKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             SpecifierKind::Named => "named",
             SpecifierKind::Default => "default",
             SpecifierKind::Namespace => "namespace",
             SpecifierKind::SideEffect => "side_effect",
             SpecifierKind::Reexport => "reexport",
+            SpecifierKind::Include => "include",
+            SpecifierKind::ReexportModule => "reexport_module",
+            SpecifierKind::DynamicImport => "dynamic_import",
+            SpecifierKind::Require => "require",
         }
     }
 }
@@ -764,7 +800,10 @@ pub fn compute_nests(nodes: &[Node<DfF>], loops: &[DfLoop]) -> Vec<DfNest> {
     out
 }
 
-/// df_node kind. 23 variants.
+/// df_node kind. Core = every variant at least two languages construct today
+/// (or none yet: `Try`); a kind one language owns lives in that language's
+/// file as an `Ext(LangKind)` constant (rust.rs BORROW/MATCH/BLOCK/BREAK,
+/// ts.rs COND/CONCAT/TEMPLATE).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum DfNodeKind {
     Param,
@@ -776,25 +815,19 @@ pub enum DfNodeKind {
     New,
     Member,
     Ret,
-    Borrow,
     Binop,
     Unop,
     Loop,
     If,
-    Match,
-    Block,
     Closure,
     Try,
-    Break,
     Expr,
-    Cond,
     Logic,
-    Concat,
-    Template,
+    Ext(LangKind),
 }
 
 impl DfNodeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             DfNodeKind::Param => "param",
             DfNodeKind::LetBind => "let_bind",
@@ -805,21 +838,15 @@ impl DfNodeKind {
             DfNodeKind::New => "new",
             DfNodeKind::Member => "member",
             DfNodeKind::Ret => "ret",
-            DfNodeKind::Borrow => "borrow",
             DfNodeKind::Binop => "binop",
             DfNodeKind::Unop => "unop",
             DfNodeKind::Loop => "loop",
             DfNodeKind::If => "if",
-            DfNodeKind::Match => "match",
-            DfNodeKind::Block => "block",
             DfNodeKind::Closure => "closure",
             DfNodeKind::Try => "try",
-            DfNodeKind::Break => "break",
             DfNodeKind::Expr => "expr",
-            DfNodeKind::Cond => "cond",
             DfNodeKind::Logic => "logic",
-            DfNodeKind::Concat => "concat",
-            DfNodeKind::Template => "template",
+            DfNodeKind::Ext(ext) => ext.tag,
         }
     }
 }
@@ -833,7 +860,7 @@ pub enum DfEdgeKind {
 }
 
 impl DfEdgeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             DfEdgeKind::Direct => "direct",
         }
@@ -870,7 +897,7 @@ pub enum FlowEdgeKind {
 }
 
 impl FlowEdgeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             FlowEdgeKind::ArgToParam => "arg_to_param",
             FlowEdgeKind::RetToCallRes => "ret_to_call_res",
@@ -1020,7 +1047,7 @@ pub enum CfgNodeKind {
 }
 
 impl CfgNodeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             CfgNodeKind::Entry => "entry",
             CfgNodeKind::Exit => "exit",
@@ -1047,7 +1074,7 @@ pub enum CfgEdgeKind {
 }
 
 impl CfgEdgeKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             CfgEdgeKind::Next => "next",
             CfgEdgeKind::Arm => "arm",
@@ -1094,7 +1121,7 @@ impl DataFormat {
         }
     }
 
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             DataFormat::Json => "json",
             DataFormat::Jsonl => "jsonl",
@@ -1116,7 +1143,7 @@ pub enum DataValueKind {
 }
 
 impl DataValueKind {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             DataValueKind::Object => "object",
             DataValueKind::Array => "array",
@@ -1928,6 +1955,255 @@ pub trait Source: Sync + Send {
     /// One parse per backing engine, masked projections. Owns the arena(s)
     /// internally; returns owned output (no borrowed parse crosses the seam).
     fn extract(&self, path: &str, content: &[u8], mask: FamilyMask) -> ExtractOutput;
+    /// The `ExtractLang` this source parses `path` with. Default: the ast-grep
+    /// shim (its `SupportLang` picks the grammar from the path); a language
+    /// with its own grammar overrides.
+    fn extract_lang(&self, path: &str) -> Option<ExtractLang> {
+        SupportLang::from_path(path).map(ExtractLang::Sg)
+    }
+}
+
+// ── the Rehome seam: what one language answers when a file moves ────────────
+
+/// One import-shaped reference a move respells. `literal` and `text` cover it
+/// AS WRITTEN, quotes included: a respell reproduces the quote style.
+pub struct ImportRef {
+    /// Project-relative path of the file that writes the reference.
+    pub importer: String,
+    pub literal: Span,
+    /// The bytes `literal` spans.
+    pub text: String,
+    /// Project-relative path the reference names, pre-move.
+    pub target: String,
+    pub kind: ImportRefKind,
+}
+
+/// The vocabulary of one `ImportRef`. Core = the kinds two or more languages
+/// construct today; a kind one language owns lives in that language's rehome
+/// file as an `Ext(LangKind)` constant, so a new language never edits this list.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ImportRefKind {
+    /// A module import (`use`, `import`, `:- use_module`).
+    Import,
+    /// A quoted path literal outside an import form.
+    PathLiteral,
+    /// A package.json / Cargo.toml target line.
+    ManifestTarget,
+    /// A kind one language owns; tag never equals a core tag (railed in
+    /// tests/7_import_ref_kind.rs), so `as_str` stays injective.
+    Ext(LangKind),
+}
+
+impl ImportRefKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ImportRefKind::Import => "import",
+            ImportRefKind::PathLiteral => "path_literal",
+            ImportRefKind::ManifestTarget => "manifest_target",
+            ImportRefKind::Ext(ext) => ext.tag,
+        }
+    }
+}
+
+/// One respelled literal: the bytes soopy's Replace writes.
+pub struct Respell {
+    pub file: String,
+    pub span: Span,
+    pub text: String,
+    /// The stdout line this respell reports itself with. soopy's own preview
+    /// covers a staged edit, so only a report a preview does not carry is set.
+    pub receipt: Option<String>,
+}
+
+/// What one language answers when a file it owns moves. Held `&'static` in the
+/// `rehomes()` roster beside `sources()`; one impl per language, no mutable state.
+pub trait Rehome: Source + Sync + Send {
+    /// Every reference this language owns that `cx`'s batch can reach, one parse
+    /// per file. Batch-gated: a resolver call is a syscall per specifier.
+    fn import_refs(&self, cx: &MoveCx) -> Vec<ImportRef>;
+
+    /// The literal text for `reference` once `cx`'s batch lands (importer AND
+    /// target may both move). None = unchanged.
+    fn respell(&self, cx: &MoveCx, reference: &ImportRef) -> Option<Respell>;
+
+    /// The manifest carriers this language owns (package.json, Cargo.toml),
+    /// project-relative, in path order.
+    fn manifests(&self, _cx: &MoveCx) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Manifest targets, as `ImportRef`s of kind `"manifest_target"`, so one
+    /// `respell` arm handles them too.
+    fn manifest_refs(&self, _cx: &MoveCx) -> Vec<ImportRef> {
+        Vec::new()
+    }
+
+    /// A reexport shim left at the old path, when this language has one.
+    fn shim(&self, _cx: &MoveCx, _old: &str, _new: &str) -> Option<String> {
+        None
+    }
+
+    /// Extra `(old, new)` spellings of one move that this language's build
+    /// output wears, for the `--text-refs` report to scan plain text for.
+    fn text_spellings(&self, _cx: &MoveCx, _old: &str, _new: &str) -> Vec<(String, String)> {
+        Vec::new()
+    }
+
+    /// Reasons this language cannot plan `cx`'s batch at all (a destination
+    /// with no parent module, a layout that disagrees with a declaration).
+    /// Any row stops the run before a stage is built; the core never sees a
+    /// panic from an arm.
+    fn plan_errors(&self, _cx: &MoveCx) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// The file name whose stem stands for its directory ("mod" for Rust,
+    /// "index" for TS). None: no directory-standing file in this language.
+    fn directory_stem(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// The names a batch can be reached by: every moved file's stem, plus the
+    /// directory name of a moved directory-standing file, which is the module
+    /// name a decl (or a directory-form specifier) spells.
+    fn moved_names(&self, cx: &MoveCx) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        for old in cx.moved().keys() {
+            if !crate::move_cx::owned_by(old, self) {
+                continue;
+            }
+            let own = crate::move_cx::stem(old);
+            if Some(own.as_str()) == self.directory_stem() {
+                names.insert(crate::move_cx::stem(crate::move_cx::dirname(old)));
+            }
+            names.insert(own);
+        }
+        names
+    }
+}
+
+// ── the Rename seam: what one language answers when a symbol is renamed ─────
+
+/// Where one occurrence of a symbol sits. `span` covers EXACTLY the identifier
+/// token: no quotes, no path prefix, no surrounding expression.
+pub struct SymbolRef {
+    /// Project-relative path of the file that writes the occurrence.
+    pub file: String,
+    pub span: Span,
+    pub role: RefRole,
+    /// The bytes at `span` as the arm read them. The core re-reads the tree and
+    /// asserts equality before staging; a mismatch is a plan error, not a skip.
+    pub text: String,
+}
+
+/// What one occurrence does with the symbol. One-for-one with SCIP's
+/// `OccurrenceRole` (:1685), so the verify leg compares without a translation.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RefRole {
+    Definition,
+    /// The imported name in `import {OLD}`.
+    Import,
+    /// The exported name in `export {OLD}` / `export {x as OLD}`.
+    Export,
+    Read,
+    Write,
+    /// A type-position mention; SCIP folds this into READ_ACCESS.
+    TypeRef,
+}
+
+/// One occurrence a rename reports and never rewrites: where it sits, and the
+/// form that reaches the symbol there.
+#[derive(Debug)]
+pub struct SymbolSeat {
+    pub file: String,
+    pub span: Span,
+    pub form: &'static str,
+}
+
+/// Why an arm will not plan. A partial rename compiles less often than no
+/// rename at all, so an arm stops instead of emitting a subset.
+#[derive(Debug)]
+pub enum RenameStop {
+    /// `old` names more than one declaration in `anchor`; `at` disambiguates.
+    Ambiguous {
+        anchor: String,
+        old: String,
+        sites: Vec<Span>,
+    },
+    /// `old` names no declaration in `anchor`.
+    NotFound { anchor: String, old: String },
+    /// A reference the arm found but cannot span exactly.
+    Inexact {
+        file: String,
+        span: Span,
+        why: &'static str,
+    },
+    /// Every reference reachable only through a runtime form (computed member,
+    /// dynamic import, string key). One seat at a time hides the next repair.
+    Dynamic(Vec<SymbolSeat>),
+}
+
+impl fmt::Display for RenameStop {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RenameStop::Ambiguous { anchor, old, sites } => {
+                let offsets: Vec<String> =
+                    sites.iter().map(|site| site.start.to_string()).collect();
+                write!(
+                    formatter,
+                    "{anchor} declares {old} more than once, at bytes {}",
+                    offsets.join(", ")
+                )
+            }
+            RenameStop::NotFound { anchor, old } => {
+                write!(formatter, "{anchor} declares no {old}")
+            }
+            RenameStop::Inexact { file, span, why } => {
+                write!(formatter, "{file} byte {}: {why}", span.start)
+            }
+            RenameStop::Dynamic(seats) => {
+                let lines: Vec<String> = seats
+                    .iter()
+                    .map(|seat| {
+                        format!(
+                            "{} byte {}: {} reaches the symbol at runtime",
+                            seat.file, seat.span.start, seat.form
+                        )
+                    })
+                    .collect();
+                formatter.write_str(&lines.join("\n"))
+            }
+        }
+    }
+}
+
+impl std::error::Error for RenameStop {}
+
+/// What one language answers when a symbol it owns is renamed. Sibling to
+/// `Rehome`, held `&'static` in the `renames()` roster; no mutable state.
+pub trait Rename: Source + Sync + Send {
+    /// Every occurrence of `request`'s symbol this language owns, across
+    /// `cx.files()`. One parse per file that can reach the anchor.
+    fn symbol_refs(
+        &self,
+        cx: &RenameCx,
+        request: &RenameRequest,
+    ) -> Result<Vec<SymbolRef>, RenameStop>;
+
+    /// The replacement bytes for one occurrence. None = unchanged (an aliased
+    /// import `{OLD as local}` leaves `local` alone).
+    fn respell_symbol(
+        &self,
+        cx: &RenameCx,
+        request: &RenameRequest,
+        reference: &SymbolRef,
+    ) -> Option<Respell>;
+
+    /// Spellings of the old name this language's corpus wears outside the scope
+    /// plane, for the `--text-refs` report. NEVER rewritten.
+    fn text_spellings(&self, _cx: &RenameCx, _request: &RenameRequest) -> Vec<(String, String)> {
+        Vec::new()
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2520,6 +2796,107 @@ pub enum FlatFact {
 // flatten / flatten_jsonl live in wire.rs (the logic, not the types).
 
 // ════════════════════════════════════════════════════════════════════════════
+// SOURCE-ACTION DRAIN  (drain.rs) - ast-grep edits -> soopy staged mutations
+// ════════════════════════════════════════════════════════════════════════════
+// @comment-ok: section banner, the same shape as the S1..S6 banners above
+
+/// One ast-grep `Edit` plus what soopy needs and ast-grep never knows: which
+/// file the byte offsets index, and which producer emitted them.
+pub struct BoundEdit {
+    pub source: soopy::ActionSource,
+    pub producer: soopy::ActionProducer,
+    pub edit: ast_grep_core::source::Edit<String>,
+}
+
+/// A `Doc` whose `do_edit` appends a soopy `TextEdit` instead of mutating the
+/// string, so one matcher walk collects every edit against ONE frozen parse.
+#[derive(Clone)]
+pub struct PendingReplaceDoc<L: LanguageExt> {
+    src: String,
+    lang: L,
+    tree: tree_sitter::Tree,
+    source: soopy::ActionSource,
+    expected: ContentId,
+    producer: soopy::ActionProducer,
+    edits: Vec<soopy::TextEdit>,
+}
+
+impl<L: LanguageExt> PendingReplaceDoc<L> {
+    /// Parse once. `expected` is the hash of these exact bytes, so a file that
+    /// changes under the walk is refused at stage time, not silently rewritten.
+    pub fn open(
+        src: &str,
+        lang: L,
+        source: soopy::ActionSource,
+        producer: soopy::ActionProducer,
+    ) -> Result<Self, String> {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&lang.get_ts_language())
+            .map_err(|error| error.to_string())?;
+        let tree = parser
+            .parse(src.as_bytes(), None)
+            .ok_or_else(|| "tree-sitter returned no tree".to_string())?;
+        Ok(Self {
+            src: src.to_string(),
+            lang,
+            tree,
+            source,
+            expected: ContentId::blake3(src.as_bytes()),
+            producer,
+            edits: Vec::new(),
+        })
+    }
+
+    pub fn lang(&self) -> &L {
+        &self.lang
+    }
+
+    pub fn tree(&self) -> &tree_sitter::Tree {
+        &self.tree
+    }
+
+    pub fn source_text(&self) -> &String {
+        &self.src
+    }
+
+    pub fn expected(&self) -> &ContentId {
+        &self.expected
+    }
+
+    pub fn edits(&self) -> &[soopy::TextEdit] {
+        &self.edits
+    }
+
+    pub fn append(&mut self, edit: &ast_grep_core::source::Edit<String>) {
+        self.edits.push(
+            BoundEdit {
+                source: self.source.clone(),
+                producer: self.producer.clone(),
+                edit: ast_grep_core::source::Edit {
+                    position: edit.position,
+                    deleted_length: edit.deleted_length,
+                    inserted_text: edit.inserted_text.clone(),
+                },
+            }
+            .into(),
+        );
+    }
+
+    /// None when nothing matched: a Replace with no edits is a staged no-op.
+    pub fn into_action(self) -> Option<soopy::SourceAction> {
+        if self.edits.is_empty() {
+            return None;
+        }
+        Some(crate::drain::replace_action(
+            self.source,
+            self.expected,
+            self.edits,
+        ))
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // LANGUAGE ROSTER  (lang/mod.rs) - first-match by extension
 // ════════════════════════════════════════════════════════════════════════════
 // Each Source = cst via ast-grep + type/call/df/const via a native front-end.
@@ -2535,6 +2912,23 @@ pub enum FlatFact {
 //     ]
 // }
 // (KotlinSource precedes TsSource: "x.kts".ends_with(".ts") routes .kts to kotlin.)
+
+// ════════════════════════════════════════════════════════════════════════════
+// AST-GREP LANGUAGE  (lang/extract_lang.rs) - the L in StrDoc<L>
+// ════════════════════════════════════════════════════════════════════════════
+// @comment-ok: this module mirrors every lang/*.rs shape as a commented sketch
+//
+// pub enum ExtractLang { Sg(SupportLang), Dl6, Prolog, Markdown, MarkdownInline }
+// impl ExtractLang {
+//     pub fn from_path(path: &str) -> Option<Self>;  // .dl6/.pl/.md, else SupportLang
+//     pub fn name(&self) -> Cow<'static, str>;       // the YAML `language:` spelling
+//     pub fn parse_name(name: &str) -> Option<Self>;
+// }
+// impl Language for ExtractLang      // expando_char '_' for dl6/prolog, 'µ' for md
+// impl LanguageExt for ExtractLang   // get_ts_language: the linked LANGUAGE consts
+//
+// SgRoot = AstGrep<StrDoc<ExtractLang>> (lang/astgrep.rs), so --ast-pattern and
+// the YAML rule door reach every grammar in the roster, not just ast-grep's own.
 
 // ════════════════════════════════════════════════════════════════════════════
 // STATUS  (flip a cell when it ships; [x] = ported + parity-green)

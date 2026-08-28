@@ -11,6 +11,7 @@ use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfEdgeKind, DfF, DfNodeKind,
     ProjectEdge, RefPosition, Reference, Specifier, SpecifierKind, TypeEntityKind, TypeF,
 };
+use crate::lang::extract_lang::ExtractLang;
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, covering_def, ProjectCx, Resolve};
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings};
@@ -185,7 +186,6 @@ fn project_calls(
         walk_head_refs(head, src, strings, sink);
         if let Some(body) = body {
             walk_goals(body, src, dcg, strings, sink, None);
-            walk_goals_refs(body, src, strings, sink);
         }
     }
 }
@@ -379,6 +379,8 @@ fn project_directive(
     match name.as_str() {
         "use_module" | "ensure_loaded" | "consult" => import_directive(operand, src, strings, sink),
         "module" => module_declaration(operand, src, strings, sink),
+        "include" => include_directive(operand, src, strings, sink),
+        "reexport" => reexport_directive(operand, src, strings, sink),
         _ => (),
     }
 }
@@ -408,11 +410,85 @@ fn import_directive(
         return;
     };
     let module = strings.intern(&module_text);
+    let mut named = 0usize;
     for indicator in predicate_indicators(list, src) {
+        named += 1;
         sink.aux.specifiers.push(Specifier {
             span: indicator.span,
             name: strings.intern(&indicator.key),
             kind: SpecifierKind::Named,
+            module: Some(module),
+            imported: None,
+        });
+    }
+    // `use_module(Path, [])` loads the file and imports nothing; without a
+    // row the file-to-file edge is invisible to every consumer.
+    if named == 0 {
+        sink.aux.specifiers.push(Specifier {
+            span: span(source),
+            name: module,
+            kind: SpecifierKind::SideEffect,
+            module: None,
+            imported: None,
+        });
+    }
+}
+
+// `include(Path)` pulls file text into the enclosing module at load time. The
+// path IS the specifier and rides `name` with no module (an include names a
+// part, never a module interface).
+fn include_directive(
+    operand: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let mut cursor = operand.walk();
+    let mut arguments = operand.children_by_field_name("argument", &mut cursor);
+    let Some(source) = arguments.next() else {
+        return;
+    };
+    sink.aux.specifiers.push(Specifier {
+        span: span(source),
+        name: strings.intern(text(source, src)),
+        kind: SpecifierKind::Include,
+        module: None,
+        imported: None,
+    });
+}
+
+// `reexport(Path)` loads another module's exported interface; `reexport(Path,
+// List)` narrows that to the named predicates. The one-argument form names no
+// predicate, so the path IS the specifier and rides `name` with no module; the
+// two-argument form keys on (module, name) like a module import.
+fn reexport_directive(
+    operand: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let mut cursor = operand.walk();
+    let mut arguments = operand.children_by_field_name("argument", &mut cursor);
+    let Some(source) = arguments.next() else {
+        return;
+    };
+    let path_text = text(source, src).to_string();
+    let Some(list) = arguments.next() else {
+        sink.aux.specifiers.push(Specifier {
+            span: span(source),
+            name: strings.intern(&path_text),
+            kind: SpecifierKind::ReexportModule,
+            module: None,
+            imported: None,
+        });
+        return;
+    };
+    let module = strings.intern(&path_text);
+    for indicator in predicate_indicators(list, src) {
+        sink.aux.specifiers.push(Specifier {
+            span: indicator.span,
+            name: strings.intern(&indicator.key),
+            kind: SpecifierKind::ReexportModule,
             module: Some(module),
             imported: None,
         });
@@ -489,6 +565,8 @@ fn collect_predicate_indicators(
     }
 }
 
+/// One spine pass pushing both `aux.sites` and `aux.refs`, replacing two
+/// walks. Directives keep their own refs-only walk below.
 fn walk_goals(
     node: tree_sitter::Node,
     src: &[u8],
@@ -504,9 +582,16 @@ fn walk_goals(
             }
         }
         "unary_operation" => {
-            if operator(node, src) == "\\+" {
+            let op = operator(node, src);
+            if op == "\\+" {
                 if let Some(operand) = field(node, "operand") {
                     walk_goals(operand, src, dcg, strings, sink, module);
+                }
+            } else {
+                // A prefix-operator goal (dynamic/1, initialization/1, ...).
+                push_ref(node, &format!("{op}/1"), RefPosition::Goal, strings, sink);
+                if let Some(operand) = field(node, "operand") {
+                    walk_data_refs(operand, RefPosition::TermArg, src, strings, sink);
                 }
             }
         }
@@ -528,19 +613,41 @@ fn walk_goals(
                     }
                 }
                 ":-" | "-->" | "::" => {}
-                _ => push_site(node, op, 2, false, strings, sink, module),
+                _ => {
+                    push_site(node, op, 2, false, strings, sink, module);
+                    push_ref(node, &format!("{op}/2"), RefPosition::Goal, strings, sink);
+                    for child in named_children(node) {
+                        walk_data_refs(child, RefPosition::TermArg, src, strings, sink);
+                    }
+                }
             }
         }
         "compound_term" => {
             if let Some((name, arity)) = callable_name_arity(node, src) {
                 push_site(node, &name, arity, dcg, strings, sink, module);
+                push_ref(
+                    node,
+                    &predicate_key(&name, arity, false),
+                    RefPosition::Goal,
+                    strings,
+                    sink,
+                );
+            }
+            let mut cursor = node.walk();
+            for arg in node.children_by_field_name("argument", &mut cursor) {
+                walk_data_refs(arg, RefPosition::TermArg, src, strings, sink);
             }
         }
         "atom" | "unquoted_atom" | "quoted_atom" | "operator_atom" => {
-            push_site(node, &atom_text(node, src), 0, dcg, strings, sink, module);
+            let name = atom_text(node, src);
+            push_site(node, &name, 0, dcg, strings, sink, module);
+            push_ref(node, &format!("{name}/0"), RefPosition::Goal, strings, sink);
         }
-        "cut" => push_site(node, "!", 0, false, strings, sink, module),
-        _ => {}
+        "cut" => {
+            push_site(node, "!", 0, false, strings, sink, module);
+            push_ref(node, "!/0", RefPosition::Goal, strings, sink);
+        }
+        _ => walk_data_refs(node, RefPosition::TermArg, src, strings, sink),
     }
 }
 
@@ -759,10 +866,15 @@ impl Source for PrologSource {
 
     fn matches(&self, path: &str) -> bool {
         path.ends_with(".pl")
+            || path.ends_with(".plt")
             || path.ends_with(".pro")
             || path.ends_with(".prolog")
             || path.ends_with(".datalog")
             || path.ends_with(".horn")
+    }
+
+    fn extract_lang(&self, _path: &str) -> Option<ExtractLang> {
+        Some(ExtractLang::Prolog)
     }
 
     fn extract(&self, _path: &str, content: &[u8], mask: FamilyMask) -> ExtractOutput {

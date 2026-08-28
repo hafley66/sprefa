@@ -672,18 +672,24 @@ positive_use_from(Source, RelPlans, Ref, Alias, From) :-
 old_state_relation_sql(Source, RelPlans, Ref, RelationSql) :-
     positive_use_table(Source, RelPlans, Ref, Table),
     quote_ident(Table, QuotedTable),
-    frontier_table_name(Ref, FrontierTable),
-    quote_ident(FrontierTable, QuotedFrontierTable),
     relplan_columns(RelPlans, Ref, Columns),
-    qualified_equalities(Columns, old_delta, old_row, FrontierEqualities),
     old_state_projection_columns(Source, RelPlans, Ref, Columns,
                                  ProjectionColumns),
     qualified_column_list(ProjectionColumns, old_row, SelectedColumns),
-    old_state_frontier_where(FrontierEqualities, FrontierWhere),
-    format(atom(RelationSql),
-           '(SELECT ~w FROM ~w old_row GROUP BY ~w HAVING count(*) > (SELECT count(*) FROM ~w old_delta WHERE old_delta."_phase" >= 0 AND ~w))',
-           [SelectedColumns, QuotedTable, SelectedColumns,
-            QuotedFrontierTable, FrontierWhere]).
+    (   frontier_mode(shared)
+    ->  shared_frontier_relation_id(Ref, RelationId),
+        format(atom(RelationSql),
+               '(SELECT ~w FROM ~w old_row WHERE old_row."__id" NOT IN (SELECT old_delta."row_id" FROM "__frontier" old_delta WHERE old_delta."relation_id" = ~w AND old_delta."_phase" >= 0))',
+               [SelectedColumns, QuotedTable, RelationId])
+    ;   frontier_table_name(Ref, FrontierTable),
+        quote_ident(FrontierTable, QuotedFrontierTable),
+        qualified_equalities(Columns, old_delta, old_row, FrontierEqualities),
+        old_state_frontier_where(FrontierEqualities, FrontierWhere),
+        format(atom(RelationSql),
+               '(SELECT ~w FROM ~w old_row GROUP BY ~w HAVING count(*) > (SELECT count(*) FROM ~w old_delta WHERE old_delta."_phase" >= 0 AND ~w))',
+               [SelectedColumns, QuotedTable, SelectedColumns,
+                QuotedFrontierTable, FrontierWhere])
+    ).
 
 old_state_frontier_where([], '1').
 old_state_frontier_where(Equalities, Where) :-
@@ -2741,9 +2747,25 @@ compile_comparison(Mode, Goal, Bound, Text) :-
     compile_expr(Mode, identity, Left, Bound, LeftSql, LeftType, LeftEncoding),
     compile_expr(Mode, identity, Right, Bound, RightSql, RightType, RightEncoding),
     comparison_operator_sql(Operator, Goal, LeftType, RightType, OperatorSql),
-    aligned_pair(LeftEncoding, LeftSql, RightEncoding, RightSql,
-                 AlignedLeft, AlignedRight),
+    (   content_comparison(LeftType, RightType, Left, LeftEncoding,
+                           Right, RightEncoding)
+    ->  compile_expr(Mode, value, Left, Bound, AlignedLeft, _, _),
+        compile_expr(Mode, value, Right, Bound, AlignedRight, _, _)
+    ;   aligned_pair(LeftEncoding, LeftSql, RightEncoding, RightSql,
+                     AlignedLeft, AlignedRight)
+    ),
     format(atom(Text), '(~w ~w ~w)', [AlignedLeft, OperatorSql, AlignedRight]).
+
+% A stored column's id is total; a literal's and a computed text's are not, and
+% `IS` matches the two NULLs a missing dictionary row leaves on both sides.
+content_comparison(text, text, Left, LeftEncoding, Right, RightEncoding) :-
+    (   LeftEncoding \== RightEncoding
+    ->  true
+    ;   text_literal_operand(Left),
+        text_literal_operand(Right)
+    ).
+
+text_literal_operand(Expr) :- nonvar(Expr), atomic(Expr), \+ number(Expr).
 
 % Family, SQL text and type rule all come from registry.pl's expression/5
 % (rank R5). The two type rules are named there: both_int for the ordered
@@ -3009,16 +3031,23 @@ term_interned_literal(Term, Literal) :-
         term_interned_literal(Argument, Literal)
     ).
 
-% sql_literal/2 refuses a quote inside a literal, so `')` terminates the
-% content at its first occurrence and no escape grammar is involved.
+% sql_text_literal/2 DOUBLES every quote inside the literal, so the closing
+% quote is the first one no second quote follows and the body halves the pairs.
 atom_interned_literal(Atom, Literal) :-
     interned_literal_sql('', Probe),
     sub_atom(Probe, 0, OpeningLength, 2, Opening),
     sub_atom(Atom, Start, OpeningLength, _, Opening),
     After is Start + OpeningLength,
     sub_atom(Atom, After, _, 0, Tail),
-    once(sub_atom(Tail, ContentLength, 2, _, '\')')),
-    sub_atom(Tail, 0, ContentLength, _, Literal).
+    atom_codes(Tail, TailCodes),
+    once(quoted_body_codes(TailCodes, LiteralCodes)),
+    atom_codes(Literal, LiteralCodes).
+
+quoted_body_codes([0''', 0''' | Rest], [0''' | Body]) :- !,
+    quoted_body_codes(Rest, Body).
+quoted_body_codes([0''' | _], []) :- !.
+quoted_body_codes([Code | Rest], [Code | Body]) :-
+    quoted_body_codes(Rest, Body).
 
 % ═══ the decode view, returned in its table's own Ddls list ═════════════════
 % One clause builds both from one Columns/ColumnTypes pair, so they cannot drift.

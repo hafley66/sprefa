@@ -1,0 +1,19 @@
+{
+  "name": "pkg",
+  "version": "0.1.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "pkg-adapter": "./bin/pkg-adapter"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./dist/27_browser.d.ts",
+      "import": "./dist/27_browser.js"
+    }
+  }
+}

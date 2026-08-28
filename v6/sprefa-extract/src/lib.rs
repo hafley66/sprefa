@@ -22,10 +22,15 @@ pub mod cpg_decode;
 pub mod cpg_types;
 pub mod deps;
 pub mod dispatch;
+pub mod drain;
 pub mod family;
 pub mod lang;
 pub mod manifests;
+pub mod move_cx;
+pub mod move_scip;
+pub mod move_stage;
 pub mod project;
+pub mod rename_cx;
 pub mod rows;
 pub mod schema;
 pub mod scip;
@@ -51,6 +56,10 @@ pub use cpg_types::{
 };
 pub use deps::{resolve_specifier, Policy, TsconfigPaths};
 pub use dispatch::dispatch;
+pub use drain::{
+    bind_action, directory_path, directory_source, drain_edits, replace_action, source_rel,
+    stage_edits, BoundEdit, PendingReplaceDoc,
+};
 pub use family::{
     flow_edges, CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfArg, DfEdgeKind, DfF,
     DfFAux, DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, Family, FlowEdge, FlowEdgeKind,
@@ -58,21 +67,29 @@ pub use family::{
     TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };
 pub use lang::{
-    decode_ast_rule_yaml, query_ast_rule, query_ast_rule_with_content, query_patterns, source_for,
-    sources, AstCaptureFact, AstPatternQuery, AstRule, AstRuleCapture, AstRuleError, AstRuleMatch,
-    AstRuleMutationProposal, AstRuleRequest, AstgrepSource, DataSource, DlSource, GoSource,
-    KotlinSource, MarkdownSource, NamedAstRule, PrologSource, PythonSource, RustSource, StopBy,
-    TsSource,
+    build_paths, compiled_spellings, decode_ast_rule_yaml, dl6_db_path, open_dl6_readonly,
+    open_readonly, query_ast_rule, query_ast_rule_with_content, query_patterns, rehome_for,
+    rehomes, rename_for, renames, respell, source_for, sources, ts_specifiers, AstCaptureFact,
+    AstPatternQuery, AstRule, AstRuleCapture, AstRuleError, AstRuleMatch, AstRuleMutationProposal,
+    AstRuleRequest, AstgrepSource, BuildPaths, DataSource, DlSource, ExtractLang, FactError,
+    FactMatcher, FactSet, GoSource, KotlinSource, MarkdownSource, NamedAstRule, PrologSource,
+    PythonSource, RustSource, StopBy, TsResolver, TsSource, TsSpecifier, DL6_DB_RELATIVE_PATH,
 };
 pub use manifests::{
     fold_package_edges, package_edges, package_edges_jsonl, Manifest, ManifestKind,
 };
+pub use move_cx::{dirname, join_rel, normalize, relative_between, MoveCx, SKIP_DIRS};
+pub use move_scip::{
+    scip_import_sites, verify_import_refs, ScipDisagreement, ScipSite, MISSED_BY_IMPL,
+    UNKNOWN_TO_SCIP,
+};
 pub use project::{
-    diet_scip, diet_scip_jsonl, resolve_project, resolve_project_jsonl, scip_facts,
+    diet_scip, diet_scip_jsonl, extract_pool, resolve_project, resolve_project_jsonl, scip_facts,
     scip_facts_jsonl, scip_family, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
     FsBlobSource, ProjectError, ResolveArm, ResolveArms, ResolveRequest, ScipFamilyRequest,
     ScipMode, SourceTreeBlobSource, RESOLVE_ARMS,
 };
+pub use rename_cx::{RenameCx, RenameRequest};
 pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{
     byte_range, copy_sources, definition_of, join_documents, site_occurrence, Fallback,
@@ -101,7 +118,10 @@ pub use soopy::{
     SourceEntry, SourceRef,
 };
 pub use source::{ExtractOutput, FamilyMask, Source};
-pub use types::{CfgEdgeKind, CfgF, CfgNodeKind};
+pub use types::{
+    CfgEdgeKind, CfgF, CfgNodeKind, ImportRef, ImportRefKind, RefRole, Rehome, Rename, RenameStop,
+    Respell, SymbolRef, SymbolSeat,
+};
 pub use wire::{
     file_fact, flatten, flatten_cfg, flatten_flow, flatten_jsonl, flatten_scip, scip_file_edges,
     FlatFact, SpanOut, SCHEMA,

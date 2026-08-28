@@ -10,10 +10,10 @@ use std::collections::BTreeMap;
 use ast_grep_config::{from_yaml_string, GlobalRules, RuleConfig};
 use ast_grep_core::meta_var::MetaVariable;
 use ast_grep_core::tree_sitter::StrDoc;
-use ast_grep_core::{AstGrep, Language, NodeMatch};
-use ast_grep_language::SupportLang;
+use ast_grep_core::{AstGrep, NodeMatch};
 use serde::Serialize;
 
+use crate::lang::extract_lang::ExtractLang;
 use crate::shape::{content_id_of, ContentId, Span};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -312,19 +312,19 @@ pub fn query_ast_rule_with_content(
     content: ContentId,
 ) -> Result<Vec<AstRuleMatch>, AstRuleError> {
     let language =
-        SupportLang::from_path(path).ok_or_else(|| AstRuleError::NoGrammar(path.into()))?;
+        ExtractLang::from_path(path).ok_or_else(|| AstRuleError::NoGrammar(path.into()))?;
     let source =
         std::str::from_utf8(bytes).map_err(|error| AstRuleError::Utf8(error.to_string()))?;
     let config_yaml = serde_yaml::to_string(&ConfigWire::from_request(request, language))
         .map_err(|error| AstRuleError::Yaml(error.to_string()))?;
-    let configs: Vec<RuleConfig<SupportLang>> =
+    let configs: Vec<RuleConfig<ExtractLang>> =
         from_yaml_string(&config_yaml, &GlobalRules::default())
             .map_err(|error| AstRuleError::InvalidRule(error.to_string()))?;
     let config = configs
         .into_iter()
         .next()
         .ok_or_else(|| AstRuleError::InvalidRule("empty rule config".into()))?;
-    let root = AstGrep::<StrDoc<SupportLang>>::new(source, language);
+    let root = AstGrep::<StrDoc<ExtractLang>>::new(source, language);
     let fixer = config
         .get_fixer()
         .map_err(|error| AstRuleError::InvalidRule(error.to_string()))?
@@ -362,7 +362,7 @@ fn make_match(
     request: &AstRuleRequest,
     fixer: Option<&ast_grep_config::Fixer>,
     matcher: &ast_grep_config::RuleCore,
-    matched: NodeMatch<StrDoc<SupportLang>>,
+    matched: NodeMatch<StrDoc<ExtractLang>>,
 ) -> AstRuleMatch {
     let range = matched.range();
     let span = Span {
@@ -417,7 +417,7 @@ fn make_match(
 #[derive(Serialize)]
 struct ConfigWire {
     id: String,
-    language: SupportLang,
+    language: ExtractLang,
     rule: RuleWire,
     utils: BTreeMap<String, RuleWire>,
     fix: Option<String>,
@@ -429,7 +429,7 @@ enum RuleWire {
 }
 
 impl ConfigWire {
-    fn from_request(request: &AstRuleRequest, language: SupportLang) -> Self {
+    fn from_request(request: &AstRuleRequest, language: ExtractLang) -> Self {
         Self {
             id: request.id.clone(),
             language,

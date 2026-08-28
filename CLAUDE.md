@@ -136,7 +136,7 @@ coordinator is the boop lane `sprefa-coordinator`. One command, zero tokens
 beyond the body, lands in its hook inbox at its next turn:
 
 ```bash
-boop beep hail sprefa-coordinator --from <your-lane-name> --body "<one line: what, where, what you need>"
+boop beep --no-wait --as <your-lane-name> sprefa-coordinator "<one line: what, where, what you need>"
 ```
 
 Use it when blocked, when done (say the PR number and the gate numbers), when
