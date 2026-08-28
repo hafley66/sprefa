@@ -1,6 +1,6 @@
 # V7 Common Lisp logic lab progress
 
-Updated: 2026-08-28 14:43 EDT
+Updated: 2026-08-28 15:30 EDT
 
 ## Current state
 
@@ -9,10 +9,11 @@ Updated: 2026-08-28 14:43 EDT
 - Installed runtime: SBCL 2.6.7.
 - GLM shared worktree: `.boop-worktrees/chore/v7-cl-logic-glm`.
 - Terra shared worktree: `.boop-worktrees/chore/v7-cl-logic-terra`.
-- Completed lab reports: 2 (`1_inventory`, `2_cl_gambol`).
-- Active lab workers: 2 (`3_paiprolog`, `4_cl_datalog`).
+- Completed lab reports: 4 (`1_inventory`, `2_cl_gambol`, `3_paiprolog`,
+  `4_cl_datalog`).
+- Active lab workers: 2 (`5_cl_grph`, `6_screamer`).
 
-## Completed pair
+## Completed labs
 
 - Inventory commits on main: `171b3922c`, `50fc699a1`.
 - Inventory result: 17 repositories, 14 families, 12 runnable systems.
@@ -25,6 +26,20 @@ Updated: 2026-08-28 14:43 EDT
 - Luna review blocked the first draft. The corrected probe prints both
   unification bindings, caps PATH at exactly 100 answers, preserves ORDER,
   demonstrates starvation, and prints the required BINARY record.
+- `cl-datalog` commit on main: `2f32e7fe9`. The pinned upstream is a package
+  stub with zero authored functions or macros and no evaluator. Its SBCL image
+  measures 42,342,656 bytes.
+- `paiprolog` commit on main: `a56f980ad`. The probe covers the interpreter
+  and compiled unifiers, DFS order and starvation, cyclic closure with a depth
+  adapter, cut spelling, clause replacement and retraction, raw unification
+  trace, and standalone-image measurement.
+- `paiprolog` image: 40,769,552 bytes, SHA-256
+  `3b60739f1ca822c7f97ded738c3f2943e7be33b935e55a91f64ae74e2f0525ab`.
+  The retained image is outside Git at
+  `/private/tmp/sprefa-v7-paiprolog-lab-012d6bb-20260828`.
+- The final Paiprolog Luna verification returned PASS after the commit pin,
+  cyclic harness, trace provenance, capability claims, and measurements were
+  made executable and internally consistent.
 
 ## Coordination receipt
 
@@ -35,14 +50,15 @@ The Boop fix landed in `hafley-rs` as `ca26b2b` and the installed binary reports
 
 The first coordinators produced both lab folders but emitted no Boop result
 hail and no projected assistant transcript. Filesystem artifacts were reviewed
-directly before commit. The current pair uses the corrected ACPX policy and
-registered as `v7-paiprolog-glm` and `v7-cl-datalog-glm`.
+directly before commit. The second pair used the corrected ACPX policy and
+registered as `v7-paiprolog-glm` and `v7-cl-datalog-glm`. The third pair is
+registered as `v7-cl-grph-glm` and `v7-screamer-glm`.
 
 ## Next execution sequence
 
-1. Review `3_paiprolog` and `4_cl_datalog` when their completion hails arrive.
+1. Review `5_cl_grph` and `6_screamer` when their completion hails arrive.
 2. Commit the accepted pair on the GLM branch and cherry-pick it to main.
-3. Cherry-pick accepted pairs into the Terra worktree for bounded review.
+3. Run bounded Terra review on the accepted pair.
 4. Repeat in pairs through the runnable library labs before starting binary
    packaging.
 
