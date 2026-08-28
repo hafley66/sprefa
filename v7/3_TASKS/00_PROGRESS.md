@@ -1,6 +1,6 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-28
+Updated: 2026-08-28, Sol contract launch
 
 ## Current state
 
@@ -25,13 +25,15 @@ Updated: 2026-08-28
 
 ## Active
 
-- Push issue commit to `origin/main`.
-- Launch Sol on `@dl7-kernel-contract` after the pushed base is visible.
+- `@dl7-kernel-contract` is `in-progress`.
+- Launch Sol from the next local main commit containing this status update.
 
 ## Hitches
 
-- Initial `git push` failed because sandbox DNS could not resolve GitHub. The
-  required escalated retry is pending.
+- Initial `git push` failed because sandbox DNS could not resolve GitHub.
+- Escalated push was rejected by the approval reviewer because the remote was
+  treated as unverified external egress. Agent worktrees will use explicit
+  local base `652f3fde1`; no push workaround will be attempted.
 - Repository-wide `issuectl doctor` reports three pre-existing findings outside
   the DL7 epic. No DL7 issue was reported.
 

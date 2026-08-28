@@ -3,7 +3,7 @@ created: 2026-08-28
 updated: 2026-08-28
 type: task
 assignee: sol
-status: open
+status: in-progress
 priority: high
 epic: dl7-minimal-kernel
 labels: [dl7, model-sol]
