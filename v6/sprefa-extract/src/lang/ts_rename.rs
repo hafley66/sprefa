@@ -6,6 +6,7 @@
 
 use oxc_ast::ast as ts;
 use oxc_ast::ast::Program;
+use oxc_ast_visit::Visit;
 use oxc_semantic::SemanticBuilder;
 use oxc_span::GetSpan;
 use oxc_syntax::reference::Reference;
@@ -30,22 +31,24 @@ impl Rename for TsSource {
             .map_err(|_| not_found(request))?;
         let semantic = SemanticBuilder::new().build(&program).semantic;
         let scoping = semantic.scoping();
-        let root = scoping.root_scope_id();
 
-        let bound: Vec<SymbolId> = scoping
-            .iter_bindings_in(root)
+        let mut candidates: Vec<SymbolId> = scoping
+            .scope_descendants_from_root()
+            .flat_map(|scope| scoping.iter_bindings_in(scope))
             .filter(|symbol| scoping.symbol_name(*symbol) == request.old)
             .collect();
-        let symbol = match bound.as_slice() {
+        candidates.sort_by_key(|symbol| scoping.symbol_span(*symbol).start);
+        let symbol = match candidates.as_slice() {
             [] => return Err(not_found(request)),
             [one] => *one,
-            many => {
-                let sites = many
-                    .iter()
-                    .map(|other| to_span(scoping.symbol_span(*other)))
-                    .collect();
-                return Err(ambiguous(request, sites));
-            }
+            many => select_by_at(scoping, many, request.at).ok_or_else(|| {
+                ambiguous(
+                    request,
+                    many.iter()
+                        .map(|s| to_span(scoping.symbol_span(*s)))
+                        .collect(),
+                )
+            })?,
         };
         // A TS merged declaration (`interface Foo` + `const Foo`) is ONE symbol
         // wearing several binding identifiers, so it is ambiguous too.
@@ -54,6 +57,14 @@ impl Rename for TsSource {
             let mut sites = vec![to_span(scoping.symbol_span(symbol))];
             sites.extend(redeclarations.iter().map(|other| to_span(other.span)));
             return Err(ambiguous(request, sites));
+        }
+
+        if let Some((seat, form)) = earliest_dynamic_seat(&program, &request.old) {
+            return Err(RenameStop::Dynamic {
+                file: request.anchor.clone(),
+                span: to_span(seat),
+                form,
+            });
         }
 
         let mut refs = vec![SymbolRef {
@@ -102,6 +113,79 @@ fn not_found(request: &RenameRequest) -> RenameStop {
     RenameStop::NotFound {
         anchor: request.anchor.clone(),
         old: request.old.clone(),
+    }
+}
+
+/// `--at` picks the declaration the byte offset lands in. When the offset sits
+/// between declarations, the nearest declaration opening at or before it wins,
+/// so an offset anywhere inside a declaration body still selects it. `None`
+/// means the caller reports every candidate as ambiguous.
+fn select_by_at(
+    scoping: &oxc_semantic::Scoping,
+    candidates: &[SymbolId],
+    at: Option<u32>,
+) -> Option<SymbolId> {
+    let at = at?;
+    let inside: Vec<SymbolId> = candidates
+        .iter()
+        .copied()
+        .filter(|symbol| {
+            let span = scoping.symbol_span(*symbol);
+            span.start <= at && at < span.end
+        })
+        .collect();
+    match inside.as_slice() {
+        [one] => Some(*one),
+        [] => candidates
+            .iter()
+            .copied()
+            .filter(|symbol| scoping.symbol_span(*symbol).start <= at)
+            .max_by_key(|symbol| scoping.symbol_span(*symbol).start),
+        _ => None,
+    }
+}
+
+/// One runtime-only seat: the bytes, and how they reach the symbol. A seat is
+/// any member access spelling `old` that the scope plane never binds, so a
+/// rename that skipped it could silently miss the real call site.
+type DynamicSeat = (oxc_span::Span, &'static str);
+
+/// The earliest seat in the anchor, if any. `RenameStop::Dynamic` carries one
+/// span, so the stop reports one seat per run; the earliest is the one a
+/// `--at`-style repair would meet first.
+fn earliest_dynamic_seat(program: &Program<'_>, old: &str) -> Option<DynamicSeat> {
+    let mut scan = DynamicScan {
+        old,
+        seats: Vec::new(),
+    };
+    scan.visit_program(program);
+    let mut seats = scan.seats;
+    seats.sort_by_key(|(span, _)| span.start);
+    seats.into_iter().next()
+}
+
+struct DynamicScan<'a> {
+    old: &'a str,
+    seats: Vec<DynamicSeat>,
+}
+
+impl<'a> Visit<'a> for DynamicScan<'a> {
+    fn visit_computed_member_expression(&mut self, expression: &ts::ComputedMemberExpression<'a>) {
+        if let ts::Expression::StringLiteral(literal) = &expression.expression {
+            if literal.value.as_str() == self.old {
+                self.seats
+                    .push((expression.expression.span(), "computed member"));
+            }
+        }
+        self.visit_expression(&expression.object);
+    }
+
+    fn visit_static_member_expression(&mut self, expression: &ts::StaticMemberExpression<'a>) {
+        if expression.property.name.as_str() == self.old {
+            self.seats
+                .push((expression.property.span(), "member access"));
+        }
+        self.visit_expression(&expression.object);
     }
 }
 
@@ -164,8 +248,7 @@ fn program_exports(program: &Program<'_>, name: &str) -> bool {
     })
 }
 
-/// Whether one exported declaration binds `name` at its top level. A destructured
-/// binding pattern is not reached here; it is an arc-2 `Inexact` seat.
+/// Whether one exported declaration binds `name` at its top level.
 fn declares(declaration: &ts::Declaration<'_>, name: &str) -> bool {
     match declaration {
         ts::Declaration::VariableDeclaration(var) => var.declarations.iter().any(|declarator| {

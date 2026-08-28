@@ -304,7 +304,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let argv: Vec<String> = std::env::args().skip(1).collect();
         if let Err(error) = source_rename::run(argv) {
             eprintln!("{error}");
-            std::process::exit(2);
+            std::process::exit(error.exit);
         }
         return Ok(());
     }
