@@ -20,7 +20,7 @@ use crate::lang::extract_lang::ExtractLang;
 use crate::lang::fact::FactSet;
 use crate::move_cx::{dirname, join_rel, relative_between, MoveCx};
 use crate::project::extract_pool;
-use crate::types::{ImportRef, ImportRefKind, Rehome, Respell, Span};
+use crate::types::{ImportRef, ImportRefKind, Rehome, RehomeShim, Respell, Span};
 
 /// The rule is data, next to the code, and rides in the binary so a move needs
 /// no file beside it.
@@ -161,7 +161,9 @@ impl Rehome for PrologSource {
             receipt: None,
         })
     }
+}
 
+impl RehomeShim for PrologSource {
     /// A module wearing the old path that reexports the new one, so every
     /// importer this run did not rewrite still loads.
     fn shim(&self, cx: &MoveCx, old: &str, new: &str) -> Option<String> {

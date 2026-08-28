@@ -16,7 +16,9 @@ use crate::lang::ts_paths::{ts_path_literals, TsPathLiteral};
 use crate::lang::ts_resolve::{respell, TsResolver};
 use crate::move_cx::{dirname, join_rel, relative_between, MoveCx};
 use crate::project::extract_pool;
-use crate::types::{ImportRef, ImportRefKind, Rehome, Respell, Span};
+use crate::types::{
+    ImportRef, ImportRefKind, Rehome, RehomeManifests, RehomeTextSpellings, Respell, Span,
+};
 
 /// Emitted output whose specifiers mirror the source tree's. The corpus walk
 /// keeps it (a `dist/package.json` is still a manifest); the parse does not.
@@ -78,7 +80,9 @@ impl Rehome for TsSource {
             receipt,
         })
     }
+}
 
+impl RehomeManifests for TsSource {
     fn manifests(&self, cx: &MoveCx) -> Vec<String> {
         cx.files()
             .iter()
@@ -113,7 +117,9 @@ impl Rehome for TsSource {
         }
         refs
     }
+}
 
+impl RehomeTextSpellings for TsSource {
     fn text_spellings(&self, cx: &MoveCx, old: &str, new: &str) -> Vec<(String, String)> {
         let manifests = self.manifests(cx);
         let package_dirs: Vec<&str> = manifests.iter().map(|rel| dirname(rel)).collect();
