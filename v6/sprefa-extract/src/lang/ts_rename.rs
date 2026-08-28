@@ -42,16 +42,33 @@ impl Rename for TsSource {
         let semantic = SemanticBuilder::new().build(&program).semantic;
         let scoping = semantic.scoping();
 
-        let mut candidates: Vec<SymbolId> = scoping
+        let mut every: Vec<SymbolId> = scoping
             .scope_descendants_from_root()
             .flat_map(|scope| scoping.iter_bindings_in(scope))
             .filter(|symbol| scoping.symbol_name(*symbol) == request.old)
             .collect();
-        candidates.sort_by_key(|symbol| scoping.symbol_span(*symbol).start);
-        let symbol = match candidates.as_slice() {
-            [] => return Err(not_found(request)),
-            [one] => *one,
-            many => select_by_at(scoping, many, request.at).ok_or_else(|| {
+        every.sort_by_key(|symbol| scoping.symbol_span(*symbol).start);
+        // A binding in the anchor's root scope is the one an importer can reach;
+        // a same-named binding nested in a function body shadows nothing outside
+        // its block. Root wins without `--at`; `--at` still selects among all.
+        let root = scoping.root_scope_id();
+        let at_root: Vec<SymbolId> = every
+            .iter()
+            .copied()
+            .filter(|symbol| scoping.symbol_scope_id(*symbol) == root)
+            .collect();
+        let symbol = match (request.at, at_root.as_slice(), every.as_slice()) {
+            (_, _, []) => return Err(not_found(request)),
+            (None, [one], _) | (None, [], [one]) => *one,
+            (None, [], many) | (None, many, _) => {
+                return Err(ambiguous(
+                    request,
+                    many.iter()
+                        .map(|s| to_span(scoping.symbol_span(*s)))
+                        .collect(),
+                ))
+            }
+            (Some(_), _, many) => select_by_at(scoping, many, request.at).ok_or_else(|| {
                 ambiguous(
                     request,
                     many.iter()

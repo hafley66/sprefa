@@ -42,10 +42,30 @@ impl Rename for RustSource {
             .scans
             .get(&request.anchor)
             .ok_or_else(|| not_found(request))?;
-        let declaration = match anchor.decls.as_slice() {
-            [] => return Err(not_found(request)),
-            [one] => one,
-            many => select_by_at(many, request.at)
+        // An item at the anchor's own module root is the one a `use` can reach;
+        // an item nested in a `mod` block or a function body needs `--at`.
+        let at_root: Vec<&Decl> = anchor
+            .decls
+            .iter()
+            .filter(|decl| decl.chain.is_empty() && decl.block.is_none())
+            .collect();
+        let declaration = match (request.at, at_root.as_slice(), anchor.decls.as_slice()) {
+            (_, _, []) => return Err(not_found(request)),
+            (None, [one], _) => *one,
+            (None, [], [one]) => one,
+            (None, [], many) => {
+                return Err(ambiguous(
+                    request,
+                    many.iter().map(|decl| decl.span).collect(),
+                ))
+            }
+            (None, many, _) => {
+                return Err(ambiguous(
+                    request,
+                    many.iter().map(|decl| decl.span).collect(),
+                ))
+            }
+            (Some(_), _, many) => select_by_at(many, request.at)
                 .ok_or_else(|| ambiguous(request, many.iter().map(|decl| decl.span).collect()))?,
         };
         let home = corpus.home(&request.anchor);
@@ -184,6 +204,7 @@ impl Corpus {
                 source: &text,
                 line_starts: &line_starts,
                 chain: Vec::new(),
+                blocks: Vec::new(),
                 role: RefRole::TypeRef,
                 out: FileScan::default(),
             };
@@ -279,14 +300,25 @@ impl Corpus {
         let home = self.home(rel);
         let mut ours: BTreeSet<&[String]> = BTreeSet::new();
         let mut shadowed: BTreeSet<&[String]> = BTreeSet::new();
+        let mut shadow_blocks: Vec<Span> = Vec::new();
         let mut globs: BTreeMap<&[String], Vec<Span>> = BTreeMap::new();
 
         for decl in &scan.decls {
-            match anchored {
-                Some(picked) if picked.span == decl.span => ours.insert(&picked.chain),
-                _ => shadowed.insert(&decl.chain),
-            };
+            match (anchored, decl.block) {
+                (Some(picked), _) if picked.span == decl.span => {
+                    ours.insert(&picked.chain);
+                }
+                (_, Some(block)) => shadow_blocks.push(block),
+                (_, None) => {
+                    shadowed.insert(&decl.chain);
+                }
+            }
         }
+        let inside_shadow_block = |span: Span| {
+            shadow_blocks
+                .iter()
+                .any(|block| block.start <= span.start && span.end() <= block.end())
+        };
         for leaf in &scan.uses {
             let reaches = self
                 .resolve(home, &leaf.chain, &leaf.prefix)
@@ -320,7 +352,7 @@ impl Corpus {
                 }
                 continue;
             }
-            if shadowed.contains(path.chain.as_slice()) {
+            if shadowed.contains(path.chain.as_slice()) || inside_shadow_block(path.span) {
                 continue;
             }
             if ours.contains(path.chain.as_slice()) {
@@ -404,6 +436,9 @@ struct Decl {
     span: Span,
     /// Declared in an `impl` or `trait` block, so call sites spell it as a method.
     method: bool,
+    /// The innermost block a function-body item is declared in: it shadows the
+    /// name inside that block only. None = declared at module scope.
+    block: Option<Span>,
 }
 
 /// One `use` clause naming the symbol, or a glob that could reach it.
@@ -443,6 +478,7 @@ struct Scan<'a> {
     source: &'a str,
     line_starts: &'a [u32],
     chain: Vec<String>,
+    blocks: Vec<Span>,
     role: RefRole,
     out: FileScan,
 }
@@ -472,6 +508,7 @@ impl Scan<'_> {
             chain: self.chain.clone(),
             span,
             method,
+            block: self.blocks.last().copied(),
         });
     }
 
@@ -497,6 +534,13 @@ impl<'ast> syn::visit::Visit<'ast> for Scan<'_> {
             self.declare(ident, false);
         }
         syn::visit::visit_item(self, node);
+    }
+
+    fn visit_block(&mut self, node: &'ast syn::Block) {
+        self.blocks
+            .push(syn_span(self.line_starts, node.brace_token.span.join()));
+        syn::visit::visit_block(self, node);
+        self.blocks.pop();
     }
 
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {

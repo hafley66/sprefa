@@ -7,6 +7,10 @@
 //! FAIL-FIRST (arc 2), against the arc-1 binary:
 //!     ambiguous_stops_then_at_selects_the_class ... left: Some(0), right: Some(3)
 //!         (the run renamed the class instead of stopping)
+//! FAIL-FIRST (root wins), against the arc-6 binary:
+//!     commit_renames_the_anchor_file ... exited 3: ambiguous oldName in src/app.ts
+//!     shadowed_inner_binding_needs_no_at ... exited 3: ambiguous Foo in src/app.ts
+//!     nested_only_candidates_stop_then_at_selects ... read fixture dir: NotFound
 //!     commit_renames_the_anchor_file ... exited 2: error: unexpected argument '--at' found
 //!     dry_run_touches_nothing ... exited 2: error: unexpected argument '--at' found
 //!     dynamic_seats_stop_and_write_nothing ... read fixture dir: NotFound
@@ -171,12 +175,11 @@ fn diff_rq(left: &Path, right: &Path) -> Vec<String> {
 #[test]
 fn commit_renames_the_anchor_file() {
     let fixture = fixture("local", "commit");
-    let at = ident_offset("local", "function", "oldName").to_string();
     let stdout = rename_verb(
         &fixture,
         &format!("{ANCHOR}#oldName"),
         "newName",
-        &["--at", &at, "--commit"],
+        &["--commit"],
     );
     assert!(
         stdout.contains(&format!("plan {ANCHOR} oldName -> newName")),
@@ -199,13 +202,7 @@ fn commit_renames_the_anchor_file() {
 #[test]
 fn dry_run_touches_nothing() {
     let fixture = fixture("local", "dry");
-    let at = ident_offset("local", "function", "oldName").to_string();
-    let stdout = rename_verb(
-        &fixture,
-        &format!("{ANCHOR}#oldName"),
-        "newName",
-        &["--at", &at],
-    );
+    let stdout = rename_verb(&fixture, &format!("{ANCHOR}#oldName"), "newName", &[]);
     for line in [
         &format!("root {}", fixture.root.display()),
         &format!("plan {ANCHOR} oldName -> newName"),
@@ -242,12 +239,43 @@ fn unknown_symbol_stops_and_writes_nothing() {
     assert_untouched(&fixture, "local");
 }
 
-/// Two same-named declarations in one file stop the run with BOTH byte offsets
-/// named; `--at <offset of the class>` then renames the class and its uses
-/// only, leaving the function-local `Foo` spelling `Foo`.
+/// A root-scope class plus a function-local `const Foo` is ONE reachable
+/// declaration: the root binding wins without `--at`, and the local `Foo`
+/// spelling stays. `--at <offset of the local>` still selects the local one.
 #[test]
-fn ambiguous_stops_then_at_selects_the_class() {
+fn shadowed_inner_binding_needs_no_at() {
     let case = "stops/ambiguous";
+    let plain = fixture(case, "root");
+    rename_verb(&plain, &format!("{ANCHOR}#Foo"), "Bar", &["--commit"]);
+    let entries = diff_rq(&plain.root, &tree(case, "after"));
+    assert!(
+        entries.is_empty(),
+        "root-wins commit differs from after/:\n{}",
+        entries.join("\n")
+    );
+    let picked = fixture(case, "local");
+    let at = ident_offset(case, "const", "Foo").to_string();
+    let stdout = rename_verb(
+        &picked,
+        &format!("{ANCHOR}#Foo"),
+        "Bar",
+        &["--at", &at, "--commit"],
+    );
+    assert!(
+        stdout.contains("  src/app.ts  2 uses"),
+        "local seat count:\n{stdout}"
+    );
+    let text = std::fs::read_to_string(picked.root.join(ANCHOR)).expect("read anchor");
+    assert!(text.contains("class Foo"), "class must stay:\n{text}");
+    assert!(text.contains("const Bar = 7"), "local must move:\n{text}");
+}
+
+/// Two function-local `const Foo`s and nothing at the root: no binding wins,
+/// the run stops with BOTH byte offsets named, and `--at <offset of the
+/// second>` renames that block only.
+#[test]
+fn nested_only_candidates_stop_then_at_selects() {
+    let case = "stops/nested_ambiguous";
     let stopped_tree = fixture(case, "stop");
     let stopped = stopped_rename_verb(&stopped_tree, &format!("{ANCHOR}#Foo"), "Bar", &[]);
     assert_eq!(
@@ -256,18 +284,18 @@ fn ambiguous_stops_then_at_selects_the_class() {
         "Ambiguous exits 3:\n{}",
         stopped.stderr
     );
-    let class_offset = ident_offset(case, "class", "Foo");
-    let local_offset = ident_offset(case, "const", "Foo");
+    let first = ident_offset(case, "const", "Foo");
+    let text = std::fs::read_to_string(tree(case, "before").join(ANCHOR)).expect("fixture");
+    let second = text.rfind("const Foo").expect("second const") + "const ".len();
     let stderr = stopped.stderr.replace('\n', " ");
     assert!(
-        stderr.contains(&format!("at bytes {local_offset}, {class_offset}"))
-            || stderr.contains(&format!("at bytes {class_offset}, {local_offset}")),
-        "Ambiguous message must name both offsets {local_offset} and {class_offset}:\n{}",
+        stderr.contains(&format!("at bytes {first}, {second}")),
+        "Ambiguous message must name both offsets {first} and {second}:\n{}",
         stopped.stderr
     );
     assert_untouched(&stopped_tree, case);
     let copy = fixture(case, "select");
-    let at = class_offset.to_string();
+    let at = second.to_string();
     rename_verb(
         &copy,
         &format!("{ANCHOR}#Foo"),
