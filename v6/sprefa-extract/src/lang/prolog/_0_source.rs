@@ -254,11 +254,30 @@ fn walk_data_refs(
     }
 }
 
+/// Statically callable argument positions of the meta-predicates this arm
+/// models. `once/1` executes its goal argument; `catch/3` executes the
+/// protected goal and the recovery goal. Other metacalls (`call/1`,
+/// `findall/3`, `maplist/2+`) keep their contents in `term_arg`: their goals
+/// are usually variables or partial applications, so a name there is data.
+fn meta_callable_arg(name: &str, arity: usize, arg_index: usize) -> bool {
+    match (name, arity) {
+        ("once", 1) => arg_index == 0,
+        ("catch", 3) => arg_index == 0 || arg_index == 2,
+        _ => false,
+    }
+}
+
+/// The `index`-th (`0`-based) `argument` child of a compound term.
+fn argument_at<'a>(node: tree_sitter::Node<'a>, index: usize) -> Option<tree_sitter::Node<'a>> {
+    let mut cursor = node.walk();
+    let args: Vec<_> = node.children_by_field_name("argument", &mut cursor).collect();
+    args.into_iter().nth(index)
+}
+
 /// Goal-position references: the top-level body conjuncts that are executed,
-/// plus the data compounds nested inside their arguments (`term_arg`). Metacall
-/// arguments (call/findall/maplist) are NOT unwrapped as goals; their contents
-/// fall through to `term_arg`, matching the existing walker, which models no
-/// metacalls.
+/// plus the data compounds nested inside their arguments (`term_arg`). The
+/// callable arguments of `once/1` and `catch/3` are unwrapped as goals; every
+/// other metacall argument (call/findall/maplist) falls through to `term_arg`.
 fn walk_goals_refs(
     node: tree_sitter::Node,
     src: &[u8],
@@ -319,10 +338,15 @@ fn walk_goals_refs(
                     strings,
                     sink,
                 );
-            }
-            let mut cursor = node.walk();
-            for arg in node.children_by_field_name("argument", &mut cursor) {
-                walk_data_refs(arg, RefPosition::TermArg, src, strings, sink);
+                for arg_index in 0..arity {
+                    if let Some(arg) = argument_at(node, arg_index) {
+                        if meta_callable_arg(&name, arity, arg_index) {
+                            walk_goals_refs(arg, src, strings, sink);
+                        } else {
+                            walk_data_refs(arg, RefPosition::TermArg, src, strings, sink);
+                        }
+                    }
+                }
             }
         }
         "atom" | "unquoted_atom" | "quoted_atom" | "operator_atom" => {
@@ -632,10 +656,15 @@ fn walk_goals(
                     strings,
                     sink,
                 );
-            }
-            let mut cursor = node.walk();
-            for arg in node.children_by_field_name("argument", &mut cursor) {
-                walk_data_refs(arg, RefPosition::TermArg, src, strings, sink);
+                for arg_index in 0..arity {
+                    if let Some(arg) = argument_at(node, arg_index) {
+                        if meta_callable_arg(&name, arity, arg_index) {
+                            walk_goals(arg, src, dcg, strings, sink, module);
+                        } else {
+                            walk_data_refs(arg, RefPosition::TermArg, src, strings, sink);
+                        }
+                    }
+                }
             }
         }
         "atom" | "unquoted_atom" | "quoted_atom" | "operator_atom" => {
