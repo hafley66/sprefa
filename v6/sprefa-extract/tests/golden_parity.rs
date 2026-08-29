@@ -34,8 +34,8 @@ use sprefa_extract::{
     build_def_index, byte_range, containing_def_site, content_id_of, covering_def, definition_of,
     dispatch, flatten, join_documents, site_occurrence, CallEdgeKind, ContentId, ExtractOutput,
     FamilyMask, FamilyTag, FileSet, FlatFact, GoSource, IndexBag, ManifestMap, ProjectCx,
-    ProjectDigest, PythonSource, Resolve, RustSource, ScipGo, ScipRust, ScipSource, ScipTypescript, Span,
-    TsSource, TypeF, ZERO_CONTENT_ID,
+    ProjectDigest, PythonSource, Resolve, RustSource, ScipGo, ScipRust, ScipSource, ScipTypescript,
+    Span, TsSource, TypeF, ZERO_CONTENT_ID,
 };
 
 struct Case {
@@ -783,6 +783,8 @@ fn deferred_and_v6_only_ledger() {
                             // A value reference has no site, so no occurrence
                             // for the scip ratchet to compare against.
                             CallEdgeKind::ValueRef => {}
+                            // The module plane binds a NAME, not an occurrence.
+                            CallEdgeKind::ImportResolve => name_resolve += 1,
                         }
                     }
                 }
@@ -794,6 +796,8 @@ fn deferred_and_v6_only_ledger() {
                             // A value reference has no site, so no occurrence
                             // for the scip ratchet to compare against.
                             CallEdgeKind::ValueRef => {}
+                            // The module plane binds a NAME, not an occurrence.
+                            CallEdgeKind::ImportResolve => name_resolve += 1,
                         }
                     }
                 }
@@ -805,6 +809,8 @@ fn deferred_and_v6_only_ledger() {
                             // A value reference has no site, so no occurrence
                             // for the scip ratchet to compare against.
                             CallEdgeKind::ValueRef => {}
+                            // The module plane binds a NAME, not an occurrence.
+                            CallEdgeKind::ImportResolve => name_resolve += 1,
                         }
                     }
                 }
@@ -1041,6 +1047,9 @@ fn call_resolve_scip_ratchet_ts() {
                 // A value reference is not a call site: no occurrence, so the
                 // scip ratchet has nothing to classify it against.
                 (Some((_, _, CallEdgeKind::ValueRef)), _) => {}
+                // The twin re-derives the NAME-MATCH leg only, so it mints no
+                // import_resolve edge for the ratchet to classify.
+                (Some((_, _, CallEdgeKind::ImportResolve)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(
@@ -1338,6 +1347,9 @@ fn call_resolve_scip_ratchet_go() {
                 // A value reference is not a call site: no occurrence, so the
                 // scip ratchet has nothing to classify it against.
                 (Some((_, _, CallEdgeKind::ValueRef)), _) => {}
+                // The twin re-derives the NAME-MATCH leg only, so it mints no
+                // import_resolve edge for the ratchet to classify.
+                (Some((_, _, CallEdgeKind::ImportResolve)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(
@@ -1625,6 +1637,9 @@ fn call_resolve_scip_ratchet_rust() {
                 // A value reference is not a call site: no occurrence, so the
                 // scip ratchet has nothing to classify it against.
                 (Some((_, _, CallEdgeKind::ValueRef)), _) => {}
+                // The twin re-derives the NAME-MATCH leg only, so it mints no
+                // import_resolve edge for the ratchet to classify.
+                (Some((_, _, CallEdgeKind::ImportResolve)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(
