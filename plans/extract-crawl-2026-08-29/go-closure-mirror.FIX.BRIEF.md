@@ -8,7 +8,7 @@ arm mirrors every `closure@<n>`-caller edge onto the enclosing fn,
 
 ## First action
 ```
-git merge --ff-only df95406ad5ad58d59c2683c02615088ec31f3158
+git merge --ff-only abb64ef46615f92e8d05430983114ad6af581647
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Binary: `v6/sprefa-extract/target/release/extract` in YOUR worktree.
