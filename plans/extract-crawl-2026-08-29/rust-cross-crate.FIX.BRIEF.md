@@ -10,7 +10,7 @@ by a `use`) and 65,992 as `no_corpus_def`. Corpus:
 
 ## First action
 ```
-git merge --ff-only eda356c419dbb911474189582ebe866e5e233ebd
+git merge --ff-only 7a1ff9de2b3a7efb1047f73153bccca7d7dd64f2
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Binary: `v6/sprefa-extract/target/release/extract` in YOUR worktree.
