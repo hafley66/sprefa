@@ -959,6 +959,39 @@ fn go_import_qualifier<'a>(
 // Receiver types (CallFAux.receivers): `x.M()` binds through x's declared
 // type T; `:=` from a call result is Inferred, a rebind conflict is Ambiguous.
 
+/// Phase-1 record of every `x := f()` / `var x = f()` binding site plus every
+/// receiver site whose operand's binding came from one. Keyed by spans, so the
+/// resolve phase can join it to the call-site stream in source order and give
+/// each name the callee's declared result type (one hop, no fixpoint).
+#[derive(Default)]
+struct GoBindPlan {
+    /// rhs call START byte -> (enclosing top-level fn span, bound names in
+    /// order). A call site's span is its function part, whose start is the
+    /// call's own start for both `f()` and `recv.M()`; the key is start-only.
+    binds: HashMap<u32, ((u32, u32), Vec<String>)>,
+    /// receiver site span -> (enclosing top-level fn span, the operand name).
+    inferred_recv: HashMap<(u32, u32), ((u32, u32), String)>,
+}
+
+/// The per-process plan cache, keyed by content (the extraction cache never
+/// skips the first extraction of a process, so every resolved file has a row).
+fn plan_cache() -> &'static Mutex<HashMap<ContentId, Arc<GoBindPlan>>> {
+    static CACHE: OnceLock<Mutex<HashMap<ContentId, Arc<GoBindPlan>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn go_bind_plan_of(blob: &ContentId) -> Option<Arc<GoBindPlan>> {
+    let guard = plan_cache().lock().unwrap_or_else(|poison| poison.into_inner());
+    guard.get(blob).cloned()
+}
+
+fn go_bind_plan_store(blob: ContentId, plan: GoBindPlan) {
+    let mut guard = plan_cache()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    guard.insert(blob, Arc::new(plan));
+}
+
 /// A declared type, unwrapped one level. `Indexable` is a slice/array/map's
 /// element/value type, reachable only via `s[i]`, never through `s` itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1231,6 +1264,8 @@ fn go_walk_receivers(
     imports: &HashMap<String, String>,
     field_types: &HashMap<(String, String), DeclType>,
     out: &mut Vec<(Span, TypeBinding)>,
+    plan: &mut GoBindPlan,
+    top: (u32, u32),
 ) {
     match node.kind() {
         "block"
@@ -1241,7 +1276,7 @@ fn go_walk_receivers(
             scope.push(HashMap::new());
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
-                go_walk_receivers(child, src, scope, imports, field_types, out);
+                go_walk_receivers(child, src, scope, imports, field_types, out, plan, top);
             }
             scope.pop();
         }
@@ -1270,7 +1305,7 @@ fn go_walk_receivers(
                         TypeBinding::Decl(DeclType::Named(t)),
                     );
                 }
-                go_walk_receivers(right, src, scope, imports, field_types, out);
+                go_walk_receivers(right, src, scope, imports, field_types, out, plan, top);
             }
         }
         "var_declaration" => {
@@ -1291,9 +1326,25 @@ fn go_walk_receivers(
                             );
                         }
                     }
+                } else if let Some(value) = spec.child_by_field_name("value") {
+                    if value.kind() == "call_expression" {
+                        let mut nc = spec.walk();
+                        let names: Vec<String> = spec
+                            .children(&mut nc)
+                            .filter(|n| n.kind() == "identifier")
+                            .map(|n| go_text(n, src).to_string())
+                            .collect();
+                        // One name, one call value (`var x = f()`); a grouped
+                        // `var a, b = f(), g()` pairs positionally and is
+                        // out of this tier.
+                        if let [name] = names.as_slice() {
+                            scope_insert(scope, name.clone(), TypeBinding::Inferred);
+                            plan.binds.insert(node_span(value).start, (top, names));
+                        }
+                    }
                 }
                 if let Some(value) = spec.child_by_field_name("value") {
-                    go_walk_receivers(value, src, scope, imports, field_types, out);
+                    go_walk_receivers(value, src, scope, imports, field_types, out, plan, top);
                 }
             }
         }
@@ -1314,9 +1365,19 @@ fn go_walk_receivers(
                         if let Some(binding) = go_binding_of_rhs(*rhs, src, scope) {
                             scope_insert(scope, go_text(*name_node, src).to_string(), binding);
                         }
+                        if rhs.kind() == "call_expression" {
+                            plan.binds.insert(
+                                node_span(*rhs).start,
+                                (top, vec![go_text(*name_node, src).to_string()]),
+                            );
+                        }
                     }
                 } else if let [rhs] = rhss.as_slice() {
                     if rhs.kind() == "call_expression" {
+                        let bound: Vec<String> = names
+                            .iter()
+                            .map(|name_node| go_text(*name_node, src).to_string())
+                            .collect();
                         for name_node in &names {
                             scope_insert(
                                 scope,
@@ -1324,9 +1385,10 @@ fn go_walk_receivers(
                                 TypeBinding::Inferred,
                             );
                         }
+                        plan.binds.insert(node_span(*rhs).start, (top, bound));
                     }
                 }
-                go_walk_receivers(right, src, scope, imports, field_types, out);
+                go_walk_receivers(right, src, scope, imports, field_types, out, plan, top);
             }
         }
         "func_literal" => {
@@ -1335,7 +1397,7 @@ fn go_walk_receivers(
                 go_seed_params(params, src, scope);
             }
             if let Some(body) = node.child_by_field_name("body") {
-                go_walk_receivers(body, src, scope, imports, field_types, out);
+                go_walk_receivers(body, src, scope, imports, field_types, out, plan, top);
             }
             scope.pop();
         }
@@ -1349,6 +1411,15 @@ fn go_walk_receivers(
                             if let Some(binding) =
                                 go_receiver_binding(operand, src, scope, field_types)
                             {
+                                if binding == TypeBinding::Inferred
+                                    && operand.kind() == "identifier"
+                                {
+                                    let span = node_span(func);
+                                    plan.inferred_recv.insert(
+                                        (span.start, span.end()),
+                                        (top, go_text(operand, src).to_string()),
+                                    );
+                                }
                                 out.push((node_span(func), binding));
                             }
                         }
@@ -1357,20 +1428,21 @@ fn go_walk_receivers(
             }
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
-                go_walk_receivers(child, src, scope, imports, field_types, out);
+                go_walk_receivers(child, src, scope, imports, field_types, out, plan, top);
             }
         }
         _ => {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
-                go_walk_receivers(child, src, scope, imports, field_types, out);
+                go_walk_receivers(child, src, scope, imports, field_types, out, plan, top);
             }
         }
     }
 }
 
 /// Drive `go_walk_receivers` over every top-level function/method, appending
-/// one `ReceiverBinding` per traceable call site to `sink.aux.receivers`.
+/// one `ReceiverBinding` per traceable call site to `sink.aux.receivers`, and
+/// store the file's bind plan for the resolve phase (keyed by content).
 fn go_collect_receivers(
     root: tree_sitter::Node,
     src: &[u8],
@@ -1379,6 +1451,7 @@ fn go_collect_receivers(
     imports: &HashMap<String, String>,
     field_types: &HashMap<(String, String), DeclType>,
 ) {
+    let mut plan = GoBindPlan::default();
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
         if !matches!(child.kind(), "function_declaration" | "method_declaration") {
@@ -1387,9 +1460,13 @@ fn go_collect_receivers(
         let Some(body) = child.child_by_field_name("body") else {
             continue;
         };
+        let top = {
+            let span = def_span(child);
+            (span.start, span.end())
+        };
         let mut scope = go_seed_top_scope(child, src);
         let mut out = Vec::new();
-        go_walk_receivers(body, src, &mut scope, imports, field_types, &mut out);
+        go_walk_receivers(body, src, &mut scope, imports, field_types, &mut out, &mut plan, top);
         for (span, binding) in out {
             let outcome = match binding {
                 TypeBinding::Decl(DeclType::Named(name)) => {
@@ -1405,6 +1482,7 @@ fn go_collect_receivers(
             });
         }
     }
+    go_bind_plan_store(crate::content_id_of(src), plan);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2610,6 +2688,9 @@ fn scip_call_target<'a>(
 struct GoFileFacts {
     owner_of: HashMap<(u32, u32), String>,
     methods_of: HashMap<String, BTreeSet<String>>,
+    /// def_span -> the declared result types in order (pointer-stripped, type
+    /// arguments cut). Feeds the one-hop return-type inference of `x := f()`.
+    ret_of: HashMap<(u32, u32), Vec<String>>,
 }
 
 fn go_file_facts(blob: &ContentId, path: &str) -> Arc<GoFileFacts> {
@@ -2628,6 +2709,7 @@ fn go_parse_file_facts(path: &str) -> GoFileFacts {
     let mut facts = GoFileFacts {
         owner_of: HashMap::new(),
         methods_of: HashMap::new(),
+        ret_of: HashMap::new(),
     };
     let Ok(bytes) = std::fs::read(path) else {
         return facts;
@@ -2661,7 +2743,11 @@ fn go_collect_file_facts(node: tree_sitter::Node, src: &[u8], facts: &mut GoFile
                         .entry(owner)
                         .or_default()
                         .insert(go_text(name_node, src).to_string());
+                    facts.insert_ret(child, src);
                 }
+            }
+            "function_declaration" => {
+                facts.insert_ret(child, src);
             }
             "type_declaration" => {
                 let mut sc = child.walk();
@@ -2672,6 +2758,59 @@ fn go_collect_file_facts(node: tree_sitter::Node, src: &[u8], facts: &mut GoFile
             _ => {}
         }
         go_collect_file_facts(child, src, facts);
+    }
+}
+
+impl GoFileFacts {
+    /// The callable's ordered declared result types, keyed by its def span.
+    /// A `*T` names T; type arguments are cut (`Wrapper[T]` -> `Wrapper`); a
+    /// func literal or a type-parameter result never lands here.
+    fn insert_ret(&mut self, decl: tree_sitter::Node, src: &[u8]) {
+        let Some(result) = decl.child_by_field_name("result") else {
+            return;
+        };
+        let span = def_span(decl);
+        let mut rets = Vec::new();
+        if result.kind() == "parameter_list" {
+            let mut cursor = result.walk();
+            for param in result.children(&mut cursor) {
+                if let Some(ty) = param
+                    .child_by_field_name("type")
+                    .filter(|_| matches!(param.kind(), "parameter_declaration"))
+                {
+                    rets.push(go_named_type_text(ty, src));
+                }
+            }
+        } else {
+            rets.push(go_named_type_text(result, src));
+        }
+        rets.retain(|t| !t.is_empty());
+        if !rets.is_empty() {
+            self.ret_of.insert((span.start, span.end()), rets);
+        }
+    }
+}
+
+/// The declared type's name text: `*T` -> `T`, `pkg.T` kept whole, type
+/// arguments cut, anything else (array, func, chan, interface literal) empty.
+fn go_named_type_text(ty: tree_sitter::Node, src: &[u8]) -> String {
+    let ty = if ty.kind() == "pointer_type" {
+        match ty.named_child(0) {
+            Some(inner) => inner,
+            None => return String::new(),
+        }
+    } else {
+        ty
+    };
+    match ty.kind() {
+        "type_identifier" | "qualified_type" | "generic_type" => {
+            let text = go_text(ty, src);
+            match text.split_once('[') {
+                Some((base, _)) => base.to_string(),
+                None => text.to_string(),
+            }
+        }
+        _ => String::new(),
     }
 }
 
@@ -2703,6 +2842,42 @@ fn go_collect_interface_facts(spec: tree_sitter::Node, src: &[u8], facts: &mut G
             .entry(iname.clone())
             .or_default()
             .insert(go_text(mname, src).to_string());
+    }
+}
+
+/// A bound result type from another package is stored qualified by the
+/// caller's own import of that package (`Sub` -> `sub.Sub`), so the receiver
+/// leg's directory lookup can find it. Same-package results stay bare.
+fn go_qualify_bound_type(
+    module: &Option<GoModule>,
+    paths: Option<&PathIndex>,
+    imports: &HashMap<String, String>,
+    own: Option<&ContentId>,
+    dst_blob: &ContentId,
+    type_name: &str,
+) -> String {
+    let (Some(module), Some(paths)) = (module, paths) else {
+        return type_name.to_string();
+    };
+    let (Some(dst_path), Some(own_path)) = (paths.get(dst_blob), own.and_then(|b| paths.get(b)))
+    else {
+        return type_name.to_string();
+    };
+    let (Some(dst_dir), Some(own_dir)) = (Path::new(dst_path).parent(), Path::new(own_path).parent())
+    else {
+        return type_name.to_string();
+    };
+    if same_dir(dst_dir, own_dir) {
+        return type_name.to_string();
+    }
+    let qualifier = imports.iter().find_map(|(qualifier, import)| {
+        go_package_dir(module, import)
+            .filter(|dir| same_dir(dir, dst_dir))
+            .map(|_| qualifier)
+    });
+    match qualifier {
+        Some(q) => format!("{q}.{type_name}"),
+        None => type_name.to_string(),
     }
 }
 
@@ -2789,8 +2964,19 @@ impl Resolve<CallF> for GoSource {
                 Some((index, joined, doc_ix))
             });
         let imports = go_import_bindings(call, &output.strings);
-        let mut edges = Vec::new();
-        for site in &call.aux.sites {
+        // The one-hop return-type inference: phase 1 recorded every `x := f()`
+        // bind site and every receiver site whose operand it bound. Resolution
+        // runs in SOURCE ORDER (a chain `b := a.M()` needs `a` bound first), so
+        // the sites are processed sorted and the edges emitted in file order.
+        let plan = own.as_ref().and_then(|blob| go_bind_plan_of(blob));
+        let sites = &call.aux.sites;
+        let mut order: Vec<usize> = (0..sites.len()).collect();
+        order.sort_by_key(|&ix| (sites[ix].span.start, sites[ix].span.end()));
+        let mut bound_types: HashMap<(u32, u32), HashMap<String, String>> = HashMap::new();
+        let mut results: Vec<Option<(NodeRef, ContentId, Span, CallEdgeKind)>> =
+            vec![None; sites.len()];
+        for ix in order {
+            let site = &sites[ix];
             // The caller is the innermost covering CallF def (the 4a
             // caller-binding discipline); a package-level site has no caller
             // node and emits no row.
@@ -2821,7 +3007,30 @@ impl Resolve<CallF> for GoSource {
                     )
                     .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
                 }
-                Some(ReceiverOutcome::Inferred) | Some(ReceiverOutcome::Ambiguous) => None,
+                Some(ReceiverOutcome::Inferred) => {
+                    let bound = plan
+                        .as_ref()
+                        .and_then(|plan| {
+                            plan.inferred_recv.get(&(site.span.start, site.span.end()))
+                        })
+                        .and_then(|(top, var)| {
+                            bound_types.get(top).and_then(|names| names.get(var))
+                        });
+                    match bound {
+                        Some(type_name) => go_receiver_target(
+                            def_index,
+                            paths,
+                            &module,
+                            own.as_ref(),
+                            &imports,
+                            type_name,
+                            callee,
+                        )
+                        .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve)),
+                        None => None,
+                    }
+                }
+                Some(ReceiverOutcome::Ambiguous) => None,
                 None => match site.callee_path.map(|id| output.strings.lookup(id)) {
                     // The import path names ONE directory through the module; the
                     // plane's own directory-scoped, exported-only lookup binds it.
@@ -2869,16 +3078,51 @@ impl Resolve<CallF> for GoSource {
             // (a conversion `Mode(0)`'s type) — one definition, two facet
             // coordinates (the ORACLE entry's "the models differ by
             // construction").
-            let ((dst_blob, dst_span), kind) = match (name_t, scip_t) {
+            let final_t = match (name_t, scip_t) {
                 (Some((blob, span, _)), Some(s)) if blob == s.0 && callee == s.2 => {
-                    ((blob, span), CallEdgeKind::NameResolve)
+                    Some(((blob, span), CallEdgeKind::NameResolve))
                 }
-                (_, Some(s)) => ((s.0, s.1), CallEdgeKind::ScipOverride),
-                (Some((blob, span, kind)), None) => ((blob, span), kind),
-                (None, None) => continue,
+                (_, Some(s)) => Some(((s.0, s.1), CallEdgeKind::ScipOverride)),
+                (Some((blob, span, kind)), None) => Some(((blob, span), kind)),
+                (None, None) => None,
             };
-            edges
-                .push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
+            if let (Some(plan), Some(((dst_blob, dst_span), _))) = (plan.as_ref(), final_t.as_ref())
+            {
+                if let Some((top, names)) = plan.binds.get(&site.span.start) {
+                    let rets = paths
+                        .and_then(|p| p.get(dst_blob))
+                        .map(|path| {
+                            go_file_facts(dst_blob, path)
+                                .ret_of
+                                .get(&(dst_span.start, dst_span.end()))
+                                .cloned()
+                                .unwrap_or_default()
+                        })
+                        .unwrap_or_default();
+                    let entry = bound_types.entry(*top).or_default();
+                    for (slot, name) in names.iter().enumerate() {
+                        if let Some(t) = rets.get(slot) {
+                            let t = go_qualify_bound_type(
+                                &module,
+                                paths,
+                                &imports,
+                                own.as_ref(),
+                                dst_blob,
+                                t,
+                            );
+                            entry.insert(name.clone(), t);
+                        }
+                    }
+                }
+            }
+            results[ix] = final_t.map(|((blob, span), kind)| (caller, blob, span, kind));
+        }
+        let mut edges = Vec::new();
+        for (site, result) in sites.iter().zip(results) {
+            let Some((caller, dst_blob, dst_span, kind)) = result else {
+                continue;
+            };
+            edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
         }
         let interfaces: BTreeSet<NameId> = output
             .types
