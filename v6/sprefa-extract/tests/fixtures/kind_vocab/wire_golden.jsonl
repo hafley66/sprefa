@@ -4583,8 +4583,10 @@
 {"record":"site","family":"call","span":{"start":202,"end":206},"callee":"Cell","callee_path":null}
 {"record":"site","family":"call","span":{"start":207,"end":210},"callee":"add","callee_path":null}
 {"record":"site","family":"call","span":{"start":234,"end":241},"callee":"add","callee_path":null}
+{"record":"site","family":"call","span":{"start":346,"end":347},"callee":"compareTo","callee_path":null}
 {"record":"site","family":"call","span":{"start":373,"end":376},"callee":"add","callee_path":null}
 {"record":"site","family":"call","span":{"start":404,"end":407},"callee":"add","callee_path":null}
+{"record":"site","family":"call","span":{"start":475,"end":476},"callee":"plus","callee_path":null}
 {"record":"node","family":"df","span":{"start":43,"end":47},"kind":"param","name":"rows"}
 {"record":"node","family":"df","span":{"start":60,"end":64},"kind":"param","name":"cols"}
 {"record":"node","family":"df","span":{"start":99,"end":102},"kind":"let_bind","name":"out"}
@@ -7664,7 +7666,9 @@
 {"record":"site","family":"call","span":{"start":1050,"end":1053},"callee":"Cfg","callee_path":null}
 {"record":"site","family":"call","span":{"start":1113,"end":1117},"callee":"pick","callee_path":null}
 {"record":"site","family":"call","span":{"start":1230,"end":1237},"callee":"fold","callee_path":null}
+{"record":"site","family":"call","span":{"start":1257,"end":1258},"callee":"plus","callee_path":null}
 {"record":"site","family":"call","span":{"start":1281,"end":1287},"callee":"map","callee_path":null}
+{"record":"site","family":"call","span":{"start":1293,"end":1294},"callee":"plus","callee_path":null}
 {"record":"node","family":"df","span":{"start":834,"end":836},"kind":"param","name":"id"}
 {"record":"node","family":"df","span":{"start":868,"end":873},"kind":"let_bind","name":"found"}
 {"record":"node","family":"df","span":{"start":876,"end":881},"kind":"var_read","name":"store"}
