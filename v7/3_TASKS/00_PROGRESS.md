@@ -193,7 +193,7 @@ Milestone 3 (resolve, check, graph):
   edge. Kind is not encoded inside `node/2` and no `edge(Id, kind, Kind,
   Index)` row exists; classification-as-edge stays open.
 - Added `check_datalog/4` to `v7/1_DATALOG/0_basement.pl`. The module now has
-  560 nonblank, noncomment lines and still exports only the two production
+  559 nonblank, noncomment lines and still exports only the two production
   entry points.
 - Resolution walks local owner edges, then reverse binding edges to containing
   owners, and resolves `int`, `text`, `any`, and `type` at a module owner to
