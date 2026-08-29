@@ -162,8 +162,9 @@ KIND VOCABULARIES (the `kind` field)
   const kind  lit (cooked literal) | template (raw source slice, holes intact)
   sig slot    param | ret
   unresolved reason  dynamic-import | computed-member-call | spread-call-args
-                    (phase 1) | no_corpus_def | ambiguous (--resolve, one row
-                    per call site the resolve arm dropped)
+                    (phase 1) | no_corpus_def | ambiguous | builtin | inferred |
+                    external (--resolve, one row per call site or import spec
+                    the resolve arm dropped)
   specifier kind    named | default | namespace | side_effect | reexport |
                     include | reexport_module | dynamic_import | require
   file_edge kind    the specifier kind that bound the crossing, or `unknown`
@@ -259,9 +260,15 @@ MODULE PLANE (--resolve)
   a::*` globs (ambiguous on disagreement, precedence namespace > star >
   indirect > local, `default` never occurs), and `use a::b;` where `b` is a
   module rather than an item (namespace). A local def always shadows an
-  import. The go arm takes the same resolved_import row shape when its plane
-  lands; it emits none today, so a go corpus produces no row here and its
-  call edges stay kind=name_resolve.
+  import. go runs its own directory-scoped plane (`src/lang/go_modules.rs`):
+  each import spec resolves to the target directory's REAL package name (its
+  `package` clause, never the import path's last segment), kind=local, or
+  kind=namespace for a dot import; an unresolvable directory emits an
+  unresolved row reason=external instead. A `pkg.Name` call or type reference
+  binds through the plane at kind=import_resolve, exported names only (Go's
+  own capitalization rule); a bare name may still bind through a dot import
+  after same-file/corpus-unique matching declines, so a local declaration
+  always shadows it. Interface and receiver dispatch (PR #554) are unchanged.
 
 PACKAGE EDGES (--package-deps)
   Reads the supplied manifests and emits package_edge rows for the dependency

@@ -26,6 +26,7 @@ use std::sync::{Arc, LazyLock};
 
 use rayon::prelude::*;
 
+use crate::lang::go_modules::{GoModuleFacts, GoModuleIndex};
 use crate::lang::rust_modules::{RustModuleFacts, RustModuleIndex};
 use crate::lang::ts_resolve::{ModuleFacts, TsModuleIndex};
 use crate::lang::{
@@ -166,6 +167,8 @@ pub(crate) struct ProjectInput {
     module: Option<ModuleFacts>,
     /// The rust module plane's own facts, same discipline as `module`.
     rust_module: Option<RustModuleFacts>,
+    /// The go module plane's own facts, same discipline as `module`.
+    go_module: Option<GoModuleFacts>,
 }
 
 /// Run the requested arms over the whole supplied file set and return the flat
@@ -264,6 +267,15 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         ))
         .ok()
         .expect("fresh project module plane (rust)");
+    let go_module_files: Vec<(String, GoModuleFacts)> = inputs
+        .iter()
+        .filter_map(|input| Some((input.path.clone(), input.go_module.clone()?)))
+        .collect();
+    cx.indexes
+        .go_modules
+        .set(GoModuleIndex::build(go_module_files))
+        .ok()
+        .expect("fresh project module plane (go)");
 
     // One resolve per input, shared by the `call` arm and the `flow` join: the
     // N+1 law applied to work rather than to rows.
@@ -556,6 +568,11 @@ fn rust_module_facts_of(path: &str, content: &[u8], wanted: bool) -> Option<Rust
     wanted.then(|| crate::lang::rust_modules::rust_module_facts(path, content))?
 }
 
+/// The go module plane's own facts, same discipline as `module_facts_of`.
+fn go_module_facts_of(path: &str, content: &[u8], wanted: bool) -> Option<GoModuleFacts> {
+    wanted.then(|| crate::lang::go_modules::go_module_facts(path, content))?
+}
+
 /// Extraction thread budget. One worker is held back below the clamp so the
 /// machine stays usable while a corpus extracts.
 fn extract_thread_cap() -> usize {
@@ -620,12 +637,14 @@ fn read_inputs_plain(paths: &[PathBuf], modules: bool) -> Result<Vec<ProjectInpu
                 let output = crate::dispatch(&path, &content, resolve_mask(&path));
                 let module = module_facts_of(&path, &content, modules);
                 let rust_module = rust_module_facts_of(&path, &content, modules);
+                let go_module = go_module_facts_of(&path, &content, modules);
                 Ok(output.map(|output| ProjectInput {
                     blob: content_id_of(&content),
                     path,
                     output,
                     module,
                     rust_module,
+                    go_module,
                 }))
             })
             .collect()
@@ -668,12 +687,14 @@ fn read_inputs_batched(
                 let output = crate::dispatch(&path, content, resolve_mask(&path));
                 let module = module_facts_of(&path, content, modules);
                 let rust_module = rust_module_facts_of(&path, content, modules);
+                let go_module = go_module_facts_of(&path, content, modules);
                 Ok(output.map(|output| ProjectInput {
                     blob: content_id_of(content),
                     path,
                     output,
                     module,
                     rust_module,
+                    go_module,
                 }))
             })
             .collect()
@@ -1084,7 +1105,18 @@ fn import_facts(input: &ProjectInput, cx: &ProjectCx) -> Vec<FlatFact> {
             hops: row.hops,
         })
     });
-    ts_rows.chain(rust_rows).collect()
+    let go_rows = cx.indexes.go_modules.get().into_iter().flat_map(|modules| {
+        modules.bindings(&input.path).into_iter().map(|row| FlatFact::ResolvedImportRow {
+            src_path: input.path.clone(),
+            name: row.name,
+            local: row.local,
+            target_path: row.target_path,
+            target_name: row.target_name,
+            kind: row.kind.as_str().to_string(),
+            hops: 0,
+        })
+    });
+    ts_rows.chain(rust_rows).chain(go_rows).collect()
 }
 
 /// The `unresolved` rows for one input: the sites its `call` arm dropped. The
