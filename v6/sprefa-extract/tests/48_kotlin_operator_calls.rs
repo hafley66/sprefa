@@ -9,6 +9,7 @@ use std::process::Command;
 const FIXTURE: &str = "tests/fixtures/kotlin/corpus_1_infix_operator.kt";
 const DEFS: &str = "tests/fixtures/kotlin/corpus_2_ops_defs.kt";
 const USE: &str = "tests/fixtures/kotlin/corpus_3_ops_use.kt";
+const NOT_IN: &str = "tests/fixtures/kotlin/corpus_4_not_in.kt";
 
 fn run(args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_extract"))
@@ -67,6 +68,25 @@ fn infix_operator_and_invoke_sites_are_minted() {
             (460, 462, "invoke".to_string()), // Box(3)()
             (454, 457, "Box".to_string()),  // Box(3)
         ]
+    );
+}
+
+#[test]
+fn in_and_not_in_both_mint_contains_sites() {
+    let all = sites(&["--family", "call", NOT_IN]);
+    let contains: Vec<(u32, u32)> = all
+        .iter()
+        .filter(|(_, _, callee)| callee == "contains")
+        .map(|(s, e, _)| (*s, *e))
+        .collect();
+    assert_eq!(
+        contains.len(),
+        2,
+        "`1 in s` and `4 !in s` each mint one contains site: {all:?}"
+    );
+    assert!(
+        contains[0].0 < contains[1].0,
+        "sites appear in clause order: {contains:?}"
     );
 }
 
