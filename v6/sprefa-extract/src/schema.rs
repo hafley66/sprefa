@@ -46,6 +46,7 @@ RECORD SHAPES
   record=capture  query=<id>  capture=<name>  text=<string>  start=<u32>  end=<u32>  match_start=<u32>  match_end=<u32>
   record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  caller_site_start=<u32>  caller_site_end=<u32>  kind=<slug>
   record=resolved_type_edge  owner_path=<string>  owner_name=<string|null>  owner_start=<u32>  owner_end=<u32>  target_path=<string>  target_name=<string|null>  kind=<slug>
+  record=resolved_import  src_path=<string>  name=<string>  local=<string>  target_path=<string>  target_name=<string|null>  kind=<slug>  hops=<u32>
   record=flow_edge  family=flow  kind=<slug>  from_blob=<hex>  from={start,end}  to_blob=<hex>  to={start,end}
   record=file_edge  src_path=<string>  dst_path=<string>  kind=<slug>  symbols=<u32>
   record=file_unresolved  src_path=<string>  module=<string>  reason=<slug>
@@ -172,7 +173,15 @@ KIND VOCABULARIES (the `kind` field)
                     node_modules_boundary | absolute_path | relative_unresolved
   package_edge kind  Cargo.toml: normal | dev | build. package.json:
                     normal | dev | peer. go.mod: require | replace.
-  resolved_edge kind       name_resolve | scip_override
+  resolved_edge kind       name_resolve | scip_override | value_ref |
+                    import_resolve (the callee is an import binding, bound
+                    through the language's own module plane)
+  resolved_import kind     local (the target module declares the name) |
+                    indirect (>=1 `export { x } from` hop) | star (>=1
+                    `export *` hop) | namespace (a module object, not one
+                    declaration) | default (the module's default export).
+                    Precedence when several apply: namespace, star, indirect,
+                    default, local.
   resolved_type_edge kind  field | impl | variant | generic | uses | doc_ref
   doc_node kind            heading | code_block
 
@@ -226,6 +235,25 @@ DEPENDENCY EDGES (--scip-deps and --deps)
   another syntactic scanner and NOT correctness: the 9 edges --scip-deps has and
   madge lacks are inferred type references with no import statement, and no
   syntactic resolver can see them.
+
+MODULE PLANE (--resolve)
+  Module resolution is the LANGUAGE'S OWN algorithm, run once per file set as
+  its own plane, and every resolve arm binds an imported name through it.
+  Name-matching a callee across files is the fallback for names with NO import
+  binding, never the first leg.
+  ts/js runs ECMA-262 16.2.1.6.3 ResolveExport over `oxc_parser`'s ModuleRecord,
+  with `oxc_resolver` turning each specifier into a corpus file: local exports,
+  `export { x } from` re-exports (renaming included), `export *` barrels to any
+  depth, `export * as ns`, default exports, `import * as ns` member calls, and
+  the TS forms `import x = require(...)` and `export =`. A re-export cycle
+  terminates on the spec's own resolveSet.
+  It emits one resolved_import row per import binding per file, and the
+  call edges it binds carry kind=import_resolve.
+  Two `export *` arms offering DIFFERENT bindings for one name is the spec's
+  AMBIGUOUS outcome: no edge, and an `unresolved` row with reason=ambiguous.
+  The go and rust arms take the same resolved_import row shape when their
+  planes land; neither emits one today, so a corpus of those languages produces
+  no row here and its call edges stay kind=name_resolve.
 
 PACKAGE EDGES (--package-deps)
   Reads the supplied manifests and emits package_edge rows for the dependency

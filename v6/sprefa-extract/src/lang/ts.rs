@@ -23,6 +23,7 @@ use oxc_ast_visit::Visit as OxcVisit;
 use oxc_span::{GetSpan, SourceType};
 
 use super::astgrep::{AstGrepParser, CstProjector};
+use super::ts_resolve::{ResolvedImport, TsModuleIndex};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
     DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier,
@@ -31,8 +32,8 @@ use crate::family::{
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
 use crate::seams::{
-    corpus_defs, covering_def, def_named, own_blob, DefIndex, DefSite, ParseError,
-    Parser, Project, Resolve,
+    corpus_defs, covering_def, def_named, own_blob, DefIndex, DefSite, ParseError, Parser, Project,
+    Resolve,
 };
 use crate::shape::{ContentId, FamilyTag, NameId, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
@@ -89,7 +90,7 @@ impl Parser for OxcParser {
 
 /// TS/JS source type by extension. `.tsx` -> TSX; `.ts`/`.mts`/`.cts` -> TS;
 /// `.js`/`.jsx`/`.mjs`/`.cjs` -> JSX-enabled JS. (v5 `source_type_for`.)
-fn source_type_for(path: &str) -> Option<SourceType> {
+pub(crate) fn source_type_for(path: &str) -> Option<SourceType> {
     if path.ends_with(".tsx") {
         Some(SourceType::tsx())
     } else if path.ends_with(".ts") || path.ends_with(".mts") || path.ends_with(".cts") {
@@ -3332,6 +3333,14 @@ impl Resolve<TypeF> for TsSource {
             return Vec::new();
         };
         let index = cx.indexes.def_index.get();
+        // A type reference through an import binds the way the module system
+        // binds it, exactly as a call does; the name match is the fallback.
+        let modules = cx
+            .indexes
+            .ts_modules
+            .get()
+            .zip(own_path(output, cx))
+            .filter(|(modules, path)| modules.knows(path));
         let mut edges = Vec::new();
         for candidate in TsSource::type_edge_candidates(output) {
             // src: the TypeF entity at the owner span. Exists by construction
@@ -3344,13 +3353,13 @@ impl Resolve<TypeF> for TsSource {
             else {
                 continue;
             };
-            let (dst_blob, dst_span) = resolve_type_dst(
-                types,
-                &output.strings,
-                index,
-                output.strings.lookup(candidate.to),
-            )
-            .unwrap_or((ZERO_CONTENT_ID, Span::empty()));
+            let referenced = output.strings.lookup(candidate.to);
+            let (dst_blob, dst_span) = modules
+                .and_then(|(modules, path)| module_target(modules, path, referenced, None).ok())
+                .flatten()
+                .map(|found| (found.target_blob, found.target_span))
+                .or_else(|| resolve_type_dst(types, &output.strings, index, referenced))
+                .unwrap_or((ZERO_CONTENT_ID, Span::empty()));
             edges.push(ProjectEdge::new(
                 NodeRef(src_ix as u32),
                 dst_blob,
@@ -3387,6 +3396,62 @@ impl Resolve<TypeF> for TsSource {
 // this increment (the addendum's ts catch-up is DEFERRED to a declared
 // snapshot increment — flagged in the 4c-ii report).
 // ════════════════════════════════════════════════════════════════════════════
+
+/// This file's supplied path, learned the way `own_blob` learns its blob: the
+/// resolve seam carries neither, and the `PathIndex` is the join.
+fn own_path<'a>(output: &ExtractOutput, cx: &'a ProjectCx) -> Option<&'a str> {
+    let blob = own_blob(output, cx.indexes.def_index.get()?)?;
+    cx.indexes.paths.get()?.get(&blob)
+}
+
+/// The sites ResolveExport judged AMBIGUOUS (two `export *` arms disagree).
+/// ONLY those: a row per unbound free name is 23,894 rows over TS 5.9 `src/**`.
+pub fn call_drops(
+    output: &ExtractOutput,
+    cx: &ProjectCx,
+    edges: &[ProjectEdge<CallF>],
+) -> Vec<crate::project::ResolveDrop> {
+    let Some(call) = &output.call else {
+        return Vec::new();
+    };
+    let Some((modules, path)) = cx.indexes.ts_modules.get().zip(own_path(output, cx)) else {
+        return Vec::new();
+    };
+    let bound: BTreeSet<(u32, u32)> = edges
+        .iter()
+        .filter_map(|edge| edge.call_site.map(|span| (span.start, span.end())))
+        .collect();
+    call.aux
+        .sites
+        .iter()
+        .filter(|site| !bound.contains(&(site.span.start, site.span.end())))
+        .filter_map(|site| {
+            let callee = output.strings.lookup(site.callee);
+            let written = site.callee_path.map(|id| output.strings.lookup(id));
+            module_target(modules, path, callee, written)
+                .err()
+                .map(|()| crate::project::ResolveDrop {
+                    span: site.span,
+                    reason: UnresolvedReason::Ambiguous,
+                    detail: written.unwrap_or(callee).to_string(),
+                })
+        })
+        .collect()
+}
+
+/// The module-plane target of one name USED in `path`: an import binding here,
+/// bound through ResolveExport. `Err(())` is the ambiguous star-export outcome.
+fn module_target(
+    modules: &TsModuleIndex,
+    path: &str,
+    name: &str,
+    written: Option<&str>,
+) -> Result<Option<ResolvedImport>, ()> {
+    match written.and_then(|written| written.rsplit_once('.')) {
+        Some((receiver, member)) => modules.member(path, receiver, member),
+        None => modules.bind(path, name),
+    }
+}
 
 impl TsSource {
     /// The name-match target of one callee (the NameResolve leg). Pub so the
@@ -3470,7 +3535,10 @@ fn containing_ts_def(index: &DefIndex, blob: ContentId, span: Span) -> Option<(&
             let better = match best {
                 None => true,
                 Some((_, ref incumbent)) => {
-                    let call_bias = (site.family == FamilyTag::Call, incumbent.family == FamilyTag::Call);
+                    let call_bias = (
+                        site.family == FamilyTag::Call,
+                        incumbent.family == FamilyTag::Call,
+                    );
                     call_bias.0 && !call_bias.1
                         || (call_bias.0 == call_bias.1
                             && site.span.end() - site.span.start
@@ -3489,23 +3557,129 @@ fn containing_ts_def(index: &DefIndex, blob: ContentId, span: Span) -> Option<(&
 /// member call on an unknown receiver spelling one of these names a builtin,
 /// never the corpus function that happens to share the spelling.
 const BUILTIN_MEMBERS: &[&str] = &[
-    "abs", "add", "all", "allSettled", "any", "apply", "assign", "at", "atan2", "bind", "call",
-    "catch", "cbrt", "ceil", "charAt", "charCodeAt", "clear", "clz32", "codePointAt", "concat",
-    "copyWithin", "create", "defineProperties", "defineProperty", "endsWith", "every", "exec",
-    "exp", "fill", "fill", "filter", "finally", "find", "findIndex", "findLast", "findLastIndex",
-    "flat", "flatMap", "floor", "forEach", "freeze", "fromCharCode", "fromCodePoint",
-    "fromEntries", "fround", "getOwnPropertyDescriptor", "getOwnPropertyDescriptors",
-    "getOwnPropertyNames", "getOwnPropertySymbols", "getPrototypeOf", "hasOwnProperty", "hypot",
-    "imul", "includes", "indexOf", "isExtensible", "isFinite", "isFrozen", "isInteger", "isNaN",
-    "isPrototypeOf", "isSafeInteger", "isSealed", "join", "lastIndexOf", "localeCompare", "log",
-    "log10", "log2", "map", "match", "matchAll", "max", "min", "normalize", "padEnd", "padStart",
-    "parse", "parseFloat", "parseInt", "pop", "pow", "preventExtensions",
-    "propertyIsEnumerable", "push", "race", "random", "reduce", "reduceRight", "repeat",
-    "replace", "replaceAll", "reverse", "round", "search", "seal", "setPrototypeOf", "shift",
-    "sign", "slice", "some", "sort", "splice", "sqrt", "startsWith", "stringify", "substr",
-    "substring", "test", "toExponential", "toFixed", "toISOString", "toLocaleString",
-    "toLowerCase", "toPrecision", "toString", "toUpperCase", "trim", "trimEnd", "trimStart",
-    "trunc", "unshift", "valueOf",
+    "abs",
+    "add",
+    "all",
+    "allSettled",
+    "any",
+    "apply",
+    "assign",
+    "at",
+    "atan2",
+    "bind",
+    "call",
+    "catch",
+    "cbrt",
+    "ceil",
+    "charAt",
+    "charCodeAt",
+    "clear",
+    "clz32",
+    "codePointAt",
+    "concat",
+    "copyWithin",
+    "create",
+    "defineProperties",
+    "defineProperty",
+    "endsWith",
+    "every",
+    "exec",
+    "exp",
+    "fill",
+    "fill",
+    "filter",
+    "finally",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "flat",
+    "flatMap",
+    "floor",
+    "forEach",
+    "freeze",
+    "fromCharCode",
+    "fromCodePoint",
+    "fromEntries",
+    "fround",
+    "getOwnPropertyDescriptor",
+    "getOwnPropertyDescriptors",
+    "getOwnPropertyNames",
+    "getOwnPropertySymbols",
+    "getPrototypeOf",
+    "hasOwnProperty",
+    "hypot",
+    "imul",
+    "includes",
+    "indexOf",
+    "isExtensible",
+    "isFinite",
+    "isFrozen",
+    "isInteger",
+    "isNaN",
+    "isPrototypeOf",
+    "isSafeInteger",
+    "isSealed",
+    "join",
+    "lastIndexOf",
+    "localeCompare",
+    "log",
+    "log10",
+    "log2",
+    "map",
+    "match",
+    "matchAll",
+    "max",
+    "min",
+    "normalize",
+    "padEnd",
+    "padStart",
+    "parse",
+    "parseFloat",
+    "parseInt",
+    "pop",
+    "pow",
+    "preventExtensions",
+    "propertyIsEnumerable",
+    "push",
+    "race",
+    "random",
+    "reduce",
+    "reduceRight",
+    "repeat",
+    "replace",
+    "replaceAll",
+    "reverse",
+    "round",
+    "search",
+    "seal",
+    "setPrototypeOf",
+    "shift",
+    "sign",
+    "slice",
+    "some",
+    "sort",
+    "splice",
+    "sqrt",
+    "startsWith",
+    "stringify",
+    "substr",
+    "substring",
+    "test",
+    "toExponential",
+    "toFixed",
+    "toISOString",
+    "toLocaleString",
+    "toLowerCase",
+    "toPrecision",
+    "toString",
+    "toUpperCase",
+    "trim",
+    "trimEnd",
+    "trimStart",
+    "trunc",
+    "unshift",
+    "valueOf",
 ];
 
 /// Whether the name match at `target` is a receiver-blind mismatch: a member
@@ -3572,6 +3746,14 @@ impl Resolve<CallF> for TsSource {
                     .position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
                 Some((index, joined, doc_ix))
             });
+        // The module plane binds an IMPORTED name; the name match is what a
+        // free name falls to.
+        let modules = cx
+            .indexes
+            .ts_modules
+            .get()
+            .zip(own_path(output, cx))
+            .filter(|(modules, path)| modules.knows(path));
         let mut edges = Vec::new();
         for site in &call.aux.sites {
             // The caller is the innermost covering CallF def (the 4a
@@ -3580,9 +3762,20 @@ impl Resolve<CallF> for TsSource {
                 continue;
             };
             let callee = output.strings.lookup(site.callee);
+            let written = site.callee_path.map(|id| output.strings.lookup(id));
+            let import_t = modules
+                .and_then(|(modules, path)| module_target(modules, path, callee, written).ok())
+                .flatten();
             // The scip leg keeps its answer: it types the receiver, this does not.
-            let name_t = TsSource::call_name_match(output, def_index, callee)
-                .filter(|t| !receiver_blind_builtin(output, call, site, callee, kinds, t));
+            let own_t = match &import_t {
+                Some(found) => Some((found.target_blob.clone(), found.target_span)),
+                None => TsSource::call_name_match(output, def_index, callee)
+                    .filter(|t| !receiver_blind_builtin(output, call, site, callee, kinds, t)),
+            };
+            let own_kind = match import_t {
+                Some(_) => CallEdgeKind::ImportResolve,
+                None => CallEdgeKind::NameResolve,
+            };
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
             });
@@ -3590,10 +3783,10 @@ impl Resolve<CallF> for TsSource {
             // call FACET (e.g. the ctor def) while scip may name the type
             // facet (the class) — one definition, two facet coordinates (the
             // ORACLE entry's "the models differ by construction").
-            let ((dst_blob, dst_span), kind) = match (name_t, scip_t) {
-                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => (n, CallEdgeKind::NameResolve),
+            let ((dst_blob, dst_span), kind) = match (own_t, scip_t) {
+                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => (n, own_kind),
                 (_, Some(s)) => ((s.0, s.1), CallEdgeKind::ScipOverride),
-                (Some(n), None) => (n, CallEdgeKind::NameResolve),
+                (Some(n), None) => (n, own_kind),
                 (None, None) => continue,
             };
             edges
@@ -3609,7 +3802,13 @@ impl Resolve<CallF> for TsSource {
                 continue;
             };
             let named = output.strings.lookup(reference.functor);
-            let Some((blob, span)) = TsSource::call_name_match(output, def_index, named) else {
+            let bound = modules
+                .and_then(|(modules, path)| modules.bind(path, named).ok())
+                .flatten()
+                .map(|found| (found.target_blob, found.target_span));
+            let Some((blob, span)) =
+                bound.or_else(|| TsSource::call_name_match(output, def_index, named))
+            else {
                 continue;
             };
             edges.push(
