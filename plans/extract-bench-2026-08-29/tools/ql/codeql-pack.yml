@@ -1,0 +1,5 @@
+name: bench/tools-queries
+version: 0.0.1
+library: true
+dependencies:
+  codeql/go-all: "*"
