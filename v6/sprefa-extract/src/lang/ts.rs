@@ -31,7 +31,7 @@ use crate::family::{
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
 use crate::seams::{
-    containing_def_site, corpus_defs, covering_def, def_named, own_blob, DefIndex, ParseError,
+    corpus_defs, covering_def, def_named, own_blob, DefIndex, DefSite, ParseError,
     Parser, Project, Resolve,
 };
 use crate::shape::{ContentId, FamilyTag, NameId, NodeRef, Span, Strings, ZERO_CONTENT_ID};
@@ -1180,6 +1180,11 @@ impl Project<CallF> for CallProjector<'_> {
         for span in lambdas.out {
             sink.nodes.push(Node::new(to_span(span), CallKind::Lambda));
         }
+        // Conditional because v5 has no module-def facet: an unconditional row
+        // is a v6-only line in the PORTED `call_def` set (tests/golden_parity.rs).
+        if module_scope_owns_a_call(sink) {
+            push_def(sink, strings, program.span, MODULE_DEF_NAME, MODULE);
+        }
         // Module specifiers (4b-ii): import/export-from rows, as written, into
         // the CallF aux (the 4a ADDENDUM home). Same one parse, same top level.
         module_specifiers(program, strings, sink);
@@ -1672,6 +1677,26 @@ impl<'a> OxcVisit<'a> for LambdaDefs {
     fn visit_assignment_pattern(&mut self, _pattern: &ts::AssignmentPattern<'a>) {
         // Param/destructuring defaults hold no df-covered values in v5.
     }
+}
+
+/// Whether any call site sits outside every def in `sink`. Prefix-max of def
+/// end, not `covering_def` per site: that re-sorts the def spans per site.
+fn module_scope_owns_a_call(sink: &FamilyBundle<CallF>) -> bool {
+    let mut reach: Vec<(u32, u32)> = sink
+        .nodes
+        .iter()
+        .map(|node| (node.span.start, node.span.end()))
+        .collect();
+    reach.sort_unstable();
+    let mut furthest = 0u32;
+    for entry in reach.iter_mut() {
+        furthest = furthest.max(entry.1);
+        entry.1 = furthest;
+    }
+    sink.aux.sites.iter().any(|site| {
+        let cut = reach.partition_point(|(start, _)| *start <= site.span.start);
+        cut == 0 || reach[cut - 1].1 < site.span.end()
+    })
 }
 
 fn push_def(
@@ -3064,6 +3089,13 @@ pub const TEMPLATE: DfNodeKind = DfNodeKind::Ext(LangKind {
     lang: "ts",
     tag: "template",
 });
+/// The module scope as a callable def, so a top-level call site has a caller.
+pub const MODULE: CallKind = CallKind::Ext(LangKind {
+    lang: "ts",
+    tag: "module",
+});
+/// The `<module>` def's name, and the `caller_name` a module-level edge wears.
+pub const MODULE_DEF_NAME: &str = "<module>";
 
 impl Source for TsSource {
     fn name(&self) -> &'static str {
@@ -3344,8 +3376,40 @@ fn scip_call_target<'a>(
     let def_doc = &index.documents[def_doc_ix];
     let (def_blob, def_content) = joined[def_doc_ix].as_ref()?;
     let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
-    let (name, def_site) = containing_def_site(def_index, def_blob.clone(), ident)?;
+    let (name, def_site) = containing_ts_def(def_index, def_blob.clone(), ident)?;
     Some((def_blob.clone(), def_site.span, name))
+}
+
+/// `containing_def_site` minus the `<module>` def, which spans the whole file
+/// and would win the shared seam's CallF bias over any module-level entity.
+fn containing_ts_def(index: &DefIndex, blob: ContentId, span: Span) -> Option<(&str, DefSite)> {
+    let mut best: Option<(&str, DefSite)> = None;
+    for (name, sites) in &index.map {
+        if name == MODULE_DEF_NAME {
+            continue;
+        }
+        for site in sites {
+            if site.blob != blob
+                || !(site.span.start <= span.start && span.end() <= site.span.end())
+            {
+                continue;
+            }
+            let better = match best {
+                None => true,
+                Some((_, ref incumbent)) => {
+                    let call_bias = (site.family == FamilyTag::Call, incumbent.family == FamilyTag::Call);
+                    call_bias.0 && !call_bias.1
+                        || (call_bias.0 == call_bias.1
+                            && site.span.end() - site.span.start
+                                < incumbent.span.end() - incumbent.span.start)
+                }
+            };
+            if better {
+                best = Some((name.as_str(), site.clone()));
+            }
+        }
+    }
+    best
 }
 
 impl Resolve<CallF> for TsSource {

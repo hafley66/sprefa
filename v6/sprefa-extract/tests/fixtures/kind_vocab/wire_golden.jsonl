@@ -300,6 +300,7 @@
 {"record":"edge","family":"cst","kind":"child","from":{"start":617,"end":621},"to":{"start":617,"end":621}}
 {"record":"edge","family":"cst","kind":"child","from":{"start":616,"end":630},"to":{"start":626,"end":630}}
 {"record":"node","family":"type","span":{"start":0,"end":53},"kind":"function","name":"createApi"}
+{"record":"node","family":"call","span":{"start":0,"end":645},"kind":"module","name":"<module>"}
 {"record":"site","family":"call","span":{"start":271,"end":280},"callee":"createApi","callee_path":null}
 {"record":"site","family":"call","span":{"start":348,"end":361},"callee":"query","callee_path":null}
 {"record":"site","family":"call","span":{"start":424,"end":437},"callee":"query","callee_path":null}
@@ -617,6 +618,7 @@
 {"record":"edge","family":"cst","kind":"child","from":{"start":441,"end":455},"to":{"start":447,"end":455}}
 {"record":"edge","family":"cst","kind":"child","from":{"start":447,"end":455},"to":{"start":448,"end":454}}
 {"record":"node","family":"type","span":{"start":0,"end":53},"kind":"function","name":"createApi"}
+{"record":"node","family":"call","span":{"start":0,"end":470},"kind":"module","name":"<module>"}
 {"record":"site","family":"call","span":{"start":272,"end":291},"callee":"injectEndpoints","callee_path":null}
 {"record":"site","family":"call","span":{"start":339,"end":355},"callee":"mutation","callee_path":null}
 {"record":"site","family":"call","span":{"start":418,"end":431},"callee":"query","callee_path":null}
@@ -18086,6 +18088,7 @@
 {"record":"node","family":"type","span":{"start":652,"end":670},"kind":"const","name":"greeting"}
 {"record":"sig","family":"type","owner":{"start":131,"end":210},"owner_start":131,"owner_end":210,"slot":"ret","pos":0,"ty":"Promise"}
 {"record":"const","family":"type","owner":{"start":652,"end":670},"field":null,"text":"hello","kind":"lit"}
+{"record":"node","family":"call","span":{"start":0,"end":983},"kind":"module","name":"<module>"}
 {"record":"site","family":"call","span":{"start":302,"end":362},"callee":"URL","callee_path":null}
 {"record":"site","family":"call","span":{"start":388,"end":437},"callee":"URL","callee_path":null}
 {"record":"site","family":"call","span":{"start":455,"end":462},"callee":"resolve","callee_path":null}
@@ -18291,6 +18294,7 @@
 {"record":"edge","family":"cst","kind":"child","from":{"start":122,"end":129},"to":{"start":122,"end":129}}
 {"record":"edge","family":"cst","kind":"child","from":{"start":120,"end":136},"to":{"start":131,"end":134}}
 {"record":"edge","family":"cst","kind":"child","from":{"start":131,"end":134},"to":{"start":131,"end":134}}
+{"record":"node","family":"call","span":{"start":0,"end":137},"kind":"module","name":"<module>"}
 {"record":"site","family":"call","span":{"start":16,"end":53},"callee":"URL","callee_path":null}
 {"record":"site","family":"call","span":{"start":66,"end":111},"callee":"URL","callee_path":null}
 {"record":"node","family":"df","span":{"start":24,"end":35},"kind":"lit","name":null}
@@ -18438,6 +18442,7 @@
 {"record":"edge","family":"cst","kind":"child","from":{"start":317,"end":321},"to":{"start":317,"end":321}}
 {"record":"node","family":"type","span":{"start":218,"end":236},"kind":"const","name":"greeting"}
 {"record":"const","family":"type","owner":{"start":218,"end":236},"field":null,"text":"hello","kind":"lit"}
+{"record":"node","family":"call","span":{"start":0,"end":324},"kind":"module","name":"<module>"}
 {"record":"site","family":"call","span":{"start":106,"end":155},"callee":"URL","callee_path":null}
 {"record":"site","family":"call","span":{"start":176,"end":183},"callee":"resolve","callee_path":null}
 {"record":"site","family":"call","span":{"start":250,"end":258},"callee":"readFile","callee_path":null}
@@ -18906,6 +18911,7 @@
 {"record":"edge","family":"cst","kind":"child","from":{"start":507,"end":518},"to":{"start":508,"end":517}}
 {"record":"node","family":"type","span":{"start":499,"end":518},"kind":"const","name":"plain"}
 {"record":"const","family":"type","owner":{"start":499,"end":518},"field":null,"text":"hello ./b","kind":"lit"}
+{"record":"node","family":"call","span":{"start":0,"end":520},"kind":"module","name":"<module>"}
 {"record":"site","family":"call","span":{"start":335,"end":342},"callee":"require","callee_path":null}
 {"record":"specifier","family":"call","span":{"start":9,"end":14},"name":"thing","kind":"named","module":"./b.ts","imported":null}
 {"record":"specifier","family":"call","span":{"start":41,"end":54},"name":"bare","kind":"named","module":"./b","imported":"thing"}
@@ -19218,6 +19224,7 @@
 {"record":"node","family":"type","span":{"start":50,"end":69},"kind":"function","name":"f"}
 {"record":"node","family":"call","span":{"start":50,"end":69},"kind":"function","name":"f"}
 {"record":"node","family":"call","span":{"start":96,"end":112},"kind":"lambda","name":null}
+{"record":"node","family":"call","span":{"start":0,"end":198},"kind":"module","name":"<module>"}
 {"record":"site","family":"call","span":{"start":31,"end":39},"callee":"loadPath","callee_path":null}
 {"record":"site","family":"call","span":{"start":71,"end":72},"callee":"f","callee_path":null}
 {"record":"site","family":"call","span":{"start":126,"end":129},"callee":"m","callee_path":null}
