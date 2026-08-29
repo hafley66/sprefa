@@ -63,3 +63,12 @@ Exposed core scaling: n=25 445 ms, n=50 562 ms, n=100 700 ms (linear). `--resolv
 - `--family scip`: no Kotlin/Prolog/Markdown indexer exists in EXACT MODE (`extract --help` lists rust-analyzer, scip-typescript, scip-go).
 - `--family diet_scip`: same records as `--resolve` for these arms; skipped.
 - Kotlin `extract move` / rename: outside the fact-battery scope.
+
+## 7. Fixes
+
+| finding | before | after | test |
+|---|---|---|---|
+| row 1: call sites only from `call_expression`; no site for infix, operator, or invoke calls | `--family call tests/fixtures/kotlin/corpus_1_infix_operator.kt` -> sites `Box Box Box Box` | sites minted for `plus2` (infix_expression), `plus` (`+`), `invoke` (`f(x)()`), plus the full operator map (`*` times, `/` div, `%` rem, `..` rangeTo, `in` contains, `[]` get/set, `==`/`!=` equals, `<``>``<=``>=` compareTo, `+=` plusAssign family, unary `!`/`-`/`+`/`++`/`--`); each site spans the operator token or infix name | `tests/47_kotlin_operator_calls.rs` (red pre-fix: sites `[(289, 292, "Box"), (417, 420, "Box"), (426, 429, "Box"), (454, 457, "Box")]`; resolve test red: `resolved_edge to plus2 missing`) |
+| row 1 `--resolve` COUNT, okio commonMain (41 `.kt` under `okio/src/commonMain/kotlin/okio`, shallow clone) | 399 resolved_edge (reproduced pre-fix binary) | 698 resolved_edge | receipt: `extract --resolve $(find okio -name '*.kt')` before 399 / after 698 |
+
+Whole-crate gate after the fix: `cargo test --features cli` -> 297 passed, 0 failed.
