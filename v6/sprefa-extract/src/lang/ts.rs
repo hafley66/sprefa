@@ -102,6 +102,68 @@ fn source_type_for(path: &str) -> Option<SourceType> {
     }
 }
 
+/// `stmts` plus every statement nested in a `namespace`/`module`/`global`
+/// block, source order: what each family's top-level loop iterates.
+fn with_module_bodies<'s, 'a>(stmts: &'s [ts::Statement<'a>]) -> Vec<&'s ts::Statement<'a>> {
+    let mut out = Vec::with_capacity(stmts.len());
+    push_with_module_bodies(stmts, &mut out);
+    out
+}
+
+fn push_with_module_bodies<'s, 'a>(
+    stmts: &'s [ts::Statement<'a>],
+    out: &mut Vec<&'s ts::Statement<'a>>,
+) {
+    for stmt in stmts {
+        out.push(stmt);
+        match module_decl_of(stmt) {
+            Some(module) => push_with_module_bodies(module_block(module), out),
+            None => {
+                if let Some(global) = global_decl_of(stmt) {
+                    push_with_module_bodies(&global.body.body, out);
+                }
+            }
+        }
+    }
+}
+
+/// `declare global {}` is its own oxc node, bare or `export`-wrapped.
+fn global_decl_of<'s, 'a>(stmt: &'s ts::Statement<'a>) -> Option<&'s ts::TSGlobalDeclaration<'a>> {
+    match stmt {
+        ts::Statement::TSGlobalDeclaration(global) => Some(global),
+        ts::Statement::ExportNamedDeclaration(export) => match &export.declaration {
+            Some(ts::Declaration::TSGlobalDeclaration(global)) => Some(global),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The `TSModuleDeclaration` a statement declares, bare or `export`-wrapped.
+fn module_decl_of<'s, 'a>(stmt: &'s ts::Statement<'a>) -> Option<&'s ts::TSModuleDeclaration<'a>> {
+    match stmt {
+        ts::Statement::TSModuleDeclaration(module) => Some(module),
+        ts::Statement::ExportNamedDeclaration(export) => match &export.declaration {
+            Some(ts::Declaration::TSModuleDeclaration(module)) => Some(module),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// `namespace A.B {}` nests one `TSModuleDeclaration` per dotted segment and
+/// only the innermost carries the block; `declare module "x";` carries none.
+fn module_block<'s, 'a>(decl: &'s ts::TSModuleDeclaration<'a>) -> &'s [ts::Statement<'a>] {
+    let mut current = decl;
+    loop {
+        match current.body.as_ref() {
+            Some(ts::TSModuleDeclarationBody::TSModuleBlock(block)) => return &block.body,
+            Some(ts::TSModuleDeclarationBody::TSModuleDeclaration(inner)) => current = inner,
+            None => return &[],
+        }
+    }
+}
+
 /// The TypeF projector: walks the oxc `Program`, minting one entity node per
 /// type/function declaration. Port of v5 `ts_entities_from` (entity half); the
 /// arrow types and edge graph are dropped here (edges land with Resolve<TypeF>).
@@ -116,7 +178,7 @@ impl Project<TypeF> for TypeProjector {
         strings: &mut Strings,
         sink: &mut FamilyBundle<TypeF>,
     ) {
-        for stmt in &program.body {
+        for stmt in with_module_bodies(&program.body) {
             use ts::Statement as S;
             match stmt {
                 S::ExportNamedDeclaration(export) => {
@@ -685,7 +747,7 @@ fn ts_type_name(name: &ts::TSTypeName) -> Option<String> {
 
 /// The top-level walk (port of v5 `ts_edges_from`'s statement match).
 fn edge_candidates(program: &Program<'_>, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
-    for stmt in &program.body {
+    for stmt in with_module_bodies(&program.body) {
         use ts::Statement as S;
         match stmt {
             S::ExportNamedDeclaration(export) => {
@@ -1112,7 +1174,7 @@ impl Project<CallF> for CallProjector<'_> {
         // arrow/fn-expr's own span (body-covering, like rust's `def_span`) so
         // a site inside the body binds to this lambda by containment.
         let mut lambdas = LambdaDefs { out: Vec::new() };
-        for stmt in &program.body {
+        for stmt in with_module_bodies(&program.body) {
             lambda_entry_stmt(&mut lambdas, stmt);
         }
         for span in lambdas.out {
@@ -1183,7 +1245,7 @@ struct ScannedSpecifier<'a> {
 /// stable over already-ascending static rows, so their order does not move.
 fn scan_module_specifiers<'a>(program: &Program<'a>) -> Vec<ScannedSpecifier<'a>> {
     let mut rows = Vec::new();
-    for stmt in &program.body {
+    for stmt in with_module_bodies(&program.body) {
         match stmt {
             ts::Statement::ImportDeclaration(import) => {
                 let module = import.source.value.as_str();
@@ -1397,7 +1459,7 @@ fn quote_at(content: &str, span: oxc_span::Span) -> char {
 }
 
 fn call_defs(program: &Program<'_>, strings: &mut Strings, sink: &mut FamilyBundle<CallF>) {
-    for stmt in &program.body {
+    for stmt in with_module_bodies(&program.body) {
         use ts::Statement as S;
         match stmt {
             S::ExportNamedDeclaration(export) => {
@@ -1815,7 +1877,7 @@ impl Project<DfF> for DfProjector<'_> {
     type Parsed<'a> = Program<'a>;
 
     fn project(&self, program: &Program<'_>, strings: &mut Strings, sink: &mut FamilyBundle<DfF>) {
-        for stmt in &program.body {
+        for stmt in with_module_bodies(&program.body) {
             df_flow_stmt(stmt, self.file, strings, sink);
         }
         // Resolve the pending template/concat spans into raw source-slice text.
@@ -2961,7 +3023,7 @@ pub(crate) fn collect_const_facts(
         entities: Vec::new(),
         values: Vec::new(),
     };
-    for stmt in &program.body {
+    for stmt in with_module_bodies(&program.body) {
         if let Some(v) = var_decl_of(stmt) {
             walker.var_facts(v);
         }
