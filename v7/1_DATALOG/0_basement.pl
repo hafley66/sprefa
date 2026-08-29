@@ -29,7 +29,7 @@ lower_after_declarations(
     lower_executables(Forms, ModuleOwner, Reservations, Relations,
                       ExecutableResult),
     (   ExecutableResult = ok(Seeds, Rules, ExecutableOrigins)
-    ->  Nodes = [node(ModuleOwner, module) | Nodes0],
+    ->          Nodes = [module(ModuleOwner) | Nodes0],
         Program = basement_program(
                       root_graph(Nodes, Edges),
                       datalog_program(Relations, Seeds, Rules)),
@@ -125,10 +125,15 @@ finish_constructor_target(
     NodeId, Owner, Kind,
     ok(target(Owner), Kind, Nodes, Edges, Relations, Origins,
        Reservations)) :-
-    Nodes = [node(Owner, Kind) | NestedNodes],
+    classifier_row(Kind, Owner, Row),
+    Nodes = [Row | NestedNodes],
     constructor_relations(Kind, Owner, Edges, OwnRelations),
     append(OwnRelations, NestedRelations, Relations),
     Origins = [origin(node(Owner), NodeId) | NestedOrigins].
+
+%% node/1 is the identity carrier; Kind is an ordinary classifier row.
+classifier_row(product, Owner, product(Owner)).
+classifier_row(sum, Owner, sum(Owner)).
 
 constructor_relations(product, Owner, Edges, [relation(Owner, Arity)]) :-
     include(edge_owned_by(Owner), Edges, OwnEdges),
@@ -404,7 +409,7 @@ resolve_name(Owner, Name, Edges, Nodes, Visited, Resolved) :-
     ->  resolve_target(Target, Edges, Nodes, [Owner | Visited], Resolved)
     ;   parent_owner(Owner, Edges, Parent),
         resolve_name(Parent, Name, Edges, Nodes, [Owner | Visited], Resolved)
-    ;   memberchk(node(Owner, module), Nodes),
+    ;   memberchk(module(Owner), Nodes),
         primitive_name(Name),
         Resolved = ref(primitive(Name))
     ).
