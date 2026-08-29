@@ -10,6 +10,7 @@ Corpus: `/Users/chrishafley/projects/typescript-go` (Microsoft's TypeScript comp
 4. [Step 4: scip comparison](#step-4)
 5. [Kinks](#kinks)
 6. [Untested and why](#untested-and-why)
+7. [Fixes](#fixes)
 
 ## Step 1 <a name="step-1"></a>
 
@@ -152,3 +153,89 @@ Also recorded: `resolved_type_edge` is 0 for the whole Go corpus while the flag 
 - RSS measurement (`/usr/bin/time -l` over 20 largest files): brief's crawl battery does not include it; the 10-second law held everywhere (max 2228 ms), so pressure is low.
 - scip crawl with test roots beyond name-pair comparisons: test-binary symbols (`cmd/tsgo.test`) carry go-build cache paths in scip_def, so per-file unreachable tables in that plane were not computed.
 - `cfg` family: Go emits `kind_role` rows per the help text, but the crawl brief does not use it; left untouched.
+
+## Fixes <a name="fixes"></a>
+
+Lane `fix-extract-go-imports`, base c60e5c4cc, head 364f38194. Same corpus and
+binary path as above; every number below is from a rerun on this machine, and
+the reruns reproduce the report's own 46,055 edges / 159,740 sites / 201
+reachable exactly.
+
+One METHOD correction first: step 2's numbers come from 82 per-package
+`--resolve` runs, so the resolution universe never held the imported package.
+A whole-project `--resolve` over all 5097 files was re-measured at rc 0 in 4 s
+(3 runs: 4, 4, 4; before-binary 4, 4, 3), inside the 10-second law. Both
+scopes are reported below; "one whole-project call exceeds 10 s" no longer
+holds.
+
+| kink | before | after | test |
+|---|---|---|---|
+| a pkg-qualified site carries no import path | `callee_path` null on all 159,740 sites | the import path on 39,819 sites (24.9%) | `import_qualified_sites_carry_the_import_path` |
+| `pkg.F()` binds the CALLER's own `F` | 122 self-edges (80 through an external import, 42 through a module-internal one) | 0 | `an_import_qualified_call_never_binds_the_callers_own_def` |
+| a cross-package callee that the caller also declares never resolves | 0 edges | 21 edges, 13 landing in the package the import names | `a_cross_package_call_never_lands_in_the_wrong_package` |
+| an ambiguous cross-package callee (`ast.Clone` against 5 corpus `Clone`s) | no edge | no edge, NOT FIXED (blocker below) | stated in prose in the same test, never asserted |
+| the own-blob join | scip-only | one per file, wall(400)/wall(200) < 2.5 | `resolve_wall_grows_linearly_over_import_qualified_files` |
+
+### Corpus receipt
+
+| scope | resolved_edge before | after | reachable before | after | defs | reachability |
+|---|---|---|---|---|---|---|
+| 82 per-package runs | 46,055 | 45,967 | 201 | 200 | 18,849 | 1.1% -> 1.1% |
+| whole project, 5097 files | 101,556 | 101,455 | 534 | 528 | 18,849 | 2.8% -> 2.8% |
+
+With the 5,873 test roots added: per-package 10,118 -> 10,106, whole project
+12,400 -> 12,392.
+
+The edge delta is 122 removed and 21 added. All 122 removed were an
+import-qualified site bound to the CALLER's own file (`cmd/tsgo/sys.go`'s
+`time.Now()` binding that file's own `Now`); the top import paths behind them
+are `internal/vfs` 18, `maps` 14, `cmp` 9, `slices` 8, `math` 8,
+`go-json-experiment/json` 7, `time` 6, `strings` 5. Of the 21 added, 13 land
+in the package the import names and 8 do not.
+
+Reachability barely moves because the crawl dies on AMBIGUOUS cross-package
+names, which this lane does not fix.
+
+### Where the whole-project edges stand after the fixes
+
+| edge class | count |
+|---|---|
+| from an unqualified site (bare name, same package) | 70,588 |
+| from a qualified site, target package dir == the import path's last segment | 26,960 |
+| from a qualified site, disagreeing, EXTERNAL import (stdlib or third-party, no corpus target exists) | 3,883 |
+| from a qualified site, disagreeing, module-internal import | 24 |
+| total | 101,455 |
+
+8,952 import-qualified sites still mint no edge at all. Those plus the 3,907
+disagreements are what the package join buys: 12,859 edges to gain or drop,
+against 101,455 today.
+
+### The blocker: the resolve seam carries no path
+
+| what the rule needs | what `Resolve<CallF>` is handed |
+|---|---|
+| the candidate def's package directory | `DefSite { blob, span, family }`, `types.rs:1467`, no path |
+| the file's `go.mod` module line | `ProjectCx.files: &FileSet`, a unit struct, `types.rs:1430`; `ManifestMap` likewise hollow |
+| the importing file's own path | phase 1 has it (`Source::extract(path, ..)`); phase 2 does not (`fn resolve(&self, output, cx)`) |
+| a reader for another file's bytes | `ProjectCx.reader`, set only when a scip index is loaded (`project.rs:201`) |
+
+The path exists in `project.rs` (`ProjectInput.path`, printed at
+`project.rs:942` as the edge's `callee_path` column) and stops there. The
+minimal additive channel is one more `OnceLock` slot on `IndexBag`
+(`types.rs:1449`, `Default`-derived, so all 8 existing `IndexBag::default()`
+constructors keep compiling) carrying blob -> project-relative path, set in
+`resolve_project`; the go arm reads it and falls back to today's behavior when
+the slot is unset. `IndexBag`'s own doc names this shape ("per-language erased
+slots (RustCrates / ts_packages / GoIndex) ... land in 4b+"). Both files are
+outside this lane's ownership; hailed to the coordinator, unanswered at the
+time of the PR.
+
+### Out of scope, and why
+
+| row | state |
+|---|---|
+| method on a known receiver (`c.compilerOptions.IsFalseOrUnknown`) | out of scope by brief; receiver typing is not a syntactic-tier fact |
+| interface dispatch | out of scope by brief |
+| builtins (`make`, `append`, `len`, `panic`) | the go arm emits NO `unresolved` rows at all; only ts does (`src/lang/ts.rs:1194`), so a named builtin reason has no seat on the go plane today. Report row, not a fix. |
+| `tests/golden_parity.rs:1251` | the go scip ratchet's twin re-runs `call_name_match` with no site in hand, so it cannot take the imported leg. The go fixture set never reaches the divergence (gamma.go's one qualified call is ambiguous across alpha/beta either way) and the ratchet is green, but the twin is now an inexact copy of the arm. File outside this lane's ownership. |
+| `tests/6_kind_vocab.rs` header | still cites 946460d75 as the golden's origin after the 1-hunk regeneration (2 gamma.go site rows). File outside this lane's ownership. |

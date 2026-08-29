@@ -35,8 +35,8 @@ use crate::family::{
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
 use crate::seams::{
-    containing_def_site, corpus_defs, covering_def, def_named, own_blob, DefIndex, Parser, Project,
-    Resolve,
+    containing_def_site, corpus_defs, covering_def, def_named, own_blob, DefIndex, DefSite, Parser,
+    Project, Resolve,
 };
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
@@ -644,8 +644,35 @@ fn project_call(
     sink: &mut FamilyBundle<CallF>,
 ) {
     go_walk_call_defs(root, src, strings, sink, false);
-    go_walk_call_sites(root, src, strings, sink);
+    // The import table is what a selector call's receiver is checked against,
+    // so the specifiers land before the sites that read them.
     go_module_specifiers(root, src, strings, sink);
+    let imports = go_import_bindings(sink, strings);
+    go_walk_call_sites(root, src, strings, sink, &imports);
+}
+
+/// Qualifier -> import path, per the `go_module_specifiers` table above: a
+/// plain spec binds its path's last segment, `_` and `.` bind no qualifier.
+fn go_import_bindings(
+    sink: &FamilyBundle<CallF>,
+    strings: &Strings,
+) -> std::collections::HashMap<String, String> {
+    let mut bindings = std::collections::HashMap::new();
+    for specifier in &sink.aux.specifiers {
+        if !matches!(specifier.kind, SpecifierKind::Named) {
+            continue;
+        }
+        let name = strings.lookup(specifier.name);
+        let (binding, path) = match specifier.module {
+            Some(module) => (name.to_string(), strings.lookup(module).to_string()),
+            None => (
+                name.rsplit('/').next().unwrap_or(name).to_string(),
+                name.to_string(),
+            ),
+        };
+        bindings.insert(binding, path);
+    }
+    bindings
 }
 
 // ── module specifiers (CallFAux.specifiers) ─────────────────────────────────
@@ -822,34 +849,53 @@ fn go_walk_call_defs(
 // syntactic tier can't tell a conversion from a call). Port of v5
 /// `go_walk_call_sites` + `go_callee`. The site span is the CALLEE node's start
 /// (line_of(span.start) = v5's reported site line).
+/// `callee_path` is the import path when the selector's operand is a name an
+/// import binds; any other receiver is a value, whose type nothing here knows.
 fn go_walk_call_sites(
     node: tree_sitter::Node,
     src: &[u8],
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
+    imports: &std::collections::HashMap<String, String>,
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind() == "call_expression" {
             if let Some(func) = child.child_by_field_name("function") {
-                let callee = match func.kind() {
-                    "identifier" => Some(go_text(func, src).to_string()),
-                    "selector_expression" => func
-                        .child_by_field_name("field")
-                        .map(|field| go_text(field, src).to_string()),
-                    _ => None,
+                let (callee, path) = match func.kind() {
+                    "identifier" => (Some(go_text(func, src).to_string()), None),
+                    "selector_expression" => (
+                        func.child_by_field_name("field")
+                            .map(|field| go_text(field, src).to_string()),
+                        go_import_qualifier(func, src, imports),
+                    ),
+                    _ => (None, None),
                 };
                 if let Some(callee) = callee {
                     sink.aux.sites.push(CallSite {
                         span: node_span(func),
                         callee: strings.intern(&callee),
-                        callee_path: None,
+                        callee_path: path.map(|path| strings.intern(path)),
                     });
                 }
             }
         }
-        go_walk_call_sites(child, src, strings, sink);
+        go_walk_call_sites(child, src, strings, sink, imports);
     }
+}
+
+/// The import path a selector's operand names, when the operand is a bare
+/// identifier this file imported. `a.b.C()` and `value.M()` name none.
+fn go_import_qualifier<'a>(
+    selector: tree_sitter::Node,
+    src: &[u8],
+    imports: &'a std::collections::HashMap<String, String>,
+) -> Option<&'a str> {
+    let operand = selector.child_by_field_name("operand")?;
+    if operand.kind() != "identifier" {
+        return None;
+    }
+    imports.get(go_text(operand, src)).map(String::as_str)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1886,10 +1932,8 @@ impl Resolve<TypeF> for GoSource {
 // no path and no bytes (the 4b-i gap), so identity flows through content.
 // Per-site edges, no dedup: two calls to one callee are two resolutions. A
 // site outside every CallF def (package level) emits no row — v5's call_edge
-// has no module caller. `callee_path` stays None for go: v5 go collects no
-// path (go_callee returns name+line only, so V5-IS-CORRECT keeps it empty),
-// the name-only + scip resolution does not need it, and filling it is the
-// same declared-snapshot-increment catch-up ts deferred in 4c-ii.
+// has no module caller. A site whose `callee_path` names an import takes the
+// IMPORTED leg: go binds `pkg.F` in pkg, never in the file that writes it.
 // The helper triplication with ts.rs (`call_name_match` / `scip_call_target`)
 // is DELIBERATE per the design audit's SEQUENCING RULING (2026-07-24): ALL
 // dedup lands in ONE sweep AFTER the Resolve pass (4a-4d) fully lands.
@@ -1919,6 +1963,33 @@ impl GoSource {
         let sites = corpus_defs(index, callee);
         let mut blobs: Vec<ContentId> = Vec::new();
         for site in sites {
+            if !blobs.contains(&site.blob) {
+                blobs.push(site.blob.clone());
+            }
+        }
+        let [blob] = blobs.as_slice() else {
+            return None;
+        };
+        let site = sites
+            .iter()
+            .find(|s| s.family == FamilyTag::Call)
+            .unwrap_or(&sites[0]);
+        Some((blob.clone(), site.span))
+    }
+
+    /// The name-match target of a callee written `pkg.F` for an imported `pkg`:
+    /// `own`'s defs leave the candidate set, a unique remaining blob wins.
+    pub fn call_name_match_imported(
+        index: &DefIndex,
+        own: Option<&ContentId>,
+        callee: &str,
+    ) -> Option<(ContentId, Span)> {
+        let sites: Vec<&DefSite> = corpus_defs(index, callee)
+            .iter()
+            .filter(|site| own.map_or(true, |blob| &site.blob != blob))
+            .collect();
+        let mut blobs: Vec<ContentId> = Vec::new();
+        for site in &sites {
             if !blobs.contains(&site.blob) {
                 blobs.push(site.blob.clone());
             }
@@ -1970,6 +2041,8 @@ impl Resolve<CallF> for GoSource {
         let Some(def_index) = cx.indexes.def_index.get() else {
             return Vec::new();
         };
+        // One join per FILE: both legs below ask which blob this output is.
+        let own = own_blob(output, def_index);
         // The scip leg: the corpus index + the rev-correct reader + this
         // file's own document (found by content hash). Any missing piece ->
         // pure name-match (v5-shaped).
@@ -1983,7 +2056,7 @@ impl Resolve<CallF> for GoSource {
                     .indexes
                     .joined_documents
                     .get_or_init(|| join_documents(index, reader));
-                let blob = own_blob(output, def_index)?;
+                let blob = own.clone()?;
                 let doc_ix = joined
                     .iter()
                     .position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
@@ -1998,7 +2071,10 @@ impl Resolve<CallF> for GoSource {
                 continue;
             };
             let callee = output.strings.lookup(site.callee);
-            let name_t = GoSource::call_name_match(output, def_index, callee);
+            let name_t = match site.callee_path {
+                Some(_) => GoSource::call_name_match_imported(def_index, own.as_ref(), callee),
+                None => GoSource::call_name_match(output, def_index, callee),
+            };
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
             });
