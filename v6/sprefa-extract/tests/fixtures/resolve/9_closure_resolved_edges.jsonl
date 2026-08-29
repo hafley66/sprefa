@@ -1,5 +1,5 @@
 {"record":"resolved_edge","caller_path":"tests/fixtures/resolve/7_closure_caller.rs","caller_name":"closure@63","callee_path":"tests/fixtures/resolve/8_closure_callee.rs","callee_name":"helper","caller_site_start":71,"caller_site_end":77,"kind":"name_resolve"}
 {"record":"resolved_edge","caller_path":"tests/fixtures/resolve/7_closure_caller.rs","caller_name":"run","callee_path":"tests/fixtures/resolve/8_closure_callee.rs","callee_name":"helper","caller_site_start":71,"caller_site_end":77,"kind":"name_resolve"}
-{"record":"unresolved","family":"call","path":"tests/fixtures/resolve/7_closure_caller.rs","span":{"start":52,"end":56},"reason":"no_corpus_def","detail":"iter"}
-{"record":"unresolved","family":"call","path":"tests/fixtures/resolve/7_closure_caller.rs","span":{"start":59,"end":62},"reason":"no_corpus_def","detail":"map"}
-{"record":"unresolved","family":"call","path":"tests/fixtures/resolve/7_closure_caller.rs","span":{"start":87,"end":94},"reason":"no_corpus_def","detail":"collect"}
+{"record":"unresolved","family":"call","path":"tests/fixtures/resolve/7_closure_caller.rs","span":{"start":52,"end":56},"reason":"inferred","detail":"iter"}
+{"record":"unresolved","family":"call","path":"tests/fixtures/resolve/7_closure_caller.rs","span":{"start":59,"end":62},"reason":"inferred","detail":"map"}
+{"record":"unresolved","family":"call","path":"tests/fixtures/resolve/7_closure_caller.rs","span":{"start":87,"end":94},"reason":"inferred","detail":"collect"}

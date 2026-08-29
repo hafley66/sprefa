@@ -935,3 +935,103 @@ inside the span; all 1,169 resolve uniquely.
 `cargo test --features cli`, SUM over the test binaries at `46c5dab0b`:
 0 failed (baseline before this lane: 0 failed; the lane adds 3 tests in
 `tests/59_rust_scip_macros.rs`, fail-first proven with the pass disabled).
+
+## 16. The 52,101 `ambiguous` drops classified (lane `fix-extract-rust-cross-crate`)
+
+The brief's first action: `extract --resolve --project-root <corpus> $(find
+crates -name '*.rs' -path '*/src/*')`, one process, the 941-file src bucket
+(873 source + generated/fixture files, test_data excluded). Raw:
+`/tmp/rxc_after.tsv` (scratch, not committed): 153,826 rows, 70,113
+`unresolved`, of which `ambiguous` **52,101** and `no_corpus_def` 17,672
+(the brief's 15,184 / 65,992 come from the bench pipeline's universe, see
+17.1; the CLASS mix is what this section measures and the mix is the
+decision input).
+
+300 rows sampled (seed 7). Each site's receiver expression was peeled
+(method chains, `)`/`]`-balanced call tails) against the source text, then
+classified by what the compiler would bind:
+
+| class | count | projected (x/300 of 52,101) | meaning |
+|---|---:|---:|---|
+| (a) method call, receiver type traceable, impl in corpus | 253 | **43,940** | `x.m()` where `x`'s type is a param annotation, `let x: T`, `self`/field, or a method-chain tail, and an `impl` block (inherent or trait) defines `m` for some corpus type |
+| (b) associated fn / ctor | 27 | 4,698 | `T::new()`, `Self::f()`, `ast::MethodCallExpr::cast()`, `Vec::new()` (about a third of these name external types, `Vec`/`TextSize`/`NonZero`, where no edge is correct) |
+| (d) free fn, module-scoped | 4 | 695 | the completion test harness `check`/`check_edit` (each defined per test module; 2 defs of `check` in `ide-completion/src/tests/*.rs`) |
+| (e) other | 16 | 2,768 | 3 struct literals (`tt::Span { .. }`, `crates/mbe/src/lib.rs`), std fns (`mem::replace`, `std::iter::from_fn`), external qualified calls (`support::token`, `crates/syntax/src/ast/generated/nodes.rs:15`), and 2 cross-crate qualified calls through a use alias (`hir::attach_db`, `crates/ide-diagnostics/src/handlers/inactive_code.rs:230`) |
+| (c) trait method through a generic bound | 0 | 0 | none in the sample |
+
+Two file:line per top class:
+
+| class | example sites |
+|---|---|
+| (a) | `crates/ide-assists/src/handlers/promote_local_to_const.rs:3231` `name.syntax()`, trait method impl'd at `crates/syntax/src/ast/expr_ext.rs:66`; `crates/hir/src/lib.rs:703` `name.clone()`, inherent impl in `crates/intern/src/symbol/symbols.rs`'s sibling `crates/intern/src/symbol.rs` |
+| (b) | `crates/project-model/src/sysroot.rs` caller, `Sysroot::empty` defined at `crates/project-model/src/sysroot.rs:56`; `SyntaxMappingBuilder::new` defined at `crates/syntax/src/syntax_editor/mapping.rs:194` |
+| (d) | `crates/ide-completion/src/tests/record.rs:48` `check(`, `crates/ide-completion/src/tests/expression.rs:1163` `check_edit(` |
+| (e) | `crates/syntax/src/ast/generated/nodes.rs:15` `support::token(`, `crates/hir-expand/src/fixup.rs:1356` `SyntaxFixupUndoInfo {` |
+
+Reading: classes (a)+(b) are 93.3% of the sample. The receiver fix the brief
+scopes (per-fn receiver table + impl map, plus `T::f()`/`Self::f()` binding)
+addresses both; (d) is the module plane's glob leg, already built in #552
+(`wildcard_scope`, single source binds, two globs ambiguous); (e) stays.
+
+## 17. The receiver leg (lane `fix-extract-rust-cross-crate`)
+
+The go #554/#562 twin: phase 1 records one `CallFAux.receivers` row per
+method-call site (`Named(T)` when the receiver's type is visible in scope,
+`Inferred` when it is not), and a corpus-wide (T, m) impl table binds the
+site. Table owner: `src/lang/rust_receivers.rs` (new); the table rides the
+module plane's second parse (`rust_modules.rs`, `impl_facts`), the resolve
+legs live in `src/lang/rust.rs` `Resolve<CallF>`.
+
+| leg | rule |
+|---|---|
+| receiver | `x.m()` with `Named(T)`: exactly one corpus impl of `(T, m)` -> edge, kind `name_resolve`; none -> NO row (a known type with no corpus impl is std/external/trait dispatch) |
+| receiver | `x.m()` with `Inferred`: falls through to the v5-shaped legs; a site that still drops carries reason `inferred` (new in `call_drops`) |
+| assoc | `T::f()` / `a::T::f()`: the last uppercase-leading segment names the impl type, same (T, m) table |
+| assoc | `Self::f()`: the enclosing impl's self type, read off the file's `method_owners` rows |
+| scope | `Named` sources: param annotations, `let x: T`, `self`/`Self`, struct field types, and ONE hop `let x = f()` through `f`'s declared return type (`-> Result<T, _>`/`-> Option<T>` take T) |
+
+The (T, m) table declines 2+ corpus impls of the same pair (the ambiguity
+rule). The glob class (d) of section 16 is the module plane's own star leg
+(#552, single source binds, two globs ambiguous); unchanged here.
+
+### 17.1 Receipt
+
+Corpus `~/projects/rust-analyzer` at `af4111f`, 873 `crates/*/src` files
+(`rust.receiver.files.txt`), binary at this lane's HEAD, one process per
+resolve group. `before` = the numbers section 15/13 carried (baseline tsv at
+`53189700b`-era binary), `after` = this lane. Raw:
+`plans/extract-bench-2026-08-29/rust.parse.{call,resolve.runs}.tsv`
+(overwritten), whole-corpus run `rust.receiver.resolve_whole.jsonl`, crawl
+`rust.receiver.crawl.json`.
+
+| | before | after |
+|---|---:|---:|
+| per-crate pipeline `|a|` (unique call rows) | 40,686 | 41,030 |
+| a ∩ `ra_ap_ide` oracle | 12,624 | 13,892 |
+| recall | 31.0% | **33.9%** |
+| precision | 46.8% | **51.4%** |
+| per-crate `ambiguous` call drops | 15,184 | **8,799** |
+| per-crate `no_corpus_def` drops | 65,992 | 28,754 |
+| per-crate drops reason `inferred` | (n/a) | 44,721 |
+| whole-corpus `resolved_edge` | 59,921 | 83,331 |
+| whole-corpus `unresolved` reason `ambiguous` | 55,073 | **15,444** |
+| whole-corpus recall / precision vs oracle | 31.0% / 46.8% | 33.5% / 67.0% |
+| crawl union (program 75 + test 7,774 roots) | 12,924 | **13,244** |
+| program-root reachable defs | 3,117 | 3,731 |
+
+The 65,992 -> 28,754 `no_corpus_def` move is mostly RECLASSIFICATION: method
+sites on std receivers now carry the `inferred` reason (44,721 rows), the
+`no_corpus_def` label stays for the non-method sites it always named. The
++320 union defs and +1,268 oracle intersections are net-new edges the
+receiver and assoc legs minted; the precision gain is the ambiguous
+name-match collisions those legs no longer fall into.
+
+### 17.2 Gate
+
+`cargo test --release --features cli --no-fail-fast`: 536 passed, 0 failed,
+2 ignored. New: `tests/68_rust_receivers.rs` (10 tests, fail-first proven on
+the pre-leg binary: 8 red), fixtures
+`tests/fixtures/rust_findings/receivers/src/**`. Two goldens updated for the
+new drop reason: `9_closure_resolved_edges.jsonl` (iter/map/collect now
+`inferred`) and `wire_golden.jsonl` (regenerated; the corpus embeds the
+former as a data fixture).
