@@ -60,10 +60,11 @@ The basement recognizes only these semantic top-level forms:
 ```
 
 Every `:` installs one ordered edge in its enclosing owner. A nested `*` or
-`+` creates another owner, and its nested binds install edges there. Each such
-owner has a `scope_parent/2` edge to its enclosing owner. Future dot access can
-resolve one segment by reading `':'(Owner, Name, Target, Index)` and continue
-from `Target`; no dot token is added in this slice.
+`+` creates another owner, and its nested binds install edges there. The outer
+binding edge targets that nested owner, which makes containment recoverable by
+reversing the edge. Future dot access can resolve one segment by reading
+`':'(Owner, Name, Target, Index)` and continue from `Target`; no dot token is
+added in this slice.
 
 The basement preserves target references and does no type evaluation. `->`,
 nested expression application, partial application, imports, negation,
@@ -124,7 +125,7 @@ file. Run the focused SWI reader command once.
 Add one production module in dependency order:
 
 ```text
-v7/1_DATALOG/0_lower.pl
+v7/1_DATALOG/0_basement.pl
 ```
 
 Public signature:
@@ -134,7 +135,7 @@ lower_datalog(+Unit, -Program, -Origins, -Diagnostics).
 
 % Pass 1: mint the file owner plus every nested product and sum owner.
 % Pass 2: reserve every ':' name in its owner before resolving targets.
-% Pass 3: emit pending bind edges, scope parents, relation declarations,
+% Pass 3: emit pending bind edges, relation declarations,
 % ground seeds, and positive rules in authored order.
 % Reify each reader VariableIdentity as var(Identity).
 % Preserve source ownership in ground origin rows.
@@ -147,7 +148,6 @@ Canonical output:
 basement_program(
   root_graph(
     [node(NodeIdentity, module | product | sum), ...],
-    [scope_parent(ChildOwner, ParentOwner), ...],
     [pending_edge(Owner, Name, TargetTerm, Index), ...]
   ),
   datalog_program(
@@ -196,7 +196,8 @@ references.
 
 - Owner identity is derived from the immutable unit identity and reader node.
 - `(Owner, Name)` and `(Owner, Index)` are unique bind keys.
-- Nested owners carry exactly one `scope_parent/2` row.
+- A nested owner's containing node is derived by reversing the binding edge
+  whose target is that owner.
 - Relation arity is the count of outgoing binds on its product target.
 - Seeds are retained in authored order until the checker canonicalizes rows.
 - Rules and body goals retain authored order.
@@ -208,10 +209,10 @@ no test file and run no V6, Rust, TypeScript, or engine suite.
 
 ## Milestone 3: resolve, check, and graph the Datalog program
 
-Add one production module after lowering:
+Extend the existing basement production module:
 
 ```text
-v7/2_DATALOG/0_check.pl
+v7/1_DATALOG/0_basement.pl
 ```
 
 Public signature:
@@ -219,7 +220,7 @@ Public signature:
 ```prolog
 check_datalog(+BasementProgram, +Origins, -Checked, -Diagnostics).
 
-% Resolve name(Owner, Name) locally, then through scope_parent/2.
+% Resolve name(Owner, Name) locally, then through reverse binding edges.
 % Resolve int, text, any, and type through the primitive root.
 % Replace successful name terms with ref(Target) and pending edges with ':'/4.
 % Check unique binds and dense zero-based indices.
@@ -234,7 +235,7 @@ Successful output:
 
 ```prolog
 checked_datalog(
-    root_graph(Nodes, ScopeParents, ColonEdges),
+    root_graph(Nodes, ColonEdges),
     datalog_program(Relations, Seeds, Rules),
     [depends(HeadRelation,
              BodyRelation,
@@ -273,7 +274,7 @@ the later negation extension data-shaped.
 
 ### Verification
 
-Use one direct SWI receipt proving nested product and sum edges, parent-scope
+Use one direct SWI receipt proving nested product and sum edges, containing-edge
 resolution, a recursive dependency graph, an undeclared relation, an arity
 mismatch, and an unsafe head variable. Add no test file. Run no V6, Rust,
 TypeScript, or engine suite.
@@ -287,13 +288,12 @@ v7/0_SWIPL/0_README.md
 v7/0_SWIPL/1_reader.pl
 v7/0_SWIPL/test/0_reader.test.pl
 v7/0_SWIPL/test/fixtures/0_minimal.dl7
-v7/1_DATALOG/0_lower.pl
-v7/2_DATALOG/0_check.pl
+v7/1_DATALOG/0_basement.pl
 v7/3_TASKS/00_PROGRESS.md
 ```
 
-No new test file is allowed. Production modules target 300 nonblank,
-noncomment lines and stop before 500.
+No new test file is allowed. Lowering and checks remain together in the one
+basement production module.
 
 ## DAG
 

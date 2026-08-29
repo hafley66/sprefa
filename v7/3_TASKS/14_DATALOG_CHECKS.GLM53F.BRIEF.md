@@ -6,10 +6,10 @@ Read `v7/2_DESIGN/2_BASEMENT_TO_DATALOG.PLAN.md` first and implement milestone
 ## Scope
 
 - Work only in the assigned worktree.
-- Add `v7/2_DATALOG/0_check.pl` and update
+- Extend `v7/1_DATALOG/0_basement.pl` and update
   `v7/3_TASKS/00_PROGRESS.md` only.
-- Export exactly `check_datalog/4`.
-- Resolve pending names through owner and parent-scope edges, with the four
+- Add `check_datalog/4` to the existing module exports.
+- Resolve pending names through owner edges and reverse binding edges, with the four
   pinned primitive references from the plan.
 - Emit canonical `':'/4` edges and replace call names with `ref(Target)`.
 - Validate binds, dense indices, explicit relation use, arities, ground seeds,
@@ -23,7 +23,7 @@ Read `v7/2_DESIGN/2_BASEMENT_TO_DATALOG.PLAN.md` first and implement milestone
 
 ## Gate
 
-Run one direct SWI command covering nested product and sum edges, parent-scope
+Run one direct SWI command covering nested product and sum edges, parent-edge
 resolution, a recursive graph, undeclared use, arity mismatch, and unsafe head
 variable. Record exact observed terms in the commit body. Run
 `git diff --check`. Run no suite.

@@ -20,13 +20,14 @@ blocked_by: ['@dl7-datalog-lower']
 
 Plan: `v7/2_DESIGN/2_BASEMENT_TO_DATALOG.PLAN.md`, milestone 3.
 
-Resolve pending names through nested owner scopes, emit canonical colon edges,
+Resolve pending names through type-node edges, emit canonical colon edges,
 validate the positive Datalog program, and emit dependency plus SCC stratum
 rows. This card ends the first basement slice immediately before evaluation.
 
 ## Acceptance Criteria
 
-- [ ] `check_datalog/4` resolves local and parent-scope names.
+- [ ] `check_datalog/4` resolves local names and containing-node names by
+  traversing binding edges.
 - [ ] `int`, `text`, `any`, and `type` resolve through the primitive root.
 - [ ] Resolved binds are canonical `':'(Owner, Name, Target, Index)` rows.
 - [ ] Resolved calls carry `ref(Target)`, `var(Identity)`, and `const(Value)`.
