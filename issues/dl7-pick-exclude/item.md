@@ -3,7 +3,7 @@ created: 2026-08-28
 updated: 2026-08-29
 type: task
 assignee: glm53f
-status: open
+status: needs-info
 priority: normal
 epic: dl7-minimal-kernel
 labels: [dl7, model-glm53f]
@@ -11,7 +11,7 @@ size: M
 lane: dl7-kernel
 lane_seq: 2
 collision: [v7-kernel, v7-prelude]
-blocked_by: ['@dl7-luna-review', '@dl7-relational-cons', '@dl7-stratified-negation', '@dl7-count-aggregate', '@dl7-ordered-index']
+blocked_by: ['@dl7-luna-review', '@dl7-relational-cons', '@dl7-stratified-negation', '@dl7-count-aggregate', '@dl7-ordered-index', '@dl7-edge-snapshot-ruling']
 ---
 
 # Add userland Pick and Exclude goals
