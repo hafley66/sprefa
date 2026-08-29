@@ -29,6 +29,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use super::astgrep::{AstGrepParser, CstProjector};
+use super::go_modules::GoModuleIndex;
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
     DfParam, DocFact, DocTag, MethodOwner, ProjectEdge, ReceiverBinding, ReceiverOutcome, SigSlot,
@@ -52,7 +53,7 @@ use crate::types::{PathIndex, ScipIndex, UnresolvedReason};
 /// (src/graph/typegraph/go.rs:41). tree-sitter 0.25's `Language::new` wraps the
 /// `LanguageFn` tree-sitter-go 0.23 exports as `LANGUAGE`; the versions unify
 /// with what ast-grep-language already transitively pulls.
-fn go_parse(content: &str) -> Option<tree_sitter::Tree> {
+pub(crate) fn go_parse(content: &str) -> Option<tree_sitter::Tree> {
     let mut parser = tree_sitter::Parser::new();
     let lang = tree_sitter::Language::new(tree_sitter_go::LANGUAGE);
     parser.set_language(&lang).ok()?;
@@ -60,7 +61,7 @@ fn go_parse(content: &str) -> Option<tree_sitter::Tree> {
 }
 
 /// UTF-8 text of a tree-sitter node. Port of v5 `go_text`.
-fn go_text<'a>(node: tree_sitter::Node, src: &'a [u8]) -> &'a str {
+pub(crate) fn go_text<'a>(node: tree_sitter::Node, src: &'a [u8]) -> &'a str {
     node.utf8_text(src).unwrap_or("")
 }
 
@@ -713,7 +714,9 @@ fn go_module_specifiers(
 }
 
 /// Recurse the tree for every `import_spec` node, appending one row each.
-fn go_walk_import_specs(
+/// `pub(crate)`: `go_modules.rs`'s own dedicated parse reuses this walk
+/// directly rather than re-deriving the kind/name/module table a second time.
+pub(crate) fn go_walk_import_specs(
     node: tree_sitter::Node,
     src: &[u8],
     strings: &mut Strings,
@@ -2341,16 +2344,25 @@ impl GoSource {
     }
 }
 
-/// The dst leg of one candidate: same-file TypeF entity first (its span joined
-/// through the `DefIndex` for the blob), else a unique corpus site, else None
-/// (text stays text — the zero leg). Name-only resolution, per the 4a ADDENDUM
-/// site-key discipline (no receiver typing anywhere in commit 4).
+/// A `pkg.Name` ref resolves through the go module plane; a bare name tries
+/// same-file then a unique corpus site, else None (text stays text).
 fn resolve_type_dst(
     types: &FamilyBundle<TypeF>,
     strings: &Strings,
     index: Option<&DefIndex>,
+    modules: Option<&GoModuleIndex>,
+    paths: Option<&PathIndex>,
+    own_path: Option<&str>,
     name: &str,
 ) -> Option<(ContentId, Span)> {
+    if let Some((pkg, bare)) = name.split_once('.') {
+        let modules = modules?;
+        let own_path = own_path?;
+        let module = go_module_of(own_path)?;
+        let import_path = modules.import_path_for(own_path, pkg)?;
+        let dir = go_package_dir(&module, &import_path)?;
+        return modules.resolve_in_dir(&dir, index?, paths?, bare);
+    }
     let same_file = types
         .nodes
         .iter()
@@ -2374,6 +2386,10 @@ impl Resolve<TypeF> for GoSource {
             return Vec::new();
         };
         let index = cx.indexes.def_index.get();
+        let modules = cx.indexes.go_modules.get();
+        let paths = cx.indexes.paths.get();
+        let own_path =
+            own_blob(cx, output).zip(paths).and_then(|(blob, paths)| paths.get(&blob));
         let mut edges = Vec::new();
         for candidate in GoSource::type_edge_candidates(output) {
             // src: the TypeF entity at the owner span. Exists by construction
@@ -2390,6 +2406,9 @@ impl Resolve<TypeF> for GoSource {
                 types,
                 &output.strings,
                 index,
+                modules,
+                paths,
+                own_path,
                 output.strings.lookup(candidate.to),
             )
             .unwrap_or((ZERO_CONTENT_ID, Span::empty()));
@@ -2474,44 +2493,14 @@ impl GoSource {
         Some((blob.clone(), site.span))
     }
 
-    /// The name-match target of a callee written `pkg.F` where the import path
-    /// names `dir`: only defs whose file SITS in `dir` are candidates.
-    pub fn call_name_match_in_package(
-        index: &DefIndex,
-        paths: &PathIndex,
-        dir: &Path,
-        callee: &str,
-    ) -> Option<(ContentId, Span)> {
-        let sites: Vec<&DefSite> = corpus_defs(index, callee)
-            .iter()
-            .filter(|site| {
-                paths
-                    .get(&site.blob)
-                    .and_then(|path| Path::new(path).parent())
-                    .is_some_and(|parent| same_dir(parent, dir))
-            })
-            .collect();
-        unique_blob(&sites)
-    }
-
-    /// The name-match target of a callee written `pkg.F` for an imported `pkg`:
-    /// `own`'s defs leave the candidate set, a unique remaining blob wins.
-    pub fn call_name_match_imported(
-        index: &DefIndex,
-        own: Option<&ContentId>,
-        callee: &str,
-    ) -> Option<(ContentId, Span)> {
-        let sites: Vec<&DefSite> = corpus_defs(index, callee)
-            .iter()
-            .filter(|site| own.map_or(true, |blob| &site.blob != blob))
-            .collect();
-        unique_blob(&sites)
-    }
+    // The `pkg.F` leg resolves through `go_modules::GoModuleIndex::resolve_in_dir`
+    // now, the plane's own directory-scoped, exported-only lookup.
 }
 
 /// The one blob `sites` name, with the CallF facet's span preferred; two blobs
-/// are an ambiguity this tier does not settle.
-fn unique_blob(sites: &[&DefSite]) -> Option<(ContentId, Span)> {
+/// are an ambiguity this tier does not settle. `pub(crate)`: `go_modules.rs`'s
+/// package-qualified leg reuses this join rather than re-deriving it.
+pub(crate) fn unique_blob(sites: &[&DefSite]) -> Option<(ContentId, Span)> {
     let mut blobs: Vec<&ContentId> = Vec::new();
     for site in sites {
         if !blobs.contains(&&site.blob) {
@@ -2529,15 +2518,16 @@ fn unique_blob(sites: &[&DefSite]) -> Option<(ContentId, Span)> {
 }
 
 /// The go module owning a file: the nearest ancestor directory holding a
-/// `go.mod`, with that file's `module` line.
-struct GoModule {
+/// `go.mod`, with that file's `module` line. `pub(crate)`: `go_modules.rs`
+/// reuses this rather than re-walking the filesystem with its own copy.
+pub(crate) struct GoModule {
     root: PathBuf,
     module: String,
 }
 
 /// Walk up from `path` for the `go.mod` that names the module the file is in.
 /// None: no ancestor has one, or the one found declares no module.
-fn go_module_of(path: &str) -> Option<GoModule> {
+pub(crate) fn go_module_of(path: &str) -> Option<GoModule> {
     let mut dir = Path::new(path).parent()?;
     loop {
         if let Ok(text) = std::fs::read_to_string(dir.join("go.mod")) {
@@ -2555,7 +2545,7 @@ fn go_module_of(path: &str) -> Option<GoModule> {
 
 /// The directory an import path names inside `module`. None = outside the
 /// module (stdlib or third-party), which no corpus file declares.
-fn go_package_dir(module: &GoModule, import_path: &str) -> Option<PathBuf> {
+pub(crate) fn go_package_dir(module: &GoModule, import_path: &str) -> Option<PathBuf> {
     if import_path == module.module {
         return Some(module.root.clone());
     }
@@ -2567,7 +2557,7 @@ fn go_package_dir(module: &GoModule, import_path: &str) -> Option<PathBuf> {
 
 /// Directory equality over supplied paths: `./a/x.go` and `a/x.go` name one
 /// directory, and no arm may resolve on the spelling difference.
-fn same_dir(left: &Path, right: &Path) -> bool {
+pub(crate) fn same_dir(left: &Path, right: &Path) -> bool {
     let strip = |path: &Path| -> Vec<std::ffi::OsString> {
         path.components()
             .filter(|part| !matches!(part, Component::CurDir))
@@ -2756,11 +2746,9 @@ impl Resolve<CallF> for GoSource {
         // and the go.mod walk is per file, never per call site.
         let own = own_blob(cx, output);
         let paths = cx.indexes.paths.get();
-        let module = own
-            .as_ref()
-            .zip(paths)
-            .and_then(|(blob, paths)| paths.get(blob))
-            .and_then(go_module_of);
+        let own_path = own.as_ref().zip(paths).and_then(|(blob, paths)| paths.get(blob));
+        let module = own_path.and_then(go_module_of);
+        let modules = cx.indexes.go_modules.get();
         // The scip leg: the corpus index + the rev-correct reader + this
         // file's own document (found by content hash). Any missing piece ->
         // pure name-match (v5-shaped).
@@ -2799,26 +2787,33 @@ impl Resolve<CallF> for GoSource {
             } else {
                 None
             };
-            let name_t = match receiver {
+            let name_t: Option<(ContentId, Span, CallEdgeKind)> = match receiver {
                 Some(ReceiverOutcome::Named(type_id)) => {
                     let type_name = output.strings.lookup(*type_id);
                     go_receiver_target(
                         def_index, paths, &module, own.as_ref(), &imports, type_name, callee,
                     )
+                    .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
                 }
                 Some(ReceiverOutcome::Inferred) | Some(ReceiverOutcome::Ambiguous) => None,
                 None => match site.callee_path.map(|id| output.strings.lookup(id)) {
-                    // With the module in hand the import path names ONE directory,
-                    // and a path outside the module names no corpus file at all.
-                    Some(import) => match (&module, paths) {
-                        (Some(module), Some(paths)) => {
-                            go_package_dir(module, import).and_then(|dir| {
-                                GoSource::call_name_match_in_package(def_index, paths, &dir, callee)
-                            })
-                        }
-                        _ => GoSource::call_name_match_imported(def_index, own.as_ref(), callee),
+                    // The import path names ONE directory through the module; the
+                    // plane's own directory-scoped, exported-only lookup binds it.
+                    Some(import) => match (&module, paths, modules) {
+                        (Some(module), Some(paths), Some(modules)) => go_package_dir(module, import)
+                            .and_then(|dir| modules.resolve_in_dir(&dir, def_index, paths, callee))
+                            .map(|(blob, span)| (blob, span, CallEdgeKind::ImportResolve)),
+                        _ => None,
                     },
-                    None => GoSource::call_name_match(output, def_index, callee),
+                    None => GoSource::call_name_match(output, def_index, callee)
+                        .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                        .or_else(|| {
+                            modules.zip(own_path).and_then(|(modules, path)| {
+                                modules
+                                    .resolve_dot_imported(path, def_index, paths?, callee)
+                                    .map(|(blob, span)| (blob, span, CallEdgeKind::ImportResolve))
+                            })
+                        }),
                 },
             };
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
@@ -2830,9 +2825,11 @@ impl Resolve<CallF> for GoSource {
             // coordinates (the ORACLE entry's "the models differ by
             // construction").
             let ((dst_blob, dst_span), kind) = match (name_t, scip_t) {
-                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => (n, CallEdgeKind::NameResolve),
+                (Some((blob, span, _)), Some(s)) if blob == s.0 && callee == s.2 => {
+                    ((blob, span), CallEdgeKind::NameResolve)
+                }
                 (_, Some(s)) => ((s.0, s.1), CallEdgeKind::ScipOverride),
-                (Some(n), None) => (n, CallEdgeKind::NameResolve),
+                (Some((blob, span, kind)), None) => ((blob, span), kind),
                 (None, None) => continue,
             };
             edges
@@ -2951,11 +2948,11 @@ fn is_go_builtin_call(name: &str) -> bool {
     GO_BUILTIN_FUNCS.contains(&name) || GO_BUILTIN_TYPES.contains(&name)
 }
 
-/// One `unresolved` row per dropped site whose callee is predeclared. Every
-/// other drop stays unreported, matching the go arm's pre-existing behavior.
+/// One `unresolved` row per dropped predeclared-callee site, plus one per
+/// import spec outside the corpus (reason `external`, import-spec-level).
 pub fn call_drops(
     output: &ExtractOutput,
-    _cx: &ProjectCx,
+    cx: &ProjectCx,
     edges: &[ProjectEdge<CallF>],
 ) -> Vec<ResolveDrop> {
     let Some(call) = &output.call else {
@@ -2965,7 +2962,8 @@ pub fn call_drops(
         .iter()
         .filter_map(|edge| edge.call_site.map(|span| (span.start, span.end())))
         .collect();
-    call.aux
+    let mut drops: Vec<ResolveDrop> = call
+        .aux
         .sites
         .iter()
         .filter(|site| !bound.contains(&(site.span.start, site.span.end())))
@@ -2992,5 +2990,19 @@ pub fn call_drops(
                 detail: callee.to_string(),
             })
         })
-        .collect()
+        .collect();
+    if let Some(modules) = cx.indexes.go_modules.get() {
+        let own_path =
+            own_blob(cx, output).zip(cx.indexes.paths.get()).and_then(|(blob, paths)| paths.get(&blob));
+        if let Some(path) = own_path {
+            drops.extend(modules.external_drops(path).into_iter().map(|(span, import_path)| {
+                ResolveDrop {
+                    span,
+                    reason: UnresolvedReason::External,
+                    detail: import_path,
+                }
+            }));
+        }
+    }
+    drops
 }
