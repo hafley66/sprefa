@@ -468,7 +468,9 @@ fn push_sig(
 }
 
 /// The callable's declared type-parameter names (the exclusion set: a generic
-/// `[T]` referencing itself is not a sig). Port of v5 `go_fn_type`'s tparams.
+/// `[T]` referencing itself is not a sig). For a method this includes the
+/// receiver's type arguments (`func (g Gen[T]) Get() T` declares T there, and
+/// T in the result position is not a ref). Port of v5 `go_fn_type`'s tparams.
 fn go_type_param_names(node: tree_sitter::Node, src: &[u8]) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     if let Some(tp_list) = node.child_by_field_name("type_parameters") {
@@ -483,7 +485,34 @@ fn go_type_param_names(node: tree_sitter::Node, src: &[u8]) -> BTreeSet<String> 
             }
         }
     }
+    if node.kind() == "method_declaration" {
+        if let Some(recv_list) = node.child_by_field_name("receiver") {
+            let mut cursor = recv_list.walk();
+            for recv in recv_list
+                .children(&mut cursor)
+                .filter(|n| n.kind() == "parameter_declaration")
+            {
+                if let Some(ty) = recv.child_by_field_name("type") {
+                    collect_identifiers(ty, src, &mut names);
+                }
+            }
+        }
+    }
     names
+}
+
+/// Every `type_identifier` name under `node`, recursive. Used for the
+/// receiver's `type_arguments`, where the grammar nests the arg inside a
+/// `type_elem`.
+fn collect_identifiers(node: tree_sitter::Node, src: &[u8], names: &mut BTreeSet<String>) {
+    if node.kind() == "type_identifier" {
+        names.insert(go_text(node, src).to_string());
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_identifiers(child, src, names);
+    }
 }
 
 /// Collect the named type references anywhere under `node`, de-duplicated and

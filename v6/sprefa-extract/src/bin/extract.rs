@@ -12,6 +12,7 @@
 //! and `tests/4_capability_parity.rs` asserts the binary reaches every library
 //! capability, so that drift cannot recur silently.
 
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -568,19 +569,27 @@ fn stream(
     mask: FamilyMask,
     cfg: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(out) = dispatch(path, content, mask) {
-        for fact in flatten(&out) {
-            println!("{}", serde_json::to_string(&fact)?);
+    // ONE BufWriter held for the whole run: a per-row println! goes through
+    // LineWriter, which flushes on every newline and turns 2M-row streams
+    // into 2M write syscalls.
+    let stdout = std::io::stdout();
+    let mut out = std::io::BufWriter::with_capacity(256 * 1024, stdout.lock());
+    if let Some(bundle) = dispatch(path, content, mask) {
+        for fact in flatten(&bundle) {
+            serde_json::to_writer(&mut out, &fact)?;
+            out.write_all(b"\n")?;
         }
-        // The cfg plane rides the SAME parse: it is derived from `out.cst`.
+        // The cfg plane rides the SAME parse: it is derived from `bundle.cst`.
         if cfg {
-            if let Some(bundle) = cfg_bundle(path, &out, content) {
-                for fact in flatten_cfg(&bundle) {
-                    println!("{}", serde_json::to_string(&fact)?);
+            if let Some(cfg_bundle) = cfg_bundle(path, &bundle, content) {
+                for fact in flatten_cfg(&cfg_bundle) {
+                    serde_json::to_writer(&mut out, &fact)?;
+                    out.write_all(b"\n")?;
                 }
             }
         }
     }
+    out.flush()?;
     Ok(())
 }
 
