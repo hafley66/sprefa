@@ -5,7 +5,7 @@ Read `plans/extract-corpus-2026-08-28/COMMON.md`. Source of the kinks:
 
 ## First action
 ```
-git merge --ff-only 7712a40b83a726981a736ef5dda424cea4bf49e3
+git merge --ff-only e433d5f9d6f0f69fc4ca16eeb9978a7a71b7f798
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Failure: STOP, `boop beep --no-wait --as fix-extract-go-scip-cli sprefa-coordinator "<one line>"`.
