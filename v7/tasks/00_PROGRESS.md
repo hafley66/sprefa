@@ -429,3 +429,21 @@ one SWI process.
 - Implementation commit: `8ffe6ae51`.
 - Consolidated SWI command: 11 passed, 0 failed, 0 choicepoint warnings.
 - Tree-sitter command: 1 parse passed, 0 failed.
+
+## Checked ordered edge indices
+
+- Added relation-shaped kernel node
+  `predecessor(Owner, EarlierIndex, LaterIndex)` with keys
+  `[[0,1],[0,2]]`.
+- After source and kernel colon edges pass dense-index checks, every edge at
+  index `N > 0` contributes the sorted checked seed `(N-1, N)` for its owner.
+- A consolidated source unit proves that empty and singleton products emit no
+  rows, a three-edge product emits `0→1` and `1→2`, and ordinary positive
+  recursion derives `0→1`, `0→2`, and `1→2`.
+- Partial's normalized runtime counts are now
+  `30/28/12/16/5/10/12`; compiler closure size is 79. The 15 new checked seeds
+  are predecessor rows, while two kernel node/classifier rows and three kernel
+  signature edges account for the remaining compiler rows.
+- Implementation commit: `cf974641f`.
+- Consolidated SWI command: 12 passed, 0 failed, 0 choicepoint warnings.
+- Tree-sitter command: 1 parse passed, 0 failed.
