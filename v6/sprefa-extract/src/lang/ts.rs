@@ -3747,7 +3747,7 @@ impl Resolve<CallF> for TsSource {
                 Some((index, joined, doc_ix))
             });
         // The module plane binds an IMPORTED name; the name match is what a
-        // free name falls to (user decision 2026-08-29).
+        // free name falls to.
         let modules = cx
             .indexes
             .ts_modules
