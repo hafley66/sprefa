@@ -2881,6 +2881,12 @@ struct GoFileFacts {
     /// struct declarations. Named types only; a slice/array/map field is no
     /// receiver and so is absent.
     fields: HashMap<(String, String), String>,
+    /// struct -> its EMBEDDED types as written, `*` and type arguments cut, a
+    /// `pkg.T` embed keeping its qualifier. Go's method promotion walks these.
+    embeds: HashMap<String, Vec<String>>,
+    /// Import qualifier -> import path, so a `pkg.T` embed resolves through
+    /// the DECLARING file's own imports rather than the resolving file's.
+    imports: HashMap<String, String>,
 }
 
 fn go_file_facts(blob: &ContentId, path: &str) -> Arc<GoFileFacts> {
@@ -2915,6 +2921,8 @@ fn go_parse_file_facts(path: &str) -> GoFileFacts {
         ret_of: HashMap::new(),
         generic: std::collections::HashSet::new(),
         fields: HashMap::new(),
+        embeds: HashMap::new(),
+        imports: HashMap::new(),
     };
     let Ok(bytes) = std::fs::read(path) else {
         return facts;
@@ -2924,6 +2932,7 @@ fn go_parse_file_facts(path: &str) -> GoFileFacts {
     };
     if let Some(tree) = go_parse(src) {
         go_collect_file_facts(tree.root_node(), src.as_bytes(), &mut facts);
+        go_collect_file_imports(tree.root_node(), src.as_bytes(), &mut facts.imports);
         for ((s, f), decl) in go_field_types(tree.root_node(), src.as_bytes()) {
             if let DeclType::Named(name) = decl {
                 facts.fields.insert((s, f), name);
@@ -2963,6 +2972,7 @@ fn go_collect_file_facts(node: tree_sitter::Node, src: &[u8], facts: &mut GoFile
                 let mut sc = child.walk();
                 for spec in child.children(&mut sc).filter(|n| n.kind() == "type_spec") {
                     go_collect_interface_facts(spec, src, facts);
+                    go_collect_embed_facts(spec, src, facts);
                 }
             }
             _ => {}
@@ -3086,6 +3096,80 @@ fn go_collect_interface_facts(spec: tree_sitter::Node, src: &[u8], facts: &mut G
     }
 }
 
+/// A struct's embedded fields: tree-sitter-go's `field_declaration` carries a
+/// `type` and NO `field_identifier` for exactly those.
+fn go_collect_embed_facts(spec: tree_sitter::Node, src: &[u8], facts: &mut GoFileFacts) {
+    let Some(name_node) = spec.child_by_field_name("name") else {
+        return;
+    };
+    let Some(struct_ty) = spec
+        .child_by_field_name("type")
+        .filter(|t| t.kind() == "struct_type")
+    else {
+        return;
+    };
+    let mut lc = struct_ty.walk();
+    let Some(list) = struct_ty
+        .children(&mut lc)
+        .find(|n| n.kind() == "field_declaration_list")
+    else {
+        return;
+    };
+    let mut embeds = Vec::new();
+    let mut fc = list.walk();
+    for field in list
+        .children(&mut fc)
+        .filter(|n| n.kind() == "field_declaration")
+    {
+        let mut nc = field.walk();
+        if field
+            .children(&mut nc)
+            .any(|n| n.kind() == "field_identifier")
+        {
+            continue;
+        }
+        let Some(ty) = field.child_by_field_name("type") else {
+            continue;
+        };
+        let name = go_named_type_text(ty, src);
+        if !name.is_empty() {
+            embeds.push(name);
+        }
+    }
+    if !embeds.is_empty() {
+        facts
+            .embeds
+            .insert(go_text(name_node, src).to_string(), embeds);
+    }
+}
+
+/// The `go_import_bindings` table off a dedicated parse: a plain spec binds
+/// its path's last segment, `_` and `.` bind no qualifier.
+fn go_collect_file_imports(
+    node: tree_sitter::Node,
+    src: &[u8],
+    out: &mut HashMap<String, String>,
+) {
+    if node.kind() == "import_spec" {
+        let path = path_of_import_spec(node, src);
+        match leading_name(node) {
+            Some(name_node) if name_node.kind() == "package_identifier" => {
+                out.insert(go_text(name_node, src).to_string(), path);
+            }
+            Some(_) => {}
+            None => {
+                let tail = path.rsplit('/').next().unwrap_or(&path).to_string();
+                out.insert(tail, path);
+            }
+        }
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        go_collect_file_imports(child, src, out);
+    }
+}
+
 /// A bound result type from another package is stored qualified by the
 /// caller's own import of that package (`Sub` -> `sub.Sub`), so the receiver
 /// leg's directory lookup can find it. Same-package results stay bare.
@@ -3123,8 +3207,8 @@ fn go_qualify_bound_type(
     }
 }
 
-/// Leg 1: `callee` among `type_name`'s methods, same package first (bare
-/// type) else the package the type's `pkg.` qualifier names.
+/// Leg 1: `callee` among `type_name`'s methods, same package first else the
+/// package the `pkg.` qualifier names, and only then the promotion walk.
 fn go_receiver_target(
     def_index: &DefIndex,
     paths: Option<&PathIndex>,
@@ -3144,6 +3228,18 @@ fn go_receiver_target(
             type_name,
         ),
     };
+    go_method_in_dir(def_index, paths, &dir, base_name, callee)
+        .or_else(|| go_promoted_method(def_index, paths, &dir, base_name, callee))
+}
+
+/// `callee` among the methods declared on `(dir, type_name)`.
+fn go_method_in_dir(
+    def_index: &DefIndex,
+    paths: &PathIndex,
+    dir: &Path,
+    type_name: &str,
+    callee: &str,
+) -> Option<(ContentId, Span)> {
     let matches: Vec<&DefSite> = corpus_defs(def_index, callee)
         .iter()
         .filter(|site| {
@@ -3151,12 +3247,12 @@ fn go_receiver_target(
                 && paths.get(&site.blob).is_some_and(|p| {
                     Path::new(p)
                         .parent()
-                        .is_some_and(|parent| same_dir(parent, &dir))
+                        .is_some_and(|parent| same_dir(parent, dir))
                         && go_file_facts(&site.blob, p)
                             .owner_of
                             .get(&(site.span.start, site.span.end()))
                             .map(String::as_str)
-                            == Some(base_name)
+                            == Some(type_name)
                 })
         })
         .collect();
@@ -3167,6 +3263,126 @@ fn go_receiver_target(
         _ => None,
     }
 }
+
+/// Embedded-field hops the promotion walk takes before it stops.
+const GO_EMBED_DEPTH: usize = 4;
+
+/// `callee` among the methods `(dir, type_name)` promotes through its embedded
+/// fields. Go's rule: shallowest wins, a tie at one depth binds nothing.
+fn go_promoted_method(
+    def_index: &DefIndex,
+    paths: &PathIndex,
+    dir: &Path,
+    type_name: &str,
+    callee: &str,
+) -> Option<(ContentId, Span)> {
+    let start = (dir.to_path_buf(), type_name.to_string());
+    let mut seen: std::collections::HashSet<(PathBuf, String)> =
+        std::collections::HashSet::from([start.clone()]);
+    let mut frontier = vec![start];
+    for _ in 0..GO_EMBED_DEPTH {
+        let mut next = Vec::new();
+        for (owner_dir, owner) in &frontier {
+            let embeds = go_embeds_of_dir(owner_dir, paths);
+            for embed in embeds.get(owner).into_iter().flatten() {
+                if seen.insert(embed.clone()) {
+                    next.push(embed.clone());
+                }
+            }
+        }
+        if next.is_empty() {
+            return None;
+        }
+        let hits: BTreeSet<(ContentId, Span)> = next
+            .iter()
+            .filter_map(|(embed_dir, embed)| {
+                go_method_in_dir(def_index, paths, embed_dir, embed, callee)
+            })
+            .collect();
+        let mut found = hits.into_iter();
+        match (found.next(), found.next()) {
+            (Some(hit), None) => return Some(hit),
+            (Some(_), Some(_)) => return None,
+            _ => {}
+        }
+        frontier = next;
+    }
+    None
+}
+
+/// `same_dir`'s component strip as an owned key, so `./a/x` and `a/x` name one
+/// directory in a hash map rather than under a per-pair comparison.
+fn normalize_dir(dir: &Path) -> PathBuf {
+    dir.components()
+        .filter(|part| !matches!(part, Component::CurDir))
+        .collect()
+}
+
+/// The resolve universe's paths grouped by directory, ONE pass per run. A
+/// per-(dir, name) scan of the whole path list is what kink 1 was.
+fn go_dir_index(paths: &PathIndex) -> Arc<DirIndex> {
+    static CACHE: OnceLock<Mutex<HashMap<usize, Arc<DirIndex>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = std::ptr::from_ref(paths) as usize;
+    let mut guard = cache.lock().unwrap_or_else(|poison| poison.into_inner());
+    if let Some(hit) = guard.get(&key) {
+        return hit.clone();
+    }
+    let mut index: DirIndex = HashMap::new();
+    for path in paths.map.values() {
+        if let Some(parent) = Path::new(path).parent() {
+            index
+                .entry(normalize_dir(parent))
+                .or_default()
+                .push(path.clone());
+        }
+    }
+    let index = Arc::new(index);
+    guard.insert(key, index.clone());
+    index
+}
+
+/// One directory's structs -> their embedded types as (declaring dir, bare
+/// name). A `pkg.T` embed resolves through the DECLARING file's imports.
+fn go_embeds_of_dir(dir: &Path, paths: &PathIndex) -> Arc<EmbedsOfDir> {
+    static CACHE: OnceLock<Mutex<EmbedsCache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = (std::ptr::from_ref(paths) as usize, normalize_dir(dir));
+    let mut guard = cache.lock().unwrap_or_else(|poison| poison.into_inner());
+    if let Some(hit) = guard.get(&key) {
+        return hit.clone();
+    }
+    let mut out: EmbedsOfDir = HashMap::new();
+    for path in go_dir_index(paths).get(&key.1).into_iter().flatten() {
+        let facts = go_facts_of_path(path);
+        for (struct_name, embeds) in &facts.embeds {
+            let resolved: Vec<(PathBuf, String)> = embeds
+                .iter()
+                .filter_map(|embed| match embed.split_once('.') {
+                    Some((qualifier, bare)) => {
+                        let import = facts.imports.get(qualifier)?;
+                        let module = go_module_of(path)?;
+                        Some((go_package_dir(&module, import)?, bare.to_string()))
+                    }
+                    None => Some((dir.to_path_buf(), embed.clone())),
+                })
+                .collect();
+            out.entry(struct_name.clone()).or_default().extend(resolved);
+        }
+    }
+    let out = Arc::new(out);
+    guard.insert(key, out.clone());
+    out
+}
+
+/// Normalized directory -> the resolve universe's `.go` paths under it.
+type DirIndex = HashMap<PathBuf, Vec<String>>;
+
+/// Struct name -> its embedded types as (declaring dir, bare name).
+type EmbedsOfDir = HashMap<String, Vec<(PathBuf, String)>>;
+
+/// (resolve-run identity, normalized dir) -> that dir's embed table.
+type EmbedsCache = HashMap<(usize, PathBuf), Arc<EmbedsOfDir>>;
 
 /// The multi-hop replay: type the chain's operand left to right in one pass,
 /// then bind `callee` on the resulting type. The base is a scope name (its
