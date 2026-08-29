@@ -171,3 +171,39 @@ fn a_member_call_site_carries_its_path_as_written() {
     .collect();
     assert_eq!(paths, ["out.push".to_string()]);
 }
+
+// ── kink 4: a function named as a value ─────────────────────────────────────
+
+/// SABOTAGE RECEIPT (fail-pre-fix): only Call/New/JSX minted a row, so
+/// `table.push(handler)` put nothing in the call plane naming `handler` and
+/// this read `[]`. Five of the ten largest unreachable defs in the TypeScript
+/// 5.9 entrypoint crawl are transformers registered exactly this way.
+#[test]
+fn a_function_named_as_a_value_mints_a_reference_row() {
+    let refs: Vec<(String, String)> = run(&[
+        "--family",
+        "call",
+        "tests/fixtures/ts5_findings/function_ref_as_value.ts",
+    ])
+    .iter()
+    .filter(|row| row["record"] == "reference")
+    .map(|row| (text(row, "functor"), text(row, "position")))
+    .collect();
+    assert_eq!(refs, [("handler".to_string(), "value".to_string())]);
+}
+
+/// The row is minted for a name this file DECLARES or IMPORTS. A bare argument
+/// that names a parameter names no def anywhere, and would be one row per
+/// argument over the whole corpus.
+#[test]
+fn a_local_named_as_an_argument_mints_no_reference_row() {
+    let refs = run(&[
+        "--family",
+        "call",
+        "tests/fixtures/ts5_findings/known_receiver/consumer.ts",
+    ])
+    .iter()
+    .filter(|row| row["record"] == "reference")
+    .count();
+    assert_eq!(refs, 0);
+}

@@ -16026,6 +16026,7 @@
 {"record":"site","family":"call","span":{"start":1261,"end":1271},"callee":"map","callee_path":"values.map"}
 {"record":"site","family":"call","span":{"start":1283,"end":1305},"callee":"map","callee_path":"[outer, outer + 1].map"}
 {"record":"site","family":"call","span":{"start":1480,"end":1490},"callee":"map","callee_path":"values.map"}
+{"record":"reference","family":"call","span":{"start":1491,"end":1497},"functor":"double","position":"value"}
 {"record":"node","family":"df","span":{"start":601,"end":617},"kind":"param","name":"values"}
 {"record":"node","family":"df","span":{"start":688,"end":689},"kind":"lit","name":null}
 {"record":"node","family":"df","span":{"start":679,"end":689},"kind":"let_bind","name":"factor"}

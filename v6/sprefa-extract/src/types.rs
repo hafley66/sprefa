@@ -508,6 +508,9 @@ pub enum RefPosition {
     HeadArg,
     TermArg,
     Closure,
+    /// A callable NAMED as a value, never called at that spot
+    /// (`transformers.push(transformES2015)`). Minted by the ts arm.
+    Value,
 }
 
 impl RefPosition {
@@ -517,6 +520,7 @@ impl RefPosition {
             RefPosition::HeadArg => "head_arg",
             RefPosition::TermArg => "term_arg",
             RefPosition::Closure => "closure",
+            RefPosition::Value => "value",
         }
     }
 }

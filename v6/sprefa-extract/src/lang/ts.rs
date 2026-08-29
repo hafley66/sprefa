@@ -39,7 +39,7 @@ use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
 use crate::types::LangKind;
 use crate::types::ScipIndex;
-use crate::types::{Unresolved, UnresolvedReason};
+use crate::types::{RefPosition, Reference, Unresolved, UnresolvedReason};
 
 /// `oxc_span::Span` (start + end) -> our byte `Span` (start + len). One
 /// coordinate; the engine derives line/col from the file bytes when needed.
@@ -1157,6 +1157,7 @@ impl Project<CallF> for CallProjector<'_> {
             depth: 0,
             nested_defs: Vec::new(),
             sites: Vec::new(),
+            value_refs: Vec::new(),
         };
         walker.visit_program(program);
         for (span, name) in walker.nested_defs {
@@ -1203,6 +1204,33 @@ impl Project<CallF> for CallProjector<'_> {
                 detail: strings.intern(&detail),
             });
         }
+        push_value_refs(sink, strings, walker.value_refs);
+    }
+}
+
+/// The `position=value` rows. Restricted to names THIS file declares or
+/// imports: any other bare argument names a local and answers no def.
+fn push_value_refs(
+    sink: &mut FamilyBundle<CallF>,
+    strings: &mut Strings,
+    candidates: Vec<(oxc_span::Span, String)>,
+) {
+    let declared: BTreeSet<String> = sink
+        .nodes
+        .iter()
+        .filter_map(|node| node.name)
+        .chain(sink.aux.specifiers.iter().map(|specifier| specifier.name))
+        .map(|name| strings.lookup(name).to_string())
+        .collect();
+    for (span, name) in candidates {
+        if !declared.contains(&name) {
+            continue;
+        }
+        sink.aux.refs.push(Reference {
+            span: to_span(span),
+            functor: strings.intern(&name),
+            position: RefPosition::Value,
+        });
     }
 }
 
@@ -1728,6 +1756,9 @@ struct CallWalker<'c> {
     depth: u32,
     nested_defs: Vec<(oxc_span::Span, String)>,
     sites: Vec<CollectedSite>,
+    /// Every identifier in call-argument position, before the projector keeps
+    /// the ones this file declares or imports.
+    value_refs: Vec<(oxc_span::Span, String)>,
 }
 
 impl<'a> OxcVisit<'a> for CallWalker<'_> {
@@ -1760,6 +1791,7 @@ impl<'a> OxcVisit<'a> for CallWalker<'_> {
                 path: callee_path(&call.callee, self.content),
             });
         }
+        collect_value_refs(&mut self.value_refs, &call.arguments);
         oxc_ast_visit::walk::walk_call_expression(self, call);
     }
 
@@ -1773,6 +1805,7 @@ impl<'a> OxcVisit<'a> for CallWalker<'_> {
                 path: callee_path(&new_expr.callee, self.content),
             });
         }
+        collect_value_refs(&mut self.value_refs, &new_expr.arguments);
         oxc_ast_visit::walk::walk_new_expression(self, new_expr);
     }
 
@@ -1808,6 +1841,19 @@ fn callee_name(expr: &ts::Expression) -> Option<String> {
         E::Identifier(id) => Some(id.name.to_string()),
         E::StaticMemberExpression(member) => Some(member.property.name.to_string()),
         _ => None,
+    }
+}
+
+/// Every bare identifier among a call's arguments. `foo(bar)` names `bar`
+/// without calling it, which mints no site and so reaches no resolve arm.
+fn collect_value_refs(
+    out: &mut Vec<(oxc_span::Span, String)>,
+    arguments: &oxc_allocator::Vec<'_, ts::Argument<'_>>,
+) {
+    for argument in arguments {
+        if let ts::Argument::Identifier(id) = argument {
+            out.push((id.span, id.name.to_string()));
+        }
     }
 }
 
