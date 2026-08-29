@@ -3,7 +3,10 @@
 //!
 //! The fixture `1_refs.pl` is laid out so and relplan/5 appears exactly:
 //!   2x head_arg  (foo/1 and bar/1 clause heads)
-//!   3x term_arg  (call/1, process/1 argument data, and a list element)
+//!   2x term_arg  (process/1 argument data, and a list element)
+//!   1x closure   (call/1's argument is a metacall closure slot: SWI
+//!                 meta_predicate call(0) means the argument executes as a
+//!                 goal, so its compound moved off term_arg; see 1b)
 //!   0x goal      (never executed as a body conjunct)
 //! and the nested compound case `wrap(outer(inner(w)))` emits BOTH outer/1 and
 //! inner/1 references (term_arg), proving every-functor-at-every-depth.
@@ -61,7 +64,8 @@ fn count(rows: &[(String, String)], position: &str) -> usize {
 fn reference_counts_per_position_are_exact() {
     let relplan = refs_for("relplan/5");
     assert_eq!(count(&relplan, "head_arg"), 2);
-    assert_eq!(count(&relplan, "term_arg"), 3);
+    assert_eq!(count(&relplan, "term_arg"), 2);
+    assert_eq!(count(&relplan, "closure"), 1);
     assert_eq!(count(&relplan, "goal"), 0);
 }
 

@@ -10041,6 +10041,7 @@
 {"record":"node","family":"call","span":{"start":357,"end":424},"kind":"function","name":"ops/2"}
 {"record":"site","family":"call","span":{"start":195,"end":206},"callee":"side_effect/0","callee_path":null}
 {"record":"site","family":"call","span":{"start":212,"end":240},"callee":"call/1","callee_path":null}
+{"record":"site","family":"call","span":{"start":217,"end":239},"callee":"relplan/5","callee_path":null}
 {"record":"site","family":"call","span":{"start":246,"end":277},"callee":"process/1","callee_path":null}
 {"record":"site","family":"call","span":{"start":283,"end":313},"callee":"list/1","callee_path":null}
 {"record":"site","family":"call","span":{"start":333,"end":354},"callee":"wrap/1","callee_path":null}
@@ -10061,7 +10062,7 @@
 {"record":"reference","family":"call","span":{"start":155,"end":177},"functor":"relplan/5","position":"head_arg"}
 {"record":"reference","family":"call","span":{"start":195,"end":206},"functor":"side_effect/0","position":"goal"}
 {"record":"reference","family":"call","span":{"start":212,"end":240},"functor":"call/1","position":"goal"}
-{"record":"reference","family":"call","span":{"start":217,"end":239},"functor":"relplan/5","position":"term_arg"}
+{"record":"reference","family":"call","span":{"start":217,"end":239},"functor":"relplan/5","position":"closure"}
 {"record":"reference","family":"call","span":{"start":246,"end":277},"functor":"process/1","position":"goal"}
 {"record":"reference","family":"call","span":{"start":254,"end":276},"functor":"relplan/5","position":"term_arg"}
 {"record":"reference","family":"call","span":{"start":283,"end":313},"functor":"list/1","position":"goal"}
