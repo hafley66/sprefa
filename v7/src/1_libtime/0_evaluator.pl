@@ -53,7 +53,8 @@ evaluate_strata(Level, MaxStratum, Strata, Rules, Seeds, LowerRows,
     include(rule_at_level(Strata, Level), Rules, CurrentRules),
     include(seed_at_level(Strata, Level), Seeds, CurrentSeeds),
     include(aggregate_rule, CurrentRules, AggregateRules),
-    exclude(aggregate_rule, CurrentRules, PlainRules),
+    include(rule_through_level(Strata, Level), Rules, AvailableRules),
+    exclude(aggregate_rule, AvailableRules, PlainRules),
     derive_aggregate_rule_rows(LowerRows, AggregateRules,
                                AggregateSeeds, AggregateDiagnostics),
     evaluate_stratum_after_aggregates(
@@ -82,6 +83,10 @@ evaluate_stratum_after_aggregates(
 
 rule_at_level(Strata, Level, rule(call(Relation, _), _)) :-
     memberchk(stratum(Relation, Level), Strata).
+
+rule_through_level(Strata, Level, rule(call(Relation, _), _)) :-
+    memberchk(stratum(Relation, RuleLevel), Strata),
+    RuleLevel =< Level.
 
 seed_at_level(Strata, Level, call(Relation, _)) :-
     relation_level(Strata, Relation, Level).
