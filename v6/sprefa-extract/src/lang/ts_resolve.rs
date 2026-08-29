@@ -589,6 +589,20 @@ impl TsModuleIndex {
         self.facts.get(path)?.imports.get(local)
     }
 
+    /// The corpus blob of one corpus path.
+    pub fn blob_of(&self, path: &str) -> Option<&ContentId> {
+        self.blobs.get(path)
+    }
+
+    /// Where one name EXPORTED by `path` is written, as (file, identifier
+    /// span). `bind` needs a def node; a `namespace` or typed `const` has none.
+    pub fn export_seat(&self, path: &str, name: &str) -> Option<(String, Span)> {
+        match self.resolve_export(path, name) {
+            ExportResolution::Binding { path, span, .. } => Some((path.to_string(), span)),
+            _ => None,
+        }
+    }
+
     /// The corpus file a specifier written in `path` names.
     pub fn target(&self, path: &str, specifier: &str) -> Option<&str> {
         self.targets
