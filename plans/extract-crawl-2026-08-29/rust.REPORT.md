@@ -802,13 +802,16 @@ comparable to either row above.
 
 ### macro_site receipt
 
-`plans/extract-macro-lab-2026-08-29/mbe.macro_sites.tsv`: one row per
-distinct invocation actually spliced (`path`, `start`, `end`, `macro_name`,
-original-file byte offsets), 1,057 rows across 51 of the 873 files. No
-`CallFAux` wire field carries this (types.rs ownership stays with whichever
-lane needs it first; the coordinator's addendum routes the macro-origin fact
-through this TSV instead, so a parallel `scip.macro_sites.tsv` from the
-`feature-extract-rust-scip-macros` lane diffs against it by span).
+Two forms of the same fact, per the coordinator's follow-up (m-6b7269ab,
+superseding the earlier TSV-only addendum): `CallFAux.macro_sites` now
+carries it on the wire too (`record=macro_site`, `types.rs`'s dedicated
+commit "types: CallFAux.macro_sites"; `source: "mbe"` distinguishes it from
+the scip-macros lane's rows on the same shape). The TSV
+(`plans/extract-macro-lab-2026-08-29/mbe.macro_sites.tsv`, one row per
+distinct invocation actually spliced: `path`, `start`, `end`, `macro_name`,
+original-file byte offsets, 1,057 rows across 51 of the 873 files) stays
+as the corpus-scale receipt the coordinator diffs against
+`scip.macro_sites.tsv` by span.
 
 ### Budget cap
 
@@ -822,8 +825,8 @@ count. `f9_recursive.rs` pins the cap's own behavior in `tests/58_rust_mbe.rs`.
 
 ### Tests
 
-`tests/58_rust_mbe.rs`: 9 tests (module-level `expand_file` behavior, the
-end-to-end `RustSource::extract` hook, the pass-budget trip, the corpus
-wall-time/TSV walk), all green. Whole-crate
-`cargo test --features cli --no-fail-fast` in background; see PR body for
+`tests/58_rust_mbe.rs`: 10 tests (module-level `expand_file` behavior, the
+end-to-end `RustSource::extract` hook including the new `macro_site` wire
+row, the pass-budget trip, the corpus wall-time/TSV walk), all green.
+Whole-crate `cargo test --features cli --no-fail-fast`: see PR body for
 the SUM.
