@@ -144,9 +144,39 @@ fn walk_py_entities(
                     }
                 }
             }
+            // PEP 695 `type X = ...` / `type X[T] = ...`: a named type wearing
+            // a statement, so it declares an entity like a class does.
+            "type_alias_statement" => {
+                if let Some(name) = target
+                    .child_by_field_name("left")
+                    .and_then(|left| py_first_identifier(left))
+                {
+                    let name = py_text(name, src).to_string();
+                    push_entity(
+                        sink,
+                        strings,
+                        node_span(target),
+                        &name,
+                        TypeEntityKind::Alias,
+                    );
+                }
+            }
             _ => walk_py_entities(target, src, strings, sink, class_owner),
         }
     }
+}
+
+/// The leading `identifier` of an alias head: `Alias` itself, or the container
+/// name of a `generic_type` head like `Pair[T]`.
+fn py_first_identifier(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+    if node.kind() == "identifier" {
+        return Some(node);
+    }
+    let mut cursor = node.walk();
+    let found = node
+        .named_children(&mut cursor)
+        .find_map(py_first_identifier);
+    found
 }
 
 fn push_entity(
@@ -813,11 +843,16 @@ fn py_walk_imports(
                 });
             }
         }
-        "import_from_statement" => {
-            let module = node
-                .child_by_field_name("module_name")
-                .map(|n| py_text(n, src).to_string())
-                .unwrap_or_default();
+        // `from __future__ import x` is its OWN node kind, and the module name
+        // is a keyword the grammar leaves off the field table.
+        "import_from_statement" | "future_import_statement" => {
+            let module = if node.kind() == "future_import_statement" {
+                "__future__".to_string()
+            } else {
+                node.child_by_field_name("module_name")
+                    .map(|n| py_text(n, src).to_string())
+                    .unwrap_or_default()
+            };
             let mut cursor = node.walk();
             let mut saw_name = false;
             for item in node.children_by_field_name("name", &mut cursor) {
@@ -1015,14 +1050,21 @@ fn py_flow_stmt(
         "function_definition" | "decorated_definition" | "class_definition" => {}
         "expression_statement" => {
             if let Some(inner) = node.named_child(0) {
-                if inner.kind() == "assignment" {
-                    py_flow_assignment(inner, src, fn_sym, strings, scope, sink);
-                } else {
-                    py_flow_expr(inner, src, fn_sym, strings, scope, sink);
+                match inner.kind() {
+                    "assignment" => {
+                        py_flow_assignment(inner, src, fn_sym, strings, scope, sink);
+                    }
+                    "augmented_assignment" => {
+                        py_flow_augmented(inner, src, fn_sym, strings, scope, sink);
+                    }
+                    _ => {
+                        py_flow_expr(inner, src, fn_sym, strings, scope, sink);
+                    }
                 }
             }
         }
         "assignment" => py_flow_assignment(node, src, fn_sym, strings, scope, sink),
+        "augmented_assignment" => py_flow_augmented(node, src, fn_sym, strings, scope, sink),
         "return_statement" => {
             let ret = df_push_node(sink, strings, node, DfNodeKind::Ret, None);
             if let Some(value) = node.named_child(0) {
@@ -1032,6 +1074,30 @@ fn py_flow_stmt(
         }
         "for_statement" => py_flow_for(node, src, fn_sym, strings, scope, sink),
         "while_statement" => py_flow_while(node, src, fn_sym, strings, scope, sink),
+        // The condition is an EXPRESSION; every other named child is a suite.
+        "if_statement" | "elif_clause" => {
+            let cond = node.child_by_field_name("condition");
+            if let Some(cond) = cond {
+                py_flow_expr(cond, src, fn_sym, strings, scope, sink);
+            }
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                if cond.is_some_and(|c| c.id() == child.id()) {
+                    continue;
+                }
+                py_flow_stmt(child, src, fn_sym, strings, scope, sink);
+            }
+        }
+        "assert_statement" | "raise_statement" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                py_flow_expr(child, src, fn_sym, strings, scope, sink);
+            }
+        }
+        "with_statement" => py_flow_with(node, src, fn_sym, strings, scope, sink),
+        "except_clause" | "except_group_clause" => {
+            py_flow_except(node, src, fn_sym, strings, scope, sink)
+        }
         _ => {
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
@@ -1039,6 +1105,130 @@ fn py_flow_stmt(
             }
         }
     }
+}
+
+/// `x += e` rebinds `x` from its own read and from `e`. The rebind carries the
+/// STATEMENT span: the target identifier already carries the read.
+fn py_flow_augmented(
+    node: tree_sitter::Node,
+    src: &[u8],
+    fn_sym: &str,
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    let left = node.child_by_field_name("left");
+    let mut sources = Vec::new();
+    if let Some(left) = left {
+        sources.push(py_flow_expr(left, src, fn_sym, strings, scope, sink));
+    }
+    if let Some(right) = node.child_by_field_name("right") {
+        sources.push(py_flow_expr(right, src, fn_sym, strings, scope, sink));
+    }
+    let Some(left) = left.filter(|target| target.kind() == "identifier") else {
+        return;
+    };
+    let name = py_text(left, src).to_string();
+    let bind = df_push_node(sink, strings, node, DfNodeKind::LetBind, Some(&name));
+    for source in sources {
+        df_edge(sink, source, bind);
+    }
+    scope.insert(name, bind);
+}
+
+/// Each `with_item` flows its context expression; an `as` target binds from
+/// that value, exactly as an assignment target binds from its rhs.
+fn py_flow_with(
+    node: tree_sitter::Node,
+    src: &[u8],
+    fn_sym: &str,
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    let mut cursor = node.walk();
+    let clauses: Vec<tree_sitter::Node> = node
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "with_clause")
+        .collect();
+    for clause in clauses {
+        let mut item_cursor = clause.walk();
+        let items: Vec<tree_sitter::Node> = clause
+            .named_children(&mut item_cursor)
+            .filter(|item| item.kind() == "with_item")
+            .collect();
+        for item in items {
+            let Some(value) = item
+                .child_by_field_name("value")
+                .or_else(|| item.named_child(0))
+            else {
+                continue;
+            };
+            if value.kind() != "as_pattern" {
+                py_flow_expr(value, src, fn_sym, strings, scope, sink);
+                continue;
+            }
+            let Some(inner) = value.named_child(0) else {
+                continue;
+            };
+            let context = py_flow_expr(inner, src, fn_sym, strings, scope, sink);
+            py_bind_as_target(value, Some(context), src, strings, scope, sink);
+        }
+    }
+    if let Some(body) = node.child_by_field_name("body") {
+        py_flow_stmt(body, src, fn_sym, strings, scope, sink);
+    }
+}
+
+/// `except E as name` binds `name` with NO incoming edge: the caught exception
+/// has no producer inside the function, and `E` is a type, never a value read.
+fn py_flow_except(
+    node: tree_sitter::Node,
+    src: &[u8],
+    fn_sym: &str,
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    let mut cursor = node.walk();
+    let children: Vec<tree_sitter::Node> = node.named_children(&mut cursor).collect();
+    for child in children {
+        match child.kind() {
+            "as_pattern" => py_bind_as_target(child, None, src, strings, scope, sink),
+            "block" => py_flow_stmt(child, src, fn_sym, strings, scope, sink),
+            _ => {}
+        }
+    }
+}
+
+/// Bind the `as NAME` half of an `as_pattern`, optionally fed by the value the
+/// pattern destructures.
+fn py_bind_as_target(
+    pattern: tree_sitter::Node,
+    value: Option<NodeRef>,
+    src: &[u8],
+    strings: &mut Strings,
+    scope: &mut Scope,
+    sink: &mut FamilyBundle<DfF>,
+) {
+    let mut cursor = pattern.walk();
+    let Some(target) = pattern
+        .child_by_field_name("alias")
+        .or_else(|| {
+            pattern
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "as_pattern_target")
+        })
+        .and_then(py_first_identifier)
+    else {
+        return;
+    };
+    let name = py_text(target, src).to_string();
+    let bind = df_push_node(sink, strings, target, DfNodeKind::LetBind, Some(&name));
+    if let Some(value) = value {
+        df_edge(sink, value, bind);
+    }
+    scope.insert(name, bind);
 }
 
 fn py_flow_assignment(
@@ -1437,6 +1627,33 @@ fn py_flow_expr(
             Some(inner) => py_flow_expr(inner, src, fn_sym, strings, scope, sink),
             None => df_push_node(sink, strings, node, DfNodeKind::Expr, None),
         },
+        // PEP 572 `name := value`: a binding whose VALUE is the binding, so the
+        // enclosing expression consumes the bound slot.
+        "named_expression" => {
+            let value = node
+                .child_by_field_name("value")
+                .or_else(|| node.named_child(1));
+            let rhs = value.map(|expr| py_flow_expr(expr, src, fn_sym, strings, scope, sink));
+            let target = node
+                .child_by_field_name("name")
+                .or_else(|| node.named_child(0))
+                .filter(|target| target.kind() == "identifier");
+            match target {
+                Some(target) => {
+                    let name = py_text(target, src).to_string();
+                    let bind =
+                        df_push_node(sink, strings, target, DfNodeKind::LetBind, Some(&name));
+                    if let Some(rhs) = rhs {
+                        df_edge(sink, rhs, bind);
+                    }
+                    scope.insert(name, bind);
+                    bind
+                }
+                None => rhs.unwrap_or_else(|| {
+                    df_push_node(sink, strings, node, DfNodeKind::Expr, None)
+                }),
+            }
+        }
         // `lambda params: body`: its OWN fn scope under `{fn_sym}::closure::
         // {row}_{col}` (tree-sitter's 0-based start), params + one `ret` at the
         // lambda's END for the body value; the enclosing scope is shared so
