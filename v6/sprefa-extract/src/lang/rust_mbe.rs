@@ -340,6 +340,11 @@ fn invocation_origin(old_chunks: &[Chunk], range: Range<u32>, own_name: &str) ->
 /// Expand every LOCAL `macro_rules!` invocation in `content` to a fixpoint.
 /// `None` when there is nothing local to expand; `budget_hit` marks a cap stop.
 pub fn expand_file(content: &str) -> Option<Expanded> {
+    // A file with no `macro_rules!` text has nothing this module can splice;
+    // skip the ra_ap_syntax parse rather than pay its RSS on every call file.
+    if !content.contains("macro_rules!") {
+        return None;
+    }
     let first_pass = expand_pass(content);
     if first_pass.is_empty() {
         return None;
