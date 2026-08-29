@@ -12,9 +12,9 @@
 //! a corpus def, mints one `CallEdgeKind::ScipMacro` edge whose caller is the
 //! innermost covering call def and whose call_site is the occurrence range.
 //!
-//! One `MacroSiteRow` rides every minted edge so the mbe lane's `macro_site`
-//! rows can be diffed by span. Without a loaded scip index the pass is a
-//! no-op and emits nothing: no index, no macro rows.
+//! One shared `macro_site` row (`MacroSiteSource::Scip`) rides every minted
+//! edge so the mbe lane's rows diff against it by span. Without a loaded scip
+//! index the pass is a no-op and emits nothing: no index, no macro rows.
 
 use std::collections::HashMap;
 
@@ -37,7 +37,8 @@ pub(crate) struct ScipMacroFile<'a> {
 }
 
 /// One `macro_site` row: the invocation a minted edge came from, with the
-/// index that bound it. `source` is `"scip"` for every row this pass emits.
+/// index that bound it. `source` is `"scip"` for every row this pass emits;
+/// the wire shape is the shared `FlatFact::MacroSiteOut` record.
 #[derive(Clone, Debug)]
 pub struct MacroSiteRow {
     pub path: String,
@@ -46,8 +47,7 @@ pub struct MacroSiteRow {
     pub source: &'static str,
 }
 
-/// Where the `macro_site` wire row puts its fields: the invocation span in
-/// `span`, the macro's name as `callee`, the binding index as `callee_path`.
+/// The `macro_site` row's source tag for every row this pass emits.
 pub const MACRO_SITE_SOURCE: &str = "scip";
 
 /// A macro invocation seen in the parse: its byte span and the macro's name

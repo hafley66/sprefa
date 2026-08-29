@@ -322,11 +322,11 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
             facts.extend(call_facts(input, &targets, edges));
             facts.extend(call_drop_facts(input, &cx, edges));
             for row in rows {
-                facts.push(FlatFact::Site {
+                facts.push(FlatFact::MacroSiteOut {
                     family: crate::shape::FamilyTag::Call,
                     span: crate::wire::SpanOut::new(row.span.start, row.span.end()),
-                    callee: row.macro_name,
-                    callee_path: Some(row.source.to_string()),
+                    macro_name: row.macro_name,
+                    source: row.source.to_string(),
                 });
             }
         }

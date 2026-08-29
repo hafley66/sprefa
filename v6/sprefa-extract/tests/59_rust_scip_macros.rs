@@ -2,8 +2,8 @@
 //! parse site, so the per-file `Resolve<CallF>` mints nothing for it. With a
 //! rust-analyzer scip index in hand the post-pass binds the edge from the
 //! index's exact occurrence, kind `scip_macro`, and one `site` row per minted
-//! edge carries the invocation span (`callee_path: "scip"` marks the source,
-//! the seat the mbe lane's `macro_site` rows are diffed against by span).
+//! edge carries the invocation span and which arm bound it (record
+//! `macro_site`, the shared shape the mbe lane folds into, `source: "scip"`).
 
 use std::process::Command;
 
@@ -60,15 +60,13 @@ fn edges(facts: &[Value], kind: &str) -> Vec<(String, String, u32, u32, String)>
 fn macro_sites(facts: &[Value]) -> Vec<(u32, u32, String, String)> {
     let mut rows: Vec<(u32, u32, String, String)> = facts
         .iter()
-        .filter(|fact| {
-            fact["record"] == "site" && fact["callee_path"] == "scip"
-        })
+        .filter(|fact| fact["record"] == "macro_site")
         .map(|fact| {
             (
                 fact["span"]["start"].as_u64().unwrap() as u32,
                 fact["span"]["end"].as_u64().unwrap() as u32,
-                fact["callee"].as_str().unwrap().to_string(),
-                fact["callee_path"].as_str().unwrap().to_string(),
+                fact["macro_name"].as_str().unwrap().to_string(),
+                fact["source"].as_str().unwrap().to_string(),
             )
         })
         .collect();
@@ -91,7 +89,7 @@ fn macro_calls_mint_scip_macro_edges_inside_the_invocation() {
     let sites = macro_sites(&facts);
     assert_eq!(sites.len(), 2, "one macro_site row per minted edge");
     let (inv_start, inv_end, macro_name, source) = &sites[0];
-    assert_eq!(macro_name, "pair");
+    assert_eq!(macro_name, "assert_eq");
     assert_eq!(source, "scip");
     for (_, _, start, end, _) in &macro_edges {
         assert!(
