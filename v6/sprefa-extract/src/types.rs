@@ -613,6 +613,9 @@ pub enum UnresolvedReason {
     /// A receiver type this tier declines to trace (a `:=` bound to a call
     /// result), not a missing declaration.
     Inferred,
+    /// An import spec whose target directory carries no corpus file: outside
+    /// the declaring module, or simply not part of this run's file set.
+    External,
 }
 
 impl UnresolvedReason {
@@ -625,6 +628,7 @@ impl UnresolvedReason {
             UnresolvedReason::Ambiguous => "ambiguous",
             UnresolvedReason::Builtin => "builtin",
             UnresolvedReason::Inferred => "inferred",
+            UnresolvedReason::External => "external",
         }
     }
 }
