@@ -97,6 +97,154 @@ fn predicate_key(name: &str, arity: usize, dcg: bool) -> String {
     }
 }
 
+/// A `meta_predicate` argument spec. `Goal` executes the argument as goals,
+/// `Closure(added)` calls an atom-or-compound with `added` extra arguments
+/// (site key name + added arity), `Caret` unwraps `Template^Goal`, `Data`
+/// keeps the argument as term data.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum MetaSpec {
+    Goal,
+    Closure(usize),
+    Caret,
+    Data,
+}
+
+/// Per-file `:- meta_predicate` declarations layered over the built-in SWI
+/// table. Keyed on (name, arity); specs beyond the stored length are `Data`.
+#[derive(Default)]
+struct MetaTable {
+    per_file: HashMap<(String, usize), Vec<MetaSpec>>,
+}
+
+impl MetaTable {
+    fn get(&self, name: &str, arity: usize) -> Option<&[MetaSpec]> {
+        if let Some(specs) = self.per_file.get(&(name.to_string(), arity)) {
+            return Some(specs);
+        }
+        builtin_meta(name, arity)
+    }
+}
+
+fn builtin_meta(name: &str, arity: usize) -> Option<&'static [MetaSpec]> {
+    use std::sync::OnceLock;
+    static TABLE: OnceLock<HashMap<(String, usize), Vec<MetaSpec>>> = OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        let mut table = HashMap::new();
+        let mut insert = |name: &str, arity: usize, mut specs: Vec<MetaSpec>| {
+            specs.resize(arity, MetaSpec::Data);
+            table.insert((name.to_string(), arity), specs);
+        };
+        for arity in 1..=8 {
+            insert("call", arity, vec![MetaSpec::Closure(arity - 1)]);
+        }
+        for name in ["once", "ignore", "not"] {
+            insert(name, 1, vec![MetaSpec::Goal]);
+        }
+        insert("forall", 2, vec![MetaSpec::Goal, MetaSpec::Goal]);
+        for arity in 3..=4 {
+            insert("findall", arity, vec![MetaSpec::Data, MetaSpec::Goal]);
+        }
+        for arity in 3..=4 {
+            insert("aggregate_all", arity, vec![MetaSpec::Data, MetaSpec::Goal]);
+        }
+        for name in ["setof", "bagof"] {
+            insert(name, 3, vec![MetaSpec::Caret, MetaSpec::Goal]);
+        }
+        for arity in 2..=7 {
+            insert("maplist", arity, vec![MetaSpec::Closure(arity - 1)]);
+        }
+        for arity in 4..=7 {
+            insert("foldl", arity, vec![MetaSpec::Closure(arity - 1)]);
+        }
+        for name in ["include", "exclude"] {
+            for arity in 2..=3 {
+                insert(name, arity, vec![MetaSpec::Closure(arity - 1)]);
+            }
+        }
+        insert("partition", 4, vec![MetaSpec::Closure(1)]);
+        insert(
+            "catch",
+            3,
+            vec![MetaSpec::Goal, MetaSpec::Data, MetaSpec::Goal],
+        );
+        insert(
+            "catch_with_backtrace",
+            2,
+            vec![MetaSpec::Goal, MetaSpec::Goal],
+        );
+        for arity in 3..=4 {
+            insert(
+                "setup_call_cleanup",
+                arity,
+                vec![MetaSpec::Goal, MetaSpec::Goal, MetaSpec::Goal],
+            );
+        }
+        insert("call_cleanup", 2, vec![MetaSpec::Goal, MetaSpec::Goal]);
+        insert("with_output_to", 2, vec![MetaSpec::Data, MetaSpec::Goal]);
+        for arity in 2..=3 {
+            insert("phrase", arity, vec![MetaSpec::Closure(2)]);
+        }
+        insert("freeze", 2, vec![MetaSpec::Data, MetaSpec::Goal]);
+        insert("thread_create", 3, vec![MetaSpec::Goal]);
+        table
+    });
+    table
+        .get(&(name.to_string(), arity))
+        .map(|specs| specs.as_slice())
+}
+
+/// `:- meta_predicate Name(spec, ...)` directives extend the table per file.
+/// The directive operand is `meta_predicate/1` around the declared head term.
+fn collect_meta_directives(root: tree_sitter::Node, src: &[u8], table: &mut MetaTable) {
+    for clause in clauses(root) {
+        let Some(term) = clause_term(clause) else {
+            continue;
+        };
+        if term.kind() != "unary_operation" || operator(term, src) != ":-" {
+            continue;
+        }
+        let Some(operand) = field(term, "operand") else {
+            continue;
+        };
+        // `meta_predicate` is a prefix operator: `:- meta_predicate name(...)`
+        // nests as unary_operation, unless parenthesized into meta_predicate/1.
+        let head =
+            if operand.kind() == "unary_operation" && operator(operand, src) == "meta_predicate" {
+                field(operand, "operand")
+            } else if operand.kind() == "compound_term"
+                && text(field(operand, "functor").unwrap_or(operand), src) == "meta_predicate"
+            {
+                let mut cursor = operand.walk();
+                let first = operand
+                    .children_by_field_name("argument", &mut cursor)
+                    .next();
+                first
+            } else {
+                None
+            };
+        let Some(head) = head else {
+            continue;
+        };
+        let Some((name, arity)) = callable_name_arity(head, src) else {
+            continue;
+        };
+        let specs: Vec<MetaSpec> = {
+            let mut cursor = head.walk();
+            head.children_by_field_name("argument", &mut cursor)
+                .map(|arg| match text(arg, src).trim() {
+                    ":" => MetaSpec::Goal,
+                    "^" => MetaSpec::Caret,
+                    raw => raw
+                        .parse::<usize>()
+                        .map(MetaSpec::Closure)
+                        .unwrap_or(MetaSpec::Data),
+                })
+                .collect()
+        };
+        table.per_file.insert((name, arity), specs);
+    }
+}
+
 fn head_body<'a>(
     clause: tree_sitter::Node<'a>,
     src: &[u8],
@@ -170,10 +318,12 @@ fn project_calls(
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
 ) {
+    let mut meta = MetaTable::default();
+    collect_meta_directives(root, src, &mut meta);
     for clause in clauses(root) {
         let Some((head, body, dcg)) = head_body(clause, src) else {
             project_directive(clause, src, strings, sink);
-            walk_directive_refs(clause, src, strings, sink);
+            walk_directive_refs(clause, src, &meta, strings, sink);
             continue;
         };
         let Some((name, arity)) = callable_name_arity(head, src) else {
@@ -185,7 +335,7 @@ fn project_calls(
         );
         walk_head_refs(head, src, strings, sink);
         if let Some(body) = body {
-            walk_goals(body, src, dcg, strings, sink, None);
+            walk_goals(body, src, dcg, strings, sink, None, &meta, true);
         }
     }
 }
@@ -254,96 +404,12 @@ fn walk_data_refs(
     }
 }
 
-/// Goal-position references: the top-level body conjuncts that are executed,
-/// plus the data compounds nested inside their arguments (`term_arg`). Metacall
-/// arguments (call/findall/maplist) are NOT unwrapped as goals; their contents
-/// fall through to `term_arg`, matching the existing walker, which models no
-/// metacalls.
-fn walk_goals_refs(
-    node: tree_sitter::Node,
-    src: &[u8],
-    strings: &mut Strings,
-    sink: &mut FamilyBundle<CallF>,
-) {
-    match node.kind() {
-        "parenthesized" | "curly_block" => {
-            for child in named_children(node) {
-                walk_goals_refs(child, src, strings, sink);
-            }
-        }
-        "unary_operation" => {
-            let op = operator(node, src);
-            if op == "\\+" {
-                if let Some(operand) = field(node, "operand") {
-                    walk_goals_refs(operand, src, strings, sink);
-                }
-            } else {
-                // A prefix-operator goal (dynamic/1, initialization/1, ...).
-                push_ref(node, &format!("{op}/1"), RefPosition::Goal, strings, sink);
-                if let Some(operand) = field(node, "operand") {
-                    walk_data_refs(operand, RefPosition::TermArg, src, strings, sink);
-                }
-            }
-        }
-        "binary_operation" => {
-            let op = operator(node, src);
-            match op {
-                "," | ";" | "|" | "->" | "*->" => {
-                    if let Some(left) = field(node, "left") {
-                        walk_goals_refs(left, src, strings, sink);
-                    }
-                    if let Some(right) = field(node, "right") {
-                        walk_goals_refs(right, src, strings, sink);
-                    }
-                }
-                ":" => {
-                    if let Some(right) = field(node, "right") {
-                        walk_goals_refs(right, src, strings, sink);
-                    }
-                }
-                ":-" | "-->" | "::" => {}
-                _ => {
-                    push_ref(node, &format!("{op}/2"), RefPosition::Goal, strings, sink);
-                    for child in named_children(node) {
-                        walk_data_refs(child, RefPosition::TermArg, src, strings, sink);
-                    }
-                }
-            }
-        }
-        "compound_term" => {
-            if let Some((name, arity)) = callable_name_arity(node, src) {
-                push_ref(
-                    node,
-                    &predicate_key(&name, arity, false),
-                    RefPosition::Goal,
-                    strings,
-                    sink,
-                );
-            }
-            let mut cursor = node.walk();
-            for arg in node.children_by_field_name("argument", &mut cursor) {
-                walk_data_refs(arg, RefPosition::TermArg, src, strings, sink);
-            }
-        }
-        "atom" | "unquoted_atom" | "quoted_atom" | "operator_atom" => {
-            push_ref(
-                node,
-                &format!("{}/0", atom_text(node, src)),
-                RefPosition::Goal,
-                strings,
-                sink,
-            );
-        }
-        "cut" => push_ref(node, "!/0", RefPosition::Goal, strings, sink),
-        _ => walk_data_refs(node, RefPosition::TermArg, src, strings, sink),
-    }
-}
-
 /// A directive body (`:- Goal`) is executed at load time: same reference walk
-/// as a clause body (goals `goal`, argument data `term_arg`).
+/// as a clause body (goals `goal`, argument data `term_arg`), no sites.
 fn walk_directive_refs(
     clause: tree_sitter::Node,
     src: &[u8],
+    meta: &MetaTable,
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
 ) {
@@ -354,7 +420,7 @@ fn walk_directive_refs(
         return;
     }
     if let Some(operand) = field(term, "operand") {
-        walk_goals_refs(operand, src, strings, sink);
+        walk_goals(operand, src, false, strings, sink, None, meta, false);
     }
 }
 
@@ -565,8 +631,8 @@ fn collect_predicate_indicators(
     }
 }
 
-/// One spine pass pushing both `aux.sites` and `aux.refs`, replacing two
-/// walks. Directives keep their own refs-only walk below.
+/// One spine pass pushing both `aux.sites` and `aux.refs` (or refs only, for
+/// directive bodies, via `sites == false`), replacing two walks.
 fn walk_goals(
     node: tree_sitter::Node,
     src: &[u8],
@@ -574,18 +640,20 @@ fn walk_goals(
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
     module: Option<&str>,
+    meta: &MetaTable,
+    sites: bool,
 ) {
     match node.kind() {
         "parenthesized" | "curly_block" => {
             for child in named_children(node) {
-                walk_goals(child, src, dcg, strings, sink, module);
+                walk_goals(child, src, dcg, strings, sink, module, meta, sites);
             }
         }
         "unary_operation" => {
             let op = operator(node, src);
             if op == "\\+" {
                 if let Some(operand) = field(node, "operand") {
-                    walk_goals(operand, src, dcg, strings, sink, module);
+                    walk_goals(operand, src, dcg, strings, sink, module, meta, sites);
                 }
             } else {
                 // A prefix-operator goal (dynamic/1, initialization/1, ...).
@@ -600,21 +668,32 @@ fn walk_goals(
             match op {
                 "," | ";" | "|" | "->" | "*->" => {
                     if let Some(left) = field(node, "left") {
-                        walk_goals(left, src, dcg, strings, sink, module);
+                        walk_goals(left, src, dcg, strings, sink, module, meta, sites);
                     }
                     if let Some(right) = field(node, "right") {
-                        walk_goals(right, src, dcg, strings, sink, module);
+                        walk_goals(right, src, dcg, strings, sink, module, meta, sites);
                     }
                 }
                 ":" => {
                     let qualifier = field(node, "left").map(|n| atom_text(n, src));
                     if let Some(right) = field(node, "right") {
-                        walk_goals(right, src, dcg, strings, sink, qualifier.as_deref());
+                        walk_goals(
+                            right,
+                            src,
+                            dcg,
+                            strings,
+                            sink,
+                            qualifier.as_deref(),
+                            meta,
+                            sites,
+                        );
                     }
                 }
                 ":-" | "-->" | "::" => {}
                 _ => {
-                    push_site(node, op, 2, false, strings, sink, module);
+                    if sites {
+                        push_site(node, op, 2, false, strings, sink, module);
+                    }
                     push_ref(node, &format!("{op}/2"), RefPosition::Goal, strings, sink);
                     for child in named_children(node) {
                         walk_data_refs(child, RefPosition::TermArg, src, strings, sink);
@@ -623,8 +702,11 @@ fn walk_goals(
             }
         }
         "compound_term" => {
+            let mut dispatched = false;
             if let Some((name, arity)) = callable_name_arity(node, src) {
-                push_site(node, &name, arity, dcg, strings, sink, module);
+                if sites {
+                    push_site(node, &name, arity, dcg, strings, sink, module);
+                }
                 push_ref(
                     node,
                     &predicate_key(&name, arity, false),
@@ -632,22 +714,92 @@ fn walk_goals(
                     strings,
                     sink,
                 );
+                if let Some(specs) = meta.get(&name, arity) {
+                    let mut cursor = node.walk();
+                    for (index, arg) in node
+                        .children_by_field_name("argument", &mut cursor)
+                        .enumerate()
+                    {
+                        let spec = specs.get(index).copied().unwrap_or(MetaSpec::Data);
+                        walk_meta_arg(arg, spec, src, dcg, strings, sink, module, meta, sites);
+                    }
+                    dispatched = true;
+                }
             }
-            let mut cursor = node.walk();
-            for arg in node.children_by_field_name("argument", &mut cursor) {
-                walk_data_refs(arg, RefPosition::TermArg, src, strings, sink);
+            if !dispatched {
+                let mut cursor = node.walk();
+                for arg in node.children_by_field_name("argument", &mut cursor) {
+                    walk_data_refs(arg, RefPosition::TermArg, src, strings, sink);
+                }
             }
         }
         "atom" | "unquoted_atom" | "quoted_atom" | "operator_atom" => {
             let name = atom_text(node, src);
-            push_site(node, &name, 0, dcg, strings, sink, module);
+            if sites {
+                push_site(node, &name, 0, dcg, strings, sink, module);
+            }
             push_ref(node, &format!("{name}/0"), RefPosition::Goal, strings, sink);
         }
         "cut" => {
-            push_site(node, "!", 0, false, strings, sink, module);
+            if sites {
+                push_site(node, "!", 0, false, strings, sink, module);
+            }
             push_ref(node, "!/0", RefPosition::Goal, strings, sink);
         }
         _ => walk_data_refs(node, RefPosition::TermArg, src, strings, sink),
+    }
+}
+
+/// One meta-predicate argument, dispatched by its `meta_predicate` spec.
+fn walk_meta_arg(
+    node: tree_sitter::Node,
+    spec: MetaSpec,
+    src: &[u8],
+    dcg: bool,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+    module: Option<&str>,
+    meta: &MetaTable,
+    sites: bool,
+) {
+    match spec {
+        MetaSpec::Data => walk_data_refs(node, RefPosition::TermArg, src, strings, sink),
+        MetaSpec::Goal => walk_goals(node, src, dcg, strings, sink, module, meta, sites),
+        MetaSpec::Caret => {
+            if node.kind() == "binary_operation" && operator(node, src) == "^" {
+                if let Some(left) = field(node, "left") {
+                    walk_data_refs(left, RefPosition::TermArg, src, strings, sink);
+                }
+                if let Some(right) = field(node, "right") {
+                    walk_goals(right, src, dcg, strings, sink, module, meta, sites);
+                }
+            } else {
+                walk_goals(node, src, dcg, strings, sink, module, meta, sites);
+            }
+        }
+        MetaSpec::Closure(added) => {
+            if let Some((name, base_arity)) = callable_name_arity(node, src) {
+                let arity = base_arity + added;
+                if sites {
+                    push_site(node, &name, arity, false, strings, sink, module);
+                }
+                push_ref(
+                    node,
+                    &predicate_key(&name, arity, false),
+                    RefPosition::Closure,
+                    strings,
+                    sink,
+                );
+                if node.kind() == "compound_term" {
+                    let mut cursor = node.walk();
+                    for arg in node.children_by_field_name("argument", &mut cursor) {
+                        walk_data_refs(arg, RefPosition::TermArg, src, strings, sink);
+                    }
+                }
+            } else {
+                walk_data_refs(node, RefPosition::TermArg, src, strings, sink);
+            }
+        }
     }
 }
 

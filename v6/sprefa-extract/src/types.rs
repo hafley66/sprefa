@@ -500,12 +500,14 @@ pub struct Reference {
 }
 
 /// Where a Prolog compound sits: executed as a goal, inside a clause head's
-/// arguments, or inside another term's arguments (data).
+/// arguments, inside another term's arguments (data), or in a meta-predicate
+/// closure slot (`maplist(double, ...)`) where the callee gains extra args.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RefPosition {
     Goal,
     HeadArg,
     TermArg,
+    Closure,
 }
 
 impl RefPosition {
@@ -514,6 +516,7 @@ impl RefPosition {
             RefPosition::Goal => "goal",
             RefPosition::HeadArg => "head_arg",
             RefPosition::TermArg => "term_arg",
+            RefPosition::Closure => "closure",
         }
     }
 }
