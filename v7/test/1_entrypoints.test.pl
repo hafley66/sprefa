@@ -71,11 +71,11 @@ test(userland_partial_maps_type_edges_deterministically) :-
                               RuntimeSnapshot, KeySnapshot, EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 89,
+                    [], [], 149,
                     partial(user,
                             [mapped(id, option(int), 0),
                              mapped(name, option(text), 1)]),
-                    runtime(counts(32, 32, 13, 19, 5, 10, 13),
+                    runtime(counts(36, 39, 15, 24, 9, 14, 15),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
@@ -115,15 +115,25 @@ test(authored_order_kernel_modes_are_checked_left_to_right) :-
                  positive,
                  call(ref(kernel(intern)),
                       [ref(option), var(arguments), var(result)])),
+    Deconstruct = checked_goal(
+                      positive,
+                      call(ref(kernel(cons)),
+                           [var(head), var(tail), var(list)])),
     check_goal_sequence([Construct, Intern], [element], Bound,
                         AcceptedDiagnostics),
+    check_goal_sequence([Deconstruct], [list], DeconstructedBound,
+                        DeconstructedDiagnostics),
     check_goal_sequence([Construct], [], _, RejectedDiagnostics),
     sort(Bound, SortedBound),
+    sort(DeconstructedBound, SortedDeconstructedBound),
     Observed = authored_order(
                    accepted(SortedBound, AcceptedDiagnostics),
+                   deconstructed(SortedDeconstructedBound,
+                                   DeconstructedDiagnostics),
                    rejected(RejectedDiagnostics)),
     Observed == authored_order(
                     accepted([arguments, element, result], []),
+                    deconstructed([head, list, tail], []),
                     rejected(
                         [diagnostic(
                              check, none,

@@ -384,9 +384,10 @@ check_goal(Goal, Bound0, Bound, Reason) :-
     goal_call(Goal, positive,
               call(ref(kernel(cons)), [Head, Tail, List])),
     !,
-    (   argument_is_bound(List, Bound0)
-    ;   argument_is_bound(Head, Bound0),
-        argument_is_bound(Tail, Bound0)
+    (   (   argument_is_bound(List, Bound0)
+        ;   argument_is_bound(Head, Bound0),
+            argument_is_bound(Tail, Bound0)
+        )
     ->  goal_variables(Goal, Variables),
         add_variables(Variables, Bound0, Bound),
         Reason = none

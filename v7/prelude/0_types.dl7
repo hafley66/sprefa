@@ -7,6 +7,16 @@
    (* (: source type)
       (: return type)))
 
+; Shared relational helpers for closed name collections and edge order.
+(: contains
+   (* (: list any)
+      (: value any)))
+
+(: before
+   (* (: owner type)
+      (: earlier int)
+      (: later int)))
+
 ; Canonical application identities use the shared cons and intern relations.
 (<- (Partial ?Source ?Result)
     (partial_request ?Source)
@@ -16,6 +26,20 @@
 (<- (Option ?Source ?Result)
     (cons ?Source 'nil ?Arguments)
     (intern Option ?Arguments ?Result))
+
+(<- (contains ?List ?Value)
+    (cons ?Value ?Tail ?List))
+
+(<- (contains ?List ?Value)
+    (cons ?Head ?Tail ?List)
+    (contains ?Tail ?Value))
+
+(<- (before ?Owner ?Earlier ?Later)
+    (predecessor ?Owner ?Earlier ?Later))
+
+(<- (before ?Owner ?Earlier ?Later)
+    (predecessor ?Owner ?Earlier ?Middle)
+    (before ?Owner ?Middle ?Later))
 
 ; Partial application results are ordinary product nodes.
 (<- (node ?Result)
