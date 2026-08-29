@@ -902,14 +902,19 @@ reachable defs (635 gained, 2 lost), the two being halving-split collateral.
 ### 15.3 `macro_site` rows
 
 `plans/extract-macro-lab-2026-08-29/scip.macro_sites.tsv`
-(path, start, end, macro_name): 1,169 rows over 51 files, one per minted edge,
-so the coordinator can diff the mbe lane's rows by span.
+(path, start, end, macro_name): 1,169 rows over 199 files, one per minted
+edge, so the coordinator can diff the mbe lane's rows by span. The stream's
+`macro_site` rows carry no path seat, so each row's path is recovered by a
+deterministic join over the corpus text (the span must spell the macro's
+invocation, `path!` / `path::name!` / `macro_rules!`, with balanced
+delimiters) cross-checked against the scip_macro edges whose call site falls
+inside the span; all 1,169 resolve uniquely.
 
 | macro | rows |
 |---|---:|
-| assert_eq | 236 |
+| assert_eq | 238 |
+| assert | 190 |
 | match_ast | 187 |
-| assert | 164 |
 | matches | 83 |
 | format | 65 |
 | try_default | 56 |
