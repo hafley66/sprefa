@@ -385,3 +385,32 @@ one SWI process.
   clauses (`cons/3`, `intern/3`).
 - Partial implementation occurrences in reader, compiler, and evaluator: 0.
 - Runtime checked data is retained; runtime runner modules in this slice: 0.
+
+## Checked Datalog foundation
+
+- `checked_goal(positive, Call)` is the uniform checked body carrier. The
+  evaluator, dependency extractor, authored-order checker, and normalized
+  runtime oracle all consume that term.
+- Checked declarations now use
+  `relation(ref(RelationIdentity), Arity, KeySets)`. Source products currently
+  carry `[]`. Kernel keys are `':'/4` with `[[0,1],[0,3]]`, `cons/3` with
+  `[[0,1],[2]]`, and `intern/3` with `[[0,1]]`.
+- `validate_functional_rows/3` checks each declared zero-based key against the
+  final sorted closure. The compiler returns no artifact when unequal rows
+  share a key.
+- `check_goal_sequence/4` folds checked goals in authored order. Ordinary
+  positive calls bind their variables. Positive `cons/3` requires argument 2
+  or arguments 0 and 1; positive `intern/3` requires arguments 0 and 1.
+  Negative constructive kernel goals are refused. Rule-head variables seed
+  the demand context; the separate range-safety check still requires every
+  head variable to occur in the body.
+- `stratify_rules/3` is pure libtime code shared with checking. Positive edges
+  have gap 0, negative edges gap 1, level relaxation returns the least derived
+  strata, and a strict edge on a dependency cycle returns one sorted named
+  diagnostic before evaluator installation.
+- Commits: `568f71038`, `bca56c573`, `fbaf13db1`.
+- Consolidated SWI command: 10 passed, 0 failed, 0 choicepoint warnings.
+- Tree-sitter command: 1 parse passed, 0 failed.
+- The normalized compiler-row stream before and after this checkpoint has the
+  same SHA-256 after replacing the worktree path:
+  `02de0eea2a3809397244eb10e05b621c72c067a03e44e0abe3fe723978b6a499`.
