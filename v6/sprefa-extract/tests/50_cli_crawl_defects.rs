@@ -118,3 +118,14 @@ fn broken_pipe_exits_0_silently() {
     assert_eq!(status.code(), Some(0), "stderr: {stderr}");
     assert!(stderr.is_empty(), "stderr: {stderr}");
 }
+
+/// Defect 3: `--scip-build` ran `scip-go .` (root package only: a 158-byte
+/// index on typescript-go against 106 MB for `./...`). The go argv must
+/// enumerate the whole tree; the other indexers already walk it.
+#[test]
+fn go_indexer_argv_enumerates_all_packages() {
+    use sprefa_extract::scip::{GO_SPEC, PYTHON_SPEC, TS_SPEC};
+    assert_eq!(GO_SPEC.args.last(), Some(&"./..."));
+    assert!(TS_SPEC.args.contains(&"index"), "ts indexes the project");
+    assert!(PYTHON_SPEC.args.contains(&"."), "python indexes the tree");
+}
