@@ -71,7 +71,7 @@ test(userland_partial_maps_type_edges_deterministically) :-
                               RuntimeSnapshot, KeySnapshot, EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 88,
+                    [], [], 89,
                     partial(user,
                             [mapped(id, option(int), 0),
                              mapped(name, option(text), 1)]),

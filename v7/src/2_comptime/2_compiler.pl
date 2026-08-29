@@ -73,8 +73,11 @@ evaluate_checked(
     Compiled,
     Diagnostics) :-
     graph_seeds(Graph, GraphSeeds),
-    append(GraphSeeds, AuthoredSeeds, Seeds),
-    evaluate(Rules, Seeds, CompilerFacts, EvaluationDiagnostics),
+    append(GraphSeeds, AuthoredSeeds, BaseSeeds0),
+    sort(BaseSeeds0, BaseSeeds),
+    colon_rows(BaseSeeds, InitialEdges),
+    evaluate_compiler_rounds(Rules, Relations, BaseSeeds, InitialEdges, 1,
+                             CompilerFacts, EvaluationDiagnostics),
     finish_evaluation(EvaluationDiagnostics, Relations, CompilerFacts,
                       Graph, AuthoredSeeds, Rules, Depends, Strata,
                       Compiled, Diagnostics).
@@ -99,6 +102,80 @@ finish_key_validation([], CompilerFacts, Graph, Relations, AuthoredSeeds,
                          datalog_program(Relations, AuthoredSeeds, Rules),
                          Depends, Strata).
 finish_key_validation(Diagnostics, _, _, _, _, _, _, _, [], Diagnostics).
+
+%% evaluate_compiler_rounds(+Rules, +Relations, +BaseSeeds, +FrozenEdges,
+%%                          +Round, -Closure, -Diagnostics) is det.
+%
+% One round exposes the previous round's complete edge set through the
+% read-only edge_snapshot/4 input. Generated colon edges become inputs only
+% after the next freeze. Every round starts again from authored seeds, frozen
+% edges, and deterministic ordering rows, so negation and aggregates never
+% retain stale conclusions from an earlier snapshot.
+evaluate_compiler_rounds(Rules, Relations, BaseSeeds, FrozenEdges, Round,
+                         Closure, Diagnostics) :-
+    compiler_round_seeds(BaseSeeds, FrozenEdges, RoundSeeds),
+    evaluate(Rules, RoundSeeds, RoundClosure0, EvaluationDiagnostics),
+    strip_snapshot_rows(RoundClosure0, RoundClosure),
+    validate_functional_rows(Relations, RoundClosure, KeyDiagnostics),
+    append(EvaluationDiagnostics, KeyDiagnostics, RoundDiagnostics0),
+    sort(RoundDiagnostics0, RoundDiagnostics),
+    continue_compiler_rounds(RoundDiagnostics, Rules, Relations, BaseSeeds,
+                             FrozenEdges, Round, RoundClosure,
+                             Closure, Diagnostics).
+
+continue_compiler_rounds([], Rules, Relations, BaseSeeds, FrozenEdges, Round,
+                         RoundClosure, Closure, Diagnostics) :-
+    !,
+    colon_rows(RoundClosure, NextEdges),
+    (   NextEdges == FrozenEdges
+    ->  Closure = RoundClosure,
+        Diagnostics = []
+    ;   compiler_round_limit(Limit),
+        (   Round >= Limit
+        ->  Closure = [],
+            Diagnostics = [diagnostic(
+                               compile, none,
+                               compiler_round_limit_exhausted(Limit))]
+        ;   NextRound is Round + 1,
+            evaluate_compiler_rounds(Rules, Relations, BaseSeeds, NextEdges,
+                                     NextRound, Closure, Diagnostics)
+        )
+    ).
+continue_compiler_rounds(Diagnostics, _, _, _, _, _, _, [], Diagnostics).
+
+compiler_round_limit(16).
+
+compiler_round_seeds(BaseSeeds, FrozenEdges, Seeds) :-
+    maplist(snapshot_edge, FrozenEdges, SnapshotRows),
+    frozen_predecessor_rows(FrozenEdges, PredecessorRows),
+    append([BaseSeeds, FrozenEdges, SnapshotRows, PredecessorRows], Seeds0),
+    sort(Seeds0, Seeds).
+
+snapshot_edge(call(ref(kernel(':')), Arguments),
+              call(ref(kernel(edge_snapshot)), Arguments)).
+
+frozen_predecessor_rows(FrozenEdges, Rows) :-
+    findall(call(ref(kernel(predecessor)),
+                 [Owner, const(EarlierIndex), const(LaterIndex)]),
+            ( member(call(ref(kernel(':')),
+                          [Owner, _, _, const(LaterIndex)]),
+                     FrozenEdges),
+              LaterIndex > 0,
+              EarlierIndex is LaterIndex - 1
+            ),
+            Rows0),
+    sort(Rows0, Rows).
+
+strip_snapshot_rows(Rows0, Rows) :-
+    exclude(snapshot_row, Rows0, Rows).
+
+snapshot_row(call(ref(kernel(edge_snapshot)), _)).
+
+colon_rows(Rows, Edges) :-
+    include(colon_row, Rows, Edges0),
+    sort(Edges0, Edges).
+
+colon_row(call(ref(kernel(':')), _)).
 
 graph_seeds(root_graph(Nodes, Edges), Seeds) :-
     maplist(node_seed, Nodes, NodeSeeds),
