@@ -160,8 +160,12 @@ contents, so labs 9 and 10 use native Terra-high workers instead.
    interoperation, dynamic updates, and debugging. General tabling, CLP, CHR,
    attributed variables, and coroutining remain undocumented in the checked
    vendor sources.
-2. Finish and review the active `16_logadat` executable probe.
-3. Run and review `17_si_kanren`.
+2. `16_logadat` completed at commit
+   `23fc43cc918e0aaac2aace1410e7283ef675153a`. Its naive fixed point completed
+   the cyclic four-node closure under a two-second bound. Direct EDB duplicates
+   survive, derived duplicates collapse, and updates require declaration
+   rebuilds. The saved image is 42,277,112 bytes.
+3. Run and review the active `17_si_kanren` probe.
 
 ## Shared-worktree laws
 
