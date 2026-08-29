@@ -24,14 +24,14 @@ lower_datalog(Unit, Program, Origins, Diagnostics) :-
 
 lower_after_declarations(error(Diagnostic), _, _, [], [], [Diagnostic]).
 lower_after_declarations(
-    ok(Nodes0, Parents, Edges, Relations, DeclarationOrigins, Reservations),
+    ok(Nodes0, Edges, Relations, DeclarationOrigins, Reservations),
     Forms, ModuleOwner, Program, Origins, Diagnostics) :-
     lower_executables(Forms, ModuleOwner, Reservations, Relations,
                       ExecutableResult),
     (   ExecutableResult = ok(Seeds, Rules, ExecutableOrigins)
     ->  Nodes = [node(ModuleOwner, module) | Nodes0],
         Program = basement_program(
-                      root_graph(Nodes, Parents, Edges),
+                      root_graph(Nodes, Edges),
                       datalog_program(Relations, Seeds, Rules)),
         append(DeclarationOrigins, ExecutableOrigins, Origins),
         Diagnostics = []
@@ -45,7 +45,7 @@ lower_after_declarations(
 lower_declarations(Forms, Owner, UnitIdentity, Result) :-
     lower_declarations(Forms, Owner, UnitIdentity, 0, Result).
 
-lower_declarations([], _, _, _, ok([], [], [], [], [], [])).
+lower_declarations([], _, _, _, ok([], [], [], [], [])).
 lower_declarations([Form | Forms], Owner, UnitIdentity, Index, Result) :-
     (   bind_form(Form, _, _, _)
     ->  lower_bind(Form, Owner, UnitIdentity, Index, BindResult),
@@ -56,19 +56,17 @@ lower_declarations([Form | Forms], Owner, UnitIdentity, Index, Result) :-
     ).
 
 continue_declarations(error(Diagnostic), _, _, _, _, error(Diagnostic)).
-continue_declarations(ok(Nodes0, Parents0, Edges0, Relations0, Origins0,
+continue_declarations(ok(Nodes0, Edges0, Relations0, Origins0,
                          Reservations0),
                       Forms, Owner, UnitIdentity, Index, Result) :-
     lower_declarations(Forms, Owner, UnitIdentity, Index, RestResult),
-    (   RestResult = ok(Nodes1, Parents1, Edges1, Relations1, Origins1,
-                        Reservations1)
+    (   RestResult = ok(Nodes1, Edges1, Relations1, Origins1, Reservations1)
     ->  append(Nodes0, Nodes1, Nodes),
-        append(Parents0, Parents1, Parents),
         append(Edges0, Edges1, Edges),
         append(Relations0, Relations1, Relations),
         append(Origins0, Origins1, Origins),
         append(Reservations0, Reservations1, Reservations),
-        Result = ok(Nodes, Parents, Edges, Relations, Origins, Reservations)
+        Result = ok(Nodes, Edges, Relations, Origins, Reservations)
     ;   Result = RestResult
     ).
 
@@ -81,10 +79,10 @@ lower_bind(BindNode, Owner, UnitIdentity, Index, Result) :-
     ).
 
 finish_bind(error(Diagnostic), _, _, _, _, error(Diagnostic)).
-finish_bind(ok(TargetTerm, Kind, Nodes, Parents, NestedEdges, Relations,
+finish_bind(ok(TargetTerm, Kind, Nodes, NestedEdges, Relations,
                Origins0, Reservations0),
             BindNodeId, Owner, Name, Index,
-            ok(Nodes, Parents, [Edge | NestedEdges], Relations, Origins,
+            ok(Nodes, [Edge | NestedEdges], Relations, Origins,
                [Reservation | Reservations0])) :-
     Edge = pending_edge(Owner, Name, TargetTerm, Index),
     Reservation = reservation(Owner, Name, TargetTerm, Kind),
@@ -101,37 +99,33 @@ bind_origins(_, _, Owner, Name, Index, BindNodeId,
              [origin(edge(Owner, Name, Index), BindNodeId)]).
 
 lower_target(node(NodeId, form([node(_, atom('*')) | Bindings])),
-             ParentOwner, UnitIdentity, Result) :-
+             _ParentOwner, UnitIdentity, Result) :-
     !,
     Owner = owner(UnitIdentity, NodeId),
     lower_bind_list(Bindings, Owner, UnitIdentity, 0, BindResult),
-    finish_constructor_target(BindResult, NodeId, Owner, ParentOwner,
-                              product, Result).
+    finish_constructor_target(BindResult, NodeId, Owner, product, Result).
 lower_target(node(NodeId, form([node(_, atom('+')) | Bindings])),
-             ParentOwner, UnitIdentity, Result) :-
+             _ParentOwner, UnitIdentity, Result) :-
     !,
     Owner = owner(UnitIdentity, NodeId),
     lower_bind_list(Bindings, Owner, UnitIdentity, 0, BindResult),
-    finish_constructor_target(BindResult, NodeId, Owner, ParentOwner,
-                              sum, Result).
+    finish_constructor_target(BindResult, NodeId, Owner, sum, Result).
 lower_target(node(_, atom(Name)), Owner, _,
-             ok(name(Owner, Name), reference, [], [], [], [], [], [])).
+             ok(name(Owner, Name), reference, [], [], [], [], [])).
 lower_target(node(_, literal(Value)), _, _,
-             ok(const(Value), literal, [], [], [], [], [], [])).
+             ok(const(Value), literal, [], [], [], [], [])).
 lower_target(node(NodeId, variable(_, _)), _, _,
              error(diagnostic(lower, NodeId, variable_bind_target))).
 lower_target(node(NodeId, form(_)), _, _,
              error(diagnostic(lower, NodeId, unsupported_bind_target))).
 
-finish_constructor_target(error(Diagnostic), _, _, _, _, error(Diagnostic)).
+finish_constructor_target(error(Diagnostic), _, _, _, error(Diagnostic)).
 finish_constructor_target(
-    ok(NestedNodes, NestedParents, Edges, NestedRelations, NestedOrigins,
-       Reservations),
-    NodeId, Owner, ParentOwner, Kind,
-    ok(target(Owner), Kind, Nodes, Parents, Edges, Relations, Origins,
+    ok(NestedNodes, Edges, NestedRelations, NestedOrigins, Reservations),
+    NodeId, Owner, Kind,
+    ok(target(Owner), Kind, Nodes, Edges, Relations, Origins,
        Reservations)) :-
     Nodes = [node(Owner, Kind) | NestedNodes],
-    Parents = [scope_parent(Owner, ParentOwner) | NestedParents],
     constructor_relations(Kind, Owner, Edges, OwnRelations),
     append(OwnRelations, NestedRelations, Relations),
     Origins = [origin(node(Owner), NodeId) | NestedOrigins].
@@ -143,7 +137,7 @@ constructor_relations(sum, _, _, []).
 
 edge_owned_by(Owner, pending_edge(Owner, _, _, _)).
 
-lower_bind_list([], _, _, _, ok([], [], [], [], [], [])).
+lower_bind_list([], _, _, _, ok([], [], [], [], [])).
 lower_bind_list([Bind | Binds], Owner, UnitIdentity, Index, Result) :-
     lower_bind(Bind, Owner, UnitIdentity, Index, BindResult),
     NextIndex is Index + 1,
@@ -151,19 +145,16 @@ lower_bind_list([Bind | Binds], Owner, UnitIdentity, Index, Result) :-
                        Result).
 
 continue_bind_list(error(Diagnostic), _, _, _, _, error(Diagnostic)).
-continue_bind_list(ok(Nodes0, Parents0, Edges0, Relations0, Origins0,
-                      Reservations0),
+continue_bind_list(ok(Nodes0, Edges0, Relations0, Origins0, Reservations0),
                    Binds, Owner, UnitIdentity, Index, Result) :-
     lower_bind_list(Binds, Owner, UnitIdentity, Index, RestResult),
-    (   RestResult = ok(Nodes1, Parents1, Edges1, Relations1, Origins1,
-                        Reservations1)
+    (   RestResult = ok(Nodes1, Edges1, Relations1, Origins1, Reservations1)
     ->  append(Nodes0, Nodes1, Nodes),
-        append(Parents0, Parents1, Parents),
         append(Edges0, Edges1, Edges),
         append(Relations0, Relations1, Relations),
         append(Origins0, Origins1, Origins),
         append(Reservations0, Reservations1, Reservations),
-        Result = ok(Nodes, Parents, Edges, Relations, Origins, Reservations)
+        Result = ok(Nodes, Edges, Relations, Origins, Reservations)
     ;   Result = RestResult
     ).
 

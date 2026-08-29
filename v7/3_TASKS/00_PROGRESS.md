@@ -166,20 +166,21 @@ Milestone 2 (nested root lowering):
 - Added `v7/1_DATALOG/0_basement.pl`, exporting `lower_datalog/4`. The next
   static-check milestone extends this same module instead of adding another
   production file.
-- The module has 271 nonblank, noncomment lines.
+- The module has 262 nonblank, noncomment lines.
 - The immutable unit plus reader node identity mints module, product, and sum
   owners.
-- Every nested constructor receives one `scope_parent/2`; every bind retains
-  owner, name, pending target, and zero-based ordinal.
+- Every bind retains owner, name, pending target, and zero-based ordinal. A
+  nested node's containing node is recoverable from the same edge, so lowering
+  stores no second scope-parent relation.
 - Facts and rules are ground compiler data using pending `name/2`,
   `var/1`, and `const/1` terms.
 - The direct receipt over nested products, a sum, one fact, and two recursive
   rules produced:
 
 ```text
-receipt([0,1,2],counts(6,5,11,4,1,2,26))
+receipt([0,1,2],counts(6,11,4,1,2,26))
 ```
 
-The fields are top-level bind indices followed by node, parent, edge,
-relation, seed, rule, and origin counts. `ground(Program)` succeeded and
+The fields are top-level bind indices followed by node, edge, relation, seed,
+rule, and origin counts. `ground(Program)` succeeded and
 `git diff --check` passed. No suite or test file was added.
