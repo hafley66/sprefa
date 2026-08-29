@@ -1,6 +1,6 @@
 //! The CLI: clap args, NO tokio. Streams flat JSONL to stdout (RSS does not buffer
 //! the whole corpus; the lib drains). One data-driven path: `dispatch(path,
-//! content, mask)` -> `flatten` -> stdout. `--family` selects the mask (default
+//! content, mask)` -> `flatten_each` -> stdout. `--family` selects the mask (default
 //! ALL); `--bench` times extract + flatten and reports per-family counts to stderr;
 //! `--schema` prints the JSONL output contract and exits. The bin names no
 //! ast-grep/oxc type outside the `Source` impls (the uniform-surface law).
@@ -19,11 +19,11 @@ use std::time::Instant;
 use clap::Parser;
 
 use sprefa_extract::{
-    cfg_bundle, deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact, flatten,
-    flatten_cfg, package_edges_jsonl, query_patterns, resolve_project_jsonl, scip_facts_jsonl,
-    scip_family_jsonl, scip_file_edges_jsonl, scip_index_location, source_for, AstPatternQuery,
-    FamilyMask, IndexBudget, ResolveArms, ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords,
-    SCHEMA,
+    cfg_bundle, deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact,
+    flatten_cfg_each, flatten_each, package_edges_jsonl, query_patterns, resolve_project_jsonl,
+    scip_facts_jsonl, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location, source_for,
+    AstPatternQuery, FamilyMask, FlatFact, IndexBudget, ResolveArms, ResolveRequest,
+    ScipFamilyRequest, ScipMode, ScipRecords, SCHEMA,
 };
 
 #[path = "extract/help.rs"]
@@ -574,18 +574,18 @@ fn stream(
     // into 2M write syscalls.
     let stdout = std::io::stdout();
     let mut out = std::io::BufWriter::with_capacity(256 * 1024, stdout.lock());
+    // Each row is written and dropped: collecting them first held a second copy
+    // of the whole stream, which on a 13 MB bundle is 800 MB of the 1,094 MB peak.
+    let mut write = |fact: FlatFact| -> Result<(), std::io::Error> {
+        serde_json::to_writer(&mut out, &fact)?;
+        out.write_all(b"\n")
+    };
     if let Some(bundle) = dispatch(path, content, mask) {
-        for fact in flatten(&bundle) {
-            serde_json::to_writer(&mut out, &fact)?;
-            out.write_all(b"\n")?;
-        }
+        flatten_each(&bundle, &mut write)?;
         // The cfg plane rides the SAME parse: it is derived from `bundle.cst`.
         if cfg {
             if let Some(cfg_bundle) = cfg_bundle(path, &bundle, content) {
-                for fact in flatten_cfg(&cfg_bundle) {
-                    serde_json::to_writer(&mut out, &fact)?;
-                    out.write_all(b"\n")?;
-                }
+                flatten_cfg_each(&cfg_bundle, &mut write)?;
             }
         }
     }
@@ -608,7 +608,12 @@ fn bench(
     let out = src.extract(path, content, mask);
     let extract = t.elapsed();
     let t = Instant::now();
-    let facts = flatten(&out);
+    let mut facts = 0usize;
+    let counted: Result<(), std::convert::Infallible> = flatten_each(&out, &mut |_| {
+        facts += 1;
+        Ok(())
+    });
+    counted.expect("counting cannot fail");
     let serial = t.elapsed();
     // The cfg plane rides the SAME parse, so its timing is charged separately
     // from extract rather than folded into it.
@@ -633,7 +638,7 @@ fn bench(
             .as_ref()
             .map_or(0, |b| b.aux.docs.len() + b.aux.values.len()),
         cfg_nodes,
-        facts.len(),
+        facts,
     );
     Ok(())
 }
