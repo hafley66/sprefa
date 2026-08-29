@@ -1,4 +1,4 @@
-# Lane `fix-extract-rust-paths-3` (opus): rust classes 8, 11, 9, 7 from the census
+# Lane `fix-extract-rust-paths-3` (terra): rust classes 8, 11, 9, 7 from the census
 
 Read `plans/extract-crawl-2026-08-29/rust.REPORT.md` section 18 (the
 15,444-row census, table 18.2). After #576 one-process `ambiguous` is 13,532.
@@ -57,3 +57,9 @@ Push `fix/extract-rust-paths-3`, `gh pr create --base main`, hail
 Laws: no em dashes anywhere including test headers, no eprintln, descriptive
 names, comments only for what code cannot show, no words
 provenance/substrate/load-bearing/regime/refusal, never "ground truth".
+
+## Reclaimed worktree
+A previous agent left partial work in this worktree's stash
+(`git stash list`, "rust-paths-3 opus partial"). After the ff-only merge run
+`git stash show -p stash@{0} | head -200` and decide per hunk: keep what
+matches the rules above, drop the rest. Say in the PR body what you kept.
