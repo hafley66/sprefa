@@ -26,10 +26,10 @@ use std::sync::{Arc, LazyLock};
 
 use rayon::prelude::*;
 
+use crate::lang::ts_resolve::{ModuleFacts, TsModuleIndex};
 use crate::lang::{
     source_for, DlSource, GoSource, KotlinSource, MarkdownSource, PrologSource, PythonSource,
-    RustSource,
-    TsSource,
+    RustSource, TsSource,
 };
 use crate::rows::FamilyBundle;
 use crate::scip::{ScipGo, ScipRust, ScipTypescript};
@@ -160,12 +160,15 @@ pub(crate) struct ProjectInput {
     pub(crate) path: String,
     blob: ContentId,
     pub(crate) output: Arc<ExtractOutput>,
+    /// This file's module facts, built while its bytes are in hand so the
+    /// plane costs no second read. `None` outside a module-plane run.
+    module: Option<ModuleFacts>,
 }
 
 /// Run the requested arms over the whole supplied file set and return the flat
 /// facts, sorted by their serialized form so callers get a byte-stable stream.
 pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, ProjectError> {
-    let inputs = read_inputs(request.paths)?;
+    let inputs = read_inputs_with_modules(request.paths)?;
     let scip_index = load_scip(request, &inputs)?;
 
     let pairs: Vec<(ContentId, &ExtractOutput)> = inputs
@@ -226,6 +229,25 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
             .set(index)
             .expect("fresh project scip index");
     }
+    // The module plane reads the def index (an export's identifier span joins
+    // to the def node containing it), so it is built after it, never beside it.
+    let corpus: Vec<(String, ContentId)> = inputs
+        .iter()
+        .map(|input| (input.path.clone(), input.blob.clone()))
+        .collect();
+    let module_files: Vec<(String, ModuleFacts)> = inputs
+        .iter()
+        .filter_map(|input| Some((input.path.clone(), input.module.clone()?)))
+        .collect();
+    cx.indexes
+        .ts_modules
+        .set(TsModuleIndex::build(
+            module_files,
+            &corpus,
+            cx.indexes.def_index.get().expect("the def index is set"),
+        ))
+        .ok()
+        .expect("fresh project module plane");
 
     // One resolve per input, shared by the `call` arm and the `flow` join: the
     // N+1 law applied to work rather than to rows.
@@ -250,6 +272,11 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         for (input, (_, edges)) in inputs.iter().zip(resolved_calls.iter()) {
             facts.extend(call_facts(input, &targets, edges));
             facts.extend(call_drop_facts(input, &cx, edges));
+        }
+    }
+    if request.arms.call || request.arms.types {
+        for input in &inputs {
+            facts.extend(import_facts(input, &cx));
         }
     }
     for input in &inputs {
@@ -475,6 +502,18 @@ pub(crate) fn sorted_lines(facts: Vec<FlatFact>) -> Vec<String> {
 }
 
 pub(crate) fn read_inputs(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, ProjectError> {
+    read_inputs_inner(paths, false)
+}
+
+/// The same read, plus each ts/js input's module facts. Split off because the
+/// facts cost one extra parse per file and only `--resolve` reads them.
+pub(crate) fn read_inputs_with_modules(
+    paths: &[PathBuf],
+) -> Result<Vec<ProjectInput>, ProjectError> {
+    read_inputs_inner(paths, true)
+}
+
+fn read_inputs_inner(paths: &[PathBuf], modules: bool) -> Result<Vec<ProjectInput>, ProjectError> {
     if paths.is_empty() {
         return Ok(Vec::new());
     }
@@ -486,9 +525,14 @@ pub(crate) fn read_inputs(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, Projec
     // per-path filesystem read, which is what the previous implementation did
     // for every input.
     match soopy::discover(&paths[0]) {
-        Ok(repository) => read_inputs_batched(&repository, paths),
-        Err(_) => read_inputs_plain(paths),
+        Ok(repository) => read_inputs_batched(&repository, paths, modules),
+        Err(_) => read_inputs_plain(paths, modules),
     }
+}
+
+/// The module facts of one file, when this run wants them.
+fn module_facts_of(path: &str, content: &[u8], wanted: bool) -> Option<ModuleFacts> {
+    wanted.then(|| crate::lang::ts_resolve::module_facts(path, content))?
 }
 
 /// Extraction thread budget. One worker is held back below the clamp so the
@@ -544,7 +588,7 @@ fn flatten_inputs(
     Ok(inputs)
 }
 
-fn read_inputs_plain(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, ProjectError> {
+fn read_inputs_plain(paths: &[PathBuf], modules: bool) -> Result<Vec<ProjectInput>, ProjectError> {
     let results: Vec<Result<Option<ProjectInput>, ProjectError>> = EXTRACT_POOL.install(|| {
         paths
             .par_iter()
@@ -553,10 +597,12 @@ fn read_inputs_plain(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, ProjectErro
                     std::fs::read(path).map_err(|err| ProjectError::Read(path.clone(), err))?;
                 let path = path.to_string_lossy().to_string();
                 let output = crate::dispatch(&path, &content, resolve_mask(&path));
+                let module = module_facts_of(&path, &content, modules);
                 Ok(output.map(|output| ProjectInput {
                     blob: content_id_of(&content),
                     path,
                     output,
+                    module,
                 }))
             })
             .collect()
@@ -567,6 +613,7 @@ fn read_inputs_plain(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, ProjectErro
 fn read_inputs_batched(
     repository: &soopy::Repository,
     paths: &[PathBuf],
+    modules: bool,
 ) -> Result<Vec<ProjectInput>, ProjectError> {
     let keys: Vec<String> = paths
         .iter()
@@ -596,10 +643,12 @@ fn read_inputs_batched(
                 };
                 let path = path.to_string_lossy().to_string();
                 let output = crate::dispatch(&path, content, resolve_mask(&path));
+                let module = module_facts_of(&path, content, modules);
                 Ok(output.map(|output| ProjectInput {
                     blob: content_id_of(content),
                     path,
                     output,
+                    module,
                 }))
             })
             .collect()
@@ -770,7 +819,7 @@ pub static RESOLVE_ARMS: &[ResolveArm] = &[
         name: "ts",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&TsSource, out, cx)),
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&TsSource, out, cx)),
-        drops: None,
+        drops: Some(crate::lang::ts::call_drops),
         type_plane: TypePlane::Nodes,
     },
     ResolveArm {
@@ -981,6 +1030,27 @@ fn call_facts(
                 caller_site_end: edge.call_site.map_or(0, |span| span.end()),
                 kind: edge.kind.as_str().to_string(),
             })
+        })
+        .collect()
+}
+
+/// Every import binding one input writes, resolved through the module plane.
+/// Not an arm output: the plane answers per FILE, ahead of any family.
+fn import_facts(input: &ProjectInput, cx: &ProjectCx) -> Vec<FlatFact> {
+    let Some(modules) = cx.indexes.ts_modules.get() else {
+        return Vec::new();
+    };
+    modules
+        .bindings(&input.path)
+        .into_iter()
+        .map(|row| FlatFact::ResolvedImportRow {
+            src_path: input.path.clone(),
+            name: row.name,
+            local: row.local,
+            target_path: row.target_path,
+            target_name: row.target_name,
+            kind: row.kind.as_str().to_string(),
+            hops: row.hops,
         })
         .collect()
 }

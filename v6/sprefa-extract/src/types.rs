@@ -456,6 +456,9 @@ pub enum CallEdgeKind {
     /// A callable NAMED as a value, never called at that spot: the edge a
     /// `position=value` reference row resolves to.
     ValueRef,
+    /// The callee is an import binding, bound through the language's own module
+    /// plane (ResolveExport) rather than by name-matching across the corpus.
+    ImportResolve,
 }
 
 impl CallEdgeKind {
@@ -464,6 +467,7 @@ impl CallEdgeKind {
             CallEdgeKind::NameResolve => "name_resolve",
             CallEdgeKind::ScipOverride => "scip_override",
             CallEdgeKind::ValueRef => "value_ref",
+            CallEdgeKind::ImportResolve => "import_resolve",
         }
     }
 }
@@ -1461,6 +1465,8 @@ pub struct ManifestMap;
 /// - `joined_documents`: index x reader, ONE slot; per FILE it is 82x129 reads.
 /// - `paths`: blob -> supplied path. ONE lang-agnostic slot for the arms whose
 ///   rule is about where a file SITS (go binds `pkg.F` in a directory).
+/// - `ts_modules`: the ts/js module plane, a per-language slot. ResolveExport
+///   is whole-corpus; `Resolve::resolve` runs per file.
 #[derive(Default)]
 pub struct IndexBag {
     pub def_index: std::sync::OnceLock<DefIndex>,
@@ -1468,6 +1474,7 @@ pub struct IndexBag {
     pub joined_documents: std::sync::OnceLock<Vec<Option<(ContentId, Vec<u8>)>>>,
     pub paths: std::sync::OnceLock<PathIndex>,
     pub kinds: std::sync::OnceLock<KindIndex>,
+    pub ts_modules: std::sync::OnceLock<crate::lang::ts_resolve::TsModuleIndex>,
 }
 
 /// Blob -> supplied path, for the whole resolve universe. Built ONCE per
@@ -2884,6 +2891,21 @@ pub enum FlatFact {
         src_manifest: String,
         dst_manifest: String,
         kind: String,
+    },
+    /// One import binding, resolved through the LANGUAGE'S OWN module plane
+    /// (ECMAScript ResolveExport for ts/js). The go and rust arms take the same
+    /// row shape when their planes land; neither emits it today. Column meanings
+    /// live at `--schema`.
+    /// @comment-ok: the cross-language contract a second arm has to honor
+    #[serde(rename = "resolved_import")]
+    ResolvedImportRow {
+        src_path: String,
+        name: String,
+        local: String,
+        target_path: String,
+        target_name: Option<String>,
+        kind: String,
+        hops: u32,
     },
     /// One file, once: its byte length and line count. v5's `file_lines` and
     /// the size half of `content`. `digest` is the same ContentId the phase-2
