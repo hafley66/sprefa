@@ -200,11 +200,13 @@ impl Project<CstF> for CstProjector {
             } else {
                 nearest_named
             };
-            let mut children: Vec<_> = node.children().collect();
-            children.reverse();
-            for child in children {
+            // Pushed forward then reversed IN PLACE on the stack's own tail: a
+            // per-node `children().collect()` is one heap allocation per node.
+            let mark = stack.len();
+            for child in node.children() {
                 stack.push((child, my_named));
             }
+            stack[mark..].reverse();
         }
     }
 }

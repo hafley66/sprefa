@@ -1,6 +1,6 @@
 //! The CLI: clap args, NO tokio. Streams flat JSONL to stdout (RSS does not buffer
 //! the whole corpus; the lib drains). One data-driven path: `dispatch(path,
-//! content, mask)` -> `flatten` -> stdout. `--family` selects the mask (default
+//! content, mask)` -> `flatten_each` -> stdout. `--family` selects the mask (default
 //! ALL); `--bench` times extract + flatten and reports per-family counts to stderr;
 //! `--schema` prints the JSONL output contract and exits. The bin names no
 //! ast-grep/oxc type outside the `Source` impls (the uniform-surface law).
@@ -19,20 +19,21 @@ use std::time::Instant;
 use clap::Parser;
 
 use sprefa_extract::{
-    cfg_bundle, deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact, flatten,
-    flatten_cfg, package_edges_jsonl, query_patterns, resolve_project_jsonl, scip_facts_jsonl,
-    scip_family_jsonl, scip_file_edges_jsonl, scip_index_location, source_for, AstPatternQuery,
-    FamilyMask, IndexBudget, ResolveArms, ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords,
-    SCHEMA,
+    cfg_bundle, deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact,
+    flatten_cfg_each, flatten_each, package_edges_jsonl, query_patterns, resolve_project_jsonl,
+    scip_facts_jsonl, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
+    size_skip_fact, source_for, AstPatternQuery, FamilyMask, FlatFact, IndexBudget, ResolveArms,
+    ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords, DEFAULT_MAX_BYTES, SCHEMA,
 };
 
 #[path = "extract/help.rs"]
 mod help;
 
 use help::{
-    BENCH_LONG, DEPS_LONG, FAMILY_LONG, FILE_FACT_LONG, LONG_ABOUT, OCCURRENCE_TEXT_LONG,
-    PACKAGE_DEPS_LONG, PATH_LONG, PROJECT_ROOT_LONG, SCIP_BUILD_LONG, SCIP_CACHE_LONG,
-    SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG, SCIP_RECORD_LONG, SCIP_TIMEOUT_LONG,
+    BENCH_LONG, DEPS_LONG, FAMILY_LONG, FILE_FACT_LONG, LONG_ABOUT, MAX_BYTES_LONG,
+    OCCURRENCE_TEXT_LONG, PACKAGE_DEPS_LONG, PATH_LONG, PROJECT_ROOT_LONG, SCIP_BUILD_LONG,
+    SCIP_CACHE_LONG, SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG, SCIP_RECORD_LONG,
+    SCIP_TIMEOUT_LONG,
 };
 
 #[path = "../0_query.rs"]
@@ -150,6 +151,10 @@ struct Cli {
     /// Prepend one `file` record: path, content digest, byte count, line count.
     #[arg(long, conflicts_with_all = ["resolve", "scip_facts", "ast_pattern"], long_help = FILE_FACT_LONG)]
     file_fact: bool,
+
+    /// Byte ceiling for one input; over it emits `size_skip` and exits 0. 0 = none.
+    #[arg(long = "max-bytes", value_name = "BYTES", long_help = MAX_BYTES_LONG)]
+    max_bytes: Option<u64>,
 
     /// Ast-grep pattern in ID=PATTERN form. Repeat to batch patterns over one parse.
     #[arg(
@@ -398,11 +403,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let path = &cli.paths[0];
     let content = std::fs::read(path)?;
     let path_str = path.to_string_lossy();
-    if !cli.ast_pattern.is_empty() {
-        let queries = parse_ast_queries(&cli.ast_pattern, &cli.ast_selector, &cli.ast_capture)?;
-        stream_ast_queries(&path_str, &content, &queries)?;
-        return Ok(());
-    }
     // The file row rides the SAME read as extraction: counting lines must never
     // cost a second pass over the file, let alone a second subprocess.
     if cli.file_fact {
@@ -410,6 +410,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "{}",
             serde_json::to_string(&file_fact(&path_str, &content))?
         );
+    }
+    // Before any parse, so the ceiling bounds the cost it exists to bound. The
+    // file row above is a digest over bytes already read, not that cost.
+    let limit = cli.max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
+    let bytes = content.len() as u64;
+    if limit > 0 && bytes > limit {
+        tracing::warn!(path = %path_str, bytes, limit, "input over the byte ceiling");
+        println!(
+            "{}",
+            serde_json::to_string(&size_skip_fact(&path_str, bytes, limit))?
+        );
+        return Ok(());
+    }
+    if !cli.ast_pattern.is_empty() {
+        let queries = parse_ast_queries(&cli.ast_pattern, &cli.ast_selector, &cli.ast_capture)?;
+        stream_ast_queries(&path_str, &content, &queries)?;
+        return Ok(());
     }
     let mask = match cli.family.as_deref() {
         Some(families) => parse_mask(families)?,
@@ -600,18 +617,18 @@ fn stream(
     // into 2M write syscalls.
     let stdout = std::io::stdout();
     let mut out = std::io::BufWriter::with_capacity(256 * 1024, stdout.lock());
+    // Each row is written and dropped: collecting them first held a second copy
+    // of the whole stream, which on a 13 MB bundle is 800 MB of the 1,094 MB peak.
+    let mut write = |fact: FlatFact| -> Result<(), std::io::Error> {
+        serde_json::to_writer(&mut out, &fact)?;
+        out.write_all(b"\n")
+    };
     if let Some(bundle) = dispatch(path, content, mask) {
-        for fact in flatten(&bundle) {
-            serde_json::to_writer(&mut out, &fact)?;
-            out.write_all(b"\n")?;
-        }
+        flatten_each(&bundle, &mut write)?;
         // The cfg plane rides the SAME parse: it is derived from `bundle.cst`.
         if cfg {
             if let Some(cfg_bundle) = cfg_bundle(path, &bundle, content) {
-                for fact in flatten_cfg(&cfg_bundle) {
-                    serde_json::to_writer(&mut out, &fact)?;
-                    out.write_all(b"\n")?;
-                }
+                flatten_cfg_each(&cfg_bundle, &mut write)?;
             }
         }
     }
@@ -634,7 +651,12 @@ fn bench(
     let out = src.extract(path, content, mask);
     let extract = t.elapsed();
     let t = Instant::now();
-    let facts = flatten(&out);
+    let mut facts = 0usize;
+    let counted: Result<(), std::convert::Infallible> = flatten_each(&out, &mut |_| {
+        facts += 1;
+        Ok(())
+    });
+    counted.expect("counting cannot fail");
     let serial = t.elapsed();
     // The cfg plane rides the SAME parse, so its timing is charged separately
     // from extract rather than folded into it.
@@ -659,7 +681,7 @@ fn bench(
             .as_ref()
             .map_or(0, |b| b.aux.docs.len() + b.aux.values.len()),
         cfg_nodes,
-        facts.len(),
+        facts,
     );
     Ok(())
 }

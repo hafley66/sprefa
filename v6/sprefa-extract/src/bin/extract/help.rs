@@ -278,6 +278,28 @@ edge is keyed on, the byte count and the line count. Off by default so existing
 output is unchanged; on, it rides the same invocation, so counting lines never
 costs a second read of the file.";
 
+pub const MAX_BYTES_LONG: &str = "\
+Byte ceiling for ONE input file. Over it, the file is not parsed: `extract`
+emits one `size_skip` record naming the path, the byte count and this ceiling,
+and exits 0. Default 16777216; 0 removes the ceiling entirely.
+
+A silent timeout is a defect and a named skip is a fact. Killing a run that has
+outgrown its budget leaves rc=124 and an empty stream, which a caller cannot
+tell from a file that legitimately has no facts, and which names neither the
+file nor its size.
+
+The number is measured, not chosen. 16777216 skips exactly one file in a
+77,472-file rust registry corpus, a 29,328,358 B machine-generated parser table
+that costs 12.55 s and 3.0 GB peak RSS, and all of that is parse time: --bench
+charges 4.5 s to 7.0 s per family to the parse against 4 ms to 225 ms of row
+flattening. No ts/js corpus file and no fixture in this crate reaches it.
+
+The decision is made on file size before any parse, so it covers the normal
+family stream, --bench and --ast-pattern alike. --file-fact still prepends its
+identity row: a digest and a line count over bytes already read is not the cost
+being bounded. A whole-project mode (--resolve, --deps, --scip-*) takes
+directories and path sets and is not covered.";
+
 pub const SCIP_CACHE_LONG: &str = "\
 Where `--family scip` places a freshly built index and finds it again. The
 default is v5's location, <ROOT>/.dl/.state/index.scip, and a `.dl/.gitignore`
