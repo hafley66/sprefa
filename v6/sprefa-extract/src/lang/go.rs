@@ -24,7 +24,7 @@
 //! empty), so v6 matches by emitting none either.
 // @comment-ok: the module header is a crate-level doc block predating the rail
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -2722,9 +2722,9 @@ fn go_receiver_target(
             type_name,
         ),
     };
-    corpus_defs(def_index, callee)
+    let matches: Vec<&DefSite> = corpus_defs(def_index, callee)
         .iter()
-        .find(|site| {
+        .filter(|site| {
             site.family == FamilyTag::Call
                 && paths.get(&site.blob).is_some_and(|p| {
                     Path::new(p).parent().is_some_and(|parent| same_dir(parent, &dir))
@@ -2735,7 +2735,13 @@ fn go_receiver_target(
                             == Some(base_name)
                 })
         })
-        .map(|site| (site.blob.clone(), site.span))
+        .collect();
+    // Exactly one, order-independent: two matches is a corpus ambiguity this
+    // tier does not settle, never a coin flip on Vec insertion order.
+    match matches.as_slice() {
+        [site] => Some((site.blob.clone(), site.span)),
+        _ => None,
+    }
 }
 
 impl Resolve<CallF> for GoSource {
@@ -2879,13 +2885,19 @@ fn go_interface_implements(
     let Some(paths) = paths else {
         return Vec::new();
     };
-    let mut candidates: HashMap<String, HashMap<&str, (ContentId, Span)>> = HashMap::new();
+    // Keyed by (owner name, declaring dir): two packages can name a type the
+    // same, and that must stay two candidates, never one conflated identity.
+    let mut candidates: BTreeMap<(String, String), HashMap<&str, (ContentId, Span)>> =
+        BTreeMap::new();
     for (_, spec_name) in specs {
         for site in corpus_defs(def_index, spec_name) {
             if site.family != FamilyTag::Call {
                 continue;
             }
             let Some(path) = paths.get(&site.blob) else {
+                continue;
+            };
+            let Some(dir) = Path::new(path).parent() else {
                 continue;
             };
             let facts = go_file_facts(&site.blob, path);
@@ -2896,7 +2908,7 @@ fn go_interface_implements(
                 continue;
             }
             candidates
-                .entry(owner.clone())
+                .entry((owner.clone(), dir.to_string_lossy().into_owned()))
                 .or_default()
                 .insert(spec_name.as_str(), (site.blob.clone(), site.span));
         }
