@@ -1,4 +1,4 @@
-# Lane `bench-extract-tools-2` (glm53f): second pass at joern and codeql, prove the queries hit
+# Lane `bench-extract-tools-2` (opus): second pass at joern and codeql, prove the queries hit
 
 Read `plans/extract-bench-2026-08-29/COMMON.md`, `plans/extract-bench-2026-08-29/TOOLS.REPORT.md`. Pass 1 left three results that
 say "the query missed", never "the tool cannot": codeql ts call 34 rows,
@@ -68,3 +68,16 @@ Push `bench/extract-tools-2`, `gh pr create --base main`, hail
 `boop beep --no-wait --as bench-extract-tools-2 sprefa-coordinator "tools pass 2: PR #N, codeql go recall x%, codeql ts x%, joern go x%, joern ts x%"`.
 Laws: no em dashes, no words provenance/substrate/load-bearing/regime, never
 "ground truth" (say oracle), commit the tsvs, no `--no-verify`.
+
+## Task E: glean and kythe, read the docs and say what it takes
+Pass 1 skipped both as Linux-only. Do not build them. Read
+glean.software/docs (indexers: which languages ship an indexer, what
+schema predicates carry call and import facts, the Angle query for each) and
+kythe.io/docs (the same for go/ts/rust indexers, the `/kythe/edge/ref/call`
+edge kind). Docker on this machine: `docker version` says whether the
+Linux demo image route exists. Output a table: tool, language, indexer name,
+call fact, import fact, run route on this Mac (docker image, or none), and
+an estimated first-run wall from the docs. If docker works, run the glean
+demo image on the go corpus mounted read-only under `timeout 900` in
+background and report `cpg`-equivalent counts; if it does not, say so with
+the exact error line.

@@ -1,4 +1,4 @@
-# Lane `bench-extract-type-oracles` (glm53f): type-family oracles for go and rust
+# Lane `bench-extract-type-oracles` (opus): type-family oracles for go and rust
 
 Read `plans/extract-bench-2026-08-29/COMMON.md` and `plans/extract-bench-2026-08-29/ORACLES.REPORT.md`. Call and module families
 have compiler oracles; the `type` family has none, and `go.parse.type.tsv`,
