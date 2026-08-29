@@ -1,12 +1,12 @@
 ---
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
 type: task
-assignee: sol
-status: needs-info
+assignee: codex
+status: done
 priority: high
 epic: dl7-minimal-kernel
-labels: [dl7, model-sol]
+labels: [dl7, model-sol, model-codex]
 size: L
 lane: dl7-contract
 lane_seq: 0
@@ -16,7 +16,14 @@ commits:
   summary: v7 plan blocked on module identity
 - hash: 4018330a1
   summary: Opus contract critique report
+- hash: c8ea96c78
+  summary: run positive closure through libtime
+- hash: c5fef951b
+  summary: derive Partial in userland comptime
+- hash: f3479f5c1
+  summary: pin comptime with one vertical oracle
 blocked_by: ['@dl7-contract-critique']
+closed: 2026-08-29
 ---
 
 # DL7 kernel contracts: edge, bind, application, interning, evaluator
@@ -79,3 +86,13 @@ two coherent options remain after inspecting prior decisions.
 ### 2026-08-28T04:51:15Z · @codex-v7
 
 2026-08-28: Opus review found the module identity fork is not the only blocker. Before implementation, the contract must also resolve body-position construction demand for Partial, remove automatic type-return intern insertion, define compiler stage ownership, qualify or collision-check relation references, and move construction request extraction outside evaluate/4. Report: v7/3_TASKS/results/1_CONTRACT_CRITIQUE.md at 4018330a1.
+
+### 2026-08-29T04:18:06Z · @codex
+
+2026-08-29 implementation reconciliation: declared nodes use owner(unit(Origin, ContentIdentity), ReaderNodeId); body-position construction is explicit cons/3 then intern/3; no automatic type-return interning exists; comptime evaluates all positive rules whose graph and authored seeds are compile-known; resolved calls carry semantic ref(Target) identities; evaluate/4 emits no construction requests and has no phase branch.
+
+## Resolution
+
+### 2026-08-29T04:18:23Z · @issuectl
+
+The previously blocked identity, construction, phase ownership, reference qualification, and evaluator request questions now have executable contracts and a vertical oracle.
