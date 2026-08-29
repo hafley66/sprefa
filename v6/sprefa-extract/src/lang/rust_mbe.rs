@@ -22,7 +22,7 @@ const MAX_GROWTH_FACTOR: usize = 4;
 /// minted by one invocation; the whole run collapses to that invocation's span.
 enum Chunk {
     Verbatim { start: u32, end: u32, orig_start: u32 },
-    Macro { start: u32, end: u32, origin: Span },
+    Macro { start: u32, end: u32, origin: Span, name: String },
 }
 
 impl Chunk {
@@ -83,6 +83,21 @@ impl Expanded {
         self.chunks.iter().any(|c| {
             matches!(c, Chunk::Macro { .. }) && c.start() <= spliced.start && spliced.end <= c.end()
         })
+    }
+
+    /// One row per distinct invocation, deduped across nested chunks that
+    /// share one origin (f3: `outer!`/`inner!` collapse to one row).
+    pub fn macro_sites(&self) -> Vec<(Span, &str)> {
+        let mut seen = Vec::new();
+        for c in &self.chunks {
+            let Chunk::Macro { origin, name, .. } = c else {
+                continue;
+            };
+            if !seen.iter().any(|(s, _): &(Span, &str)| *s == *origin) {
+                seen.push((*origin, name.as_str()));
+            }
+        }
+        seen
     }
 }
 
@@ -194,7 +209,7 @@ fn spaced_text(node: SyntaxNode) -> String {
 
 /// One pass over `text`: expand every LOCAL `macro_rules!` invocation found
 /// there. A name with no local def (cross-file, builtin, derive) is untouched.
-fn expand_pass(text: &str) -> Vec<(Range<u32>, String)> {
+fn expand_pass(text: &str) -> Vec<(Range<u32>, String, String)> {
     let parsed = SourceFile::parse(text, Edition::CURRENT);
     let root = parsed.syntax_node();
     let mut defs = HashMap::new();
@@ -231,6 +246,7 @@ fn expand_pass(text: &str) -> Vec<(Range<u32>, String)> {
                 end: u32::from(inv.range.end()),
             },
             spaced_text(parsed2.syntax_node()),
+            inv.name.clone(),
         ));
     }
     edits
@@ -241,9 +257,9 @@ fn expand_pass(text: &str) -> Vec<(Range<u32>, String)> {
 fn apply_pass(
     old_text: &str,
     old_chunks: &[Chunk],
-    mut edits: Vec<(Range<u32>, String)>,
+    mut edits: Vec<(Range<u32>, String, String)>,
 ) -> (String, Vec<Chunk>) {
-    edits.sort_by_key(|(r, _)| r.start);
+    edits.sort_by_key(|(r, _, _)| r.start);
     let mut new_text = String::with_capacity(old_text.len());
     let mut new_chunks = Vec::new();
     let mut cursor: u32 = 0;
@@ -268,24 +284,26 @@ fn apply_pass(
                     end: new_end,
                     orig_start: orig_start + (lo - start),
                 }),
-                Chunk::Macro { origin, .. } => new_chunks.push(Chunk::Macro {
+                Chunk::Macro { origin, name, .. } => new_chunks.push(Chunk::Macro {
                     start: new_start,
                     end: new_end,
                     origin: *origin,
+                    name: name.clone(),
                 }),
             }
         }
     };
 
-    for (range, replacement) in &edits {
+    for (range, replacement, name) in &edits {
         push_verbatim_range(cursor, range.start, &mut new_text, &mut new_chunks);
-        let origin = invocation_span(old_chunks, range.clone());
+        let (origin, name) = invocation_origin(old_chunks, range.clone(), name);
         let start = new_text.len() as u32;
         new_text.push_str(replacement);
         new_chunks.push(Chunk::Macro {
             start,
             end: new_text.len() as u32,
             origin,
+            name,
         });
         cursor = range.end;
     }
@@ -293,24 +311,30 @@ fn apply_pass(
     (new_text, new_chunks)
 }
 
-/// The span an invocation at `range` reports: its own verbatim position, or
-/// the span already carried by the macro chunk that minted it.
-fn invocation_span(old_chunks: &[Chunk], range: Range<u32>) -> Span {
+/// The (span, name) an invocation at `range` reports: its own verbatim
+/// position and its own name, or whatever the enclosing macro chunk carries.
+fn invocation_origin(old_chunks: &[Chunk], range: Range<u32>, own_name: &str) -> (Span, String) {
     for c in old_chunks {
         if c.start() <= range.start && range.end <= c.end() {
             return match c {
-                Chunk::Verbatim { start, orig_start, .. } => Span {
-                    start: orig_start + (range.start - start),
-                    len: range.end - range.start,
-                },
-                Chunk::Macro { origin, .. } => *origin,
+                Chunk::Verbatim { start, orig_start, .. } => (
+                    Span {
+                        start: orig_start + (range.start - start),
+                        len: range.end - range.start,
+                    },
+                    own_name.to_string(),
+                ),
+                Chunk::Macro { origin, name, .. } => (*origin, name.clone()),
             };
         }
     }
-    Span {
-        start: range.start,
-        len: range.end - range.start,
-    }
+    (
+        Span {
+            start: range.start,
+            len: range.end - range.start,
+        },
+        own_name.to_string(),
+    )
 }
 
 /// Expand every LOCAL `macro_rules!` invocation in `content` to a fixpoint.

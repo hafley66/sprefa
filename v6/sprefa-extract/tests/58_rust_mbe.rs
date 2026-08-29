@@ -1,8 +1,8 @@
-//! `rust_mbe::expand_file` in isolation: no hook into `RustSource::extract`
-//! exists yet (blocked on a shared `CallFAux` row, see the PR body), so this
-//! drives `RustSource.extract` a second time over the spliced text to check
-//! the exact "sites/defs orig -> expanded" counts the lab measured
-//! (`plans/extract-macro-lab-2026-08-29/PLAN.md` Option 1 fixture table).
+//! `rust_mbe::expand_file` plus the `RustSource::extract` call-arm hook that
+//! splices it in. `RustSource.extract(fixture)` now folds the gained facts
+//! straight into `call.nodes`/`call.aux.sites`, spans already mapped back to
+//! the original file, so these end-to-end counts ARE the lab's "expanded"
+//! column (`plans/extract-macro-lab-2026-08-29/PLAN.md` Option 1 table).
 
 use sprefa_extract::lang::rust_mbe::expand_file;
 use sprefa_extract::{FamilyMask, RustSource, Source};
@@ -40,37 +40,22 @@ fn no_local_macro_leaves_file_untouched() {
 #[test]
 fn f1_local_call_in_body_gains_two_sites() {
     let src = read("f1_local_call_in_body.rs");
-    let (orig_defs, orig_sites) = counts(&src);
-    assert_eq!((orig_defs, orig_sites), (2, 0));
-
-    let expanded = expand_file(&src).expect("twice! is local");
-    assert!(!expanded.budget_hit);
-    let (defs, sites) = counts(&expanded.text);
-    assert_eq!((defs, sites), (2, 2));
+    assert!(!expand_file(&src).unwrap().budget_hit);
+    assert_eq!(counts(&src), (2, 2));
 }
 
 #[test]
 fn f3_nested_invocations_settle_to_one_site() {
     let src = read("f3_nested.rs");
-    let (orig_defs, orig_sites) = counts(&src);
-    assert_eq!((orig_defs, orig_sites), (2, 0));
-
-    let expanded = expand_file(&src).expect("outer!/inner! are both local");
-    assert!(!expanded.budget_hit);
-    let (defs, sites) = counts(&expanded.text);
-    assert_eq!((defs, sites), (2, 1));
+    assert!(!expand_file(&src).unwrap().budget_hit);
+    assert_eq!(counts(&src), (2, 1));
 }
 
 #[test]
 fn f7_mints_fn_gains_a_def_and_a_site() {
     let src = read("f7_mints_fn.rs");
-    let (orig_defs, orig_sites) = counts(&src);
-    assert_eq!((orig_defs, orig_sites), (2, 1));
-
-    let expanded = expand_file(&src).expect("mkfn! is local");
-    assert!(!expanded.budget_hit);
-    let (defs, sites) = counts(&expanded.text);
-    assert_eq!((defs, sites), (3, 2));
+    assert!(!expand_file(&src).unwrap().budget_hit);
+    assert_eq!(counts(&src), (3, 2));
 }
 
 /// Every def/site gained by expansion reports the ORIGINAL invocation's span,
@@ -96,6 +81,27 @@ fn gained_site_spans_map_inside_the_invocation() {
         }
     }
     assert!(saw_macro_site, "f7's generated() call should be macro-origin");
+}
+
+/// The `RustSource::extract` hook maps a gained site's span all the way to
+/// ORIGINAL file coordinates: a caller reading the normal wire never sees a
+/// spliced-text offset.
+#[test]
+fn extract_reports_the_gained_site_at_its_invocation_in_the_source_file() {
+    let src = read("f7_mints_fn.rs");
+    let mkfn_start = src.find("mkfn!").expect("fixture invokes mkfn!") as u32;
+    let mkfn_end = mkfn_start + src[mkfn_start as usize..].find('}').unwrap() as u32 + 1;
+
+    let output = RustSource.extract("f.rs", src.as_bytes(), FamilyMask::ALL);
+    let call = output.call.as_ref().unwrap();
+    let inner_call_site = call
+        .aux
+        .sites
+        .iter()
+        .find(|s| output.strings.lookup(s.callee) == "inner_call")
+        .expect("mkfn!'s expansion calls inner_call()");
+
+    assert!(inner_call_site.span.start >= mkfn_start && inner_call_site.span.end() <= mkfn_end);
 }
 
 /// A macro that keeps re-minting itself never terminates a fixpoint; the pass

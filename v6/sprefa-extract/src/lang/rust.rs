@@ -3132,6 +3132,46 @@ fn df_edge(sink: &mut FamilyBundle<DfF>, src: NodeRef, dst: NodeRef) {
 // across all four families.
 // ════════════════════════════════════════════════════════════════════════════
 
+/// Re-runs `project_call` over `rust_mbe::expand_file`'s spliced text, folding
+/// in only the defs/sites born inside a macro expansion, span-mapped back.
+fn splice_macro_expansions(src: &str, strings: &mut Strings, bundle: &mut FamilyBundle<CallF>) {
+    let Some(expanded) = super::rust_mbe::expand_file(src) else {
+        return;
+    };
+    let Ok(expanded_parsed) = syn::parse_file(&expanded.text) else {
+        return;
+    };
+    let expanded_line_starts = build_line_starts(&expanded.text);
+    let mut expanded_bundle = FamilyBundle::<CallF>::default();
+    project_call(
+        &expanded_parsed,
+        &expanded_line_starts,
+        strings,
+        &mut expanded_bundle,
+    );
+
+    for mut node in expanded_bundle.nodes {
+        let range = node.span.start..node.span.start + node.span.len;
+        if !expanded.is_macro_span(range.clone()) {
+            continue;
+        }
+        if let Some(mapped) = expanded.map_span(range) {
+            node.span = mapped;
+            bundle.nodes.push(node);
+        }
+    }
+    for mut site in expanded_bundle.aux.sites {
+        let range = site.span.start..site.span.start + site.span.len;
+        if !expanded.is_macro_span(range.clone()) {
+            continue;
+        }
+        if let Some(mapped) = expanded.map_span(range) {
+            site.span = mapped;
+            bundle.aux.sites.push(site);
+        }
+    }
+}
+
 /// The Rust `Source`. `matches` = the path ends in `.rs`. cst via ast-grep's rust
 /// grammar; type/call/df/const via one `syn::parse_file`.
 #[derive(Default)]
@@ -3228,6 +3268,7 @@ impl Source for RustSource {
                         let _entered = span.enter();
                         let mut bundle = FamilyBundle::<CallF>::default();
                         project_call(&parsed, &line_starts, &mut strings, &mut bundle);
+                        splice_macro_expansions(src, &mut strings, &mut bundle);
                         trace::record_bundle(&span, &bundle, bundle.aux.sites.len());
                         call = Some(bundle);
                     }
