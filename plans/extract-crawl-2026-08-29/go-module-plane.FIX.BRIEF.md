@@ -12,7 +12,7 @@ resolves an import path to a directory; this lane makes it a plane.
 
 ## First action
 ```
-git merge --ff-only 1de4d763b2a9fe74bb810137bcaf29f5cf7cf04a
+git merge --ff-only b23f8dffe32770d8563285dfb9788c6d8fed214f
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Failure: STOP, `boop beep --no-wait --as fix-extract-go-module-plane sprefa-coordinator "<one line>"`.
