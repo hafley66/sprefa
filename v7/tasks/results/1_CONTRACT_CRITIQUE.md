@@ -2,8 +2,8 @@
 
 Date: 2026-08-28
 
-Reviewed: `v7/2_DESIGN/1_MINIMAL_VERTICAL_SLICE.PLAN.md`,
-`v7/3_TASKS/results/0_KERNEL_CONTRACT.md`. Donor reports opened to verify
+Reviewed: `v7/design/1_MINIMAL_VERTICAL_SLICE.PLAN.md`,
+`v7/tasks/results/0_KERNEL_CONTRACT.md`. Donor reports opened to verify
 disputed claims: `5_TYPES.md`, `6_GENERICS.md`, `7_COMPILER_FIXPOINT.md`,
 `4_SCOPE.md`, `11_ORACLES.md`. Donor source read for receipts:
 `v6/prolog/0_type_ids.pl`, `0_compiler_relations.pl`,

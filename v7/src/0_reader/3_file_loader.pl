@@ -1,11 +1,11 @@
-:- module(dl7_loader,
+:- module(dl7_file_loader,
           [ load_dl7/2,
             load_dl7/3
           ]).
 
 :- use_module(library(error), [must_be/2]).
 :- use_module(library(readutil), [read_file_to_string/3]).
-:- use_module('3_quasi', [dl7_text_unit/5]).
+:- use_module('2_embedder', [dl7_text_unit/5]).
 
 load_dl7(Path, Unit) :-
     load_dl7(Path, Unit, Diagnostics),

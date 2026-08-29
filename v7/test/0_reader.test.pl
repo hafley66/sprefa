@@ -1,10 +1,10 @@
 :- begin_tests(dl7_reader_foundation).
 
-:- use_module('../1_reader', [read_dl7/5]).
-:- use_module('../4_loader', [load_dl7/3]).
+:- use_module('../src/0_reader/0_parser', [read_dl7/5]).
+:- use_module('../src/0_reader/3_file_loader', [load_dl7/3]).
 
 test(standalone_fixture_has_canonical_reader_snapshot) :-
-    load_dl7('v7/0_SWIPL/test/fixtures/0_minimal.dl7',
+    load_dl7('v7/test/fixtures/0_minimal.dl7',
              Unit, Diagnostics),
     unit_snapshot(Unit, Snapshot),
     expected_snapshot(Expected),

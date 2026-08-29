@@ -16,8 +16,8 @@ folder in `v7/`. V6 remains read-only donor material.
 
 - Work only in the agent's Sprefa fork.
 - Read this brief first.
-- Read `v7/2_DESIGN/0_KERNEL_RECONCILIATION.md`,
-  `v7/2_DESIGN/1_MINIMAL_VERTICAL_SLICE.PLAN.md`,
+- Read `v7/design/0_KERNEL_RECONCILIATION.md`,
+  `v7/design/1_MINIMAL_VERTICAL_SLICE.PLAN.md`,
   `v7/1_AUDIT/results/1_READER.md`, and
   `v7/1_AUDIT/results/2_EXPANSION.md` before choosing term shapes.
 - Inspect the actual V6 SWI project, especially:
@@ -152,7 +152,7 @@ command through `5_driver.pl` and record the hook limitation with an official
 SWI reference. In both cases this command must work:
 
 ```text
-swipl -q -s v7/0_SWIPL/5_driver.pl -- path/to/program.dl7
+swipl -q -s v7/src/0_reader/4_cli_mainer.pl -- path/to/program.dl7
 ```
 
 The driver prints canonical reader/expansion output suitable for a golden or
@@ -188,7 +188,7 @@ No parse logic may be copied between them.
 
 ## V6 donor audit
 
-Write a compact table in `v7/0_SWIPL/0_README.md` with these columns:
+Write a compact table in `v7/src/0_reader/README.md` with these columns:
 
 ```text
 V6 donor | useful law/mechanism | rough edge measured | V7 treatment

@@ -1,6 +1,6 @@
-:- module(dl7_driver, [main/0, main/1]).
+:- module(dl7_cli_mainer, [main/0, main/1]).
 
-:- use_module('4_loader', [load_dl7/3]).
+:- use_module('3_file_loader', [load_dl7/3]).
 
 :- initialization(main, main).
 
@@ -20,7 +20,7 @@ driver_exit_code([Path], Code) :-
     unit_exit(Diagnostics, Unit, Code).
 driver_exit_code(_, 1) :-
     format(user_error,
-           "usage: swipl -q -s v7/0_SWIPL/5_driver.pl -- path/to/program.dl7~n",
+           "usage: swipl -q -s v7/src/0_reader/4_cli_mainer.pl -- path/to/program.dl7~n",
            []).
 
 unit_exit([], Unit, 0) :-

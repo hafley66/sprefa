@@ -9,7 +9,7 @@ existing ProgramJson and Rust engine door. This is a contract task first.
 - [ ] Name the minimum ProgramJson fields for one inert or one-row program.
 - [ ] Confirm zero engine source changes are required, or record the blocker.
 - [ ] Define an adapter signature without importing V6 parser terms.
-- [ ] Write `v7/3_TASKS/results/9_ENGINE_SEAM.md`.
+- [ ] Write `v7/tasks/results/9_ENGINE_SEAM.md`.
 
 ## Tests Run
 

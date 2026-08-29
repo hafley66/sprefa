@@ -1,11 +1,11 @@
 :- begin_tests(dl7_entrypoints).
 
 :- use_module(library(process), [process_create/3, process_wait/2]).
-:- use_module('../4_loader', [load_dl7/3]).
+:- use_module('../src/0_reader/3_file_loader', [load_dl7/3]).
 :- use_module('fixtures/1_embedded', []).
 
 test(file_and_bare_quasi_share_reader_and_expansion_pipeline) :-
-    load_dl7('v7/0_SWIPL/test/fixtures/0_minimal.dl7',
+    load_dl7('v7/test/fixtures/0_minimal.dl7',
              FileUnit, FileDiagnostics),
     FileUnit = dl7_unit(FileOrigin, content_sha256(FileDigest),
                         FileForms, FileRows, FileExpansions),
@@ -23,7 +23,7 @@ test(file_and_bare_quasi_share_reader_and_expansion_pipeline) :-
     Observed == entrypoint_result(true, true, true, [], [], []).
 
 test(driver_is_canonical_on_two_consecutive_runs) :-
-    load_dl7('v7/0_SWIPL/test/fixtures/0_minimal.dl7',
+    load_dl7('v7/test/fixtures/0_minimal.dl7',
              ExpectedUnit, []),
     driver_run(Status1, Stdout1, Stderr1),
     driver_run(Status2, Stdout2, Stderr2),
@@ -79,8 +79,8 @@ driver_run(Status, Stdout, Stderr) :-
     process_create(
         path(swipl),
         [ '-q',
-          '-s', 'v7/0_SWIPL/5_driver.pl',
-          '--', 'v7/0_SWIPL/test/fixtures/0_minimal.dl7'
+          '-s', 'v7/src/0_reader/4_cli_mainer.pl',
+          '--', 'v7/test/fixtures/0_minimal.dl7'
         ],
         [ stdout(pipe(StdoutStream)),
           stderr(pipe(StderrStream)),

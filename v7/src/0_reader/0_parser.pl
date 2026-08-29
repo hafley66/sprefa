@@ -1,4 +1,4 @@
-:- module(dl7_reader, [read_dl7/5]).
+:- module(dl7_parser, [read_dl7/5]).
 
 :- use_module(library(error), [must_be/2]).
 

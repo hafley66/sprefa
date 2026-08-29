@@ -125,7 +125,7 @@ file. Run the focused SWI reader command once.
 Add one production module in dependency order:
 
 ```text
-v7/1_DATALOG/0_basement.pl
+v7/src/2_comptime/0_compiler.pl
 ```
 
 Public signature:
@@ -212,7 +212,7 @@ no test file and run no V6, Rust, TypeScript, or engine suite.
 Extend the existing basement production module:
 
 ```text
-v7/1_DATALOG/0_basement.pl
+v7/src/2_comptime/0_compiler.pl
 ```
 
 Public signature:
@@ -284,12 +284,12 @@ TypeScript, or engine suite.
 These three milestones may change or add only:
 
 ```text
-v7/0_SWIPL/0_README.md
-v7/0_SWIPL/1_reader.pl
-v7/0_SWIPL/test/0_reader.test.pl
-v7/0_SWIPL/test/fixtures/0_minimal.dl7
-v7/1_DATALOG/0_basement.pl
-v7/3_TASKS/00_PROGRESS.md
+v7/src/0_reader/README.md
+v7/src/0_reader/0_parser.pl
+v7/test/0_reader.test.pl
+v7/test/fixtures/0_minimal.dl7
+v7/src/2_comptime/0_compiler.pl
+v7/tasks/00_PROGRESS.md
 ```
 
 No new test file is allowed. Lowering and checks remain together in the one

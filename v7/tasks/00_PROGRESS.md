@@ -5,7 +5,7 @@ Updated: 2026-08-28 20:55 EDT
 ## Basement restart
 
 The next implementation boundary is every layer before comptime fixpoint
-goals. Plan: `v7/2_DESIGN/2_BASEMENT_TO_DATALOG.PLAN.md`.
+goals. Plan: `v7/design/2_BASEMENT_TO_DATALOG.PLAN.md`.
 
 ```text
 root datums
@@ -51,7 +51,7 @@ these three cards.
 
 - Read Boop favorites 26 through 37 covering binding, prefix syntax,
   application, interning, compiler phasing, and shared fixpoint semantics.
-- Wrote `v7/2_DESIGN/1_MINIMAL_VERTICAL_SLICE.PLAN.md`.
+- Wrote `v7/design/1_MINIMAL_VERTICAL_SLICE.PLAN.md`.
 - Capped the first slice at four production modules and one exact test.
 - Made `Partial`, `Pick`, and `Exclude` dependent userland proof goals.
 - Created the issuectl epic and eleven task cards with model, size, lane,
@@ -98,7 +98,7 @@ these three cards.
   because the user's stop rule requires this choice to return to the user.
 - Sol committed `297d90b9a`; it was reviewed and cherry-picked as `7e3303be5`.
   The diff changes only the plan and
-  `v7/3_TASKS/results/0_KERNEL_CONTRACT.md`; `git diff --check` passed.
+  `v7/tasks/results/0_KERNEL_CONTRACT.md`; `git diff --check` passed.
 - Coordinator review found three claims requiring Opus receipts before a user
   ruling:
   - phase ownership is inferred from a `primitive(type)` return;
@@ -124,7 +124,7 @@ these three cards.
   interning, duplicate request rows, stored specialization arity, strata and
   negation, unlowered sum syntax, and unused graph rows.
 - Full receipts and the identity comparison are in
-  `v7/3_TASKS/results/1_CONTRACT_CRITIQUE.md`.
+  `v7/tasks/results/1_CONTRACT_CRITIQUE.md`.
 
 ## Next DAG edges
 
@@ -156,14 +156,14 @@ Milestone 1 (root datums) reader changes:
   `dl7_reader_foundation` tests pass.
 
 ```text
-swipl -q -g "load_files(['v7/0_SWIPL/test/0_reader.test.pl'],[silent(true)]),run_tests,halt"
+swipl -q -g "load_files(['v7/test/0_reader.test.pl'],[silent(true)]),run_tests,halt"
 ```
 
 No other suite run.
 
 Milestone 2 (nested root lowering):
 
-- Added `v7/1_DATALOG/0_basement.pl`, exporting `lower_datalog/4`. The next
+- Added `v7/src/2_comptime/0_compiler.pl`, exporting `lower_datalog/4`. The next
   static-check milestone extends this same module instead of adding another
   production file.
 - The module has 262 nonblank, noncomment lines.
@@ -200,7 +200,7 @@ Milestone 3 (resolve, check, graph):
   containment. `module/1` identifies the compiler-created file root;
   `product/1` and `sum/1` retain algebraic meaning. No point in the current
   basement requires a `namespace/1` or `scope/1` relation.
-- Added `check_datalog/4` to `v7/1_DATALOG/0_basement.pl`. The module now has
+- Added `check_datalog/4` to `v7/src/2_comptime/0_compiler.pl`. The module now has
   559 nonblank, noncomment lines and still exports only the two production
   entry points.
 - Resolution walks local owner edges, then reverse binding edges to containing

@@ -1,4 +1,4 @@
-:- module(dl7_expand,
+:- module(dl7_expander,
           [ expand_dl7/6,
             dl7_syntax_rewrite/3
           ]).

@@ -1,4 +1,4 @@
-:- module(dl7_basement, [lower_datalog/4, check_datalog/4]).
+:- module(dl7_compiler, [lower_datalog/4, check_datalog/4]).
 
 :- use_module(library(error), [must_be/2]).
 

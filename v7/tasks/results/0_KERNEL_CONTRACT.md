@@ -138,7 +138,7 @@ production or test file.
 - [x] `intern/3` is the only domain-construction primitive.
 - [x] Partial remains a `.dl7` proof goal.
 - [x] Plan stays within four production modules and one test.
-- [x] Report written to `v7/3_TASKS/results/0_KERNEL_CONTRACT.md`.
+- [x] Report written to `v7/tasks/results/0_KERNEL_CONTRACT.md`.
 - [ ] Declared-node module identity selected. Parent directed this ruling to
       remain open under the task stop condition.
 

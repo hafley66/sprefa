@@ -1,13 +1,13 @@
 # GLM53F brief: resolve, check, and graph lowered Datalog
 
-Read `v7/2_DESIGN/2_BASEMENT_TO_DATALOG.PLAN.md` first and implement milestone
+Read `v7/design/2_BASEMENT_TO_DATALOG.PLAN.md` first and implement milestone
 3 only. Milestones 1 and 2 will already be present in the base commit.
 
 ## Scope
 
 - Work only in the assigned worktree.
-- Extend `v7/1_DATALOG/0_basement.pl` and update
-  `v7/3_TASKS/00_PROGRESS.md` only.
+- Extend `v7/src/2_comptime/0_compiler.pl` and update
+  `v7/tasks/00_PROGRESS.md` only.
 - Add `check_datalog/4` to the existing module exports.
 - Resolve pending names through owner edges and reverse binding edges, with the four
   pinned primitive references from the plan.

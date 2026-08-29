@@ -1,13 +1,13 @@
 # GLM53F brief: lower nested binds and root forms
 
-Read `v7/2_DESIGN/2_BASEMENT_TO_DATALOG.PLAN.md` first and implement milestone
+Read `v7/design/2_BASEMENT_TO_DATALOG.PLAN.md` first and implement milestone
 2 only. Milestone 1 will already be present in the base commit.
 
 ## Scope
 
 - Work only in the assigned worktree.
 - Add `v7/1_DATALOG/0_lower.pl` and update
-  `v7/3_TASKS/00_PROGRESS.md` only.
+  `v7/tasks/00_PROGRESS.md` only.
 - Export exactly `lower_datalog/4`.
 - Implement the three-pass owner, reserve, and lower algorithm and exact
   `basement_program/2` terms from the plan.

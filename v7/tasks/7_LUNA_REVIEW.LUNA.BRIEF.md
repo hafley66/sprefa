@@ -10,7 +10,7 @@ kernel clauses, and test cases.
 - [ ] Confirm compiler and runtime invoke the same evaluator predicate.
 - [ ] Confirm Partial appears only in prelude, fixture, and documentation.
 - [ ] Confirm one test exists.
-- [ ] Write `v7/3_TASKS/results/7_LUNA_REVIEW.md`.
+- [ ] Write `v7/tasks/results/7_LUNA_REVIEW.md`.
 - [ ] Modify no implementation file.
 
 ## Tests Run

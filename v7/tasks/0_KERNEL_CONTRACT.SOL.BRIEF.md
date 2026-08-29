@@ -1,6 +1,6 @@
 ## Description
 
-Read `v7/2_DESIGN/1_MINIMAL_VERTICAL_SLICE.PLAN.md`, Boop favorites 26 through
+Read `v7/design/1_MINIMAL_VERTICAL_SLICE.PLAN.md`, Boop favorites 26 through
 37, and the twelve V7 donor reports. Pin the smallest executable contracts for
 prefix terms, `:/4`, callable output columns, interning, fixpoint requests, and
 one evaluator used by compiler and runtime rule sets.
@@ -30,7 +30,7 @@ every row key, lifetime, cleanup boundary, and canonical construction identity.
 - [ ] `intern/3` is the only domain-construction primitive.
 - [ ] Partial remains a `.dl7` proof goal.
 - [ ] Plan stays within four production modules and one test.
-- [ ] Report written to `v7/3_TASKS/results/0_KERNEL_CONTRACT.md`.
+- [ ] Report written to `v7/tasks/results/0_KERNEL_CONTRACT.md`.
 
 ## Tests Run
 

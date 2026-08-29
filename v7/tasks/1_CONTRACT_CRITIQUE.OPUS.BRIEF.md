@@ -29,7 +29,7 @@ Audit these observed contract risks:
 - [ ] Compare both module identity forms without selecting one.
 - [ ] Rule on the stage-ownership, inserted-interning, and relation-reference
       risks with donor file and line receipts.
-- [ ] Write `v7/3_TASKS/results/1_CONTRACT_CRITIQUE.md`.
+- [ ] Write `v7/tasks/results/1_CONTRACT_CRITIQUE.md`.
 - [ ] Modify no implementation file.
 
 ## Tests Run

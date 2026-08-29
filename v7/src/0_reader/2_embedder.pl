@@ -1,4 +1,4 @@
-:- module(dl7_quasi,
+:- module(dl7_embedder,
           [ dl7/4,
             dl7_text_unit/5
           ]).
@@ -10,8 +10,8 @@
                 quasi_quotation_syntax_error/1,
                 with_quasi_quotation_input/3
               ]).
-:- use_module('1_reader', [read_dl7/5]).
-:- use_module('2_expand', [expand_dl7/6]).
+:- use_module('0_parser', [read_dl7/5]).
+:- use_module('1_expander', [expand_dl7/6]).
 
 :- quasi_quotation_syntax(dl7).
 
