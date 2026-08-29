@@ -2,11 +2,16 @@
 
 :- use_module(library(aggregate), [aggregate_all/3]).
 :- use_module(library(process), [process_create/3, process_wait/2]).
+:- use_module('../src/0_reader/2_embedder', [dl7_text_unit/5]).
 :- use_module('../src/0_reader/3_file_loader', [load_dl7/3]).
-:- use_module('../src/2_comptime/2_compiler', [compile_dl7/4]).
+:- use_module('../src/2_comptime/2_compiler',
+              [ compile_dl7/4,
+                compile_unit/3
+              ]).
 :- use_module('../src/2_comptime/1_checker', [check_goal_sequence/4]).
 :- use_module('../src/1_libtime/0_evaluator',
-              [ stratify_rules/3,
+              [ evaluate/4,
+                stratify_rules/3,
                 validate_functional_rows/3
               ]).
 :- use_module('fixtures/1_embedded', []).
@@ -146,6 +151,110 @@ test(stratification_is_pure_deterministic_and_strict_cycle_checked) :-
                         [diagnostic(
                              stratify, none,
                              strict_dependency_cycle([Left-Right]))])).
+
+test(cons_constructs_deconstructs_and_stops_at_the_nil_tail) :-
+    Rules =
+        [ rule(call(ref(singleton), [var(list)]),
+               [checked_goal(
+                    positive,
+                    call(ref(kernel(cons)),
+                         [const(one), const(symbol(nil)), var(list)]))]),
+          rule(call(ref(pair), [var(list)]),
+               [ checked_goal(
+                     positive,
+                     call(ref(kernel(cons)),
+                          [const(two), const(symbol(nil)), var(tail)])),
+                 checked_goal(
+                     positive,
+                     call(ref(kernel(cons)),
+                          [const(one), var(tail), var(list)]))
+               ]),
+          rule(call(ref(suffix), [var(list)]),
+               [checked_goal(positive,
+                             call(ref(source), [var(list)]))]),
+          rule(call(ref(suffix), [var(tail)]),
+               [ checked_goal(positive,
+                              call(ref(suffix), [var(list)])),
+                 checked_goal(
+                     positive,
+                     call(ref(kernel(cons)),
+                          [var(head), var(tail), var(list)]))
+               ]),
+          rule(call(ref(item), [var(head)]),
+               [ checked_goal(positive,
+                              call(ref(suffix), [var(list)])),
+                 checked_goal(
+                     positive,
+                     call(ref(kernel(cons)),
+                          [var(head), var(tail), var(list)]))
+               ]),
+          rule(call(ref(empty_witness), []),
+               [checked_goal(
+                    positive,
+                    call(ref(kernel(cons)),
+                         [var(head), var(tail), const([])]))]),
+          rule(call(ref(improper_witness), []),
+               [checked_goal(
+                    positive,
+                    call(ref(kernel(cons)),
+                         [var(head), var(tail), const([one | improper])]))])
+        ],
+    Seeds = [call(ref(source),
+                  [const([const(one), const(two), const(three)])])],
+    evaluate(Rules, Seeds, Closure, EvaluationDiagnostics),
+    evaluator_snapshot(EvaluatorSnapshot),
+    findall(Item,
+            member(call(ref(item), [const(Item)]), Closure),
+            Items),
+    findall(List,
+            member(call(ref(suffix), [const(List)]), Closure),
+            Suffixes0),
+    sort(Suffixes0, Suffixes),
+    findall(List,
+            member(call(ref(singleton), [const(List)]), Closure),
+            Singletons),
+    findall(List,
+            member(call(ref(pair), [const(List)]), Closure),
+            Pairs),
+    witness_presence(Closure, empty_witness, EmptyWitness),
+    witness_presence(Closure, improper_witness, ImproperWitness),
+    underconstrained_cons_diagnostic(SourceDiagnostics),
+    Observed = cons_result(
+                   evaluation(EvaluationDiagnostics, EvaluatorSnapshot),
+                   traversal(Items, Suffixes),
+                   construction(Singletons, Pairs),
+                   absent(EmptyWitness, ImproperWitness),
+                   source_check(SourceDiagnostics)),
+    Observed == cons_result(
+                    evaluation(
+                        [],
+                        evaluator(temporary_rules(0), temporary_seeds(0))),
+                    traversal(
+                        [one, three, two],
+                        [ symbol(nil),
+                          [const(one), const(two), const(three)],
+                          [const(three)],
+                          [const(two), const(three)]
+                        ]),
+                    construction([[const(one)]],
+                                 [[const(one), const(two)]]),
+                    absent(false, false),
+                    source_check(
+                        [diagnostic(
+                             check, reader_node(cons_mode_source, 26),
+                             underconstrained_kernel_goal(
+                                 cons, [[2], [0, 1]]))])),
+    !.
+
+witness_presence(Closure, Relation, true) :-
+    memberchk(call(ref(Relation), []), Closure),
+    !.
+witness_presence(_, _, false).
+
+underconstrained_cons_diagnostic(Diagnostics) :-
+    Text = "(: Source (* (: value any)))\n(: Bad (* (: value any)))\n(Source \"ok\")\n(<- (Bad ?Value)\n    (cons ?Head ?Tail ?List)\n    (Source ?Value))\n",
+    dl7_text_unit(cons_mode, cons_mode_source, Text, Unit, []),
+    compile_unit(Unit, [], Diagnostics).
 
 partial_snapshot(Rows, Snapshot) :-
     member(call(ref(kernel(':')),

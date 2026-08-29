@@ -233,9 +233,7 @@ proves(EvaluationId, Head) :-
     instantiate_rule(Rule, Head, Body),
     proves_body(Body, EvaluationId).
 proves(_, call(ref(kernel(cons)), [Head, Tail, List])) :-
-    ground(Head),
-    ground(Tail),
-    cons_value(Head, Tail, List).
+    cons_relation(Head, Tail, List).
 proves(_, call(ref(kernel(intern)), [Constructor, Arguments, Result])) :-
     ground(Constructor),
     ground(Arguments),
@@ -254,8 +252,26 @@ satisfy_goal(EvaluationId, Goal) :-
     goal_call(Goal, positive, Call),
     proves(EvaluationId, Call).
 
-cons_value(Head, const(symbol(nil)), const([Head])).
-cons_value(Head, const(Tail), const([Head | Tail])) :-
+%% cons_relation(?Head, ?Tail, ?List) is semidet.
+%
+% A completed nonempty proper list determines its head and tail. Otherwise a
+% ground head and tail construct the list. The empty proper list and improper
+% lists have no cons tuple.
+cons_relation(Head, Tail, List) :-
+    (   ground(List)
+    ->  cons_deconstruct(List, Head, Tail)
+    ;   ground(Head),
+        ground(Tail),
+        cons_construct(Head, Tail, List)
+    ).
+
+cons_construct(Head, const(symbol(nil)), const([Head])).
+cons_construct(Head, const(Tail), const([Head | Tail])) :-
+    is_list(Tail).
+
+cons_deconstruct(const([Head]), Head, const(symbol(nil))) :- !.
+cons_deconstruct(const([Head | Tail]), Head, const(Tail)) :-
+    Tail = [_ | _],
     is_list(Tail).
 
 intern_value(ref(Constructor), const(TaggedArguments),
