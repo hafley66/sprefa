@@ -396,7 +396,7 @@ Not filed as a finding.
 | # | lang | class | path:line | repro | observed | expected |
 |---|---|---|---|---|---|---|
 | F1 | ts | missing_fact | `src/lang/ts.rs:119` (was `for stmt in &program.body`) | `extract --family type,call tests/fixtures/ts/corpus_1.ts` | zero facts for every declaration inside `namespace` / `declare module` / `declare global` | one entity per nested declaration. **FIXED, see section 10** |
-| F2 | ts | wrong_fact | `src/lang/ts.rs:1776` (`callee_name`, `E::StaticMemberExpression`) | `extract --resolve tests/fixtures/ts/corpus_2.ts tests/fixtures/ts/corpus_2_logger.ts` | `console.log(...)` in `corpus_2.ts` emits a `resolved_edge` to the free `log` in `corpus_2_logger.ts`, which it never imports | no edge; the receiver `console` is not that file |
+| F2 | ts | wrong_fact | `src/lang/ts.rs:1776` (`callee_name`, `E::StaticMemberExpression`) | `extract --resolve tests/fixtures/ts_findings/corpus_2.ts tests/fixtures/ts_findings/corpus_2_logger.ts` | `console.log(...)` in `corpus_2.ts` emits a `resolved_edge` to the free `log` in `corpus_2_logger.ts`, which it never imports | no edge; the receiver `console` is not that file |
 | F3 | ts | missing_fact | `src/lang/ts.rs:1642` (`CallWalker` has no `visit_decorator`) | `extract --family call tests/fixtures/ts/corpus_3.ts \| grep -c site` -> `0` | `@Injectable` and `@Log` produce no `site` record | two `site` records, callee `Injectable` and `Log` |
 | F4 | ts | rss | `src/lang/astgrep.rs`, reached from `src/lang/ts.rs:3018` | `/usr/bin/time -l extract --family cst monaco-editor/dev/vs/assets/ts.worker-DrA3GP0m.js` | 1,087 MB resident for a 12.7 MB input, 3.33 s | a bound that does not scale 88x with input; 8-way parallel dispatch over such files needs ~9 GB |
 | F5 | ts | parse_error | `src/lang/ts.rs:92` and the CLI stream | `extract <gzip blob named .js>` -> rc=0, empty stdout, empty stderr | a caller cannot tell "no facts" from "could not parse this input" | a `parse_error` row, or the CST `ERROR` node the text path already emits |
@@ -405,6 +405,26 @@ Not filed as a finding.
 | F8 | ts | wrong_fact | `--schema` `record=scip_fn_edge` | boop-adapters: 184 distinct scip pairs, 47 resolve pairs, 0 shared | 90 of 209 `scip_fn_edge` rows have a field/property callee (`X#X:X.X`); the name says function edge | either a narrower relation or a schema line stating that property references are included |
 | F9 | ts | crash | `--resolve` / `--deps` argument handling | `extract --resolve ~/projects/hafley-rxjs/packages/rxjs-ext/src` -> rc=1 | `Error: Read("src", Custom { kind: Other, error: "read /abs/path" })`, a Debug dump of the error type | a message naming the cause: a directory is not a `--resolve` path |
 | F10 | ts | missing_fact | `src/lang/ts.rs:1399` (`--resolve` with one path) | `extract --resolve one.tsx` -> rc=0, empty stdout | silence, though `--help` states "Needs two or more paths" | a non-zero exit with that sentence, the way a missing `--project-root` already does |
+
+### Where a repro fixture may live
+
+`tests/fixtures/ts` is the scip-ratchet corpus. `golden_parity.rs:844`
+(`call_resolve_scip_ratchet_ts`) globs every `.ts` under it recursively, runs
+scip-typescript over the directory, and asserts `missing_occurrence == 0`,
+`disagreements == 0`, `misses == 0`, `overbound == 0`. A fixture that
+demonstrates a defect cannot live there:
+
+| fixture | in the ratchet root? | why |
+|---|---|---|
+| `ts/corpus_1.ts` | yes | backs the landed F1 fix; declares no call site, so it adds a document and passes every leg |
+| `ts/corpus_3.ts` | yes | F3 means it emits no `site` at all, so it too adds a document and passes |
+| `ts_findings/corpus_2.ts`, `ts_findings/corpus_2_logger.ts` | **no** | the pair IS an overbind, which the ratchet asserts is zero. It also could not satisfy the occurrence leg: the root's `tsconfig.json` sets `"lib": ["es2020"]` with no DOM and no `@types/node`, so scip emits no occurrence for `console.log` or `process.stdout.write` |
+
+`tests/fixtures/ts_findings/` follows the existing sibling convention
+(`ts_move`, `ts_rename`, `ts_unresolved`). Four test files root at
+`tests/fixtures/ts` exactly (`golden_parity.rs:845`, `5_scip_facts_cli.rs:358`,
+`4_capability_parity.rs:208`, `8_scip_families_cli.rs:30`); a sibling is outside
+all four.
 
 ### Known-by-design, recorded not filed
 
@@ -473,5 +493,5 @@ slice of the corpus.
 | `--resolve` across directory boundaries | Every step-3 run took files at depth 1 of one directory. A whole-package run pulls in `dist/` twins of the same sources and doubles every definition, which measures the file selection rather than the resolver. |
 | `--family scip` on a root without `tsconfig.json` | All three roots have one. The `not_installed` and `timed_out` `scip_skip` branches never fired, so their text is unverified here. |
 | `--scip-override` (`--resolve` with `--project-root` plus an index) | Needs a decision about which index is authoritative per root; step 5 shows `scip_fn_edge` and `resolved_edge` are different relations (F8), so an override comparison would be measuring that mismatch, not the override. |
-| Fixes for F2, F3, F5 through F10 | F2 and F3 are inside this arm but change edge semantics corpus-wide: dropping a member call whose receiver is not a local binding would also drop legitimate method edges, and adding decorator call sites changes every framework-heavy file's call graph. Both need the coordinator's call, so this lane files them with repro fixtures (`corpus_2.ts`, `corpus_2_logger.ts`, `corpus_3.ts`) and lands neither. F4 is `astgrep.rs`, F5 through F10 are the CLI and scip planes; none is this arm. |
+| Fixes for F2, F3, F5 through F10 | F2 and F3 are inside this arm but change edge semantics corpus-wide: dropping a member call whose receiver is not a local binding would also drop legitimate method edges, and adding decorator call sites changes every framework-heavy file's call graph. Both need the coordinator's call, so this lane files them with repro fixtures (`ts_findings/corpus_2.ts`, `ts_findings/corpus_2_logger.ts`, `ts/corpus_3.ts`) and lands neither. F4 is `astgrep.rs`, F5 through F10 are the CLI and scip planes; none is this arm. |
 | Throughput per construct | The bytes/ms low tail is battery contention, shown in section 8. Isolating a slow construct needs a single-process benchmark harness, which is a separate build. |
