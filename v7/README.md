@@ -9,6 +9,7 @@ outside this arc.
 
 - [Donor audit index](1_AUDIT/results/0_INDEX.md)
 - [Kernel reconciliation](2_DESIGN/0_KERNEL_RECONCILIATION.md)
+- [Minimal programmable kernel plan](2_DESIGN/1_MINIMAL_VERTICAL_SLICE.PLAN.md)
 
 Initial boundary under examination:
 
