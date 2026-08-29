@@ -163,7 +163,9 @@ No other suite run.
 
 Milestone 2 (nested root lowering):
 
-- Added `v7/1_DATALOG/0_lower.pl`, exporting `lower_datalog/4`.
+- Added `v7/1_DATALOG/0_basement.pl`, exporting `lower_datalog/4`. The next
+  static-check milestone extends this same module instead of adding another
+  production file.
 - The module has 271 nonblank, noncomment lines.
 - The immutable unit plus reader node identity mints module, product, and sum
   owners.
