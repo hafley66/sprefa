@@ -8,7 +8,7 @@ priority: high
 epic: dl7-datalog-extensions
 labels: [dl7, model-terra]
 lane: dl7-datalog-kernel
-lane_seq: 4
+lane_seq: 5
 collision: [v7-datalog-lower, v7-datalog-check, v7-libtime, v7-test]
 size: L
 blocked_by: ['@dl7-stratified-negation']

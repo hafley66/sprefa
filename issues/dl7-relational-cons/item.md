@@ -8,7 +8,7 @@ priority: high
 epic: dl7-datalog-extensions
 labels: [dl7, model-luna]
 lane: dl7-datalog-kernel
-lane_seq: 1
+lane_seq: 2
 collision: [v7-libtime, v7-test, v7-datalog-check]
 size: S
 blocked_by: ['@dl7-compiler-split', '@dl7-checked-foundation']

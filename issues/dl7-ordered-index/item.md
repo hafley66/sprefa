@@ -9,7 +9,7 @@ epic: dl7-datalog-extensions
 labels: [dl7, model-terra]
 size: M
 lane: dl7-datalog-kernel
-lane_seq: 2
+lane_seq: 3
 collision: [v7-datalog-check, v7-test]
 blocked_by: ['@dl7-checked-foundation', '@dl7-datalog-rulings']
 ---

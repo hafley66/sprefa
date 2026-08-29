@@ -9,9 +9,9 @@ epic: dl7-datalog-extensions
 labels: [dl7, model-terra]
 size: L
 lane: dl7-datalog-kernel
-lane_seq: 0
+lane_seq: 1
 collision: [v7-datalog-lower, v7-datalog-check, v7-libtime, v7-test]
-blocked_by: ['@dl7-datalog-rulings']
+blocked_by: ['@dl7-datalog-rulings', '@dl7-positive-goal-ir']
 ---
 
 # Restore checked Datalog foundation contracts
