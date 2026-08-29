@@ -234,7 +234,7 @@ resolve_goals([Goal | Rest], RuleIndex, GoalIndex, Edges, Nodes, Relations,
                   Origins, RestResult, RestDiags),
     (   GoalResult = ok(ResolvedGoal),
         RestResult = ok(RestGoals)
-    ->  Result = ok([ResolvedGoal | RestGoals])
+    ->  Result = ok([checked_goal(positive, ResolvedGoal) | RestGoals])
     ;   Result = error(rule)
     ),
     (   GoalResult = error(Reason)
@@ -287,9 +287,22 @@ resolve_args([Arg | Rest], Edges, Nodes, Result) :-
 head_safety_diagnostics(call(_, HeadArgs), Body, Origins, RuleIndex, Diags) :-
     rule_origin(Origins, RuleIndex, NodeId),
     findall(Var, member(var(Var), HeadArgs), HeadVars),
-    findall(Var, (member(call(_, BodyArgs), Body),
-                  member(var(Var), BodyArgs)), BodyVars),
+    findall(Var, (member(Goal, Body),
+                  goal_variables(Goal, GoalVars),
+                  member(Var, GoalVars)), BodyVars),
     unsafe_vars(HeadVars, BodyVars, NodeId, Diags).
+
+%% goal_call(+CheckedGoal, -Polarity, -Call) is det.
+goal_call(checked_goal(Polarity, Call), Polarity, Call).
+
+%% goal_variables(+CheckedGoal, -VariableIdentities) is det.
+goal_variables(Goal, Variables) :-
+    goal_call(Goal, _, call(_, Arguments)),
+    findall(Identity, member(var(Identity), Arguments), Variables).
+
+%% goal_dependency(+HeadRef, +CheckedGoal, -Dependency) is det.
+goal_dependency(HeadRef, Goal, depends(HeadRef, BodyRef, Polarity)) :-
+    goal_call(Goal, Polarity, call(BodyRef, _)).
 
 unsafe_vars([], _, _, []).
 unsafe_vars([Var | Rest], BodyVars, NodeId, Diags) :-
@@ -307,8 +320,8 @@ depends_rows([rule(call(HeadRef, _), Body) | Rest], Depends) :-
     append(OwnDeps, RestDeps, Depends).
 
 body_refs([], _, []).
-body_refs([call(BodyRef, _) | Rest], HeadRef,
-          [depends(HeadRef, BodyRef, positive) | More]) :-
+body_refs([Goal | Rest], HeadRef, [Dependency | More]) :-
+    goal_dependency(HeadRef, Goal, Dependency),
     body_refs(Rest, HeadRef, More).
 
 %% One stratum row per declared relation; positive-only graphs sit at zero.

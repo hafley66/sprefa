@@ -117,7 +117,9 @@ normalized_relation(relation(ref(_), Arity)) :- integer(Arity).
 normalized_call(call(ref(_), Arguments)) :- is_list(Arguments).
 normalized_rule(rule(Head, Body)) :-
     normalized_call(Head),
-    maplist(normalized_call, Body).
+    maplist(normalized_goal, Body).
+normalized_goal(checked_goal(positive, Call)) :-
+    normalized_call(Call).
 normalized_depends(depends(ref(_), ref(_), positive)).
 normalized_stratum(stratum(ref(_), 0)).
 

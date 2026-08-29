@@ -11,7 +11,7 @@
 %% evaluate(+Rules, +Seeds, -Closure, -Diagnostics) is det.
 %
 % Close one ground positive Datalog program. Compiler and runtime callers use
-% the same entry point and checked call representation. Mutable clauses and
+% the same entry point and checked-goal representation. Mutable clauses and
 % SLG tables carry a fresh evaluation identity and are removed on every exit.
 evaluate(Rules, Seeds, Closure, Diagnostics) :-
     must_be(ground, Rules),
@@ -62,9 +62,17 @@ proves(_, call(ref(kernel(intern)), [Constructor, Arguments, Result])) :-
     intern_value(Constructor, Arguments, Result).
 
 proves_body([], _).
-proves_body([Call | Calls], EvaluationId) :-
-    proves(EvaluationId, Call),
-    proves_body(Calls, EvaluationId).
+proves_body([Goal | Goals], EvaluationId) :-
+    satisfy_goal(EvaluationId, Goal),
+    proves_body(Goals, EvaluationId).
+
+%% goal_call(+CheckedGoal, -Polarity, -Call) is det.
+goal_call(checked_goal(Polarity, Call), Polarity, Call).
+
+%% satisfy_goal(+EvaluationId, +CheckedGoal) is nondet.
+satisfy_goal(EvaluationId, Goal) :-
+    goal_call(Goal, positive, Call),
+    proves(EvaluationId, Call).
 
 cons_value(Head, const(symbol(nil)), const([Head])).
 cons_value(Head, const(Tail), const([Head | Tail])) :-
@@ -84,13 +92,15 @@ semantic_argument(const(Value), Value).
 % being proved. Each later proof receives a fresh identity-to-variable map.
 instantiate_rule(rule(Head0, Body0), Head, Body) :-
     instantiate_call(Head0, [], Variables0, Head),
-    instantiate_calls(Body0, Variables0, _, Body).
+    instantiate_goals(Body0, Variables0, _, Body).
 
-instantiate_calls([], Variables, Variables, []).
-instantiate_calls([Call0 | Calls0], Variables0, Variables,
-                  [Call | Calls]) :-
+%% instantiate_goals(+Goals0, +Variables0, -Variables, -Goals) is det.
+instantiate_goals([], Variables, Variables, []).
+instantiate_goals([checked_goal(Polarity, Call0) | Goals0],
+                  Variables0, Variables,
+                  [checked_goal(Polarity, Call) | Goals]) :-
     instantiate_call(Call0, Variables0, Variables1, Call),
-    instantiate_calls(Calls0, Variables1, Variables, Calls).
+    instantiate_goals(Goals0, Variables1, Variables, Goals).
 
 instantiate_call(call(Relation, Arguments0), Variables0, Variables,
                  call(Relation, Arguments)) :-
