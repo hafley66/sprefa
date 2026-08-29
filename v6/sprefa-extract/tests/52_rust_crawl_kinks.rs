@@ -1,8 +1,9 @@
 //! Defects the rust-analyzer entrypoint crawl measured
-//! (`plans/extract-crawl-2026-08-29/rust.REPORT.md` section 7). Fixtures and
-//! their expected/observed headers are in `tests/fixtures/rust_findings/`.
+//! (`plans/extract-crawl-2026-08-29/rust.REPORT.md` section 7, kinks 3, 5, 6).
+//! Fixtures and their expected/observed headers are in
+//! `tests/fixtures/rust_findings/`.
 //!
-//! FAIL-FIRST RECEIPT, kinks 5 and 6, red before the fix (binary at c60e5c4cc):
+//! FAIL-FIRST RECEIPT, all five red before the fix (binary at c60e5c4cc):
 //!   const_block_fns_mint_call_defs
 //!     left: {}   right: {"inner", "outer"}
 //!   const_block_call_resolves_to_its_sibling
@@ -10,10 +11,16 @@
 //!                               kind: "name_resolve" }]
 //!   initializer_calls_carry_the_const_or_static_item_as_caller
 //!     left: []   right: ["ROW", "TABLE"]
+//!   a_closure_caller_edge_mirrors_onto_the_enclosing_fn
+//!     left: {"closure@1182"}   right: {"closure@1182", "entry"}
+//!   one_mirror_edge_per_closure_caller_edge
+//!     no mirror for Edge { caller: "closure@1014", callee: "spawn", site: 1017 }
+//!     among 5 rows, 3 of them closure-caller
 //!
 //! SABOTAGE RECEIPT: deleting the `syn::Item::Const` arm from
 //! `call_defs_in_items` restores rows 1 and 2; returning `false` from
-//! `initializer_defs` without minting the item def restores row 3.
+//! `initializer_defs` without minting the item def restores row 3; dropping
+//! the `enclosing_named_def` push in `Resolve<CallF>` restores rows 4 and 5.
 
 use std::collections::BTreeSet;
 use std::process::Command;
@@ -117,4 +124,52 @@ fn a_const_with_no_call_in_its_initializer_mints_no_call_def() {
         "a call-free initializer minted {} call def(s)",
         call.nodes.len()
     );
+}
+
+/// Kink 3. A closure caller ends every walk, so the edge is ALSO emitted from
+/// the innermost enclosing named def and a BFS over named defs passes through.
+/// The closure edge stays: it is the only row that says where the call is.
+#[test]
+fn a_closure_caller_edge_mirrors_onto_the_enclosing_fn() {
+    let edges = resolved_edges(&["tests/fixtures/rust_findings/closure_caller_chain.rs"]);
+    let worker_callers: BTreeSet<&str> = edges
+        .iter()
+        .filter(|edge| edge.callee == "worker")
+        .map(|edge| edge.caller.as_str())
+        .collect();
+    assert_eq!(worker_callers, BTreeSet::from(["closure@1182", "entry"]));
+    assert_eq!(edges.len(), 3, "2 primary edges + 1 mirror: {edges:?}");
+}
+
+/// Kink 3's COUNT rail: exactly one mirror per closure-caller edge, never one
+/// per closure and never one per named def. Three closures, one nested inside
+/// another, so a mirror-per-closure-frame walk would over-count.
+#[test]
+fn one_mirror_edge_per_closure_caller_edge() {
+    let edges = resolved_edges(&["tests/fixtures/rust_findings/closure_mirror_count.rs"]);
+    let closure_edges: Vec<&Edge> = edges
+        .iter()
+        .filter(|edge| edge.caller.starts_with("closure@"))
+        .collect();
+    let mirrors: Vec<&Edge> = closure_edges
+        .iter()
+        .map(|closure| {
+            edges
+                .iter()
+                .find(|edge| {
+                    edge.site == closure.site
+                        && edge.callee == closure.callee
+                        && !edge.caller.starts_with("closure@")
+                })
+                .unwrap_or_else(|| panic!("no mirror for {closure:?} among {edges:?}"))
+        })
+        .collect();
+    assert_eq!(closure_edges.len(), 3, "{edges:?}");
+    assert_eq!(mirrors.len(), 3);
+    assert!(
+        mirrors.iter().all(|mirror| mirror.caller == "entry"),
+        "every mirror names the innermost enclosing NAMED def: {mirrors:?}"
+    );
+    // 5 primaries (one per site) + 3 mirrors. Before the fix: 5.
+    assert_eq!(edges.len(), 8, "{edges:?}");
 }

@@ -1059,6 +1059,9 @@ impl Resolve<CallF> for RustSource {
             });
         // Per FILE, never per site: the join is over the whole corpus index.
         let own = own_file_blob(output, def_index);
+        // Sorted once per file: the mirror lookup runs per closure-caller site,
+        // and a per-site scan of the def table is the shape kink 1 was.
+        let named = named_def_spans(call);
         let mut edges = Vec::new();
         for site in &call.aux.sites {
             // The caller is the innermost covering CallF def (the 4a
@@ -1082,11 +1085,55 @@ impl Resolve<CallF> for RustSource {
                 (Some(n), None) => (n, CallEdgeKind::NameResolve),
                 (None, None) => continue,
             };
+            // Nothing names `closure@<n>` as a callee, so a walk over named
+            // defs stops at one. The closure row stays; it names the frame.
+            if call.node(caller).name.is_none() {
+                if let Some(enclosing) = enclosing_named_def(&named, site.span) {
+                    edges.push(
+                        ProjectEdge::new(
+                            enclosing,
+                            dst_blob.clone(),
+                            dst_span,
+                            CallEdgeKind::NameResolve,
+                        )
+                        .with_call_site(site.span),
+                    );
+                }
+            }
             edges
                 .push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
         }
         edges
     }
+}
+
+/// Every NAMED CallF def as (span, ref), sorted by (start, end) for the
+/// `enclosing_named_def` binary search.
+fn named_def_spans(defs: &FamilyBundle<CallF>) -> Vec<(Span, NodeRef)> {
+    let mut sorted: Vec<(Span, NodeRef)> = defs
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.name.is_some())
+        .map(|(ix, node)| (node.span, NodeRef(ix as u32)))
+        .collect();
+    sorted.sort_by_key(|(span, _)| (span.start, span.end()));
+    sorted
+}
+
+/// The innermost NAMED def covering `site`. `covering_def` takes the innermost
+/// def of any kind, which is the closure wherever one is in the way.
+fn enclosing_named_def(sorted: &[(Span, NodeRef)], site: Span) -> Option<NodeRef> {
+    let cut = sorted.partition_point(|(span, _)| span.start <= site.start);
+    let mut best: Option<(Span, NodeRef)> = None;
+    for &(span, r) in &sorted[..cut] {
+        if site.end() <= span.end()
+            && best.map_or(true, |(b, _)| span.end() - span.start < b.end() - b.start)
+        {
+            best = Some((span, r));
+        }
+    }
+    best.map(|(_, r)| r)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
