@@ -3,7 +3,7 @@ created: 2026-08-28
 updated: 2026-08-28
 type: task
 assignee: glm53f
-status: in-progress
+status: done
 priority: high
 epic: dl7-minimal-kernel
 labels: [dl7, basement, model-glm53f]
@@ -12,6 +12,10 @@ lane: dl7-basement
 lane_seq: 2
 collision: [v7-datalog-check]
 blocked_by: ['@dl7-datalog-lower']
+closed: 2026-08-28
+commits:
+- hash: 3fa817fd3
+  summary: finish checked Datalog basement
 ---
 
 # Resolve and check the Datalog basement
@@ -44,3 +48,9 @@ rows. This card ends the first basement slice immediately before evaluation.
 ## Implementation Notes
 
 Worker brief: `v7/3_TASKS/14_DATALOG_CHECKS.GLM53F.BRIEF.md`.
+
+## Resolution
+
+### 2026-08-29T03:58:52Z · @issuectl
+
+All acceptance checks and the direct SWI receipt pass. The reviewed correction restores node identity rows and enforces owner-index uniqueness.
