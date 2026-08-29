@@ -1,5 +1,9 @@
 # Rust macro-expansion lab (2026-08-29)
 
+Last copy of the lab crate (`v6/sprefa-extract/labs/macro_expand/`): commit
+`dae353d75`. The lab crate is deleted in the follow-up commit; this hash is
+the only remaining record of its code.
+
 ## TOC
 
 - [Corpus counts (re-measured)](#corpus-counts-re-measured)
