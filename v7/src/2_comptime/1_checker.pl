@@ -52,9 +52,12 @@ finish_checked([], DerivedStrata, Nodes, ColonEdges, Relations, Seeds, Rules,
     append(Nodes, KernelNodes, CheckedNodes),
     append(ColonEdges, KernelEdges, AllEdges),
     msort(AllEdges, SortedEdges),
+    predecessor_seeds(SortedEdges, PredecessorSeeds),
+    append(Seeds, PredecessorSeeds, CheckedSeeds),
     msort(Relations, SortedRelations),
     Checked = checked_datalog(root_graph(CheckedNodes, SortedEdges),
-                              datalog_program(SortedRelations, Seeds, Rules),
+                              datalog_program(SortedRelations, CheckedSeeds,
+                                              Rules),
                               Depends, Strata).
 finish_checked(Diagnostics, _, _, _, _, _, _, [], Diagnostics).
 
@@ -165,10 +168,22 @@ kernel_relation_rows(Relations) :-
 kernel_relation_keys(':', [[0, 1], [0, 3]]).
 kernel_relation_keys(cons, [[0, 1], [2]]).
 kernel_relation_keys(intern, [[0, 1]]).
+kernel_relation_keys(predecessor, [[0, 1], [0, 2]]).
 kernel_relation_keys(node, []).
 kernel_relation_keys(module, []).
 kernel_relation_keys(product, []).
 kernel_relation_keys(sum, []).
+
+%% Every checked dense owner-index sequence contributes its adjacent pairs.
+predecessor_seeds(Edges, Seeds) :-
+    findall(call(ref(kernel(predecessor)),
+                 [ref(Owner), const(EarlierIndex), const(LaterIndex)]),
+            ( member(':'(Owner, _, _, LaterIndex), Edges),
+              LaterIndex > 0,
+              EarlierIndex is LaterIndex - 1
+            ),
+            Seeds0),
+    sort(Seeds0, Seeds).
 
 kernel_graph(
     [ node(primitive(int)),
@@ -181,7 +196,8 @@ kernel_graph(
       node(kernel(sum)), product(kernel(sum)),
       node(kernel(':')), product(kernel(':')),
       node(kernel(cons)), product(kernel(cons)),
-      node(kernel(intern)), product(kernel(intern))
+      node(kernel(intern)), product(kernel(intern)),
+      node(kernel(predecessor)), product(kernel(predecessor))
     ],
     [ ':'(kernel(node), id, ref(primitive(type)), 0),
       ':'(kernel(module), id, ref(primitive(type)), 0),
@@ -196,7 +212,10 @@ kernel_graph(
       ':'(kernel(cons), return, ref(primitive(any)), 2),
       ':'(kernel(intern), constructor, ref(primitive(type)), 0),
       ':'(kernel(intern), arguments, ref(primitive(any)), 1),
-      ':'(kernel(intern), return, ref(primitive(type)), 2)
+      ':'(kernel(intern), return, ref(primitive(type)), 2),
+      ':'(kernel(predecessor), owner, ref(primitive(type)), 0),
+      ':'(kernel(predecessor), earlier, ref(primitive(int)), 1),
+      ':'(kernel(predecessor), later, ref(primitive(int)), 2)
     ]).
 
 %% Seeds resolve to ground calls over declared product relations.

@@ -67,15 +67,16 @@ test(userland_partial_maps_type_edges_deterministically) :-
                               RuntimeSnapshot, KeySnapshot, EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 59,
+                    [], [], 79,
                     partial(user,
                             [mapped(id, option(int), 0),
                              mapped(name, option(text), 1)]),
-                    runtime(counts(28, 25, 11, 1, 5, 10, 11),
+                    runtime(counts(30, 28, 12, 16, 5, 10, 12),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          cons([[0, 1], [2]]),
-                         intern([[0, 1]])),
+                         intern([[0, 1]]),
+                         predecessor([[0, 1], [0, 2]])),
                     evaluator(temporary_rules(0), temporary_seeds(0)),
                     true, true),
     !.
@@ -246,6 +247,43 @@ test(cons_constructs_deconstructs_and_stops_at_the_nil_tail) :-
                                  cons, [[2], [0, 1]]))])),
     !.
 
+test(checked_edge_indices_expose_adjacent_and_strict_order) :-
+    Text = "(: Empty (*))\n(: Singleton (* (: only int)))\n(: Triple (* (: first int) (: second int) (: third int)))\n(: before (* (: owner type) (: earlier int) (: later int)))\n(<- (before ?Owner ?Earlier ?Later)\n    (predecessor ?Owner ?Earlier ?Later))\n(<- (before ?Owner ?Earlier ?Later)\n    (predecessor ?Owner ?Earlier ?Middle)\n    (before ?Owner ?Middle ?Later))\n",
+    dl7_text_unit(ordered_index, ordered_index_source, Text, Unit,
+                  ReaderDiagnostics),
+    compile_unit(Unit,
+                 compiled_unit(_, RuntimeProgram, CompilerRows),
+                 CompilerDiagnostics),
+    named_owner(CompilerRows, 'Empty', Empty),
+    named_owner(CompilerRows, 'Singleton', Singleton),
+    named_owner(CompilerRows, 'Triple', Triple),
+    named_owner(CompilerRows, before, Before),
+    relation_pairs(CompilerRows, ref(kernel(predecessor)), Empty,
+                   EmptyPairs),
+    relation_pairs(CompilerRows, ref(kernel(predecessor)), Singleton,
+                   SingletonPairs),
+    relation_pairs(CompilerRows, ref(kernel(predecessor)), Triple,
+                   AdjacentPairs),
+    relation_pairs(CompilerRows, ref(Before), Triple, StrictPairs),
+    runtime_predecessor_snapshot(RuntimeProgram, Triple, RuntimeSnapshot),
+    Observed = ordered_index_result(
+                   diagnostics(ReaderDiagnostics, CompilerDiagnostics),
+                   empty(EmptyPairs),
+                   singleton(SingletonPairs),
+                   triple(adjacent(AdjacentPairs), strict(StrictPairs)),
+                   RuntimeSnapshot),
+    Observed == ordered_index_result(
+                    diagnostics([], []),
+                    empty([]),
+                    singleton([]),
+                    triple(
+                        adjacent([0-1, 1-2]),
+                        strict([0-1, 0-2, 1-2])),
+                    runtime(
+                        keys([[0, 1], [0, 2]]),
+                        ordered_seeds([0-1, 1-2]))),
+    !.
+
 witness_presence(Closure, Relation, true) :-
     memberchk(call(ref(Relation), []), Closure),
     !.
@@ -298,10 +336,33 @@ runtime_snapshot(
 
 runtime_key_snapshot(
     checked_datalog(_, datalog_program(Relations, _, _), _, _),
-    keys(colon(ColonKeys), cons(ConsKeys), intern(InternKeys))) :-
+    keys(colon(ColonKeys), cons(ConsKeys), intern(InternKeys),
+         predecessor(PredecessorKeys))) :-
     memberchk(relation(ref(kernel(':')), 4, ColonKeys), Relations),
     memberchk(relation(ref(kernel(cons)), 3, ConsKeys), Relations),
-    memberchk(relation(ref(kernel(intern)), 3, InternKeys), Relations).
+    memberchk(relation(ref(kernel(intern)), 3, InternKeys), Relations),
+    memberchk(relation(ref(kernel(predecessor)), 3, PredecessorKeys),
+              Relations).
+
+named_owner(Rows, Name, Owner) :-
+    member(call(ref(kernel(':')),
+                [ref(_), const(Name), ref(Owner), const(_)]),
+           Rows),
+    !.
+
+relation_pairs(Rows, Relation, Owner, Pairs) :-
+    findall(Earlier-Later,
+            member(call(Relation,
+                        [ref(Owner), const(Earlier), const(Later)]),
+                   Rows),
+            Pairs).
+
+runtime_predecessor_snapshot(
+    checked_datalog(_, datalog_program(Relations, Seeds, _), _, _),
+    Owner,
+    runtime(keys(Keys), ordered_seeds(Pairs))) :-
+    memberchk(relation(ref(kernel(predecessor)), 3, Keys), Relations),
+    relation_pairs(Seeds, ref(kernel(predecessor)), Owner, Pairs).
 
 normalized_program(Relations, Seeds, Rules, Depends, Strata) :-
     maplist(normalized_relation, Relations),

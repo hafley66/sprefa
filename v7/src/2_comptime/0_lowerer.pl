@@ -327,3 +327,4 @@ kernel_relation(sum, 1).
 kernel_relation(':', 4).
 kernel_relation(cons, 3).
 kernel_relation(intern, 3).
+kernel_relation(predecessor, 3).
