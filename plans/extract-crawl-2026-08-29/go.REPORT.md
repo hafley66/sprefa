@@ -559,3 +559,54 @@ Tests: `cargo test --features cli` 498 passed / 0 failed (93 suites). New
 fail-first tests in `tests/62_go_module_plane.rs` (4 new) against the twin
 module fixture (`module_c`: two `package debug` directories, a `_test.go`
 sibling, a caller-only partition run).
+
+## Fixes 5 (inferred receivers, lane `fix-extract-go-inferred`) <a name="fixes-5"></a>
+
+Lane base `e90322438` (#560). Same corpus, this lane's own build of
+`v6/sprefa-extract/target/release/extract`. One whole-project `--resolve`
+(single process, 5,096 files, rc 0, wall 9.35 s).
+
+### What landed
+
+| leg | mechanism |
+|---|---|
+| bind plan (phase 1) | `go_collect_receivers` additionally records, per file, every `x := f()` / `var x = f()` bind site (rhs call start byte -> enclosing top-level fn span + bound names in order) and every receiver site whose operand's scope binding is Inferred; stored in a per-process, content-keyed cache (`GoBindPlan`), so the resolve phase joins it without a second parse |
+| result types (resolve) | `GoFileFacts.ret_of`: def span -> ordered declared result types (`*T` -> `T`, type arguments cut), parsed once per blob in the existing disk-read cache |
+| source-order resolution | the site loop runs sorted by span start and stores per-site results; edges emit in original file order, so output row order is unchanged while a chain `b := a.M()` sees `a` already bound |
+| cross-package binding | a bound result type declared outside the caller's own directory is stored qualified by the caller's own import of that package (`Sub` -> `sub.Sub`), so leg 1's directory lookup finds it |
+| scip untouched | `scip_t` still overrides `name_t`; a binding only ever adds a name leg where the site previously dropped |
+
+Still `inferred` by design: a call the legs cannot bind, a func literal callee,
+a type-parameter result, an interface/builtin result with no corpus decl.
+
+### Receipt
+
+| metric | before (#560) | now |
+|---|---|---|
+| unresolved `inferred` | 19,022 | **3,293** |
+| unresolved `builtin` | 14,470 / 14,434 | 14,434 |
+| unresolved `external` | 11,255 (Fixes 3, batched) | 6,492 |
+| resolved_edge (name_resolve) | 55,123* / 71,590 | 71,590 |
+| resolved_edge (import_resolve) | 22,859* / 28,560 | 28,560 |
+| resolved_edge (implements) | 1,657 | 1,657 |
+| resolved_edge total | 86,078 | **101,807** |
+| resolved_import | 14,173 | 14,173 |
+| call recall vs `go.oracle.call.vta.tsv` | 8.67% (5,059) | **9.01%** (5,254) |
+| defs | 19,173 | 19,173 |
+| reachable (104 program roots) | 4,833 | **7,786** |
+| reachable with test roots | 11,600 | **14,398** |
+
+*The Fixes 4 before numbers are single-process where marked; the Fixes 3
+columns were xargs-batched.
+
+### Tests
+
+`cargo test --features cli`: 507 passed / 0 failed (94 suites). New suite
+`tests/63_go_inferred.rs` (9 tests) over `tests/fixtures/go_findings/inferred/`:
+same-package func, import-qualified func, method-on-known-receiver result,
+`(T, error)` first slot, multi-assign by result index, source-order chain,
+unbound callee stays `inferred`, interface result stays `inferred`, and the
+once-per-corpus COUNT gate (wall(400)/wall(200) < 2.5).
+`tests/55_go_type_plane.rs`: `viaInferred` flipped from the old
+"stays inferred" policy to the new binding (3 assertions updated, fixture
+untouched).

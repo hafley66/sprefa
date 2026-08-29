@@ -104,6 +104,7 @@ fn receiver_typed_dispatch_covers_var_param_pointer_field_and_slice() {
             "viaPointer",
             "viaField",
             "viaSliceElement",
+            "viaInferred",
         ]),
         "receiver-typed callers with a Name edge: {name_edges:?}"
     );
@@ -117,27 +118,29 @@ fn receiver_typed_dispatch_covers_var_param_pointer_field_and_slice() {
     }
 }
 
-/// `w := newWidget(); w.Name()`: the := binds from a call result, out of
-/// scope by policy. No edge, and an `unresolved` row names it `inferred`.
+/// `w := newWidget(); w.Name()`: the := binds from a call result. The
+/// inferred-receiver plane (tests/63) gives w newWidget's declared result
+/// type Widget, so the Name edge lands in receivers.go and no `inferred`
+/// drop remains for it.
 #[test]
-fn a_call_result_receiver_type_is_inferred_not_resolved() {
+fn a_call_result_receiver_type_binds_through_the_callee_result() {
     let paths = type_plane_dir();
     let edges = resolved_edges(&paths);
-    assert!(
-        !edges.iter().any(|e| e.0 == "viaInferred" && e.1 == "Name"),
-        "viaInferred must not resolve a Name edge (newWidget() itself may still resolve): {edges:?}"
-    );
-    let unresolved = unresolved_rows(&paths);
-    let inferred: Vec<&(String, String, String)> = unresolved
+    let name = edges
         .iter()
-        .filter(|(path, reason, detail)| {
+        .find(|e| e.0 == "viaInferred" && e.1 == "Name")
+        .expect("viaInferred resolves Name through newWidget's result type");
+    assert!(
+        name.2.ends_with("receivers.go"),
+        "viaInferred's Name edge bound outside receivers.go: {name:?}"
+    );
+    assert_eq!(name.3, "name_resolve");
+    let unresolved = unresolved_rows(&paths);
+    assert!(
+        !unresolved.iter().any(|(path, reason, detail)| {
             path.ends_with("receivers.go") && reason == "inferred" && detail == "Name"
-        })
-        .collect();
-    assert_eq!(
-        inferred.len(),
-        1,
-        "expected exactly one inferred Name drop: {unresolved:?}"
+        }),
+        "the inferred Name drop must be gone: {unresolved:?}"
     );
 }
 
@@ -235,8 +238,8 @@ fn receiver_typed_edges_equal_the_fixtures_written_bindings() {
     let edges = resolved_edges(&type_plane_dir());
     let name_edge_count = edges.iter().filter(|e| e.1 == "Name").count();
     assert_eq!(
-        name_edge_count, 5,
-        "receivers.go writes 5 Name call sites through a traceable receiver"
+        name_edge_count, 6,
+        "receivers.go writes 6 Name call sites through a traceable receiver (5 declared + viaInferred through the inferred binding)"
     );
 }
 
