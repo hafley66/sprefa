@@ -1,0 +1,372 @@
+{
+ "total_defs": 14438,
+ "closure_caller_edges": 13595,
+ "sets": {
+  "A_strict": {
+   "seeds": 47,
+   "seeds_in_graph": 47,
+   "reachable": 977,
+   "depth_hist": {
+    "0": 47,
+    "1": 66,
+    "2": 85,
+    "3": 109,
+    "4": 115,
+    "5": 93,
+    "6": 74,
+    "7": 60,
+    "8": 63,
+    "9": 53,
+    "10": 33,
+    "11": 28,
+    "12": 11,
+    "13": 13,
+    "14": 18,
+    "15": 26,
+    "16": 19,
+    "17": 30,
+    "18": 22,
+    "19": 9,
+    "20": 3
+   },
+   "max_depth": 20
+  },
+  "A_patched": {
+   "seeds": 47,
+   "seeds_in_graph": 47,
+   "reachable": 977,
+   "depth_hist": {
+    "0": 47,
+    "1": 66,
+    "2": 85,
+    "3": 109,
+    "4": 115,
+    "5": 93,
+    "6": 74,
+    "7": 60,
+    "8": 63,
+    "9": 53,
+    "10": 33,
+    "11": 28,
+    "12": 11,
+    "13": 13,
+    "14": 18,
+    "15": 26,
+    "16": 19,
+    "17": 30,
+    "18": 22,
+    "19": 9,
+    "20": 3
+   },
+   "max_depth": 20
+  },
+  "A_patched_closure_folded": {
+   "seeds": 47,
+   "seeds_in_graph": 47,
+   "reachable": 4419,
+   "depth_hist": {
+    "0": 47,
+    "1": 88,
+    "2": 124,
+    "3": 248,
+    "4": 466,
+    "5": 703,
+    "6": 755,
+    "7": 737,
+    "8": 554,
+    "9": 380,
+    "10": 182,
+    "11": 67,
+    "12": 39,
+    "13": 24,
+    "14": 5
+   },
+   "max_depth": 14
+  },
+  "B_testRunner": {
+   "seeds": 1252,
+   "seeds_in_graph": 1252,
+   "reachable": 2238,
+   "depth_hist": {
+    "0": 1252,
+    "1": 159,
+    "2": 165,
+    "3": 168,
+    "4": 185,
+    "5": 143,
+    "6": 78,
+    "7": 51,
+    "8": 20,
+    "9": 13,
+    "10": 3,
+    "11": 1
+   },
+   "max_depth": 11
+  },
+  "B_testRunner_closure_folded": {
+   "seeds": 1252,
+   "seeds_in_graph": 1252,
+   "reachable": 3168,
+   "depth_hist": {
+    "0": 1252,
+    "1": 259,
+    "2": 274,
+    "3": 311,
+    "4": 422,
+    "5": 338,
+    "6": 193,
+    "7": 79,
+    "8": 26,
+    "9": 11,
+    "10": 3
+   },
+   "max_depth": 10
+  }
+ },
+ "reachable_union_strict": 2497,
+ "reachable_union_folded": 6146,
+ "largest_unreachable": [
+  {
+   "bytes": 3121747,
+   "path": "src/compiler/checker.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 3067386,
+   "path": "src/compiler/checker.ts",
+   "name": "createTypeChecker",
+   "start": 44249,
+   "reached_when_folded": true
+  },
+  {
+   "bytes": 539588,
+   "path": "src/compiler/parser.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 510858,
+   "path": "src/compiler/utilities.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 335027,
+   "path": "src/compiler/factory/nodeFactory.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 327729,
+   "path": "src/compiler/checker.ts",
+   "name": "createNodeBuilder",
+   "start": 320403,
+   "reached_when_folded": true
+  },
+  {
+   "bytes": 309595,
+   "path": "src/compiler/factory/nodeFactory.ts",
+   "name": "createNodeFactory",
+   "start": 11660,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 285036,
+   "path": "src/services/completions.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 272827,
+   "path": "src/compiler/emitter.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 268915,
+   "path": "src/server/editorServices.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 268261,
+   "path": "src/compiler/program.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 256145,
+   "path": "src/harness/fourslashImpl.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 219162,
+   "path": "src/compiler/scanner.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 215275,
+   "path": "src/compiler/transformers/es2015.ts",
+   "name": "transformES2015",
+   "start": 16088,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 202281,
+   "path": "src/server/session.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 199121,
+   "path": "src/compiler/binder.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 181717,
+   "path": "src/compiler/commandLineParser.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 180972,
+   "path": "src/compiler/moduleNameResolver.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 174571,
+   "path": "src/compiler/binder.ts",
+   "name": "createBinder",
+   "start": 17005,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 171456,
+   "path": "src/services/utilities.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  }
+ ],
+ "highest_out_degree": [
+  {
+   "path": "src/compiler/emitter.ts",
+   "name": "pipelineEmitWithHintWorker",
+   "out": 174
+  },
+  {
+   "path": "src/server/session.ts",
+   "name": "<module>",
+   "out": 86
+  },
+  {
+   "path": "src/compiler/checker.ts",
+   "name": "checkSourceElementWorker",
+   "out": 77
+  },
+  {
+   "path": "src/compiler/checker.ts",
+   "name": "structuredTypeRelatedToWorker",
+   "out": 77
+  },
+  {
+   "path": "src/compiler/expressionToTypeNode.ts",
+   "name": "visitExistingNodeTreeSymbolsWorker",
+   "out": 66
+  },
+  {
+   "path": "src/compiler/transformers/declarations.ts",
+   "name": "transformTopLevelDeclaration",
+   "out": 64
+  },
+  {
+   "path": "src/compiler/transformers/declarations.ts",
+   "name": "visitDeclarationSubtree",
+   "out": 60
+  },
+  {
+   "path": "src/compiler/binder.ts",
+   "name": "bindWorker",
+   "out": 59
+  },
+  {
+   "path": "src/compiler/checker.ts",
+   "name": "typeToTypeNodeWorker",
+   "out": 58
+  },
+  {
+   "path": "src/services/symbolDisplay.ts",
+   "name": "getSymbolDisplayPartsDocumentationAndSymbolKindWorker",
+   "out": 56
+  },
+  {
+   "path": "src/compiler/checker.ts",
+   "name": "getTypeOfVariableOrParameterOrPropertyWorker",
+   "out": 55
+  },
+  {
+   "path": "src/compiler/checker.ts",
+   "name": "checkVariableLikeDeclaration",
+   "out": 52
+  },
+  {
+   "path": "src/compiler/factory/nodeFactory.ts",
+   "name": "replaceModifiers",
+   "out": 52
+  },
+  {
+   "path": "src/compiler/checker.ts",
+   "name": "checkPropertyAccessExpressionOrQualifiedName",
+   "out": 51
+  },
+  {
+   "path": "src/compiler/checker.ts",
+   "name": "getSymbolAtLocation",
+   "out": 49
+  },
+  {
+   "path": "src/compiler/checker.ts",
+   "name": "getPropertyTypeForIndexType",
+   "out": 48
+  },
+  {
+   "path": "src/compiler/checker.ts",
+   "name": "getTypeForVariableLikeDeclaration",
+   "out": 48
+  },
+  {
+   "path": "src/compiler/checker.ts",
+   "name": "checkExpressionWorker",
+   "out": 47
+  },
+  {
+   "path": "src/compiler/checker.ts",
+   "name": "checkObjectLiteral",
+   "out": 46
+  },
+  {
+   "path": "src/compiler/checker.ts",
+   "name": "getSymbolOfNameOrPropertyAccessExpression",
+   "out": 45
+  }
+ ]
+}

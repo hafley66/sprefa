@@ -22,6 +22,7 @@ first ts crawl (PR #538) landed on.
 6. [Step 5: kinks](#6-step-5-kinks)
 7. [Recount of the eight kinks from PR #538](#7-recount-of-the-eight-kinks-from-pr-538)
 8. [What stays untested and why](#8-what-stays-untested-and-why)
+9. [Fixes](#9-fixes-lane-fix-extract-ts-crawl-pr-against-originmain-b9b98e3af)
 
 ## 1. Corpus and exclusions
 
@@ -546,3 +547,98 @@ been ES modules since 5.0.
 | a serial rerun of all 19,818 files | the `ms_parallel8` column is inflated 3x to 8x; the 20 largest `src/` files and the 8 slowest `tests/cases` files were remeasured serially and the rest carry no timing claim |
 | scip over `tests/**` | `scip-typescript` needs one tsconfig per root; the test corpus has none and is not the program |
 | a fix for any row in section 6 | analysis lane |
+
+## 9. Fixes (lane `fix-extract-ts-crawl`, PR against `origin/main` b9b98e3af)
+
+Section 6's rows 1, 5, 6 and 8 landed. Row 3 is blocked and row 4 is out of
+scope, both stated below. Every number rerun over the same corpus
+(`/Users/chrishafley/projects/TypeScript-5.9` @ `7e133bea1`, 701 `src/**` files)
+with `ts5.crawl.py` unchanged, plus `ts5.crawl.module.py`, one `sed` off it that
+adds `module` to `DEF_KINDS` so the new `<module>` def is a graph node.
+
+### 9.1 The receipt
+
+| binary | `resolved_edge` | defs | A_strict | union strict | union folded |
+|---|---|---|---|---|---|
+| `origin/main` b9b98e3af | 75,089 | 14,047 | 3,509 | 5,854 | 7,344 |
+| + kink 1 only (`fa300d2c8`) | 75,893 | 14,438 | **3,854** | **6,110** | **7,683** |
+| + kinks 1, 3, 4, 5 (this branch) | 62,755 | 14,438 | **977** | **2,497** | 6,146 |
+
+Rows 2 and 3 read `ts5.crawl.module.py`; row 1 has no `module` def to see, so
+both scripts give it the same numbers. This branch under the STOCK script reads
+A_strict 566 / union strict 2,244, because a `<module>` caller is not a
+`function` or a `method` and the stock `DEF_KINDS` cannot seed or traverse it.
+
+### 9.2 Kink 1 is a clean win, kink 3 is a 4x reachability regression
+
+Kink 1 alone: +804 edges, +391 defs, A_strict 3,509 -> 3,854, union strict
+5,854 -> 6,110. Every gained edge carries `caller_name: "<module>"`.
+
+Kink 3 costs 13,138 edges and takes A_strict 3,854 -> 977. The lost edges,
+classed by the kind of the def they named:
+
+| callee def kind | lost edges | leaders |
+|---|---|---|
+| `function` | 8,618 | `push` 2,064, `map` 481, `getTypeChecker` 173, `createExpressionStatement` 135 |
+| `method` | 4,346 | `runQueuedTimeoutCallbacks` 711, `executeCommandSeq` 683, `getStart` 184 |
+| no def row (a builtin) | 50 | `getOwnPropertyDescriptor` 13, `next` 11, `setPrototypeOf` 9 |
+
+Section 6 measured 3,175 edges as WRONG under this rule. The rule removes
+13,138, so roughly 9,900 of the removals were edges a call graph wanted:
+`program.getTypeChecker()` and `factory.createCallExpression()` go the same way
+`out.push(x)` does. The def kind does not separate them — TypeScript builds its
+public API out of free functions closed over by a factory object, so
+`getTypeChecker` and `tracing.ts:push` are both `kind=function`, and
+`collectionsImpl.ts:keys` is a `method` that was wrong before.
+
+The `src/lib/*.d.ts` route was probed and does not work: a bodiless declaration
+mints no CallF def, so `push` has 0 def rows under `src/lib/` and the corpus
+cannot be asked which names are ECMAScript builtins.
+
+**The discriminator this needs is kink 2** (the import closure): the receiver's
+type is out of reach, but "the file that declares this name is a file I import"
+keeps `program.getTypeChecker()` and still drops `out.push(x)`. Kink 3 landing
+before kink 2 is what produces the regression. Reverting only the block, not
+the phase-1 `callee_path` it rides on, is the `unknown_receiver` call in
+`Resolve<CallF>` (`src/lang/ts.rs`), three lines.
+
+### 9.3 Kink 2 was not attempted: it does not fit inside a lang arm
+
+`Resolve<CallF>::resolve(&self, output, cx)` sees one file's `ExtractOutput` and
+the `ProjectCx`. Following `./barrel.js` needs the importing file's own PATH and
+the barrel file's specifier rows, and neither is reachable:
+
+| what is needed | where it would come from | state |
+|---|---|---|
+| this file's project-relative path | not a `Resolve` parameter | `src/project.rs:817-832` passes `output` and `cx` only |
+| the corpus file list | `ProjectCx.files` | `pub struct FileSet;`, a unit struct (`src/types.rs:1428-1430`) |
+| another file's specifier rows | `ProjectCx.indexes` | `IndexBag` carries `def_index`, `scip_index`, `joined_documents` and nothing else (`src/types.rs:1449-1453`) |
+
+The shape it wants is a module-graph slot on `IndexBag`, built once per refresh
+from the phase-1 outputs beside `build_def_index`, which is `src/types.rs` plus
+`src/project.rs`. Both are outside this lane's ownership. Hailed to the
+coordinator as `m-e66dc63d`.
+
+### 9.4 Kink 4 landed half
+
+The `position=value` reference row is in the stream. The resolve leg is not:
+the edge needs a `CallEdgeKind::ValueRef`, and `CallEdgeKind` is matched
+EXHAUSTIVELY at `tests/golden_parity.rs:781-798` and `:987-1005`, so a third
+variant does not compile without editing a file outside this lane's ownership.
+This is why the table in 9.1 shows no edge gain from kink 4.
+
+### 9.5 Rows not touched
+
+| row | why |
+|---|---|
+| the `node` record carries no exported flag | brief scopes it out (a wire change) |
+| exact mode drops a document over ~1 MB | brief scopes it out; the defect is in `scip-typescript` |
+| a `closure@<offset>` caller has no `node` row | the rust lane owns the closure fold (`src/project.rs` `caller_name`); a generic fold is a later decision |
+| peak RSS scales with nesting depth | not in the brief |
+
+### 9.6 Two registrations this lane could not make
+
+| gap | file | what is missing |
+|---|---|---|
+| the `ts::MODULE` ext tag is unpinned | `tests/6_kind_vocab.rs` `EXT_KINDS` | `("ts::MODULE", ts::MODULE.as_str())`; the tag-collision and byte-stability tests iterate that list, so a new ext tag not on it is unasserted |
+| the `reference` schema line still says `position=<goal\|head_arg\|term_arg>` | `src/schema.rs:37` | it was already missing `closure`; `value` makes four |
