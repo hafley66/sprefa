@@ -201,8 +201,8 @@ fn initializer_reads_the_outer_binding() {
 
 /// SABOTAGE RECEIPT: `fn new() -> Self` put the literal string `Self` in the
 /// one-hop return table, so `let b = Beta::new(); b.tick()` asked the impl
-/// table for `("Self", "tick")`, found nothing, and — the receiver type being
-/// KNOWN — emitted no row at all:
+/// table for `("Self", "tick")`, found nothing, and, the receiver type being
+/// KNOWN, emitted no row at all:
 /// `assertion failed: has(&rows, "beta_one_hop", "tick", "recv_beta")`.
 #[test]
 fn self_return_one_hop_binds() {
