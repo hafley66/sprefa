@@ -152,3 +152,15 @@ Lane `fix-extract-go-corpus`, base 5a13c36bb. Red-first per fix; whole-crate gat
 Commit receipts: 43bae3a35 (F1), 32a439f04 (F2, includes pre-fix profile top frames and the 20-file byte-identical diff receipt: files=20 diffs=0), F3 commit (count test, no src change).
 
 Out of scope, unchanged: scip_skip on read-only module cache; data.go 346MB RSS (literal rows are a caller filter decision).
+
+## Fixes: CLI defects from the crawls (lane fix-extract-cli-crawl)
+
+| kink | before | after | test |
+|---|---|---|---|
+| `--scip-facts --project-root X --scip-index Y X` exits 2 "is a directory" (PR #532's `check_file_paths` ran for root modes) | exit 2 before reaching the library | `check_file_paths` skipped for `--scip-facts` and `--scip-deps` (PATH is a root); `--resolve` and other file modes keep the check | `scip_facts_takes_a_root_directory`, `scip_deps_takes_a_root_directory`, `resolve_on_a_directory_still_exits_2` |
+| `extract <file> \| head -1` panics (`failed printing to stdout`, rc 101) or exits 1 with `Error: Os { kind: BrokenPipe }` | panic on `println!` rows, io error propagated from the BufWriter path | BrokenPipe intercepted in `main` (error-chain walk), `println!` replaced with `emit` across all row loops and file-fact/size_skip/schema; exit 0, empty stderr | `broken_pipe_exits_0_silently` (200k+ row input, read one byte, drop, rc 0) |
+| `--family scip --scip-build` ran `scip-go .`: root package only (158-byte index on typescript-go vs 106 MB for `./...`) | `scip-go --output {out}` with no package argument | GO_SPEC argv gains `./...`; ts/python/java/clang already walk the tree, unchanged | `go_indexer_argv_enumerates_all_packages` |
+| `--scip-build` ignored `--scip-timeout` (budget came from `IndexBudget::from_env` in project.rs) | sleeping indexer ran past the watchdog; no `scip_skip timed_out` row | `--scip-timeout` sets `SPREFA_SCIP_TIMEOUT_SECS` before dispatch, the same env the library documents; `--family scip` emits `reason: timed_out` | `scip_timeout_caps_the_scip_build_flag`, `scip_timeout_caps_the_family_scip_build` |
+| `scip_skip.detail` on a failed rust-analyzer build carried `note: Some details are omitted, run with RUST_BACKTRACE=1` (rust.REPORT kink 8) | tail picked the last nonempty stderr line | `last_error_line` picks the last line that is not a `note:` line, falling back to the last line | `error_line_skips_panic_notes` |
+
+Gate: `cargo test --features cli --no-fail-fast` = 406 passed, 0 failed (sum over all binaries).
