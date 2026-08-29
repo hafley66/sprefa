@@ -165,7 +165,16 @@ contents, so labs 9 and 10 use native Terra-high workers instead.
    the cyclic four-node closure under a two-second bound. Direct EDB duplicates
    survive, derived duplicates collapse, and updates require declaration
    rebuilds. The saved image is 42,277,112 bytes.
-3. Run and review the active `17_si_kanren` probe.
+3. `17_si_kanren` completed at upstream commit
+   `93f051fcc2b46649d214eab951cdd4ed1de869da`. Public queries receipt nested
+   unification, structural occurs check, interleaved bounded search,
+   proof-path duplicates, disequality, `numbero`, `symbolo`, and `absento`.
+   General cyclic closure remains an unrolled adapter, and no Datalog fixpoint
+   or table store is supplied. The independently rebuilt saved image is
+   42,539,296 bytes.
+
+All numbered Common Lisp logic labs in this sequence are now reviewed and
+committed.
 
 ## Shared-worktree laws
 
