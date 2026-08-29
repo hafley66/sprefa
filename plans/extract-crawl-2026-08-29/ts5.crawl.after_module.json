@@ -1,130 +1,146 @@
 {
  "total_defs": 14438,
- "closure_caller_edges": 13595,
+ "closure_caller_edges": 17458,
  "sets": {
   "A_strict": {
    "seeds": 47,
    "seeds_in_graph": 47,
-   "reachable": 977,
+   "reachable": 4837,
    "depth_hist": {
     "0": 47,
-    "1": 66,
-    "2": 85,
-    "3": 109,
-    "4": 115,
-    "5": 93,
-    "6": 74,
-    "7": 60,
-    "8": 63,
-    "9": 53,
-    "10": 33,
-    "11": 28,
-    "12": 11,
-    "13": 13,
-    "14": 18,
-    "15": 26,
-    "16": 19,
-    "17": 30,
-    "18": 22,
-    "19": 9,
-    "20": 3
+    "1": 95,
+    "2": 133,
+    "3": 160,
+    "4": 222,
+    "5": 280,
+    "6": 375,
+    "7": 488,
+    "8": 635,
+    "9": 614,
+    "10": 505,
+    "11": 501,
+    "12": 325,
+    "13": 210,
+    "14": 97,
+    "15": 60,
+    "16": 54,
+    "17": 21,
+    "18": 9,
+    "19": 2,
+    "20": 4
    },
    "max_depth": 20
   },
   "A_patched": {
    "seeds": 47,
    "seeds_in_graph": 47,
-   "reachable": 977,
+   "reachable": 4837,
    "depth_hist": {
     "0": 47,
-    "1": 66,
-    "2": 85,
-    "3": 109,
-    "4": 115,
-    "5": 93,
-    "6": 74,
-    "7": 60,
-    "8": 63,
-    "9": 53,
-    "10": 33,
-    "11": 28,
-    "12": 11,
-    "13": 13,
-    "14": 18,
-    "15": 26,
-    "16": 19,
-    "17": 30,
-    "18": 22,
-    "19": 9,
-    "20": 3
+    "1": 95,
+    "2": 133,
+    "3": 160,
+    "4": 222,
+    "5": 280,
+    "6": 375,
+    "7": 488,
+    "8": 635,
+    "9": 614,
+    "10": 505,
+    "11": 501,
+    "12": 325,
+    "13": 210,
+    "14": 97,
+    "15": 60,
+    "16": 54,
+    "17": 21,
+    "18": 9,
+    "19": 2,
+    "20": 4
    },
    "max_depth": 20
   },
   "A_patched_closure_folded": {
    "seeds": 47,
    "seeds_in_graph": 47,
-   "reachable": 4419,
+   "reachable": 6262,
    "depth_hist": {
     "0": 47,
-    "1": 88,
-    "2": 124,
-    "3": 248,
-    "4": 466,
-    "5": 703,
-    "6": 755,
-    "7": 737,
-    "8": 554,
-    "9": 380,
-    "10": 182,
-    "11": 67,
-    "12": 39,
-    "13": 24,
-    "14": 5
+    "1": 117,
+    "2": 232,
+    "3": 323,
+    "4": 598,
+    "5": 889,
+    "6": 886,
+    "7": 823,
+    "8": 672,
+    "9": 518,
+    "10": 393,
+    "11": 256,
+    "12": 191,
+    "13": 134,
+    "14": 87,
+    "15": 56,
+    "16": 28,
+    "17": 11,
+    "18": 1
    },
-   "max_depth": 14
+   "max_depth": 18
   },
   "B_testRunner": {
    "seeds": 1252,
    "seeds_in_graph": 1252,
-   "reachable": 2238,
+   "reachable": 6798,
    "depth_hist": {
     "0": 1252,
-    "1": 159,
-    "2": 165,
-    "3": 168,
-    "4": 185,
-    "5": 143,
-    "6": 78,
-    "7": 51,
-    "8": 20,
-    "9": 13,
-    "10": 3,
-    "11": 1
+    "1": 246,
+    "2": 315,
+    "3": 387,
+    "4": 483,
+    "5": 522,
+    "6": 473,
+    "7": 498,
+    "8": 570,
+    "9": 566,
+    "10": 459,
+    "11": 331,
+    "12": 317,
+    "13": 182,
+    "14": 127,
+    "15": 46,
+    "16": 10,
+    "17": 9,
+    "18": 3,
+    "19": 2
    },
-   "max_depth": 11
+   "max_depth": 19
   },
   "B_testRunner_closure_folded": {
    "seeds": 1252,
    "seeds_in_graph": 1252,
-   "reachable": 3168,
+   "reachable": 8434,
    "depth_hist": {
     "0": 1252,
-    "1": 259,
-    "2": 274,
-    "3": 311,
-    "4": 422,
-    "5": 338,
-    "6": 193,
-    "7": 79,
-    "8": 26,
-    "9": 11,
-    "10": 3
+    "1": 446,
+    "2": 654,
+    "3": 906,
+    "4": 1217,
+    "5": 1246,
+    "6": 1006,
+    "7": 699,
+    "8": 427,
+    "9": 299,
+    "10": 140,
+    "11": 92,
+    "12": 40,
+    "13": 9,
+    "14": 1
    },
-   "max_depth": 10
+   "max_depth": 14
   }
  },
- "reachable_union_strict": 2497,
- "reachable_union_folded": 6146,
+ "reachable_union_strict": 6943,
+ "reachable_union_folded": 8552,
  "largest_unreachable": [
   {
    "bytes": 3121747,
@@ -132,13 +148,6 @@
    "name": "<module>",
    "start": 0,
    "reached_when_folded": false
-  },
-  {
-   "bytes": 3067386,
-   "path": "src/compiler/checker.ts",
-   "name": "createTypeChecker",
-   "start": 44249,
-   "reached_when_folded": true
   },
   {
    "bytes": 539588,
@@ -160,13 +169,6 @@
    "name": "<module>",
    "start": 0,
    "reached_when_folded": false
-  },
-  {
-   "bytes": 327729,
-   "path": "src/compiler/checker.ts",
-   "name": "createNodeBuilder",
-   "start": 320403,
-   "reached_when_folded": true
   },
   {
    "bytes": 309595,
@@ -265,58 +267,77 @@
    "name": "<module>",
    "start": 0,
    "reached_when_folded": false
+  },
+  {
+   "bytes": 159334,
+   "path": "src/services/services.ts",
+   "name": "<module>",
+   "start": 0,
+   "reached_when_folded": false
+  },
+  {
+   "bytes": 144311,
+   "path": "src/compiler/transformers/classFields.ts",
+   "name": "transformClassFields",
+   "start": 10072,
+   "reached_when_folded": false
   }
  ],
  "highest_out_degree": [
   {
    "path": "src/compiler/emitter.ts",
    "name": "pipelineEmitWithHintWorker",
-   "out": 174
+   "out": 179
   },
   {
    "path": "src/server/session.ts",
    "name": "<module>",
-   "out": 86
-  },
-  {
-   "path": "src/compiler/checker.ts",
-   "name": "checkSourceElementWorker",
-   "out": 77
+   "out": 95
   },
   {
    "path": "src/compiler/checker.ts",
    "name": "structuredTypeRelatedToWorker",
-   "out": 77
+   "out": 79
   },
   {
    "path": "src/compiler/expressionToTypeNode.ts",
    "name": "visitExistingNodeTreeSymbolsWorker",
-   "out": 66
+   "out": 79
+  },
+  {
+   "path": "src/compiler/checker.ts",
+   "name": "checkSourceElementWorker",
+   "out": 78
   },
   {
    "path": "src/compiler/transformers/declarations.ts",
    "name": "transformTopLevelDeclaration",
-   "out": 64
+   "out": 75
+  },
+  {
+   "path": "src/compiler/transformers/esDecorators.ts",
+   "name": "transformClassLike",
+   "out": 70
+  },
+  {
+   "path": "src/services/symbolDisplay.ts",
+   "name": "getSymbolDisplayPartsDocumentationAndSymbolKindWorker",
+   "out": 69
   },
   {
    "path": "src/compiler/transformers/declarations.ts",
    "name": "visitDeclarationSubtree",
-   "out": 60
+   "out": 65
+  },
+  {
+   "path": "src/compiler/checker.ts",
+   "name": "typeToTypeNodeWorker",
+   "out": 61
   },
   {
    "path": "src/compiler/binder.ts",
    "name": "bindWorker",
    "out": 59
-  },
-  {
-   "path": "src/compiler/checker.ts",
-   "name": "typeToTypeNodeWorker",
-   "out": 58
-  },
-  {
-   "path": "src/services/symbolDisplay.ts",
-   "name": "getSymbolDisplayPartsDocumentationAndSymbolKindWorker",
-   "out": 56
   },
   {
    "path": "src/compiler/checker.ts",
@@ -326,7 +347,12 @@
   {
    "path": "src/compiler/checker.ts",
    "name": "checkVariableLikeDeclaration",
-   "out": 52
+   "out": 53
+  },
+  {
+   "path": "src/services/refactors/extractSymbol.ts",
+   "name": "extractFunctionInScope",
+   "out": 53
   },
   {
    "path": "src/compiler/factory/nodeFactory.ts",
@@ -340,33 +366,23 @@
   },
   {
    "path": "src/compiler/checker.ts",
+   "name": "resolveExternalModule",
+   "out": 51
+  },
+  {
+   "path": "src/services/inlayHints.ts",
+   "name": "visitForDisplayParts",
+   "out": 51
+  },
+  {
+   "path": "src/compiler/checker.ts",
    "name": "getSymbolAtLocation",
    "out": 49
   },
   {
    "path": "src/compiler/checker.ts",
-   "name": "getPropertyTypeForIndexType",
-   "out": 48
-  },
-  {
-   "path": "src/compiler/checker.ts",
-   "name": "getTypeForVariableLikeDeclaration",
-   "out": 48
-  },
-  {
-   "path": "src/compiler/checker.ts",
-   "name": "checkExpressionWorker",
-   "out": 47
-  },
-  {
-   "path": "src/compiler/checker.ts",
-   "name": "checkObjectLiteral",
-   "out": 46
-  },
-  {
-   "path": "src/compiler/checker.ts",
    "name": "getSymbolOfNameOrPropertyAccessExpression",
-   "out": 45
+   "out": 49
   }
  ]
 }
