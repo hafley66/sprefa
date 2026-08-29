@@ -1,0 +1,5 @@
+crate	files	resolve_rc	scip_fn_edge	scip_name_pairs	resolved_edge	resolve_name_pairs	both	scip_only	resolve_only	scip_callee_is_fn	scip_callee_not_fn
+line-index	2	0	116	109	54	40	31	78	9	26	90
+text-size	10	0	171	144	78	53	47	97	6	68	103
+smol_str	6	0	412	326	311	195	90	236	105	132	280
+la-arena	2	0	240	224	125	105	50	174	55	50	190
