@@ -1,6 +1,6 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-29 13:28 EDT
+Updated: 2026-08-29 17:57 EDT
 
 ## Current execution state
 
@@ -11,6 +11,7 @@ shared positive evaluator            done
 userland Partial                      done
 compiler stage split                  done
 engine seam contract                  done
+checked positive goal IR              done
 
 semantic rulings -> checked foundation -> relational cons
                                       \-> ordered index
@@ -40,12 +41,16 @@ layout rulings -> layout -> ProgramJson -> engine smoke
   Count also needs an ordered-index source and explicit zero-rank handling to
   support Pick and Exclude.
 - The corrected issue graph landed as `57a9d24c9`. Semantic choices are held in
-  `@dl7-datalog-rulings`; implementation cards depend on that ruling task and
-  no Datalog implementation worker is active.
+  `@dl7-datalog-rulings`; implementation cards depend on that ruling task.
+- The decision-free positive-goal slice landed as `ea876b7db`. Every checked
+  body row is now `checked_goal(positive, call(ref(...), Arguments))`.
+  Dependency analysis, variable analysis, instantiation, and evaluator dispatch
+  consume that one carrier. The exact Partial receipt remains 59 compiler rows,
+  10 dependencies, and 11 strata; all 10 body goals use the wrapper.
 - The layout blocker landed as `1c0a28475`. Checked Datalog has no rows for
-  stored-relation selection, `set|log`, physical keys and types, target names,
-  DDL ownership, runtime statements, or seed placement. These choices are held
-  in `@dl7-layout-rulings`, and the layout planner depends on it.
+  stored-relation selection, `set|log`, layout keys, artifact roles, or encoded
+  representations. These choices are held in `@dl7-layout-rulings`, and the
+  layout planner depends on it.
 - Commercial Common Prolog research landed as `dd100f858`. The active
   executable labs also completed: logadat provides a naive finite Datalog
   fixpoint; si-kanren provides unification, occurs checking, fair bounded

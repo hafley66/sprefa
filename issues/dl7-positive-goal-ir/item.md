@@ -3,7 +3,7 @@ created: 2026-08-29
 updated: 2026-08-29
 type: task
 assignee: codex
-status: open
+status: done
 priority: high
 epic: dl7-datalog-extensions
 labels: [dl7, model-codex]
@@ -12,6 +12,10 @@ lane: dl7-datalog-kernel
 lane_seq: 0
 collision: [v7-datalog-check, v7-libtime, v7-test]
 blocked_by: ['@dl7-compiler-split']
+commits:
+- hash: ea876b7db
+  summary: Normalize positive checked goals
+closed: 2026-08-29
 ---
 
 # Normalize positive checked goals
@@ -48,23 +52,29 @@ as sets. Closure rows and runtime storage do not change.
 
 ## Acceptance Criteria
 
-- [ ] Every checked positive body row is
+- [x] Every checked positive body row is
   `checked_goal(positive, call(ref(Relation), Arguments))`.
-- [ ] Bare checked body calls are absent.
-- [ ] Dependency and variable analysis consume checked goals through explicit
+- [x] Bare checked body calls are absent.
+- [x] Dependency and variable analysis consume checked goals through explicit
   helper predicates.
-- [ ] The evaluator dispatches checked positive goals through one helper.
-- [ ] Existing Partial compiler closure remains term-identical.
-- [ ] Existing dependency and stratum receipts remain term-identical.
-- [ ] No negative syntax, strict stratum, aggregate, key, cons-mode, or emitter
+- [x] The evaluator dispatches checked positive goals through one helper.
+- [x] Existing Partial compiler closure remains term-identical.
+- [x] Existing dependency and stratum receipts remain term-identical.
+- [x] No negative syntax, strict stratum, aggregate, key, cons-mode, or emitter
   behavior lands in this task.
 
 ## Tests Run
 
-- [ ] Existing consolidated V7 SWI suite passes with the normalized checked IR
+- [x] Existing consolidated V7 SWI suite passes with the normalized checked IR
   snapshot in the existing test file.
-- [ ] Tree-sitter build gate passes unchanged.
+- [x] Tree-sitter build gate passes unchanged.
 
 ## Implementation Notes
 
 Contract source: `v7/design/3_DATALOG_EXTENSIONS.REVIEW.md`.
+
+## Agent Runs
+
+### 2026-08-29T21:57:32Z · @codex
+
+SWI 7/7 passed. Tree-sitter 1/1 passed. Partial receipt: 10 checked positive goals, 59 compiler rows, 10 dependencies, and 11 strata. git diff --check passed.
