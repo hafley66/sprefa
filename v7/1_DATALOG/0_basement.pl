@@ -1,4 +1,4 @@
-:- module(dl7_datalog_lower, [lower_datalog/4]).
+:- module(dl7_basement, [lower_datalog/4]).
 
 :- use_module(library(error), [must_be/2]).
 
@@ -7,7 +7,7 @@
 % Lower the ground reader tree in three passes: mint constructor owners,
 % reserve every bind name, then lower top-level facts and rules against the
 % complete file-owner reservation table. The result remains ground compiler
-% data; reference resolution and Datalog checks belong to 0_check.pl.
+% data; reference resolution and Datalog checks run later in this module.
 lower_datalog(Unit, Program, Origins, Diagnostics) :-
     must_be(ground, Unit),
     (   Unit = dl7_unit(Origin, ContentIdentity, Forms, _, _)
