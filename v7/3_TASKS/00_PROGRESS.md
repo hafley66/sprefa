@@ -1,6 +1,6 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-28 20:15 EDT
+Updated: 2026-08-28 20:55 EDT
 
 ## Basement restart
 
@@ -143,5 +143,19 @@ contract critique [done]
 
 ## Test ledger
 
-No tests run. The design and issue commits contain documentation and metadata
-only.
+Milestone 1 (root datums) reader changes:
+
+- `1_reader.pl` lexes `'Name` as `literal(symbol(Name))` with
+  `expected_symbol_name` / `invalid_symbol_name` diagnostics; symbols never
+  enter name resolution.
+- Fixture `0_minimal.dl7` now pins an empty form, nested product forms, bare
+  atoms, symbol data (`'kind`, `'spot`), and the existing variable sharing.
+- `0_reader.test.pl` snapshot regenerated for the extended fixture
+  (digest `f2ae0a30...`, nodes 0-47, sources 0-47).
+- Gate run: both `dl7_reader_foundation` tests pass.
+
+```text
+swipl -q -g "load_files(['v7/0_SWIPL/test/0_reader.test.pl'],[silent(true)]),run_tests,halt"
+```
+
+No other suite run.
