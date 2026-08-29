@@ -1,4 +1,4 @@
-# Lane `bench-extract-tools` (glm53f): third-party static-analysis tools on the same corpora
+# Lane `bench-extract-tools` (sonnet, respawn): third-party static-analysis tools on the same corpora
 
 Read `plans/extract-bench-2026-08-29/COMMON.md` first. Build-vs-buy law:
 every tool gets a real run or a cited reason it cannot run here; no one-line
@@ -15,6 +15,16 @@ dismissals.
 | joern | go, ts | call | `joern-parse` + a scala query dumping call edges; record if the JVM install exceeds 15 min |
 | kythe | go | all | record install cost; skip if bazel is required |
 Emit the normal-form tsv for every run that succeeds.
+
+## Already done (branch `bench/extract-tools-partial`, cherry-pick its one commit first)
+madge and dependency-cruiser tsvs + `tools/madge2tsv.py`, `tools/depcruise2tsv.py`.
+
+## Stall rule
+The first run stalled 30 minutes inside codeql. Every install or index build
+runs as `nohup ... > <log> 2>&1 &` with `timeout 900`; you poll the log every
+60 s with a single `tail -3`, never a foreground wait. A tool that has not
+produced its database inside 900 s is recorded as "did not finish in 900 s"
+with the log's last line, and you move to the next tool.
 
 ## Ownership
 Only `plans/extract-bench-2026-08-29/**` (`TOOLS.REPORT.md`, `<lang>.<tool>.<family>.tsv`, tool scripts under `tools/`). No `src/` edits. Do not write `bench.py`; the sibling lane owns it, pull it from `origin/bench/extract-oracles` when it appears, else write your comparison inline in the report.
