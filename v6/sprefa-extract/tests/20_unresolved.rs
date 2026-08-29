@@ -44,6 +44,7 @@ fn unresolved_rows(bytes: &[u8]) -> Vec<(String, String, u32, u32)> {
     for fact in flatten(&out) {
         if let FlatFact::Unresolved {
             family,
+            path,
             span,
             reason,
             detail,
@@ -54,6 +55,7 @@ fn unresolved_rows(bytes: &[u8]) -> Vec<(String, String, u32, u32)> {
                 FamilyTag::Call,
                 "unresolved rows live on the Call plane"
             );
+            assert_eq!(path, None, "a phase-1 row's file is the caller's own");
             rows.push((reason, detail, span.start, span.end));
         }
     }

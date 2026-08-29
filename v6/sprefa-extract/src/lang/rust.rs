@@ -37,6 +37,7 @@ use crate::family::{
     DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, MethodOwner, ProjectEdge, SigSlot,
     Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
+use crate::project::ResolveDrop;
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
 use crate::seams::{
@@ -48,7 +49,7 @@ use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
 use crate::types::LangKind;
 use crate::types::ScipIndex;
-use crate::types::{CfgScope, TestOnlyCall};
+use crate::types::{CfgScope, DefSite, PathIndex, TestOnlyCall, UnresolvedReason};
 
 // ── span bridge: proc_macro2 line/col -> v6 byte Span ───────────────────────
 
@@ -948,6 +949,142 @@ impl RustSource {
             .unwrap_or(&sites[0]);
         Some((blob.clone(), site.span))
     }
+
+    /// The name-match target of a callee written `a::b::f` for MODULES `a::b`:
+    /// only defs whose file spells a module path ending in `a::b` are candidates.
+    pub fn call_name_match_in_module(
+        index: &DefIndex,
+        paths: &PathIndex,
+        from: &str,
+        qualifier: &[&str],
+        callee: &str,
+    ) -> Option<(ContentId, Span)> {
+        let want = module_target(from, qualifier)?;
+        let sites: Vec<&DefSite> = corpus_defs(index, callee)
+            .iter()
+            .filter(|site| {
+                paths
+                    .get(&site.blob)
+                    .is_some_and(|path| want.covers(&module_segments(path)))
+            })
+            .collect();
+        let mut blobs: Vec<&ContentId> = Vec::new();
+        for site in &sites {
+            if !blobs.contains(&&site.blob) {
+                blobs.push(&site.blob);
+            }
+        }
+        let [blob] = blobs.as_slice() else {
+            return None;
+        };
+        let site = sites
+            .iter()
+            .find(|s| s.family == FamilyTag::Call)
+            .unwrap_or(&sites[0]);
+        Some(((*blob).clone(), site.span))
+    }
+}
+
+/// A `callee_path`'s leading segments when every one is MODULE-shaped, else
+/// None: receiver typing is out of scope, so `Widget::build` keeps the name leg.
+fn module_qualifier(callee_path: &str) -> Option<Vec<&str>> {
+    let mut segments: Vec<&str> = callee_path.split("::").collect();
+    segments.pop()?;
+    if segments.is_empty() {
+        return None;
+    }
+    segments
+        .iter()
+        .all(|segment| {
+            !segment
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_uppercase())
+        })
+        .then_some(segments)
+}
+
+/// The module path a file spells: minus `.rs`, `src` dropped, `mod`/`lib`/`main`
+/// collapsing to the directory, `-` read as `_` (`crates/ide-db` is `ide_db`).
+fn module_segments(path: &str) -> Vec<String> {
+    let stem = path.strip_suffix(".rs").unwrap_or(path);
+    let mut segments: Vec<String> = stem
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != "." && *segment != "src")
+        .map(|segment| segment.replace('-', "_"))
+        .collect();
+    if matches!(
+        segments.last().map(String::as_str),
+        Some("mod" | "lib" | "main")
+    ) {
+        segments.pop();
+    }
+    segments
+}
+
+/// What a resolved qualifier demands of a candidate file: a module-path suffix,
+/// and under `crate::` the caller's own crate directory as a path prefix.
+struct ModuleTarget {
+    suffix: Vec<String>,
+    crate_root: Option<String>,
+}
+
+impl ModuleTarget {
+    fn covers(&self, candidate: &[String]) -> bool {
+        if let Some(root) = &self.crate_root {
+            if !candidate.starts_with(&module_segments(root)) {
+                return false;
+            }
+        }
+        candidate.ends_with(&self.suffix)
+    }
+}
+
+/// `qualifier` read from `from`'s position: `crate` restarts at the crate root,
+/// `self` extends the caller's module, `super` pops one, else absolute suffix.
+fn module_target(from: &str, qualifier: &[&str]) -> Option<ModuleTarget> {
+    let own = module_segments(from);
+    let normalize = |rest: &[&str]| -> Vec<String> {
+        rest.iter()
+            .map(|segment| segment.replace('-', "_"))
+            .collect()
+    };
+    match qualifier[0] {
+        "crate" => Some(ModuleTarget {
+            suffix: normalize(&qualifier[1..]),
+            crate_root: crate_root_of(from),
+        }),
+        "self" | "super" => {
+            let mut base = own;
+            let mut rest = qualifier;
+            while let Some(head) = rest.first() {
+                match *head {
+                    "self" => {}
+                    "super" => {
+                        base.pop()?;
+                    }
+                    _ => break,
+                }
+                rest = &rest[1..];
+            }
+            base.extend(normalize(rest));
+            Some(ModuleTarget {
+                suffix: base,
+                crate_root: None,
+            })
+        }
+        _ => Some(ModuleTarget {
+            suffix: normalize(qualifier),
+            crate_root: None,
+        }),
+    }
+}
+
+/// The crate directory holding `path`: the prefix ending at the segment before
+/// the first `src`. None where the file sits outside a Cargo layout.
+fn crate_root_of(path: &str) -> Option<String> {
+    let (root, _) = path.split_once("/src/")?;
+    Some(root.to_string())
 }
 
 /// One corpus `DefSite` examined while learning a file's own blob. The term
@@ -1059,6 +1196,11 @@ impl Resolve<CallF> for RustSource {
             });
         // Per FILE, never per site: the join is over the whole corpus index.
         let own = own_file_blob(output, def_index);
+        let paths = cx.indexes.paths.get();
+        let own_path = own
+            .as_ref()
+            .zip(paths)
+            .and_then(|(blob, paths)| paths.get(blob));
         // Sorted once per file: the mirror lookup runs per closure-caller site,
         // and a per-site scan of the def table is the shape kink 1 was.
         let named = named_def_spans(call);
@@ -1071,7 +1213,18 @@ impl Resolve<CallF> for RustSource {
                 continue;
             };
             let callee = output.strings.lookup(site.callee);
-            let name_t = RustSource::call_name_match_in(output, def_index, own.as_ref(), callee);
+            let qualifier = site
+                .callee_path
+                .map(|id| output.strings.lookup(id))
+                .and_then(module_qualifier);
+            let name_t = match (qualifier, own_path, paths) {
+                (Some(qualifier), Some(from), Some(paths)) => {
+                    RustSource::call_name_match_in_module(
+                        def_index, paths, from, &qualifier, callee,
+                    )
+                }
+                _ => RustSource::call_name_match_in(output, def_index, own.as_ref(), callee),
+            };
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
             });
@@ -1105,6 +1258,44 @@ impl Resolve<CallF> for RustSource {
         }
         edges
     }
+}
+
+/// One `unresolved` row per site the `Resolve<CallF>` pass dropped. The reason
+/// reads the corpus def count for the callee's name: none, or more than one.
+pub fn call_drops(
+    output: &ExtractOutput,
+    cx: &ProjectCx,
+    edges: &[ProjectEdge<CallF>],
+) -> Vec<ResolveDrop> {
+    let (Some(call), Some(def_index)) = (&output.call, cx.indexes.def_index.get()) else {
+        return Vec::new();
+    };
+    let bound: BTreeSet<(u32, u32)> = edges
+        .iter()
+        .filter_map(|edge| edge.call_site.map(|span| (span.start, span.end())))
+        .collect();
+    call.aux
+        .sites
+        .iter()
+        .filter(|site| !bound.contains(&(site.span.start, site.span.end())))
+        .map(|site| {
+            let callee = output.strings.lookup(site.callee);
+            let reason = if corpus_defs(def_index, callee).is_empty() {
+                UnresolvedReason::NoCorpusDef
+            } else {
+                UnresolvedReason::Ambiguous
+            };
+            let detail = site.callee_path.map_or_else(
+                || callee.to_string(),
+                |id| output.strings.lookup(id).to_string(),
+            );
+            ResolveDrop {
+                span: site.span,
+                reason,
+                detail,
+            }
+        })
+        .collect()
 }
 
 /// Every NAMED CallF def as (span, ref), sorted by (start, end) for the

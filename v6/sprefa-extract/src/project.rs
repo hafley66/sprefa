@@ -40,7 +40,9 @@ use crate::seams::{
 };
 use crate::shape::{content_id_of, ContentId, Span};
 use crate::source::{ExtractOutput, FamilyMask, Resolve, Source};
-use crate::types::{flow_edges, CallF, ProjectEdge, ScipError, ScipIndex, ScipSource, TypeF};
+use crate::types::{
+    flow_edges, CallF, ProjectEdge, ScipError, ScipIndex, ScipSource, TypeF, UnresolvedReason,
+};
 use crate::wire::{flatten_flow, FlatFact};
 
 /// Which phase-2 arms to run. All default off at the type level so a caller
@@ -247,6 +249,7 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
     if request.arms.call {
         for (input, (_, edges)) in inputs.iter().zip(resolved_calls.iter()) {
             facts.extend(call_facts(input, &targets, edges));
+            facts.extend(call_drop_facts(input, &cx, edges));
         }
     }
     for input in &inputs {
@@ -744,9 +747,20 @@ pub struct ResolveArm {
     pub name: &'static str,
     pub call: Option<fn(&ExtractOutput, &ProjectCx) -> Vec<ProjectEdge<CallF>>>,
     pub types: Option<fn(&ExtractOutput, &ProjectCx) -> Vec<ProjectEdge<TypeF>>>,
+    /// The `call` arm's non-edge channel: one row per site it dropped. `None`
+    /// leaves an arm's output byte-identical to the era before the channel.
+    pub drops: Option<fn(&ExtractOutput, &ProjectCx, &[ProjectEdge<CallF>]) -> Vec<ResolveDrop>>,
     /// Which types plane the `types` arm reads. Also the phase-1 mask
     /// `read_inputs` dispatches this language under.
     pub type_plane: TypePlane,
+}
+
+/// One call site a `Resolve<CallF>` arm dropped: where, why, and the callee as
+/// written. `Vec<ProjectEdge>` has no seat for a non-edge, so the arm says here.
+pub struct ResolveDrop {
+    pub span: Span,
+    pub reason: UnresolvedReason,
+    pub detail: String,
 }
 
 /// One row per `Source` in `lang::sources()`; an impl with no row here is
@@ -756,48 +770,56 @@ pub static RESOLVE_ARMS: &[ResolveArm] = &[
         name: "ts",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&TsSource, out, cx)),
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&TsSource, out, cx)),
+        drops: None,
         type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "rust",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&RustSource, out, cx)),
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&RustSource, out, cx)),
+        drops: Some(crate::lang::rust::call_drops),
         type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "go",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&GoSource, out, cx)),
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&GoSource, out, cx)),
+        drops: None,
         type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "dl6",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&DlSource, out, cx)),
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&DlSource, out, cx)),
+        drops: None,
         type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "kotlin",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&KotlinSource, out, cx)),
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&KotlinSource, out, cx)),
+        drops: None,
         type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "prolog",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&PrologSource, out, cx)),
         types: None,
+        drops: None,
         type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "python",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&PythonSource, out, cx)),
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&PythonSource, out, cx)),
+        drops: None,
         type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "markdown",
         call: None,
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&MarkdownSource, out, cx)),
+        drops: None,
         type_plane: TypePlane::DocNodes,
     },
     // Nothing on the data plane names another file, so it resolves nothing.
@@ -805,12 +827,14 @@ pub static RESOLVE_ARMS: &[ResolveArm] = &[
         name: "data",
         call: None,
         types: None,
+        drops: None,
         type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "astgrep",
         call: None,
         types: None,
+        drops: None,
         type_plane: TypePlane::Nodes,
     },
 ];
@@ -957,6 +981,28 @@ fn call_facts(
                 caller_site_end: edge.call_site.map_or(0, |span| span.end()),
                 kind: edge.kind.as_str().to_string(),
             })
+        })
+        .collect()
+}
+
+/// The `unresolved` rows for one input: the sites its `call` arm dropped. The
+/// path rides the row because a resolve run spans files.
+fn call_drop_facts(
+    input: &ProjectInput,
+    cx: &ProjectCx,
+    edges: &[ProjectEdge<CallF>],
+) -> Vec<FlatFact> {
+    let Some(drops) = arm_for(&input.path).and_then(|arm| arm.drops) else {
+        return Vec::new();
+    };
+    drops(&input.output, cx, edges)
+        .into_iter()
+        .map(|drop| FlatFact::Unresolved {
+            family: crate::shape::FamilyTag::Call,
+            path: Some(input.path.clone()),
+            span: crate::wire::SpanOut::new(drop.span.start, drop.span.end()),
+            reason: drop.reason.as_str().to_string(),
+            detail: drop.detail,
         })
         .collect()
 }

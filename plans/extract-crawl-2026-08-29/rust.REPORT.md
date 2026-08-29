@@ -16,6 +16,8 @@ Every `extract` call ran under `timeout 10`. Raw tables sit beside this file.
 8. [Fixtures](#8-fixtures)
 9. [What stays untested and why](#9-what-stays-untested-and-why)
 10. [Two corrections to the brief](#10-two-corrections-to-the-brief)
+11. [Fixes (lane `fix-extract-rust-crawl`)](#11-fixes-lane-fix-extract-rust-crawl)
+12. [Fixes (lane `fix-extract-rust-crawl-2`)](#12-fixes-lane-fix-extract-rust-crawl-2)
 
 ## 1. What was measured
 
@@ -505,3 +507,106 @@ line at `src/schema.rs:162`. All four files are outside this lane's ownership.
   edge. Debug and release binaries produce byte-identical output.
 - Gate, `cargo test --features cli --no-fail-fast`, SUM over 82 binaries:
   404 passed, 0 failed, 2 ignored (baseline before this lane: 399/0/2).
+
+## 12. Fixes (lane `fix-extract-rust-crawl-2`)
+
+Kinks 4 and 7 are landed. Section 11.3's two seam blockers are gone: PR #546
+put a blob-to-path index on `IndexBag` (`src/types.rs`, `PathIndex`, set in
+`resolve_project`), and this lane added the resolve-phase non-edge channel it
+named as missing.
+
+### 12.1 The table
+
+| kink | before | after | test |
+|---|---|---|---|
+| 4, `callee_path` ignored | 310 of 846 judged edges point at a file other than the module the site names | 0 of 981 | `52_rust_crawl_kinks.rs::a_module_qualified_call_binds_in_the_module_the_path_names`, `::a_type_qualifier_keeps_the_name_leg_and_an_unknown_crate_mints_nothing` |
+| 7, no `unresolved` row | 0 rows over 138,223 sites | 86,081 rows, one per dropped site | `::a_dropped_site_mints_an_unresolved_row_naming_why`, `::one_unresolved_row_per_dropped_site` |
+
+### 12.2 The rule kink 4 now applies
+
+A site's `callee_path` is read ONLY when every qualifier segment is module-shaped
+(lowercase first letter). `Widget::build` and `Vec::new` are type qualifiers and
+keep the bare-name leg, because receiver typing is out of this arm's scope.
+
+| written | resolved against |
+|---|---|
+| `a::b::f` | any corpus file whose module path ends with `a::b` |
+| `crate::b::f` | the caller's crate directory, then the `b` suffix |
+| `self::b::f` | the caller's own module path, then `b` |
+| `super::f` | the caller's module path with one segment popped |
+| `other_crate::f` | nothing: no corpus file spells that module |
+
+A file's module path is its supplied path minus `.rs`, with `src` segments
+dropped, `mod.rs`/`lib.rs`/`main.rs` collapsing to their directory, and `-`
+read as `_`, so `crates/ide-db/src/famous_defs.rs` spells `ide_db::famous_defs`.
+Two candidate blobs after the filter is still an ambiguity this tier drops.
+
+### 12.3 The channel kink 7 uses
+
+`Resolve<CallF>` returns `Vec<ProjectEdge<CallF>>` and has no seat for a
+non-edge, so the drop channel is a second fn pointer on the roster row:
+`ResolveArm.drops` (`src/project.rs`), fed by `RustSource::call_drops`. Every
+other arm sets `drops: None` and its output is byte-identical to before.
+`UnresolvedReason` gained `no_corpus_def` and `ambiguous`, both corpus-wide
+facts a per-file phase-1 walk cannot decide, carrying the issue row
+`issues/extract-unresolved-resolve-phase-reasons`. The `unresolved` record
+gained an optional `path`, absent from a per-file run and present under
+`--resolve`, because a resolve spans files and a bare span does not say which.
+
+| reason | corpus rows | decided by |
+|---|---:|---|
+| `no_corpus_def` | 69,192 | no corpus def bears the callee's name |
+| `ambiguous` | 16,889 | the corpus defines the name; this tier does not settle which |
+
+### 12.4 The corpus receipt
+
+`plans/extract-crawl-2026-08-29/rust.crawl.py` and `rust.qualified.py` over
+`~/projects/rust-analyzer` at `af4111f`, 941 src files, one `--resolve --family
+call,type` call per crate under `timeout 10`. BOTH columns were measured with
+this lane's script and its two release binaries, so the before column is a
+fresh measurement of `b9b98e3af`, not a copy of section 11.2. 0 timeouts in
+either run, 46 crates each, slowest crate 254 ms before and 262 ms after.
+
+| | before (`b9b98e3af`) | after |
+|---|---:|---:|
+| named defs | 19,339 | 19,339 |
+| `resolved_edge` | 59,506 | 59,097 |
+| judged qualified edges | 846 | 981 |
+| edges whose callee file disagrees with the site's `callee_path` | 310 | **0** |
+| `unresolved` rows | 0 | 86,081 |
+| reachable, union of program + test roots | 12,221 (63.2%) | 12,142 (62.8%) |
+| reachable from the 75 program roots | 477 | 471 |
+| unreachable | 7,118 | 7,197 |
+| program crawl max depth | 10 | 10 |
+
+The COUNT rail holds at corpus scale: 138,223 sites, 52,142 of them bound to at
+least one edge, 86,081 `unresolved` rows, and 138,223 - 52,142 = 86,081.
+
+409 net edges left (911 lost, 502 gained). The losses are the price of the rule:
+a qualifier naming an inline `mod` no file spells, or a `use` re-export, no
+longer falls back to a bare-name guess. The gains are sites that were previously
+ambiguous corpus-wide and the path now disambiguates. Reachability paid 79 defs
+for 310 corrected edge targets.
+
+Raw: `rust.qualified.before.json`, `rust.qualified.after.json`,
+`rust.resolve_runs.after.tsv`.
+
+### 12.5 What the fixes changed in the shape
+
+- `tests/6_kind_vocab.rs` gained the `rust::CONST_INIT` EXT_KINDS row section
+  11.4 asked for. The wire golden did not move for it: no `rust_findings`
+  fixture is in `kind_vocab/corpus.txt`.
+- `tests/fixtures/resolve/9_closure_resolved_edges.jsonl` gained 3 rows, the
+  `unresolved` rows for `iter`, `map` and `collect`, which have no corpus def
+  in that two-file universe. That `.jsonl` is itself a data fixture in
+  `kind_vocab/corpus.txt`, so `wire_golden.jsonl` was regenerated by the
+  procedure `tests/6_kind_vocab.rs` documents: TWO hunks, 30 lines added, 0
+  removed, all of them the `data_doc` + 9 `data_value` rows of the three
+  appended lines.
+- `tests/8_scip_families_cli.rs::the_discrimination_holds_through_rust_analyzer_too`
+  asserted the heuristic output does not contain the string `helper` at all.
+  The drop row now names it in `detail`, so the assertion was narrowed to what
+  it means: no edge row binds `helper`, and one row SAYS the name is ambiguous.
+- `tests/20_unresolved.rs` pins that a phase-1 row's `path` is absent.
+- Gate, `cargo test --features cli --no-fail-fast`, SUM over 83 binaries:
+  424 passed, 0 failed, 2 ignored.
