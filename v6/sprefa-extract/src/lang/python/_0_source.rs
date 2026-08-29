@@ -26,8 +26,8 @@ use crate::lang::{AstGrepParser, CstProjector};
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
 use crate::seams::{
-    containing_def_site, corpus_defs, covering_def, def_named, own_blob, DefIndex, Parser, Project,
-    Resolve,
+    containing_def_site, corpus_defs, covering_def, def_named, own_blob, DefIndex, Parser,
+    Project, Resolve,
 };
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
@@ -990,10 +990,7 @@ fn py_flow_fn(
             }
             if let Some(pname) = name_opt {
                 let node_ref = df_push_node(sink, strings, param, DfNodeKind::Param, Some(&pname));
-                sink.aux.params.push(DfParam {
-                    node: node_ref,
-                    pos,
-                });
+                sink.aux.params.push(DfParam { node: node_ref, pos });
                 scope.insert(pname, node_ref);
                 pos += 1;
             }
@@ -1323,7 +1320,10 @@ fn py_flow_expr(
                     }
                 }
             }
-            let is_ctor = callee_name.chars().next().is_some_and(|c| c.is_uppercase());
+            let is_ctor = callee_name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_uppercase());
             let call_node = if is_ctor {
                 df_push_node(sink, strings, node, DfNodeKind::New, Some(&callee_name))
             } else {
