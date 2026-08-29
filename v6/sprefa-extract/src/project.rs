@@ -28,8 +28,7 @@ use rayon::prelude::*;
 
 use crate::lang::{
     source_for, DlSource, GoSource, KotlinSource, MarkdownSource, PrologSource, PythonSource,
-    RustSource,
-    TsSource,
+    RustSource, TsSource,
 };
 use crate::rows::FamilyBundle;
 use crate::scip::{ScipGo, ScipRust, ScipTypescript};
