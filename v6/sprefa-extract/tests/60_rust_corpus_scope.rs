@@ -4,8 +4,12 @@
 
 use std::process::Command;
 
-const A: &str = "tests/fixtures/resolve/12_rust_scope_helper_a.rs";
-const B: &str = "tests/fixtures/resolve/13_rust_scope_helper_b.rs";
+// Outside the golden_parity scip-ratchet glob (tests/fixtures/rust/**): these
+// fixtures are crate-unreachable on purpose (duplicate top-level `helper`
+// across two files), which the ratchet's every-file-crate-reachable invariant
+// forbids.
+const A: &str = "tests/fixtures/rust_scopes/corpus_scope_a.rs";
+const B: &str = "tests/fixtures/rust_scopes/corpus_scope_b.rs";
 
 fn run(args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_extract"))
@@ -26,7 +30,7 @@ fn same_file_scope_beats_foreign_top_level_def() {
     let mut edges = out.lines().filter(|l| l.contains("resolved_edge"));
     let edge = edges.next().expect("one resolved edge");
     assert!(
-        edge.contains(r#""callee_path":"tests/fixtures/resolve/13_rust_scope_helper_b.rs""#),
+        edge.contains(r#""callee_path":"tests/fixtures/rust_scopes/corpus_scope_b.rs""#),
         "callee should be the same file's helper, got: {edge}"
     );
 }
