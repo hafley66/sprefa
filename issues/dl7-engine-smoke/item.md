@@ -1,6 +1,6 @@
 ---
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
 type: task
 assignee: flash4
 status: open
@@ -11,7 +11,7 @@ size: S
 lane: dl7-test
 lane_seq: 1
 collision: [v7-test, v7-engine-contract]
-blocked_by: ['@dl7-engine-seam', '@dl7-kernel-oracle']
+blocked_by: ['@dl7-engine-seam', '@dl7-kernel-oracle', '@dl7-layout-planner', '@dl7-program-json-writer']
 ---
 
 # Smoke one V7 artifact through the existing Rust engine

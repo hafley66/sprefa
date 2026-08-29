@@ -11,7 +11,7 @@ size: M
 lane: dl7-kernel
 lane_seq: 2
 collision: [v7-kernel, v7-prelude]
-blocked_by: ['@dl7-luna-review']
+blocked_by: ['@dl7-luna-review', '@dl7-relational-cons', '@dl7-stratified-negation', '@dl7-count-aggregate']
 ---
 
 # Add userland Pick and Exclude goals
