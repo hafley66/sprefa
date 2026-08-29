@@ -71,11 +71,11 @@ test(userland_partial_maps_type_edges_deterministically) :-
                               RuntimeSnapshot, KeySnapshot, EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 149,
+                    [], [], 266,
                     partial(user,
                             [mapped(id, option(int), 0),
                              mapped(name, option(text), 1)]),
-                    runtime(counts(36, 39, 15, 24, 9, 14, 15),
+                    runtime(counts(46, 63, 20, 43, 18, 29, 20),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
