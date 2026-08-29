@@ -447,3 +447,31 @@ one SWI process.
 - Implementation commit: `cf974641f`.
 - Consolidated SWI command: 12 passed, 0 failed, 0 choicepoint warnings.
 - Tree-sitter command: 1 parse passed, 0 failed.
+
+## Checked stratified negation
+
+- Prefix `(not (Relation Arguments...))` lowers to
+  `pending_goal(negative, Call)` and checks as
+  `checked_goal(negative, call(ref(Relation), Arguments))`. Ordinary goals use
+  the same carriers with `positive` polarity.
+- Authored-order safety tracks caller-available and body-produced variable sets
+  separately. Constructive kernels may consume caller inputs; negative goals
+  may consume only variables produced by preceding body goals.
+- The shared stratifier assigns negative dependencies gap 1. Strict cycles
+  return one sorted relation payload; the checker attaches the first authored
+  negative goal's reader node.
+- `evaluate/4` runs ascending strata. Each stratum tables positive recursion
+  over current rules and seeds plus immutable completed lower rows. Negative
+  goals query only those lower rows.
+- The consolidated anti-join derives only `allowed("a")` from candidates
+  `"a"`, `"b"` and blocked `"b"`. Its checked body is positive candidate then
+  negative blocked; levels are candidate 0, blocked 0, allowed 1.
+- Exact receipts also cover negative-before-binding refusal, source-positioned
+  negative-cycle refusal, negative `cons/3` refusal, and zero remaining rule,
+  seed, and lower-row clauses after success, diagnostic, and exception paths.
+- The normalized Partial compiler-row SHA-256 before and after evaluator
+  scheduling is unchanged:
+  `6d1c6ee03f48e5a76a8eb6e0f440243eac5c3c03256acc04686bd8147142c5bc`.
+- Commits: `e4517c3eb`, `e642d8c9f`.
+- Consolidated SWI command: 13 passed, 0 failed, 0 choicepoint warnings.
+- Tree-sitter command: 1 parse passed, 0 failed.
