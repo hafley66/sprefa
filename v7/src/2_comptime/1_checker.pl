@@ -212,6 +212,7 @@ kernel_relation_rows(Relations) :-
             Relations).
 
 kernel_relation_keys(':', [[0, 1], [0, 3]]).
+kernel_relation_keys(edge_snapshot, [[0, 1], [0, 3]]).
 kernel_relation_keys(cons, [[0, 1], [2]]).
 kernel_relation_keys(intern, [[0, 1]]).
 kernel_relation_keys(predecessor, [[0, 1], [0, 2]]).
@@ -241,6 +242,7 @@ kernel_graph(
       node(kernel(product)), product(kernel(product)),
       node(kernel(sum)), product(kernel(sum)),
       node(kernel(':')), product(kernel(':')),
+      node(kernel(edge_snapshot)), product(kernel(edge_snapshot)),
       node(kernel(cons)), product(kernel(cons)),
       node(kernel(intern)), product(kernel(intern)),
       node(kernel(predecessor)), product(kernel(predecessor))
@@ -253,6 +255,10 @@ kernel_graph(
       ':'(kernel(':'), name, ref(primitive(text)), 1),
       ':'(kernel(':'), target, ref(primitive(any)), 2),
       ':'(kernel(':'), index, ref(primitive(int)), 3),
+      ':'(kernel(edge_snapshot), owner, ref(primitive(type)), 0),
+      ':'(kernel(edge_snapshot), name, ref(primitive(text)), 1),
+      ':'(kernel(edge_snapshot), target, ref(primitive(any)), 2),
+      ':'(kernel(edge_snapshot), index, ref(primitive(int)), 3),
       ':'(kernel(cons), head, ref(primitive(any)), 0),
       ':'(kernel(cons), tail, ref(primitive(any)), 1),
       ':'(kernel(cons), return, ref(primitive(any)), 2),

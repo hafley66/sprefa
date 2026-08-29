@@ -71,13 +71,14 @@ test(userland_partial_maps_type_edges_deterministically) :-
                               RuntimeSnapshot, KeySnapshot, EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 79,
+                    [], [], 88,
                     partial(user,
                             [mapped(id, option(int), 0),
                              mapped(name, option(text), 1)]),
-                    runtime(counts(30, 28, 12, 16, 5, 10, 12),
+                    runtime(counts(32, 32, 13, 19, 5, 10, 13),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
+                         edge_snapshot([[0, 1], [0, 3]]),
                          cons([[0, 1], [2]]),
                          intern([[0, 1]]),
                          predecessor([[0, 1], [0, 2]])),
@@ -574,9 +575,12 @@ runtime_snapshot(
 
 runtime_key_snapshot(
     checked_datalog(_, datalog_program(Relations, _, _), _, _),
-    keys(colon(ColonKeys), cons(ConsKeys), intern(InternKeys),
+    keys(colon(ColonKeys), edge_snapshot(SnapshotKeys),
+         cons(ConsKeys), intern(InternKeys),
          predecessor(PredecessorKeys))) :-
     memberchk(relation(ref(kernel(':')), 4, ColonKeys), Relations),
+    memberchk(relation(ref(kernel(edge_snapshot)), 4, SnapshotKeys),
+              Relations),
     memberchk(relation(ref(kernel(cons)), 3, ConsKeys), Relations),
     memberchk(relation(ref(kernel(intern)), 3, InternKeys), Relations),
     memberchk(relation(ref(kernel(predecessor)), 3, PredecessorKeys),
