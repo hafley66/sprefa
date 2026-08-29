@@ -3,7 +3,7 @@ created: 2026-08-28
 updated: 2026-08-29
 type: task
 assignee: codex
-status: in-progress
+status: done
 priority: high
 epic: dl7-minimal-kernel
 labels: [dl7, model-glm53f, model-codex]
@@ -12,6 +12,10 @@ lane: dl7-kernel
 lane_seq: 1
 collision: [v7-kernel, v7-prelude, v7-comptime, v7-libtime]
 blocked_by: ['@dl7-symbol-graph', '@dl7-shared-evaluator']
+closed: 2026-08-29
+commits:
+- hash: c5fef951b
+  summary: derive Partial in userland comptime
 ---
 
 # Prove userland Partial over the DL7 type graph
@@ -75,3 +79,9 @@ prelude + source
 
 The source requests a compile-known Partial application with an ordinary
 ground fact. All type transformation logic remains authored in `.dl7`.
+
+## Resolution
+
+### 2026-08-29T04:12:29Z · @issuectl
+
+The DL7 prelude derives a canonical Partial(User) product and maps both source edges through Option. Two compilations in one SWI process return identical compiler and runtime terms.
