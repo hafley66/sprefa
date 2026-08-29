@@ -192,6 +192,14 @@ Milestone 3 (resolve, check, graph):
   rows, and `':'(Owner, Name, Target, Index)` remains the primordial public
   edge. Kind is not encoded inside `node/2` and no `edge(Id, kind, Kind,
   Index)` row exists; classification-as-edge stays open.
+- Namespace ruling applied: namespace and scope are neither node kinds nor
+  classifier relations; any node with outgoing named edges is
+  namespace-capable. Lexical containment resolves transiently only from
+  `pending_edge(Parent, Name, target(Child), Index)` (`parent_owner/3`,
+  `0_basement.pl:417`); resolved `':'/4` edges are never reversed for
+  containment. `module/1` identifies the compiler-created file root;
+  `product/1` and `sum/1` retain algebraic meaning. No point in the current
+  basement requires a `namespace/1` or `scope/1` relation.
 - Added `check_datalog/4` to `v7/1_DATALOG/0_basement.pl`. The module now has
   559 nonblank, noncomment lines and still exports only the two production
   entry points.
