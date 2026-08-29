@@ -11,6 +11,13 @@
 // The count is the gate and the wall is the second one, the `n_plus_one.rs`
 // discipline: a quadratic that slips under the count bound cannot also hold
 // the ratio.
+//
+// The third case is the shape the corpus crawl hit:
+// `rust-analyzer/crates/syntax` resolved in 19.16 s and rc=124 under
+// `timeout 10`, because one generated file (`ast/generated/nodes.rs`) carries
+// 2,508 defs and 3,320 sites. Post-fix that directory resolves in 290 ms.
+// The case below reproduces the shape without the external checkout: pre-fix
+// it did not finish under `timeout 60`, post-fix it runs in 0.15 s (release).
 
 use std::process::Command;
 use std::time::Instant;
@@ -121,6 +128,38 @@ fn rust_resolve_wall_grows_linearly_with_file_count() {
     assert!(
         wall400 / wall200 < RATIO_BUDGET,
         "wall(400)={wall400:.3}s vs wall(200)={wall200:.3}s exceeds {RATIO_BUDGET}x"
+    );
+}
+
+/// `rust-analyzer/crates/syntax` sizes: one generated file of 2,508 defs and
+/// 3,320 sites beside 57 ordinary ones.
+const GENERATED_DEFS: usize = 2_508;
+const MODULE_FILES: usize = 57;
+
+/// One machine-generated node file in a crate-sized corpus is the shape that
+/// took `--resolve` over the 10-second law: its site count multiplies the
+/// whole corpus index once per site.
+#[test]
+fn a_generated_node_file_resolves_under_the_ten_second_law() {
+    let dir = corpus_dir("generated");
+    let mut big = String::from("pub fn helper() -> u32 { 0 }\n");
+    for i in 0..GENERATED_DEFS {
+        let prev = if i == 0 {
+            "helper".to_string()
+        } else {
+            format!("n{}", i - 1)
+        };
+        big.push_str(&format!("pub fn n{i}() -> u32 {{ {prev}() + helper() }}\n"));
+    }
+    std::fs::write(dir.join("nodes.rs"), big).unwrap();
+    let mut paths = corpus_files(&dir, MODULE_FILES);
+    paths.push(dir.join("nodes.rs"));
+
+    let wall = resolve_wall(env!("CARGO_BIN_EXE_extract"), &paths);
+    assert!(
+        wall < 10.0,
+        "{wall:.3}s over {} files is a per-site rescan, not a resolve",
+        paths.len()
     );
 }
 

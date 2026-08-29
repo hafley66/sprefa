@@ -259,10 +259,12 @@ median of 3 interleaved runs.
 | `perf`, ratio 400/200 | 5.0x | 1.8x | (same, budget 2.5x) |
 | `perf`, own-blob probes at 50 synthetic files | 25,349,600 | 100 | `tests/49_rust_resolve_scaling.rs::own_blob_probes_stay_linear_in_the_file_count` |
 | `perf`, own-blob probes at 400 synthetic files | did not terminate in a usable time | 800 | (same, bound 4/file) |
+| `timeout`, `rust-analyzer/crates/syntax` (58 files; `nodes.rs` carries 2,508 defs and 3,320 sites) | rc=124 under `timeout 10`; 19.16 s untimed | rc=0, 290 ms | `tests/49_rust_resolve_scaling.rs::a_generated_node_file_resolves_under_the_ten_second_law` |
 
-Output is byte-identical before and after on the 400-file tokio corpus: 6,274
-rows, `cmp -s` clean. The same-file-wins edge of `tests/60_rust_corpus_scope.rs`
-is re-asserted inside the new test file.
+Output is byte-identical before and after on the 400-file tokio corpus (6,274
+rows) and on `rust-analyzer/crates/syntax` (4,432 rows), `cmp -s` clean both
+times. The same-file-wins edge of `tests/60_rust_corpus_scope.rs` is re-asserted
+inside the new test file.
 
 Whole crate after the fix: `cargo test --features cli --no-fail-fast` rc=0,
 392 passed, 0 failed, 2 ignored.
