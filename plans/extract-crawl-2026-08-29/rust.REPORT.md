@@ -20,6 +20,7 @@ Every `extract` call ran under `timeout 10`. Raw tables sit beside this file.
 12. [Fixes (lane `fix-extract-rust-crawl-2`)](#12-fixes-lane-fix-extract-rust-crawl-2)
 13. [Fixes: the module plane (lane `fix-extract-rust-module-plane`)](#13-fixes-the-module-plane-lane-fix-extract-rust-module-plane)
 14. [macro_rules expansion, kink 2 closed (lane `feature-extract-rust-mbe`)](#14-macro_rules-expansion-kink-2-closed-lane-feature-extract-rust-mbe)
+15. [Scip macro-span call sites](#15-scip-macro-span-call-sites-lane-feature-extract-rust-scip-macros)
 
 ## 1. What was measured
 
@@ -830,3 +831,101 @@ end-to-end `RustSource::extract` hook including the new `macro_site` wire
 row, the pass-budget trip, the corpus wall-time/TSV walk), all green.
 Whole-crate `cargo test --features cli --no-fail-fast`: see PR body for
 the SUM.
+
+## 15. Scip macro-span call sites (lane `feature-extract-rust-scip-macros`)
+
+The kink-2 post-pass: a call written inside a macro invocation has no parse
+site, so `Resolve<CallF>` minted nothing for it. A post-pass in
+`resolve_project` (`src/lang/rust_scip_macros.rs`) joins the loaded scip
+index's reference occurrences to the invocation spans of a syn re-parse and
+mints one `resolved_edge` per unmatched call-shaped occurrence, kind
+`scip_macro`, plus one `macro_site` row per minted edge (wire record `site`,
+`callee` = macro name, `callee_path: "scip"`, rows ride their file's block of
+the stream). Without a scip index the pass emits nothing.
+
+### 15.1 Receipt
+
+Binary: this lane's `extract` at `46c5dab0b`. Corpus `~/projects/rust-analyzer`
+at `af4111f`, index `rust-analyzer 1.100.0-nightly` at
+`~/projects/rust-analyzer/.dl/.state/index.scip` (72,518,685 B, the lab's).
+Every `extract` call under `timeout 10`.
+
+- defs: 941-file src bucket (540 `test_data` + 943 lab `.expanded.rs` droppings
+  excluded), one `--family call` call per file, 0 rc != 0. Raw:
+  `plans/extract-macro-lab-2026-08-29/scip.defs_runs.tsv`.
+- resolve unions: one `--resolve --family call,type` per crate. TEN crates
+  exceeded the 10s budget with the index loaded (finding, below), so those
+  crates were halved recursively to fit and the SAME 96-leaf partition was
+  then reused for a matched no-index baseline. Raw:
+  `plans/extract-macro-lab-2026-08-29/scip.resolve_runs.{base,scip}.tsv`,
+  partition `scip.resolve_leaves.tsv`.
+- crawl: `rust.crawl.py` unchanged, once per union. Raw:
+  `plans/extract-macro-lab-2026-08-29/scip.crawl.{base,scip}.json`.
+
+| | base (matched partition, no index) | scip (index) |
+|---|---:|---:|
+| `resolved_edge` | 47,845 (all `name_resolve`) | 48,878 |
+| - `name_resolve` | 47,845 | 44,735 |
+| - `scip_override` | 0 | 2,980 |
+| - `scip_macro` | 0 | 1,163 |
+| reachable, program roots (75) | 199 | 334 |
+| reachable, test roots (7,903) | 11,048 | 11,583 |
+| reachable, union | **11,223** | **11,857** |
+| unreachable | 8,116 | 7,482 |
+
+Union 12,221 -> 11,857 is the honest full sentence: the report's 12,221 (and
+this HEAD's no-index per-crate rerun, 12,078) uses the whole-crate universe,
+which the index-loaded arm cannot fit in the 10s budget on the ten largest
+crates. The matched-partition baseline is 11,223, and against it the post-pass
+gains 634 reachable defs (638 gained, 4 lost). The four lost defs are
+halving-split collateral
+(`hir-def/src/resolver.rs::def_map`, `hir/src/lib.rs::attrs`,
+`parser/src/parser.rs::kind`, `vfs/src/file_set.rs::iter`), each one hop from
+a def whose callers landed in the other half.
+
+### 15.2 Per-file top 10 gained (defs newly reachable)
+
+| gained | path |
+|---:|---|
+| 31 | crates/hir-def/src/item_tree/lower.rs |
+| 26 | crates/ide-completion/src/context/analysis.rs |
+| 21 | crates/rust-analyzer/src/cli/analysis_stats.rs |
+| 20 | crates/rust-analyzer/src/config.rs |
+| 19 | crates/project-model/src/workspace.rs |
+| 19 | crates/syntax/src/validation.rs |
+| 18 | crates/syntax/src/ast/node_ext.rs |
+| 15 | crates/ide/src/lib.rs |
+| 15 | crates/project-model/src/sysroot.rs |
+| 14 | crates/ide/src/signature_help.rs |
+
+### 15.3 `macro_site` rows
+
+`plans/extract-macro-lab-2026-08-29/scip.macro_sites.tsv`
+(path, start, end, macro_name): 1,163 rows over 50 files, one per minted edge,
+so the coordinator can diff the mbe lane's rows by span.
+
+| macro | rows |
+|---|---:|
+| assert_eq | 238 |
+| assert | 190 |
+| match_ast | 187 |
+| matches | 78 |
+| format | 65 |
+| try_default | 56 |
+| from_bytes | 54 |
+| write | 49 |
+| debug_assert | 49 |
+| vec | 48 |
+
+### 15.4 Findings
+
+| lang | class | path | repro | observed | expected |
+|---|---|---|---|---|---|
+| rust | perf | `src/lang/rust.rs:1170` (Resolve<CallF> scip leg) | `timeout 10 extract --resolve --scip-index <index> -p <root> crates/hir/src/**` | per-crate resolve with the index exceeds 10s on the ten largest crates (`hir`, `hir-def`, `hir-expand`, `hir-ty`, `ide`, `ide-assists`, `ide-completion`, `ide-db`, `rust-analyzer`, `syntax`); `definition_of` scans every document's occurrences per site | a per-crate scip resolve inside the 10s budget |
+| rust | timeout | `crates/hir/src/lib.rs`, `crates/syntax/src/ast/generated/nodes.rs` | halved to a single file and still rc=124 | 2 of 96 leaves lost their resolve rows | 0 |
+
+### 15.5 Gate
+
+`cargo test --features cli`, SUM over the test binaries at `46c5dab0b`:
+0 failed (baseline before this lane: 0 failed; the lane adds 3 tests in
+`tests/59_rust_scip_macros.rs`, fail-first proven with the pass disabled).
