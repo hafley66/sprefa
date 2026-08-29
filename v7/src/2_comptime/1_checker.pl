@@ -1,4 +1,7 @@
-:- module(dl7_checker, [check_datalog/4]).
+:- module(dl7_checker,
+          [ check_datalog/4,
+            check_goal_sequence/4
+          ]).
 
 :- use_module(library(error), [must_be/2]).
 :- use_module('0_lowerer', [kernel_relation/2]).
@@ -221,9 +224,13 @@ resolve_rules([Rule | Rest], RuleIndex, Edges, Nodes, Relations, Origins,
     (   HeadResult = ok(ResolvedHead),
         BodyResult = ok(ResolvedBody)
     ->  ResolvedRule = rule(ResolvedHead, ResolvedBody),
+        head_variables(ResolvedHead, HeadVariables),
+        check_goal_sequence_failures(ResolvedBody, 0, HeadVariables, _,
+                                     ModeFailures),
+        mode_failure_diagnostics(ModeFailures, RuleIndex, Origins, ModeDiags),
         head_safety_diagnostics(ResolvedHead, ResolvedBody, Origins,
                                 RuleIndex, SafetyDiags),
-        append(GoalDiags, SafetyDiags, OwnDiags)
+        append([GoalDiags, ModeDiags, SafetyDiags], OwnDiags)
     ;   ResolvedRule = Rule,
         (   HeadResult = error(Reason)
         ->  OwnDiags = [diagnostic(check, NodeId, Reason) | GoalDiags]
@@ -252,6 +259,108 @@ resolve_goals([Goal | Rest], RuleIndex, GoalIndex, Edges, Nodes, Relations,
     ->  Diags = [diagnostic(check, NodeId, Reason) | RestDiags]
     ;   Diags = RestDiags
     ).
+
+%% check_goal_sequence(+Goals, +Bound0, -Bound, -Diagnostics) is det.
+%
+% Fold checked goals in authored order. Bound0 represents variables supplied
+% by the relation call context. Ordinary positive calls bind every variable;
+% constructive kernel calls first require one of their declared input modes.
+check_goal_sequence(Goals, Bound0, Bound, Diagnostics) :-
+    check_goal_sequence_failures(Goals, 0, Bound0, Bound, Failures),
+    maplist(unlocated_mode_diagnostic, Failures, Diagnostics).
+
+check_goal_sequence_failures([], _, Bound, Bound, []).
+check_goal_sequence_failures([Goal | Goals], GoalIndex, Bound0, Bound,
+                             Failures) :-
+    check_goal(Goal, Bound0, Bound1, Reason),
+    NextGoalIndex is GoalIndex + 1,
+    check_goal_sequence_failures(Goals, NextGoalIndex, Bound1, Bound,
+                                 RestFailures),
+    (   Reason == none
+    ->  Failures = RestFailures
+    ;   Failures = [goal_failure(GoalIndex, Reason) | RestFailures]
+    ).
+
+check_goal(Goal, Bound0, Bound, Reason) :-
+    goal_call(Goal, positive,
+              call(ref(kernel(cons)), [Head, Tail, List])),
+    !,
+    (   argument_is_bound(List, Bound0)
+    ;   argument_is_bound(Head, Bound0),
+        argument_is_bound(Tail, Bound0)
+    ->  goal_variables(Goal, Variables),
+        add_variables(Variables, Bound0, Bound),
+        Reason = none
+    ;   Bound = Bound0,
+        Reason = underconstrained_kernel_goal(cons, [[2], [0, 1]])
+    ).
+check_goal(Goal, Bound0, Bound, Reason) :-
+    goal_call(Goal, positive,
+              call(ref(kernel(intern)), [Constructor, Arguments, _])),
+    !,
+    (   argument_is_bound(Constructor, Bound0),
+        argument_is_bound(Arguments, Bound0)
+    ->  goal_variables(Goal, Variables),
+        add_variables(Variables, Bound0, Bound),
+        Reason = none
+    ;   Bound = Bound0,
+        Reason = underconstrained_kernel_goal(intern, [[0, 1]])
+    ).
+check_goal(Goal, Bound, Bound, negative_constructive_kernel_goal(Name)) :-
+    goal_call(Goal, negative, call(ref(kernel(Name)), _)),
+    memberchk(Name, [cons, intern]),
+    !.
+check_goal(Goal, Bound, Bound, Reason) :-
+    goal_call(Goal, negative, _),
+    !,
+    goal_variables(Goal, Variables),
+    (   variables_are_bound(Variables, Bound)
+    ->  Reason = none
+    ;   Reason = unbound_negative_goal(Variables)
+    ).
+check_goal(Goal, Bound0, Bound, none) :-
+    goal_call(Goal, positive, _),
+    goal_variables(Goal, Variables),
+    add_variables(Variables, Bound0, Bound).
+
+argument_is_bound(Argument, Bound) :-
+    argument_variables(Argument, Variables),
+    variables_are_bound(Variables, Bound).
+
+argument_variables(Argument, Variables) :-
+    findall(Identity,
+            ( sub_term(Subterm, Argument),
+              Subterm = var(Identity)
+            ),
+            Variables0),
+    sort(Variables0, Variables).
+
+variables_are_bound([], _).
+variables_are_bound([Variable | Variables], Bound) :-
+    memberchk(Variable, Bound),
+    variables_are_bound(Variables, Bound).
+
+add_variables([], Bound, Bound).
+add_variables([Variable | Variables], Bound0, Bound) :-
+    (   memberchk(Variable, Bound0)
+    ->  Bound1 = Bound0
+    ;   Bound1 = [Variable | Bound0]
+    ),
+    add_variables(Variables, Bound1, Bound).
+
+unlocated_mode_diagnostic(goal_failure(_, Reason),
+                          diagnostic(check, none, Reason)).
+
+mode_failure_diagnostics([], _, _, []).
+mode_failure_diagnostics([goal_failure(GoalIndex, Reason) | Failures],
+                         RuleIndex, Origins,
+                         [diagnostic(check, NodeId, Reason) | Diagnostics]) :-
+    goal_origin(Origins, RuleIndex, GoalIndex, NodeId),
+    mode_failure_diagnostics(Failures, RuleIndex, Origins, Diagnostics).
+
+head_variables(call(_, Arguments), Variables) :-
+    findall(Identity, member(var(Identity), Arguments), Variables0),
+    sort(Variables0, Variables).
 
 %% resolve_call(+Call, +Edges, +Nodes, +Relations, -Result) is det.
 %

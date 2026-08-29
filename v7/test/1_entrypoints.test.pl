@@ -4,6 +4,7 @@
 :- use_module(library(process), [process_create/3, process_wait/2]).
 :- use_module('../src/0_reader/3_file_loader', [load_dl7/3]).
 :- use_module('../src/2_comptime/2_compiler', [compile_dl7/4]).
+:- use_module('../src/2_comptime/1_checker', [check_goal_sequence/4]).
 :- use_module('../src/1_libtime/0_evaluator',
               [validate_functional_rows/3]).
 :- use_module('fixtures/1_embedded', []).
@@ -90,6 +91,30 @@ test(final_closure_rejects_declared_functional_key_conflicts) :-
                         call(Relation,
                              [ref(owner), const(name), ref(second), const(1)]))
                    )].
+
+test(authored_order_kernel_modes_are_checked_left_to_right) :-
+    Construct = checked_goal(
+                    positive,
+                    call(ref(kernel(cons)),
+                         [var(element), const(symbol(nil)), var(arguments)])),
+    Intern = checked_goal(
+                 positive,
+                 call(ref(kernel(intern)),
+                      [ref(option), var(arguments), var(result)])),
+    check_goal_sequence([Construct, Intern], [element], Bound,
+                        AcceptedDiagnostics),
+    check_goal_sequence([Construct], [], _, RejectedDiagnostics),
+    sort(Bound, SortedBound),
+    Observed = authored_order(
+                   accepted(SortedBound, AcceptedDiagnostics),
+                   rejected(RejectedDiagnostics)),
+    Observed == authored_order(
+                    accepted([arguments, element, result], []),
+                    rejected(
+                        [diagnostic(
+                             check, none,
+                             underconstrained_kernel_goal(
+                                 cons, [[2], [0, 1]]))])).
 
 partial_snapshot(Rows, Snapshot) :-
     member(call(ref(kernel(':')),
