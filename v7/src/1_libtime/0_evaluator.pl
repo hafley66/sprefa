@@ -1,10 +1,17 @@
 :- module(dl7_evaluator,
           [ evaluate/4,
+            stratify_rules/3,
             validate_functional_rows/3
           ]).
 
 :- use_module(library(error), [must_be/2]).
 :- use_module(library(gensym), [gensym/2]).
+:- use_module(library(lists), [max_list/2]).
+:- use_module(library(ugraphs),
+              [ neighbors/3,
+                transitive_closure/2,
+                vertices_edges_to_ugraph/3
+              ]).
 
 :- dynamic evaluation_rule/2.
 :- dynamic evaluation_seed/2.
@@ -79,6 +86,122 @@ key_values(call(_, Arguments), Positions, Values) :-
     maplist(argument_at(Arguments), Positions, Values).
 
 argument_at(Arguments, Position, Value) :- nth0(Position, Arguments, Value).
+
+%% stratify_rules(+Rules, -DerivedStrata, -Diagnostics) is det.
+%
+% Derive the least relation stratum satisfying every checked dependency.
+% Positive reads have gap zero and negative reads have gap one. A strict edge
+% on a dependency cycle is diagnosed before evaluator state is installed.
+stratify_rules(Rules, DerivedStrata, Diagnostics) :-
+    must_be(ground, Rules),
+    rule_dependencies(Rules, Dependencies),
+    rule_relations(Rules, Relations),
+    strict_cycle_diagnostics(Relations, Dependencies, CycleDiagnostics),
+    (   CycleDiagnostics == []
+    ->  initial_levels(Relations, InitialLevels),
+        relax_to_fixpoint(Dependencies, InitialLevels, Levels),
+        derived_relations(Rules, DerivedRelations),
+        strata_for_relations(DerivedRelations, Levels, DerivedStrata),
+        Diagnostics = []
+    ;   DerivedStrata = [],
+        Diagnostics = CycleDiagnostics
+    ).
+
+rule_dependencies([], []).
+rule_dependencies([rule(call(HeadRelation, _), Goals) | Rules], Dependencies) :-
+    goal_dependencies(Goals, HeadRelation, OwnDependencies),
+    rule_dependencies(Rules, RestDependencies),
+    append(OwnDependencies, RestDependencies, Dependencies).
+
+goal_dependencies([], _, []).
+goal_dependencies(
+    [checked_goal(Polarity, call(BodyRelation, _)) | Goals], HeadRelation,
+    [dependency(HeadRelation, BodyRelation, Polarity, Gap) | Dependencies]) :-
+    polarity_gap(Polarity, Gap),
+    goal_dependencies(Goals, HeadRelation, Dependencies).
+
+polarity_gap(positive, 0).
+polarity_gap(negative, 1).
+
+rule_relations(Rules, Relations) :-
+    findall(Relation,
+            ( member(rule(call(HeadRelation, _), Goals), Rules),
+              ( Relation = HeadRelation
+              ; member(checked_goal(_, call(Relation, _)), Goals)
+              )
+            ),
+            Relations0),
+    sort(Relations0, Relations).
+
+derived_relations(Rules, Relations) :-
+    findall(Relation,
+            member(rule(call(Relation, _), _), Rules),
+            Relations0),
+    sort(Relations0, Relations).
+
+strict_cycle_diagnostics([], _, []) :- !.
+strict_cycle_diagnostics(Relations, Dependencies, Diagnostics) :-
+    dependency_edges(Dependencies, Edges),
+    vertices_edges_to_ugraph(Relations, Edges, Graph),
+    transitive_closure(Graph, Closure),
+    findall(HeadRelation-BodyRelation,
+            ( member(dependency(HeadRelation, BodyRelation, _, 1),
+                     Dependencies),
+              neighbors(BodyRelation, Closure, Reachable),
+              memberchk(HeadRelation, Reachable)
+            ),
+            StrictEdges0),
+    sort(StrictEdges0, StrictEdges),
+    strict_edges_diagnostics(StrictEdges, Diagnostics).
+
+strict_edges_diagnostics([], []) :- !.
+strict_edges_diagnostics(StrictEdges,
+                         [diagnostic(stratify, none,
+                                     strict_dependency_cycle(StrictEdges))]).
+
+dependency_edges([], []).
+dependency_edges([dependency(HeadRelation, BodyRelation, _, _) | Dependencies],
+                 [HeadRelation-BodyRelation | Edges]) :-
+    dependency_edges(Dependencies, Edges).
+
+initial_levels([], []).
+initial_levels([Relation | Relations],
+               [level(Relation, 0) | Levels]) :-
+    initial_levels(Relations, Levels).
+
+relax_to_fixpoint(Dependencies, Levels0, Levels) :-
+    relax_levels(Levels0, Dependencies, Levels1),
+    (   Levels1 == Levels0
+    ->  Levels = Levels1
+    ;   relax_to_fixpoint(Dependencies, Levels1, Levels)
+    ).
+
+relax_levels(Levels0, Dependencies, Levels) :-
+    relax_levels(Levels0, Levels0, Dependencies, Levels).
+
+relax_levels([], _, _, []).
+relax_levels([level(Relation, Current) | Levels0], AllLevels, Dependencies,
+             [level(Relation, Next) | Levels]) :-
+    dependency_requirements(Relation, Dependencies,
+                            AllLevels, Requirements0),
+    Requirements = [Current | Requirements0],
+    max_list(Requirements, Next),
+    relax_levels(Levels0, AllLevels, Dependencies, Levels).
+
+dependency_requirements(Relation, Dependencies, Levels, Requirements) :-
+    findall(Required,
+            ( member(dependency(Relation, BodyRelation, _, Gap),
+                     Dependencies),
+              memberchk(level(BodyRelation, BodyLevel), Levels),
+              Required is BodyLevel + Gap
+            ),
+            Requirements).
+
+strata_for_relations([], _, []).
+strata_for_relations([Relation | Relations], Levels,
+                     [stratum(Relation, Level) | Strata]) :-
+    memberchk(level(Relation, Level), Levels),
+    strata_for_relations(Relations, Levels, Strata).
 
 install_evaluation(EvaluationId, Rules, Seeds, ClauseReferences) :-
     install_rules(Rules, EvaluationId, RuleReferences),

@@ -4,6 +4,7 @@
           ]).
 
 :- use_module(library(error), [must_be/2]).
+:- use_module('../1_libtime/0_evaluator', [stratify_rules/3]).
 :- use_module('0_lowerer', [kernel_relation/2]).
 
 %% check_datalog(+BasementProgram, +Origins, -Checked, -Diagnostics) is det.
@@ -31,24 +32,31 @@ check_datalog(basement_program(root_graph(Nodes, PendingEdges),
                   Rules, RuleDiags),
     append([BindDiags, EdgeDiags, SeedDiags, RuleDiags], Diags),
     (   Diags == []
-    ->  depends_rows(Rules, Depends0),
-        sort(Depends0, Depends),
-        strata_rows(Relations, Strata),
-        kernel_graph(KernelNodes, KernelEdges),
-        append(Nodes, KernelNodes, CheckedNodes),
-        append(ColonEdges, KernelEdges, AllEdges),
-        msort(AllEdges, SortedEdges),
-        msort(Relations, SortedRelations),
-        Checked = checked_datalog(root_graph(CheckedNodes, SortedEdges),
-                                  datalog_program(SortedRelations, Seeds, Rules),
-                                  Depends, Strata),
-        Diagnostics = []
+    ->  stratify_rules(Rules, DerivedStrata, StrataDiagnostics),
+        finish_checked(StrataDiagnostics, DerivedStrata, Nodes, ColonEdges,
+                       Relations, Seeds, Rules, Checked, Diagnostics)
     ;   Checked = [],
         sort(Diags, Diagnostics)
     ).
 check_datalog(Program, _, [], Diagnostics) :-
     must_be(ground, Program),
     Diagnostics = [diagnostic(check, none, invalid_basement_program)].
+
+finish_checked([], DerivedStrata, Nodes, ColonEdges, Relations, Seeds, Rules,
+               Checked, []) :-
+    !,
+    depends_rows(Rules, Depends0),
+    sort(Depends0, Depends),
+    strata_rows(Relations, DerivedStrata, Strata),
+    kernel_graph(KernelNodes, KernelEdges),
+    append(Nodes, KernelNodes, CheckedNodes),
+    append(ColonEdges, KernelEdges, AllEdges),
+    msort(AllEdges, SortedEdges),
+    msort(Relations, SortedRelations),
+    Checked = checked_datalog(root_graph(CheckedNodes, SortedEdges),
+                              datalog_program(SortedRelations, Seeds, Rules),
+                              Depends, Strata).
+finish_checked(Diagnostics, _, _, _, _, _, _, [], Diagnostics).
 
 %% Bind checks: one unique name per owner and dense zero-based indices.
 bind_diagnostics(Edges, Origins, Diags) :-
@@ -444,13 +452,18 @@ body_refs([Goal | Rest], HeadRef, [Dependency | More]) :-
     goal_dependency(HeadRef, Goal, Dependency),
     body_refs(Rest, HeadRef, More).
 
-%% One stratum row per declared relation; positive-only graphs sit at zero.
-strata_rows(Relations, Strata) :-
-    strata_rows(Relations, [], Strata).
+%% One deterministic stratum row per declared relation. Relations without a
+%% derived head remain at zero; the shared stratifier owns derived levels.
+strata_rows(Relations, DerivedStrata, Strata) :-
+    maplist(relation_stratum(DerivedStrata), Relations, Strata0),
+    sort(Strata0, Strata).
 
-strata_rows([], Strata, Strata).
-strata_rows([relation(Relation, _, _) | Rest], Acc, Strata) :-
-    strata_rows(Rest, [stratum(Relation, 0) | Acc], Strata).
+relation_stratum(DerivedStrata, relation(Relation, _, _),
+                 stratum(Relation, Level)) :-
+    (   memberchk(stratum(Relation, DerivedLevel), DerivedStrata)
+    ->  Level = DerivedLevel
+    ;   Level = 0
+    ).
 
 relations_refs([], []).
 relations_refs([relation(Target, Arity, KeySets) | Rest],

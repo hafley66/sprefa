@@ -6,7 +6,9 @@
 :- use_module('../src/2_comptime/2_compiler', [compile_dl7/4]).
 :- use_module('../src/2_comptime/1_checker', [check_goal_sequence/4]).
 :- use_module('../src/1_libtime/0_evaluator',
-              [validate_functional_rows/3]).
+              [ stratify_rules/3,
+                validate_functional_rows/3
+              ]).
 :- use_module('fixtures/1_embedded', []).
 
 test(file_and_bare_quasi_share_reader_and_expansion_pipeline) :-
@@ -115,6 +117,35 @@ test(authored_order_kernel_modes_are_checked_left_to_right) :-
                              check, none,
                              underconstrained_kernel_goal(
                                  cons, [[2], [0, 1]]))])).
+
+test(stratification_is_pure_deterministic_and_strict_cycle_checked) :-
+    Source = ref(source),
+    Left = ref(left),
+    Right = ref(right),
+    AcyclicRules =
+        [rule(call(Left, [var(value)]),
+              [checked_goal(negative,
+                            call(Source, [var(value)]))])],
+    CycleRules =
+        [ rule(call(Left, [var(value)]),
+               [checked_goal(negative,
+                             call(Right, [var(value)]))]),
+          rule(call(Right, [var(value)]),
+               [checked_goal(positive,
+                             call(Left, [var(value)]))])
+        ],
+    stratify_rules(AcyclicRules, AcyclicStrata, AcyclicDiagnostics),
+    stratify_rules(CycleRules, CycleStrata, CycleDiagnostics),
+    Observed = stratification(
+                   acyclic(AcyclicStrata, AcyclicDiagnostics),
+                   strict_cycle(CycleStrata, CycleDiagnostics)),
+    Observed == stratification(
+                    acyclic([stratum(Left, 1)], []),
+                    strict_cycle(
+                        [],
+                        [diagnostic(
+                             stratify, none,
+                             strict_dependency_cycle([Left-Right]))])).
 
 partial_snapshot(Rows, Snapshot) :-
     member(call(ref(kernel(':')),
