@@ -474,7 +474,7 @@ impl Resolve<TypeF> for DlSource {
         let Some(index) = cx.indexes.def_index.get() else {
             return Vec::new();
         };
-        let own = own_blob(output, index);
+        let own = own_blob(cx, output);
         let mut edges = Vec::new();
         for cand in Self::type_edge_candidates(output) {
             let Some(owner_ref) = types

@@ -2754,7 +2754,7 @@ impl Resolve<CallF> for GoSource {
         };
         // One join per FILE: every leg below asks which blob this output is,
         // and the go.mod walk is per file, never per call site.
-        let own = own_blob(output, def_index);
+        let own = own_blob(cx, output);
         let paths = cx.indexes.paths.get();
         let module = own
             .as_ref()

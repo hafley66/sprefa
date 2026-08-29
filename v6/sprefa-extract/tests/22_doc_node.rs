@@ -99,6 +99,7 @@ fn with_resolve_cx<R>(
         reader: None,
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
+        own: std::cell::RefCell::new(None),
     };
     cx.indexes
         .def_index

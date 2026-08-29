@@ -81,6 +81,7 @@ fn prolog_name_arity_resolution() {
         reader: None,
         digest: ProjectDigest::default(),
         indexes,
+        own: std::cell::RefCell::new(None),
     };
     let edges = Resolve::<CallF>::resolve(&PrologSource, &output, &cx);
     let resolved: Vec<_> = edges.iter().map(|edge| edge.kind).collect();

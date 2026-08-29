@@ -853,8 +853,7 @@ impl Resolve<TypeF> for RustSource {
         };
         let index = cx.indexes.def_index.get();
         let modules = cx.indexes.rust_modules.get();
-        let own_path = index
-            .and_then(|index| own_blob(output, index))
+        let own_path = own_blob(cx, output)
             .zip(cx.indexes.paths.get())
             .and_then(|(blob, paths)| paths.get(&blob).map(str::to_string));
         let mut edges = Vec::new();
@@ -1217,7 +1216,7 @@ impl Resolve<CallF> for RustSource {
                     .indexes
                     .joined_documents
                     .get_or_init(|| join_documents(index, reader));
-                let blob = own_blob(output, def_index)?;
+                let blob = own_blob(cx, output)?;
                 let doc_ix = joined
                     .iter()
                     .position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
