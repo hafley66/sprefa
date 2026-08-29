@@ -63,3 +63,9 @@ Exposed core scaling: n=25 445 ms, n=50 562 ms, n=100 700 ms (linear). `--resolv
 - `--family scip`: no Kotlin/Prolog/Markdown indexer exists in EXACT MODE (`extract --help` lists rust-analyzer, scip-typescript, scip-go).
 - `--family diet_scip`: same records as `--resolve` for these arms; skipped.
 - Kotlin `extract move` / rename: outside the fact-battery scope.
+
+## 7. Fixes (lane fix-extract-prolog-metacall)
+
+| finding | before | after | test |
+|---|---|---|---|
+| rows 4-5: metacall closures and goal arguments (`src/lang/prolog/_0_source.rs`) | `double` under `maplist/3` and `call/3`: no site, no reference; goals under `forall/2`, `findall/3`: `term_arg`. swipl library+boot `--resolve` `resolved_edge` = 11064 (`extract --resolve /opt/homebrew/lib/swipl/library/*.pl /opt/homebrew/lib/swipl/boot/*.pl`) | meta_predicate spec table (SWI builtins + per-file `:- meta_predicate` directives) mints closure sites (name + added arity) and `closure` references for `call/1..8`, `once`, `ignore`, `not`, `forall`, `findall/3,4`, `aggregate_all/3,4`, `setof`, `bagof`, `maplist/2..7`, `foldl/4..7`, `include`, `exclude`, `partition/4`, `catch`, `catch_with_backtrace`, `setup_call_cleanup`, `call_cleanup`, `with_output_to/2`, `phrase/2,3`, `freeze/2`, `thread_create/3`; `0` slots recurse as goals; `^` unwraps. resolved_edge = 12015 (same command, rc=0, under 10s) | `cargo test --features cli --test 1b_prolog_metacall` (5 tests: sites + reference positions in clause order over `corpus_1_meta_closures.pl`, `--resolve` over `corpus_2_meta_def.pl` + `corpus_2_meta_use.pl` with 4 go/1 -> double/2 edges, file-declared `meta_predicate` over `corpus_3_meta_directive.pl`, setof caret unwrap); whole-crate `cargo test --features cli`: 372 passed, 0 failed |
