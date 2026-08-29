@@ -7,7 +7,7 @@ batteries) and `plans/extract-crawl-2026-08-29/go.REPORT.md` sections
 
 ## First action
 ```
-git merge --ff-only 7297fdfef9cec20203f74153d5e65ee44aa82c31
+git merge --ff-only 50102c851d75fb7b18a026367f4b6d1632c7456a
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Binary: `v6/sprefa-extract/target/release/extract` in YOUR worktree.
