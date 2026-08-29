@@ -1845,8 +1845,6 @@ internal/fourslash/tests/gen/autoImportTypeOnlyPreferred3_test.go		internal/test
 internal/fourslash/tests/gen/autoImportVerbatimTypeOnly1_test.go		internal/fourslash	
 internal/fourslash/tests/gen/autoImportVerbatimTypeOnly1_test.go		internal/lsp/lsproto	
 internal/fourslash/tests/gen/autoImportVerbatimTypeOnly1_test.go		internal/testutil	
-internal/fourslash/tests/gen/autoImport_node12_node_modules1_test.go		internal/fourslash	
-internal/fourslash/tests/gen/autoImport_node12_node_modules1_test.go		internal/testutil	
 internal/fourslash/tests/gen/autoImportsCustomConditions_test.go		internal/fourslash	
 internal/fourslash/tests/gen/autoImportsCustomConditions_test.go		internal/testutil	
 internal/fourslash/tests/gen/autoImportsNodeNext1_test.go		internal/fourslash	
