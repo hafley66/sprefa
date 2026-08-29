@@ -455,7 +455,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = content.len() as u64;
     if limit > 0 && bytes > limit {
         tracing::warn!(path = %path_str, bytes, limit, "input over the byte ceiling");
-        emit(&serde_json::to_string(&size_skip_fact(&path_str, bytes, limit))?)?;
+        emit(&serde_json::to_string(&size_skip_fact(
+            &path_str, bytes, limit,
+        ))?)?;
         return Ok(());
     }
     if !cli.ast_pattern.is_empty() {

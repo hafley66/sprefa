@@ -315,11 +315,8 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
                 output: input.output.as_ref(),
             })
             .collect();
-        macro_rows = crate::lang::rust_scip_macros::mint_macro_edges(
-            &macro_files,
-            &cx,
-            &mut resolved_calls,
-        );
+        macro_rows =
+            crate::lang::rust_scip_macros::mint_macro_edges(&macro_files, &cx, &mut resolved_calls);
     }
 
     let mut facts = Vec::new();
@@ -1128,37 +1125,51 @@ fn call_facts(
 /// language's plane, so only one of the two closures below yields rows.
 fn import_facts(input: &ProjectInput, cx: &ProjectCx) -> Vec<FlatFact> {
     let ts_rows = cx.indexes.ts_modules.get().into_iter().flat_map(|modules| {
-        modules.bindings(&input.path).into_iter().map(|row| FlatFact::ResolvedImportRow {
-            src_path: input.path.clone(),
-            name: row.name,
-            local: row.local,
-            target_path: row.target_path,
-            target_name: row.target_name,
-            kind: row.kind.as_str().to_string(),
-            hops: row.hops,
-        })
+        modules
+            .bindings(&input.path)
+            .into_iter()
+            .map(|row| FlatFact::ResolvedImportRow {
+                src_path: input.path.clone(),
+                name: row.name,
+                local: row.local,
+                target_path: row.target_path,
+                target_name: row.target_name,
+                kind: row.kind.as_str().to_string(),
+                hops: row.hops,
+            })
     });
-    let rust_rows = cx.indexes.rust_modules.get().into_iter().flat_map(|modules| {
-        modules.bindings(&input.path).into_iter().map(|row| FlatFact::ResolvedImportRow {
-            src_path: input.path.clone(),
-            name: row.name,
-            local: row.local,
-            target_path: row.target_path,
-            target_name: row.target_name,
-            kind: row.kind.as_str().to_string(),
-            hops: row.hops,
-        })
-    });
+    let rust_rows = cx
+        .indexes
+        .rust_modules
+        .get()
+        .into_iter()
+        .flat_map(|modules| {
+            modules
+                .bindings(&input.path)
+                .into_iter()
+                .map(|row| FlatFact::ResolvedImportRow {
+                    src_path: input.path.clone(),
+                    name: row.name,
+                    local: row.local,
+                    target_path: row.target_path,
+                    target_name: row.target_name,
+                    kind: row.kind.as_str().to_string(),
+                    hops: row.hops,
+                })
+        });
     let go_rows = cx.indexes.go_modules.get().into_iter().flat_map(|modules| {
-        modules.bindings(&input.path).into_iter().map(|row| FlatFact::ResolvedImportRow {
-            src_path: input.path.clone(),
-            name: row.name,
-            local: row.local,
-            target_path: row.target_path,
-            target_name: row.target_name,
-            kind: row.kind.as_str().to_string(),
-            hops: 0,
-        })
+        modules
+            .bindings(&input.path)
+            .into_iter()
+            .map(|row| FlatFact::ResolvedImportRow {
+                src_path: input.path.clone(),
+                name: row.name,
+                local: row.local,
+                target_path: row.target_path,
+                target_name: row.target_name,
+                kind: row.kind.as_str().to_string(),
+                hops: 0,
+            })
     });
     ts_rows.chain(rust_rows).chain(go_rows).collect()
 }

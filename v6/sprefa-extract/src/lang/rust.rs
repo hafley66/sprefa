@@ -49,7 +49,9 @@ use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
 use crate::types::LangKind;
 use crate::types::ScipIndex;
-use crate::types::{CfgScope, DefSite, MacroSite, MacroSiteSource, PathIndex, TestOnlyCall, UnresolvedReason};
+use crate::types::{
+    CfgScope, DefSite, MacroSite, MacroSiteSource, PathIndex, TestOnlyCall, UnresolvedReason,
+};
 
 // ── span bridge: proc_macro2 line/col -> v6 byte Span ───────────────────────
 
@@ -1246,10 +1248,13 @@ impl Resolve<CallF> for RustSource {
                 .callee_path
                 .map(|id| output.strings.lookup(id))
                 .and_then(module_qualifier);
-            let name_t: Option<(ContentId, Span, CallEdgeKind)> = match (qualifier, own_path, paths) {
+            let name_t: Option<(ContentId, Span, CallEdgeKind)> = match (qualifier, own_path, paths)
+            {
                 (Some(qualifier), Some(from), Some(paths)) => {
-                    RustSource::call_name_match_in_module(def_index, paths, from, &qualifier, callee)
-                        .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                    RustSource::call_name_match_in_module(
+                        def_index, paths, from, &qualifier, callee,
+                    )
+                    .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
                 }
                 _ => same_file_call_match(output, def_index, own.as_ref(), callee)
                     .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))

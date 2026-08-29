@@ -26,7 +26,9 @@ use crate::seams::{corpus_defs, DefIndex, DefSite};
 use crate::shape::{ContentId, Span, Strings};
 use crate::types::PathIndex;
 
-use super::go::{go_module_of, go_package_dir, go_parse, go_text, go_walk_import_specs, same_dir, unique_blob};
+use super::go::{
+    go_module_of, go_package_dir, go_parse, go_text, go_walk_import_specs, same_dir, unique_blob,
+};
 
 // ── phase-2 facts: one dedicated parse per file ─────────────────────────────
 
@@ -73,13 +75,18 @@ pub fn go_module_facts(path: &str, content: &[u8]) -> Option<GoModuleFacts> {
             module: spec.module.map(|id| strings.lookup(id).to_string()),
         })
         .collect();
-    Some(GoModuleFacts { package_name, specifiers })
+    Some(GoModuleFacts {
+        package_name,
+        specifiers,
+    })
 }
 
 /// `package_clause`'s one child, no field name in tree-sitter-go's grammar.
 fn package_clause_name(root: tree_sitter::Node, src: &[u8]) -> Option<String> {
     let mut cursor = root.walk();
-    let clause = root.children(&mut cursor).find(|node| node.kind() == "package_clause")?;
+    let clause = root
+        .children(&mut cursor)
+        .find(|node| node.kind() == "package_clause")?;
     Some(go_text(clause.named_child(0)?, src).to_string())
 }
 
@@ -88,9 +95,22 @@ fn import_path_of(spec: &GoSpecifier) -> &str {
 }
 
 /// Go's own export rule: visible outside its package iff the first rune of a
-/// top-level name is upper-case.
-fn is_exported(name: &str) -> bool {
+/// top-level name is upper-case. `pub(crate)`: `go.rs`'s import-qualified
+/// fallback leg gates on the same rule.
+pub(crate) fn is_exported(name: &str) -> bool {
     name.chars().next().is_some_and(char::is_uppercase)
+}
+
+/// A `_test.go` external test package shares its directory with the primary
+/// package it tests; importers always bind the primary one.
+fn is_test_package(name: &str) -> bool {
+    name.ends_with("_test")
+}
+
+/// The best package-name guess for an import path with no corpus file in this
+/// invocation: the path's last segment (phase 1's own guess).
+fn import_path_tail(import_path: &str) -> &str {
+    import_path.rsplit('/').next().unwrap_or(import_path)
 }
 
 // ── the module plane proper ──────────────────────────────────────────────────
@@ -123,7 +143,10 @@ pub struct GoImportRow {
 }
 
 fn dir_key(path: &str) -> String {
-    Path::new(path).parent().map(|dir| dir.to_string_lossy().into_owned()).unwrap_or_default()
+    Path::new(path)
+        .parent()
+        .map(|dir| dir.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// THE corpus go module plane, built ONCE per refresh in `resolve_project`.
@@ -140,7 +163,19 @@ impl GoModuleIndex {
         let mut index = GoModuleIndex::default();
         for (path, facts) in &files {
             if let Some(name) = &facts.package_name {
-                index.package_of_dir.entry(dir_key(path)).or_insert_with(|| name.clone());
+                let key = dir_key(path);
+                // The primary package wins the directory: an external test
+                // package (`foo_test`) never binds an importer, whatever order
+                // the directory's files arrive in.
+                match index.package_of_dir.get(&key) {
+                    None => {
+                        index.package_of_dir.insert(key, name.clone());
+                    }
+                    Some(existing) if is_test_package(existing) && !is_test_package(name) => {
+                        index.package_of_dir.insert(key, name.clone());
+                    }
+                    _ => {}
+                }
             }
         }
         index.facts = files.into_iter().collect();
@@ -149,7 +184,9 @@ impl GoModuleIndex {
 
     /// The package name declared at `dir`, if any corpus file sits there.
     pub fn package_name(&self, dir: &Path) -> Option<&str> {
-        self.package_of_dir.get(&dir.to_string_lossy().into_owned()).map(String::as_str)
+        self.package_of_dir
+            .get(&dir.to_string_lossy().into_owned())
+            .map(String::as_str)
     }
 
     /// Every import spec `file` writes, resolved to a `resolved_import` row.
@@ -166,8 +203,16 @@ impl GoModuleIndex {
                 continue;
             }
             let import_path = import_path_of(spec);
-            let Some(dir) = go_package_dir(&module, import_path) else { continue };
-            let Some(pkg_name) = self.package_name(&dir) else { continue };
+            // The directory an in-module import names exists whether or not
+            // its files share this invocation; the row's name falls back to
+            // the path's last segment when no corpus file can declare it.
+            let Some(dir) = go_package_dir(&module, import_path) else {
+                continue;
+            };
+            let pkg_name = self
+                .package_name(&dir)
+                .map(str::to_string)
+                .unwrap_or_else(|| import_path_tail(import_path).to_string());
             let (local, kind) = match spec.kind {
                 SpecifierKind::Namespace => (".".to_string(), GoImportKind::Namespace),
                 // aliased: `name` carries the alias text; path-only: `name`
@@ -186,8 +231,9 @@ impl GoModuleIndex {
         rows
     }
 
-    /// `(span, import path)` per non-blank spec whose target dir carries no
-    /// corpus file: the `unresolved` reason `external` leg.
+    /// `(span, import path)` per non-blank spec whose import path names no
+    /// directory inside the file's module (stdlib or third-party): the
+    /// `unresolved` reason `external` leg.
     pub fn external_drops(&self, file: &str) -> Vec<(Span, String)> {
         let Some(facts) = self.facts.get(file) else {
             return Vec::new();
@@ -199,9 +245,9 @@ impl GoModuleIndex {
             .filter(|spec| spec.kind != SpecifierKind::SideEffect)
             .filter_map(|spec| {
                 let import_path = import_path_of(spec);
-                let resolved = module.as_ref().is_some_and(|module| {
-                    go_package_dir(module, import_path).is_some_and(|dir| self.package_name(&dir).is_some())
-                });
+                let resolved = module
+                    .as_ref()
+                    .is_some_and(|module| go_package_dir(module, import_path).is_some());
                 (!resolved).then(|| (spec.span, import_path.to_string()))
             })
             .collect()
@@ -270,8 +316,12 @@ impl GoModuleIndex {
             if spec.kind != SpecifierKind::Namespace {
                 continue;
             }
-            let Some(dir) = go_package_dir(&module, import_path_of(spec)) else { continue };
-            let Some(hit) = self.resolve_in_dir(&dir, def_index, paths, name) else { continue };
+            let Some(dir) = go_package_dir(&module, import_path_of(spec)) else {
+                continue;
+            };
+            let Some(hit) = self.resolve_in_dir(&dir, def_index, paths, name) else {
+                continue;
+            };
             match &found {
                 None => found = Some(hit),
                 Some(existing) if *existing != hit => return None,

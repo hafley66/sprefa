@@ -200,11 +200,13 @@ fn the_discrimination_holds_through_rust_analyzer_too() {
     // index to fix here (the plane's own drops-channel + fixture ambiguity
     // is covered by 57_rust_module_plane.rs).
     assert!(
-        heuristic.lines().any(|line| line.contains("\"record\":\"resolved_edge\"")
-            && line.contains("\"kind\":\"import_resolve\"")
-            && line.contains("\"caller_name\":\"run\"")
-            && line.contains("\"callee_name\":\"helper\"")
-            && line.contains("alpha.rs")),
+        heuristic
+            .lines()
+            .any(|line| line.contains("\"record\":\"resolved_edge\"")
+                && line.contains("\"kind\":\"import_resolve\"")
+                && line.contains("\"caller_name\":\"run\"")
+                && line.contains("\"callee_name\":\"helper\"")
+                && line.contains("alpha.rs")),
         "the module plane binds gamma's call through its use: {heuristic}"
     );
     assert!(

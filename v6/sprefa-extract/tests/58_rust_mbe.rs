@@ -80,7 +80,10 @@ fn gained_site_spans_map_inside_the_invocation() {
             );
         }
     }
-    assert!(saw_macro_site, "f7's generated() call should be macro-origin");
+    assert!(
+        saw_macro_site,
+        "f7's generated() call should be macro-origin"
+    );
 }
 
 /// The `RustSource::extract` hook maps a gained site's span all the way to
@@ -172,7 +175,9 @@ fn corpus_wall_time_and_macro_sites_tsv() {
             budget_hits += 1;
             eprintln!("budget_hit: {}", path.display());
         }
-        let rel = path.strip_prefix("/Users/chrishafley/projects/rust-analyzer/").unwrap();
+        let rel = path
+            .strip_prefix("/Users/chrishafley/projects/rust-analyzer/")
+            .unwrap();
         for (span, name) in expanded.macro_sites() {
             tsv.push_str(&format!(
                 "{}\t{}\t{}\t{}\n",
@@ -198,5 +203,8 @@ fn corpus_wall_time_and_macro_sites_tsv() {
         budget_hits,
         wall.as_millis()
     );
-    assert!(wall.as_secs() < 2, "wall {wall:?} exceeds the 2s COUNT budget");
+    assert!(
+        wall.as_secs() < 2,
+        "wall {wall:?} exceeds the 2s COUNT budget"
+    );
 }

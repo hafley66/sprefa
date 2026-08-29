@@ -124,9 +124,10 @@ fn augmented_assignment_rebinds_its_target() {
         .expect("the return reads total")
         .2;
     assert!(
-        edges
-            .iter()
-            .any(|(fk, fs, tk, ts)| fk == "let_bind" && *fs == rebind && tk == "var_read" && *ts == read),
+        edges.iter().any(|(fk, fs, tk, ts)| fk == "let_bind"
+            && *fs == rebind
+            && tk == "var_read"
+            && *ts == read),
         "the return reads the rebind: {edges:?}"
     );
 }

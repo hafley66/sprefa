@@ -92,10 +92,8 @@ fn type_plane_dir() -> Vec<String> {
 #[test]
 fn receiver_typed_dispatch_covers_var_param_pointer_field_and_slice() {
     let edges = resolved_edges(&type_plane_dir());
-    let name_edges: Vec<&(String, String, String, String)> = edges
-        .iter()
-        .filter(|e| e.1 == "Name")
-        .collect();
+    let name_edges: Vec<&(String, String, String, String)> =
+        edges.iter().filter(|e| e.1 == "Name").collect();
     let callers: std::collections::BTreeSet<&str> =
         name_edges.iter().map(|e| e.0.as_str()).collect();
     assert_eq!(
@@ -222,7 +220,9 @@ fn a_package_level_func_named_len_shadows_the_builtin() {
         "caller -> len (the shadow def) must resolve: {edges:?}"
     );
     assert!(
-        !unresolved.iter().any(|(_, reason, detail)| reason == "builtin" && detail == "len"),
+        !unresolved
+            .iter()
+            .any(|(_, reason, detail)| reason == "builtin" && detail == "len"),
         "the shadowed len must never drop as builtin: {unresolved:?}"
     );
 }
@@ -245,11 +245,14 @@ fn receiver_typed_edges_equal_the_fixtures_written_bindings() {
 /// one pass per interface (grouped by spec name), never per call site.
 fn generated_implementers_module(dir: &std::path::Path, n: usize) -> Vec<String> {
     std::fs::create_dir_all(dir).unwrap();
-    std::fs::write(dir.join("go.mod"), "module example.com/implscale\n\ngo 1.22\n").unwrap();
+    std::fs::write(
+        dir.join("go.mod"),
+        "module example.com/implscale\n\ngo 1.22\n",
+    )
+    .unwrap();
 
-    let mut iface = String::from(
-        "package implscale\n\ntype Iface interface {\n\tM1() int\n\tM2() int\n}\n\n",
-    );
+    let mut iface =
+        String::from("package implscale\n\ntype Iface interface {\n\tM1() int\n\tM2() int\n}\n\n");
     for i in 0..n {
         iface.push_str(&format!(
             "type T{i} struct{{}}\nfunc (t *T{i}) M1() int {{ return {i} }}\nfunc (t *T{i}) M2() int {{ return {i} }}\n"
