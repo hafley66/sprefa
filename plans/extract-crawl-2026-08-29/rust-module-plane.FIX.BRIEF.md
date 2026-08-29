@@ -13,7 +13,7 @@ columns.
 
 ## First action
 ```
-git merge --ff-only BASE_SHA
+git merge --ff-only 212218cc61657116b0a1cd2baf1a01ea928a7dac
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Failure: STOP, `boop beep --no-wait --as fix-extract-rust-module-plane sprefa-coordinator "<one line>"`.
