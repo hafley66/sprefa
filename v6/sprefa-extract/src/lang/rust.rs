@@ -1804,7 +1804,7 @@ fn push_use_leaf(
 
 /// `#[path = "x.rs"]`: the literal a resolver must resolve, so it becomes the
 /// module text as written (`src/graph/modgraph/rust.rs:50-64`).
-fn mod_path_attr(attrs: &[syn::Attribute]) -> Option<String> {
+pub(crate) fn mod_path_attr(attrs: &[syn::Attribute]) -> Option<String> {
     attrs.iter().find_map(|attr| {
         if !attr.path().is_ident("path") {
             return None;
