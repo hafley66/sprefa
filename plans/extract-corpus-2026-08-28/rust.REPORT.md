@@ -10,6 +10,7 @@
 - [Findings](#findings)
 - [Fix landed](#fix-landed)
 - [Fix landed: the large-file resource bound](#fix-landed-the-large-file-resource-bound)
+- [Fix landed: the --resolve superlinear name-match](#fix-landed-the---resolve-superlinear-name-match)
 - [What stays untested and why](#what-stays-untested-and-why)
 
 ## Setup
@@ -235,3 +236,33 @@ the right path, bytes and limit at rc=0; the boundary is inclusive (a file at
 its own ceiling extracts); `--max-bytes` lowers it; `--max-bytes 0` disables it;
 `--file-fact` still rides a skip; an under-ceiling file is unchanged;
 `--ast-pattern` skips too; `--schema` declares the record.
+
+## Fix landed: the --resolve superlinear name-match
+
+Lane `fix-extract-rust-resolve-perf`, base sha `cec3d5c1d`.
+
+`own_file_blob` (`src/lang/rust.rs`) learned the file's own `ContentId` once per
+CALL SITE and scanned the whole corpus `DefIndex` to do it, so the name-match
+cost grew as sites x index entries x candidate blobs. It is now computed once
+per FILE, threaded into the new `RustSource::call_name_match_in`, and seeded on
+the file's rarest def name so a corpus-wide name like `helper` or `new` no
+longer puts every file in the candidate set.
+
+Corpus: `tokio-1.48.0` from the crates.io registry, first N `.rs` files by
+`find <dir> -name '*.rs' | sort`, `extract --resolve <files>`, release binary,
+median of 3 interleaved runs.
+
+| finding | before | after | test |
+|---|---|---|---|
+| `perf`, wall at 200 files | 260 ms | 100 ms | `tests/49_rust_resolve_scaling.rs::rust_resolve_wall_grows_linearly_with_file_count` |
+| `perf`, wall at 400 files | 1,300 ms | 180 ms | (same) |
+| `perf`, ratio 400/200 | 5.0x | 1.8x | (same, budget 2.5x) |
+| `perf`, own-blob probes at 50 synthetic files | 25,349,600 | 100 | `tests/49_rust_resolve_scaling.rs::own_blob_probes_stay_linear_in_the_file_count` |
+| `perf`, own-blob probes at 400 synthetic files | did not terminate in a usable time | 800 | (same, bound 4/file) |
+
+Output is byte-identical before and after on the 400-file tokio corpus: 6,274
+rows, `cmp -s` clean. The same-file-wins edge of `tests/60_rust_corpus_scope.rs`
+is re-asserted inside the new test file.
+
+Whole crate after the fix: `cargo test --features cli --no-fail-fast` rc=0,
+392 passed, 0 failed, 2 ignored.
