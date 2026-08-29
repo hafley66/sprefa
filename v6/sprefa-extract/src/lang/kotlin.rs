@@ -43,7 +43,7 @@ use crate::family::{
     TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::seams::{corpus_defs, covering_def, def_named, DefIndex, Parser, Project, Resolve};
+use crate::seams::{DefIndex, Parser, Project, Resolve, corpus_defs, covering_def, def_named};
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
@@ -836,10 +836,16 @@ fn kt_walk_call_sites(
                     kt_bin_site(child, callee, strings, sink);
                 }
             }
-            // `a in b` (the `!` of `!in` is a separate anonymous token; the
-            // `in` lookup finds it either way). `is`/`!is` has no operator fun.
+            // `a in b` / `a !in b` both lower to a `contains` site. The `!` of
+            // `!in` is its own anonymous token, so scan every anonymous child
+            // for the `in` token instead of reading only the first one.
+            // `is`/`!is` has no operator fun.
             "check_expression" => {
-                if kt_anon_token(child, src).as_deref() == Some("in") {
+                let mut cursor = child.walk();
+                let is_in = child
+                    .children(&mut cursor)
+                    .any(|c| !c.is_named() && matches!(kt_text(c, src), "in" | "!in"));
+                if is_in {
                     kt_bin_site(child, "contains", strings, sink);
                 }
             }

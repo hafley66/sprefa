@@ -13,7 +13,7 @@ use crate::family::{
 };
 use crate::lang::extract_lang::ExtractLang;
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::seams::{corpus_defs, covering_def, ProjectCx, Resolve};
+use crate::seams::{ProjectCx, Resolve, corpus_defs, covering_def};
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, Source};
 use crate::trace;
@@ -110,15 +110,17 @@ enum MetaSpec {
 }
 
 /// Per-file `:- meta_predicate` declarations layered over the built-in SWI
-/// table. Keyed on (name, arity); specs beyond the stored length are `Data`.
+/// table. Two-level map keyed by arity then name, so `get(name)` borrows a
+/// `&str` and a goal lookup never allocates a key. Specs beyond the stored
+/// length are `Data`.
 #[derive(Default)]
 struct MetaTable {
-    per_file: HashMap<(String, usize), Vec<MetaSpec>>,
+    per_file: HashMap<usize, HashMap<String, Vec<MetaSpec>>>,
 }
 
 impl MetaTable {
     fn get(&self, name: &str, arity: usize) -> Option<&[MetaSpec]> {
-        if let Some(specs) = self.per_file.get(&(name.to_string(), arity)) {
+        if let Some(specs) = self.per_file.get(&arity).and_then(|m| m.get(name)) {
             return Some(specs);
         }
         builtin_meta(name, arity)
@@ -127,69 +129,99 @@ impl MetaTable {
 
 fn builtin_meta(name: &str, arity: usize) -> Option<&'static [MetaSpec]> {
     use std::sync::OnceLock;
-    static TABLE: OnceLock<HashMap<(String, usize), Vec<MetaSpec>>> = OnceLock::new();
+    static TABLE: OnceLock<HashMap<usize, HashMap<String, Vec<MetaSpec>>>> = OnceLock::new();
     let table = TABLE.get_or_init(|| {
-        let mut table = HashMap::new();
-        let mut insert = |name: &str, arity: usize, mut specs: Vec<MetaSpec>| {
+        let mut table: HashMap<usize, HashMap<String, Vec<MetaSpec>>> = HashMap::new();
+        let mut insert = |arity: usize, name: &str, mut specs: Vec<MetaSpec>| {
             specs.resize(arity, MetaSpec::Data);
-            table.insert((name.to_string(), arity), specs);
+            table
+                .entry(arity)
+                .or_default()
+                .insert(name.to_string(), specs);
         };
         for arity in 1..=8 {
-            insert("call", arity, vec![MetaSpec::Closure(arity - 1)]);
+            insert(arity, "call", vec![MetaSpec::Closure(arity - 1)]);
         }
         for name in ["once", "ignore", "not"] {
-            insert(name, 1, vec![MetaSpec::Goal]);
+            insert(1, name, vec![MetaSpec::Goal]);
         }
-        insert("forall", 2, vec![MetaSpec::Goal, MetaSpec::Goal]);
+        insert(2, "forall", vec![MetaSpec::Goal, MetaSpec::Goal]);
         for arity in 3..=4 {
-            insert("findall", arity, vec![MetaSpec::Data, MetaSpec::Goal]);
+            insert(arity, "findall", vec![MetaSpec::Data, MetaSpec::Goal]);
         }
-        for arity in 3..=4 {
-            insert("aggregate_all", arity, vec![MetaSpec::Data, MetaSpec::Goal]);
-        }
+        // aggregate_all(:Spec, ?Discriminator, :Goal, -Result) and the 3-arity
+        // form aggregate_all(:Spec, :Goal, -Result) put the goal one slot
+        // earlier than the /4 row the old table carried.
+        insert(3, "aggregate_all", vec![MetaSpec::Data, MetaSpec::Goal]);
+        insert(
+            4,
+            "aggregate_all",
+            vec![MetaSpec::Data, MetaSpec::Data, MetaSpec::Goal],
+        );
+        // setof(?Template, ^Goal, -Set): the template is data, the caret
+        // operand carries the goal.
         for name in ["setof", "bagof"] {
-            insert(name, 3, vec![MetaSpec::Caret, MetaSpec::Goal]);
-        }
-        for arity in 2..=7 {
-            insert("maplist", arity, vec![MetaSpec::Closure(arity - 1)]);
-        }
-        for arity in 4..=7 {
-            insert("foldl", arity, vec![MetaSpec::Closure(arity - 1)]);
-        }
-        for name in ["include", "exclude"] {
-            for arity in 2..=3 {
-                insert(name, arity, vec![MetaSpec::Closure(arity - 1)]);
-            }
-        }
-        insert("partition", 4, vec![MetaSpec::Closure(1)]);
-        insert(
-            "catch",
-            3,
-            vec![MetaSpec::Goal, MetaSpec::Data, MetaSpec::Goal],
-        );
-        insert(
-            "catch_with_backtrace",
-            2,
-            vec![MetaSpec::Goal, MetaSpec::Goal],
-        );
-        for arity in 3..=4 {
             insert(
-                "setup_call_cleanup",
-                arity,
-                vec![MetaSpec::Goal, MetaSpec::Goal, MetaSpec::Goal],
+                3,
+                name,
+                vec![MetaSpec::Data, MetaSpec::Caret, MetaSpec::Data],
             );
         }
-        insert("call_cleanup", 2, vec![MetaSpec::Goal, MetaSpec::Goal]);
-        insert("with_output_to", 2, vec![MetaSpec::Data, MetaSpec::Goal]);
-        for arity in 2..=3 {
-            insert("phrase", arity, vec![MetaSpec::Closure(2)]);
+        for arity in 2..=7 {
+            insert(arity, "maplist", vec![MetaSpec::Closure(arity - 1)]);
         }
-        insert("freeze", 2, vec![MetaSpec::Data, MetaSpec::Goal]);
-        insert("thread_create", 3, vec![MetaSpec::Goal]);
+        for arity in 4..=7 {
+            insert(arity, "foldl", vec![MetaSpec::Closure(arity - 1)]);
+        }
+        // include/3 and exclude/3 only; SWI ships no arity-2 forms.
+        for name in ["include", "exclude"] {
+            insert(3, name, vec![MetaSpec::Closure(2)]);
+        }
+        // partition(:Pred, ?List, ?Less, ?Equal, ?Greater[, ?Tail]): the
+        // closure gets two extra arguments (the element and one bucket).
+        insert(5, "partition", vec![MetaSpec::Closure(2)]);
+        insert(6, "partition", vec![MetaSpec::Closure(2)]);
+        insert(4, "partition", vec![MetaSpec::Closure(1)]);
+        insert(
+            3,
+            "catch",
+            vec![MetaSpec::Goal, MetaSpec::Data, MetaSpec::Goal],
+        );
+        // catch_with_backtrace(:Goal, ?Catcher, :Recovery) is arity 3.
+        insert(
+            3,
+            "catch_with_backtrace",
+            vec![MetaSpec::Goal, MetaSpec::Data, MetaSpec::Goal],
+        );
+        // setup_call_cleanup(:Setup, :Goal, :Cleanup) is arity 3; the arity-4
+        // form is setup_call_catcher_cleanup(:Setup, :Goal, ?Catcher, :Cleanup).
+        insert(
+            3,
+            "setup_call_cleanup",
+            vec![MetaSpec::Goal, MetaSpec::Goal, MetaSpec::Goal],
+        );
+        insert(
+            4,
+            "setup_call_catcher_cleanup",
+            vec![
+                MetaSpec::Goal,
+                MetaSpec::Goal,
+                MetaSpec::Data,
+                MetaSpec::Goal,
+            ],
+        );
+        insert(2, "call_cleanup", vec![MetaSpec::Goal, MetaSpec::Goal]);
+        insert(2, "with_output_to", vec![MetaSpec::Data, MetaSpec::Goal]);
+        for arity in 2..=3 {
+            insert(arity, "phrase", vec![MetaSpec::Closure(2)]);
+        }
+        insert(2, "freeze", vec![MetaSpec::Data, MetaSpec::Goal]);
+        insert(3, "thread_create", vec![MetaSpec::Goal]);
         table
     });
     table
-        .get(&(name.to_string(), arity))
+        .get(&arity)
+        .and_then(|by_name| by_name.get(name))
         .map(|specs| specs.as_slice())
 }
 
@@ -241,7 +273,7 @@ fn collect_meta_directives(root: tree_sitter::Node, src: &[u8], table: &mut Meta
                 })
                 .collect()
         };
-        table.per_file.insert((name, arity), specs);
+        table.per_file.entry(arity).or_default().insert(name, specs);
     }
 }
 
