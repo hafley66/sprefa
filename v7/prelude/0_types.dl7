@@ -12,6 +12,9 @@
    (* (: list any)
       (: value any)))
 
+(: closed_names
+   (* (: list any)))
+
 (: before
    (* (: owner type)
       (: earlier int)
@@ -46,20 +49,85 @@
       (: source_index int)
       (: result_index int)))
 
+(: Exclude
+   (* (: source type)
+      (: names any)
+      (: return type)))
+
+(: excluded_name
+   (* (: source type)
+      (: names any)
+      (: name any)))
+
+(: exclude_edge
+   (* (: source type)
+      (: names any)
+      (: name any)
+      (: target type)
+      (: source_index int)))
+
+(: exclude_predecessor
+   (* (: source type)
+      (: names any)
+      (: source_index int)
+      (: prior_index int)))
+
+(: exclude_has_predecessor
+   (* (: source type)
+      (: names any)
+      (: source_index int)))
+
+(: exclude_rank
+   (* (: source type)
+      (: names any)
+      (: source_index int)
+      (: result_index int)))
+
 ; Canonical application identities use the shared cons and intern relations.
 (<- (Partial ?Source ?Result)
     (partial_request ?Source)
-    (cons ?Source 'nil ?Arguments)
+    (nil ?Empty)
+    (cons ?Source ?Empty ?Arguments)
     (intern Partial ?Arguments ?Result))
 
+(<- (Partial ?Source ?Result)
+    (intern_snapshot Partial ?Arguments ?Result)
+    (nil ?Empty)
+    (cons ?Source ?Empty ?Arguments))
+
 (<- (Option ?Source ?Result)
-    (cons ?Source 'nil ?Arguments)
+    (nil ?Empty)
+    (cons ?Source ?Empty ?Arguments)
     (intern Option ?Arguments ?Result))
 
+(<- (Option ?Source ?Result)
+    (intern_snapshot Option ?Arguments ?Result)
+    (nil ?Empty)
+    (cons ?Source ?Empty ?Arguments))
+
 (<- (Pick ?Source ?Names ?Result)
-    (cons ?Names 'nil ?TailArguments)
+    (nil ?Empty)
+    (cons ?Names ?Empty ?TailArguments)
     (cons ?Source ?TailArguments ?Arguments)
     (intern Pick ?Arguments ?Result))
+
+(<- (Pick ?Source ?Names ?Result)
+    (intern_snapshot Pick ?Arguments ?Result)
+    (cons ?Source ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Names ?Empty ?TailArguments))
+
+(<- (Exclude ?Source ?Names ?Result)
+    (nil ?Empty)
+    (cons ?Names ?Empty ?TailArguments)
+    (cons ?Source ?TailArguments ?Arguments)
+    (intern Exclude ?Arguments ?Result))
+
+(<- (Exclude ?Source ?Names ?Result)
+    (intern_snapshot Exclude ?Arguments ?Result)
+    (cons ?Source ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Names ?Empty ?TailArguments))
 
 (<- (contains ?List ?Value)
     (cons ?Value ?Tail ?List))
@@ -67,6 +135,13 @@
 (<- (contains ?List ?Value)
     (cons ?Head ?Tail ?List)
     (contains ?Tail ?Value))
+
+(<- (closed_names ?Empty)
+    (nil ?Empty))
+
+(<- (closed_names ?List)
+    (cons ?Head ?Tail ?List)
+    (closed_names ?Tail))
 
 (<- (before ?Owner ?Earlier ?Later)
     (predecessor ?Owner ?Earlier ?Later))
@@ -76,6 +151,7 @@
     (before ?Owner ?Middle ?Later))
 
 (<- (pick_edge ?Source ?Names ?Name ?Target ?SourceIndex)
+    (Pick ?Source ?Names ?Result)
     (edge_snapshot ?Source ?Name ?Target ?SourceIndex)
     (contains ?Names ?Name))
 
@@ -99,6 +175,37 @@
     (pick_edge ?Source ?Names ?Name ?Target ?SourceIndex)
     (pick_rank ?Source ?Names ?SourceIndex ?ResultIndex))
 
+(<- (excluded_name ?Source ?Names ?Name)
+    (Exclude ?Source ?Names ?Result)
+    (edge_snapshot ?Source ?Name ?Target ?SourceIndex)
+    (contains ?Names ?Name))
+
+(<- (exclude_edge ?Source ?Names ?Name ?Target ?SourceIndex)
+    (Exclude ?Source ?Names ?Result)
+    (edge_snapshot ?Source ?Name ?Target ?SourceIndex)
+    (closed_names ?Names)
+    (not (excluded_name ?Source ?Names ?Name)))
+
+(<- (exclude_predecessor ?Source ?Names ?SourceIndex ?PriorIndex)
+    (exclude_edge ?Source ?Names ?Name ?Target ?SourceIndex)
+    (exclude_edge ?Source ?Names ?PriorName ?PriorTarget ?PriorIndex)
+    (before ?Source ?PriorIndex ?SourceIndex))
+
+(<- (exclude_has_predecessor ?Source ?Names ?SourceIndex)
+    (exclude_predecessor ?Source ?Names ?SourceIndex ?PriorIndex))
+
+(<- (exclude_rank ?Source ?Names ?SourceIndex (count ?PriorIndex))
+    (exclude_predecessor ?Source ?Names ?SourceIndex ?PriorIndex))
+
+(<- (exclude_rank ?Source ?Names ?SourceIndex 0)
+    (exclude_edge ?Source ?Names ?Name ?Target ?SourceIndex)
+    (not (exclude_has_predecessor ?Source ?Names ?SourceIndex)))
+
+(<- (: ?Result ?Name ?Target ?ResultIndex)
+    (Exclude ?Source ?Names ?Result)
+    (exclude_edge ?Source ?Names ?Name ?Target ?SourceIndex)
+    (exclude_rank ?Source ?Names ?SourceIndex ?ResultIndex))
+
 ; Partial application results are ordinary product nodes.
 (<- (node ?Result)
     (Partial ?Source ?Result))
@@ -111,6 +218,12 @@
 
 (<- (product ?Result)
     (Pick ?Source ?Names ?Result))
+
+(<- (node ?Result)
+    (Exclude ?Source ?Names ?Result))
+
+(<- (product ?Result)
+    (Exclude ?Source ?Names ?Result))
 
 ; Each source edge keeps its label and ordinal while Option maps the target.
 (<- (: ?Result ?Name ?OptionalTarget ?Index)

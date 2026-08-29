@@ -17,6 +17,7 @@
 :- dynamic evaluation_rule/2.
 :- dynamic evaluation_seed/2.
 :- dynamic evaluation_lower/2.
+:- dynamic evaluation_request/2.
 
 :- table proves/2.
 
@@ -414,26 +415,40 @@ install_lower_rows([Row | Rows], EvaluationId, [Reference | References]) :-
 
 collect_closure(EvaluationId, Closure) :-
     findall(Call, proves(EvaluationId, Call), Calls),
-    sort(Calls, Closure).
+    findall(Request, evaluation_request(EvaluationId, Request), Requests),
+    append(Calls, Requests, Rows),
+    sort(Rows, Closure).
 
 clear_evaluation(EvaluationId, ClauseReferences) :-
     abolish_table_subgoals(dl7_evaluator:proves(EvaluationId, _)),
+    retractall(evaluation_request(EvaluationId, _)),
     maplist(erase, ClauseReferences).
 
 proves(EvaluationId, Call) :-
     evaluation_seed(EvaluationId, Call).
 proves(EvaluationId, Call) :-
     evaluation_lower(EvaluationId, Call).
+proves(_, call(ref(kernel(nil)), [const([])])).
 proves(EvaluationId, Head) :-
     evaluation_rule(EvaluationId, Rule),
     instantiate_rule(Rule, Head, Body),
     proves_body(Body, EvaluationId).
 proves(_, call(ref(kernel(cons)), [Head, Tail, List])) :-
     cons_relation(Head, Tail, List).
-proves(_, call(ref(kernel(intern)), [Constructor, Arguments, Result])) :-
+proves(EvaluationId,
+       call(ref(kernel(intern)), [Constructor, Arguments, Result])) :-
     ground(Constructor),
     ground(Arguments),
-    intern_value(Constructor, Arguments, Result).
+    intern_value(Constructor, Arguments, Result),
+    Request = call(ref(kernel(intern)),
+                   [Constructor, Arguments, Result]),
+    record_evaluation_request(EvaluationId, Request).
+
+record_evaluation_request(EvaluationId, Request) :-
+    (   evaluation_request(EvaluationId, Request)
+    ->  true
+    ;   assertz(evaluation_request(EvaluationId, Request))
+    ).
 
 proves_body([], _).
 proves_body([Goal | Goals], EvaluationId) :-
@@ -465,11 +480,11 @@ cons_relation(Head, Tail, List) :-
         cons_construct(Head, Tail, List)
     ).
 
-cons_construct(Head, const(symbol(nil)), const([Head])).
+cons_construct(Head, const([]), const([Head])).
 cons_construct(Head, const(Tail), const([Head | Tail])) :-
     is_list(Tail).
 
-cons_deconstruct(const([Head]), Head, const(symbol(nil))) :- !.
+cons_deconstruct(const([Head]), Head, const([])) :- !.
 cons_deconstruct(const([Head | Tail]), Head, const(Tail)) :-
     Tail = [_ | _],
     is_list(Tail).

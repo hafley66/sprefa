@@ -54,12 +54,12 @@ test(driver_is_canonical_on_two_consecutive_runs) :-
     Observed == driver_result(exit(0), exit(0), true,
                               true, true, "", "").
 
-test(userland_partial_maps_type_edges_deterministically) :-
+test(userland_type_operators_chain_across_compiler_rounds) :-
     compile_dl7('v7/test/fixtures/2_partial.dl7',
                 Rows1, Runtime1, Diagnostics1),
     compile_dl7('v7/test/fixtures/2_partial.dl7',
                 Rows2, Runtime2, Diagnostics2),
-    once(partial_snapshot(Rows1, Snapshot)),
+    once(type_operator_snapshot(Rows1, Snapshot)),
     runtime_snapshot(Runtime1, RuntimeSnapshot),
     runtime_key_snapshot(Runtime1, KeySnapshot),
     evaluator_snapshot(EvaluatorSnapshot),
@@ -71,19 +71,24 @@ test(userland_partial_maps_type_edges_deterministically) :-
                               RuntimeSnapshot, KeySnapshot, EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 270,
-                    partial(user,
-                            [mapped(id, option(int), 0),
-                             mapped(name, option(text), 1)]),
-                    runtime(counts(46, 63, 20, 43, 18, 29, 20),
+                    [], [], 552,
+                    type_operators(
+                        partial([mapped(id, option(int), 0),
+                                 mapped(name, option(text), 1)]),
+                        pick([mapped(id, option(int), 0),
+                              mapped(name, option(text), 1)]),
+                        exclude([mapped(name, option(text), 0)])),
+                    runtime(counts(68, 101, 31, 70, 36, 72, 31),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
+                         nil([[0]]),
                          cons([[0, 1], [2]]),
                          intern([[0, 1]]),
+                         intern_snapshot([[0, 1]]),
                          predecessor([[0, 1], [0, 2]])),
                     evaluator(temporary_rules(0), temporary_seeds(0),
-                              temporary_lower_rows(0)),
+                              temporary_lower_rows(0), temporary_requests(0)),
                     true, true),
     !.
 
@@ -110,7 +115,7 @@ test(authored_order_kernel_modes_are_checked_left_to_right) :-
     Construct = checked_goal(
                     positive,
                     call(ref(kernel(cons)),
-                         [var(element), const(symbol(nil)), var(arguments)])),
+                         [var(element), const([]), var(arguments)])),
     Intern = checked_goal(
                  positive,
                  call(ref(kernel(intern)),
@@ -179,20 +184,21 @@ test(stratification_is_pure_deterministic_and_strict_cycle_checked) :-
                                  stratify, none,
                                  strict_dependency_cycle([Left, Right]))],
                             evaluator(temporary_rules(0), temporary_seeds(0),
-                                      temporary_lower_rows(0))))).
+                                      temporary_lower_rows(0),
+                                      temporary_requests(0))))).
 
-test(cons_constructs_deconstructs_and_stops_at_the_nil_tail) :-
+test(cons_constructs_deconstructs_and_stops_at_the_empty_tail) :-
     Rules =
         [ rule(call(ref(singleton), [var(list)]),
                [checked_goal(
                     positive,
                     call(ref(kernel(cons)),
-                         [const(one), const(symbol(nil)), var(list)]))]),
+                         [const(one), const([]), var(list)]))]),
           rule(call(ref(pair), [var(list)]),
                [ checked_goal(
                      positive,
                      call(ref(kernel(cons)),
-                          [const(two), const(symbol(nil)), var(tail)])),
+                          [const(two), const([]), var(tail)])),
                  checked_goal(
                      positive,
                      call(ref(kernel(cons)),
@@ -258,10 +264,11 @@ test(cons_constructs_deconstructs_and_stops_at_the_nil_tail) :-
                     evaluation(
                         [],
                         evaluator(temporary_rules(0), temporary_seeds(0),
-                                  temporary_lower_rows(0))),
+                                  temporary_lower_rows(0),
+                                  temporary_requests(0))),
                     traversal(
                         [one, three, two],
-                        [ symbol(nil),
+                        [ [],
                           [const(one), const(two), const(three)],
                           [const(three)],
                           [const(two), const(three)]
@@ -327,7 +334,8 @@ test(prefix_negation_is_safe_stratified_and_cleanup_scoped) :-
                         dependencies(positive, negative),
                         strata(candidate(0), blocked(0), allowed(1)),
                         evaluator(temporary_rules(0), temporary_seeds(0),
-                                  temporary_lower_rows(0))),
+                                  temporary_lower_rows(0),
+                                  temporary_requests(0))),
                     unsafe(
                         goal_node(32),
                         variable_node(27)),
@@ -335,12 +343,13 @@ test(prefix_negation_is_safe_stratified_and_cleanup_scoped) :-
                         goal_node(38),
                         relations([left, right])),
                     kernel(
-                        goal_node(29),
+                        goal_node(32),
                         negative_constructive_kernel_goal(cons)),
                     exception(
                         caught,
                         evaluator(temporary_rules(0), temporary_seeds(0),
-                                  temporary_lower_rows(0)))),
+                                  temporary_lower_rows(0),
+                                  temporary_requests(0)))),
     !.
 
 test(count_groups_completed_lower_proofs_and_rejects_bad_placement) :-
@@ -358,7 +367,8 @@ test(count_groups_completed_lower_proofs_and_rejects_bad_placement) :-
                         dependency(positive),
                         strata(source(0), count(1)),
                         evaluator(temporary_rules(0), temporary_seeds(0),
-                                  temporary_lower_rows(0))),
+                                  temporary_lower_rows(0),
+                                  temporary_requests(0))),
                     multiple(
                         node(27),
                         multiple_count_aggregates(region_count)),
@@ -519,7 +529,7 @@ negative_cycle_receipt(cycle(goal_node(GoalIndex),
 
 negative_kernel_receipt(
     kernel(goal_node(GoalIndex), negative_constructive_kernel_goal(cons))) :-
-    Text = "(: source (* (: value any)))\n(: bad (* (: value any)))\n(source \"x\")\n(<- (bad ?Value)\n    (source ?Value)\n    (not (cons ?Value 'nil ?List)))\n",
+    Text = "(: source (* (: value any)))\n(: bad (* (: value any)))\n(source \"x\")\n(<- (bad ?Value)\n    (source ?Value)\n    (nil ?Empty)\n    (not (cons ?Value ?Empty ?List)))\n",
     dl7_text_unit(negative_kernel, negative_kernel_source, Text, Unit, []),
     compile_unit(
         Unit, [],
@@ -543,7 +553,7 @@ underconstrained_cons_diagnostic(Diagnostics) :-
     dl7_text_unit(cons_mode, cons_mode_source, Text, Unit, []),
     compile_unit(Unit, [], Diagnostics).
 
-partial_snapshot(Rows, Snapshot) :-
+type_operator_snapshot(Rows, Snapshot) :-
     member(call(ref(kernel(':')),
                 [ref(Module), const('User'), ref(User), const(_)]), Rows),
     member(call(ref(kernel(':')),
@@ -552,7 +562,21 @@ partial_snapshot(Rows, Snapshot) :-
     member(call(ref(kernel(':')),
                 [ref(Module), const('Option'), ref(OptionConstructor),
                  const(_)]), Rows),
+    member(call(ref(kernel(':')),
+                [ref(Module), const('Pick'), ref(PickConstructor),
+                 const(_)]), Rows),
+    member(call(ref(kernel(':')),
+                [ref(Module), const('Exclude'), ref(ExcludeConstructor),
+                 const(_)]), Rows),
+    named_owner(Rows, selected_request, SelectedRequest),
+    named_owner(Rows, excluded_request, ExcludedRequest),
     Partial = application(PartialConstructor, [User]),
+    Picked = application(PickConstructor,
+                         [Partial, [const(id), const(name)]]),
+    Excluded = application(ExcludeConstructor,
+                           [Picked, [const(id)]]),
+    memberchk(call(ref(SelectedRequest), [ref(Picked)]), Rows),
+    memberchk(call(ref(ExcludedRequest), [ref(Excluded)]), Rows),
     member(call(ref(kernel(node)), [ref(Partial)]), Rows),
     member(call(ref(kernel(product)), [ref(Partial)]), Rows),
     member(call(ref(kernel(':')),
@@ -563,9 +587,24 @@ partial_snapshot(Rows, Snapshot) :-
                 [ref(Partial), const(name),
                  ref(application(OptionConstructor, [primitive(text)])),
                  const(1)]), Rows),
-    Snapshot = partial(user,
-                       [mapped(id, option(int), 0),
-                        mapped(name, option(text), 1)]).
+    member(call(ref(kernel(':')),
+                [ref(Picked), const(id),
+                 ref(application(OptionConstructor, [primitive(int)])),
+                 const(0)]), Rows),
+    member(call(ref(kernel(':')),
+                [ref(Picked), const(name),
+                 ref(application(OptionConstructor, [primitive(text)])),
+                 const(1)]), Rows),
+    member(call(ref(kernel(':')),
+                [ref(Excluded), const(name),
+                 ref(application(OptionConstructor, [primitive(text)])),
+                 const(0)]), Rows),
+    Snapshot = type_operators(
+                   partial([mapped(id, option(int), 0),
+                            mapped(name, option(text), 1)]),
+                   pick([mapped(id, option(int), 0),
+                         mapped(name, option(text), 1)]),
+                   exclude([mapped(name, option(text), 0)])).
 
 runtime_snapshot(
     checked_datalog(root_graph(Nodes, Edges),
@@ -586,13 +625,17 @@ runtime_snapshot(
 runtime_key_snapshot(
     checked_datalog(_, datalog_program(Relations, _, _), _, _),
     keys(colon(ColonKeys), edge_snapshot(SnapshotKeys),
-         cons(ConsKeys), intern(InternKeys),
+         nil(NilKeys), cons(ConsKeys), intern(InternKeys),
+         intern_snapshot(InternSnapshotKeys),
          predecessor(PredecessorKeys))) :-
     memberchk(relation(ref(kernel(':')), 4, ColonKeys), Relations),
     memberchk(relation(ref(kernel(edge_snapshot)), 4, SnapshotKeys),
               Relations),
+    memberchk(relation(ref(kernel(nil)), 1, NilKeys), Relations),
     memberchk(relation(ref(kernel(cons)), 3, ConsKeys), Relations),
     memberchk(relation(ref(kernel(intern)), 3, InternKeys), Relations),
+    memberchk(relation(ref(kernel(intern_snapshot)), 3,
+                       InternSnapshotKeys), Relations),
     memberchk(relation(ref(kernel(predecessor)), 3, PredecessorKeys),
               Relations).
 
@@ -641,10 +684,13 @@ normalized_stratum(stratum(ref(_), Level)) :-
 
 evaluator_snapshot(
     evaluator(temporary_rules(RuleFacts), temporary_seeds(SeedFacts),
-              temporary_lower_rows(LowerFacts))) :-
+              temporary_lower_rows(LowerFacts),
+              temporary_requests(RequestFacts))) :-
     aggregate_all(count, dl7_evaluator:evaluation_rule(_, _), RuleFacts),
     aggregate_all(count, dl7_evaluator:evaluation_seed(_, _), SeedFacts),
-    aggregate_all(count, dl7_evaluator:evaluation_lower(_, _), LowerFacts).
+    aggregate_all(count, dl7_evaluator:evaluation_lower(_, _), LowerFacts),
+    aggregate_all(count, dl7_evaluator:evaluation_request(_, _),
+                  RequestFacts).
 
 origin_kinds(file(_),
              embedded(_, position(_, _, _)),

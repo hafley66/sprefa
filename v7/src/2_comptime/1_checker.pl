@@ -213,8 +213,10 @@ kernel_relation_rows(Relations) :-
 
 kernel_relation_keys(':', [[0, 1], [0, 3]]).
 kernel_relation_keys(edge_snapshot, [[0, 1], [0, 3]]).
+kernel_relation_keys(nil, [[0]]).
 kernel_relation_keys(cons, [[0, 1], [2]]).
 kernel_relation_keys(intern, [[0, 1]]).
+kernel_relation_keys(intern_snapshot, [[0, 1]]).
 kernel_relation_keys(predecessor, [[0, 1], [0, 2]]).
 kernel_relation_keys(node, []).
 kernel_relation_keys(module, []).
@@ -243,8 +245,10 @@ kernel_graph(
       node(kernel(sum)), product(kernel(sum)),
       node(kernel(':')), product(kernel(':')),
       node(kernel(edge_snapshot)), product(kernel(edge_snapshot)),
+      node(kernel(nil)), product(kernel(nil)),
       node(kernel(cons)), product(kernel(cons)),
       node(kernel(intern)), product(kernel(intern)),
+      node(kernel(intern_snapshot)), product(kernel(intern_snapshot)),
       node(kernel(predecessor)), product(kernel(predecessor))
     ],
     [ ':'(kernel(node), id, ref(primitive(type)), 0),
@@ -259,12 +263,16 @@ kernel_graph(
       ':'(kernel(edge_snapshot), name, ref(primitive(text)), 1),
       ':'(kernel(edge_snapshot), target, ref(primitive(any)), 2),
       ':'(kernel(edge_snapshot), index, ref(primitive(int)), 3),
+      ':'(kernel(nil), return, ref(primitive(any)), 0),
       ':'(kernel(cons), head, ref(primitive(any)), 0),
       ':'(kernel(cons), tail, ref(primitive(any)), 1),
       ':'(kernel(cons), return, ref(primitive(any)), 2),
       ':'(kernel(intern), constructor, ref(primitive(type)), 0),
       ':'(kernel(intern), arguments, ref(primitive(any)), 1),
       ':'(kernel(intern), return, ref(primitive(type)), 2),
+      ':'(kernel(intern_snapshot), constructor, ref(primitive(type)), 0),
+      ':'(kernel(intern_snapshot), arguments, ref(primitive(any)), 1),
+      ':'(kernel(intern_snapshot), return, ref(primitive(type)), 2),
       ':'(kernel(predecessor), owner, ref(primitive(type)), 0),
       ':'(kernel(predecessor), earlier, ref(primitive(int)), 1),
       ':'(kernel(predecessor), later, ref(primitive(int)), 2)
@@ -408,7 +416,7 @@ check_goal(Goal, Bound0, Bound, Reason) :-
     ).
 check_goal(Goal, Bound, Bound, negative_constructive_kernel_goal(Name)) :-
     goal_call(Goal, negative, call(ref(kernel(Name)), _)),
-    memberchk(Name, [cons, intern]),
+    memberchk(Name, [cons, intern, nil]),
     !.
 check_goal(Goal, Bound, Bound, Reason) :-
     goal_call(Goal, negative, _),

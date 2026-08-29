@@ -76,7 +76,9 @@ evaluate_checked(
     append(GraphSeeds, AuthoredSeeds, BaseSeeds0),
     sort(BaseSeeds0, BaseSeeds),
     colon_rows(BaseSeeds, InitialEdges),
-    evaluate_compiler_rounds(Rules, Relations, BaseSeeds, InitialEdges, 1,
+    intern_rows(BaseSeeds, InitialRequests),
+    evaluate_compiler_rounds(Rules, Relations, BaseSeeds, InitialEdges,
+                             InitialRequests, 1,
                              CompilerFacts, EvaluationDiagnostics),
     finish_evaluation(EvaluationDiagnostics, Relations, CompilerFacts,
                       Graph, AuthoredSeeds, Rules, Depends, Strata,
@@ -104,32 +106,35 @@ finish_key_validation([], CompilerFacts, Graph, Relations, AuthoredSeeds,
 finish_key_validation(Diagnostics, _, _, _, _, _, _, _, [], Diagnostics).
 
 %% evaluate_compiler_rounds(+Rules, +Relations, +BaseSeeds, +FrozenEdges,
-%%                          +Round, -Closure, -Diagnostics) is det.
+%%                          +FrozenRequests, +Round,
+%%                          -Closure, -Diagnostics) is det.
 %
 % One round exposes the previous round's complete edge set through the
 % read-only edge_snapshot/4 input. Generated colon edges become inputs only
 % after the next freeze. Every round starts again from authored seeds, frozen
 % edges, and deterministic ordering rows, so negation and aggregates never
 % retain stale conclusions from an earlier snapshot.
-evaluate_compiler_rounds(Rules, Relations, BaseSeeds, FrozenEdges, Round,
-                         Closure, Diagnostics) :-
-    compiler_round_seeds(BaseSeeds, FrozenEdges, RoundSeeds),
+evaluate_compiler_rounds(Rules, Relations, BaseSeeds, FrozenEdges,
+                         FrozenRequests, Round, Closure, Diagnostics) :-
+    compiler_round_seeds(BaseSeeds, FrozenEdges, FrozenRequests, RoundSeeds),
     evaluate(Rules, RoundSeeds, RoundClosure0, EvaluationDiagnostics),
     strip_snapshot_rows(RoundClosure0, RoundClosure),
-    validate_functional_rows(Relations, RoundClosure, KeyDiagnostics),
-    append(EvaluationDiagnostics, KeyDiagnostics, RoundDiagnostics0),
-    sort(RoundDiagnostics0, RoundDiagnostics),
-    continue_compiler_rounds(RoundDiagnostics, Rules, Relations, BaseSeeds,
-                             FrozenEdges, Round, RoundClosure,
+    continue_compiler_rounds(EvaluationDiagnostics,
+                             Rules, Relations, BaseSeeds,
+                             FrozenEdges, FrozenRequests, Round, RoundClosure,
                              Closure, Diagnostics).
 
-continue_compiler_rounds([], Rules, Relations, BaseSeeds, FrozenEdges, Round,
-                         RoundClosure, Closure, Diagnostics) :-
+continue_compiler_rounds([], Rules, Relations, BaseSeeds, FrozenEdges,
+                         FrozenRequests, Round, RoundClosure,
+                         Closure, Diagnostics) :-
     !,
     colon_rows(RoundClosure, NextEdges),
-    (   NextEdges == FrozenEdges
-    ->  Closure = RoundClosure,
-        Diagnostics = []
+    intern_rows(RoundClosure, NextRequests),
+    (   NextEdges == FrozenEdges,
+        NextRequests == FrozenRequests
+    ->  validate_functional_rows(Relations, RoundClosure, KeyDiagnostics),
+        finish_stable_round(KeyDiagnostics, RoundClosure,
+                            Closure, Diagnostics)
     ;   compiler_round_limit(Limit),
         (   Round >= Limit
         ->  Closure = [],
@@ -138,21 +143,35 @@ continue_compiler_rounds([], Rules, Relations, BaseSeeds, FrozenEdges, Round,
                                compiler_round_limit_exhausted(Limit))]
         ;   NextRound is Round + 1,
             evaluate_compiler_rounds(Rules, Relations, BaseSeeds, NextEdges,
-                                     NextRound, Closure, Diagnostics)
+                                     NextRequests, NextRound,
+                                     Closure, Diagnostics)
         )
     ).
-continue_compiler_rounds(Diagnostics, _, _, _, _, _, _, [], Diagnostics).
+continue_compiler_rounds(Diagnostics, _, _, _, _, _, _, _, [], Diagnostics).
+
+finish_stable_round([], RoundClosure, Closure, []) :-
+    !,
+    strip_intern_rows(RoundClosure, Closure).
+finish_stable_round(Diagnostics, _, [], Diagnostics).
 
 compiler_round_limit(16).
 
-compiler_round_seeds(BaseSeeds, FrozenEdges, Seeds) :-
+compiler_round_seeds(BaseSeeds, FrozenEdges, FrozenRequests, Seeds) :-
     maplist(snapshot_edge, FrozenEdges, SnapshotRows),
+    maplist(snapshot_intern, FrozenRequests, RequestSnapshotRows),
     frozen_predecessor_rows(FrozenEdges, PredecessorRows),
-    append([BaseSeeds, FrozenEdges, SnapshotRows, PredecessorRows], Seeds0),
+    append([ BaseSeeds,
+             SnapshotRows,
+             RequestSnapshotRows,
+             PredecessorRows
+           ], Seeds0),
     sort(Seeds0, Seeds).
 
 snapshot_edge(call(ref(kernel(':')), Arguments),
               call(ref(kernel(edge_snapshot)), Arguments)).
+
+snapshot_intern(call(ref(kernel(intern)), Arguments),
+                call(ref(kernel(intern_snapshot)), Arguments)).
 
 frozen_predecessor_rows(FrozenEdges, Rows) :-
     findall(call(ref(kernel(predecessor)),
@@ -170,6 +189,16 @@ strip_snapshot_rows(Rows0, Rows) :-
     exclude(snapshot_row, Rows0, Rows).
 
 snapshot_row(call(ref(kernel(edge_snapshot)), _)).
+snapshot_row(call(ref(kernel(intern_snapshot)), _)).
+
+intern_rows(Rows, Requests) :-
+    include(intern_row, Rows, Requests0),
+    sort(Requests0, Requests).
+
+strip_intern_rows(Rows0, Rows) :-
+    exclude(intern_row, Rows0, Rows).
+
+intern_row(call(ref(kernel(intern)), _)).
 
 colon_rows(Rows, Edges) :-
     include(colon_row, Rows, Edges0),

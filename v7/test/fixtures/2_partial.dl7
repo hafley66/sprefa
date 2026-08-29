@@ -6,3 +6,26 @@
    (* (: source type)))
 
 (partial_request User)
+
+(: selected_request
+   (* (: result type)))
+
+(<- (selected_request ?Result)
+    (partial_request ?Source)
+    (Partial ?Source ?Partial)
+    (edge_snapshot ?Partial ?FirstName ?FirstType 0)
+    (edge_snapshot ?Partial ?SecondName ?SecondType 1)
+    (nil ?Empty)
+    (cons ?SecondName ?Empty ?Tail)
+    (cons ?FirstName ?Tail ?Names)
+    (Pick ?Partial ?Names ?Result))
+
+(: excluded_request
+   (* (: result type)))
+
+(<- (excluded_request ?Result)
+    (selected_request ?Selected)
+    (edge_snapshot ?Selected ?RemovedName ?RemovedType 0)
+    (nil ?Empty)
+    (cons ?RemovedName ?Empty ?Names)
+    (Exclude ?Selected ?Names ?Result))
