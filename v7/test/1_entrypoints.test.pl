@@ -3,7 +3,7 @@
 :- use_module(library(aggregate), [aggregate_all/3]).
 :- use_module(library(process), [process_create/3, process_wait/2]).
 :- use_module('../src/0_reader/3_file_loader', [load_dl7/3]).
-:- use_module('../src/2_comptime/1_type_compiler', [compile_dl7/4]).
+:- use_module('../src/2_comptime/2_compiler', [compile_dl7/4]).
 :- use_module('fixtures/1_embedded', []).
 
 test(file_and_bare_quasi_share_reader_and_expansion_pipeline) :-

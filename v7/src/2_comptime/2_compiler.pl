@@ -1,4 +1,4 @@
-:- module(dl7_type_compiler,
+:- module(dl7_compiler,
           [ compile_dl7/4,
             compile_unit/3
           ]).
@@ -6,7 +6,8 @@
 :- use_module(library(readutil), [read_file_to_string/3]).
 :- use_module('../0_reader/2_embedder', [dl7_text_unit/5]).
 :- use_module('../1_libtime/0_evaluator', [evaluate/4]).
-:- use_module('0_compiler', [lower_datalog/4, check_datalog/4]).
+:- use_module('0_lowerer', [lower_datalog/4]).
+:- use_module('1_checker', [check_datalog/4]).
 
 %% compile_dl7(+Path, -CompilerRows, -RuntimeProgram, -Diagnostics) is det.
 %
@@ -25,7 +26,7 @@ compile_dl7(Path, CompilerRows, RuntimeProgram, Diagnostics) :-
     compiled_outputs(Compiled, CompilerRows, RuntimeProgram).
 
 type_prelude_path(Path) :-
-    once(source_file(dl7_type_compiler:compile_dl7(_, _, _, _), SourcePath)),
+    once(source_file(dl7_compiler:compile_dl7(_, _, _, _), SourcePath)),
     file_directory_name(SourcePath, ComptimeDirectory),
     directory_file_path(ComptimeDirectory, '../../prelude/0_types.dl7',
                         RelativePath),
