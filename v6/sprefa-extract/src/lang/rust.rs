@@ -1059,6 +1059,9 @@ impl Resolve<CallF> for RustSource {
             });
         // Per FILE, never per site: the join is over the whole corpus index.
         let own = own_file_blob(output, def_index);
+        // Sorted once per file: the mirror lookup runs per closure-caller site,
+        // and a per-site scan of the def table is the shape kink 1 was.
+        let named = named_def_spans(call);
         let mut edges = Vec::new();
         for site in &call.aux.sites {
             // The caller is the innermost covering CallF def (the 4a
@@ -1082,11 +1085,55 @@ impl Resolve<CallF> for RustSource {
                 (Some(n), None) => (n, CallEdgeKind::NameResolve),
                 (None, None) => continue,
             };
+            // Nothing names `closure@<n>` as a callee, so a walk over named
+            // defs stops at one. The closure row stays; it names the frame.
+            if call.node(caller).name.is_none() {
+                if let Some(enclosing) = enclosing_named_def(&named, site.span) {
+                    edges.push(
+                        ProjectEdge::new(
+                            enclosing,
+                            dst_blob.clone(),
+                            dst_span,
+                            CallEdgeKind::NameResolve,
+                        )
+                        .with_call_site(site.span),
+                    );
+                }
+            }
             edges
                 .push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
         }
         edges
     }
+}
+
+/// Every NAMED CallF def as (span, ref), sorted by (start, end) for the
+/// `enclosing_named_def` binary search.
+fn named_def_spans(defs: &FamilyBundle<CallF>) -> Vec<(Span, NodeRef)> {
+    let mut sorted: Vec<(Span, NodeRef)> = defs
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.name.is_some())
+        .map(|(ix, node)| (node.span, NodeRef(ix as u32)))
+        .collect();
+    sorted.sort_by_key(|(span, _)| (span.start, span.end()));
+    sorted
+}
+
+/// The innermost NAMED def covering `site`. `covering_def` takes the innermost
+/// def of any kind, which is the closure wherever one is in the way.
+fn enclosing_named_def(sorted: &[(Span, NodeRef)], site: Span) -> Option<NodeRef> {
+    let cut = sorted.partition_point(|(span, _)| span.start <= site.start);
+    let mut best: Option<(Span, NodeRef)> = None;
+    for &(span, r) in &sorted[..cut] {
+        if site.end() <= span.end()
+            && best.map_or(true, |(b, _)| span.end() - span.start < b.end() - b.start)
+        {
+            best = Some((span, r));
+        }
+    }
+    best.map(|(_, r)| r)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1186,9 +1233,95 @@ fn call_defs_in_items(
                     call_defs_in_items(inner, line_starts, defs, owners, scopes, active);
                 }
             }
+            syn::Item::Const(c) => {
+                let span = def_span(line_starts, c.ident.span(), c.expr.span());
+                if initializer_defs(
+                    span,
+                    &c.ident,
+                    &c.expr,
+                    line_starts,
+                    defs,
+                    owners,
+                    scopes,
+                    active,
+                ) {
+                    note(span, scopes);
+                }
+            }
+            syn::Item::Static(s) => {
+                let span = def_span(line_starts, s.ident.span(), s.expr.span());
+                if initializer_defs(
+                    span,
+                    &s.ident,
+                    &s.expr,
+                    line_starts,
+                    defs,
+                    owners,
+                    scopes,
+                    active,
+                ) {
+                    note(span, scopes);
+                }
+            }
             _ => {}
         }
     }
+}
+
+/// Defs under a `const`/`static` initializer, plus the item as a def when the
+/// initializer holds a call no inner def covers. Returns whether it minted one.
+#[allow(clippy::too_many_arguments)]
+fn initializer_defs(
+    item_span: Span,
+    ident: &syn::Ident,
+    expr: &syn::Expr,
+    line_starts: &[u32],
+    defs: &mut RustCallDefs,
+    owners: &mut Vec<CollectedOwner>,
+    scopes: &mut Vec<(Span, String)>,
+    under_cfg: Option<&str>,
+) -> bool {
+    let mark = defs.out.len();
+    match expr {
+        // The block form is the derive-macro shape: its statement items carry
+        // impl blocks and trait impls, which only `call_defs_in_items` reads.
+        syn::Expr::Block(block) => {
+            let items: Vec<syn::Item> = block
+                .block
+                .stmts
+                .iter()
+                .filter_map(|stmt| match stmt {
+                    syn::Stmt::Item(item) => Some(item.clone()),
+                    _ => None,
+                })
+                .collect();
+            call_defs_in_items(&items, line_starts, defs, owners, scopes, under_cfg);
+            for stmt in &block.block.stmts {
+                if !matches!(stmt, syn::Stmt::Item(_)) {
+                    syn::visit::Visit::visit_stmt(defs, stmt);
+                }
+            }
+        }
+        // The METHOD, never `syn::visit::visit_expr`: the free fn dispatches
+        // past the override, so a top-level `f()` or `|| ..` is not seen.
+        _ => syn::visit::Visit::visit_expr(defs, expr),
+    }
+    let covered: Vec<Span> = defs.out[mark..].iter().map(|def| def.span).collect();
+    let mut sites = CallCollector {
+        line_starts,
+        sites: Vec::new(),
+        under_cfg: None,
+    };
+    syn::visit::Visit::visit_expr(&mut sites, expr);
+    let uncovered = sites.sites.iter().any(|site| {
+        !covered
+            .iter()
+            .any(|span| span.start <= site.span.start && site.span.end() <= span.end())
+    });
+    if uncovered {
+        defs.push(item_span, Some(ident.to_string()), CONST_INIT);
+    }
+    uncovered
 }
 
 /// One method's declaration before it is interned into the aux. `self_type` is
@@ -2793,6 +2926,12 @@ pub const MATCH: DfNodeKind = DfNodeKind::Ext(LangKind {
 pub const BLOCK: DfNodeKind = DfNodeKind::Ext(LangKind {
     lang: "rust",
     tag: "block",
+});
+/// A `const`/`static` item that owns calls in its initializer. Not `Free`: it
+/// is a caller and never a callee, and no other language has the shape.
+pub const CONST_INIT: CallKind = CallKind::Ext(LangKind {
+    lang: "rust",
+    tag: "const_init",
 });
 
 impl Source for RustSource {

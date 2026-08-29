@@ -1,1 +1,2 @@
 {"record":"resolved_edge","caller_path":"tests/fixtures/resolve/7_closure_caller.rs","caller_name":"closure@63","callee_path":"tests/fixtures/resolve/8_closure_callee.rs","callee_name":"helper","caller_site_start":71,"caller_site_end":77,"kind":"name_resolve"}
+{"record":"resolved_edge","caller_path":"tests/fixtures/resolve/7_closure_caller.rs","caller_name":"run","callee_path":"tests/fixtures/resolve/8_closure_callee.rs","callee_name":"helper","caller_site_start":71,"caller_site_end":77,"kind":"name_resolve"}
