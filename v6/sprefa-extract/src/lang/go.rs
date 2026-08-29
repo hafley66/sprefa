@@ -33,6 +33,7 @@ use crate::family::{
     DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
     TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
+use crate::project::ResolveDrop;
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
 use crate::seams::{
@@ -42,7 +43,7 @@ use crate::seams::{
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
-use crate::types::{PathIndex, ScipIndex};
+use crate::types::{PathIndex, ScipIndex, UnresolvedReason};
 
 // ── the tree-sitter-go parse (one parse feeds type/call/df) ──────────────────
 
@@ -2184,4 +2185,59 @@ impl Resolve<CallF> for GoSource {
         }
         edges
     }
+}
+
+// call_drops: a bare callee matching the table below drops reason `builtin`; a
+// local def sharing the name already won NameResolve, so it is in `bound`.
+
+/// Go's predeclared function identifiers (functions only).
+const GO_BUILTIN_FUNCS: &[&str] = &[
+    "append", "cap", "clear", "close", "complex", "copy", "delete", "imag", "len", "make", "max",
+    "min", "new", "panic", "print", "println", "real", "recover",
+];
+
+/// Predeclared TYPE identifiers used as a conversion call (`int32(x)`).
+const GO_BUILTIN_TYPES: &[&str] = &[
+    "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64",
+    "uintptr", "float32", "float64", "complex64", "complex128", "bool", "string", "byte", "rune",
+    "error", "any",
+];
+
+fn is_go_builtin_call(name: &str) -> bool {
+    GO_BUILTIN_FUNCS.contains(&name) || GO_BUILTIN_TYPES.contains(&name)
+}
+
+/// One `unresolved` row per dropped site whose callee is predeclared. Every
+/// other drop stays unreported, matching the go arm's pre-existing behavior.
+pub fn call_drops(
+    output: &ExtractOutput,
+    _cx: &ProjectCx,
+    edges: &[ProjectEdge<CallF>],
+) -> Vec<ResolveDrop> {
+    let Some(call) = &output.call else {
+        return Vec::new();
+    };
+    let bound: BTreeSet<(u32, u32)> = edges
+        .iter()
+        .filter_map(|edge| edge.call_site.map(|span| (span.start, span.end())))
+        .collect();
+    call.aux
+        .sites
+        .iter()
+        .filter(|site| !bound.contains(&(site.span.start, site.span.end())))
+        .filter_map(|site| {
+            if site.callee_path.is_some() {
+                return None;
+            }
+            let callee = output.strings.lookup(site.callee);
+            if !is_go_builtin_call(callee) {
+                return None;
+            }
+            Some(ResolveDrop {
+                span: site.span,
+                reason: UnresolvedReason::Builtin,
+                detail: callee.to_string(),
+            })
+        })
+        .collect()
 }

@@ -578,15 +578,22 @@ pub struct Unresolved {
 
 /// The closed v5 vocabulary (`src/engine/family/mod.rs:552-570`) plus two
 /// resolve-phase reasons (`issues/extract-unresolved-resolve-phase-reasons`).
+/// `Builtin`/`Inferred` are additive; every existing arm keeps emitting only
+/// its original reasons.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum UnresolvedReason {
     DynamicImport,
     ComputedMemberCall,
     SpreadCallArgs,
-    /// No corpus def bears the callee's name: std, a dependency, or a builtin.
+    /// No corpus def bears the callee's name: std or a dependency.
     NoCorpusDef,
     /// The corpus defines the name and this tier cannot say which one is meant.
     Ambiguous,
+    /// A predeclared identifier (builtin func or conversion), not a corpus gap.
+    Builtin,
+    /// A receiver type this tier declines to trace (a `:=` bound to a call
+    /// result), not a missing declaration.
+    Inferred,
 }
 
 impl UnresolvedReason {
@@ -597,6 +604,8 @@ impl UnresolvedReason {
             UnresolvedReason::SpreadCallArgs => "spread-call-args",
             UnresolvedReason::NoCorpusDef => "no_corpus_def",
             UnresolvedReason::Ambiguous => "ambiguous",
+            UnresolvedReason::Builtin => "builtin",
+            UnresolvedReason::Inferred => "inferred",
         }
     }
 }
