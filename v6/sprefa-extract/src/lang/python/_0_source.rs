@@ -1999,7 +1999,7 @@ impl Resolve<CallF> for PythonSource {
                     .indexes
                     .joined_documents
                     .get_or_init(|| join_documents(index, reader));
-                let blob = own_blob(output, def_index)?;
+                let blob = own_blob(cx, output)?;
                 let doc_ix = joined
                     .iter()
                     .position(|j| j.as_ref().is_some_and(|(b, _)| *b == blob))?;

@@ -1,0 +1,8 @@
+{
+  "name": "extract-bench-oracles",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

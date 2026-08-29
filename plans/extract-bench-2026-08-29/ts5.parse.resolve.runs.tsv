@@ -1,0 +1,13 @@
+src/compiler	resolve	77	0	3777	68422
+src/deprecatedCompat	resolve	3	0	679	46
+src/harness	resolve	38	0	945	3278
+src/jsTyping	resolve	6	0	773	90
+src/server	resolve	15	0	626	3383
+src/services	resolve	168	0	786	12677
+src/testRunner	resolve	279	0	784	13268
+src/tsc	resolve	2	0	1146	1
+src/tsserver	resolve	3	0	1182	34
+src/typescript	resolve	3	0	732	1
+src/typingsInstaller	resolve	1	0	1024	14
+src/typingsInstallerCore	resolve	4	0	901	44
+src/watchGuard	resolve	1	0	926	0
