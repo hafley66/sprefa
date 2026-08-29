@@ -1,4 +1,7 @@
-:- module(dl7_evaluator, [evaluate/4]).
+:- module(dl7_evaluator,
+          [ evaluate/4,
+            validate_functional_rows/3
+          ]).
 
 :- use_module(library(error), [must_be/2]).
 :- use_module(library(gensym), [gensym/2]).
@@ -22,6 +25,60 @@ evaluate(Rules, Seeds, Closure, Diagnostics) :-
         collect_closure(EvaluationId, Closure),
         clear_evaluation(EvaluationId, ClauseReferences)),
     Diagnostics = [].
+
+%% validate_functional_rows(+Relations, +Rows, -Diagnostics) is det.
+%
+% Check every declared zero-based functional key against a completed closure.
+% Complete-row set identity is already enforced by evaluate/4 sorting its
+% output. A relation with no declared keys therefore needs no additional
+% validation.
+validate_functional_rows(Relations, Rows, Diagnostics) :-
+    must_be(ground, Relations),
+    must_be(ground, Rows),
+    sort(Rows, SortedRows),
+    relation_key_diagnostics(Relations, SortedRows, Diagnostics0),
+    sort(Diagnostics0, Diagnostics).
+
+relation_key_diagnostics([], _, []).
+relation_key_diagnostics([relation(Relation, _, KeySets) | Relations], Rows,
+                         Diagnostics) :-
+    relation_rows(Relation, Rows, RelationRows),
+    key_sets_diagnostics(KeySets, Relation, RelationRows, OwnDiagnostics),
+    relation_key_diagnostics(Relations, Rows, RestDiagnostics),
+    append(OwnDiagnostics, RestDiagnostics, Diagnostics).
+
+relation_rows(_, [], []).
+relation_rows(Relation, [call(Relation, Arguments) | Rows],
+              [call(Relation, Arguments) | RelationRows]) :-
+    !,
+    relation_rows(Relation, Rows, RelationRows).
+relation_rows(Relation, [_ | Rows], RelationRows) :-
+    relation_rows(Relation, Rows, RelationRows).
+
+key_sets_diagnostics([], _, _, []).
+key_sets_diagnostics([Positions | KeySets], Relation, Rows, Diagnostics) :-
+    findall(Diagnostic,
+            functional_key_conflict(Relation, Positions, Rows, Diagnostic),
+            OwnDiagnostics),
+    key_sets_diagnostics(KeySets, Relation, Rows, RestDiagnostics),
+    append(OwnDiagnostics, RestDiagnostics, Diagnostics).
+
+functional_key_conflict(Relation, Positions, Rows,
+                        diagnostic(evaluate, none,
+                                   functional_key_conflict(
+                                       Relation, Positions, Values,
+                                       Left, Right))) :-
+    ordered_row_pair(Rows, Left, Right),
+    key_values(Left, Positions, Values),
+    key_values(Right, Positions, Values).
+
+ordered_row_pair([Left | Rows], Left, Right) :- member(Right, Rows).
+ordered_row_pair([_ | Rows], Left, Right) :- ordered_row_pair(Rows, Left, Right).
+
+key_values(call(_, Arguments), Positions, Values) :-
+    maplist(argument_at(Arguments), Positions, Values).
+
+argument_at(Arguments, Position, Value) :- nth0(Position, Arguments, Value).
 
 install_evaluation(EvaluationId, Rules, Seeds, ClauseReferences) :-
     install_rules(Rules, EvaluationId, RuleReferences),

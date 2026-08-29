@@ -5,7 +5,10 @@
 
 :- use_module(library(readutil), [read_file_to_string/3]).
 :- use_module('../0_reader/2_embedder', [dl7_text_unit/5]).
-:- use_module('../1_libtime/0_evaluator', [evaluate/4]).
+:- use_module('../1_libtime/0_evaluator',
+              [ evaluate/4,
+                validate_functional_rows/3
+              ]).
 :- use_module('0_lowerer', [lower_datalog/4]).
 :- use_module('1_checker', [check_datalog/4]).
 
@@ -67,16 +70,35 @@ evaluate_checked(
     checked_datalog(Graph,
                     datalog_program(Relations, AuthoredSeeds, Rules),
                     Depends, Strata),
-    compiled_unit(TypeGraphFacts, RuntimeProgram, CompilerFacts),
+    Compiled,
     Diagnostics) :-
     graph_seeds(Graph, GraphSeeds),
     append(GraphSeeds, AuthoredSeeds, Seeds),
-    evaluate(Rules, Seeds, CompilerFacts, Diagnostics),
+    evaluate(Rules, Seeds, CompilerFacts, EvaluationDiagnostics),
+    finish_evaluation(EvaluationDiagnostics, Relations, CompilerFacts,
+                      Graph, AuthoredSeeds, Rules, Depends, Strata,
+                      Compiled, Diagnostics).
+
+finish_evaluation([], Relations, CompilerFacts, Graph, AuthoredSeeds, Rules,
+                  Depends, Strata, Compiled, Diagnostics) :-
+    !,
+    validate_functional_rows(Relations, CompilerFacts, KeyDiagnostics),
+    finish_key_validation(KeyDiagnostics, CompilerFacts, Graph, Relations,
+                          AuthoredSeeds, Rules, Depends, Strata,
+                          Compiled, Diagnostics).
+finish_evaluation(Diagnostics, _, _, _, _, _, _, _, [], Diagnostics).
+
+finish_key_validation([], CompilerFacts, Graph, Relations, AuthoredSeeds,
+                      Rules, Depends, Strata,
+                      compiled_unit(TypeGraphFacts, RuntimeProgram,
+                                    CompilerFacts), []) :-
+    !,
     type_graph_facts(CompilerFacts, TypeGraphFacts),
     RuntimeProgram = checked_datalog(
                          Graph,
                          datalog_program(Relations, AuthoredSeeds, Rules),
                          Depends, Strata).
+finish_key_validation(Diagnostics, _, _, _, _, _, _, _, [], Diagnostics).
 
 graph_seeds(root_graph(Nodes, Edges), Seeds) :-
     maplist(node_seed, Nodes, NodeSeeds),

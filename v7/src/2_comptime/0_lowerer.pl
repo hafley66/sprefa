@@ -138,7 +138,7 @@ finish_constructor_target(
 classifier_row(product, Owner, product(Owner)).
 classifier_row(sum, Owner, sum(Owner)).
 
-constructor_relations(product, Owner, Edges, [relation(Owner, Arity)]) :-
+constructor_relations(product, Owner, Edges, [relation(Owner, Arity, [])]) :-
     include(edge_owned_by(Owner), Edges, OwnEdges),
     length(OwnEdges, Arity).
 constructor_relations(sum, _, _, []).
@@ -259,7 +259,7 @@ lower_call(node(NodeId, form([node(_, atom(Name)) | ArgumentNodes])),
     !,
     (   memberchk(reservation(Owner, Name, target(Target), product),
                   Reservations)
-    ->  memberchk(relation(Target, Arity), Relations),
+    ->  memberchk(relation(Target, Arity, _), Relations),
         length(ArgumentNodes, ObservedArity),
         (   ObservedArity =:= Arity
         ->  lower_arguments(ArgumentNodes, Owner, ArgumentResult),

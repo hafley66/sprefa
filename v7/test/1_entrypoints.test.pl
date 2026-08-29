@@ -4,6 +4,8 @@
 :- use_module(library(process), [process_create/3, process_wait/2]).
 :- use_module('../src/0_reader/3_file_loader', [load_dl7/3]).
 :- use_module('../src/2_comptime/2_compiler', [compile_dl7/4]).
+:- use_module('../src/1_libtime/0_evaluator',
+              [validate_functional_rows/3]).
 :- use_module('fixtures/1_embedded', []).
 
 test(file_and_bare_quasi_share_reader_and_expansion_pipeline) :-
@@ -47,13 +49,14 @@ test(userland_partial_maps_type_edges_deterministically) :-
                 Rows2, Runtime2, Diagnostics2),
     once(partial_snapshot(Rows1, Snapshot)),
     runtime_snapshot(Runtime1, RuntimeSnapshot),
+    runtime_key_snapshot(Runtime1, KeySnapshot),
     evaluator_snapshot(EvaluatorSnapshot),
     equality(Rows1, Rows2, RowsEqual),
     equality(Runtime1, Runtime2, RuntimeEqual),
     length(Rows1, CompilerRowCount),
     Observed = partial_result(Diagnostics1, Diagnostics2,
                               CompilerRowCount, Snapshot,
-                              RuntimeSnapshot, EvaluatorSnapshot,
+                              RuntimeSnapshot, KeySnapshot, EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
                     [], [], 59,
@@ -62,9 +65,31 @@ test(userland_partial_maps_type_edges_deterministically) :-
                              mapped(name, option(text), 1)]),
                     runtime(counts(28, 25, 11, 1, 5, 10, 11),
                             normalized(true)),
+                    keys(colon([[0, 1], [0, 3]]),
+                         cons([[0, 1], [2]]),
+                         intern([[0, 1]])),
                     evaluator(temporary_rules(0), temporary_seeds(0)),
                     true, true),
     !.
+
+test(final_closure_rejects_declared_functional_key_conflicts) :-
+    Relation = ref(kernel(':')),
+    Relations = [relation(Relation, 4, [[0, 1], [0, 3]])],
+    Rows = [ call(Relation,
+                  [ref(owner), const(name), ref(first), const(0)]),
+             call(Relation,
+                  [ref(owner), const(name), ref(second), const(1)])
+           ],
+    validate_functional_rows(Relations, Rows, Diagnostics),
+    Diagnostics ==
+        [diagnostic(evaluate, none,
+                    functional_key_conflict(
+                        Relation, [0, 1], [ref(owner), const(name)],
+                        call(Relation,
+                             [ref(owner), const(name), ref(first), const(0)]),
+                        call(Relation,
+                             [ref(owner), const(name), ref(second), const(1)]))
+                   )].
 
 partial_snapshot(Rows, Snapshot) :-
     member(call(ref(kernel(':')),
@@ -106,6 +131,13 @@ runtime_snapshot(
     ;   Normalized = false
     ).
 
+runtime_key_snapshot(
+    checked_datalog(_, datalog_program(Relations, _, _), _, _),
+    keys(colon(ColonKeys), cons(ConsKeys), intern(InternKeys))) :-
+    memberchk(relation(ref(kernel(':')), 4, ColonKeys), Relations),
+    memberchk(relation(ref(kernel(cons)), 3, ConsKeys), Relations),
+    memberchk(relation(ref(kernel(intern)), 3, InternKeys), Relations).
+
 normalized_program(Relations, Seeds, Rules, Depends, Strata) :-
     maplist(normalized_relation, Relations),
     maplist(normalized_call, Seeds),
@@ -113,7 +145,9 @@ normalized_program(Relations, Seeds, Rules, Depends, Strata) :-
     maplist(normalized_depends, Depends),
     maplist(normalized_stratum, Strata).
 
-normalized_relation(relation(ref(_), Arity)) :- integer(Arity).
+normalized_relation(relation(ref(_), Arity, KeySets)) :-
+    integer(Arity),
+    is_list(KeySets).
 normalized_call(call(ref(_), Arguments)) :- is_list(Arguments).
 normalized_rule(rule(Head, Body)) :-
     normalized_call(Head),

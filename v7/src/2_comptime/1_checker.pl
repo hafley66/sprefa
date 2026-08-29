@@ -145,8 +145,19 @@ primitive_name(any).
 primitive_name(type).
 
 kernel_relation_rows(Relations) :-
-    findall(relation(ref(kernel(Name)), Arity),
-            kernel_relation(Name, Arity), Relations).
+    findall(relation(ref(kernel(Name)), Arity, KeySets),
+            ( kernel_relation(Name, Arity),
+              kernel_relation_keys(Name, KeySets)
+            ),
+            Relations).
+
+kernel_relation_keys(':', [[0, 1], [0, 3]]).
+kernel_relation_keys(cons, [[0, 1], [2]]).
+kernel_relation_keys(intern, [[0, 1]]).
+kernel_relation_keys(node, []).
+kernel_relation_keys(module, []).
+kernel_relation_keys(product, []).
+kernel_relation_keys(sum, []).
 
 kernel_graph(
     [ node(primitive(int)),
@@ -248,7 +259,7 @@ resolve_goals([Goal | Rest], RuleIndex, GoalIndex, Edges, Nodes, Relations,
 resolve_call(call(name(Owner, Name), Args), Edges, Nodes, Relations, Result) :-
     (   resolve_name(Owner, Name, Edges, Nodes, [], Target)
     ->  (   Target = ref(_)
-        ->  (   memberchk(relation(Target, Arity), Relations)
+        ->  (   memberchk(relation(Target, Arity, _), Relations)
             ->  length(Args, ObservedArity),
                 (   ObservedArity =:= Arity
                 ->  resolve_args(Args, Edges, Nodes, ArgsResult),
@@ -329,12 +340,12 @@ strata_rows(Relations, Strata) :-
     strata_rows(Relations, [], Strata).
 
 strata_rows([], Strata, Strata).
-strata_rows([relation(Relation, _) | Rest], Acc, Strata) :-
+strata_rows([relation(Relation, _, _) | Rest], Acc, Strata) :-
     strata_rows(Rest, [stratum(Relation, 0) | Acc], Strata).
 
 relations_refs([], []).
-relations_refs([relation(Target, Arity) | Rest],
-               [relation(ref(Target), Arity) | Refs]) :-
+relations_refs([relation(Target, Arity, KeySets) | Rest],
+               [relation(ref(Target), Arity, KeySets) | Refs]) :-
     relations_refs(Rest, Refs).
 
 edge_origin(Origins, Owner, Name, Index, NodeId) :-
