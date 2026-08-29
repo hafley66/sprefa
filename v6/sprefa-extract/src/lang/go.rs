@@ -35,8 +35,8 @@ use crate::family::{
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
 use crate::seams::{
-    containing_def_site, corpus_defs, covering_def, def_named, own_blob, DefIndex, Parser, Project,
-    Resolve,
+    containing_def_site, corpus_defs, covering_def, def_named, own_blob, DefIndex, DefSite, Parser,
+    Project, Resolve,
 };
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
@@ -1932,10 +1932,8 @@ impl Resolve<TypeF> for GoSource {
 // no path and no bytes (the 4b-i gap), so identity flows through content.
 // Per-site edges, no dedup: two calls to one callee are two resolutions. A
 // site outside every CallF def (package level) emits no row — v5's call_edge
-// has no module caller. `callee_path` stays None for go: v5 go collects no
-// path (go_callee returns name+line only, so V5-IS-CORRECT keeps it empty),
-// the name-only + scip resolution does not need it, and filling it is the
-// same declared-snapshot-increment catch-up ts deferred in 4c-ii.
+// has no module caller. A site whose `callee_path` names an import takes the
+// IMPORTED leg: go binds `pkg.F` in pkg, never in the file that writes it.
 // The helper triplication with ts.rs (`call_name_match` / `scip_call_target`)
 // is DELIBERATE per the design audit's SEQUENCING RULING (2026-07-24): ALL
 // dedup lands in ONE sweep AFTER the Resolve pass (4a-4d) fully lands.
@@ -1965,6 +1963,33 @@ impl GoSource {
         let sites = corpus_defs(index, callee);
         let mut blobs: Vec<ContentId> = Vec::new();
         for site in sites {
+            if !blobs.contains(&site.blob) {
+                blobs.push(site.blob.clone());
+            }
+        }
+        let [blob] = blobs.as_slice() else {
+            return None;
+        };
+        let site = sites
+            .iter()
+            .find(|s| s.family == FamilyTag::Call)
+            .unwrap_or(&sites[0]);
+        Some((blob.clone(), site.span))
+    }
+
+    /// The name-match target of a callee written `pkg.F` for an imported `pkg`:
+    /// `own`'s defs leave the candidate set, a unique remaining blob wins.
+    pub fn call_name_match_imported(
+        index: &DefIndex,
+        own: Option<&ContentId>,
+        callee: &str,
+    ) -> Option<(ContentId, Span)> {
+        let sites: Vec<&DefSite> = corpus_defs(index, callee)
+            .iter()
+            .filter(|site| own.map_or(true, |blob| &site.blob != blob))
+            .collect();
+        let mut blobs: Vec<ContentId> = Vec::new();
+        for site in &sites {
             if !blobs.contains(&site.blob) {
                 blobs.push(site.blob.clone());
             }
@@ -2016,6 +2041,8 @@ impl Resolve<CallF> for GoSource {
         let Some(def_index) = cx.indexes.def_index.get() else {
             return Vec::new();
         };
+        // One join per FILE: both legs below ask which blob this output is.
+        let own = own_blob(output, def_index);
         // The scip leg: the corpus index + the rev-correct reader + this
         // file's own document (found by content hash). Any missing piece ->
         // pure name-match (v5-shaped).
@@ -2029,7 +2056,7 @@ impl Resolve<CallF> for GoSource {
                     .indexes
                     .joined_documents
                     .get_or_init(|| join_documents(index, reader));
-                let blob = own_blob(output, def_index)?;
+                let blob = own.clone()?;
                 let doc_ix = joined
                     .iter()
                     .position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
@@ -2044,7 +2071,10 @@ impl Resolve<CallF> for GoSource {
                 continue;
             };
             let callee = output.strings.lookup(site.callee);
-            let name_t = GoSource::call_name_match(output, def_index, callee);
+            let name_t = match site.callee_path {
+                Some(_) => GoSource::call_name_match_imported(def_index, own.as_ref(), callee),
+                None => GoSource::call_name_match(output, def_index, callee),
+            };
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
             });
