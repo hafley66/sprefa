@@ -5,6 +5,8 @@ Lane `crawl-extract-typescript-5`. Analysis only: no file under
 
 Binary `v6/sprefa-extract/target/release/extract`, built `--features cli` at
 base `483c055a3`, `Finished release profile in 1m 57s`.
+`cargo test --release --features cli` with the new fixtures in the tree:
+80 suites, 389 passed, 0 failed.
 Corpus `/Users/chrishafley/projects/TypeScript-5.9`, branch `release-5.9`,
 head `7e133bea1`, read-only. This is the last TypeScript-in-TypeScript
 compiler, so `src/` is a real 20.6 MB program rather than the npm shim the
