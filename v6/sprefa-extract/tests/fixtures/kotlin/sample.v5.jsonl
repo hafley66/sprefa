@@ -12,6 +12,8 @@ call_site	fold	37
 call_site	get	19
 call_site	map	38
 call_site	pick	31
+call_site	plus	37
+call_site	plus	38
 df_args	13	0	11
 df_args	13	1	12
 df_args	18	0	17
