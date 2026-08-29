@@ -1770,6 +1770,46 @@ fn module_scope_owns_a_call(sink: &FamilyBundle<CallF>) -> bool {
     })
 }
 
+/// Every CallF def as (span, ref), sorted by (start, end).
+fn def_spans_sorted(defs: &FamilyBundle<CallF>) -> Vec<(Span, NodeRef)> {
+    let mut sorted: Vec<(Span, NodeRef)> = defs
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(ix, node)| (node.span, NodeRef(ix as u32)))
+        .collect();
+    sorted.sort_by_key(|(span, _)| (span.start, span.end()));
+    sorted
+}
+
+/// Every def covering `site`, innermost first: the lexical chain a nested
+/// arrow closes over when it reads an outer `const`.
+fn covering_chain(sorted: &[(Span, NodeRef)], site: Span) -> Vec<NodeRef> {
+    let cut = sorted.partition_point(|(span, _)| span.start <= site.start);
+    let mut covers: Vec<(u32, NodeRef)> = sorted[..cut]
+        .iter()
+        .filter(|(span, _)| site.end() <= span.end())
+        .map(|(span, r)| (span.end() - span.start, *r))
+        .collect();
+    covers.sort_by_key(|(len, _)| *len);
+    covers.into_iter().map(|(_, r)| r).collect()
+}
+
+/// The innermost NAMED def covering `site`. `covering_def` takes the innermost
+/// def of any kind, which is the lambda wherever one is in the way.
+fn enclosing_named_def(sorted: &[(Span, NodeRef)], site: Span) -> Option<NodeRef> {
+    let cut = sorted.partition_point(|(span, _)| span.start <= site.start);
+    let mut best: Option<(Span, NodeRef)> = None;
+    for &(span, r) in &sorted[..cut] {
+        if site.end() <= span.end()
+            && best.map_or(true, |(b, _)| span.end() - span.start < b.end() - b.start)
+        {
+            best = Some((span, r));
+        }
+    }
+    best.map(|(_, r)| r)
+}
+
 fn push_def(
     sink: &mut FamilyBundle<CallF>,
     strings: &mut Strings,
@@ -3847,7 +3887,10 @@ impl Resolve<CallF> for TsSource {
         let sites = &call.aux.sites;
         let mut order: Vec<usize> = (0..sites.len()).collect();
         order.sort_by_key(|&ix| (sites[ix].span.start, sites[ix].span.end()));
-        let mut bound_types: HashMap<NodeRef, HashMap<String, String>> = HashMap::new();
+        let def_spans = def_spans_sorted(call);
+        // Per covering def, var name -> (declared type name, the blob whose
+        // scope WROTE it); a nested arrow reads it off the lexical chain.
+        let mut bound_types: HashMap<NodeRef, HashMap<String, (String, ContentId)>> = HashMap::new();
         let mut results: Vec<Option<(NodeRef, ContentId, Span, CallEdgeKind)>> =
             vec![None; sites.len()];
         for ix in order {
@@ -3863,10 +3906,12 @@ impl Resolve<CallF> for TsSource {
                 .and_then(|(modules, path)| module_target(modules, path, callee, written).ok())
                 .flatten();
             let receiver = recv_map.get(&(site.span.start, site.span.end()));
-            let recv_spec: Option<ts_receivers::RecvSpec> = match receiver {
+            // The spec, and the blob the type name was written in when the
+            // receiver came one hop through an initializer.
+            let recv_spec: Option<(ts_receivers::RecvSpec, Option<ContentId>)> = match receiver {
                 Some(ts_receivers::TypeBinding::Decl(name)) => {
                     let base = name.clone();
-                    Some(
+                    Some((
                         own_facts
                             .as_ref()
                             .and_then(|facts| facts.field_recv.get(&site.span.start))
@@ -3874,13 +3919,23 @@ impl Resolve<CallF> for TsSource {
                                 ts_receivers::RecvSpec::Field(base.clone(), field.clone())
                             })
                             .unwrap_or(ts_receivers::RecvSpec::Type(base)),
-                    )
+                        None,
+                    ))
                 }
                 Some(ts_receivers::TypeBinding::Inferred) => own_facts
                     .as_ref()
                     .and_then(|facts| facts.inferred_recv.get(&site.span.start))
-                    .and_then(|var| bound_types.get(&caller).and_then(|names| names.get(var)))
-                    .map(|bound| ts_receivers::RecvSpec::Type(bound.clone())),
+                    .and_then(|var| {
+                        covering_chain(&def_spans, site.span)
+                            .iter()
+                            .find_map(|def| bound_types.get(def).and_then(|names| names.get(var)))
+                    })
+                    .map(|(bound, ctx)| {
+                        (
+                            ts_receivers::RecvSpec::Type(bound.clone()),
+                            Some(ctx.clone()),
+                        )
+                    }),
                 Some(ts_receivers::TypeBinding::Ambiguous) | None => None,
             };
             // A traceable receiver owns the site: a member bind is the answer,
@@ -3888,13 +3943,26 @@ impl Resolve<CallF> for TsSource {
             let recv_t = match (&import_t, receiver) {
                 (Some(_), _) | (_, None) => None,
                 (None, Some(_)) => match (own.as_ref(), own_facts.as_ref()) {
-                    (Some(blob), Some(facts)) => recv_spec.as_ref().and_then(|receiver| {
+                    (Some(blob), Some(facts)) => recv_spec.as_ref().and_then(|(receiver, ctx)| {
+                        // The type name's own file anchors it: a `const x =
+                        // f()` receiver names a type the caller never imports.
+                        let ctx_facts = match ctx {
+                            Some(ctx) if ctx != blob => ts_receivers::facts_of(ctx, paths)
+                                .map(|facts| (ctx.clone(), facts)),
+                            _ => None,
+                        };
+                        let (ctx_blob, ctx_facts, ctx_path) = match &ctx_facts {
+                            Some((blob, facts)) => {
+                                (blob, facts, paths.and_then(|paths| paths.get(blob)))
+                            }
+                            None => (blob, facts, own_path(output, cx)),
+                        };
                         ts_receivers::receiver_member_target(
                             receiver,
                             callee,
-                            blob,
-                            facts,
-                            own_path(output, cx),
+                            ctx_blob,
+                            ctx_facts,
+                            ctx_path,
                             modules.map(|(modules, _)| modules),
                             paths,
                         )
@@ -3938,17 +4006,37 @@ impl Resolve<CallF> for TsSource {
                             bound_types
                                 .entry(caller)
                                 .or_default()
-                                .insert(var.clone(), declared.clone());
+                                .insert(var.clone(), (declared.clone(), dst_blob.clone()));
                         }
                     }
                 }
             }
             results[ix] = final_t.map(|((blob, span), kind)| (caller, blob, span, kind));
         }
+        // A Lambda caller (`closure@<n>`) also emits onto the innermost NAMED
+        // def covering the site; the closure row stays, it names the frame.
+        let named: Vec<(Span, NodeRef)> = def_spans
+            .iter()
+            .filter(|(_, node_ref)| call.node(*node_ref).name.is_some())
+            .copied()
+            .collect();
         for (site, result) in call.aux.sites.iter().zip(results) {
             let Some((caller, dst_blob, dst_span, kind)) = result else {
                 continue;
             };
+            if call.node(caller).name.is_none() {
+                if let Some(enclosing) = enclosing_named_def(&named, site.span) {
+                    edges.push(
+                        ProjectEdge::new(
+                            enclosing,
+                            dst_blob.clone(),
+                            dst_span,
+                            CallEdgeKind::NameResolve,
+                        )
+                        .with_call_site(site.span),
+                    );
+                }
+            }
             edges
                 .push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
         }
