@@ -23,6 +23,7 @@ first ts crawl (PR #538) landed on.
 7. [Recount of the eight kinks from PR #538](#7-recount-of-the-eight-kinks-from-pr-538)
 8. [What stays untested and why](#8-what-stays-untested-and-why)
 9. [Fixes](#9-fixes-lane-fix-extract-ts-crawl-pr-against-originmain-b9b98e3af)
+10. [Fixes: the module plane](#10-fixes-the-module-plane-lane-fix-extract-ts-module-plane)
 
 ## 1. Corpus and exclusions
 
@@ -669,3 +670,137 @@ The tag-collision and byte-stability tests iterate that list, so the new
 `module` tag is unasserted until it is added. `src/schema.rs:37` also still
 spells `position=<goal|head_arg|term_arg>`; it was already missing `closure`,
 and `value` makes four.
+
+## 10. Fixes: the module plane (lane `fix-extract-ts-module-plane`)
+
+Section 9.4 called row 3 (barrels) unfixable inside a lang arm and asked for one
+more `IndexBag` slot. That is what landed, with a wider brief: module resolution
+is the LANGUAGE'S OWN algorithm, run once per file set as its own plane, and
+every ts resolve arm binds an imported name through it. Name-matching a callee
+across files is the fallback for a name with NO import binding, never the first
+leg (user decision 2026-08-29).
+
+Same corpus, same commands, same machine: `/Users/chrishafley/projects/TypeScript-5.9`
+@ `7e133bea1`, 701 `src/**` files. Binary built `--features cli` at
+`22de779fd`. Scratch: `/tmp/ts5-module-plane`.
+
+### 10.1 What was built
+
+| piece | where |
+|---|---|
+| `ModuleFacts` off `oxc_parser`'s `ModuleRecord` + `import x = require` / `export =` | `src/lang/ts_resolve.rs` |
+| `TsModuleIndex`: every specifier resolved to a corpus file by `oxc_resolver`, def sites span-sorted per blob | same |
+| `resolve_export` per ECMA-262 16.2.1.6.3, cycle-safe on the spec's own resolveSet | same |
+| `IndexBag.ts_modules`, built after the def index | `src/types.rs`, `src/project.rs` |
+| `Resolve<CallF>` / `Resolve<TypeF>` bind through it first | `src/lang/ts.rs` |
+| `CallEdgeKind::ImportResolve` | `src/types.rs` |
+| the AMBIGUOUS stop on the drops channel | `src/lang/ts.rs` `call_drops` |
+| the `resolved_import` record + `--schema` MODULE PLANE section | `src/types.rs`, `src/schema.rs` |
+
+The spec is written per NAME. A per-name walk over a 73-star barrel is quadratic
+in a corpus that imports through it: the first implementation measured
+wall(400)/wall(200) = 2.66 against the 2.5 budget in
+`tests/54_ts_module_plane.rs`. One export TABLE per module, built on first ask
+and cached, is what ships.
+
+### 10.2 The receipt
+
+| binary | `resolved_edge` | defs | A_strict | union strict | union folded |
+|---|---|---|---|---|---|
+| PR #547 (section 9.1 "this branch") | 76,699 | 14,438 | 4,837 | 6,943 | 8,552 |
+| **this branch** | **81,256** | 14,438 | **4,866** | **7,001** | **8,616** |
+
+By kind: `name_resolve` 49,995, `import_resolve` 26,826, `value_ref` 4,435.
+`resolved_type_edge` 25,635 (was 20,883): param 8,326, field 5,367, uses 4,964,
+returns 3,089, generic 2,339, variant 1,497, impl 53.
+Cross-file edges 41,685 of 81,256; 26,825 of the 26,826 `import_resolve` edges
+cross a file boundary, which is what an import binding is for.
+
+`resolved_import`: 17,565 rows over 532 of the 701 files.
+
+| column | value |
+|---|---|
+| kind | star 15,966, local 1,192, namespace 407, indirect 0 |
+| hops | 2: 9,898, 3: 6,043, 1: 1,599, 4: 25 |
+
+`indirect` is 0 and that is the corpus, not a gap: TypeScript 5.9's
+`_namespaces/*.ts` barrels are written entirely as `export * from`, with no
+`export { x } from` line anywhere in `src/**`. The arm is covered by
+`tests/54_ts_module_plane.rs::a_renaming_reexport_binds_to_the_declared_name`.
+
+### 10.3 The ambiguity the crawl measured
+
+`ts5.resolve_analysis.py`, unchanged except for its scratch path, re-judging the
+sites that got no edge:
+
+| outcome | PR #547 | this branch |
+|---|---|---|
+| ambiguous by name, total | 11,768 | 7,976 |
+| the name is not imported here (member call on a receiver) | 8,126 | 7,658 |
+| still ambiguous inside the barrel closure | 2,399 | 56 |
+| narrows to exactly one def | 1,241 | 260 |
+| the module resolves outside the universe | 2 | 2 |
+
+All 260 remaining "narrows to exactly one def" rows are MEMBER calls: the script
+is receiver-blind and counts a site whose trailing segment merely spells an
+imported name. `src/compiler/builder.ts:13224` is
+`oldState!.changedFilesSet?.forEach(...)`, which is `Set.prototype.forEach` and
+not the `forEach` that file imports from `./_namespaces/ts.js`. The plane
+refuses it correctly; the bare-name bucket the script was written for is 0.
+
+### 10.4 Precision, checked against a second resolver
+
+Every `resolved_import` target must sit inside the `export * from` closure of the
+module its import statement names, and that closure comes from `--deps`
+(`deps.rs`, a syntactic resolver with no code shared with the plane).
+
+| check | rows |
+|---|---|
+| target inside the `--deps` reexport closure | 17,565 |
+| target OUTSIDE the closure | 0 |
+| no module, or module outside the universe | 0 |
+
+### 10.5 Cost
+
+| measure | PR #547 | this branch |
+|---|---|---|
+| `--resolve --family call,type` over 701 files, wall | 2 s | 3.10 s |
+| rows | 95,972 | 124,456 |
+
+Under the 10-second law. The added second is one extra `oxc` parse per ts input
+(`ParserReturn::module_record` borrows the arena `dispatch` drops, and the
+`Parser` seam is language-generic and returns a `Program` alone) plus one
+`oxc_resolver` answer per distinct (directory, specifier).
+
+### 10.6 Zero `unresolved` rows on this corpus
+
+The ts drops channel fires ONLY on the spec's AMBIGUOUS outcome: two `export *`
+arms of one barrel offering different bindings for one name. TypeScript 5.9's
+`src/**` has none, so the run emits no `unresolved` row. The arm is covered by
+`tests/54_ts_module_plane.rs::two_disagreeing_star_arms_are_ambiguous_and_say_so`.
+Every OTHER unbound ts site stays silent on purpose: a row per free name would
+be 23,894 rows on this corpus and the name-match tier has no opinion to record.
+
+### 10.7 Three receipts this lane had to re-seat
+
+Each asserted a limit the plane removed. None was deleted.
+
+| test | the claim | where it moved |
+|---|---|---|
+| `8_scip_families_cli.rs` | "two corpus defs named `helper` make the call unresolvable by name match" | to a RECEIVER-TYPED call (`tests/fixtures/ts/scip/{delta,epsilon}.ts`), which a name match still cannot reach. The old shape stays as the plane's own assertion. |
+| `4_capability_parity.rs` | a `resolved_edge` row proves a SCIP index was consumed | `CliReach::Emits` gains `field`; the two SCIP capabilities witness `kind=scip_override` |
+| `5_scip_facts_cli.rs` | the ts scip root folds to exactly one `file_edge` | two, the new fixture pair adds one real import crossing |
+
+### 10.8 Gate
+
+`cargo test --release --features cli --no-fail-fast`: 447 passed, 0 failed.
+
+### 10.9 What stays untested and why
+
+| gap | why |
+|---|---|
+| `export =` on the CONSUMER side beyond `default` | `export = ns` where `ns` is a namespace declaration makes `m.f` a member of a namespace, which is intra-file scope resolution and not a module-plane question |
+| a specifier resolving into `node_modules` | the plane keeps corpus targets only, the same boundary `--deps` draws |
+| the go and rust `resolved_import` arms | the record shape is declared for them; the planes are not built |
+| `import()` and `require()` with a literal argument | they carry `specifier` rows but bind no NAME, so ResolveExport has nothing to ask for |
+| a second `--resolve` over the same tree after an edit | the plane is built per run; no incremental invalidation is claimed |
