@@ -1,6 +1,43 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-29 10:59 EDT
+Updated: 2026-08-29 12:18 EDT
+
+## Current execution state
+
+```text
+Tree-sitter reader                    done
+root datums -> checked Datalog        done
+shared positive evaluator            done
+userland Partial                      done
+compiler stage split                  done
+engine seam contract                  done
+
+                     ┌-> relational cons ───────────┐
+compiler split ──────┼-> stratified negation -> count ─> Pick/Exclude
+                     └-> layout -> ProgramJson ────────> engine smoke
+```
+
+- Runtime shootout landed through `1f1a67a30`: SBCL, SWI, and Racket all
+  materialize exact chain and ring closures. The independent full run emitted
+  45 measurement records in 24 seconds.
+- `@dl7-pick-exclude` reached its planned stop. The checked program currently
+  has positive calls, positive dependency rows, stratum 0, constructing
+  `cons/3`, and no dense-rank representation. Receipt: `16abb82ad` and
+  `v7/tasks/results/8_PICK_EXCLUDE.md`.
+- The engine contract report landed as `1c5523a1c`. Existing Rust source
+  changes required: 0. V7 still owes a layout graph and ProgramJson/module
+  writer before `@dl7-engine-smoke` can run.
+- The comptime compiler split landed as `8fda71fa7` and its issue receipt as
+  `f86f924a2`. Nonblank, noncomment lines are 287 in `0_lowerer.pl`, 293 in
+  `1_checker.pl`, and 91 in `2_compiler.pl`. Predicate-name inventory is
+  unchanged; SWI passed 7 of 7 and Tree-sitter passed 1 of 1.
+- The extension DAG landed as `bf2f2bc4c`. `@dl7-relational-cons` and
+  `@dl7-stratified-negation` are unblocked; `@dl7-count-aggregate` follows
+  negation; Pick/Exclude follows all three. `@dl7-layout-planner` is also
+  unblocked and runs independently.
+- Active agents at this entry: Sol review of the Datalog extension boundaries,
+  Terra layout planning, Luna commercial Common Prolog research, and Terra
+  logadat execution.
 
 ## Tree-sitter parser replacement
 
