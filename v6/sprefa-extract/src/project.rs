@@ -206,6 +206,14 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         .def_index
         .set(build_def_index(&pairs))
         .expect("fresh project definition index");
+    cx.indexes
+        .paths
+        .set(crate::types::build_path_index(
+            inputs
+                .iter()
+                .map(|input| (input.blob.clone(), input.path.as_str())),
+        ))
+        .expect("fresh project path index");
     if let Some(index) = scip_index {
         cx.indexes
             .scip_index

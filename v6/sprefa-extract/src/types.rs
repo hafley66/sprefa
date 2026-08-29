@@ -1445,11 +1445,37 @@ pub struct ManifestMap;
 ///   hand. `Resolve<CallF>` reads it for the ScipOverride leg; an unset slot
 ///   means pure name-match resolution (no scip oracle loaded).
 /// - `joined_documents`: index x reader, ONE slot; per FILE it is 82x129 reads.
+/// - `paths`: blob -> supplied path. ONE lang-agnostic slot for the arms whose
+///   rule is about where a file SITS (go binds `pkg.F` in a directory).
 #[derive(Default)]
 pub struct IndexBag {
     pub def_index: std::sync::OnceLock<DefIndex>,
     pub scip_index: std::sync::OnceLock<ScipIndex>,
     pub joined_documents: std::sync::OnceLock<Vec<Option<(ContentId, Vec<u8>)>>>,
+    pub paths: std::sync::OnceLock<PathIndex>,
+}
+
+/// Blob -> supplied path, for the whole resolve universe. Built ONCE per
+/// refresh beside the `DefIndex`, from the same inputs; never a re-read.
+#[derive(Clone, Debug, Default)]
+pub struct PathIndex {
+    pub map: std::collections::HashMap<ContentId, String>,
+}
+
+impl PathIndex {
+    pub fn get(&self, blob: &ContentId) -> Option<&str> {
+        self.map.get(blob).map(String::as_str)
+    }
+}
+
+/// Build the `PathIndex` from the (blob, path) pairs the resolve was handed.
+/// Two identical files share one blob; the FIRST path supplied wins.
+pub fn build_path_index<'a>(inputs: impl IntoIterator<Item = (ContentId, &'a str)>) -> PathIndex {
+    let mut index = PathIndex::default();
+    for (blob, path) in inputs {
+        index.map.entry(blob).or_insert_with(|| path.to_string());
+    }
+    index
 }
 
 // ── the corpus name index + shared resolve helpers (ADDENDUM 4a) ────────────

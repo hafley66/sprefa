@@ -128,7 +128,7 @@ fn generated_module(dir: &std::path::Path, pairs: usize) -> Vec<String> {
     let mut alpha = String::from("package alpha\n\n");
     let mut beta = String::from("package beta\n\n");
     let mut gamma = String::from(
-        "package gamma\n\nimport (\n\t\"example.com/gen/alpha\"\n\tb \"example.com/gen/beta\"\n)\n\n",
+        "package gamma\n\nimport (\n\t\"strings\"\n\n\t\"example.com/gen/alpha\"\n\tb \"example.com/gen/beta\"\n)\n\n",
     );
     for i in 0..pairs {
         alpha.push_str(&format!("func Helper{i}() int {{ return {i} }}\n"));
@@ -139,6 +139,9 @@ fn generated_module(dir: &std::path::Path, pairs: usize) -> Vec<String> {
         ));
         gamma.push_str(&format!("func CallB{i}() int {{ return b.Only{i}() }}\n"));
     }
+    // An external import naming a callee the corpus DOES declare: `strings` is
+    // outside the module, so `strings.Only0` has no corpus target at all.
+    gamma.push_str("func CallExternal() int { return strings.Only0() }\n");
     let files = [
         (dir.join("alpha/alpha.go"), alpha),
         (dir.join("beta/beta.go"), beta),
@@ -153,42 +156,70 @@ fn generated_module(dir: &std::path::Path, pairs: usize) -> Vec<String> {
         .collect()
 }
 
-/// 40 cross-package calls, 20 of them on a name both packages export. Every
-/// edge that IS minted names the package the import names: a call written
-/// `b.Only3()` never lands in alpha, and no call lands back in gamma.
-///
-/// The 20 ambiguous `alpha.Helper{i}` calls resolve to nothing today: telling
-/// alpha's `Helper3` from beta's needs the callee's package directory, and the
-/// resolve seam carries no path for a candidate def (`DefSite` is
-/// blob/span/family, `ProjectCx.files` is a unit struct). Reported, not
-/// asserted, so this test never pins the gap as correct.
+/// 40 cross-package calls, 20 of them on a name BOTH packages export. All 40
+/// resolve, each into the package its import names: `alpha.Helper3` picks
+/// alpha's, `b.Only3` picks beta's, and nothing lands back in gamma.
 #[test]
-fn a_cross_package_call_never_lands_in_the_wrong_package() {
+fn every_cross_package_call_resolves_into_the_package_the_import_names() {
     let dir = std::env::temp_dir().join("sprefa-extract-51-cross-package");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let paths = generated_module(&dir, 20);
     let edges = resolved_edges(&paths);
 
-    let unique: Vec<&(String, String, String)> =
-        edges.iter().filter(|e| e.1.starts_with("Only")).collect();
+    let helper: Vec<&(String, String, String)> = edges
+        .iter()
+        .filter(|e| e.0.starts_with("CallA") && e.1.starts_with("Helper"))
+        .collect();
+    let only: Vec<&(String, String, String)> = edges
+        .iter()
+        .filter(|e| e.0.starts_with("CallB") && e.1.starts_with("Only"))
+        .collect();
     assert_eq!(
-        unique.len(),
-        20,
-        "every corpus-unique cross-package callee resolves: {unique:?}"
+        (helper.len(), only.len()),
+        (20, 20),
+        "40 cross-package calls, 40 edges: ambiguous {} unique {}",
+        helper.len(),
+        only.len()
     );
-    for edge in &edges {
+    for edge in &helper {
         assert!(
-            !edge.2.ends_with("gamma/gamma.go"),
-            "a cross-package call bound the calling package: {edge:?}"
+            edge.2.ends_with("alpha/alpha.go"),
+            "alpha.Helper landed outside alpha: {edge:?}"
         );
-        if edge.1.starts_with("Only") {
-            assert!(
-                edge.2.ends_with("beta/beta.go"),
-                "b.Only bound a package the import does not name: {edge:?}"
-            );
-        }
     }
+    for edge in &only {
+        assert!(
+            edge.2.ends_with("beta/beta.go"),
+            "b.Only landed outside beta: {edge:?}"
+        );
+    }
+    assert!(
+        !edges.iter().any(|e| e.2.ends_with("gamma/gamma.go")),
+        "a cross-package call bound the calling package: {edges:?}"
+    );
+}
+
+/// `strings.Only0()` names a package outside the module, so it has no corpus
+/// target however many `Only0`s the corpus declares. A unique corpus name is
+/// not evidence that the imported package is the one that declares it.
+#[test]
+fn a_call_through_an_external_import_resolves_to_nothing() {
+    let dir = std::env::temp_dir().join("sprefa-extract-51-external");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let paths = generated_module(&dir, 20);
+    let edges = resolved_edges(&paths);
+
+    let external: Vec<&(String, String, String)> = edges
+        .iter()
+        .filter(|edge| edge.0 == "CallExternal")
+        .collect();
+
+    assert!(
+        external.is_empty(),
+        "a stdlib-qualified call bound a corpus def: {external:?}"
+    );
 }
 
 /// A file that declares its own `Helper` and calls `alpha.Helper()` binds the

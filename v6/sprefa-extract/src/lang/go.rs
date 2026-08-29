@@ -25,6 +25,7 @@
 // @comment-ok: the module header is a crate-level doc block predating the rail
 
 use std::collections::BTreeSet;
+use std::path::{Component, Path, PathBuf};
 
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
@@ -41,7 +42,7 @@ use crate::seams::{
 use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
-use crate::types::ScipIndex;
+use crate::types::{PathIndex, ScipIndex};
 
 // ── the tree-sitter-go parse (one parse feeds type/call/df) ──────────────────
 
@@ -1977,6 +1978,26 @@ impl GoSource {
         Some((blob.clone(), site.span))
     }
 
+    /// The name-match target of a callee written `pkg.F` where the import path
+    /// names `dir`: only defs whose file SITS in `dir` are candidates.
+    pub fn call_name_match_in_package(
+        index: &DefIndex,
+        paths: &PathIndex,
+        dir: &Path,
+        callee: &str,
+    ) -> Option<(ContentId, Span)> {
+        let sites: Vec<&DefSite> = corpus_defs(index, callee)
+            .iter()
+            .filter(|site| {
+                paths
+                    .get(&site.blob)
+                    .and_then(|path| Path::new(path).parent())
+                    .is_some_and(|parent| same_dir(parent, dir))
+            })
+            .collect();
+        unique_blob(&sites)
+    }
+
     /// The name-match target of a callee written `pkg.F` for an imported `pkg`:
     /// `own`'s defs leave the candidate set, a unique remaining blob wins.
     pub fn call_name_match_imported(
@@ -1988,21 +2009,76 @@ impl GoSource {
             .iter()
             .filter(|site| own.map_or(true, |blob| &site.blob != blob))
             .collect();
-        let mut blobs: Vec<ContentId> = Vec::new();
-        for site in &sites {
-            if !blobs.contains(&site.blob) {
-                blobs.push(site.blob.clone());
-            }
-        }
-        let [blob] = blobs.as_slice() else {
-            return None;
-        };
-        let site = sites
-            .iter()
-            .find(|s| s.family == FamilyTag::Call)
-            .unwrap_or(&sites[0]);
-        Some((blob.clone(), site.span))
+        unique_blob(&sites)
     }
+}
+
+/// The one blob `sites` name, with the CallF facet's span preferred; two blobs
+/// are an ambiguity this tier does not settle.
+fn unique_blob(sites: &[&DefSite]) -> Option<(ContentId, Span)> {
+    let mut blobs: Vec<&ContentId> = Vec::new();
+    for site in sites {
+        if !blobs.contains(&&site.blob) {
+            blobs.push(&site.blob);
+        }
+    }
+    let [blob] = blobs.as_slice() else {
+        return None;
+    };
+    let site = sites
+        .iter()
+        .find(|s| s.family == FamilyTag::Call)
+        .unwrap_or(&sites[0]);
+    Some(((*blob).clone(), site.span))
+}
+
+/// The go module owning a file: the nearest ancestor directory holding a
+/// `go.mod`, with that file's `module` line.
+struct GoModule {
+    root: PathBuf,
+    module: String,
+}
+
+/// Walk up from `path` for the `go.mod` that names the module the file is in.
+/// None: no ancestor has one, or the one found declares no module.
+fn go_module_of(path: &str) -> Option<GoModule> {
+    let mut dir = Path::new(path).parent()?;
+    loop {
+        if let Ok(text) = std::fs::read_to_string(dir.join("go.mod")) {
+            let module = text
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("module "))?;
+            return Some(GoModule {
+                root: dir.to_path_buf(),
+                module: module.trim().to_string(),
+            });
+        }
+        dir = dir.parent()?;
+    }
+}
+
+/// The directory an import path names inside `module`. None = outside the
+/// module (stdlib or third-party), which no corpus file declares.
+fn go_package_dir(module: &GoModule, import_path: &str) -> Option<PathBuf> {
+    if import_path == module.module {
+        return Some(module.root.clone());
+    }
+    let rel = import_path
+        .strip_prefix(&module.module)?
+        .strip_prefix('/')?;
+    Some(module.root.join(rel))
+}
+
+/// Directory equality over supplied paths: `./a/x.go` and `a/x.go` name one
+/// directory, and no arm may resolve on the spelling difference.
+fn same_dir(left: &Path, right: &Path) -> bool {
+    let strip = |path: &Path| -> Vec<std::ffi::OsString> {
+        path.components()
+            .filter(|part| !matches!(part, Component::CurDir))
+            .map(|part| part.as_os_str().to_os_string())
+            .collect()
+    };
+    strip(left) == strip(right)
 }
 
 /// The scip-resolved corpus target of one call site: the site's occurrence
@@ -2041,8 +2117,15 @@ impl Resolve<CallF> for GoSource {
         let Some(def_index) = cx.indexes.def_index.get() else {
             return Vec::new();
         };
-        // One join per FILE: both legs below ask which blob this output is.
+        // One join per FILE: every leg below asks which blob this output is,
+        // and the go.mod walk is per file, never per call site.
         let own = own_blob(output, def_index);
+        let paths = cx.indexes.paths.get();
+        let module = own
+            .as_ref()
+            .zip(paths)
+            .and_then(|(blob, paths)| paths.get(blob))
+            .and_then(go_module_of);
         // The scip leg: the corpus index + the rev-correct reader + this
         // file's own document (found by content hash). Any missing piece ->
         // pure name-match (v5-shaped).
@@ -2071,8 +2154,15 @@ impl Resolve<CallF> for GoSource {
                 continue;
             };
             let callee = output.strings.lookup(site.callee);
-            let name_t = match site.callee_path {
-                Some(_) => GoSource::call_name_match_imported(def_index, own.as_ref(), callee),
+            let name_t = match site.callee_path.map(|id| output.strings.lookup(id)) {
+                // With the module in hand the import path names ONE directory,
+                // and a path outside the module names no corpus file at all.
+                Some(import) => match (&module, paths) {
+                    (Some(module), Some(paths)) => go_package_dir(module, import).and_then(|dir| {
+                        GoSource::call_name_match_in_package(def_index, paths, &dir, callee)
+                    }),
+                    _ => GoSource::call_name_match_imported(def_index, own.as_ref(), callee),
+                },
                 None => GoSource::call_name_match(output, def_index, callee),
             };
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
