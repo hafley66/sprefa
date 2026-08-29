@@ -1,6 +1,6 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-29 00:12 EDT
+Updated: 2026-08-29 00:38 EDT
 
 ## Basement restart
 
@@ -260,3 +260,28 @@ receipt([call(ref(edge),[const(a),const(b)]),call(ref(edge),[const(b),const(c)])
 The receipt proves duplicate seed collapse, two-hop recursive closure,
 same-variable matching, an isolated second invocation, and zero remaining
 temporary rule or seed clauses. No test file was added.
+
+## Type graph and userland Partial
+
+- Added phase-independent kernel relations `cons/3` and `intern/3` to libtime.
+  `cons/3` builds a closed ordered argument list; `intern/3` returns the
+  structural `application(Constructor, Arguments)` identity.
+- The checked compiler now exposes `node/1`, `module/1`, `product/1`, `sum/1`,
+  `:/4`, `cons/3`, and `intern/3` as relation-shaped kernel nodes with ordinary
+  product classifiers and colon edges.
+- Added `v7/src/2_comptime/1_type_compiler.pl`. Root graph rows become ordinary
+  evaluator seeds, authored rules close through libtime, and the artifact is
+  `compiled_unit(TypeGraphFacts, RuntimeProgram, CompilerFacts)`.
+- Added `v7/prelude/0_types.dl7`. Partial and Option construction, node
+  classification, and edge mapping are authored entirely as DL7 rules.
+- `v7/test/fixtures/2_partial.dl7` declares `User(id: int, name: text)` and one
+  ground Partial request. No test module was added.
+- Normalized direct receipt:
+
+```text
+receipt([],[],59,partial(user,[mapped(id,option(int)),mapped(name,option(text))]),repeat(true,true))
+```
+
+The receipt checks both generated edges, canonical application identities,
+ordinary node and product facts, and byte-equal terms from two compilations in
+one SWI process.

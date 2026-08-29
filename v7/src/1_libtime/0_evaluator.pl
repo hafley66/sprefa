@@ -52,11 +52,31 @@ proves(EvaluationId, Head) :-
     evaluation_rule(EvaluationId, Rule),
     instantiate_rule(Rule, Head, Body),
     proves_body(Body, EvaluationId).
+proves(_, call(ref(kernel(cons)), [Head, Tail, List])) :-
+    ground(Head),
+    ground(Tail),
+    cons_value(Head, Tail, List).
+proves(_, call(ref(kernel(intern)), [Constructor, Arguments, Result])) :-
+    ground(Constructor),
+    ground(Arguments),
+    intern_value(Constructor, Arguments, Result).
 
 proves_body([], _).
 proves_body([Call | Calls], EvaluationId) :-
     proves(EvaluationId, Call),
     proves_body(Calls, EvaluationId).
+
+cons_value(Head, const(symbol(nil)), const([Head])).
+cons_value(Head, const(Tail), const([Head | Tail])) :-
+    is_list(Tail).
+
+intern_value(ref(Constructor), const(TaggedArguments),
+             ref(application(Constructor, Arguments))) :-
+    is_list(TaggedArguments),
+    maplist(semantic_argument, TaggedArguments, Arguments).
+
+semantic_argument(ref(Identity), Identity).
+semantic_argument(const(Value), Value).
 
 %% instantiate_rule(+Rule, -Head, -Body) is det.
 %

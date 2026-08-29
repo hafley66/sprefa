@@ -270,6 +270,18 @@ lower_call(node(NodeId, form([node(_, atom(Name)) | ArgumentNodes])),
         )
     ;   memberchk(reservation(Owner, Name, _, _), Reservations)
     ->  Result = error(diagnostic(lower, NodeId, not_relation(Name)))
+    ;   kernel_relation(Name, Arity)
+    ->  length(ArgumentNodes, ObservedArity),
+        (   ObservedArity =:= Arity
+        ->  lower_arguments(ArgumentNodes, Owner, ArgumentResult),
+            (   ArgumentResult = ok(Arguments)
+            ->  Result = ok(call(name(Owner, Name), Arguments))
+            ;   Result = ArgumentResult
+            )
+        ;   Result = error(diagnostic(
+                               lower, NodeId,
+                               arity_mismatch(Name, Arity, ObservedArity)))
+        )
     ;   Result = error(diagnostic(lower, NodeId, undeclared_relation(Name)))
     ).
 lower_call(Node, _, _, _, error(diagnostic(lower, NodeId, expected_call))) :-
@@ -317,7 +329,10 @@ check_datalog(basement_program(root_graph(Nodes, PendingEdges),
               Origins, Checked, Diagnostics) :-
     !,
     must_be(ground, Origins),
-    relations_refs(Relations0, Relations),
+    relations_refs(Relations0, SourceRelations),
+    kernel_relation_rows(KernelRelations),
+    append(SourceRelations, KernelRelations, AllRelations),
+    sort(AllRelations, Relations),
     bind_diagnostics(PendingEdges, Origins, BindDiags),
     resolve_edges(PendingEdges, PendingEdges, Nodes, Origins, ColonEdges,
                   EdgeDiags),
@@ -330,9 +345,12 @@ check_datalog(basement_program(root_graph(Nodes, PendingEdges),
     ->  depends_rows(Rules, Depends0),
         sort(Depends0, Depends),
         strata_rows(Relations, Strata),
-        msort(ColonEdges, SortedEdges),
+        kernel_graph(KernelNodes, KernelEdges),
+        append(Nodes, KernelNodes, CheckedNodes),
+        append(ColonEdges, KernelEdges, AllEdges),
+        msort(AllEdges, SortedEdges),
         msort(Relations, SortedRelations),
-        Checked = checked_datalog(root_graph(Nodes, SortedEdges),
+        Checked = checked_datalog(root_graph(CheckedNodes, SortedEdges),
                                   datalog_program(SortedRelations, Seeds, Rules),
                                   Depends, Strata),
         Diagnostics = []
@@ -425,6 +443,9 @@ resolve_name(Owner, Name, Edges, Nodes, Visited, Resolved) :-
     ;   parent_owner(Owner, Edges, Parent),
         resolve_name(Parent, Name, Edges, Nodes, [Owner | Visited], Resolved)
     ;   memberchk(module(Owner), Nodes),
+        kernel_relation(Name, _),
+        Resolved = ref(kernel(Name))
+    ;   memberchk(module(Owner), Nodes),
         primitive_name(Name),
         Resolved = ref(primitive(Name))
     ).
@@ -436,6 +457,47 @@ primitive_name(int).
 primitive_name(text).
 primitive_name(any).
 primitive_name(type).
+
+kernel_relation(node, 1).
+kernel_relation(module, 1).
+kernel_relation(product, 1).
+kernel_relation(sum, 1).
+kernel_relation(':', 4).
+kernel_relation(cons, 3).
+kernel_relation(intern, 3).
+
+kernel_relation_rows(Relations) :-
+    findall(relation(ref(kernel(Name)), Arity),
+            kernel_relation(Name, Arity), Relations).
+
+kernel_graph(
+    [ node(primitive(int)),
+      node(primitive(text)),
+      node(primitive(any)),
+      node(primitive(type)),
+      node(kernel(node)), product(kernel(node)),
+      node(kernel(module)), product(kernel(module)),
+      node(kernel(product)), product(kernel(product)),
+      node(kernel(sum)), product(kernel(sum)),
+      node(kernel(':')), product(kernel(':')),
+      node(kernel(cons)), product(kernel(cons)),
+      node(kernel(intern)), product(kernel(intern))
+    ],
+    [ ':'(kernel(node), id, ref(primitive(type)), 0),
+      ':'(kernel(module), id, ref(primitive(type)), 0),
+      ':'(kernel(product), id, ref(primitive(type)), 0),
+      ':'(kernel(sum), id, ref(primitive(type)), 0),
+      ':'(kernel(':'), owner, ref(primitive(type)), 0),
+      ':'(kernel(':'), name, ref(primitive(text)), 1),
+      ':'(kernel(':'), target, ref(primitive(any)), 2),
+      ':'(kernel(':'), index, ref(primitive(int)), 3),
+      ':'(kernel(cons), head, ref(primitive(any)), 0),
+      ':'(kernel(cons), tail, ref(primitive(any)), 1),
+      ':'(kernel(cons), return, ref(primitive(any)), 2),
+      ':'(kernel(intern), constructor, ref(primitive(type)), 0),
+      ':'(kernel(intern), arguments, ref(primitive(any)), 1),
+      ':'(kernel(intern), return, ref(primitive(type)), 2)
+    ]).
 
 %% Seeds resolve to ground calls over declared product relations.
 resolve_seeds([], _, _, _, _, _, [], []).

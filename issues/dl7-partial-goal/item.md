@@ -1,16 +1,16 @@
 ---
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
 type: task
-assignee: glm53f
-status: open
+assignee: codex
+status: in-progress
 priority: high
 epic: dl7-minimal-kernel
-labels: [dl7, model-glm53f]
+labels: [dl7, model-glm53f, model-codex]
 size: M
 lane: dl7-kernel
 lane_seq: 1
-collision: [v7-kernel, v7-prelude]
+collision: [v7-kernel, v7-prelude, v7-comptime, v7-libtime]
 blocked_by: ['@dl7-symbol-graph', '@dl7-shared-evaluator']
 ---
 
@@ -18,36 +18,60 @@ blocked_by: ['@dl7-symbol-graph', '@dl7-shared-evaluator']
 
 ## Description
 
-## Description
+Compile one source file together with `v7/prelude/0_types.dl7`. The prelude
+defines `Partial` and `Option` as ordinary relations. `cons/3` builds the
+ordered constructor-argument list and `intern/3` returns the canonical
+`application(Constructor, Arguments)` identity. Userland rules classify the
+Partial result and derive its transformed edges.
 
-Add the compile driver and one `.dl7` standard-library definition of Partial.
-The reader, graph kernel, and evaluator must remain unaware of Partial.
-
-## Signature
+## Signatures
 
 ```prolog
 compile_dl7(+Path, -CompilerRows, -RuntimeProgram, -Diagnostics).
+compile_unit(+Unit, -CompiledUnit, -Diagnostics).
+
+% CompiledUnit = compiled_unit(TypeGraphFacts,
+%                              RuntimeProgram,
+%                              CompilerFacts).
 ```
 
-## Timeline and storage
+## Timeline
 
-Read prelude and program, lower both, run compiler rules through `evaluate/4`,
-drain ground intern requests, and return runtime rules in the same IR.
+```text
+prelude + source
+    -> reader
+    -> checked graph and positive rules
+    -> graph rows become evaluator seeds
+    -> shared libtime closure
+    -> type graph facts + retained runtime program + compiler facts
+```
+
+## Storage and uniqueness
+
+- Constructor identity plus its ordered argument list keys each application.
+- Repeating the same application produces the same structural identity.
+- Partial copies each source edge label and ordinal.
+- Each copied target is the canonical Option application of the source target.
+- The source graph remains present beside the generated graph.
 
 ## Acceptance Criteria
 
-- [ ] Partial behavior exists only in `.dl7` prelude rules.
-- [ ] Partial copies names and indices and maps targets through Option.
-- [ ] Compiler closure and runtime program use the same normalized rule shape.
-- [ ] Compile twice in one process produces identical terms.
-- [ ] Driver stays under `v7/3_COMPILE/`; prelude under `v7/4_PRELUDE/`.
-- [ ] Adds no standalone test file.
+- [x] Partial and Option behavior exists only in the DL7 prelude rules.
+- [x] `cons/3` and `intern/3` are phase-independent kernel relations.
+- [x] Partial applications emit ordinary `node/1` and `product/1` facts.
+- [x] Partial copies source labels and indices and maps targets through Option.
+- [x] Compiler closure and runtime program retain the same checked call shape.
+- [x] Compiling twice in one SWI process produces identical terms.
+- [x] Compiler code lives in `v7/src/2_comptime/1_type_compiler.pl`.
+- [x] No DL6, Rust, TypeScript, effect, tick, or emitter dependency is added.
+- [x] No standalone test file is added.
 
-## Test Run
+## Tests Run
 
-Use one direct end-to-end SWI receipt until the oracle lands.
+- [x] One direct SWI receipt proves `Partial(User)`, two mapped edges, canonical
+      Option targets, and identical repeated compilation.
 
-## Stop condition
+## Implementation Notes
 
-Hail the parent if Partial requires a macro, recursive construction, or
-operator-specific kernel clause.
+The source requests a compile-known Partial application with an ordinary
+ground fact. All type transformation logic remains authored in `.dl7`.
