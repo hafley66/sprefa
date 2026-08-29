@@ -1,0 +1,300 @@
+UseCaseSensitiveFileNames	direct	19	n	310:path := uri.Path(fs.fs.UseCaseSensitiveFileNames())
+getGlobalNonNullableTypeInstantiation	direct	1	n	31293:return c.getGlobalNonNullableTypeInstantiation(t) || 31331:func (c *Checker) getGlobalNonNullableTypeInstantiation(t *Type) *Type {
+transformCommonJSModule$1	closure	0	n	
+NewPropertyAccessExpression	direct	1	n	1299:tx.Factory().NewPropertyAccessExpression(visitedTarget, node.QuestionDotToken, tx.Factory().NewIdentifier("cal || 1308:tx.Factory().NewPropertyAccessExpression(visitedTarget, nil, tx.Factory().NewIdentifier("call"), ast.NodeFlags || 1344:tx.Factory().NewPropertyAccessExpression(tx.Visitor().VisitNode(target), nil, tx.Factory().NewIdentifier("bind
+FileExists	direct	23	n	813:if orchestrator.host.FS().FileExists(outputFile) {
+UseCaseSensitiveFileNames	direct	19	n	227:func (p *Program) UseCaseSensitiveFileNames() bool { || 228:return p.Host().FS().UseCaseSensitiveFileNames() || 249:canonicalFileName := tspath.GetCanonicalFileName(fileName, p.UseCaseSensitiveFileNames())
+ConfigName	direct	1	n	185:return ast.NewCompilerDiagnostic(diagnostics.Matched_by_include_pattern_0_in_1, matchedIncludeSpec, toFileName
+checkArrayLiteralDestructuringElementAssignment$1	closure	0	n	
+VisitEachChild	direct	170	y	53:visited := tx.Visitor().VisitEachChild(node.AsNode()) || 90:return tx.Visitor().VisitEachChild(node) || 119:return tx.fallbackNodeVisitor.VisitEachChild(node)
+Initializer	direct	1	n	1940:if declaration.Pos() <= usage.Pos() && !(ast.IsPropertyDeclaration(declaration) && isThisProperty(usage.Parent || 2031:initializerOfProperty := propertyDeclaration.Initializer() == current || 2685:if node.Initializer() == nil && isOptionalDeclaration(node) && ast.IsBindingPattern(node.Name()) && fn.Body() 
+runKind	direct	1	n	89:r.runKind(t, configuredName, extension, units, options, harnessOptions, false) || 92:r.runKind(t, configuredName, extension, units, options, harnessOptions, true) || 104:func (r *TranspileBaselineRunner) runKind(
+EmitContext	direct	2	n	181:tx.modifierVisitor = tx.EmitContext().NewNodeVisitor(tx.visitModifier) || 182:tx.discardedValueVisitor = tx.EmitContext().NewNodeVisitor(tx.visitDiscardedValue) || 183:tx.heritageClauseVisitor = tx.EmitContext().NewNodeVisitor(tx.visitHeritageClause)
+ChangedPaths$1	closure	0	n	
+ResolvePath	direct	0	n	328:option := tspath.ResolvePath(symlinkDirectory, relative)
+IsPrivateIdentifierClassElementDeclaration	direct	0	n	2915:return ast.IsPrivateIdentifierClassElementDeclaration(n) || ast.IsPropertyDeclaration(n) && !ast.IsStatic(n) & || 4289:return ast.HasStaticModifier(p) && ast.IsPrivateIdentifierClassElementDeclaration(p) || 10161:(ast.IsPrivateIdentifierClassElementDeclaration(member) ||
+AsObjectLiteralExpression	direct	1	n	3256:p.emitObjectLiteralExpression(node.AsObjectLiteralExpression())
+InsertNodeAfter	direct	1	n	139:changeTracker.InsertNodeAfter(
+findChildNode$1	closure	0	n	
+AsNode	direct	2	y	75:n := data.AsNode() || 192:func (n *Node) AsNode() *Node { return n } || 1182:AsNode() *Node
+AsImportClause	direct	1	n	5364:if importClause != nil && !c.checkGrammarImportClause(importClause.AsImportClause()) { || 5369:namedBindings := importClause.AsImportClause().NamedBindings || 7340:namedBindings := node.AsImportClause().NamedBindings
+Push$2	closure	0	n	
+ContentMapper	direct	1	n	413:ContentMapper:              task.file.ContentMapper(), || 459:ContentMapper:              file.ContentMapper(),
+registerMultiProjectReferenceRequestHandler$1$1	closure	0	n	
+AsNode	direct	2	y	244:if !canUseSourceFile || ast.GetSourceFileOfNode(node) != p.emitContext.MostOriginal(p.currentSourceFile.AsNode || 776:if p.shouldEmitOnSingleLine(body.AsNode()) { || 784:if !ast.NodeIsSynthesized(body.AsNode()) && p.currentSourceFile != nil && !RangeIsOnSingleLine(body.Loc, p.cur
+AsSatisfiesExpression	direct	1	n	333:return n.AsSatisfiesExpression().Expression || 422:n.AsSatisfiesExpression().Expression = expr || 655:return n.AsSatisfiesExpression().Type
+Body	direct	1	n	64:if node.Body() != nil { || 65:for _, statement := range node.Body().Statements() {
+getSymbolOfDeclaration	direct	3	n	332:sym = b.ch.getSymbolOfDeclaration(b.ch.getThisContainer(leftmost, false, false)) || 845:typeParams = []*Type{b.ch.getDeclaredTypeOfTypeParameter(b.ch.getSymbolOfDeclaration(node.AsMappedTypeNode().T
+TryGetAutoImportableReferenceFromTypeNode$1	closure	0	n	
+NpmInstall	direct	3	n	1885:func (s *Session) NpmInstall(cwd string, npmInstallArgs []string) ([]byte, error) { || 1886:return s.npmExecutor.NpmInstall(cwd, npmInstallArgs)
+IsExpandoFunctionDeclarationUnsafe	direct	1	n	68:return s.resolver.IsExpandoFunctionDeclarationUnsafe(ref) || 88:if s.state.resolver.IsExpandoFunctionDeclarationUnsafe(node) { // within a node builder call that should alrea
+UseCaseSensitiveFileNames	direct	19	n	171:UseCaseSensitiveFileNames: host.UseCaseSensitiveFileNames(), || 184:// importingFilePath := tspath.ToPath(info.ImportingSourceFileName, host.GetCurrentDirectory(), host.UseCaseSe || 185:// importedFilePath := tspath.ToPath(importedFileName, host.GetCurrentDirectory(), host.UseCaseSensitiveFileNa
+getBreakOrContinueStatementOccurrences	direct	0	n	622:func getBreakOrContinueStatementOccurrences(node *ast.Node, sourceFile *ast.SourceFile) []*ast.Node {
+Clear	direct	5	y	363:e.writer.Clear()
+getImportersForExport$3	closure	0	n	
+AsAwaitExpression	direct	1	n	3282:p.emitAwaitExpression(node.AsAwaitExpression())
+IsIncremental	direct	2	n	407:if t.resolved.CompilerOptions().IsIncremental() { || 408:if !buildInfo.IsIncremental() { || 447:if buildInfo.IsIncremental() {
+VisitEachChild	direct	170	y	49:node = tx.Visitor().VisitEachChild(node) || 181:visited = tx.Visitor().VisitEachChild(node.AsNode()) || 208:return tx.Visitor().VisitEachChild(node.AsNode())
+EnumMap	direct	1	n	198:enumMap := optionDecl.EnumMap() || 225:if elem != nil && elem.EnumMap() != nil { || 227:elemMap := elem.EnumMap()
+getExistingNodeTreeVisitor$1$1	closure	0	n	
+EmitContext	direct	2	n	181:tx.modifierVisitor = tx.EmitContext().NewNodeVisitor(tx.visitModifier) || 182:tx.discardedValueVisitor = tx.EmitContext().NewNodeVisitor(tx.visitDiscardedValue) || 183:tx.heritageClauseVisitor = tx.EmitContext().NewNodeVisitor(tx.visitHeritageClause)
+Factory	direct	1	n	46:statements := tx.Factory().EnsureUseStrict(node.Statements.Nodes) || 47:statementList := tx.Factory().NewNodeList(statements) || 49:return tx.Factory().UpdateSourceFile(node, statementList, node.EndOfFileToken).AsSourceFile().AsNode()
+Name	direct	57	y	459:if c.isMatchingReference(f.reference.Expression(), c.getReferenceCandidate(callAccess.Expression())) && ast.Is || 753:name = expr.AsPropertyAccessExpression().Name() || 1545:isLengthPushOrUnshift := ast.IsPropertyAccessExpression(parent) && (parent.Name().Text() == "length" ||
+createArrayLiteralError	direct	0	n	610:func createArrayLiteralError(node *ast.Node) *ast.Diagnostic { || 719:return createArrayLiteralError(node)
+Get	direct	5	n	152:option := tsoptions.CommandLineCompilerOptionsMap.Get(propertyName)
+dropTrailingEmptyLines	direct	0	n	165:return strings.Join(dropTrailingEmptyLines(commandLines), "\n") || 259:return strings.Join(dropTrailingEmptyLines(commandLines), "\n") || 331:return strings.Join(dropTrailingEmptyLines(commandLines), "\n")
+CreateDiagnosticReporter$1	closure	0	n	
+maybeTypeOfKind	direct	1	n	731:removeNullable := c.strictNullChecks && (optionalChain || isNonNullAccess(access)) && c.maybeTypeOfKind(t, Typ || 942:if c.maybeTypeOfKind(t, TypeFlagsInstantiable) { || 1908:if c.maybeTypeOfKind(typeWithPrimitives, TypeFlagsString|TypeFlagsTemplateLiteral|TypeFlagsNumber|TypeFlagsBig
+Expression	direct	2	n	152:return current.Parent != nil && ast.IsExportAssignment(current.Parent) && current.Parent.Expression() == curre || 924:return (ast.IsPropertyAccessExpression(node) || ast.IsElementAccessExpression(node)) && node.Expression().Kind || 1020:return (!ast.IsBindableStaticAccessExpression(left, false /*excludeThisKeyword*/) || !ast.IsPrototypeAccess(le
+SetSourceMapRange	direct	1	n	525:tx.EmitContext().SetSourceMapRange(initializer, nameRange.Loc) || 527:tx.EmitContext().SetSourceMapRange(initializer, transformers.MoveRangePastDecorators(node)) || 539:tx.EmitContext().SetSourceMapRange(initializer, nameRange.Loc)
+Pos	direct	7	n	53:start := adjusted.Pos() || 54:if start == originalRange.Pos() && enclosingNode.End() == originalRange.End() { || 59:precedingToken := astnav.FindPrecedingTokenEx(sourceFile, originalRange.Pos(), nil /*startNode*/, true /*exclu
+isGenericTupleType	direct	1	n	13764:case c.isGenericTupleType(t): || 21139:if c.isGenericTupleType(t) { || 23611:func isGenericTupleType(t *Type) bool {
+DeclarationNameToString	direct	0	n	1532:c.error(errorLocation, message, scanner.DeclarationNameToString(prop.Name()), name) || 1588:declarationName = scanner.DeclarationNameToString(errorLocation) // use escape sequences from original file || 1861:c.error(errorLocation, diagnostics.Parameter_0_cannot_reference_itself, scanner.DeclarationNameToString(associ
+GetSymbolAtLocation	direct	2	n	157:return c.GetSymbolAtLocation(location) || 185:symbol := c.GetSymbolAtLocation(node.Parent) || 234:symbol := c.GetSymbolAtLocation(name)
+checkObjectTypeForDuplicateDeclarations$1	closure	0	n	
+WriteError	direct	3	y	163:writeErr := c.protocol.WriteError(msg.ID, &jsonrpc.ResponseError{ || 186:writeErr = c.protocol.WriteError(msg.ID, &jsonrpc.ResponseError{
+AsNode	direct	2	y	76:if _, ok := tx.classAliases[d.AsNode()]; ok && tx.referenceResolver.GetReferencedValueDeclaration(tx.EmitConte || 77:return tx.classAliases[d.AsNode()] || 80:return node.AsNode()
+isSuggestionDiagnostic	direct	0	n	5424:f.verifyDiagnostics(t, expected, func(d *lsproto.Diagnostic) bool { return !isSuggestionDiagnostic(d) }) || 5469:func isSuggestionDiagnostic(diag *lsproto.Diagnostic) bool { || 5483:func(d *lsproto.Diagnostic) bool { return !isSuggestionDiagnostic(d) },
+Modifiers	direct	4	y	1443:p.emitModifierList(node.AsNode(), node.Modifiers(), false /*allowDecorators*/) || 1479:p.emitModifierList(node.AsNode(), node.Modifiers(), true /*allowDecorators*/) || 1488:p.emitInitializer(node.Initializer, greatestEnd(node.Pos(), node.Type, node.QuestionToken, node.Name(), node.M
+BreadthFirstSearchParallelEx$1	closure	0	n	
+EmitContext	direct	2	n	100:tx.EmitContext().StartVariableEnvironment() || 156:topLevelStatements = append(topLevelStatements, tx.EmitContext().EndVariableEnvironment()...) || 183:tx.EmitContext().AddEmitHelper(visited, tx.EmitContext().ReadEmitHelpers()...)
+AsNode	direct	2	y	606:return cloneNode(f.AsNodeFactory().NewToken(node.Kind), node.AsNode(), f.AsNodeFactory().hooks) || 635:return cloneNode(f.AsNodeFactory().NewIdentifier(node.Text), node.AsNode(), f.AsNodeFactory().hooks) || 659:return cloneNode(f.AsNodeFactory().NewPrivateIdentifier(node.Text), node.AsNode(), f.AsNodeFactory().hooks)
+EmitContext	direct	2	n	104:func NewDeclarationTransformer(host DeclarationEmitHost, context *printer.EmitContext, compilerOptions *core.C || 134:tx.bindingNameVisitor = tx.EmitContext().NewNodeVisitor(tx.visitBindingName) || 135:tx.expressionVisitor = tx.EmitContext().NewNodeVisitor(tx.visitNestedExpression)
+IsBundled	direct	0	n	326:if bundled.IsBundled(fileName) {
+FS	direct	24	y	179:caches:          newCaches(host.GetCurrentDirectory(), host.FS().UseCaseSensitiveFileNames(), options), || 203:r.caches = newCaches(host.GetCurrentDirectory(), host.FS().UseCaseSensitiveFileNames(), compilerOptions) || 412:directoryExists := r.resolver.host.FS().DirectoryExists(typeRoot)
+getPropertyOfObjectType	direct	1	n	4600:baseSymbol := c.getPropertyOfObjectType(t, base.Name) || 4624:if baseSymbol := c.getPropertyOfObjectType(otherBaseType, base.Name); baseSymbol != nil && base != c.getTarget || 4921:return c.getPropertyOfObjectType(base, prop.Name) != nil && c.getIndexTypeOfType(base, info.keyType) != nil
+IsNone	direct	1	n	514:if spanFidelity.IsNone() || sourceFile.ContentMapper() != "" && !lspRangeContains(span, selectionSpan) { || 576:if lspRange, fidelity := l.converters.ToLSPRangeForFeature(sourceFile, entry.textRange, spanmap.FeatureCallHie || 644:if _, fidelity := l.converters.ToLSPPositionForFeature(locationFile, core.TextPos(locationStart), spanmap.Feat
+Name	direct	57	y	90:if startInDeclarationContainer && reference.Parent != nil && ast.IsDeclaration(reference.Parent) && reference. || 156:startInDeclarationContainer := node.Parent != nil && (node.Parent.Kind == ast.KindModuleDeclaration || node.Pa
+UseCaseSensitiveFileNames	direct	19	y	13:UseCaseSensitiveFileNames() bool || 54:UseCaseSensitiveFileNames: host.UseCaseSensitiveFileNames(), || 89:UseCaseSensitiveFileNames: host.UseCaseSensitiveFileNames(),
+GetMTime	direct	2	n	233:aTime = h.program.host.GetMTime(fileName)
+EmitContext	direct	2	n	236:tx.currentModuleInfo = collectExternalModuleInfo(node, tx.compilerOptions, tx.EmitContext(), tx.resolver) || 285:tx.EmitContext().SetEmitFlags(statement, printer.EFCustomPrologue) || 290:tx.EmitContext().StartVariableEnvironment()
+WriteParameter	direct	6	n	63:func (w *trailingSemicolonDeferringWriter) WriteParameter(text string) { || 65:w.inner.WriteParameter(text)
+Modifiers	direct	4	y	1443:p.emitModifierList(node.AsNode(), node.Modifiers(), false /*allowDecorators*/) || 1479:p.emitModifierList(node.AsNode(), node.Modifiers(), true /*allowDecorators*/) || 1488:p.emitInitializer(node.Initializer, greatestEnd(node.Pos(), node.Type, node.QuestionToken, node.Name(), node.M
+WriteFile	direct	14	n	148:func (fsys *FS) WriteFile(path string, data string) error { || 149:return fsys.fs.WriteFile(path, data)
+UseCaseSensitiveFileNames	direct	19	n	55:UseCaseSensitiveFileNames: host.FS().UseCaseSensitiveFileNames(), || 88:UseCaseSensitiveFileNames: host.FS().UseCaseSensitiveFileNames(), || 171:path := tspath.ToPath(fileName, p.currentDirectory, p.fs.UseCaseSensitiveFileNames())
+Error	direct	21	y	126:Message: err.Error(), || 149:Message: err.Error(), || 193:if msg.Error != nil {
+NewPropertyAccessExpression	direct	1	n	290:propAccess := f.NewPropertyAccessExpression(left, nil, right, ast.NodeFlagsNone) || 359:f.NewPropertyAccessExpression(object, nil, methodName, ast.NodeFlagsNone), || 367:f.NewPropertyAccessExpression(object, nil, methodName, ast.NodeFlagsNone),
+AsConditionalTypeNode	direct	1	n	784:checkType := visitor.VisitNode(node.AsConditionalTypeNode().CheckType) || 786:extendsType := visitor.VisitNode(node.AsConditionalTypeNode().ExtendsType) || 787:trueType := visitor.VisitNode(node.AsConditionalTypeNode().TrueType)
+Name	direct	57	y	586:if !tx.resolver.IsDefinitelyReferenceToGlobalSymbolObject(input.Name().Expression()) { || 590:} else if (ast.IsInterfaceDeclaration(input.Parent) || ast.IsTypeLiteralNode(input.Parent)) && !ast.IsEntityNa || 596:} else if !tx.resolver.IsLateBound(tx.EmitContext().ParseNode(input)) || !ast.IsEntityNameExpression(input.Nam
+GetOrCreateToken	direct	1	n	255:return sourceFile.GetOrCreateToken(token, tokenFullStart, tokenEnd, current, flags) || 258:prevToken := sourceFile.GetOrCreateToken(token, tokenFullStart, tokenEnd, current, flags) || 573:tokens = append(tokens, sourceFile.GetOrCreateToken(token, tokenFullStart, tokenEnd, n, flags))
+AsNode	direct	2	y	606:return cloneNode(f.AsNodeFactory().NewToken(node.Kind), node.AsNode(), f.AsNodeFactory().hooks) || 635:return cloneNode(f.AsNodeFactory().NewIdentifier(node.Text), node.AsNode(), f.AsNodeFactory().hooks) || 659:return cloneNode(f.AsNodeFactory().NewPrivateIdentifier(node.Text), node.AsNode(), f.AsNodeFactory().hooks)
+ContentMapperProject	direct	5	y	608:if contentMapperProject := project.Program.ContentMapperProject(); contentMapperProject != nil {
+Push$5	closure	0	n	
+NewUniqueNameEx	direct	1	n	289:tx.outerThis = tx.Factory().NewUniqueNameEx("_outerThis", printer.AutoGenerateOptions{ || 465:return tx.Factory().NewUniqueNameEx( || 487:metadataReference: f.NewUniqueNameEx("_metadata", printer.AutoGenerateOptions{
+loadModuleFromTargetExportOrImport$2	closure	0	n	
+ReadFile	direct	18	n	57:func (vfs *wrappedFS) ReadFile(path string) (contents string, ok bool) { || 62:return vfs.fs.ReadFile(path)
+VisitEachChild	direct	170	y	117:node = tx.Visitor().VisitEachChild(node) || 134:node = tx.Visitor().VisitEachChild(node) || 351:node = tx.Visitor().VisitEachChild(node.AsNode()).AsEnumDeclaration()
+ParseOptions	direct	1	n	409:ParseOptions:               task.file.ParseOptions(), || 455:ParseOptions:               file.ParseOptions(),
+allKeysStartWithDot$1	closure	0	n	
+Text	direct	12	y	1438:ast.GetSymbolTable(&c.patternAmbientModuleAugmentations)[moduleName.Text()] = merged || 1453:c.error(moduleName, diagnostics.Cannot_augment_module_0_because_it_resolves_to_a_non_module_entity, moduleName || 1539:if !ast.IsIdentifier(errorLocation) || errorLocation.Text() != name || isTypeReferenceIdentifier(errorLocation
+Name	direct	57	y	94:} else if node.Parent.Kind == ast.KindImportClause && node.Parent.AsImportClause().Name() == node { || 111:name := clause.Name() || 126:if importClause.Name() != nil {
+QuietDiagnosticReporter	direct	0	n	
+PostfixToken	direct	1	n	657:if node.PostfixToken() != nil { || 661:Value: scanner.TokenToString(node.PostfixToken().Kind), || 683:if node.PostfixToken() != nil {
+GetLocale	direct	3	n	120:diagnosticLocale = c.builder.client.GetLocale()
+Visitor	direct	1	n	175:node = tx.Visitor().VisitEachChild(node) || 413:return tx.Visitor().VisitNode(node.Expression) || 696:return tx.Visitor().VisitNode(tx.Factory().NewImportStarHelper(innerExpr))
+Options	direct	5	y	595:addAsTypeOnly := getAddAsTypeOnly(isValidTypeOnlyUseSite, export, v.program.Options()) || 713:addAsTypeOnly := getAddAsTypeOnly(isValidTypeOnlyUseSite, export, v.program.Options()) || 802:if program.Options().VerbatimModuleSyntax.IsTrue() && program.GetEmitModuleFormatOfFile(importingFile) == core
+Text	direct	12	y	88:c.regExpScanner.SetText(sourceFile.Text()) || 113:return c.grammarErrorOnNode(privIdAsNode, diagnostics.Cannot_find_name_0, privId.Text) || 681:end := scanner.SkipTrivia(file.Text(), typeParameters.End()) + len(">")
+Path	direct	8	y	129:dirtyFile           tspath.Path || 162:func (b BucketState) DirtyFile() tspath.Path { || 180:func (b BucketState) possiblyNeedsRebuildForFile(file tspath.Path, preferences lsutil.UserPreferences) bool {
+compareDir$2	closure	0	n	
+getMembersOfSymbol	direct	1	n	95:copySymbols(c.getMembersOfSymbol(c.getSymbolOfDeclaration(location)), meaning&ast.SymbolFlagsType) || 502:propertySymbol := c.getSymbol(c.getMembersOfSymbol(classDeclaration.Symbol()), parameterName, ast.SymbolFlagsV
+scanNumberFragment$1	closure	0	n	
+recordPotentialCollisionWithWeakMapSetInGeneratedCode$1	closure	0	n	
+createGetSymbolAccessibilityDiagnosticForNode$4	closure	0	n	
+GetNormalizedAbsolutePath	direct	0	n	127:fileName := tspath.GetNormalizedAbsolutePath(file.UnitName, currentDirectory) || 165:compilerOptions.OutDir = tspath.GetNormalizedAbsolutePath(compilerOptions.OutDir, currentDirectory) || 168:compilerOptions.Project = tspath.GetNormalizedAbsolutePath(compilerOptions.Project, currentDirectory)
+ContentMapperProject	direct	5	n	360:if contentMapperProject := project.Program.ContentMapperProject(); contentMapperProject != nil { || 1226:contentMapperProject := project.host.ContentMapperProject()
+getNodeVisitor$1	closure	0	n	
+AsTypeAliasDeclaration	direct	1	n	1814:p.emitTypeAliasDeclaration(node.AsTypeAliasDeclaration()) || 4205:p.emitTypeAliasDeclaration(node.AsTypeAliasDeclaration())
+disposeCheckerLocked	direct	1	n	352:p.disposeCheckerLocked(index, c) || 449:p.disposeCheckerLocked(i, c) || 460:func (p *checkerPool) disposeCheckerLocked(index int, c *checker.Checker) {
+elaborateError	direct	1	n	454:elaborated := next != nil && c.elaborateError(next, sourcePropType, targetPropType, relation, nil /*headMessag
+Realpath	direct	11	n	1882:rp := tspath.NormalizePath(r.resolver.host.FS().Realpath(path)) || 2242:if realPath := r.host.FS().Realpath(fileName); realPath != fileName {
+AsNode	direct	2	y	162:return p.AsNode() == parseTreeNode || 166:previousSibling = params[paramIdx-1].AsNode() || 284:return node.AsNode()
+FS	direct	24	n	126:return p.Host().FS().FileExists(path) || 228:return p.Host().FS().UseCaseSensitiveFileNames() || 1326:if !p.Host().FS().UseCaseSensitiveFileNames() {
+AsNumericLiteral	direct	1	n	1090:c.checkGrammarNumericLiteral(name.AsNumericLiteral())
+OriginalToVirtualSpans	direct	1	n	207:return spans.OriginalToVirtualSpans(origRange, feature)
+GetSourceFileOfNode	direct	0	n	171:sourceFile := ast.GetSourceFileOfNode(node) || 180:sourceFile := ast.GetSourceFileOfNode(node) || 201:sourceFile := ast.GetSourceFileOfNode(node)
+File	direct	4	n	29:File() FileLike || 57:func (d *ASTDiagnostic) File() FileLike { || 58:file := d.Diagnostic.File()
+FileNames	direct	1	n	327:originalRootNames := p.CommandLine.FileNames()
+FileName	direct	17	y	119:if len(location) > 0 && isDefaultLibraryFile(info.File().FileName()) { || 138:if diag.File() == nil || !isDefaultLibraryFile(diag.File().FileName()) && !isTsConfigFile(diag.File().FileName || 166:tspath.ComparePaths(removeTestPathPrefixes(e.File().FileName(), false), removeTestPathPrefixes(inputFile.UnitN
+Pos	direct	7	n	228:pos := node.Pos() || 333:if len(p.diagnostics) == 0 || p.diagnostics[len(p.diagnostics)-1].Pos() != loc.Pos() { || 535:return diagnostic.Pos() >= prevStatement.Pos()
+SourceFiles	direct	4	y	461:SourceFiles() []*ast.SourceFile || 526:targetSourceFiles = host.SourceFiles()
+WriteFile	direct	14	n	21:func (fs *OutputRecorderFS) WriteFile(path string, data string) error { || 22:if err := fs.FS.WriteFile(path, data); err != nil {
+FS	direct	24	n	37:info := h.CompilerHost.FS().Stat(opts.FileName) || 114:wm := watchmanager.NewWatchManager(sys.Writer(), sys.FS().DirectoryExists) || 144:host := compiler.NewCompilerHost(w.sys.GetCurrentDirectory(), w.sys.FS(), w.sys.DefaultLibraryPath(), w.extend
+Factory	direct	1	n	89:return tx.Factory().UpdatePropertyAccessExpression(node, expression, node.QuestionDotToken, node.Name(), node. || 129:updated := tx.Factory().UpdateParameterDeclaration( || 131:elideModifiers(tx.Factory(), node.Modifiers()),
+IsStatic	direct	1	n	458:if ast.IsStatic(node) { || 997:if ast.IsStatic(member) != isStatic { || 1331:ast.IsStatic(member),
+VisitEachChild	direct	170	y	274:visited := tx.Visitor().VisitEachChild(node.AsNode()) || 295:return tx.outerThisVisitor.VisitEachChild(n) || 361:result := tx.Visitor().VisitEachChild(node)
+getAdjustedNode$1	closure	0	n	
+Push$3	closure	0	n	
+NewBindingPattern	direct	1	n	247:tx.Factory().NewBindingPattern(ast.KindObjectBindingPattern, tx.Factory().NewNodeList(asBindingElems)),
+getModuleInstanceStateWorker$1	closure	0	n	
+NewUniqueName	direct	1	n	109:tempVar := f.NewUniqueName("templateObject")
+QuietDiagnosticReporter	direct	0	n	
+getCompletionData$13	closure	0	n	
+start$1	closure	0	n	
+newSyntheticRecursiveVisitor$1	closure	0	n	
+GetDeclarationOfKind	direct	0	n	708:shouldResolveAlias := symbolFromSymbolTable.Flags&ast.SymbolFlagsAlias != 0 && ast.GetDeclarationOfKind(symbol
+UpdateBlock	direct	1	n	958:return c.Factory.UpdateBlock( || 965:return c.Factory.UpdateBlock( || 989:return c.Factory.UpdateBlock(updated.AsBlock(), statementsList, updated.AsBlock().MultiLine)
+UseCaseSensitiveFileNames	direct	19	n	112:excludeMatcher := vfsmatch.NewSpecMatcher(c.validatedExcludeSpecs, comparePathsOptions.CurrentDirectory, vfsma || 132:includeMatcher := vfsmatch.NewSpecMatcher([]string{spec}, comparePathsOptions.CurrentDirectory, vfsmatch.Usage || 144:filePath := tspath.ToPath(fileName, comparePathsOptions.CurrentDirectory, comparePathsOptions.UseCaseSensitive
+IsDeclarationVisible	direct	1	n	2452:if !tx.resolver.IsDeclarationVisible(decl.AsNode()) { || 2491:if decl.ImportClause != nil && decl.ImportClause.Name() != nil && tx.resolver.IsDeclarationVisible(decl.Import || 2515:if tx.resolver.IsDeclarationVisible(decl.ImportClause.AsImportClause().NamedBindings) {
+Writer	direct	3	n	16:fmt.Fprintln(sys.Writer(), diagnostics.Version_0.Localize(locale, core.Version())) || 106:fmt.Fprint(sys.Writer(), chunk) || 131:fmt.Fprint(sys.Writer(), chunk)
+ReportNonlocalAugmentation	direct	3	n	90:func (this *SymbolTrackerImpl) ReportNonlocalAugmentation(containingFile *ast.SourceFile, parentSymbol *ast.Sy || 95:this.inner.ReportNonlocalAugmentation(containingFile, parentSymbol, augmentingSymbol)
+cancelScheduledSnapshotUpdate	direct	1	n	381:s.cancelScheduledSnapshotUpdate() || 409:s.cancelScheduledSnapshotUpdate() || 702:func (s *Session) cancelScheduledSnapshotUpdate() {
+Text	direct	12	y	112:if strings.LastIndexByte(sourceFile.Text(), '<') == -1 { || 247:return node.Text() == "this" && node.Parent.Kind == ast.KindParameter || 998:return checker.GetPropertyOfType(typeOfPattern, bindingElement.Name().Text())
+IsIndexSignatureDeclaration	direct	0	n	3617:!ast.IsIndexSignatureDeclaration(node.Parent) {
+Remove	direct	12	n	116:func (fsys *FS) Remove(path string) error { || 117:return fsys.fs.Remove(path)
+NewSession$1	closure	0	n	
+ReadFile	direct	18	n	80:func (l *LanguageService) ReadFile(fileName string) (string, bool) { || 81:return l.host.ReadFile(fileName)
+ReportNonSerializableProperty$1	closure	0	n	
+IsLineBreak	direct	0	n	459:if stringutil.IsLineBreak(ch) {
+checkObjectLiteral$2	closure	0	n	
+IsSourceFileFromExternalLibrary	direct	2	y	2117:func (p *Program) IsSourceFileFromExternalLibrary(file *ast.SourceFile) bool { || 2152:if p.IsSourceFileDefaultLibrary(file.Path()) || p.IsSourceFileFromExternalLibrary(file) || strings.Contains(fi
+NewNodeVisitor	direct	1	n	181:tx.modifierVisitor = tx.EmitContext().NewNodeVisitor(tx.visitModifier) || 182:tx.discardedValueVisitor = tx.EmitContext().NewNodeVisitor(tx.visitDiscardedValue) || 183:tx.heritageClauseVisitor = tx.EmitContext().NewNodeVisitor(tx.visitHeritageClause)
+AsModuleDeclaration	direct	1	n	49:nameText := node.AsModuleDeclaration().Name().Text() || 56:file.ModuleAugmentations = append(file.ModuleAugmentations, node.AsModuleDeclaration().Name())
+FileExists	direct	23	y	956:if r.resolver.host.FS().FileExists(possibleInputWithInputExtension) { || 1615:if r.resolver.host.FS().FileExists(fileName) { || 1795:if directoryExists && r.resolver.host.FS().FileExists(packageJsonPath) {
+Error	direct	21	n	516:return nil, nil, "", "", &InitializeError{Kind: InitializeErrorKindProcessStart, MapperName: diagnosticName, C || 554:return nil, nil, "", "", &InitializeError{Kind: InitializeErrorKindRequest, MapperName: diagnosticName, Detail || 1107:return "", "", &InitializeError{Kind: InitializeErrorKindInvalidResponse, Detail: err.Error()}
+Factory	direct	1	n	398:name = tx.Factory().NewStringLiteralFromNode(node.AsPropertyAccessExpression().Name()) || 401:temp := tx.Factory().NewTempVariable() || 402:setExpr := tx.Factory().NewReflectSetCall(
+AsNode	direct	2	y	244:if !canUseSourceFile || ast.GetSourceFileOfNode(node) != p.emitContext.MostOriginal(p.currentSourceFile.AsNode || 776:if p.shouldEmitOnSingleLine(body.AsNode()) { || 784:if !ast.NodeIsSynthesized(body.AsNode()) && p.currentSourceFile != nil && !RangeIsOnSingleLine(body.Loc, p.cur
+IsNone	direct	1	n	524:if fidelity.IsNone() { || 536:if mappedFidelity.IsNone() { || 550:if mappedFidelity.IsNone() {
+AsNode	direct	2	y	244:if !canUseSourceFile || ast.GetSourceFileOfNode(node) != p.emitContext.MostOriginal(p.currentSourceFile.AsNode || 776:if p.shouldEmitOnSingleLine(body.AsNode()) { || 784:if !ast.NodeIsSynthesized(body.AsNode()) && p.currentSourceFile != nil && !RangeIsOnSingleLine(body.Loc, p.cur
+getAllSuperTypeNodes	direct	0	n	1494:baseTypeNodes = getAllSuperTypeNodes(decl)
+Error	direct	21	n	126:Message: err.Error(), || 149:Message: err.Error(), || 193:if msg.Error != nil {
+AsNode	direct	2	y	117:importElisionEnabled := !options.VerbatimModuleSyntax.IsTrue() && !ast.IsInJSFile(sourceFile.AsNode()) || 301:printer_.Write(sourceFile.AsNode(), sourceFile, e.writer, sourceMapGenerator)
+IsDecorator	direct	0	n	1961:!c.legacyDecorators && ast.IsDecorator(container) && (container.Parent == declaration || || 1973:if !c.legacyDecorators && ast.IsDecorator(container) { || 2056:if current.Parent != nil && ast.IsDecorator(current.Parent) {
+FileExists	direct	23	n	956:if r.resolver.host.FS().FileExists(possibleInputWithInputExtension) { || 1615:if r.resolver.host.FS().FileExists(fileName) { || 1795:if directoryExists && r.resolver.host.FS().FileExists(packageJsonPath) {
+IsSingleSegment	direct	1	n	333:if !selectionFidelity.IsSingleSegment() { || 600:if !fidelity.IsSingleSegment() {
+checkFunctionOrConstructorSymbolWorker$2	closure	0	n	
+Clone	direct	210	y	466:clone := alias.Clone(tx.Factory()) || 1272:clone = receiver.Clone(tx.Factory()) || 1920:tx.getClassLexicalEnvironment().classConstructor = temp.Clone(tx.Factory())
+AsNode	direct	2	y	606:return cloneNode(f.AsNodeFactory().NewToken(node.Kind), node.AsNode(), f.AsNodeFactory().hooks) || 635:return cloneNode(f.AsNodeFactory().NewIdentifier(node.Text), node.AsNode(), f.AsNodeFactory().hooks) || 659:return cloneNode(f.AsNodeFactory().NewPrivateIdentifier(node.Text), node.AsNode(), f.AsNodeFactory().hooks)
+UseCaseSensitiveFileNames	direct	19	n	55:UseCaseSensitiveFileNames: host.FS().UseCaseSensitiveFileNames(), || 88:UseCaseSensitiveFileNames: host.FS().UseCaseSensitiveFileNames(), || 171:path := tspath.ToPath(fileName, p.currentDirectory, p.fs.UseCaseSensitiveFileNames())
+narrowTypeByInKeyword$2	closure	0	n	
+getSymbolOfDeclaration	direct	3	n	82:symbol := r.checker.getSymbolOfDeclaration(node) || 356:sym := r.checker.getSymbolOfDeclaration(r.checker.getThisContainer(firstIdentifier, false, false)) || 478:symbol := r.checker.getSymbolOfDeclaration(node)
+WriteKeyword	direct	5	y	38:func (w *trailingSemicolonDeferringWriter) WriteKeyword(text string) { || 40:w.inner.WriteKeyword(text)
+AsParameterDeclaration	direct	1	n	562:} else if node.Kind == ast.KindParameter && (flags&ast.ModifierFlagsParameterPropertyModifier != 0) && node.As || 692:parameter := parameters.Nodes[i].AsParameterDeclaration() || 731:parameter := n.AsParameterDeclaration()
+Visitor	direct	1	n	105:return tx.Visitor().VisitEachChild(node) || 215:return tx.Visitor().VisitEachChild(node) || 223:tx.Factory().NewAwaitHelper(tx.Visitor().VisitNode(node.Expression)),
+Marshal	direct	1	n	31:}}).Marshal()
+UseCaseSensitiveFileNames	direct	19	y	90:compareOptions := tspath.ComparePathsOptions{UseCaseSensitiveFileNames: l.UseCaseSensitiveFileNames()} || 104:if suffix, ok := tspath.TrimFilePathPrefix(path, trimmedOldPath, l.UseCaseSensitiveFileNames()); ok && || 131:foundExactMatch := updatePathsProperty(configFile, configDir, property, changeTracker, oldToNew, l.converters,
+AsJsxSpreadAttribute	direct	1	n	4348:p.emitJsxSpreadAttribute(node.AsJsxSpreadAttribute()) || 5215:p.emitJsxSpreadAttribute(node.AsJsxSpreadAttribute())
+IsStringLiteral	direct	1	n	1339:return IsImportTypeNode(node) && IsLiteralTypeNode(node.AsImportTypeNode().Argument) && IsStringLiteral(node.A || 1936:if IsStringLiteral(node.AsModuleDeclaration().Name()) { || 1959:if IsStringLiteral(literalTypeNode.Literal) {
+IsObjectBindingPattern	direct	0	n	737:if ast.IsObjectBindingPattern(bindingPattern) { || 1309:if ast.IsObjectBindingPattern(n) || ast.IsArrayBindingPattern(n) {
+Pos	direct	7	n	181:return format.GetLineStartPositionForPosition(JSDocComments[0].Pos(), sourceFile) || 198:fullStart := node.Pos() || 252:if comment.Kind == ast.KindSingleLineCommentTrivia || scanner.ComputeLineOfPosition(lineStarts, comment.Pos())
+Modifiers	direct	4	y	1443:p.emitModifierList(node.AsNode(), node.Modifiers(), false /*allowDecorators*/) || 1479:p.emitModifierList(node.AsNode(), node.Modifiers(), true /*allowDecorators*/) || 1488:p.emitInitializer(node.Initializer, greatestEnd(node.Pos(), node.Type, node.QuestionToken, node.Name(), node.M
+init$6	closure	0	n	
+GetCurrentDirectory	direct	24	n	179:caches:          newCaches(host.GetCurrentDirectory(), host.FS().UseCaseSensitiveFileNames(), options), || 203:r.caches = newCaches(host.GetCurrentDirectory(), host.FS().UseCaseSensitiveFileNames(), compilerOptions) || 256:typeRoots, fromConfig := compilerOptions.GetEffectiveTypeRoots(r.host.GetCurrentDirectory())
+DeclarationMapPath	direct	1	n	1346:verifyEmitFilePath(emitFileNames.DeclarationMapPath())
+String	direct	82	n	40:[]any{"typesVersions", "object", p.Fields.TypesVersions.Type.String()}, || 63:[]any{"typesVersions['" + key + "']", "object", value.Type.String()},
+GetCurrentDirectory	direct	24	n	50:parser := parseCommandLineWorker(CompilerOptionsDidYouMeanDiagnostics, commandLine, host.FS(), host.GetCurrent || 51:options := convertToOptionsWithAbsolutePaths(parser.options.Clone(), CommandLineCompilerOptionsMap, host.GetCu || 56:CurrentDirectory:          host.GetCurrentDirectory(),
+noop	direct	0	n	
+Run	direct	4	y	14:return ipc.NewAsyncConn(rwc, staticProjectHandler{Handler: &Handler{}}).Run(ctx) || 40:go func() { _ = ipc.NewAsyncConn(server, handler).Run(context.Background()) }()
+BuildNodeIndexTable$3	closure	0	n	
+getElementTypeOfSliceOfTupleType	direct	1	n	24953:func (c *Checker) getElementTypeOfSliceOfTupleType(t *Type, index int, endSkipCount int, writing bool, noReduc || 24975:return c.getElementTypeOfSliceOfTupleType(t, t.TargetTupleType().fixedLength, 0, false, false) || 28080:elementType := c.getElementTypeOfSliceOfTupleType(objectType, core.IfElse(indexType.flags&TypeFlagsNumber != 0
+Close	direct	26	y	227:defer contentMapperHost.Close() || 252:defer contentMapperProject.Close()
+Stat	direct	13	n	124:func (fsys *FS) Stat(path string) vfs.FileInfo { || 131:ret := fsys.fs.Stat(path)
+String	direct	82	n	300:traceBuilder.write(diagnostics.Module_resolution_kind_is_not_specified_using_0, moduleResolution.String()) || 304:traceBuilder.write(diagnostics.Explicitly_specified_module_resolution_kind_Colon_0, moduleResolution.String()) || 320:traceBuilder.write(diagnostics.Module_name_0_was_successfully_resolved_to_1_with_Package_ID_2, moduleName, res
+Visitor	direct	1	n	228:visited := tx.Visitor().VisitEachChild(node.AsNode()) || 338:return tx.Visitor().VisitEachChild(node) || 396:name = tx.Visitor().VisitNode(node.AsElementAccessExpression().ArgumentExpression)
+getIterationTypesOfIterableWorker$1	closure	0	n	
+IsStatic	direct	1	n	458:if ast.IsStatic(node) { || 997:if ast.IsStatic(member) != isStatic { || 1331:ast.IsStatic(member),
+FileName	direct	17	n	211:fileName := uri.FileName() || 232:if entry := b.findDefaultConfiguredProject(overlay.FileName(), b.toPath(overlay.FileName())); entry != nil { || 275:paths = append(paths, b.toPath(uri.FileName()))
+dropTrailingEmptyLines	direct	0	n	165:return strings.Join(dropTrailingEmptyLines(commandLines), "\n") || 259:return strings.Join(dropTrailingEmptyLines(commandLines), "\n") || 331:return strings.Join(dropTrailingEmptyLines(commandLines), "\n")
+instantiateType	direct	1	n	2629:c.checkTypeAssignableTo(defaultType, c.getTypeWithThisArgument(c.instantiateType(constraintType, newSimpleType || 3035:result = result && c.checkTypeAssignableTo(typeArguments[i], c.instantiateType(constraint, mapper), core.Eleme || 9331:if !c.checkTypeAssignableToEx(typeArgument, c.getTypeWithThisArgument(c.instantiateType(constraint, mapper), t
+GetMTime	direct	2	y	233:aTime = h.program.host.GetMTime(fileName)
+Parameters	direct	2	n	597:if isNodeArrayMultiLine(node.Parameters(), sourceFile) {
+areTypesComparable	direct	1	n	596:return c.areTypesComparable(t, valueType) || doubleEquals && isCoercibleUnderDoubleEquals(t, valueType) || 608:return !(c.isUnitLikeType(t) && c.areTypesComparable(t, valueType)) || 746:return discriminantType.flags&TypeFlagsNever == 0 && narrowedPropType.flags&TypeFlagsNever == 0 && c.areTypesC
+AsArrayTypeNode	direct	1	n	546:visitForDisplayParts(node.AsArrayTypeNode().ElementType)
+newSyntheticRecursiveVisitor$1	closure	0	n	
+getExistingNodeTreeVisitor$1$1	closure	0	n	
+UseCaseSensitiveFileNames	direct	19	n	112:excludeMatcher := vfsmatch.NewSpecMatcher(c.validatedExcludeSpecs, comparePathsOptions.CurrentDirectory, vfsma || 132:includeMatcher := vfsmatch.NewSpecMatcher([]string{spec}, comparePathsOptions.CurrentDirectory, vfsmatch.Usage || 144:filePath := tspath.ToPath(fileName, comparePathsOptions.CurrentDirectory, comparePathsOptions.UseCaseSensitive
+EmitContext	direct	2	n	104:func NewDeclarationTransformer(host DeclarationEmitHost, context *printer.EmitContext, compilerOptions *core.C || 134:tx.bindingNameVisitor = tx.EmitContext().NewNodeVisitor(tx.visitBindingName) || 135:tx.expressionVisitor = tx.EmitContext().NewNodeVisitor(tx.visitNestedExpression)
+normalizeDiagnosticDirectives$1	closure	0	n	
+WalkDir	direct	11	n	448:_ = w.fs.WalkDir(directory, func(path string, entry vfs.DirEntry, err error) error {
+AsPropertyAccessExpression	direct	1	n	1758:pa := node.AsPropertyAccessExpression() || 1956:} else if ast.IsPropertyAccessExpression(bin.Left) && ast.IsIdentifier(bin.Left.AsPropertyAccessExpression().N || 1957:setterName = f.NewStringLiteralFromNode(bin.Left.AsPropertyAccessExpression().Name())
+AsType	direct	1	y	560:return t.AsType() || 569:t.objectTypeWithoutAbstractConstructSignatures = t.AsType() || 570:return t.AsType()
+FileExists	direct	23	n	956:if r.resolver.host.FS().FileExists(possibleInputWithInputExtension) { || 1615:if r.resolver.host.FS().FileExists(fileName) { || 1795:if directoryExists && r.resolver.host.FS().FileExists(packageJsonPath) {
+getContextualTypeForReturnExpression$1	closure	0	n	
+UseCaseSensitiveFileNames	direct	19	n	112:excludeMatcher := vfsmatch.NewSpecMatcher(c.validatedExcludeSpecs, comparePathsOptions.CurrentDirectory, vfsma || 132:includeMatcher := vfsmatch.NewSpecMatcher([]string{spec}, comparePathsOptions.CurrentDirectory, vfsmatch.Usage || 144:filePath := tspath.ToPath(fileName, comparePathsOptions.CurrentDirectory, comparePathsOptions.UseCaseSensitive
+DecreaseIndent	direct	5	y	93:func (w *trailingSemicolonDeferringWriter) DecreaseIndent() { || 95:w.inner.DecreaseIndent()
+IsIncremental	direct	2	n	417:p.snapshot.hasErrors = core.IfElse(p.snapshot.options.IsIncremental(), core.TSFalse, core.TSTrue) || 440:return p.snapshot.options.IsIncremental() || 450:p.snapshot.hasSemanticErrors = !p.snapshot.options.IsIncremental()
+NewNodeList	direct	1	n	101:replacement := f.NewNodeList([]*ast.Node{}) || 446:tx.Factory().NewNodeList([]*ast.Node{tx.Factory().NewExpressionStatement( || 452:newList := tx.Factory().NewNodeList(memberList)
+CreateECMALineInfo	direct	0	n	68:f.lineInfo = sourcemap.CreateECMALineInfo(f.content, lineStarts)
+AsSwitchStatement	direct	1	n	4185:p.emitSwitchStatement(node.AsSwitchStatement()) || 6024:p.generateNames(node.AsSwitchStatement().CaseBlock)
+getTypeFromTypeNode	direct	2	n	71:t := b.getTypeFromTypeNode(node, false) || 84:t := b.getTypeFromTypeNode(node, false) || 430:if !b.canReuseExistingJSTypeNode(node, b.getTypeFromTypeNode(node, false)) {
+getResolvedPackageNames	direct	0	n	822:allResolvedPackageNames[entry.Key()] = getResolvedPackageNames(ctx, program)
+EmitContext	direct	2	n	134:ec := tx.EmitContext() || 275:tx.EmitContext().AddEmitHelper(visited, tx.EmitContext().ReadEmitHelpers()...) || 277:tx.EmitContext().AddEmitFlags(visited, printer.EFTransformPrivateStaticElements)
+GetSourceFileMetaData	direct	3	n	1198:sourceFileMetaData := c.program.GetSourceFileMetaData(sourceFile.Path()) || 1696:sourceFileMetaData := c.program.GetSourceFileMetaData(sourceFile.Path())
+GetCurrentDirectory	direct	24	n	179:caches:          newCaches(host.GetCurrentDirectory(), host.FS().UseCaseSensitiveFileNames(), options), || 203:r.caches = newCaches(host.GetCurrentDirectory(), host.FS().UseCaseSensitiveFileNames(), compilerOptions) || 256:typeRoots, fromConfig := compilerOptions.GetEffectiveTypeRoots(r.host.GetCurrentDirectory())
+Visitor	direct	1	n	274:visited := tx.Visitor().VisitEachChild(node.AsNode()) || 361:result := tx.Visitor().VisitEachChild(node) || 365:return tx.Visitor().VisitEachChild(node)
+DirectoryExists	direct	14	n	412:directoryExists := r.resolver.host.FS().DirectoryExists(typeRoot) || 480:directoryExists := r.resolver.host.FS().DirectoryExists(typeRoot) || 1034:if !r.resolver.host.FS().DirectoryExists(nodeModulesFolder) {
+Realpath	direct	11	n	184:func (fs *callbackFS) Realpath(path string) string { || 198:return fs.base.Realpath(path)
+WriteLine	direct	6	n	355:p.writer.WriteLine() || 5478:p.writer.WriteLine() || 5482:p.writer.WriteLine()
+UseCaseSensitiveFileNames	direct	19	n	273:UseCaseSensitiveFileNames: w.sys.FS().UseCaseSensitiveFileNames(), || 293:caseSensitive := w.sys.FS().UseCaseSensitiveFileNames() || 379:caseSensitive := w.sys.FS().UseCaseSensitiveFileNames()
+AsUnionTypeNode	direct	1	n	1936:typesList := union.AsUnionTypeNode().Types
+noop	direct	0	n	
+Parameters	direct	2	n	2689:if slices.Index(fn.Parameters(), node) != 0 { || 2752:c.checkSourceElements(node.Parameters()) || 2866:core.Some(node.Parameters(), func(p *ast.Node) bool {
+noop	direct	0	n	
+UseCaseSensitiveFileNames	direct	19	n	112:excludeMatcher := vfsmatch.NewSpecMatcher(c.validatedExcludeSpecs, comparePathsOptions.CurrentDirectory, vfsma || 132:includeMatcher := vfsmatch.NewSpecMatcher([]string{spec}, comparePathsOptions.CurrentDirectory, vfsmatch.Usage || 144:filePath := tspath.ToPath(fileName, comparePathsOptions.CurrentDirectory, comparePathsOptions.UseCaseSensitive
+Visitor	direct	1	n	175:node = tx.Visitor().VisitEachChild(node) || 413:return tx.Visitor().VisitNode(node.Expression) || 696:return tx.Visitor().VisitNode(tx.Factory().NewImportStarHelper(innerExpr))
+EmitContext	direct	2	n	100:tx.EmitContext().StartVariableEnvironment() || 156:topLevelStatements = append(topLevelStatements, tx.EmitContext().EndVariableEnvironment()...) || 183:tx.EmitContext().AddEmitHelper(visited, tx.EmitContext().ReadEmitHelpers()...)
+FileName	direct	17	y	35:configFilePath = config.ConfigFile.SourceFile.FileName()
+Path	direct	8	n	102:hasEmitBlockingDiagnostics     collections.Set[tspath.Path] || 163:func (p *Program) PackageJsonCacheEntries(f func(key tspath.Path, value *packagejson.InfoCacheEntry) bool) { || 169:func (p *Program) GetRedirectTargets(path tspath.Path) []string {
+IsImportEqualsDeclaration	direct	0	n	2481:return IsImportEqualsDeclaration(node) && node.AsImportEqualsDeclaration().ModuleReference.Kind != KindExterna || 4089:return IsImportDeclaration(node) || IsImportEqualsDeclaration(node)
+Options	direct	5	n	244:supportedExtensionsBase := tsoptions.GetSupportedExtensions(p.Options(), p.CommandLine().ContentMapperExtensio || 245:supportedExtensions := tsoptions.GetSupportedExtensionsWithJsonIfResolveJsonModule(p.Options(), supportedExten || 246:allowNonTsExtensions := p.Options().AllowNonTsExtensions.IsTrue()
+mergeCompilerOptions	direct	0	n	1177:mergeCompilerOptions(result.options, extendedConfig.options, extendsRaw) || 1214:ownConfig.options = mergeCompilerOptions(result.options, ownConfig.options, ownConfig.raw) || 1259:mergeCompilerOptions(parsedConfig.options, existingOptions, existingOptionsRaw)
+Statements	direct	1	n	986:statements = append(statements, updated.Statements()...)
+getSymbolOfDeclaration	direct	3	n	73:func (r *referenceResolver) getSymbolOfDeclaration(declaration *ast.Declaration) *ast.Symbol { || 181:return (n.Kind == ast.KindModuleDeclaration || n.Kind == ast.KindEnumDeclaration) && r.getSymbolOfDeclaration(
+getHomomorphicTypeVariable	direct	1	n	8120:return c.isTupleLikeType(t) || c.isGenericMappedType(t) && t.AsMappedType().nameType == nil && c.getHomomorphi || 13762:typeVariable := c.getHomomorphicTypeVariable(t) || 21888:typeVariable := c.getHomomorphicTypeVariable(target)
+GetElementAccessExpressionName	direct	2	n	2983:return tx.resolver.GetElementAccessExpressionName(node.AsElementAccessExpression())
+GetSymbolAtLocation	direct	2	n	236:if sym := c.GetSymbolAtLocation(resolveNode); sym != nil {
+Factory	direct	1	n	46:d := tx.Factory().NewVariableDeclaration( || 47:tx.Factory().NewUniqueNameEx("_jsxFileName", printer.AutoGenerateOptions{ || 52:tx.Factory().NewStringLiteral(tx.currentSourceFile.FileName(), ast.TokenFlagsNone),
+Token	direct	1	n	16:token := s.Token() || 672:token := scanner.Token() || 750:tokenKind := scan.Token()
+newLogicalAssignmentTransformer	direct	0	n	
+FS	direct	24	y	179:caches:          newCaches(host.GetCurrentDirectory(), host.FS().UseCaseSensitiveFileNames(), options), || 203:r.caches = newCaches(host.GetCurrentDirectory(), host.FS().UseCaseSensitiveFileNames(), compilerOptions) || 412:directoryExists := r.resolver.host.FS().DirectoryExists(typeRoot)
+NewPropertyAccessExpression	direct	1	n	794:classNameReference := f.NewPropertyAccessExpression(renamedClassThis, nil, f.NewIdentifier("name"), ast.NodeFl || 812:classDescriptorValueRef := f.NewPropertyAccessExpression(ci.classDescriptorName, nil, f.NewIdentifier("value") || 2419:target := f.NewPropertyAccessExpression(assign, nil, pa.Name(), ast.NodeFlagsNone)
+Symbol	direct	4	n	104:enumSymbol *ast.Symbol || 187:s *ast.Symbol || 541:resolvedProperties []*ast.Symbol    // Properties occurring in sibling object literals
+String	direct	82	n	5398:c.error(moduleSpecifier, diagnostics.Importing_a_JSON_file_into_an_ECMAScript_module_requires_a_type_Colon_jso || 7089:panic("Unhandled case in getDeclarationSpaces: " + node.Kind.String()) || 10703:c.error(name, diagnostics.Class_name_cannot_be_Object_when_targeting_ES5_and_above_with_module_0, c.moduleKind
+Ref	direct	1	n	536:session.programCounter.Ref(project.Program)
+noop	direct	0	n	
+TryGetExtensionFromPath	direct	0	n	1157:if len(tspath.TryGetExtensionFromPath(pattern)) > 0 {
+AsElementAccessExpression	direct	1	n	1397:expression = ast.SkipParentheses(node.AsElementAccessExpression().ArgumentExpression) || 1984:elementAccess := expr.AsElementAccessExpression()
+Assert	direct	0	n	623:debug.Assert(distance <= bestDistance) // Else `levenshteinWithMax` should return undefined
+FS	direct	24	y	179:caches:          newCaches(host.GetCurrentDirectory(), host.FS().UseCaseSensitiveFileNames(), options), || 203:r.caches = newCaches(host.GetCurrentDirectory(), host.FS().UseCaseSensitiveFileNames(), compilerOptions) || 412:directoryExists := r.resolver.host.FS().DirectoryExists(typeRoot)
+Text	direct	12	y	829:return valueExpression.Text(), []*ast.Diagnostic{ast.NewDiagnostic(sourceFile, valueExpression.Loc, diagnostic || 831:return valueExpression.Text(), nil || 834:return float64(jsnum.FromString(valueExpression.Text())), nil
+Pos	direct	7	n	514:if p.nextListElementPos > 0 && firstChild.Pos() == p.nextListElementPos { || 537:!ast.PositionIsSynthesized(parentNode.Pos()) && || 544:firstChild.Pos(),
+addClassStaticThisReferences$1	closure	0	n	
+ReportCyclicStructureError	direct	3	n	66:func (this *SymbolTrackerImpl) ReportCyclicStructureError() { || 71:this.inner.ReportCyclicStructureError()
+FileExists	direct	23	n	956:if r.resolver.host.FS().FileExists(possibleInputWithInputExtension) { || 1615:if r.resolver.host.FS().FileExists(fileName) { || 1795:if directoryExists && r.resolver.host.FS().FileExists(packageJsonPath) {
+EmitContext	direct	2	n	181:tx.modifierVisitor = tx.EmitContext().NewNodeVisitor(tx.visitModifier) || 182:tx.discardedValueVisitor = tx.EmitContext().NewNodeVisitor(tx.visitDiscardedValue) || 183:tx.heritageClauseVisitor = tx.EmitContext().NewNodeVisitor(tx.visitHeritageClause)
+AsNode	direct	2	y	162:return p.AsNode() == parseTreeNode || 166:previousSibling = params[paramIdx-1].AsNode() || 284:return node.AsNode()
+FileName	direct	17	y	212:sourceFilePath := tspath.GetNormalizedAbsolutePath(sourceFile.FileName(), result.Host.GetCurrentDirectory()) || 216:sourceFileName = sourceFile.FileName()
+getTypeFromTypeNode	direct	2	n	677:predicateTypeFromNode := b.ch.getTypeFromTypeNode(tp.Type) || 695:return b.ch.getTypeFromTypeNode(t.AsPseudoTypeDirect().TypeNode)
+NewIdentifier	direct	1	n	1064:tx.Factory().NewIdentifier("value"), || 1196:nameNode = tx.Factory().NewIdentifier(nameText) || 1378:className := tx.Factory().NewIdentifier(classExprName.Text())
+CreateDiagnosticReporter$1	closure	0	n	
+GetPropertiesOfType	direct	1	n	1145:typeChecker.GetPropertiesOfType(typeForObject), || 1503:typeChecker.GetPropertiesOfType(typeChecker.GetTypeOfSymbolAtLocation(t.Symbol(), decl))..., || 1507:baseSymbols = append(baseSymbols, typeChecker.GetPropertiesOfType(t)...)
+ProcessResolution	direct	1	n	86:cache.ProcessResolution(resolution.OriginalPath, resolution.ResolvedFileName) || 89:cache.ProcessResolution(resolution.OriginalPath, resolution.ResolvedFileName) || 93:func (cache *KnownSymlinks) ProcessResolution(originalPath string, resolvedFileName string) {
+updateBucketAndDirectoryExistence$5	closure	0	n	
+GetAliasedSymbol	direct	1	n	110:if resolved := c.GetAliasedSymbol(symbol); resolved != nil && resolved != symbol { || 208:aliasedSymbol := c.GetAliasedSymbol(symbol) || 593:if aliasedSymbol := c.GetAliasedSymbol(symbol); aliasedSymbol != c.GetUnknownSymbol() {
+FS	direct	24	y	179:caches:          newCaches(host.GetCurrentDirectory(), host.FS().UseCaseSensitiveFileNames(), options), || 203:r.caches = newCaches(host.GetCurrentDirectory(), host.FS().UseCaseSensitiveFileNames(), compilerOptions) || 412:directoryExists := r.resolver.host.FS().DirectoryExists(typeRoot)
+SymbolName	direct	0	n	417:if firstIdentifier.Text() == ast.SymbolName(exportSymbol) {
+Symbol	direct	4	n	104:enumSymbol *ast.Symbol || 187:s *ast.Symbol || 541:resolvedProperties []*ast.Symbol    // Properties occurring in sibling object literals
+HasDecorators	direct	0	n	750:if node.Kind == ast.KindParameter && ast.HasDecorators(node) {
+GetCurrentDirectory	direct	24	n	163:defaultLibraryPath: tspath.GetNormalizedAbsolutePath(opts.Host.DefaultLibraryPath(), opts.Host.GetCurrentDirec || 166:CurrentDirectory:          opts.Host.GetCurrentDirectory(), || 216:return tspath.ToPath(file, p.opts.Host.GetCurrentDirectory(), p.opts.Host.FS().UseCaseSensitiveFileNames())
+IsTaggedTemplateExpression	direct	0	n	3649:if IsTaggedTemplateExpression(node) {
+FormatNodeGivenIndentation$1	closure	0	n	
+ReadFile	direct	18	n	1168:configFileContent, ok := s.projectSession.FS().ReadFile(configFileName) || 1218:configFileContent, ok := s.projectSession.FS().ReadFile(configFileName) || 1248:input, ok := s.projectSession.FS().ReadFile(fileName)
+AsNode	direct	2	y	244:if !canUseSourceFile || ast.GetSourceFileOfNode(node) != p.emitContext.MostOriginal(p.currentSourceFile.AsNode || 776:if p.shouldEmitOnSingleLine(body.AsNode()) { || 784:if !ast.NodeIsSynthesized(body.AsNode()) && p.currentSourceFile != nil && !RangeIsOnSingleLine(body.Loc, p.cur
+Pos	direct	7	n	28:pos := node.Pos() || 30:if parsed := p.parseJSDocComment(node, comment.Pos(), comment.End(), pos); parsed != nil { || 82:pos := node.Pos()
+IsExternalModule	direct	1	n	826:isExternalModuleFile := ast.IsExternalModule(file)
+End	direct	6	n	611:end := greatestEnd(lastChild.End(), childrenTextRange) || 616:parentNode.End(), || 653:for ; pos < loc.End(); currentLine++ {
+RawWrite	direct	5	y	323:e.writer.RawWrite(core.IfElse(options.NewLine == core.NewLineKindCRLF, "\r\n", "\n"))
+End	direct	6	n	505:nodes = appendUint32s(nodes, SyntaxKindNodeList, utf16(nodeList.Pos()), utf16(nodeList.End()), 0, parentIndex, || 538:nodes = appendUint32s(nodes, uint32(node.Kind), utf16(node.Pos()), utf16(node.End()), 0, parentIndex, getNodeD || 569:nodes = appendUint32s(nodes, uint32(rootNode.Kind), utf16(rootNode.Pos()), utf16(rootNode.End()), 0, 0, getNod
+isValidPrecedingNode	direct	0	n	413:!isValidPrecedingNode(foundChild, sourceFile) || 464:func isValidPrecedingNode(node *ast.Node, sourceFile *ast.SourceFile) bool { || 509:if isValidPrecedingNode(node, sourceFile) {
+hasInternalAnnotation	direct	0	n	191:return hasInternalAnnotation(commentRanges[len(commentRanges)-1], sourceFile) || 197:if hasInternalAnnotation(commentRange, sourceFile) { || 211:func hasInternalAnnotation(commentRange ast.CommentRange, sourceFile *ast.SourceFile) bool {
+StatementList	direct	1	n	527:return parent.StatementList() || 540:return parent.StatementList()
+hasReturn$1	closure	0	n	
+Push$1	closure	0	n	
+AsNode	direct	2	y	36:return v.VisitNode(node.AsNode()).AsSourceFile()
+propagateSubtreeFacts	direct	26	y	221:func (n *Node) propagateSubtreeFacts() SubtreeFacts       { return n.data.propagateSubtreeFacts() } || 1201:propagateSubtreeFacts() SubtreeFacts || 1243:func (node *NodeDefault) propagateSubtreeFacts() SubtreeFacts {
+Assert	direct	0	n	231:debug.Assert(!hasSourceMapText, "Unexpected multiple source map outputs, file: "+fileName) || 235:debug.Assert(!hasOutputText, "Unexpected multiple outputs, file: "+fileName) || 250:debug.Assert(hasOutputText, "Output generation failed")
+placeOpenBraceOnNewLineForControlBlocksOption	direct	0	n	86:func placeOpenBraceOnNewLineForControlBlocksOption(options lsutil.FormatCodeSettings) core.Tristate {
+GetStartOfNode	direct	0	n	411:start := GetStartOfNode(foundChild, sourceFile, !excludeJSDoc /*includeJSDoc*/) || 468:start := GetStartOfNode(node, sourceFile, false /*includeJSDoc*/) || 473:func GetStartOfNode(node *ast.Node, file *ast.SourceFile, includeJSDoc bool) int {
+Get	direct	5	n	249:if cached, ok := r.typeRefDirectiveResolutionCache.Get(cacheKey); ok { || 286:if cached, ok := r.moduleResolutionCache.Get(cacheKey); ok { || 687:} else if dot, ok := packageInfo.Contents.Exports.AsObject().Get("."); ok {
+Push	direct	2	n	284:defer p.opts.Tracing.Push(tracing.PhaseProgram, "createProgram", map[string]any{"configFilePath": opts.Config. || 560:defer p.opts.Tracing.Push(tracing.PhaseBind, "bindSourceFile", map[string]any{"path": string(file.Path())}, tr || 1798:defer tr.Push(tracing.PhaseEmit, "emit", nil, true)()
+NewCompilerDiagnostic	direct	0	n	229:t.result.reportStatus(ast.NewCompilerDiagnostic(diagnostics.Building_project_0, orchestrator.relativeFileName( || 305:t.result.reportStatus(ast.NewCompilerDiagnostic(diagnostics.Project_0_is_up_to_date, t.config)) || 311:t.result.reportStatus(ast.NewCompilerDiagnostic(
+emitDetachedComments$1	closure	0	n	

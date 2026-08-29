@@ -1,0 +1,60 @@
+{
+ "interface method dispatch": [
+  "internal/project/overlayfs.go\tprocessChanges\tinternal/api/callbackfs.go\tUseCaseSensitiveFileNames",
+  "internal/ast/ast.go\tcollectIdentifiersForSourceFile\tinternal/ast/ast.go\tAsNode",
+  "internal/printer/printer.go\temitNamedImports\tinternal/ast/ast.go\tAsNode",
+  "internal/project/session.go\tNpmInstall\tinternal/testutil/projecttestutil/npmexecutormock_generated.go\tNpmInstall",
+  "internal/transformers/declarations/tracker.go\tReportInferenceFallback\tinternal/checker/emitresolver.go\tIsExpandoFunctionDeclarationUnsafe"
+ ],
+ "closure-caller naming": [
+  "internal/checker/checker.go\tgetAdjustedTypeWithFacts$1\tinternal/checker/checker.go\tgetGlobalNonNullableTypeInstantiation",
+  "internal/checker/checker.go\tcontainsArgumentsReference$1\tinternal/ast/ast.go\tInitializer",
+  "internal/testrunner/transpile_runner.go\trunTest$1\tinternal/testrunner/transpile_runner.go\trunKind",
+  "internal/modulespecifiers/specifiers.go\tGetEachFileNameOfModule$2$1\tinternal/tspath/path.go\tResolvePath",
+  "internal/checker/checker.go\tcheckClassDeclaration$1\tinternal/ast/utilities.go\tIsPrivateIdentifierClassElementDeclaration"
+ ],
+ "vta-closure-callee (func literal named by vta)": [
+  "internal/ast/ast.go\tIterChildren$1$1\tinternal/transformers/moduletransforms/commonjsmodule.go\ttransformCommonJSModule$1",
+  "internal/checker/checker.go\tmapTypeEx\tinternal/checker/checker.go\tcheckArrayLiteralDestructuringElementAssignment$1",
+  "internal/vfs/vfstest/vfstest.go\tEntries$1\tinternal/testutil/fsbaselineutil/differ.go\tChangedPaths$1",
+  "internal/ast/ast.go\tvisit\tinternal/ast/parseoptions.go\tfindChildNode$1",
+  "internal/compiler/emitter.go\temitDeclarationFile\tinternal/tracing/tracing.go\tPush$2"
+ ],
+ "multi-hop receiver chain": [
+  "internal/transformers/estransforms/classfields.go\tcreateMemberAccessForPropertyName\tinternal/ast/ast_generated.go\tNewPropertyAccessExpression",
+  "internal/execute/build/buildtask.go\tcleanProjectOutput\tinternal/vfs/iovfs/iofs.go\tFileExists",
+  "internal/compiler/program.go\tUseCaseSensitiveFileNames\tinternal/project/snapshotfs.go\tUseCaseSensitiveFileNames",
+  "internal/transformers/estransforms/async.go\tvisit\tinternal/ast/visitor.go\tVisitEachChild",
+  "internal/transformers/estransforms/classfields.go\tcreateCallBinding\tinternal/transformers/transformer.go\tEmitContext"
+ ],
+ "other: concrete struct method missed": [
+  "internal/compiler/fileInclude.go\tcomputeDiagnostic\tinternal/tsoptions/parsedcommandline.go\tConfigName",
+  "internal/tsoptions/showconfig.go\tserializeCompilerOptions\tinternal/tsoptions/commandlineoption.go\tEnumMap",
+  "internal/ls/callhierarchy.go\tcreateCallHierarchyItem\tinternal/spanmap/spanmap.go\tIsNone",
+  "internal/printer/factory.go\tNewObjectDefinePropertyCall\tinternal/ast/ast_generated.go\tNewPropertyAccessExpression",
+  "internal/ls/lsconv/converters.go\tlspRangeToVirtual\tinternal/spanmap/spanmap.go\tOriginalToVirtualSpans"
+ ],
+ "interface method dispatch (single impl)": [
+  "internal/printer/printer.go\temitExpression\tinternal/ast/ast_generated.go\tAsObjectLiteralExpression",
+  "internal/checker/checker.go\tcheckImportDeclaration\tinternal/ast/ast_generated.go\tAsImportClause",
+  "internal/ast/ast.go\tSetExpression\tinternal/ast/ast_generated.go\tAsSatisfiesExpression",
+  "internal/printer/printer.go\temitExpression\tinternal/ast/ast_generated.go\tAsAwaitExpression",
+  "internal/printer/printer.go\temitStatement\tinternal/ast/ast_generated.go\tAsTypeAliasDeclaration"
+ ],
+ "func-typed field/param": [
+  "internal/ls/documenthighlights.go\tuseParent\tinternal/ls/documenthighlights.go\tgetBreakOrContinueStatementOccurrences",
+  "internal/execute/build/buildtask.go\treportDiagnostic\tinternal/execute/tsc/diagnostics.go\tQuietDiagnosticReporter",
+  "internal/execute/tsc/init.go\tWriteConfigFile\tinternal/execute/tsc/diagnostics.go\tQuietDiagnosticReporter",
+  "internal/api/session.go\thandleGetExportSpecifierLocalTargetSymbol\tinternal/compiler/checkerpool.go\tnoop",
+  "internal/api/session.go\thandleGetTypesAtPositions\tinternal/project/checkerpool.go\tnoop"
+ ],
+ "other: concrete pkg func missed": [
+  "internal/ls/lsconv/converters.go\tFileNameToDocumentURI\tinternal/bundled/embed.go\tIsBundled",
+  "internal/ast/utilities.go\tgetImportTypeNodeLiteral\tinternal/ast/ast_generated.go\tIsStringLiteral",
+  "internal/transformers/estransforms/esdecorator.go\tgetHelperVariableName\tinternal/ast/utilities.go\tIsStatic"
+ ],
+ "other: concrete struct/pkg call missed": [
+  "internal/printer/emitcontext.go\tVisitIterationBody\tinternal/ast/ast.go\tStatements",
+  "internal/compiler/fileloader.go\tresolveImportsAndModuleAugmentations\tinternal/ast/utilities.go\tIsExternalModule"
+ ]
+}
