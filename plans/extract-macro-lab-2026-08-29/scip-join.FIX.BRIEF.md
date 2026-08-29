@@ -8,7 +8,7 @@ corpus afterwards. Your receipt must make that diff possible.
 
 ## First action
 ```
-git merge --ff-only 9928476ff35ea361ef057f5bf300a866d0e70edc
+git merge --ff-only 671721693e817dc1cc7fe0aafa4bfb3d139e9901
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Failure: STOP, `boop beep --no-wait --as feature-extract-rust-scip-macros sprefa-coordinator "<one line>"`.
