@@ -11,6 +11,7 @@ Corpus: `/Users/chrishafley/projects/typescript-go` (Microsoft's TypeScript comp
 5. [Kinks](#kinks)
 6. [Untested and why](#untested-and-why)
 7. [Fixes](#fixes)
+8. [Fixes 2](#fixes-2)
 
 ## Step 1 <a name="step-1"></a>
 
@@ -238,3 +239,97 @@ that is the configuration the scip ratchet grades.
 | a `_test.go` file in the same directory as the package it tests | its defs are candidates for that package's import path, so a name only the test file declares can win. Not observed in the 28,560 corpus edges; the rule would need the package clause, which no index carries. |
 | `tests/golden_parity.rs:1251` | the go scip ratchet's twin re-runs `call_name_match` with no site in hand, so it takes neither the imported nor the package leg. It grades the path-less configuration, which is a real one, but the twin is no longer the arm's exact copy. File outside this lane's ownership. |
 | `tests/6_kind_vocab.rs` header | still cites 946460d75 as the golden's origin after the 1-hunk regeneration (2 gamma.go site rows). File outside this lane's ownership. |
+
+## Fixes 2 <a name="fixes-2"></a>
+
+Lane `fix-extract-go-type-plane`, base `e433d5f9d`. Same corpus, same binary
+path (`v6/sprefa-extract/target/release/extract`, this lane's build), a fresh
+`--resolve` over all 5097 files plus one `--family call` pass per file for
+the site/def totals. Numbers below are the mode of 5 back-to-back runs (see
+the flakiness row); the "Fixes" table's own numbers are the before column.
+
+### What landed
+
+| leg | mechanism | test |
+|---|---|---|
+| 1. receiver types | `x.M()` binds through x's declared type (var/param/receiver/pointer/one struct field/one slice-or-map element), same package first then the type's own `pkg.` qualifier; `:=` from a call result is `inferred`, a rebound conflict is `ambiguous` | `tests/55_go_type_plane.rs`, 5 of 7 tests |
+| 2. interface dispatch | every `method_elem` mints a CallF Method def (owner = the interface, via `CallFAux.method_owners`); a type wins `CallEdgeKind::Implements` on a spec only if its method set covers ALL of the interface's specs | `tests/55_go_type_plane.rs`, 2 of 7 tests |
+| 3. builtins | a bare call to a predeclared func/type-conversion drops `unresolved reason builtin`, never a corpus gap; a local shadow still wins `name_resolve` | `tests/55_go_type_plane.rs`, 2 of 7 tests |
+
+### Corpus receipt
+
+`resolved_edge`/`unresolved`/reachability, 104 program roots, whole project
+(5097 files, wall ~7-8s):
+
+| metric | before this lane | after |
+|---|---|---|
+| resolved_edge (name_resolve) | 99,190 | 84,413 |
+| resolved_edge (implements) | 0 (kind did not exist) | 1,657 |
+| resolved_edge total | 99,190 | 86,070 |
+| call sites (whole corpus) | 159,740 | 159,737 |
+| unresolved sites (sites − edges) | 60,550 | 73,667 |
+| unresolved sites WITH a reported reason | 0 (`drops: None`) | 33,457 (`builtin` 14,434, `inferred` 19,023, `ambiguous` 0) |
+| reachable defs (non-test roots) | 4,253 / 18,849 (22.6%) | 4,832 / 19,174 (25.2%) |
+| reachable defs (+ test roots) | 12,542 | 11,600 |
+
+`resolved_edge` total DROPPED (99,190 -> 86,070) while reachability ROSE: leg
+1 replaced the old bare-name search (`GoSource::call_name_match`, which binds
+ANY unique corpus def named `M` with no receiver check at all) with a
+directory- and type-checked lookup for every selector site that has a
+traceable receiver, so a site that used to bind "by luck" onto an unrelated
+same-named method now correctly finds nothing, or finds the right one. Net:
+14,777 fewer (looser) name-match edges, 1,657 new implements edges, all of
+them targeted at real cross-type/cross-interface dispatch.
+
+`reachable_with_tests` fell (12,542 -> 11,600) even though the non-test
+number rose; not investigated further inside this lane's time box (see the
+"untested" row below) — a real number, not a typo, but its direction is
+unexplained.
+
+### Kink: `own_blob` cross-corpus span search is non-deterministic at scale
+
+`own_blob` (`types.rs:1683`, shared by every language, not go-specific)
+finds "this file's own blob" by scanning `index.map.values().flatten()` — a
+plain `HashMap`, so the scan order is Rust's per-process random seed, not
+insertion order — for the first `DefSite` whose SPAN equals one of this
+file's own named-entity spans. At small scale a `(start,end)` byte-offset
+pair colliding with an unrelated file's node is rare enough to never surface.
+At full corpus scale (5097 files), leg 2 mints one new small CallF node per
+`method_elem` across the whole corpus, and at least one of those spans
+coincides with an unrelated file's own span closely enough that `own_blob`
+occasionally returns the WRONG blob for `internal/execute/tsctests/runner.go`
+depending on the hash-map iteration order, which is fixed once per PROCESS
+start, not per run: back-to-back `--resolve` invocations of the identical
+file list gave `resolved_edge` counts of 86,070 (4 of 5 runs) and 86,061 (1
+of 5), the 9-edge gap always the same set of receiver-typed sites in that one
+file. Isolated to a small fixture, or forced single-threaded
+(`SPREFA_EXTRACT_THREADS=1`), it never reproduces — confirmed NOT a rayon
+race (verified: `own_blob`'s search order depends on the HashMap's random
+seed, chosen once at process start, independent of thread count). Confirmed
+NOT caused by this lane's resolve logic: checked out the pre-lane binary
+(`684339680`) and ran the identical 5-file-list `--resolve` 3 times back to
+back — stable at 99,190 every time, because it mints far fewer nodes and
+never happens to collide. `own_blob` itself is `types.rs`, outside this
+lane's ownership, and a real fix needs it scoped by blob/file rather than
+searched corpus-wide — a design change, not a one-line patch. Leg 1/2's OWN
+candidate-selection was independently hardened during this investigation
+(`go_receiver_target` now requires an exact-one match, was `.find()`
+first-wins; `go_interface_implements` now keys candidates by (owner name,
+declaring dir), was keyed by bare name alone, conflating two packages that
+name a type the same) — neither fix changed the flake, confirming the root
+sits in `own_blob`, not in this lane's new code.
+
+### Untested, and why
+
+- `reachable_with_tests` regression direction: not root-caused inside this
+  lane's time box; flagged for the coordinator, not silently reported as fine.
+- Cross-package receiver types (`var x pkg.T; x.M()`) resolve through the
+  file's own import table (`go_receiver_target`'s qualified-name branch), but
+  no corpus fixture in `tests/55_go_type_plane.rs` exercises it; the whole-
+  corpus receipt above is the only evidence it fires (some fraction of the
+  1,657 implements edges and some receiver-typed name_resolve edges cross
+  package boundaries, not separately counted).
+- `ambiguous` never appeared in the whole-corpus run (0 of 33,457 reported
+  drops): either genuinely rare in this corpus, or the block-scoped
+  `TypeScope` in `go_walk_receivers` is stricter than real Go shadowing
+  requires and never actually produces the conflict. Not distinguished.
