@@ -14,6 +14,8 @@ const MD: &str = "tests/fixtures/markdown/doc_node.md";
 const RUST_SAMPLE: &str = "tests/fixtures/rust/sample.rs";
 const TS_SAMPLE: &str = "tests/fixtures/ts/sample.ts";
 const TS_DOCS: &str = "tests/fixtures/ts/docs.ts";
+const PY_CLASS: &str = "tests/fixtures/python/corpus_8.py";
+const PY_CALLER: &str = "tests/fixtures/python/corpus_9.py";
 
 fn extract(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_extract"))
@@ -119,5 +121,21 @@ fn resolve_cli_reaches_the_markdown_doc_ref_arm() {
         doc_refs[0].contains(&format!(r#""target_path":"{RUST_SAMPLE}""#)),
         "Engine bridges to the rust declaration: {}",
         doc_refs[0]
+    );
+}
+
+/// FAIL-FIRST RECEIPT: `"callee_name":null` on the `Widget()` row. A class is
+/// not a CallF def, so the shared def index answered from the TypeF plane and
+/// the call-plane span table had no name at that span.
+#[test]
+fn resolve_cli_names_a_class_constructor_callee() {
+    let rows = stdout_of(&["--resolve", PY_CLASS, PY_CALLER]);
+    assert!(
+        !rows.contains(r#""callee_name":null"#),
+        "every resolved edge must name its callee:\n{rows}"
+    );
+    assert!(
+        rows.contains(r#""callee_name":"Widget""#),
+        "the constructor edge must name the class:\n{rows}"
     );
 }

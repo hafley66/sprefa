@@ -917,6 +917,14 @@ fn name_at(names: Option<&SpanNames>, output: &ExtractOutput, span: Span) -> Opt
         .map(|name| output.strings.lookup(name).to_string())
 }
 
+/// The callee's declared name at `span`. A constructor resolves to a class,
+/// which is a TypeF def and never a CallF one, so the call table alone answers null.
+fn callee_name(targets: &TargetIndex<'_>, target: &ProjectInput, span: Span) -> Option<String> {
+    name_at(targets.call_names.get(&target.blob), &target.output, span).or_else(|| {
+        name_at(targets.type_names.get(&target.blob), &target.output, span)
+    })
+}
+
 fn call_facts(
     input: &ProjectInput,
     targets: &TargetIndex<'_>,
@@ -933,11 +941,7 @@ fn call_facts(
                 caller_path: input.path.clone(),
                 caller_name: Some(caller_name(call, &input.output, edge.src)),
                 callee_path: target.path.clone(),
-                callee_name: name_at(
-                    targets.call_names.get(&target.blob),
-                    &target.output,
-                    edge.dst_span,
-                ),
+                callee_name: callee_name(targets, target, edge.dst_span),
                 caller_site_start: edge.call_site.map_or(0, |span| span.start),
                 caller_site_end: edge.call_site.map_or(0, |span| span.end()),
                 kind: edge.kind.as_str().to_string(),
