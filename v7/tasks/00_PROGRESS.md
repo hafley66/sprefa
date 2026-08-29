@@ -475,3 +475,25 @@ one SWI process.
 - Commits: `e4517c3eb`, `e642d8c9f`.
 - Consolidated SWI command: 13 passed, 0 failed, 0 choicepoint warnings.
 - Tree-sitter command: 1 parse passed, 0 failed.
+
+## Completed-stratum count
+
+- One rule-head `(count Argument)` lowers to
+  `aggregate(count, Argument)`. A second count descriptor, malformed count
+  shape, count body goal, and unrelated nested head form each stop with a
+  deterministic lowering diagnostic.
+- Every dependency of an aggregate-headed rule has strict gap 1. A strict
+  cycle containing an aggregate edge returns
+  `aggregate_dependency_cycle(Relations)`, distinct from negative cycles.
+- Before current-stratum tabling, `derive_aggregate_rows/4` enumerates complete
+  body proofs over immutable completed lower rows. Plain head positions form
+  the group key; the count descriptor becomes `const(BagLength)`.
+- The grouped receipt maps two east sale proofs and one west proof to
+  `region_count("east", 2)` and `region_count("west", 1)`. Both east proofs
+  contribute even though the count expression has the same value. Empty bags
+  emit no row, and group rows are sorted.
+- The normalized Partial compiler-row SHA-256 remains
+  `6d1c6ee03f48e5a76a8eb6e0f440243eac5c3c03256acc04686bd8147142c5bc`.
+- Commits: `f1a25c814`, `7e8c08f20`.
+- Consolidated SWI command: 14 passed, 0 failed, 0 choicepoint warnings.
+- Tree-sitter command: 1 parse passed, 0 failed.
