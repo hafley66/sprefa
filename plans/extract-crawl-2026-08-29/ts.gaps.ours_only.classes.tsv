@@ -1,0 +1,200 @@
+bare call, def not found (method ref / property fn)	src/compiler/emitter.ts willEmitLeadingNewLine	src/compiler/emitter.ts commentWillEmitNewLine	3271		
+bare call, def not found (method ref / property fn)	src/compiler/parser.ts parsePropertyDeclaration	src/compiler/parser.ts parseInitializer	7982		
+bare call, def not found (method ref / property fn)	src/compiler/transformers/esDecorators.ts visitAssignmentElement	src/compiler/transformers/esDecorators.ts isAnonymousClassNeedingAssignedName	2106		
+bare call, def not found (method ref / property fn)	src/compiler/transformers/ts.ts transformConstructorBody	src/compiler/transformers/ts.ts transformParameterWithPropertyAssignment	1432		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/binder.ts closure@116812	src/compiler/factory/nodeTests.ts isPropertyAccessExpression	1060		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/builder.ts closure@109447	src/compiler/builder.ts toFilePath	2376	semanticD	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/builder.ts closure@55726	src/compiler/builder.ts tryAddRoot	1248	checkPendi	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts closure@1150417	src/compiler/factory/nodeTests.ts isRestTypeNode	19997	retur	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts closure@2538765	src/compiler/checker.ts error	1140		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts closure@2605865	src/compiler/factory/nodeTests.ts isObjectBindingPattern	45248		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts closure@2609257	src/compiler/utilitiesPublic.ts idText	21123		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts closure@2744171	src/compiler/checker.ts getApparentType	29383	is	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts closure@333557	src/compiler/checker.ts withContext	6451		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts closure@466277	src/compiler/core.ts some	8550		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts closure@50654	src/compiler/types.ts getSourceFiles	1629		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts closure@530833	src/compiler/core.ts cast	9562	s	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts closure@57145	src/compiler/checker.ts symbolToString	1746		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts closure@60647	src/compiler/utilitiesPublic.ts escapeLeadingUnderscores	1814	name	string
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts closure@61420	src/compiler/utilitiesPublic.ts getParseTreeNode	1829		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts closure@638838	src/compiler/core.ts length	11128		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts closure@847116	src/compiler/checker.ts createSignature	14828	proper	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts closure@893304	src/compiler/checker.ts everyType	15612		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/expressionToTypeNode.ts closure@69693	src/compiler/utilitiesPublic.ts isFunctionLikeDeclaration	0		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/moduleNameResolver.ts loadNodeModuleFromDirectoryWorker	src/compiler/moduleNameResolver.ts noPackageId	2536		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/parser.ts closure@26286	src/compiler/parser.ts visitNode	688	visitN	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/resolutionCache.ts closeTypeRootsWatch	src/compiler/utilities.ts closeFileWatcher	1648		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/sys.ts closure@24060	src/compiler/sys.ts watchDirectory	419		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/sys.ts closure@33832	src/compiler/path.ts normalizePath	856		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/transformers/declarations.ts closure@25262	src/compiler/path.ts getRelativePathToDirectoryOrUrl	218		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/transformers/declarations.ts closure@34871	src/compiler/transformers/declarations.ts ensureParameter	789	input	AccessorDeclaration
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/transformers/declarations.ts closure@80052	src/compiler/transformers/declarations.ts ensureNoInitializer	1643	hasPri	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/transformers/esDecorators.ts visitReferencedPropertyName	src/compiler/utilitiesPublic.ts isExpression	1988		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/transformers/legacyDecorators.ts closure@14050	src/compiler/factory/nodeTests.ts isDecorator	331	collision	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/transformers/ts.ts visitImportClause	src/compiler/utilitiesPublic.ts isNamedImportBindings	2338		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/transformers/typeSerializer.ts closure@5332	src/compiler/transformers/typeSerializer.ts serializeTypeNode	148	serializ	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/tsbuildPublic.ts closure@28596	src/compiler/tsbuildPublic.ts toResolvedConfigFilePath	680	mutate	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/tsbuildPublic.ts closure@9670	src/compiler/watch.ts getLocaleTimeString	295	cre	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/utilities.ts closure@505693	src/compiler/factory/nodeTests.ts isStringLiteral	0		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/utilities.ts closure@507464	src/compiler/utilities.ts getSynthesizedDeepCloneWithReplacements	0		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/visitorPublic.ts closure@57799	src/compiler/utilitiesPublic.ts isExpression	635	Debu	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/visitorPublic.ts closure@78867	src/compiler/factory/nodeTests.ts isModuleExportName	1650	_tokenVisi	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/watch.ts closure@13553	src/compiler/watch.ts fileIncludeReasonToDiagnostics	363	optio	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/watch.ts closure@42772	src/compiler/watch.ts reportUnrecoverableDiagnostic	928		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/watchPublic.ts closure@58578	src/compiler/watchPublic.ts nextSourceFileVersion	728	scheduleP	
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/watchPublic.ts watchReferencedProject	src/compiler/watchPublic.ts watchFile	1123		
+caller naming: closure@N (oracle names the enclosing fn)	src/harness/harnessIO.ts closure@28944	src/compiler/path.ts comparePaths	638	engine	
+caller naming: closure@N (oracle names the enclosing fn)	src/harness/harnessLanguageService.ts closure@21541	src/compiler/path.ts toPath	554	retu	
+caller naming: closure@N (oracle names the enclosing fn)	src/harness/tsserverLogger.ts closure@2085	src/harness/tsserverLogger.ts msg	70	l	
+caller naming: closure@N (oracle names the enclosing fn)	src/server/editorServices.ts closure@185197	src/server/editorServices.ts onSourceFileChanged	4145	removeRootOfInferredProjectIfNowPartOfOtherPro	
+caller naming: closure@N (oracle names the enclosing fn)	src/server/editorServices.ts closure@188094	src/server/editorServices.ts clearSemanticCache	4174		
+caller naming: closure@N (oracle names the enclosing fn)	src/server/editorServices.ts closure@193458	src/server/editorServices.ts assignOrphanScriptInfoToInferredProject	4273	originalScri	
+caller naming: closure@N (oracle names the enclosing fn)	src/server/editorServices.ts closure@84990	src/server/editorServices.ts getConfiguredProjectByCanonicalConfigFilePath	2082	configF	
+caller naming: closure@N (oracle names the enclosing fn)	src/server/project.ts closure@41695	src/server/project.ts close	1176	det	
+caller naming: closure@N (oracle names the enclosing fn)	src/server/session.ts closure@144998	src/server/session.ts mapTextChangeToCodeEdit	3110	a	NavigateToItem
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/addMissingAwait.ts closure@12436	src/compiler/factory/nodeTests.ts isBlock	281	kin	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/addMissingAwait.ts closure@7309	src/compiler/core.ts isNumber	156		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/annotateWithTypeFromJSDoc.ts transformJSDocParameter	src/services/codefixes/annotateWithTypeFromJSDoc.ts transformJSDocType	193		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/convertToAsyncFunction.ts closure@44951	src/services/codefixes/convertToAsyncFunction.ts getMappedBindingNameOrDefault	889	i	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/fixAddMissingMember.ts closure@6483	src/compiler/checker.ts getNodeId	197	return	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/fixAddMissingNewOperator.ts closure@647	src/services/codefixes/fixAddMissingNewOperator.ts addMissingNewOperator	25		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/fixClassSuperMustPrecedeThisAccess.ts closure@1328	src/services/codeFixProvider.ts codeFixAll	42		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/fixExtendsInterfaceBecomesImplements.ts closure@833	src/services/codefixes/fixExtendsInterfaceBecomesImplements.ts doChanges	28	ex	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/fixJSDocTypes.ts closure@1308	src/services/codefixes/fixJSDocTypes.ts fix	57	Change_all_jsdoc_style	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/fixMissingCallParentheses.ts closure@641	src/services/codefixes/fixMissingCallParentheses.ts getCallName	28	spa	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/fixUnusedIdentifier.ts closure@6259	src/services/codefixes/fixUnusedIdentifier.ts tryDeleteDeclaration	106	len	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/importFixes.ts sortFixInfo	src/compiler/utilities.ts hostGetCanonicalFileName	1402		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/requireInTs.ts closure@881	src/services/codefixes/requireInTs.ts getInfo	40	pro	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/splitTypeOnlyImport.ts closure@728	src/services/codefixes/splitTypeOnlyImport.ts getImportDeclaration	27	conte	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/completions.ts closure@253083	src/services/completions.ts isTypeScriptOnlyKeyword	1236	sortT	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/completions.ts closure@260892	src/services/completions.ts getApparentProperties	5781	getType	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/completions.ts closure@32978	src/services/completions.ts getJSDocParamAnnotation	982		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/findAllReferences.ts closure@123729	src/services/findAllReferences.ts fromRoot	2614		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/findAllReferences.ts closure@21847	src/compiler/debug.ts assertNever	704	Symbo	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/formatting/formatting.ts closure@12438	src/services/utilities.ts startEndOverlapsWithStartEnd	376	inside	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/getEditsForFileRename.ts closure@9360	src/compiler/utilities.ts isAmbientModule	208	sta	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/goToDefinition.ts closure@5886	src/services/goToDefinition.ts createDefinitionInfoFromName	183		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/organizeImports.ts closure@14417	src/services/organizeImports.ts isDeclarationUsed	340		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/patternMatcher.ts closure@5933	src/services/patternMatcher.ts createSegment	126	dotSeparatedSegments	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/refactors/extractSymbol.ts closure@101997	src/services/refactors/extractSymbol.ts isExtractableExpression	0		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/services.ts closure@92937	src/services/utilities.ts getContainerNode	2356	n	Node
+caller naming: closure@N (oracle names the enclosing fn)	src/services/stringCompletions.ts closure@62093	src/services/stringCompletions.ts directoryResult	10		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/utilities.ts closure@100755	src/compiler/factory/nodeTests.ts isStringLiteral	2589	Text	
+caller naming: closure@N (oracle names the enclosing fn)	src/services/utilities.ts closure@158896	src/compiler/factory/nodeTests.ts isExportSpecifier	4037	boolea	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/parallel/host.ts closure@12166	src/testRunner/parallel/host.ts updateProgress	358		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/projectsRunner.ts compileDeclarations	src/compiler/core.ts combine	421		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/config/commandLineParsing.ts closure@10074	src/compiler/commandLineParser.ts parseBuildCommand	14		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/config/commandLineParsing.ts closure@406	src/compiler/program.ts formatDiagnostics	18	formatDiagnost	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/customTransforms.ts closure@143	src/testRunner/unittests/customTransforms.ts emitsCorrectly	79		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/evaluation/autoAccessors.ts closure@990	src/harness/evaluatorImpl.ts evaluateTypeScript	12	evaluateTypeScrip	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/evaluation/forOf.ts closure@216	src/harness/evaluatorImpl.ts evaluateTypeScript	6	evalu	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/helpers/baseline.ts closure@12658	src/testRunner/unittests/helpers/baseline.ts toFileName	253	roo	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/helpers/noEmit.ts closure@10904	src/testRunner/unittests/helpers/tsc.ts verifyTsc	26		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/helpers/tsc.ts closure@13587	src/compiler/core.ts isString	295		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/helpers/tsserver.ts closure@28015	src/testRunner/unittests/helpers/tsserver.ts invokeWatchChanges	0		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts closure@17750	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts ensureLib	507	globalTypingsCacheL	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/incrementalParser.ts closure@15001	src/testRunner/unittests/incrementalParser.ts withDelete	101	sourc	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/incrementalParser.ts closure@19229	src/testRunner/unittests/incrementalParser.ts withDelete	103		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/paths.ts closure@15567	src/compiler/path.ts combinePaths	238	strictEqual	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/programApi.ts closure@5044	src/compiler/program.ts createProgram	139	g	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/reuseProgramStructure.ts closure@27737	src/testRunner/unittests/reuseProgramStructure.ts baselineProgram	535		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/reuseProgramStructure.ts closure@47616	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts createWatchedSystem	999	isFalse	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/services/colorization.ts closure@10184	src/testRunner/unittests/services/colorization.ts identifier	174	ts	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/services/colorization.ts closure@9915	src/testRunner/unittests/services/colorization.ts comment	170	testLexica	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/services/patternMatcher.ts closure@3318	src/testRunner/unittests/services/patternMatcher.ts assertSegmentMatch	7		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/services/patternMatcher.ts closure@539	src/testRunner/unittests/services/patternMatcher.ts verifyBreakIntoCharacterSpans	18	verifyBreakIntoCh	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/services/textChanges.ts closure@257	src/testRunner/unittests/convertToBase64.ts runTest	638		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsbuild/emitDeclarationOnly.ts closure@317	src/testRunner/unittests/tsbuild/emitDeclarationOnly.ts verifyEmitDeclarationOnly	71	disableM	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsbuild/resolveJsonModule.ts closure@2272	src/testRunner/unittests/tsbuild/resolveJsonModule.ts getProjFs	52		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsbuild/roots.ts closure@3805	src/testRunner/unittests/helpers.ts jsonToReadableText	110		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsbuild/sample.ts closure@15380	src/testRunner/unittests/helpers/sampleProjectReferences.ts getSysForSampleProjectReferences	361		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsbuild/sample.ts closure@9327	src/compiler/tsbuildPublic.ts createBuilderStatusReporter	232	clearOu	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsc/projectReferencesConfig.ts closure@4674	src/testRunner/unittests/tsc/projectReferencesConfig.ts getConfig	49		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tscWatch/emit.ts closure@11366	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts runQueuedTimeoutCallbacks	253	shape	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tscWatch/emit.ts closure@11666	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts appendFile	261	isolatedMod	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tscWatch/forceConsistentCasingInFileNames.ts closure@2004	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts runQueuedTimeoutCallbacks	34		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tscWatch/moduleResolution.ts closure@737	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts createWatchedSystem	21	creat	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tscWatch/noEmitOnError.ts closure@138	src/testRunner/unittests/helpers/noEmitOnError.ts forEachNoEmitOnErrorScenarioTscWatch	4	for	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tscWatch/programUpdates.ts closure@31336	src/testRunner/unittests/helpers.ts jsonToReadableText	139	runQueued	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tscWatch/programUpdates.ts closure@69475	src/testRunner/unittests/helpers.ts jsonToReadableText	1545	mypro	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tscWatch/programUpdates.ts closure@759	src/testRunner/unittests/tscWatch/programUpdates.ts changeWhenLibCheckChanges	1992	mypro	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tscWatch/projectsWithReferences.ts closure@1155	src/testRunner/unittests/helpers/sampleProjectReferences.ts getSysForSampleProjectReferencesBuilt	26	getSysForSampleProjectRef	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tscWatch/watchApi.ts closure@11847	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts runQueuedTimeoutCallbacks	258	createSystem	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tscWatch/watchApi.ts closure@908	src/compiler/watchPublic.ts createWatchProgram	63		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tscWatch/watchEnvironment.ts closure@30578	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts ensureFileOrFolder	30	create	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tscWatch/watchEnvironment.ts closure@6737	src/testRunner/unittests/tscWatch/watchEnvironment.ts verifySymlinks	171		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/autoImportProvider.ts closure@13840	src/testRunner/unittests/tsserver/autoImportProvider.ts setup	160		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/autoImportProvider.ts closure@9760	src/testRunner/unittests/tsserver/autoImportProvider.ts setup	50	i	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/auxiliaryProject.ts closure@3023	src/testRunner/unittests/helpers/tsserver.ts TestSession	37	executeC	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/cachingFileSystemInformation.ts closure@4568	src/testRunner/unittests/helpers/tsserver.ts setCompilerOptionsForInferredProjectsRequestForSession	116		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/compileOnSave.ts closure@22906	src/testRunner/unittests/helpers/tsserver.ts baselineTsserverLogs	59	create	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/compileOnSave.ts closure@36240	src/testRunner/unittests/helpers/tsserver.ts baselineTsserverLogs	755	protocol	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/compileOnSave.ts closure@38432	src/testRunner/unittests/helpers/tsserver.ts toExternalFiles	825	TypeScriptProject3	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/completionsIncomplete.ts closure@7880	src/testRunner/unittests/helpers/tsserver.ts baselineTsserverLogs	169	host	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/configuredProjects.ts closure@21252	src/testRunner/unittests/helpers/contents.ts compilerOptionsToConfigJson	96		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/configuredProjects.ts closure@21252	src/testRunner/unittests/helpers/tsserver.ts baselineTsserverLogs	484	username	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/configuredProjects.ts closure@24502	src/testRunner/unittests/helpers/tsserver.ts TestSession	535	proje	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/configuredProjects.ts closure@26844	src/testRunner/unittests/helpers/tsserver.ts openFilesForSession	580	l	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/configuredProjects.ts closure@57262	src/testRunner/unittests/helpers.ts jsonToReadableText	1169	configuredP	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/duplicatePackages.ts closure@576	src/testRunner/unittests/helpers/tsserver.ts TestSession	34		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/exportMapCache.ts closure@15327	src/testRunner/unittests/tsserver/exportMapCache.ts verifyReferences	347		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/exportMapCache.ts closure@7291	src/testRunner/unittests/helpers/tsserver.ts getProjectService	193	classesTs	File
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/externalProjects.ts closure@9158	src/testRunner/unittests/helpers/tsserver.ts toExternalFiles	153	openFilesForSession	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/getExportReferences.ts closure@1837	src/testRunner/unittests/helpers/tsserver.ts baselineTsserverLogs	52		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/getExportReferences.ts closure@1837	src/testRunner/unittests/tsserver/getExportReferences.ts makeSampleSession	39	executeCo	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/getExportReferences.ts closure@3297	src/testRunner/unittests/helpers/tsserver.ts protocolFileLocationFromSubstring	79	base	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/maxNodeModuleJsDepth.ts closure@552	src/harness/tsserverLogger.ts log	30	maxNodeMo	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/moduleSpecifierCache.ts closure@5420	src/testRunner/unittests/helpers/tsserver.ts baselineTsserverLogs	134	getW	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/openFile.ts closure@1348	src/testRunner/unittests/helpers/tsserver.ts TestSession	61	confi	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/openFile.ts closure@505	src/testRunner/unittests/helpers/tsserver.ts openExternalProjectForSession	27	openExternalProjectForSess	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/projectErrors.ts closure@5914	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts createServerHost	2		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/projectReferenceCompileOnSave.ts closure@4660	src/testRunner/unittests/helpers/tsserver.ts TestSession	60	sessio	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/projectReferences.ts closure@23558	src/testRunner/unittests/helpers/tsserver.ts TestSession	108		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/projects.ts closure@41147	src/testRunner/unittests/helpers/tsserver.ts TestSession	926		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/projects.ts closure@50998	src/testRunner/unittests/helpers/tsserver.ts executeCommandSeq	1209		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/projects.ts closure@64430	src/testRunner/unittests/helpers.ts jsonToReadableText	553		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/projectsWithReferences.ts closure@9813	src/testRunner/unittests/helpers/tsserver.ts baselineTsserverLogs	123	ref	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/regionDiagnostics.ts closure@5915	src/testRunner/unittests/helpers/tsserver.ts baselineTsserverLogs	16		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/regionDiagnostics.ts closure@7032	src/testRunner/unittests/helpers/tsserver.ts openFilesForSession	35	protocolTextSpanFro	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/resolutionCache.ts closure@19525	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts createServerHost	410	rela	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/resolutionCache.ts closure@900	src/testRunner/unittests/helpers/tsserver.ts baselineTsserverLogs	41		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/skipLibCheck.ts closure@7962	src/testRunner/unittests/helpers/tsserver.ts openFilesForSession	169		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/symLinks.ts closure@8848	src/testRunner/unittests/tsserver/symLinks.ts createSessionAndOpenFile	190		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/typingsInstaller.ts closure@48112	src/testRunner/unittests/helpers/tsserver.ts openFilesForSession	1164	f	
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/versionCache.ts closure@2019	src/server/scriptVersionCache.ts LineIndex	53		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/watchEnvironment.ts closure@25723	src/testRunner/unittests/helpers/tsserver.ts TestSession	578		
+caller naming: closure@N (oracle names the enclosing fn)	src/tsserver/nodeServer.ts closure@19261	src/tsserver/nodeServer.ts getGlobalTypingsCacheLocation	508	ev	
+interface receiver (needs implementer fan-out)	src/server/session.ts getNavigationBarItems	src/server/session.ts getNavigationBarItems	2792	len	number
+method on a namespace-merged / imported-module declaration	src/compiler/parser.ts parseImportDeclarationOrImportEqualsDeclaration	src/compiler/parser.ts nextTokenIsFromKeywordOrEqualsToken	8571	SyntaxKind	
+other: MANUAL(no-recv)	src/compiler/utilities.ts suppressLeadingTrivia	src/compiler/utilities.ts getFirstChild	0		
+other: MANUAL(no-recv)	src/harness/fourslashImpl.ts makeWhitespaceVisible	src/harness/fourslashImpl.ts replace	0		
+other: MANUAL(no-recv)	src/server/scriptInfo.ts scriptInfoIsContainedByBackgroundProject	src/server/project.ts isBackgroundProject	0		
+other: MANUAL(no-recv)	src/services/codefixes/fixNoPropertyAccessFromIndexSignature.ts getPropertyAccessExpression	src/compiler/factory/nodeTests.ts isPropertyAccessExpression	0		
+other: MANUAL(no-recv)	src/services/completions.ts isDeprecated	src/services/utilities.ts isDeprecatedDeclaration	0		
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/checker.ts addDuplicateDeclarationError	src/compiler/utilitiesPublic.ts symbolName	2841	Identi	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/emitter.ts emitForInStatement	src/compiler/emitter.ts writeKeyword	3186	posit	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/emitter.ts emitImportDeclaration	src/compiler/emitter.ts writeKeyword	2017	writeSp	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/factory/parenthesizerRules.ts <module>	src/compiler/utilitiesPublic.ts isUnaryExpression	698	parenthesizeOpera	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/sys.ts getNodeSystem	src/compiler/sys.ts disableCPUProfiler	1619	m	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/sys.ts nonRecursiveWatchDirectory	src/compiler/sys.ts getCurrentDirectory	1181	WatchDire	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/transformers/classFields.ts transformPrivateFieldInitializer	src/compiler/utilitiesPublic.ts isExpression	1033	static	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/transformers/es2015.ts visitCaseBlock	src/compiler/transformers/es2015.ts visitor	835	createRetu	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/transformers/es2017.ts visitForInStatementInAsyncBody	src/compiler/utilitiesPublic.ts isExpression	354	isVariableDeclarationListWithCollidi	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/transformers/es2018.ts visitMethodDeclaration	src/compiler/transformers/es2018.ts visitor	989	par	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/transformers/es2018.ts visitParameter	src/compiler/transformers/es2018.ts visitor	991	collectParameter	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/transformers/ts.ts isElisionBlocked	src/compiler/factory/nodeTests.ts isImportEqualsDeclaration	461	moduleRef	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/transformers/ts.ts visitAssertionExpression	src/compiler/transformers/ts.ts visitor	1763	fu	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/utilities.ts attachFileToDiagnostic	src/compiler/core.ts length	8838	un	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/utilitiesPublic.ts getJSDocDeprecatedTag	src/compiler/factory/nodeTests.ts isJSDocDeprecatedTag	1202	ex	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/harness/fourslashInterfaceImpl.ts baselineCallHierarchy	src/harness/fourslashInterfaceImpl.ts baselineCallHierarchy	661	verif	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/harness/fourslashInterfaceImpl.ts copyFormatOptions	src/harness/fourslashInterfaceImpl.ts copyFormatOptions	5	TestS	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/harness/fourslashInterfaceImpl.ts markerName	src/harness/fourslashInterfaceImpl.ts markerName	21	markerNam	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/harness/harnessLanguageService.ts ServerLanguageServiceAdapter	src/harness/harnessLanguageService.ts SessionClientHost	643	useInferredProjectPerProjectR	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/server/session.ts <module>	src/server/session.ts getJsxClosingTag	3756	getEditsFor	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/services/inlayHints.ts visitForDisplayParts	src/compiler/factory/nodeTests.ts isConstructorTypeNode	577	visitDisplayPa	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/services/inlayHints.ts visitForDisplayParts	src/compiler/factory/nodeTests.ts isPropertySignature	799	visitDisplayPa	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/services/refactors/convertOverloadListToSingleSignature.ts convertSignatureParametersToTuple	src/services/refactors/convertOverloadListToSingleSignature.ts convertParameterToNamedTupleMember	180	No	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/services/stringCompletions.ts getDirectoryFragmentTextSpan	src/compiler/core.ts length	1428	retur	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/testRunner/parallel/worker.ts start	src/testRunner/parallel/worker.ts mixin	93	M	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/testRunner/unittests/helpers/tsserver.ts TestSession	src/harness/tsserverLogger.ts createLoggerWithInMemoryLogs	225	useCancellationT	
+this/super in class still unbound	src/server/scriptVersionCache.ts insertLines	src/server/scriptVersionCache.ts LineNode	131	this	

@@ -26,6 +26,7 @@ pub mod python;
 pub mod rust;
 pub mod rust_mbe;
 pub mod rust_modules;
+pub mod rust_receivers;
 pub mod rust_rehome;
 pub mod rust_rename;
 pub mod rust_scip_macros;

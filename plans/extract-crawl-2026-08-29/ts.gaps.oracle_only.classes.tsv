@@ -1,0 +1,300 @@
+bare call, def not found (method ref / property fn)	src/compiler/checker.ts reportNonlocalAugmentation	src/compiler/types.ts reportNonlocalAugmentation	53744		
+bare call, def not found (method ref / property fn)	src/compiler/emitter.ts emitFiles	src/compiler/performance.ts enter	759		
+bare call, def not found (method ref / property fn)	src/compiler/parser.ts doOutsideOfContext	src/compiler/parser.ts doOutsideOfContext	2086		
+bare call, def not found (method ref / property fn)	src/compiler/parser.ts scanJsxIdentifier	src/compiler/scanner.ts scanJsxIdentifier	2244		
+bare call, def not found (method ref / property fn)	src/harness/fourslashImpl.ts TestState.constructor	src/harness/fourslashImpl.ts addSourceFile	469		
+bare call, def not found (method ref / property fn)	src/harness/fourslashImpl.ts TestState.constructor	src/harness/fourslashImpl.ts memoWrap	397		
+bare call, def not found (method ref / property fn)	src/harness/fourslashInterfaceImpl.ts baselineGetEmitOutput	src/harness/fourslashImpl.ts baselineGetEmitOutput	448		
+bare call, def not found (method ref / property fn)	src/harness/fourslashInterfaceImpl.ts printBreakpointAtCurrentLocation	src/harness/fourslashImpl.ts printBreakpointAtCurrentLocation	778		
+bare call, def not found (method ref / property fn)	src/server/session.ts getMoveToRefactoringFileSuggestions	src/services/types.ts getMoveToRefactoringFileSuggestions	2978		
+bare call, single def	src/compiler/builder.ts ensureHasErrorsForState	src/compiler/utilities.ts isIncrementalCompilation	1198		
+bare call, single def	src/compiler/checker.ts recursiveTypeRelatedTo	src/compiler/checker.ts createTypeChecker	1476		
+bare call, single def	src/compiler/emitter.ts getOutputPathsForBundle	src/compiler/utilities.ts getEmitDeclarations	510		
+bare call, single def	src/harness/fourslashInterfaceImpl.ts select	src/harness/fourslashImpl.ts select	127		
+bare call, single def	src/services/callHierarchy.ts collectCallSitesOfClassStaticBlockDeclaration	src/services/callHierarchy.ts collectCallSitesOfClassStaticBlockDeclaration	617		
+bare call, single def	src/services/getEditsForFileRename.ts updateImportsWorker	src/services/getEditsForFileRename.ts updateImportsWorker	197		
+bare call, single def	src/services/stringCompletions.ts getCompletionEntriesForNonRelativeModules	src/compiler/utilities.ts getResolvePackageJsonImports	1026		
+bare call, single def	src/services/symbolDisplay.ts getPrinter	src/compiler/emitter.ts createPrinterWithRemoveComments	823		
+callback / func-typed param or field	src/testRunner/unittests/helpers/projectRoots.ts timeouts	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts runQueuedTimeoutCallbacks	80	sys	() 
+callback / func-typed param or field	src/testRunner/unittests/tsbuildWatch/moduleResolution.ts edit	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts renameFile	139	sys	() 
+callback / func-typed param or field	src/testRunner/unittests/tsc/incremental.ts edit	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts readFile	461	sys	() 
+callback / func-typed param or field	src/testRunner/unittests/tsc/moduleResolution.ts edit	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts deleteFile	199	sys	() 
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/builder.ts getNonIncrementalBuildInfoRoots	src/compiler/path.ts toPath	2448		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts addImplementationSuccessElaboration	src/compiler/utilitiesPublic.ts isFunctionLikeDeclaration	10791		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts canReuseTypeNodeAnnotation	src/compiler/checker.ts addOptionality	6398		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts checkAssertionDeferred	src/compiler/checker.ts checkTypeComparableTo	21822		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts checkFlagAgreementBetweenOverloads	src/compiler/checker.ts error	2514		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts checkSuperExpression	src/compiler/factory/nodeTests.ts isSourceFile	3292		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts createTypeChecker	src/compiler/checker.ts getRestrictiveTypeParameter	2108		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts getContainersOfSymbol	src/compiler/checker.ts getNodeLinks	1905		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts getModuleSpecifierOverride	src/compiler/checker.ts getSpecifierForModuleSymbol	6351		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts getResolvedMembersOrExportsOfSymbol	src/compiler/checker.ts mergeSymbol	2684		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts getSignaturesOfType	src/compiler/checker.ts getMappedType	8501		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts isPropertyImmediatelyReferencedWithinDeclaration	src/compiler/factory/nodeTests.ts isPropertyDeclaration	2994		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts mergeSymbolTable	src/compiler/checker.ts mergeSymbol	2684		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts serializeAsNamespaceDeclaration	src/compiler/utilities.ts getSourceFileOfNode	2424		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts serializeTypeOfExpression	src/compiler/checker.ts instantiateType	6275		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts symbolToDeclarations	src/compiler/checker.ts simplifyModifiers	6495		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/checker.ts writeSignature	src/compiler/checker.ts signatureToString	1712		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/commandLineParser.ts convertJsonOptionOfCustomType	src/compiler/commandLineParser.ts createDiagnosticForNodeInSourceFileOrCompilerDiagnostic	3840		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/core.ts has	src/compiler/core.ts isArray	380		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/debug.ts value	src/compiler/factory/nodeTests.ts isArrayTypeNode	738		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/debug.ts value	src/compiler/utilitiesPublic.ts getParseTreeNode	794		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/emitter.ts getCommonSourceDirectoryOfConfig	src/compiler/core.ts filter	671		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/executeCommandLine.ts countLines	src/compiler/executeCommandLine.ts getCountKey	108		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/factory/nodeFactory.ts converters	src/compiler/core.ts memoize	496		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/factory/nodeFactory.ts createImportTypeNode	src/compiler/core.ts memoize	496		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/moduleSpecifiers.ts forEachFileNameOfModule	src/compiler/path.ts startsWithDirectory	746		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/parser.ts forEachChildInJSDocImplementsTag	src/compiler/parser.ts visitNode	507		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/parser.ts forEachChildInJSDocSignature	src/compiler/parser.ts visitNode	507		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/parser.ts forEachChildInNamespaceImport	src/compiler/parser.ts visitNode	507		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/parser.ts forEachChildInReturnStatement	src/compiler/parser.ts visitNode	507		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/parser.ts reparseTopLevelAwait	src/compiler/parser.ts token	1641		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/parser.ts tryParseConstructorDeclaration	src/compiler/parser.ts parseFunctionBlockOrSemicolon	7564		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/program.ts createProgram	src/compiler/emitter.ts getCommonSourceDirectoryOfConfig	1769		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/resolutionCache.ts removeResolutionsFromProjectReferenceRedirects	src/compiler/resolutionCache.ts toPath	184		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/symbolWalker.ts walkSymbol	src/compiler/symbolWalker.ts visitSymbol	61		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/transformers/declarations.ts transformTopLevelDeclaration	src/compiler/transformers/declarations.ts ensureNoInitializer	649		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/transformers/destructuring.ts createObjectBindingOrAssignmentPattern	src/compiler/transformers/destructuring.ts makeObjectAssignmentPattern	131		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/transformers/esDecorators.ts partialTransformClassElement	src/compiler/core.ts tryCast	1351		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/tsbuildPublic.ts getUpToDateStatusOfProject	src/compiler/tsbuildPublic.ts parseConfigFile	437		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/tsbuildPublic.ts getUpToDateStatusOfProject	src/compiler/tsbuildPublic.ts toResolvedConfigFilePath	437		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/visitorPublic.ts visitParameterList	src/compiler/visitorPublic.ts visitNodes	223		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/watch.ts createDiagnosticReporter	src/compiler/program.ts formatDiagnostic	131		
+caller naming: closure@N (oracle names the enclosing fn)	src/compiler/watchPublic.ts synchronizeProgram	src/compiler/watchPublic.ts toPath	128		
+caller naming: closure@N (oracle names the enclosing fn)	src/server/editorServices.ts forEachResolvedProjectReferenceProjectLoad	src/server/utilitiesPublic.ts asNormalizedPath	861		
+caller naming: closure@N (oracle names the enclosing fn)	src/server/editorServices.ts getNearestAncestorDirectoryWithPackageJson	src/compiler/path.ts combinePaths	1445		
+caller naming: closure@N (oracle names the enclosing fn)	src/server/project.ts getHostForAutoImportProvider	src/compiler/types.ts useCaseSensitiveFileNames	769		
+caller naming: closure@N (oracle names the enclosing fn)	src/server/project.ts writeFile	src/compiler/sys.ts writeFile	781		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codeFixProvider.ts getFixes	src/services/codeFixProvider.ts removeFixIdIfFixAllUnavailable	88		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/convertToAsyncFunction.ts getAllCodeActions	src/services/codeFixProvider.ts codeFixAll	98		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/disableJsDiagnostics.ts getAllCodeActions	src/services/codefixes/disableJsDiagnostics.ts makeChange	59		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/fixAddMissingConstraint.ts getAllCodeActions	src/compiler/utilities.ts addToSeen	72		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/fixClassSuperMustPrecedeThisAccess.ts getAllCodeActions	src/services/codefixes/fixClassSuperMustPrecedeThisAccess.ts getNodes	32		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/fixClassSuperMustPrecedeThisAccess.ts getNodes	src/compiler/factory/nodeTests.ts isPropertyAccessExpression	65		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/importFixes.ts _toPath	src/compiler/utilities.ts hostGetCanonicalFileName	1382		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/codefixes/returnValueCorrect.ts getCodeActionsToCorrectReturnValue	src/services/codefixes/returnValueCorrect.ts getActionForFixRemoveBracesFromArrowFunctionBody	93		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/findAllReferences.ts cb	src/compiler/utilitiesPublic.ts isClassLike	1348		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/findAllReferences.ts getReferencesForThisKeyword	src/services/utilities.ts isThis	1289		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/getEditsForFileRename.ts updateImports	src/compiler/utilities.ts isAmbientModule	205		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/refactors/extractType.ts getRefactorActionsToExtractType	src/compiler/utilities.ts getLocaleSpecificMessage	81		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/refactors/inferFunctionReturnType.ts getRefactorEditsToInferReturnType	src/services/refactors/inferFunctionReturnType.ts doChange	54		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/refactors/moveToFile.ts getRefactorEditsToMoveToFile	src/compiler/utilities.ts hasTSFileExtension	209		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/refactors/moveToFile.ts getUsageInfo	src/services/refactors/moveToFile.ts isTopLevelDeclaration	904		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/stringCompletions.ts getCompletionEntriesForDirectoryFragmentWithRootDirs	src/services/stringCompletions.ts getCompletionEntriesForDirectoryFragment	746		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/symbolDisplay.ts getSymbolDisplayPartsDocumentationAndSymbolKindWorker	src/compiler/factory/nodeTests.ts isEnumDeclaration	509		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/symbolDisplay.ts getSymbolDisplayPartsDocumentationAndSymbolKindWorker	src/services/symbolDisplay.ts getPrinter	711		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/textChanges.ts clear	src/compiler/types.ts clear	1542		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/textChanges.ts createJSDocText	src/compiler/core.ts isString	721		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/textChanges.ts finishClassesWithNodesInsertedAtStart	src/services/textChanges.ts getMembersOrProperties	858		
+caller naming: closure@N (oracle names the enclosing fn)	src/services/utilities.ts getFixableErrorSpanExpression	src/services/utilities.ts textSpansEqual	3868		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/canWatch.ts <module>	src/testRunner/unittests/canWatch.ts combinePaths	13		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/canWatch.ts baselineCanWatch	src/testRunner/unittests/canWatch.ts baselineCanWatchForOsRoot	157		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/reuseProgramStructure.ts verifyRedirects	src/testRunner/unittests/reuseProgramStructure.ts updateRedirectProgram	504		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsbuild/amdModulesWithOut.ts sys	src/testRunner/unittests/tsbuild/amdModulesWithOut.ts outFileSys	7		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsbuild/graphOrdering.ts <module>	src/testRunner/unittests/tsbuild/graphOrdering.ts writeProjects	24		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsc/libraryResolution.ts <module>	src/testRunner/unittests/helpers/libraryResolution.ts getCommandLineArgsForLibResolution	22		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsc/projectReferencesConfig.ts sys	src/testRunner/unittests/tsc/projectReferencesConfig.ts getConfig	18		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tscWatch/watchApi.ts <module>	src/testRunner/unittests/tscWatch/watchApi.ts verify	349		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/completionsIncomplete.ts <module>	src/testRunner/unittests/helpers/tsserver.ts openFilesForSession	65		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/configuredProjects.ts verifySession	src/testRunner/unittests/tsserver/configuredProjects.ts verifySessionWorker	911		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/events/projectLoading.ts <module>	src/testRunner/unittests/tsserver/events/projectLoading.ts verifyProjectLoadingStartAndFinish	30		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/projectsWithReferences.ts <module>	src/testRunner/unittests/tsserver/projectsWithReferences.ts setup	44		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/rename.ts <module>	src/testRunner/unittests/helpers.ts jsonToReadableText	147		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/session.ts TestSession.constructor	src/harness/tsserverLogger.ts createHasErrorMessageLogger	452		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/telemetry.ts <module>	src/testRunner/unittests/tsserver/telemetry.ts makeFile	18		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/typingsInstaller.ts <module>	src/testRunner/unittests/tsserver/typingsInstaller.ts discoverTypings	1574		
+caller naming: closure@N (oracle names the enclosing fn)	src/testRunner/unittests/tsserver/typingsInstaller.ts <module>	src/testRunner/unittests/tsserver/typingsInstaller.ts testConfiguredProjectNodeModules	851		
+caller naming: closure@N (oracle names the enclosing fn)	src/tsserver/nodeServer.ts initializeNodeSystem	src/tsserver/nodeServer.ts hasLevel	162		
+declared ChangeTracker	src/services/codefixes/importFixes.ts promoteImportClause	src/services/textChanges.ts insertImportSpecifierAtIndex	1811	changes	textChanges.ChangeTracker
+declared ChangeTracker	src/services/codefixes/requireInTs.ts doChange	src/services/textChanges.ts replaceNode	59	changes	textChanges.ChangeTracker
+declared ChangeTracker	src/services/refactors/convertExport.ts changeDefaultToNamedImport	src/services/textChanges.ts insertNodeAtEndOfList	273	changes	textChanges.ChangeTracker
+declared ConfiguredProject	src/server/editorServices.ts addFilesToNonInferredProject	src/server/project.ts markAsDirty	1638	project	ConfiguredProject
+declared ConfiguredProject	src/server/editorServices.ts delayUpdateProjectGraphs	src/server/project.ts clearSourceMapperCache	1726	project	ConfiguredProject
+declared LanguageServiceAdapterHost	src/harness/fourslashImpl.ts memoWrap	src/harness/harnessLanguageService.ts getScriptInfo	521	languageServiceAdapterHost	Harness.LanguageService.LanguageServiceAdapterHost
+declared TestServerHost	src/testRunner/unittests/tsserver/symLinks.ts verifyModuleResolution	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts writeFile	150	host	TestServerHost
+declared TestState	src/harness/fourslashInterfaceImpl.ts replaceLine	src/harness/fourslashImpl.ts type	699	state	FourSlash.TestState
+declared getNamesForExportedSymbol(namedSymbol, c	src/services/exportInfoMap.ts onFileChanged	src/services/exportInfoMap.ts ambientModuleDeclarationsAreEqual	267	!	getNamesForExportedSymbol(namedSymbol, checker, /*scriptTarget*/ undefined)
+declared kind	src/compiler/program.ts processImportedModules	src/compiler/utilities.ts getAllowJSCompilerOption	3988	!	b.kind 
+declared parent, or(isClassLike, isInterfaceDecla	src/services/findAllReferences.ts getReferencesForStringLiteral	src/compiler/utilities.ts rangeIsOnSingleLine	2490	!	isExpressionWithTypeArguments(node) ? tryCast(node.parent.parent, or(isClassLike, isInterf
+declared pos)	src/compiler/utilities.ts forEachPropertyAssignment	src/compiler/factory/nodeTests.ts isPropertyAssignment	3040	!	skipTrivia(sourceFile.text, errorNode.pos)
+declared undefined!	src/compiler/checker.ts trackExistingEntityName	src/compiler/checker.ts reportInferenceFallback	9157	tracker	undefined!
+interface receiver (needs implementer fan-out)	src/compiler/checker.ts getDefaultResolutionModeForFile	src/compiler/types.ts getDefaultResolutionModeForFile	4721	host	TypeCheckerHost
+interface receiver (needs implementer fan-out)	src/compiler/checker.ts trySymbolTable	src/compiler/parser.ts isExternalModule	5334	!	symbol
+interface receiver (needs implementer fan-out)	src/compiler/executeCommandLine.ts reportStatistics	src/compiler/types.ts getRelationCacheSizes	1183	program	Program
+interface receiver (needs implementer fan-out)	src/compiler/transformers/declarations.ts reportInferenceFallback	src/compiler/types.ts isExpandoFunctionDeclaration	330	resolver	EmitResolver
+interface receiver (needs implementer fan-out)	src/compiler/transformers/declarations.ts transformTopLevelDeclaration	src/compiler/types.ts addDiagnostic	320	context	TransformationContext
+interface receiver (needs implementer fan-out)	src/compiler/transformers/declarations.ts transformTopLevelDeclaration	src/compiler/types.ts createTypeOfDeclaration	704	resolver	EmitResolver
+interface receiver (needs implementer fan-out)	src/compiler/watchPublic.ts createIncrementalCompilerHost	src/compiler/types.ts getCurrentDirectory	128	host	ReadBuildProgramHost
+interface receiver (needs implementer fan-out)	src/harness/fourslashImpl.ts baselineQuickInfo	src/services/types.ts getQuickInfoAtPosition	1937	languageService	ts.LanguageService
+interface receiver (needs implementer fan-out)	src/harness/fourslashImpl.ts verifyGetEmitOutputForCurrentFile	src/services/types.ts getEmitOutput	827	languageService	ts.LanguageService
+interface receiver (needs implementer fan-out)	src/harness/incrementalUtils.ts afterResolveSingleModuleNameWithoutWatching	src/compiler/moduleNameResolver.ts getPackageJsonInfoCache	597	moduleResolutionCache	ts.ModuleResolutionCache
+interface receiver (needs implementer fan-out)	src/harness/incrementalUtils.ts verifyProgram	src/server/project.ts getCompilationSettings	565	project	ts.server.Project
+interface receiver (needs implementer fan-out)	src/server/editorServices.ts ensureParsedConfigUptoDate	src/compiler/sys.ts getCurrentDirectory	1197	host	ServerHost
+interface receiver (needs implementer fan-out)	src/server/editorServices.ts getOrCreateInferredProjectForProjectRootPathIfEnabled	src/compiler/sys.ts getCurrentDirectory	1197	host	ServerHost
+interface receiver (needs implementer fan-out)	src/server/editorServices.ts getPositionOfLineAndCharacter	src/server/scriptInfo.ts lineOffsetToPosition	3931	info	OpenFileInfo
+interface receiver (needs implementer fan-out)	src/server/editorServices.ts processDirectory	src/server/packageJsonCache.ts searchDirectoryAndAncestors	5593	packageJsonCache	PackageJsonCache
+interface receiver (needs implementer fan-out)	src/server/session.ts findImplementationFileFromDtsFileName	src/server/project.ts getCurrentDirectory	1734	project	Project
+interface receiver (needs implementer fan-out)	src/server/session.ts prepareCallHierarchy	src/server/project.ts getLanguageService	531	project	Project
+interface receiver (needs implementer fan-out)	src/server/session.ts provideCallHierarchyOutgoingCalls	src/server/project.ts getLanguageService	531	project	Project
+interface receiver (needs implementer fan-out)	src/services/classifier.ts processElement	src/services/types.ts getFullWidth	580	node	Node
+interface receiver (needs implementer fan-out)	src/services/completions.ts createObjectLiteralMethod	src/compiler/types.ts typeToTypeNode	2345	checker	TypeChecker
+interface receiver (needs implementer fan-out)	src/services/completions.ts resolvingModuleSpecifiers	src/compiler/types.ts getCompilerOptions	646	program	Program
+interface receiver (needs implementer fan-out)	src/services/formatting/smartIndenter.ts getActualIndentationForListStartLine	src/services/types.ts getLineAndCharacterOfPosition	111	sourceFile	SourceFile
+interface receiver (needs implementer fan-out)	src/services/getEditsForFileRename.ts getSourceFileToImport	src/compiler/types.ts getSourceFiles	252	program	Program
+interface receiver (needs implementer fan-out)	src/services/goToDefinition.ts getReferenceAtPosition	src/compiler/types.ts getSourceFileFromReference	362	program	Program
+interface receiver (needs implementer fan-out)	src/services/symbolDisplay.ts tryExpandSymbol	src/compiler/types.ts getEmitResolver	894	typeChecker	TypeChecker
+interface receiver (needs implementer fan-out)	src/services/utilities.ts spanContainsNode	src/services/types.ts getStart	2602	node	Node
+interface receiver (needs implementer fan-out)	src/testRunner/projectsRunner.ts compileDeclarations	src/compiler/types.ts getCompilerOptions	376	program	ts.Program
+interface receiver (needs implementer fan-out)	src/testRunner/unittests/helpers/tsserver.ts setRequest	src/harness/tsserverLogger.ts log	65	logger	LoggerWithInMemoryLogs
+interface receiver (needs implementer fan-out)	src/testRunner/unittests/programApi.ts <module>	src/compiler/types.ts getConfigFileParsingDiagnostics	233	program	ts.Program
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/classFields.ts createCopiableReceiverExpr	src/compiler/types.ts createTempVariable	931	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/classFields.ts transformConstructorBodyWorker	src/compiler/types.ts updateTryStatement	2270	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/es2015.ts visitSourceFile	src/compiler/types.ts copyPrologue	786	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/es2017.ts transformAsyncFunctionBody	src/compiler/types.ts createReturnStatement	807	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/es2017.ts visitConstructorDeclaration	src/compiler/types.ts updateConstructorDeclaration	414	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/es2018.ts transformForAwaitOfStatement	src/compiler/types.ts createObjectLiteralExpression	488	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/es2018.ts transformFunctionBody	src/compiler/types.ts createBlock	775	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/es2020.ts visitNonOptionalCallExpression	src/compiler/types.ts createFunctionCallCall	145	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/es2020.ts visitOptionalExpression	src/compiler/types.ts createDeleteExpression	221	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/esDecorators.ts createMetadata	src/compiler/types.ts createToken	2498	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/esDecorators.ts transformClassLike	src/compiler/types.ts createNodeArray	732	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/esDecorators.ts visitBinaryExpression	src/compiler/types.ts createTempVariable	1596	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/esDecorators.ts visitClassStaticBlockDeclaration	src/compiler/types.ts createClassStaticBlockDeclaration	941	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/esDecorators.ts visitSetAccessorDeclaration	src/compiler/types.ts updateSetAccessorDeclaration	1451	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/generators.ts visitNewExpression	src/compiler/types.ts createCallBinding	1227	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/module/module.ts createImportCallExpressionAMD	src/compiler/types.ts createPropertyAccessExpression	297	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/module/module.ts visitTopLevelExportDeclaration	src/compiler/types.ts getExportName	1608	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/module/system.ts createSystemModuleBody	src/compiler/types.ts createPropertyAssignment	404	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/ts.ts getNamespaceContainerName	src/compiler/types.ts getGeneratedNameForNode	923	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/ts.ts getNewTypeMetadata	src/compiler/types.ts createToken	1142	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/ts.ts getOldTypeMetadata	src/compiler/types.ts createDecorator	1124	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/ts.ts transformEnumMemberDeclarationValue	src/compiler/types.ts createVoidZero	1960	factory	
+interface receiver via destructuring (const { factory } = context)	src/compiler/transformers/ts.ts visitClassDeclaration	src/compiler/types.ts createImmediatelyInvokedArrowFunction	977	factory	
+interface receiver via destructuring (const { factory } = context)	src/testRunner/unittests/printer.ts <module>	src/compiler/types.ts createParameterDeclaration	301	factory	
+interface receiver via destructuring (const { factory } = context)	src/testRunner/unittests/services/textChanges.ts <module>	src/compiler/types.ts createCallExpression	102	factory	
+interface receiver via destructuring (const { factory } = context)	src/testRunner/unittests/transform.ts createTaggedTemplateLiteral	src/compiler/types.ts createNoSubstitutionTemplateLiteral	75	factory	
+method on a namespace-merged / imported-module declaration	src/compiler/binder.ts getDeclarationName	src/compiler/debug.ts formatSyntaxKind	743	Debug	
+method on a namespace-merged / imported-module declaration	src/compiler/checker.ts appendReferenceToType	src/compiler/types.ts updateTypeReferenceNode	7523	factory	
+method on a namespace-merged / imported-module declaration	src/compiler/checker.ts serializeEnum	src/compiler/types.ts createStringLiteral	6761	factory	
+method on a namespace-merged / imported-module declaration	src/compiler/checker.ts symbolToTypeNode	src/compiler/types.ts createTypeQueryNode	6764	factory	
+method on a namespace-merged / imported-module declaration	src/compiler/checker.ts typePredicateToTypePredicateNodeHelper	src/compiler/types.ts createToken	7038	factory	
+method on a namespace-merged / imported-module declaration	src/compiler/checker.ts typeReferenceToTypeNode	src/compiler/types.ts createRestTypeNode	7378	factory	
+method on a namespace-merged / imported-module declaration	src/compiler/emitter.ts emitSourceFileOrBundle	src/compiler/tracing.ts pop	780	tracing	
+method on a namespace-merged / imported-module declaration	src/compiler/expressionToTypeNode.ts ensureParameter	src/compiler/types.ts updateParameterDeclaration	1114	factory	
+method on a namespace-merged / imported-module declaration	src/compiler/expressionToTypeNode.ts visitExistingNodeTreeSymbolsWorker	src/compiler/types.ts cloneNode	196	factory	
+method on a namespace-merged / imported-module declaration	src/compiler/factory/utilities.ts enter	src/compiler/debug.ts assertEqual	1282	Debug	
+method on a namespace-merged / imported-module declaration	src/compiler/visitorPublic.ts visitEachChildOfConditionalTypeNode	src/compiler/debug.ts checkDefined	627	Debug	
+method on a namespace-merged / imported-module declaration	src/compiler/visitorPublic.ts visitEachChildOfExpressionWithTypeArguments	src/compiler/debug.ts checkDefined	627	Debug	
+method on a namespace-merged / imported-module declaration	src/compiler/visitorPublic.ts visitEachChildOfFunctionTypeNode	src/compiler/types.ts updateFunctionTypeNode	803	factory	
+method on a namespace-merged / imported-module declaration	src/compiler/visitorPublic.ts visitEachChildOfImportTypeAssertionContainer	src/compiler/debug.ts checkDefined	627	Debug	
+method on a namespace-merged / imported-module declaration	src/compiler/visitorPublic.ts visitEachChildOfInterfaceDeclaration	src/compiler/types.ts updateInterfaceDeclaration	1454	factory	
+method on a namespace-merged / imported-module declaration	src/compiler/visitorPublic.ts visitEachChildOfMappedType	src/compiler/types.ts updateMappedTypeNode	947	factory	
+method on a namespace-merged / imported-module declaration	src/compiler/visitorPublic.ts visitEachChildOfNewExpression	src/compiler/types.ts updateNewExpression	1069	factory	
+method on a namespace-merged / imported-module declaration	src/compiler/visitorPublic.ts visitEachChildOfTemplateExpression	src/compiler/debug.ts checkDefined	627	Debug	
+method on a namespace-merged / imported-module declaration	src/compiler/visitorPublic.ts visitEachChildOfTypeOperatorNode	src/compiler/debug.ts checkDefined	627	Debug	
+method on a namespace-merged / imported-module declaration	src/compiler/visitorPublic.ts visitEachChildOfVariableStatement	src/compiler/debug.ts checkDefined	627	Debug	
+method on a namespace-merged / imported-module declaration	src/compiler/visitorPublic.ts visitEachChildOfWithStatement	src/compiler/debug.ts checkDefined	627	Debug	
+method on a namespace-merged / imported-module declaration	src/harness/client.ts getDiagnostics	src/compiler/debug.ts checkDefined	400	Debug	
+method on a namespace-merged / imported-module declaration	src/harness/fourslashImpl.ts getAllDiagnostics	src/compiler/path.ts getBaseFileName	552	ts	
+method on a namespace-merged / imported-module declaration	src/harness/harnessIO.ts doSourcemapBaseline	src/compiler/utilities.ts getAreDeclarationMapsEnabled	921	ts	
+method on a namespace-merged / imported-module declaration	src/server/editorServices.ts onWildCardDirectoryWatcherInvoke	src/compiler/debug.ts checkDefined	1527	Debug	
+method on a namespace-merged / imported-module declaration	src/server/session.ts executeAction	src/compiler/tracing.ts pop	425	tracing	
+method on a namespace-merged / imported-module declaration	src/services/codefixes/convertToEsModule.ts makeExportDeclaration	src/compiler/types.ts createNamedExports	677	factory	
+method on a namespace-merged / imported-module declaration	src/services/codefixes/convertToTypeOnlyImport.ts doChange	src/compiler/types.ts updateNamedImports	142	factory	
+method on a namespace-merged / imported-module declaration	src/services/codefixes/convertTypedefToType.ts createTypeAliasForTypeExpression	src/compiler/types.ts createTypeAliasDeclaration	199	factory	
+method on a namespace-merged / imported-module declaration	src/services/codefixes/fixMissingTypeAnnotationOnExports.ts transformDestructuringPatterns	src/compiler/types.ts createConditionalExpression	750	factory	
+method on a namespace-merged / imported-module declaration	src/services/codefixes/generateAccessors.ts generateGetAccessor	src/compiler/types.ts createReturnStatement	215	factory	
+method on a namespace-merged / imported-module declaration	src/services/completions.ts getExhaustiveCaseSnippets	src/compiler/types.ts createStringLiteral	1484	factory	
+method on a namespace-merged / imported-module declaration	src/services/refactors/convertToOptionalChainExpression.ts convertOccurrences	src/compiler/types.ts createElementAccessChain	327	factory	
+method on a namespace-merged / imported-module declaration	src/services/refactors/convertToOptionalChainExpression.ts doChange	src/compiler/types.ts createToken	343	factory	
+method on a namespace-merged / imported-module declaration	src/services/refactors/extractSymbol.ts getTypeDeepCloneUnionUndefined	src/compiler/types.ts createUnionTypeNode	1360	factory	
+method on a namespace-merged / imported-module declaration	src/services/refactors/extractSymbol.ts transformFunctionInitializerAndType	src/compiler/types.ts createParameterDeclaration	1069	factory	
+method on a namespace-merged / imported-module declaration	src/services/refactors/moveToFile.ts addEs6Export	src/compiler/types.ts updateModuleDeclaration	588	factory	
+method on a namespace-merged / imported-module declaration	src/testRunner/unittests/moduleResolution.ts fileExists	src/compiler/path.ts normalizePath	392	ts	
+method on a namespace-merged / imported-module declaration	src/testRunner/unittests/printer.ts <module>	src/compiler/program.ts createProgram	125	ts	
+method on a namespace-merged / imported-module declaration	src/testRunner/unittests/transform.ts addStaticFieldWithComment	src/compiler/visitorPublic.ts visitNode	42	ts	
+method on a namespace-merged / imported-module declaration	src/testRunner/unittests/tscWatch/incremental.ts <module>	src/compiler/watch.ts performIncrementalCompilation	161	ts	
+method on a namespace-merged / imported-module declaration	src/testRunner/unittests/tsserver/events/projectUpdatedInBackground.ts getInitialState	src/compiler/core.ts find	127	ts	
+method on a namespace-merged / imported-module declaration	src/testRunner/unittests/tsserver/watchEnvironment.ts <module>	src/compiler/core.ts startsWith	586	ts	
+other: MANUAL(no-recv)	src/compiler/checker.ts createLateBoundIndexSignatures	src/compiler/core.ts map	4113		
+other: MANUAL(no-span)	src/compiler/core.ts findLast	src/compiler/core.ts findLast	0		
+other: MANUAL(no-span)	src/compiler/emitter.ts emitListItemWithParenthesizerRule	src/compiler/emitter.ts <module>	0		
+other: MANUAL(no-span)	src/compiler/sys.ts watchDirectory	src/compiler/sys.ts <module>	0		
+other: MANUAL(no-span)	src/compiler/transformers/es2018.ts transformForAwaitOfStatement	src/compiler/types.ts getEmitHelperFactory	0		
+other: MANUAL(no-span)	src/compiler/visitorPublic.ts visitEachChildOfJsxOpeningElement	src/compiler/types.ts <module>	0		
+other: MANUAL(no-span)	src/harness/compilerImpl.ts CompilationResult.constructor	src/compiler/utilities.ts hasJSFileExtension	0		
+other: MANUAL(no-span)	src/harness/documentsUtil.ts fromUrl	src/harness/documentsUtil.ts SourceMap.constructor	0		
+other: MANUAL(no-span)	src/harness/fourslashImpl.ts runCode	src/harness/fourslashInterfaceImpl.ts Test.constructor	0		
+other: MANUAL(no-span)	src/server/editorServices.ts getOrCreateScriptInfoWorker	src/server/scriptInfo.ts ScriptInfo.constructor	0		
+other: MANUAL(no-span)	src/testRunner/unittests/evaluation/awaitUsingDeclarations.ts [evaluator.FakeSymbol.dispose]	src/testRunner/unittests/evaluation/awaitUsingDeclarations.ts return	0		
+other: MANUAL(no-span)	src/testRunner/unittests/tsserver/codeFix.ts setup	src/testRunner/unittests/helpers/tsserver.ts TestSession.constructor	0		
+other: MANUAL(no-span)	src/testRunner/unittests/tsserver/findAllReferences.ts <module>	src/testRunner/unittests/helpers/tsserver.ts TestSession.constructor	0		
+other: MANUAL(no-span)	src/testRunner/unittests/tsserver/resolutionCache.ts verifyTypesLoad	src/testRunner/unittests/helpers/tsserver.ts TestSession.constructor	0		
+other: MANUAL(no-span)	src/testRunner/unittests/typeParameterIsPossiblyReferenced.ts <module>	src/harness/fakesHosts.ts CompilerHost.constructor	0		
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/checker.ts getSomeTargetNameFromDeclarations	src/compiler/factory/nodeTests.ts isIdentifier	2402	!	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/compiler/parser.ts parseArrayLiteralExpression	src/compiler/scanner.ts hasPrecedingLineBreak	2455	!scanner	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/harness/harnessIO.ts getEnvironmentVariable	src/compiler/sys.ts getEnvironmentVariable	144	sys	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/harness/harnessLanguageService.ts create	src/services/types.ts getSemanticDiagnostics	544	languageService	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/server/project.ts updateGraphWorker	src/server/editorServices.ts getOrCreateScriptInfoNotOpenedByClient	715	projectService	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/services/codefixes/addEmptyExportDeclaration.ts getCodeActionsToAddEmptyExportDeclaration	src/services/textChanges.ts with	19	ChangeTracker	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/services/codefixes/addMissingDeclareProperty.ts getCodeActionsToAddMissingDeclareOnProperty	src/services/textChanges.ts with	25	ChangeTracker	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/services/codefixes/fixAddMissingConstraint.ts getAllCodeActions	src/services/textChanges.ts with	60	ChangeTracker	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/services/codefixes/fixUnmatchedParameter.ts getDeleteAction	src/services/types.ts getText	79	name	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/services/codefixes/fixUnusedIdentifier.ts getAllCodeActions	src/compiler/types.ts getTypeChecker	88	program	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/services/codefixes/fixUnusedIdentifier.ts getCodeActions	src/services/textChanges.ts with	93	ChangeTracker	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/services/completions.ts getPresentModifiers	src/services/types.ts getStart	2202	n	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/services/formatting/smartIndenter.ts isArgumentAndStartLineOverlapsExpressionBeingCalled	src/services/types.ts getEnd	401	expression	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/services/navigateTo.ts shouldKeepItem	src/services/types.ts getSourceFile	121	d	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/services/refactors/extractType.ts getRangeToExtract	src/compiler/types.ts getTypeChecker	193	program	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/testRunner/unittests/helpers/tsc.ts storeDtsSignatures	src/compiler/types.ts getSourceFileByPath	143	program	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/testRunner/unittests/tsserver/exportMapCache.ts <module>	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts runQueuedTimeoutCallbacks	67	host	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/testRunner/unittests/tsserver/jsdocTag.ts assertSignatureHelpJSDoc	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts createServerHost	30	TestServerHost	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/testRunner/unittests/tsserver/projectReferences.ts baselineDisableReferencedProjectLoad	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts createServerHost	332	TestServerHost	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/testRunner/unittests/tsserver/rename.ts <module>	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts createServerHost	20	TestServerHost	
+other: receiver decl not found in file (destructured / `!` field / outer scope)	src/testRunner/unittests/tsserver/watchEnvironment.ts verifyFileNames	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts createServerHost	49	TestServerHost	
+receiver from a call result (one hop)	src/compiler/factory/nodeFactory.ts createAwaitExpression	src/compiler/types.ts parenthesizeOperandOfPrefixUnary	3143	parenthesizerRules()	
+receiver from a call result (one hop)	src/services/services.ts getCurrentSourceFile	src/compiler/moduleNameResolver.ts getPackageJsonInfoCache	1424	()	
+receiver from a call result (one hop)	src/testRunner/unittests/tsserver/exportMapCache.ts createSetup	src/compiler/types.ts getTypeChecker	362	getProgram()!	
+this/super in class still unbound	src/harness/compilerImpl.ts CompilationResult.constructor	src/harness/compilerImpl.ts getOutputPath	132	this	
+this/super in class still unbound	src/harness/harnessLanguageService.ts ScriptInfo.constructor	src/harness/harnessLanguageService.ts setContent	40	this	
+this/super in class still unbound	src/server/editorServices.ts onWildCardDirectoryWatcherInvoke	src/server/editorServices.ts getConfiguredProjectByCanonicalConfigFilePath	2044	this	
+this/super in class still unbound	src/server/project.ts updateGraphWorker	src/server/project.ts detachScriptInfoFromProject	1057	this	
+this/super in class still unbound	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts TestServerHost.constructor	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts directoryExists	505	this	
+this/super in class still unbound	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts switchToBaseliningInvoke	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts invokeWorker	215	this	
+this/super in class still unbound	src/typingsInstaller/nodeTypingsInstaller.ts installWorker	src/typingsInstaller/nodeTypingsInstaller.ts execSyncAndLog	118	this	
+this/super in class still unbound	src/typingsInstallerCore/typingsInstaller.ts installPackage	src/typingsInstallerCore/typingsInstaller.ts installWorker	248	this	
+unannotated receiver (type inferred from initializer)	src/compiler/checker.ts typePredicateToStringWorker	src/compiler/types.ts writeNode	6121	printer	
+unannotated receiver (type inferred from initializer)	src/compiler/emitter.ts printSourceFileOrBundle	src/compiler/types.ts getText	1034	writer	
+unannotated receiver (type inferred from initializer)	src/compiler/factory/emitHelpers.ts createReadHelper	src/compiler/types.ts createCallExpression	221	factory	
+unannotated receiver (type inferred from initializer)	src/compiler/factory/emitHelpers.ts createRestHelper	src/compiler/types.ts createAdd	479	factory	
+unannotated receiver (type inferred from initializer)	src/compiler/parser.ts clearState	src/compiler/scanner.ts setText	1772	scanner	
+unannotated receiver (type inferred from initializer)	src/compiler/parser.ts createIdentifier	src/compiler/scanner.ts getTokenStart	2150	scanner	
+unannotated receiver (type inferred from initializer)	src/compiler/parser.ts createMissingNode	src/compiler/types.ts createTemplateLiteralLikeNode	2629	factory	
+unannotated receiver (type inferred from initializer)	src/compiler/parser.ts initializeState	src/compiler/scanner.ts setText	1772	scanner	
+unannotated receiver (type inferred from initializer)	src/compiler/parser.ts parseDoStatement	src/compiler/scanner.ts getTokenStart	2150	scanner	
+unannotated receiver (type inferred from initializer)	src/compiler/parser.ts parseEnumTag	src/compiler/types.ts createJSDocEnumTag	9602	factory	
+unannotated receiver (type inferred from initializer)	src/compiler/parser.ts parseImportEqualsDeclaration	src/compiler/types.ts createImportEqualsDeclaration	8491	factory	
+unannotated receiver (type inferred from initializer)	src/compiler/parser.ts parseMethodDeclaration	src/compiler/types.ts createMethodDeclaration	7793	factory	
+unannotated receiver (type inferred from initializer)	src/compiler/parser.ts parseTemplateTypeSpan	src/compiler/types.ts createTemplateLiteralTypeSpan	3705	factory	
+unannotated receiver (type inferred from initializer)	src/compiler/parser.ts parseTupleElementType	src/compiler/types.ts createOptionalTypeNode	4445	factory	
+unannotated receiver (type inferred from initializer)	src/compiler/program.ts handleDirectoryCouldBeSymlink	src/compiler/utilities.ts setSymlinkedDirectory	4976	symlinkCache	
+unannotated receiver (type inferred from initializer)	src/compiler/resolutionCache.ts createFileWatcherOfAffectingLocation	src/compiler/watchUtilities.ts addOrDeleteFile	1202	cachedDirectoryStructureHost	
+unannotated receiver (type inferred from initializer)	src/compiler/transformers/classFields.ts createHoistedVariableForClass	src/compiler/types.ts hasNodeCheckFlag	1756	resolver	
+unannotated receiver (type inferred from initializer)	src/compiler/utilities.ts isValidBigIntString	src/compiler/scanner.ts getTokenFlags	10504	scanner	
+unannotated receiver (type inferred from initializer)	src/server/editorServices.ts tryGetDefaultProjectForFile	src/server/scriptInfo.ts getDefaultProject	1815	scriptInfo	
+unannotated receiver (type inferred from initializer)	src/services/codefixes/convertTypedefToType.ts getLeftAndRightSiblings	src/services/types.ts getChildAt	136	commentNode	
+unannotated receiver (type inferred from initializer)	src/services/codefixes/generateAccessors.ts generateAccessorFromProperty	src/services/textChanges.ts getChanges	127	changeTracker	
+unannotated receiver (type inferred from initializer)	src/services/completions.ts getExhaustiveCaseSnippets	src/services/utilities.ts addValue	1462	tracker	
+unannotated receiver (type inferred from initializer)	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts changeToHostTrackingWrittenFiles	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts toFullPath	1388	host	
+unannotated receiver (type inferred from initializer)	src/testRunner/unittests/reuseProgramStructure.ts getSourceFile	src/compiler/types.ts getSourceFile	299	program1	
+unannotated receiver (type inferred from initializer)	src/testRunner/unittests/services/languageService.ts verifyProgramUptoDate	src/services/types.ts getProgram	116	ls	
+unannotated receiver (type inferred from initializer)	src/testRunner/unittests/tsserver/partialSemanticServer.ts <module>	src/server/project.ts getPackageJsonAutoImportProvider	218	project	
+unannotated receiver (type inferred from initializer)	src/testRunner/unittests/tsserver/typingsInstaller.ts verifyUnresolvedImportResolutions	src/testRunner/unittests/helpers/virtualFileSystemWithWatch.ts runQueuedTimeoutCallbacks	117	host	
+unannotated receiver (type inferred from initializer)	src/testRunner/unittests/typeParameterIsPossiblyReferenced.ts <module>	src/compiler/types.ts getSourceFile	28	program	
+unannotated receiver (type inferred from initializer)	src/testRunner/unittests/typeParameterIsPossiblyReferenced.ts <module>	src/compiler/types.ts getTypeChecker	27	program	
+union-typed receiver	src/compiler/emitter.ts printSourceFileOrBundle	src/compiler/types.ts toString	1025	sourceMapGenerator	SourceMapGenerator | undefined
+union-typed receiver	src/compiler/factory/nodeFactory.ts getCookedText	src/compiler/scanner.ts setText	7246	rawTextScanner	Scanner | undefined
+union-typed receiver	src/harness/fourslashImpl.ts printNavigationBar	src/harness/harnessIO.ts log	493	logger	LoggerWithInMemoryLogs | undefined
+union-typed receiver	src/server/project.ts updateGraphWorker	src/services/exportInfoMap.ts onFileChanged	1742	exportMapCache!	ExportInfoMap | undefined
+union-typed receiver	src/server/project.ts watchTypingLocations	src/compiler/sys.ts close	1073	autoImportProviderHost	AutoImportProviderProject | false | undefined
