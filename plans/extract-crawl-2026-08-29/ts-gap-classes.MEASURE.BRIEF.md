@@ -8,7 +8,7 @@ After #566 our ts call edges reach 70.05% of the TypeChecker's on
 
 ## First action
 ```
-git merge --ff-only 7bfc8d4a4e20128374f341b02890ff0880163112
+git merge --ff-only 58811b9bdbe4fb39f84ded4f278496747ab25bad
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 
