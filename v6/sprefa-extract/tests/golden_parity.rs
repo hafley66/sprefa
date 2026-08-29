@@ -785,6 +785,7 @@ fn deferred_and_v6_only_ledger() {
                             CallEdgeKind::ValueRef => {}
                             // The module plane binds a NAME, not an occurrence.
                             CallEdgeKind::ImportResolve => name_resolve += 1,
+                            CallEdgeKind::Implements => {}
                         }
                     }
                 }
@@ -798,6 +799,7 @@ fn deferred_and_v6_only_ledger() {
                             CallEdgeKind::ValueRef => {}
                             // The module plane binds a NAME, not an occurrence.
                             CallEdgeKind::ImportResolve => name_resolve += 1,
+                            CallEdgeKind::Implements => {}
                         }
                     }
                 }
@@ -811,6 +813,7 @@ fn deferred_and_v6_only_ledger() {
                             CallEdgeKind::ValueRef => {}
                             // The module plane binds a NAME, not an occurrence.
                             CallEdgeKind::ImportResolve => name_resolve += 1,
+                            CallEdgeKind::Implements => {}
                         }
                     }
                 }
@@ -1050,6 +1053,7 @@ fn call_resolve_scip_ratchet_ts() {
                 // The twin re-derives the NAME-MATCH leg only, so it mints no
                 // import_resolve edge for the ratchet to classify.
                 (Some((_, _, CallEdgeKind::ImportResolve)), _) => {}
+                (Some((_, _, CallEdgeKind::Implements)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(
@@ -1350,6 +1354,7 @@ fn call_resolve_scip_ratchet_go() {
                 // The twin re-derives the NAME-MATCH leg only, so it mints no
                 // import_resolve edge for the ratchet to classify.
                 (Some((_, _, CallEdgeKind::ImportResolve)), _) => {}
+                (Some((_, _, CallEdgeKind::Implements)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(
@@ -1640,6 +1645,7 @@ fn call_resolve_scip_ratchet_rust() {
                 // The twin re-derives the NAME-MATCH leg only, so it mints no
                 // import_resolve edge for the ratchet to classify.
                 (Some((_, _, CallEdgeKind::ImportResolve)), _) => {}
+                (Some((_, _, CallEdgeKind::Implements)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(
