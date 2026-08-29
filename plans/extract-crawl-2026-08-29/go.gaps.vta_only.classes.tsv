@@ -1,0 +1,300 @@
+interface method dispatch	internal/project/overlayfs.go	processChanges	internal/api/callbackfs.go	UseCaseSensitiveFileNames
+closure-caller naming	internal/checker/checker.go	getAdjustedTypeWithFacts$1	internal/checker/checker.go	getGlobalNonNullableTypeInstantiation
+vta-closure-callee (func literal named by vta)	internal/ast/ast.go	IterChildren$1$1	internal/transformers/moduletransforms/commonjsmodule.go	transformCommonJSModule$1
+multi-hop receiver chain	internal/transformers/estransforms/classfields.go	createMemberAccessForPropertyName	internal/ast/ast_generated.go	NewPropertyAccessExpression
+multi-hop receiver chain	internal/execute/build/buildtask.go	cleanProjectOutput	internal/vfs/iovfs/iofs.go	FileExists
+multi-hop receiver chain	internal/compiler/program.go	UseCaseSensitiveFileNames	internal/project/snapshotfs.go	UseCaseSensitiveFileNames
+other: concrete struct method missed	internal/compiler/fileInclude.go	computeDiagnostic	internal/tsoptions/parsedcommandline.go	ConfigName
+vta-closure-callee (func literal named by vta)	internal/checker/checker.go	mapTypeEx	internal/checker/checker.go	checkArrayLiteralDestructuringElementAssignment$1
+multi-hop receiver chain	internal/transformers/estransforms/async.go	visit	internal/ast/visitor.go	VisitEachChild
+closure-caller naming	internal/checker/checker.go	containsArgumentsReference$1	internal/ast/ast.go	Initializer
+closure-caller naming	internal/testrunner/transpile_runner.go	runTest$1	internal/testrunner/transpile_runner.go	runKind
+multi-hop receiver chain	internal/transformers/estransforms/classfields.go	createCallBinding	internal/transformers/transformer.go	EmitContext
+vta-closure-callee (func literal named by vta)	internal/vfs/vfstest/vfstest.go	Entries$1	internal/testutil/fsbaselineutil/differ.go	ChangedPaths$1
+closure-caller naming	internal/modulespecifiers/specifiers.go	GetEachFileNameOfModule$2$1	internal/tspath/path.go	ResolvePath
+closure-caller naming	internal/checker/checker.go	checkClassDeclaration$1	internal/ast/utilities.go	IsPrivateIdentifierClassElementDeclaration
+interface method dispatch (single impl)	internal/printer/printer.go	emitExpression	internal/ast/ast_generated.go	AsObjectLiteralExpression
+closure-caller naming	internal/ls/file_rename.go	updateTsconfigFiles$1	internal/ls/change/tracker.go	InsertNodeAfter
+vta-closure-callee (func literal named by vta)	internal/ast/ast.go	visit	internal/ast/parseoptions.go	findChildNode$1
+interface method dispatch	internal/ast/ast.go	collectIdentifiersForSourceFile	internal/ast/ast.go	AsNode
+interface method dispatch (single impl)	internal/checker/checker.go	checkImportDeclaration	internal/ast/ast_generated.go	AsImportClause
+vta-closure-callee (func literal named by vta)	internal/compiler/emitter.go	emitDeclarationFile	internal/tracing/tracing.go	Push$2
+closure-caller naming	internal/compiler/filesparser.go	getProcessedFiles$1	internal/ast/ast.go	ContentMapper
+vta-closure-callee (func literal named by vta)	internal/lsp/server.go	handleRequestOrNotification$1	internal/lsp/server.go	registerMultiProjectReferenceRequestHandler$1$1
+interface method dispatch	internal/printer/printer.go	emitNamedImports	internal/ast/ast.go	AsNode
+interface method dispatch (single impl)	internal/ast/ast.go	SetExpression	internal/ast/ast_generated.go	AsSatisfiesExpression
+multi-hop receiver chain	internal/parser/references.go	collectModuleReferences	internal/ast/ast.go	Body
+closure-caller naming	internal/checker/nodecopy.go	getExistingNodeTreeVisitor$9	internal/checker/checker.go	getSymbolOfDeclaration
+vta-closure-callee (func literal named by vta)	internal/transformers/declarations/transform.go	transformFunctionTypeNode	internal/ls/autoimport/import_adder.go	TryGetAutoImportableReferenceFromTypeNode$1
+interface method dispatch	internal/project/session.go	NpmInstall	internal/testutil/projecttestutil/npmexecutormock_generated.go	NpmInstall
+interface method dispatch	internal/transformers/declarations/tracker.go	ReportInferenceFallback	internal/checker/emitresolver.go	IsExpandoFunctionDeclarationUnsafe
+closure-caller naming	internal/modulespecifiers/specifiers.go	GetEachFileNameOfModule$2	internal/ls/autoimport/aliasresolver.go	UseCaseSensitiveFileNames
+func-typed field/param	internal/ls/documenthighlights.go	useParent	internal/ls/documenthighlights.go	getBreakOrContinueStatementOccurrences
+interface method dispatch	internal/compiler/emitter.go	printSourceFile	internal/printer/textwriter.go	Clear
+vta-closure-callee (func literal named by vta)	internal/ls/importTracker.go	getImportersForExport$6	internal/ls/importTracker.go	getImportersForExport$3
+interface method dispatch (single impl)	internal/printer/printer.go	emitExpression	internal/ast/ast_generated.go	AsAwaitExpression
+multi-hop receiver chain	internal/execute/build/buildtask.go	storeOutputTimeStamp	internal/core/compileroptions.go	IsIncremental
+multi-hop receiver chain	internal/transformers/estransforms/using.go	visitSourceFile	internal/ast/visitor.go	VisitEachChild
+other: concrete struct method missed	internal/tsoptions/showconfig.go	serializeCompilerOptions	internal/tsoptions/commandlineoption.go	EnumMap
+vta-closure-callee (func literal named by vta)	internal/api/encoder/encoder.go	encodeTree$4	internal/checker/nodecopy.go	getExistingNodeTreeVisitor$1$1
+multi-hop receiver chain	internal/transformers/estransforms/classfields.go	visitSourceFile	internal/transformers/transformer.go	EmitContext
+multi-hop receiver chain	internal/transformers/estransforms/usestrict.go	visitSourceFile	internal/transformers/transformer.go	Factory
+interface method dispatch	internal/checker/flow.go	tryGetNameFromEntityNameExpression	internal/ast/ast.go	Name
+closure-caller naming	internal/transformers/declarations/diagnostics.go	createGetIsolatedDeclarationErrors$2	internal/transformers/declarations/diagnostics.go	createArrayLiteralError
+closure-caller naming	internal/ls/file_rename.go	updateTsconfigFiles$1$1	internal/tsoptions/tsconfigparsing.go	Get
+closure-caller naming	internal/fourslash/baselineutil.go	getBaselineOptions$7	internal/fourslash/baselineutil.go	dropTrailingEmptyLines
+vta-closure-callee (func literal named by vta)	internal/execute/build/buildtask.go	reportDiagnostic	internal/execute/tsc/diagnostics.go	CreateDiagnosticReporter$1
+closure-caller naming	internal/checker/flow.go	getNarrowedTypeWorker$3$3	internal/checker/checker.go	maybeTypeOfKind
+interface method dispatch	internal/checker/utilities.go	isExportAssignmentExpressionName	internal/ast/ast.go	Expression
+multi-hop receiver chain	internal/transformers/estransforms/esdecorator.go	createDescriptorMethod	internal/printer/emitcontext.go	SetSourceMapRange
+closure-caller naming	internal/format/span.go	execute$3	internal/core/text.go	Pos
+closure-caller naming	internal/checker/checker.go	computeBaseConstraint$1	internal/checker/checker.go	isGenericTupleType
+closure-caller naming	internal/checker/checker.go	checkFunctionOrConstructorSymbolWorker$4	internal/scanner/utilities.go	DeclarationNameToString
+interface method dispatch	internal/ls/callhierarchy.go	resolveCallHierarchyDeclaration	internal/checker/checker.go	GetSymbolAtLocation
+vta-closure-callee (func literal named by vta)	internal/checker/checker.go	checkObjectTypeForDuplicateDeclarations	internal/checker/checker.go	checkObjectTypeForDuplicateDeclarations$1
+interface method dispatch	internal/ipc/conn_async.go	handleRequest	internal/ipc/protocol_jsonrpc.go	WriteError
+interface method dispatch	internal/transformers/tstransforms/legacydecorators.go	visitSetAccessorDeclaration	internal/ast/ast.go	AsNode
+closure-caller naming	internal/fourslash/fourslash.go	VerifyNumberOfErrorsInCurrentFile$1	internal/fourslash/fourslash.go	isSuggestionDiagnostic
+interface method dispatch	internal/printer/printer.go	emitParameter	internal/ast/ast.go	Modifiers
+vta-closure-callee (func literal named by vta)	internal/core/bfs.go	BreadthFirstSearchParallelEx	internal/core/bfs.go	BreadthFirstSearchParallelEx$1
+multi-hop receiver chain	internal/transformers/estransforms/using.go	hoistInitializedVariable	internal/transformers/transformer.go	EmitContext
+interface method dispatch	internal/ast/ast_generated.go	UpdateJSDocTemplateTag	internal/ast/ast.go	AsNode
+multi-hop receiver chain	internal/transformers/declarations/transform.go	transformTopLevelDeclaration	internal/transformers/transformer.go	EmitContext
+other: concrete pkg func missed	internal/ls/lsconv/converters.go	FileNameToDocumentURI	internal/bundled/embed.go	IsBundled
+multi-hop receiver chain	internal/module/resolver.go	resolveTypeReferenceDirective	internal/project/autoimport.go	FS
+closure-caller naming	internal/checker/checker.go	getSuggestionForNonexistentIndexSignature$1	internal/checker/checker.go	getPropertyOfObjectType
+other: concrete struct method missed	internal/ls/callhierarchy.go	createCallHierarchyItem	internal/spanmap/spanmap.go	IsNone
+interface method dispatch	internal/binder/referenceresolver.go	getReferencedValueSymbol	internal/ast/ast.go	Name
+interface method dispatch	internal/outputpaths/outputpaths.go	getOutputPathWithoutChangingExtension	internal/compiler/program.go	UseCaseSensitiveFileNames
+closure-caller naming	internal/execute/incremental/emitfileshandler.go	getEmitOptions$1	internal/execute/build/host.go	GetMTime
+multi-hop receiver chain	internal/transformers/moduletransforms/commonjsmodule.go	visitPostfixUnaryExpression	internal/transformers/transformer.go	EmitContext
+interface method dispatch	internal/printer/semicolon_writer.go	WriteParameter	internal/ls/displaypartswriter.go	WriteParameter
+interface method dispatch	internal/printer/printer.go	parenthesizeExpressionForNoAsi	internal/ast/ast.go	Modifiers
+interface method dispatch	internal/vfs/cachedvfs/cachedvfs.go	WriteFile	internal/execute/tsctests/fs.go	WriteFile
+interface method dispatch	internal/tsoptions/commandlineparser.go	parseResponseFile	internal/vfs/cachedvfs/cachedvfs.go	UseCaseSensitiveFileNames
+interface method dispatch	internal/ipc/conn_sync.go	handleRequest	internal/fswatch/watcher.go	Error
+other: concrete struct method missed	internal/printer/factory.go	NewObjectDefinePropertyCall	internal/ast/ast_generated.go	NewPropertyAccessExpression
+closure-caller naming	internal/checker/nodecopy.go	getExistingNodeTreeVisitor$8	internal/ast/ast_generated.go	AsConditionalTypeNode
+closure-caller naming	internal/transformers/declarations/transform.go	createFullExpandoBlock$1	internal/ast/ast.go	Name
+closure-caller naming	internal/astnav/tokens.go	FindNextToken$1	internal/ast/ast.go	GetOrCreateToken
+interface method dispatch	internal/ast/ast_generated.go	UpdateParenthesizedExpression	internal/ast/ast.go	AsNode
+interface method dispatch	internal/project/snapshot.go	dispose	internal/compiler/program.go	ContentMapperProject
+vta-closure-callee (func literal named by vta)	internal/compiler/fileloader.go	parseSourceFile	internal/tracing/tracing.go	Push$5
+multi-hop receiver chain	internal/transformers/estransforms/esdecorator.go	transformClassLike	internal/printer/factory.go	NewUniqueNameEx
+vta-closure-callee (func literal named by vta)	internal/execute/incremental/buildInfo.go	getNormalizedPaths$1	internal/module/resolver.go	loadModuleFromTargetExportOrImport$2
+interface method dispatch	internal/bundled/embed.go	ReadFile	internal/vfs/iovfs/iofs.go	ReadFile
+multi-hop receiver chain	internal/transformers/tstransforms/runtimesyntax.go	visitImportEqualsDeclaration	internal/ast/visitor.go	VisitEachChild
+closure-caller naming	internal/compiler/filesparser.go	getProcessedFiles$1	internal/ast/ast.go	ParseOptions
+vta-closure-callee (func literal named by vta)	internal/tsoptions/parsedcommandline.go	GetOutputFileNames$1	internal/modulespecifiers/util.go	allKeysStartWithDot$1
+multi-hop receiver chain	internal/checker/checker.go	checkUnusedTypeParameters	internal/ast/ast.go	Text
+multi-hop receiver chain	internal/ls/change/delete.go	deleteDeclaration	internal/ast/ast_generated.go	Name
+func-typed field/param	internal/execute/build/buildtask.go	reportDiagnostic	internal/execute/tsc/diagnostics.go	QuietDiagnosticReporter
+closure-caller naming	internal/ls/inlay_hints.go	getInlayHintLabelParts$1	internal/ast/ast.go	PostfixToken
+interface method dispatch	internal/project/compilerhost.go	GetContentMappedSourceFiles	internal/lsp/server.go	GetLocale
+multi-hop receiver chain	internal/transformers/moduletransforms/commonjsmodule.go	visitTopLevelNestedVariableStatement	internal/transformers/transformer.go	Visitor
+interface method dispatch	internal/ls/autoimport/fix.go	GetFixes	internal/compiler/program.go	Options
+interface method dispatch	internal/checker/grammarchecks.go	checkGrammarJsxElement	internal/ast/ast.go	Text
+closure-caller naming	internal/ls/autoimport/registry.go	buildProjectBucket$1	internal/ast/ast.go	Path
+vta-closure-callee (func literal named by vta)	internal/fswatch/walkdir_unix.go	iterateDir	internal/fswatch/kqueue.go	compareDir$2
+closure-caller naming	internal/checker/services.go	getSymbolsInScope$4	internal/checker/checker.go	getMembersOfSymbol
+vta-closure-callee (func literal named by vta)	internal/scanner/scanner.go	scanASCIIWhile	internal/scanner/scanner.go	scanNumberFragment$1
+vta-closure-callee (func literal named by vta)	internal/core/workgroup.go	RunAndWait	internal/checker/checker.go	recordPotentialCollisionWithWeakMapSetInGeneratedCode$1
+vta-closure-callee (func literal named by vta)	internal/transformers/declarations/tracker.go	handleSymbolAccessibilityError	internal/transformers/declarations/diagnostics.go	createGetSymbolAccessibilityDiagnosticForNode$4
+closure-caller naming	internal/testutil/harnessutil/harnessutil.go	getOptionValue$1	internal/tspath/path.go	GetNormalizedAbsolutePath
+closure-caller naming	internal/project/projectcollectionbuilder.go	updateProgram$2$1	internal/project/compilerhost.go	ContentMapperProject
+vta-closure-callee (func literal named by vta)	internal/astnav/tokens.go	VisitEachChildAndJSDoc	internal/astnav/tokens.go	getNodeVisitor$1
+interface method dispatch (single impl)	internal/printer/printer.go	emitStatement	internal/ast/ast_generated.go	AsTypeAliasDeclaration
+closure-caller naming	internal/project/checkerpool.go	createRelease$1	internal/project/checkerpool.go	disposeCheckerLocked
+closure-caller naming	internal/checker/jsx.go	elaborateIterableOrArrayLikeTargetElementwise$2	internal/checker/relater.go	elaborateError
+multi-hop receiver chain	internal/module/resolver.go	realPath	internal/project/snapshotfs.go	Realpath
+multi-hop receiver chain	internal/transformers/declarations/transform.go	transformSetAccessorDeclaration	internal/ast/ast.go	AsNode
+multi-hop receiver chain	internal/compiler/program.go	UseCaseSensitiveFileNames	internal/execute/build/compilerHost.go	FS
+interface method dispatch (single impl)	internal/checker/grammarchecks.go	checkGrammarObjectLiteralExpression	internal/ast/ast_generated.go	AsNumericLiteral
+other: concrete struct method missed	internal/ls/lsconv/converters.go	lspRangeToVirtual	internal/spanmap/spanmap.go	OriginalToVirtualSpans
+closure-caller naming	internal/ls/callhierarchy.go	getSourceFile$1	internal/ast/utilities.go	GetSourceFileOfNode
+interface method dispatch	internal/diagnosticwriter/diagnosticwriter.go	File	internal/ast/diagnostic.go	File
+closure-caller naming	internal/project/project.go	getCommandLineWithTypingsFiles$1	internal/tsoptions/parsedcommandline.go	FileNames
+closure-caller naming	internal/testutil/tsbaseline/error_baseline.go	iterateErrorBaseline$4	internal/fourslash/fourslash.go	FileName
+interface method dispatch	internal/parser/parser.go	makeSatisfiesExpression	internal/ast/ast.go	Pos
+interface method dispatch	internal/compiler/emitter.go	getSourceFilesToEmit	internal/compiler/emitHost.go	SourceFiles
+interface method dispatch	internal/testutil/harnessutil/recorderfs.go	WriteFile	internal/bundled/embed.go	WriteFile
+multi-hop receiver chain	internal/execute/watcher.go	doBuild	internal/execute/tsctests/sys.go	FS
+multi-hop receiver chain	internal/transformers/tstransforms/legacydecorators.go	getClassPrototype	internal/transformers/transformer.go	Factory
+closure-caller naming	internal/transformers/estransforms/esdecorator.go	emitMemberInfoDeclarations$1	internal/ast/utilities.go	IsStatic
+multi-hop receiver chain	internal/transformers/estransforms/esdecorator.go	visitCallExpression	internal/ast/visitor.go	VisitEachChild
+vta-closure-callee (func literal named by vta)	internal/ast/utilities.go	FindAncestor	internal/ls/signaturehelp.go	getAdjustedNode$1
+vta-closure-callee (func literal named by vta)	internal/compiler/fileloader.go	processAllProgramFiles	internal/tracing/tracing.go	Push$3
+closure-caller naming	internal/transformers/jsxtransforms/jsx.go	visitSourceFile$2	internal/ast/ast_generated.go	NewBindingPattern
+vta-closure-callee (func literal named by vta)	internal/ast/ast.go	visit	internal/ast/utilities.go	getModuleInstanceStateWorker$1
+other: concrete struct method missed	internal/transformers/estransforms/taggedtemplate.go	processTaggedTemplateExpression	internal/printer/factory.go	NewUniqueName
+func-typed field/param	internal/execute/tsc/init.go	WriteConfigFile	internal/execute/tsc/diagnostics.go	QuietDiagnosticReporter
+vta-closure-callee (func literal named by vta)	internal/ls/completions.go	getCompletionData$18	internal/ls/completions.go	getCompletionData$13
+vta-closure-callee (func literal named by vta)	internal/core/workgroup.go	RunAndWait	internal/compiler/projectreferenceparser.go	start$1
+vta-closure-callee (func literal named by vta)	internal/ast/visitor.go	VisitNode	internal/testutil/parsetestutil/parsetestutil.go	newSyntheticRecursiveVisitor$1
+closure-caller naming	internal/checker/symbolaccessibility.go	needsQualification$1	internal/ast/utilities.go	GetDeclarationOfKind
+other: concrete struct method missed	internal/printer/emitcontext.go	VisitFunctionBody	internal/ast/ast_generated.go	UpdateBlock
+closure-caller naming	internal/tsoptions/tsconfigparsing.go	getFileNamesFromConfigSpecs$1	internal/project/snapshotfs.go	UseCaseSensitiveFileNames
+closure-caller naming	internal/transformers/declarations/transform.go	transformImportDeclaration$1	internal/checker/emitresolver.go	IsDeclarationVisible
+interface method dispatch	internal/execute/tsc/help.go	printAllHelp	internal/execute/tsctests/sys.go	Writer
+interface method dispatch	internal/checker/symboltracker.go	ReportNonlocalAugmentation	internal/transformers/declarations/tracker.go	ReportNonlocalAugmentation
+closure-caller naming	internal/project/session.go	scheduleIdleCacheClean$1	internal/project/session.go	cancelScheduledSnapshotUpdate
+multi-hop receiver chain	internal/ls/utilities.go	getPropertySymbolFromBindingElement	internal/ast/ast.go	Text
+closure-caller naming	internal/ls/completions.go	getClosestSymbolDeclaration$1	internal/ast/ast_generated.go	IsIndexSignatureDeclaration
+interface method dispatch	internal/vfs/cachedvfs/cachedvfs.go	Remove	internal/execute/tsctests/fs.go	Remove
+vta-closure-callee (func literal named by vta)	internal/project/projectcollectionbuilder.go	HandleAPIRequest	internal/project/session.go	NewSession$1
+interface method dispatch	internal/ls/languageservice.go	ReadFile	internal/project/snapshot.go	ReadFile
+vta-closure-callee (func literal named by vta)	internal/checker/checker.go	produceDeferredDiagnostics	internal/checker/nodecopy.go	ReportNonSerializableProperty$1
+closure-caller naming	internal/core/core.go	ComputeECMALineStartsSeq$1	internal/stringutil/util.go	IsLineBreak
+vta-closure-callee (func literal named by vta)	internal/checker/checker.go	mapTypeEx	internal/checker/checker.go	checkObjectLiteral$2
+closure-caller naming	internal/compiler/program.go	collectPackageNames$1	internal/compiler/program.go	IsSourceFileFromExternalLibrary
+multi-hop receiver chain	internal/transformers/estransforms/classfields.go	newClassFieldsTransformer	internal/printer/emitcontext.go	NewNodeVisitor
+multi-hop receiver chain	internal/parser/references.go	collectModuleReferences	internal/ast/ast_generated.go	AsModuleDeclaration
+multi-hop receiver chain	internal/module/resolver.go	tryFileLookup	internal/project/snapshotfs.go	FileExists
+interface method dispatch	internal/contentmapper/hostimpl.go	handshake	internal/contentmapper/host.go	Error
+multi-hop receiver chain	internal/transformers/estransforms/classfields.go	transformConstructor	internal/transformers/transformer.go	Factory
+interface method dispatch	internal/printer/printer.go	emitCaseBlock	internal/ast/ast.go	AsNode
+closure-caller naming	internal/ls/findallreferences.go	getNonLocalDefinition$1	internal/spanmap/spanmap.go	IsNone
+interface method dispatch	internal/printer/printer.go	emitBigIntLiteral	internal/ast/ast.go	AsNode
+closure-caller naming	internal/ls/completions.go	getCompletionData$15	internal/ls/utilities.go	getAllSuperTypeNodes
+interface method dispatch	internal/ipc/conn_sync.go	handleRequest	internal/semver/version.go	Error
+interface method dispatch	internal/compiler/emitter.go	getScriptTransformers	internal/ast/ast.go	AsNode
+closure-caller naming	internal/checker/checker.go	isUsedInFunctionOrInstanceProperty$1	internal/ast/ast_generated.go	IsDecorator
+multi-hop receiver chain	internal/module/resolver.go	GetAutomaticTypeDirectiveNames	internal/vfs/wrapvfs/wrapvfs.go	FileExists
+other: concrete struct method missed	internal/ls/symbols.go	ProvideWorkspaceSymbols	internal/spanmap/spanmap.go	IsSingleSegment
+vta-closure-callee (func literal named by vta)	internal/checker/checker.go	checkFunctionOrConstructorSymbolWorker	internal/checker/checker.go	checkFunctionOrConstructorSymbolWorker$2
+interface method dispatch	internal/transformers/estransforms/classfields.go	visitIdentifier	internal/ast/ast.go	Clone
+interface method dispatch	internal/ast/ast_generated.go	UpdateTaggedTemplateExpression	internal/ast/ast.go	AsNode
+multi-hop receiver chain	internal/tsoptions/commandlineparser.go	ParseCommandLine	internal/vfs/iovfs/iofs.go	UseCaseSensitiveFileNames
+vta-closure-callee (func literal named by vta)	internal/checker/checker.go	filterType$1	internal/checker/flow.go	narrowTypeByInKeyword$2
+interface method dispatch	internal/checker/emitresolver.go	IsReferencedAliasDeclaration	internal/checker/checker.go	getSymbolOfDeclaration
+interface method dispatch	internal/printer/semicolon_writer.go	WriteKeyword	internal/printer/singlelinestringwriter.go	WriteKeyword
+interface method dispatch (single impl)	internal/checker/grammarchecks.go	checkGrammarAccessor	internal/ast/ast_generated.go	AsParameterDeclaration
+multi-hop receiver chain	internal/transformers/estransforms/forawait.go	visitMethodDeclaration	internal/transformers/transformer.go	Visitor
+other: concrete struct method missed	internal/testutil/contentmappertest/supplemental_diagnostics.go	HandleRequest	internal/spanmap/spanmap.go	Marshal
+closure-caller naming	internal/ls/file_rename.go	updateTsconfigFiles$1	internal/ls/languageservice.go	UseCaseSensitiveFileNames
+interface method dispatch (single impl)	internal/printer/printer.go	emitJsxAttributeLike	internal/ast/ast_generated.go	AsJsxSpreadAttribute
+other: concrete pkg func missed	internal/ast/utilities.go	getImportTypeNodeLiteral	internal/ast/ast_generated.go	IsStringLiteral
+closure-caller naming	internal/ls/codeactions_fixmissingtypeannotation.go	findAncestorWithMissingType$1	internal/ast/ast_generated.go	IsObjectBindingPattern
+closure-caller naming	internal/ls/change/trackerimpl.go	getEndPositionOfMultilineTrailingComment$1	internal/core/text.go	Pos
+interface method dispatch	internal/printer/printer.go	emitInterfaceDeclaration	internal/ast/ast.go	Modifiers
+vta-closure-callee (func literal named by vta)	internal/ls/lsutil/userpreferences.go	serializeField	internal/ls/lsutil/userpreferences.go	init$6
+interface method dispatch	internal/module/resolver.go	loadModuleFromTargetExportOrImport	cmd/tsgo/sys.go	GetCurrentDirectory
+closure-caller naming	internal/compiler/program.go	verifyCompilerOptions$17	internal/outputpaths/outputpaths.go	DeclarationMapPath
+closure-caller naming	internal/packagejson/cache.go	GetVersionPaths$1$1	internal/packagejson/jsonvalue.go	String
+interface method dispatch	internal/tsoptions/commandlineparser.go	ParseCommandLine	internal/execute/tsctests/sys.go	GetCurrentDirectory
+func-typed field/param	internal/api/session.go	handleGetExportSpecifierLocalTargetSymbol	internal/compiler/checkerpool.go	noop
+interface method dispatch	internal/testutil/contentmappertest/spawner.go	Serve	internal/ipc/conn_async.go	Run
+vta-closure-callee (func literal named by vta)	internal/transformers/declarations/transform.go	transformJSDocNullableType	internal/api/encoder/encoder.go	BuildNodeIndexTable$3
+closure-caller naming	internal/checker/checker.go	getContextualTypeForElementExpression$1	internal/checker/checker.go	getElementTypeOfSliceOfTupleType
+interface method dispatch	internal/testutil/harnessutil/harnessutil.go	CompileFilesEx	internal/contentmapper/hostimpl.go	Close
+interface method dispatch	internal/vfs/cachedvfs/cachedvfs.go	Stat	internal/bundled/embed.go	Stat
+interface method dispatch	internal/module/resolver.go	traceTypeReferenceDirectiveResult	internal/module/types.go	String
+multi-hop receiver chain	internal/transformers/estransforms/classfields.go	visitAssignmentElement	internal/transformers/transformer.go	Visitor
+vta-closure-callee (func literal named by vta)	internal/core/workgroup.go	RunAndWait	internal/checker/checker.go	getIterationTypesOfIterableWorker$1
+other: concrete pkg func missed	internal/transformers/estransforms/esdecorator.go	getHelperVariableName	internal/ast/utilities.go	IsStatic
+interface method dispatch	internal/project/projectcollectionbuilder.go	DidChangeFiles	internal/lsp/lsproto/lsp.go	FileName
+closure-caller naming	internal/fourslash/baselineutil.go	getBaselineOptions$5	internal/fourslash/baselineutil.go	dropTrailingEmptyLines
+closure-caller naming	internal/checker/checker.go	getApparentMappedTypeKeys$1	internal/checker/checker.go	instantiateType
+closure-caller naming	internal/execute/incremental/emitfileshandler.go	getEmitOptions$1	internal/execute/incremental/host.go	GetMTime
+interface method dispatch	internal/ls/folding.go	tryGetFunctionOpenToken	internal/ast/ast.go	Parameters
+closure-caller naming	internal/checker/flow.go	narrowTypeBySwitchOnDiscriminant$1	internal/checker/relater.go	areTypesComparable
+closure-caller naming	internal/ls/inlay_hints.go	getInlayHintLabelParts$1	internal/ast/ast_generated.go	AsArrayTypeNode
+vta-closure-callee (func literal named by vta)	internal/api/encoder/encoder.go	BuildNodeIndexTable$3	internal/testutil/parsetestutil/parsetestutil.go	newSyntheticRecursiveVisitor$1
+vta-closure-callee (func literal named by vta)	internal/transformers/declarations/transform.go	transformJSDocOptionalType	internal/checker/nodecopy.go	getExistingNodeTreeVisitor$1$1
+interface method dispatch	internal/tsoptions/tsconfigparsing.go	getFileNamesFromConfigSpecs	internal/bundled/embed.go	UseCaseSensitiveFileNames
+multi-hop receiver chain	internal/transformers/declarations/transform.go	transformJSDocAllType	internal/transformers/transformer.go	EmitContext
+vta-closure-callee (func literal named by vta)	internal/contentmapper/hostimpl.go	normalizeDiagnosticDirectives	internal/contentmapper/hostimpl.go	normalizeDiagnosticDirectives$1
+interface method dispatch	internal/lsp/lspwatcher/lspwatcher.go	emitSyntheticCreates	internal/bundled/embed.go	WalkDir
+interface method dispatch (single impl)	internal/transformers/estransforms/esdecorator.go	createCallBinding	internal/ast/ast_generated.go	AsPropertyAccessExpression
+interface method dispatch	internal/checker/nodebuilderimpl.go	isHomomorphicMappedTypeWithNonHomomorphicInstantiation	internal/checker/types.go	AsType
+multi-hop receiver chain	internal/module/resolver.go	GetAutomaticTypeDirectiveNames	internal/api/callbackfs.go	FileExists
+vta-closure-callee (func literal named by vta)	internal/checker/checker.go	filterType	internal/checker/checker.go	getContextualTypeForReturnExpression$1
+multi-hop receiver chain	internal/tsoptions/tsconfigparsing.go	GetParsedCommandLineOfConfigFile	internal/vfs/trackingvfs/trackingvfs.go	UseCaseSensitiveFileNames
+interface method dispatch	internal/printer/semicolon_writer.go	DecreaseIndent	internal/printer/changetrackerwriter.go	DecreaseIndent
+interface method dispatch	internal/execute/incremental/program.go	ensureHasErrorsForState	internal/core/compileroptions.go	IsIncremental
+other: concrete struct method missed	internal/transformers/tstransforms/legacydecorators.go	elideNodes	internal/ast/ast.go	NewNodeList
+closure-caller naming	internal/project/overlayfs.go	ECMALineInfo$1	internal/sourcemap/lineinfo.go	CreateECMALineInfo
+interface method dispatch (single impl)	internal/printer/printer.go	emitStatement	internal/ast/ast_generated.go	AsSwitchStatement
+closure-caller naming	internal/checker/nodecopy.go	getExistingNodeTreeVisitor$9	internal/checker/nodebuilderimpl.go	getTypeFromTypeNode
+closure-caller naming	internal/ls/autoimport/registry.go	updateIndexes$1	internal/ls/autoimport/util.go	getResolvedPackageNames
+multi-hop receiver chain	internal/transformers/estransforms/esdecorator.go	createCallBinding	internal/transformers/transformer.go	EmitContext
+interface method dispatch	internal/checker/grammarchecks.go	checkGrammarForInOrForOfStatement	internal/compiler/program.go	GetSourceFileMetaData
+interface method dispatch	internal/module/resolver.go	tryLoadInputFileForPath	cmd/tsgo/sys.go	GetCurrentDirectory
+multi-hop receiver chain	internal/transformers/estransforms/esdecorator.go	visitConstructorDeclaration	internal/transformers/transformer.go	Visitor
+multi-hop receiver chain	internal/module/resolver.go	loadNodeModuleFromDirectoryWorker	internal/api/callbackfs.go	DirectoryExists
+interface method dispatch	internal/api/callbackfs.go	Realpath	internal/bundled/embed.go	Realpath
+interface method dispatch	internal/printer/printer.go	emitLeadingSynthesizedComment	internal/ls/displaypartswriter.go	WriteLine
+multi-hop receiver chain	internal/execute/watcher.go	doBuild	internal/bundled/embed.go	UseCaseSensitiveFileNames
+interface method dispatch (single impl)	internal/ls/string_completions.go	getAlreadyUsedTypesInStringLiteralUnion	internal/ast/ast_generated.go	AsUnionTypeNode
+func-typed field/param	internal/api/session.go	handleGetTypesAtPositions	internal/project/checkerpool.go	noop
+interface method dispatch	internal/checker/checker.go	getArgumentArityError	internal/ast/ast.go	Parameters
+func-typed field/param	internal/ls/api.go	GetTypeOfSymbol	internal/compiler/checkerpool.go	noop
+closure-caller naming	internal/tsoptions/tsconfigparsing.go	parseConfig$1$1$1	internal/project/snapshotfs.go	UseCaseSensitiveFileNames
+multi-hop receiver chain	internal/transformers/moduletransforms/commonjsmodule.go	visitTopLevelExportDeclaration	internal/transformers/transformer.go	Visitor
+multi-hop receiver chain	internal/transformers/estransforms/using.go	hoistExportEquals	internal/transformers/transformer.go	EmitContext
+interface method dispatch	internal/execute/tsc.go	startTracingIfNeeded	internal/ast/ast.go	FileName
+closure-caller naming	internal/compiler/program.go	ExplainFiles$2	internal/compiler/fileloader.go	Path
+closure-caller naming	internal/ast/utilities.go	FindManyAncestors	internal/ast/ast_generated.go	IsImportEqualsDeclaration
+multi-hop receiver chain	internal/compiler/program.go	GetDiagnosticsOfAnyProgram	internal/execute/incremental/program.go	Options
+closure-caller naming	internal/tsoptions/tsconfigparsing.go	parseConfig$1	internal/tsoptions/parsinghelpers.go	mergeCompilerOptions
+other: concrete struct/pkg call missed	internal/printer/emitcontext.go	VisitIterationBody	internal/ast/ast.go	Statements
+closure-caller naming	internal/binder/referenceresolver.go	GetReferencedExportContainer$1	internal/binder/referenceresolver.go	getSymbolOfDeclaration
+closure-caller naming	internal/checker/checker.go	checkArrayLiteral$1	internal/checker/checker.go	getHomomorphicTypeVariable
+interface method dispatch	internal/transformers/declarations/transform.go	tryGetPropertyName	internal/checker/emitresolver.go	GetElementAccessExpressionName
+interface method dispatch	internal/ls/sourcedefinition.go	getSourceDefCheckerInfo	internal/checker/checker.go	GetSymbolAtLocation
+multi-hop receiver chain	internal/transformers/jsxtransforms/jsx.go	transformJsxAttributesToObjectProps	internal/transformers/transformer.go	Factory
+closure-caller naming	internal/astnav/tokens.go	FindChildOfKind$1	internal/scanner/scanner.go	Token
+func-typed field/param	internal/transformers/estransforms/definitions.go	GetESTransformer	internal/transformers/estransforms/logicalassignment.go	newLogicalAssignmentTransformer
+multi-hop receiver chain	internal/module/resolver.go	nodeLoadModuleByRelativeName	internal/ls/autoimport/util.go	FS
+interface method dispatch	internal/transformers/estransforms/esdecorator.go	createMethodDescriptorForwarder	internal/ast/ast_generated.go	NewPropertyAccessExpression
+interface method dispatch	internal/checker/checker.go	getTargetOfNamespaceExportDeclaration	internal/ast/ast.go	Symbol
+interface method dispatch	internal/checker/checker.go	getTypeOfVariableOrParameterOrPropertyWorker	internal/ast/kind_stringer_generated.go	String
+other: concrete struct method missed	internal/project/snapshot.go	Clone	internal/project/programcounter.go	Ref
+func-typed field/param	internal/ls/rename.go	getRenameInfoForNode	internal/compiler/checkerpool.go	noop
+closure-caller naming	internal/modulespecifiers/specifiers.go	tryGetModuleNameFromPaths$1	internal/tspath/extension.go	TryGetExtensionFromPath
+interface method dispatch (single impl)	internal/checker/grammarchecks.go	isInitializerSimpleLiteralEnumReference	internal/ast/ast_generated.go	AsElementAccessExpression
+closure-caller naming	internal/core/core.go	getSpellingSuggestion$1	internal/debug/debug.go	Assert
+multi-hop receiver chain	internal/module/resolver.go	loadModuleFromSpecificNodeModulesDirectory	internal/compiler/host.go	FS
+interface method dispatch	internal/tsoptions/tsconfigparsing.go	convertPropertyValueToJson	internal/ast/ast.go	Text
+interface method dispatch	internal/printer/printer.go	emitReturnStatement	internal/ast/ast.go	Pos
+vta-closure-callee (func literal named by vta)	internal/ls/findallreferences.go	addClassStaticThisReferences	internal/ls/findallreferences.go	addClassStaticThisReferences$1
+interface method dispatch	internal/checker/symboltracker.go	ReportCyclicStructureError	internal/checker/nodecopy.go	ReportCyclicStructureError
+multi-hop receiver chain	internal/module/resolver.go	tryFileLookup	internal/vfs/wrapvfs/wrapvfs.go	FileExists
+multi-hop receiver chain	internal/transformers/estransforms/classfields.go	visitForStatement	internal/transformers/transformer.go	EmitContext
+interface method dispatch	internal/transformers/declarations/transform.go	transformTypeAliasDeclaration	internal/ast/ast.go	AsNode
+closure-caller naming	internal/testutil/tsbaseline/js_emit_baseline.go	prepareDeclarationCompilationContext$3	internal/ast/ast.go	FileName
+interface method dispatch	internal/checker/pseudotypenodebuilder.go	pseudoReturnTypeMatchesPredicate	internal/checker/checker.go	getTypeFromTypeNode
+closure-caller naming	internal/transformers/declarations/transform.go	transformEnumDeclaration$1	internal/ast/ast_generated.go	NewIdentifier
+vta-closure-callee (func literal named by vta)	internal/execute/tsc/emit.go	EmitFilesAndReportErrors	internal/execute/tsc/diagnostics.go	CreateDiagnosticReporter$1
+closure-caller naming	internal/ls/completions.go	getCompletionData$15	internal/checker/exports.go	GetPropertiesOfType
+closure-caller naming	internal/symlinks/knownsymlinks.go	SetSymlinksFromResolutions$1	internal/symlinks/knownsymlinks.go	ProcessResolution
+vta-closure-callee (func literal named by vta)	internal/ls/autoimport/registry.go	updateBucketAndDirectoryExistence$9	internal/ls/autoimport/registry.go	updateBucketAndDirectoryExistence$5
+closure-caller naming	internal/ls/hover.go	getQuickInfoAndDeclarationAtLocation$10	internal/checker/checker.go	GetAliasedSymbol
+multi-hop receiver chain	internal/module/resolver.go	getOriginalAndResolvedFileName	internal/project/autoimport.go	FS
+closure-caller naming	internal/ls/importTracker.go	getSearchesFromDirectImports$5	internal/ast/symbol.go	SymbolName
+closure-caller naming	internal/checker/checker.go	getMatchingUnionConstituentForObjectLiteral$1	internal/ast/ast.go	Symbol
+closure-caller naming	internal/compiler/program.go	getAdditionalJSSyntacticDiagnostics$1	internal/ast/utilities.go	HasDecorators
+interface method dispatch	internal/compiler/fileloader.go	addRootTask	internal/execute/build/compilerHost.go	GetCurrentDirectory
+closure-caller naming	internal/ast/utilities.go	isCalleeWorker	internal/ast/ast_generated.go	IsTaggedTemplateExpression
+vta-closure-callee (func literal named by vta)	internal/format/span.go	processRange	internal/format/api.go	FormatNodeGivenIndentation$1
+multi-hop receiver chain	internal/api/session.go	handleReadConfigFile	internal/api/callbackfs.go	ReadFile
+interface method dispatch	internal/printer/printer.go	emitEnumDeclaration	internal/ast/ast.go	AsNode
+interface method dispatch	internal/parser/jsdoc.go	parseJSDocEntityName	internal/ast/ast.go	Pos
+other: concrete struct/pkg call missed	internal/compiler/fileloader.go	resolveImportsAndModuleAugmentations	internal/ast/utilities.go	IsExternalModule
+multi-hop receiver chain	internal/printer/printer.go	emitEnumMember	internal/ast/ast.go	End
+interface method dispatch	internal/compiler/emitter.go	printSourceFile	internal/printer/singlelinestringwriter.go	RawWrite
+interface method dispatch	internal/api/encoder/encoder.go	recordExtendedData_SourceFile	internal/ast/ast.go	End
+closure-caller naming	internal/astnav/tokens.go	FindPrecedingTokenEx$1	internal/astnav/tokens.go	isValidPrecedingNode
+closure-caller naming	internal/transformers/declarations/transform.go	isInternalDeclaration$5	internal/transformers/declarations/transform.go	hasInternalAnnotation
+other: concrete struct method missed	internal/printer/utilities.go	getContainingNodeArray	internal/ast/ast.go	StatementList
+vta-closure-callee (func literal named by vta)	internal/ast/utilities.go	ForEachReturnStatement$1	internal/ls/jsdoc_snippet.go	hasReturn$1
+vta-closure-callee (func literal named by vta)	internal/compiler/fileloader.go	processAllProgramFiles	internal/tracing/tracing.go	Push$1
+interface method dispatch	internal/ast/visitor.go	VisitSourceFile	internal/ast/ast.go	AsNode
+interface method dispatch	internal/ast/ast.go	propagateSubtreeFacts	internal/ast/subtreefacts.go	propagateSubtreeFacts
+closure-caller naming	internal/transpile/transpile.go	transpileWorker$1	internal/debug/debug.go	Assert
+closure-caller naming	internal/format/rulecontext.go	isOptionDisabledOrUndefinedOrTokensOnSameLine$1	internal/format/rulecontext.go	placeOpenBraceOnNewLineForControlBlocksOption
+closure-caller naming	internal/astnav/tokens.go	FindPrecedingTokenEx$1	internal/astnav/tokens.go	GetStartOfNode
+interface method dispatch	internal/module/resolver.go	ResolveModuleName	internal/module/cache.go	Get
+interface method dispatch	internal/compiler/program.go	Emit	internal/tracing/tracing.go	Push
+closure-caller naming	internal/execute/build/buildtask.go	updateTimeStamps$1	internal/ast/diagnostic.go	NewCompilerDiagnostic
+vta-closure-callee (func literal named by vta)	internal/scanner/scanner.go	iterateCommentRanges$1	internal/printer/printer.go	emitDetachedComments$1
