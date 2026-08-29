@@ -7,8 +7,12 @@
 //! extractor's output.
 
 use std::process::Command;
+use std::time::Instant;
 
 use sprefa_extract::{FamilyMask, GoSource, Source};
+
+/// `tests/46_resolve_scaling.rs`'s budget, on the import-qualified shape.
+const RATIO_BUDGET: f64 = 2.5;
 
 const PATH: &str = "tests/fixtures/go_findings/pkg_qualified_calls.go";
 const SOURCE: &[u8] = include_bytes!("fixtures/go_findings/pkg_qualified_calls.go");
@@ -111,6 +115,82 @@ fn fixture(rel: &str) -> String {
     format!("{}/tests/fixtures/{rel}", env!("CARGO_MANIFEST_DIR"))
 }
 
+/// A generated module under `dir`: packages alpha and beta both export
+/// `Helper{i}`, only beta exports `Only{i}`, and gamma calls both through its
+/// imports. `pairs` counts the `(Helper, Only)` pairs, so gamma writes
+/// `2 * pairs` cross-package calls, half of them on an ambiguous name.
+fn generated_module(dir: &std::path::Path, pairs: usize) -> Vec<String> {
+    for package in ["alpha", "beta", "gamma"] {
+        std::fs::create_dir_all(dir.join(package)).unwrap();
+    }
+    std::fs::write(dir.join("go.mod"), "module example.com/gen\n\ngo 1.22\n").unwrap();
+
+    let mut alpha = String::from("package alpha\n\n");
+    let mut beta = String::from("package beta\n\n");
+    let mut gamma = String::from(
+        "package gamma\n\nimport (\n\t\"example.com/gen/alpha\"\n\tb \"example.com/gen/beta\"\n)\n\n",
+    );
+    for i in 0..pairs {
+        alpha.push_str(&format!("func Helper{i}() int {{ return {i} }}\n"));
+        beta.push_str(&format!("func Helper{i}() int {{ return {i} }}\n"));
+        beta.push_str(&format!("func Only{i}() int {{ return {i} }}\n"));
+        gamma.push_str(&format!(
+            "func CallA{i}() int {{ return alpha.Helper{i}() }}\n"
+        ));
+        gamma.push_str(&format!("func CallB{i}() int {{ return b.Only{i}() }}\n"));
+    }
+    let files = [
+        (dir.join("alpha/alpha.go"), alpha),
+        (dir.join("beta/beta.go"), beta),
+        (dir.join("gamma/gamma.go"), gamma),
+    ];
+    files
+        .into_iter()
+        .map(|(path, text)| {
+            std::fs::write(&path, text).unwrap();
+            path.to_string_lossy().into_owned()
+        })
+        .collect()
+}
+
+/// 40 cross-package calls, 20 of them on a name both packages export. Every
+/// edge that IS minted names the package the import names: a call written
+/// `b.Only3()` never lands in alpha, and no call lands back in gamma.
+///
+/// The 20 ambiguous `alpha.Helper{i}` calls resolve to nothing today: telling
+/// alpha's `Helper3` from beta's needs the callee's package directory, and the
+/// resolve seam carries no path for a candidate def (`DefSite` is
+/// blob/span/family, `ProjectCx.files` is a unit struct). Reported, not
+/// asserted, so this test never pins the gap as correct.
+#[test]
+fn a_cross_package_call_never_lands_in_the_wrong_package() {
+    let dir = std::env::temp_dir().join("sprefa-extract-51-cross-package");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let paths = generated_module(&dir, 20);
+    let edges = resolved_edges(&paths);
+
+    let unique: Vec<&(String, String, String)> =
+        edges.iter().filter(|e| e.1.starts_with("Only")).collect();
+    assert_eq!(
+        unique.len(),
+        20,
+        "every corpus-unique cross-package callee resolves: {unique:?}"
+    );
+    for edge in &edges {
+        assert!(
+            !edge.2.ends_with("gamma/gamma.go"),
+            "a cross-package call bound the calling package: {edge:?}"
+        );
+        if edge.1.starts_with("Only") {
+            assert!(
+                edge.2.ends_with("beta/beta.go"),
+                "b.Only bound a package the import does not name: {edge:?}"
+            );
+        }
+    }
+}
+
 /// A file that declares its own `Helper` and calls `alpha.Helper()` binds the
 /// call in package alpha. The same-file name-match is the wrong candidate set
 /// for an import-qualified site, whatever the file happens to declare.
@@ -131,5 +211,62 @@ fn an_import_qualified_call_never_binds_the_callers_own_def() {
         run.2.ends_with("own_name_shadow/alpha/alpha.go"),
         "alpha.Helper bound the caller's own Helper: {}",
         run.2
+    );
+}
+
+/// One caller file per exported `Helper{i}`, each reaching it through the
+/// import. `n` files, `n + 1` in the resolve universe.
+fn qualified_module(dir: &std::path::Path, n: usize) -> Vec<String> {
+    std::fs::create_dir_all(dir.join("alpha")).unwrap();
+    std::fs::create_dir_all(dir.join("caller")).unwrap();
+    std::fs::write(dir.join("go.mod"), "module example.com/scale\n\ngo 1.22\n").unwrap();
+
+    let mut alpha = String::from("package alpha\n\n");
+    for i in 0..n {
+        alpha.push_str(&format!("func Helper{i}() int {{ return {i} }}\n"));
+    }
+    let alpha_path = dir.join("alpha/alpha.go");
+    std::fs::write(&alpha_path, alpha).unwrap();
+
+    let mut paths = vec![alpha_path.to_string_lossy().into_owned()];
+    for i in 0..n {
+        let path = dir.join(format!("caller/f{i}.go"));
+        std::fs::write(
+            &path,
+            format!(
+                "package caller\n\nimport \"example.com/scale/alpha\"\n\nfunc local{i}() int {{ return {i} }}\n\nfunc use{i}() int {{ return alpha.Helper{i}() + local{i}() }}\n"
+            ),
+        )
+        .unwrap();
+        paths.push(path.to_string_lossy().into_owned());
+    }
+    paths
+}
+
+fn resolve_wall(paths: &[String]) -> f64 {
+    let start = Instant::now();
+    let out = Command::new(env!("CARGO_BIN_EXE_extract"))
+        .arg("--resolve")
+        .args(paths)
+        .output()
+        .expect("extract binary runs");
+    assert!(out.status.success(), "resolve failed");
+    start.elapsed().as_secs_f64()
+}
+
+/// The imported leg costs one own-blob join per FILE, never one per call site;
+/// doubling the file count must not more than double the wall.
+#[test]
+fn resolve_wall_grows_linearly_over_import_qualified_files() {
+    let dir = std::env::temp_dir().join("sprefa-extract-51-scale");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let wall200 = resolve_wall(&qualified_module(&dir.join("n200"), 200));
+    let wall400 = resolve_wall(&qualified_module(&dir.join("n400"), 400));
+
+    assert!(
+        wall400 / wall200 < RATIO_BUDGET,
+        "wall(400)={wall400:.3}s vs wall(200)={wall200:.3}s exceeds {RATIO_BUDGET}x"
     );
 }
