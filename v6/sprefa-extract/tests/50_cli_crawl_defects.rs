@@ -129,3 +129,109 @@ fn go_indexer_argv_enumerates_all_packages() {
     assert!(TS_SPEC.args.contains(&"index"), "ts indexes the project");
     assert!(PYTHON_SPEC.args.contains(&"."), "python indexes the tree");
 }
+
+/// Defect 4: `--scip-build` ignored `--scip-timeout`; the load_scip budget
+/// came from the env only, so a slow indexer ran to the 600 s default. A fake
+/// sleeping indexer under a 1 s budget must produce a timed-out skip row
+/// (`--family scip`) and a fail-fast error (`--scip-build`), never a hang.
+#[test]
+fn scip_timeout_caps_the_family_scip_build() {
+    let root = temp_root("scip-timeout-family");
+    std::fs::write(root.join("go.mod"), "module fake\n\ngo 1.21\n").unwrap();
+    std::fs::write(root.join("main.go"), "package main\nfunc main() {}\n").unwrap();
+    let bin = fake_sleeper(&root);
+    let cache = root.join("cache");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_extract"))
+        .env("PATH", fake_path(&bin))
+        .args([
+            "--family",
+            "scip",
+            "--scip-cache",
+            cache.to_str().unwrap(),
+            "--scip-timeout",
+            "1",
+            root.to_str().unwrap(),
+        ])
+        .output()
+        .expect("extract binary runs");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(r#""record":"scip_skip""#) && stdout.contains("timed_out"),
+        "expected a scip_skip timed_out row; stdout: {stdout}"
+    );
+}
+
+#[test]
+fn scip_timeout_caps_the_scip_build_flag() {
+    let root = temp_root("scip-timeout-build");
+    std::fs::write(root.join("main.go"), "package main\nfunc main() {}\n").unwrap();
+    std::fs::write(root.join("go.mod"), "module fake\n\ngo 1.21\n").unwrap();
+    let bin = fake_sleeper(&root);
+    let file = root.join("main.go");
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_extract"))
+        .env("PATH", fake_path(&bin))
+        .args([
+            "--scip-facts",
+            "--scip-build",
+            "--project-root",
+            root.to_str().unwrap(),
+            "--scip-timeout",
+            "1",
+            file.to_str().unwrap(),
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("extract binary runs");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut stderr = String::new();
+    loop {
+        match child.try_wait().expect("try_wait") {
+            Some(status) => {
+                use std::io::Read;
+                if let Some(mut s) = child.stderr.take() {
+                    let _ = s.read_to_string(&mut stderr);
+                }
+                assert!(
+                    !status.success(),
+                    "a timed-out build cannot yield facts; stderr: {stderr}"
+                );
+                assert!(
+                    stderr.contains("exceeded the 1s budget"),
+                    "expected the timed-out skip detail; stderr: {stderr}"
+                );
+                return;
+            }
+            None => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("--scip-build ignored --scip-timeout: still running after 15s");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    }
+}
+
+/// A `scip-go` stand-in on PATH that sleeps past any test budget.
+fn fake_sleeper(root: &std::path::Path) -> std::path::PathBuf {
+    let bin = root.join("fake-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let script = bin.join("scip-go");
+    std::fs::write(&script, "#!/bin/sh\nsleep 30\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    script
+}
+
+/// PATH = the fake bin dir plus whatever the test host needs.
+fn fake_path(fake: &std::path::Path) -> String {
+    let host = std::env::var("PATH").unwrap_or_default();
+    format!("{}:{host}", fake.parent().unwrap().display())
+}

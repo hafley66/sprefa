@@ -367,6 +367,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let cli = Cli::parse();
 
+    // `--scip-timeout` must reach the library's `ScipMode::Build` path, whose
+    // budget comes from `IndexBudget::from_env` (project.rs). Setting the same
+    // variable the library documents keeps one budget rule for both build
+    // paths; `--family scip` threads its own `IndexBudget` and ignores this.
+    if let Some(secs) = cli.scip_timeout {
+        if secs > 0 {
+            std::env::set_var("SPREFA_SCIP_TIMEOUT_SECS", secs.to_string());
+        }
+    }
+
     if cli.schema {
         print_schema();
         return Ok(());
