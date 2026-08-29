@@ -11,7 +11,7 @@ applied to an expression instead of a variable.
 
 ## First action
 ```
-git merge --ff-only 876bae08b5c5588bdaf1dd29c32c8925c2f34d83
+git merge --ff-only 7c19948e7439ecd1afde4dc6612a8b5873937f61
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Binary: `v6/sprefa-extract/target/release/extract` in YOUR worktree.
