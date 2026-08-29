@@ -315,3 +315,19 @@ not fixes.
 - **go's `--deps`/`--scip-deps` module family**, only `--resolve`'s (absent,
   defect 2) was measured; `--deps` is a different code path this brief didn't
   ask for.
+
+## 11. ts module family, corrected: `--deps` file_edge is the file-imports-file row
+
+Section 7's 47% module overlap compared two different rows. `resolved_import`
+is the BINDING target through barrels (`binder.ts -> checker.ts` via
+`_namespaces/ts.ts`, `export *`); madge, dependency-cruiser, codeql,
+stack-graphs and scip all emit file-imports-file (`binder.ts ->
+_namespaces/ts.ts`). The file-imports-file row already exists:
+`extract --deps --project-root <root> <files>` emits `file_edge`.
+
+| a | b | \|a\| | \|b\| | a∩b | a-only | b-only |
+|---|---|---:|---:|---:|---:|---:|
+| `ts5.deps.module.tsv` (`--deps` file_edge, 600 src files) | `ts.madge.module.tsv` | 2,010 | 2,011 | 2,010 | 0 | 1 (`src/../scripts/failed-tests.d.cts`, outside `src/`) |
+
+Command: `extract --deps --project-root ~/projects/TypeScript-5.9 $(find src -name '*.ts' ! -name '*.d.ts')`, 600 files, wall under 60 s in one process.
+Both rows stay: `file_edge` answers "what does this file import", `resolved_import` answers "where does this name come from".
