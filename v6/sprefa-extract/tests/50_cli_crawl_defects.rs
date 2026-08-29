@@ -235,3 +235,28 @@ fn fake_path(fake: &std::path::Path) -> String {
     let host = std::env::var("PATH").unwrap_or_default();
     format!("{}:{host}", fake.parent().unwrap().display())
 }
+
+/// Defect 5 (rust.REPORT kink 8): a failed rust-analyzer build carried the
+/// panic's `note: Some details are omitted, run with RUST_BACKTRACE=1` line as
+/// scip_skip.detail instead of the panic line before it.
+#[test]
+fn error_line_skips_panic_notes() {
+    let stderr = "thread 'rust-analyzer' panicked at src/x.rs:12:5:\n\
+                  explicit panic at the real call site\n\
+                  note: Some details are omitted, run with `RUST_BACKTRACE=1` \
+                  environment variable to display a backtrace\n";
+    assert_eq!(
+        sprefa_extract::scip_ensure::last_error_line(stderr),
+        "explicit panic at the real call site"
+    );
+    // No note lines: the last line wins unchanged.
+    assert_eq!(
+        sprefa_extract::scip_ensure::last_error_line("first\nlast\n"),
+        "last"
+    );
+    // Only note lines: fall back to the last one rather than empty.
+    assert!(sprefa_extract::scip_ensure::last_error_line(
+        "note: only\n"
+    )
+    .starts_with("note:"));
+}
