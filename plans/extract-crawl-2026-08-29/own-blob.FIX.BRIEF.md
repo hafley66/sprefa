@@ -6,7 +6,7 @@ span search is non-deterministic at scale".
 
 ## First action
 ```
-git merge --ff-only BASE_SHA
+git merge --ff-only 7cafeae8061535bcf6b448d44f96aebe0ce2bc0b
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Failure: STOP, `boop beep --no-wait --as fix-extract-own-blob sprefa-coordinator "<one line>"`.
