@@ -146,17 +146,33 @@ stratify_rules(Rules, DerivedStrata, Diagnostics) :-
     ).
 
 rule_dependencies([], []).
-rule_dependencies([rule(call(HeadRelation, _), Goals) | Rules], Dependencies) :-
-    goal_dependencies(Goals, HeadRelation, OwnDependencies),
+rule_dependencies([rule(call(HeadRelation, HeadArguments), Goals) | Rules],
+                  Dependencies) :-
+    aggregate_arguments(HeadArguments, Aggregates),
+    aggregate_dependency_mode(Aggregates, AggregateMode),
+    goal_dependencies(Goals, HeadRelation, AggregateMode, OwnDependencies),
     rule_dependencies(Rules, RestDependencies),
     append(OwnDependencies, RestDependencies, Dependencies).
 
-goal_dependencies([], _, []).
+goal_dependencies([], _, _, []).
 goal_dependencies(
     [checked_goal(Polarity, call(BodyRelation, _)) | Goals], HeadRelation,
-    [dependency(HeadRelation, BodyRelation, Polarity, Gap) | Dependencies]) :-
-    polarity_gap(Polarity, Gap),
-    goal_dependencies(Goals, HeadRelation, Dependencies).
+    AggregateMode,
+    [dependency(HeadRelation, BodyRelation, Polarity, Gap, Cause)
+     | Dependencies]) :-
+    dependency_gap(AggregateMode, Polarity, Gap, Cause),
+    goal_dependencies(Goals, HeadRelation, AggregateMode, Dependencies).
+
+aggregate_arguments(Arguments, Aggregates) :-
+    include(count_aggregate, Arguments, Aggregates).
+
+count_aggregate(aggregate(count, _)).
+
+aggregate_dependency_mode([], plain).
+aggregate_dependency_mode([_ | _], aggregate).
+
+dependency_gap(aggregate, _, 1, aggregate).
+dependency_gap(plain, Polarity, Gap, Polarity) :- polarity_gap(Polarity, Gap).
 
 polarity_gap(positive, 0).
 polarity_gap(negative, 1).
@@ -182,8 +198,8 @@ strict_cycle_diagnostics(Relations, Dependencies, Diagnostics) :-
     dependency_edges(Dependencies, Edges),
     vertices_edges_to_ugraph(Relations, Edges, Graph),
     transitive_closure(Graph, Closure),
-    findall(HeadRelation-BodyRelation,
-            ( member(dependency(HeadRelation, BodyRelation, _, 1),
+    findall(strict_edge(Cause, HeadRelation, BodyRelation),
+            ( member(dependency(HeadRelation, BodyRelation, _, 1, Cause),
                      Dependencies),
               neighbors(BodyRelation, Closure, Reachable),
               memberchk(HeadRelation, Reachable)
@@ -194,16 +210,21 @@ strict_cycle_diagnostics(Relations, Dependencies, Diagnostics) :-
 
 strict_edges_diagnostics([], _, _, []) :- !.
 strict_edges_diagnostics(StrictEdges, Relations, Closure,
-                         [diagnostic(stratify, none,
-                                     strict_dependency_cycle(
-                                         CycleRelations))]) :-
+                         [diagnostic(stratify, none, CycleDiagnostic)]) :-
     findall(Relation,
-            ( member(Head-_, StrictEdges),
+            ( member(strict_edge(_, Head, _), StrictEdges),
               member(Relation, Relations),
               mutually_reachable(Head, Relation, Closure)
             ),
             CycleRelations0),
-    sort(CycleRelations0, CycleRelations).
+    sort(CycleRelations0, CycleRelations),
+    cycle_diagnostic(StrictEdges, CycleRelations, CycleDiagnostic).
+
+cycle_diagnostic(StrictEdges, Relations,
+                 aggregate_dependency_cycle(Relations)) :-
+    memberchk(strict_edge(aggregate, _, _), StrictEdges),
+    !.
+cycle_diagnostic(_, Relations, strict_dependency_cycle(Relations)).
 
 mutually_reachable(Relation, Relation, _) :- !.
 mutually_reachable(Left, Right, Closure) :-
@@ -213,7 +234,8 @@ mutually_reachable(Left, Right, Closure) :-
     memberchk(Left, RightReachable).
 
 dependency_edges([], []).
-dependency_edges([dependency(HeadRelation, BodyRelation, _, _) | Dependencies],
+dependency_edges([dependency(HeadRelation, BodyRelation, _, _, _)
+                  | Dependencies],
                  [HeadRelation-BodyRelation | Edges]) :-
     dependency_edges(Dependencies, Edges).
 
@@ -243,7 +265,7 @@ relax_levels([level(Relation, Current) | Levels0], AllLevels, Dependencies,
 
 dependency_requirements(Relation, Dependencies, Levels, Requirements) :-
     findall(Required,
-            ( member(dependency(Relation, BodyRelation, _, Gap),
+            ( member(dependency(Relation, BodyRelation, _, Gap, _),
                      Dependencies),
               memberchk(level(BodyRelation, BodyLevel), Levels),
               Required is BodyLevel + Gap

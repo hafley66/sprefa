@@ -74,6 +74,15 @@ locate_strata_diagnostics(
     !,
     cycle_origin(Rules, Relations, Origins, NodeId),
     locate_strata_diagnostics(Diagnostics0, Rules, Origins, Diagnostics).
+locate_strata_diagnostics(
+    [diagnostic(stratify, none,
+                aggregate_dependency_cycle(Relations)) | Diagnostics0],
+    Rules, Origins,
+    [diagnostic(stratify, NodeId,
+                aggregate_dependency_cycle(Relations)) | Diagnostics]) :-
+    !,
+    aggregate_cycle_origin(Rules, Relations, Origins, NodeId),
+    locate_strata_diagnostics(Diagnostics0, Rules, Origins, Diagnostics).
 locate_strata_diagnostics([Diagnostic | Diagnostics0], Rules, Origins,
                           [Diagnostic | Diagnostics]) :-
     locate_strata_diagnostics(Diagnostics0, Rules, Origins, Diagnostics).
@@ -88,6 +97,15 @@ cycle_origin(Rules, Relations, Origins, NodeId) :-
     goal_origin(Origins, RuleIndex, GoalIndex, NodeId),
     !.
 cycle_origin(_, _, _, none).
+
+aggregate_cycle_origin(Rules, Relations, Origins, NodeId) :-
+    nth0(RuleIndex, Rules,
+         rule(call(HeadRelation, HeadArguments), _)),
+    memberchk(HeadRelation, Relations),
+    memberchk(aggregate(count, _), HeadArguments),
+    rule_origin(Origins, RuleIndex, NodeId),
+    !.
+aggregate_cycle_origin(_, _, _, none).
 
 %% Bind checks: one unique name per owner and dense zero-based indices.
 bind_diagnostics(Edges, Origins, Diags) :-
@@ -443,7 +461,12 @@ mode_failure_diagnostics([goal_failure(GoalIndex, Reason) | Failures],
     mode_failure_diagnostics(Failures, RuleIndex, Origins, Diagnostics).
 
 head_variables(call(_, Arguments), Variables) :-
-    findall(Identity, member(var(Identity), Arguments), Variables0),
+    findall(Identity,
+            ( member(Argument, Arguments),
+              argument_variables(Argument, ArgumentVariables),
+              member(Identity, ArgumentVariables)
+            ),
+            Variables0),
     sort(Variables0, Variables).
 
 %% resolve_call(+Call, +Edges, +Nodes, +Relations, -Result) is det.
@@ -471,26 +494,35 @@ resolve_call(call(name(Owner, Name), Args), Edges, Nodes, Relations, Result) :-
 
 resolve_args([], _, _, ok([])).
 resolve_args([Arg | Rest], Edges, Nodes, Result) :-
-    (   Arg = name(ArgOwner, ArgName)
-    ->  (   resolve_name(ArgOwner, ArgName, Edges, Nodes, [], Resolved)
-        ->  resolve_args(Rest, Edges, Nodes, RestResult),
-            (   RestResult = ok(RestResolved)
-            ->  Result = ok([Resolved | RestResolved])
-            ;   Result = RestResult
-            )
-        ;   Result = error(unresolved_name(ArgName))
-        )
-    ;   resolve_args(Rest, Edges, Nodes, RestResult),
+    resolve_argument(Arg, Edges, Nodes, ArgumentResult),
+    (   ArgumentResult = ok(Resolved)
+    ->  resolve_args(Rest, Edges, Nodes, RestResult),
         (   RestResult = ok(RestResolved)
-        ->  Result = ok([Arg | RestResolved])
+        ->  Result = ok([Resolved | RestResolved])
         ;   Result = RestResult
         )
+    ;   Result = ArgumentResult
     ).
+
+resolve_argument(name(Owner, Name), Edges, Nodes, Result) :-
+    !,
+    (   resolve_name(Owner, Name, Edges, Nodes, [], Resolved)
+    ->  Result = ok(Resolved)
+    ;   Result = error(unresolved_name(Name))
+    ).
+resolve_argument(aggregate(count, Expression), Edges, Nodes, Result) :-
+    !,
+    resolve_argument(Expression, Edges, Nodes, ExpressionResult),
+    (   ExpressionResult = ok(ResolvedExpression)
+    ->  Result = ok(aggregate(count, ResolvedExpression))
+    ;   Result = ExpressionResult
+    ).
+resolve_argument(Argument, _, _, ok(Argument)).
 
 %% Every head var(Identity) must occur in a positive body call.
 head_safety_diagnostics(call(_, HeadArgs), Body, Origins, RuleIndex, Diags) :-
     rule_origin(Origins, RuleIndex, NodeId),
-    findall(Var, member(var(Var), HeadArgs), HeadVars),
+    head_variables(call(_, HeadArgs), HeadVars),
     findall(Var, (member(Goal, Body),
                   goal_variables(Goal, GoalVars),
                   member(Var, GoalVars)), BodyVars),

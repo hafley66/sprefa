@@ -225,7 +225,7 @@ lower_seed(Node, Owner, Reservations, Relations, SeedIndex, Result) :-
 
 lower_rule(HeadNode, BodyNodes, Owner, Reservations, Relations,
            RuleIndex, RuleNodeId, Result) :-
-    lower_call(HeadNode, Owner, Reservations, Relations, HeadResult),
+    lower_head_call(HeadNode, Owner, Reservations, Relations, HeadResult),
     (   HeadResult = ok(Head)
     ->  lower_goals(BodyNodes, Owner, Reservations, Relations, RuleIndex, 0,
                     BodyResult),
@@ -270,7 +270,14 @@ lower_goal(Node, Owner, Reservations, Relations, Result) :-
 pending_goal_result(ok(Call), Polarity, ok(pending_goal(Polarity, Call))).
 pending_goal_result(error(Diagnostic), _, error(Diagnostic)).
 
-lower_call(node(NodeId, form([node(_, atom(Name)) | ArgumentNodes])),
+lower_head_call(Node, Owner, Reservations, Relations, Result) :-
+    lower_call_mode(head, Node, Owner, Reservations, Relations, Result).
+
+lower_call(Node, Owner, Reservations, Relations, Result) :-
+    lower_call_mode(plain, Node, Owner, Reservations, Relations, Result).
+
+lower_call_mode(Mode,
+           node(NodeId, form([node(_, atom(Name)) | ArgumentNodes])),
            Owner, Reservations, Relations, Result) :-
     !,
     (   memberchk(reservation(Owner, Name, target(Target), product),
@@ -278,11 +285,9 @@ lower_call(node(NodeId, form([node(_, atom(Name)) | ArgumentNodes])),
     ->  memberchk(relation(Target, Arity, _), Relations),
         length(ArgumentNodes, ObservedArity),
         (   ObservedArity =:= Arity
-        ->  lower_arguments(ArgumentNodes, Owner, ArgumentResult),
-            (   ArgumentResult = ok(Arguments)
-            ->  Result = ok(call(name(Owner, Name), Arguments))
-            ;   Result = ArgumentResult
-            )
+        ->  lower_arguments(Mode, ArgumentNodes, Owner, ArgumentResult),
+            finish_call_arguments(Mode, Name, NodeId, Owner,
+                                  ArgumentResult, Result)
         ;   Result = error(diagnostic(
                                lower, NodeId,
                                arity_mismatch(Name, Arity, ObservedArity)))
@@ -292,25 +297,39 @@ lower_call(node(NodeId, form([node(_, atom(Name)) | ArgumentNodes])),
     ;   kernel_relation(Name, Arity)
     ->  length(ArgumentNodes, ObservedArity),
         (   ObservedArity =:= Arity
-        ->  lower_arguments(ArgumentNodes, Owner, ArgumentResult),
-            (   ArgumentResult = ok(Arguments)
-            ->  Result = ok(call(name(Owner, Name), Arguments))
-            ;   Result = ArgumentResult
-            )
+        ->  lower_arguments(Mode, ArgumentNodes, Owner, ArgumentResult),
+            finish_call_arguments(Mode, Name, NodeId, Owner,
+                                  ArgumentResult, Result)
         ;   Result = error(diagnostic(
                                lower, NodeId,
                                arity_mismatch(Name, Arity, ObservedArity)))
         )
     ;   Result = error(diagnostic(lower, NodeId, undeclared_relation(Name)))
     ).
-lower_call(Node, _, _, _, error(diagnostic(lower, NodeId, expected_call))) :-
+lower_call_mode(_, Node, _, _, _,
+                error(diagnostic(lower, NodeId, expected_call))) :-
     node_id(Node, NodeId).
 
-lower_arguments([], _, ok([])).
-lower_arguments([Node | Nodes], Owner, Result) :-
-    lower_argument(Node, Owner, ArgumentResult),
+finish_call_arguments(_, _, _, _, error(Diagnostic), error(Diagnostic)).
+finish_call_arguments(head, Name, NodeId, Owner, ok(Arguments), Result) :-
+    !,
+    include(count_aggregate, Arguments, Aggregates),
+    length(Aggregates, AggregateCount),
+    (   AggregateCount =< 1
+    ->  Result = ok(call(name(Owner, Name), Arguments))
+    ;   Result = error(diagnostic(lower, NodeId,
+                                  multiple_count_aggregates(Name)))
+    ).
+finish_call_arguments(_, Name, _, Owner, ok(Arguments),
+                      ok(call(name(Owner, Name), Arguments))).
+
+count_aggregate(aggregate(count, _)).
+
+lower_arguments(_, [], _, ok([])).
+lower_arguments(Mode, [Node | Nodes], Owner, Result) :-
+    lower_argument(Mode, Node, Owner, ArgumentResult),
     (   ArgumentResult = ok(Argument)
-    ->  lower_arguments(Nodes, Owner, RestResult),
+    ->  lower_arguments(Mode, Nodes, Owner, RestResult),
         (   RestResult = ok(Arguments)
         ->  Result = ok([Argument | Arguments])
         ;   Result = RestResult
@@ -318,11 +337,29 @@ lower_arguments([Node | Nodes], Owner, Result) :-
     ;   Result = ArgumentResult
     ).
 
-lower_argument(node(_, variable(Identity, _)), _, ok(var(Identity))).
-lower_argument(node(_, literal(Value)), _, ok(const(Value))).
-lower_argument(node(_, atom(Name)), Owner, ok(name(Owner, Name))).
-lower_argument(node(NodeId, form(_)), _,
+lower_argument(head,
+               node(_, form([node(_, atom(count)), Expression])),
+               Owner, Result) :-
+    !,
+    lower_argument(plain, Expression, Owner, ExpressionResult),
+    aggregate_argument_result(ExpressionResult, Result).
+lower_argument(head, node(NodeId, form([node(_, atom(count)) | _])), _,
+               error(diagnostic(lower, NodeId,
+                                invalid_count_aggregate))) :-
+    !.
+lower_argument(plain, node(NodeId, form([node(_, atom(count)) | _])), _,
+               error(diagnostic(lower, NodeId,
+                                aggregate_outside_rule_head))) :-
+    !.
+lower_argument(_, node(_, variable(Identity, _)), _, ok(var(Identity))).
+lower_argument(_, node(_, literal(Value)), _, ok(const(Value))).
+lower_argument(_, node(_, atom(Name)), Owner, ok(name(Owner, Name))).
+lower_argument(_, node(NodeId, form(_)), _,
                error(diagnostic(lower, NodeId, nested_call_argument))).
+
+aggregate_argument_result(ok(Expression),
+                          ok(aggregate(count, Expression))).
+aggregate_argument_result(error(Diagnostic), error(Diagnostic)).
 
 call_contains_var(call(_, Arguments)) :- member(var(_), Arguments).
 
