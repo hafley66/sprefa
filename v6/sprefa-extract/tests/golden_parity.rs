@@ -34,8 +34,8 @@ use sprefa_extract::{
     build_def_index, byte_range, containing_def_site, content_id_of, covering_def, definition_of,
     dispatch, flatten, join_documents, site_occurrence, CallEdgeKind, ContentId, ExtractOutput,
     FamilyMask, FamilyTag, FileSet, FlatFact, GoSource, IndexBag, ManifestMap, ProjectCx,
-    ProjectDigest, PythonSource, Resolve, RustSource, ScipGo, ScipRust, ScipSource, ScipTypescript,
-    Span, TsSource, TypeF, ZERO_CONTENT_ID,
+    ProjectDigest, PythonSource, Resolve, RustSource, ScipGo, ScipRust, ScipSource, ScipTypescript, Span,
+    TsSource, TypeF, ZERO_CONTENT_ID,
 };
 
 struct Case {
