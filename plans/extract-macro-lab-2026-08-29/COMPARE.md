@@ -72,3 +72,13 @@ Inputs: `mbe.macro_sites.tsv` (PR #553, in-process `macro_rules` expansion) and 
 | mbe sees only `macro_rules` defined in the same file; `format!`/`vec!`/`assert!`/derives are scip-only by construction | PLAN.md Option 1 fixture table f4-f6, f8 |
 | scip sees any call the compiler resolved inside an invocation span, but needs the index build | PLAN.md Option 4 |
 | the two sets are complementary, not competing: union is the number to carry | counts table above |
+
+## Overlap by RANGE (exact-span join is zero: the two arms do not share a span convention)
+
+| fact | value |
+|---|---:|
+| mbe rows whose range overlaps a scip row in the same file | 3 of 1057 |
+| of those, same macro name | 0 |
+| files with mbe rows | 51 |
+| files with scip rows | 51 |
+| files in both | 5 |
