@@ -804,3 +804,67 @@ Each asserted a limit the plane removed. None was deleted.
 | the go and rust `resolved_import` arms | the record shape is declared for them; the planes are not built |
 | `import()` and `require()` with a literal argument | they carry `specifier` rows but bind no NAME, so ResolveExport has nothing to ask for |
 | a second `--resolve` over the same tree after an edit | the plane is built per run; no incremental invalidation is claimed |
+
+## 11. Fixes: receiver-typed member calls (lane `fix-extract-ts-member-calls`)
+
+Section 10.3 left 7,976 name-ambiguous sites, 7,658 of them member calls whose
+receiver type the parse arm never read. This lane ports the go arm's receiver
+legs (#554, #562) to ts: one scope-threaded pass per function body binds each
+member-call receiver to its declared type name, then the resolve leg binds
+`T.f` from the declaring class/interface.
+
+### 11.1 What was built
+
+| piece | where |
+|---|---|
+| `ReceiverWalker`: one pass per body, rows + per-file facts | `src/lang/ts_receivers.rs` (new) |
+| receiver sources: param annotation, `const x: T`, class field, `this` in a class, `new T()`, static `T.f()`, one-level field read, one hop `const x = f()` | same |
+| per-blob facts store (rows never enter the wired aux, so phase-1 wire shapes are unchanged) | same, process-cached like `go_file_facts` |
+| `receiver_member_target`: type anchor (same-file or one module-plane `bind`), member lookup by span containment, `extends` ONE hop, overload pick = largest span | same |
+| CallF defs at interface method-signature spans (the callee_name seat for interface receivers) | `src/lang/ts.rs` `interface_member_defs` |
+| receiver leg in `Resolve<CallF>`: a traceable receiver REPLACES the name match; a missing member is a drop | `src/lang/ts.rs` |
+| drops channel: `inferred` / `ambiguous` rows for unbound traced sites, like go | `src/lang/ts.rs` `call_drops` |
+
+Union, primitive (`string[]` etc.), and literal-inferred receivers stay
+unbound (`Inferred`/`Ambiguous`); imported namespace receivers stay on the
+module plane (imports are never seeded into the receiver scope).
+
+### 11.2 The receipt (same corpus, ONE process, 2.66s wall)
+
+`extract --resolve --project-root ~/projects/TypeScript-5.9 $(find src -name '*.ts' ! -name '*.d.ts')`, normalized with `normalize.py`, benched against the TypeChecker oracle:
+
+| measure | before | after |
+|---|---|---|
+| call recall (a∩b / a) | 64.2% (35,719 / 55,611) | **70.05%** (41,547 / 59,311) |
+| precision (a∩b / b) | 60.2% | **70.00%** |
+| ambiguous by name (section 10.3 re-judge) | 7,976 | **7,567** |
+| drops rows recorded (reason) | 0 | 7,095 `inferred` + 543 `ambiguous` |
+| resolved_edge by kind | name 49,995 / import 26,826 / value 4,435 | name 44,856 / import 26,828 / value 4,472 |
+
+The recall gain is +3,700 unique edges; precision rises 9.8 points because the
+traced sites that used to name-match a same-spelled free function now bind the
+type's own member or drop.
+
+### 11.4 Gate
+
+`cargo test --release --features cli --no-fail-fast`: 523 passed, 0 failed.
+
+Three receipts re-seated (each asserted a limit the receiver plane removed;
+none deleted):
+
+| test | the claim | where it moved |
+|---|---|---|
+| `47_resolve_door_cli.rs` | `--resolve` never carries `unresolved` | now: phase-1 rows (dynamic import etc.) still never ride `--resolve`; the drops channel does |
+| `8_scip_families_cli.rs` | the delta/epsilon `probe` pair is the ScipIndexLoad witness | `far` became `castFar()` with no declared return type, so the receiver leg cannot trace it; the witness survives |
+| `8_scip_families_cli.rs` golden | a diet stream carries only `resolved_edge`/`resolved_type_edge` | the drops channel's `unresolved` rows join it (they are resolve-pass output) |
+| `53_ts_crawl_kinks.rs` | an array `.push()` binding to a class method named `push` was an ACCEPTED false positive | gone: `string[]` receivers are `Inferred` and drop |
+| `6_kind_vocab.rs` wire golden | byte-identical to 946460d75 | regenerated: interface method-signature defs + the drops rows are new phase-1/2 facts, record SHAPES unchanged |
+
+### 11.5 What stays untested and why
+
+| gap | why |
+|---|---|
+| `extends` deeper than one hop | the go arm's same budget; a second hop is a fixpoint, out of this tier |
+| interface member PROPERTY signatures typed as functions | call targets there are property reads; method signatures cover the corpus |
+| implementer fan-out from an interface receiver | declared later arc by the brief: the signature binds, implementations are a class-hierarchy question |
+| generic type arguments (`x: Foo<T>` member typed by `T`) | the anchor binds `Foo`'s own members; `T`-substituted members are a compiler question |

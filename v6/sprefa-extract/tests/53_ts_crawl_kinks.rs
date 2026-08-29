@@ -119,25 +119,23 @@ fn an_array_push_does_not_bind_to_a_free_function_named_push() {
     );
 }
 
-/// The RESIDUE the narrowed rule accepts, and the PR #538 face of the kink: an
-/// unrelated `push` that is a class METHOD keeps its edge. Blocking it too
-/// costs 5 defs of entrypoint reachability over TypeScript 5.9 and drops 290
-/// more edges (report section 9.2); the coordinator's rule is method-or-nothing,
-/// so this asserts the accepted false positive rather than pretending it is gone.
+/// The RESIDUE the narrowed rule accepted, and the PR #538 face of the kink:
+/// an unrelated `push` that is a class METHOD kept its edge. The receiver
+/// plane closed even that: `out: string[]` is a `TSTypeReference`-free array
+/// annotation, so the receiver is `Inferred`, the site drops reason=inferred,
+/// and the class-method false positive is gone with it.
 #[test]
 fn an_array_push_still_binds_to_a_class_method_named_push() {
-    assert_eq!(
-        edges(&[
-            "--resolve",
-            "--family",
-            "call",
-            "tests/fixtures/ts_findings/receiver_blind_method/consumer.ts",
-            "tests/fixtures/ts_findings/receiver_blind_method/writer.ts",
-        ]),
-        [
-            ("collect".to_string(), "push".to_string()),
-            ("collect".to_string(), "push".to_string()),
-        ]
+    let edges = edges(&[
+        "--resolve",
+        "--family",
+        "call",
+        "tests/fixtures/ts_findings/receiver_blind_method/consumer.ts",
+        "tests/fixtures/ts_findings/receiver_blind_method/writer.ts",
+    ]);
+    assert!(
+        edges.is_empty(),
+        "an array receiver drops, it never binds a same-named method: {edges:?}"
     );
 }
 

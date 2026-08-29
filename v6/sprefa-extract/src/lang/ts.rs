@@ -14,7 +14,7 @@
 //! name-resolved type EDGES (field / impl / uses / ...) still land with
 //! `Resolve<TypeF>`; phase 1 stays pure-content.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast as ts;
@@ -40,7 +40,11 @@ use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
 use crate::types::LangKind;
 use crate::types::{KindIndex, ScipIndex};
-use crate::types::{RefPosition, Reference, Unresolved, UnresolvedReason};
+use crate::types::{
+    content_id_of, RefPosition, Reference, Unresolved, UnresolvedReason,
+};
+
+use super::ts_receivers;
 
 /// `oxc_span::Span` (start + end) -> our byte `Span` (start + len). One
 /// coordinate; the engine derives line/col from the file bytes when needed.
@@ -541,8 +545,7 @@ fn class_entity(class: &ts::Class, strings: &mut Strings, sink: &mut FamilyBundl
     }
 }
 
-fn fn_entity(func: &ts::Function, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
-    let Some(id) = &func.id else { return };
+fn fn_entity(func: &ts::Function, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {    let Some(id) = &func.id else { return };
     push_entity(
         sink,
         strings,
@@ -1206,6 +1209,14 @@ impl Project<CallF> for CallProjector<'_> {
             });
         }
         push_value_refs(sink, strings, walker.value_refs);
+        // Receiver typing for member calls: one scope-threaded pass per
+        // function body. The rows live in the per-blob facts store (never in
+        // the wired aux, so the phase-1 wire stays byte-identical); the
+        // resolve leg joins them by `CallSite.span`.
+        ts_receivers::store_facts(
+            content_id_of(self.content.as_bytes()),
+            ts_receivers::collect(program),
+        );
     }
 }
 
@@ -1514,7 +1525,34 @@ fn call_defs(program: &Program<'_>, strings: &mut Strings, sink: &mut FamilyBund
             S::ClassDeclaration(class) => class_call_defs(class, strings, sink),
             S::FunctionDeclaration(func) => fn_call_def(func, strings, sink),
             S::VariableDeclaration(var) => var_call_defs(var, strings, sink),
+            S::TSInterfaceDeclaration(interface) => {
+                interface_member_defs(interface, strings, sink)
+            }
             _ => {}
+        }
+    }
+}
+
+/// An interface's method signatures are callable defs: a member call on an
+/// interface-typed receiver binds the SIGNATURE (the oracle's coordinate),
+/// never an implementer. Class methods carry the same shape at their own
+/// definition spans; a signature has no body, so no other def exists there.
+fn interface_member_defs(
+    interface: &ts::TSInterfaceDeclaration,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    for member in &interface.body.body {
+        if let ts::TSSignature::TSMethodSignature(method) = member {
+            if let ts::PropertyKey::StaticIdentifier(key) = &method.key {
+                push_def(
+                    sink,
+                    strings,
+                    method.span,
+                    key.name.to_string(),
+                    CallKind::Method,
+                );
+            }
         }
     }
 }
@@ -1524,6 +1562,9 @@ fn call_decl_def(decl: &ts::Declaration, strings: &mut Strings, sink: &mut Famil
         ts::Declaration::ClassDeclaration(class) => class_call_defs(class, strings, sink),
         ts::Declaration::FunctionDeclaration(func) => fn_call_def(func, strings, sink),
         ts::Declaration::VariableDeclaration(var) => var_call_defs(var, strings, sink),
+        ts::Declaration::TSInterfaceDeclaration(interface) => {
+            interface_member_defs(interface, strings, sink)
+        }
         _ => {}
     }
 }
@@ -3428,6 +3469,33 @@ pub fn call_drops(
         .filter_map(|site| {
             let callee = output.strings.lookup(site.callee);
             let written = site.callee_path.map(|id| output.strings.lookup(id));
+            // A traced receiver says WHY the site dropped, like the go arm:
+            // an untyped (`inferred`) or union (`ambiguous`) receiver is a
+            // policy boundary, never a missing declaration.
+            let own_facts = own_blob(cx, output)
+                .as_ref()
+                .and_then(|blob| ts_receivers::facts_of(blob, None));
+            let receiver = own_facts.as_ref().and_then(|facts| {
+                facts
+                    .rows
+                    .iter()
+                    .find(|(start, end, _)| {
+                        *start == site.span.start && *end == site.span.end()
+                    })
+                    .map(|(_, _, outcome)| outcome)
+            });
+            if let Some(outcome) = receiver {
+                let reason = match outcome {
+                    ts_receivers::TypeBinding::Decl(_) => return None,
+                    ts_receivers::TypeBinding::Inferred => UnresolvedReason::Inferred,
+                    ts_receivers::TypeBinding::Ambiguous => UnresolvedReason::Ambiguous,
+                };
+                return Some(crate::project::ResolveDrop {
+                    span: site.span,
+                    reason,
+                    detail: callee.to_string(),
+                });
+            }
             module_target(modules, path, callee, written)
                 .err()
                 .map(|()| crate::project::ResolveDrop {
@@ -3755,7 +3823,35 @@ impl Resolve<CallF> for TsSource {
             .zip(own_path(output, cx))
             .filter(|(modules, path)| modules.knows(path));
         let mut edges = Vec::new();
-        for site in &call.aux.sites {
+        // The receiver leg: phase 1 typed each member-call site's receiver
+        // (one scope-threaded pass per body). A traceable receiver REPLACES
+        // the name match: the member is looked up on the receiver's declared
+        // type, and a missing member is a drop, never a fallback. The one-hop
+        // `const x = f()` binds resolve in source order, so the sites are
+        // processed sorted and emitted in file order.
+        let own = own_blob(cx, output);
+        let paths = cx.indexes.paths.get();
+        let own_facts = own
+            .as_ref()
+            .and_then(|blob| ts_receivers::facts_of(blob, paths));
+        let recv_map: HashMap<(u32, u32), &ts_receivers::TypeBinding> = own_facts
+            .as_ref()
+            .map(|facts| {
+                facts
+                    .rows
+                    .iter()
+                    .map(|(start, end, outcome)| ((*start, *end), outcome))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let sites = &call.aux.sites;
+        let mut order: Vec<usize> = (0..sites.len()).collect();
+        order.sort_by_key(|&ix| (sites[ix].span.start, sites[ix].span.end()));
+        let mut bound_types: HashMap<NodeRef, HashMap<String, String>> = HashMap::new();
+        let mut results: Vec<Option<(NodeRef, ContentId, Span, CallEdgeKind)>> =
+            vec![None; sites.len()];
+        for ix in order {
+            let site = &sites[ix];
             // The caller is the innermost covering CallF def (the 4a
             // caller-binding discipline); the `<module>` def covers the rest.
             let Some(caller) = covering_def(call, site.span) else {
@@ -3766,9 +3862,50 @@ impl Resolve<CallF> for TsSource {
             let import_t = modules
                 .and_then(|(modules, path)| module_target(modules, path, callee, written).ok())
                 .flatten();
+            let receiver = recv_map.get(&(site.span.start, site.span.end()));
+            let recv_spec: Option<ts_receivers::RecvSpec> = match receiver {
+                Some(ts_receivers::TypeBinding::Decl(name)) => {
+                    let base = name.clone();
+                    Some(
+                        own_facts
+                            .as_ref()
+                            .and_then(|facts| facts.field_recv.get(&site.span.start))
+                            .map(|(_, field)| {
+                                ts_receivers::RecvSpec::Field(base.clone(), field.clone())
+                            })
+                            .unwrap_or(ts_receivers::RecvSpec::Type(base)),
+                    )
+                }
+                Some(ts_receivers::TypeBinding::Inferred) => own_facts
+                    .as_ref()
+                    .and_then(|facts| facts.inferred_recv.get(&site.span.start))
+                    .and_then(|var| bound_types.get(&caller).and_then(|names| names.get(var)))
+                    .map(|bound| ts_receivers::RecvSpec::Type(bound.clone())),
+                Some(ts_receivers::TypeBinding::Ambiguous) | None => None,
+            };
+            // A traceable receiver owns the site: a member bind is the answer,
+            // and a missing member is a drop, never a name-match fallback.
+            let recv_t = match (&import_t, receiver) {
+                (Some(_), _) | (_, None) => None,
+                (None, Some(_)) => match (own.as_ref(), own_facts.as_ref()) {
+                    (Some(blob), Some(facts)) => recv_spec.as_ref().and_then(|receiver| {
+                        ts_receivers::receiver_member_target(
+                            receiver,
+                            callee,
+                            blob,
+                            facts,
+                            own_path(output, cx),
+                            modules.map(|(modules, _)| modules),
+                            paths,
+                        )
+                    }),
+                    _ => None,
+                },
+            };
             // The scip leg keeps its answer: it types the receiver, this does not.
             let own_t = match &import_t {
                 Some(found) => Some((found.target_blob.clone(), found.target_span)),
+                None if receiver.is_some() => recv_t,
                 None => TsSource::call_name_match(output, def_index, callee)
                     .filter(|t| !receiver_blind_builtin(output, call, site, callee, kinds, t)),
             };
@@ -3783,11 +3920,34 @@ impl Resolve<CallF> for TsSource {
             // call FACET (e.g. the ctor def) while scip may name the type
             // facet (the class) — one definition, two facet coordinates (the
             // ORACLE entry's "the models differ by construction").
-            let ((dst_blob, dst_span), kind) = match (own_t, scip_t) {
-                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => (n, own_kind),
-                (_, Some(s)) => ((s.0, s.1), CallEdgeKind::ScipOverride),
-                (Some(n), None) => (n, own_kind),
-                (None, None) => continue,
+            let final_t = match (own_t, scip_t) {
+                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => Some(((n.0, n.1), own_kind)),
+                (_, Some(s)) => Some(((s.0, s.1), CallEdgeKind::ScipOverride)),
+                (Some(n), None) => Some((n, own_kind)),
+                (None, None) => None,
+            };
+            // The one-hop return-type inference: a `const x = f()` init call
+            // that just resolved hands its declared return type to the var, in
+            // source order, keyed by the covering def.
+            if let (Some(facts), Some(((dst_blob, dst_span), _))) =
+                (own_facts.as_ref(), final_t.as_ref())
+            {
+                if let Some(var) = facts.binds.get(&site.span.start) {
+                    if let Some(dst_facts) = ts_receivers::facts_of(dst_blob, paths) {
+                        if let Some(declared) = dst_facts.ret_of.get(&dst_span.start) {
+                            bound_types
+                                .entry(caller)
+                                .or_default()
+                                .insert(var.clone(), declared.clone());
+                        }
+                    }
+                }
+            }
+            results[ix] = final_t.map(|((blob, span), kind)| (caller, blob, span, kind));
+        }
+        for (site, result) in call.aux.sites.iter().zip(results) {
+            let Some((caller, dst_blob, dst_span, kind)) = result else {
+                continue;
             };
             edges
                 .push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
