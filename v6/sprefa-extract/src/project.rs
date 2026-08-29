@@ -268,7 +268,7 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
 
     // One resolve per input, shared by the `call` arm and the `flow` join: the
     // N+1 law applied to work rather than to rows.
-    let resolved_calls: Vec<(ContentId, Vec<ProjectEdge<CallF>>)> =
+    let mut resolved_calls: Vec<(ContentId, Vec<ProjectEdge<CallF>>)> =
         if request.arms.call || request.arms.flow {
             inputs
                 .iter()
@@ -288,15 +288,50 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
             Vec::new()
         };
 
-    let targets = TargetIndex::build(&inputs);
-    let mut facts = Vec::new();
+    // The scip macro post-pass: call edges for calls written inside macro
+    // invocations, which the per-file resolve never sees (the parse mints no
+    // site there). No scip index -> a no-op that emits nothing. The rows land
+    // per FILE, inside that file's block of the stream, so a row-line consumer
+    // can attribute each one to the caller_path the block's edges carry.
+    let mut macro_rows: Vec<Vec<crate::lang::rust_scip_macros::MacroSiteRow>> = Vec::new();
     if request.arms.call {
-        for (input, (_, edges)) in inputs.iter().zip(resolved_calls.iter()) {
+        let macro_files: Vec<crate::lang::rust_scip_macros::ScipMacroFile> = inputs
+            .iter()
+            .map(|input| crate::lang::rust_scip_macros::ScipMacroFile {
+                path: &input.path,
+                blob: &input.blob,
+                output: input.output.as_ref(),
+            })
+            .collect();
+        macro_rows = crate::lang::rust_scip_macros::mint_macro_edges(
+            &macro_files,
+            &cx,
+            &mut resolved_calls,
+        );
+    }
+
+    let mut facts = Vec::new();
+    let targets = TargetIndex::build(&inputs);
+    if request.arms.call {
+        for ((input, (_, edges)), rows) in inputs
+            .iter()
+            .zip(resolved_calls.iter())
+            .zip(macro_rows.into_iter().chain(std::iter::repeat(Vec::new())))
+        {
             cx.own.replace(Some(input.blob.clone()));
             facts.extend(call_facts(input, &targets, edges));
             facts.extend(call_drop_facts(input, &cx, edges));
+            for row in rows {
+                facts.push(FlatFact::MacroSiteOut {
+                    family: crate::shape::FamilyTag::Call,
+                    span: crate::wire::SpanOut::new(row.span.start, row.span.end()),
+                    macro_name: row.macro_name,
+                    source: row.source.to_string(),
+                });
+            }
         }
     }
+
     if request.arms.call || request.arms.types {
         for input in &inputs {
             cx.own.replace(Some(input.blob.clone()));

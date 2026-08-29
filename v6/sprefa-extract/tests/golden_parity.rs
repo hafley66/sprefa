@@ -814,6 +814,10 @@ fn deferred_and_v6_only_ledger() {
                             // The module plane binds a NAME, not an occurrence.
                             CallEdgeKind::ImportResolve => name_resolve += 1,
                             CallEdgeKind::Implements => {}
+                            // Minted by the project post-pass, never by this
+                            // arm: the name-match leg the ledger counts here
+                            // never produces one.
+                            CallEdgeKind::ScipMacro => {}
                         }
                     }
                 }
@@ -828,6 +832,10 @@ fn deferred_and_v6_only_ledger() {
                             // The module plane binds a NAME, not an occurrence.
                             CallEdgeKind::ImportResolve => name_resolve += 1,
                             CallEdgeKind::Implements => {}
+                            // Minted by the project post-pass, never by this
+                            // arm: the name-match leg the ledger counts here
+                            // never produces one.
+                            CallEdgeKind::ScipMacro => {}
                         }
                     }
                 }
@@ -842,6 +850,10 @@ fn deferred_and_v6_only_ledger() {
                             // The module plane binds a NAME, not an occurrence.
                             CallEdgeKind::ImportResolve => name_resolve += 1,
                             CallEdgeKind::Implements => {}
+                            // Minted by the project post-pass, never by this
+                            // arm: the name-match leg the ledger counts here
+                            // never produces one.
+                            CallEdgeKind::ScipMacro => {}
                         }
                     }
                 }
@@ -1083,6 +1095,9 @@ fn call_resolve_scip_ratchet_ts() {
                 // import_resolve edge for the ratchet to classify.
                 (Some((_, _, CallEdgeKind::ImportResolve)), _) => {}
                 (Some((_, _, CallEdgeKind::Implements)), _) => {}
+                // The twin re-derives the per-site legs only; a ScipMacro
+                // edge is minted by the project post-pass, not by a site.
+                (Some((_, _, CallEdgeKind::ScipMacro)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(
@@ -1385,6 +1400,9 @@ fn call_resolve_scip_ratchet_go() {
                 // import_resolve edge for the ratchet to classify.
                 (Some((_, _, CallEdgeKind::ImportResolve)), _) => {}
                 (Some((_, _, CallEdgeKind::Implements)), _) => {}
+                // The twin re-derives the per-site legs only; a ScipMacro
+                // edge is minted by the project post-pass, not by a site.
+                (Some((_, _, CallEdgeKind::ScipMacro)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(
@@ -1677,6 +1695,9 @@ fn call_resolve_scip_ratchet_rust() {
                 // import_resolve edge for the ratchet to classify.
                 (Some((_, _, CallEdgeKind::ImportResolve)), _) => {}
                 (Some((_, _, CallEdgeKind::Implements)), _) => {}
+                // The twin re-derives the per-site legs only; a ScipMacro
+                // edge is minted by the project post-pass, not by a site.
+                (Some((_, _, CallEdgeKind::ScipMacro)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(
