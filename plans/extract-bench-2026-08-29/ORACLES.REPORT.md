@@ -349,3 +349,225 @@ enclosing function; those and the fourslash test harness
 (`internal/fourslash/fourslash.go`, 11,559 ours-only rows) are the bulk of
 ours-only. `go.parse.call.tsv` predates #558, #560 and #562; the receipt
 lane for the next go arc re-emits it on the current binary.
+
+## 13. type oracles
+
+Corpora and shas unchanged from section 1. Two new probes, both extensions of
+the existing binaries in this directory.
+
+### 13.1 The normal form, and where it is ambiguous
+
+`go.parse.type.tsv`, `rust.parse.type.tsv` and their `dietscip` twins carry
+FOUR columns, not five: `normalize.py:37-40` drops `resolved_type_edge`'s
+`kind` on the way out. The brief's fifth `kind` column therefore cannot ride in
+the file `bench.py` joins on, since `bench.py` compares whole lines
+(`bench.py:9-15`). Reading picked, stated here:
+
+| file | columns | joins with `bench.py` |
+|---|---|---|
+| `go.oracle.type.tsv`, `rust.oracle.type.tsv` | 4 | yes, against `*.parse.type.tsv` |
+| `go.oracle.type.kinds.tsv`, `rust.oracle.type.kinds.tsv` | 5, `kind` last | no, per-kind slicing only |
+| `go.oracle.type.typedecl.tsv`, `rust.oracle.type.typedecl.tsv` | 4, owners restricted to type declarations | yes |
+
+Five rows of `go.parse.type.tsv` fixing the src/dst reading:
+
+```
+internal/api/proto.go	APIFileChangeSummary	internal/api/proto.go	DocumentIdentifier
+internal/api/proto.go	APIFileChanges	internal/api/proto.go	DocumentIdentifier
+_tools/customlint/testdata/unexportedapi/unexportedapi.go	Foo	..	oops
+_tools/customlint/testdata/unexportedapi/unexportedapi.go	OkayEmbed	..	unexported
+crates/base-db/src/change.rs	FileChange	crates/base-db/src/input.rs	CrateGraphBuilder
+```
+
+src_name is the DECLARING entity, dst_name the referenced type, both bare.
+Every src_name in both our files is a TYPE name; neither language's extractor
+emits a fn-owned type reference. `go.rs:296-301` says so outright ("Method/fn
+SIGNATURES are NOT edge sources for go"); the rust arm
+(`rust.rs:635-693`) walks `Item::Struct`, `Enum`, `Union`, `Trait` and `Impl`
+only. That is why the `typedecl` column exists: the full oracle set is a
+different question from the one our extractor answers, and both numbers are
+reported.
+
+`*.dietscip.type.tsv` is BYTE-IDENTICAL to `*.parse.type.tsv` for all three
+languages (`cmp` returns identical). Every "diet scip recall" column below
+therefore repeats its `parse` neighbour exactly; the scip index widens the
+`call` family only.
+
+### 13.2 go, via `go/types`
+
+`oracle_go/main.go` gained `writeTypeEdges` (`main.go:258-400`). Run:
+`./oracle_go/oracle_go ~/projects/typescript-go <outDir> type`.
+
+| kind | how it is derived | code |
+|---|---|---|
+| `ref` | every `*ast.Ident` whose `TypesInfo.Uses` entry is a `*types.TypeName` that is not a `*types.TypeParam`, keyed on the enclosing top-level decl (fn name, type-spec name, or first value-spec name) | `main.go:227-248` |
+| `implements` | `types.Implements(T, I)` or `types.Implements(*T, I)` over every non-generic package-level named type x every named interface with at least one method | `main.go:326-348` |
+| `extends` | every `Anonymous()` field of a named struct, pointer-unwrapped to its `TypeName` | `main.go:350-376` |
+
+Cost of the `implements` sweep: **2,413 named types x 98 interfaces =
+236,474 pairs**, 929 of which hold. Whole run, load included, **2.26s wall**.
+
+| lang | kind | oracle rows | ours rows | overlap | recall | precision | diet scip recall | wall |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| go | all three, full | 44,214 | 3,178 | 3,102 | 7.0% | 97.6% | 7.0% | 2.26s |
+| go | all three, type-decl owners only | 6,204 | 3,178 | 3,102 | 50.0% | 97.6% | 50.0% | 2.26s |
+| go | `ref` | 43,323 | 3,178 | 3,102 | 7.2% | 97.6% | 7.2% | 2.26s |
+| go | `implements` | 929 | 3,178 | 11 | 1.2% | 0.4% | 1.2% | 2.26s |
+| go | `extends` | 617 | 3,178 | 563 | 91.3% | 17.7% | 91.3% | 2.26s |
+
+Recall is against the oracle's own row set per kind; precision is
+`overlap / |ours|`, so the per-kind precision columns are each a slice of one
+3,178-row denominator and only the "all three" row's 97.6% is meaningful.
+
+**Ours-only, 76 rows, classed.** These are rows the oracle cannot see, plus a
+small real defect:
+
+| class | rows | why |
+|---|---:|---|
+| testfile | 23 | `packages.Config` carries no `Tests: true`, so `_test.go` is not loaded |
+| testdata | 18 | `go build ./...` skips `testdata/`; the whole `_tools/customlint/testdata` tree is invisible to the oracle |
+| buildtag-goos | 15 | `internal/fswatch/{fanotify_linux,inotify_linux,windows}.go`, gated off on darwin |
+| buildtag-ignore | 5 | `internal/diagnostics/generate.go` carries `//go:build ignore` |
+| local | 10 | function-local `type` decls (`internal/core/bfs.go:76` `type result struct`); the oracle keys them on the enclosing fn |
+| wrong-file | 5 | ours points dst_path at the REFERRING file, not the declaring one |
+
+The five wrong-file rows, oracle dst on the right:
+
+| row | ours dst_path | oracle dst_path |
+|---|---|---|
+| `ast.go ModifierList -> ModifierFlags` | `internal/ast/ast.go` | `internal/ast/modifierflags.go` |
+| `ast.go PatternAmbientModule -> Symbol` | `internal/ast/ast.go` | `internal/ast/symbol.go` |
+| `emitcontext.go emitNode -> EmitFlags` | `internal/printer/emitcontext.go` | `internal/printer/emitflags.go` |
+| `projectcollection.go ProjectCollection -> ConfigFileRegistry` | `internal/project/projectcollection.go` | `internal/project/configfileregistry.go` |
+| `session.go Session -> Snapshot` | `internal/project/session.go` | `internal/project/snapshot.go` |
+
+`ModifierList` at `internal/ast/ast.go:154-157` is `struct { NodeList;
+ModifierFlags ModifierFlags }`: a field whose NAME equals the referenced
+TYPE's name. Ours binds the dst to the same-file field rather than to the
+type declared in `modifierflags.go`. Same shape in the other four.
+
+**Oracle-only, 3,102 rows against the typedecl set, classed.** Sums exceed
+3,102 because one 4-col row can carry two kinds.
+
+| class | rows | evidence |
+|---|---:|---|
+| chunk | 1,908 | the row crosses a top-2-level directory boundary. EVERY one of ours' 559 cross-file hits stays inside one top-2 dir and ZERO cross it, so this is the chunked driver (`--resolve` run split per top-2-level dir, section 8), not the extractor |
+| implements | 918 | ours computes no interface-satisfaction relation at all; its `TypeEdgeKind::Impl` is embedded fields and interface `type_elem`s (`go.rs:354-368`) |
+| cross-file-in-chunk | 899 | cross-file, same top-2 dir, so the chunk cannot explain it |
+| signature-or-alias | 185 | same-file, kind `ref`: type aliases (`internal/ast/ast.go:1262` `AnyImportOrRequireStatement = Node`, dropped by `go.rs:369` `_ => {}`) and interface method signatures |
+| extends | 54 | all 54 cross-file, so a subset of chunk |
+
+10 oracle-only rows, sampled every 4,000th, with a one-word class:
+
+| row | class |
+|---|---|
+| `cmd/tsgo/api.go parseAPIFlags -> apiFlags` | fn-owner |
+| `internal/ast/ast_generated.go UpdateBindingElement -> PropertyName` | fn-owner |
+| `internal/checker/checker.go extendExportSymbols -> ExportCollisionTable` | fn-owner |
+| `internal/checker/inference.go addIntraExpressionInferenceSite -> types.go Type` | fn-owner |
+| `internal/compiler/projectreferencefilemapper.go getSourceToDtsIfSymlink -> tsoptions/parsedcommandline.go SourceOutputAndProjectReference` | fn-owner |
+| `internal/execute/tsctests/sys.go WatchBackend -> watchmanager/watchbackend.go WatchBackend` | chunk |
+| `internal/ls/completions.go getSingleLine... -> lsproto/lsp_generated.go Range` | fn-owner |
+| `internal/lsp/lsproto/lsp_generated.go UnmarshalJSONFrom -> DidChangeConfigurationParams` | fn-owner |
+| `internal/printer/factory.go NewExternalModuleExport -> ast/ast.go Node` | fn-owner |
+| `internal/testutil/harnessutil/harnessutil.go CompileFilesEx -> HarnessOptions` | fn-owner |
+
+### 13.3 rust, via `ra_ap_ide` + `ra_ap_hir`
+
+`ra_ide_probe/main.rs` gained `write_type_edges` (`main.rs:149-235`) and three
+deps (`ra_ap_hir`, `ra_ap_syntax`, plus a `[[bin]]` target the manifest lacked).
+Run: `./ra_ide_probe/target/release/ra_ide_probe ~/projects/rust-analyzer 900 <outDir> type`.
+
+| kind | how it is derived | code |
+|---|---|---|
+| `ref` | every `ast::Path` node in the file, resolved with `Semantics::resolve_path`, kept when it lands on `ModuleDef::Adt`, `Trait` or `TypeAlias`; dst file and name off `TryToNav::try_to_nav` | `main.rs:176-192` |
+| `implements` | every `ast::Impl` with a `trait_`, `Semantics::to_impl_def` then `hir::Impl::trait_` and `self_ty(db).as_adt()` | `main.rs:193-206` |
+| `extends` | not emitted; rust has no such relation | |
+
+Two defects hit on the way and both are recorded, since either one silently
+zeroes the probe:
+
+| symptom | cause | fix |
+|---|---|---|
+| `no method named 'name' found for struct ast::Struct`, 9 times | `ast::HasName` is a trait and was not in scope | `main.rs:9` imports `ast::HasName` |
+| panic `Try to use attached db, but not db is attached` at `ra_ap_hir_ty-0.0.349/src/next_solver/interner.rs:2487`, on the FIRST `resolve_path` | the next-solver interner reads a thread-local db; `Analysis::with_db` wraps every ide entry point in `hir::attach_db` (`ra_ap_ide-0.0.349/src/lib.rs:975`) and a hand-rolled `Semantics` walk gets no such wrapper | `main.rs:172` wraps the whole file loop in `attach_db(db, ...)` |
+
+`resolve_path` fired **78,217** times and produced 42,950 distinct `ref` rows;
+739 `impl Trait for Type` blocks resolved with both legs inside the corpus.
+
+| lang | kind | oracle rows | ours rows | overlap | recall | precision | diet scip recall | wall |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| rust | both, full (1,481 files in vfs) | 43,134 | 1,673 | 1,646 | 3.8% | 98.4% | 3.8% | 11.0s |
+| rust | both, type-decl owners only | 8,343 | 1,673 | 1,646 | 19.7% | 98.4% | 19.7% | 11.0s |
+| rust | type-decl owners, `crates/*/src` only | 8,151 | 1,673 | 1,646 | 20.2% | 98.4% | 20.2% | 11.0s |
+| rust | type-decl owners, `crates/*/src`, self-edges dropped | 6,756 | 1,673 | 1,637 | **24.2%** | 97.9% | 24.2% | 11.0s |
+| rust | `ref` | 42,950 | 1,673 | 1,646 | 3.8% | 98.4% | 3.8% | 11.0s |
+| rust | `implements` | 739 | 1,673 | 322 | **43.6%** | 19.3% | 43.6% | 11.0s |
+
+The self-edge row matters: an `impl Foo { .. }` block makes `owner_of` name the
+block `Foo` and the path `Foo` in its header resolve to `Foo`, so the oracle
+mints 1,395 `X -> X` rows in the restricted set that ours never mints (9). They
+are an artifact of the oracle, not a miss, so 24.2% is the number to quote.
+`implements` at 43.6% is the one kind where the two sides ask the same question:
+`rust.rs:678-686` binds `Item::Impl`'s `trait_` path exactly as
+`hir::Impl::trait_` does. go's 1.2% is not comparable, because go's
+`TypeEdgeKind::Impl` is embedding, not interface satisfaction.
+
+**Ours-only, 27 rows.** 17 of them are the same defect as go's wrong-file
+class, and rust's version is worse because the wrong file is in a different
+crate:
+
+| row | ours dst_path | oracle dst_path |
+|---|---|---|
+| `hir-ty/src/infer.rs InferenceContext -> Resolver` (6 rows share this dst) | `crates/hir-ty/src/infer/unify.rs` | `crates/hir-def/src/resolver.rs` |
+| `hir-def/src/lib.rs ProcMacroLoc -> ProcMacroKind` | `crates/hir-def/src/nameres/proc_macro.rs` | `crates/hir-expand/src/proc_macro.rs` |
+| `hir-ty/src/target_feature.rs TargetFeatures -> Symbol` | `crates/hir-ty/src/next_solver/interner.rs` | `crates/intern/src/symbol.rs` |
+
+The remaining 10 bind a std name to a same-named local type, e.g.
+`crates/syntax/src/syntax_error.rs SyntaxError -> ast/generated/tokens.rs
+String`: the referenced type is `std::string::String`, and ours picked the
+syntax crate's `String` TOKEN node of the same name.
+
+**Oracle-only, 5,119 rows** (against the self-edge-free restricted set):
+
+| class | rows | evidence |
+|---|---:|---|
+| chunk | 2,009 | crosses a crate boundary. `rust.parse.type.tsv` contains **ZERO** cross-crate rows out of 1,673, so no cross-crate row is reachable at all under the chunked driver |
+| same-crate, cross-file | 1,689 | ours DOES resolve cross-file inside a chunk (805 of its 1,646 hits are cross-file), so these are extractor gaps, not driver ones |
+| same-crate, same-file | 1,421 | dominated by impl-block bodies and enum variant payload types, neither of which `rust.rs` walks |
+
+10 oracle-only rows, sampled every 260th of the same-crate set, one-word class:
+
+| row | class |
+|---|---|
+| `base-db/src/input.rs BuiltCrateData -> Crate` | impl-body |
+| `hir-def/src/import_map.rs ImportMapIndex -> lib.rs FxIndexMap` | alias |
+| `hir-def/src/resolver.rs ImplId -> lib.rs ImplId` | impl-body |
+| `hir-ty/src/infer.rs InferenceContext -> next_solver.rs DefaultAny` | impl-body |
+| `hir-ty/src/next_solver/consts.rs BoundConst -> interner.rs DbInterner` | impl-body |
+| `hir-ty/src/next_solver/interner.rs CoroutineClosureId -> def_id.rs CoroutineClosureIdWrapper` | impl-body |
+| `hir/src/from_id.rs ModuleDefId -> lib.rs ModuleDef` | impl-body |
+| `ide-ssr/src/lib.rs SsrRule -> parsing.rs ParsedRule` | field |
+| `rust-analyzer/src/flycheck.rs Event -> StateChange` | enum-variant |
+| `syntax/src/ast/generated/nodes.rs GenericParam -> LifetimeParam` | enum-variant |
+
+`rust.rs:645-660` states the enum-variant gap outright: the variant edge is
+minted as the synthetic text `Enum::Variant`, and `rust.parse.type.tsv` carries
+ZERO rows with `::` in dst_name, so every one of them died unresolved.
+
+### 13.4 The two findings worth acting on
+
+| finding | evidence | who owns it |
+|---|---|---|
+| The chunked `--resolve` driver, not the extractor, caps both languages. go: every one of ours' 559 cross-file hits stays inside one top-2-level dir, ZERO cross it, and 1,908 oracle rows do. rust: ZERO of 1,673 rows cross a crate. | sections 13.2, 13.3 | the bench driver, `resolve_runs.py`, not `src/` |
+| dst_path binds to the referring file when a same-named field or token exists there. 5 rows in go, 17 in rust. `internal/ast/ast.go:154-157` `ModifierFlags ModifierFlags` is the minimal case: a field whose name equals the referenced type's name. | sections 13.2, 13.3 | `src/`, a resolve arm; out of this lane's ownership |
+
+### 13.5 What it took to run, added rows
+
+| step | wall | needs |
+|---|---|---|
+| `oracle_go` rebuild with `writeTypeEdges` | under 5s | `go`, no network (deps already in the module cache) |
+| `oracle_go ... type` over `typescript-go` | 2.26s, 236,474 `types.Implements` pairs included | none |
+| `ra_ide_probe` cold rebuild after adding `ra_ap_hir` + `ra_ap_syntax` | **380.82s**, 239 crates, `ra_ap_hir_def` and `ra_ap_hir_ty` the long poles | `cargo`; the crates were already in `~/.cargo/registry/src`, no network |
+| `ra_ide_probe` incremental rebuild (one-line fixes) | under 1s | none |
+| `ra_ide_probe ... type` over `rust-analyzer` | 12.04s total, 11.00s in the walk, workspace load 0.47s from warm caches | none |
