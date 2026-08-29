@@ -1,4 +1,5 @@
 {"record":"resolved_edge","caller_path":"tests/fixtures/ts/docs.ts","caller_name":"scaled","callee_path":"tests/fixtures/ts/docs.ts","callee_name":"Vec2","caller_site_start":1281,"caller_site_end":1315,"kind":"name_resolve"}
+{"record":"resolved_edge","caller_path":"tests/fixtures/ts/lambdas.ts","caller_name":"doubleAll","callee_path":"tests/fixtures/ts/lambdas.ts","callee_name":"double","caller_site_start":1491,"caller_site_end":1497,"kind":"value_ref"}
 {"record":"resolved_edge","caller_path":"tests/fixtures/ts/sample.ts","caller_name":"scaled","callee_path":"tests/fixtures/ts/sample.ts","callee_name":"Vec2","caller_site_start":765,"caller_site_end":789,"kind":"name_resolve"}
 {"record":"resolved_edge","caller_path":"tests/fixtures/ts/sample.ts","caller_name":"shift","callee_path":"tests/fixtures/ts/sample.ts","callee_name":"Vec2","caller_site_start":350,"caller_site_end":382,"kind":"name_resolve"}
 {"record":"resolved_edge","caller_path":"tests/fixtures/ts/sample.ts","caller_name":"shift","callee_path":"tests/fixtures/ts/sample.ts","callee_name":"clamp","caller_site_start":359,"caller_site_end":364,"kind":"name_resolve"}

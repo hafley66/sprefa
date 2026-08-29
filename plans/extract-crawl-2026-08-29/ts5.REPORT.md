@@ -22,6 +22,7 @@ first ts crawl (PR #538) landed on.
 6. [Step 5: kinks](#6-step-5-kinks)
 7. [Recount of the eight kinks from PR #538](#7-recount-of-the-eight-kinks-from-pr-538)
 8. [What stays untested and why](#8-what-stays-untested-and-why)
+9. [Fixes](#9-fixes-lane-fix-extract-ts-crawl-pr-against-originmain-b9b98e3af)
 
 ## 1. Corpus and exclusions
 
@@ -546,3 +547,125 @@ been ES modules since 5.0.
 | a serial rerun of all 19,818 files | the `ms_parallel8` column is inflated 3x to 8x; the 20 largest `src/` files and the 8 slowest `tests/cases` files were remeasured serially and the rest carry no timing claim |
 | scip over `tests/**` | `scip-typescript` needs one tsconfig per root; the test corpus has none and is not the program |
 | a fix for any row in section 6 | analysis lane |
+
+
+## 9. Fixes (lane `fix-extract-ts-crawl`, PR #547 against `origin/main` b9b98e3af)
+
+Section 6 rows 1, 4, 5, 6 and 8 landed. Row 3 (barrels) does not fit inside a
+lang arm and is specified below. Every number rerun over the same corpus
+(`/Users/chrishafley/projects/TypeScript-5.9` @ `7e133bea1`, 701 `src/**`
+files), with `ts5.crawl.py` unchanged plus `ts5.crawl.module.py`, one `sed` off
+it that adds `module` to `DEF_KINDS` so the new `<module>` def is a graph node.
+
+### 9.1 The receipt
+
+| binary | `resolved_edge` | defs | A_strict | union strict | union folded |
+|---|---|---|---|---|---|
+| `origin/main` b9b98e3af | 75,089 | 14,047 | 3,509 | 5,854 | 7,344 |
+| kink 1 only (`fa300d2c8`) | 75,893 | 14,438 | 3,854 | 6,110 | 7,683 |
+| kink 3 as a HARD BLOCK (`be05673f7`) | 62,755 | 14,438 | 977 | 2,497 | 6,146 |
+| **this branch** | **76,699** | 14,438 | **4,837** | **6,943** | **8,552** |
+
+By kind: `name_resolve` 72,419, `value_ref` 4,280.
+
+Rows 2 to 4 read `ts5.crawl.module.py`; row 1 has no `module` def to see, so
+both scripts give it the same numbers. Under the STOCK script this branch reads
+A_strict 566 for the hard-block row and cannot seed a `<module>` caller at all,
+because that caller is neither a `function` nor a `method`.
+
+### 9.2 Kink 3: three rules measured, one meets the bar
+
+The coordinator set two conditions: A_strict >= 3,854 (the kink-1-only ceiling)
+AND the wrong `push`/`bind` edges at 0.
+
+| rule | `resolved_edge` | A_strict | verdict |
+|---|---|---|---|
+| block every unknown-receiver member call | 62,755 | 977 | net loss, 13,138 edges gone |
+| name-match ONLY to a `CallKind::Method` (the literal grant) | 67,183 | 1,058 | 2,796 under its own bar |
+| builtin member NAME + not a `Method` (**landed**) | 72,373 | 3,838 | meets both, and 4,837 once `value_ref` lands |
+
+The middle rule fails because the kind does not separate right from wrong on
+this corpus. TypeScript builds its public API out of free functions closed over
+by a factory object, so `program.getTypeChecker` and `tracing.ts:push` are both
+`kind=function`, while `collectionsImpl.ts:keys` is a `method` that was wrong
+before. Splitting the 13,014 hard-block casualties by target kind:
+
+| callee def kind | lost edges | leaders |
+|---|---|---|
+| `function` | 8,618 | `push` 2,064, `map` 481, `getTypeChecker` 173 |
+| `method` | 4,346 | `runQueuedTimeoutCallbacks` 711, `executeCommandSeq` 683 |
+| no def row (a builtin) | 50 | `getOwnPropertyDescriptor` 13, `next` 11 |
+
+The landed rule blocks only when ALL of: the callee is a member expression, its
+receiver is neither a module binding this file declares nor `this`/`super`, the
+callee spells an ECMAScript standard-library member (`BUILTIN_MEMBERS` in
+`src/lang/ts.rs`), and the target is not a `CallKind::Method`.
+
+| target | base | now |
+|---|---|---|
+| `push` -> `tracing.ts:push` | 2,064 | **0** |
+| `pop` -> `tracing.ts:pop` | 119 | **0** |
+| `bind` -> `binder.ts:bind` | 116 | 62 |
+| `stringify` -> `fourslashImpl.ts` | 156 | 22 |
+| `map` -> `core.ts:map` | 716 | 236 |
+| `getTypeChecker` -> `program.ts` | 185 | **185** |
+| `createExpressionStatement` -> `nodeFactory.ts` | 151 | **151** |
+| `runQueuedTimeoutCallbacks` | 711 | **711** |
+
+`bind` keeps 62 and loses 54: the 54 are section 6's `fn.bind(...)` member
+calls, the 62 are `binder.ts` calling its own `bind(node)` bare. `map` keeps the
+bare `map(xs, f)` calls the compiler makes constantly.
+
+Two probes that did NOT work, so the builtin list is a list and not a query:
+
+| probe | result |
+|---|---|
+| ask `src/lib/*.d.ts` which names are builtins | a bodiless declaration mints no CallF def, so `push` has 0 def rows under `src/lib/`; `--family type` over `es5.d.ts` emits 95 `interface` entities and no member entity at all |
+| let the corpus disambiguate (a lib member entity would make `push` 2-blob and the name match would drop it by itself) | needs interface-member entities in the TypeF plane, which is the PORTED `type_node` facet and would break every captured v5 oracle |
+
+RESIDUE, asserted rather than hidden
+(`53_ts_crawl_kinks.rs::an_array_push_still_binds_to_a_class_method_named_push`):
+an unrelated class METHOD named `push` keeps its edge, because the grant is
+method-or-nothing. Blocking builtin names regardless of kind was measured too:
+72,083 edges, A_strict 3,833 — 290 more edges dropped for 5 defs of reachability.
+
+### 9.3 Kink 4: both legs
+
+`RefPosition::Value` mints the `position=value` reference row; `CallEdgeKind::ValueRef`
+resolves it to an edge from its covering def. 4,280 `value_ref` edges over
+`src/**`, and they are most of the jump from 3,838 to 4,837: the five largest
+unreachable defs in the original crawl were transformers registered as
+`transformers.push(transformES2015)`.
+
+### 9.4 Kink 2 still does not fit inside a lang arm
+
+PR #546's `PathIndex` closed two of the three legs. The third is open.
+
+| leg | source | state |
+|---|---|---|
+| this file's project-relative path | `cx.indexes.paths` (`PathIndex`) | AVAILABLE since PR #546 |
+| a module specifier's target file | join the resolved path against `PathIndex` | AVAILABLE, pure lookup, no filesystem |
+| the BARREL file's own `export * from` rows | another file's `ExtractOutput` | MISSING. `Resolve` sees one file's output; `IndexBag` carries `def_index`, `scip_index`, `joined_documents`, `paths`, `kinds` and no specifier slot |
+
+The shape it wants is one more additive `IndexBag` slot, blob -> `Vec<Specifier>`,
+built beside `build_def_index` — the same `OnceLock` pattern this lane already
+used for `KindIndex`. Nothing else is missing. A direct-import preference
+without the barrel chain buys nothing: section 3.1 measured the narrowing at
+1,241 sites and all of it comes from the reexport closure.
+
+### 9.5 Rows not touched
+
+| row | why |
+|---|---|
+| the `node` record carries no exported flag | brief scopes it out (a wire change) |
+| exact mode drops a document over ~1 MB | brief scopes it out; the defect is in `scip-typescript` |
+| a `closure@<offset>` caller has no `node` row | the rust lane owns the closure fold in `src/project.rs` |
+| peak RSS scales with nesting depth | not in the brief |
+
+### 9.6 One registration this lane could not make
+
+`tests/6_kind_vocab.rs` `EXT_KINDS` needs `("ts::MODULE", ts::MODULE.as_str())`.
+The tag-collision and byte-stability tests iterate that list, so the new
+`module` tag is unasserted until it is added. `src/schema.rs:37` also still
+spells `position=<goal|head_arg|term_arg>`; it was already missing `closure`,
+and `value` makes four.

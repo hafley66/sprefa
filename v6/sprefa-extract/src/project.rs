@@ -207,6 +207,10 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         .set(build_def_index(&pairs))
         .expect("fresh project definition index");
     cx.indexes
+        .kinds
+        .set(crate::types::build_kind_index(&pairs))
+        .expect("fresh project kind index");
+    cx.indexes
         .paths
         .set(crate::types::build_path_index(
             inputs
