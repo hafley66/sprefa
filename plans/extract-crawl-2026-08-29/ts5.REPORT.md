@@ -233,8 +233,8 @@ nearest enclosing named function or method.
 | A_patched | closure-folded | 49 | 5,276 | 37.6% | 16 |
 | B_testRunner | strict | 1,014 | 5,758 | 41.0% | 19 |
 | B_testRunner | closure-folded | 1,014 | 7,230 | 51.5% | 14 |
-| **union A + B** | strict | | **5,854** | **41.7%** | |
-| **union A + B** | closure-folded | | **7,344** | **52.3%** | |
+| **union A_strict + B_testRunner** | strict | | **5,854** | **41.7%** | |
+| **union A_patched + B_testRunner** | closure-folded | | **7,344** | **52.3%** | |
 
 Folding the closure callers recovers 1,490 defs, a 25.5% relative gain, and
 shortens the deepest chain by 4 to 5 hops.
