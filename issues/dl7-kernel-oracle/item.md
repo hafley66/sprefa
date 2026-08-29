@@ -3,7 +3,7 @@ created: 2026-08-28
 updated: 2026-08-29
 type: task
 assignee: codex
-status: in-progress
+status: done
 priority: high
 epic: dl7-minimal-kernel
 labels: [dl7, model-flash4, model-codex]
@@ -12,6 +12,10 @@ lane: dl7-test
 lane_seq: 0
 collision: [v7-test]
 blocked_by: ['@dl7-partial-goal']
+closed: 2026-08-29
+commits:
+- hash: f3479f5c1
+  summary: pin comptime with one vertical oracle
 ---
 
 # Pin the DL7 vertical kernel with one consolidated oracle
@@ -41,3 +45,9 @@ source paths and semantic IDs can vary while graph meaning remains exact.
 
 The test lives in `v7/test/1_entrypoints.test.pl` and reuses
 `v7/test/fixtures/2_partial.dl7`.
+
+## Resolution
+
+### 2026-08-29T04:15:36Z · @issuectl
+
+The consolidated Partial oracle passes with six existing reader and entrypoint tests: 7 passed, 0 failed, and no choicepoint warning.
