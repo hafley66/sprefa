@@ -1,23 +1,3 @@
----
-created: 2026-08-28
-updated: 2026-08-29
-type: task
-assignee: codex
-status: done
-priority: high
-epic: dl7-minimal-kernel
-labels: [dl7, model-sol, model-codex]
-size: L
-lane: dl7-evaluator
-lane_seq: 0
-collision: [v7-evaluator, v7-libtime]
-blocked_by: ['@dl7-datalog-checks']
-closed: 2026-08-29
-commits:
-- hash: c8ea96c78
-  summary: run positive closure through libtime
----
-
 # Execute checked positive Datalog through one shared SWI fixpoint
 
 ## Description
@@ -65,18 +45,18 @@ functional-key policy, and outer request loops stay outside this task.
 
 ## Acceptance Criteria
 
-- [x] `evaluate/4` runs compiler and runtime-shaped inputs without a phase branch.
-- [x] Positive recursion reaches a finite set fixpoint through SWI tabling.
-- [x] Reified variables share by identity within each rule invocation.
-- [x] Closure rows retain `call(ref(Relation), Arguments)` compiler data.
-- [x] Evaluation-local tables and facts are cleaned through `setup_call_cleanup/3`.
-- [x] Production code lives in `v7/src/1_libtime/0_evaluator.pl`.
-- [x] No DL6, Rust, TypeScript, effect, interning, or negation dependency is added.
-- [x] No standalone test file is added.
+- [ ] `evaluate/4` runs compiler and runtime-shaped inputs without a phase branch.
+- [ ] Positive recursion reaches a finite set fixpoint through SWI tabling.
+- [ ] Reified variables share by identity within each rule invocation.
+- [ ] Closure rows retain `call(ref(Relation), Arguments)` compiler data.
+- [ ] Evaluation-local tables and facts are cleaned through `setup_call_cleanup/3`.
+- [ ] Production code lives in `v7/src/1_libtime/0_evaluator.pl`.
+- [ ] No DL6, Rust, TypeScript, effect, interning, or negation dependency is added.
+- [ ] No standalone test file is added.
 
 ## Tests Run
 
-- [x] One direct SWI receipt proves two-hop recursive closure, deduplication,
+- [ ] One direct SWI receipt proves two-hop recursive closure, deduplication,
       variable sharing, and a second clean invocation.
 
 ## Implementation Notes
@@ -84,9 +64,3 @@ functional-key policy, and outer request loops stay outside this task.
 The checked caller contract is produced by
 `v7/src/2_comptime/0_compiler.pl`. `v7/src/1_libtime` contains algorithms
 shared by comptime and runtime; it contains no phase policy.
-
-## Resolution
-
-### 2026-08-29T04:02:28Z · @issuectl
-
-The phase-independent SWI evaluator satisfies all eight acceptance checks and the direct recursive cleanup receipt.

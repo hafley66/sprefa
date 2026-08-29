@@ -1,0 +1,8 @@
+(: User
+   (* (: id int)
+      (: name text)))
+
+(: partial_request
+   (* (: source type)))
+
+(partial_request User)
