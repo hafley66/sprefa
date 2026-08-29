@@ -12,6 +12,7 @@ Corpus: `/Users/chrishafley/projects/typescript-go` (Microsoft's TypeScript comp
 6. [Untested and why](#untested-and-why)
 7. [Fixes](#fixes)
 8. [Fixes 2](#fixes-2)
+9. [Fixes 3 (module plane, PR #558)](#fixes-3)
 
 ## Step 1 <a name="step-1"></a>
 
@@ -333,3 +334,112 @@ sits in `own_blob`, not in this lane's new code.
   drops): either genuinely rare in this corpus, or the block-scoped
   `TypeScope` in `go_walk_receivers` is stricter than real Go shadowing
   requires and never actually produces the conflict. Not distinguished.
+
+## Fixes 3 (module plane, PR #558) <a name="fixes-3"></a>
+
+Lane `chore-go-module-plane-receipt`, base `50102c851` (PR #558 merged). Same
+corpus, this lane's own build of
+`v6/sprefa-extract/target/release/extract`. One whole-project `--resolve`
+over all 5,096 `.go` files in a single process, `timeout 10`, rc 0, wall
+8.5 s. The run is deterministic here: 3 back-to-back reruns each gave
+resolved_edge = 79,476.
+
+### Commands
+
+```
+BIN=v6/sprefa-extract/target/release/extract
+find /Users/chrishafley/projects/typescript-go -name '*.go' | grep -v node_modules > gofiles.txt
+xargs timeout 10 $BIN --resolve < gofiles.txt > all_resolved.jsonl
+python3 plans/extract-bench-2026-08-29/normalize.py resolved all_resolved.jsonl \
+  /Users/chrishafley/projects/typescript-go go.parse.call.tsv go.parse.type.tsv
+python3 plans/extract-bench-2026-08-29/bench.py go.parse.module.tsv \
+  plans/extract-bench-2026-08-29/go.oracle.module.tsv
+python3 plans/extract-bench-2026-08-29/bench.py go.parse.call.tsv \
+  plans/extract-bench-2026-08-29/go.oracle.call.vta.tsv
+python3 plans/extract-crawl-2026-08-29/go.crawl.py <scratch>
+```
+
+`go.parse.module.tsv` normalizes `resolved_import` rows to the bench normal
+form: `src_path` relative to corpus root, empty name column, `target_path`
+relative when under the root, trailing empty column. `go.parse.call.tsv`
+normalizes `resolved_edge` rows (all kinds) to
+`src_path src_name dst_path dst_name`. Both are committed beside this
+report.
+
+### resolved_import and resolved_edge by kind
+
+| record | kind | rows |
+|---|---|---|
+| resolved_import | local | 8,227 |
+| resolved_import | namespace | 1,183 |
+| resolved_import | total | 9,410 |
+| resolved_edge | import_resolve | 22,859 |
+| resolved_edge | name_resolve | 55,123 |
+| resolved_edge | implements | 1,494 |
+| resolved_edge | total | 79,476 |
+| unresolved | builtin | 14,470 |
+| unresolved | inferred | 19,022 |
+| unresolved | external | 11,255 |
+| unresolved | total | 44,747 |
+
+### Module plane vs `go.oracle.module.tsv` (2,152 rows)
+
+| metric | value |
+|---|---|
+| ours (unique (src, import path) rows) | 9,410 |
+| oracle | 2,152 |
+| intersection | 1,810 |
+| recall (intersection / oracle) | 84.11% |
+| precision (intersection / ours) | 19.23% |
+| ours-only | 7,600 |
+| oracle-only | 342 |
+
+| diff class | rows | note |
+|---|---|---|
+| ours-only: `_test.go` source file | 7,593 | the oracle does not cover test files; not a miss |
+| ours-only: non-test source file | 6 | e.g. `internal/bundled/noembed.go -> internal/osutil` |
+| ours-only: testdata / `_tools` | 1 | `_tools/customlint/testdata/unexportedapi/unexportedapi.go` |
+| oracle-only: non-test file, import line present in the file's own text | 342 | real gaps, see below |
+
+The oracle-only 342 rows span 150 files and are under-reporting, not wrong
+paths. Examples:
+
+| example | oracle rows for the file | ours |
+|---|---|---|
+| `internal/compiler/program.go` | 22 | 1 (only `internal/packagejson`; `program.go:13-38` declares 22 corpus imports) |
+| `internal/compiler/emitter.go` | 18 | 0 (`emitter.go:3-23` declares 19 corpus imports; the file still yields 64 name_resolve/implements edges) |
+| `internal/api/proto.go` | 14 | 13 (`packagejson` dropped, its 12th of 14 corpus imports at `proto.go:19`) |
+| `internal/ast/utilities.go` | 3 | 2 (`debug` dropped at `utilities.go:11`) |
+
+Two rows also carry a suspect `local` binding: `utilities.go` (a non-test
+file) emits `local = core_test`, and `program.go` emits
+`local = packagejson_test`, the `_test` package qualifier the Fixes section
+already flagged as a candidate-selection hazard. Mechanism not
+root-caused; defect rows, no fix in this lane.
+
+### Call plane vs `go.oracle.call.vta.tsv` (58,332 rows)
+
+| metric | Fixes 2 baseline | this run |
+|---|---|---|
+| ours (unique 4-tuples) | n/a | 60,251 |
+| intersection | n/a | 5,059 |
+| recall (intersection / oracle) | 5.6% | **8.67%** |
+| precision (intersection / ours) | n/a | 8.40% |
+
+### Entrypoint crawl, 104 program roots
+
+| metric | Fixes 2 (after #554) | this run |
+|---|---|---|
+| defs (call-plane function/method nodes) | 19,174 | 19,173 |
+| reachable (non-test roots) | 4,832 (25.2%) | **4,580 (23.9%)** |
+| roots with test roots | 5,977 | 5,977 |
+| reachable with tests | 11,600 | 11,393 |
+
+Reachability fell 252 defs against the #554 baseline while the module plane
+landed. The crawl consumes only `resolved_edge` caller/callee pairs; the
+module plane replaced qualified-site binding with `import_resolve` edges,
+and the intersection with the oracle's notion of a call edge fell in the
+table above, so the two moves in the same direction. Single file diff not
+root-caused; the own_blob span-search nondeterminism documented in Fixes 2
+remains a candidate (defs differ by 1 node from Fixes 2's run on the same
+code).
