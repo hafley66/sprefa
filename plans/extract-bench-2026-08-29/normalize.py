@@ -47,6 +47,27 @@ def resolved_to_tsv(raw_path, root, call_out, type_out, kind_filter=None):
     return len(set(call_rows)), len(set(type_rows))
 
 
+def resolved_import_to_module_tsv(raw_path, root, out_path):
+    # A module row carries no names, so `resolved_import`'s name/local/kind/hops
+    # columns are dropped: the row answers "which file binds from which target".
+    rows = set()
+    with open(raw_path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            if d["record"] != "resolved_import":
+                continue
+            rows.add("\t".join([
+                relp(root, d["src_path"]), "",
+                relp(root, d["target_path"]), "",
+            ]))
+    with open(out_path, "w") as f:
+        f.write("\n".join(sorted(rows)) + "\n")
+    return len(rows)
+
+
 def scip_to_call_tsv(scip_jsonl, root, out_path):
     sym_file = {}
     sym_name = {}
@@ -87,6 +108,9 @@ if __name__ == "__main__":
     elif mode == "scip_call":
         n = scip_to_call_tsv(sys.argv[2], sys.argv[3], sys.argv[4])
         print(f"scip call edges (joined) = {n}")
+    elif mode == "module":
+        n = resolved_import_to_module_tsv(sys.argv[2], sys.argv[3], sys.argv[4])
+        print(f"module={n}")
     elif mode == "resolved_filtered":
         n_call, n_type = resolved_to_tsv(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], kind_filter={sys.argv[6]})
         print(f"call={n_call} type={n_type}")

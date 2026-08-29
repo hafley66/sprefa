@@ -18,6 +18,9 @@ file (`plans/extract-bench-2026-08-29/*.tsv`).
 9. [Defects found (file:line)](#9-defects-found-fileline)
 10. [What it took to run](#10-what-it-took-to-run)
 11. [What stays untested and why](#11-what-stays-untested-and-why)
+12. [go call family, corrected](#12-go-call-family-corrected-bare-method-names)
+13. [type oracles](#13-type-oracles)
+14. [Single process: every "ours" number re-measured](#14-single-process-every-ours-number-re-measured-from-one-process-per-corpus)
 
 ## 1. What was measured
 
@@ -571,3 +574,218 @@ ZERO rows with `::` in dst_name, so every one of them died unresolved.
 | `ra_ide_probe` cold rebuild after adding `ra_ap_hir` + `ra_ap_syntax` | **380.82s**, 239 crates, `ra_ap_hir_def` and `ra_ap_hir_ty` the long poles | `cargo`; the crates were already in `~/.cargo/registry/src`, no network |
 | `ra_ide_probe` incremental rebuild (one-line fixes) | under 1s | none |
 | `ra_ide_probe ... type` over `rust-analyzer` | 12.04s total, 11.00s in the walk, workspace load 0.47s from warm caches | none |
+
+## 14. Single process: every "ours" number re-measured from ONE process per corpus
+
+Binary rebuilt from this worktree at `f5fd6dbf9`, `cargo build --release
+--features cli`, 2m43s. Corpora and shas unchanged from section 1
+(TypeScript-5.9 `7e133bea1` 600 files, typescript-go `89d5d5b2` 5,097,
+rust-analyzer `af4111f` 873). Recall is `overlap / |oracle|` and precision is
+`overlap / |ours|`, section 13's convention; `bench.py` prints those two labels
+the other way round (`bench.py:38-41`) and section 7's table carries its
+spelling, so section 7's "recall" column is this section's "precision".
+
+### 14.1 There is no `module` resolve arm
+
+`parse_arms` accepts `call`, `type`/`types` and `flow` only
+(`v6/sprefa-extract/src/bin/extract.rs:599-618`); `--family module` is a named
+stop. The module row rides the other two: `import_facts` runs under
+`request.arms.call || request.arms.types` (`v6/sprefa-extract/src/project.rs:346-351`),
+so `--resolve --family call,type` emits all three families in one process.
+`normalize.py` gained a `module` mode that folds `resolved_import` to the
+4-column normal form with both names empty, matching the committed
+`go.parse.module.tsv` shape.
+
+### 14.2 What one process costs
+
+`/usr/bin/time -l`, three runs per corpus per mode, median wall, max peak RSS.
+`<lang>.<mode>.single.runs.tsv` carries one line per invocation, so `wc -l` on
+it is the process count: 1 for every run below.
+
+| corpus | files | mode | walls (ms) | median | peak RSS | JSONL lines | rc |
+|---|---:|---|---|---:|---:|---:|---:|
+| typescript-go | 5,097 | resolve | 9522 / 9379 / 8190 | **9.38 s** | 666 MB | 159,551 | 0 |
+| typescript-go | 5,097 | diet_scip | 8987 / 8507 / 8723 | 8.72 s | 645 MB | 159,551 | 0 |
+| TypeScript-5.9 | 600 | resolve | 2482 / 2449 / 2483 | **2.48 s** | 409 MB | 123,229 | 0 |
+| TypeScript-5.9 | 600 | diet_scip | 3067 / 2504 / 2806 | 2.81 s | 403 MB | 123,229 | 0 |
+| rust-analyzer | 873 | resolve | 2180 / 2137 / 2287 | **2.18 s** | 536 MB | 157,297 | 0 |
+| rust-analyzer | 873 | diet_scip | 2377 / 2322 / 2431 | 2.38 s | 536 MB | 157,297 | 0 |
+
+No invocation crossed 10 s, so no run is a 10-second-law defect and none needed
+a fix. go is the closest at 9.52 s worst of three, so a 5 s `sample` was taken
+anyway; the run is tree-sitter bound, not resolve-index bound. Top frames by
+top-of-stack samples, worker threads parked in `__psynch_cvwait` (19,014)
+excluded:
+
+| frame | samples |
+|---|---:|
+| `ts_tree_cursor_child_iterator_next` | 1,576 |
+| `ts_parser_parse` | 1,113 |
+| `_nanov2_free` (libsystem_malloc) | 585 |
+| `ts_lex` | 515 |
+| `ts_language_next_state` | 419 |
+
+The whole path list rides argv: go is the largest at 331 KB relative / ~400 KB
+absolute, and `ARG_MAX` on this machine is 1,048,576, so no `xargs` and no
+batching is needed at these corpus sizes.
+
+### 14.3 The chunked driver emits ZERO cross-partition rows, in every family
+
+`resolve_runs.py --chunk` on the SAME binary is the control, so the columns
+below isolate the driver rather than binary drift: 550 processes for go, 147
+for ts5, 36 for rust (`<lang>.resolve.chunked.runs.tsv`).
+
+| lang | family | boundary | control cross-partition | of | single cross-partition | of |
+|---|---|---|---:|---:|---:|---:|
+| go | call | top-2 dir | **0** | 23,837 | 34,159 | 84,622 |
+| go | type | top-2 dir | **0** | 2,725 | 1,186 | 4,411 |
+| go | module | top-2 dir | 8,350 | 14,175 | 8,350 | 14,175 |
+| ts5 | call | top-2 dir | **0** | 35,540 | 8,391 | 59,311 |
+| ts5 | type | top-2 dir | **0** | 6,652 | 4,964 | 20,317 |
+| ts5 | module | top-2 dir | **0** | 619 | 997 | 3,096 |
+| rust | call | crate | **0** | 40,867 | 16,337 | 48,020 |
+| rust | type | crate | **0** | 1,679 | 1,343 | 2,946 |
+| rust | module | crate | **0** | 1,871 | 2,680 | 4,465 |
+
+go's module row is the exception and it is the fix landing: PR #560 made a
+`resolved_import` row depend on `go_package_dir` alone rather than on which
+files the invocation carries (docs/failure-modes.md entry 96), so the control
+and the single-process run agree on all 14,175 rows including the 8,350 that
+cross a top-2 directory. Every other family in every language still loses
+100% of its cross-partition rows to the split.
+
+Splitting also MINTS rows a whole-corpus run declines. rust's control carries
+9,184 rows the single-process run does not, across 465 distinct callee names,
+led by `text_range` (376), `iter` (351), `kind` (310), `insert` (302), `map`
+(280): a chunk makes an ambiguous method name look unique, and the name-match
+arm binds it. Chunked precision is therefore inflated as well as chunked
+recall being a floor.
+
+### 14.4 Every "ours" row, chunked control beside single process
+
+
+#### go, one process, 9.38 s wall, 666 MB peak RSS
+
+| family | oracle / tool | oracle rows | ours chunked | chunked recall | chunked precision | ours single | single recall | single precision |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| call | `go.oracle.call.vta.bare.tsv` | 55099 | 23837 | 32.1% | 74.2% | 84622 | 75.9% | 49.4% |
+| call | `go.oracle.call.cha.tsv` | 172957 | 23837 | 1.3% | 9.3% | 84622 | 3.0% | 6.2% |
+| call | `go.codeql2.call.tsv` | 48529 | 23837 | 37.1% | 75.5% | 84622 | 88.7% | 50.9% |
+| call | `go.joern2.call.tsv` | 31617 | 23837 | 32.0% | 42.4% | 84622 | 83.1% | 31.0% |
+| type | `go.oracle.type.tsv` | 44214 | 2725 | 6.0% | 97.9% | 4411 | 9.7% | 96.8% |
+| type | `go.oracle.type.typedecl.tsv` | 6204 | 2725 | 43.0% | 97.9% | 4411 | 68.9% | 96.8% |
+| module | `go.oracle.module.tsv` | 2152 | 14175 | 100.0% | 15.2% | 14175 | 100.0% | 15.2% |
+
+#### ts5, one process, 2.48 s wall, 408 MB peak RSS
+
+| family | oracle / tool | oracle rows | ours chunked | chunked recall | chunked precision | ours single | single recall | single precision |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| call | `ts5.oracle.call.tsv` | 59356 | 35540 | 39.6% | 66.1% | 59311 | 70.0% | 70.0% |
+| call | `ts.codeql2.call.tsv` | 53140 | 35540 | 42.6% | 63.7% | 59311 | 72.9% | 65.3% |
+| call | `ts.joern2.call.tsv` | 24451 | 35540 | 58.1% | 40.0% | 59311 | 58.7% | 24.2% |
+| type | no oracle in this lab | n/a | 6652 | n/a | n/a | 20317 | n/a | n/a |
+| module | `ts5.oracle.module.tsv` | 2009 | 619 | 30.8% | 100.0% | 3096 | 50.6% | 32.8% |
+| module | `ts.madge.module.tsv` | 2011 | 619 | 30.8% | 100.0% | 3096 | 50.6% | 32.8% |
+| module | `ts.depcruise.module.tsv` | 2011 | 619 | 30.8% | 100.0% | 3096 | 50.6% | 32.9% |
+| module | `ts.stackgraphs.module.tsv` | 1208 | 619 | 19.0% | 37.0% | 3096 | 38.5% | 15.0% |
+| module | `ts.codeql.module.tsv` | 1477 | 619 | 41.9% | 100.0% | 3096 | 68.9% | 32.8% |
+
+#### rust, one process, 2.18 s wall, 536 MB peak RSS
+
+| family | oracle / tool | oracle rows | ours chunked | chunked recall | chunked precision | ours single | single recall | single precision |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| call | `rust.oracle.call.tsv` | 27004 | 40867 | 46.8% | 30.9% | 48020 | 50.4% | 28.3% |
+| type | `rust.oracle.type.tsv` | 43134 | 1679 | 3.8% | 98.0% | 2946 | 5.1% | 74.1% |
+| type | `rust.oracle.type.typedecl.tsv` | 8343 | 1679 | 19.7% | 98.0% | 2946 | 26.2% | 74.1% |
+| module | no oracle in this lab | n/a | 1871 | n/a | n/a | 4465 | n/a | n/a |
+
+#### the committed `*.chunked.tsv` files, against the same oracles
+
+| lang | family | committed chunked rows | oracle | recall | precision |
+|---|---|---:|---|---:|---:|
+| go | call | 84618 | `go.oracle.call.vta.bare.tsv` | 75.9% | 49.4% |
+| go | call | 84618 | `go.oracle.call.cha.tsv` | 3.0% | 6.2% |
+| go | call | 84618 | `go.codeql2.call.tsv` | 88.7% | 50.9% |
+| go | call | 84618 | `go.joern2.call.tsv` | 83.1% | 31.0% |
+| go | type | 3178 | `go.oracle.type.tsv` | 7.0% | 97.6% |
+| go | type | 3178 | `go.oracle.type.typedecl.tsv` | 50.0% | 97.6% |
+| go | module | 14173 | `go.oracle.module.tsv` | 100.0% | 15.2% |
+| ts5 | call | 59311 | `ts5.oracle.call.tsv` | 70.0% | 70.0% |
+| ts5 | call | 59311 | `ts.codeql2.call.tsv` | 72.9% | 65.3% |
+| ts5 | call | 59311 | `ts.joern2.call.tsv` | 58.7% | 24.2% |
+| ts5 | module | 2099 | `ts5.oracle.module.tsv` | 49.3% | 47.2% |
+| ts5 | module | 2099 | `ts.madge.module.tsv` | 49.2% | 47.2% |
+| ts5 | module | 2099 | `ts.depcruise.module.tsv` | 49.3% | 47.2% |
+| ts5 | module | 2099 | `ts.stackgraphs.module.tsv` | 37.7% | 21.7% |
+| ts5 | module | 2099 | `ts.codeql.module.tsv` | 67.0% | 47.2% |
+| rust | call | 40686 | `rust.oracle.call.tsv` | 46.7% | 31.0% |
+| rust | type | 1673 | `rust.oracle.type.tsv` | 3.8% | 98.4% |
+| rust | type | 1673 | `rust.oracle.type.typedecl.tsv` | 19.7% | 98.4% |
+
+### 14.5 Two committed files already carried single-process numbers
+
+`go.parse.call.tsv` and `ts5.parse.call.tsv` at `f5fd6dbf9` were re-emitted by
+the type-oracle lane on a post-#565/#566/#567 binary and are NOT chunked
+artifacts: `go.parse.call.chunked.tsv` carries 34,158 rows crossing a top-2
+directory, and its single-process re-run adds only 4 rows. `ts5.parse.call`
+reproduced byte-for-byte, 59,311 rows, zero either way. The genuinely chunked
+committed artifacts are the `dietscip` twins and the `type`/`module` files:
+`go.dietscip.call.chunked.tsv` has 0 cross-top-2 rows out of 49,082.
+
+| committed file | rows | chunked? | single-process rows |
+|---|---:|---|---:|
+| `go.parse.call.chunked.tsv` | 84,618 | no | 84,622 |
+| `ts5.parse.call.chunked.tsv` | 59,311 | no | 59,311 |
+| `go.dietscip.call.chunked.tsv` | 49,082 | yes | 84,622 |
+| `ts5.dietscip.call.chunked.tsv` | 55,611 | yes | 59,311 |
+| `rust.parse.call.chunked.tsv` | 40,686 | yes | 48,020 |
+| `go.parse.type.chunked.tsv` | 3,178 | yes | 4,411 |
+| `ts5.parse.type.chunked.tsv` | 16,944 | yes | 20,317 |
+| `rust.parse.type.chunked.tsv` | 1,673 | yes | 2,946 |
+| `go.parse.module.chunked.tsv` | 14,173 | yes, and chunk-immune | 14,175 |
+| `ts5.parse.module.chunked.tsv` | 2,099 | yes | 3,096 |
+| `rust.parse.module` | absent | n/a | 4,465, new this lane |
+
+`*.dietscip.*` is byte-identical to `*.parse.*` for all three languages under
+one process too, both families, so section 5's "by construction" claim holds at
+whole-corpus scale and every diet-scip column repeats its parse neighbour.
+
+### 14.6 Where the headline numbers moved
+
+Against each language's primary oracle, chunked control to single process:
+
+| lang | family | oracle | chunked recall | single recall | chunked precision | single precision |
+|---|---|---|---:|---:|---:|---:|
+| go | call | `go.oracle.call.vta.bare.tsv` | 32.1% | **75.9%** | 74.2% | 49.4% |
+| go | type | `go.oracle.type.typedecl.tsv` | 43.0% | **68.9%** | 97.9% | 96.8% |
+| go | module | `go.oracle.module.tsv` | 100.0% | 100.0% | 15.2% | 15.2% |
+| ts5 | call | `ts5.oracle.call.tsv` | 39.6% | **70.0%** | 66.1% | 70.0% |
+| ts5 | module | `ts.madge.module.tsv` | 30.8% | **50.6%** | 100.0% | 32.8% |
+| rust | call | `rust.oracle.call.tsv` | 46.8% | **50.4%** | 30.9% | 28.3% |
+| rust | type | `rust.oracle.type.typedecl.tsv` | 19.7% | **26.2%** | 98.0% | 74.1% |
+
+Section 13.4 finding 1 is confirmed and priced: the driver, not the extractor,
+capped both type-family numbers, and it capped the call family harder still.
+Finding 2 (dst_path binding to the referring file) is untouched by this lane
+and still belongs to `src/`.
+
+The ts5 and rust module rows are the one place single process costs precision
+outright: `resolved_import` follows barrels to the binding target, madge and
+dependency-cruiser emit file-imports-file, and a whole-corpus run resolves more
+barrel hops than a chunk can. Section 11's reading stands, `--deps`'s
+`file_edge` is the row that joins those tools; `ts5.deps.module.tsv` was not
+re-emitted this lane because `--deps` is a per-project code path with no
+partitioning to fix.
+
+### 14.7 `resolve_runs.py` now defaults to one process
+
+`resolve_runs.py` takes `--chunk` to reach the split path and defaults to a
+single invocation per corpus per mode. Under the default the runs log has
+exactly one line, so `wc -l` on it is the receipt that no split happened; under
+`--chunk` the script prints `FLOOR run` to stderr and a non-zero rc no longer
+triggers a bisect, because bisecting is what produced the floors entry 96
+records. `--suffix` tags the output filenames, defaulting to `chunked` or
+`single`. Files this lane added beside the report: `<lang>.ctl.{call,type,module}.tsv`
+(the same-binary control), `<lang>.{resolve,diet_scip}.single.runs.tsv`,
+`<lang>.resolve.chunked.runs.tsv`, `single_process_runs.sh` (the timed one-process
+driver) and `section14.py` (the table generator).
