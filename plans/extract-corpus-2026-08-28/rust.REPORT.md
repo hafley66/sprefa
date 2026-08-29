@@ -9,6 +9,7 @@
 - [Perf and RSS](#perf-and-rss)
 - [Findings](#findings)
 - [Fix landed](#fix-landed)
+- [Fix landed: the large-file resource bound](#fix-landed-the-large-file-resource-bound)
 - [What stays untested and why](#what-stays-untested-and-why)
 
 ## Setup
@@ -142,3 +143,95 @@ plus std (`try_from`, `alloc_transition`) and closure/field callees.
   worktree root substitutes.
 - Trait-impl method callees under `--resolve`: name-only by the 4a ADDENDUM
   (receiver typing out of scope); scip is the oracle for those edges (step 5).
+
+## Fix landed: the large-file resource bound
+
+Lane `fix-extract-large-files`, base sha `99b8dc79f`, commit "extract: stream
+flat facts instead of collecting them". Full write-up and the byte-identity
+receipt: `ts.REPORT.md` section 12.
+
+| finding | before | after | test |
+|---|---|---|---|
+| `rss` on `nickel-lang-core-0.15.3/src/parser/grammar.rs` (29,328,358 B) | 3,610,509,312 B peak RSS | 3,004,694,528 B | `tests/9_large_file_bounds.rs::rs_all_families_rss_is_bounded` |
+| wall, same file, no `timeout` | 14.24 s | 12.55 s | (same) |
+| `timeout` rc=124 under `timeout 10`, same file | rc=124, empty stream | rc=0, one `size_skip` row | `tests/9_size_skip.rs`, 8 cases |
+
+Output on that file is byte-identical before and after: 13,664,266 rows,
+`cmp -s` clean.
+
+### The timeout is parse time, not row time
+
+`extract --bench --family <f>` on the same file splits extract from flatten:
+
+| family | extract | serial (flatten) | rows | peak RSS |
+|---|---|---|---|---|
+| cst | 7.043 s | 224.8 ms | 11,416,699 | 2,039,300,096 B |
+| type | 5.119 s | 6.9 ms | 175,430 | 2,419,736,576 B |
+| call | 5.494 s | 4.0 ms | 129,247 | 2,292,367,360 B |
+| df | 4.475 s | 71.3 ms | 1,942,890 | 2,876,817,408 B |
+| data | (0.02 s wall) | | 0 | 34,684,928 B |
+| default (all) | | | 13,664,266 | 3,004,694,528 B, 12.55 s |
+
+Flatten is 0.1% to 3% of each family's wall. The 12.55 s is the ast-grep parse
+(7.0 s) plus the one shared syn parse and its three projections. No change to
+the row plane moves it, and the 3.0 GB floor is the syn AST: `--family type`
+peaks at 2.42 GB while emitting 175,430 rows.
+
+The corpus gap is sharp. Second-slowest rust file is `chrono-tz` `timezones.rs`
+at 3,789 ms for 7.2 MB; nickel `grammar.rs` is 29.3 MB. One file in 77,472
+exceeds 10 s.
+
+### Named size skip: LANDED
+
+Ownership for `src/types.rs` and `src/schema.rs` was extended by the
+coordinator for this record only. The row:
+
+```
+record=size_skip  path=<string>  bytes=<u64>  limit=<u64>  reason=<over_max_bytes>
+```
+
+An input over the ceiling is not parsed: `extract` emits that one row and exits
+0. `--max-bytes N` sets the ceiling, `--max-bytes 0` removes it, default
+16,777,216 B. The decision is made on file size before any parse, so it covers
+the normal family stream, `--bench` and `--ast-pattern` alike. `--file-fact`
+still prepends its identity row: a digest and a line count over bytes already
+read is not the cost being bounded. A whole-project mode (`--resolve`,
+`--deps`, `--scip-*`) takes directories and path sets and is not covered.
+
+The finding's exact repro, before and after:
+
+| command | before | after |
+|---|---|---|
+| `timeout 10 extract <nickel grammar.rs>` | rc=124, empty stream, 10 s burned | rc=0, one `size_skip` row, milliseconds |
+| `timeout 10 extract --max-bytes 0 <same>` | (no such flag) | rc=124, unchanged; the unbounded path is still reachable |
+
+```json
+{"record":"size_skip","path":".../nickel-lang-core-0.15.3/src/parser/grammar.rs","bytes":29328358,"limit":16777216,"reason":"over_max_bytes"}
+```
+
+### The ceiling is measured, not chosen
+
+| corpus | files over 16,777,216 B |
+|---|---|
+| rust registry, 77,472 files | 1: `nickel-lang-core-0.15.3/src/parser/grammar.rs` |
+| ts/js (`~/projects/instant`) | 0 |
+| this crate's `tests/fixtures/**` | 0 (largest is a 1 MB golden jsonl, not an input) |
+
+So the default changes no existing stream. Verified: the 19 corpus files of the
+20-file parity sample that sit under the ceiling stay byte-identical against the
+pre-fix binary; the 20th is the nickel file, whose output is the skip row by
+design.
+
+One existing test needed the escape hatch, not a weakening.
+`tests/45_emit_throughput.rs` builds a 25,563,904 B synthetic `.go` to measure
+JSONL emission on 350k rows, which is over the ceiling by construction. It now
+passes `--max-bytes 0`; its budget, its row-count equality assert and its input
+are unchanged. It is the only test in the crate that generates an over-ceiling
+input (`27_blob_cache.rs` writes 4 KB, `46_resolve_scaling.rs` runs
+`--resolve`, which the ceiling does not cover).
+
+Tests: `tests/9_size_skip.rs`, 8 cases. Over-ceiling emits exactly one row with
+the right path, bytes and limit at rc=0; the boundary is inclusive (a file at
+its own ceiling extracts); `--max-bytes` lowers it; `--max-bytes 0` disables it;
+`--file-fact` still rides a skip; an under-ceiling file is unchanged;
+`--ast-pattern` skips too; `--schema` declares the record.

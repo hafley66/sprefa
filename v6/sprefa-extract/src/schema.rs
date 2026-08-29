@@ -51,6 +51,7 @@ RECORD SHAPES
   record=file_unresolved  src_path=<string>  module=<string>  reason=<slug>
   record=package_edge  src_manifest=<string>  dst_manifest=<string>  kind=<slug>
   record=file  path=<string>  digest=<hex>  bytes=<u32>  lines=<u32>
+  record=size_skip  path=<string>  bytes=<u64>  limit=<u64>  reason=<over_max_bytes>
   record=scip_metadata  version=<i32>  tool_name=<string>  tool_version=<string>  tool_arguments=[<string>]  project_root=<string>  text_document_encoding=<i32>
   record=scip_document  path=<string>  language=<string>  position_encoding=<i32>  text=<string|null>
   record=scip_occurrence  path=<string>  symbol=<string>  start=<u32>  end=<u32>  roles=<i32>  definition=<bool>  import=<bool>  write_access=<bool>  read_access=<bool>  generated=<bool>  test=<bool>  forward_definition=<bool>  syntax_kind=<i32>  enclosing_start=<u32|null>  enclosing_end=<u32|null>  text=<string|null>
@@ -236,6 +237,22 @@ PACKAGE EDGES (--package-deps)
 FILE FACT (--file-fact)
   Prepends one `file` row to the normal stream, carrying the content digest,
   byte count and line count. It rides the same read as extraction.
+
+SIZE CEILING (--max-bytes)
+  A single input over the ceiling is NOT parsed. It emits one size_skip row
+  naming the path, the byte count and the ceiling, and exits 0. The default is
+  16777216; --max-bytes N sets it, --max-bytes 0 removes it. The decision is
+  made on the file size before any parse, so it covers the normal family
+  stream, --bench, and --ast-pattern alike, and --file-fact still prepends its
+  identity row (a digest over bytes already read, not the cost being bounded).
+  A whole-project mode (--resolve, --deps, --scip-*) takes directories and sets
+  and is not covered.
+  The point is that a silent timeout is a defect and a named skip is a fact.
+  A caller that gets rc=124 and an empty stream cannot tell it from a file with
+  no facts, and learns neither which file nor how big. The ceiling is measured:
+  16777216 skips exactly one file in a 77,472-file rust corpus (a 29,328,358 B
+  machine-generated parser table that costs 12.55 s and 3.0 GB, all of it parse
+  time), no ts/js corpus file, and no fixture in this crate.
 
 THE TWO NAMED FAMILIES (--family scip | --family diet_scip)
   DIET MEANS PARSE TECHNIQUE AND HEURISTICS, NEVER ACTUAL SCIP DATA.

@@ -2613,6 +2613,15 @@ pub enum FlatFact {
         reason: String,
         detail: String,
     },
+    /// A NAMED SKIP on SIZE, `scip_skip`'s per-file twin: one input was over the
+    /// byte ceiling, so it was not parsed. `limit` rides the row: it is a flag.
+    #[serde(rename = "size_skip")]
+    SizeSkipRow {
+        path: String,
+        bytes: u64,
+        limit: u64,
+        reason: String,
+    },
     /// One SCIP occurrence: a symbol mentioned at a byte span in one document.
     /// RAW index fact, deliberately unjoined. v5's `scip_def` is this row with
     /// `definition` true, `scip_ref` is it with `definition` false, and

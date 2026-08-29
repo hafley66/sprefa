@@ -69,3 +69,34 @@ Exposed core scaling: n=25 445 ms, n=50 562 ms, n=100 700 ms (linear). `--resolv
 | finding | before | after | test |
 |---|---|---|---|
 | rows 4-5: metacall closures and goal arguments (`src/lang/prolog/_0_source.rs`) | `double` under `maplist/3` and `call/3`: no site, no reference; goals under `forall/2`, `findall/3`: `term_arg`. swipl library+boot `--resolve` `resolved_edge` = 11064 (`extract --resolve /opt/homebrew/lib/swipl/library/*.pl /opt/homebrew/lib/swipl/boot/*.pl`) | meta_predicate spec table (SWI builtins + per-file `:- meta_predicate` directives) mints closure sites (name + added arity) and `closure` references for `call/1..8`, `once`, `ignore`, `not`, `forall`, `findall/3,4`, `aggregate_all/3,4`, `setof`, `bagof`, `maplist/2..7`, `foldl/4..7`, `include`, `exclude`, `partition/4`, `catch`, `catch_with_backtrace`, `setup_call_cleanup`, `call_cleanup`, `with_output_to/2`, `phrase/2,3`, `freeze/2`, `thread_create/3`; `0` slots recurse as goals; `^` unwraps. resolved_edge = 12015 (same command, rc=0, under 10s) | `cargo test --features cli --test 1b_prolog_metacall` (5 tests: sites + reference positions in clause order over `corpus_1_meta_closures.pl`, `--resolve` over `corpus_2_meta_def.pl` + `corpus_2_meta_use.pl` with 4 go/1 -> double/2 edges, file-declared `meta_predicate` over `corpus_3_meta_directive.pl`, setof caret unwrap); whole-crate `cargo test --features cli`: 372 passed, 0 failed |
+## 7. Fixes (lane `fix-extract-resolve-door`)
+Landed against the resolve door and the CLI. Every row's test is in
+`v6/sprefa-extract/tests/47_resolve_door_cli.rs`; whole crate after:
+`cargo test --features cli --no-fail-fast` 372 passed, 0 failed, 2 ignored.
+
+| finding | before | after | test |
+|---|---|---|---|
+| markdown `doc_ref` absent from the CLI (this report, section 5) | `--resolve --family type doc_node.md <corpus>`: 0 `doc_ref` rows, 1 from the library API | 1 row, `owner_name=Engine`, `target_path=tests/fixtures/rust/sample.rs`, equal to the library count | `resolve_cli_reaches_the_markdown_doc_ref_arm` |
+| python F1 (`python.REPORT.md:275`) | `Widget()` edge carries `callee_name: null` | `callee_name: "Widget"`; no null callee in the fixture pair | `resolve_cli_names_a_class_constructor_callee` |
+| ts F9 (`ts.REPORT.md:406`) | `--resolve <dir>` rc=1, `Error: Read("src", Custom { kind: Other, ... })` | rc=2, `extract: <path> is a directory; --resolve takes files, so expand the tree with a shell glob or find` | `resolve_cli_names_a_directory_plainly` |
+| ts F10 (`ts.REPORT.md:407`) | `--help` said "Needs two or more paths"; one path exits 0 | help states one path is a legal universe; the behaviour is unchanged and correct | `resolve_cli_accepts_one_path_and_says_so` |
+| ts F6 (`ts.REPORT.md:403`) | `--schema` lists `unresolved`, `--resolve` never emits it, nothing says so | help states `--resolve` carries phase-2 records only and names the per-file door for the rest | `resolve_cli_documents_the_phase_one_records_it_drops` |
+
+Two rows above are doc fixes rather than behaviour changes, and both were the
+finding's own stated alternative:
+
+- F10 asked for exit 2 on a single path. That contradicts a green golden:
+  `tests/1_resolve_cli.rs:52` runs `--resolve <one kotlin file>` and pins its
+  same-file call edges. One path is a legal resolution universe, so the help
+  sentence was the wrong half.
+- F6 asked for `unresolved` rows in `--resolve`. The record has no path field
+  (`src/wire.rs:290`), so in a multi-file phase-2 stream it cannot name the file
+  it came from and the row would be unjoinable. Adding one needs a wire-shape
+  change in `src/wire.rs` and `src/types.rs`, outside this lane's ownership, and
+  it would break the byte-exact golden at `tests/20_unresolved.rs`.
+
+Also fixed in the same pass: a missing path now exits 2 with
+`extract: <path> does not exist` instead of the same Debug dump, and the check
+runs for every mode that takes files (`--resolve`, `--deps`, `--package-deps`,
+`--scip-deps`, `--scip-facts`, `--family diet_scip`, per-file). `--family scip`
+is exempt: it takes a ROOT directory.
