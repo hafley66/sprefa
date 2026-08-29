@@ -1,0 +1,19 @@
+{
+  "name": "tree-sitter-dl7",
+  "version": "0.0.1",
+  "description": "Tree-sitter grammar for the DL7 prefix syntax",
+  "main": "grammar.js",
+  "keywords": [
+    "tree-sitter",
+    "datalog",
+    "sprefa",
+    "dl7"
+  ],
+  "license": "MIT",
+  "tree-sitter": [
+    {
+      "scope": "source.dl7",
+      "file-types": ["dl7"]
+    }
+  ]
+}

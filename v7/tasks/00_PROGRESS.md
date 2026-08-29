@@ -1,6 +1,25 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-29 00:38 EDT
+Updated: 2026-08-29 10:59 EDT
+
+## Tree-sitter parser replacement
+
+- Added `v7/justfile`; `just build` is the first V7 build gate.
+- Added `v7/tree-sitter-dl7/grammar.js` and generated C parser metadata.
+- The grammar owns parenthesized nesting, strings, comments, token boundaries,
+  source coordinates, and recoverable syntax errors.
+- A maximal `bare_token` preserves the existing delimiter law. Classification
+  into names, integers, symbols, variables, or diagnostics remains an adapter
+  responsibility.
+- Added one corpus case covering nested prefix syntax, strings, symbols,
+  variables, integers, empty expressions, and malformed whole-token examples.
+- `just build`: 1 parse, 1 successful, 0 failed.
+- Existing fixtures `0_minimal.dl7`, `2_partial.dl7`, and prelude
+  `0_types.dl7` parse without `ERROR` or `MISSING` nodes.
+- Added the C ABI declaration `tree_sitter_dl7()` and verified the header with
+  C, C++, and Zig frontends.
+- The current SWI parser remains connected until the canonical syntax adapter
+  reproduces `read_dl7/5` output.
 
 ## Basement restart
 
