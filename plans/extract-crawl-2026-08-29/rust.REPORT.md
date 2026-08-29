@@ -19,6 +19,7 @@ Every `extract` call ran under `timeout 10`. Raw tables sit beside this file.
 11. [Fixes (lane `fix-extract-rust-crawl`)](#11-fixes-lane-fix-extract-rust-crawl)
 12. [Fixes (lane `fix-extract-rust-crawl-2`)](#12-fixes-lane-fix-extract-rust-crawl-2)
 13. [Fixes: the module plane (lane `fix-extract-rust-module-plane`)](#13-fixes-the-module-plane-lane-fix-extract-rust-module-plane)
+14. [macro_rules expansion, kink 2 closed (lane `feature-extract-rust-mbe`)](#14-macro_rules-expansion-kink-2-closed-lane-feature-extract-rust-mbe)
 
 ## 1. What was measured
 
@@ -718,3 +719,111 @@ in `tests/57_rust_module_plane.rs::barrel_resolve_wall_grows_linearly_with_file_
 | a workspace `[patch]`/virtual manifest / `Cargo.toml` dependency graph reader | the plane never reads a manifest; a `use other_crate::f` resolves by suffix match against whatever corpus files are SUPPLIED, same discipline as `crate::`'s `crate_root_of`, so a same-named module in an unrelated crate in the SAME corpus can false-positive (pre-existing kink-4 limitation, not new) |
 | macro-generated `use` items | `rust_module_facts`'s parse sees written source only, same boundary as kink 2 |
 | incremental re-resolve after an edit | the plane, like `TsModuleIndex`, is built once per run |
+
+## 14. macro_rules expansion, kink 2 closed (lane `feature-extract-rust-mbe`)
+
+`plans/extract-macro-lab-2026-08-29/PLAN.md` Option 1, wired into
+`RustSource::extract`'s call arm (`src/lang/rust.rs::splice_macro_expansions`,
+`src/lang/rust_mbe.rs`). Kink 2 was: a call written only inside a local
+`macro_rules!` invocation has no site, because `syn::visit::visit_file` never
+enters a `Macro` expression/item node. The hook splices each invocation's
+expansion into the file's own text and re-runs the call walker on it, mapping
+gained spans back to the invocation that minted them.
+
+### Corpus cleanup
+
+The `~/projects/rust-analyzer` clone (still commit `af4111f`) carried 943
+`*.rs.expanded.rs` files left over by the ORIGINAL lab's corpus battery
+(`labs/macro_expand/src/main.rs`'s `corpus` mode writes one such file per
+invocation next to its source). That inflated `find crates -name '*.rs' |
+grep '/src/'` from 873 to 1,816 files. Removed with `git clean -fdx --
+'*.rs.expanded.rs'` (dry-run checked first: exactly 943 matches, nothing
+else); corpus back to the PLAN.md bucket, 873 files.
+
+### Bucket note
+
+PLAN.md's own bucket (`crates/*/src/**`, 873 files) is NOT the 941-file
+bucket sections 2-5 above used; comparing counts across the two would be the
+same bucket-mismatch PLAN.md itself flagged for the 17,184/941 figures. Every
+number below re-measures BOTH sides (with the mbe hook, without it) on the
+SAME 873-file bucket, same binary otherwise (worktree at commit `8cf73229e`,
+the two commits before the hook landed).
+
+### Call sites, whole 873-file bucket
+
+| | sites | rc != 0 |
+|---|---:|---:|
+| without the hook | 133,102 | 0 |
+| with the hook | 141,520 | 0 |
+| gain | +8,418 (+6.3%) | |
+
+`plans/extract-macro-lab-2026-08-29/mbe.battery.py` regenerates this: one
+`extract --family call FILE` per file, `timeout 10`, 8 workers.
+
+### Spot check against the lab's named kink-2 files
+
+PLAN.md cites four files as the whole gain; re-measured here per file
+(`extract --family call FILE`, site-row count):
+
+| file | lab's stated gain | measured gain (this PR) |
+|---|---:|---:|
+| `crates/intern/src/symbol/symbols.rs` | +5,391 | +5,383 |
+| `crates/hir-def/src/lang_item.rs` | +992 | +992 |
+| `crates/hir-expand/src/inert_attr_macro.rs` | +416 | +416 |
+| `crates/rust-analyzer/src/config.rs` | +226 | +226 |
+
+Three of four match exactly; `symbols.rs` is within 8 sites (the lab's
+own single-pass `corpus` CLI mode expanded each file once, this hook runs the
+full 8-pass fixpoint, so a file with macro-inside-macro nesting can gain a
+few more sites here than the lab's one-shot number). Summing just these four
+files (7,017-7,025) already exceeds PLAN.md's own corpus-wide total of
++4,843 sites gained across "33 gain files" — an inconsistency in PLAN.md's
+own summary row, not introduced by this hook; the per-file numbers this PR
+re-measured are the ones that reproduce.
+
+### Entrypoint crawl, same 873-file bucket both sides
+
+`resolve_edges.jsonl`/`defs.jsonl` regenerated per crate
+(`extract --resolve --family call`, 35 crates, `timeout 10` each, 0
+`rc != 0` either side), fed to `rust.crawl.py`:
+
+| | defs_total | edges_total | union_reachable |
+|---|---:|---:|---:|
+| without the hook | 18,685 | 57,377 | 11,787 |
+| with the hook | 19,249 | 60,948 | 11,792 |
+| gain | +564 | +3,571 | +5 |
+
+Closing kink 2 raises the def/edge counts substantially but moves the
+entrypoint-reachable union by only 5 defs: most call sites gained inside a
+macro expansion name a callee ALREADY reachable some other way (the macro
+body calls a helper the surrounding module already calls directly elsewhere).
+`12,221`/`12,142` from sections 11-12 are the 941-file bucket and are not
+comparable to either row above.
+
+### macro_site receipt
+
+`plans/extract-macro-lab-2026-08-29/mbe.macro_sites.tsv`: one row per
+distinct invocation actually spliced (`path`, `start`, `end`, `macro_name`,
+original-file byte offsets), 1,057 rows across 51 of the 873 files. No
+`CallFAux` wire field carries this (types.rs ownership stays with whichever
+lane needs it first; the coordinator's addendum routes the macro-origin fact
+through this TSV instead, so a parallel `scip.macro_sites.tsv` from the
+`feature-extract-rust-scip-macros` lane diffs against it by span).
+
+### Budget cap
+
+2 of 871 files the `#[ignore]`d `corpus_wall_time_and_macro_sites_tsv` test
+walked hit `budget_hit`:
+`crates/ide-completion/src/completions/attribute.rs` and
+`crates/intern/src/symbol/symbols.rs`. The second is the file with the
+5,383-site gain above: its expansion is a PARTIAL fixpoint (8 passes still
+found a pending invocation), so that gain is a lower bound, not the settled
+count. `f9_recursive.rs` pins the cap's own behavior in `tests/58_rust_mbe.rs`.
+
+### Tests
+
+`tests/58_rust_mbe.rs`: 9 tests (module-level `expand_file` behavior, the
+end-to-end `RustSource::extract` hook, the pass-budget trip, the corpus
+wall-time/TSV walk), all green. Whole-crate
+`cargo test --features cli --no-fail-fast` in background; see PR body for
+the SUM.

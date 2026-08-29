@@ -112,3 +112,75 @@ fn recursive_macro_hits_the_pass_budget() {
     let expanded = expand_file(&src).expect("spin! is local");
     assert!(expanded.budget_hit);
 }
+
+fn rs_files_under(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            rs_files_under(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// COUNT: `expand_file` is one `ra_ap_syntax` parse per file (plus a second
+/// parse per pass that still finds an invocation); ignored by default since it
+/// needs a local rust-analyzer checkout. Also the mbe.macro_sites.tsv receipt
+/// for `plans/extract-crawl-2026-08-29/rust.REPORT.md` section 14.
+#[test]
+#[ignore]
+fn corpus_wall_time_and_macro_sites_tsv() {
+    let corpus = std::path::Path::new("/Users/chrishafley/projects/rust-analyzer/crates");
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(corpus).expect("rust-analyzer checkout at this path") {
+        let crate_dir = entry.unwrap().path().join("src");
+        rs_files_under(&crate_dir, &mut files);
+    }
+    files.sort();
+
+    let t0 = std::time::Instant::now();
+    let mut tsv = String::from("path\tstart\tend\tmacro_name\n");
+    let mut files_with_macros = 0usize;
+    let mut budget_hits = 0usize;
+    for path in &files {
+        let content = std::fs::read_to_string(path).unwrap();
+        let Some(expanded) = expand_file(&content) else {
+            continue;
+        };
+        files_with_macros += 1;
+        if expanded.budget_hit {
+            budget_hits += 1;
+            eprintln!("budget_hit: {}", path.display());
+        }
+        let rel = path.strip_prefix("/Users/chrishafley/projects/rust-analyzer/").unwrap();
+        for (span, name) in expanded.macro_sites() {
+            tsv.push_str(&format!(
+                "{}\t{}\t{}\t{}\n",
+                rel.display(),
+                span.start,
+                span.end(),
+                name
+            ));
+        }
+    }
+    let wall = t0.elapsed();
+
+    std::fs::write(
+        "../../plans/extract-macro-lab-2026-08-29/mbe.macro_sites.tsv",
+        &tsv,
+    )
+    .expect("plans dir is writable from the crate root");
+
+    eprintln!(
+        "files={} with_macros={} budget_hits={} wall_ms={}",
+        files.len(),
+        files_with_macros,
+        budget_hits,
+        wall.as_millis()
+    );
+    assert!(wall.as_secs() < 2, "wall {wall:?} exceeds the 2s COUNT budget");
+}
