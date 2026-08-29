@@ -1,7 +1,9 @@
 :- begin_tests(dl7_entrypoints).
 
+:- use_module(library(aggregate), [aggregate_all/3]).
 :- use_module(library(process), [process_create/3, process_wait/2]).
 :- use_module('../src/0_reader/3_file_loader', [load_dl7/3]).
+:- use_module('../src/2_comptime/1_type_compiler', [compile_dl7/4]).
 :- use_module('fixtures/1_embedded', []).
 
 test(file_and_bare_quasi_share_reader_and_expansion_pipeline) :-
@@ -37,6 +39,92 @@ test(driver_is_canonical_on_two_consecutive_runs) :-
                              Stderr1, Stderr2),
     Observed == driver_result(exit(0), exit(0), true,
                               true, true, "", "").
+
+test(userland_partial_maps_type_edges_deterministically) :-
+    compile_dl7('v7/test/fixtures/2_partial.dl7',
+                Rows1, Runtime1, Diagnostics1),
+    compile_dl7('v7/test/fixtures/2_partial.dl7',
+                Rows2, Runtime2, Diagnostics2),
+    once(partial_snapshot(Rows1, Snapshot)),
+    runtime_snapshot(Runtime1, RuntimeSnapshot),
+    evaluator_snapshot(EvaluatorSnapshot),
+    equality(Rows1, Rows2, RowsEqual),
+    equality(Runtime1, Runtime2, RuntimeEqual),
+    length(Rows1, CompilerRowCount),
+    Observed = partial_result(Diagnostics1, Diagnostics2,
+                              CompilerRowCount, Snapshot,
+                              RuntimeSnapshot, EvaluatorSnapshot,
+                              RowsEqual, RuntimeEqual),
+    Observed == partial_result(
+                    [], [], 59,
+                    partial(user,
+                            [mapped(id, option(int), 0),
+                             mapped(name, option(text), 1)]),
+                    runtime(counts(28, 25, 11, 1, 5, 10, 11),
+                            normalized(true)),
+                    evaluator(temporary_rules(0), temporary_seeds(0)),
+                    true, true),
+    !.
+
+partial_snapshot(Rows, Snapshot) :-
+    member(call(ref(kernel(':')),
+                [ref(Module), const('User'), ref(User), const(_)]), Rows),
+    member(call(ref(kernel(':')),
+                [ref(Module), const('Partial'), ref(PartialConstructor),
+                 const(_)]), Rows),
+    member(call(ref(kernel(':')),
+                [ref(Module), const('Option'), ref(OptionConstructor),
+                 const(_)]), Rows),
+    Partial = application(PartialConstructor, [User]),
+    member(call(ref(kernel(node)), [ref(Partial)]), Rows),
+    member(call(ref(kernel(product)), [ref(Partial)]), Rows),
+    member(call(ref(kernel(':')),
+                [ref(Partial), const(id),
+                 ref(application(OptionConstructor, [primitive(int)])),
+                 const(0)]), Rows),
+    member(call(ref(kernel(':')),
+                [ref(Partial), const(name),
+                 ref(application(OptionConstructor, [primitive(text)])),
+                 const(1)]), Rows),
+    Snapshot = partial(user,
+                       [mapped(id, option(int), 0),
+                        mapped(name, option(text), 1)]).
+
+runtime_snapshot(
+    checked_datalog(root_graph(Nodes, Edges),
+                    datalog_program(Relations, Seeds, Rules),
+                    Depends, Strata),
+    runtime(counts(NodeCount, EdgeCount, RelationCount, SeedCount,
+                   RuleCount, DependsCount, StrataCount),
+            normalized(Normalized))) :-
+    maplist(length,
+            [Nodes, Edges, Relations, Seeds, Rules, Depends, Strata],
+            [NodeCount, EdgeCount, RelationCount, SeedCount,
+             RuleCount, DependsCount, StrataCount]),
+    (   normalized_program(Relations, Seeds, Rules, Depends, Strata)
+    ->  Normalized = true
+    ;   Normalized = false
+    ).
+
+normalized_program(Relations, Seeds, Rules, Depends, Strata) :-
+    maplist(normalized_relation, Relations),
+    maplist(normalized_call, Seeds),
+    maplist(normalized_rule, Rules),
+    maplist(normalized_depends, Depends),
+    maplist(normalized_stratum, Strata).
+
+normalized_relation(relation(ref(_), Arity)) :- integer(Arity).
+normalized_call(call(ref(_), Arguments)) :- is_list(Arguments).
+normalized_rule(rule(Head, Body)) :-
+    normalized_call(Head),
+    maplist(normalized_call, Body).
+normalized_depends(depends(ref(_), ref(_), positive)).
+normalized_stratum(stratum(ref(_), 0)).
+
+evaluator_snapshot(
+    evaluator(temporary_rules(RuleFacts), temporary_seeds(SeedFacts))) :-
+    aggregate_all(count, dl7_evaluator:evaluation_rule(_, _), RuleFacts),
+    aggregate_all(count, dl7_evaluator:evaluation_seed(_, _), SeedFacts).
 
 origin_kinds(file(_),
              embedded(_, position(_, _, _)),

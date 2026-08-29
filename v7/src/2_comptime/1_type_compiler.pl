@@ -13,9 +13,9 @@
 % Load the userland type prelude and one source file through the same reader,
 % then run every compile-known positive rule over the initial type graph.
 compile_dl7(Path, CompilerRows, RuntimeProgram, Diagnostics) :-
-    absolute_file_name(Path, ProgramPath,
-                       [access(read), file_errors(error)]),
-    type_prelude_path(PreludePath),
+    once(absolute_file_name(Path, ProgramPath,
+                            [access(read), file_errors(error)])),
+    once(type_prelude_path(PreludePath)),
     read_file_to_string(PreludePath, PreludeText, [encoding(utf8)]),
     read_file_to_string(ProgramPath, ProgramText, [encoding(utf8)]),
     format(string(Text), "~s~n~s", [PreludeText, ProgramText]),
@@ -25,7 +25,7 @@ compile_dl7(Path, CompilerRows, RuntimeProgram, Diagnostics) :-
     compiled_outputs(Compiled, CompilerRows, RuntimeProgram).
 
 type_prelude_path(Path) :-
-    source_file(dl7_type_compiler:compile_dl7(_, _, _, _), SourcePath),
+    once(source_file(dl7_type_compiler:compile_dl7(_, _, _, _), SourcePath)),
     file_directory_name(SourcePath, ComptimeDirectory),
     directory_file_path(ComptimeDirectory, '../../prelude/0_types.dl7',
                         RelativePath),

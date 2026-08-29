@@ -285,3 +285,12 @@ receipt([],[],59,partial(user,[mapped(id,option(int)),mapped(name,option(text))]
 The receipt checks both generated edges, canonical application identities,
 ordinary node and product facts, and byte-equal terms from two compilations in
 one SWI process.
+
+## Consolidated vertical oracle
+
+- Extended `v7/test/1_entrypoints.test.pl` with one Partial vertical test.
+- Its one expected term covers 59 compiler rows, both mapped edges, node and
+  product classification, runtime counts `28/25/11/1/5/10/11`, normalized
+  checked call shapes, zero remaining evaluator clauses, and identical repeated
+  compilation.
+- Focused V7 command: 7 passed, 0 failed, 0 choicepoint warnings.

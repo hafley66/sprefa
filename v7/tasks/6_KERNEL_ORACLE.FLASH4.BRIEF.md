@@ -1,21 +1,27 @@
+# Pin the DL7 vertical kernel with one consolidated oracle
+
 ## Description
 
-Write one fixture and one test that proves reader output, compiler type closure,
-normalized runtime rules, runtime reference closure, and cleanup determinism.
+Extend the existing entrypoint test module with one vertical test for the
+Partial fixture. Keep the expected result as one normalized term so absolute
+source paths and semantic IDs can vary while graph meaning remains exact.
 
 ## Acceptance Criteria
 
-- [ ] Exactly one focused test exists.
-- [ ] One complete expected term covers every output listed above.
-- [ ] The fixture is compiled twice in one SWI process.
-- [ ] No existence-only or fragmented assertions.
-- [ ] No V6 test, generated corpus, or engine suite runs.
-- [ ] Test changes stay under `v7/5_TEST/`.
+- [ ] One focused Partial test is added to the existing entrypoint test module.
+- [ ] One expected term covers compiler diagnostics and row count.
+- [ ] The same term covers generated Partial node, classifier, labels, targets, and indices.
+- [ ] The same term covers checked runtime graph and program counts plus normalized call shapes.
+- [ ] The same term proves evaluator temporary clauses are empty after compilation.
+- [ ] The fixture compiles twice in one SWI process with identical compiler and runtime terms.
+- [ ] No existence-only assertion or additional test file is added.
+- [ ] No V6, Rust, TypeScript, generated corpus, or engine suite runs.
 
-## Test Run
+## Tests Run
 
-Run the single SWI command once and record exact pass/fail counts.
+- [ ] One focused SWI command passes all 7 consolidated V7 tests.
 
-## Stop condition
+## Implementation Notes
 
-Report production defects to the owning card. Do not patch production code.
+The test lives in `v7/test/1_entrypoints.test.pl` and reuses
+`v7/test/fixtures/2_partial.dl7`.

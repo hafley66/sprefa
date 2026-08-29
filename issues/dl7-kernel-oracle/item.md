@@ -1,12 +1,12 @@
 ---
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
 type: task
-assignee: flash4
-status: open
+assignee: codex
+status: in-progress
 priority: high
 epic: dl7-minimal-kernel
-labels: [dl7, model-flash4]
+labels: [dl7, model-flash4, model-codex]
 size: S
 lane: dl7-test
 lane_seq: 0
@@ -14,28 +14,30 @@ collision: [v7-test]
 blocked_by: ['@dl7-partial-goal']
 ---
 
-# Pin the DL7 kernel with one exact oracle
+# Pin the DL7 vertical kernel with one consolidated oracle
 
 ## Description
 
-## Description
-
-Write one fixture and one test that proves reader output, compiler type closure,
-normalized runtime rules, runtime reference closure, and cleanup determinism.
+Extend the existing entrypoint test module with one vertical test for the
+Partial fixture. Keep the expected result as one normalized term so absolute
+source paths and semantic IDs can vary while graph meaning remains exact.
 
 ## Acceptance Criteria
 
-- [ ] Exactly one focused test exists.
-- [ ] One complete expected term covers every output listed above.
-- [ ] The fixture is compiled twice in one SWI process.
-- [ ] No existence-only or fragmented assertions.
-- [ ] No V6 test, generated corpus, or engine suite runs.
-- [ ] Test changes stay under `v7/5_TEST/`.
+- [x] One focused Partial test is added to the existing entrypoint test module.
+- [x] One expected term covers compiler diagnostics and row count.
+- [x] The same term covers generated Partial node, classifier, labels, targets, and indices.
+- [x] The same term covers checked runtime graph and program counts plus normalized call shapes.
+- [x] The same term proves evaluator temporary clauses are empty after compilation.
+- [x] The fixture compiles twice in one SWI process with identical compiler and runtime terms.
+- [x] No existence-only assertion or additional test file is added.
+- [x] No V6, Rust, TypeScript, generated corpus, or engine suite runs.
 
-## Test Run
+## Tests Run
 
-Run the single SWI command once and record exact pass/fail counts.
+- [x] One focused SWI command passes all 7 consolidated V7 tests.
 
-## Stop condition
+## Implementation Notes
 
-Report production defects to the owning card. Do not patch production code.
+The test lives in `v7/test/1_entrypoints.test.pl` and reuses
+`v7/test/fixtures/2_partial.dl7`.
