@@ -3400,7 +3400,7 @@ impl Resolve<TypeF> for TsSource {
 /// This file's supplied path, learned the way `own_blob` learns its blob: the
 /// resolve seam carries neither, and the `PathIndex` is the join.
 fn own_path<'a>(output: &ExtractOutput, cx: &'a ProjectCx) -> Option<&'a str> {
-    let blob = own_blob(output, cx.indexes.def_index.get()?)?;
+    let blob = own_blob(cx, output)?;
     cx.indexes.paths.get()?.get(&blob)
 }
 
@@ -3740,7 +3740,7 @@ impl Resolve<CallF> for TsSource {
                     .indexes
                     .joined_documents
                     .get_or_init(|| join_documents(index, reader));
-                let blob = own_blob(output, def_index)?;
+                let blob = own_blob(cx, output)?;
                 let doc_ix = joined
                     .iter()
                     .position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;

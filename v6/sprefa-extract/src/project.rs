@@ -209,6 +209,7 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         reader: scip_index.is_some().then_some(&reader),
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
+        own: std::cell::RefCell::new(None),
     };
     cx.indexes
         .def_index
@@ -272,6 +273,11 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
             inputs
                 .iter()
                 .map(|input| {
+                    // The per-file identity the resolve seam carries: each
+                    // arm reads its own blob off `cx.own` instead of guessing
+                    // it from span matches (a wrong guess when two files
+                    // share a named span).
+                    cx.own.replace(Some(input.blob.clone()));
                     (
                         input.blob.clone(),
                         resolve_call_edges(&input.path, &input.output, &cx),
@@ -286,17 +292,20 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
     let mut facts = Vec::new();
     if request.arms.call {
         for (input, (_, edges)) in inputs.iter().zip(resolved_calls.iter()) {
+            cx.own.replace(Some(input.blob.clone()));
             facts.extend(call_facts(input, &targets, edges));
             facts.extend(call_drop_facts(input, &cx, edges));
         }
     }
     if request.arms.call || request.arms.types {
         for input in &inputs {
+            cx.own.replace(Some(input.blob.clone()));
             facts.extend(import_facts(input, &cx));
         }
     }
     for input in &inputs {
         if request.arms.types {
+            cx.own.replace(Some(input.blob.clone()));
             facts.extend(type_facts(input, &targets, &cx));
         }
     }

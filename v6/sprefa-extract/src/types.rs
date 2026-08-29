@@ -1502,6 +1502,10 @@ pub struct ProjectCx<'a> {
     /// GoIndex). Opaque here; each language module owns its concrete index type
     /// behind a OnceLock. Spec: `_2_traits.rs`:46-51 (field) + :59-61 (IndexBag).
     pub indexes: IndexBag,
+    /// The blob of the output currently being resolved, set by `resolve_project`
+    /// before each per-file resolve. `None` in hand-built contexts (unit tests),
+    /// where `own_blob` falls back to the deterministic span-count rule.
+    pub own: std::cell::RefCell<Option<ContentId>>,
 }
 
 /// The file set: project-relative paths that exist at this rev. Hollow in 4a
@@ -1713,13 +1717,19 @@ pub fn corpus_defs<'a>(index: &'a DefIndex, name: &str) -> &'a [DefSite] {
     index.map.get(name).map(Vec::as_slice).unwrap_or(&[])
 }
 
-/// Which blob produced `output`: the 4b-iii self-blob trick generalized. A
-/// named def node in THIS output (CallF def or TypeF entity) joined against
-/// its own `DefSite` gives the file's content key — the arm learns its own
-/// blob with NO path and NO bytes (the resolve seam carries neither). None
-/// when the output has no named def (a file with nothing to resolve FROM) or
-/// the output was not in the index's corpus.
-pub fn own_blob(output: &ExtractOutput, index: &DefIndex) -> Option<ContentId> {
+/// Which blob produced `output`. When `cx.own` is set (the `resolve_project`
+/// path) it IS the answer: the caller knows which output it handed in, and any
+/// span search is a guess. The fallback (hand-built contexts) counts, per
+/// blob, how many of the output's named spans match a `DefSite` in the index
+/// and returns the single highest-count blob; a tie means the index cannot
+/// distinguish the files, so None. Blobs are scored in sorted `ContentId`
+/// order so the fallback stays stable under any later tie-break. One pass
+/// over the index, never one pass per named span.
+pub fn own_blob(cx: &ProjectCx, output: &ExtractOutput) -> Option<ContentId> {
+    if let Some(own) = cx.own.borrow().clone() {
+        return Some(own);
+    }
+    let index = cx.indexes.def_index.get()?;
     let mut named_spans: Vec<Span> = Vec::new();
     if let Some(call) = &output.call {
         named_spans.extend(
@@ -1740,12 +1750,26 @@ pub fn own_blob(output: &ExtractOutput, index: &DefIndex) -> Option<ContentId> {
     }
     named_spans.sort();
     named_spans.dedup();
-    for span in named_spans {
-        if let Some(site) = index.map.values().flatten().find(|site| site.span == span) {
-            return Some(site.blob.clone());
+    let mut counts: Vec<(ContentId, usize)> = Vec::new();
+    for sites in index.map.values() {
+        for site in sites {
+            if named_spans.binary_search(&site.span).is_ok() {
+                match counts.iter_mut().find(|(blob, _)| *blob == site.blob) {
+                    Some((_, count)) => *count += 1,
+                    None => counts.push((site.blob.clone(), 1)),
+                }
+            }
         }
     }
-    None
+    if counts.len() < 2 {
+        return counts.into_iter().next().map(|(blob, _)| blob);
+    }
+    counts.sort_by(|a, b| (b.1, &a.0).cmp(&(a.1, &b.0)));
+    let (top_blob, top_count) = &counts[0];
+    if counts[1].1 == *top_count {
+        return None;
+    }
+    Some(top_blob.clone())
 }
 
 /// The corpus def site in `blob` whose node span CONTAINS `span` (the scip
