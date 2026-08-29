@@ -894,6 +894,26 @@ impl Resolve<TypeF> for RustSource {
 // A site outside every CallF def (module level) emits no row.
 // ════════════════════════════════════════════════════════════════════════════
 
+/// The SAME-FILE def named `callee`, extracted so `rust_modules.rs` can run it
+/// before an import-binding leg: a local def shadows an import.
+fn same_file_call_match(
+    output: &ExtractOutput,
+    index: &DefIndex,
+    own: Option<&ContentId>,
+    callee: &str,
+) -> Option<(ContentId, Span)> {
+    let call = output.call.as_ref()?;
+    let r = def_named(call, &output.strings, callee)?;
+    let span = call.node(r).span;
+    // The span join must land on THIS file's DefSite: a byte-identical
+    // (name, span) def can exist in two files.
+    let blob = own?;
+    corpus_defs(index, callee)
+        .iter()
+        .find(|site| site.span == span && &site.blob == blob)
+        .map(|site| (site.blob.clone(), site.span))
+}
+
 impl RustSource {
     /// The name-match target of one callee (the NameResolve leg). Pub so the
     /// scip ratchet re-runs it to classify overrides — same discipline as
@@ -916,22 +936,8 @@ impl RustSource {
         own: Option<&ContentId>,
         callee: &str,
     ) -> Option<(ContentId, Span)> {
-        let call = output.call.as_ref()?;
-        if let Some(r) = def_named(call, &output.strings, callee) {
-            let span = call.node(r).span;
-            // The span join must land on THIS file's DefSite: two corpus files
-            // can carry a byte-identical (name, span) def (the same helper at
-            // the top of both), so the candidate blob has to cover the whole
-            // named-def span set of this file, the first span alone is not a
-            // file identity.
-            if let Some(blob) = own {
-                if let Some(site) = corpus_defs(index, callee)
-                    .iter()
-                    .find(|site| site.span == span && &site.blob == blob)
-                {
-                    return Some((site.blob.clone(), site.span));
-                }
-            }
+        if let Some(found) = same_file_call_match(output, index, own, callee) {
+            return Some(found);
         }
         let sites = corpus_defs(index, callee);
         let mut blobs: Vec<ContentId> = Vec::new();
@@ -1006,7 +1012,7 @@ fn module_qualifier(callee_path: &str) -> Option<Vec<&str>> {
 
 /// The module path a file spells: minus `.rs`, `src` dropped, `mod`/`lib`/`main`
 /// collapsing to the directory, `-` read as `_` (`crates/ide-db` is `ide_db`).
-fn module_segments(path: &str) -> Vec<String> {
+pub(crate) fn module_segments(path: &str) -> Vec<String> {
     let stem = path.strip_suffix(".rs").unwrap_or(path);
     let mut segments: Vec<String> = stem
         .split('/')
@@ -1024,13 +1030,13 @@ fn module_segments(path: &str) -> Vec<String> {
 
 /// What a resolved qualifier demands of a candidate file: a module-path suffix,
 /// and under `crate::` the caller's own crate directory as a path prefix.
-struct ModuleTarget {
-    suffix: Vec<String>,
-    crate_root: Option<String>,
+pub(crate) struct ModuleTarget {
+    pub(crate) suffix: Vec<String>,
+    pub(crate) crate_root: Option<String>,
 }
 
 impl ModuleTarget {
-    fn covers(&self, candidate: &[String]) -> bool {
+    pub(crate) fn covers(&self, candidate: &[String]) -> bool {
         if let Some(root) = &self.crate_root {
             if !candidate.starts_with(&module_segments(root)) {
                 return false;
@@ -1042,7 +1048,7 @@ impl ModuleTarget {
 
 /// `qualifier` read from `from`'s position: `crate` restarts at the crate root,
 /// `self` extends the caller's module, `super` pops one, else absolute suffix.
-fn module_target(from: &str, qualifier: &[&str]) -> Option<ModuleTarget> {
+pub(crate) fn module_target(from: &str, qualifier: &[&str]) -> Option<ModuleTarget> {
     let own = module_segments(from);
     let normalize = |rest: &[&str]| -> Vec<String> {
         rest.iter()
@@ -1082,7 +1088,7 @@ fn module_target(from: &str, qualifier: &[&str]) -> Option<ModuleTarget> {
 
 /// The crate directory holding `path`: the prefix ending at the segment before
 /// the first `src`. None where the file sits outside a Cargo layout.
-fn crate_root_of(path: &str) -> Option<String> {
+pub(crate) fn crate_root_of(path: &str) -> Option<String> {
     let (root, _) = path.split_once("/src/")?;
     Some(root.to_string())
 }
