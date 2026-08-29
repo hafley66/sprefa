@@ -3,7 +3,7 @@ created: 2026-08-28
 updated: 2026-08-29
 type: task
 assignee: codex
-status: in-progress
+status: done
 priority: high
 epic: dl7-minimal-kernel
 labels: [dl7, model-sol, model-codex]
@@ -12,6 +12,10 @@ lane: dl7-evaluator
 lane_seq: 0
 collision: [v7-evaluator, v7-libtime]
 blocked_by: ['@dl7-datalog-checks']
+closed: 2026-08-29
+commits:
+- hash: c8ea96c78
+  summary: run positive closure through libtime
 ---
 
 # Execute checked positive Datalog through one shared SWI fixpoint
@@ -80,3 +84,9 @@ functional-key policy, and outer request loops stay outside this task.
 The checked caller contract is produced by
 `v7/src/2_comptime/0_compiler.pl`. `v7/src/1_libtime` contains algorithms
 shared by comptime and runtime; it contains no phase policy.
+
+## Resolution
+
+### 2026-08-29T04:02:28Z · @issuectl
+
+The phase-independent SWI evaluator satisfies all eight acceptance checks and the direct recursive cleanup receipt.
