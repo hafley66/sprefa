@@ -414,3 +414,18 @@ one SWI process.
 - The normalized compiler-row stream before and after this checkpoint has the
   same SHA-256 after replacing the worktree path:
   `02de0eea2a3809397244eb10e05b621c72c067a03e44e0abe3fe723978b6a499`.
+
+## Bounded relational cons
+
+- `cons/3` dispatches by the grounded determining side. A ground `List`
+  deconstructs; otherwise a ground `Head` and `Tail` construct.
+- Singleton deconstruction returns `const(symbol(nil))`. Longer proper lists
+  return their nonempty proper suffix as `const(Tail)`.
+- `const([])` and improper lists have no `cons/3` tuple.
+- The consolidated oracle constructs singleton and two-element lists, walks a
+  three-element value through every suffix and the nil tail, rejects empty and
+  improper inputs, checks the source-positioned underconstraint diagnostic,
+  and observes zero temporary evaluator clauses after completion.
+- Implementation commit: `8ffe6ae51`.
+- Consolidated SWI command: 11 passed, 0 failed, 0 choicepoint warnings.
+- Tree-sitter command: 1 parse passed, 0 failed.

@@ -3,7 +3,7 @@ created: 2026-08-29
 updated: 2026-08-29
 type: task
 assignee: luna
-status: in-progress
+status: done
 priority: high
 epic: dl7-datalog-extensions
 labels: [dl7, model-luna]
@@ -12,6 +12,11 @@ lane_seq: 2
 collision: [v7-libtime, v7-test, v7-datalog-check]
 size: S
 blocked_by: ['@dl7-compiler-split', '@dl7-checked-foundation']
+closed: 2026-08-29
+closed_by: codex
+commits:
+- hash: 8ffe6ae51
+  summary: Make kernel cons reversible in bounded modes
 ---
 
 # Make DL7 cons relational in bounded modes
@@ -38,22 +43,28 @@ List values remain const([...]). Construction is functional on (Head, Tail). Des
 
 ## Acceptance Criteria
 
-- [ ] Existing singleton and longer-list construction terms remain exactly
+- [x] Existing singleton and longer-list construction terms remain exactly
   equal under `==`.
-- [ ] Ground nonempty lists deconstruct deterministically.
-- [ ] Empty-list and improper-list behavior match the selected ruling in
+- [x] Ground nonempty lists deconstruct deterministically.
+- [x] Empty-list and improper-list behavior match the selected ruling in
   `@dl7-datalog-rulings`.
-- [ ] Underconstrained source calls produce one named checker diagnostic with
+- [x] Underconstrained source calls produce one named checker diagnostic with
   source origin before evaluator state is installed.
-- [ ] Finite proper-list traversal reaches the nil tail without inventing a
+- [x] Finite proper-list traversal reaches the nil tail without inventing a
   stored list identity.
-- [ ] No Pick or Exclude name appears in Prolog.
+- [x] No Pick or Exclude name appears in Prolog.
 
 ## Tests Run
 
-- [ ] Existing consolidated V7 SWI suite with one added oracle arm and no new test file.
+- [x] Existing consolidated V7 SWI suite with one added oracle arm and no new test file.
 
 ## Implementation Notes
 
 This task follows `@dl7-checked-foundation` and the exact evaluator contract in
 `v7/design/3_DATALOG_EXTENSIONS.REVIEW.md`.
+
+## Resolution
+
+### 2026-08-29T22:21:13Z · @codex
+
+Bounded cons construction and deconstruction, finite suffix traversal, empty and improper refusal, source-positioned mode diagnostics, and evaluator cleanup are covered. Focused SWI suite: 11/11. Tree-sitter: 1/1.
