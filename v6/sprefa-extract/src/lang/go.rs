@@ -2388,10 +2388,8 @@ impl Resolve<TypeF> for GoSource {
         let index = cx.indexes.def_index.get();
         let modules = cx.indexes.go_modules.get();
         let paths = cx.indexes.paths.get();
-        let own_path = index
-            .and_then(|index| own_blob(output, index))
-            .zip(paths)
-            .and_then(|(blob, paths)| paths.get(&blob));
+        let own_path =
+            own_blob(cx, output).zip(paths).and_then(|(blob, paths)| paths.get(&blob));
         let mut edges = Vec::new();
         for candidate in GoSource::type_edge_candidates(output) {
             // src: the TypeF entity at the owner span. Exists by construction
@@ -2993,10 +2991,9 @@ pub fn call_drops(
             })
         })
         .collect();
-    if let (Some(modules), Some(def_index)) = (cx.indexes.go_modules.get(), cx.indexes.def_index.get()) {
-        let own_path = own_blob(output, def_index)
-            .zip(cx.indexes.paths.get())
-            .and_then(|(blob, paths)| paths.get(&blob));
+    if let Some(modules) = cx.indexes.go_modules.get() {
+        let own_path =
+            own_blob(cx, output).zip(cx.indexes.paths.get()).and_then(|(blob, paths)| paths.get(&blob));
         if let Some(path) = own_path {
             drops.extend(modules.external_drops(path).into_iter().map(|(span, import_path)| {
                 ResolveDrop {
