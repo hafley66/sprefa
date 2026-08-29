@@ -903,13 +903,19 @@ impl RustSource {
         index: &DefIndex,
         callee: &str,
     ) -> Option<(ContentId, Span)> {
+        let own = own_file_blob(output, index);
+        Self::call_name_match_in(output, index, own.as_ref(), callee)
+    }
+
+    /// `call_name_match` with the file's own blob already in hand: the blob is
+    /// a per-FILE fact, and finding it costs a corpus-index join per call.
+    pub fn call_name_match_in(
+        output: &ExtractOutput,
+        index: &DefIndex,
+        own: Option<&ContentId>,
+        callee: &str,
+    ) -> Option<(ContentId, Span)> {
         let call = output.call.as_ref()?;
-        let own_spans: Vec<Span> = call
-            .nodes
-            .iter()
-            .filter(|n| n.name.is_some())
-            .map(|n| n.span)
-            .collect();
         if let Some(r) = def_named(call, &output.strings, callee) {
             let span = call.node(r).span;
             // The span join must land on THIS file's DefSite: two corpus files
@@ -917,10 +923,10 @@ impl RustSource {
             // the top of both), so the candidate blob has to cover the whole
             // named-def span set of this file, the first span alone is not a
             // file identity.
-            if let Some(blob) = own_file_blob(index, &own_spans) {
+            if let Some(blob) = own {
                 if let Some(site) = corpus_defs(index, callee)
                     .iter()
-                    .find(|site| site.span == span && site.blob == blob)
+                    .find(|site| site.span == span && &site.blob == blob)
                 {
                     return Some((site.blob.clone(), site.span));
                 }
@@ -944,26 +950,54 @@ impl RustSource {
     }
 }
 
-/// The corpus blob whose named-def span set covers every span in `spans`
-/// (the file-fingerprint join behind `call_name_match`'s same-file leg). A
-/// single span is not a file identity: two files can hold an identical def
-/// at the same offset. Returns None when no single blob covers the set.
-fn own_file_blob(index: &DefIndex, spans: &[Span]) -> Option<ContentId> {
-    let first = *spans.first()?;
+/// One corpus `DefSite` examined while learning a file's own blob. The term
+/// that was quadratic while the join ran once per call site.
+static OWN_BLOB_PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn own_blob_probes() -> u64 {
+    OWN_BLOB_PROBES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn probe<T>(value: T) -> T {
+    OWN_BLOB_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    value
+}
+
+/// The corpus blob covering every named CallF def of `output`. One def is not
+/// a file identity: two files can hold an identical def at the same offset.
+fn own_file_blob(output: &ExtractOutput, index: &DefIndex) -> Option<ContentId> {
+    let call = output.call.as_ref()?;
+    let own: Vec<(&str, Span)> = call
+        .nodes
+        .iter()
+        .filter_map(|node| Some((output.strings.lookup(node.name?), node.span)))
+        .collect();
+    // Seeded on the RAREST name: a corpus-wide name like `new` puts every file
+    // in the candidate set, and each candidate costs a full cover check.
+    let (seed_name, seed_span) = *own
+        .iter()
+        .min_by_key(|(name, _)| corpus_defs(index, name).len())?;
+    let seeds = || {
+        corpus_defs(index, seed_name)
+            .iter()
+            .filter(|site| probe(site.span == seed_span))
+    };
+    let mut hits = seeds();
+    let first = hits.next()?;
+    if hits.next().is_none() {
+        return Some(first.blob.clone());
+    }
+    // Two files carry this (name, span): only the whole named-def set tells
+    // them apart.
     let covers = |blob: &ContentId| {
-        spans.iter().all(|sp| {
-            index
-                .map
-                .values()
-                .flatten()
-                .any(|s| &s.blob == blob && s.span == *sp)
+        own.iter().all(|(name, span)| {
+            corpus_defs(index, name)
+                .iter()
+                .any(|site| probe(&site.blob == blob && site.span == *span))
         })
     };
-    index
-        .map
-        .values()
-        .flatten()
-        .find(|site| site.span == first && covers(&site.blob))
+    seeds()
+        .find(|site| covers(&site.blob))
         .map(|site| site.blob.clone())
 }
 
@@ -1023,6 +1057,8 @@ impl Resolve<CallF> for RustSource {
                     .position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
                 Some((index, joined, doc_ix))
             });
+        // Per FILE, never per site: the join is over the whole corpus index.
+        let own = own_file_blob(output, def_index);
         let mut edges = Vec::new();
         for site in &call.aux.sites {
             // The caller is the innermost covering CallF def (the 4a
@@ -1032,7 +1068,7 @@ impl Resolve<CallF> for RustSource {
                 continue;
             };
             let callee = output.strings.lookup(site.callee);
-            let name_t = RustSource::call_name_match(output, def_index, callee);
+            let name_t = RustSource::call_name_match_in(output, def_index, own.as_ref(), callee);
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
             });
