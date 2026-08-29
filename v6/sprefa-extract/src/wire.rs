@@ -311,6 +311,7 @@ fn flatten_call<E>(
     for unresolved in &bundle.aux.unresolved {
         push(FlatFact::Unresolved {
             family: CallF::TAG,
+            path: None,
             span: SpanOut::new(unresolved.span.start, unresolved.span.end()),
             reason: unresolved.reason.as_str().to_string(),
             detail: strings.lookup(unresolved.detail).to_string(),

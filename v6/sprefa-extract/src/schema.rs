@@ -42,7 +42,7 @@ RECORD SHAPES
   record=data_doc  family=data            ordinal=<u32>  span={start,end}  format=<json|jsonl|yaml|toml>  doc=<json value>
   record=data_value  family=data          ordinal=<u32>  path=<dotted>  kind=<object|array|string|number|boolean|null>  text=<string|null>  span={start,end}
   record=specifier  family=call            span={start,end}   name=<string>  kind=<slug>  module=<string|null>  imported=<string|null>
-  record=unresolved  family=call           span={start,end}   reason=<slug>  detail=<string>
+  record=unresolved  family=call           path=<string, only under --resolve>  span={start,end}   reason=<slug>  detail=<string>
   record=capture  query=<id>  capture=<name>  text=<string>  start=<u32>  end=<u32>  match_start=<u32>  match_end=<u32>
   record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  caller_site_start=<u32>  caller_site_end=<u32>  kind=<slug>
   record=resolved_type_edge  owner_path=<string>  owner_name=<string|null>  owner_start=<u32>  owner_end=<u32>  target_path=<string>  target_name=<string|null>  kind=<slug>
@@ -160,6 +160,8 @@ KIND VOCABULARIES (the `kind` field)
   const kind  lit (cooked literal) | template (raw source slice, holes intact)
   sig slot    param | ret
   unresolved reason  dynamic-import | computed-member-call | spread-call-args
+                    (phase 1) | no_corpus_def | ambiguous (--resolve, one row
+                    per call site the resolve arm dropped)
   specifier kind    named | default | namespace | side_effect | reexport |
                     include | reexport_module | dynamic_import | require
   file_edge kind    the specifier kind that bound the crossing, or `unknown`

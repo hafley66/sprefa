@@ -1,0 +1,86 @@
+{
+ "judged": 846,
+ "wrong_file": 310,
+ "examples": [
+  {
+   "site": "crates/ide-diagnostics/src/handlers/json_is_not_rust.rs:1982",
+   "written": "make::record_field_list",
+   "bound": "crates/ide-diagnostics/src/handlers/no_such_field.rs",
+   "expected": [
+    "crates/syntax/src/ast/make.rs"
+   ]
+  },
+  {
+   "site": "crates/proc-macro-api/src/bidirectional_protocol/msg.rs:4270",
+   "written": "postcard::read",
+   "bound": "crates/proc-macro-api/src/bidirectional_protocol/msg.rs",
+   "expected": [
+    "crates/proc-macro-api/src/transport/postcard.rs"
+   ]
+  },
+  {
+   "site": "crates/proc-macro-api/src/bidirectional_protocol/msg.rs:4510",
+   "written": "postcard::write",
+   "bound": "crates/proc-macro-api/src/bidirectional_protocol/msg.rs",
+   "expected": [
+    "crates/proc-macro-api/src/transport/postcard.rs"
+   ]
+  },
+  {
+   "site": "crates/proc-macro-api/src/legacy_protocol/msg.rs:6148",
+   "written": "json::read",
+   "bound": "crates/proc-macro-api/src/legacy_protocol/msg.rs",
+   "expected": [
+    "crates/proc-macro-api/src/transport/json.rs"
+   ]
+  },
+  {
+   "site": "crates/proc-macro-api/src/legacy_protocol/msg.rs:6565",
+   "written": "json::read",
+   "bound": "crates/proc-macro-api/src/legacy_protocol/msg.rs",
+   "expected": [
+    "crates/proc-macro-api/src/transport/json.rs"
+   ]
+  },
+  {
+   "site": "crates/proc-macro-api/src/legacy_protocol/msg.rs:6376",
+   "written": "json::write",
+   "bound": "crates/proc-macro-api/src/legacy_protocol/msg.rs",
+   "expected": [
+    "crates/proc-macro-api/src/transport/json.rs"
+   ]
+  },
+  {
+   "site": "crates/proc-macro-api/src/legacy_protocol/msg.rs:6793",
+   "written": "json::write",
+   "bound": "crates/proc-macro-api/src/legacy_protocol/msg.rs",
+   "expected": [
+    "crates/proc-macro-api/src/transport/json.rs"
+   ]
+  },
+  {
+   "site": "crates/proc-macro-api/src/process.rs:10198",
+   "written": "bidirectional_protocol::enable_rust_analyzer_spans",
+   "bound": "crates/proc-macro-api/src/process.rs",
+   "expected": [
+    "crates/proc-macro-api/src/bidirectional_protocol.rs"
+   ]
+  },
+  {
+   "site": "crates/proc-macro-api/src/process.rs:9976",
+   "written": "legacy_protocol::enable_rust_analyzer_spans",
+   "bound": "crates/proc-macro-api/src/process.rs",
+   "expected": [
+    "crates/proc-macro-api/src/legacy_protocol.rs"
+   ]
+  },
+  {
+   "site": "crates/proc-macro-api/src/process.rs:10828",
+   "written": "legacy_protocol::expand",
+   "bound": "crates/proc-macro-api/src/process.rs",
+   "expected": [
+    "crates/proc-macro-api/src/legacy_protocol.rs"
+   ]
+  }
+ ]
+}

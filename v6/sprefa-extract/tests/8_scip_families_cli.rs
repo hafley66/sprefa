@@ -173,8 +173,15 @@ fn the_discrimination_holds_through_rust_analyzer_too() {
     diet.extend_from_slice(&trio);
     let heuristic = run(&diet);
     assert!(
-        !heuristic.contains("helper"),
+        !heuristic.contains("\"record\":\"scip_fn_edge\"")
+            && !heuristic.contains("\"record\":\"resolved_edge\""),
         "the rust name match is ambiguous the same way: {heuristic}"
+    );
+    assert!(
+        heuristic
+            .lines()
+            .any(|line| line.contains("\"reason\":\"ambiguous\"") && line.contains("helper")),
+        "and it SAYS so, one row per dropped site: {heuristic}"
     );
 
     let real = scip_family(RUST_ROOT, &cache, &[]);

@@ -564,13 +564,17 @@ pub struct Unresolved {
     pub detail: NameId,
 }
 
-/// The closed v5 vocabulary (`src/engine/family/mod.rs:552-570`). A fourth
-/// reason needs its own issue, never a silent addition.
+/// The closed v5 vocabulary (`src/engine/family/mod.rs:552-570`) plus two
+/// resolve-phase reasons (`issues/extract-unresolved-resolve-phase-reasons`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum UnresolvedReason {
     DynamicImport,
     ComputedMemberCall,
     SpreadCallArgs,
+    /// No corpus def bears the callee's name: std, a dependency, or a builtin.
+    NoCorpusDef,
+    /// The corpus defines the name and this tier cannot say which one is meant.
+    Ambiguous,
 }
 
 impl UnresolvedReason {
@@ -579,6 +583,8 @@ impl UnresolvedReason {
             UnresolvedReason::DynamicImport => "dynamic-import",
             UnresolvedReason::ComputedMemberCall => "computed-member-call",
             UnresolvedReason::SpreadCallArgs => "spread-call-args",
+            UnresolvedReason::NoCorpusDef => "no_corpus_def",
+            UnresolvedReason::Ambiguous => "ambiguous",
         }
     }
 }
@@ -2483,8 +2489,13 @@ pub enum FlatFact {
     #[serde(rename = "unresolved")]
     Unresolved {
         family: FamilyTag,
+        /// The file the site sits in. ABSENT from a per-file run, where the
+        /// caller already knows it; a resolve run spans files and must say.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
         span: SpanOut,
-        /// dynamic-import | computed-member-call | spread-call-args
+        /// dynamic-import | computed-member-call | spread-call-args |
+        /// no_corpus_def | ambiguous
         reason: String,
         detail: String,
     },

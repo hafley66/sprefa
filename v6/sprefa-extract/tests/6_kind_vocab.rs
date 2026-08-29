@@ -56,6 +56,7 @@ const EXT_KINDS: &[(&str, &'static str)] = &[
     ("rust::MATCH", rust::MATCH.as_str()),
     ("rust::BLOCK", rust::BLOCK.as_str()),
     ("rust::TRAIT", rust::TRAIT.as_str()),
+    ("rust::CONST_INIT", rust::CONST_INIT.as_str()),
     ("ts::COND", ts::COND.as_str()),
     ("ts::CONCAT", ts::CONCAT.as_str()),
     ("ts::TEMPLATE", ts::TEMPLATE.as_str()),
