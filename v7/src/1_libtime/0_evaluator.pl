@@ -1,5 +1,6 @@
 :- module(dl7_evaluator,
-          [ evaluate/4,
+          [ derive_aggregate_rows/4,
+            evaluate/4,
             stratify_rules/3,
             validate_functional_rows/3
           ]).
@@ -32,10 +33,11 @@ evaluate(Rules, Seeds, Closure, Diagnostics) :-
     evaluate_after_stratify(StrataDiagnostics, Strata, Rules, Seeds,
                             Closure, Diagnostics).
 
-evaluate_after_stratify([], Strata, Rules, Seeds, Closure, []) :-
+evaluate_after_stratify([], Strata, Rules, Seeds, Closure, Diagnostics) :-
     !,
     max_stratum(Strata, MaxStratum),
-    evaluate_strata(0, MaxStratum, Strata, Rules, Seeds, [], Closure).
+    evaluate_strata(0, MaxStratum, Strata, Rules, Seeds, [],
+                    Closure, Diagnostics).
 evaluate_after_stratify(Diagnostics, _, _, _, [], Diagnostics).
 
 max_stratum([], 0).
@@ -43,21 +45,40 @@ max_stratum(Strata, MaxStratum) :-
     findall(Level, member(stratum(_, Level), Strata), Levels),
     max_list(Levels, MaxStratum).
 
-evaluate_strata(Level, MaxStratum, _, _, _, Closure, Closure) :-
+evaluate_strata(Level, MaxStratum, _, _, _, Closure, Closure, []) :-
     Level > MaxStratum,
     !.
-evaluate_strata(Level, MaxStratum, Strata, Rules, Seeds, LowerRows, Closure) :-
+evaluate_strata(Level, MaxStratum, Strata, Rules, Seeds, LowerRows,
+                Closure, Diagnostics) :-
     include(rule_at_level(Strata, Level), Rules, CurrentRules),
     include(seed_at_level(Strata, Level), Seeds, CurrentSeeds),
+    include(aggregate_rule, CurrentRules, AggregateRules),
+    exclude(aggregate_rule, CurrentRules, PlainRules),
+    derive_aggregate_rule_rows(LowerRows, AggregateRules,
+                               AggregateSeeds, AggregateDiagnostics),
+    evaluate_stratum_after_aggregates(
+        AggregateDiagnostics, AggregateSeeds,
+        Level, MaxStratum, Strata, Rules, Seeds, LowerRows,
+        PlainRules, CurrentSeeds, Closure, Diagnostics).
+
+evaluate_stratum_after_aggregates(
+    [], AggregateSeeds,
+    Level, MaxStratum, Strata, Rules, Seeds, LowerRows,
+    PlainRules, CurrentSeeds, Closure, Diagnostics) :-
+    !,
+    append(CurrentSeeds, AggregateSeeds, Seeds0),
+    sort(Seeds0, StratumSeeds),
     gensym(dl7_evaluation_, EvaluationId),
     setup_call_cleanup(
-        install_evaluation(EvaluationId, CurrentRules, CurrentSeeds, LowerRows,
+        install_evaluation(EvaluationId, PlainRules, StratumSeeds, LowerRows,
                            ClauseReferences),
         collect_closure(EvaluationId, CompletedRows),
         clear_evaluation(EvaluationId, ClauseReferences)),
     NextLevel is Level + 1,
     evaluate_strata(NextLevel, MaxStratum, Strata, Rules, Seeds,
-                    CompletedRows, Closure).
+                    CompletedRows, Closure, Diagnostics).
+evaluate_stratum_after_aggregates(
+    Diagnostics, _, _, _, _, _, _, _, _, _, [], Diagnostics).
 
 rule_at_level(Strata, Level, rule(call(Relation, _), _)) :-
     memberchk(stratum(Relation, Level), Strata).
@@ -70,6 +91,93 @@ relation_level(Strata, Relation, Level) :-
     ->  Level = DerivedLevel
     ;   Level = 0
     ).
+
+aggregate_rule(rule(call(_, Arguments), _)) :-
+    memberchk(aggregate(count, _), Arguments).
+
+derive_aggregate_rule_rows(_, [], [], []).
+derive_aggregate_rule_rows(CompletedRows, [Rule | Rules], Rows, Diagnostics) :-
+    derive_aggregate_rows(CompletedRows, Rule, OwnRows, OwnDiagnostics),
+    derive_aggregate_rule_rows(CompletedRows, Rules,
+                               RestRows, RestDiagnostics),
+    append(OwnRows, RestRows, Rows0),
+    sort(Rows0, Rows),
+    append(OwnDiagnostics, RestDiagnostics, Diagnostics0),
+    sort(Diagnostics0, Diagnostics).
+
+%% derive_aggregate_rows(+CompletedRows, +Rule, -Rows, -Diagnostics) is det.
+%
+% Enumerate complete body proofs against one immutable lower-row snapshot.
+% Plain head positions form the group key. Every proof contributes one bag
+% entry, including equal count expressions reached through distinct bindings.
+derive_aggregate_rows(CompletedRows, Rule, Rows, Diagnostics) :-
+    must_be(ground, CompletedRows),
+    must_be(ground, Rule),
+    Rule = rule(call(_, HeadArguments), _),
+    aggregate_arguments(HeadArguments, Aggregates),
+    length(Aggregates, AggregateCount),
+    derive_checked_aggregate(AggregateCount, CompletedRows, Rule,
+                             Rows, Diagnostics).
+
+derive_checked_aggregate(1, CompletedRows, Rule, Rows, Diagnostics) :-
+    !,
+    findall(Head,
+            aggregate_rule_proof(CompletedRows, Rule, Head),
+            ProofHeads),
+    (   ground(ProofHeads)
+    ->  aggregate_proofs(ProofHeads, Proofs0),
+        msort(Proofs0, Proofs),
+        grouped_aggregate_rows(Proofs, Rows0),
+        sort(Rows0, Rows),
+        Diagnostics = []
+    ;   Rows = [],
+        Diagnostics = [diagnostic(evaluate, none,
+                                  non_ground_aggregate_proof)]
+    ).
+derive_checked_aggregate(AggregateCount, _, _, [],
+                         [diagnostic(evaluate, none,
+                                     malformed_aggregate_head(
+                                         AggregateCount))]).
+
+aggregate_rule_proof(CompletedRows, Rule, Head) :-
+    instantiate_rule(Rule, Head, Body),
+    completed_body_holds(Body, CompletedRows).
+
+completed_body_holds([], _).
+completed_body_holds([checked_goal(positive, Call) | Goals], Rows) :-
+    member(Call, Rows),
+    completed_body_holds(Goals, Rows).
+completed_body_holds([checked_goal(negative, Call) | Goals], Rows) :-
+    ground(Call),
+    \+ memberchk(Call, Rows),
+    completed_body_holds(Goals, Rows).
+
+aggregate_proofs([], []).
+aggregate_proofs([Head | Heads], [proof(Key, Head) | Proofs]) :-
+    aggregate_group_key(Head, Key),
+    aggregate_proofs(Heads, Proofs).
+
+aggregate_group_key(call(Relation, Arguments), group(Relation, Plain)) :-
+    exclude(count_aggregate, Arguments, Plain).
+
+grouped_aggregate_rows([], []).
+grouped_aggregate_rows([proof(Key, Head) | Proofs], [Row | Rows]) :-
+    take_aggregate_group(Proofs, Key, 1, Count, Rest),
+    aggregate_output_row(Head, Count, Row),
+    grouped_aggregate_rows(Rest, Rows).
+
+take_aggregate_group([proof(Key, _) | Proofs], Key, Count0, Count, Rest) :-
+    !,
+    Count1 is Count0 + 1,
+    take_aggregate_group(Proofs, Key, Count1, Count, Rest).
+take_aggregate_group(Rest, _, Count, Count, Rest).
+
+aggregate_output_row(call(Relation, Arguments0), Count,
+                     call(Relation, Arguments)) :-
+    maplist(aggregate_output_argument(Count), Arguments0, Arguments).
+
+aggregate_output_argument(Count, aggregate(count, _), const(Count)) :- !.
+aggregate_output_argument(_, Argument, Argument).
 
 %% validate_functional_rows(+Relations, +Rows, -Diagnostics) is det.
 %
@@ -398,6 +506,10 @@ instantiate_arguments([Argument0 | Arguments0], Variables0, Variables,
 instantiate_argument(var(Identity), Variables0, Variables, Variable) :-
     !,
     variable_for_identity(Identity, Variables0, Variables, Variable).
+instantiate_argument(aggregate(count, Expression0), Variables0, Variables,
+                     aggregate(count, Expression)) :-
+    !,
+    instantiate_argument(Expression0, Variables0, Variables, Expression).
 instantiate_argument(Argument, Variables, Variables, Argument).
 
 variable_for_identity(Identity, Variables0, Variables, Variable) :-

@@ -332,6 +332,109 @@ test(prefix_negation_is_safe_stratified_and_cleanup_scoped) :-
                                   temporary_lower_rows(0)))),
     !.
 
+test(count_groups_completed_lower_proofs_and_rejects_bad_placement) :-
+    grouped_count_receipt(Grouped),
+    multiple_count_receipt(Multiple),
+    misplaced_count_receipt(Misplaced),
+    nested_head_receipt(Nested),
+    aggregate_cycle_receipt(Cycle),
+    Observed = count_result(Grouped, Multiple, Misplaced, Nested, Cycle),
+    Observed == count_result(
+                    grouped(
+                        rows(["east"-2, "west"-1]),
+                        checked_head(
+                            [plain(region), aggregate(count, region)]),
+                        dependency(positive),
+                        strata(source(0), count(1)),
+                        evaluator(temporary_rules(0), temporary_seeds(0),
+                                  temporary_lower_rows(0))),
+                    multiple(
+                        node(27),
+                        multiple_count_aggregates(region_count)),
+                    misplaced(
+                        node(26),
+                        aggregate_outside_rule_head),
+                    nested(
+                        node(25),
+                        nested_call_argument),
+                    cycle(
+                        node(13),
+                        aggregate_dependency_cycle([loop]))),
+    !.
+
+grouped_count_receipt(Receipt) :-
+    Text = "(: sale (* (: region text) (: item text)))\n(: region_count (* (: region text) (: total int)))\n(sale \"east\" \"one\")\n(sale \"east\" \"two\")\n(sale \"west\" \"three\")\n(<- (region_count ?Region (count ?Region))\n    (sale ?Region ?Item))\n",
+    dl7_text_unit(grouped_count, grouped_count_source, Text, Unit, []),
+    compile_unit(Unit,
+                 compiled_unit(_, RuntimeProgram, CompilerRows), []),
+    named_owner(CompilerRows, sale, Sale),
+    named_owner(CompilerRows, region_count, RegionCount),
+    findall(Region-Count,
+            member(call(ref(RegionCount), [const(Region), const(Count)]),
+                   CompilerRows),
+            Rows),
+    grouped_count_runtime_snapshot(RuntimeProgram, Sale, RegionCount,
+                                   RuntimeSnapshot),
+    evaluator_snapshot(EvaluatorSnapshot),
+    RuntimeSnapshot = runtime(CheckedHead, Dependency, Strata),
+    Receipt = grouped(rows(Rows), CheckedHead, Dependency, Strata,
+                      EvaluatorSnapshot).
+
+grouped_count_runtime_snapshot(
+    checked_datalog(_, datalog_program(_, _, Rules), Depends, Strata),
+    Sale, RegionCount,
+    runtime(checked_head(
+                [plain(region), aggregate(count, region)]),
+            dependency(positive),
+            strata(source(SaleLevel), count(CountLevel)))) :-
+    memberchk(rule(
+                  call(ref(RegionCount),
+                       [var(Region), aggregate(count, var(Region))]),
+                  [checked_goal(
+                       positive,
+                       call(ref(Sale), [var(Region), var(_)]))]),
+              Rules),
+    memberchk(depends(ref(RegionCount), ref(Sale), positive), Depends),
+    memberchk(stratum(ref(Sale), SaleLevel), Strata),
+    memberchk(stratum(ref(RegionCount), CountLevel), Strata).
+
+multiple_count_receipt(multiple(node(NodeIndex), Reason)) :-
+    Text = "(: source (* (: value text)))\n(: region_count (* (: first int) (: second int)))\n(source \"x\")\n(<- (region_count (count ?Value) (count ?Value))\n    (source ?Value))\n",
+    dl7_text_unit(multiple_count, multiple_count_source, Text, Unit, []),
+    compile_unit(Unit, [],
+                 [diagnostic(lower,
+                             reader_node(multiple_count_source, NodeIndex),
+                             Reason)]).
+
+misplaced_count_receipt(misplaced(node(NodeIndex), Reason)) :-
+    Text = "(: source (* (: value text)))\n(: bad (* (: value text)))\n(source \"x\")\n(<- (bad ?Value)\n    (count ?Value)\n    (source ?Value))\n",
+    dl7_text_unit(misplaced_count, misplaced_count_source, Text, Unit, []),
+    compile_unit(Unit, [],
+                 [diagnostic(lower,
+                             reader_node(misplaced_count_source, NodeIndex),
+                             Reason)]).
+
+nested_head_receipt(nested(node(NodeIndex), Reason)) :-
+    Text = "(: source (* (: value text)))\n(: bad (* (: value text)))\n(source \"x\")\n(<- (bad (wrapper ?Value))\n    (source ?Value))\n",
+    dl7_text_unit(nested_head, nested_head_source, Text, Unit, []),
+    compile_unit(Unit, [],
+                 [diagnostic(lower,
+                             reader_node(nested_head_source, NodeIndex),
+                             Reason)]).
+
+aggregate_cycle_receipt(
+    cycle(node(NodeIndex), aggregate_dependency_cycle([loop]))) :-
+    Text = "(: loop (* (: value text) (: total int)))\n(<- (loop ?Value (count ?Value))\n    (loop ?Value ?Total))\n",
+    dl7_text_unit(aggregate_cycle, aggregate_cycle_source, Text, Unit, []),
+    lower_datalog(Unit, Basement, Origins, []),
+    Basement = basement_program(root_graph(_, PendingEdges), _),
+    memberchk(pending_edge(_, loop, target(Loop), _), PendingEdges),
+    check_datalog(
+        Basement, Origins, [],
+        [diagnostic(stratify,
+                    reader_node(aggregate_cycle_source, NodeIndex),
+                    aggregate_dependency_cycle([ref(Loop)]))]).
+
 anti_join_receipt(Receipt) :-
     Text = "(: candidate (* (: value text)))\n(: blocked (* (: value text)))\n(: allowed (* (: value text)))\n(candidate \"a\")\n(candidate \"b\")\n(blocked \"b\")\n(<- (allowed ?Value)\n    (candidate ?Value)\n    (not (blocked ?Value)))\n",
     dl7_text_unit(anti_join, anti_join_source, Text, Unit, []),

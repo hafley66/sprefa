@@ -263,6 +263,11 @@ lower_goal(node(_, form([node(_, atom(not)), Inner])),
 lower_goal(node(NodeId, form([node(_, atom(not)) | _])),
            _, _, _, error(diagnostic(lower, NodeId, invalid_negative_goal))) :-
     !.
+lower_goal(node(NodeId, form([node(_, atom(count)) | _])),
+           _, _, _,
+           error(diagnostic(lower, NodeId,
+                            aggregate_outside_rule_head))) :-
+    !.
 lower_goal(Node, Owner, Reservations, Relations, Result) :-
     lower_call(Node, Owner, Reservations, Relations, CallResult),
     pending_goal_result(CallResult, positive, Result).
