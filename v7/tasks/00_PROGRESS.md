@@ -1,6 +1,6 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-29 13:08 EDT
+Updated: 2026-08-29 13:28 EDT
 
 ## Current execution state
 
@@ -47,8 +47,15 @@ layout rulings -> layout -> ProgramJson -> engine smoke
   DDL ownership, runtime statements, or seed placement. These choices are held
   in `@dl7-layout-rulings`, and the layout planner depends on it.
 - Commercial Common Prolog research landed as `dd100f858`. The active
-  independent work is the executable `16_logadat` lab, followed by
-  `17_si_kanren`.
+  executable labs also completed: logadat provides a naive finite Datalog
+  fixpoint; si-kanren provides unification, occurs checking, fair bounded
+  search, and disequality/type/absento constraint stores. Their reviewed lab
+  receipts are under `v7/labs/16_logadat` and `v7/labs/17_si_kanren`.
+- The layout/adapter correction landed as `d562a4ac2`: target-neutral layout
+  rows stop before SQLite names, DDL, statements, and ProgramJson seed
+  placement. Those fields have a separate target-adapter ruling card.
+- Independent gates after the planning changes: SWI 7 of 7 passed in 0.3
+  seconds; Tree-sitter 1 of 1 passed in 3.2 seconds.
 
 ## Tree-sitter parser replacement
 
