@@ -42,6 +42,10 @@ these three cards.
 - Plan committed: `52c6d203f`
 - Issue DAG committed: `6b82a9d83`
 - Active epic: `@dl7-minimal-kernel`
+- Milestone 1 (root datums) implemented: `'name` reads as
+  `literal(symbol(Name))` in `v7/0_SWIPL/1_reader.pl`; the reader fixture
+  gains an empty form, a symbol literal, and a bare atom; the snapshot test
+  pins all of them. Reader gate passes (2/2).
 - Spawnable head: `@dl7-kernel-contract`
 - Production code added: 0 files
 - Tests added: 0

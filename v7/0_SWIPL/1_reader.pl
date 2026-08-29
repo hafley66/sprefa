@@ -65,6 +65,13 @@ read_term_kind([0'? | Codes0], Path, TopNodeId, NodeId, Start, Index,
     take_token(Codes0, Position, NameCodes, Codes, End),
     finish_variable(Path, TopNodeId, NodeId, Start, End, Index,
                     NameCodes, Codes, Variables0, Result).
+read_term_kind([0'\' | Codes0], Path, _, NodeId, Start, Index,
+               Variables, Result) :-
+    !,
+    advance(0'\', Start, Position),
+    take_token(Codes0, Position, NameCodes, Codes, End),
+    finish_symbol(Path, NodeId, Start, End, Index, NameCodes, Codes,
+                  Variables, Result).
 read_term_kind([], Path, _, NodeId, Position, _, _, error(Diagnostic)) :-
     reader_diagnostic(Path, NodeId, expected_term, Position, Diagnostic).
 read_term_kind(Codes0, Path, _, NodeId, Start, Index, Variables, Result) :-
@@ -168,6 +175,22 @@ finish_variable(Path, TopNodeId, NodeId, Start, End, Index, NameCodes, Codes,
     atom_codes(Name, NameCodes),
     variable_identity(Name, TopNodeId, NodeId, Variables0, Variables,
                       VariableId),
+    source_row(NodeId, Path, Start, End, Source).
+
+finish_symbol(Path, NodeId, Start, _, _, NameCodes, _, _,
+              error(Diagnostic)) :-
+    \+ valid_identifier_codes(NameCodes),
+    !,
+    (   NameCodes == []
+    ->  Code = expected_symbol_name
+    ;   atom_codes(Token, NameCodes),
+        Code = invalid_symbol_name(Token)
+    ),
+    reader_diagnostic(Path, NodeId, Code, Start, Diagnostic).
+finish_symbol(Path, NodeId, Start, End, Index, NameCodes, Codes, Variables,
+              ok(node(NodeId, literal(symbol(Name))), [Source], Codes, End,
+                 Index, Variables)) :-
+    atom_codes(Name, NameCodes),
     source_row(NodeId, Path, Start, End, Source).
 
 variable_identity('_', _, NodeId, Variables, Variables,

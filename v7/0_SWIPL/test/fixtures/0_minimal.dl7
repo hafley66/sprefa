@@ -6,3 +6,7 @@
       (: note "hello\nworld")))
 (<- (copy ?Value ?Value ?_ ?_)
     (source ?Value))
+(: Symbols
+   (* (: kind 'kind)
+      (: empty ())
+      (: bare atom)))
