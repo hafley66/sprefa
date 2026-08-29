@@ -29,7 +29,7 @@ lower_after_declarations(
     lower_executables(Forms, ModuleOwner, Reservations, Relations,
                       ExecutableResult),
     (   ExecutableResult = ok(Seeds, Rules, ExecutableOrigins)
-    ->          Nodes = [module(ModuleOwner) | Nodes0],
+    ->  Nodes = [node(ModuleOwner), module(ModuleOwner) | Nodes0],
         Program = basement_program(
                       root_graph(Nodes, Edges),
                       datalog_program(Relations, Seeds, Rules)),
@@ -126,7 +126,7 @@ finish_constructor_target(
     ok(target(Owner), Kind, Nodes, Edges, Relations, Origins,
        Reservations)) :-
     classifier_row(Kind, Owner, Row),
-    Nodes = [Row | NestedNodes],
+    Nodes = [node(Owner), Row | NestedNodes],
     constructor_relations(Kind, Owner, Edges, OwnRelations),
     append(OwnRelations, NestedRelations, Relations),
     Origins = [origin(node(Owner), NodeId) | NestedOrigins].
@@ -346,8 +346,9 @@ check_datalog(Program, _, [], Diagnostics) :-
 %% Bind checks: one unique name per owner and dense zero-based indices.
 bind_diagnostics(Edges, Origins, Diags) :-
     duplicate_bind_diagnostics(Edges, Origins, [], Diags0),
-    dense_index_diagnostics(Edges, Edges, Origins, Diags1),
-    append(Diags0, Diags1, Diags).
+    duplicate_index_diagnostics(Edges, Origins, [], Diags1),
+    dense_index_diagnostics(Edges, Edges, Origins, Diags2),
+    append([Diags0, Diags1, Diags2], Diags).
 
 duplicate_bind_diagnostics([], _, _, []).
 duplicate_bind_diagnostics([pending_edge(Owner, Name, _, Index) | Rest],
@@ -361,12 +362,26 @@ duplicate_bind_diagnostics([pending_edge(Owner, Name, _, Index) | Rest],
     duplicate_bind_diagnostics(Rest, Origins, [seen(Owner, Name) | Seen],
                                RestDiags).
 
+duplicate_index_diagnostics([], _, _, []).
+duplicate_index_diagnostics([pending_edge(Owner, Name, _, Index) | Rest],
+                            Origins, Seen, Diags) :-
+    edge_origin(Origins, Owner, Name, Index, NodeId),
+    (   memberchk(seen(Owner, Index), Seen)
+    ->  Diags = [diagnostic(check, NodeId,
+                            duplicate_bind_index(Owner, Index)) | RestDiags]
+    ;   Diags = RestDiags
+    ),
+    duplicate_index_diagnostics(Rest, Origins,
+                                [seen(Owner, Index) | Seen], RestDiags).
+
 dense_index_diagnostics([], _, _, []).
 dense_index_diagnostics([pending_edge(Owner, Name, _, Index) | Rest], All,
                         Origins, Diags) :-
     count_owner_edges(All, Owner, Count),
     edge_origin(Origins, Owner, Name, Index, NodeId),
-    (   Index >= Count
+    (   (   Index < 0
+        ;   Index >= Count
+        )
     ->  Diags = [diagnostic(check, NodeId, non_dense_index(Owner, Index))
                  | RestDiags]
     ;   Diags = RestDiags

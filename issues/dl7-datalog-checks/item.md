@@ -26,20 +26,20 @@ rows. This card ends the first basement slice immediately before evaluation.
 
 ## Acceptance Criteria
 
-- [ ] `check_datalog/4` resolves local names and containing-node names by
+- [x] `check_datalog/4` resolves local names and containing-node names by
   traversing binding edges.
-- [ ] `int`, `text`, `any`, and `type` resolve through the primitive root.
-- [ ] Resolved binds are canonical `':'(Owner, Name, Target, Index)` rows.
-- [ ] Resolved calls carry `ref(Target)`, `var(Identity)`, and `const(Value)`.
-- [ ] Explicit relation, arity, ground-seed, and positive-rule safety checks run.
-- [ ] Distinct positive dependency rows and one SCC stratum row per relation emit.
-- [ ] Nested product and sum, recursive, undeclared, arity, and unsafe receipts run.
-- [ ] No evaluator, negation, aggregate, interning behavior, or test file is added.
-- [ ] `v7/3_TASKS/00_PROGRESS.md` records the receipt.
+- [x] `int`, `text`, `any`, and `type` resolve through the primitive root.
+- [x] Resolved binds are canonical `':'(Owner, Name, Target, Index)` rows.
+- [x] Resolved calls carry `ref(Target)`, `var(Identity)`, and `const(Value)`.
+- [x] Explicit relation, arity, ground-seed, and positive-rule safety checks run.
+- [x] Distinct positive dependency rows and one SCC stratum row per relation emit.
+- [x] Nested product and sum, recursive, undeclared, arity, and unsafe receipts run.
+- [x] No evaluator, negation, aggregate, interning behavior, or test file is added.
+- [x] `v7/3_TASKS/00_PROGRESS.md` records the receipt.
 
 ## Tests Run
 
-- [ ] One direct SWI checker receipt from the worker brief.
+- [x] One direct SWI checker receipt from the worker brief.
 
 ## Implementation Notes
 

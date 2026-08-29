@@ -1,6 +1,6 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-28 20:55 EDT
+Updated: 2026-08-28 23:58 EDT
 
 ## Basement restart
 
@@ -196,27 +196,29 @@ Milestone 3 (resolve, check, graph):
   classifier relations; any node with outgoing named edges is
   namespace-capable. Lexical containment resolves transiently only from
   `pending_edge(Parent, Name, target(Child), Index)` (`parent_owner/3`,
-  `0_basement.pl:417`); resolved `':'/4` edges are never reversed for
+  `0_compiler.pl`); resolved `':'/4` edges are never reversed for
   containment. `module/1` identifies the compiler-created file root;
   `product/1` and `sum/1` retain algebraic meaning. No point in the current
   basement requires a `namespace/1` or `scope/1` relation.
-- Added `check_datalog/4` to `v7/src/2_comptime/0_compiler.pl`. The module now has
-  559 nonblank, noncomment lines and still exports only the two production
+- Added `check_datalog/4` to `v7/src/2_comptime/0_compiler.pl`. The module has
+  515 nonblank, noncomment lines and still exports only the two production
   entry points.
 - Resolution walks local owner edges, then reverse binding edges to containing
   owners, and resolves `int`, `text`, `any`, and `type` at a module owner to
   the pinned `ref(primitive(Name))` targets.
-- Successful output emits classifier rows `module(Id)`, `product(Id)`, and
-  `sum(Id)`, canonical `':'(Owner, Name, Target, Index)` edges,
+- Successful output emits one `node(Id)` identity row plus applicable
+  `module(Id)`, `product(Id)`, and `sum(Id)` classifier rows, canonical
+  `':'(Owner, Name, Target, Index)` edges,
   `relation(ref(Target), Arity)` rows, resolved `call(ref(Relation), Args)`
   seeds and rules, distinct `depends(HeadRef, BodyRef, positive)` rows, and
   `stratum(Relation, 0)` per declared relation. Edge, relation, depends, and
   strata rows are sorted by standard term order; seeds and rules keep authored
   order.
-- Checks: duplicate bind names, non-dense zero-based indices, explicit
-  relation use, call arity, ground seeds, and head vars occurring in positive
-  body calls. Diagnostics are `diagnostic(check, OriginNode, Reason)`, sorted
-  by standard term order, and no `Checked` value survives any diagnostic.
+- Checks: duplicate bind names, duplicate bind indices, non-dense zero-based
+  indices, explicit relation use, call arity, ground seeds, and head vars
+  occurring in positive body calls. Diagnostics are
+  `diagnostic(check, OriginNode, Reason)`, sorted by standard term order, and
+  no `Checked` value survives any diagnostic.
 - Direct SWI receipt (nested product and sum edges, parent-edge resolution,
   recursive graph, undeclared use, arity mismatch, unsafe head variable):
 
@@ -229,3 +231,11 @@ The undeclared-use diagnostic surfaces as `unresolved_name(missing)` because
 no owner edge resolves the spelling; `undeclared_relation/1` covers a name
 that resolves to a non-relation target. `git diff --check` passed. No suite or
 test file was added.
+
+Review correction at 23:58 EDT:
+
+- Restored the promised `node(Id)` carrier beside each classifier row.
+- Added `(Owner, Index)` collision diagnostics and rejected negative indices.
+- Duplicate ordinal receipt:
+  `result([],[diagnostic(check,b0,duplicate_bind_index(m,0))])`.
+- All 6 existing reader and entrypoint tests still pass.
