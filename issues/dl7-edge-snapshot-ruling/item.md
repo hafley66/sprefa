@@ -2,7 +2,7 @@
 created: 2026-08-29
 updated: 2026-08-29
 type: task
-status: needs-info
+status: in-progress
 priority: high
 epic: dl7-minimal-kernel
 labels: [dl7, needs-ruling]
@@ -85,3 +85,9 @@ or emitter contract belongs in this ruling.
 
 Blocker discovered after `@dl7-count-aggregate` closed. The kernel correctly
 rejects the unseparated `':' -> aggregate rank -> ':'` relation cycle.
+
+## Decisions
+
+### 2026-08-29T23:14:00Z · @codex
+
+Selected compiler freeze/refreeze rounds. Each round seeds edge_snapshot/4 from the complete colon-edge set known at the end of the previous round and regenerates predecessor/3 for every frozen owner. Kernel signature edges participate. edge_snapshot/4 uses the same arity and functional keys as ':'/4: [[0,1],[0,3]]. Generated colon rows become visible to another type operator in the next compiler round. Snapshot rows are compiler transport and are absent from final compiler rows. Runtime evaluate/4 remains one-program evaluation. The outer compile driver stops when the colon-edge set is unchanged and diagnoses compiler_round_limit_exhausted(16).
