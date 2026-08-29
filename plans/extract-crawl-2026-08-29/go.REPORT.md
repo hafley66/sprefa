@@ -713,3 +713,59 @@ excluded; 65 generated implementers emit one `fanout_cap` row and no
 fan-out. Implementer-map COUNT gate: the cache key is
 (corpus `DefIndex`, interface name) and `go_iface_fanout` computes the
 candidate set exactly once per key; the per-site loop only reads it.
+
+## Fixes 8: multi-hop receiver chains (`fix-extract-go-multihop`)
+
+Base `7c19948e7439` (Fixes 7 merged). The third vta-only class
+(go.GAPS.md): `a.b().c()`, projected 2,587 edges, example
+`buildtask.go cleanProjectOutput -> iovfs/iofs.go FileExists` through
+`orchestrator.host.FS().FileExists`. Now (`src/lang/go.rs`): the operand
+of a selector call is decomposed at phase 1 into a chain
+(base + hops, depth cap 8 hops, at least one call hop required); resolve
+replays it left to right in one pass and binds the final `.c()` the way
+#562 binds a one-hop receiver.
+
+| chain element | typed by |
+|---|---|
+| base name | its scope Decl type, else the #562 bind table (`bound_types`) |
+| `pkg.F()` base | the import leg's resolved func's declared first result |
+| `.field` | the struct field's declared type: this file's `go_field_types` first, else a memoized per-dir lookup over `GoFileFacts.fields` (cross-file, same package) |
+| `.M()` | the declared first result of `T.M` via `go_receiver_target` + `GoFileFacts.ret_of`; interface method_specs now carry their results too (`insert_ret` on `method_elem`) |
+| stop | builtin result (`is_noise_go`), generic result (`GoFileFacts.generic`), indexable field, mid-chain import qualifier, local call `f()`, no unique owner match |
+
+The interface fan-out from #565 applies when the final receiver type is an
+interface. A chain that stops anywhere leaves the site's current outcome
+untouched (the name-match leg still runs). Per site the walk is bounded by
+the chain length; the only corpus access is the name-keyed `DefIndex` plus
+a memoized (dir, struct, field) scan.
+
+### Tests (`tests/67_go_multihop.rs`, fixtures `tests/fixtures/go_findings/multihop/`)
+
+| fixture caller | shape | assertion |
+|---|---|---|
+| `viaStruct` | `o.FS().FileExists()`, `FS()` returns struct | binds `Host.FileExists` |
+| `viaIface` | `VFS()` returns interface | spec edge + 2 implements fan-out |
+| `viaField` | `a.cfg.Log.Write()`, fields declared in another file | binds `Logger.Write` |
+| `viaImport` | `sub.NewSub().Hello()` | binds across package |
+| `viaBuiltin` | `Name()` returns `string` | no edge |
+| `viaGeneric` | `Items()` returns `List[Item]` | no edge (name match is a 2-blob ambiguity) |
+| `viaEight` | 8 hops | resolves at the cap |
+| `viaNine` | 9 hops | no edge past the cap |
+
+`cargo test --features cli`: 499 passed, 0 failed (includes the 8 new).
+
+### Receipt, current binary, ONE process over all 5,096 files
+
+`extract --resolve --project-root /Users/chrishafley/projects/typescript-go
+$(cat gofiles.txt)`, rc 0. The prior lane's `xargs` receipt form batches
+the file list into several processes (xargs split), which re-scopes each
+resolve universe; the numbers below are single-process for BOTH the base
+binary (rebuilt at `7c19948e`) and this one, so the delta is the fix.
+
+| metric | base (7c19948e) | this run |
+|---|---:|---:|
+| unique call edges (`go.parse.call.tsv`) | 84,346 | 84,618 (+272) |
+| oracle edges reached (`a∩b` / oracle 55,099) | 75.6% (41,651) | **75.9%** (41,806, +155) |
+| superseded base edges | - | 28 (name-match self-hits now bound through the chain to the receiver's real type, e.g. `snapshotfs.go Realpath -> vfs.go Realpath`) |
+| reachable (104 roots) | 8,876 | **8,999** (+123) |
+| reachable with test roots (5,977) | 15,483 | **15,606** |
