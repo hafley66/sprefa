@@ -240,19 +240,35 @@ lower_rule(HeadNode, BodyNodes, Owner, Reservations, Relations,
 lower_goals([], _, _, _, _, _, ok([], [])).
 lower_goals([Node | Nodes], Owner, Reservations, Relations, RuleIndex,
             GoalIndex, Result) :-
-    lower_call(Node, Owner, Reservations, Relations, CallResult),
-    (   CallResult = ok(Call)
+    lower_goal(Node, Owner, Reservations, Relations, GoalResult),
+    (   GoalResult = ok(Goal)
     ->  node_id(Node, NodeId),
         NextGoalIndex is GoalIndex + 1,
         lower_goals(Nodes, Owner, Reservations, Relations, RuleIndex,
                     NextGoalIndex, RestResult),
-        (   RestResult = ok(Calls, Origins)
-        ->  Result = ok([Call | Calls],
+        (   RestResult = ok(Goals, Origins)
+        ->  Result = ok([Goal | Goals],
                         [origin(goal(RuleIndex, GoalIndex), NodeId) | Origins])
         ;   Result = RestResult
         )
-    ;   Result = CallResult
+    ;   Result = GoalResult
     ).
+
+%% Prefix not/1 is erased into explicit pending polarity before checking.
+lower_goal(node(_, form([node(_, atom(not)), Inner])),
+           Owner, Reservations, Relations, Result) :-
+    !,
+    lower_call(Inner, Owner, Reservations, Relations, CallResult),
+    pending_goal_result(CallResult, negative, Result).
+lower_goal(node(NodeId, form([node(_, atom(not)) | _])),
+           _, _, _, error(diagnostic(lower, NodeId, invalid_negative_goal))) :-
+    !.
+lower_goal(Node, Owner, Reservations, Relations, Result) :-
+    lower_call(Node, Owner, Reservations, Relations, CallResult),
+    pending_goal_result(CallResult, positive, Result).
+
+pending_goal_result(ok(Call), Polarity, ok(pending_goal(Polarity, Call))).
+pending_goal_result(error(Diagnostic), _, error(Diagnostic)).
 
 lower_call(node(NodeId, form([node(_, atom(Name)) | ArgumentNodes])),
            Owner, Reservations, Relations, Result) :-

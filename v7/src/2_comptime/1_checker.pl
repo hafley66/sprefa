@@ -270,7 +270,8 @@ resolve_rules([Rule | Rest], RuleIndex, Edges, Nodes, Relations, Origins,
     append(OwnDiags, RestDiags, Diags).
 
 resolve_goals([], _, _, _, _, _, _, ok([]), []).
-resolve_goals([Goal | Rest], RuleIndex, GoalIndex, Edges, Nodes, Relations,
+resolve_goals([pending_goal(Polarity, Goal) | Rest], RuleIndex, GoalIndex,
+              Edges, Nodes, Relations,
               Origins, Result, Diags) :-
     goal_origin(Origins, RuleIndex, GoalIndex, NodeId),
     resolve_call(Goal, Edges, Nodes, Relations, GoalResult),
@@ -279,7 +280,7 @@ resolve_goals([Goal | Rest], RuleIndex, GoalIndex, Edges, Nodes, Relations,
                   Origins, RestResult, RestDiags),
     (   GoalResult = ok(ResolvedGoal),
         RestResult = ok(RestGoals)
-    ->  Result = ok([checked_goal(positive, ResolvedGoal) | RestGoals])
+    ->  Result = ok([checked_goal(Polarity, ResolvedGoal) | RestGoals])
     ;   Result = error(rule)
     ),
     (   GoalResult = error(Reason)
