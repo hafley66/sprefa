@@ -1542,6 +1542,8 @@ pub struct IndexBag {
     pub ts_modules: std::sync::OnceLock<crate::lang::ts_resolve::TsModuleIndex>,
     /// the rust module plane, same discipline as `ts_modules`.
     pub rust_modules: std::sync::OnceLock<crate::lang::rust_modules::RustModuleIndex>,
+    /// the go module plane, same discipline as `ts_modules`/`rust_modules`.
+    pub go_modules: std::sync::OnceLock<crate::lang::go_modules::GoModuleIndex>,
 }
 
 /// Blob -> supplied path, for the whole resolve universe. Built ONCE per
