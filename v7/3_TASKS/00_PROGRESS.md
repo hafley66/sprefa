@@ -184,3 +184,34 @@ receipt([0,1,2],counts(6,11,4,1,2,26))
 The fields are top-level bind indices followed by node, edge, relation, seed,
 rule, and origin counts. `ground(Program)` succeeded and
 `git diff --check` passed. No suite or test file was added.
+
+Milestone 3 (resolve, check, graph):
+
+- Added `check_datalog/4` to `v7/1_DATALOG/0_basement.pl`. The module now has
+  555 nonblank, noncomment lines and still exports only the two production
+  entry points.
+- Resolution walks local owner edges, then reverse binding edges to containing
+  owners, and resolves `int`, `text`, `any`, and `type` at a module owner to
+  the pinned `ref(primitive(Name))` targets.
+- Successful output emits canonical `':'(Owner, Name, Target, Index)` edges,
+  `relation(ref(Target), Arity)` rows, resolved `call(ref(Relation), Args)`
+  seeds and rules, distinct `depends(HeadRef, BodyRef, positive)` rows, and
+  `stratum(Relation, 0)` per declared relation. Edge, relation, depends, and
+  strata rows are sorted by standard term order; seeds and rules keep authored
+  order.
+- Checks: duplicate bind names, non-dense zero-based indices, explicit
+  relation use, call arity, ground seeds, and head vars occurring in positive
+  body calls. Diagnostics are `diagnostic(check, OriginNode, Reason)`, sorted
+  by standard term order, and no `Checked` value survives any diagnostic.
+- Direct SWI receipt (nested product and sum edges, parent-edge resolution,
+  recursive graph, undeclared use, arity mismatch, unsafe head variable):
+
+```text
+result(good,checked_datalog(root_graph([node(module(unit(gate,content(good))),module),node(owner(unit(gate,content(good)),3),product),node(owner(unit(gate,content(good)),23),product),node(owner(unit(gate,content(good)),43),sum),node(owner(unit(gate,content(good)),48),product),node(owner(unit(gate,content(good)),57),product),node(owner(unit(gate,content(good)),63),product)],[:(module(unit(gate,content(good))),edge,ref(owner(unit(gate,content(good)),3)),0),:(module(unit(gate,content(good))),from_ref,ref(owner(unit(gate,content(good)),3)),3),:(module(unit(gate,content(good))),node,ref(owner(unit(gate,content(good)),23)),1),:(module(unit(gate,content(good))),reachable,ref(owner(unit(gate,content(good)),63)),4),:(module(unit(gate,content(good))),result,ref(owner(unit(gate,content(good)),43)),2),:(owner(unit(gate,content(good)),3),from,ref(primitive(text)),0),:(owner(unit(gate,content(good)),3),to,ref(primitive(text)),1),:(owner(unit(gate,content(good)),23),id,ref(primitive(text)),0),:(owner(unit(gate,content(good)),23),label,ref(primitive(text)),1),:(owner(unit(gate,content(good)),43),err,ref(owner(unit(gate,content(good)),57)),1),:(owner(unit(gate,content(good)),43),ok,ref(owner(unit(gate,content(good)),48)),0),:(owner(unit(gate,content(good)),48),value,ref(primitive(text)),0),:(owner(unit(gate,content(good)),57),message,ref(primitive(text)),0),:(owner(unit(gate,content(good)),63),from,ref(primitive(text)),0),:(owner(unit(gate,content(good)),63),to,ref(primitive(text)),1)]),datalog_program([relation(ref(owner(unit(gate,content(good)),3)),2),relation(ref(owner(unit(gate,content(good)),23)),2),relation(ref(owner(unit(gate,content(good)),48)),1),relation(ref(owner(unit(gate,content(good)),57)),1),relation(ref(owner(unit(gate,content(good)),63)),2)],[call(ref(owner(unit(gate,content(good)),3)),[const("a"),const("b")]),call(ref(owner(unit(gate,content(good)),3)),[const("b"),const("c")])],[rule(call(ref(owner(unit(gate,content(good)),63)),[var(v(84)),var(v(85))]),[call(ref(owner(unit(gate,content(good)),3)),[var(v(84)),var(v(85))])]),rule(call(ref(owner(unit(gate,content(good)),63)),[var(v(94)),var(v(95))]),[call(ref(owner(unit(gate,content(good)),3)),[var(v(94)),var(v(98))]),call(ref(owner(unit(gate,content(good)),63)),[var(v(98)),var(v(95))])])]),[depends(ref(owner(unit(gate,content(good)),63)),ref(owner(unit(gate,content(good)),3)),positive),depends(ref(owner(unit(gate,content(good)),63)),ref(owner(unit(gate,content(good)),63)),positive)],[stratum(ref(owner(unit(gate,content(good)),63)),0),stratum(ref(owner(unit(gate,content(good)),57)),0),stratum(ref(owner(unit(gate,content(good)),48)),0),stratum(ref(owner(unit(gate,content(good)),23)),0),stratum(ref(owner(unit(gate,content(good)),3)),0)]),[])
+result(bad,[diagnostic(check,r0,unsafe_head_var(a)),diagnostic(check,r1,arity_mismatch(edge,2,1)),diagnostic(check,s0,unresolved_name(missing))])
+```
+
+The undeclared-use diagnostic surfaces as `unresolved_name(missing)` because
+no owner edge resolves the spelling; `undeclared_relation/1` covers a name
+that resolves to a non-relation target. `git diff --check` passed. No suite or
+test file was added.
