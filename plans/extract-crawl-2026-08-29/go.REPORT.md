@@ -610,3 +610,48 @@ once-per-corpus COUNT gate (wall(400)/wall(200) < 2.5).
 `tests/55_go_type_plane.rs`: `viaInferred` flipped from the old
 "stays inferred" policy to the new binding (3 assertions updated, fixture
 untouched).
+
+## Fixes 6 (closure-caller mirror, lane `fix-extract-go-closure-mirror`) <a name="fixes-6"></a>
+
+Base `abb64ef46`. The rust arm's kink 3, mirrored into the go arm
+(`src/lang/go.rs`): a call whose caller is a Lambda def (`closure@<n>`) gets
+ONE extra edge onto the innermost NAMED def covering the site, kind
+`NameResolve`, same call site. Package-level func literals mint no def, so
+their sites have no caller and no mirror. Suite:
+`tests/64_go_closure_mirror.rs` over
+`tests/fixtures/go_findings/closure_mirror/` (3 tests; all red before the
+fix, green after).
+
+### Receipt, current binary, ONE process over all 5,096 files
+
+`extract --resolve --project-root /Users/chrishafley/projects/typescript-go
+$(cat gofiles.txt)`; normalize with
+`plans/extract-bench-2026-08-29/normalize.py`; overwrite
+`plans/extract-bench-2026-08-29/go.parse.call.tsv`; first commit of
+`go.parse.module.tsv` (resolved_import rows, normal form).
+
+| record | kind | rows |
+|---|---|---|
+| resolved_edge | name_resolve | 80,316 |
+| resolved_edge | import_resolve | 28,560 |
+| resolved_edge | implements | 1,657 |
+| resolved_edge | total | 110,533 |
+| resolved_import | local | 12,990 |
+| resolved_import | namespace | 1,183 |
+| unresolved | builtin / external / inferred | 14,434 / 6,492 / 3,293 |
+| closure@-caller edges | primary | 8,726 (+ one mirror each) |
+
+| metric | Fixes 5 | this run |
+|---|---|---|
+| call recall vs `go.oracle.call.vta.bare.tsv` | 45.3% (24,980) | **73.4%** (40,454) |
+| call precision (intersection / ours) | 50.9% | **50.2%** (ours 80,584 unique) |
+| reachable (104 program roots) | 7,786 | **8,983** |
+| reachable with test roots | 14,398 | **15,593** |
+| module plane vs `go.oracle.module.tsv` | recall 84.11% | **100%** (2,152/2,152), precision 15.18% |
+
+### Tests
+
+`cargo test --features cli`: 95 suites, 0 failed, rc 0. New suite
+`tests/64_go_closure_mirror.rs`: one mirror per closure-caller edge (COUNT
+rail), nested closures mirror to the named fn (`outer`, never an outer
+closure), and a package-level literal emits no row at all.

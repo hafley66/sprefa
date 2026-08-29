@@ -3117,11 +3117,32 @@ impl Resolve<CallF> for GoSource {
             }
             results[ix] = final_t.map(|((blob, span), kind)| (caller, blob, span, kind));
         }
+        // The closure-caller mirror: a caller whose def is a Lambda
+        // (`closure@<n>`) gets ONE extra edge onto the innermost NAMED def
+        // covering the site (the enclosing fn/method), same shape and kind as
+        // the rust arm (52_rust_crawl_kinks kink 3). Package-level func
+        // literals mint no def, so their sites have no caller and no mirror.
+        // Sorted once per file: the mirror lookup runs per closure-caller
+        // site, and a per-site scan of the def table is the shape kink 1 was.
+        let named = go_named_def_spans(call);
         let mut edges = Vec::new();
         for (site, result) in sites.iter().zip(results) {
             let Some((caller, dst_blob, dst_span, kind)) = result else {
                 continue;
             };
+            if call.node(caller).name.is_none() {
+                if let Some(enclosing) = go_enclosing_named_def(&named, site.span) {
+                    edges.push(
+                        ProjectEdge::new(
+                            enclosing,
+                            dst_blob.clone(),
+                            dst_span,
+                            CallEdgeKind::NameResolve,
+                        )
+                        .with_call_site(site.span),
+                    );
+                }
+            }
             edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
         }
         let interfaces: BTreeSet<NameId> = output
@@ -3165,6 +3186,35 @@ impl Resolve<CallF> for GoSource {
 
 /// Leg 2: for every named type whose method set covers ALL of `specs`, one
 /// `Implements` edge per spec. One pass per interface, never per call site.
+/// Every NAMED CallF def as (span, ref), sorted by (start, end) for the
+/// `go_enclosing_named_def` binary search.
+fn go_named_def_spans(defs: &FamilyBundle<CallF>) -> Vec<(Span, NodeRef)> {
+    let mut sorted: Vec<(Span, NodeRef)> = defs
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.name.is_some())
+        .map(|(ix, node)| (node.span, NodeRef(ix as u32)))
+        .collect();
+    sorted.sort_by_key(|(span, _)| (span.start, span.end()));
+    sorted
+}
+
+/// The innermost NAMED def covering `site`. `covering_def` takes the innermost
+/// def of any kind, which is the closure wherever one is in the way.
+fn go_enclosing_named_def(sorted: &[(Span, NodeRef)], site: Span) -> Option<NodeRef> {
+    let cut = sorted.partition_point(|(span, _)| span.start <= site.start);
+    let mut best: Option<(Span, NodeRef)> = None;
+    for &(span, r) in &sorted[..cut] {
+        if site.end() <= span.end()
+            && best.map_or(true, |(b, _)| span.end() - span.start < b.end() - b.start)
+        {
+            best = Some((span, r));
+        }
+    }
+    best.map(|(_, r)| r)
+}
+
 fn go_interface_implements(
     def_index: &DefIndex,
     paths: Option<&PathIndex>,
