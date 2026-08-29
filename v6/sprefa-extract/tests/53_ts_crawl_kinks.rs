@@ -207,3 +207,29 @@ fn a_local_named_as_an_argument_mints_no_reference_row() {
     .count();
     assert_eq!(refs, 0);
 }
+
+// ── kink 5: --scip-facts needs a git worktree ───────────────────────────────
+
+/// SABOTAGE RECEIPT (fail-pre-fix): `--help` never named the requirement, so
+/// running the flag over a scratch copy of a corpus died on
+/// `Error: Read(".", ... ". is not inside a Git worktree")` with nothing in the
+/// help pointing at the cause.
+#[test]
+fn scip_facts_help_names_the_git_worktree_requirement() {
+    let help = String::from_utf8(
+        Command::new(env!("CARGO_BIN_EXE_extract"))
+            .arg("--help")
+            .output()
+            .expect("extract binary runs")
+            .stdout,
+    )
+    .expect("help is UTF-8");
+    let line = help
+        .lines()
+        .find(|line| line.contains("Git worktree"))
+        .unwrap_or_else(|| panic!("--help never names the Git worktree requirement"));
+    assert!(
+        line.contains("--project-root"),
+        "the requirement is on --project-root, not on the flag: {line}"
+    );
+}

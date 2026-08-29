@@ -197,7 +197,11 @@ true, a reference is one without, a local is a `local `-prefixed symbol), and
 those machines belong above this binary.
 
 PATH... under this flag only selects the indexer for --scip-build; the facts
-cover every document in the index either way.";
+cover every document in the index either way.
+
+--project-root must be inside a Git worktree: the index's bytes are read
+through a source tree, so a scratch copy of a corpus dies on
+`Read(\".\", \". is not inside a Git worktree\")`.";
 
 pub const SCIP_DEPS_LONG: &str = "\
 Fold a SCIP index into file_edge rows: src_path holds a reference to a symbol
