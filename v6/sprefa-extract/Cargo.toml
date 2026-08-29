@@ -70,6 +70,16 @@ oxc_resolver = "11.24"
 # in lang/rust.rs.
 syn = { version = "2", features = ["full", "visit", "parsing", "extra-traits"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
+# In-process macro_rules expander, plans/extract-macro-lab-2026-08-29/PLAN.md
+# Option 1. Versions pinned to the lab's, commit dae353d75.
+ra_ap_syntax = "0.0.349"
+ra_ap_mbe = "0.0.349"
+ra_ap_tt = "0.0.349"
+ra_ap_parser = "0.0.349"
+ra_ap_span = "0.0.349"
+ra_ap_syntax-bridge = "0.0.349"
+ra_ap_intern = "0.0.349"
+salsa = { version = "0.28.2", default-features = false, features = ["macros", "rayon"] }
 # tree-sitter is the Go AST front-end v5 carried (src/graph/typegraph/go.rs).
 # These versions match what ast-grep-language already transitively pulls
 # (tree-sitter 0.25.10 + tree-sitter-go 0.23.4), so cargo UNIFIES them: one copy
