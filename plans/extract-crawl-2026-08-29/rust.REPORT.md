@@ -21,6 +21,9 @@ Every `extract` call ran under `timeout 10`. Raw tables sit beside this file.
 13. [Fixes: the module plane (lane `fix-extract-rust-module-plane`)](#13-fixes-the-module-plane-lane-fix-extract-rust-module-plane)
 14. [macro_rules expansion, kink 2 closed (lane `feature-extract-rust-mbe`)](#14-macro_rules-expansion-kink-2-closed-lane-feature-extract-rust-mbe)
 15. [Scip macro-span call sites](#15-scip-macro-span-call-sites-lane-feature-extract-rust-scip-macros)
+16. [The 52,101 `ambiguous` drops classified](#16-the-52101-ambiguous-drops-classified-lane-fix-extract-rust-cross-crate)
+17. [The receiver leg](#17-the-receiver-leg-lane-fix-extract-rust-cross-crate)
+18. [The receiver leg, pass 2](#18-the-receiver-leg-pass-2-lane-fix-extract-rust-receivers-2)
 
 ## 1. What was measured
 
@@ -1035,3 +1038,146 @@ the pre-leg binary: 8 red), fixtures
 new drop reason: `9_closure_resolved_edges.jsonl` (iter/map/collect now
 `inferred`) and `wire_golden.jsonl` (regenerated; the corpus embeds the
 former as a data fixture).
+
+## 18. The receiver leg, pass 2 (lane `fix-extract-rust-receivers-2`)
+
+### 18.1 The universe
+
+One process, no chunking: `extract --resolve --family call,type --project-root
+. $(cat rust.receiver.files.txt)` from the corpus root, 873 `crates/*/src`
+files, corpus `~/projects/rust-analyzer` at `af4111f`. Wall **5.06s** before
+the fix, **3.01s** after, one run each; the 10-second law holds with room.
+
+Section 16 counted 52,101 `ambiguous` drops and section 17 left 15,444 in this
+universe (8,799 in the bench's per-crate chunked universe). Both numbers are
+this section's input; the whole-corpus 15,444 reproduced EXACTLY on this lane's
+pre-fix binary, which is what makes the before column below comparable.
+
+### 18.2 Why the receiver leg did not bind: all 15,444, classified
+
+Not a projection from a sample. Every ambiguous drop carries its receiver
+state, read out of a throwaway instrumented build (the drop `detail` grew
+`#recv=<T>#impls=<n>`; the patch was reverted before any commit, so no `src/`
+file in this PR carries it). `T` is then read against three corpus tables: the
+extractor's own struct/enum/trait nodes (`--family type`, 873 serial runs),
+a `type X = ..` alias scan, and a trait-body scan.
+
+`rust.r2.ambiguous.sample300.tsv` (seed 7, committed beside this file) is a
+300-row slice of the after column, one row per site with its class.
+
+| # | class | before | after | who takes it |
+|---|---|---:|---:|---|
+| 1 | method site with NO receiver row at all | **2,232** | **80** | `rust_receivers.rs` `visit_local`, fixed below; the 80 left are macro-expanded spans |
+| 2 | receiver type is the literal `Self` | **366** | **0** | `rust_receivers.rs` `tables`/`resolve_self`, fixed below |
+| 3a | receiver type is a corpus ALIAS to an external type | 2,470 | 2,630 | nobody: `type SyntaxNode = rowan::SyntaxNode<..>`, no corpus edge is correct |
+| 3b | receiver type is undeclared in the corpus | 1,370 | 1,449 | nobody: `FxHashMap`, `str`, `Arena` |
+| 5 | corpus struct/enum, method from an external trait or a `Deref` | 1,501 | 1,974 | nobody: `Clone::clone`, `Hash::hash`, `Into::into` |
+| 10 | `T::f()`, T external or an alias | 1,977 | 1,977 | nobody: `Arc::new`, `FxHashSet::default` |
+| 8 | `T::f()`, T a corpus struct/enum | 1,366 | 1,366 | `rust.rs` `assoc_path_type` + `impl_target`: the pair has 0 or 2+ corpus impls |
+| 11 | module-qualified path `mod::f()` | 1,367 | 1,367 | `rust.rs` `call_name_match_in_module`; `mem::take` and friends are external |
+| 9 | free fn / bare name / struct literal | 1,364 | 1,178 | the module plane's glob leg (section 16 class d) |
+| 7 | Named receiver, 2+ corpus impls of (T, m) | 759 | 815 | `rust_modules.rs` `impl_target`; 395 are `Vec::push`, where no corpus edge is correct |
+| 12 | `T::f()`, T a corpus trait (`Default::default`) | 260 | 260 | trait dispatch, unbuilt |
+| 4 | corpus struct/enum, method is a corpus trait DEFAULT body | 194 | 199 | `impl_facts` would need trait bodies plus a T -> traits table |
+| 6 | receiver type is a corpus TRAIT (`dyn`/`impl`/bound) | 150 | 161 | trait dispatch, unbuilt |
+| 6b | receiver type is a generic param name (`T`, `S`, `R`) | 52 | 60 | bound resolution, unbuilt |
+| 13 | `Self::f()` | 16 | 16 | `rust.rs` `self_impl_type`; the pair has 0 or 2+ corpus impls |
+| | TOTAL | **15,444** | **13,532** | |
+
+Classes 3a, 3b, 5, 7 and 10 GROW because sites that had no receiver row now
+have one, and it names an external type. 6,053 of the 13,532 that remain
+(44.7%) are sites where the receiver's type is std, external, or an alias to
+one: no corpus edge is correct and the drop is right. What is wrong there is
+only the reason slug, which reads `ambiguous` where the tier can in fact say
+"known receiver, no corpus impl".
+
+Two file:line per class:
+
+| # | sites |
+|---|---|
+| 1 | `crates/cfg/src/cfg_expr.rs:136` `keyword`; `crates/cfg/src/cfg_expr.rs:148` `next` |
+| 2 | `crates/cfg/src/dnf.rs:151` `push` recv=Self; `crates/cfg/src/dnf.rs:155` `extend` recv=Self |
+| 3a | `crates/base-db/src/input.rs:550` `into_iter` recv=Vec; `crates/base-db/src/input.rs:664` `insert` recv=FxHashSet |
+| 3b | `crates/base-db/src/input.rs:402` `iter` recv=FxHashMap; `crates/base-db/src/input.rs:544` `shrink_to_fit` recv=FxHashMap |
+| 4 | `crates/hir-def/src/attrs.rs:658` `krate` recv=GenericDefId; `crates/hir-def/src/expr_store/lower.rs:2401` `label` recv=ForExpr |
+| 5 | `crates/base-db/src/editioned_file_id.rs:54` `field` recv=EditionedFileId; `crates/base-db/src/editioned_file_id.rs:59` `field` recv=EditionedFileId |
+| 6 | `crates/cfg/src/lib.rs:134` `into_iter` recv=T; `crates/hir-def/src/item_tree/attrs.rs:104` `span_for` recv=S |
+| 6b | `crates/hir-ty/src/diagnostics/decl_check.rs:728` `lookup` recv=L; `crates/hir-ty/src/next_solver/consts.rs:333` `consts` recv=R |
+| 7 | `crates/base-db/src/change.rs:46` `push` recv=Vec; `crates/base-db/src/input.rs:769` `push` recv=Vec |
+| 8 | `crates/base-db/src/change.rs:72` `LocalRoots::get`; `crates/base-db/src/change.rs:73` `LibraryRoots::get` |
+| 9 | `crates/cfg/src/cfg_expr.rs:163` `query`; `crates/hir-def/src/attrs/docs.rs:975` `range` |
+| 10 | `crates/base-db/src/change.rs:56` `FxHashSet::default`; `crates/base-db/src/change.rs:57` `FxHashSet::default` |
+| 11 | `crates/base-db/src/input.rs:810` `mem::take`; `crates/base-db/src/input.rs:846` `std::mem::take` |
+| 12 | `crates/base-db/src/input.rs:1005` `Default::default`; `crates/base-db/src/input.rs:1006` `Default::default` |
+| 13 | `crates/hir-def/src/hir.rs:512` `Self::all`; `crates/hir-expand/src/proc_macro.rs:125` `Self::builder` |
+
+### 18.3 The two fixes
+
+| # | defect | throw site | rule now |
+|---|---|---|---|
+| 1 | `visit_local` returned before `syn::visit::visit_local` for every pattern that is not an ident, so the initializer of `let (a, b) = ..` and `let Some(x) = .. else` was never walked and each method call inside one got no receiver row | `rust_receivers.rs:157-177` (pre-fix) | the walk descends into every local, whatever the pattern; a destructuring pattern simply binds no name |
+| 2 | `fn new() -> Self` put the literal `Self` in the same-file one-hop return table, so `let w = T::new(); w.m()` asked the impl table for `("Self", m)`, found nothing, and, the receiver type being KNOWN, emitted no row at all | `rust_receivers.rs:328` (the `let _ = &self_type;` leftover) | `-> Self` inside `impl T` reads as `T`, and `Self` reaching the walk from a param or a field resolves through the impl stack |
+
+One more shape came out of fix 1 for free: the initializer is now walked in the
+OUTER scope, so `let a = a.tick()` types its receiver through the binding it
+shadows instead of through the one being introduced.
+
+### 18.4 Step 3 of the brief: the field-shadow twin does not reproduce here
+
+The brief asked for the rust half of ORACLES.REPORT.md section 13.4 finding 2:
+17 `type` rows whose dst_path points at the referring file because a field or
+token there carries the referenced type's name. Measured, it is two different
+things and neither is a field shadow:
+
+| claim | measurement | verdict |
+|---|---|---|
+| a same-named FIELD captures a type reference | the rust arm mints no TypeF node for a field (kinds emitted: struct, enum, trait, method, function, const), and **0 of 3,471** resolved type edges in the one-process run bind to a non-type def; same count, 0 of 1,706, in the chunked run | does not happen |
+| `Resolver` binds to `hir-ty/src/infer/unify.rs` instead of `hir-def/src/resolver.rs`, 6 of the 17 rows | `unify.rs:716` declares a real `pub(super) struct Resolver`. Under one process the row is CORRECT (`crates/hir-def/src/resolver.rs`, via the module plane's import leg); under the chunked driver hir-def is not in the hir-ty chunk, so the only candidate is unify.rs | the chunked driver, finding 1, `resolve_runs.py` |
+| `ProcMacroLoc -> ProcMacroKind` and `TargetFeatures -> Symbol` | one process binds the first to `crates/hir-expand/src/proc_macro.rs` (the oracle's answer) and emits no row at all for the second | the chunked driver |
+
+Misbound dst_path against `rust.oracle.type.typedecl.tsv`, joined on
+(src_path, src_name, dst_name):
+
+| driver | ours rows | exact hits | dst_path misbound |
+|---|---:|---:|---:|
+| chunked, per crate (the bench universe) | 1,679 | 1,646 | **17** |
+| one process, whole corpus | 2,946 | 2,184 | **11** |
+
+The 11 that survive one process are a different defect: two REAL type
+declarations sharing a name across crates (`GenericArgs` in
+`hir-def/src/expr_store/path.rs` and in `hir-ty/src/next_solver/generic_arg.rs`,
+5 rows; `FieldSource`, 2; `Layout`, 1, where the true target is a `type` alias
+the extractor mints no node for). Filtering candidates to type declarations,
+which is what the brief prescribed, changes none of them: the wrong target is
+already a struct or an enum. No code change landed for step 3. What landed is a
+pin, `a_field_named_like_a_type_does_not_capture_the_reference` in
+`tests/68_rust_receivers.rs`, which fails the day a field starts capturing a
+type reference.
+
+### 18.5 Receipt
+
+| | before | after |
+|---|---:|---:|
+| one process, `resolved_edge` | 83,331 | **83,583** |
+| one process, `unresolved` reason `ambiguous` | 15,444 | **13,532** |
+| one process, reason `inferred` | 41,161 | 43,396 |
+| one process, reason `no_corpus_def` | 7,422 | 6,881 |
+| one process, unique call rows normalized | 53,991 | 54,166 |
+| one process, oracle intersection | 18,101 | **18,243** |
+| one process, intersection / ours | 33.53% | **33.68%** |
+| one process, intersection / oracle | 67.03% | **67.56%** |
+| one process, oracle rows we miss | 8,903 | **8,761** |
+| per-crate pipeline, unique call rows | 41,030 | 41,033 |
+| per-crate pipeline, oracle intersection | 13,892 | **13,943** |
+| per-crate pipeline, intersection / ours | 33.9% | **33.98%** |
+| per-crate pipeline, intersection / oracle | 51.4% | **51.63%** |
+| per-crate pipeline, `ambiguous` drops | 8,799 | **8,353** |
+| type rows, dst_path misbound (chunked / one process) | 17 / (unmeasured) | 17 / **11** |
+
+`before` for the per-crate rows is section 17.1's measurement of the same
+script (`resolve_runs.py`, depth 3, 36 groups) at the same corpus sha; the
+whole-corpus rows were both measured on this lane.
+
+The oracle is `rust.oracle.call.tsv` (`ra_ap_ide`, 27,004 rows). `bench.py`
+prints its two ratios as recall and precision with `a` = ours; the rows above
+spell out which denominator each uses.

@@ -62,6 +62,41 @@ fn edges(names: &[&str]) -> Vec<(String, String, String)> {
     rows
 }
 
+/// (owner_name, target_name, target file stem) per `resolved_type_edge`.
+fn type_edges(names: &[&str]) -> Vec<(String, String, String)> {
+    let mut args: Vec<String> = vec![
+        "--resolve".to_string(),
+        "--family".to_string(),
+        "type".to_string(),
+    ];
+    args.extend(names.iter().map(|name| format!("{SRC}/{name}")));
+    let output = Command::new(env!("CARGO_BIN_EXE_extract"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(&args)
+        .output()
+        .expect("extract binary runs");
+    let mut rows: Vec<(String, String, String)> = String::from_utf8(output.stdout)
+        .expect("stdout is UTF-8")
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("a flat fact is JSON"))
+        .filter(|row| row["record"] == "resolved_type_edge")
+        .map(|row| {
+            (
+                text(&row, "owner_name"),
+                text(&row, "target_name"),
+                text(&row, "target_path")
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .trim_end_matches(".rs")
+                    .to_string(),
+            )
+        })
+        .collect();
+    rows.sort();
+    rows
+}
+
 fn drops(names: &[&str]) -> Vec<(String, String)> {
     let mut rows: Vec<(String, String)> = run(names)
         .iter()
@@ -173,6 +208,23 @@ fn initializer_reads_the_outer_binding() {
 fn self_return_one_hop_binds() {
     let rows = edges(&MULTI);
     assert!(has(&rows, "beta_one_hop", "tick", "recv_beta"), "{rows:?}");
+}
+
+/// PIN, not a fail-first: it passes on the pre-fix binary too. The go twin
+/// (`ModifierFlags ModifierFlags`, ORACLES.REPORT.md section 13.4 finding 2)
+/// binds a type reference to the referring file when a same-named FIELD sits
+/// there. `Frame` carries a field spelled `Alpha`, and the rust arm mints no
+/// TypeF node for a field, so the reference must still land in `recv_alpha`.
+/// Section 18.4 has the corpus measurement: 0 of 3,471 type edges bind to a
+/// non-type def.
+#[test]
+fn a_field_named_like_a_type_does_not_capture_the_reference() {
+    let rows = type_edges(&["recv_field_shadow.rs", "recv_alpha.rs"]);
+    assert!(
+        rows.iter()
+            .any(|(owner, target, file)| owner == "Frame" && target == "Alpha" && file == "recv_alpha"),
+        "{rows:?}"
+    );
 }
 
 #[test]
