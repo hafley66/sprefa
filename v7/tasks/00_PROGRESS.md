@@ -1,6 +1,6 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-28 23:58 EDT
+Updated: 2026-08-29 00:12 EDT
 
 ## Basement restart
 
@@ -239,3 +239,24 @@ Review correction at 23:58 EDT:
 - Duplicate ordinal receipt:
   `result([],[diagnostic(check,b0,duplicate_bind_index(m,0))])`.
 - All 6 existing reader and entrypoint tests still pass.
+
+## Shared libtime evaluator
+
+- Added `v7/src/1_libtime/0_evaluator.pl` with one public `evaluate/4`.
+- The evaluator accepts the checked `rule/2` and `call/2` data used by both
+  compiler and runtime callers. It has no phase option or phase branch.
+- SWI tabling closes positive recursion. A per-call evaluation identity keys
+  installed facts, rules, and tabled subgoals.
+- Reified `var(Identity)` terms become fresh SWI variables per rule proof;
+  repeated identities inside that proof share one variable.
+- `setup_call_cleanup/3` abolishes the evaluation table and erases temporary
+  clauses after closure is copied and sorted.
+- Direct receipt:
+
+```text
+receipt([call(ref(edge),[const(a),const(b)]),call(ref(edge),[const(b),const(c)]),call(ref(pair),[const(a),const(a)]),call(ref(pair),[const(a),const(b)]),call(ref(reach),[const(a),const(b)]),call(ref(reach),[const(a),const(c)]),call(ref(reach),[const(b),const(c)]),call(ref(same),[const(a)])],[],[call(ref(ping),[const(ok)])],[],temporary(0,0))
+```
+
+The receipt proves duplicate seed collapse, two-hop recursive closure,
+same-variable matching, an isolated second invocation, and zero remaining
+temporary rule or seed clauses. No test file was added.
