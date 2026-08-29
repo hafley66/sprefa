@@ -8,10 +8,10 @@ priority: high
 epic: dl7-datalog-extensions
 labels: [dl7, model-terra]
 lane: dl7-datalog-kernel
-lane_seq: 1
-collision: [v7-datalog-check, v7-libtime, v7-test]
+lane_seq: 3
+collision: [v7-datalog-check, v7-libtime, v7-test, v7-datalog-lower]
 size: L
-blocked_by: ['@dl7-compiler-split']
+blocked_by: ['@dl7-compiler-split', '@dl7-checked-foundation', '@dl7-relational-cons']
 ---
 
 # Add checked stratified negation to DL7
@@ -37,11 +37,19 @@ Positive goals read the current stratum closure. Negative goals read only the co
 
 ## Acceptance Criteria
 
-- [ ] Prefix negative goal lowers without adding infix syntax.
-- [ ] Checked rule bodies carry explicit positive or negative polarity.
-- [ ] Negative dependencies impose gap 1.
-- [ ] Negative cycles produce one deterministic diagnostic.
-- [ ] Positive recursive closure remains unchanged.
+- [ ] `(not (Relation Argument...))` lowers without adding infix syntax.
+- [ ] Every checked body row has the exact form
+  `checked_goal(positive|negative, call(ref(Relation), Arguments))`.
+- [ ] Negative variables are bound by preceding authored-order goals.
+- [ ] Negative dependencies impose `HeadStratum >= BodyStratum + 1`.
+- [ ] Negative cycles produce one deterministic diagnostic with sorted relation
+  payload and source origin.
+- [ ] Positive recursive closure remains term-identical.
+- [ ] Negative goals read completed lower rows only.
+- [ ] Evaluation-local lower rows, asserted clauses, and SWI tables are absent
+  after success, diagnostic, and exception.
+- [ ] Negative constructive-kernel goals follow the selected ruling in
+  `@dl7-datalog-rulings`.
 - [ ] No emitter or target storage code changes.
 
 ## Tests Run
@@ -50,4 +58,6 @@ Positive goals read the current stratum closure. Negative goals read only the co
 
 ## Implementation Notes
 
-Donor predicates: compiler_rule_constraint/5, relax_compiler_strata/4, tabled_compiler_closure/4, satisfy_tabled_compiler_body/2.
+Donor predicates: compiler_rule_constraint/5, relax_compiler_strata/4,
+tabled_compiler_closure/4, satisfy_tabled_compiler_body/2. Shared checked-goal,
+safety, key, and strata contracts land in `@dl7-checked-foundation` first.

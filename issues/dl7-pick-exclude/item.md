@@ -11,7 +11,7 @@ size: M
 lane: dl7-kernel
 lane_seq: 2
 collision: [v7-kernel, v7-prelude]
-blocked_by: ['@dl7-luna-review', '@dl7-relational-cons', '@dl7-stratified-negation', '@dl7-count-aggregate']
+blocked_by: ['@dl7-luna-review', '@dl7-relational-cons', '@dl7-stratified-negation', '@dl7-count-aggregate', '@dl7-ordered-index']
 ---
 
 # Add userland Pick and Exclude goals
@@ -55,3 +55,8 @@ dense-rank relation, arithmetic, comparison, or aggregate representation is
 checked.
 
 Detailed evidence: `v7/tasks/results/8_PICK_EXCLUDE.md`.
+
+The extension review adds three required inputs: ordered strict-predecessor
+rows or comparison, explicit zero-rank handling, and closure functional-key
+validation for derived `':'/4` rows. Exact rule shapes and the corrected DAG are
+in `v7/design/3_DATALOG_EXTENSIONS.REVIEW.md`.

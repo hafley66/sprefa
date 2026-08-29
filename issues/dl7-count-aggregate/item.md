@@ -8,7 +8,7 @@ priority: high
 epic: dl7-datalog-extensions
 labels: [dl7, model-terra]
 lane: dl7-datalog-kernel
-lane_seq: 2
+lane_seq: 4
 collision: [v7-datalog-lower, v7-datalog-check, v7-libtime, v7-test]
 size: L
 blocked_by: ['@dl7-stratified-negation']
@@ -18,12 +18,14 @@ blocked_by: ['@dl7-stratified-negation']
 
 ## Description
 
-Lower a nested count application in a rule head into checked aggregate data and derive grouped counts from completed lower rows. This supplies dense predecessor counts for selected ordered edges.
+Lower one count form in a rule head into checked aggregate data and derive
+grouped counts from completed lower rows. Dense selected-edge indices remain a
+separate consumer of `@dl7-ordered-index` and the selected zero-count policy.
 
 ## Signatures
 
-aggregate_argument(count, +Expression).
-derive_aggregate(+CompletedRows, +Rule, -Row).
+aggregate(count, +Expression).
+derive_aggregate_rows(+CompletedRows, +AggregateRule, -SortedRows, -Diagnostics).
 
 ## Instance lifetimes
 
@@ -35,16 +37,23 @@ Plain head arguments form the group key. count(Expression) contributes one row p
 
 ## Acceptance Criteria
 
-- [ ] Nested head application lowers through the generic expression path.
-- [ ] Only count is admitted in this card.
+- [ ] One `(count Argument)` head form lowers into
+  `aggregate(count, Argument)`; other nested head forms remain rejected.
+- [ ] Exactly one count position is admitted in this card.
 - [ ] Count reads a completed lower stratum.
-- [ ] Group keys and output rows are deterministic and sorted.
-- [ ] Aggregate recursion is rejected.
+- [ ] Every relation read by an aggregate-headed rule imposes stratum gap 1.
+- [ ] Plain positions form the group key and one complete body proof contributes
+  one bag entry, including equal values from distinct proofs.
+- [ ] Empty-bag behavior matches `@dl7-datalog-rulings`.
+- [ ] Group rows are deterministic and sorted.
+- [ ] Aggregate recursion and malformed placement have distinct deterministic
+  diagnostics.
 - [ ] No SQL or emitter vocabulary enters V7 Prolog.
 
 ## Tests Run
 
-- [ ] Existing consolidated V7 SWI suite with grouped and dense-rank receipts in the existing test file.
+- [ ] Existing consolidated V7 SWI suite with grouped count receipts in the
+  existing test file.
 
 ## Implementation Notes
 

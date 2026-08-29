@@ -8,10 +8,10 @@ priority: normal
 epic: dl7-engine-adapter
 labels: [dl7, model-terra]
 lane: dl7-layout
-lane_seq: 0
+lane_seq: 1
 collision: [v7-layout, v7-test]
 size: M
-blocked_by: ['@dl7-compiler-split']
+blocked_by: ['@dl7-compiler-split', '@dl7-layout-rulings']
 ---
 
 # Plan one DL7 relation into a layout graph
