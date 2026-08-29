@@ -1,6 +1,6 @@
 # Brief: sprefa-extract corpus battery, language = ts
 
-Read `plans/extract-corpus-2026-08-28/COMMON.md` FIRST and follow it exactly.
+Read `/Users/chrishafley/projects/sprefa/plans/extract-corpus-2026-08-28/COMMON.md` FIRST (absolute path; it is not in your worktree) and follow it exactly.
 Your lane name: `chore-extract-corpus-ts`.
 
 ## Your language and arm
