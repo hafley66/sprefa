@@ -18,7 +18,9 @@ blocked_by: ['@dl7-compiler-split', '@dl7-layout-rulings']
 
 ## Description
 
-Build the minimum target-neutral physical plan for one declared stored relation and its authored seed rows. Keep SQL dialect data at the adapter boundary and keep SQLite names out of the logical type and rule graphs.
+Build the minimum target-neutral layout for one declared stored relation and
+its authored seed rows. Keep target names, DDL, and statements at the adapter
+boundary.
 
 ## Signatures
 
@@ -30,15 +32,20 @@ Checked logical rows live through compilation. The immutable layout exists after
 
 ## Storage, reads, writes, uniqueness
 
-One logical relation identity maps to one physical relation plan. Ordered colon edges supply columns and types. Key metadata, table identity, DDL, arrival statements, and boundary statements occur once per relation. The first slice supports one base relation and no rule edge.
+One logical relation identity maps to one layout relation. Ordered colon edges
+supply columns and semantic types. The selected layout policy supplies artifact
+role, encoded representation, and key metadata. The first slice supports one
+base relation and no rule edge.
 
 ## Acceptance Criteria
 
 - [ ] Input is V7 checked_datalog only.
-- [ ] Output has explicit relation, column, type, key, DDL, arrival, and boundary fields.
+- [ ] Output has explicit semantic relation identity, artifact role, ordered
+  columns, semantic types, encoded representations, keys, and authored seeds.
 - [ ] One base relation with one seed row plans deterministically.
 - [ ] Unsupported recursive or edge programs produce a named diagnostic.
-- [ ] Layout vocabulary contains no V6 parser term.
+- [ ] Layout vocabulary contains no V6 parser term, target table name, DDL, or
+  engine statement.
 - [ ] No Rust, TypeScript, or V6 file changes.
 
 ## Tests Run
@@ -51,17 +58,14 @@ Status remains open. `checked_datalog/4` supplies relation arity, ordered
 colon edges, ground seeds, rules, dependencies, and strata. It supplies none
 of the required physical rows below:
 
-| Required field | Missing signature | Competing choices |
+| Required layout field | Missing signature | Competing choices |
 | --- | --- | --- |
 | relation kind | `relation_storage_kind(+Relation, -Kind)` | `set`; `log`; explicit stored declaration classifier |
 | key indices | `relation_key_indices(+Relation, -KeyIndices)` | `[]`; all columns; explicit authored positions |
-| physical types | `physical_column_type(+SemanticType, -RowColumnType)` | existing ProgramJson boundary types; no mapping for V7 `any` or `type` |
-| relation and table names | `physical_relation_name(+Relation, +Target, -Name)` | quoted spelling; encoding; identity hash/generated name |
-| DDL and statements | `physical_table_ddl/2`; `physical_relation_statements/4` | durable/transient table SQL; arrival add/delete and boundary protocols |
-| seed placement | `seed_placement(+Relation, +Seeds, -BootOrArrivalPlan)` | `boot`; arrival DTO/template; both |
+| artifact role | `layout_artifact(+Relation, -ArtifactRole)` | current state; event/log; history; transient frontier |
+| encoded representation | `layout_column_representation(+SemanticType, -Representation)` | target-neutral scalar, reference, list, and type-ID representations |
 
-The engine requires every `IncrementalRelationPlan` field, including `kind`,
-all physical table names, `column_types`, `key_indices`, arrival SQL, and
-boundary SQL. The V7 plan contract leaves the first plan schema and its
-ProgramJson mapping as a decision still required. Detailed sources and the
-exact existing engine fields: `v7/tasks/results/10_LAYOUT_BLOCKER.md`.
+ProgramJson still requires table names, boundary types, DDL, arrival SQL, and
+seed placement. Those fields belong to `@dl7-program-json-rulings` and
+`@dl7-program-json-writer`. Detailed sources and the exact existing engine
+fields: `v7/tasks/results/10_LAYOUT_BLOCKER.md`.

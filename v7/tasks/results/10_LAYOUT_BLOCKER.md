@@ -4,6 +4,16 @@ Date: 2026-08-29
 
 Status: blocked; `issues/dl7-layout-planner` remains open.
 
+## Boundary correction
+
+The target-neutral layout planner owns relation selection, artifact roles,
+ordered columns, semantic types, encoded representations, and keys. ProgramJson
+owns target table names, `RowColumnType`, DDL, add/delete/boundary statements,
+and boot versus arrival seed placement. The latter fields remain blocked, but
+they block `@dl7-program-json-writer` through
+`@dl7-program-json-rulings`, rather than expanding the layout graph with SQLite
+policy.
+
 ## Checked input inventory
 
 The only planner input signature on this card is:
@@ -54,15 +64,16 @@ Sources: `v6/sprefa-engine-rs/src/types.rs:5-19,456-482,716-748` and
 
 ## Missing rows and policy forks
 
-| Required layout field | Exact missing V7 row or signature | Competing choices left unresolved |
-| --- | --- | --- |
-| Stored-relation selection and `kind` | `relation_storage_kind(+Relation, -Kind)` | `set`; `log`; a V7 declaration classifier distinct from every product and kernel relation |
-| `key_indices` | `relation_key_indices(+Relation, -KeyIndices)` | `[]`; all ordered columns; explicit authored key positions |
-| `column_types` | `physical_column_type(+SemanticType, -RowColumnType)` | V7 primitive-to-boundary mappings among `text`, `int`, `float`, `bool`, `json`, `ref`, `relation_id`, `list`, and `bytes`; the current `primitive(any)` and `primitive(type)` have no mapping |
-| `rel` and all table-name fields | `physical_relation_name(+Relation, +Target, -Name)` | quoted semantic spelling; delimiter encoding; deterministic identity hash or generated name |
-| DDL durability and physical SQL types | `physical_table_ddl(+RelationLayout, -DdlStatements)` | durable base table plus transient companions required by the engine, with backend SQL types and CREATE form derived from the unresolved name and type rows |
-| arrival add/delete and boundary SQL | `physical_relation_statements(+RelationLayout, -ArrivalAddSql, -ArrivalDelSql, -BoundarySql)` | key-based upsert or row-set arrival; key-based delete or complete-row delete; boundary statement over the selected companion-table protocol |
-| authored seed placement | `seed_placement(+Relation, +Seeds, -BootOrArrivalPlan)` | `boot` statements; arrival DTO/template rows; both with distinct engine fields |
+| Owner | Required field | Exact missing V7 row or signature | Competing choices left unresolved |
+| --- | --- | --- | --- |
+| Layout | Stored-relation selection and `kind` | `relation_storage_kind(+Relation, -Kind)` | `set`; `log`; a V7 declaration classifier distinct from every product and kernel relation |
+| Layout | `key_indices` | `relation_key_indices(+Relation, -KeyIndices)` | `[]`; all ordered columns; explicit authored key positions |
+| Layout | artifact role | `layout_artifact(+Relation, -ArtifactRole)` | current state; event/log; history; transient frontier |
+| Layout | encoded representation | `layout_column_representation(+SemanticType, -Representation)` | target-neutral scalar, reference, list, and type-ID forms |
+| ProgramJson | `column_types` | `program_json_column_type(+Representation, -RowColumnType)` | mappings among `text`, `int`, `float`, `bool`, `json`, `ref`, `relation_id`, `list`, and `bytes` |
+| ProgramJson | `rel` and table names | `program_json_relation_name(+LayoutRelation, -Name)` | quoted semantic spelling; delimiter encoding; deterministic generated name |
+| ProgramJson | DDL and statements | `program_json_relation_ddl/2`; `program_json_relation_statements/4` | durable/transient SQL and arrival add/delete/boundary protocols |
+| ProgramJson | authored seed placement | `program_json_seed_placement(+LayoutRelation, +Seeds, -BootOrArrivalPlan)` | `boot`; arrival DTO/template rows; both |
 
 The semantic-plan contract permits a target adapter to derive SQL DDL from a
 target-neutral layout graph (`v7/design/0_KERNEL_RECONCILIATION.md:346-349`),

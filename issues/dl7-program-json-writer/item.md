@@ -8,17 +8,19 @@ priority: normal
 epic: dl7-engine-adapter
 labels: [dl7, model-luna]
 lane: dl7-layout
-lane_seq: 1
-collision: [v7-layout, v7-test]
+lane_seq: 2
+collision: [v7-layout, v7-test, v7-engine-contract]
 size: M
-blocked_by: ['@dl7-layout-planner']
+blocked_by: ['@dl7-layout-planner', '@dl7-program-json-rulings']
 ---
 
 # Write DL7 ProgramJson engine artifact
 
 ## Description
 
-Serialize the bounded V7 layout into the existing ProgramJson contract and wrap it in the generated Rust module text consumed by run::load_program.
+Adapt the bounded target-neutral V7 layout into the existing SQLite-backed
+ProgramJson contract and wrap it in the generated Rust module text consumed by
+`run::load_program`.
 
 ## Signatures
 
@@ -31,11 +33,15 @@ Layout and ProgramJson live for one compilation artifact. Module text survives o
 
 ## Storage, reads, writes, uniqueness
 
-Emit ir_version 1 from one V7 constant. Emit every required ProgramJson field exactly once. Module text contains one PROGRAM_JSON raw string constant. This card writes no runtime database.
+Emit `ir_version` 1 from one V7 constant. The adapter derives physical names,
+boundary column types, DDL, add/delete/boundary statements, and seed placement
+from immutable layout rows and the selected target policy. Module text contains
+one `PROGRAM_JSON` raw string constant. This card writes no runtime database.
 
 ## Acceptance Criteria
 
 - [ ] ProgramJson contains all fields required by the existing Rust serde type.
+- [ ] SQLite names, DDL, and statements occur only in this target adapter output.
 - [ ] ir_version is 1 from one V7 source.
 - [ ] Output order and escaping are deterministic.
 - [ ] Existing run::load_program accepts the wrapper.
