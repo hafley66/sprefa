@@ -18,6 +18,7 @@ Every `extract` call ran under `timeout 10`. Raw tables sit beside this file.
 10. [Two corrections to the brief](#10-two-corrections-to-the-brief)
 11. [Fixes (lane `fix-extract-rust-crawl`)](#11-fixes-lane-fix-extract-rust-crawl)
 12. [Fixes (lane `fix-extract-rust-crawl-2`)](#12-fixes-lane-fix-extract-rust-crawl-2)
+13. [Fixes: the module plane (lane `fix-extract-rust-module-plane`)](#13-fixes-the-module-plane-lane-fix-extract-rust-module-plane)
 
 ## 1. What was measured
 
@@ -610,3 +611,110 @@ Raw: `rust.qualified.before.json`, `rust.qualified.after.json`,
 - `tests/20_unresolved.rs` pins that a phase-1 row's `path` is absent.
 - Gate, `cargo test --features cli --no-fail-fast`, SUM over 83 binaries:
   424 passed, 0 failed, 2 ignored.
+
+## 13. Fixes: the module plane (lane `fix-extract-rust-module-plane`)
+
+Module resolution is the LANGUAGE'S OWN algorithm, run once per file set as
+its own plane, and every rust resolve arm binds an imported name through it
+before falling to the corpus-wide name-match (user decision 2026-08-29, the
+same ruling that landed the ts twin, `fix-extract-ts-module-plane`, PR #549).
+
+### 13.1 What was built
+
+| piece | where |
+|---|---|
+| `RustModuleFacts`: a dedicated second `syn` parse per file (`use` bindings with qualifier/asked/reexport/glob kept apart, inline `mod x {}` names, `mod x;`/`#[path]` declarations) | `src/lang/rust_modules.rs` |
+| `RustModuleIndex`: qualifier -> home file via the kink-4 `module_target`/`module_segments`/`crate_root_of` text math (reused, not duplicated), `export_table` per file (local defs, `pub use` hops, glob merge with ambiguity), `local_scope_table` for a non-reexport glob's own-file scope | same |
+| `IndexBag.rust_modules`, built after the def index | `src/types.rs`, `src/project.rs` |
+| `Resolve<CallF>` / `Resolve<TypeF>` try the plane after a same-file def, before the corpus-wide ambiguous match | `src/lang/rust.rs` |
+| `resolved_import` rows, chained with the ts plane's in one fact loop | `src/project.rs` `import_facts` |
+
+Two bugs the fail-first tests in `tests/57_rust_module_plane.rs` caught before
+landing (both fixed, both covered): `home_file` bucketed candidate files by
+the raw qualifier text (`super`/`self`/`crate` are never a file's own module
+segment), so any `super::`/`self::` use could never resolve; and a per-NAME
+walk over a module's star imports reproduced kink 1's shape (a generated
+200/400-leaf-plus-barrel corpus measured wall(400)/wall(200) = 2.557x against
+the 2.5x budget). Both are the SAME class of defect the ts plane already
+named in its own header comment (`ts_resolve.rs`): resolve by TABLE, not by
+per-name re-walk.
+
+### 13.2 The receipt
+
+Same corpus, same 941 files (`plans/extract-crawl-2026-08-29/rust.crawl.py`'s
+own partition of the 46 crate labels in `rust.resolve_runs.after.tsv`),
+same machine. `before` = `da239de8f` (this lane's base sha, kink 4/7 already
+landed), `after` = `53189700b`. Kink 1's timeout (the reason sections 3/11/12
+split the resolve into 46 per-crate calls) is ALREADY FIXED on both binaries
+by a prior PR, so this receipt uses ONE whole-corpus `--resolve --family
+call,type` call instead: a cleaner before/after with no per-crate-split
+distortion, and a correction to two of the brief's baseline citations (13.3).
+
+| | before (`da239de8f`) | after (`53189700b`) |
+|---|---:|---:|
+| whole-corpus `--resolve` wall | 2.65s | 4.66s |
+| `resolved_edge` | 55,298 | 59,921 |
+| `resolved_edge` kind `import_resolve` | 0 | 11,907 |
+| `resolved_edge` kind `name_resolve` | 55,298 | 48,014 |
+| `resolved_type_edge` | 2,366 | 2,575 |
+| `resolved_import` rows | 0 (no record for rust) | 7,870 |
+| `unresolved` | 89,827 | 85,435 |
+| `unresolved` reason `ambiguous` | 59,465 | 55,073 |
+| `unresolved` reason `no_corpus_def` | 30,362 | 30,362 |
+| named defs | 19,333 | 19,333 |
+| reachable from the 75 program roots | 3,117 | 3,196 |
+| reachable, union of program + test roots | 12,827 (66.4%) | 12,924 (66.9%) |
+| unreachable | 6,506 | 6,409 |
+
+`resolved_import` by kind: local 5,398, indirect 1,437, namespace 563, star
+472. `no_corpus_def` is BYTE IDENTICAL before/after: the plane only removes
+AMBIGUITY (2+ corpus defs, now one of them named by a `use`), it can never
+manufacture a def std/an external crate never had. Of the 11,907
+`import_resolve` edges, 7,284 are call sites that ALREADY resolved via
+name-match to the same target (now correctly attributed to the language's own
+rule instead of incidental corpus-wide uniqueness) and 4,623 are net-new edges
+a dropped or ambiguous site gained; 55,298 + 4,623 = 59,921.
+
+### 13.3 Two corrections to the brief's baseline numbers
+
+- The brief cites reachable-from-program-roots 477 and union 12,221 (63.2%)
+  as the number to move. Both are section 11.2's PRE-kink-4/7 figures; section
+  12.4 already moved them to 471 and 12,142 (62.8%) on the SAME per-crate-split
+  binary this lane started from. Neither is directly comparable to 13.2's
+  numbers, which are a whole-corpus run (see above) — a wider universe than
+  any per-crate split, so its raw counts sit higher across the board.
+- `ambiguous_cross_crate` (27,267) and `single_def_cross_crate` (9,656) are
+  section 4's names for shapes measured against a PER-CRATE-SPLIT universe:
+  "no candidate in the caller's crate" only means something when the universe
+  really is one crate at a time. Re-run at whole-corpus scope with a
+  crate-partition classifier (`/tmp/rmp_crawl_scratch/classify.py`, not
+  committed — a reconstruction script, not part of the shipped binary):
+  `ambiguous_in_crate` 28,473 -> 26,690, `ambiguous_cross_crate` 27,569 ->
+  27,465. `single_def_cross_crate` has no whole-corpus analogue: a single
+  cross-crate def is not ambiguous once the universe already contains it, so
+  it resolves as `name_resolve` on BOTH binaries, uncounted by either.
+
+### 13.4 Cost
+
+Whole-corpus wall grew 2.65s -> 4.66s (+76%), the same shape as the ts
+plane's own cost line (2s -> 3.10s, +55%): one extra `syn::parse_file` per
+rust input the dedicated second parse costs (phase 1's own parse doesn't
+survive past dispatch), plus the `export_table`/`local_scope_table` build.
+Under the 10-second law on every crate size measured, including the
+whole-corpus call. The COUNT test guarding against a per-name re-walk lives
+in `tests/57_rust_module_plane.rs::barrel_resolve_wall_grows_linearly_with_file_count`.
+
+### 13.5 Gate
+
+`cargo test --release --features cli --no-fail-fast`: 460 passed, 0 failed,
+2 ignored, over 86 binaries.
+
+### 13.6 What stays untested and why
+
+| gap | why |
+|---|---|
+| a qualified call THROUGH an imported module alias (`use a::b as ns; ns::f()`) | `Resolve<CallF>`'s qualified branch (kink 4) reads `callee_path` as an absolute/`crate`/`self`/`super` module path; it does not check whether the FIRST segment is itself a `use`-bound alias. Bare-name imports (the brief's stated scope) are covered; this is a real gap, not fixed here. |
+| `pub(crate)`/`pub(in path)`/private visibility enforcement | explicitly out of scope per the brief, same as kink 4's ruling |
+| a workspace `[patch]`/virtual manifest / `Cargo.toml` dependency graph reader | the plane never reads a manifest; a `use other_crate::f` resolves by suffix match against whatever corpus files are SUPPLIED, same discipline as `crate::`'s `crate_root_of`, so a same-named module in an unrelated crate in the SAME corpus can false-positive (pre-existing kink-4 limitation, not new) |
+| macro-generated `use` items | `rust_module_facts`'s parse sees written source only, same boundary as kink 2 |
+| incremental re-resolve after an edit | the plane, like `TsModuleIndex`, is built once per run |

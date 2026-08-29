@@ -23,6 +23,7 @@ pub mod markdown;
 pub mod prolog;
 pub mod python;
 pub mod rust;
+pub mod rust_modules;
 pub mod rust_rehome;
 pub mod rust_rename;
 pub mod ts;
