@@ -62,12 +62,12 @@ or emitter contract belongs in this ruling.
 
 ## Required rulings
 
-- [ ] Select immutable source-edge rows, freeze/refreeze rounds, or exact
+- [x] Select immutable source-edge rows, freeze/refreeze rounds, or exact
   seed-versus-derived semantics for one relation.
-- [ ] Specify whether kernel signature edges participate in the frozen input
+- [x] Specify whether kernel signature edges participate in the frozen input
   edge relation.
-- [ ] Specify the checked row identity and functional keys.
-- [ ] Specify when generated colon rows become visible to another type
+- [x] Specify the checked row identity and functional keys.
+- [x] Specify when generated colon rows become visible to another type
   operator in the same compilation.
 
 ## Acceptance Criteria
