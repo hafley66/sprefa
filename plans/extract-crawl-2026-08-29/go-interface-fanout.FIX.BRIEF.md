@@ -10,7 +10,7 @@ and the vta oracle both want the site to reach `T.M` directly.
 
 ## First action
 ```
-git merge --ff-only 25c63fb00bd49f837394b86e3ca9bc982aebe12d
+git merge --ff-only ac9b1765e22331b80b3cccf94f397a89614b1180
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Binary: `v6/sprefa-extract/target/release/extract` in YOUR worktree.
