@@ -9,7 +9,8 @@ TOC
 - [Step 5: scip](#step-5-scip)
 - [Perf](#perf)
 - [Extra go checks](#extra-go-checks)
-- [Findings](#findings)
+^- [Findings](#findings)
+- [Fixes](#fixes)
 - [What stays untested and why](#what-stays-untested-and-why)
 
 ## Setup
@@ -138,3 +139,16 @@ No crash, no parse_error, no missing_fact, no rc!=0 besides the timeouts; 0 of 7
 - cgo files: the corpus holds none beyond generated stubs; `.go` files with `import "C"` were not separately enumerated.
 - Windows/plan9 build-tag content: only the `//go:build` line's parse was checked, not per-tag evaluation (out of scope; extract is tag-blind by design).
 - scip_fn_edge vs resolved_edge precision beyond the 20-row sample on yaml.v3.
+## Fixes
+
+Lane `fix-extract-go-corpus`, base 5a13c36bb. Red-first per fix; whole-crate gate `cargo test --features cli` 356 passed / 0 failed.
+
+| finding | before | after | test |
+|---|---|---|---|
+| wrong_fact: receiver type params in sigs (corpus_1.go) | sig{owner=Get,slot=ret,pos=0,ty="T"} | excluded; receiver `type_arguments` identifiers joined into the exclusion set (src/lang/go.rs `go_type_param_names`) | tests/44_go_receiver_type_params.rs |
+| timeout: JSONL emission (x/text collate/tables.go, 2,255,221 rows) | /dev/null 3.67s, piped 3.44s | /dev/null 2.73s, piped 2.22s; one 256 KiB BufWriter + `serde_json::to_writer`, no per-row println/to_string | tests/45_emit_throughput.rs |
+| timeout: --resolve on x/text module dirs (486 files) | rc=124 (report) | rc=0, 3.34s wall, 7,707 rows; fixed by the emission change, no new src change; growth pin wall(400)/wall(200)=1.58 (765/1961/3093ms at n=100/200/400) | tests/46_resolve_scaling.rs |
+
+Commit receipts: 43bae3a35 (F1), 32a439f04 (F2, includes pre-fix profile top frames and the 20-file byte-identical diff receipt: files=20 diffs=0), F3 commit (count test, no src change).
+
+Out of scope, unchanged: scip_skip on read-only module cache; data.go 346MB RSS (literal rows are a caller filter decision).
