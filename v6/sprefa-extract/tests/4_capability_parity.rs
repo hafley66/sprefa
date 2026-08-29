@@ -191,6 +191,9 @@ enum CliReach {
     Emits {
         args: Vec<String>,
         record: &'static str,
+        /// Narrows the witness past the record tag, for a record a second
+        /// capability also produces. Matched as a substring of the same line.
+        field: Option<&'static str>,
         absent_without: Option<Vec<String>>,
     },
     /// Run the binary with these arguments and require this text in stdout.
@@ -229,11 +232,13 @@ fn reach_of(capability: LibraryCapability, scip_index: &Path) -> CliReach {
     match capability {
         Phase1Flatten => CliReach::Emits {
             args: strings(&["tests/fixtures/ts/sample.ts"]),
+            field: None,
             record: "node",
             absent_without: None,
         },
         Phase1FamilyMask => CliReach::Emits {
             args: strings(&["--family", "df", "tests/fixtures/ts/sample.ts"]),
+            field: None,
             record: "param",
             // Without the mask the default is every family, so `param` rows
             // appear anyway; the mask's effect is proven by the roster leg's
@@ -248,6 +253,7 @@ fn reach_of(capability: LibraryCapability, scip_index: &Path) -> CliReach {
                 "call=FN",
                 "tests/fixtures/ts/sample.ts",
             ]),
+            field: None,
             record: "capture",
             absent_without: Some(strings(&["tests/fixtures/ts/sample.ts"])),
         },
@@ -257,6 +263,7 @@ fn reach_of(capability: LibraryCapability, scip_index: &Path) -> CliReach {
                 "tests/fixtures/resolve/0_caller.ts",
                 "tests/fixtures/resolve/1_callee.ts",
             ]),
+            field: None,
             record: "resolved_edge",
             absent_without: Some(strings(&["tests/fixtures/resolve/0_caller.ts"])),
         },
@@ -268,6 +275,7 @@ fn reach_of(capability: LibraryCapability, scip_index: &Path) -> CliReach {
                 "tests/fixtures/ts/sample.ts",
                 "tests/fixtures/ts/consts.ts",
             ]),
+            field: None,
             record: "resolved_type_edge",
             // The same paths under the default arm emit call edges only, so the
             // `type` arm is proven to be what produced these rows.
@@ -289,8 +297,10 @@ fn reach_of(capability: LibraryCapability, scip_index: &Path) -> CliReach {
             CliReach::Emits {
                 args,
                 // A scip_override row exists ONLY because the indexer's answer
-                // displaced the name match, so this record is proof the index
-                // was really consumed and not merely accepted.
+                // displaced the name match, so it is proof the index was really
+                // consumed. The record tag alone is not: the module plane binds
+                // gamma.ts's import without any indexer.
+                field: Some("\"kind\":\"scip_override\""),
                 record: "resolved_edge",
                 absent_without: {
                     let mut bare = strings(&["--resolve"]);
@@ -309,6 +319,7 @@ fn reach_of(capability: LibraryCapability, scip_index: &Path) -> CliReach {
             args.extend(ts_scip_files());
             CliReach::Emits {
                 args,
+                field: Some("\"kind\":\"scip_override\""),
                 record: "resolved_edge",
                 absent_without: {
                     let mut bare = strings(&["--resolve"]);
@@ -333,11 +344,13 @@ fn reach_of(capability: LibraryCapability, scip_index: &Path) -> CliReach {
                 "--scip-build",
                 "tests/fixtures/scip_rel/animal.ts",
             ]),
+            field: None,
             record: "scip_relationship",
             absent_without: Some(strings(&["tests/fixtures/scip_rel/animal.ts"])),
         },
         FileFact => CliReach::Emits {
             args: strings(&["--file-fact", "tests/fixtures/ts/sample.ts"]),
+            field: None,
             record: "file",
             absent_without: Some(strings(&["tests/fixtures/ts/sample.ts"])),
         },
@@ -349,6 +362,7 @@ fn reach_of(capability: LibraryCapability, scip_index: &Path) -> CliReach {
                 "--scip-build",
                 "tests/fixtures/ts/scip/alpha.ts",
             ]),
+            field: None,
             record: "file_edge",
             absent_without: Some(strings(&["tests/fixtures/ts/scip/gamma.ts"])),
         },
@@ -360,6 +374,7 @@ fn reach_of(capability: LibraryCapability, scip_index: &Path) -> CliReach {
                 "tests/fixtures/deps/app.ts",
                 "tests/fixtures/deps/lib/util.ts",
             ]),
+            field: None,
             record: "file_edge",
             absent_without: Some(strings(&["tests/fixtures/deps/app.ts"])),
         },
@@ -370,6 +385,7 @@ fn reach_of(capability: LibraryCapability, scip_index: &Path) -> CliReach {
                 "tests/fixtures/deps",
                 "tests/fixtures/deps/app.ts",
             ]),
+            field: None,
             record: "file_unresolved",
             absent_without: Some(strings(&["tests/fixtures/deps/app.ts"])),
         },
@@ -381,6 +397,7 @@ fn reach_of(capability: LibraryCapability, scip_index: &Path) -> CliReach {
                 "tests/fixtures/packages/crates/alpha/Cargo.toml",
                 "tests/fixtures/packages/crates/beta/Cargo.toml",
             ]),
+            field: None,
             record: "package_edge",
             absent_without: Some(strings(&[
                 "--deps",
@@ -418,18 +435,22 @@ fn every_library_capability_is_reachable_through_the_binary() {
             CliReach::Emits {
                 args,
                 record,
+                field,
                 absent_without,
             } => {
                 let tag = format!("\"record\":\"{record}\"");
+                let matches = |line: &String| {
+                    line.contains(&tag) && field.map_or(true, |field| line.contains(field))
+                };
                 let lines = run_ok(&args, *capability);
                 assert!(
-                    lines.iter().any(|line| line.contains(&tag)),
+                    lines.iter().any(matches),
                     "{capability:?}: the binary reached no {record} record with {args:?}"
                 );
                 if let Some(bare) = absent_without {
                     let without = run_ok(&bare, *capability);
                     assert!(
-                        !without.iter().any(|line| line.contains(&tag)),
+                        !without.iter().any(matches),
                         "{capability:?}: {record} records appear WITHOUT {args:?} too, so \
                          this reach proves nothing about the capability"
                     );

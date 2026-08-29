@@ -94,30 +94,53 @@ fn records<'a>(stream: &'a str, kind: &str) -> Vec<&'a str> {
 
 /// THE RECEIPT THAT JUSTIFIES TWO NAMES.
 ///
-/// `scip/alpha.ts` and `scip/beta.ts` each export a function called `helper`.
-/// `scip/gamma.ts` imports alpha's and calls it. That call is the whole test:
+/// `scip/delta.ts` declares `Near.probe` and `scip/epsilon.ts` declares
+/// `Far.probe`. `delta.ts` calls BOTH through typed receivers, importing
+/// neither name. That second call is the whole test:
 ///
-///   diet_scip  sees two corpus definitions named `helper`, cannot choose, and
-///              emits NO EDGE AT ALL. It is not wrong about which one; it has
-///              no basis to pick, and inventing one would be worse.
-///   scip       resolves it through the import, because scip-typescript ran the
+///   diet_scip  has two corpus definitions named `probe` and no import binding
+///              for the name, so the module plane has no word and the name
+///              match takes the same-file one. It cannot type a receiver.
+///   scip       moves it to `epsilon.ts`, because scip-typescript ran the
 ///              TypeScript compiler over the program and the compiler knows.
 ///
-/// This is one worked case of a whole class: any unqualified reference whose
-/// name is not unique corpus-wide. It is not an exotic shape, it is what
-/// happens the moment two modules use the same word.
+/// This is one worked case of a whole class: any reference whose target is
+/// chosen by the RECEIVER'S TYPE. The module plane closed the neighbouring
+/// class (an unqualified name that IS imported: `gamma.ts` binds `helper` to
+/// `alpha.ts` with no indexer at all), which is why this receipt moved here.
 #[test]
 fn only_real_scip_resolves_the_cross_file_call_the_heuristic_cannot() {
     let cache = scratch("discriminating");
 
-    // The heuristic half: nothing. Not a wrong edge, no edge.
-    let mut diet: Vec<&str> = vec!["--family", "diet_scip"];
-    diet.extend_from_slice(&TS_TRIO);
-    let heuristic = run(&diet);
-    assert_eq!(
-        heuristic, "",
-        "two corpus defs named `helper` make the call unresolvable by name \
-         match; diet_scip must emit nothing rather than guess, got: {heuristic}"
+    // The heuristic half: an edge, and the WRONG one - same-file `Near.probe`
+    // for both sites, because a name match cannot type `far`.
+    let heuristic = run(&[
+        "--family",
+        "diet_scip",
+        "tests/fixtures/ts/scip/delta.ts",
+        "tests/fixtures/ts/scip/epsilon.ts",
+    ]);
+    let far_site = heuristic
+        .lines()
+        .filter(|line| line.contains(r#""callee_name":"probe""#))
+        .collect::<Vec<_>>();
+    assert_eq!(far_site.len(), 2, "two probe sites, got: {heuristic}");
+    assert!(
+        far_site
+            .iter()
+            .all(|line| line.contains(r#""callee_path":"tests/fixtures/ts/scip/delta.ts""#)),
+        "the name match takes the same-file probe for both sites: {heuristic}"
+    );
+
+    // The module plane's own half, on the neighbouring shape: an IMPORTED name
+    // binds with no indexer, which is what stopped being scip's alone.
+    let mut plane: Vec<&str> = vec!["--family", "diet_scip"];
+    plane.extend_from_slice(&TS_TRIO);
+    let bound = run(&plane);
+    assert!(
+        bound.contains(r#""callee_path":"tests/fixtures/ts/scip/alpha.ts""#)
+            && bound.contains(r#""kind":"import_resolve""#),
+        "an imported name binds through the module plane: {bound}"
     );
 
     // The real half: the call binds, and it binds to ALPHA.
