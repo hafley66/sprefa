@@ -27,5 +27,5 @@
 ; Each source edge keeps its label and ordinal while Option maps the target.
 (<- (: ?Result ?Name ?OptionalTarget ?Index)
     (Partial ?Source ?Result)
-    (: ?Source ?Name ?Target ?Index)
+    (edge_snapshot ?Source ?Name ?Target ?Index)
     (Option ?Target ?OptionalTarget))
