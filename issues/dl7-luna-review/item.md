@@ -1,38 +1,43 @@
 ---
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
 type: task
-assignee: luna
-status: open
+assignee: codex
+status: in-progress
 priority: high
 epic: dl7-minimal-kernel
-labels: [dl7, model-luna-low]
+labels: [dl7, model-luna-low, model-codex]
 size: S
 lane: dl7-review
 lane_seq: 0
-collision: [v7-review]
+collision: [v7-review, v7-docs]
 blocked_by: ['@dl7-kernel-oracle']
 ---
 
-# Review DL7 kernel size and shared evaluator boundary
+# Review DL7 kernel size and layer boundaries
 
 ## Description
 
-## Description
-
-Review the landed minimal kernel against the plan and one oracle. Count files,
-production lines, evaluator entry points, phase branches, operator-specific
-kernel clauses, and test cases.
+Read the landed reader, libtime, comptime, prelude, fixture, and consolidated
+oracle. Report exact source counts, imports, evaluator entry points and call
+sites, phase branches, kernel relations, Partial ownership, and test counts.
 
 ## Acceptance Criteria
 
-- [ ] Report exact counts and file paths.
-- [ ] Confirm compiler and runtime invoke the same evaluator predicate.
-- [ ] Confirm Partial appears only in prelude, fixture, and documentation.
-- [ ] Confirm one test exists.
-- [ ] Write `v7/3_TASKS/results/7_LUNA_REVIEW.md`.
-- [ ] Modify no implementation file.
+- [x] Report exact production file and line counts.
+- [x] Map the numeric reader, libtime, and comptime dependency order.
+- [x] Count evaluator exports, call sites, phase arguments, and phase branches.
+- [x] Record that runtime checked data exists while a runtime runner does not.
+- [x] Count kernel relations and constructive evaluator clauses.
+- [x] Confirm Partial has zero reader, compiler, or evaluator implementation clauses.
+- [x] Report the two test modules, seven cases, and one Partial vertical oracle.
+- [x] Write `v7/tasks/results/7_LUNA_REVIEW.md`.
+- [x] Modify no implementation file.
 
 ## Tests Run
 
-Run no suite. Read the existing oracle receipt.
+- [x] Run no additional suite; read the recorded 7-pass oracle receipt.
+
+## Implementation Notes
+
+This task records boundaries and counts only.

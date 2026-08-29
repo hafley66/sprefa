@@ -294,3 +294,15 @@ one SWI process.
   checked call shapes, zero remaining evaluator clauses, and identical repeated
   compilation.
 - Focused V7 command: 7 passed, 0 failed, 0 choicepoint warnings.
+
+## Boundary review
+
+- Review: `v7/tasks/results/7_LUNA_REVIEW.md`.
+- Production inventory: 8 modules, 1,575 physical lines, 1,357 nonblank and
+  noncomment lines.
+- Evaluator inventory: 1 export, 1 comptime call site, 0 phase arguments, and
+  0 compiler/runtime branches.
+- Kernel inventory: 7 relation-shaped nodes and 2 constructive libtime
+  clauses (`cons/3`, `intern/3`).
+- Partial implementation occurrences in reader, compiler, and evaluator: 0.
+- Runtime checked data is retained; runtime runner modules in this slice: 0.
