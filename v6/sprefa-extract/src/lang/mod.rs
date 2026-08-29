@@ -31,6 +31,7 @@ pub mod rust_rename;
 pub mod rust_scip_macros;
 pub mod ts;
 pub mod ts_paths;
+pub mod ts_receivers;
 pub mod ts_rehome;
 pub mod ts_rename;
 pub mod ts_resolve;

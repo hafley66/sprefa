@@ -112,24 +112,30 @@ fn records<'a>(stream: &'a str, kind: &str) -> Vec<&'a str> {
 fn only_real_scip_resolves_the_cross_file_call_the_heuristic_cannot() {
     let cache = scratch("discriminating");
 
-    // The heuristic half: an edge, and the WRONG one - same-file `Near.probe`
-    // for both sites, because a name match cannot type `far`.
+    // The heuristic half: `near.probe()` binds the same-file `Near.probe`
+    // through the receiver leg; `far.probe()` stays UNBOUND (a name match
+    // cannot type `far`, so the site drops reason=inferred) until scip runs.
     let heuristic = run(&[
         "--family",
         "diet_scip",
         "tests/fixtures/ts/scip/delta.ts",
         "tests/fixtures/ts/scip/epsilon.ts",
     ]);
-    let far_site = heuristic
+    let probe_edges = heuristic
         .lines()
+        .filter(|line| line.contains(r#""record":"resolved_edge""#))
         .filter(|line| line.contains(r#""callee_name":"probe""#))
         .collect::<Vec<_>>();
-    assert_eq!(far_site.len(), 2, "two probe sites, got: {heuristic}");
+    assert_eq!(probe_edges.len(), 1, "only the typed receiver binds: {heuristic}");
     assert!(
-        far_site
-            .iter()
-            .all(|line| line.contains(r#""callee_path":"tests/fixtures/ts/scip/delta.ts""#)),
-        "the name match takes the same-file probe for both sites: {heuristic}"
+        probe_edges[0].contains(r#""callee_path":"tests/fixtures/ts/scip/delta.ts""#),
+        "the receiver leg takes the same-file probe: {heuristic}"
+    );
+    assert!(
+        heuristic
+            .lines()
+            .any(|line| line.contains(r#""reason":"inferred""#) && line.contains(r#""detail":"probe""#)),
+        "the untyped far site drops reason=inferred: {heuristic}"
     );
 
     // The module plane's own half, on the neighbouring shape: an IMPORTED name
@@ -244,8 +250,9 @@ fn the_scip_family_stream_is_the_v5_relation_vocabulary() {
 }
 
 /// The whole `--family diet_scip` stream over four ts files, pinned. Every row
-/// is `resolved_edge` or `resolved_type_edge`: the family is a LABEL on the
-/// existing resolve pass, not a new wire.
+/// is a resolve-pass record (`resolved_edge` / `resolved_type_edge`, plus the
+/// drops channel's `unresolved` rows): the family is a LABEL on the existing
+/// resolve pass, not a new wire.
 #[test]
 fn the_diet_scip_family_stream_is_the_resolve_pass_output() {
     let stream = run(&[
@@ -261,8 +268,9 @@ fn the_diet_scip_family_stream_is_the_resolve_pass_output() {
         stream
             .lines()
             .all(|line| line.contains("\"resolved_edge\"")
-                || line.contains("\"resolved_type_edge\"")),
-        "no scip-derived record may appear in a diet stream: {stream}"
+                || line.contains("\"resolved_type_edge\"")
+                || line.contains("\"record\":\"unresolved\"")),
+        "a diet stream carries only resolve-pass records (edges + drops): {stream}"
     );
 }
 
