@@ -300,6 +300,14 @@ fn flatten_call<E>(
             cfg: strings.lookup(call.cfg).to_string(),
         })?;
     }
+    for site in &bundle.aux.macro_sites {
+        push(FlatFact::MacroSiteOut {
+            family: CallF::TAG,
+            span: SpanOut::new(site.span.start, site.span.end()),
+            macro_name: strings.lookup(site.macro_name).to_string(),
+            source: site.source.as_str().to_string(),
+        })?;
+    }
     for reference in &bundle.aux.refs {
         push(FlatFact::Reference {
             family: CallF::TAG,

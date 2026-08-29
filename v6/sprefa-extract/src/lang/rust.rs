@@ -49,7 +49,7 @@ use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
 use crate::types::LangKind;
 use crate::types::ScipIndex;
-use crate::types::{CfgScope, DefSite, PathIndex, TestOnlyCall, UnresolvedReason};
+use crate::types::{CfgScope, DefSite, MacroSite, MacroSiteSource, PathIndex, TestOnlyCall, UnresolvedReason};
 
 // ── span bridge: proc_macro2 line/col -> v6 byte Span ───────────────────────
 
@@ -3169,6 +3169,13 @@ fn splice_macro_expansions(src: &str, strings: &mut Strings, bundle: &mut Family
             site.span = mapped;
             bundle.aux.sites.push(site);
         }
+    }
+    for (span, name) in expanded.macro_sites() {
+        bundle.aux.macro_sites.push(MacroSite {
+            span,
+            macro_name: strings.intern(name),
+            source: MacroSiteSource::Mbe,
+        });
     }
 }
 

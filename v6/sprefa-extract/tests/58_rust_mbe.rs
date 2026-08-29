@@ -104,6 +104,22 @@ fn extract_reports_the_gained_site_at_its_invocation_in_the_source_file() {
     assert!(inner_call_site.span.start >= mkfn_start && inner_call_site.span.end() <= mkfn_end);
 }
 
+/// The wire's `macro_site` row (`CallFAux.macro_sites`) names the invocation
+/// that minted the gained facts, tagged `source: mbe`.
+#[test]
+fn extract_emits_one_macro_site_row_naming_mkfn() {
+    let src = read("f7_mints_fn.rs");
+    let output = RustSource.extract("f.rs", src.as_bytes(), FamilyMask::ALL);
+    let call = output.call.as_ref().unwrap();
+
+    assert_eq!(call.aux.macro_sites.len(), 1);
+    let site = &call.aux.macro_sites[0];
+    assert_eq!(output.strings.lookup(site.macro_name), "mkfn");
+    assert_eq!(site.source, sprefa_extract::types::MacroSiteSource::Mbe);
+    let text = &src[site.span.start as usize..(site.span.start + site.span.len) as usize];
+    assert!(text.contains("mkfn"));
+}
+
 /// A macro that keeps re-minting itself never terminates a fixpoint; the pass
 /// cap is what stops it, not a growing byte count.
 #[test]
