@@ -1153,6 +1153,7 @@ impl Project<CallF> for CallProjector<'_> {
         // site. The walker owns its output (no &mut strings/sink inside the
         // visitor), drained here so the two &mut params never alias through self.
         let mut walker = CallWalker {
+            content: self.content,
             depth: 0,
             nested_defs: Vec::new(),
             sites: Vec::new(),
@@ -1165,7 +1166,7 @@ impl Project<CallF> for CallProjector<'_> {
             sink.aux.sites.push(CallSite {
                 span: to_span(site.span),
                 callee: strings.intern(&site.callee),
-                callee_path: None,
+                callee_path: site.path.as_deref().map(|path| strings.intern(path)),
             });
         }
         // Lambda defs: one per inline arrow / fn-expr the DfF lift reaches
@@ -1710,23 +1711,26 @@ fn push_def(
         .push(Node::new(to_span(span), kind).with_name(strings.intern(name.as_ref())));
 }
 
-/// One collected call site before it is interned into the aux.
+/// One collected call site. `path` is the callee as written when it is a
+/// member expression, the receiver seat `Resolve<CallF>` reads.
 struct CollectedSite {
     span: oxc_span::Span,
     callee: String,
+    path: Option<String>,
 }
 
 /// Walks the whole program for (a) nested named function DECLARATIONS at
 /// `depth > 0` (top-level ones are `call_defs`' job) and (b) every call site
 /// (`foo()`, `new Foo()`, `<Card/>`). Collects into owned vecs; the projector
 /// drains + interns after the walk. Port of v5 `TsNestedFnDefs` + `TsCallSites`.
-struct CallWalker {
+struct CallWalker<'c> {
+    content: &'c str,
     depth: u32,
     nested_defs: Vec<(oxc_span::Span, String)>,
     sites: Vec<CollectedSite>,
 }
 
-impl<'a> OxcVisit<'a> for CallWalker {
+impl<'a> OxcVisit<'a> for CallWalker<'_> {
     fn visit_function(&mut self, func: &ts::Function<'a>, flags: oxc_syntax::scope::ScopeFlags) {
         // Only named DECLARATIONS below the top level (function expressions and
         // method values are already Methods; top-level decls are call_defs').
@@ -1753,6 +1757,7 @@ impl<'a> OxcVisit<'a> for CallWalker {
             self.sites.push(CollectedSite {
                 span: call.callee.span(),
                 callee,
+                path: callee_path(&call.callee, self.content),
             });
         }
         oxc_ast_visit::walk::walk_call_expression(self, call);
@@ -1765,6 +1770,7 @@ impl<'a> OxcVisit<'a> for CallWalker {
             self.sites.push(CollectedSite {
                 span: new_expr.span,
                 callee,
+                path: callee_path(&new_expr.callee, self.content),
             });
         }
         oxc_ast_visit::walk::walk_new_expression(self, new_expr);
@@ -1774,15 +1780,19 @@ impl<'a> OxcVisit<'a> for CallWalker {
         // `<Card/>` is a call (jsx(Card, props)); host elements (`<div/>`,
         // lowercase Identifier) have no def to resolve to and are skipped.
         use ts::JSXElementName as N;
-        let callee = match &element.opening_element.name {
-            N::IdentifierReference(reference) => Some(reference.name.to_string()),
-            N::MemberExpression(member) => Some(member.property.name.to_string()),
-            _ => None,
+        let (callee, path) = match &element.opening_element.name {
+            N::IdentifierReference(reference) => (Some(reference.name.to_string()), None),
+            N::MemberExpression(member) => (
+                Some(member.property.name.to_string()),
+                slice_at(self.content, member.span),
+            ),
+            _ => (None, None),
         };
         if let Some(callee) = callee {
             self.sites.push(CollectedSite {
                 span: element.opening_element.span,
                 callee,
+                path,
             });
         }
         oxc_ast_visit::walk::walk_jsx_element(self, element);
@@ -1799,6 +1809,23 @@ fn callee_name(expr: &ts::Expression) -> Option<String> {
         E::StaticMemberExpression(member) => Some(member.property.name.to_string()),
         _ => None,
     }
+}
+
+/// The callee AS WRITTEN when it is a member expression (`out.push`), the
+/// `CallSite.callee_path` seat. A bare identifier is its own segment: None.
+fn callee_path(expr: &ts::Expression, content: &str) -> Option<String> {
+    match expr {
+        ts::Expression::StaticMemberExpression(member) => slice_at(content, member.span),
+        _ => None,
+    }
+}
+
+/// The source text at `span`, None when the span is not a char boundary of
+/// `content` (a lone surrogate half in the file, never in valid TS).
+fn slice_at(content: &str, span: oxc_span::Span) -> Option<String> {
+    content
+        .get(span.start as usize..span.end as usize)
+        .map(str::to_string)
 }
 
 // ── unresolved (CallFAux.unresolved; port of v5 `TsUnresolvedWalker`) ────────
@@ -3412,6 +3439,25 @@ fn containing_ts_def(index: &DefIndex, blob: ContentId, span: Span) -> Option<(&
     best
 }
 
+/// Whether a site's receiver names no scope this file can see, which makes the
+/// trailing segment `call_name_match` reads (`out.push`) mean nothing.
+fn unknown_receiver(output: &ExtractOutput, call: &FamilyBundle<CallF>, site: &CallSite) -> bool {
+    let Some(path) = site.callee_path else {
+        return false;
+    };
+    let Some((receiver, _)) = output.strings.lookup(path).rsplit_once('.') else {
+        return false;
+    };
+    if receiver == "this" || receiver == "super" {
+        return false;
+    }
+    !call
+        .aux
+        .specifiers
+        .iter()
+        .any(|specifier| output.strings.lookup(specifier.name) == receiver)
+}
+
 impl Resolve<CallF> for TsSource {
     fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<CallF>> {
         let Some(call) = &output.call else {
@@ -3442,13 +3488,15 @@ impl Resolve<CallF> for TsSource {
         let mut edges = Vec::new();
         for site in &call.aux.sites {
             // The caller is the innermost covering CallF def (the 4a
-            // caller-binding discipline); a module-level site has no caller
-            // node and emits no row.
+            // caller-binding discipline); the `<module>` def covers the rest.
             let Some(caller) = covering_def(call, site.span) else {
                 continue;
             };
             let callee = output.strings.lookup(site.callee);
-            let name_t = TsSource::call_name_match(output, def_index, callee);
+            // The scip leg keeps its answer: it types the receiver, this does not.
+            let name_t = (!unknown_receiver(output, call, site))
+                .then(|| TsSource::call_name_match(output, def_index, callee))
+                .flatten();
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
             });

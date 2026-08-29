@@ -9,5 +9,5 @@
 {"record":"site","family":"call","span":{"start":350,"end":382},"callee":"Vec2","callee_path":null}
 {"record":"site","family":"call","span":{"start":359,"end":364},"callee":"clamp","callee_path":null}
 {"record":"site","family":"call","span":{"start":371,"end":376},"callee":"clamp","callee_path":null}
-{"record":"site","family":"call","span":{"start":632,"end":641},"callee":"sqrt","callee_path":null}
+{"record":"site","family":"call","span":{"start":632,"end":641},"callee":"sqrt","callee_path":"Math.sqrt"}
 {"record":"site","family":"call","span":{"start":765,"end":789},"callee":"Vec2","callee_path":null}

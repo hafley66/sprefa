@@ -98,3 +98,76 @@ fn a_file_with_no_module_level_call_site_mints_no_module_def() {
         .count();
     assert_eq!(modules, 0);
 }
+
+// ── kink 3: a member call on an unknown receiver ────────────────────────────
+
+/// SABOTAGE RECEIPT (fail-pre-fix): `call_name_match` reads only the trailing
+/// segment, so `out.push(x)` bound to the free `push` in `tracing_like.ts` and
+/// this asserted one `("collect", "push")` edge. `src/compiler/tracing.ts:push`
+/// alone captures 2,064 array pushes over TypeScript 5.9's `src/**`.
+#[test]
+fn an_array_push_does_not_bind_to_a_free_function_named_push() {
+    assert_eq!(
+        edges(&[
+            "--resolve",
+            "--family",
+            "call",
+            "tests/fixtures/ts5_findings/receiver_blind_prototype.ts",
+            "tests/fixtures/ts5_findings/tracing_like.ts",
+        ]),
+        [] as [(String, String); 0]
+    );
+}
+
+/// The PR #538 face of the same kink: the unrelated `push` is a class METHOD.
+/// The def index carries no `CallKind`, so the receiver is the only signal that
+/// separates the two, and both must go.
+#[test]
+fn an_array_push_does_not_bind_to_a_method_named_push() {
+    assert_eq!(
+        edges(&[
+            "--resolve",
+            "--family",
+            "call",
+            "tests/fixtures/ts_findings/receiver_blind_method/consumer.ts",
+            "tests/fixtures/ts_findings/receiver_blind_method/writer.ts",
+        ]),
+        [] as [(String, String); 0]
+    );
+}
+
+/// The rule keys on the RECEIVER, not on member-ness: a namespace-import
+/// binding and `this` both name a scope this file can see.
+#[test]
+fn a_namespace_import_receiver_and_this_still_resolve() {
+    assert_eq!(
+        edges(&[
+            "--resolve",
+            "--family",
+            "call",
+            "tests/fixtures/ts5_findings/known_receiver/consumer.ts",
+            "tests/fixtures/ts5_findings/known_receiver/ns.ts",
+        ]),
+        [
+            ("run".to_string(), "normalize".to_string()),
+            ("run".to_string(), "tidy".to_string()),
+        ]
+    );
+}
+
+/// The receiver reaches `Resolve<CallF>` through `callee_path`, the seat the
+/// 4a site-key discipline reserved for it (`CallSite`, src/types.rs:467-472:
+/// "ts/go emit None today and catch up with their resolve arms").
+#[test]
+fn a_member_call_site_carries_its_path_as_written() {
+    let paths: Vec<String> = run(&[
+        "--family",
+        "call",
+        "tests/fixtures/ts5_findings/receiver_blind_prototype.ts",
+    ])
+    .iter()
+    .filter(|row| row["record"] == "site")
+    .map(|row| text(row, "callee_path"))
+    .collect();
+    assert_eq!(paths, ["out.push".to_string()]);
+}
