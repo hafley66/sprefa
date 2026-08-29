@@ -458,6 +458,10 @@ pub enum CallEdgeKind {
     ImportResolve,
     /// An interface method spec bound to one implementing type's method.
     Implements,
+    /// The call is written inside a macro invocation: the parse walk never saw
+    /// a site, so the scip occurrence at the expanded position bound the edge.
+    /// Minted by the project post-pass, never by a per-file `Resolve` arm.
+    ScipMacro,
 }
 
 impl CallEdgeKind {
@@ -468,6 +472,7 @@ impl CallEdgeKind {
             CallEdgeKind::ValueRef => "value_ref",
             CallEdgeKind::ImportResolve => "import_resolve",
             CallEdgeKind::Implements => "implements",
+            CallEdgeKind::ScipMacro => "scip_macro",
         }
     }
 }
