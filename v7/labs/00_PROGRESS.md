@@ -120,6 +120,19 @@ Updated: 2026-08-29 11:47 EDT
   traces, pin checks, benchmark command, external dependencies, and source
   versus image receipts. Lab 12 required one source/runtime dependency wording
   correction.
+- The Racket crosswalk commit on main is `05835f746`. Racket 9.3, `datalog`,
+  and Racklog were locally exercised; recursive Datalog, retraction, Racklog
+  occurs-check policy, `raco exe`, and `raco distribute` have bounded receipts.
+  General SWI tabling, CHR, attributed variables, and incremental tabling stay
+  outside those Racket package surfaces.
+- The binary packaging lab is in the same commit. Measured executable bytes:
+  minimal SBCL 38,606,536; handwritten kernel 42,080,472; Paiprolog
+  40,769,552; minimal SWI saved state 269,693. The SBCL-to-SWI subprocess image
+  is 38,606,536 bytes plus an external SWI installation and answered 20 tabled
+  cyclic queries in 1.90 seconds.
+- Coordinator verification rebuilt fresh minimal SBCL and SWI artifacts. They
+  printed `SBCL-MINIMAL` and `SWI-SAVED PATH [a,b,c,d]`; `git diff --check`
+  passed before the pair commit.
 
 ## Coordination receipt
 
@@ -142,11 +155,9 @@ contents, so labs 9 and 10 use native Terra-high workers instead.
 
 ## Next execution sequence
 
-1. Run `13_racket_crosswalk` and `14_binary_packaging` in parallel.
-2. Review, measure, and commit the accepted pair on the shared branch.
-3. Cherry-pick the pair to main and update this progress log.
-4. Repeat in pairs through the runnable library labs before starting binary
-   packaging.
+1. Run `15_commercial_common_prolog` and `16_logadat` in parallel.
+2. Review and commit the accepted pair, then update this progress log.
+3. Run and review `17_si_kanren`.
 
 ## Shared-worktree laws
 
