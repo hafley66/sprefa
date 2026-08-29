@@ -3,7 +3,8 @@ created: 2026-08-29
 updated: 2026-08-29
 type: chore
 assignee: luna
-status: open
+status: done
+closed: 2026-08-29
 priority: normal
 epic: dl7-minimal-kernel
 labels: [dl7, refactor, model-luna]
@@ -43,17 +44,17 @@ Reader terms and origin rows live for one compilation. Basement data flows from 
 
 ## Acceptance Criteria
 
-- [ ] Production files follow dependency and reading order: 0_lowerer.pl, 1_checker.pl, 2_compiler.pl.
-- [ ] Predicate bodies move without semantic edits.
-- [ ] Existing seven SWI tests pass unchanged except import paths.
-- [ ] Tree-sitter parser corpus remains green.
-- [ ] No V6, Rust, TypeScript, prelude, fixture, or issue outside this card changes.
-- [ ] Each production file stays below 500 nonblank, noncomment lines.
+- [x] Production files follow dependency and reading order: 0_lowerer.pl, 1_checker.pl, 2_compiler.pl.
+- [x] Predicate bodies move without semantic edits.
+- [x] Existing seven SWI tests pass unchanged except import paths.
+- [x] Tree-sitter parser corpus remains green.
+- [x] No V6, Rust, TypeScript, prelude, fixture, or issue outside this card changes.
+- [x] Each production file stays below 500 nonblank, noncomment lines.
 
 ## Tests Run
 
-- [ ] Focused seven-test SWI command.
-- [ ] V7 just build.
+- [x] `swipl -q -g "load_files(['v7/test/0_reader.test.pl','v7/test/1_entrypoints.test.pl'],[silent(true)]),run_tests,halt"` (7 passed, 0 failed).
+- [x] `cd v7 && just build` (1/1 passed).
 
 ## Implementation Notes
 
