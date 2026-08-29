@@ -38,6 +38,7 @@ pub(crate) struct ScipMacroFile<'a> {
 
 /// One `macro_site` row: the invocation a minted edge came from, with the
 /// index that bound it. `source` is `"scip"` for every row this pass emits.
+#[derive(Clone, Debug)]
 pub struct MacroSiteRow {
     pub path: String,
     pub span: Span,
@@ -161,7 +162,7 @@ pub(crate) fn mint_macro_edges(
     files: &[ScipMacroFile<'_>],
     cx: &ProjectCx<'_>,
     resolved: &mut [(ContentId, Vec<ProjectEdge<CallF>>)],
-) -> Vec<MacroSiteRow> {
+) -> Vec<Vec<MacroSiteRow>> {
     let (Some(index), Some(reader)) = (cx.indexes.scip_index.get(), cx.reader) else {
         return Vec::new();
     };
@@ -173,8 +174,9 @@ pub(crate) fn mint_macro_edges(
         .joined_documents
         .get_or_init(|| crate::scip::join_documents(index, reader));
     let mut def_lines: HashMap<usize, LineTable> = HashMap::new();
-    let mut rows: Vec<MacroSiteRow> = Vec::new();
+    let mut rows: Vec<Vec<MacroSiteRow>> = Vec::new();
     for (file, (_blob, edges)) in files.iter().zip(resolved.iter_mut()) {
+        rows.push(Vec::new());
         let Some(call) = &file.output.call else {
             continue;
         };
@@ -261,7 +263,10 @@ pub(crate) fn mint_macro_edges(
                 ProjectEdge::new(caller, def_site.blob.clone(), def_site.span, CallEdgeKind::ScipMacro)
                     .with_call_site(span),
             );
-            rows.push(MacroSiteRow {
+            rows
+                .last_mut()
+                .expect("one row slot per file, pushed above")
+                .push(MacroSiteRow {
                 path: file.path.to_string(),
                 span: invocation.span,
                 macro_name: invocation.macro_name.clone(),
