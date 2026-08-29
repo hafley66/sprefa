@@ -152,10 +152,32 @@ Milestone 1 (root datums) reader changes:
   atoms, symbol data (`'kind`, `'spot`), and the existing variable sharing.
 - `0_reader.test.pl` snapshot regenerated for the extended fixture
   (digest `f2ae0a30...`, nodes 0-47, sources 0-47).
-- Gate run: both `dl7_reader_foundation` tests pass.
+- Gate run after the reviewed symbol-diagnostic correction: all four
+  `dl7_reader_foundation` tests pass.
 
 ```text
 swipl -q -g "load_files(['v7/0_SWIPL/test/0_reader.test.pl'],[silent(true)]),run_tests,halt"
 ```
 
 No other suite run.
+
+Milestone 2 (nested root lowering):
+
+- Added `v7/1_DATALOG/0_lower.pl`, exporting `lower_datalog/4`.
+- The module has 271 nonblank, noncomment lines.
+- The immutable unit plus reader node identity mints module, product, and sum
+  owners.
+- Every nested constructor receives one `scope_parent/2`; every bind retains
+  owner, name, pending target, and zero-based ordinal.
+- Facts and rules are ground compiler data using pending `name/2`,
+  `var/1`, and `const/1` terms.
+- The direct receipt over nested products, a sum, one fact, and two recursive
+  rules produced:
+
+```text
+receipt([0,1,2],counts(6,5,11,4,1,2,26))
+```
+
+The fields are top-level bind indices followed by node, parent, edge,
+relation, seed, rule, and origin counts. `ground(Program)` succeeded and
+`git diff --check` passed. No suite or test file was added.
