@@ -2688,6 +2688,8 @@ fn scip_call_target<'a>(
 struct GoFileFacts {
     owner_of: HashMap<(u32, u32), String>,
     methods_of: HashMap<String, BTreeSet<String>>,
+    /// Names declared as interface types (method specs, never struct methods).
+    ifaces: BTreeSet<String>,
     /// def_span -> the declared result types in order (pointer-stripped, type
     /// arguments cut). Feeds the one-hop return-type inference of `x := f()`.
     ret_of: HashMap<(u32, u32), Vec<String>>,
@@ -2709,6 +2711,7 @@ fn go_parse_file_facts(path: &str) -> GoFileFacts {
     let mut facts = GoFileFacts {
         owner_of: HashMap::new(),
         methods_of: HashMap::new(),
+        ifaces: BTreeSet::new(),
         ret_of: HashMap::new(),
     };
     let Ok(bytes) = std::fs::read(path) else {
@@ -2825,6 +2828,7 @@ fn go_collect_interface_facts(spec: tree_sitter::Node, src: &[u8], facts: &mut G
         return;
     };
     let iname = go_text(name_node, src).to_string();
+    facts.ifaces.insert(iname.clone());
     let mut mc = iface.walk();
     for elem in iface
         .children(&mut mc)
@@ -2973,6 +2977,9 @@ impl Resolve<CallF> for GoSource {
         let mut order: Vec<usize> = (0..sites.len()).collect();
         order.sort_by_key(|&ix| (sites[ix].span.start, sites[ix].span.end()));
         let mut bound_types: HashMap<(u32, u32), HashMap<String, String>> = HashMap::new();
+        // Per-site fan-out source: the interface a Named receiver resolved
+        // through, when that receiver type is an interface.
+        let mut iface_recv: Vec<Option<String>> = vec![None; sites.len()];
         let mut results: Vec<Option<(NodeRef, ContentId, Span, CallEdgeKind)>> =
             vec![None; sites.len()];
         for ix in order {
@@ -2996,7 +3003,7 @@ impl Resolve<CallF> for GoSource {
             let name_t: Option<(ContentId, Span, CallEdgeKind)> = match receiver {
                 Some(ReceiverOutcome::Named(type_id)) => {
                     let type_name = output.strings.lookup(*type_id);
-                    go_receiver_target(
+                    let target = go_receiver_target(
                         def_index,
                         paths,
                         &module,
@@ -3004,8 +3011,14 @@ impl Resolve<CallF> for GoSource {
                         &imports,
                         type_name,
                         callee,
-                    )
-                    .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                    );
+                    if target.is_some() {
+                        let bare = type_name.split('.').next_back().unwrap_or(type_name);
+                        if go_iface_fanout(def_index, paths, bare).is_iface {
+                            iface_recv[ix] = Some(bare.to_string());
+                        }
+                    }
+                    target.map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
                 }
                 Some(ReceiverOutcome::Inferred) => {
                     let bound = plan
@@ -3126,7 +3139,7 @@ impl Resolve<CallF> for GoSource {
         // site, and a per-site scan of the def table is the shape kink 1 was.
         let named = go_named_def_spans(call);
         let mut edges = Vec::new();
-        for (site, result) in sites.iter().zip(results) {
+        for (ix, (site, result)) in sites.iter().zip(results).enumerate() {
             let Some((caller, dst_blob, dst_span, kind)) = result else {
                 continue;
             };
@@ -3144,6 +3157,28 @@ impl Resolve<CallF> for GoSource {
                 }
             }
             edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
+            let Some(iface) = &iface_recv[ix] else {
+                continue;
+            };
+            let fanout = go_iface_fanout(def_index, paths, iface);
+            if fanout.impls.len() > GO_FANOUT_CAP {
+                fanout_cap_registry()
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .entry(corpus_key(def_index))
+                    .or_default()
+                    .insert((site.span.start, site.span.end()), fanout.impls.len());
+                continue;
+            }
+            let callee = output.strings.lookup(site.callee);
+            for methods in &fanout.impls {
+                if let Some((blob, span)) = methods.get(callee) {
+                    edges.push(
+                        ProjectEdge::new(caller, blob.clone(), *span, CallEdgeKind::Implements)
+                            .with_call_site(site.span),
+                    );
+                }
+            }
         }
         let interfaces: BTreeSet<NameId> = output
             .types
@@ -3221,6 +3256,106 @@ fn go_interface_implements(
     iface_name: &str,
     specs: &[(NodeRef, String)],
 ) -> Vec<ProjectEdge<CallF>> {
+    let methods: BTreeSet<String> = specs.iter().map(|(_, name)| name.clone()).collect();
+    go_iface_candidate_maps(def_index, paths, iface_name, &methods)
+        .into_iter()
+        .flat_map(|methods| {
+            specs.iter().filter_map(move |(node_ref, spec_name)| {
+                methods.get(spec_name).map(|(blob, span)| {
+                    ProjectEdge::new(*node_ref, blob.clone(), *span, CallEdgeKind::Implements)
+                })
+            })
+        })
+        .collect()
+}
+
+/// A corpus identity for the resolve-phase static caches: the `DefIndex`'s
+/// address, stable for the resolve run that owns it.
+fn corpus_key(def_index: &DefIndex) -> usize {
+    std::ptr::from_ref(def_index) as usize
+}
+
+/// The fan-out-capped site spans per corpus (def_index address): site span ->
+/// implementer count. `resolve` fills it; `call_drops` emits one
+/// `fanout_cap` row per entry.
+fn fanout_cap_registry() -> &'static Mutex<HashMap<usize, HashMap<(u32, u32), usize>>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<usize, HashMap<(u32, u32), usize>>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// One implementer of an interface: every required method -> its def site.
+type IfaceImplementers = Vec<HashMap<String, (ContentId, Span)>>;
+
+/// The corpus-wide fan-out facts for one interface NAME: whether a type of
+/// this name is declared as an interface, and the implementer set. Keyed by
+/// name (same convention as `go_interface_implements`); two packages naming a
+/// type the same merge into one candidate set, never a conflation inside a
+/// single (owner, dir).
+struct IfaceFanout {
+    is_iface: bool,
+    impls: IfaceImplementers,
+}
+
+/// Fan-out cap: an interface with more implementers than this emits the
+/// `I.M` spec edge only plus one `unresolved` row reason `fanout_cap`.
+const GO_FANOUT_CAP: usize = 64;
+
+/// Per-corpus cache, keyed by (def_index address, interface name): the
+/// implementer set is built once per corpus, never per call site (the same
+/// discipline as `plan_cache`; the corpus is identified by its `DefIndex`,
+/// whose address is stable for the resolve run that owns it).
+fn iface_fanout_cache(
+) -> &'static Mutex<HashMap<(usize, String), Arc<IfaceFanout>>> {
+    static CACHE: OnceLock<Mutex<HashMap<(usize, String), Arc<IfaceFanout>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn go_iface_fanout(def_index: &DefIndex, paths: Option<&PathIndex>, iface: &str) -> Arc<IfaceFanout> {
+    let key = (corpus_key(def_index), iface.to_string());
+    let cache = iface_fanout_cache();
+    let mut guard = cache.lock().unwrap_or_else(|poison| poison.into_inner());
+    if let Some(hit) = guard.get(&key) {
+        return hit.clone();
+    }
+    // The interface's required method set comes from every corpus TypeF site
+    // of this name that facts say IS an interface (a struct with methods can
+    // share the name; its method set is not a spec).
+    let mut is_iface = false;
+    let mut methods: BTreeSet<String> = BTreeSet::new();
+    if let Some(paths) = paths {
+        for site in corpus_defs(def_index, iface) {
+            if site.family != FamilyTag::Type {
+                continue;
+            }
+            let Some(path) = paths.get(&site.blob) else {
+                continue;
+            };
+            let facts = go_file_facts(&site.blob, path);
+            if !facts.ifaces.contains(iface) {
+                continue;
+            }
+            is_iface = true;
+            if let Some(names) = facts.methods_of.get(iface) {
+                methods.extend(names.iter().cloned());
+            }
+        }
+    }
+    let fanout = Arc::new(IfaceFanout {
+        is_iface,
+        impls: go_iface_candidate_maps(def_index, paths, iface, &methods),
+    });
+    guard.insert(key, fanout.clone());
+    fanout
+}
+
+/// Every named type whose method set covers ALL of `methods`, as one map per
+/// implementer. One pass per interface, never per call site.
+fn go_iface_candidate_maps(
+    def_index: &DefIndex,
+    paths: Option<&PathIndex>,
+    iface_name: &str,
+    methods: &BTreeSet<String>,
+) -> IfaceImplementers {
     let Some(paths) = paths else {
         return Vec::new();
     };
@@ -3228,8 +3363,8 @@ fn go_interface_implements(
     // same, and that must stay two candidates, never one conflated identity.
     let mut candidates: BTreeMap<(String, String), HashMap<&str, (ContentId, Span)>> =
         BTreeMap::new();
-    for (_, spec_name) in specs {
-        for site in corpus_defs(def_index, spec_name) {
+    for method in methods {
+        for site in corpus_defs(def_index, method) {
             if site.family != FamilyTag::Call {
                 continue;
             }
@@ -3249,28 +3384,18 @@ fn go_interface_implements(
             candidates
                 .entry((owner.clone(), dir.to_string_lossy().into_owned()))
                 .or_default()
-                .insert(spec_name.as_str(), (site.blob.clone(), site.span));
+                .insert(method.as_str(), (site.blob.clone(), site.span));
         }
     }
-    let mut edges = Vec::new();
-    for methods in candidates.values() {
-        if !specs
-            .iter()
-            .all(|(_, name)| methods.contains_key(name.as_str()))
-        {
-            continue;
-        }
-        for (node_ref, spec_name) in specs {
-            let (blob, span) = &methods[spec_name.as_str()];
-            edges.push(ProjectEdge::new(
-                *node_ref,
-                blob.clone(),
-                *span,
-                CallEdgeKind::Implements,
-            ));
-        }
-    }
-    edges
+    candidates
+        .into_values()
+        .filter(|set| methods.iter().all(|name| set.contains_key(name.as_str())))
+        .map(|set| {
+            set.into_iter()
+                .map(|(name, site)| (name.to_string(), site))
+                .collect()
+        })
+        .collect()
 }
 
 // call_drops: a bare callee matching the table below drops reason `builtin`; a
@@ -3354,6 +3479,25 @@ pub fn call_drops(
             })
         })
         .collect();
+    // The fan-out cap rows are minted by `resolve` (which knows the
+    // implementer counts); the registry carries them across phases.
+    if let Some(def_index) = cx.indexes.def_index.get() {
+        let capped = fanout_cap_registry()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .get(&corpus_key(def_index))
+            .cloned()
+            .unwrap_or_default();
+        for site in &call.aux.sites {
+            if let Some(count) = capped.get(&(site.span.start, site.span.end())) {
+                drops.push(ResolveDrop {
+                    span: site.span,
+                    reason: UnresolvedReason::FanoutCap,
+                    detail: format!("{count} implementers"),
+                });
+            }
+        }
+    }
     if let Some(modules) = cx.indexes.go_modules.get() {
         let own_path = own_blob(cx, output)
             .zip(cx.indexes.paths.get())

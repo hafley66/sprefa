@@ -163,7 +163,9 @@ KIND VOCABULARIES (the `kind` field)
   sig slot    param | ret
   unresolved reason  dynamic-import | computed-member-call | spread-call-args
                     (phase 1) | no_corpus_def | ambiguous | builtin | inferred |
-                    external (--resolve, one row per call site or import spec
+                    external | fanout_cap (interface dispatch with more than
+                    64 implementers: the spec edge stays, detail carries the
+                    count) (--resolve, one row per call site or import spec
                     the resolve arm dropped)
   specifier kind    named | default | namespace | side_effect | reexport |
                     include | reexport_module | dynamic_import | require

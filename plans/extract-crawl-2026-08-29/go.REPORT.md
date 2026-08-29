@@ -655,3 +655,61 @@ $(cat gofiles.txt)`; normalize with
 `tests/64_go_closure_mirror.rs`: one mirror per closure-caller edge (COUNT
 rail), nested closures mirror to the named fn (`outer`, never an outer
 closure), and a package-level literal emits no row at all.
+
+## Fixes 7 (interface dispatch fan-out, lane `fix-extract-go-iface-fanout`) <a name="fixes-7"></a>
+
+Base `ac9b1765e`. The top vta-only class (go.GAPS.md): a call site `x.M()`
+with `x: I` bound `I.M` only; vta names the concrete implementer. Now
+(`src/lang/go.rs`): every call edge resolved through a Named receiver whose
+type is an interface keeps the `I.M` spec edge and gains one additional
+`resolved_edge` per implementer, kind `implements`, same call_site span.
+The implementer sets come from `go_iface_candidate_maps` (the
+`go_interface_implements` candidate builder, shared): keyed by
+(owner name, declaring dir), an implementer must cover ALL of the
+interface's methods, and the map is built once per corpus per interface
+name behind a static cache keyed by the corpus `DefIndex`. Cap: an
+interface with more than 64 implementers emits the `I.M` edge only plus one
+`unresolved` row reason `fanout_cap` (detail carries the implementer
+count); the cap is documented in the `extract --schema` unresolved-reason
+line. `GoFileFacts` gained an `ifaces` set so a struct that merely shares
+an interface's name never supplies a method set.
+
+### Receipt, current binary, ONE process over all 5,096 files
+
+`extract --resolve --project-root /Users/chrishafley/projects/typescript-go
+$(cat gofiles.txt)`, wall 9.8 s, rc 0. Normalize with
+`plans/extract-bench-2026-08-29/normalize.py`; overwrite
+`go.parse.call.tsv`.
+
+| record | kind | Fixes 6 | this run |
+|---|---|---:|---:|
+| resolved_edge | name_resolve | 80,316 | 80,316 |
+| resolved_edge | import_resolve | 28,560 | 28,560 |
+| resolved_edge | implements | 1,657 | **7,548** (+5,891 fan-out) |
+| unresolved | builtin / external / inferred | 14,434 / 6,492 / 3,293 | unchanged |
+
+| metric | Fixes 6 | this run |
+|---|---:|---:|
+| oracle edges reached (`a∩b` / oracle 55,099) | 73.4% (40,454) | **75.6%** (41,651) |
+| precision (`a∩b` / ours 84,346 unique) | 50.2% | **49.4%** (fan-out to mock/test implementers is ours-only by design) |
+| reachable (104 program roots) | 8,983 | **8,876** (see drift note) |
+| reachable with test roots | 15,593 | **15,483** |
+
+Reachability drift note: the Fixes 6 `defs.tsv` artifact is gone from the
+scratch dir, so `defs.tsv` and `all_resolved.jsonl` were regenerated today.
+The regenerated `defs.tsv` yields defs 19,106 / roots 104; running the
+identical regenerated pipeline against the Fixes 6 edge set (verified
+byte-exact: `resolved_edge` = 110,533 on HEAD) gives reachable 8,858 /
+15,481, so the fan-out delta is +18 / +2 and the remaining gap to 8,983 /
+15,593 is the defs artifact, not this fix.
+
+### Tests
+
+`cargo test --features cli`: 513 passed / 0 failed. New suite
+`tests/66_go_iface_fanout.rs` over `tests/fixtures/go_findings/iface_fanout/`
+(3 tests, all red against HEAD, green after): two implementers fan out per
+site with the spec edge kept; an implementer missing one method is
+excluded; 65 generated implementers emit one `fanout_cap` row and no
+fan-out. Implementer-map COUNT gate: the cache key is
+(corpus `DefIndex`, interface name) and `go_iface_fanout` computes the
+candidate set exactly once per key; the per-site loop only reads it.

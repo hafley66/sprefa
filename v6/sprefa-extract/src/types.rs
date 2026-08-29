@@ -621,6 +621,9 @@ pub enum UnresolvedReason {
     /// An import spec whose target directory carries no corpus file: outside
     /// the declaring module, or simply not part of this run's file set.
     External,
+    /// An interface dispatch site whose interface has more than 64
+    /// implementers: the `I.M` spec edge stays, the fan-out is capped.
+    FanoutCap,
 }
 
 impl UnresolvedReason {
@@ -634,6 +637,7 @@ impl UnresolvedReason {
             UnresolvedReason::Builtin => "builtin",
             UnresolvedReason::Inferred => "inferred",
             UnresolvedReason::External => "external",
+            UnresolvedReason::FanoutCap => "fanout_cap",
         }
     }
 }
