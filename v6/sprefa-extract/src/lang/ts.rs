@@ -23,7 +23,7 @@ use oxc_ast_visit::Visit as OxcVisit;
 use oxc_span::{GetSpan, SourceType};
 
 use super::astgrep::{AstGrepParser, CstProjector};
-use super::ts_resolve::{ResolvedImport, TsModuleIndex};
+use super::ts_resolve::{ImportedName, ResolvedImport, TsModuleIndex};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
     DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier,
@@ -39,10 +39,8 @@ use crate::shape::{ContentId, FamilyTag, NameId, NodeRef, Span, Strings, ZERO_CO
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
 use crate::types::LangKind;
+use crate::types::{content_id_of, RefPosition, Reference, Unresolved, UnresolvedReason};
 use crate::types::{KindIndex, ScipIndex};
-use crate::types::{
-    content_id_of, RefPosition, Reference, Unresolved, UnresolvedReason,
-};
 
 use super::ts_receivers;
 
@@ -545,7 +543,8 @@ fn class_entity(class: &ts::Class, strings: &mut Strings, sink: &mut FamilyBundl
     }
 }
 
-fn fn_entity(func: &ts::Function, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {    let Some(id) = &func.id else { return };
+fn fn_entity(func: &ts::Function, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
+    let Some(id) = &func.id else { return };
     push_entity(
         sink,
         strings,
@@ -1525,9 +1524,7 @@ fn call_defs(program: &Program<'_>, strings: &mut Strings, sink: &mut FamilyBund
             S::ClassDeclaration(class) => class_call_defs(class, strings, sink),
             S::FunctionDeclaration(func) => fn_call_def(func, strings, sink),
             S::VariableDeclaration(var) => var_call_defs(var, strings, sink),
-            S::TSInterfaceDeclaration(interface) => {
-                interface_member_defs(interface, strings, sink)
-            }
+            S::TSInterfaceDeclaration(interface) => interface_member_defs(interface, strings, sink),
             _ => {}
         }
     }
@@ -3519,14 +3516,14 @@ pub fn call_drops(
                 facts
                     .rows
                     .iter()
-                    .find(|(start, end, _)| {
-                        *start == site.span.start && *end == site.span.end()
-                    })
+                    .find(|(start, end, _)| *start == site.span.start && *end == site.span.end())
                     .map(|(_, _, outcome)| outcome)
             });
             if let Some(outcome) = receiver {
                 let reason = match outcome {
-                    ts_receivers::TypeBinding::Decl(_) => return None,
+                    ts_receivers::TypeBinding::Decl(_) | ts_receivers::TypeBinding::Field(_, _) => {
+                        return None
+                    }
                     ts_receivers::TypeBinding::Inferred => UnresolvedReason::Inferred,
                     ts_receivers::TypeBinding::Ambiguous => UnresolvedReason::Ambiguous,
                 };
@@ -3545,6 +3542,65 @@ pub fn call_drops(
                 })
         })
         .collect()
+}
+
+/// The file and identifier span a dotted receiver path names, one module-plane
+/// segment at a time: `ts.factory` hops the import, then asks it for `factory`.
+fn receiver_seat(modules: &TsModuleIndex, path: &str, receiver: &str) -> Option<(String, Span)> {
+    let mut segments = receiver.split('.');
+    let binding = modules.import(path, segments.next()?)?;
+    let mut module = modules.target(path, &binding.module)?.to_string();
+    let mut seat = match &binding.imported {
+        ImportedName::Namespace => None,
+        ImportedName::Default => Some(modules.export_seat(&module, "default")?),
+        ImportedName::Named(name) => Some(modules.export_seat(&module, name)?),
+    };
+    for segment in segments {
+        // Only a namespace segment can be walked further: a named binding
+        // already names a declaration, whose members are not module exports.
+        if seat.is_some() {
+            return None;
+        }
+        let found = modules.export_seat(&module, segment)?;
+        module = found.0.clone();
+        seat = Some(found);
+    }
+    seat
+}
+
+/// The corpus def of `member` on an IMPORTED receiver that seats no def node:
+/// a `namespace X {}`, or an exported `const x: T` whose type has the member.
+fn imported_member_target(
+    modules: &TsModuleIndex,
+    paths: Option<&crate::types::PathIndex>,
+    path: &str,
+    receiver: &str,
+    member: &str,
+) -> Option<(ContentId, Span)> {
+    let (seat_path, seat_span) = receiver_seat(modules, path, receiver)?;
+    let seat_blob = modules.blob_of(&seat_path)?.clone();
+    let facts = ts_receivers::facts_of(&seat_blob, paths)?;
+    if let Some(members) = facts.namespace_members.get(&seat_span.start) {
+        if let Some((_, found)) = members.iter().find(|(name, _)| name == member) {
+            return Some((
+                seat_blob,
+                Span {
+                    start: found.0,
+                    len: found.1 - found.0,
+                },
+            ));
+        }
+    }
+    let declared = facts.const_type.get(&seat_span.start)?.clone();
+    ts_receivers::receiver_member_target(
+        &ts_receivers::RecvSpec::Type(declared),
+        member,
+        &seat_blob,
+        &facts,
+        Some(&seat_path),
+        Some(modules),
+        paths,
+    )
 }
 
 /// The module-plane target of one name USED in `path`: an import binding here,
@@ -3890,7 +3946,8 @@ impl Resolve<CallF> for TsSource {
         let def_spans = def_spans_sorted(call);
         // Per covering def, var name -> (declared type name, the blob whose
         // scope WROTE it); a nested arrow reads it off the lexical chain.
-        let mut bound_types: HashMap<NodeRef, HashMap<String, (String, ContentId)>> = HashMap::new();
+        let mut bound_types: HashMap<NodeRef, HashMap<String, (String, ContentId)>> =
+            HashMap::new();
         let mut results: Vec<Option<(NodeRef, ContentId, Span, CallEdgeKind)>> =
             vec![None; sites.len()];
         for ix in order {
@@ -3909,13 +3966,14 @@ impl Resolve<CallF> for TsSource {
             // The spec, and the blob the type name was written in when the
             // receiver came one hop through an initializer.
             let recv_spec: Option<(ts_receivers::RecvSpec, Option<ContentId>)> = match receiver {
-                Some(ts_receivers::TypeBinding::Decl(name)) => {
+                Some(ts_receivers::TypeBinding::Decl(name))
+                | Some(ts_receivers::TypeBinding::Field(name, _)) => {
                     let base = name.clone();
                     Some((
                         own_facts
                             .as_ref()
                             .and_then(|facts| facts.field_recv.get(&site.span.start))
-                            .map(|(_, field)| {
+                            .map(|(base, field)| {
                                 ts_receivers::RecvSpec::Field(base.clone(), field.clone())
                             })
                             .unwrap_or(ts_receivers::RecvSpec::Type(base)),
@@ -3947,8 +4005,9 @@ impl Resolve<CallF> for TsSource {
                         // The type name's own file anchors it: a `const x =
                         // f()` receiver names a type the caller never imports.
                         let ctx_facts = match ctx {
-                            Some(ctx) if ctx != blob => ts_receivers::facts_of(ctx, paths)
-                                .map(|facts| (ctx.clone(), facts)),
+                            Some(ctx) if ctx != blob => {
+                                ts_receivers::facts_of(ctx, paths).map(|facts| (ctx.clone(), facts))
+                            }
                             _ => None,
                         };
                         let (ctx_blob, ctx_facts, ctx_path) = match &ctx_facts {
@@ -3970,16 +4029,38 @@ impl Resolve<CallF> for TsSource {
                     _ => None,
                 },
             };
+            // An imported receiver seating no def node (`Debug.assert`,
+            // `factory.createX`) binds ahead of the local typed-receiver leg.
+            let seat_t = match (&import_t, receiver, written) {
+                (None, None, Some(written)) => written.rsplit_once('.').zip(modules).and_then(
+                    |((receiver, _), (modules, path))| {
+                        imported_member_target(modules, paths, path, receiver, callee)
+                    },
+                ),
+                _ => None,
+            };
             // The scip leg keeps its answer: it types the receiver, this does not.
-            let own_t = match &import_t {
-                Some(found) => Some((found.target_blob.clone(), found.target_span)),
-                None if receiver.is_some() => recv_t,
-                None => TsSource::call_name_match(output, def_index, callee)
+            let own_t = match (&import_t, &seat_t) {
+                (Some(found), _) => Some((found.target_blob.clone(), found.target_span)),
+                (None, Some(found)) => Some(found.clone()),
+                // A destructured receiver is a one-hop guess and yields to the
+                // name match; every other traced receiver owns its site.
+                (None, None)
+                    if matches!(receiver, Some(ts_receivers::TypeBinding::Field(_, _))) =>
+                {
+                    recv_t.or_else(|| {
+                        TsSource::call_name_match(output, def_index, callee).filter(|t| {
+                            !receiver_blind_builtin(output, call, site, callee, kinds, t)
+                        })
+                    })
+                }
+                (None, None) if receiver.is_some() => recv_t,
+                (None, None) => TsSource::call_name_match(output, def_index, callee)
                     .filter(|t| !receiver_blind_builtin(output, call, site, callee, kinds, t)),
             };
-            let own_kind = match import_t {
-                Some(_) => CallEdgeKind::ImportResolve,
-                None => CallEdgeKind::NameResolve,
+            let own_kind = match (&import_t, &seat_t) {
+                (Some(_), _) | (None, Some(_)) => CallEdgeKind::ImportResolve,
+                (None, None) => CallEdgeKind::NameResolve,
             };
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)

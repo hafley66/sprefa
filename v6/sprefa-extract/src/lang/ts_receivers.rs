@@ -1,9 +1,12 @@
 //! Receiver typing for ts member calls (`x.f()`): one scope-threaded pass per
 //! function body binds each receiver to its declared type name (param
 //! annotation, `const x: T`, class field, `this` inside a class, `new T()`,
-//! one hop through a `const x = f()` initializer), and the resolve phase binds
-//! `T.f` from the declaring class/interface's members. Union, primitive, and
-//! literal-inferred receivers stay `Inferred`/`Ambiguous` and never bind.
+//! one hop through a `const x = f()` initializer, one hop out of a
+//! `const { field } = base` pattern), and the resolve phase binds `T.f` from
+//! the declaring class/interface's members, folding merged declaration blocks
+//! of one type onto one seat and walking `extends` for members and fields
+//! alike. Union, primitive, and literal-inferred receivers never bind.
+//! @comment-ok: module header, the seam list every lang file opens with
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -25,16 +28,26 @@ pub struct TsFileTypes {
     /// fn-like span start -> declared return type name (a plain
     /// `TSTypeReference` only; unions, primitives, aliases record nothing).
     pub ret_of: HashMap<u32, String>,
-    /// class/interface span start -> `extends` base name as written.
-    pub extends_of: HashMap<u32, String>,
-    /// type name -> declaration span, UNIQUE names only (a duplicate name in
-    /// one file is an ambiguity this tier declines, never a coin flip).
+    /// canonical declaration span start -> `extends` base names as written.
+    pub extends_of: HashMap<u32, Vec<String>>,
+    /// type name -> the FIRST declaration span bearing it, the canonical seat
+    /// every merged block folds onto.
     pub decl_span: HashMap<String, (u32, u32)>,
-    /// type declaration span start -> declared method members (name, span).
+    /// Any merged block's span start -> the canonical seat's. Merged blocks of
+    /// one `interface X` seat at different spans and share one member set.
+    pub canonical_decl: HashMap<u32, u32>,
+    /// canonical declaration span start -> declared method members (name,
+    /// span), unioned over every merged block.
     pub members: HashMap<u32, Vec<(String, (u32, u32))>>,
-    /// (class name, field name) -> field's declared type name, this file's
-    /// classes only. Feeds the one-level `this.field.recv()` leg.
+    /// (type name, field name) -> field's declared type name, this file's
+    /// classes and interfaces.
     pub fields: HashMap<(String, String), String>,
+    /// `namespace X {}` seat span start (the declaration's own span AND its
+    /// identifier's) -> the functions declared inside it.
+    pub namespace_members: HashMap<u32, Vec<(String, (u32, u32))>>,
+    /// `const x: T` binding identifier span start -> `T`. The module plane
+    /// seats an exported const at its NAME, never at a def node.
+    pub const_type: HashMap<u32, String>,
     /// Class and interface names declared in this file (static receivers).
     pub type_names: BTreeSet<String>,
     /// `const x = f()` init-call callee span start -> the bound name. The
@@ -57,6 +70,9 @@ pub struct TsFileTypes {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TypeBinding {
     Decl(String),
+    /// `const { field } = base`: the receiver IS `base`'s property `field`, so
+    /// the member binds on the property's declared type, one hop out.
+    Field(String, String),
     Inferred,
     Ambiguous,
 }
@@ -79,6 +95,49 @@ fn scope_insert(scope: &mut TypeScope, name: String, binding: TypeBinding) {
 
 fn scope_lookup<'a>(scope: &'a TypeScope, name: &str) -> Option<&'a TypeBinding> {
     scope.iter().rev().find_map(|frame| frame.get(name))
+}
+
+/// The callables one `namespace X {}` body declares, as (name, span). Only the
+/// body's own statements: a nested namespace seats its own members.
+fn namespace_member_spans(module: &ts::TSModuleDeclaration) -> Vec<(String, (u32, u32))> {
+    let Some(ts::TSModuleDeclarationBody::TSModuleBlock(block)) = &module.body else {
+        return Vec::new();
+    };
+    let mut members = Vec::new();
+    for statement in &block.body {
+        let declaration = match statement {
+            ts::Statement::ExportNamedDeclaration(export) => export.declaration.as_ref(),
+            other => other.as_declaration(),
+        };
+        match declaration {
+            Some(ts::Declaration::FunctionDeclaration(func)) => {
+                if let Some(id) = &func.id {
+                    if func.body.is_some() {
+                        members.push((id.name.to_string(), (func.span.start, func.span.end)));
+                    }
+                }
+            }
+            Some(ts::Declaration::VariableDeclaration(var)) => {
+                for declarator in &var.declarations {
+                    let ts::BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                        continue;
+                    };
+                    if matches!(
+                        declarator.init,
+                        Some(ts::Expression::ArrowFunctionExpression(_))
+                            | Some(ts::Expression::FunctionExpression(_))
+                    ) {
+                        members.push((
+                            id.name.to_string(),
+                            (declarator.span.start, declarator.span.end),
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    members
 }
 
 /// The type name a `TSType` binds, when it is a plain named reference.
@@ -158,6 +217,44 @@ impl ReceiverWalker {
         }
     }
 
+    /// The canonical member seat of one declared type name: the FIRST block's
+    /// span start, with every later merged block mapped onto it.
+    fn seat(&mut self, name: &str, start: u32, end: u32) -> u32 {
+        let canonical = self
+            .facts
+            .decl_span
+            .entry(name.to_string())
+            .or_insert((start, end))
+            .0;
+        self.facts.canonical_decl.insert(start, canonical);
+        self.facts.type_names.insert(name.to_string());
+        canonical
+    }
+
+    /// `const { field, other: alias } = base`: every property binds to `base`'s
+    /// declared type one hop out, which the resolve leg walks through `fields`.
+    fn seed_destructured(&mut self, pattern: &ts::ObjectPattern, init: Option<&ts::Expression>) {
+        let Some(init) = init else { return };
+        let Some(TypeBinding::Decl(base)) =
+            receiver_of(init, &self.scope, self.this_stack.last(), &self.facts)
+        else {
+            return;
+        };
+        for property in &pattern.properties {
+            let ts::PropertyKey::StaticIdentifier(key) = &property.key else {
+                continue;
+            };
+            let ts::BindingPattern::BindingIdentifier(local) = &property.value else {
+                continue;
+            };
+            scope_insert(
+                &mut self.scope,
+                local.name.to_string(),
+                TypeBinding::Field(base.clone(), key.name.to_string()),
+            );
+        }
+    }
+
     fn enter_callable(
         &mut self,
         params: &ts::FormalParameters,
@@ -186,16 +283,12 @@ impl<'a> OxcVisit<'a> for ReceiverWalker {
     fn visit_class(&mut self, class: &ts::Class<'a>) {
         if let Some(id) = &class.id {
             let name = id.name.to_string();
-            self.facts
-                .decl_span
-                .entry(name.clone())
-                .or_insert((class.span.start, class.span.end));
-            self.facts.type_names.insert(name.clone());
+            let seat = self.seat(&name, class.span.start, class.span.end);
             if let Some(base) = class.super_class.as_ref().and_then(|ext| match ext {
                 ts::Expression::Identifier(id) => Some(id.name.to_string()),
                 _ => None,
             }) {
-                self.facts.extends_of.insert(class.span.start, base);
+                self.facts.extends_of.entry(seat).or_default().push(base);
             }
             for element in &class.body.body {
                 match element {
@@ -216,12 +309,9 @@ impl<'a> OxcVisit<'a> for ReceiverWalker {
                         if let ts::PropertyKey::StaticIdentifier(key) = &method.key {
                             self.facts
                                 .members
-                                .entry(class.span.start)
+                                .entry(seat)
                                 .or_default()
-                                .push((
-                                    key.name.to_string(),
-                                    (method.span.start, method.span.end),
-                                ));
+                                .push((key.name.to_string(), (method.span.start, method.span.end)));
                         }
                     }
                     _ => {}
@@ -235,30 +325,60 @@ impl<'a> OxcVisit<'a> for ReceiverWalker {
 
     fn visit_ts_interface_declaration(&mut self, interface: &ts::TSInterfaceDeclaration<'a>) {
         let name = interface.id.name.to_string();
-        self.facts
-            .decl_span
-            .entry(name.clone())
-            .or_insert((interface.span.start, interface.span.end));
-        self.facts.type_names.insert(name);
+        let seat = self.seat(&name, interface.span.start, interface.span.end);
         for ext in &interface.extends {
             if let ts::Expression::Identifier(id) = &ext.expression {
                 self.facts
                     .extends_of
-                    .insert(interface.span.start, id.name.to_string());
+                    .entry(seat)
+                    .or_default()
+                    .push(id.name.to_string());
             }
         }
         for member in &interface.body.body {
-            if let ts::TSSignature::TSMethodSignature(method) = member {
-                if let ts::PropertyKey::StaticIdentifier(key) = &method.key {
-                    self.facts
-                        .members
-                        .entry(interface.span.start)
-                        .or_default()
-                        .push((key.name.to_string(), (method.span.start, method.span.end)));
+            match member {
+                ts::TSSignature::TSMethodSignature(method) => {
+                    if let ts::PropertyKey::StaticIdentifier(key) = &method.key {
+                        self.facts
+                            .members
+                            .entry(seat)
+                            .or_default()
+                            .push((key.name.to_string(), (method.span.start, method.span.end)));
+                    }
                 }
+                // A property signature is a FIELD of the interface: the one-hop
+                // `holder.session.f()` and `const { session } = holder` legs.
+                ts::TSSignature::TSPropertySignature(prop) => {
+                    let Some(ann) = &prop.type_annotation else {
+                        continue;
+                    };
+                    let Some(type_name) = named_ref_of(&ann.type_annotation) else {
+                        continue;
+                    };
+                    if let ts::PropertyKey::StaticIdentifier(key) = &prop.key {
+                        self.facts
+                            .fields
+                            .insert((name.clone(), key.name.to_string()), type_name);
+                    }
+                }
+                _ => {}
             }
         }
         oxc_ast_visit::walk::walk_ts_interface_declaration(self, interface);
+    }
+
+    fn visit_ts_module_declaration(&mut self, module: &ts::TSModuleDeclaration<'a>) {
+        if let ts::TSModuleDeclarationName::Identifier(id) = &module.id {
+            let members = namespace_member_spans(module);
+            for seat in [module.span.start, id.span.start] {
+                self.facts
+                    .namespace_members
+                    .entry(seat)
+                    .or_default()
+                    .extend(members.iter().cloned());
+            }
+        }
+        oxc_ast_visit::walk::walk_ts_module_declaration(self, module);
     }
 
     fn visit_function(&mut self, func: &ts::Function<'a>, flags: oxc_syntax::scope::ScopeFlags) {
@@ -295,8 +415,18 @@ impl<'a> OxcVisit<'a> for ReceiverWalker {
     }
 
     fn visit_variable_declarator(&mut self, declarator: &ts::VariableDeclarator<'a>) {
+        if let ts::BindingPattern::ObjectPattern(pattern) = &declarator.id {
+            self.seed_destructured(pattern, declarator.init.as_ref());
+        }
         if let ts::BindingPattern::BindingIdentifier(id) = &declarator.id {
             let name = id.name.to_string();
+            if let Some(type_name) = declarator
+                .type_annotation
+                .as_ref()
+                .and_then(|ann| named_ref_of(&ann.type_annotation))
+            {
+                self.facts.const_type.insert(id.span.start, type_name);
+            }
             if let Some(ann) = &declarator.type_annotation {
                 let binding = match &ann.type_annotation {
                     ts::TSType::TSUnionType(_) => TypeBinding::Ambiguous,
@@ -336,12 +466,19 @@ impl<'a> OxcVisit<'a> for ReceiverWalker {
                 self.this_stack.last(),
                 &self.facts,
             ) {
-                if let (TypeBinding::Decl(base), ts::Expression::StaticMemberExpression(object)) =
-                    (&outcome, &member.object)
-                {
-                    self.facts
-                        .field_recv
-                        .insert(member.span.start, (base.clone(), object.property.name.to_string()));
+                match (&outcome, &member.object) {
+                    (TypeBinding::Decl(base), ts::Expression::StaticMemberExpression(object)) => {
+                        self.facts.field_recv.insert(
+                            member.span.start,
+                            (base.clone(), object.property.name.to_string()),
+                        );
+                    }
+                    (TypeBinding::Field(base, field), _) => {
+                        self.facts
+                            .field_recv
+                            .insert(member.span.start, (base.clone(), field.clone()));
+                    }
+                    _ => {}
                 }
                 if outcome == TypeBinding::Inferred {
                     if let ts::Expression::Identifier(id) = &member.object {
@@ -350,7 +487,9 @@ impl<'a> OxcVisit<'a> for ReceiverWalker {
                             .insert(member.span.start, id.name.to_string());
                     }
                 }
-                self.facts.rows.push((member.span.start, member.span.end, outcome));
+                self.facts
+                    .rows
+                    .push((member.span.start, member.span.end, outcome));
             }
         }
         oxc_ast_visit::walk::walk_call_expression(self, call);
@@ -420,6 +559,10 @@ pub enum RecvSpec {
     Field(String, String),
 }
 
+/// One type name resolved to where it is DECLARED: the blob, the declaration
+/// span, and that file's facts.
+type TypeAnchor = (ContentId, (u32, u32), Arc<TsFileTypes>);
+
 /// Where a type name used in `ctx_path` is DECLARED: a unique same-file class
 /// / interface, else one import binding through the module plane. Returns the
 /// declaring blob, the declaration span, and that file's facts.
@@ -430,7 +573,7 @@ fn type_anchor(
     ctx_path: Option<&str>,
     modules: Option<&crate::lang::ts_resolve::TsModuleIndex>,
     paths: Option<&PathIndex>,
-) -> Option<(ContentId, (u32, u32), Arc<TsFileTypes>)> {
+) -> Option<TypeAnchor> {
     if let Some(span) = ctx_facts.decl_span.get(type_name) {
         return Some((ctx_blob.clone(), *span, Arc::clone(ctx_facts)));
     }
@@ -449,7 +592,7 @@ fn type_anchor(
 /// the member is inherited. Deterministic on overloads (the largest span wins,
 /// which is the implementation, never an overload signature).
 fn member_on(
-    anchor: (ContentId, (u32, u32), Arc<TsFileTypes>),
+    anchor: TypeAnchor,
     member: &str,
     modules: Option<&crate::lang::ts_resolve::TsModuleIndex>,
     paths: Option<&PathIndex>,
@@ -460,10 +603,14 @@ fn member_on(
     }
     // One extends hop: the base is declared in the same file as the derived
     // type, or imported into it (resolved through the declaring file's path).
-    let base = facts.extends_of.get(&decl.0)?.clone();
+    let seat = facts.canonical_decl.get(&decl.0).copied().unwrap_or(decl.0);
+    let bases = facts.extends_of.get(&seat)?.clone();
     let ctx_path = paths.and_then(|paths| paths.get(&blob)).map(str::to_string);
-    let (blob, decl, facts) = type_anchor(&base, &blob, &facts, ctx_path.as_deref(), modules, paths)?;
-    member_in(&facts, decl, member).map(|span| (blob, to_span(span)))
+    bases.iter().find_map(|base| {
+        let (blob, decl, facts) =
+            type_anchor(base, &blob, &facts, ctx_path.as_deref(), modules, paths)?;
+        member_in(&facts, decl, member).map(|span| (blob, to_span(span)))
+    })
 }
 
 /// The corpus def site of `member` on a receiver: a declared type name, or one
@@ -487,19 +634,75 @@ pub fn receiver_member_target(
         }
         RecvSpec::Field(base, field) => {
             let anchor = type_anchor(base, own_blob, own_facts, own_path, modules, paths)?;
-            let field_type = anchor.2.fields.get(&(base.to_string(), field.to_string()))?;
-            let ctx_path = paths.and_then(|paths| paths.get(&anchor.0)).map(str::to_string);
-            let field_anchor =
-                type_anchor(field_type, &anchor.0, &anchor.2, ctx_path.as_deref(), modules, paths)?;
+            let (owner, field_type) = field_on(anchor, base, field, modules, paths)?;
+            let ctx_path = paths
+                .and_then(|paths| paths.get(&owner.0))
+                .map(str::to_string);
+            let field_anchor = type_anchor(
+                &field_type,
+                &owner.0,
+                &owner.2,
+                ctx_path.as_deref(),
+                modules,
+                paths,
+            )?;
             member_on(field_anchor, member, modules, paths)
         }
     }
 }
 
+/// One anchored type's declared FIELD, its own or a base's, as (the anchor
+/// that OWNS it, the field's written type name).
+fn field_on(
+    anchor: TypeAnchor,
+    type_name: &str,
+    field: &str,
+    modules: Option<&crate::lang::ts_resolve::TsModuleIndex>,
+    paths: Option<&PathIndex>,
+) -> Option<(TypeAnchor, String)> {
+    let mut seen = BTreeSet::new();
+    let mut frontier = vec![(anchor, type_name.to_string())];
+    while let Some((anchor, name)) = frontier.pop() {
+        if !seen.insert((anchor.0.clone(), anchor.1)) {
+            continue;
+        }
+        if let Some(found) = anchor.2.fields.get(&(name.clone(), field.to_string())) {
+            let found = found.clone();
+            return Some((anchor, found));
+        }
+        let seat = anchor
+            .2
+            .canonical_decl
+            .get(&anchor.1 .0)
+            .copied()
+            .unwrap_or(anchor.1 .0);
+        let Some(bases) = anchor.2.extends_of.get(&seat).cloned() else {
+            continue;
+        };
+        let ctx_path = paths
+            .and_then(|paths| paths.get(&anchor.0))
+            .map(str::to_string);
+        for base in bases {
+            if let Some(next) = type_anchor(
+                &base,
+                &anchor.0,
+                &anchor.2,
+                ctx_path.as_deref(),
+                modules,
+                paths,
+            ) {
+                frontier.push((next, base));
+            }
+        }
+    }
+    None
+}
+
 fn member_in(facts: &TsFileTypes, decl: (u32, u32), member: &str) -> Option<(u32, u32)> {
+    let seat = facts.canonical_decl.get(&decl.0).copied().unwrap_or(decl.0);
     facts
         .members
-        .get(&decl.0)?
+        .get(&seat)?
         .iter()
         .filter(|(name, _)| name == member)
         .map(|(_, span)| *span)
