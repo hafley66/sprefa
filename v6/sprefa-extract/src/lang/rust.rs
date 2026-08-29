@@ -904,13 +904,26 @@ impl RustSource {
         callee: &str,
     ) -> Option<(ContentId, Span)> {
         let call = output.call.as_ref()?;
+        let own_spans: Vec<Span> = call
+            .nodes
+            .iter()
+            .filter(|n| n.name.is_some())
+            .map(|n| n.span)
+            .collect();
         if let Some(r) = def_named(call, &output.strings, callee) {
             let span = call.node(r).span;
-            if let Some(site) = corpus_defs(index, callee)
-                .iter()
-                .find(|site| site.span == span)
-            {
-                return Some((site.blob.clone(), site.span));
+            // The span join must land on THIS file's DefSite: two corpus files
+            // can carry a byte-identical (name, span) def (the same helper at
+            // the top of both), so the candidate blob has to cover the whole
+            // named-def span set of this file, the first span alone is not a
+            // file identity.
+            if let Some(blob) = own_file_blob(index, &own_spans) {
+                if let Some(site) = corpus_defs(index, callee)
+                    .iter()
+                    .find(|site| site.span == span && site.blob == blob)
+                {
+                    return Some((site.blob.clone(), site.span));
+                }
             }
         }
         let sites = corpus_defs(index, callee);
@@ -929,6 +942,29 @@ impl RustSource {
             .unwrap_or(&sites[0]);
         Some((blob.clone(), site.span))
     }
+}
+
+/// The corpus blob whose named-def span set covers every span in `spans`
+/// (the file-fingerprint join behind `call_name_match`'s same-file leg). A
+/// single span is not a file identity: two files can hold an identical def
+/// at the same offset. Returns None when no single blob covers the set.
+fn own_file_blob(index: &DefIndex, spans: &[Span]) -> Option<ContentId> {
+    let first = *spans.first()?;
+    let covers = |blob: &ContentId| {
+        spans.iter().all(|sp| {
+            index
+                .map
+                .values()
+                .flatten()
+                .any(|s| &s.blob == blob && s.span == *sp)
+        })
+    };
+    index
+        .map
+        .values()
+        .flatten()
+        .find(|site| site.span == first && covers(&site.blob))
+        .map(|site| site.blob.clone())
 }
 
 /// The scip-resolved corpus target of one call site: the site's occurrence
