@@ -33,7 +33,10 @@ check_datalog(basement_program(root_graph(Nodes, PendingEdges),
     append([BindDiags, EdgeDiags, SeedDiags, RuleDiags], Diags),
     (   Diags == []
     ->  stratify_rules(Rules, DerivedStrata, StrataDiagnostics),
-        finish_checked(StrataDiagnostics, DerivedStrata, Nodes, ColonEdges,
+        locate_strata_diagnostics(StrataDiagnostics, Rules, Origins,
+                                  LocatedStrataDiagnostics),
+        finish_checked(LocatedStrataDiagnostics, DerivedStrata,
+                       Nodes, ColonEdges,
                        Relations, Seeds, Rules, Checked, Diagnostics)
     ;   Checked = [],
         sort(Diags, Diagnostics)
@@ -60,6 +63,31 @@ finish_checked([], DerivedStrata, Nodes, ColonEdges, Relations, Seeds, Rules,
                                               Rules),
                               Depends, Strata).
 finish_checked(Diagnostics, _, _, _, _, _, _, [], Diagnostics).
+
+locate_strata_diagnostics([], _, _, []).
+locate_strata_diagnostics(
+    [diagnostic(stratify, none,
+                strict_dependency_cycle(Relations)) | Diagnostics0],
+    Rules, Origins,
+    [diagnostic(stratify, NodeId,
+                strict_dependency_cycle(Relations)) | Diagnostics]) :-
+    !,
+    cycle_origin(Rules, Relations, Origins, NodeId),
+    locate_strata_diagnostics(Diagnostics0, Rules, Origins, Diagnostics).
+locate_strata_diagnostics([Diagnostic | Diagnostics0], Rules, Origins,
+                          [Diagnostic | Diagnostics]) :-
+    locate_strata_diagnostics(Diagnostics0, Rules, Origins, Diagnostics).
+
+cycle_origin(Rules, Relations, Origins, NodeId) :-
+    nth0(RuleIndex, Rules,
+         rule(call(HeadRelation, _), Goals)),
+    memberchk(HeadRelation, Relations),
+    nth0(GoalIndex, Goals,
+         checked_goal(negative, call(BodyRelation, _))),
+    memberchk(BodyRelation, Relations),
+    goal_origin(Origins, RuleIndex, GoalIndex, NodeId),
+    !.
+cycle_origin(_, _, _, none).
 
 %% Bind checks: one unique name per owner and dense zero-based indices.
 bind_diagnostics(Edges, Origins, Diags) :-
@@ -252,8 +280,8 @@ resolve_rules([Rule | Rest], RuleIndex, Edges, Nodes, Relations, Origins,
         BodyResult = ok(ResolvedBody)
     ->  ResolvedRule = rule(ResolvedHead, ResolvedBody),
         head_variables(ResolvedHead, HeadVariables),
-        check_goal_sequence_failures(ResolvedBody, 0, HeadVariables, _,
-                                     ModeFailures),
+        check_goal_sequence_failures(ResolvedBody, 0, HeadVariables, [],
+                                     _, _, ModeFailures),
         mode_failure_diagnostics(ModeFailures, RuleIndex, Origins, ModeDiags),
         head_safety_diagnostics(ResolvedHead, ResolvedBody, Origins,
                                 RuleIndex, SafetyDiags),
@@ -294,19 +322,38 @@ resolve_goals([pending_goal(Polarity, Goal) | Rest], RuleIndex, GoalIndex,
 % by the relation call context. Ordinary positive calls bind every variable;
 % constructive kernel calls first require one of their declared input modes.
 check_goal_sequence(Goals, Bound0, Bound, Diagnostics) :-
-    check_goal_sequence_failures(Goals, 0, Bound0, Bound, Failures),
+    check_goal_sequence_failures(Goals, 0, Bound0, Bound0,
+                                 Bound, _, Failures),
     maplist(unlocated_mode_diagnostic, Failures, Diagnostics).
 
-check_goal_sequence_failures([], _, Bound, Bound, []).
-check_goal_sequence_failures([Goal | Goals], GoalIndex, Bound0, Bound,
+check_goal_sequence_failures([], _, Available, Produced,
+                             Available, Produced, []).
+check_goal_sequence_failures([Goal | Goals], GoalIndex,
+                             Available0, Produced0, Available, Produced,
                              Failures) :-
-    check_goal(Goal, Bound0, Bound1, Reason),
+    check_goal_transition(Goal, Available0, Produced0,
+                          Available1, Produced1, Reason),
     NextGoalIndex is GoalIndex + 1,
-    check_goal_sequence_failures(Goals, NextGoalIndex, Bound1, Bound,
-                                 RestFailures),
+    check_goal_sequence_failures(Goals, NextGoalIndex,
+                                 Available1, Produced1,
+                                 Available, Produced, RestFailures),
     (   Reason == none
     ->  Failures = RestFailures
     ;   Failures = [goal_failure(GoalIndex, Reason) | RestFailures]
+    ).
+
+check_goal_transition(Goal, Available, Produced,
+                      Available, Produced, Reason) :-
+    goal_call(Goal, negative, _),
+    !,
+    check_goal(Goal, Produced, _, Reason).
+check_goal_transition(Goal, Available0, Produced0,
+                      Available, Produced, Reason) :-
+    check_goal(Goal, Available0, Available, Reason),
+    (   Reason == none
+    ->  goal_variables(Goal, Variables),
+        add_variables(Variables, Produced0, Produced)
+    ;   Produced = Produced0
     ).
 
 check_goal(Goal, Bound0, Bound, Reason) :-
@@ -342,9 +389,10 @@ check_goal(Goal, Bound, Bound, Reason) :-
     goal_call(Goal, negative, _),
     !,
     goal_variables(Goal, Variables),
-    (   variables_are_bound(Variables, Bound)
+    unbound_variables(Variables, Bound, Unbound),
+    (   Unbound == []
     ->  Reason = none
-    ;   Reason = unbound_negative_goal(Variables)
+    ;   Reason = unbound_negative_goal(Unbound)
     ).
 check_goal(Goal, Bound0, Bound, none) :-
     goal_call(Goal, positive, _),
@@ -367,6 +415,14 @@ variables_are_bound([], _).
 variables_are_bound([Variable | Variables], Bound) :-
     memberchk(Variable, Bound),
     variables_are_bound(Variables, Bound).
+
+unbound_variables([], _, []).
+unbound_variables([Variable | Variables], Bound, Unbound) :-
+    (   memberchk(Variable, Bound)
+    ->  Unbound = Rest
+    ;   Unbound = [Variable | Rest]
+    ),
+    unbound_variables(Variables, Bound, Rest).
 
 add_variables([], Bound, Bound).
 add_variables([Variable | Variables], Bound0, Bound) :-

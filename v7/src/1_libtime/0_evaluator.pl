@@ -15,23 +15,61 @@
 
 :- dynamic evaluation_rule/2.
 :- dynamic evaluation_seed/2.
+:- dynamic evaluation_lower/2.
 
 :- table proves/2.
 
 %% evaluate(+Rules, +Seeds, -Closure, -Diagnostics) is det.
 %
-% Close one ground positive Datalog program. Compiler and runtime callers use
-% the same entry point and checked-goal representation. Mutable clauses and
-% SLG tables carry a fresh evaluation identity and are removed on every exit.
+% Close one ground stratified Datalog program. Compiler and runtime callers use
+% the same entry point and checked-goal representation. Each stratum receives
+% an immutable completed-lower snapshot and its own cleanup-scoped clauses and
+% SLG table.
 evaluate(Rules, Seeds, Closure, Diagnostics) :-
     must_be(ground, Rules),
     must_be(ground, Seeds),
+    stratify_rules(Rules, Strata, StrataDiagnostics),
+    evaluate_after_stratify(StrataDiagnostics, Strata, Rules, Seeds,
+                            Closure, Diagnostics).
+
+evaluate_after_stratify([], Strata, Rules, Seeds, Closure, []) :-
+    !,
+    max_stratum(Strata, MaxStratum),
+    evaluate_strata(0, MaxStratum, Strata, Rules, Seeds, [], Closure).
+evaluate_after_stratify(Diagnostics, _, _, _, [], Diagnostics).
+
+max_stratum([], 0).
+max_stratum(Strata, MaxStratum) :-
+    findall(Level, member(stratum(_, Level), Strata), Levels),
+    max_list(Levels, MaxStratum).
+
+evaluate_strata(Level, MaxStratum, _, _, _, Closure, Closure) :-
+    Level > MaxStratum,
+    !.
+evaluate_strata(Level, MaxStratum, Strata, Rules, Seeds, LowerRows, Closure) :-
+    include(rule_at_level(Strata, Level), Rules, CurrentRules),
+    include(seed_at_level(Strata, Level), Seeds, CurrentSeeds),
     gensym(dl7_evaluation_, EvaluationId),
     setup_call_cleanup(
-        install_evaluation(EvaluationId, Rules, Seeds, ClauseReferences),
-        collect_closure(EvaluationId, Closure),
+        install_evaluation(EvaluationId, CurrentRules, CurrentSeeds, LowerRows,
+                           ClauseReferences),
+        collect_closure(EvaluationId, CompletedRows),
         clear_evaluation(EvaluationId, ClauseReferences)),
-    Diagnostics = [].
+    NextLevel is Level + 1,
+    evaluate_strata(NextLevel, MaxStratum, Strata, Rules, Seeds,
+                    CompletedRows, Closure).
+
+rule_at_level(Strata, Level, rule(call(Relation, _), _)) :-
+    memberchk(stratum(Relation, Level), Strata).
+
+seed_at_level(Strata, Level, call(Relation, _)) :-
+    relation_level(Strata, Relation, Level).
+
+relation_level(Strata, Relation, Level) :-
+    (   memberchk(stratum(Relation, DerivedLevel), Strata)
+    ->  Level = DerivedLevel
+    ;   Level = 0
+    ).
 
 %% validate_functional_rows(+Relations, +Rows, -Diagnostics) is det.
 %
@@ -152,12 +190,27 @@ strict_cycle_diagnostics(Relations, Dependencies, Diagnostics) :-
             ),
             StrictEdges0),
     sort(StrictEdges0, StrictEdges),
-    strict_edges_diagnostics(StrictEdges, Diagnostics).
+    strict_edges_diagnostics(StrictEdges, Relations, Closure, Diagnostics).
 
-strict_edges_diagnostics([], []) :- !.
-strict_edges_diagnostics(StrictEdges,
+strict_edges_diagnostics([], _, _, []) :- !.
+strict_edges_diagnostics(StrictEdges, Relations, Closure,
                          [diagnostic(stratify, none,
-                                     strict_dependency_cycle(StrictEdges))]).
+                                     strict_dependency_cycle(
+                                         CycleRelations))]) :-
+    findall(Relation,
+            ( member(Head-_, StrictEdges),
+              member(Relation, Relations),
+              mutually_reachable(Head, Relation, Closure)
+            ),
+            CycleRelations0),
+    sort(CycleRelations0, CycleRelations).
+
+mutually_reachable(Relation, Relation, _) :- !.
+mutually_reachable(Left, Right, Closure) :-
+    neighbors(Left, Closure, LeftReachable),
+    memberchk(Right, LeftReachable),
+    neighbors(Right, Closure, RightReachable),
+    memberchk(Left, RightReachable).
 
 dependency_edges([], []).
 dependency_edges([dependency(HeadRelation, BodyRelation, _, _) | Dependencies],
@@ -203,10 +256,11 @@ strata_for_relations([Relation | Relations], Levels,
     memberchk(level(Relation, Level), Levels),
     strata_for_relations(Relations, Levels, Strata).
 
-install_evaluation(EvaluationId, Rules, Seeds, ClauseReferences) :-
+install_evaluation(EvaluationId, Rules, Seeds, LowerRows, ClauseReferences) :-
     install_rules(Rules, EvaluationId, RuleReferences),
     install_seeds(Seeds, EvaluationId, SeedReferences),
-    append(RuleReferences, SeedReferences, ClauseReferences).
+    install_lower_rows(LowerRows, EvaluationId, LowerReferences),
+    append([RuleReferences, SeedReferences, LowerReferences], ClauseReferences).
 
 install_rules([], _, []).
 install_rules([Rule | Rules], EvaluationId, [Reference | References]) :-
@@ -218,6 +272,11 @@ install_seeds([Seed | Seeds], EvaluationId, [Reference | References]) :-
     assertz(evaluation_seed(EvaluationId, Seed), Reference),
     install_seeds(Seeds, EvaluationId, References).
 
+install_lower_rows([], _, []).
+install_lower_rows([Row | Rows], EvaluationId, [Reference | References]) :-
+    assertz(evaluation_lower(EvaluationId, Row), Reference),
+    install_lower_rows(Rows, EvaluationId, References).
+
 collect_closure(EvaluationId, Closure) :-
     findall(Call, proves(EvaluationId, Call), Calls),
     sort(Calls, Closure).
@@ -228,6 +287,8 @@ clear_evaluation(EvaluationId, ClauseReferences) :-
 
 proves(EvaluationId, Call) :-
     evaluation_seed(EvaluationId, Call).
+proves(EvaluationId, Call) :-
+    evaluation_lower(EvaluationId, Call).
 proves(EvaluationId, Head) :-
     evaluation_rule(EvaluationId, Rule),
     instantiate_rule(Rule, Head, Body),
@@ -251,6 +312,10 @@ goal_call(checked_goal(Polarity, Call), Polarity, Call).
 satisfy_goal(EvaluationId, Goal) :-
     goal_call(Goal, positive, Call),
     proves(EvaluationId, Call).
+satisfy_goal(EvaluationId, Goal) :-
+    goal_call(Goal, negative, Call),
+    ground(Call),
+    \+ evaluation_lower(EvaluationId, Call).
 
 %% cons_relation(?Head, ?Tail, ?List) is semidet.
 %

@@ -8,7 +8,11 @@
               [ compile_dl7/4,
                 compile_unit/3
               ]).
-:- use_module('../src/2_comptime/1_checker', [check_goal_sequence/4]).
+:- use_module('../src/2_comptime/0_lowerer', [lower_datalog/4]).
+:- use_module('../src/2_comptime/1_checker',
+              [ check_datalog/4,
+                check_goal_sequence/4
+              ]).
 :- use_module('../src/1_libtime/0_evaluator',
               [ evaluate/4,
                 stratify_rules/3,
@@ -77,7 +81,8 @@ test(userland_partial_maps_type_edges_deterministically) :-
                          cons([[0, 1], [2]]),
                          intern([[0, 1]]),
                          predecessor([[0, 1], [0, 2]])),
-                    evaluator(temporary_rules(0), temporary_seeds(0)),
+                    evaluator(temporary_rules(0), temporary_seeds(0),
+                              temporary_lower_rows(0)),
                     true, true),
     !.
 
@@ -142,16 +147,28 @@ test(stratification_is_pure_deterministic_and_strict_cycle_checked) :-
         ],
     stratify_rules(AcyclicRules, AcyclicStrata, AcyclicDiagnostics),
     stratify_rules(CycleRules, CycleStrata, CycleDiagnostics),
+    evaluate(CycleRules, [], CycleClosure, EvaluationDiagnostics),
+    evaluator_snapshot(EvaluatorSnapshot),
     Observed = stratification(
                    acyclic(AcyclicStrata, AcyclicDiagnostics),
-                   strict_cycle(CycleStrata, CycleDiagnostics)),
+                   strict_cycle(CycleStrata, CycleDiagnostics,
+                                evaluation(CycleClosure,
+                                           EvaluationDiagnostics,
+                                           EvaluatorSnapshot))),
     Observed == stratification(
                     acyclic([stratum(Left, 1)], []),
                     strict_cycle(
                         [],
                         [diagnostic(
                              stratify, none,
-                             strict_dependency_cycle([Left-Right]))])).
+                             strict_dependency_cycle([Left, Right]))],
+                        evaluation(
+                            [],
+                            [diagnostic(
+                                 stratify, none,
+                                 strict_dependency_cycle([Left, Right]))],
+                            evaluator(temporary_rules(0), temporary_seeds(0),
+                                      temporary_lower_rows(0))))).
 
 test(cons_constructs_deconstructs_and_stops_at_the_nil_tail) :-
     Rules =
@@ -229,7 +246,8 @@ test(cons_constructs_deconstructs_and_stops_at_the_nil_tail) :-
     Observed == cons_result(
                     evaluation(
                         [],
-                        evaluator(temporary_rules(0), temporary_seeds(0))),
+                        evaluator(temporary_rules(0), temporary_seeds(0),
+                                  temporary_lower_rows(0))),
                     traversal(
                         [one, three, two],
                         [ symbol(nil),
@@ -283,6 +301,123 @@ test(checked_edge_indices_expose_adjacent_and_strict_order) :-
                         keys([[0, 1], [0, 2]]),
                         ordered_seeds([0-1, 1-2]))),
     !.
+
+test(prefix_negation_is_safe_stratified_and_cleanup_scoped) :-
+    anti_join_receipt(AntiJoin),
+    unsafe_negation_receipt(Unsafe),
+    negative_cycle_receipt(Cycle),
+    negative_kernel_receipt(Kernel),
+    evaluator_exception_receipt(Exception),
+    Observed = negation_result(AntiJoin, Unsafe, Cycle, Kernel, Exception),
+    Observed == negation_result(
+                    anti_join(
+                        values(["a"]),
+                        body([positive(candidate), negative(blocked)]),
+                        dependencies(positive, negative),
+                        strata(candidate(0), blocked(0), allowed(1)),
+                        evaluator(temporary_rules(0), temporary_seeds(0),
+                                  temporary_lower_rows(0))),
+                    unsafe(
+                        goal_node(32),
+                        variable_node(27)),
+                    cycle(
+                        goal_node(38),
+                        relations([left, right])),
+                    kernel(
+                        goal_node(29),
+                        negative_constructive_kernel_goal(cons)),
+                    exception(
+                        caught,
+                        evaluator(temporary_rules(0), temporary_seeds(0),
+                                  temporary_lower_rows(0)))),
+    !.
+
+anti_join_receipt(Receipt) :-
+    Text = "(: candidate (* (: value text)))\n(: blocked (* (: value text)))\n(: allowed (* (: value text)))\n(candidate \"a\")\n(candidate \"b\")\n(blocked \"b\")\n(<- (allowed ?Value)\n    (candidate ?Value)\n    (not (blocked ?Value)))\n",
+    dl7_text_unit(anti_join, anti_join_source, Text, Unit, []),
+    compile_unit(Unit,
+                 compiled_unit(_, RuntimeProgram, CompilerRows), []),
+    named_owner(CompilerRows, candidate, Candidate),
+    named_owner(CompilerRows, blocked, Blocked),
+    named_owner(CompilerRows, allowed, Allowed),
+    findall(Value,
+            member(call(ref(Allowed), [const(Value)]), CompilerRows),
+            Values),
+    anti_join_runtime_snapshot(RuntimeProgram, Candidate, Blocked, Allowed,
+                               RuntimeSnapshot),
+    evaluator_snapshot(EvaluatorSnapshot),
+    RuntimeSnapshot = runtime(Body, Dependencies, Strata),
+    Receipt = anti_join(values(Values), Body, Dependencies, Strata,
+                        EvaluatorSnapshot).
+
+anti_join_runtime_snapshot(
+    checked_datalog(_, datalog_program(_, _, Rules), Depends, Strata),
+    Candidate, Blocked, Allowed,
+    runtime(body(BodySnapshot), dependencies(Positive, Negative),
+            strata(candidate(CandidateLevel), blocked(BlockedLevel),
+                    allowed(AllowedLevel)))) :-
+    memberchk(rule(call(ref(Allowed), [_]), Body), Rules),
+    maplist(label_checked_goal(Candidate, Blocked), Body, BodySnapshot),
+    dependency_presence(Depends, ref(Allowed), ref(Candidate), positive,
+                        Positive),
+    dependency_presence(Depends, ref(Allowed), ref(Blocked), negative,
+                        Negative),
+    memberchk(stratum(ref(Candidate), CandidateLevel), Strata),
+    memberchk(stratum(ref(Blocked), BlockedLevel), Strata),
+    memberchk(stratum(ref(Allowed), AllowedLevel), Strata).
+
+label_checked_goal(Candidate, _,
+                   checked_goal(positive, call(ref(Candidate), [_])),
+                   positive(candidate)).
+label_checked_goal(_, Blocked,
+                   checked_goal(negative, call(ref(Blocked), [_])),
+                   negative(blocked)).
+
+dependency_presence(Depends, Head, Body, Polarity, Polarity) :-
+    memberchk(depends(Head, Body, Polarity), Depends).
+
+unsafe_negation_receipt(unsafe(goal_node(GoalIndex),
+                               variable_node(VariableIndex))) :-
+    Text = "(: candidate (* (: value text)))\n(: blocked (* (: value text)))\n(: allowed (* (: value text)))\n(<- (allowed ?Value)\n    (not (blocked ?Value))\n    (candidate ?Value))\n",
+    dl7_text_unit(unsafe_negation, unsafe_negation_source, Text, Unit, []),
+    compile_unit(
+        Unit, [],
+        [diagnostic(
+             check, reader_node(unsafe_negation_source, GoalIndex),
+             unbound_negative_goal(
+                 [variable(reader_node(unsafe_negation_source, VariableIndex),
+                           'Value')]))]).
+
+negative_cycle_receipt(cycle(goal_node(GoalIndex),
+                             relations([left, right]))) :-
+    Text = "(: domain (* (: value text)))\n(: left (* (: value text)))\n(: right (* (: value text)))\n(domain \"a\")\n(<- (left ?Value)\n    (domain ?Value)\n    (not (right ?Value)))\n(<- (right ?Value)\n    (domain ?Value)\n    (not (left ?Value)))\n",
+    dl7_text_unit(negative_cycle, negative_cycle_source, Text, Unit, []),
+    lower_datalog(Unit, Basement, Origins, []),
+    Basement = basement_program(root_graph(_, PendingEdges), _),
+    memberchk(pending_edge(_, left, target(Left), _), PendingEdges),
+    memberchk(pending_edge(_, right, target(Right), _), PendingEdges),
+    sort([ref(Left), ref(Right)], ExpectedRelations),
+    check_datalog(
+        Basement, Origins, [],
+        [diagnostic(stratify,
+                    reader_node(negative_cycle_source, GoalIndex),
+                    strict_dependency_cycle(ExpectedRelations))]).
+
+negative_kernel_receipt(
+    kernel(goal_node(GoalIndex), negative_constructive_kernel_goal(cons))) :-
+    Text = "(: source (* (: value any)))\n(: bad (* (: value any)))\n(source \"x\")\n(<- (bad ?Value)\n    (source ?Value)\n    (not (cons ?Value 'nil ?List)))\n",
+    dl7_text_unit(negative_kernel, negative_kernel_source, Text, Unit, []),
+    compile_unit(
+        Unit, [],
+        [diagnostic(
+             check, reader_node(negative_kernel_source, GoalIndex),
+             negative_constructive_kernel_goal(cons))]).
+
+evaluator_exception_receipt(exception(caught, EvaluatorSnapshot)) :-
+    catch(evaluate([], [call(ref(seed), [_])], _, _),
+          error(instantiation_error, _),
+          true),
+    evaluator_snapshot(EvaluatorSnapshot).
 
 witness_presence(Closure, Relation, true) :-
     memberchk(call(ref(Relation), []), Closure),
@@ -378,15 +513,21 @@ normalized_call(call(ref(_), Arguments)) :- is_list(Arguments).
 normalized_rule(rule(Head, Body)) :-
     normalized_call(Head),
     maplist(normalized_goal, Body).
-normalized_goal(checked_goal(positive, Call)) :-
+normalized_goal(checked_goal(Polarity, Call)) :-
+    memberchk(Polarity, [positive, negative]),
     normalized_call(Call).
-normalized_depends(depends(ref(_), ref(_), positive)).
-normalized_stratum(stratum(ref(_), 0)).
+normalized_depends(depends(ref(_), ref(_), Polarity)) :-
+    memberchk(Polarity, [positive, negative]).
+normalized_stratum(stratum(ref(_), Level)) :-
+    integer(Level),
+    Level >= 0.
 
 evaluator_snapshot(
-    evaluator(temporary_rules(RuleFacts), temporary_seeds(SeedFacts))) :-
+    evaluator(temporary_rules(RuleFacts), temporary_seeds(SeedFacts),
+              temporary_lower_rows(LowerFacts))) :-
     aggregate_all(count, dl7_evaluator:evaluation_rule(_, _), RuleFacts),
-    aggregate_all(count, dl7_evaluator:evaluation_seed(_, _), SeedFacts).
+    aggregate_all(count, dl7_evaluator:evaluation_seed(_, _), SeedFacts),
+    aggregate_all(count, dl7_evaluator:evaluation_lower(_, _), LowerFacts).
 
 origin_kinds(file(_),
              embedded(_, position(_, _, _)),
