@@ -508,7 +508,7 @@ flat facts instead of collecting them".
 |---|---|---|---|
 | ts F4 (`rss`), `--family cst` on `ts.worker-DrA3GP0m.js`, 13,308,634 B | 1,094,057,984 B peak RSS, 2.09 s | 335,773,696 B, 1.92 s | `tests/9_large_file_bounds.rs::js_cst_rss_is_bounded` |
 | rust `rss`, default families on `nickel-lang-core-0.15.3/src/parser/grammar.rs`, 29,328,358 B | 3,610,509,312 B peak RSS, 14.24 s | 3,004,694,528 B, 12.55 s | `tests/9_large_file_bounds.rs::rs_all_families_rss_is_bounded` |
-| rust `timeout`, same file | rc=124 under `timeout 10` | rc=124 under `timeout 10`, unchanged | not fixed; see `rust.REPORT.md`, "Named size skip" |
+| rust `timeout`, same file | rc=124 under `timeout 10`, empty stream | rc=0, one `size_skip` row naming path, bytes and ceiling | `tests/9_size_skip.rs`, 8 cases; see `rust.REPORT.md`, "Named size skip: LANDED" |
 
 ### Where the memory went
 

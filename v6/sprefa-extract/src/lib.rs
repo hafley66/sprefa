@@ -125,5 +125,5 @@ pub use types::{
 };
 pub use wire::{
     file_fact, flatten, flatten_cfg, flatten_cfg_each, flatten_each, flatten_flow, flatten_jsonl,
-    flatten_scip, scip_file_edges, FlatFact, SpanOut, SCHEMA,
+    flatten_scip, scip_file_edges, size_skip_fact, FlatFact, SpanOut, DEFAULT_MAX_BYTES, SCHEMA,
 };

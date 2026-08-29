@@ -154,7 +154,7 @@ receipt: `ts.REPORT.md` section 12.
 |---|---|---|---|
 | `rss` on `nickel-lang-core-0.15.3/src/parser/grammar.rs` (29,328,358 B) | 3,610,509,312 B peak RSS | 3,004,694,528 B | `tests/9_large_file_bounds.rs::rs_all_families_rss_is_bounded` |
 | wall, same file, no `timeout` | 14.24 s | 12.55 s | (same) |
-| `timeout` rc=124 under `timeout 10`, same file | rc=124 | rc=124, **unchanged** | none; blocked, below |
+| `timeout` rc=124 under `timeout 10`, same file | rc=124, empty stream | rc=0, one `size_skip` row | `tests/9_size_skip.rs`, 8 cases |
 
 Output on that file is byte-identical before and after: 13,664,266 rows,
 `cmp -s` clean.
@@ -181,24 +181,57 @@ The corpus gap is sharp. Second-slowest rust file is `chrono-tz` `timezones.rs`
 at 3,789 ms for 7.2 MB; nickel `grammar.rs` is 29.3 MB. One file in 77,472
 exceeds 10 s.
 
-### Named size skip: designed, BLOCKED on ownership
+### Named size skip: LANDED
 
-The user law is that a silent timeout is a defect and a named skip is a fact.
-The row, mirroring `scip_skip`:
+Ownership for `src/types.rs` and `src/schema.rs` was extended by the
+coordinator for this record only. The row:
 
 ```
-record=size_skip  path=<string>  bytes=<u32>  limit=<u32>  reason=<over_max_bytes>
+record=size_skip  path=<string>  bytes=<u64>  limit=<u64>  reason=<over_max_bytes>
 ```
 
-`extract` emits that one row and exits 0 when the input exceeds the ceiling;
-`--max-bytes N` overrides it, `--max-bytes 0` disables it. A ceiling of
-16,777,216 B skips nickel `grammar.rs` and no other file in the 77,472-file
-rust corpus, no ts/js corpus file, and no fixture, so every golden stays
-byte-identical.
+An input over the ceiling is not parsed: `extract` emits that one row and exits
+0. `--max-bytes N` sets the ceiling, `--max-bytes 0` removes it, default
+16,777,216 B. The decision is made on file size before any parse, so it covers
+the normal family stream, `--bench` and `--ast-pattern` alike. `--file-fact`
+still prepends its identity row: a digest and a line count over bytes already
+read is not the cost being bounded. A whole-project mode (`--resolve`,
+`--deps`, `--scip-*`) takes directories and path sets and is not covered.
 
-Not landed. A `FlatFact` variant lives in `src/types.rs`, its contract line in
-`src/schema.rs`, and the flag in `src/bin/extract.rs` plus
-`src/bin/extract/help.rs`. `types.rs` and `schema.rs` are shared by every
-language arm and are on this lane's forbidden list, so the coordinator was
-beeped for the call rather than the files edited. The design above is complete
-and needs no further measurement.
+The finding's exact repro, before and after:
+
+| command | before | after |
+|---|---|---|
+| `timeout 10 extract <nickel grammar.rs>` | rc=124, empty stream, 10 s burned | rc=0, one `size_skip` row, milliseconds |
+| `timeout 10 extract --max-bytes 0 <same>` | (no such flag) | rc=124, unchanged; the unbounded path is still reachable |
+
+```json
+{"record":"size_skip","path":".../nickel-lang-core-0.15.3/src/parser/grammar.rs","bytes":29328358,"limit":16777216,"reason":"over_max_bytes"}
+```
+
+### The ceiling is measured, not chosen
+
+| corpus | files over 16,777,216 B |
+|---|---|
+| rust registry, 77,472 files | 1: `nickel-lang-core-0.15.3/src/parser/grammar.rs` |
+| ts/js (`~/projects/instant`) | 0 |
+| this crate's `tests/fixtures/**` | 0 (largest is a 1 MB golden jsonl, not an input) |
+
+So the default changes no existing stream. Verified: the 19 corpus files of the
+20-file parity sample that sit under the ceiling stay byte-identical against the
+pre-fix binary; the 20th is the nickel file, whose output is the skip row by
+design.
+
+One existing test needed the escape hatch, not a weakening.
+`tests/45_emit_throughput.rs` builds a 25,563,904 B synthetic `.go` to measure
+JSONL emission on 350k rows, which is over the ceiling by construction. It now
+passes `--max-bytes 0`; its budget, its row-count equality assert and its input
+are unchanged. It is the only test in the crate that generates an over-ceiling
+input (`27_blob_cache.rs` writes 4 KB, `46_resolve_scaling.rs` runs
+`--resolve`, which the ceiling does not cover).
+
+Tests: `tests/9_size_skip.rs`, 8 cases. Over-ceiling emits exactly one row with
+the right path, bytes and limit at rc=0; the boundary is inclusive (a file at
+its own ceiling extracts); `--max-bytes` lowers it; `--max-bytes 0` disables it;
+`--file-fact` still rides a skip; an under-ceiling file is unchanged;
+`--ast-pattern` skips too; `--schema` declares the record.

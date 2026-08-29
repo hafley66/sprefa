@@ -427,6 +427,21 @@ pub fn file_fact(path: &str, content: &[u8]) -> FlatFact {
     }
 }
 
+/// The default per-file byte ceiling, 16 MiB. Measured, not chosen: it skips
+/// one file in the 77,472-file rust corpus, no ts/js corpus file, no fixture.
+pub const DEFAULT_MAX_BYTES: u64 = 16 * 1024 * 1024;
+
+/// The named size skip. A caller that gets this row knows which file, how big
+/// it was, and which ceiling decided; an empty stream or an rc=124 knows none.
+pub fn size_skip_fact(path: &str, bytes: u64, limit: u64) -> FlatFact {
+    FlatFact::SizeSkipRow {
+        path: path.to_string(),
+        bytes,
+        limit,
+        reason: "over_max_bytes".to_string(),
+    }
+}
+
 /// Flatten one DfF bundle to flat facts: value-flow NODES (kind = the DfNodeKind
 /// slug; name = the variable / property / type when the node carries one) +
 /// Direct value EDGES (src value -> dst value). The enclosing callable is
