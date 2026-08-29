@@ -1186,9 +1186,95 @@ fn call_defs_in_items(
                     call_defs_in_items(inner, line_starts, defs, owners, scopes, active);
                 }
             }
+            syn::Item::Const(c) => {
+                let span = def_span(line_starts, c.ident.span(), c.expr.span());
+                if initializer_defs(
+                    span,
+                    &c.ident,
+                    &c.expr,
+                    line_starts,
+                    defs,
+                    owners,
+                    scopes,
+                    active,
+                ) {
+                    note(span, scopes);
+                }
+            }
+            syn::Item::Static(s) => {
+                let span = def_span(line_starts, s.ident.span(), s.expr.span());
+                if initializer_defs(
+                    span,
+                    &s.ident,
+                    &s.expr,
+                    line_starts,
+                    defs,
+                    owners,
+                    scopes,
+                    active,
+                ) {
+                    note(span, scopes);
+                }
+            }
             _ => {}
         }
     }
+}
+
+/// Defs under a `const`/`static` initializer, plus the item as a def when the
+/// initializer holds a call no inner def covers. Returns whether it minted one.
+#[allow(clippy::too_many_arguments)]
+fn initializer_defs(
+    item_span: Span,
+    ident: &syn::Ident,
+    expr: &syn::Expr,
+    line_starts: &[u32],
+    defs: &mut RustCallDefs,
+    owners: &mut Vec<CollectedOwner>,
+    scopes: &mut Vec<(Span, String)>,
+    under_cfg: Option<&str>,
+) -> bool {
+    let mark = defs.out.len();
+    match expr {
+        // The block form is the derive-macro shape: its statement items carry
+        // impl blocks and trait impls, which only `call_defs_in_items` reads.
+        syn::Expr::Block(block) => {
+            let items: Vec<syn::Item> = block
+                .block
+                .stmts
+                .iter()
+                .filter_map(|stmt| match stmt {
+                    syn::Stmt::Item(item) => Some(item.clone()),
+                    _ => None,
+                })
+                .collect();
+            call_defs_in_items(&items, line_starts, defs, owners, scopes, under_cfg);
+            for stmt in &block.block.stmts {
+                if !matches!(stmt, syn::Stmt::Item(_)) {
+                    syn::visit::Visit::visit_stmt(defs, stmt);
+                }
+            }
+        }
+        // The METHOD, never `syn::visit::visit_expr`: the free fn dispatches
+        // past the override, so a top-level `f()` or `|| ..` is not seen.
+        _ => syn::visit::Visit::visit_expr(defs, expr),
+    }
+    let covered: Vec<Span> = defs.out[mark..].iter().map(|def| def.span).collect();
+    let mut sites = CallCollector {
+        line_starts,
+        sites: Vec::new(),
+        under_cfg: None,
+    };
+    syn::visit::Visit::visit_expr(&mut sites, expr);
+    let uncovered = sites.sites.iter().any(|site| {
+        !covered
+            .iter()
+            .any(|span| span.start <= site.span.start && site.span.end() <= span.end())
+    });
+    if uncovered {
+        defs.push(item_span, Some(ident.to_string()), CONST_INIT);
+    }
+    uncovered
 }
 
 /// One method's declaration before it is interned into the aux. `self_type` is
@@ -2793,6 +2879,12 @@ pub const MATCH: DfNodeKind = DfNodeKind::Ext(LangKind {
 pub const BLOCK: DfNodeKind = DfNodeKind::Ext(LangKind {
     lang: "rust",
     tag: "block",
+});
+/// A `const`/`static` item that owns calls in its initializer. Not `Free`: it
+/// is a caller and never a callee, and no other language has the shape.
+pub const CONST_INIT: CallKind = CallKind::Ext(LangKind {
+    lang: "rust",
+    tag: "const_init",
 });
 
 impl Source for RustSource {
