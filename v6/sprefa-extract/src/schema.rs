@@ -251,9 +251,16 @@ MODULE PLANE (--resolve)
   call edges it binds carry kind=import_resolve.
   Two `export *` arms offering DIFFERENT bindings for one name is the spec's
   AMBIGUOUS outcome: no edge, and an `unresolved` row with reason=ambiguous.
-  The go and rust arms take the same resolved_import row shape when their
-  planes land; neither emits one today, so a corpus of those languages produces
-  no row here and its call edges stay kind=name_resolve.
+  rust runs the Rust Reference's own name resolution over its `use`/`mod`
+  facts (a dedicated second parse, `src/lang/rust_modules.rs`): `crate::`/
+  `self::`/`super::`/absolute paths to a home file (reusing the kink-4
+  qualifier-to-file match), `pub use` re-export chains to any depth, `use
+  a::*` globs (ambiguous on disagreement, precedence namespace > star >
+  indirect > local, `default` never occurs), and `use a::b;` where `b` is a
+  module rather than an item (namespace). A local def always shadows an
+  import. The go arm takes the same resolved_import row shape when its plane
+  lands; it emits none today, so a go corpus produces no row here and its
+  call edges stay kind=name_resolve.
 
 PACKAGE EDGES (--package-deps)
   Reads the supplied manifests and emits package_edge rows for the dependency

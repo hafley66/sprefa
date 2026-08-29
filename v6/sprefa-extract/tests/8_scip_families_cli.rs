@@ -195,16 +195,21 @@ fn the_discrimination_holds_through_rust_analyzer_too() {
     ];
     diet.extend_from_slice(&trio);
     let heuristic = run(&diet);
+    // gamma's `use crate::scip::alpha::helper;` now binds through the rust
+    // module plane, agreeing with scip below: no ambiguity left for a real
+    // index to fix here (the plane's own drops-channel + fixture ambiguity
+    // is covered by 57_rust_module_plane.rs).
     assert!(
-        !heuristic.contains("\"record\":\"scip_fn_edge\"")
-            && !heuristic.contains("\"record\":\"resolved_edge\""),
-        "the rust name match is ambiguous the same way: {heuristic}"
+        heuristic.lines().any(|line| line.contains("\"record\":\"resolved_edge\"")
+            && line.contains("\"kind\":\"import_resolve\"")
+            && line.contains("\"caller_name\":\"run\"")
+            && line.contains("\"callee_name\":\"helper\"")
+            && line.contains("alpha.rs")),
+        "the module plane binds gamma's call through its use: {heuristic}"
     );
     assert!(
-        heuristic
-            .lines()
-            .any(|line| line.contains("\"reason\":\"ambiguous\"") && line.contains("helper")),
-        "and it SAYS so, one row per dropped site: {heuristic}"
+        !heuristic.contains("beta.rs\",\"callee_name\":\"helper\""),
+        "nothing should still bind to beta's helper: {heuristic}"
     );
 
     let real = scip_family(RUST_ROOT, &cache, &[]);
