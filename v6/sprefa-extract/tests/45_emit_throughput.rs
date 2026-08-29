@@ -30,9 +30,15 @@ fn emit_throughput_350k_rows_under_budget() {
     let bin = env!("CARGO_BIN_EXE_extract");
     let arg = path.to_string_lossy().into_owned();
 
+    // 25,563,904 B is over the default --max-bytes ceiling, and being over it
+    // is the point: this test measures emission on a large row count, so it
+    // opts out rather than measuring the skip. Budget and asserts unchanged.
+    let no_ceiling = ["--max-bytes", "0"];
+
     // Piped run: count lines, wall under a fixed budget.
     let t = Instant::now();
     let mut child = Command::new(bin)
+        .args(no_ceiling)
         .arg(&arg)
         .stdout(Stdio::piped())
         .spawn()
@@ -56,7 +62,12 @@ fn emit_throughput_350k_rows_under_budget() {
     assert!(status.success());
 
     // --bench run: the fact count must match the piped line count.
-    let out = Command::new(bin).arg("--bench").arg(&arg).output().unwrap();
+    let out = Command::new(bin)
+        .arg("--bench")
+        .args(no_ceiling)
+        .arg(&arg)
+        .output()
+        .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     let facts: u64 = stderr
         .lines()

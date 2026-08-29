@@ -66,9 +66,18 @@ FAST MODE: --family diet_scip PATH...
 
 CROSS-FILE RESOLUTION: --resolve PATH...
   Extract every supplied file, build one definition index, emit resolved edges.
-  Needs two or more paths. Under --resolve, --family picks which edges: `call`
-  (default) emits resolved_edge, `type` emits resolved_type_edge, `call,type`
-  both.
+  Under --resolve, --family picks which edges: `call` (default) emits
+  resolved_edge, `type` emits resolved_type_edge, `call,type` both.
+
+  The paths ARE the resolution universe: a name that resolves outside them is
+  not emitted. One path is a legal universe and resolves that file's edges into
+  itself. Pass files, never directories; expand a tree with a glob or find.
+
+  The stream carries phase-2 records only (resolved_edge, resolved_type_edge,
+  flow_edge), never the per-file phase-1 records `--schema` also lists (node,
+  edge, sig, site, specifier, unresolved and the rest). Those carry no path
+  field, so they cannot name their file in a multi-file stream; get them one
+  file at a time from a plain `extract FILE`.
 
   Add `--project-root DIR` plus `--scip-index FILE` (an index you already have)
   or `--scip-build` (build one first) to put a compiler index in the loop; the
@@ -268,6 +277,28 @@ Prepend one `file` record carrying the path, the content digest every resolved
 edge is keyed on, the byte count and the line count. Off by default so existing
 output is unchanged; on, it rides the same invocation, so counting lines never
 costs a second read of the file.";
+
+pub const MAX_BYTES_LONG: &str = "\
+Byte ceiling for ONE input file. Over it, the file is not parsed: `extract`
+emits one `size_skip` record naming the path, the byte count and this ceiling,
+and exits 0. Default 16777216; 0 removes the ceiling entirely.
+
+A silent timeout is a defect and a named skip is a fact. Killing a run that has
+outgrown its budget leaves rc=124 and an empty stream, which a caller cannot
+tell from a file that legitimately has no facts, and which names neither the
+file nor its size.
+
+The number is measured, not chosen. 16777216 skips exactly one file in a
+77,472-file rust registry corpus, a 29,328,358 B machine-generated parser table
+that costs 12.55 s and 3.0 GB peak RSS, and all of that is parse time: --bench
+charges 4.5 s to 7.0 s per family to the parse against 4 ms to 225 ms of row
+flattening. No ts/js corpus file and no fixture in this crate reaches it.
+
+The decision is made on file size before any parse, so it covers the normal
+family stream, --bench and --ast-pattern alike. --file-fact still prepends its
+identity row: a digest and a line count over bytes already read is not the cost
+being bounded. A whole-project mode (--resolve, --deps, --scip-*) takes
+directories and path sets and is not covered.";
 
 pub const SCIP_CACHE_LONG: &str = "\
 Where `--family scip` places a freshly built index and finds it again. The
