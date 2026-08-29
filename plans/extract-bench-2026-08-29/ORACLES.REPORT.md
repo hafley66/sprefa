@@ -331,3 +331,21 @@ _namespaces/ts.ts`). The file-imports-file row already exists:
 
 Command: `extract --deps --project-root ~/projects/TypeScript-5.9 $(find src -name '*.ts' ! -name '*.d.ts')`, 600 files, wall under 60 s in one process.
 Both rows stay: `file_edge` answers "what does this file import", `resolved_import` answers "where does this name come from".
+
+## 12. go call family, corrected: bare method names
+
+Section 7's go call recall (5.6%) compared `Checker.GetAliasedSymbol`
+(`go/callgraph` writes `Type.Method`) against `GetAliasedSymbol` (ours writes
+the bare name). With the receiver prefix stripped on the oracle side
+(`go.oracle.call.vta.bare.tsv`):
+
+| ours (`go.parse.call.tsv`, pre-#558 binary) | oracle | both | recall | precision |
+|---|---:|---:|---:|---:|
+| 49,082 vs vta 55,099 | | 24,980 | **45.3%** | 50.9% |
+| 49,082 vs cha 169,232 | | 25,177 | 14.9% | 51.3% |
+
+4,132 of our rows carry a `closure@<n>` caller the oracle names by the
+enclosing function; those and the fourslash test harness
+(`internal/fourslash/fourslash.go`, 11,559 ours-only rows) are the bulk of
+ours-only. `go.parse.call.tsv` predates #558, #560 and #562; the receipt
+lane for the next go arc re-emits it on the current binary.
