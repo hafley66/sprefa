@@ -1,6 +1,52 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-29 17:57 EDT
+Updated: 2026-08-29 19:39 EDT
+
+## 2026-08-29 type-operator closure
+
+```text
+authored and kernel ':' rows
+          |
+          v
+edge_snapshot round N
+          |
+          v
+Partial<User>
+          |
+          v
+edge_snapshot round N+1
+          |
+          v
+Pick<Partial<User>, [id, name]>
+          |
+          v
+edge_snapshot round N+2
+          |
+          v
+Exclude<Pick<...>, [id]>
+          |
+          v
+stable closure and functional-key validation
+```
+
+- `@dl7-edge-snapshot-ruling`: done.
+- `@dl7-pick-exclude`: done.
+- `@dl7-datalog-extensions`: done.
+- `edge_snapshot/4` carries frozen type edges between compiler evaluations.
+- `intern_snapshot/3` carries the current application-demand set between
+  compiler evaluations. Requests that disappear are removed on the next
+  round.
+- `nil/1` supplies `const([])` to relational `cons/3`; the quoted `'nil`
+  sentinel is absent from the V7 compiler, prelude, fixture, and oracle.
+- `Pick` uses positive membership. `Exclude` materializes
+  `excluded_name/3`, then performs a completed lower-stratum anti-join.
+- The existing type-operator oracle proves preserved relative order and dense
+  indices through `Partial`, `Pick`, and `Exclude`.
+- Commit: `d2d7410c0`.
+- Gates: SWI 14 of 14 passed; Tree-sitter 1 of 1 passed.
+- Next DL7 head of line: `@dl7-layout-rulings` (`needs-info`). Its decisions
+  govern target-neutral layout rows before the planner and ProgramJson adapter
+  can proceed.
 
 ## Current execution state
 

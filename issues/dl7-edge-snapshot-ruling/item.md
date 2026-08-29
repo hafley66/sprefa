@@ -2,7 +2,7 @@
 created: 2026-08-29
 updated: 2026-08-29
 type: task
-status: in-progress
+status: done
 priority: high
 epic: dl7-minimal-kernel
 labels: [dl7, needs-ruling]
@@ -10,6 +10,11 @@ size: S
 lane: dl7-kernel
 lane_seq: 2
 collision: [v7-design]
+closed: 2026-08-29
+closed_by: codex
+commits:
+- hash: d2d7410c0
+  summary: Complete chained type operator rounds
 ---
 
 # Resolve source and generated edge strata
@@ -72,14 +77,14 @@ or emitter contract belongs in this ruling.
 
 ## Acceptance Criteria
 
-- [ ] Pick and Exclude have an acyclic checked dependency graph under the
+- [x] Pick and Exclude have an acyclic checked dependency graph under the
   selected contract.
-- [ ] Partial's current positive closure remains unchanged.
-- [ ] The contract contains no target or emitter vocabulary.
+- [x] Partial's current positive closure remains unchanged.
+- [x] The contract contains no target or emitter vocabulary.
 
 ## Tests Run
 
-- [ ] Run no implementation suite until the ruling is selected.
+- [x] Run no implementation suite until the ruling is selected.
 
 ## Implementation Notes
 
@@ -91,3 +96,9 @@ rejects the unseparated `':' -> aggregate rank -> ':'` relation cycle.
 ### 2026-08-29T23:14:00Z · @codex
 
 Selected compiler freeze/refreeze rounds. Each round seeds edge_snapshot/4 from the complete colon-edge set known at the end of the previous round and regenerates predecessor/3 for every frozen owner. Kernel signature edges participate. edge_snapshot/4 uses the same arity and functional keys as ':'/4: [[0,1],[0,3]]. Generated colon rows become visible to another type operator in the next compiler round. Snapshot rows are compiler transport and are absent from final compiler rows. Runtime evaluate/4 remains one-program evaluation. The outer compile driver stops when the colon-edge set is unchanged and diagnoses compiler_round_limit_exhausted(16).
+
+## Resolution
+
+### 2026-08-29T23:39:07Z · @codex
+
+Implemented edge_snapshot/4 freeze-refreeze rounds with kernel signature edges, previous-round visibility, stable-round key validation, and a 16-round diagnostic. Verified by the consolidated 14-test SWI suite and the 1-case Tree-sitter corpus.

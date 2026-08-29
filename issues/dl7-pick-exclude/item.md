@@ -3,7 +3,7 @@ created: 2026-08-28
 updated: 2026-08-29
 type: task
 assignee: glm53f
-status: needs-info
+status: done
 priority: normal
 epic: dl7-minimal-kernel
 labels: [dl7, model-glm53f]
@@ -12,6 +12,11 @@ lane: dl7-kernel
 lane_seq: 2
 collision: [v7-kernel, v7-prelude]
 blocked_by: ['@dl7-luna-review', '@dl7-relational-cons', '@dl7-stratified-negation', '@dl7-count-aggregate', '@dl7-ordered-index', '@dl7-edge-snapshot-ruling']
+closed: 2026-08-29
+closed_by: codex
+commits:
+- hash: d2d7410c0
+  summary: Complete chained type operator rounds
 ---
 
 # Add userland Pick and Exclude goals
@@ -25,15 +30,23 @@ rules. Reuse the one oracle fixture and expected term.
 
 ## Acceptance Criteria
 
-- [ ] Operator names occur only in prelude, fixture, and documentation.
-- [ ] Pick uses a positive symbol-membership join.
-- [ ] Exclude uses a completed lower-stratum anti-join.
-- [ ] Both preserve relative order and assign dense output indices.
-- [ ] The existing single oracle expands without adding a test.
+- [x] Operator names occur only in prelude, fixture, and documentation.
+- [x] Pick uses a positive symbol-membership join.
+- [x] Exclude uses a completed lower-stratum anti-join.
+- [x] Both preserve relative order and assign dense output indices.
+- [x] The existing single oracle expands without adding a test.
 
-## Test Run
+## Tests Run
 
-Run the single SWI command once.
+- [x] Consolidated V7 SWI suite: 14 of 14 tests passed.
+- [x] V7 Tree-sitter corpus: 1 of 1 parses passed.
+
+## Implementation Notes
+
+Compiler rounds expose the previous complete `':'/4` set through
+`edge_snapshot/4`. Application demand crosses rounds through
+`intern_snapshot/3`. `Exclude` materializes `excluded_name/3` before its
+completed lower-stratum anti-join.
 
 ## Stop condition
 
@@ -60,3 +73,9 @@ The extension review adds three required inputs: ordered strict-predecessor
 rows or comparison, explicit zero-rank handling, and closure functional-key
 validation for derived `':'/4` rows. Exact rule shapes and the corrected DAG are
 in `v7/design/3_DATALOG_EXTENSIONS.REVIEW.md`.
+
+## Resolution
+
+### 2026-08-29T23:39:08Z · @codex
+
+Pick and Exclude are prelude Datalog rules. Exclude materializes excluded_name/3 before its lower-stratum anti-join; both operators preserve relative order and assign dense indices in the existing oracle.
