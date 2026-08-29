@@ -269,6 +269,11 @@ impl<'a> OxcVisit<'a> for ReceiverWalker {
             .as_deref()
             .and_then(|ann| named_ref_of(&ann.type_annotation))
         {
+            // The corpus def index seats a fn at the `function` keyword, the
+            // module plane's export entry at its NAME: both keys, one type.
+            if let Some(id) = &func.id {
+                self.facts.ret_of.insert(id.span.start, name.clone());
+            }
             self.facts.ret_of.insert(func.span.start, name);
         }
         oxc_ast_visit::walk::walk_function(self, func, flags);
