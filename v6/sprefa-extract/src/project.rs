@@ -858,7 +858,7 @@ pub static RESOLVE_ARMS: &[ResolveArm] = &[
         name: "go",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&GoSource, out, cx)),
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&GoSource, out, cx)),
-        drops: None,
+        drops: Some(crate::lang::go::call_drops),
         type_plane: TypePlane::Nodes,
     },
     ResolveArm {

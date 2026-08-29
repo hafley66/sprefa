@@ -443,10 +443,7 @@ impl CallKind {
 }
 
 /// How a resolved call edge's callee was bound. Emitted by Resolve<CallF>.
-/// ADDENDUM 4a (site-key discipline): method resolution is NAME-ONLY — the
-/// callee name binds via the corpus `DefIndex` (`NameResolve`) and SCIP may
-/// override that binding (`ScipOverride`). Receiver typing (type-of-receiver ->
-/// method set) is OUT OF SCOPE for commit 4: no lang resolve arm invents it.
+/// `Implements` is additive: only go emits it (interface spec -> implementer).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CallEdgeKind {
     /// The callee name resolved to exactly one def in the corpus.
@@ -459,6 +456,8 @@ pub enum CallEdgeKind {
     /// The callee is an import binding, bound through the language's own module
     /// plane (ResolveExport) rather than by name-matching across the corpus.
     ImportResolve,
+    /// An interface method spec bound to one implementing type's method.
+    Implements,
 }
 
 impl CallEdgeKind {
@@ -468,6 +467,7 @@ impl CallEdgeKind {
             CallEdgeKind::ScipOverride => "scip_override",
             CallEdgeKind::ValueRef => "value_ref",
             CallEdgeKind::ImportResolve => "import_resolve",
+            CallEdgeKind::Implements => "implements",
         }
     }
 }
@@ -494,6 +494,25 @@ pub struct MethodOwner {
     pub self_type: Option<NameId>,
     /// The implemented or declaring trait; `None` for an inherent impl.
     pub trait_name: Option<NameId>,
+}
+
+/// A call site's receiver-type outcome, keyed by `CallSite.span` (`call_site`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReceiverBinding {
+    pub call_site: Span,
+    pub outcome: ReceiverOutcome,
+}
+
+/// How a call site's receiver expression's static type was determined.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReceiverOutcome {
+    /// The declared type name (var/param/field/receiver, pointer/slice/map
+    /// unwrapped to the element or value type).
+    Named(NameId),
+    /// A `:=` bound to a call result: out of scope by policy.
+    Inferred,
+    /// Two conflicting type declarations bind the same name in this scope.
+    Ambiguous,
 }
 
 /// A Prolog term-occurrence reference: a compound constructed or destructured in
@@ -578,15 +597,22 @@ pub struct Unresolved {
 
 /// The closed v5 vocabulary (`src/engine/family/mod.rs:552-570`) plus two
 /// resolve-phase reasons (`issues/extract-unresolved-resolve-phase-reasons`).
+/// `Builtin`/`Inferred` are additive; every existing arm keeps emitting only
+/// its original reasons.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum UnresolvedReason {
     DynamicImport,
     ComputedMemberCall,
     SpreadCallArgs,
-    /// No corpus def bears the callee's name: std, a dependency, or a builtin.
+    /// No corpus def bears the callee's name: std or a dependency.
     NoCorpusDef,
     /// The corpus defines the name and this tier cannot say which one is meant.
     Ambiguous,
+    /// A predeclared identifier (builtin func or conversion), not a corpus gap.
+    Builtin,
+    /// A receiver type this tier declines to trace (a `:=` bound to a call
+    /// result), not a missing declaration.
+    Inferred,
 }
 
 impl UnresolvedReason {
@@ -597,6 +623,8 @@ impl UnresolvedReason {
             UnresolvedReason::SpreadCallArgs => "spread-call-args",
             UnresolvedReason::NoCorpusDef => "no_corpus_def",
             UnresolvedReason::Ambiguous => "ambiguous",
+            UnresolvedReason::Builtin => "builtin",
+            UnresolvedReason::Inferred => "inferred",
         }
     }
 }
@@ -666,6 +694,9 @@ pub struct CallFAux {
     /// One row per callee this file names ONLY from cfg-guarded sites, so a
     /// consumer can subtract the name and still keep every shipped call.
     pub test_only_calls: Vec<TestOnlyCall>,
+    /// One row per call site whose receiver type this file could trace, joined
+    /// to `CallSite.span`. Go populates it; other languages leave it empty.
+    pub receivers: Vec<ReceiverBinding>,
     /// One row per macro invocation that minted a def/site elsewhere in this
     /// bundle, joined by span to whatever phase-1 arm found the expansion.
     pub macro_sites: Vec<MacroSite>,
