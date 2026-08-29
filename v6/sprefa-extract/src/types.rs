@@ -1753,7 +1753,7 @@ pub fn own_blob(cx: &ProjectCx, output: &ExtractOutput) -> Option<ContentId> {
     let mut counts: Vec<(ContentId, usize)> = Vec::new();
     for sites in index.map.values() {
         for site in sites {
-            if named_spans.contains(&site.span) {
+            if named_spans.binary_search(&site.span).is_ok() {
                 match counts.iter_mut().find(|(blob, _)| *blob == site.blob) {
                     Some((_, count)) => *count += 1,
                     None => counts.push((site.blob.clone(), 1)),
