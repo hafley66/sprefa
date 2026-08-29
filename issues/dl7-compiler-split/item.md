@@ -11,7 +11,6 @@ lane: dl7-refactor
 lane_seq: 0
 collision: [v7-datalog-lower, v7-datalog-check]
 size: M
-blocked_by: ['@dl7-pick-exclude']
 ---
 
 # Split DL7 lowering and checking stages
