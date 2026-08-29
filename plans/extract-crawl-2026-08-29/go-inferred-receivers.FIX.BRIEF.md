@@ -8,7 +8,7 @@ the largest unresolved bucket on typescript-go is `unresolved reason=inferred`:
 
 ## First action
 ```
-git merge --ff-only 5020a96b31b3ecd99352e5ceb678a31dc06ed08c
+git merge --ff-only e90322438c2871543e1e6e339d26910590a09c6c
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Binary: `v6/sprefa-extract/target/release/extract` in YOUR worktree.
