@@ -3,7 +3,7 @@ created: 2026-08-28
 updated: 2026-08-29
 type: task
 assignee: codex
-status: in-progress
+status: done
 priority: high
 epic: dl7-minimal-kernel
 labels: [dl7, model-luna-low, model-codex]
@@ -12,6 +12,10 @@ lane: dl7-review
 lane_seq: 0
 collision: [v7-review, v7-docs]
 blocked_by: ['@dl7-kernel-oracle']
+closed: 2026-08-29
+commits:
+- hash: 4df2ad816
+  summary: record kernel boundary review
 ---
 
 # Review DL7 kernel size and layer boundaries
@@ -41,3 +45,9 @@ sites, phase branches, kernel relations, Partial ownership, and test counts.
 ## Implementation Notes
 
 This task records boundaries and counts only.
+
+## Resolution
+
+### 2026-08-29T04:17:29Z · @issuectl
+
+The review records exact source, evaluator, kernel, Partial, runtime-boundary, and test counts without implementation edits.
