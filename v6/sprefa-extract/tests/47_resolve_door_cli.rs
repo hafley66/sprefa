@@ -14,6 +14,7 @@ const MD: &str = "tests/fixtures/markdown/doc_node.md";
 const RUST_SAMPLE: &str = "tests/fixtures/rust/sample.rs";
 const TS_SAMPLE: &str = "tests/fixtures/ts/sample.ts";
 const TS_DOCS: &str = "tests/fixtures/ts/docs.ts";
+const TS_UNRESOLVED: &str = "tests/fixtures/ts_unresolved/unresolved.ts";
 const PY_CLASS: &str = "tests/fixtures/python/corpus_8.py";
 const PY_CALLER: &str = "tests/fixtures/python/corpus_9.py";
 
@@ -137,5 +138,75 @@ fn resolve_cli_names_a_class_constructor_callee() {
     assert!(
         rows.contains(r#""callee_name":"Widget""#),
         "the constructor edge must name the class:\n{rows}"
+    );
+}
+
+/// FAIL-FIRST RECEIPT: `Error: Read("tests/fixtures/ts", Custom { kind: Other,
+/// error: "read /abs/path" })`, a Debug dump of the error type with no reading
+/// for a human.
+#[test]
+fn resolve_cli_names_a_directory_plainly() {
+    let output = extract(&["--resolve", "tests/fixtures/ts"]);
+    assert_eq!(output.status.code(), Some(2), "an argument error exits 2");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("tests/fixtures/ts") && stderr.contains("is a directory"),
+        "the message must name the path and the cause: {stderr}"
+    );
+    assert!(
+        !stderr.contains("Custom {"),
+        "no Debug dump of the error type: {stderr}"
+    );
+    assert!(
+        stderr.contains("--resolve takes files"),
+        "the message must say what to pass instead: {stderr}"
+    );
+}
+
+/// One path is a legitimate resolve universe: same-file edges resolve inside
+/// it, which `tests/1_resolve_cli.rs:52` pins for kotlin. The help text said
+/// "Needs two or more paths", so the docs and the binary disagreed.
+#[test]
+fn resolve_cli_accepts_one_path_and_says_so() {
+    let rows = stdout_of(&["--resolve", TS_SAMPLE]);
+    assert!(
+        rows.contains(r#""record":"resolved_edge""#),
+        "one path resolves its own same-file edges:\n{rows}"
+    );
+    let help = stdout_of(&["--help"]);
+    assert!(
+        !help.contains("Needs two or more paths"),
+        "the help must not promise a minimum the binary does not enforce"
+    );
+    assert!(
+        help.contains("One path is a legal universe"),
+        "the help must state what one path means:\n{help}"
+    );
+}
+
+/// The `unresolved` record is a PHASE-1 per-file row with no path field
+/// (`src/wire.rs:290`), so it cannot name its file in a multi-file phase-2
+/// stream. `--resolve` therefore does not carry it, and the help says which
+/// invocation does.
+#[test]
+fn resolve_cli_documents_the_phase_one_records_it_drops() {
+    let rows = stdout_of(&["--resolve", TS_UNRESOLVED, TS_SAMPLE]);
+    assert!(
+        !rows.contains(r#""record":"unresolved""#),
+        "phase-2 mode carries phase-2 records only:\n{rows}"
+    );
+    let per_file = stdout_of(&[TS_UNRESOLVED]);
+    assert!(
+        per_file.contains(r#""record":"unresolved""#),
+        "the per-file door is where the record lives:\n{per_file}"
+    );
+    let help = stdout_of(&["--help"]);
+    assert!(
+        help.contains("never the per-file phase-1 records"),
+        "the help must say --resolve drops them:\n{help}"
+    );
+    assert!(
+        help.contains("unresolved"),
+        "the help must name the record by name:\n{help}"
     );
 }

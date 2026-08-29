@@ -920,9 +920,8 @@ fn name_at(names: Option<&SpanNames>, output: &ExtractOutput, span: Span) -> Opt
 /// The callee's declared name at `span`. A constructor resolves to a class,
 /// which is a TypeF def and never a CallF one, so the call table alone answers null.
 fn callee_name(targets: &TargetIndex<'_>, target: &ProjectInput, span: Span) -> Option<String> {
-    name_at(targets.call_names.get(&target.blob), &target.output, span).or_else(|| {
-        name_at(targets.type_names.get(&target.blob), &target.output, span)
-    })
+    name_at(targets.call_names.get(&target.blob), &target.output, span)
+        .or_else(|| name_at(targets.type_names.get(&target.blob), &target.output, span))
 }
 
 fn call_facts(
