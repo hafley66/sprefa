@@ -155,8 +155,12 @@ contents, so labs 9 and 10 use native Terra-high workers instead.
 
 ## Next execution sequence
 
-1. Run `15_commercial_common_prolog` and `16_logadat` in parallel.
-2. Review and commit the accepted pair, then update this progress log.
+1. `15_commercial_common_prolog` completed from vendor documentation. Directly
+   covered facilities include nested unification, backtracking, cut, Lisp
+   interoperation, dynamic updates, and debugging. General tabling, CLP, CHR,
+   attributed variables, and coroutining remain undocumented in the checked
+   vendor sources.
+2. Finish and review the active `16_logadat` executable probe.
 3. Run and review `17_si_kanren`.
 
 ## Shared-worktree laws
