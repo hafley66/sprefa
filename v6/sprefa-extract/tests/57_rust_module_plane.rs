@@ -63,7 +63,11 @@ fn text(row: &Value, key: &str) -> String {
 }
 
 fn stem(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).trim_end_matches(".rs").to_string()
+    path.rsplit('/')
+        .next()
+        .unwrap_or(path)
+        .trim_end_matches(".rs")
+        .to_string()
 }
 
 /// `(caller, callee file stem, callee, kind)` per `resolved_edge`, sorted.
@@ -111,7 +115,13 @@ fn unresolved(names: &[&str]) -> Vec<(String, String, String)> {
     let mut rows: Vec<(String, String, String)> = run(names)
         .iter()
         .filter(|row| row["record"] == "unresolved")
-        .map(|row| (stem(&text(row, "path")), text(row, "reason"), text(row, "detail")))
+        .map(|row| {
+            (
+                stem(&text(row, "path")),
+                text(row, "reason"),
+                text(row, "detail"),
+            )
+        })
         .collect();
     rows.sort();
     rows
@@ -229,7 +239,9 @@ fn a_local_item_shadows_a_glob_brought_name() {
 /// star arms disagree, so the site drops with reason `ambiguous`.
 #[test]
 fn two_globs_offering_the_same_name_drop_ambiguous() {
-    assert!(!edges(FIXTURE_FILES).iter().any(|(caller, ..)| caller == "glob_ambiguous_caller"));
+    assert!(!edges(FIXTURE_FILES)
+        .iter()
+        .any(|(caller, ..)| caller == "glob_ambiguous_caller"));
     assert!(unresolved(FIXTURE_FILES).contains(&(
         "lib".to_string(),
         "ambiguous".to_string(),
@@ -278,7 +290,9 @@ fn a_cross_crate_use_binds_when_the_target_crate_is_in_the_corpus() {
 /// `no_corpus_def`/`ambiguous`, both corpus-wide facts already carried).
 #[test]
 fn an_external_std_use_mints_no_import_row() {
-    assert!(!imports(FIXTURE_FILES).iter().any(|(_, local, ..)| local == "StdMapUnused"));
+    assert!(!imports(FIXTURE_FILES)
+        .iter()
+        .any(|(_, local, ..)| local == "StdMapUnused"));
 }
 
 /// One `resolved_import` row per RESOLVED `use` leaf in the fixture: an
@@ -303,8 +317,11 @@ fn barrel_corpus(dir: &Path, n: usize) -> Vec<String> {
     let mut barrel = String::new();
     for index in 0..n {
         let leaf = dir.join(format!("leaf{index}.rs"));
-        std::fs::write(&leaf, format!("pub fn pick{index}(n: u32) -> u32 {{ n + {index} }}\n"))
-            .expect("leaf file");
+        std::fs::write(
+            &leaf,
+            format!("pub fn pick{index}(n: u32) -> u32 {{ n + {index} }}\n"),
+        )
+        .expect("leaf file");
         paths.push(leaf.to_string_lossy().into_owned());
         barrel.push_str(&format!("pub use crate::leaf{index}::*;\n"));
     }

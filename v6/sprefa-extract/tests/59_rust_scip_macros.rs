@@ -114,5 +114,8 @@ fn an_occurrence_with_a_parse_site_mints_no_duplicate() {
 fn without_a_scip_index_the_pass_is_a_no_op() {
     let facts = resolve(false);
     assert!(edges(&facts, "scip_macro").is_empty(), "no scip, no mints");
-    assert!(macro_sites(&facts).is_empty(), "no scip, no macro_site rows");
+    assert!(
+        macro_sites(&facts).is_empty(),
+        "no scip, no macro_site rows"
+    );
 }

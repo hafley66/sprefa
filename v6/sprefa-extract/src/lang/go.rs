@@ -29,7 +29,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use super::astgrep::{AstGrepParser, CstProjector};
-use super::go_modules::GoModuleIndex;
+use super::go_modules::{is_exported, GoModuleIndex};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
     DfParam, DocFact, DocTag, MethodOwner, ProjectEdge, ReceiverBinding, ReceiverOutcome, SigSlot,
@@ -882,7 +882,10 @@ fn go_mint_interface_methods(
     };
     let iname = go_text(name_node, src).to_string();
     let mut mc = iface.walk();
-    for elem in iface.children(&mut mc).filter(|n| n.kind() == "method_elem") {
+    for elem in iface
+        .children(&mut mc)
+        .filter(|n| n.kind() == "method_elem")
+    {
         let Some(mname) = elem.child_by_field_name("name") else {
             continue;
         };
@@ -1230,7 +1233,10 @@ fn go_walk_receivers(
     out: &mut Vec<(Span, TypeBinding)>,
 ) {
     match node.kind() {
-        "block" | "if_statement" | "for_statement" | "type_switch_statement"
+        "block"
+        | "if_statement"
+        | "for_statement"
+        | "type_switch_statement"
         | "expression_switch_statement" => {
             scope.push(HashMap::new());
             let mut cursor = node.walk();
@@ -1269,7 +1275,10 @@ fn go_walk_receivers(
         }
         "var_declaration" => {
             let mut cursor = node.walk();
-            for spec in node.children(&mut cursor).filter(|n| n.kind() == "var_spec") {
+            for spec in node
+                .children(&mut cursor)
+                .filter(|n| n.kind() == "var_spec")
+            {
                 if let Some(ty) = spec.child_by_field_name("type") {
                     if let Some(decl) = go_decl_type_of(ty, src) {
                         let mut nc = spec.walk();
@@ -2388,8 +2397,9 @@ impl Resolve<TypeF> for GoSource {
         let index = cx.indexes.def_index.get();
         let modules = cx.indexes.go_modules.get();
         let paths = cx.indexes.paths.get();
-        let own_path =
-            own_blob(cx, output).zip(paths).and_then(|(blob, paths)| paths.get(&blob));
+        let own_path = own_blob(cx, output)
+            .zip(paths)
+            .and_then(|(blob, paths)| paths.get(&blob));
         let mut edges = Vec::new();
         for candidate in GoSource::type_edge_candidates(output) {
             // src: the TypeF entity at the owner span. Exists by construction
@@ -2638,11 +2648,14 @@ fn go_collect_file_facts(node: tree_sitter::Node, src: &[u8], facts: &mut GoFile
     for child in node.children(&mut cursor) {
         match child.kind() {
             "method_declaration" => {
-                if let (Some(name_node), Some(owner)) =
-                    (child.child_by_field_name("name"), go_receiver_type(child, src))
-                {
+                if let (Some(name_node), Some(owner)) = (
+                    child.child_by_field_name("name"),
+                    go_receiver_type(child, src),
+                ) {
                     let span = def_span(child);
-                    facts.owner_of.insert((span.start, span.end()), owner.clone());
+                    facts
+                        .owner_of
+                        .insert((span.start, span.end()), owner.clone());
                     facts
                         .methods_of
                         .entry(owner)
@@ -2674,12 +2687,17 @@ fn go_collect_interface_facts(spec: tree_sitter::Node, src: &[u8], facts: &mut G
     };
     let iname = go_text(name_node, src).to_string();
     let mut mc = iface.walk();
-    for elem in iface.children(&mut mc).filter(|n| n.kind() == "method_elem") {
+    for elem in iface
+        .children(&mut mc)
+        .filter(|n| n.kind() == "method_elem")
+    {
         let Some(mname) = elem.child_by_field_name("name") else {
             continue;
         };
         let span = node_span(elem);
-        facts.owner_of.insert((span.start, span.end()), iname.clone());
+        facts
+            .owner_of
+            .insert((span.start, span.end()), iname.clone());
         facts
             .methods_of
             .entry(iname.clone())
@@ -2701,10 +2719,7 @@ fn go_receiver_target(
 ) -> Option<(ContentId, Span)> {
     let paths = paths?;
     let (dir, base_name) = match type_name.split_once('.') {
-        Some((pkg, bare)) => (
-            go_package_dir(module.as_ref()?, imports.get(pkg)?)?,
-            bare,
-        ),
+        Some((pkg, bare)) => (go_package_dir(module.as_ref()?, imports.get(pkg)?)?, bare),
         None => (
             Path::new(paths.get(own?)?)
                 .parent()
@@ -2717,7 +2732,9 @@ fn go_receiver_target(
         .filter(|site| {
             site.family == FamilyTag::Call
                 && paths.get(&site.blob).is_some_and(|p| {
-                    Path::new(p).parent().is_some_and(|parent| same_dir(parent, &dir))
+                    Path::new(p)
+                        .parent()
+                        .is_some_and(|parent| same_dir(parent, &dir))
                         && go_file_facts(&site.blob, p)
                             .owner_of
                             .get(&(site.span.start, site.span.end()))
@@ -2746,7 +2763,10 @@ impl Resolve<CallF> for GoSource {
         // and the go.mod walk is per file, never per call site.
         let own = own_blob(cx, output);
         let paths = cx.indexes.paths.get();
-        let own_path = own.as_ref().zip(paths).and_then(|(blob, paths)| paths.get(blob));
+        let own_path = own
+            .as_ref()
+            .zip(paths)
+            .and_then(|(blob, paths)| paths.get(blob));
         let module = own_path.and_then(go_module_of);
         let modules = cx.indexes.go_modules.get();
         // The scip leg: the corpus index + the rev-correct reader + this
@@ -2791,7 +2811,13 @@ impl Resolve<CallF> for GoSource {
                 Some(ReceiverOutcome::Named(type_id)) => {
                     let type_name = output.strings.lookup(*type_id);
                     go_receiver_target(
-                        def_index, paths, &module, own.as_ref(), &imports, type_name, callee,
+                        def_index,
+                        paths,
+                        &module,
+                        own.as_ref(),
+                        &imports,
+                        type_name,
+                        callee,
                     )
                     .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
                 }
@@ -2799,10 +2825,29 @@ impl Resolve<CallF> for GoSource {
                 None => match site.callee_path.map(|id| output.strings.lookup(id)) {
                     // The import path names ONE directory through the module; the
                     // plane's own directory-scoped, exported-only lookup binds it.
+                    // The v5-shaped name match stays the LAST leg, and only for
+                    // an EXPORTED name on an in-module import whose directory
+                    // leg declined (the target's files may sit outside this
+                    // invocation): a unique corpus name still binds, kind
+                    // NameResolve. An unexported callee can never be referenced
+                    // from another package, and an EXTERNAL import (stdlib,
+                    // third-party) stays nothing.
                     Some(import) => match (&module, paths, modules) {
-                        (Some(module), Some(paths), Some(modules)) => go_package_dir(module, import)
-                            .and_then(|dir| modules.resolve_in_dir(&dir, def_index, paths, callee))
-                            .map(|(blob, span)| (blob, span, CallEdgeKind::ImportResolve)),
+                        (Some(module), Some(paths), Some(modules)) => {
+                            go_package_dir(module, import).and_then(|dir| {
+                                modules
+                                    .resolve_in_dir(&dir, def_index, paths, callee)
+                                    .map(|(blob, span)| (blob, span, CallEdgeKind::ImportResolve))
+                                    .or_else(|| {
+                                        if !is_exported(callee) {
+                                            return None;
+                                        }
+                                        GoSource::call_name_match(output, def_index, callee).map(
+                                            |(blob, span)| (blob, span, CallEdgeKind::NameResolve),
+                                        )
+                                    })
+                            })
+                        }
                         _ => None,
                     },
                     None => GoSource::call_name_match(output, def_index, callee)
@@ -2862,7 +2907,10 @@ impl Resolve<CallF> for GoSource {
             interface_specs
                 .entry(output.strings.lookup(self_type).to_string())
                 .or_default()
-                .push((NodeRef(ix as u32), output.strings.lookup(name_id).to_string()));
+                .push((
+                    NodeRef(ix as u32),
+                    output.strings.lookup(name_id).to_string(),
+                ));
         }
         for (iface_name, specs) in &interface_specs {
             edges.extend(go_interface_implements(def_index, paths, iface_name, specs));
@@ -2912,7 +2960,10 @@ fn go_interface_implements(
     }
     let mut edges = Vec::new();
     for methods in candidates.values() {
-        if !specs.iter().all(|(_, name)| methods.contains_key(name.as_str())) {
+        if !specs
+            .iter()
+            .all(|(_, name)| methods.contains_key(name.as_str()))
+        {
             continue;
         }
         for (node_ref, spec_name) in specs {
@@ -2939,9 +2990,27 @@ const GO_BUILTIN_FUNCS: &[&str] = &[
 
 /// Predeclared TYPE identifiers used as a conversion call (`int32(x)`).
 const GO_BUILTIN_TYPES: &[&str] = &[
-    "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64",
-    "uintptr", "float32", "float64", "complex64", "complex128", "bool", "string", "byte", "rune",
-    "error", "any",
+    "int",
+    "int8",
+    "int16",
+    "int32",
+    "int64",
+    "uint",
+    "uint8",
+    "uint16",
+    "uint32",
+    "uint64",
+    "uintptr",
+    "float32",
+    "float64",
+    "complex64",
+    "complex128",
+    "bool",
+    "string",
+    "byte",
+    "rune",
+    "error",
+    "any",
 ];
 
 fn is_go_builtin_call(name: &str) -> bool {
@@ -2992,16 +3061,20 @@ pub fn call_drops(
         })
         .collect();
     if let Some(modules) = cx.indexes.go_modules.get() {
-        let own_path =
-            own_blob(cx, output).zip(cx.indexes.paths.get()).and_then(|(blob, paths)| paths.get(&blob));
+        let own_path = own_blob(cx, output)
+            .zip(cx.indexes.paths.get())
+            .and_then(|(blob, paths)| paths.get(&blob));
         if let Some(path) = own_path {
-            drops.extend(modules.external_drops(path).into_iter().map(|(span, import_path)| {
-                ResolveDrop {
-                    span,
-                    reason: UnresolvedReason::External,
-                    detail: import_path,
-                }
-            }));
+            drops.extend(
+                modules
+                    .external_drops(path)
+                    .into_iter()
+                    .map(|(span, import_path)| ResolveDrop {
+                        span,
+                        reason: UnresolvedReason::External,
+                        detail: import_path,
+                    }),
+            );
         }
     }
     drops

@@ -443,3 +443,119 @@ table above, so the two moves in the same direction. Single file diff not
 root-caused; the own_blob span-search nondeterminism documented in Fixes 2
 remains a candidate (defs differ by 1 node from Fixes 2's run on the same
 code).
+
+## Fixes 4 (module-plane kinks, this lane) <a name="fixes-4"></a>
+
+Lane `fix-extract-go-module-kinks`, base `fd930b332` (#558 + the Fixes 3
+receipt). Same corpus, this lane's own build of
+`v6/sprefa-extract/target/release/extract`. Two measured defects from Fixes 3,
+one root cause between them.
+
+### Method correction first
+
+The Fixes 3 receipt's command was `xargs timeout 10 $BIN --resolve < gofiles.txt`.
+macOS xargs splits a 5,096-path list into MULTIPLE extract processes, and every
+index in this crate is per-process. Re-measured on the #558 code:
+
+| invocation | processes | resolved_import | resolved_edge | reachable |
+|---|---|---|---|---|
+| one `--resolve` over all 5,096 paths (single process) | 1 | 14,173 | 86,067 | 4,832 |
+| `xargs` default batching (the Fixes 3 command) | 6 | 9,410 | 79,476 | 4,580 |
+
+The Fixes 3 numbers were the batched shape despite the "single process" note
+(its 60,251 unique call tuples reproduce exactly under `xargs` batching). A
+file partition loses every cross-package fact whose target sits in another
+process; that, not a resolve-arm regression, is the 252-def drop. Root causes
+in `src/lang/go_modules.rs` / `src/lang/go.rs`:
+
+| defect | line | mechanism |
+|---|---|---|
+| `resolved_import` rows silently vanish | `go_modules.rs` `bindings()` | a row was emitted only when the target dir carried a corpus file IN THIS PROCESS (`package_name(&dir)` None -> skip); an in-module import whose package files landed in another `xargs` batch vanished |
+| `_test.go` sibling poisons a directory's package name | `go_modules.rs` `GoModuleIndex::build` | `package_of_dir` was first-file-wins, so `package core_test` arriving before `package core` made every importer bind `core_test` (the suspect `local` rows in Fixes 3: `utilities.go -> core_test`, `program.go -> packagejson_test`) |
+| an import-qualified site's last leg was missing | `go.rs` `Resolve<CallF>` | #554 had a `call_name_match_imported` corpus name-match after the import leg; #558 dropped it, so an import leg that declines (target files outside the invocation) emits NOTHING instead of falling through |
+
+### What landed
+
+| fix | mechanism | test (fail-first) |
+|---|---|---|
+| import rows are partition-independent | a row is emitted for every in-module import path through `go_package_dir` alone; the package NAME falls back to the path's last segment only when no corpus file in this invocation can declare the real one | `an_import_emits_its_row_without_the_target_package_in_the_run` (red: 0 rows from a caller-only invocation) |
+| the primary package wins its directory | a `foo_test` package clause never takes a dir's binding from the primary `foo` | `a_test_sibling_never_poisons_the_dir_package_name` |
+| the last leg returns | the import leg falls to `call_name_match` (kind `name_resolve`) when it declines on an EXPORTED name; an unexported callee can never be referenced cross-package, and an external import stays nothing (test 51's external rule holds) | `an_import_qualified_site_falls_back_to_the_name_match`, fixture `tests/fixtures` twin module: two directories both declaring `package debug` |
+| two packages sharing one name | the same fixture: `debug/` and `other/` both declare `package debug`; each import binds its own directory, never a name-keyed map | `two_packages_sharing_a_name_bind_by_directory_not_by_name` |
+
+### The 342 oracle-only rows
+
+| metric | Fixes 3 | now |
+|---|---|---|
+| oracle rows | 2,152 | 2,152 |
+| ours (unique (src, import path)) | 9,410 | 14,173 |
+| intersection | 1,810 | **2,152** |
+| oracle-only | **342** | **0** |
+| precision | 19.23% | 100% |
+
+`internal/api/proto.go` carries all 14 corpus imports and
+`internal/ast/utilities.go` all 3 (both defects 1 examples resolved). The
+oracle now sits fully inside `ours`.
+
+### The #558 edge diff, classified
+
+Whole-corpus normalized (caller_path, caller_name, callee_path, callee_name),
+base = #554 (`7cafeae80`, Fixes 2) built in a second worktree, both shapes:
+
+| comparison | unique 4-tuples | lost | gained |
+|---|---|---|---|
+| #554 single vs #558 single (pre-fix) | 66,489 vs 66,483 | 1 | 7 |
+| #554 single vs #558 `xargs` batched (the Fixes 3 comparison) | 66,483 vs 60,251 | **19,900** | 518 |
+| #554 batched vs fixed batched | 60,251 vs 60,283 | 1 | 33 |
+| #554 single vs fixed single | 66,483 vs 66,500 | 1 | 18 |
+
+The 19,900 lost edges are all kind `name_resolve` in #554 (import_resolve did
+not exist there), spread over 86 callee directories. Top callee dirs:
+internal/fourslash 7,148; internal/testutil 4,538; internal/ast 2,660;
+internal/core 847; internal/checker 455. Ten examples (caller span is the
+call-site start byte):
+
+| caller | callee | kind in #554 |
+|---|---|---|
+| cmd/tsgo/main.go site 590 `runMain` | internal/execute/tsc.go `CommandLine` | name_resolve |
+| internal/api/callbackfs.go site 2586 `call` | internal/ipc/conn.go `Call` | name_resolve |
+| internal/api/encoder/encoder_test.go site 4100 closure@3943 | internal/testutil/baseline/baseline.go `Run` | name_resolve |
+| internal/api/encoder/testmain_test.go site 229 `TestMain` | internal/testutil/baseline/testmain.go `Track` | name_resolve |
+| internal/api/jsonvalue_test.go site 1023 `TestJSONValueToAny` | internal/collections/ordered_map.go `GetOrZero` | name_resolve |
+| internal/api/proto.go site 32857 `NewConfigFileResponse` | internal/collections/ordered_map.go `GetOrZero` | name_resolve |
+| internal/api/proto.go site 13219 `ToURI` | internal/ls/lsconv/converters.go `FileNameToDocumentURI` | name_resolve |
+| internal/api/server.go site 4188 `Run` | internal/ipc/conn.go `Run` | name_resolve |
+| internal/api/server.go site 3748 `Run` | internal/ipc/conn_async.go `NewAsyncConnWithProtocol` | name_resolve |
+| internal/checker/checker_test.go site (BenchmarkNewChecker) | internal/execute/incremental/program.go `NewProgram` | name_resolve |
+
+None of these are resolve-arm losses: #554's corpus-unique name match caught
+them inside one process, #558's import leg could not see the other partition.
+The single edge lost in EVERY comparison is the `_tools/customlint/testdata`
+`badCall -> Parent` flip (a wrong #554 edge into a sibling testdata package,
+now correctly bound inside its own package), 1 lost, 1 gained, a wash.
+
+### Receipt
+
+One whole-project `--resolve` (single process, 5,096 files, `timeout 10`,
+rc 0, wall ~8.5 s, 3 back-to-back runs all 86,078 resolved_edge):
+
+| metric | Fixes 3 | this lane |
+|---|---|---|
+| resolved_import | 9,410 | **14,173** (single-process shape; the 9,410 was the xargs partition) |
+| resolved_edge | 79,476 (batched) | 86,078 (single) |
+| oracle-only imports | 342 | **0** |
+| module precision | 19.23% | **100%** (2,152 / 2,152, zero ours-only in the oracle) |
+| reachable (104 program roots) | 4,580 | **4,833** |
+| reachable with tests | 11,393 | 11,600 |
+| defs | 19,173 | 19,173 |
+
+Batched (`xargs`, the Fixes 3 command shape) still loses cross-package edges
+whose defs sit in another process: reachable 4,582, resolved_import 14,173
+(the import rows themselves are now partition-independent, only the CALL legs
+are not). The receipt command for this corpus is a single `--resolve`
+invocation; it stays under the 10-second law at ~8.5 s.
+
+Tests: `cargo test --features cli` 498 passed / 0 failed (93 suites). New
+fail-first tests in `tests/62_go_module_plane.rs` (4 new) against the twin
+module fixture (`module_c`: two `package debug` directories, a `_test.go`
+sibling, a caller-only partition run).
