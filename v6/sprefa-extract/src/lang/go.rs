@@ -971,6 +971,109 @@ struct GoBindPlan {
     binds: HashMap<u32, ((u32, u32), Vec<String>)>,
     /// receiver site span -> (enclosing top-level fn span, the operand name).
     inferred_recv: HashMap<(u32, u32), ((u32, u32), String)>,
+    /// receiver site span -> (enclosing top-level fn span, the chain). A chain
+    /// site is one whose operand is a selector chain with at least one call
+    /// hop; the final `.c()` is the site's own callee.
+    multihop: HashMap<(u32, u32), ((u32, u32), GoChain)>,
+    /// This file's struct field types, so the resolve phase can fold `.field`
+    /// hops whose struct is declared here.
+    fields: HashMap<(String, String), DeclType>,
+}
+
+/// The leftmost value of a selector chain: a name in scope, or an
+/// import-qualified func call `pkg.F()` whose result type resolve re-derives.
+#[derive(Clone, Debug)]
+enum GoChainBase {
+    Var { name: String, decl: Option<String> },
+    Import { callee: String, path: String },
+}
+
+/// One hop of a chain, in source order. `Field` folds through a struct field's
+/// declared type; `Call` through the method's declared first result.
+#[derive(Clone, Debug)]
+enum GoChainStep {
+    Field(String),
+    Call(String),
+}
+
+#[derive(Clone, Debug)]
+struct GoChain {
+    base: GoChainBase,
+    steps: Vec<GoChainStep>,
+}
+
+/// The maximum number of hops a chain may carry, the site's own final call
+/// included; deeper chains keep their current outcome.
+const GO_CHAIN_MAX_STEPS: usize = 8;
+
+/// Decompose a chain operand into (base, hops). The hops are appended in
+/// source order; a call hop's own method name is one hop, the site's final
+/// callee is NOT a hop here. Returns None for anything the tier cannot type
+/// one pass (a local call `f()`, an import qualifier mid-chain, a field on an
+/// unknown type, an index, a type assertion).
+fn go_chain_of(
+    expr: tree_sitter::Node,
+    src: &[u8],
+    scope: &TypeScope,
+    imports: &HashMap<String, String>,
+    steps: &mut Vec<GoChainStep>,
+) -> Option<GoChainBase> {
+    match expr.kind() {
+        "identifier" => {
+            let name = go_text(expr, src);
+            match scope_lookup(scope, name) {
+                Some(TypeBinding::Decl(DeclType::Named(t))) => Some(GoChainBase::Var {
+                    name: name.to_string(),
+                    decl: Some(t.clone()),
+                }),
+                Some(TypeBinding::Inferred) | None => {
+                    if imports.contains_key(name) {
+                        None
+                    } else {
+                        Some(GoChainBase::Var {
+                            name: name.to_string(),
+                            decl: None,
+                        })
+                    }
+                }
+                _ => None,
+            }
+        }
+        "selector_expression" => {
+            let operand = expr.child_by_field_name("operand")?;
+            let field = expr.child_by_field_name("field")?;
+            if operand.kind() == "identifier" && imports.contains_key(go_text(operand, src)) {
+                return None;
+            }
+            let base = go_chain_of(operand, src, scope, imports, steps)?;
+            steps.push(GoChainStep::Field(go_text(field, src).to_string()));
+            Some(base)
+        }
+        "call_expression" => {
+            let function = expr.child_by_field_name("function")?;
+            if function.kind() != "selector_expression" {
+                return None;
+            }
+            let operand = function.child_by_field_name("operand")?;
+            let field = function.child_by_field_name("field")?;
+            if operand.kind() == "identifier" && imports.contains_key(go_text(operand, src)) {
+                // `pkg.F()` is only a chain ROOT: its result type is
+                // re-derived at resolve through the import leg.
+                return if steps.is_empty() {
+                    Some(GoChainBase::Import {
+                        callee: go_text(field, src).to_string(),
+                        path: imports.get(go_text(operand, src))?.clone(),
+                    })
+                } else {
+                    None
+                };
+            }
+            let base = go_chain_of(operand, src, scope, imports, steps)?;
+            steps.push(GoChainStep::Call(go_text(field, src).to_string()));
+            Some(base)
+        }
+        _ => None,
+    }
 }
 
 /// The per-process plan cache, keyed by content (the extraction cache never
@@ -981,7 +1084,9 @@ fn plan_cache() -> &'static Mutex<HashMap<ContentId, Arc<GoBindPlan>>> {
 }
 
 fn go_bind_plan_of(blob: &ContentId) -> Option<Arc<GoBindPlan>> {
-    let guard = plan_cache().lock().unwrap_or_else(|poison| poison.into_inner());
+    let guard = plan_cache()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     guard.get(blob).cloned()
 }
 
@@ -1408,19 +1513,37 @@ fn go_walk_receivers(
                         let is_import = operand.kind() == "identifier"
                             && imports.contains_key(go_text(operand, src));
                         if !is_import {
-                            if let Some(binding) =
-                                go_receiver_binding(operand, src, scope, field_types)
-                            {
-                                if binding == TypeBinding::Inferred
-                                    && operand.kind() == "identifier"
-                                {
-                                    let span = node_span(func);
-                                    plan.inferred_recv.insert(
-                                        (span.start, span.end()),
-                                        (top, go_text(operand, src).to_string()),
-                                    );
+                            match go_receiver_binding(operand, src, scope, field_types) {
+                                Some(binding) => {
+                                    if binding == TypeBinding::Inferred
+                                        && operand.kind() == "identifier"
+                                    {
+                                        let span = node_span(func);
+                                        plan.inferred_recv.insert(
+                                            (span.start, span.end()),
+                                            (top, go_text(operand, src).to_string()),
+                                        );
+                                    }
+                                    out.push((node_span(func), binding));
                                 }
-                                out.push((node_span(func), binding));
+                                None => {
+                                    let mut steps = Vec::new();
+                                    if let Some(base) =
+                                        go_chain_of(operand, src, scope, imports, &mut steps)
+                                    {
+                                        if steps.len() < GO_CHAIN_MAX_STEPS
+                                            && steps
+                                                .iter()
+                                                .any(|s| matches!(s, GoChainStep::Call(_)))
+                                        {
+                                            let span = node_span(func);
+                                            plan.multihop.insert(
+                                                (span.start, span.end()),
+                                                (top, GoChain { base, steps }),
+                                            );
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1466,7 +1589,16 @@ fn go_collect_receivers(
         };
         let mut scope = go_seed_top_scope(child, src);
         let mut out = Vec::new();
-        go_walk_receivers(body, src, &mut scope, imports, field_types, &mut out, &mut plan, top);
+        go_walk_receivers(
+            body,
+            src,
+            &mut scope,
+            imports,
+            field_types,
+            &mut out,
+            &mut plan,
+            top,
+        );
         for (span, binding) in out {
             let outcome = match binding {
                 TypeBinding::Decl(DeclType::Named(name)) => {
@@ -1482,7 +1614,15 @@ fn go_collect_receivers(
             });
         }
     }
-    go_bind_plan_store(crate::content_id_of(src), plan);
+    go_bind_plan_store(
+        crate::content_id_of(src),
+        GoBindPlan {
+            binds: plan.binds,
+            inferred_recv: plan.inferred_recv,
+            multihop: plan.multihop,
+            fields: field_types.clone(),
+        },
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2693,6 +2833,13 @@ struct GoFileFacts {
     /// def_span -> the declared result types in order (pointer-stripped, type
     /// arguments cut). Feeds the one-hop return-type inference of `x := f()`.
     ret_of: HashMap<(u32, u32), Vec<String>>,
+    /// def_spans whose result is a generic instantiation; a multi-hop chain
+    /// stops there (a cut type-argument result is not a type this tier names).
+    generic: std::collections::HashSet<(u32, u32)>,
+    /// (struct, field) -> the field's declared type name, this file's own
+    /// struct declarations. Named types only; a slice/array/map field is no
+    /// receiver and so is absent.
+    fields: HashMap<(String, String), String>,
 }
 
 fn go_file_facts(blob: &ContentId, path: &str) -> Arc<GoFileFacts> {
@@ -2707,12 +2854,26 @@ fn go_file_facts(blob: &ContentId, path: &str) -> Arc<GoFileFacts> {
     facts
 }
 
+fn go_facts_of_path(path: &str) -> Arc<GoFileFacts> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Arc<GoFileFacts>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().unwrap_or_else(|poison| poison.into_inner());
+    if let Some(existing) = guard.get(path) {
+        return existing.clone();
+    }
+    let facts = Arc::new(go_parse_file_facts(path));
+    guard.insert(path.to_string(), facts.clone());
+    facts
+}
+
 fn go_parse_file_facts(path: &str) -> GoFileFacts {
     let mut facts = GoFileFacts {
         owner_of: HashMap::new(),
         methods_of: HashMap::new(),
         ifaces: BTreeSet::new(),
         ret_of: HashMap::new(),
+        generic: std::collections::HashSet::new(),
+        fields: HashMap::new(),
     };
     let Ok(bytes) = std::fs::read(path) else {
         return facts;
@@ -2722,6 +2883,11 @@ fn go_parse_file_facts(path: &str) -> GoFileFacts {
     };
     if let Some(tree) = go_parse(src) {
         go_collect_file_facts(tree.root_node(), src.as_bytes(), &mut facts);
+        for ((s, f), decl) in go_field_types(tree.root_node(), src.as_bytes()) {
+            if let DeclType::Named(name) = decl {
+                facts.fields.insert((s, f), name);
+            }
+        }
     }
     facts
 }
@@ -2788,10 +2954,39 @@ impl GoFileFacts {
             rets.push(go_named_type_text(result, src));
         }
         rets.retain(|t| !t.is_empty());
-        if !rets.is_empty() {
-            self.ret_of.insert((span.start, span.end()), rets);
+        if rets.is_empty() {
+            return;
         }
+        if is_generic_ret(decl) {
+            self.generic.insert((span.start, span.end()));
+        }
+        self.ret_of.insert((span.start, span.end()), rets);
     }
+}
+
+/// Whether the callable's declared result is (or contains) a generic
+/// instantiation, `Wrapper[T]`.
+fn is_generic_ret(decl: tree_sitter::Node) -> bool {
+    let Some(result) = decl.child_by_field_name("result") else {
+        return false;
+    };
+    let mut types: Vec<tree_sitter::Node> = Vec::new();
+    if result.kind() == "parameter_list" {
+        let mut cursor = result.walk();
+        for param in result.children(&mut cursor) {
+            if let Some(ty) = param.child_by_field_name("type") {
+                types.push(ty);
+            }
+        }
+    } else {
+        types.push(result);
+    }
+    types.iter().any(|ty| {
+        ty.kind() == "generic_type"
+            || ty
+                .children(&mut ty.walk())
+                .any(|child| child.kind() == "generic_type")
+    })
 }
 
 /// The declared type's name text: `*T` -> `T`, `pkg.T` kept whole, type
@@ -2846,6 +3041,7 @@ fn go_collect_interface_facts(spec: tree_sitter::Node, src: &[u8], facts: &mut G
             .entry(iname.clone())
             .or_default()
             .insert(go_text(mname, src).to_string());
+        facts.insert_ret(elem, src);
     }
 }
 
@@ -2867,7 +3063,8 @@ fn go_qualify_bound_type(
     else {
         return type_name.to_string();
     };
-    let (Some(dst_dir), Some(own_dir)) = (Path::new(dst_path).parent(), Path::new(own_path).parent())
+    let (Some(dst_dir), Some(own_dir)) =
+        (Path::new(dst_path).parent(), Path::new(own_path).parent())
     else {
         return type_name.to_string();
     };
@@ -2928,6 +3125,152 @@ fn go_receiver_target(
         [site] => Some((site.blob.clone(), site.span)),
         _ => None,
     }
+}
+
+/// The multi-hop replay: type the chain's operand left to right in one pass,
+/// then bind `callee` on the resulting type. The base is a scope name (its
+/// declared type, else the #562 bind table) or an import-qualified func's
+/// first result. A `Field` hop folds through this file's struct field types;
+/// a `Call` hop through the method's declared first result, stopping at a
+/// builtin, a generic result, or a type the corpus does not name. Returns the
+/// target plus the final receiver type (the fan-out gate reads it).
+#[allow(clippy::too_many_arguments)]
+fn go_chain_receiver_target(
+    def_index: &DefIndex,
+    paths: Option<&PathIndex>,
+    module: &Option<GoModule>,
+    own: Option<&ContentId>,
+    imports: &HashMap<String, String>,
+    modules: Option<&GoModuleIndex>,
+    plan: &GoBindPlan,
+    bound_types: &HashMap<(u32, u32), HashMap<String, String>>,
+    site_span: (u32, u32),
+    callee: &str,
+) -> Option<(ContentId, Span, String)> {
+    let paths = paths?;
+    let (top, chain) = plan.multihop.get(&site_span)?;
+    let mut ty: Option<String> = match &chain.base {
+        GoChainBase::Var { name, decl } => match decl {
+            Some(t) => Some(t.clone()),
+            None => bound_types.get(top)?.get(name).cloned(),
+        },
+        GoChainBase::Import { callee, path } => {
+            let (blob, span) = match (module, modules) {
+                (Some(module), Some(modules)) => go_package_dir(module, path)
+                    .and_then(|dir| modules.resolve_in_dir(&dir, def_index, paths, callee))?,
+                _ => return None,
+            };
+            let ret = ret_first_of(&blob, span, paths)?;
+            Some(go_qualify_bound_type(
+                module,
+                Some(paths),
+                imports,
+                own,
+                &blob,
+                &ret,
+            ))
+        }
+    };
+    for step in &chain.steps {
+        let cur = ty?;
+        ty = match step {
+            GoChainStep::Field(field) => {
+                let (bare, pkg) = match cur.rsplit_once('.') {
+                    Some((pkg, bare)) => (bare.to_string(), Some(pkg.to_string())),
+                    None => (cur.clone(), None),
+                };
+                let local = plan
+                    .fields
+                    .get(&(bare.clone(), field.clone()))
+                    .and_then(|decl| match decl {
+                        DeclType::Named(t) => Some(t.clone()),
+                        DeclType::Indexable(_) => None,
+                    });
+                match local {
+                    Some(t) => Some(t),
+                    None => {
+                        let dir = match pkg {
+                            Some(pkg) => go_package_dir(module.as_ref()?, imports.get(&pkg)?)?,
+                            None => Path::new(paths.get(own?)?)
+                                .parent()
+                                .map(Path::to_path_buf)?,
+                        };
+                        go_field_type_in_dir(&dir, &bare, field, paths)
+                    }
+                }
+            }
+            GoChainStep::Call(method) => {
+                if is_noise_go(&cur) {
+                    return None;
+                }
+                let (blob, span) =
+                    go_receiver_target(def_index, Some(paths), module, own, imports, &cur, method)?;
+                let ret = ret_first_of(&blob, span, paths)?;
+                Some(go_qualify_bound_type(
+                    module,
+                    Some(paths),
+                    imports,
+                    own,
+                    &blob,
+                    &ret,
+                ))
+            }
+        };
+    }
+    let ty = ty?;
+    if is_noise_go(&ty) {
+        return None;
+    }
+    let (blob, span) =
+        go_receiver_target(def_index, Some(paths), module, own, imports, &ty, callee)?;
+    Some((blob, span, ty))
+}
+
+/// A def's declared first result type from its file facts; None when the def
+/// declares none or its result is generic (a chain stops at both).
+fn ret_first_of(blob: &ContentId, span: Span, paths: &PathIndex) -> Option<String> {
+    let path = paths.get(blob)?;
+    let facts = go_file_facts(blob, path);
+    let key = (span.start, span.end());
+    if facts.generic.contains(&key) {
+        return None;
+    }
+    facts.ret_of.get(&key)?.first().cloned()
+}
+
+/// (dir, struct, field) -> the field's declared type, memoized per process.
+/// A miss scans the resolve universe's paths once for the dir's files; every
+/// later hop on the same triple is a map hit.
+fn go_field_type_in_dir(
+    dir: &Path,
+    struct_name: &str,
+    field: &str,
+    paths: &PathIndex,
+) -> Option<String> {
+    static CACHE: OnceLock<Mutex<HashMap<(PathBuf, String, String), Option<String>>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().unwrap_or_else(|poison| poison.into_inner());
+    let key = (
+        dir.to_path_buf(),
+        struct_name.to_string(),
+        field.to_string(),
+    );
+    if let Some(hit) = guard.get(&key) {
+        return hit.clone();
+    }
+    let hit = paths
+        .map
+        .values()
+        .filter(|path| Path::new(path).parent().is_some_and(|parent| parent == dir))
+        .find_map(|path| {
+            go_facts_of_path(path)
+                .fields
+                .get(&(struct_name.to_string(), field.to_string()))
+                .cloned()
+        });
+    guard.insert(key, hit.clone());
+    hit
 }
 
 impl Resolve<CallF> for GoSource {
@@ -3072,15 +3415,45 @@ impl Resolve<CallF> for GoSource {
                         }
                         _ => None,
                     },
-                    None => GoSource::call_name_match(output, def_index, callee)
-                        .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
-                        .or_else(|| {
-                            modules.zip(own_path).and_then(|(modules, path)| {
-                                modules
-                                    .resolve_dot_imported(path, def_index, paths?, callee)
-                                    .map(|(blob, span)| (blob, span, CallEdgeKind::ImportResolve))
-                            })
-                        }),
+                    None => {
+                        // The multi-hop chain leg: replay the operand's hops
+                        // left to right and bind the final `.c()` the way a
+                        // one-hop receiver binds. Only when the chain gives
+                        // nothing does the bare name-match leg run.
+                        let chained = plan.as_ref().and_then(|plan| {
+                            go_chain_receiver_target(
+                                def_index,
+                                paths,
+                                &module,
+                                own.as_ref(),
+                                &imports,
+                                modules,
+                                plan,
+                                &bound_types,
+                                (site.span.start, site.span.end()),
+                                callee,
+                            )
+                        });
+                        if let Some((blob, span, ty)) = chained {
+                            let bare = ty.rsplit('.').next_back().unwrap_or(&ty);
+                            if go_iface_fanout(def_index, paths, bare).is_iface {
+                                iface_recv[ix] = Some(bare.to_string());
+                            }
+                            Some((blob, span, CallEdgeKind::NameResolve))
+                        } else {
+                            GoSource::call_name_match(output, def_index, callee)
+                                .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                                .or_else(|| {
+                                    modules.zip(own_path).and_then(|(modules, path)| {
+                                        modules
+                                            .resolve_dot_imported(path, def_index, paths?, callee)
+                                            .map(|(blob, span)| {
+                                                (blob, span, CallEdgeKind::ImportResolve)
+                                            })
+                                    })
+                                })
+                        }
+                    }
                 },
             };
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
@@ -3156,7 +3529,8 @@ impl Resolve<CallF> for GoSource {
                     );
                 }
             }
-            edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
+            edges
+                .push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
             let Some(iface) = &iface_recv[ix] else {
                 continue;
             };
@@ -3304,13 +3678,16 @@ const GO_FANOUT_CAP: usize = 64;
 /// implementer set is built once per corpus, never per call site (the same
 /// discipline as `plan_cache`; the corpus is identified by its `DefIndex`,
 /// whose address is stable for the resolve run that owns it).
-fn iface_fanout_cache(
-) -> &'static Mutex<HashMap<(usize, String), Arc<IfaceFanout>>> {
+fn iface_fanout_cache() -> &'static Mutex<HashMap<(usize, String), Arc<IfaceFanout>>> {
     static CACHE: OnceLock<Mutex<HashMap<(usize, String), Arc<IfaceFanout>>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn go_iface_fanout(def_index: &DefIndex, paths: Option<&PathIndex>, iface: &str) -> Arc<IfaceFanout> {
+fn go_iface_fanout(
+    def_index: &DefIndex,
+    paths: Option<&PathIndex>,
+    iface: &str,
+) -> Arc<IfaceFanout> {
     let key = (corpus_key(def_index), iface.to_string());
     let cache = iface_fanout_cache();
     let mut guard = cache.lock().unwrap_or_else(|poison| poison.into_inner());
