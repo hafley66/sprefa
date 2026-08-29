@@ -1,12 +1,12 @@
 {
- "defs_total": 19339,
- "edges_total": 47845,
+ "defs_total": 19924,
+ "edges_total": 52674,
  "program_roots": 75,
  "program_handlers": 73,
- "test_roots": 7903,
- "program_reachable": 199,
- "test_reachable": 11048,
- "union_reachable": 11223,
+ "test_roots": 7905,
+ "program_reachable": 200,
+ "test_reachable": 11071,
+ "union_reachable": 11245,
  "program_depth_hist": [
   [
    0,
@@ -14,7 +14,7 @@
   ],
   [
    1,
-   72
+   73
   ],
   [
    2,
@@ -32,39 +32,39 @@
  "test_depth_hist": [
   [
    0,
-   7903
+   7905
   ],
   [
    1,
-   545
+   554
   ],
   [
    2,
-   498
+   509
   ],
   [
    3,
-   552
+   557
   ],
   [
    4,
-   405
+   406
   ],
   [
    5,
-   290
+   291
   ],
   [
    6,
-   180
+   179
   ],
   [
    7,
-   163
+   161
   ],
   [
    8,
-   139
+   137
   ],
   [
    9,
@@ -72,7 +72,7 @@
   ],
   [
    10,
-   89
+   88
   ],
   [
    11,
@@ -99,7 +99,7 @@
    2
   ]
  ],
- "unreachable_total": 8116,
+ "unreachable_total": 8679,
  "unreachable_top20": [
   {
    "path": "crates/ide-db/src/generated/lints.rs",
@@ -134,7 +134,7 @@
    "name": "INERT_ATTRIBUTES",
    "span_bytes": 27988,
    "in_edges": 0,
-   "out_edges": 1
+   "out_edges": 2
   },
   {
    "path": "crates/hir-ty/src/display.rs",
@@ -200,46 +200,46 @@
    "out_edges": 28
   },
   {
+   "path": "crates/hir-def/src/lang_item.rs",
+   "name": "merge_prefer_self",
+   "span_bytes": 15355,
+   "in_edges": 0,
+   "out_edges": 0
+  },
+  {
+   "path": "crates/hir-def/src/lang_item.rs",
+   "name": "from_lang_items",
+   "span_bytes": 15355,
+   "in_edges": 0,
+   "out_edges": 0
+  },
+  {
+   "path": "crates/hir-def/src/lang_item.rs",
+   "name": "from_symbol",
+   "span_bytes": 15355,
+   "in_edges": 0,
+   "out_edges": 0
+  },
+  {
+   "path": "crates/hir-def/src/lang_item.rs",
+   "name": "fill_non_lang_core_items",
+   "span_bytes": 15355,
+   "in_edges": 0,
+   "out_edges": 0
+  },
+  {
+   "path": "crates/hir-def/src/lang_item.rs",
+   "name": "assign_lang_item",
+   "span_bytes": 15355,
+   "in_edges": 0,
+   "out_edges": 0
+  },
+  {
    "path": "crates/hir-ty/src/layout.rs",
    "name": "layout_of_ty_query",
    "span_bytes": 15204,
    "in_edges": 0,
    "out_edges": 10
-  },
-  {
-   "path": "crates/ide/src/hover/render.rs",
-   "name": "definition",
-   "span_bytes": 14664,
-   "in_edges": 0,
-   "out_edges": 10
-  },
-  {
-   "path": "crates/ide-completion/src/context/analysis.rs",
-   "name": "expected_type_and_name",
-   "span_bytes": 14116,
-   "in_edges": 1,
-   "out_edges": 1
-  },
-  {
-   "path": "crates/rust-analyzer/src/cli/analysis_stats.rs",
-   "name": "run",
-   "span_bytes": 14078,
-   "in_edges": 0,
-   "out_edges": 16
-  },
-  {
-   "path": "crates/rust-analyzer/src/flycheck.rs",
-   "name": "run",
-   "span_bytes": 13778,
-   "in_edges": 2,
-   "out_edges": 9
-  },
-  {
-   "path": "crates/ide-assists/src/handlers/inline_call.rs",
-   "name": "inline",
-   "span_bytes": 13375,
-   "in_edges": 4,
-   "out_edges": 4
   }
  ],
  "out_degree_top20": [
@@ -260,6 +260,12 @@
    "name": "semantic_diagnostics",
    "out_degree": 88,
    "depth": 2
+  },
+  {
+   "path": "crates/hir/src/diagnostics.rs",
+   "name": "from",
+   "out_degree": 78,
+   "depth": -1
   },
   {
    "path": "crates/hir-ty/src/infer/expr.rs",
@@ -298,10 +304,28 @@
    "depth": -1
   },
   {
+   "path": "crates/hir/src/semantics.rs",
+   "name": "to_def",
+   "out_degree": 31,
+   "depth": -1
+  },
+  {
    "path": "crates/hir/src/lib.rs",
    "name": "diagnostics",
    "out_degree": 30,
    "depth": -1
+  },
+  {
+   "path": "crates/hir-def/src/expr_store/lower.rs",
+   "name": "collect_pat",
+   "out_degree": 30,
+   "depth": 8
+  },
+  {
+   "path": "crates/hir-def/src/nameres/collector.rs",
+   "name": "collect",
+   "out_degree": 30,
+   "depth": 1
   },
   {
    "path": "crates/hir-ty/src/mir/eval.rs",
@@ -310,15 +334,9 @@
    "depth": 3
   },
   {
-   "path": "crates/hir-def/src/expr_store/lower.rs",
-   "name": "collect_pat",
-   "out_degree": 29,
-   "depth": 8
-  },
-  {
    "path": "crates/hir-ty/src/mir/eval/shim.rs",
    "name": "exec_intrinsic",
-   "out_degree": 28,
+   "out_degree": 29,
    "depth": 7
   },
   {
@@ -344,24 +362,6 @@
    "name": "eval_rvalue",
    "out_degree": 27,
    "depth": 4
-  },
-  {
-   "path": "crates/ide-completion/src/render/literal.rs",
-   "name": "render",
-   "out_degree": 27,
-   "depth": 5
-  },
-  {
-   "path": "crates/hir-def/src/expr_store/lower/path.rs",
-   "name": "lower_path",
-   "out_degree": 26,
-   "depth": 8
-  },
-  {
-   "path": "crates/hir-expand/src/lib.rs",
-   "name": "expand_speculative",
-   "out_degree": 26,
-   "depth": -1
   }
  ]
 }

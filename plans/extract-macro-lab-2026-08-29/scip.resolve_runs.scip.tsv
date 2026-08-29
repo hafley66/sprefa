@@ -4,7 +4,7 @@ crates/edition	0	1
 crates/hir[a][a]	0	3
 crates/hir[a][b][a]	0	2
 crates/hir[a][b][b][a]	0	1
-crates/hir[a][b][b][b]	124	1
+crates/hir[a][b][b][b]	0	1
 crates/hir[b]	0	8
 crates/hir-def[a][a]	0	16
 crates/hir-def[a][b]	0	17

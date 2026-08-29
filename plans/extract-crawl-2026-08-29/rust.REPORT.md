@@ -839,19 +839,23 @@ site, so `Resolve<CallF>` minted nothing for it. A post-pass in
 `resolve_project` (`src/lang/rust_scip_macros.rs`) joins the loaded scip
 index's reference occurrences to the invocation spans of a syn re-parse and
 mints one `resolved_edge` per unmatched call-shaped occurrence, kind
-`scip_macro`, plus one `macro_site` row per minted edge (wire record `site`,
-`callee` = macro name, `callee_path: "scip"`, rows ride their file's block of
-the stream). Without a scip index the pass emits nothing.
+`scip_macro`, plus one shared `macro_site` row (`source: "scip"`) per minted
+edge, rows riding their file's block of the stream. Without a scip index the
+pass emits nothing.
 
 ### 15.1 Receipt
 
-Binary: this lane's `extract` at `46c5dab0b`. Corpus `~/projects/rust-analyzer`
+Binary: this lane's `extract` at `7ecb3122d`, rebased on main past the mbe
+merge (#553): the mbe arm now expands local `macro_rules` in phase 1, so this
+pass's surviving universe is builtins and proc macros, and the `macro_site`
+rows ride the shared `FlatFact::MacroSiteOut` record (`source: "scip"`). Corpus `~/projects/rust-analyzer`
 at `af4111f`, index `rust-analyzer 1.100.0-nightly` at
 `~/projects/rust-analyzer/.dl/.state/index.scip` (72,518,685 B, the lab's).
 Every `extract` call under `timeout 10`.
 
 - defs: 941-file src bucket (540 `test_data` + 943 lab `.expanded.rs` droppings
-  excluded), one `--family call` call per file, 0 rc != 0. Raw:
+  excluded), one `--family call` call per file, 0 rc != 0 (the mbe merge grows
+  the named-def set to 19,924 with expansion-minted defs). Raw:
   `plans/extract-macro-lab-2026-08-29/scip.defs_runs.tsv`.
 - resolve unions: one `--resolve --family call,type` per crate. TEN crates
   exceeded the 10s budget with the index loaded (finding, below), so those
@@ -864,24 +868,21 @@ Every `extract` call under `timeout 10`.
 
 | | base (matched partition, no index) | scip (index) |
 |---|---:|---:|
-| `resolved_edge` | 47,845 (all `name_resolve`) | 48,878 |
-| - `name_resolve` | 47,845 | 44,735 |
-| - `scip_override` | 0 | 2,980 |
-| - `scip_macro` | 0 | 1,163 |
-| reachable, program roots (75) | 199 | 334 |
-| reachable, test roots (7,903) | 11,048 | 11,583 |
-| reachable, union | **11,223** | **11,857** |
-| unreachable | 8,116 | 7,482 |
+| `resolved_edge` | 52,674 | 53,958 |
+| - `name_resolve` | 44,245 | 48,720 |
+| - `import_resolve` | 8,429 | 830 |
+| - `scip_override` | 0 | 3,239 |
+| - `scip_macro` | 0 | 1,169 |
+| reachable, program roots (75) | 200 | 335 |
+| reachable, test roots (7,905) | 11,071 | 11,604 |
+| reachable, union | **11,245** | **11,877** |
+| unreachable | 8,679 | 8,047 |
 
-Union 12,221 -> 11,857 is the honest full sentence: the report's 12,221 (and
-this HEAD's no-index per-crate rerun, 12,078) uses the whole-crate universe,
-which the index-loaded arm cannot fit in the 10s budget on the ten largest
-crates. The matched-partition baseline is 11,223, and against it the post-pass
-gains 634 reachable defs (638 gained, 4 lost). The four lost defs are
-halving-split collateral
-(`hir-def/src/resolver.rs::def_map`, `hir/src/lib.rs::attrs`,
-`parser/src/parser.rs::kind`, `vfs/src/file_set.rs::iter`), each one hop from
-a def whose callers landed in the other half.
+The `import_resolve` drop under the index (8,429 -> 830) is a KIND
+reclassification, not a loss: with scip's word in hand the same bindings land
+as `scip_override` (+3,239) and the `name_resolve` count rises with them. The
+matched-partition baseline is 11,245, and against it the post-pass gains 632
+reachable defs (635 gained, 2 lost), the two being halving-split collateral.
 
 ### 15.2 Per-file top 10 gained (defs newly reachable)
 
@@ -891,31 +892,31 @@ a def whose callers landed in the other half.
 | 26 | crates/ide-completion/src/context/analysis.rs |
 | 21 | crates/rust-analyzer/src/cli/analysis_stats.rs |
 | 20 | crates/rust-analyzer/src/config.rs |
-| 19 | crates/project-model/src/workspace.rs |
 | 19 | crates/syntax/src/validation.rs |
+| 19 | crates/project-model/src/workspace.rs |
 | 18 | crates/syntax/src/ast/node_ext.rs |
-| 15 | crates/ide/src/lib.rs |
 | 15 | crates/project-model/src/sysroot.rs |
-| 14 | crates/ide/src/signature_help.rs |
+| 15 | crates/ide/src/lib.rs |
+| 14 | crates/ide/src/inlay_hints.rs |
 
 ### 15.3 `macro_site` rows
 
 `plans/extract-macro-lab-2026-08-29/scip.macro_sites.tsv`
-(path, start, end, macro_name): 1,163 rows over 50 files, one per minted edge,
+(path, start, end, macro_name): 1,169 rows over 51 files, one per minted edge,
 so the coordinator can diff the mbe lane's rows by span.
 
 | macro | rows |
 |---|---:|
-| assert_eq | 238 |
-| assert | 190 |
+| assert_eq | 236 |
 | match_ast | 187 |
-| matches | 78 |
+| assert | 164 |
+| matches | 83 |
 | format | 65 |
 | try_default | 56 |
 | from_bytes | 54 |
-| write | 49 |
 | debug_assert | 49 |
 | vec | 48 |
+| write | 47 |
 
 ### 15.4 Findings
 
