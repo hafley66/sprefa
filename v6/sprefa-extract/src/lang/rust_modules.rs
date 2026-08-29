@@ -19,7 +19,8 @@ use std::sync::Mutex;
 use crate::seams::DefIndex;
 use crate::shape::{ContentId, FamilyTag, Span, ZERO_CONTENT_ID};
 
-use super::rust::{mod_path_attr, module_segments, module_target};
+use super::rust::{build_line_starts, mod_path_attr, module_segments, module_target};
+use super::rust_receivers::{impl_facts, ImplEntry};
 
 // ── phase-2 facts: one dedicated parse per file ──────────────────────────────
 
@@ -51,6 +52,9 @@ pub struct RustModuleFacts {
     inline_mods: BTreeSet<String>,
     /// `mod x;` / `#[path = "y.rs"] mod x;`: name plus the path literal.
     mod_decls: Vec<(String, Option<String>)>,
+    /// Every impl block's (self type, fn name, fn def span), for the corpus
+    /// receiver leg's (T, m) table.
+    impls: Vec<ImplEntry>,
 }
 
 /// `None` for a non-`.rs` path or a parse that fails: the plane then simply
@@ -62,6 +66,8 @@ pub fn rust_module_facts(path: &str, content: &[u8]) -> Option<RustModuleFacts> 
     let text = std::str::from_utf8(content).ok()?;
     let parsed = syn::parse_file(text).ok()?;
     let mut facts = RustModuleFacts::default();
+    let line_starts = build_line_starts(text);
+    facts.impls = impl_facts(&parsed, &line_starts);
     collect(&parsed.items, &mut facts);
     Some(facts)
 }
@@ -321,6 +327,9 @@ pub struct RustModuleIndex {
     /// file -> its WHOLE local scope (the export table plus non-reexport
     /// globs), for a bare name with no explicit `use` in the SAME file.
     scope_tables: Mutex<HashMap<String, std::sync::Arc<ExportTable>>>,
+    /// (self type, fn name) -> the ONE corpus def site the impl block names.
+    /// 2+ impls of the same pair is the ambiguity this table declines.
+    impl_methods: HashMap<(String, String), Vec<(ContentId, Span)>>,
 }
 
 type ExportTable = HashMap<String, Resolution>;
@@ -371,8 +380,31 @@ impl RustModuleIndex {
                 ));
             }
         }
+        for (path, facts) in &files {
+            let Some(blob) = index.blobs.get(path) else {
+                continue;
+            };
+            for entry in &facts.impls {
+                for (name, span) in &entry.methods {
+                    index
+                        .impl_methods
+                        .entry((entry.self_type.clone(), name.clone()))
+                        .or_default()
+                        .push((blob.clone(), *span));
+                }
+            }
+        }
         index.facts = files.into_iter().collect();
         index
+    }
+
+    /// The ONE def site an impl block names for (self type, fn); 2+ corpus
+    /// impls of the pair is an ambiguity this tier does not settle.
+    pub(crate) fn impl_target(&self, self_type: &str, method: &str) -> Option<(ContentId, Span)> {
+        match self.impl_methods.get(&(self_type.to_string(), method.to_string()))?.as_slice() {
+            [only] => Some(only.clone()),
+            _ => None,
+        }
     }
 
     /// Every `use` binding `path` writes, resolved; an ambiguous or

@@ -49,7 +49,7 @@ use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
 use crate::types::LangKind;
 use crate::types::ScipIndex;
-use crate::types::{CfgScope, DefSite, MacroSite, MacroSiteSource, PathIndex, TestOnlyCall, UnresolvedReason};
+use crate::types::{CfgScope, DefSite, MacroSite, MacroSiteSource, PathIndex, ReceiverOutcome, TestOnlyCall, UnresolvedReason};
 
 // ── span bridge: proc_macro2 line/col -> v6 byte Span ───────────────────────
 
@@ -1013,10 +1013,53 @@ impl RustSource {
     }
 }
 
+/// The type an associated-call path names: the LAST uppercase-leading
+/// segment before the callee (`ast::MethodCallExpr::cast` -> `MethodCallExpr`).
+/// All-lowercase paths are module-qualified, not associated.
+fn assoc_path_type(callee_path: Option<&str>) -> Option<String> {
+    let path = callee_path?;
+    let segments: Vec<&str> = path.split("::").collect();
+    if segments.len() < 2 {
+        return None;
+    }
+    segments[..segments.len() - 1]
+        .iter()
+        .rev()
+        .find(|segment| {
+            segment
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_uppercase())
+        })
+        .map(|segment| (*segment).to_string())
+}
+
+/// The enclosing impl's self type for a `Self::f()` site: the caller def's
+/// span lies inside a method def whose method-owner row names it.
+fn self_impl_type(
+    call: &FamilyBundle<CallF>,
+    strings: &Strings,
+    caller: NodeRef,
+) -> Option<String> {
+    let caller_span = &call.node(caller).span;
+    call.aux
+        .method_owners
+        .iter()
+        .find(|owner| {
+            owner.self_type.is_some()
+                && owner.span.start <= caller_span.start
+                && caller_span.end() <= owner.span.end()
+        })
+        .and_then(|owner| {
+            owner
+                .self_type
+                .map(|name| strings.lookup(name).to_string())
+        })
+}
+
 /// A `callee_path`'s leading segments when every one is MODULE-shaped, else
 /// None: receiver typing is out of scope, so `Widget::build` keeps the name leg.
-fn module_qualifier(callee_path: &str) -> Option<Vec<&str>> {
-    let mut segments: Vec<&str> = callee_path.split("::").collect();
+fn module_qualifier(callee_path: &str) -> Option<Vec<&str>> {    let mut segments: Vec<&str> = callee_path.split("::").collect();
     segments.pop()?;
     if segments.is_empty() {
         return None;
@@ -1246,21 +1289,88 @@ impl Resolve<CallF> for RustSource {
                 .callee_path
                 .map(|id| output.strings.lookup(id))
                 .and_then(module_qualifier);
-            let name_t: Option<(ContentId, Span, CallEdgeKind)> = match (qualifier, own_path, paths) {
-                (Some(qualifier), Some(from), Some(paths)) => {
-                    RustSource::call_name_match_in_module(def_index, paths, from, &qualifier, callee)
-                        .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
-                }
-                _ => same_file_call_match(output, def_index, own.as_ref(), callee)
-                    .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
-                    .or_else(|| {
-                        import_bound_target(modules, own_path, callee)
-                            .map(|(blob, span)| (blob, span, CallEdgeKind::ImportResolve))
+            // The receiver leg (the go twin): a method site whose receiver's
+            // type the compiler could see in scope binds ONLY through the
+            // corpus (T, m) impl table; the name-match never runs for it.
+            let recv_named: Option<String> = call
+                .aux
+                .receivers
+                .iter()
+                .find(|r| r.call_site == site.span)
+                .and_then(|r| match &r.outcome {
+                    ReceiverOutcome::Named(name) => Some(output.strings.lookup(*name).to_string()),
+                    _ => None,
+                });
+            let recv_t = recv_named.as_ref().and_then(|ty| {
+                modules.and_then(|m| m.impl_target(ty, callee)).map(
+                    |(blob, span)| (blob, span, CallEdgeKind::NameResolve),
+                )
+            });
+            // The receiver's type was SEEN in scope (even if no impl binds).
+            let recv_known = call.aux.receivers.iter().any(|r| {
+                r.call_site == site.span
+                    && matches!(r.outcome, ReceiverOutcome::Named(_))
+            });
+            // The associated leg: `T::f()` / `a::T::f()` names T's impl block;
+            // `Self::f()` names the enclosing impl's self type via the file's
+            // own method-owner rows.
+            let assoc_t = (qualifier.is_none() && recv_named.is_none()).then_some(()).and_then(
+                |()| assoc_path_type(site.callee_path.map(|id| output.strings.lookup(id))).and_then(|ty| {
+                    modules.and_then(|m| m.impl_target(&ty, callee)).map(
+                        |(blob, span)| (blob, span, CallEdgeKind::NameResolve),
+                    )
+                }),
+            );
+            let self_t = (qualifier.is_none()
+                && recv_named.is_none()
+                && site
+                    .callee_path
+                    .map(|id| {
+                        output.strings
+                            .lookup(id)
+                            .split("::")
+                            .next()
+                            == Some("Self")
                     })
-                    .or_else(|| {
-                        RustSource::call_name_match_in(output, def_index, own.as_ref(), callee)
-                            .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
-                    }),
+                    .unwrap_or(false))
+            .then_some(())
+            .and_then(|()| self_impl_type(call, &output.strings, caller))
+            .and_then(|ty| {
+                modules.and_then(|m| m.impl_target(&ty, callee)).map(
+                    |(blob, span)| (blob, span, CallEdgeKind::NameResolve),
+                )
+            });
+            let name_t: Option<(ContentId, Span, CallEdgeKind)> = if let Some(t) = recv_t {
+                Some(t)
+            } else if recv_known {
+                // A KNOWN receiver type with no corpus impl target is
+                // definitive (std, an external crate, trait dispatch).
+                None
+            } else {
+                match (qualifier, own_path, paths) {
+                    (Some(qualifier), Some(from), Some(paths)) => RustSource::call_name_match_in_module(
+                        def_index,
+                        paths,
+                        from,
+                        &qualifier,
+                        callee,
+                    )
+                    .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve)),
+                    _ => assoc_t
+                        .or(self_t)
+                        .or_else(|| {
+                            same_file_call_match(output, def_index, own.as_ref(), callee)
+                                .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                        })
+                        .or_else(|| {
+                            import_bound_target(modules, own_path, callee)
+                                .map(|(blob, span)| (blob, span, CallEdgeKind::ImportResolve))
+                        })
+                        .or_else(|| {
+                            RustSource::call_name_match_in(output, def_index, own.as_ref(), callee)
+                                .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                        }),
+                }
             };
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
@@ -1313,13 +1423,22 @@ pub fn call_drops(
         .iter()
         .filter_map(|edge| edge.call_site.map(|span| (span.start, span.end())))
         .collect();
+    let inferred: BTreeSet<(u32, u32)> = call
+        .aux
+        .receivers
+        .iter()
+        .filter(|r| matches!(r.outcome, ReceiverOutcome::Inferred))
+        .map(|r| (r.call_site.start, r.call_site.end()))
+        .collect();
     call.aux
         .sites
         .iter()
         .filter(|site| !bound.contains(&(site.span.start, site.span.end())))
         .map(|site| {
             let callee = output.strings.lookup(site.callee);
-            let reason = if corpus_defs(def_index, callee).is_empty() {
+            let reason = if inferred.contains(&(site.span.start, site.span.end())) {
+                UnresolvedReason::Inferred
+            } else if corpus_defs(def_index, callee).is_empty() {
                 UnresolvedReason::NoCorpusDef
             } else {
                 UnresolvedReason::Ambiguous
@@ -1379,7 +1498,7 @@ fn enclosing_named_def(sorted: &[(Span, NodeRef)], site: Span) -> Option<NodeRef
 
 /// A proc_macro2 span pair -> v6 byte Span covering `[start.start, end.end)`.
 /// The def span covers the whole callable body for span-containment resolution.
-fn def_span(line_starts: &[u32], start: proc_macro2::Span, end: proc_macro2::Span) -> Span {
+pub(crate) fn def_span(line_starts: &[u32], start: proc_macro2::Span, end: proc_macro2::Span) -> Span {
     let start_lc = start.start();
     let end_lc = end.end();
     let start_byte = line_col_to_byte(line_starts, start_lc.line as u32, start_lc.column as u32);
@@ -1676,6 +1795,7 @@ fn project_call(
     }
 
     module_specifiers(&parsed.items, line_starts, strings, sink);
+    super::rust_receivers::collect_receivers(parsed, line_starts, strings, sink);
 }
 
 // ── module specifiers (CallFAux.specifiers) ─────────────────────────────────

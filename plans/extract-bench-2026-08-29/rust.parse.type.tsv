@@ -1093,12 +1093,18 @@ crates/intern/src/gc.rs	InternedStorage	crates/intern/src/gc.rs	GcInternedVisit
 crates/intern/src/gc.rs	InternedStorage	crates/intern/src/gc.rs	Storage
 crates/intern/src/gc.rs	InternedStorage	crates/intern/src/intern.rs	Internable
 crates/intern/src/intern.rs	InternStorage	crates/intern/src/intern.rs	Internable
+crates/intern/src/intern.rs	Internable	crates/intern/src/symbol/symbols.rs	
 crates/intern/src/intern.rs	Interned	crates/intern/src/intern.rs	Internable
+crates/intern/src/intern.rs	Interned	crates/intern/src/symbol/symbols.rs	
 crates/intern/src/intern.rs	InternedRef	crates/intern/src/intern.rs	Internable
+crates/intern/src/intern.rs	InternedRef	crates/intern/src/symbol/symbols.rs	
 crates/intern/src/intern_slice.rs	InternSliceStorage	crates/intern/src/intern_slice.rs	SliceInternable
 crates/intern/src/intern_slice.rs	InternedSlice	crates/intern/src/intern_slice.rs	SliceInternable
+crates/intern/src/intern_slice.rs	InternedSlice	crates/intern/src/symbol/symbols.rs	
 crates/intern/src/intern_slice.rs	InternedSliceRef	crates/intern/src/intern_slice.rs	SliceInternable
+crates/intern/src/intern_slice.rs	InternedSliceRef	crates/intern/src/symbol/symbols.rs	
 crates/intern/src/symbol.rs	Symbol	crates/intern/src/symbol.rs	TaggedArcPtr
+crates/intern/src/symbol.rs	Symbol	crates/intern/src/symbol/symbols.rs	
 crates/load-cargo/src/lib.rs	LoadCargoConfig	crates/load-cargo/src/lib.rs	ProcMacroServerChoice
 crates/load-cargo/src/lib.rs	ProjectFolders	crates/load-cargo/src/lib.rs	SourceRootConfig
 crates/mbe/src/expander.rs	Bindings	crates/mbe/src/expander.rs	Binding
