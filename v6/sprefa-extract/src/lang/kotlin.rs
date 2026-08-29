@@ -770,10 +770,23 @@ fn def_span(child: tree_sitter::Node) -> Span {
     }
 }
 
-/// Walk every `call_expression`, minting one call site per call. Port of v5
-/// `kt_walk_call_sites`. The site span is the LEAD callee node's span
-/// (line_of(span.start) = v5's reported site line - for `recv.m()` the
-/// navigation_expression's start, NOT the suffix's).
+/// Walk every call-shaped node, minting one call site per call. Port of v5
+/// `kt_walk_call_sites` plus the operator/infix/invoke sites v5 dropped. The
+/// site span is the LEAD callee node's span (line_of(span.start) = v5's
+/// reported site line - for `recv.m()` the navigation_expression's start, NOT
+/// the suffix's). Operator-shaped calls span their operator token (or the
+/// infix name), so `--resolve` joins them to the `operator fun` /
+/// `infix fun` def by name:
+///  - `a infixName b`  -> infix_expression, callee = the infix name
+///  - `a + b` etc.     -> additive/multiplicative/range/comparison/equality
+///                        expression, callee = the operator-function name
+///  - `a in b`         -> check_expression, callee = contains
+///  - `-a` `!a` `++a`  -> prefix_expression (unaryMinus/unaryPlus/not/inc/dec)
+///  - `a++` `a--`      -> postfix_expression (inc/dec)
+///  - `a[i]`           -> indexing_suffix, callee = get (`a[i] = v` -> set)
+///  - `a += b` etc.    -> assignment (plusAssign/minusAssign/...)
+///  - `f(x)()`         -> call_expression over a call_expression, callee =
+///                        invoke, span = the `()` call_suffix
 fn kt_walk_call_sites(
     node: tree_sitter::Node,
     src: &[u8],
@@ -782,17 +795,173 @@ fn kt_walk_call_sites(
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if child.kind() == "call_expression" {
-            if let Some((callee, lead)) = kt_callee(child, src) {
-                sink.aux.sites.push(CallSite {
-                    span: node_span(lead),
-                    callee: strings.intern(&callee),
-                    callee_path: None,
-                });
+        match child.kind() {
+            "call_expression" => {
+                if let Some((callee, lead)) = kt_callee(child, src) {
+                    kt_push_site(node_span(lead), &callee, strings, sink);
+                } else {
+                    // An invoked expression value: `f(x)()` calls `invoke`
+                    // on the result of the inner call.
+                    let mut lead_cur = child.walk();
+                    let lead_kind = child
+                        .children(&mut lead_cur)
+                        .find(|c| c.kind() != "call_suffix")
+                        .map(|l| l.kind());
+                    if lead_kind == Some("call_expression") {
+                        if let Some(suffix) = kt_first_child(child, "call_suffix") {
+                            kt_push_site(node_span(suffix), "invoke", strings, sink);
+                        }
+                    }
+                }
             }
+            // `1 plus2 2`: seq(expr, simple_identifier, expr) - the middle
+            // child is the infix function name.
+            "infix_expression" => {
+                let mut infix = child.walk();
+                let mid = child.children(&mut infix).nth(1);
+                if let Some(name) = mid {
+                    if name.kind() == "simple_identifier" {
+                        let callee = kt_text(name, src).to_string();
+                        kt_push_site(node_span(name), &callee, strings, sink);
+                    }
+                }
+            }
+            "additive_expression"
+            | "multiplicative_expression"
+            | "range_expression"
+            | "comparison_expression"
+            | "equality_expression" => {
+                if let Some(callee) = kt_anon_token(child, src).and_then(|op| kt_operator_name(&op))
+                {
+                    kt_bin_site(child, callee, strings, sink);
+                }
+            }
+            // `a in b` (the `!` of `!in` is a separate anonymous token; the
+            // `in` lookup finds it either way). `is`/`!is` has no operator fun.
+            "check_expression" => {
+                if kt_anon_token(child, src).as_deref() == Some("in") {
+                    kt_bin_site(child, "contains", strings, sink);
+                }
+            }
+            "prefix_expression" => {
+                if let Some(callee) = kt_anon_token(child, src).and_then(|op| kt_prefix_name(&op)) {
+                    kt_bin_site(child, callee, strings, sink);
+                }
+            }
+            "postfix_expression" => {
+                if let Some(callee) = kt_anon_token(child, src).and_then(|op| kt_postfix_name(&op))
+                {
+                    kt_bin_site(child, callee, strings, sink);
+                }
+            }
+            "indexing_expression" => {
+                if let Some(suffix) = kt_first_child(child, "indexing_suffix") {
+                    kt_push_site(node_span(suffix), "get", strings, sink);
+                }
+            }
+            "assignment" => {
+                if let Some(callee) = kt_anon_token(child, src).and_then(|op| kt_assign_name(&op)) {
+                    kt_bin_site(child, callee, strings, sink);
+                }
+                // `a[i] = v` lowers to `set` on the index suffix (the lhs is
+                // a directly_assignable_expression wrapping the suffix; there
+                // is no indexing_expression node in the write position).
+                if let Some(lhs) = kt_first_child(child, "directly_assignable_expression") {
+                    if let Some(suffix) = kt_first_child(lhs, "indexing_suffix") {
+                        kt_push_site(node_span(suffix), "set", strings, sink);
+                    }
+                }
+            }
+            _ => {}
         }
         kt_walk_call_sites(child, src, strings, sink);
     }
+}
+
+/// Push one call site onto the aux sink.
+fn kt_push_site(span: Span, callee: &str, strings: &mut Strings, sink: &mut FamilyBundle<CallF>) {
+    sink.aux.sites.push(CallSite {
+        span,
+        callee: strings.intern(callee),
+        callee_path: None,
+    });
+}
+
+/// Mint an operator site spanned by the node's anonymous operator token
+/// (`a + b` spans the `+`); fall back to the whole node when the grammar
+/// folds the operator into a named child.
+fn kt_bin_site(
+    expr: tree_sitter::Node,
+    callee: &str,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let span = kt_anon_token_node(expr)
+        .map(node_span)
+        .unwrap_or_else(|| node_span(expr));
+    kt_push_site(span, callee, strings, sink);
+}
+
+/// The text of the node's first anonymous (non-named) child, if any.
+fn kt_anon_token(node: tree_sitter::Node, src: &[u8]) -> Option<String> {
+    Some(kt_text(kt_anon_token_node(node)?, src).to_string())
+}
+
+fn kt_anon_token_node<'a>(node: tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
+    let mut cursor = node.walk();
+    let found = node.children(&mut cursor).find(|c| !c.is_named());
+    found
+}
+
+/// Binary/infix operator token -> Kotlin operator-function name.
+fn kt_operator_name(op: &str) -> Option<&'static str> {
+    Some(match op {
+        "+" => "plus",
+        "-" => "minus",
+        "*" => "times",
+        "/" => "div",
+        "%" => "rem",
+        ".." => "rangeTo",
+        "..<" => "rangeUntil",
+        "in" => "contains",
+        "==" | "!=" => "equals",
+        "<" | ">" | "<=" | ">=" => "compareTo",
+        _ => return None,
+    })
+}
+
+/// Prefix unary operator token -> operator-function name.
+fn kt_prefix_name(op: &str) -> Option<&'static str> {
+    Some(match op {
+        "-" => "unaryMinus",
+        "+" => "unaryPlus",
+        "!" => "not",
+        "++" => "inc",
+        "--" => "dec",
+        _ => return None,
+    })
+}
+
+/// Postfix unary operator token -> operator-function name (`!!` is notNull,
+/// which has no operator fun).
+fn kt_postfix_name(op: &str) -> Option<&'static str> {
+    Some(match op {
+        "++" => "inc",
+        "--" => "dec",
+        _ => return None,
+    })
+}
+
+/// Compound-assignment operator token -> operator-function name.
+fn kt_assign_name(op: &str) -> Option<&'static str> {
+    Some(match op {
+        "+=" => "plusAssign",
+        "-=" => "minusAssign",
+        "*=" => "timesAssign",
+        "/=" => "divAssign",
+        "%=" => "remAssign",
+        _ => return None,
+    })
 }
 
 /// (callee name, lead node) for a `call_expression`, or None when the callee
