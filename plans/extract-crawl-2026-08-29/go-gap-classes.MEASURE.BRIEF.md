@@ -7,7 +7,7 @@ vta-only remainder.
 
 ## First action
 ```
-git merge --ff-only c5fd7659232bbe874ec4d5c52f2e59d02b753dce
+git merge --ff-only 29885363035af7d5f52d209e5f307f291c2fa6f9
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 
