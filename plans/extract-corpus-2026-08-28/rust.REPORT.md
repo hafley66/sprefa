@@ -9,6 +9,7 @@
 - [Perf and RSS](#perf-and-rss)
 - [Findings](#findings)
 - [Fix landed](#fix-landed)
+- [Fix landed: the large-file resource bound](#fix-landed-the-large-file-resource-bound)
 - [What stays untested and why](#what-stays-untested-and-why)
 
 ## Setup
@@ -142,3 +143,62 @@ plus std (`try_from`, `alloc_transition`) and closure/field callees.
   worktree root substitutes.
 - Trait-impl method callees under `--resolve`: name-only by the 4a ADDENDUM
   (receiver typing out of scope); scip is the oracle for those edges (step 5).
+
+## Fix landed: the large-file resource bound
+
+Lane `fix-extract-large-files`, base sha `99b8dc79f`, commit "extract: stream
+flat facts instead of collecting them". Full write-up and the byte-identity
+receipt: `ts.REPORT.md` section 12.
+
+| finding | before | after | test |
+|---|---|---|---|
+| `rss` on `nickel-lang-core-0.15.3/src/parser/grammar.rs` (29,328,358 B) | 3,610,509,312 B peak RSS | 3,004,694,528 B | `tests/9_large_file_bounds.rs::rs_all_families_rss_is_bounded` |
+| wall, same file, no `timeout` | 14.24 s | 12.55 s | (same) |
+| `timeout` rc=124 under `timeout 10`, same file | rc=124 | rc=124, **unchanged** | none; blocked, below |
+
+Output on that file is byte-identical before and after: 13,664,266 rows,
+`cmp -s` clean.
+
+### The timeout is parse time, not row time
+
+`extract --bench --family <f>` on the same file splits extract from flatten:
+
+| family | extract | serial (flatten) | rows | peak RSS |
+|---|---|---|---|---|
+| cst | 7.043 s | 224.8 ms | 11,416,699 | 2,039,300,096 B |
+| type | 5.119 s | 6.9 ms | 175,430 | 2,419,736,576 B |
+| call | 5.494 s | 4.0 ms | 129,247 | 2,292,367,360 B |
+| df | 4.475 s | 71.3 ms | 1,942,890 | 2,876,817,408 B |
+| data | (0.02 s wall) | | 0 | 34,684,928 B |
+| default (all) | | | 13,664,266 | 3,004,694,528 B, 12.55 s |
+
+Flatten is 0.1% to 3% of each family's wall. The 12.55 s is the ast-grep parse
+(7.0 s) plus the one shared syn parse and its three projections. No change to
+the row plane moves it, and the 3.0 GB floor is the syn AST: `--family type`
+peaks at 2.42 GB while emitting 175,430 rows.
+
+The corpus gap is sharp. Second-slowest rust file is `chrono-tz` `timezones.rs`
+at 3,789 ms for 7.2 MB; nickel `grammar.rs` is 29.3 MB. One file in 77,472
+exceeds 10 s.
+
+### Named size skip: designed, BLOCKED on ownership
+
+The user law is that a silent timeout is a defect and a named skip is a fact.
+The row, mirroring `scip_skip`:
+
+```
+record=size_skip  path=<string>  bytes=<u32>  limit=<u32>  reason=<over_max_bytes>
+```
+
+`extract` emits that one row and exits 0 when the input exceeds the ceiling;
+`--max-bytes N` overrides it, `--max-bytes 0` disables it. A ceiling of
+16,777,216 B skips nickel `grammar.rs` and no other file in the 77,472-file
+rust corpus, no ts/js corpus file, and no fixture, so every golden stays
+byte-identical.
+
+Not landed. A `FlatFact` variant lives in `src/types.rs`, its contract line in
+`src/schema.rs`, and the flag in `src/bin/extract.rs` plus
+`src/bin/extract/help.rs`. `types.rs` and `schema.rs` are shared by every
+language arm and are on this lane's forbidden list, so the coordinator was
+beeped for the call rather than the files edited. The design above is complete
+and needs no further measurement.

@@ -13,6 +13,7 @@
 9. [Findings](#9-findings)
 10. [Landed fix: module bodies](#10-landed-fix-module-bodies)
 11. [What stays untested and why](#11-what-stays-untested-and-why)
+12. [Fixes: the large-file resource bound](#12-fixes-the-large-file-resource-bound)
 
 Binary: `v6/sprefa-extract/target/release/extract`, `cargo build --release
 --features cli`, base sha `8e946ada9`. Steps 1 and 2 ran the base binary; steps
@@ -495,3 +496,60 @@ slice of the corpus.
 | `--scip-override` (`--resolve` with `--project-root` plus an index) | Needs a decision about which index is authoritative per root; step 5 shows `scip_fn_edge` and `resolved_edge` are different relations (F8), so an override comparison would be measuring that mismatch, not the override. |
 | Fixes for F2, F3, F5 through F10 | F2 and F3 are inside this arm but change edge semantics corpus-wide: dropping a member call whose receiver is not a local binding would also drop legitimate method edges, and adding decorator call sites changes every framework-heavy file's call graph. Both need the coordinator's call, so this lane files them with repro fixtures (`ts_findings/corpus_2.ts`, `ts_findings/corpus_2_logger.ts`, `ts/corpus_3.ts`) and lands neither. F4 is `astgrep.rs`, F5 through F10 are the CLI and scip planes; none is this arm. |
 | Throughput per construct | The bytes/ms low tail is battery contention, shown in section 8. Isolating a slow construct needs a single-process benchmark harness, which is a separate build. |
+
+---
+
+## 12. Fixes: the large-file resource bound
+
+Lane `fix-extract-large-files`, base sha `99b8dc79f`, commit "extract: stream
+flat facts instead of collecting them".
+
+| finding | before | after | test |
+|---|---|---|---|
+| ts F4 (`rss`), `--family cst` on `ts.worker-DrA3GP0m.js`, 13,308,634 B | 1,094,057,984 B peak RSS, 2.09 s | 335,773,696 B, 1.92 s | `tests/9_large_file_bounds.rs::js_cst_rss_is_bounded` |
+| rust `rss`, default families on `nickel-lang-core-0.15.3/src/parser/grammar.rs`, 29,328,358 B | 3,610,509,312 B peak RSS, 14.24 s | 3,004,694,528 B, 12.55 s | `tests/9_large_file_bounds.rs::rs_all_families_rss_is_bounded` |
+| rust `timeout`, same file | rc=124 under `timeout 10` | rc=124 under `timeout 10`, unchanged | not fixed; see `rust.REPORT.md`, "Named size skip" |
+
+### Where the memory went
+
+`ps` RSS per stage, `--family cst`, monaco `ts.worker-DrA3GP0m.js`:
+
+| stage | RSS | delta |
+|---|---|---|
+| start | 3 MB | |
+| after `fs::read` | 16 MB | +13 MB, the input |
+| after ast-grep parse alone | 252 MB | +236 MB, the tree-sitter tree |
+| after `dispatch` (1,298,775 cst nodes) | 324 MB | +72 MB, nodes + child edges |
+| after `flatten` (2,597,549 facts) | 454 MB | +130 MB resident, and the `extend` copy on top |
+
+`size_of::<FlatFact>()` is 136 B and every row carries owned `String`s.
+`flatten` filled a per-family `Vec` and then `extend`ed it into the whole-file
+`Vec`, so the peak held the stream twice: 2,597,549 rows against a stream that
+is written once and never re-read.
+
+### The fix
+
+`wire::flatten_each(out, &mut push)` walks the same families in the same order
+and hands over one `FlatFact` at a time. `flatten` is that walk collecting, so
+`flatten_jsonl`, the store seam adapter and the parity normalize are unchanged.
+`src/bin/extract.rs::stream` writes and drops each row; `--bench` counts
+without collecting; `flatten_cfg_each` is the twin for the derived cfg plane.
+`CstProjector::project` lost its per-node `children().collect()` (the stack
+tail is reversed in place), which is one fewer heap allocation per named node.
+
+### What is left, and why it is not row work
+
+The residual is the parse tree. On the monaco file, ast-grep costs 236 MB
+before a single row is projected, so the 300 MB target in the brief sits below
+the tree-sitter floor of this grammar on this input; the landed 335,773,696 B
+is 336 MB, of which 250 MB is the tree. On the nickel file the floor is the syn
+AST: `--family type` alone peaks at 2,419,736,576 B while emitting 175,430
+rows. Neither is reachable from `wire.rs` or a language arm.
+
+### Byte-identity receipt
+
+20 corpus files, `extract <file>` under the pre-fix and post-fix release
+binaries, `cmp -s`: **20 identical, 0 different**, 41,517,168 stdout rows
+total. Per-file table: `large-file.parity20.tsv`. The sample is the 8 slowest
+rust files, the 8 slowest ts/js files and 4 python files from the three arms'
+`runs.tsv`.
