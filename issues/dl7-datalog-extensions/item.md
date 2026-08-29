@@ -20,16 +20,22 @@ Relational list destructuring, negative goals over completed lower strata, and c
 
 ## Acceptance Criteria
 
-- [ ] Reversible cons supports bounded list traversal.
-- [ ] Negative goals carry explicit polarity and stratify.
-- [ ] Count aggregates read completed lower rows.
+- [x] Reversible cons supports bounded list traversal.
+- [x] Negative goals carry explicit polarity and stratify.
+- [x] Count aggregates read completed lower rows.
 - [ ] Pick and Exclude become ordinary prelude rules.
-- [ ] Compiler and runtime callers retain one evaluator entry point.
+- [x] Compiler and runtime callers retain one evaluator entry point.
 
 ## Tests Run
 
-- [ ] Existing consolidated V7 SWI suite.
+- [x] Existing consolidated V7 SWI suite.
 
 ## Implementation Notes
 
 DL6 donors: v6/prolog/strat.pl and v6/prolog/0_compiler_relations/1_aggregates.pl.
+
+## Decisions
+
+### 2026-08-29T22:43:52Z · @codex
+
+Kernel capabilities are complete through count aggregation. The remaining Pick and Exclude criterion is blocked by @dl7-edge-snapshot-ruling because relation-level stratification rejects the strict ':' read/write cycle without a frozen source-edge boundary.
