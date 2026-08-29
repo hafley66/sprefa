@@ -6,7 +6,7 @@
 ;;;; (successor lists keyed by node id, values being materialized cons
 ;;;; pairs (from . to)). Reachability from each origin does a recursive
 ;;;; DFS with a per-origin hash-set of visited nodes so rings terminate;
-;;;; every distinct (from . to) closure pair reachable from the origin is
+;;;; every distinct (origin . to) closure pair reachable from the origin is
 ;;;; accumulated into the origin's result hash-set of cons pairs. The
 ;;;; closure count is the total number of materialized pairs across all
 ;;;; origins. Timing uses SBCL's monotonic real time (get-internal-real-
@@ -39,7 +39,7 @@ lists: edges\[i\] holds every (i . to) pair. Returns (values edges edge-count)."
 
 (defun closure-from (origin edges n)
   "Recursive DFS from ORIGIN over EDGES with a per-origin visited set.
-Accumulates every distinct (from . to) pair reachable from ORIGIN into a
+Accumulates every distinct (ORIGIN . to) pair reachable from ORIGIN into a
 hash set keyed by the cons pair itself (materialized host objects)."
   (let ((visited (make-hash-table :test #'eql))
         (pairs (make-hash-table :test #'equal)))
@@ -47,7 +47,7 @@ hash set keyed by the cons pair itself (materialized host objects)."
                (unless (>= node n)
                  (dolist (edge (svref edges node))
                    (let ((to (cdr edge)))
-                     (setf (gethash edge pairs) t)
+                     (setf (gethash (cons origin to) pairs) t)
                      (unless (gethash to visited)
                        (setf (gethash to visited) t)
                        (walk to)))))))

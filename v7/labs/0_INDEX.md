@@ -29,5 +29,6 @@ Each folder is one experiment variant. Every worker owns exactly one folder and 
 | 15 | `15_commercial_common_prolog` | research | What do Allegro Prolog and LispWorks Common Prolog cover? | queued |
 | 16 | `16_logadat` | Datalog library | Does `logadat` (2025) execute recursive Datalog and terminate on cycles? | queued |
 | 17 | `17_si_kanren` | miniKanren plus constraints | Does `si-kanren` supply the constraint store (disequality, `numbero`, `symbolo`, `absento`) on the shared fixture? | queued |
+| 18 | `18_runtime_shootout` | native-logic benchmark | How do SBCL host data structures, SWI tabling, and Racket Datalog compare on materialized transitive closure? | completed |
 
 The inventory report owns the final candidate count. A repository search result alone does not establish a distinct or runnable library.

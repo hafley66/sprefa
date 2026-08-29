@@ -31,9 +31,9 @@ main(Argv) :-
     setup_edges(Case, N),
     statistics(walltime, [T1, _]),
     evaluate_closure,
+    closure_count(ClosureCount),
     statistics(walltime, [T2, _]),
     aggregate_all(count, edge(_, _), EdgeCount),
-    closure_count(ClosureCount),
     expected_closure(Case, N, Expected),
     (   ClosureCount =:= Expected
     ->  SetupMs is T1 - T0,
@@ -47,8 +47,7 @@ main(Argv) :-
                          'closure_count'-ClosureCount,
                          'setup_ms'-SetupMs,
                          'closure_ms'-ClosureMs]),
-                   [width(0)]),
-        nl
+                   [width(0)])
     ;   format(user_error, 'closure mismatch: got ~d, expected ~d~n',
                [ClosureCount, Expected]),
         halt(1)

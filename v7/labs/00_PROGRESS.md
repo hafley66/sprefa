@@ -1,9 +1,13 @@
 # V7 Common Lisp logic lab progress
 
-Updated: 2026-08-28 18:19 EDT
+Updated: 2026-08-29 11:47 EDT
 
 ## Current state
 
+- Native-logic shootout: SBCL 2.6.7 host data structures, SWI-Prolog 10.0.2
+  tabling, and Racket CS 9.3 `datalog` evaluation on deterministic chain and
+  ring transitive closures. `N=48` completed one warmup and five measured
+  repetitions in 40 seconds with exact closure counts of 1,128 and 2,304.
 - Shared skill commit: `932abe9` in `claude-research`.
 - Lab scaffold commit: `98f991dbd` in `sprefa`.
 - Installed runtime: SBCL 2.6.7.

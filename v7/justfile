@@ -20,3 +20,11 @@ tree-sitter-parse path:
 
 # Step 1 compiler-front build gate.
 build: tree-sitter-test
+
+# Validate exact closure counts on tiny chain and ring graphs.
+runtime-shootout-smoke:
+    bash "{{ v7 }}/labs/18_runtime_shootout/4_run.sh" smoke 4
+
+# Run one warmup and five measured repetitions for every native-logic arm.
+runtime-shootout n="48":
+    bash "{{ v7 }}/labs/18_runtime_shootout/4_run.sh" full "{{ n }}"

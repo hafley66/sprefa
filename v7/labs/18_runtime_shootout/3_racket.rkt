@@ -17,7 +17,7 @@
 
 ;; Monotonic wall-clock milliseconds.
 (define (now-ms)
-  (inexact->exact (floor (current-inexact-milliseconds))))
+  (current-inexact-monotonic-milliseconds))
 
 (define (node-sym i)
   (string->symbol (string-append "n" (number->string i))))
@@ -44,12 +44,11 @@
   (define answers
     (datalog theory
       (? (reach X Y))))
-  (define t2 (now-ms))
-
   (define pairs
     (for/set ([h (in-list answers)])
       (cons (hash-ref h 'X) (hash-ref h 'Y))))
   (define closure-count (set-count pairs))
+  (define t2 (now-ms))
 
   (values edge-count closure-count (- t1 t0) (- t2 t1)))
 
