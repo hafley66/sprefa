@@ -1,6 +1,41 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-28 00:52 EDT, stopped for user semantic rulings
+Updated: 2026-08-28 20:15 EDT
+
+## Basement restart
+
+The next implementation boundary is every layer before comptime fixpoint
+goals. Plan: `v7/2_DESIGN/2_BASEMENT_TO_DATALOG.PLAN.md`.
+
+```text
+root datums
+    -> nested bind/product/sum lowering
+        -> reference resolution + Datalog checks + dependency graph
+            -> later comptime fixpoint evaluator
+```
+
+Current datum law:
+
+```text
+atom(Name)       unresolved reader spelling
+ref(Target)      resolved semantic name
+var(Identity)    logical variable
+const(Value)     literal data
+```
+
+Nested `:` is an owner edge and namespace operation. Nested `*` and `+` forms
+create owners with parent-scope edges. Future dot resolution traverses the
+canonical colon edges. Future punning expands into the same explicit edge
+shape and therefore receives no second representation.
+
+Issue DAG:
+
+- `@dl7-root-datums`, GLM53F, S, head of line.
+- `@dl7-datalog-lower`, GLM53F, M, blocked by root datums.
+- `@dl7-datalog-checks`, GLM53F, M, blocked by lowering.
+
+No evaluator, type fixpoint, interning, engine, Rust, or TypeScript work is in
+these three cards.
 
 ## Current state
 
