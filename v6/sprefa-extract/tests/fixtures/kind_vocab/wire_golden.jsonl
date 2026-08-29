@@ -10771,6 +10771,7 @@
 {"record":"edge","family":"df","kind":"direct","from":{"start":39,"end":48},"from_kind":"binop","to":{"start":39,"end":48},"to_kind":"ret"}
 {"record":"param","family":"df","span":{"start":14,"end":19},"pos":0}
 {"record":"data_doc","family":"data","ordinal":0,"span":{"start":0,"end":260},"format":"jsonl","doc":{"callee_name":"helper","callee_path":"tests/fixtures/resolve/8_closure_callee.rs","caller_name":"closure@63","caller_path":"tests/fixtures/resolve/7_closure_caller.rs","caller_site_end":77,"caller_site_start":71,"kind":"name_resolve","record":"resolved_edge"}}
+{"record":"data_doc","family":"data","ordinal":1,"span":{"start":261,"end":514},"format":"jsonl","doc":{"callee_name":"helper","callee_path":"tests/fixtures/resolve/8_closure_callee.rs","caller_name":"run","caller_path":"tests/fixtures/resolve/7_closure_caller.rs","caller_site_end":77,"caller_site_start":71,"kind":"name_resolve","record":"resolved_edge"}}
 {"record":"data_value","family":"data","ordinal":0,"path":"","kind":"object","text":null,"span":{"start":0,"end":260}}
 {"record":"data_value","family":"data","ordinal":0,"path":"record","kind":"string","text":"resolved_edge","span":{"start":11,"end":24}}
 {"record":"data_value","family":"data","ordinal":0,"path":"caller_path","kind":"string","text":"tests/fixtures/resolve/7_closure_caller.rs","span":{"start":41,"end":83}}
@@ -10780,6 +10781,15 @@
 {"record":"data_value","family":"data","ordinal":0,"path":"caller_site_start","kind":"number","text":"71","span":{"start":214,"end":216}}
 {"record":"data_value","family":"data","ordinal":0,"path":"caller_site_end","kind":"number","text":"77","span":{"start":235,"end":237}}
 {"record":"data_value","family":"data","ordinal":0,"path":"kind","kind":"string","text":"name_resolve","span":{"start":246,"end":258}}
+{"record":"data_value","family":"data","ordinal":1,"path":"","kind":"object","text":null,"span":{"start":261,"end":514}}
+{"record":"data_value","family":"data","ordinal":1,"path":"record","kind":"string","text":"resolved_edge","span":{"start":272,"end":285}}
+{"record":"data_value","family":"data","ordinal":1,"path":"caller_path","kind":"string","text":"tests/fixtures/resolve/7_closure_caller.rs","span":{"start":302,"end":344}}
+{"record":"data_value","family":"data","ordinal":1,"path":"caller_name","kind":"string","text":"run","span":{"start":361,"end":364}}
+{"record":"data_value","family":"data","ordinal":1,"path":"callee_path","kind":"string","text":"tests/fixtures/resolve/8_closure_callee.rs","span":{"start":381,"end":423}}
+{"record":"data_value","family":"data","ordinal":1,"path":"callee_name","kind":"string","text":"helper","span":{"start":440,"end":446}}
+{"record":"data_value","family":"data","ordinal":1,"path":"caller_site_start","kind":"number","text":"71","span":{"start":468,"end":470}}
+{"record":"data_value","family":"data","ordinal":1,"path":"caller_site_end","kind":"number","text":"77","span":{"start":489,"end":491}}
+{"record":"data_value","family":"data","ordinal":1,"path":"kind","kind":"string","text":"name_resolve","span":{"start":500,"end":512}}
 {"record":"data_doc","family":"data","ordinal":0,"span":{"start":0,"end":648},"format":"toml","doc":{"lib":{"name":"fixtures","path":"lib.rs"},"package":{"edition":"2021","name":"fixtures","publish":false,"version":"0.0.0"},"workspace":{}}}
 {"record":"data_value","family":"data","ordinal":0,"path":"","kind":"object","text":null,"span":{"start":0,"end":648}}
 {"record":"data_value","family":"data","ordinal":0,"path":"package","kind":"object","text":null,"span":{"start":515,"end":595}}
