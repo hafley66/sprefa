@@ -34,6 +34,7 @@ RECORD SHAPES
   record=method_owner  family=call         owner={start,end}  self_type=<string|null>  trait=<string|null>
   record=cfg_scope  family=call            span={start,end}   cfg=<string>   (only for cfg-guarded defs)
   record=test_only_call  family=call        callee=<name>  cfg=<string>   (only for callees every site in the file names under a cfg naming `test`)
+  record=macro_site  family=call            span={start,end}   macro_name=<string>  source=<mbe|scip>
   record=reference  family=call            span={start,end}   functor=<name/arity>  position=<goal|head_arg|term_arg>
   record=const  family=type                owner={start,end}  field=<string|null>  text=<string>  kind=<lit|template>
   record=doc    family=type                owner={start,end}  parent=<string|null>  text=<string>

@@ -697,6 +697,36 @@ pub struct CallFAux {
     /// One row per call site whose receiver type this file could trace, joined
     /// to `CallSite.span`. Go populates it; other languages leave it empty.
     pub receivers: Vec<ReceiverBinding>,
+    /// One row per macro invocation that minted a def/site elsewhere in this
+    /// bundle, joined by span to whatever phase-1 arm found the expansion.
+    pub macro_sites: Vec<MacroSite>,
+}
+
+/// One macro invocation whose expansion is folded into this bundle's own
+/// nodes/sites. `span` is the invocation's span, never the expansion's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MacroSite {
+    pub span: Span,
+    pub macro_name: NameId,
+    pub source: MacroSiteSource,
+}
+
+/// Which arm minted the expansion this `MacroSite` reports.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum MacroSiteSource {
+    /// In-process `macro_rules!` expansion (`rust_mbe::expand_file`).
+    Mbe,
+    /// A scip occurrence inside a macro invocation span, joined post-resolve.
+    Scip,
+}
+
+impl MacroSiteSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            MacroSiteSource::Mbe => "mbe",
+            MacroSiteSource::Scip => "scip",
+        }
+    }
 }
 
 /// A def the compiler only builds under a cfg predicate. Carried so a caller
@@ -2549,6 +2579,15 @@ pub enum FlatFact {
         family: FamilyTag,
         callee: String,
         cfg: String,
+    },
+    /// CallF macro site: the invocation `span` whose expansion minted a
+    /// def/site elsewhere in this file, and which arm found it.
+    #[serde(rename = "macro_site")]
+    MacroSiteOut {
+        family: FamilyTag,
+        span: SpanOut,
+        macro_name: String,
+        source: String,
     },
     /// A Prolog term-occurrence reference: a compound in argument position,
     /// tagged goal | head_arg | term_arg. Deliberately exceeds the LSP/SCIP
