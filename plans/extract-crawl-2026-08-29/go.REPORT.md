@@ -10,6 +10,7 @@ Corpus: `/Users/chrishafley/projects/typescript-go` (Microsoft's TypeScript comp
 4. [Step 4: scip comparison](#step-4)
 5. [Kinks](#kinks)
 6. [Untested and why](#untested-and-why)
+7. [Fixes](#fixes)
 
 ## Step 1 <a name="step-1"></a>
 
@@ -152,3 +153,88 @@ Also recorded: `resolved_type_edge` is 0 for the whole Go corpus while the flag 
 - RSS measurement (`/usr/bin/time -l` over 20 largest files): brief's crawl battery does not include it; the 10-second law held everywhere (max 2228 ms), so pressure is low.
 - scip crawl with test roots beyond name-pair comparisons: test-binary symbols (`cmd/tsgo.test`) carry go-build cache paths in scip_def, so per-file unreachable tables in that plane were not computed.
 - `cfg` family: Go emits `kind_role` rows per the help text, but the crawl brief does not use it; left untouched.
+
+## Fixes <a name="fixes"></a>
+
+Lane `fix-extract-go-imports`, base c60e5c4cc. Same corpus, same binary path;
+every number is a rerun on this machine, and the reruns reproduce this
+report's own 46,055 edges / 159,740 sites / 201 reachable exactly, so the
+before column is the report's own.
+
+Two METHOD corrections first, both re-measured three times:
+
+| the report says | measured |
+|---|---|
+| one whole-project call exceeds 10 s | rc 0 in 3-5 s over all 5097 files, every run, before and after |
+| entrypoint reachability is 1.1% | 1.1% is the 82-per-package battery, whose universe never holds the imported package. The same crawl over whole-project edges reaches 534 defs before this lane, 4,253 after. |
+
+### What landed
+
+| kink | before | after | test |
+|---|---|---|---|
+| a pkg-qualified site carries no import path | `callee_path` null on all 159,740 sites | the import path on 39,819 sites (24.9%) | `import_qualified_sites_carry_the_import_path` |
+| `pkg.F()` binds the CALLER's own `F` | 122 self-edges | 0 | `an_import_qualified_call_never_binds_the_callers_own_def` |
+| `pkg.F()` binds ANY package that happens to declare one `F` | 3,997 edges into a package the import does not name | 0 | `every_cross_package_call_resolves_into_the_package_the_import_names` |
+| a stdlib or third-party callee binds a corpus def | 3,948 of those 3,997 | 0 | `a_call_through_an_external_import_resolves_to_nothing` |
+| an ambiguous cross-package callee (`alpha.Helper3` against beta's `Helper3`) | no edge | resolves, by package directory under the `go.mod` module path | `every_cross_package_call_resolves_into_the_package_the_import_names`, 40 of 40 |
+| the resolve seam carries no path | `DefSite` is blob/span/family, `ProjectCx.files` a unit struct | `IndexBag.paths`, blob -> supplied path, one additive `OnceLock` slot | whole gate, 405 passed |
+| the own-blob join | scip-only | one per file, and one `go.mod` walk per file | `resolve_wall_grows_linearly_over_import_qualified_files` |
+
+### Corpus receipt
+
+`resolved_edge` and entrypoint reachability, 104 program roots, 18,849 defs:
+
+| scope | | before | + own-def fix | + package join |
+|---|---|---|---|---|
+| whole project, 5097 files | edges | 101,556 | 101,455 | 99,190 |
+| | reachable | 534 (2.8%) | 528 (2.8%) | **4,253 (22.6%)** |
+| | with test roots | 12,400 | 12,392 | 12,542 |
+| | wall | 4 s | 4 s | 4 s |
+| 82 per-package runs | edges | 46,055 | 45,967 | 45,556 |
+| | reachable | 201 (1.1%) | 200 | 199 |
+| | with test roots | 10,118 | 10,106 | 10,084 |
+
+The crawl now runs to depth 29 (before: depth 8, 534 defs), the same shape the
+scip plane shows in step 4. Fewer edges, 21x the reachability: the edges that
+went away were guesses into packages the import never named, and the ones that
+arrived cross package boundaries the crawl needs.
+
+### Every whole-project edge, classified by the site that minted it
+
+| edge class | before | + own-def fix | + package join |
+|---|---|---|---|
+| from an unqualified site (a bare name, same package) | 70,630 | 70,630 | 70,630 |
+| from a qualified site, into the package the import names | 26,929 | 26,932 | 28,560 |
+| from a qualified site, into another package | 3,997 | 3,893 | **0** |
+| of those, through an EXTERNAL import (stdlib or third-party, no corpus target exists) | 3,948 | 3,882 | 0 |
+| total | 101,556 | 101,455 | 99,190 |
+
+Joined on the full call-site span; a join on the start byte alone
+double-counts a chained `f(x).g()`, whose two sites share one start.
+
+### The rule
+
+| step | source |
+|---|---|
+| the site's import path | phase 1, from the file's own import block: a plain spec binds its path's last segment, an alias binds the alias, `_` and `.` bind no qualifier |
+| the file's module and root | `go.mod` in the nearest ancestor of the file's own path, one walk per file |
+| the directory the import names | module root + (import path - module path). Not a prefix of the module path: EXTERNAL, no corpus target, no edge |
+| the candidates | `corpus_defs(callee)` whose file sits in that directory, unique blob wins |
+| the file's own path | `IndexBag.paths`, keyed by the blob `own_blob` already computes |
+
+The seam slot is additive: `IndexBag` derives `Default`, so every existing
+`IndexBag::default()` construction keeps compiling and every arm that ignores
+the slot is byte-identical. With the slot unset (a hand-built `ProjectCx`, as
+in `golden_parity.rs`) the go arm falls back to the own-blob exclusion, and
+that is the configuration the scip ratchet grades.
+
+### Out of scope, and why
+
+| row | state |
+|---|---|
+| method on a known receiver (`c.compilerOptions.IsFalseOrUnknown`) | out of scope by brief; receiver typing is not a syntactic-tier fact |
+| interface dispatch | out of scope by brief |
+| builtins (`make`, `append`, `len`, `panic`) | the go arm emits NO `unresolved` rows at all; only ts does (`src/lang/ts.rs:1194`), so a named builtin reason has no seat on the go plane today. Report row, not a fix. |
+| a `_test.go` file in the same directory as the package it tests | its defs are candidates for that package's import path, so a name only the test file declares can win. Not observed in the 28,560 corpus edges; the rule would need the package clause, which no index carries. |
+| `tests/golden_parity.rs:1251` | the go scip ratchet's twin re-runs `call_name_match` with no site in hand, so it takes neither the imported nor the package leg. It grades the path-less configuration, which is a real one, but the twin is no longer the arm's exact copy. File outside this lane's ownership. |
+| `tests/6_kind_vocab.rs` header | still cites 946460d75 as the golden's origin after the 1-hunk regeneration (2 gamma.go site rows). File outside this lane's ownership. |

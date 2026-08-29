@@ -621,13 +621,21 @@ fn kill_process_group(_pid: u32) {}
 
 /// The last nonempty line of a log file, trimmed: the indexer's own error line.
 fn stderr_tail(path: &Path) -> String {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
-    text.lines()
-        .filter(|line| !line.trim().is_empty())
-        .last()
-        .unwrap_or("")
-        .trim()
-        .to_string()
+    last_error_line(&std::fs::read_to_string(path).unwrap_or_default())
+}
+
+/// The last line of `text` that is not a `note:` line, trimmed. A rust panic's
+/// tail is the panic line followed by `note: Some details are omitted, run
+/// with RUST_BACKTRACE=1 ...`; the panic line is the detail a skip row should
+/// carry, and the note names only the runtime's own behavior.
+pub fn last_error_line(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let picked = lines
+        .iter()
+        .rev()
+        .find(|l| !l.trim_start().starts_with("note:"))
+        .or(lines.last());
+    picked.map(|l| l.trim().to_string()).unwrap_or_default()
 }
 
 /// Every marker file the roster looks for, as one comma-separated list. Named

@@ -420,3 +420,88 @@ site. All seven were run and reproduce.
   `.boop-worktrees/crawl/hafley-rs` and does not exist. The binary
   boop-start hydrates at `target/release/extract` was used instead. No
   `src/**` change was made, so nothing needed rebuilding.
+
+## 11. Fixes (lane `fix-extract-rust-crawl`)
+
+Kinks 3, 5 and 6 are landed. Kinks 4 and 7 are NOT: neither is reachable from
+`src/lang/rust.rs`, the only source file this lane owns, and the seam facts
+that block them are in section 11.3. Kink 2 stays out of scope by brief.
+
+### 11.1 The table
+
+| kink | before | after | test |
+|---|---|---|---|
+| 3, closure caller ends the crawl | 6,977 closure-caller edges, 0 reachable through one | 6,995 mirror edges, one per closure-caller edge | `52_rust_crawl_kinks.rs::a_closure_caller_edge_mirrors_onto_the_enclosing_fn`, `::one_mirror_edge_per_closure_caller_edge` |
+| 5, fn inside `const _: () = { .. }` | 0 defs from const/static bodies | 125 `const_init` defs, 20 methods, 7 free fns | `::const_block_fns_mint_call_defs`, `::const_block_call_resolves_to_its_sibling` |
+| 6, call in a `static`/`const` initializer | 0 edges | 2,006 edges whose caller is the const/static item | `::initializer_calls_carry_the_const_or_static_item_as_caller`, `::a_const_with_no_call_in_its_initializer_mints_no_call_def` |
+| 4, `callee_path` ignored | 294 wrong edges | unchanged, see 11.3 | none |
+| 7, no `unresolved` row | 0 rows | unchanged, see 11.3 | none |
+
+### 11.2 The corpus receipt
+
+`plans/extract-crawl-2026-08-29/rust.crawl.py` over
+`~/projects/rust-analyzer` at `af4111f`, 941 src files, one `--resolve
+--family call,type` call per crate under `timeout 10`. Both columns were
+measured with THIS method and THIS lane's two release binaries, so the before
+column is not section 5's 10,928: the kink-1 hoist (PR #540) landed between,
+so `crates/syntax` no longer times out and no crate needed halving. 0 timeouts
+in either run; slowest crate 254 ms.
+
+| | before (`c60e5c4cc`) | after (`2e2200e83`) |
+|---|---:|---:|
+| named defs | 19,190 | 19,339 |
+| `resolved_edge` | 50,490 | 59,506 |
+| `resolved_type_edge` | 1,720 | 1,720 |
+| reachable, union of program + test roots | 10,951 (57.1%) | 12,221 (63.2%) |
+| reachable from the 75 program roots | 336 | 477 |
+| reachable from the two `fn main` alone | 66 | 269 |
+| unreachable | 8,239 | 7,118 |
+| program crawl max depth | 9 | 10 |
+
+The 9,038 new edge rows: 6,995 mirrors (kink 3), 2,006 with a const/static
+item as caller (kink 6), 37 reaching a def that only exists now (kink 5).
+
+Section 5's headline break is closed. `crates/rust-analyzer/src/bin/main.rs:68`
+is `move || run_server(None)`, and the whole LSP server spine now walks from
+`fn main`:
+
+| def | before | after |
+|---|---|---|
+| `bin/main.rs::run_server` | unreachable | reachable |
+| `session.rs::run_session` | unreachable | reachable |
+| `main_loop.rs::main_loop` | unreachable | reachable |
+| `main_loop.rs::handle_event` | unreachable | reachable |
+
+### 11.3 Why kinks 4 and 7 did not land
+
+| kink | what the brief asked | the seam fact that blocks it |
+|---|---|---|
+| 4 | restrict candidates to defs whose module path (file path segments + `mod` scope owner) ends with `callee_path` | `Resolve::resolve(&self, output, cx)` never receives a path: `resolve_call_edges` holds one and drops it (`src/project.rs:817-832`). `ProjectCx.files` is the unit struct `FileSet` (`src/types.rs:1430`). `DefSite` is `{blob, span, family}` (`src/types.rs:1467`). No blob-to-path map exists anywhere in the resolve seam, so "file path segments" is not computable from `src/lang/rust.rs`. |
+| 7 | emit one `unresolved` row per site that resolves to nothing, reason `no_corpus_def` / `ambiguous` | `unresolved` is a PHASE-1 aux record (`CallFAux.unresolved`, serialized at `src/wire.rs:311`) and `UnresolvedReason` is a closed 3-value enum whose header states a fourth reason needs its own issue (`src/types.rs:567-574`). Both requested reasons are corpus-wide facts a per-file phase-1 walk cannot know, and `Resolve<CallF>` returns `Vec<ProjectEdge<CallF>>` with no channel for a non-edge. |
+
+Both are one grant away: kink 4 needs a path on `DefSite` or `ProjectCx`
+(`src/types.rs` + `src/project.rs`); kink 7 needs two enum variants
+(`src/types.rs`), a resolve-phase channel (`src/project.rs`) and the vocabulary
+line at `src/schema.rs:162`. All four files are outside this lane's ownership.
+
+### 11.4 What the fixes changed in the shape
+
+- A new rust ext `CallKind`, tag `const_init`, for a `const`/`static` item that
+  owns calls in its initializer. It is a caller and never a callee, and no other
+  language has the shape, so it goes through the `Ext(LangKind)` door rather
+  than the core enum (`tests/6_kind_vocab.rs`). Its `EXT_KINDS` row belongs in
+  that test's list; that file is outside this lane's ownership.
+- The item def is minted ONLY when the initializer holds a call no inner def
+  covers, so `const GREETING: &str = "hello"` stays out of the corpus name index
+  and no rust source fixture moved the wire golden.
+- `tests/fixtures/resolve/9_closure_resolved_edges.jsonl` gained ONE appended
+  row (`run -> helper`, the mirror of the `closure@63 -> helper` row it already
+  pinned), granted by the coordinator. Its test now pins 2 rows, not 1.
+- That `.jsonl` is ITSELF a data fixture in `kind_vocab/corpus.txt`, so the
+  appended row cascades into the wire golden. `wire_golden.jsonl` was
+  regenerated by the procedure `tests/6_kind_vocab.rs` documents (`extract
+  <path>` over `corpus.txt`, concatenated): ONE hunk, 10 lines added, 0
+  removed, all of them the `data_doc` + 9 `data_value` rows of the appended
+  edge. Debug and release binaries produce byte-identical output.
+- Gate, `cargo test --features cli --no-fail-fast`, SUM over 82 binaries:
+  404 passed, 0 failed, 2 ignored (baseline before this lane: 399/0/2).

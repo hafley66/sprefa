@@ -272,7 +272,7 @@ fn stream_scip_family(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         slug: None,
     };
     for line in scip_family_jsonl(&request)? {
-        println!("{line}");
+        emit(&line)?;
     }
     if let Some(path) = scip_index_location(&request) {
         // @eprintln-ok: CLI-UX location line, deliberately off the fact stream.
@@ -304,11 +304,41 @@ fn check_file_paths(paths: &[PathBuf]) {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let summary = sprefa_extract::trace::install();
-    let outcome = run();
+    let outcome = match run() {
+        Ok(()) => Ok(()),
+        // A consumer closing the pipe early (`extract FILE | head -1`) is a
+        // clean exit 0 with nothing on stderr, whatever path the write failed
+        // on: the BufWriter stream, a flush, or one of the row loops.
+        Err(error) if is_broken_pipe(error.as_ref()) => Ok(()),
+        Err(error) => Err(error),
+    };
     if let Some(state) = summary {
         state.print();
     }
     outcome
+}
+
+/// True when the error chain carries an io::BrokenPipe.
+fn is_broken_pipe(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(step) = current {
+        if let Some(io) = step.downcast_ref::<std::io::Error>() {
+            if io.kind() == std::io::ErrorKind::BrokenPipe {
+                return true;
+            }
+        }
+        current = step.source();
+    }
+    false
+}
+
+/// One stdout row, `println!` minus the panic on a closed pipe: `println!`
+/// panics with "failed printing to stdout" (rc 101) when the consumer closed
+/// early, and the error here propagates to `main`'s BrokenPipe intercept.
+fn emit(line: &str) -> Result<(), std::io::Error> {
+    let mut out = std::io::stdout().lock();
+    out.write_all(line.as_bytes())?;
+    out.write_all(b"\n")
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -337,6 +367,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let cli = Cli::parse();
 
+    // `--scip-timeout` must reach the library's `ScipMode::Build` path, whose
+    // budget comes from `IndexBudget::from_env` (project.rs). Setting the same
+    // variable the library documents keeps one budget rule for both build
+    // paths; `--family scip` threads its own `IndexBudget` and ignores this.
+    if let Some(secs) = cli.scip_timeout {
+        if secs > 0 {
+            std::env::set_var("SPREFA_SCIP_TIMEOUT_SECS", secs.to_string());
+        }
+    }
+
     if cli.schema {
         print_schema();
         return Ok(());
@@ -345,8 +385,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // The two named families are whole-project modes, so they are dispatched
     // before every per-file path below.
     let mode = family_mode(cli.family.as_deref())?;
-    // `--family scip` takes a ROOT directory; every other mode takes files.
-    if !matches!(mode, Some(FamilyMode::Scip)) {
+    // `--family scip`, `--scip-facts` and `--scip-deps` take a ROOT directory;
+    // every other mode takes files.
+    if !matches!(mode, Some(FamilyMode::Scip)) && !cli.scip_facts && !cli.scip_deps {
         check_file_paths(&cli.paths);
     }
     match mode {
@@ -356,7 +397,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(FamilyMode::DietScip) => {
             for line in diet_scip_jsonl(&cli.paths)? {
-                println!("{line}");
+                emit(&line)?;
             }
             return Ok(());
         }
@@ -370,28 +411,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     if cli.deps {
         for line in diet_file_edges_jsonl(&scip_request(&cli)?)? {
-            println!("{line}");
+            emit(&line)?;
         }
         return Ok(());
     }
 
     if cli.package_deps {
         for line in package_edges_jsonl(&scip_request(&cli)?)? {
-            println!("{line}");
+            emit(&line)?;
         }
         return Ok(());
     }
 
     if cli.scip_deps {
         for line in scip_file_edges_jsonl(&scip_request(&cli)?)? {
-            println!("{line}");
+            emit(&line)?;
         }
         return Ok(());
     }
 
     if cli.scip_facts {
         for line in scip_facts_jsonl(&scip_request(&cli)?)? {
-            println!("{line}");
+            emit(&line)?;
         }
         return Ok(());
     }
@@ -406,10 +447,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // The file row rides the SAME read as extraction: counting lines must never
     // cost a second pass over the file, let alone a second subprocess.
     if cli.file_fact {
-        println!(
-            "{}",
-            serde_json::to_string(&file_fact(&path_str, &content))?
-        );
+        emit(&serde_json::to_string(&file_fact(&path_str, &content))?)?;
     }
     // Before any parse, so the ceiling bounds the cost it exists to bound. The
     // file row above is a digest over bytes already read, not that cost.
@@ -417,10 +455,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = content.len() as u64;
     if limit > 0 && bytes > limit {
         tracing::warn!(path = %path_str, bytes, limit, "input over the byte ceiling");
-        println!(
-            "{}",
-            serde_json::to_string(&size_skip_fact(&path_str, bytes, limit))?
-        );
+        emit(&serde_json::to_string(&size_skip_fact(&path_str, bytes, limit))?)?;
         return Ok(());
     }
     if !cli.ast_pattern.is_empty() {
@@ -530,7 +565,7 @@ fn stream_ast_queries(
     queries: &[AstPatternQuery],
 ) -> Result<(), Box<dyn std::error::Error>> {
     for fact in query_patterns(path, content, queries)? {
-        println!("{}", serde_json::to_string(&fact)?);
+        emit(&serde_json::to_string(&fact)?)?;
     }
     Ok(())
 }
@@ -554,7 +589,7 @@ fn stream_resolve(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         ..scip_request(cli)?
     };
     for line in resolve_project_jsonl(&request)? {
-        println!("{line}");
+        emit(&line)?;
     }
     Ok(())
 }
@@ -690,5 +725,5 @@ fn bench(
 /// `sprefa_extract::wire::SCHEMA`, not here, so a library consumer can read the
 /// same contract without shelling out to this binary.
 fn print_schema() {
-    println!("{SCHEMA}");
+    let _ = emit(&SCHEMA.to_string());
 }
