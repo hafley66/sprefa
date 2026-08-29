@@ -1,33 +1,37 @@
+# Lower DL7 nodes, edges, products, sums, facts, and rules
+
 ## Description
 
-Lower prefix forms into module, product, callable, colon-edge, and normalized
-fact/rule rows. Resolve names by reading colon edges from the current owner.
+Lower reader forms into one ground graph and positive Datalog IR. A file owns
+one compiler-created module node. Nested products and sums mint nodes with
+ordinary classifier rows. Every `:` bind becomes an ordered owner-name-target
+edge. Facts and rules use the same positional call representation regardless
+of whether their arguments later carry types or runtime values.
 
-## Signature
+## Signatures
 
 ```prolog
-lower_dl7(+ModulePath, +Forms, -Rules, -Seeds, -Requests, -Diagnostics).
+lower_datalog(+Unit, -Program, -Origins, -Diagnostics).
+check_datalog(+Program, +Origins, -Checked, -Diagnostics).
 ```
-
-## Timeline and storage
-
-Reserve top-level names, construct product owners, resolve targets, then lower
-applications by appending the declared return position.
 
 ## Acceptance Criteria
 
-- [ ] Canonical edge rows are `':'(Owner, Name, Target, Index)`.
-- [ ] `(Owner, Name)` and `(Owner, Index)` are functional keys.
-- [ ] No `member`, `binding`, synthetic edge ID, or public application wrapper.
-- [ ] Value and type calls use one application-lowering predicate.
-- [ ] Production changes stay under `v7/1_KERNEL/`.
-- [ ] Adds no standalone test file.
+- [ ] Every identity has a `node(Id)` row and applicable classifier rows.
+- [ ] Canonical edges are `':'(Owner, Name, Target, Index)`.
+- [ ] `(Owner, Name)` and `(Owner, Index)` collisions are diagnosed.
+- [ ] Nested bind targets provide lexical parent lookup without a scope kind.
+- [ ] Facts and rules share `call(ref(Relation), Arguments)` lowering.
+- [ ] Type-valued and runtime-valued calls use the same lowering predicate.
+- [ ] No member vocabulary, synthetic public edge ID, or relation inference is added.
+- [ ] Production code lives in `v7/src/2_comptime/0_compiler.pl`.
+- [ ] No standalone test file is added.
 
-## Test Run
+## Tests Run
 
-Use one direct SWI receipt until the single oracle lands.
+- [ ] Direct nested-graph, recursive-rule, invalid-call, and edge-key receipts pass.
 
-## Stop condition
+## Implementation Notes
 
-Hail the parent when a missing callable declaration or node-identity ruling
-would require inference.
+The output is checked compiler data consumed by
+`v7/src/1_libtime/0_evaluator.pl` and retained for later emitters.
