@@ -251,7 +251,7 @@ pub struct IndexerSpec {
     pub staging: Staging,
 }
 
-static TS_SPEC: IndexerSpec = IndexerSpec {
+pub static TS_SPEC: IndexerSpec = IndexerSpec {
     bin: "scip-typescript",
     args: &["index", "--infer-tsconfig", "--output", "{out}"],
     fallback: Fallback::Npx("@sourcegraph/scip-typescript@0.4.0"),
@@ -262,7 +262,7 @@ static TS_SPEC: IndexerSpec = IndexerSpec {
     },
 };
 
-static RUST_SPEC: IndexerSpec = IndexerSpec {
+pub static RUST_SPEC: IndexerSpec = IndexerSpec {
     bin: "rust-analyzer",
     args: &["scip", ".", "--output", "{out}"],
     fallback: Fallback::None,
@@ -272,16 +272,16 @@ static RUST_SPEC: IndexerSpec = IndexerSpec {
     },
 };
 
-static GO_SPEC: IndexerSpec = IndexerSpec {
+pub static GO_SPEC: IndexerSpec = IndexerSpec {
     bin: "scip-go",
-    args: &["--output", "{out}"],
+    args: &["--output", "{out}", "./..."],
     fallback: Fallback::GoRun("github.com/scip-code/scip-go/cmd/scip-go@v0.2.7"),
     staging: Staging::InPlace,
 };
 
 /// scip-python writes only the redirected output; its pyright analysis reads
 /// the tree and caches outside it.
-static PYTHON_SPEC: IndexerSpec = IndexerSpec {
+pub static PYTHON_SPEC: IndexerSpec = IndexerSpec {
     bin: "scip-python",
     args: &["index", ".", "--output", "{out}"],
     fallback: Fallback::Npx("@sourcegraph/scip-python"),
@@ -290,7 +290,7 @@ static PYTHON_SPEC: IndexerSpec = IndexerSpec {
 
 /// scip-java drives gradle or maven, which write `build/` and `target/` under
 /// the root, so the copy is not optional.
-static JAVA_SPEC: IndexerSpec = IndexerSpec {
+pub static JAVA_SPEC: IndexerSpec = IndexerSpec {
     bin: "scip-java",
     args: &["index", "--output", "{out}"],
     fallback: Fallback::None,
@@ -302,7 +302,7 @@ static JAVA_SPEC: IndexerSpec = IndexerSpec {
 
 /// scip-clang reads the compilation database and writes only `-o`. The compdb
 /// names absolute paths, so a staged copy would break every entry.
-static CLANG_SPEC: IndexerSpec = IndexerSpec {
+pub static CLANG_SPEC: IndexerSpec = IndexerSpec {
     bin: "scip-clang",
     args: &["--compdb-path", "compile_commands.json", "-o", "{out}"],
     fallback: Fallback::None,
