@@ -18,7 +18,7 @@
 //! and the corpus-wide directory index gives the REAL package name a
 //! qualifier binds.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::family::SpecifierKind;
@@ -27,7 +27,8 @@ use crate::shape::{ContentId, Span, Strings};
 use crate::types::PathIndex;
 
 use super::go::{
-    go_module_of, go_package_dir, go_parse, go_text, go_walk_import_specs, same_dir, unique_blob,
+    go_module_of, go_node_span, go_package_dir, go_parse, go_text, go_walk_import_specs, same_dir,
+    unique_blob,
 };
 
 // ── phase-2 facts: one dedicated parse per file ─────────────────────────────
@@ -51,6 +52,9 @@ struct GoSpecifier {
 pub struct GoModuleFacts {
     package_name: Option<String>,
     specifiers: Vec<GoSpecifier>,
+    /// This file's `type` declaration spans. The corpus `DefIndex` carries no
+    /// entity kind, and a go method shares the name index with its type.
+    type_decls: HashSet<Span>,
 }
 
 /// `None`: a non-`.go` path, or a parse that fails.
@@ -75,10 +79,32 @@ pub fn go_module_facts(path: &str, content: &[u8]) -> Option<GoModuleFacts> {
             module: spec.module.map(|id| strings.lookup(id).to_string()),
         })
         .collect();
+    let mut type_decls = HashSet::new();
+    walk_type_decls(root, &mut type_decls);
     Some(GoModuleFacts {
         package_name,
         specifiers,
+        type_decls,
     })
+}
+
+/// Every `type` declaration's entity span, at any nesting depth. The recursion
+/// and the `type_spec`/`type_alias` span mirror `go.rs`'s `walk_go_entities`.
+fn walk_type_decls(node: tree_sitter::Node, out: &mut HashSet<Span>) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "type_declaration" {
+            let mut specs = child.walk();
+            for spec in child.children(&mut specs) {
+                if matches!(spec.kind(), "type_spec" | "type_alias")
+                    && spec.child_by_field_name("name").is_some()
+                {
+                    out.insert(go_node_span(spec));
+                }
+            }
+        }
+        walk_type_decls(child, out);
+    }
 }
 
 /// `package_clause`'s one child, no field name in tree-sitter-go's grammar.
@@ -253,6 +279,14 @@ impl GoModuleIndex {
             .collect()
     }
 
+    /// Is the entity at `(path, span)` a `type` declaration? A path with no
+    /// facts (no `.go` file supplied it) answers false.
+    pub fn is_type_decl(&self, path: &str, span: Span) -> bool {
+        self.facts
+            .get(path)
+            .is_some_and(|facts| facts.type_decls.contains(&span))
+    }
+
     /// `dir`'s exported decl named `name`, joined through the `DefIndex`.
     pub fn resolve_in_dir(
         &self,
@@ -264,7 +298,63 @@ impl GoModuleIndex {
         if !is_exported(name) {
             return None;
         }
-        let sites: Vec<&DefSite> = corpus_defs(def_index, name)
+        unique_blob(&self.sites_in_dir(dir, def_index, paths, name))
+    }
+
+    /// `resolve_in_dir` narrowed to `type` declarations, for the type arm's
+    /// qualified `pkg.Type` leg.
+    pub fn resolve_type_in_dir(
+        &self,
+        dir: &Path,
+        def_index: &DefIndex,
+        paths: &PathIndex,
+        name: &str,
+    ) -> Option<(ContentId, Span)> {
+        if !is_exported(name) {
+            return None;
+        }
+        self.type_decl_in_dir(dir, def_index, paths, name)
+    }
+
+    /// The referring file's OWN package directory. No export gate: a
+    /// package-level name is visible to its own package whatever its case.
+    pub fn resolve_type_in_own_dir(
+        &self,
+        dir: &Path,
+        def_index: &DefIndex,
+        paths: &PathIndex,
+        name: &str,
+    ) -> Option<(ContentId, Span)> {
+        self.type_decl_in_dir(dir, def_index, paths, name)
+    }
+
+    fn type_decl_in_dir(
+        &self,
+        dir: &Path,
+        def_index: &DefIndex,
+        paths: &PathIndex,
+        name: &str,
+    ) -> Option<(ContentId, Span)> {
+        let sites: Vec<&DefSite> = self
+            .sites_in_dir(dir, def_index, paths, name)
+            .into_iter()
+            .filter(|site| {
+                paths
+                    .get(&site.blob)
+                    .is_some_and(|path| self.is_type_decl(path, site.span))
+            })
+            .collect();
+        unique_blob(&sites)
+    }
+
+    fn sites_in_dir<'a>(
+        &self,
+        dir: &Path,
+        def_index: &'a DefIndex,
+        paths: &PathIndex,
+        name: &str,
+    ) -> Vec<&'a DefSite> {
+        corpus_defs(def_index, name)
             .iter()
             .filter(|site| {
                 paths
@@ -272,8 +362,7 @@ impl GoModuleIndex {
                     .and_then(|path| Path::new(path).parent())
                     .is_some_and(|parent| same_dir(parent, dir))
             })
-            .collect();
-        unique_blob(&sites)
+            .collect()
     }
 
     /// `qualifier`'s import path: an alias matches literally, else it must

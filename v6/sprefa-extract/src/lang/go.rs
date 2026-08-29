@@ -126,7 +126,7 @@ fn walk_go_entities(
                         _ => continue,
                     };
                     let Some(name_node) = name_node else { continue };
-                    let span = node_span(spec);
+                    let span = go_node_span(spec);
                     let name = go_text(name_node, src).to_string();
                     push_entity(sink, strings, span, &name, kind);
                     // A grouped `type ( ... )` decl carries its doc above the
@@ -143,7 +143,7 @@ fn walk_go_entities(
             }
             "function_declaration" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
-                    let span = node_span(child);
+                    let span = go_node_span(child);
                     let name = go_text(name_node, src).to_string();
                     push_entity(sink, strings, span, &name, TypeEntityKind::Function);
                     if let Some(text) = go_leading_doc(child, src) {
@@ -160,7 +160,7 @@ fn walk_go_entities(
                     child.child_by_field_name("name"),
                     go_receiver_type(child, src),
                 ) {
-                    let span = node_span(child);
+                    let span = go_node_span(child);
                     let name = go_text(name_node, src).to_string();
                     push_entity(sink, strings, span, &name, TypeEntityKind::Method);
                     if let Some(text) = go_leading_doc(child, src) {
@@ -187,7 +187,7 @@ fn push_entity(
 }
 
 /// The byte span of a tree-sitter node `[start_byte, end_byte)`.
-fn node_span(node: tree_sitter::Node) -> Span {
+pub(crate) fn go_node_span(node: tree_sitter::Node) -> Span {
     Span {
         start: node.start_byte() as u32,
         len: (node.end_byte() - node.start_byte()) as u32,
@@ -889,7 +889,7 @@ fn go_mint_interface_methods(
         let Some(mname) = elem.child_by_field_name("name") else {
             continue;
         };
-        let span = node_span(elem);
+        let span = go_node_span(elem);
         let name = go_text(mname, src).to_string();
         sink.nodes
             .push(Node::new(span, CallKind::Method).with_name(strings.intern(&name)));
@@ -931,7 +931,7 @@ fn go_walk_call_sites(
                 };
                 if let Some(callee) = callee {
                     sink.aux.sites.push(CallSite {
-                        span: node_span(func),
+                        span: go_node_span(func),
                         callee: strings.intern(&callee),
                         callee_path: path.map(|path| strings.intern(path)),
                     });
@@ -1444,7 +1444,7 @@ fn go_walk_receivers(
                         // out of this tier.
                         if let [name] = names.as_slice() {
                             scope_insert(scope, name.clone(), TypeBinding::Inferred);
-                            plan.binds.insert(node_span(value).start, (top, names));
+                            plan.binds.insert(go_node_span(value).start, (top, names));
                         }
                     }
                 }
@@ -1472,7 +1472,7 @@ fn go_walk_receivers(
                         }
                         if rhs.kind() == "call_expression" {
                             plan.binds.insert(
-                                node_span(*rhs).start,
+                                go_node_span(*rhs).start,
                                 (top, vec![go_text(*name_node, src).to_string()]),
                             );
                         }
@@ -1490,7 +1490,7 @@ fn go_walk_receivers(
                                 TypeBinding::Inferred,
                             );
                         }
-                        plan.binds.insert(node_span(*rhs).start, (top, bound));
+                        plan.binds.insert(go_node_span(*rhs).start, (top, bound));
                     }
                 }
                 go_walk_receivers(right, src, scope, imports, field_types, out, plan, top);
@@ -1518,13 +1518,13 @@ fn go_walk_receivers(
                                     if binding == TypeBinding::Inferred
                                         && operand.kind() == "identifier"
                                     {
-                                        let span = node_span(func);
+                                        let span = go_node_span(func);
                                         plan.inferred_recv.insert(
                                             (span.start, span.end()),
                                             (top, go_text(operand, src).to_string()),
                                         );
                                     }
-                                    out.push((node_span(func), binding));
+                                    out.push((go_node_span(func), binding));
                                 }
                                 None => {
                                     let mut steps = Vec::new();
@@ -1536,7 +1536,7 @@ fn go_walk_receivers(
                                                 .iter()
                                                 .any(|s| matches!(s, GoChainStep::Call(_)))
                                         {
-                                            let span = node_span(func);
+                                            let span = go_node_span(func);
                                             plan.multihop.insert(
                                                 (span.start, span.end()),
                                                 (top, GoChain { base, steps }),
@@ -2571,8 +2571,38 @@ impl GoSource {
     }
 }
 
+/// Go's `type` entity kinds. Only a type declaration can be a type reference's
+/// target; a `Function`/`Method` entity shares the name index with it.
+fn is_go_type_decl(kind: TypeEntityKind) -> bool {
+    matches!(
+        kind,
+        TypeEntityKind::Struct | TypeEntityKind::Interface | TypeEntityKind::Alias
+    )
+}
+
+/// A type reference's candidate sites: type declarations only. With no module
+/// plane in hand (a hand-built cx) nothing can tell the kinds apart, so all pass.
+fn type_decl_sites<'a>(
+    sites: &'a [DefSite],
+    modules: Option<&GoModuleIndex>,
+    paths: Option<&PathIndex>,
+) -> Vec<&'a DefSite> {
+    let (Some(modules), Some(paths)) = (modules, paths) else {
+        return sites.iter().collect();
+    };
+    sites
+        .iter()
+        .filter(|site| {
+            paths
+                .get(&site.blob)
+                .is_some_and(|path| modules.is_type_decl(path, site.span))
+        })
+        .collect()
+}
+
 /// A `pkg.Name` ref resolves through the go module plane; a bare name tries
-/// same-file then a unique corpus site, else None (text stays text).
+/// same-file then a unique corpus site, else None (text stays text). Every leg
+/// sees type declarations only (`type_decl_sites`).
 fn resolve_type_dst(
     types: &FamilyBundle<TypeF>,
     strings: &Strings,
@@ -2588,20 +2618,31 @@ fn resolve_type_dst(
         let module = go_module_of(own_path)?;
         let import_path = modules.import_path_for(own_path, pkg)?;
         let dir = go_package_dir(&module, &import_path)?;
-        return modules.resolve_in_dir(&dir, index?, paths?, bare);
+        return modules.resolve_type_in_dir(&dir, index?, paths?, bare);
     }
-    let same_file = types
-        .nodes
-        .iter()
-        .find(|node| node.name.map_or(false, |id| strings.lookup(id) == name));
+    let same_file = types.nodes.iter().find(|node| {
+        is_go_type_decl(node.kind) && node.name.map_or(false, |id| strings.lookup(id) == name)
+    });
     if let (Some(node), Some(index)) = (same_file, index) {
         return corpus_defs(index, name)
             .iter()
             .find(|site| site.span == node.span)
             .map(|site| (site.blob.clone(), site.span));
     }
+    // Go's package scope: a bare name binds in the referring file's own
+    // directory before any corpus-wide name match is allowed to guess.
+    if let (Some(modules), Some(index), Some(paths), Some(dir)) = (
+        modules,
+        index,
+        paths,
+        own_path.and_then(|path| Path::new(path).parent()),
+    ) {
+        if let Some(hit) = modules.resolve_type_in_own_dir(dir, index, paths, name) {
+            return Some(hit);
+        }
+    }
     let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
-    match sites {
+    match type_decl_sites(sites, modules, paths).as_slice() {
         [only] => Some((only.blob.clone(), only.span)),
         _ => None,
     }
@@ -3032,7 +3073,7 @@ fn go_collect_interface_facts(spec: tree_sitter::Node, src: &[u8], facts: &mut G
         let Some(mname) = elem.child_by_field_name("name") else {
             continue;
         };
-        let span = node_span(elem);
+        let span = go_node_span(elem);
         facts
             .owner_of
             .insert((span.start, span.end()), iname.clone());
