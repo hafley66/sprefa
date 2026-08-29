@@ -45,9 +45,12 @@ read_dl7(+Path, +Text, -Forms, -SourceRows, -Diagnostics).
 
 It accepts atoms matching `[A-Za-z_][A-Za-z0-9_-]*`, the symbolic atoms `:`,
 `*`, `+`, `->`, and `<-`, `?Name` logic variables, decimal integers, strings,
-parenthesized forms, whitespace, and `;` line comments. Strings decode `\n`,
+`'Name` symbol literals, parenthesized forms, whitespace, and `;` line
+comments. Strings decode `\n`,
 `\t`, `\r`, `\\`, and `\"`; an unknown escape preserves its backslash and
-following character. Comments are layout and produce no node.
+following character. A symbol literal reads one identifier after `'` and
+yields `literal(symbol(Name))`; it is data immediately and never enters name
+resolution. Comments are layout and produce no node.
 
 Canonical rows follow the current V7 contract:
 

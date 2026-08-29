@@ -55,7 +55,7 @@ snapshot_source(
 
 expected_snapshot(
     reader_snapshot(
-        a3956b46bcb3e6c5c0cd1dfb507a274d2e739d9b63f5e6a1dd1b8e05d254a7ca,
+        f2ae0a30fb13178923b4c1e40077cd4d71bec93c74d360e5a6754b7ba54ce26c,
         [ node(0,
                form(
                    [ node(1, atom(':')),
@@ -107,8 +107,43 @@ expected_snapshot(
                                 node(27,
                                      variable(variable(17, 'Value'),
                                               'Value'))
+                               ]))
+                    ])),
+          node(28, form([])),
+          node(29,
+               form(
+                   [ node(30, atom(':')),
+                     node(31, atom('Wrapper')),
+                     node(32,
+                          form(
+                              [ node(33, atom('*')),
+                                node(34,
+                                     form(
+                                         [ node(35, atom(':')),
+                                           node(36, atom(inner)),
+                                           node(37,
+                                                form(
+                                                    [ node(38, atom('*')),
+                                                      node(39,
+                                                           form(
+                                                               [ node(40,
+                                                                      atom(':')),
+                                                                 node(41,
+                                                                      atom(tag)),
+                                                                 node(42,
+                                                                      literal(symbol(kind)))
+                                                               ]))
+                                                    ]))
+                                         ])),
+                                node(43,
+                                     form(
+                                         [ node(44, atom(':')),
+                                           node(45, atom(bare)),
+                                           node(46, atom(atom))
+                                         ]))
                               ]))
-                   ]))
+                   ])),
+          node(47, literal(symbol(spot)))
         ],
         [ source(0, 27, 103, 3, 1, 6, 32),
           source(1, 28, 29, 3, 2, 3, 3),
@@ -137,7 +172,27 @@ expected_snapshot(
           source(24, 131, 133, 7, 28, 7, 30),
           source(25, 139, 154, 8, 5, 8, 20),
           source(26, 140, 146, 8, 6, 8, 12),
-          source(27, 147, 153, 8, 13, 8, 19)
+          source(27, 147, 153, 8, 13, 8, 19),
+          source(28, 156, 158, 9, 1, 9, 3),
+          source(29, 211, 286, 11, 1, 14, 22),
+          source(30, 212, 213, 11, 2, 11, 3),
+          source(31, 214, 221, 11, 4, 11, 11),
+          source(32, 225, 285, 12, 4, 14, 21),
+          source(33, 226, 227, 12, 5, 12, 6),
+          source(34, 228, 264, 12, 7, 13, 28),
+          source(35, 229, 230, 12, 8, 12, 9),
+          source(36, 231, 236, 12, 10, 12, 15),
+          source(37, 246, 263, 13, 10, 13, 27),
+          source(38, 247, 248, 13, 11, 13, 12),
+          source(39, 249, 262, 13, 13, 13, 26),
+          source(40, 250, 251, 13, 14, 13, 15),
+          source(41, 252, 255, 13, 16, 13, 19),
+          source(42, 256, 261, 13, 20, 13, 25),
+          source(43, 271, 284, 14, 7, 14, 20),
+          source(44, 272, 273, 14, 8, 14, 9),
+          source(45, 274, 278, 14, 10, 14, 14),
+          source(46, 279, 283, 14, 15, 14, 19),
+          source(47, 287, 292, 15, 1, 15, 6)
         ],
         [])).
 
