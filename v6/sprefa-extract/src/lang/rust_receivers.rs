@@ -155,25 +155,31 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for ReceiverWalk<'a> {
     }
 
     fn visit_local(&mut self, local: &'ast syn::Local) {
-        let (name, binding) = match &local.pat {
-            syn::Pat::Ident(pat) => (
+        let bound = match &local.pat {
+            syn::Pat::Ident(pat) => Some((
                 pat.ident.to_string(),
                 self.one_hop_init(local.init.as_ref().map(|i| i.expr.as_ref())).unwrap_or(TypeBinding::Unknown),
-            ),
-            syn::Pat::Type(pat) => {
-                let syn::Pat::Ident(inner) = &*pat.pat else {
-                    return;
-                };
-                let binding = principal_ty(&pat.ty)
-                    .map(TypeBinding::Named)
-                    .or_else(|| self.one_hop_init(local.init.as_ref().map(|i| i.expr.as_ref())))
-                    .unwrap_or(TypeBinding::Unknown);
-                (inner.ident.to_string(), binding)
-            }
-            _ => return,
+            )),
+            syn::Pat::Type(pat) => match &*pat.pat {
+                syn::Pat::Ident(inner) => {
+                    let binding = principal_ty(&pat.ty)
+                        .map(TypeBinding::Named)
+                        .or_else(|| self.one_hop_init(local.init.as_ref().map(|i| i.expr.as_ref())))
+                        .unwrap_or(TypeBinding::Unknown);
+                    Some((inner.ident.to_string(), binding))
+                }
+                _ => None,
+            },
+            // `let (a, b) = ..` / `let Some(x) = .. else`: no name this walk
+            // can type, and an initializer that still holds call sites.
+            _ => None,
         };
-        self.insert(name, binding);
+        // The initializer is read in the OUTER scope: `let a = a.tick()` types
+        // its receiver through the binding it shadows, never through itself.
         syn::visit::visit_local(self, local);
+        if let Some((name, binding)) = bound {
+            self.insert(name, binding);
+        }
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
@@ -242,10 +248,13 @@ impl<'a> ReceiverWalk<'a> {
                             None => ReceiverOutcome::Inferred,
                         };
                     }
-                    let bound = self.lookup(&ident).and_then(|b| match b {
-                        TypeBinding::Named(ty) => Some(ty.clone()),
-                        _ => None,
-                    });
+                    let bound = self
+                        .lookup(&ident)
+                        .and_then(|b| match b {
+                            TypeBinding::Named(ty) => Some(ty.clone()),
+                            _ => None,
+                        })
+                        .and_then(|ty| self.resolve_self(&ty));
                     return match bound {
                         Some(ty) => ReceiverOutcome::Named(self.strings.intern(&ty)),
                         None => ReceiverOutcome::Inferred,
@@ -259,13 +268,28 @@ impl<'a> ReceiverWalk<'a> {
                     let syn::Member::Named(ident) = member else {
                         return ReceiverOutcome::Inferred;
                     };
-                    return match self.fields.get(&(base_ty, ident.to_string())) {
-                        Some(ty) => ReceiverOutcome::Named(self.strings.intern(ty)),
+                    let field_ty = self
+                        .fields
+                        .get(&(base_ty, ident.to_string()))
+                        .cloned()
+                        .and_then(|ty| self.resolve_self(&ty));
+                    return match field_ty {
+                        Some(ty) => ReceiverOutcome::Named(self.strings.intern(&ty)),
                         None => ReceiverOutcome::Inferred,
                     };
                 }
                 _ => return ReceiverOutcome::Inferred,
             }
+        }
+    }
+
+    /// `Self` written as a type is the enclosing impl's self type; outside an
+    /// impl it names nothing this walk can bind.
+    fn resolve_self(&self, ty: &str) -> Option<String> {
+        if ty == "Self" {
+            self.impl_stack.last().cloned()
+        } else {
+            Some(ty.to_string())
         }
     }
 
@@ -279,7 +303,7 @@ impl<'a> ReceiverWalk<'a> {
                     self.impl_stack.last().cloned()
                 } else {
                     match self.lookup(&ident) {
-                        Some(TypeBinding::Named(ty)) => Some(ty.clone()),
+                        Some(TypeBinding::Named(ty)) => self.resolve_self(ty),
                         _ => None,
                     }
                 }
@@ -320,12 +344,13 @@ fn tables(items: &[syn::Item], rets: &mut std::collections::HashMap<String, Stri
                 for item in &imp.items {
                     if let syn::ImplItem::Fn(f) = item {
                         let name = f.sig.ident.to_string();
+                        // `fn new() -> Self` returns the block's own type.
                         if let Some(ty) = output_ty(&f.sig) {
+                            let ty = if ty == "Self" { self_type.clone() } else { ty };
                             rets.entry(name).or_insert(ty);
                         }
                     }
                 }
-                let _ = &self_type;
             }
             syn::Item::Struct(s) => {
                 let struct_name = s.ident.to_string();

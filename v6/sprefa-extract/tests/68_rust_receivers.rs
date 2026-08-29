@@ -130,6 +130,51 @@ fn unknown_receiver_drops_inferred() {
     );
 }
 
+/// `recv_alpha.rs` and `recv_beta.rs` both define `tick`, so the corpus name
+/// match declines every site in `recv_sites.rs` and ONLY the receiver leg can
+/// bind one. `recv_sites.rs` defines no `tick` of its own, so the same-file
+/// leg cannot rescue it either.
+const MULTI: [&str; 3] = ["recv_sites.rs", "recv_alpha.rs", "recv_beta.rs"];
+
+/// SABOTAGE RECEIPT: `visit_local`'s `_ => return` arm returned before
+/// `syn::visit::visit_local`, so the initializer of a destructuring `let` was
+/// never walked and `a.tick()` inside one got NO receiver row:
+/// `assertion failed: has(&rows, "tuple_pattern_init", "tick", "recv_alpha")`.
+#[test]
+fn tuple_pattern_initializer_binds() {
+    let rows = edges(&MULTI);
+    assert!(has(&rows, "tuple_pattern_init", "tick", "recv_alpha"), "{rows:?}");
+}
+
+/// SABOTAGE RECEIPT: the same hole through a `let ... else`, the shape 2,232
+/// of the corpus's 15,444 `ambiguous` method sites carry:
+/// `assertion failed: has(&rows, "let_else_init", "tick", "recv_alpha")`.
+#[test]
+fn let_else_initializer_binds() {
+    let rows = edges(&MULTI);
+    assert!(has(&rows, "let_else_init", "tick", "recv_alpha"), "{rows:?}");
+}
+
+/// SABOTAGE RECEIPT: `let a = a.tick()` inserted the new `a` before the
+/// initializer was walked, so the receiver read its own binding as unknown:
+/// `assertion failed: has(&rows, "shadowed_by_own_init", "tick", "recv_alpha")`.
+#[test]
+fn initializer_reads_the_outer_binding() {
+    let rows = edges(&MULTI);
+    assert!(has(&rows, "shadowed_by_own_init", "tick", "recv_alpha"), "{rows:?}");
+}
+
+/// SABOTAGE RECEIPT: `fn new() -> Self` put the literal string `Self` in the
+/// one-hop return table, so `let b = Beta::new(); b.tick()` asked the impl
+/// table for `("Self", "tick")`, found nothing, and — the receiver type being
+/// KNOWN — emitted no row at all:
+/// `assertion failed: has(&rows, "beta_one_hop", "tick", "recv_beta")`.
+#[test]
+fn self_return_one_hop_binds() {
+    let rows = edges(&MULTI);
+    assert!(has(&rows, "beta_one_hop", "tick", "recv_beta"), "{rows:?}");
+}
+
 #[test]
 fn single_glob_source_binds() {
     let rows = edges(&["glob_single.rs", "glob_src.rs"]);
