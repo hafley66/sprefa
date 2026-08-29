@@ -644,8 +644,35 @@ fn project_call(
     sink: &mut FamilyBundle<CallF>,
 ) {
     go_walk_call_defs(root, src, strings, sink, false);
-    go_walk_call_sites(root, src, strings, sink);
+    // The import table is what a selector call's receiver is checked against,
+    // so the specifiers land before the sites that read them.
     go_module_specifiers(root, src, strings, sink);
+    let imports = go_import_bindings(sink, strings);
+    go_walk_call_sites(root, src, strings, sink, &imports);
+}
+
+/// Qualifier -> import path, per the `go_module_specifiers` table above: a
+/// plain spec binds its path's last segment, `_` and `.` bind no qualifier.
+fn go_import_bindings(
+    sink: &FamilyBundle<CallF>,
+    strings: &Strings,
+) -> std::collections::HashMap<String, String> {
+    let mut bindings = std::collections::HashMap::new();
+    for specifier in &sink.aux.specifiers {
+        if !matches!(specifier.kind, SpecifierKind::Named) {
+            continue;
+        }
+        let name = strings.lookup(specifier.name);
+        let (binding, path) = match specifier.module {
+            Some(module) => (name.to_string(), strings.lookup(module).to_string()),
+            None => (
+                name.rsplit('/').next().unwrap_or(name).to_string(),
+                name.to_string(),
+            ),
+        };
+        bindings.insert(binding, path);
+    }
+    bindings
 }
 
 // ── module specifiers (CallFAux.specifiers) ─────────────────────────────────
@@ -822,34 +849,53 @@ fn go_walk_call_defs(
 // syntactic tier can't tell a conversion from a call). Port of v5
 /// `go_walk_call_sites` + `go_callee`. The site span is the CALLEE node's start
 /// (line_of(span.start) = v5's reported site line).
+/// `callee_path` is the import path when the selector's operand is a name an
+/// import binds; any other receiver is a value, whose type nothing here knows.
 fn go_walk_call_sites(
     node: tree_sitter::Node,
     src: &[u8],
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
+    imports: &std::collections::HashMap<String, String>,
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind() == "call_expression" {
             if let Some(func) = child.child_by_field_name("function") {
-                let callee = match func.kind() {
-                    "identifier" => Some(go_text(func, src).to_string()),
-                    "selector_expression" => func
-                        .child_by_field_name("field")
-                        .map(|field| go_text(field, src).to_string()),
-                    _ => None,
+                let (callee, path) = match func.kind() {
+                    "identifier" => (Some(go_text(func, src).to_string()), None),
+                    "selector_expression" => (
+                        func.child_by_field_name("field")
+                            .map(|field| go_text(field, src).to_string()),
+                        go_import_qualifier(func, src, imports),
+                    ),
+                    _ => (None, None),
                 };
                 if let Some(callee) = callee {
                     sink.aux.sites.push(CallSite {
                         span: node_span(func),
                         callee: strings.intern(&callee),
-                        callee_path: None,
+                        callee_path: path.map(|path| strings.intern(path)),
                     });
                 }
             }
         }
-        go_walk_call_sites(child, src, strings, sink);
+        go_walk_call_sites(child, src, strings, sink, imports);
     }
+}
+
+/// The import path a selector's operand names, when the operand is a bare
+/// identifier this file imported. `a.b.C()` and `value.M()` name none.
+fn go_import_qualifier<'a>(
+    selector: tree_sitter::Node,
+    src: &[u8],
+    imports: &'a std::collections::HashMap<String, String>,
+) -> Option<&'a str> {
+    let operand = selector.child_by_field_name("operand")?;
+    if operand.kind() != "identifier" {
+        return None;
+    }
+    imports.get(go_text(operand, src)).map(String::as_str)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
