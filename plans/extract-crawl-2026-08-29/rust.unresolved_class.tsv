@@ -1,0 +1,8 @@
+class	count	pct	top_file	top_file_count
+no_corpus_def	33446	37.4	crates/ide-db/src/generated/lints.rs	1841
+ambiguous_cross_crate	27267	30.5	crates/hir/src/lib.rs	724
+ambiguous_in_crate	15021	16.8	crates/syntax/src/ast/syntax_factory/constructors.rs	724
+single_def_cross_crate	9656	10.8	crates/hir/src/lib.rs	381
+resolve_timeout_file	3320	3.7	crates/syntax/src/ast/generated/nodes.rs	3320
+single_def_same_crate_MISS	396	0.4	crates/syntax/src/ast/syntax_factory/constructors.rs	229
+ambiguous_corpus_wide	394	0.4	crates/syntax/src/ast/syntax_factory/constructors.rs	87

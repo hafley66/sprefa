@@ -1,0 +1,53 @@
+label	family	files	bytes	rc	ms	rows	note
+crates/ide-assists	call,type	142	2558293	0	1244	7822	
+crates/hir-ty	call,type	137	3427150	0	3381	10708	
+crates/ide-diagnostics	call,type	81	614347	0	151	829	
+crates/ide	call,type	77	1629689	0	1558	4417	
+crates/hir-def	call,type	66	1463126	0	926	4385	
+crates/ide-completion	call,type	65	1045958	0	243	2260	
+crates/rust-analyzer	call,type	59	1241245	0	278	3124	
+crates/syntax	call,type	34	800151	124	10007	0	split
+crates/syntax.a	call,type	17	639843	124	10012	0	split
+crates/syntax.a.a	call,type	8	401514	124	10008	0	split
+crates/syntax.a.a.a	call,type	4	17009	0	146	68	
+crates/syntax.a.a.b	call,type	4	384505	124	10012	0	split
+crates/syntax.a.a.b.a	call,type	2	31306	0	114	134	
+crates/syntax.a.a.b.b	call,type	2	353199	124	10009	0	split
+crates/syntax.a.a.b.b.a	call,type	1	1087	0	111	3	
+crates/syntax.a.a.b.b.b	call,type	1	352112	124	10009	0	
+crates/syntax.a.b	call,type	9	238329	0	244	1759	
+crates/syntax.b	call,type	17	160308	0	117	706	
+crates/ide-db	call,type	33	1306967	0	243	1963	
+crates/parser	call,type	29	280382	0	124	2133	
+crates/hir-expand	call,type	20	352598	0	158	1124	
+xtask	call,type	20	177456	0	113	465	
+crates/hir	call,type	15	730657	0	1824	3279	
+crates/proc-macro-srv	call,type	15	109453	0	114	195	
+crates/project-model	call,type	14	236103	0	130	673	
+crates/stdx	call,type	13	75538	0	110	160	
+crates/ide-ssr	call,type	11	145323	0	117	406	
+crates/proc-macro-api	call,type	11	101956	0	112	295	
+lib/text-size	call,type	10	24795	0	100	80	
+crates/mbe	call,type	8	126914	0	110	473	
+crates/proc-macro-srv-cli	call,type	8	55066	0	104	119	
+crates/vfs	call,type	8	48248	0	107	204	
+lib/lsp-server	call,type	7	49052	0	100	136	
+crates/intern	call,type	6	61531	0	103	168	
+lib/smol_str	call,type	6	60424	0	111	314	
+crates/base-db	call,type	5	61001	0	108	285	
+crates/test-utils	call,type	5	109317	0	114	48	
+lib/ungrammar	call,type	5	15966	0	102	80	
+crates/cfg	call,type	4	37634	0	98	188	
+crates/profile	call,type	4	11894	0	102	28	
+crates/span	call,type	4	76910	0	105	171	
+crates/syntax-bridge	call,type	4	61023	0	112	149	
+crates/tt	call,type	4	93349	0	123	486	
+lib/la-arena	call,type	2	23182	0	103	126	
+lib/line-index	call,type	2	24376	0	104	55	
+crates/edition	call,type	1	2656	0	103	2	
+crates/load-cargo	call,type	1	38990	0	107	52	
+crates/macros	call,type	1	8053	0	101	4	
+crates/paths	call,type	1	11840	0	103	65	
+crates/test-fixture	call,type	1	40351	0	108	20	
+crates/toolchain	call,type	1	6192	0	105	10	
+crates/vfs-notify	call,type	1	15781	0	107	42	
