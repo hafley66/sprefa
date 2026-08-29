@@ -158,7 +158,7 @@ finish_string(Path, NodeId, Start, Index, Variables,
     string_codes(String, StringCodes),
     source_row(NodeId, Path, Start, End, Source).
 
-finish_symbol(Path, _, NodeId, Start, _, _, NameCodes, _, _,
+finish_symbol(Path, NodeId, Start, _, _, NameCodes, _, _,
               error(Diagnostic)) :-
     \+ valid_identifier_codes(NameCodes),
     !,

@@ -11,6 +11,30 @@ test(standalone_fixture_has_canonical_reader_snapshot) :-
     Observed = reader_result(Diagnostics, Snapshot),
     Observed == reader_result([], Expected).
 
+test(malformed_symbol_returns_one_positioned_diagnostic) :-
+    read_dl7('broken.dl7', "'\n", Forms, SourceRows, Diagnostics),
+    Observed = reader_result(Forms, SourceRows, Diagnostics),
+    Observed ==
+        reader_result(
+            [], [],
+            [ diagnostic(reader, 'broken.dl7',
+                         reader_node('broken.dl7', 0),
+                         expected_symbol_name,
+                         position(0, 1, 1))
+            ]).
+
+test(bad_symbol_name_returns_one_positioned_diagnostic) :-
+    read_dl7('broken.dl7', "'a<b", Forms, SourceRows, Diagnostics),
+    Observed = reader_result(Forms, SourceRows, Diagnostics),
+    Observed ==
+        reader_result(
+            [], [],
+            [ diagnostic(reader, 'broken.dl7',
+                         reader_node('broken.dl7', 0),
+                         invalid_symbol_name('a<b'),
+                         position(0, 1, 1))
+            ]).
+
 test(malformed_form_returns_one_positioned_diagnostic) :-
     read_dl7('broken.dl7', "(\n", Forms, SourceRows, Diagnostics),
     Observed = reader_result(Forms, SourceRows, Diagnostics),
