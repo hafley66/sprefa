@@ -22,9 +22,9 @@ ONE process, `~/projects/TypeScript-5.9`, `find src -name '*.ts' ! -name '*.d.ts
 | baseline (#566) | 59,311 | 41,547 | 70.05% | 70.00% | 7,638 | n/a | n/a |
 | after closure mirror (#575) | 65,974 | 46,380 | 70.30% | 78.14% | 7,638 | 3.14s | 384 MB |
 | after init receivers (#575) | 66,714 | 46,958 | 70.39% | 79.11% | 6,865 | 3.31s | 383 MB |
-| after A (imported receiver seats) | 68,975 | 49,060 | 71.13% | 82.65% | — | — | — |
-| after B (interface receivers) | 68,721 | 48,422 | 70.46% | 81.58% | — | — | — |
-| after C (destructured receivers) | 69,225 | 48,829 | 70.54% | 82.26% | — | — | — |
+| after A (imported receiver seats) | 68,975 | 49,060 | 71.13% | 82.65% | n/a | n/a | n/a |
+| after B (interface receivers) | 68,721 | 48,422 | 70.46% | 81.58% | n/a | n/a | n/a |
+| after C (destructured receivers) | 69,225 | 48,829 | 70.54% | 82.26% | n/a | n/a | n/a |
 | all three | 70,799 | 50,383 | 71.16% | 84.88% | 6,800 | 2.03s | 401 MB |
 
 The three A/B/C rows are LEAVE-ONE-OUT: each is the full build with that one
@@ -115,7 +115,7 @@ receipt for it does not hold: `grep Implements v6/sprefa-extract/src/lang/ts.rs`
 returns nothing, only the go arm emits that kind (`types.rs:446`).
 
 The oracle cannot contain an implementer edge. `plans/extract-bench-2026-08-29/oracle_ts.mjs:162-163`
-takes `checker.getResolvedSignature(node).declaration` — exactly ONE declaration
+takes `checker.getResolvedSignature(node).declaration` n/a exactly ONE declaration
 per call site, the signature the type checker resolved. For an interface-typed
 receiver that is the interface's method signature, which is why the 4,858
 oracle-only rows point at `types.ts`. Fan-out edges would therefore be
