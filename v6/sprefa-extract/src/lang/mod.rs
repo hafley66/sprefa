@@ -27,6 +27,7 @@ pub mod rust_mbe;
 pub mod rust_modules;
 pub mod rust_rehome;
 pub mod rust_rename;
+pub mod rust_scip_macros;
 pub mod ts;
 pub mod ts_paths;
 pub mod ts_rehome;

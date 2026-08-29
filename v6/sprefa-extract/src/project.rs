@@ -268,7 +268,7 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
 
     // One resolve per input, shared by the `call` arm and the `flow` join: the
     // N+1 law applied to work rather than to rows.
-    let resolved_calls: Vec<(ContentId, Vec<ProjectEdge<CallF>>)> =
+    let mut resolved_calls: Vec<(ContentId, Vec<ProjectEdge<CallF>>)> =
         if request.arms.call || request.arms.flow {
             inputs
                 .iter()
@@ -288,8 +288,34 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
             Vec::new()
         };
 
-    let targets = TargetIndex::build(&inputs);
+    // The scip macro post-pass: call edges for calls written inside macro
+    // invocations, which the per-file resolve never sees (the parse mints no
+    // site there). No scip index -> a no-op that emits nothing.
     let mut facts = Vec::new();
+    if request.arms.call {
+        let macro_files: Vec<crate::lang::rust_scip_macros::ScipMacroFile> = inputs
+            .iter()
+            .map(|input| crate::lang::rust_scip_macros::ScipMacroFile {
+                path: &input.path,
+                blob: &input.blob,
+                output: input.output.as_ref(),
+            })
+            .collect();
+        for row in crate::lang::rust_scip_macros::mint_macro_edges(
+            &macro_files,
+            &cx,
+            &mut resolved_calls,
+        ) {
+            facts.push(FlatFact::Site {
+                family: crate::shape::FamilyTag::Call,
+                span: crate::wire::SpanOut::new(row.span.start, row.span.end()),
+                callee: row.macro_name,
+                callee_path: Some(row.source.to_string()),
+            });
+        }
+    }
+
+    let targets = TargetIndex::build(&inputs);
     if request.arms.call {
         for (input, (_, edges)) in inputs.iter().zip(resolved_calls.iter()) {
             cx.own.replace(Some(input.blob.clone()));
