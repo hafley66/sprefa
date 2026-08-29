@@ -1,0 +1,9 @@
+path	rc	ms	bytes	lines	maxrss_b
+tests/cases/fourslash/reallyLargeFile.ts	0	435	3502391	1167442	242040832
+tests/cases/compiler/binderBinaryExpressionStress.ts	0	170	39935	63065	98680832
+tests/cases/compiler/binderBinaryExpressionStressJs.ts	0	174	39969	63069	98009088
+tests/cases/compiler/largeControlFlowGraph.ts	0	84	140192	130018	24363008
+tests/cases/compiler/resolvingClassDeclarationWhenInBaseTypeResolution.ts	0	54	125873	65409	16269312
+tests/cases/compiler/unionSubtypeReductionErrors.ts	0	58	114699	69083	17973248
+tests/cases/compiler/manyConstExports.ts	0	57	153907	70003	20840448
+tests/cases/fourslash/codeFixClassImplementInterfaceNoTruncation.ts	0	61	4024809	91	34603008
