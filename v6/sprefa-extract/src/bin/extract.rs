@@ -276,6 +276,27 @@ fn stream_scip_family(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Every mode but `--family scip` takes source FILES. A directory or a missing
+/// path reaches the library as an `io::Error` Debug dump that names no cause.
+fn check_file_paths(paths: &[PathBuf]) {
+    for path in paths {
+        let stop = if path.is_dir() {
+            format!(
+                "{} is a directory; --resolve takes files, so expand the tree \
+                 with a shell glob or find",
+                path.display()
+            )
+        } else if !path.exists() {
+            format!("{} does not exist", path.display())
+        } else {
+            continue;
+        };
+        // @eprintln-ok: CLI-UX argument error, off the fact stream, exit 2.
+        eprintln!("extract: {stop}");
+        std::process::exit(2);
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let summary = sprefa_extract::trace::install();
     let outcome = run();
@@ -318,7 +339,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // The two named families are whole-project modes, so they are dispatched
     // before every per-file path below.
-    match family_mode(cli.family.as_deref())? {
+    let mode = family_mode(cli.family.as_deref())?;
+    // `--family scip` takes a ROOT directory; every other mode takes files.
+    if !matches!(mode, Some(FamilyMode::Scip)) {
+        check_file_paths(&cli.paths);
+    }
+    match mode {
         Some(FamilyMode::Scip) => {
             stream_scip_family(&cli)?;
             return Ok(());

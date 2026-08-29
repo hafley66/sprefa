@@ -63,3 +63,35 @@ Exposed core scaling: n=25 445 ms, n=50 562 ms, n=100 700 ms (linear). `--resolv
 - `--family scip`: no Kotlin/Prolog/Markdown indexer exists in EXACT MODE (`extract --help` lists rust-analyzer, scip-typescript, scip-go).
 - `--family diet_scip`: same records as `--resolve` for these arms; skipped.
 - Kotlin `extract move` / rename: outside the fact-battery scope.
+
+## 7. Fixes (lane `fix-extract-resolve-door`)
+Landed against the resolve door and the CLI. Every row's test is in
+`v6/sprefa-extract/tests/47_resolve_door_cli.rs`; whole crate after:
+`cargo test --features cli --no-fail-fast` 372 passed, 0 failed, 2 ignored.
+
+| finding | before | after | test |
+|---|---|---|---|
+| markdown `doc_ref` absent from the CLI (this report, section 5) | `--resolve --family type doc_node.md <corpus>`: 0 `doc_ref` rows, 1 from the library API | 1 row, `owner_name=Engine`, `target_path=tests/fixtures/rust/sample.rs`, equal to the library count | `resolve_cli_reaches_the_markdown_doc_ref_arm` |
+| python F1 (`python.REPORT.md:275`) | `Widget()` edge carries `callee_name: null` | `callee_name: "Widget"`; no null callee in the fixture pair | `resolve_cli_names_a_class_constructor_callee` |
+| ts F9 (`ts.REPORT.md:406`) | `--resolve <dir>` rc=1, `Error: Read("src", Custom { kind: Other, ... })` | rc=2, `extract: <path> is a directory; --resolve takes files, so expand the tree with a shell glob or find` | `resolve_cli_names_a_directory_plainly` |
+| ts F10 (`ts.REPORT.md:407`) | `--help` said "Needs two or more paths"; one path exits 0 | help states one path is a legal universe; the behaviour is unchanged and correct | `resolve_cli_accepts_one_path_and_says_so` |
+| ts F6 (`ts.REPORT.md:403`) | `--schema` lists `unresolved`, `--resolve` never emits it, nothing says so | help states `--resolve` carries phase-2 records only and names the per-file door for the rest | `resolve_cli_documents_the_phase_one_records_it_drops` |
+
+Two rows above are doc fixes rather than behaviour changes, and both were the
+finding's own stated alternative:
+
+- F10 asked for exit 2 on a single path. That contradicts a green golden:
+  `tests/1_resolve_cli.rs:52` runs `--resolve <one kotlin file>` and pins its
+  same-file call edges. One path is a legal resolution universe, so the help
+  sentence was the wrong half.
+- F6 asked for `unresolved` rows in `--resolve`. The record has no path field
+  (`src/wire.rs:290`), so in a multi-file phase-2 stream it cannot name the file
+  it came from and the row would be unjoinable. Adding one needs a wire-shape
+  change in `src/wire.rs` and `src/types.rs`, outside this lane's ownership, and
+  it would break the byte-exact golden at `tests/20_unresolved.rs`.
+
+Also fixed in the same pass: a missing path now exits 2 with
+`extract: <path> does not exist` instead of the same Debug dump, and the check
+runs for every mode that takes files (`--resolve`, `--deps`, `--package-deps`,
+`--scip-deps`, `--scip-facts`, `--family diet_scip`, per-file). `--family scip`
+is exempt: it takes a ROOT directory.

@@ -66,9 +66,18 @@ FAST MODE: --family diet_scip PATH...
 
 CROSS-FILE RESOLUTION: --resolve PATH...
   Extract every supplied file, build one definition index, emit resolved edges.
-  Needs two or more paths. Under --resolve, --family picks which edges: `call`
-  (default) emits resolved_edge, `type` emits resolved_type_edge, `call,type`
-  both.
+  Under --resolve, --family picks which edges: `call` (default) emits
+  resolved_edge, `type` emits resolved_type_edge, `call,type` both.
+
+  The paths ARE the resolution universe: a name that resolves outside them is
+  not emitted. One path is a legal universe and resolves that file's edges into
+  itself. Pass files, never directories; expand a tree with a glob or find.
+
+  The stream carries phase-2 records only (resolved_edge, resolved_type_edge,
+  flow_edge), never the per-file phase-1 records `--schema` also lists (node,
+  edge, sig, site, specifier, unresolved and the rest). Those carry no path
+  field, so they cannot name their file in a multi-file stream; get them one
+  file at a time from a plain `extract FILE`.
 
   Add `--project-root DIR` plus `--scip-index FILE` (an index you already have)
   or `--scip-build` (build one first) to put a compiler index in the loop; the

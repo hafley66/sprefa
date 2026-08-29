@@ -537,7 +537,7 @@ fn read_inputs_plain(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, ProjectErro
                 let content =
                     std::fs::read(path).map_err(|err| ProjectError::Read(path.clone(), err))?;
                 let path = path.to_string_lossy().to_string();
-                let output = crate::dispatch(&path, &content, FamilyMask::ALL);
+                let output = crate::dispatch(&path, &content, resolve_mask(&path));
                 Ok(output.map(|output| ProjectInput {
                     blob: content_id_of(&content),
                     path,
@@ -580,7 +580,7 @@ fn read_inputs_batched(
                     ));
                 };
                 let path = path.to_string_lossy().to_string();
-                let output = crate::dispatch(&path, content, FamilyMask::ALL);
+                let output = crate::dispatch(&path, content, resolve_mask(&path));
                 Ok(output.map(|output| ProjectInput {
                     blob: content_id_of(content),
                     path,
@@ -698,12 +698,43 @@ fn scip_source_for(inputs: &[ProjectInput]) -> Result<&'static dyn ScipSource, P
     }
 }
 
+/// Which types plane an arm's `Resolve<TypeF>` reads. Picks BOTH the phase-1
+/// mask that produces the plane and the vector `src` indexes.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TypePlane {
+    /// `src` indexes `FamilyBundle::nodes`; the plane rides `FamilyMask::ALL`.
+    Nodes,
+    /// `src` indexes `TypeFAux::doc_nodes` (`lang/markdown/_0_source.rs:266`),
+    /// projected only with cst OFF (`lang/markdown/_0_source.rs:142`).
+    DocNodes,
+}
+
+impl TypePlane {
+    /// The phase-1 mask that produces this plane. `FamilyMask::ALL` leaves the
+    /// doc plane empty, so a resolve read of it has to state its own mask.
+    pub fn mask(self) -> FamilyMask {
+        match self {
+            TypePlane::Nodes => FamilyMask::ALL,
+            TypePlane::DocNodes => FamilyMask {
+                cst: false,
+                types: true,
+                call: false,
+                df: false,
+                data: false,
+            },
+        }
+    }
+}
+
 /// One roster entry's phase-2 arms. `None` means the language has no impl:
 /// `Resolve::resolve` is non-defaulted, so a missing arm cannot be dispatched.
 pub struct ResolveArm {
     pub name: &'static str,
     pub call: Option<fn(&ExtractOutput, &ProjectCx) -> Vec<ProjectEdge<CallF>>>,
     pub types: Option<fn(&ExtractOutput, &ProjectCx) -> Vec<ProjectEdge<TypeF>>>,
+    /// Which types plane the `types` arm reads. Also the phase-1 mask
+    /// `read_inputs` dispatches this language under.
+    pub type_plane: TypePlane,
 }
 
 /// One row per `Source` in `lang::sources()`; an impl with no row here is
@@ -713,58 +744,74 @@ pub static RESOLVE_ARMS: &[ResolveArm] = &[
         name: "ts",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&TsSource, out, cx)),
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&TsSource, out, cx)),
+        type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "rust",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&RustSource, out, cx)),
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&RustSource, out, cx)),
+        type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "go",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&GoSource, out, cx)),
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&GoSource, out, cx)),
+        type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "dl6",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&DlSource, out, cx)),
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&DlSource, out, cx)),
+        type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "kotlin",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&KotlinSource, out, cx)),
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&KotlinSource, out, cx)),
+        type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "prolog",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&PrologSource, out, cx)),
         types: None,
+        type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "python",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&PythonSource, out, cx)),
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&PythonSource, out, cx)),
+        type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "markdown",
         call: None,
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&MarkdownSource, out, cx)),
+        type_plane: TypePlane::DocNodes,
     },
     // Nothing on the data plane names another file, so it resolves nothing.
     ResolveArm {
         name: "data",
         call: None,
         types: None,
+        type_plane: TypePlane::Nodes,
     },
     ResolveArm {
         name: "astgrep",
         call: None,
         types: None,
+        type_plane: TypePlane::Nodes,
     },
 ];
 
 fn arm_for(path: &str) -> Option<&'static ResolveArm> {
     let name = source_for(path).map(Source::name)?;
     RESOLVE_ARMS.iter().find(|arm| arm.name == name)
+}
+
+/// The phase-1 mask one path is extracted under for a project resolve: whatever
+/// its arm's types plane needs, and `FamilyMask::ALL` for every path with no arm.
+fn resolve_mask(path: &str) -> FamilyMask {
+    arm_for(path).map_or(FamilyMask::ALL, |arm| arm.type_plane.mask())
 }
 
 fn resolve_call_edges(
@@ -870,6 +917,13 @@ fn name_at(names: Option<&SpanNames>, output: &ExtractOutput, span: Span) -> Opt
         .map(|name| output.strings.lookup(name).to_string())
 }
 
+/// The callee's declared name at `span`. A constructor resolves to a class,
+/// which is a TypeF def and never a CallF one, so the call table alone answers null.
+fn callee_name(targets: &TargetIndex<'_>, target: &ProjectInput, span: Span) -> Option<String> {
+    name_at(targets.call_names.get(&target.blob), &target.output, span)
+        .or_else(|| name_at(targets.type_names.get(&target.blob), &target.output, span))
+}
+
 fn call_facts(
     input: &ProjectInput,
     targets: &TargetIndex<'_>,
@@ -886,11 +940,7 @@ fn call_facts(
                 caller_path: input.path.clone(),
                 caller_name: Some(caller_name(call, &input.output, edge.src)),
                 callee_path: target.path.clone(),
-                callee_name: name_at(
-                    targets.call_names.get(&target.blob),
-                    &target.output,
-                    edge.dst_span,
-                ),
+                callee_name: callee_name(targets, target, edge.dst_span),
                 caller_site_start: edge.call_site.map_or(0, |span| span.start),
                 caller_site_end: edge.call_site.map_or(0, |span| span.end()),
                 kind: edge.kind.as_str().to_string(),
@@ -899,18 +949,42 @@ fn call_facts(
         .collect()
 }
 
+/// One `Resolve<TypeF>` edge's owner span and the name declared there. A
+/// doc-plane owner is a heading: it carries its own name, out of the span table.
+fn type_owner(
+    plane: TypePlane,
+    input: &ProjectInput,
+    types: &FamilyBundle<TypeF>,
+    names: Option<&SpanNames>,
+    src: crate::shape::NodeRef,
+) -> Option<(Span, Option<String>)> {
+    match plane {
+        TypePlane::Nodes => {
+            let span = types.nodes.get(src.0 as usize)?.span;
+            Some((span, name_at(names, &input.output, span)))
+        }
+        TypePlane::DocNodes => {
+            let node = types.aux.doc_nodes.get(src.0 as usize)?;
+            let name = input.output.strings.lookup(node.name).to_string();
+            Some((node.span, Some(name)))
+        }
+    }
+}
+
 fn type_facts(input: &ProjectInput, targets: &TargetIndex<'_>, cx: &ProjectCx) -> Vec<FlatFact> {
     let Some(types) = input.output.types.as_ref() else {
         return Vec::new();
     };
+    let plane = arm_for(&input.path).map_or(TypePlane::Nodes, |arm| arm.type_plane);
     resolve_type_edges(&input.path, &input.output, cx)
         .iter()
         .filter_map(|edge| {
             let target = targets.input(&edge.dst_blob)?;
-            let owner = types.node(edge.src).span;
+            let names = targets.type_names.get(&input.blob);
+            let (owner, owner_name) = type_owner(plane, input, types, names, edge.src)?;
             Some(FlatFact::ResolvedTypeEdge {
                 owner_path: input.path.clone(),
-                owner_name: name_at(targets.type_names.get(&input.blob), &input.output, owner),
+                owner_name,
                 owner_start: owner.start,
                 owner_end: owner.end(),
                 target_path: target.path.clone(),
