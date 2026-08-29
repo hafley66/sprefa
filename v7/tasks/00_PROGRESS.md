@@ -1,6 +1,6 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-29 12:18 EDT
+Updated: 2026-08-29 13:08 EDT
 
 ## Current execution state
 
@@ -12,9 +12,12 @@ userland Partial                      done
 compiler stage split                  done
 engine seam contract                  done
 
-                     ┌-> relational cons ───────────┐
-compiler split ──────┼-> stratified negation -> count ─> Pick/Exclude
-                     └-> layout -> ProgramJson ────────> engine smoke
+semantic rulings -> checked foundation -> relational cons
+                                      \-> ordered index
+relational cons -> stratified negation -> count
+ordered index + count + negation -> Pick/Exclude
+
+layout rulings -> layout -> ProgramJson -> engine smoke
 ```
 
 - Runtime shootout landed through `1f1a67a30`: SBCL, SWI, and Racket all
@@ -31,13 +34,21 @@ compiler split ──────┼-> stratified negation -> count ─> Pick/Ex
   `f86f924a2`. Nonblank, noncomment lines are 287 in `0_lowerer.pl`, 293 in
   `1_checker.pl`, and 91 in `2_compiler.pl`. Predicate-name inventory is
   unchanged; SWI passed 7 of 7 and Tree-sitter passed 1 of 1.
-- The extension DAG landed as `bf2f2bc4c`. `@dl7-relational-cons` and
-  `@dl7-stratified-negation` are unblocked; `@dl7-count-aggregate` follows
-  negation; Pick/Exclude follows all three. `@dl7-layout-planner` is also
-  unblocked and runs independently.
-- Active agents at this entry: Sol review of the Datalog extension boundaries,
-  Terra layout planning, Luna commercial Common Prolog research, and Terra
-  logadat execution.
+- The extension review landed as `780e2bfaa`. It found that checked-goal
+  polarity, authored-order mode safety, functional keys, closure validation,
+  and pure stratification must land together before cons, negation, or count.
+  Count also needs an ordered-index source and explicit zero-rank handling to
+  support Pick and Exclude.
+- The corrected issue graph landed as `57a9d24c9`. Semantic choices are held in
+  `@dl7-datalog-rulings`; implementation cards depend on that ruling task and
+  no Datalog implementation worker is active.
+- The layout blocker landed as `1c0a28475`. Checked Datalog has no rows for
+  stored-relation selection, `set|log`, physical keys and types, target names,
+  DDL ownership, runtime statements, or seed placement. These choices are held
+  in `@dl7-layout-rulings`, and the layout planner depends on it.
+- Commercial Common Prolog research landed as `dd100f858`. The active
+  independent work is the executable `16_logadat` lab, followed by
+  `17_si_kanren`.
 
 ## Tree-sitter parser replacement
 
