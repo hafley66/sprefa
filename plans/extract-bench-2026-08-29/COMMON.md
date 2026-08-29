@@ -13,7 +13,7 @@ Corpora (read-only, never modify):
 
 First action in every lane:
 ```
-git merge --ff-only 6837b823318009e6084be0e2b9517ba2e0b08c12
+git merge --ff-only 136a28bc9439efea8676f10d7e61f513f0471b95
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Binary: `v6/sprefa-extract/target/release/extract` in YOUR worktree. Every
