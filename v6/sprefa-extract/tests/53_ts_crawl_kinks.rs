@@ -119,11 +119,13 @@ fn an_array_push_does_not_bind_to_a_free_function_named_push() {
     );
 }
 
-/// The PR #538 face of the same kink: the unrelated `push` is a class METHOD.
-/// The def index carries no `CallKind`, so the receiver is the only signal that
-/// separates the two, and both must go.
+/// The RESIDUE the narrowed rule accepts, and the PR #538 face of the kink: an
+/// unrelated `push` that is a class METHOD keeps its edge. Blocking it too
+/// costs 5 defs of entrypoint reachability over TypeScript 5.9 and drops 290
+/// more edges (report section 9.2); the coordinator's rule is method-or-nothing,
+/// so this asserts the accepted false positive rather than pretending it is gone.
 #[test]
-fn an_array_push_does_not_bind_to_a_method_named_push() {
+fn an_array_push_still_binds_to_a_class_method_named_push() {
     assert_eq!(
         edges(&[
             "--resolve",
@@ -132,7 +134,27 @@ fn an_array_push_does_not_bind_to_a_method_named_push() {
             "tests/fixtures/ts_findings/receiver_blind_method/consumer.ts",
             "tests/fixtures/ts_findings/receiver_blind_method/writer.ts",
         ]),
-        [] as [(String, String); 0]
+        [
+            ("collect".to_string(), "push".to_string()),
+            ("collect".to_string(), "push".to_string()),
+        ]
+    );
+}
+
+/// A member call on an unknown receiver whose callee is NOT a builtin member
+/// name keeps its name match: `program.getTypeChecker()` is 173 edges over
+/// TypeScript 5.9 and every one of them is right.
+#[test]
+fn a_non_builtin_member_name_keeps_its_match() {
+    assert_eq!(
+        edges(&[
+            "--resolve",
+            "--family",
+            "call",
+            "tests/fixtures/ts5_findings/user_api_receiver/consumer.ts",
+            "tests/fixtures/ts5_findings/user_api_receiver/program.ts",
+        ]),
+        [("run".to_string(), "getTypeChecker".to_string())]
     );
 }
 
@@ -190,6 +212,36 @@ fn a_function_named_as_a_value_mints_a_reference_row() {
     .map(|row| (text(row, "functor"), text(row, "position")))
     .collect();
     assert_eq!(refs, [("handler".to_string(), "value".to_string())]);
+}
+
+/// The resolve leg: the reference resolves to a `value_ref` edge from the def
+/// that names it, so a crawl walks INTO `handler` from `register`.
+#[test]
+fn a_value_reference_resolves_to_a_value_ref_edge() {
+    let rows: Vec<(String, String, String)> = run(&[
+        "--resolve",
+        "--family",
+        "call",
+        "tests/fixtures/ts5_findings/function_ref_as_value.ts",
+    ])
+    .iter()
+    .filter(|row| row["record"] == "resolved_edge")
+    .map(|row| {
+        (
+            text(row, "caller_name"),
+            text(row, "callee_name"),
+            text(row, "kind"),
+        )
+    })
+    .collect();
+    assert_eq!(
+        rows,
+        [(
+            "register".to_string(),
+            "handler".to_string(),
+            "value_ref".to_string()
+        )]
+    );
 }
 
 /// The row is minted for a name this file DECLARES or IMPORTS. A bare argument

@@ -453,6 +453,9 @@ pub enum CallEdgeKind {
     NameResolve,
     /// SCIP overrode the AST name-match.
     ScipOverride,
+    /// A callable NAMED as a value, never called at that spot: the edge a
+    /// `position=value` reference row resolves to.
+    ValueRef,
 }
 
 impl CallEdgeKind {
@@ -460,6 +463,7 @@ impl CallEdgeKind {
         match self {
             CallEdgeKind::NameResolve => "name_resolve",
             CallEdgeKind::ScipOverride => "scip_override",
+            CallEdgeKind::ValueRef => "value_ref",
         }
     }
 }
@@ -1457,6 +1461,7 @@ pub struct IndexBag {
     pub scip_index: std::sync::OnceLock<ScipIndex>,
     pub joined_documents: std::sync::OnceLock<Vec<Option<(ContentId, Vec<u8>)>>>,
     pub paths: std::sync::OnceLock<PathIndex>,
+    pub kinds: std::sync::OnceLock<KindIndex>,
 }
 
 /// Blob -> supplied path, for the whole resolve universe. Built ONCE per
@@ -1478,6 +1483,35 @@ pub fn build_path_index<'a>(inputs: impl IntoIterator<Item = (ContentId, &'a str
     let mut index = PathIndex::default();
     for (blob, path) in inputs {
         index.map.entry(blob).or_insert_with(|| path.to_string());
+    }
+    index
+}
+
+/// Blob + def span -> that def's `CallKind`, for the whole resolve universe.
+/// `DefSite` carries the family leg but not the kind, and a receiver-blind
+/// name match has to know whether a candidate is a class member.
+#[derive(Clone, Debug, Default)]
+pub struct KindIndex {
+    pub map: std::collections::HashMap<(ContentId, Span), CallKind>,
+}
+
+impl KindIndex {
+    pub fn get(&self, blob: &ContentId, span: Span) -> Option<CallKind> {
+        self.map.get(&(blob.clone(), span)).copied()
+    }
+}
+
+/// Build the `KindIndex` ONCE per refresh, from the same phase-1 outputs
+/// `build_def_index` reads. CallF nodes only: TypeF entities carry a different
+/// kind vocabulary.
+pub fn build_kind_index(outputs: &[(ContentId, &ExtractOutput)]) -> KindIndex {
+    let mut index = KindIndex::default();
+    for (blob, output) in outputs {
+        if let Some(call) = &output.call {
+            for node in &call.nodes {
+                index.map.insert((blob.clone(), node.span), node.kind);
+            }
+        }
     }
     index
 }

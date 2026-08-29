@@ -780,6 +780,9 @@ fn deferred_and_v6_only_ledger() {
                         match edge.kind {
                             CallEdgeKind::NameResolve => name_resolve += 1,
                             CallEdgeKind::ScipOverride => scip_override += 1,
+                            // A value reference has no site, so no occurrence
+                            // for the scip ratchet to compare against.
+                            CallEdgeKind::ValueRef => {}
                         }
                     }
                 }
@@ -788,6 +791,9 @@ fn deferred_and_v6_only_ledger() {
                         match edge.kind {
                             CallEdgeKind::NameResolve => name_resolve += 1,
                             CallEdgeKind::ScipOverride => scip_override += 1,
+                            // A value reference has no site, so no occurrence
+                            // for the scip ratchet to compare against.
+                            CallEdgeKind::ValueRef => {}
                         }
                     }
                 }
@@ -796,6 +802,9 @@ fn deferred_and_v6_only_ledger() {
                         match edge.kind {
                             CallEdgeKind::NameResolve => name_resolve += 1,
                             CallEdgeKind::ScipOverride => scip_override += 1,
+                            // A value reference has no site, so no occurrence
+                            // for the scip ratchet to compare against.
+                            CallEdgeKind::ValueRef => {}
                         }
                     }
                 }
@@ -925,6 +934,9 @@ fn call_resolve_scip_ratchet_ts() {
         let edges = Resolve::<sprefa_extract::CallF>::resolve(&TsSource, out, &cx);
         let mut actual: Vec<(u32, u32, u32, &'static str, ContentId)> = edges
             .iter()
+            // The ratchet grades SITE outcomes against scip occurrences; a
+            // value reference is not a site and has no occurrence.
+            .filter(|edge| edge.kind != CallEdgeKind::ValueRef)
             .map(|edge| {
                 let from = call.node(edge.src).span;
                 (
@@ -1026,6 +1038,9 @@ fn call_resolve_scip_ratchet_ts() {
                 (Some((_, _, CallEdgeKind::ScipOverride)), None) => {
                     panic!("override without a scip corpus target at {rel}:{line} {callee}");
                 }
+                // A value reference is not a call site: no occurrence, so the
+                // scip ratchet has nothing to classify it against.
+                (Some((_, _, CallEdgeKind::ValueRef)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(
@@ -1216,6 +1231,9 @@ fn call_resolve_scip_ratchet_go() {
         let edges = Resolve::<sprefa_extract::CallF>::resolve(&GoSource, out, &cx);
         let mut actual: Vec<(u32, u32, u32, &'static str, ContentId)> = edges
             .iter()
+            // The ratchet grades SITE outcomes against scip occurrences; a
+            // value reference is not a site and has no occurrence.
+            .filter(|edge| edge.kind != CallEdgeKind::ValueRef)
             .map(|edge| {
                 let from = call.node(edge.src).span;
                 (
@@ -1317,6 +1335,9 @@ fn call_resolve_scip_ratchet_go() {
                 (Some((_, _, CallEdgeKind::ScipOverride)), None) => {
                     panic!("override without a scip corpus target at {rel}:{line} {callee}");
                 }
+                // A value reference is not a call site: no occurrence, so the
+                // scip ratchet has nothing to classify it against.
+                (Some((_, _, CallEdgeKind::ValueRef)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(
@@ -1495,6 +1516,9 @@ fn call_resolve_scip_ratchet_rust() {
         let edges = Resolve::<sprefa_extract::CallF>::resolve(&RustSource, out, &cx);
         let mut actual: Vec<(u32, u32, u32, &'static str, ContentId)> = edges
             .iter()
+            // The ratchet grades SITE outcomes against scip occurrences; a
+            // value reference is not a site and has no occurrence.
+            .filter(|edge| edge.kind != CallEdgeKind::ValueRef)
             .map(|edge| {
                 let from = call.node(edge.src).span;
                 (
@@ -1598,6 +1622,9 @@ fn call_resolve_scip_ratchet_rust() {
                 (Some((_, _, CallEdgeKind::ScipOverride)), None) => {
                     panic!("override without a scip corpus target at {rel}:{line} {callee}");
                 }
+                // A value reference is not a call site: no occurrence, so the
+                // scip ratchet has nothing to classify it against.
+                (Some((_, _, CallEdgeKind::ValueRef)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(

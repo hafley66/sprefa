@@ -38,7 +38,7 @@ use crate::shape::{ContentId, FamilyTag, NameId, NodeRef, Span, Strings, ZERO_CO
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
 use crate::types::LangKind;
-use crate::types::ScipIndex;
+use crate::types::{KindIndex, ScipIndex};
 use crate::types::{RefPosition, Reference, Unresolved, UnresolvedReason};
 
 /// `oxc_span::Span` (start + end) -> our byte `Span` (start + len). One
@@ -3485,6 +3485,46 @@ fn containing_ts_def(index: &DefIndex, blob: ContentId, span: Span) -> Option<(&
     best
 }
 
+/// ECMAScript standard-library member and global-object function names. A
+/// member call on an unknown receiver spelling one of these names a builtin,
+/// never the corpus function that happens to share the spelling.
+const BUILTIN_MEMBERS: &[&str] = &[
+    "abs", "add", "all", "allSettled", "any", "apply", "assign", "at", "atan2", "bind", "call",
+    "catch", "cbrt", "ceil", "charAt", "charCodeAt", "clear", "clz32", "codePointAt", "concat",
+    "copyWithin", "create", "defineProperties", "defineProperty", "endsWith", "every", "exec",
+    "exp", "fill", "fill", "filter", "finally", "find", "findIndex", "findLast", "findLastIndex",
+    "flat", "flatMap", "floor", "forEach", "freeze", "fromCharCode", "fromCodePoint",
+    "fromEntries", "fround", "getOwnPropertyDescriptor", "getOwnPropertyDescriptors",
+    "getOwnPropertyNames", "getOwnPropertySymbols", "getPrototypeOf", "hasOwnProperty", "hypot",
+    "imul", "includes", "indexOf", "isExtensible", "isFinite", "isFrozen", "isInteger", "isNaN",
+    "isPrototypeOf", "isSafeInteger", "isSealed", "join", "lastIndexOf", "localeCompare", "log",
+    "log10", "log2", "map", "match", "matchAll", "max", "min", "normalize", "padEnd", "padStart",
+    "parse", "parseFloat", "parseInt", "pop", "pow", "preventExtensions",
+    "propertyIsEnumerable", "push", "race", "random", "reduce", "reduceRight", "repeat",
+    "replace", "replaceAll", "reverse", "round", "search", "seal", "setPrototypeOf", "shift",
+    "sign", "slice", "some", "sort", "splice", "sqrt", "startsWith", "stringify", "substr",
+    "substring", "test", "toExponential", "toFixed", "toISOString", "toLocaleString",
+    "toLowerCase", "toPrecision", "toString", "toUpperCase", "trim", "trimEnd", "trimStart",
+    "trunc", "unshift", "valueOf",
+];
+
+/// Whether the name match at `target` is a receiver-blind mismatch: a member
+/// call whose receiver names no scope this file can see, spelling a builtin
+/// member name, bound to something that is not a class member.
+fn receiver_blind_builtin(
+    output: &ExtractOutput,
+    call: &FamilyBundle<CallF>,
+    site: &CallSite,
+    callee: &str,
+    kinds: Option<&KindIndex>,
+    target: &(ContentId, Span),
+) -> bool {
+    if !BUILTIN_MEMBERS.contains(&callee) || !unknown_receiver(output, call, site) {
+        return false;
+    }
+    kinds.and_then(|index| index.get(&target.0, target.1)) != Some(CallKind::Method)
+}
+
 /// Whether a site's receiver names no scope this file can see, which makes the
 /// trailing segment `call_name_match` reads (`out.push`) mean nothing.
 fn unknown_receiver(output: &ExtractOutput, call: &FamilyBundle<CallF>, site: &CallSite) -> bool {
@@ -3512,6 +3552,7 @@ impl Resolve<CallF> for TsSource {
         let Some(def_index) = cx.indexes.def_index.get() else {
             return Vec::new();
         };
+        let kinds = cx.indexes.kinds.get();
         // The scip leg: the corpus index + the rev-correct reader + this
         // file's own document (found by content hash). Any missing piece ->
         // pure name-match (v5-shaped).
@@ -3540,9 +3581,8 @@ impl Resolve<CallF> for TsSource {
             };
             let callee = output.strings.lookup(site.callee);
             // The scip leg keeps its answer: it types the receiver, this does not.
-            let name_t = (!unknown_receiver(output, call, site))
-                .then(|| TsSource::call_name_match(output, def_index, callee))
-                .flatten();
+            let name_t = TsSource::call_name_match(output, def_index, callee)
+                .filter(|t| !receiver_blind_builtin(output, call, site, callee, kinds, t));
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
             });
@@ -3558,6 +3598,24 @@ impl Resolve<CallF> for TsSource {
             };
             edges
                 .push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
+        }
+        // A callable NAMED as a value: no site, so no scip occurrence to
+        // consult, and the name match is the whole answer.
+        for reference in &call.aux.refs {
+            if reference.position != RefPosition::Value {
+                continue;
+            }
+            let Some(caller) = covering_def(call, reference.span) else {
+                continue;
+            };
+            let named = output.strings.lookup(reference.functor);
+            let Some((blob, span)) = TsSource::call_name_match(output, def_index, named) else {
+                continue;
+            };
+            edges.push(
+                ProjectEdge::new(caller, blob, span, CallEdgeKind::ValueRef)
+                    .with_call_site(reference.span),
+            );
         }
         edges
     }
