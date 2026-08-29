@@ -7,7 +7,7 @@ measured defects after the go module plane (#558), both on
 
 ## First action
 ```
-git merge --ff-only ab463868deb7a2d166bb69f83d0d48d6d7041769
+git merge --ff-only fd930b3325195b2bfa2c439e3a0936169042ba35
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Binary: `v6/sprefa-extract/target/release/extract` in YOUR worktree.
