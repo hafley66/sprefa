@@ -7,7 +7,7 @@ read it with `git show dae353d75:<path>`, copy code from it freely).
 
 ## First action
 ```
-git merge --ff-only 0debe6e50ef20c7ab2448577b1aadde33a7c2fc1
+git merge --ff-only bd0266113020fca5dea42266ed30e0c2cfb6dab8
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Failure: STOP, `boop beep --no-wait --as feature-extract-rust-mbe sprefa-coordinator "<one line>"`.
