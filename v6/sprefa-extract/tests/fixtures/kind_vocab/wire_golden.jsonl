@@ -6033,11 +6033,14 @@
 {"record":"doc","family":"type","owner":{"start":727,"end":775},"parent":null,"text":"Trim returns its input unchanged."}
 {"record":"doc","family":"type","owner":{"start":882,"end":992},"parent":null,"text":"MakeEngine builds an Engine from a name.\nA second doc line, to exercise the multi-line block walk."}
 {"record":"doc","family":"type","owner":{"start":1023,"end":1089},"parent":"Engine","text":"Mode picks the fast mode."}
+{"record":"node","family":"call","span":{"start":636,"end":646},"kind":"method","name":"Size"}
 {"record":"node","family":"call","span":{"start":727,"end":775},"kind":"function","name":"Trim"}
 {"record":"node","family":"call","span":{"start":882,"end":992},"kind":"function","name":"MakeEngine"}
 {"record":"node","family":"call","span":{"start":1023,"end":1089},"kind":"method","name":"Mode"}
 {"record":"site","family":"call","span":{"start":932,"end":936},"callee":"Trim","callee_path":null}
 {"record":"site","family":"call","span":{"start":1065,"end":1069},"callee":"Mode","callee_path":null}
+{"record":"method_owner","family":"call","owner":{"start":636,"end":646},"self_type":"Sizer","trait":null}
+{"record":"method_owner","family":"call","owner":{"start":1023,"end":1089},"self_type":"Engine","trait":null}
 {"record":"node","family":"df","span":{"start":737,"end":742},"kind":"param","name":"value"}
 {"record":"node","family":"df","span":{"start":768,"end":773},"kind":"var_read","name":"value"}
 {"record":"node","family":"df","span":{"start":768,"end":773},"kind":"ret","name":null}
@@ -6397,8 +6400,13 @@
 {"record":"node","family":"type","span":{"start":961,"end":1047},"kind":"struct","name":"Repo"}
 {"record":"node","family":"type","span":{"start":1054,"end":1063},"kind":"alias","name":"Color"}
 {"record":"node","family":"type","span":{"start":1065,"end":1115},"kind":"method","name":"Label"}
+{"record":"node","family":"call","span":{"start":800,"end":814},"kind":"method","name":"Label"}
+{"record":"node","family":"call","span":{"start":852,"end":863},"kind":"method","name":"Price"}
 {"record":"node","family":"call","span":{"start":1065,"end":1115},"kind":"method","name":"Label"}
 {"record":"specifier","family":"call","span":{"start":767,"end":773},"name":"time","kind":"named","module":null,"imported":null}
+{"record":"method_owner","family":"call","owner":{"start":800,"end":814},"self_type":"Entity","trait":null}
+{"record":"method_owner","family":"call","owner":{"start":852,"end":863},"self_type":"Pricing","trait":null}
+{"record":"method_owner","family":"call","owner":{"start":1065,"end":1115},"self_type":"Repo","trait":null}
 {"record":"node","family":"df","span":{"start":1107,"end":1113},"kind":"lit","name":null}
 {"record":"node","family":"df","span":{"start":1107,"end":1113},"kind":"ret","name":null}
 {"record":"edge","family":"df","kind":"direct","from":{"start":1107,"end":1113},"from_kind":"lit","to":{"start":1107,"end":1113},"to_kind":"ret"}
@@ -6645,11 +6653,14 @@
 {"record":"node","family":"type","span":{"start":759,"end":825},"kind":"method","name":"Mode"}
 {"record":"sig","family":"type","owner":{"start":647,"end":757},"owner_start":647,"owner_end":757,"slot":"ret","pos":0,"ty":"Engine"}
 {"record":"sig","family":"type","owner":{"start":759,"end":825},"owner_start":759,"owner_end":825,"slot":"ret","pos":0,"ty":"Mode"}
+{"record":"node","family":"call","span":{"start":535,"end":545},"kind":"method","name":"Size"}
 {"record":"node","family":"call","span":{"start":597,"end":645},"kind":"function","name":"Trim"}
 {"record":"node","family":"call","span":{"start":647,"end":757},"kind":"function","name":"MakeEngine"}
 {"record":"node","family":"call","span":{"start":759,"end":825},"kind":"method","name":"Mode"}
 {"record":"site","family":"call","span":{"start":697,"end":701},"callee":"Trim","callee_path":null}
 {"record":"site","family":"call","span":{"start":801,"end":805},"callee":"Mode","callee_path":null}
+{"record":"method_owner","family":"call","owner":{"start":535,"end":545},"self_type":"Sizer","trait":null}
+{"record":"method_owner","family":"call","owner":{"start":759,"end":825},"self_type":"Engine","trait":null}
 {"record":"node","family":"df","span":{"start":607,"end":612},"kind":"param","name":"value"}
 {"record":"node","family":"df","span":{"start":638,"end":643},"kind":"var_read","name":"value"}
 {"record":"node","family":"df","span":{"start":638,"end":643},"kind":"ret","name":null}

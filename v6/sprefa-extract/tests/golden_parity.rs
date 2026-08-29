@@ -204,6 +204,31 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
         .enumerate()
         .map(|(ix, start)| (start, ix as u32))
         .collect();
+    // An interface method spec is a v6-only call_def (no v5 construct mints
+    // one): skip it via its method_owner naming a `kind=interface` type node.
+    let interface_names: std::collections::BTreeSet<&str> = facts
+        .iter()
+        .filter_map(|fact| match fact {
+            FlatFact::Node {
+                family: FamilyTag::Type,
+                kind,
+                name: Some(name),
+                ..
+            } if kind == "interface" => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let interface_spec_spans: std::collections::BTreeSet<(u32, u32)> = facts
+        .iter()
+        .filter_map(|fact| match fact {
+            FlatFact::MethodOwnerOut {
+                owner,
+                self_type: Some(self_type),
+                ..
+            } if interface_names.contains(self_type.as_str()) => Some((owner.start, owner.end)),
+            _ => None,
+        })
+        .collect();
     let mut set = BTreeSet::new();
     for fact in facts {
         match fact {
@@ -221,11 +246,13 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
                     ));
                 }
                 FamilyTag::Call => {
-                    set.insert(format!(
-                        "call_def\t{kind}\t{}\t{}",
-                        name.as_deref().unwrap_or(""),
-                        line_of(bytes, span.start)
-                    ));
+                    if !interface_spec_spans.contains(&(span.start, span.end)) {
+                        set.insert(format!(
+                            "call_def\t{kind}\t{}\t{}",
+                            name.as_deref().unwrap_or(""),
+                            line_of(bytes, span.start)
+                        ));
+                    }
                 }
                 FamilyTag::Df => {
                     set.insert(format!(

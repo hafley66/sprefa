@@ -24,14 +24,15 @@
 //! empty), so v6 matches by emitting none either.
 // @comment-ok: the module header is a crate-level doc block predating the rail
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
-    DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
-    TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
+    DfParam, DocFact, DocTag, MethodOwner, ProjectEdge, ReceiverBinding, ReceiverOutcome, SigSlot,
+    Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::project::ResolveDrop;
 use crate::rows::{Edge, FamilyBundle, Node};
@@ -40,7 +41,7 @@ use crate::seams::{
     containing_def_site, corpus_defs, covering_def, def_named, own_blob, DefIndex, DefSite, Parser,
     Project, Resolve,
 };
-use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
+use crate::shape::{ContentId, FamilyTag, NameId, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
 use crate::types::{PathIndex, ScipIndex, UnresolvedReason};
@@ -651,6 +652,8 @@ fn project_call(
     go_module_specifiers(root, src, strings, sink);
     let imports = go_import_bindings(sink, strings);
     go_walk_call_sites(root, src, strings, sink, &imports);
+    let field_types = go_field_types(root, src);
+    go_collect_receivers(root, src, strings, sink, &imports, &field_types);
 }
 
 /// Qualifier -> import path, per the `go_module_specifiers` table above: a
@@ -817,7 +820,7 @@ fn go_walk_call_defs(
             }
             // @callable go method
             "method_declaration" => {
-                if let (Some(name_node), Some(_)) = (
+                if let (Some(name_node), Some(owner)) = (
                     child.child_by_field_name("name"),
                     go_receiver_type(child, src),
                 ) {
@@ -825,6 +828,11 @@ fn go_walk_call_defs(
                     let name = go_text(name_node, src).to_string();
                     sink.nodes
                         .push(Node::new(span, CallKind::Method).with_name(strings.intern(&name)));
+                    sink.aux.method_owners.push(MethodOwner {
+                        span,
+                        self_type: Some(strings.intern(&owner)),
+                        trait_name: None,
+                    });
                     go_walk_call_defs(child, src, strings, sink, true);
                     continue;
                 }
@@ -839,9 +847,51 @@ fn go_walk_call_defs(
                 go_walk_call_defs(child, src, strings, sink, true);
                 continue;
             }
+            // An interface method spec is its own callable def, owner = the
+            // interface name (leg-2 dispatch treats it like a concrete method).
+            "type_declaration" => {
+                let mut sc = child.walk();
+                for spec in child.children(&mut sc).filter(|n| n.kind() == "type_spec") {
+                    go_mint_interface_methods(spec, src, strings, sink);
+                }
+                continue;
+            }
             _ => {}
         }
         go_walk_call_defs(child, src, strings, sink, in_fn);
+    }
+}
+
+fn go_mint_interface_methods(
+    spec: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let Some(name_node) = spec.child_by_field_name("name") else {
+        return;
+    };
+    let Some(iface) = spec
+        .child_by_field_name("type")
+        .filter(|t| t.kind() == "interface_type")
+    else {
+        return;
+    };
+    let iname = go_text(name_node, src).to_string();
+    let mut mc = iface.walk();
+    for elem in iface.children(&mut mc).filter(|n| n.kind() == "method_elem") {
+        let Some(mname) = elem.child_by_field_name("name") else {
+            continue;
+        };
+        let span = node_span(elem);
+        let name = go_text(mname, src).to_string();
+        sink.nodes
+            .push(Node::new(span, CallKind::Method).with_name(strings.intern(&name)));
+        sink.aux.method_owners.push(MethodOwner {
+            span,
+            self_type: Some(strings.intern(&iname)),
+            trait_name: None,
+        });
     }
 }
 
@@ -898,6 +948,451 @@ fn go_import_qualifier<'a>(
         return None;
     }
     imports.get(go_text(operand, src)).map(String::as_str)
+}
+
+// Receiver types (CallFAux.receivers): `x.M()` binds through x's declared
+// type T; `:=` from a call result is Inferred, a rebind conflict is Ambiguous.
+
+/// A declared type, unwrapped one level. `Indexable` is a slice/array/map's
+/// element/value type, reachable only via `s[i]`, never through `s` itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DeclType {
+    Named(String),
+    Indexable(String),
+}
+
+/// One name's binding within the innermost enclosing scope frame.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TypeBinding {
+    Decl(DeclType),
+    Inferred,
+    Ambiguous,
+}
+
+/// A stack of block-scoped frames, innermost last (an inner `x` shadows an
+/// outer one; lookup walks top-down).
+type TypeScope = Vec<HashMap<String, TypeBinding>>;
+
+fn scope_insert(scope: &mut TypeScope, name: String, binding: TypeBinding) {
+    let Some(frame) = scope.last_mut() else {
+        return;
+    };
+    match frame.get(&name) {
+        Some(existing) if *existing != binding => {
+            frame.insert(name, TypeBinding::Ambiguous);
+        }
+        _ => {
+            frame.insert(name, binding);
+        }
+    }
+}
+
+fn scope_lookup<'a>(scope: &'a TypeScope, name: &str) -> Option<&'a TypeBinding> {
+    scope.iter().rev().find_map(|frame| frame.get(name))
+}
+
+/// The declared type of a `_type` node, pointer-stripped, slice/array/map
+/// unwrapped to `Indexable`.
+fn go_decl_type_of(ty: tree_sitter::Node, src: &[u8]) -> Option<DeclType> {
+    let ty = if ty.kind() == "pointer_type" {
+        ty.named_child(0)?
+    } else {
+        ty
+    };
+    match ty.kind() {
+        "type_identifier" | "qualified_type" => Some(DeclType::Named(go_text(ty, src).to_string())),
+        "generic_type" => ty
+            .child_by_field_name("type")
+            .map(|t| DeclType::Named(go_text(t, src).to_string())),
+        "slice_type" | "array_type" => {
+            let elem = ty.child_by_field_name("element")?;
+            match go_decl_type_of(elem, src)? {
+                DeclType::Named(name) => Some(DeclType::Indexable(name)),
+                DeclType::Indexable(_) => None,
+            }
+        }
+        "map_type" => {
+            let value = ty.child_by_field_name("value")?;
+            match go_decl_type_of(value, src)? {
+                DeclType::Named(name) => Some(DeclType::Indexable(name)),
+                DeclType::Indexable(_) => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// (struct name, field name) -> the field's declared type, this file's own
+/// struct declarations only (no false edge, just no binding, otherwise).
+fn go_field_types(root: tree_sitter::Node, src: &[u8]) -> HashMap<(String, String), DeclType> {
+    let mut out = HashMap::new();
+    go_walk_field_types(root, src, &mut out);
+    out
+}
+
+fn go_walk_field_types(
+    node: tree_sitter::Node,
+    src: &[u8],
+    out: &mut HashMap<(String, String), DeclType>,
+) {
+    if node.kind() == "type_declaration" {
+        let mut sc = node.walk();
+        for spec in node.children(&mut sc).filter(|n| n.kind() == "type_spec") {
+            let Some(name_node) = spec.child_by_field_name("name") else {
+                continue;
+            };
+            let Some(struct_ty) = spec.child_by_field_name("type") else {
+                continue;
+            };
+            if struct_ty.kind() != "struct_type" {
+                continue;
+            }
+            let struct_name = go_text(name_node, src).to_string();
+            let mut lc = struct_ty.walk();
+            let Some(list) = struct_ty
+                .children(&mut lc)
+                .find(|n| n.kind() == "field_declaration_list")
+            else {
+                continue;
+            };
+            let mut fc = list.walk();
+            for field in list
+                .children(&mut fc)
+                .filter(|n| n.kind() == "field_declaration")
+            {
+                let Some(ftype) = field.child_by_field_name("type") else {
+                    continue;
+                };
+                let Some(decl) = go_decl_type_of(ftype, src) else {
+                    continue;
+                };
+                let mut nc = field.walk();
+                for name_node in field
+                    .children(&mut nc)
+                    .filter(|n| n.kind() == "field_identifier")
+                {
+                    out.insert(
+                        (struct_name.clone(), go_text(name_node, src).to_string()),
+                        decl.clone(),
+                    );
+                }
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        go_walk_field_types(child, src, out);
+    }
+}
+
+/// Seed one frame from a parameter list (or a receiver's own single param).
+/// A variadic `xs ...T` behaves like `[]T`: indexable, not itself a receiver.
+fn go_seed_params(params: tree_sitter::Node, src: &[u8], scope: &mut TypeScope) {
+    let mut cursor = params.walk();
+    for param in params.children(&mut cursor) {
+        if !matches!(
+            param.kind(),
+            "parameter_declaration" | "variadic_parameter_declaration"
+        ) {
+            continue;
+        }
+        let Some(ty) = param.child_by_field_name("type") else {
+            continue;
+        };
+        let Some(decl) = go_decl_type_of(ty, src) else {
+            continue;
+        };
+        let decl = if param.kind() == "variadic_parameter_declaration" {
+            match decl {
+                DeclType::Named(name) => DeclType::Indexable(name),
+                indexable => indexable,
+            }
+        } else {
+            decl
+        };
+        let mut nc = param.walk();
+        for name_node in param.children(&mut nc).filter(|n| n.kind() == "identifier") {
+            scope_insert(
+                scope,
+                go_text(name_node, src).to_string(),
+                TypeBinding::Decl(decl.clone()),
+            );
+        }
+    }
+}
+
+/// A method/function's opening frame: the receiver (base type, `*` stripped)
+/// plus every parameter's declared type.
+fn go_seed_top_scope(fn_node: tree_sitter::Node, src: &[u8]) -> TypeScope {
+    let mut scope: TypeScope = vec![HashMap::new()];
+    if fn_node.kind() == "method_declaration" {
+        if let Some(recv_list) = fn_node.child_by_field_name("receiver") {
+            let mut rc = recv_list.walk();
+            let param = recv_list
+                .children(&mut rc)
+                .find(|n| n.kind() == "parameter_declaration");
+            if let Some(param) = param {
+                let mut pc = param.walk();
+                let recv_name = param.children(&mut pc).find(|n| n.kind() == "identifier");
+                if let (Some(recv_name), Some(owner)) = (recv_name, go_receiver_type(fn_node, src))
+                {
+                    scope_insert(
+                        &mut scope,
+                        go_text(recv_name, src).to_string(),
+                        TypeBinding::Decl(DeclType::Named(owner)),
+                    );
+                }
+            }
+        }
+    }
+    if let Some(params) = fn_node.child_by_field_name("parameters") {
+        go_seed_params(params, src, &mut scope);
+    }
+    scope
+}
+
+/// The rhs binding a `:=`/`var` name gets: a (possibly `&`-taken) composite
+/// literal names its type; a call result is `Inferred`; `y := x` copies x's own binding.
+fn go_binding_of_rhs(rhs: tree_sitter::Node, src: &[u8], scope: &TypeScope) -> Option<TypeBinding> {
+    match rhs.kind() {
+        "composite_literal" => {
+            let ty = rhs.child_by_field_name("type")?;
+            go_decl_type_of(ty, src).map(TypeBinding::Decl)
+        }
+        "unary_expression" => {
+            let op = rhs.child_by_field_name("operator")?;
+            if go_text(op, src) != "&" {
+                return None;
+            }
+            let operand = rhs.child_by_field_name("operand")?;
+            go_binding_of_rhs(operand, src, scope)
+        }
+        "call_expression" => Some(TypeBinding::Inferred),
+        "identifier" => scope_lookup(scope, go_text(rhs, src)).cloned(),
+        _ => None,
+    }
+}
+
+/// The receiver-type outcome of a selector call's operand: a bare identifier,
+/// an index into a slice/array/map var, or one field (one level: `r.f.M()`).
+fn go_receiver_binding(
+    operand: tree_sitter::Node,
+    src: &[u8],
+    scope: &TypeScope,
+    field_types: &HashMap<(String, String), DeclType>,
+) -> Option<TypeBinding> {
+    match operand.kind() {
+        "identifier" => match scope_lookup(scope, go_text(operand, src))?.clone() {
+            TypeBinding::Decl(DeclType::Indexable(_)) => None,
+            other => Some(other),
+        },
+        "index_expression" => {
+            let base = operand.child_by_field_name("operand")?;
+            if base.kind() != "identifier" {
+                return None;
+            }
+            match scope_lookup(scope, go_text(base, src))? {
+                TypeBinding::Decl(DeclType::Indexable(t)) => {
+                    Some(TypeBinding::Decl(DeclType::Named(t.clone())))
+                }
+                _ => None,
+            }
+        }
+        "selector_expression" => {
+            let base = operand.child_by_field_name("operand")?;
+            let field = operand.child_by_field_name("field")?;
+            if base.kind() != "identifier" {
+                return None;
+            }
+            match scope_lookup(scope, go_text(base, src))? {
+                TypeBinding::Decl(DeclType::Named(struct_name)) => field_types
+                    .get(&(struct_name.clone(), go_text(field, src).to_string()))
+                    .cloned()
+                    .map(TypeBinding::Decl),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Walk one callable body, threading a block-scoped `TypeScope`, recording a
+/// `(span, TypeBinding)` row per non-import selector call site.
+fn go_walk_receivers(
+    node: tree_sitter::Node,
+    src: &[u8],
+    scope: &mut TypeScope,
+    imports: &HashMap<String, String>,
+    field_types: &HashMap<(String, String), DeclType>,
+    out: &mut Vec<(Span, TypeBinding)>,
+) {
+    match node.kind() {
+        "block" | "if_statement" | "for_statement" | "type_switch_statement"
+        | "expression_switch_statement" => {
+            scope.push(HashMap::new());
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                go_walk_receivers(child, src, scope, imports, field_types, out);
+            }
+            scope.pop();
+        }
+        "range_clause" => {
+            if let (Some(left), Some(right)) = (
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+            ) {
+                let elem = if right.kind() == "identifier" {
+                    match scope_lookup(scope, go_text(right, src)) {
+                        Some(TypeBinding::Decl(DeclType::Indexable(t))) => Some(t.clone()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                let mut lc = left.walk();
+                let idents: Vec<tree_sitter::Node> = left
+                    .children(&mut lc)
+                    .filter(|n| n.kind() == "identifier")
+                    .collect();
+                if let (Some(value_ident), Some(t)) = (idents.last(), elem) {
+                    scope_insert(
+                        scope,
+                        go_text(*value_ident, src).to_string(),
+                        TypeBinding::Decl(DeclType::Named(t)),
+                    );
+                }
+                go_walk_receivers(right, src, scope, imports, field_types, out);
+            }
+        }
+        "var_declaration" => {
+            let mut cursor = node.walk();
+            for spec in node.children(&mut cursor).filter(|n| n.kind() == "var_spec") {
+                if let Some(ty) = spec.child_by_field_name("type") {
+                    if let Some(decl) = go_decl_type_of(ty, src) {
+                        let mut nc = spec.walk();
+                        for name_node in spec.children(&mut nc).filter(|n| n.kind() == "identifier")
+                        {
+                            scope_insert(
+                                scope,
+                                go_text(name_node, src).to_string(),
+                                TypeBinding::Decl(decl.clone()),
+                            );
+                        }
+                    }
+                }
+                if let Some(value) = spec.child_by_field_name("value") {
+                    go_walk_receivers(value, src, scope, imports, field_types, out);
+                }
+            }
+        }
+        "short_var_declaration" => {
+            if let (Some(left), Some(right)) = (
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+            ) {
+                let mut lc = left.walk();
+                let names: Vec<tree_sitter::Node> = left
+                    .children(&mut lc)
+                    .filter(|n| n.kind() == "identifier")
+                    .collect();
+                let mut rc = right.walk();
+                let rhss: Vec<tree_sitter::Node> = right.children(&mut rc).collect();
+                if names.len() == rhss.len() {
+                    for (name_node, rhs) in names.iter().zip(rhss.iter()) {
+                        if let Some(binding) = go_binding_of_rhs(*rhs, src, scope) {
+                            scope_insert(scope, go_text(*name_node, src).to_string(), binding);
+                        }
+                    }
+                } else if let [rhs] = rhss.as_slice() {
+                    if rhs.kind() == "call_expression" {
+                        for name_node in &names {
+                            scope_insert(
+                                scope,
+                                go_text(*name_node, src).to_string(),
+                                TypeBinding::Inferred,
+                            );
+                        }
+                    }
+                }
+                go_walk_receivers(right, src, scope, imports, field_types, out);
+            }
+        }
+        "func_literal" => {
+            scope.push(HashMap::new());
+            if let Some(params) = node.child_by_field_name("parameters") {
+                go_seed_params(params, src, scope);
+            }
+            if let Some(body) = node.child_by_field_name("body") {
+                go_walk_receivers(body, src, scope, imports, field_types, out);
+            }
+            scope.pop();
+        }
+        "call_expression" => {
+            if let Some(func) = node.child_by_field_name("function") {
+                if func.kind() == "selector_expression" {
+                    if let Some(operand) = func.child_by_field_name("operand") {
+                        let is_import = operand.kind() == "identifier"
+                            && imports.contains_key(go_text(operand, src));
+                        if !is_import {
+                            if let Some(binding) =
+                                go_receiver_binding(operand, src, scope, field_types)
+                            {
+                                out.push((node_span(func), binding));
+                            }
+                        }
+                    }
+                }
+            }
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                go_walk_receivers(child, src, scope, imports, field_types, out);
+            }
+        }
+        _ => {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                go_walk_receivers(child, src, scope, imports, field_types, out);
+            }
+        }
+    }
+}
+
+/// Drive `go_walk_receivers` over every top-level function/method, appending
+/// one `ReceiverBinding` per traceable call site to `sink.aux.receivers`.
+fn go_collect_receivers(
+    root: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+    imports: &HashMap<String, String>,
+    field_types: &HashMap<(String, String), DeclType>,
+) {
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if !matches!(child.kind(), "function_declaration" | "method_declaration") {
+            continue;
+        }
+        let Some(body) = child.child_by_field_name("body") else {
+            continue;
+        };
+        let mut scope = go_seed_top_scope(child, src);
+        let mut out = Vec::new();
+        go_walk_receivers(body, src, &mut scope, imports, field_types, &mut out);
+        for (span, binding) in out {
+            let outcome = match binding {
+                TypeBinding::Decl(DeclType::Named(name)) => {
+                    ReceiverOutcome::Named(strings.intern(&name))
+                }
+                TypeBinding::Decl(DeclType::Indexable(_)) => continue,
+                TypeBinding::Inferred => ReceiverOutcome::Inferred,
+                TypeBinding::Ambiguous => ReceiverOutcome::Ambiguous,
+            };
+            sink.aux.receivers.push(ReceiverBinding {
+                call_site: span,
+                outcome,
+            });
+        }
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2110,6 +2605,139 @@ fn scip_call_target<'a>(
     Some((def_blob.clone(), def_site.span, name))
 }
 
+// One file's method/interface facts, re-read from disk once per blob and
+// cached for the process (not an IndexBag slot; `paths` names the real path).
+struct GoFileFacts {
+    owner_of: HashMap<(u32, u32), String>,
+    methods_of: HashMap<String, BTreeSet<String>>,
+}
+
+fn go_file_facts(blob: &ContentId, path: &str) -> Arc<GoFileFacts> {
+    static CACHE: OnceLock<Mutex<HashMap<ContentId, Arc<GoFileFacts>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().unwrap_or_else(|poison| poison.into_inner());
+    if let Some(existing) = guard.get(blob) {
+        return existing.clone();
+    }
+    let facts = Arc::new(go_parse_file_facts(path));
+    guard.insert(blob.clone(), facts.clone());
+    facts
+}
+
+fn go_parse_file_facts(path: &str) -> GoFileFacts {
+    let mut facts = GoFileFacts {
+        owner_of: HashMap::new(),
+        methods_of: HashMap::new(),
+    };
+    let Ok(bytes) = std::fs::read(path) else {
+        return facts;
+    };
+    let Ok(src) = std::str::from_utf8(&bytes) else {
+        return facts;
+    };
+    if let Some(tree) = go_parse(src) {
+        go_collect_file_facts(tree.root_node(), src.as_bytes(), &mut facts);
+    }
+    facts
+}
+
+/// Every method declaration's (span -> owner) + (owner -> method names), and
+/// every interface's method_elem the same way (owner = the interface name).
+fn go_collect_file_facts(node: tree_sitter::Node, src: &[u8], facts: &mut GoFileFacts) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "method_declaration" => {
+                if let (Some(name_node), Some(owner)) =
+                    (child.child_by_field_name("name"), go_receiver_type(child, src))
+                {
+                    let span = def_span(child);
+                    facts.owner_of.insert((span.start, span.end()), owner.clone());
+                    facts
+                        .methods_of
+                        .entry(owner)
+                        .or_default()
+                        .insert(go_text(name_node, src).to_string());
+                }
+            }
+            "type_declaration" => {
+                let mut sc = child.walk();
+                for spec in child.children(&mut sc).filter(|n| n.kind() == "type_spec") {
+                    go_collect_interface_facts(spec, src, facts);
+                }
+            }
+            _ => {}
+        }
+        go_collect_file_facts(child, src, facts);
+    }
+}
+
+fn go_collect_interface_facts(spec: tree_sitter::Node, src: &[u8], facts: &mut GoFileFacts) {
+    let Some(name_node) = spec.child_by_field_name("name") else {
+        return;
+    };
+    let Some(iface) = spec
+        .child_by_field_name("type")
+        .filter(|t| t.kind() == "interface_type")
+    else {
+        return;
+    };
+    let iname = go_text(name_node, src).to_string();
+    let mut mc = iface.walk();
+    for elem in iface.children(&mut mc).filter(|n| n.kind() == "method_elem") {
+        let Some(mname) = elem.child_by_field_name("name") else {
+            continue;
+        };
+        let span = node_span(elem);
+        facts.owner_of.insert((span.start, span.end()), iname.clone());
+        facts
+            .methods_of
+            .entry(iname.clone())
+            .or_default()
+            .insert(go_text(mname, src).to_string());
+    }
+}
+
+/// Leg 1: `callee` among `type_name`'s methods, same package first (bare
+/// type) else the package the type's `pkg.` qualifier names.
+fn go_receiver_target(
+    def_index: &DefIndex,
+    paths: Option<&PathIndex>,
+    module: &Option<GoModule>,
+    own: Option<&ContentId>,
+    imports: &HashMap<String, String>,
+    type_name: &str,
+    callee: &str,
+) -> Option<(ContentId, Span)> {
+    let paths = paths?;
+    let (dir, base_name) = match type_name.split_once('.') {
+        Some((pkg, bare)) => (
+            go_package_dir(module.as_ref()?, imports.get(pkg)?)?,
+            bare,
+        ),
+        None => (
+            Path::new(paths.get(own?)?)
+                .parent()
+                .map(Path::to_path_buf)?,
+            type_name,
+        ),
+    };
+    corpus_defs(def_index, callee)
+        .iter()
+        .find(|site| {
+            site.family == FamilyTag::Call
+                && paths.get(&site.blob).is_some_and(|p| {
+                    Path::new(p).parent().is_some_and(|parent| same_dir(parent, &dir))
+                        && go_file_facts(&site.blob, p)
+                            .owner_of
+                            .get(&(site.span.start, site.span.end()))
+                            .map(String::as_str)
+                            == Some(base_name)
+                })
+        })
+        .map(|site| (site.blob.clone(), site.span))
+}
+
 impl Resolve<CallF> for GoSource {
     fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<CallF>> {
         let Some(call) = &output.call else {
@@ -2146,6 +2774,7 @@ impl Resolve<CallF> for GoSource {
                     .position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
                 Some((index, joined, doc_ix))
             });
+        let imports = go_import_bindings(call, &output.strings);
         let mut edges = Vec::new();
         for site in &call.aux.sites {
             // The caller is the innermost covering CallF def (the 4a
@@ -2155,16 +2784,36 @@ impl Resolve<CallF> for GoSource {
                 continue;
             };
             let callee = output.strings.lookup(site.callee);
-            let name_t = match site.callee_path.map(|id| output.strings.lookup(id)) {
-                // With the module in hand the import path names ONE directory,
-                // and a path outside the module names no corpus file at all.
-                Some(import) => match (&module, paths) {
-                    (Some(module), Some(paths)) => go_package_dir(module, import).and_then(|dir| {
-                        GoSource::call_name_match_in_package(def_index, paths, &dir, callee)
-                    }),
-                    _ => GoSource::call_name_match_imported(def_index, own.as_ref(), callee),
+            let receiver = if site.callee_path.is_none() {
+                call.aux
+                    .receivers
+                    .iter()
+                    .find(|r| r.call_site == site.span)
+                    .map(|r| &r.outcome)
+            } else {
+                None
+            };
+            let name_t = match receiver {
+                Some(ReceiverOutcome::Named(type_id)) => {
+                    let type_name = output.strings.lookup(*type_id);
+                    go_receiver_target(
+                        def_index, paths, &module, own.as_ref(), &imports, type_name, callee,
+                    )
+                }
+                Some(ReceiverOutcome::Inferred) | Some(ReceiverOutcome::Ambiguous) => None,
+                None => match site.callee_path.map(|id| output.strings.lookup(id)) {
+                    // With the module in hand the import path names ONE directory,
+                    // and a path outside the module names no corpus file at all.
+                    Some(import) => match (&module, paths) {
+                        (Some(module), Some(paths)) => {
+                            go_package_dir(module, import).and_then(|dir| {
+                                GoSource::call_name_match_in_package(def_index, paths, &dir, callee)
+                            })
+                        }
+                        _ => GoSource::call_name_match_imported(def_index, own.as_ref(), callee),
+                    },
+                    None => GoSource::call_name_match(output, def_index, callee),
                 },
-                None => GoSource::call_name_match(output, def_index, callee),
             };
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
@@ -2183,8 +2832,91 @@ impl Resolve<CallF> for GoSource {
             edges
                 .push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
         }
+        let interfaces: BTreeSet<NameId> = output
+            .types
+            .as_ref()
+            .map(|types| {
+                types
+                    .nodes
+                    .iter()
+                    .filter(|n| n.kind == TypeEntityKind::Interface)
+                    .filter_map(|n| n.name)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut interface_specs: HashMap<String, Vec<(NodeRef, String)>> = HashMap::new();
+        for (ix, node) in call.nodes.iter().enumerate() {
+            if node.kind != CallKind::Method {
+                continue;
+            }
+            let Some(owner) = call.aux.method_owners.iter().find(|o| o.span == node.span) else {
+                continue;
+            };
+            let Some(self_type) = owner.self_type.filter(|t| interfaces.contains(t)) else {
+                continue;
+            };
+            let Some(name_id) = node.name else { continue };
+            interface_specs
+                .entry(output.strings.lookup(self_type).to_string())
+                .or_default()
+                .push((NodeRef(ix as u32), output.strings.lookup(name_id).to_string()));
+        }
+        for (iface_name, specs) in &interface_specs {
+            edges.extend(go_interface_implements(def_index, paths, iface_name, specs));
+        }
         edges
     }
+}
+
+/// Leg 2: for every named type whose method set covers ALL of `specs`, one
+/// `Implements` edge per spec. One pass per interface, never per call site.
+fn go_interface_implements(
+    def_index: &DefIndex,
+    paths: Option<&PathIndex>,
+    iface_name: &str,
+    specs: &[(NodeRef, String)],
+) -> Vec<ProjectEdge<CallF>> {
+    let Some(paths) = paths else {
+        return Vec::new();
+    };
+    let mut candidates: HashMap<String, HashMap<&str, (ContentId, Span)>> = HashMap::new();
+    for (_, spec_name) in specs {
+        for site in corpus_defs(def_index, spec_name) {
+            if site.family != FamilyTag::Call {
+                continue;
+            }
+            let Some(path) = paths.get(&site.blob) else {
+                continue;
+            };
+            let facts = go_file_facts(&site.blob, path);
+            let Some(owner) = facts.owner_of.get(&(site.span.start, site.span.end())) else {
+                continue;
+            };
+            if owner == iface_name {
+                continue;
+            }
+            candidates
+                .entry(owner.clone())
+                .or_default()
+                .insert(spec_name.as_str(), (site.blob.clone(), site.span));
+        }
+    }
+    let mut edges = Vec::new();
+    for methods in candidates.values() {
+        if !specs.iter().all(|(_, name)| methods.contains_key(name.as_str())) {
+            continue;
+        }
+        for (node_ref, spec_name) in specs {
+            let (blob, span) = &methods[spec_name.as_str()];
+            edges.push(ProjectEdge::new(
+                *node_ref,
+                blob.clone(),
+                *span,
+                CallEdgeKind::Implements,
+            ));
+        }
+    }
+    edges
 }
 
 // call_drops: a bare callee matching the table below drops reason `builtin`; a
@@ -2230,12 +2962,21 @@ pub fn call_drops(
                 return None;
             }
             let callee = output.strings.lookup(site.callee);
-            if !is_go_builtin_call(callee) {
-                return None;
-            }
+            let receiver = call
+                .aux
+                .receivers
+                .iter()
+                .find(|r| r.call_site == site.span)
+                .map(|r| &r.outcome);
+            let reason = match receiver {
+                Some(ReceiverOutcome::Inferred) => UnresolvedReason::Inferred,
+                Some(ReceiverOutcome::Ambiguous) => UnresolvedReason::Ambiguous,
+                _ if is_go_builtin_call(callee) => UnresolvedReason::Builtin,
+                _ => return None,
+            };
             Some(ResolveDrop {
                 span: site.span,
-                reason: UnresolvedReason::Builtin,
+                reason,
                 detail: callee.to_string(),
             })
         })
