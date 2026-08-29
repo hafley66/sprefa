@@ -3,7 +3,7 @@ created: 2026-08-29
 updated: 2026-08-29
 type: task
 assignee: luna
-status: open
+status: in-progress
 priority: high
 epic: dl7-datalog-extensions
 labels: [dl7, model-luna]
