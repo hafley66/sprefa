@@ -809,6 +809,8 @@ fn resolve_type_dst(
     types: &FamilyBundle<TypeF>,
     strings: &Strings,
     index: Option<&DefIndex>,
+    modules: Option<&crate::lang::rust_modules::RustModuleIndex>,
+    own_path: Option<&str>,
     name: &str,
 ) -> Option<(ContentId, Span)> {
     let same_file = types
@@ -816,10 +818,16 @@ fn resolve_type_dst(
         .iter()
         .find(|node| node.name.map_or(false, |id| strings.lookup(id) == name));
     if let (Some(node), Some(index)) = (same_file, index) {
-        return corpus_defs(index, name)
+        if let Some(found) = corpus_defs(index, name)
             .iter()
             .find(|site| site.span == node.span)
-            .map(|site| (site.blob.clone(), site.span));
+            .map(|site| (site.blob.clone(), site.span))
+        {
+            return Some(found);
+        }
+    }
+    if let Some(found) = import_bound_target(modules, own_path, name) {
+        return Some(found);
     }
     let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
     match sites {
@@ -828,17 +836,30 @@ fn resolve_type_dst(
     }
 }
 
+/// A bare name with no same-file def: the `use` binding named `name` in
+/// `own_path`, resolved through the module plane.
+fn import_bound_target(
+    modules: Option<&crate::lang::rust_modules::RustModuleIndex>,
+    own_path: Option<&str>,
+    name: &str,
+) -> Option<(ContentId, Span)> {
+    modules?.target(own_path?, name)
+}
+
 impl Resolve<TypeF> for RustSource {
     fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<TypeF>> {
         let Some(types) = &output.types else {
             return Vec::new();
         };
         let index = cx.indexes.def_index.get();
+        let modules = cx.indexes.rust_modules.get();
+        let own_path = index
+            .and_then(|index| own_blob(output, index))
+            .zip(cx.indexes.paths.get())
+            .and_then(|(blob, paths)| paths.get(&blob).map(str::to_string));
         let mut edges = Vec::new();
         for candidate in RustSource::type_edge_candidates(output) {
-            // src: the TypeF entity at the owner span. Exists by construction
-            // (candidates are minted beside their entity); a miss would break
-            // the parity golden's zip count loudly, so it is not hidden here.
+            // src: the TypeF entity at the owner span, exists by construction.
             let Some(src_ix) = types
                 .nodes
                 .iter()
@@ -850,6 +871,8 @@ impl Resolve<TypeF> for RustSource {
                 types,
                 &output.strings,
                 index,
+                modules,
+                own_path.as_deref(),
                 output.strings.lookup(candidate.to),
             )
             .unwrap_or((ZERO_CONTENT_ID, Span::empty()));
@@ -1207,6 +1230,7 @@ impl Resolve<CallF> for RustSource {
             .as_ref()
             .zip(paths)
             .and_then(|(blob, paths)| paths.get(blob));
+        let modules = cx.indexes.rust_modules.get();
         // Sorted once per file: the mirror lookup runs per closure-caller site,
         // and a per-site scan of the def table is the shape kink 1 was.
         let named = named_def_spans(call);
@@ -1223,13 +1247,21 @@ impl Resolve<CallF> for RustSource {
                 .callee_path
                 .map(|id| output.strings.lookup(id))
                 .and_then(module_qualifier);
-            let name_t = match (qualifier, own_path, paths) {
+            let name_t: Option<(ContentId, Span, CallEdgeKind)> = match (qualifier, own_path, paths) {
                 (Some(qualifier), Some(from), Some(paths)) => {
-                    RustSource::call_name_match_in_module(
-                        def_index, paths, from, &qualifier, callee,
-                    )
+                    RustSource::call_name_match_in_module(def_index, paths, from, &qualifier, callee)
+                        .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
                 }
-                _ => RustSource::call_name_match_in(output, def_index, own.as_ref(), callee),
+                _ => same_file_call_match(output, def_index, own.as_ref(), callee)
+                    .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                    .or_else(|| {
+                        import_bound_target(modules, own_path, callee)
+                            .map(|(blob, span)| (blob, span, CallEdgeKind::ImportResolve))
+                    })
+                    .or_else(|| {
+                        RustSource::call_name_match_in(output, def_index, own.as_ref(), callee)
+                            .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                    }),
             };
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
@@ -1239,9 +1271,11 @@ impl Resolve<CallF> for RustSource {
             // two facet coordinates (the ORACLE entry's "the models differ by
             // construction").
             let ((dst_blob, dst_span), kind) = match (name_t, scip_t) {
-                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => (n, CallEdgeKind::NameResolve),
+                (Some((blob, span, _)), Some(s)) if blob == s.0 && callee == s.2 => {
+                    ((blob, span), CallEdgeKind::NameResolve)
+                }
                 (_, Some(s)) => ((s.0, s.1), CallEdgeKind::ScipOverride),
-                (Some(n), None) => (n, CallEdgeKind::NameResolve),
+                (Some((blob, span, kind)), None) => ((blob, span), kind),
                 (None, None) => continue,
             };
             // Nothing names `closure@<n>` as a callee, so a walk over named

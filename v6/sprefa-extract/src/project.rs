@@ -26,6 +26,7 @@ use std::sync::{Arc, LazyLock};
 
 use rayon::prelude::*;
 
+use crate::lang::rust_modules::{RustModuleFacts, RustModuleIndex};
 use crate::lang::ts_resolve::{ModuleFacts, TsModuleIndex};
 use crate::lang::{
     source_for, DlSource, GoSource, KotlinSource, MarkdownSource, PrologSource, PythonSource,
@@ -163,6 +164,8 @@ pub(crate) struct ProjectInput {
     /// This file's module facts, built while its bytes are in hand so the
     /// plane costs no second read. `None` outside a module-plane run.
     module: Option<ModuleFacts>,
+    /// The rust module plane's own facts, same discipline as `module`.
+    rust_module: Option<RustModuleFacts>,
 }
 
 /// Run the requested arms over the whole supplied file set and return the flat
@@ -248,6 +251,19 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         ))
         .ok()
         .expect("fresh project module plane");
+    let rust_module_files: Vec<(String, RustModuleFacts)> = inputs
+        .iter()
+        .filter_map(|input| Some((input.path.clone(), input.rust_module.clone()?)))
+        .collect();
+    cx.indexes
+        .rust_modules
+        .set(RustModuleIndex::build(
+            rust_module_files,
+            &corpus,
+            cx.indexes.def_index.get().expect("the def index is set"),
+        ))
+        .ok()
+        .expect("fresh project module plane (rust)");
 
     // One resolve per input, shared by the `call` arm and the `flow` join: the
     // N+1 law applied to work rather than to rows.
@@ -535,6 +551,11 @@ fn module_facts_of(path: &str, content: &[u8], wanted: bool) -> Option<ModuleFac
     wanted.then(|| crate::lang::ts_resolve::module_facts(path, content))?
 }
 
+/// The rust module plane's own facts, same discipline as `module_facts_of`.
+fn rust_module_facts_of(path: &str, content: &[u8], wanted: bool) -> Option<RustModuleFacts> {
+    wanted.then(|| crate::lang::rust_modules::rust_module_facts(path, content))?
+}
+
 /// Extraction thread budget. One worker is held back below the clamp so the
 /// machine stays usable while a corpus extracts.
 fn extract_thread_cap() -> usize {
@@ -598,11 +619,13 @@ fn read_inputs_plain(paths: &[PathBuf], modules: bool) -> Result<Vec<ProjectInpu
                 let path = path.to_string_lossy().to_string();
                 let output = crate::dispatch(&path, &content, resolve_mask(&path));
                 let module = module_facts_of(&path, &content, modules);
+                let rust_module = rust_module_facts_of(&path, &content, modules);
                 Ok(output.map(|output| ProjectInput {
                     blob: content_id_of(&content),
                     path,
                     output,
                     module,
+                    rust_module,
                 }))
             })
             .collect()
@@ -644,11 +667,13 @@ fn read_inputs_batched(
                 let path = path.to_string_lossy().to_string();
                 let output = crate::dispatch(&path, content, resolve_mask(&path));
                 let module = module_facts_of(&path, content, modules);
+                let rust_module = rust_module_facts_of(&path, content, modules);
                 Ok(output.map(|output| ProjectInput {
                     blob: content_id_of(content),
                     path,
                     output,
                     module,
+                    rust_module,
                 }))
             })
             .collect()
@@ -1034,16 +1059,11 @@ fn call_facts(
         .collect()
 }
 
-/// Every import binding one input writes, resolved through the module plane.
-/// Not an arm output: the plane answers per FILE, ahead of any family.
+/// Every import binding one input writes. A file belongs to at most one
+/// language's plane, so only one of the two closures below yields rows.
 fn import_facts(input: &ProjectInput, cx: &ProjectCx) -> Vec<FlatFact> {
-    let Some(modules) = cx.indexes.ts_modules.get() else {
-        return Vec::new();
-    };
-    modules
-        .bindings(&input.path)
-        .into_iter()
-        .map(|row| FlatFact::ResolvedImportRow {
+    let ts_rows = cx.indexes.ts_modules.get().into_iter().flat_map(|modules| {
+        modules.bindings(&input.path).into_iter().map(|row| FlatFact::ResolvedImportRow {
             src_path: input.path.clone(),
             name: row.name,
             local: row.local,
@@ -1052,7 +1072,19 @@ fn import_facts(input: &ProjectInput, cx: &ProjectCx) -> Vec<FlatFact> {
             kind: row.kind.as_str().to_string(),
             hops: row.hops,
         })
-        .collect()
+    });
+    let rust_rows = cx.indexes.rust_modules.get().into_iter().flat_map(|modules| {
+        modules.bindings(&input.path).into_iter().map(|row| FlatFact::ResolvedImportRow {
+            src_path: input.path.clone(),
+            name: row.name,
+            local: row.local,
+            target_path: row.target_path,
+            target_name: row.target_name,
+            kind: row.kind.as_str().to_string(),
+            hops: row.hops,
+        })
+    });
+    ts_rows.chain(rust_rows).collect()
 }
 
 /// The `unresolved` rows for one input: the sites its `call` arm dropped. The
