@@ -1,4 +1,4 @@
-# Lane `bench-extract-tools` (sonnet, respawn): third-party static-analysis tools on the same corpora
+# Lane `bench-extract-tools` (glm53f, respawn; sonnet ACP handshake failed twice): third-party static-analysis tools on the same corpora
 
 Read `plans/extract-bench-2026-08-29/COMMON.md` first. Build-vs-buy law:
 every tool gets a real run or a cited reason it cannot run here; no one-line
