@@ -4,6 +4,7 @@ Prefix syntax
 
 (: Pair (* (: left int)))
 (<- (copy ?Value ?_) (source ?Value))
+((Pair User) Order)
 "hello\nworld"
 'spot
 -12
@@ -32,6 +33,11 @@ Prefix syntax
     (parenthesized_expression
       (bare_token)
       (bare_token)))
+  (parenthesized_expression
+    (parenthesized_expression
+      (bare_token)
+      (bare_token))
+    (bare_token))
   (string_literal)
   (bare_token)
   (bare_token)
