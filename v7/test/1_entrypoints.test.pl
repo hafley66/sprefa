@@ -231,6 +231,58 @@ test(nested_and_chained_bind_applications_flatten_in_dependency_order) :-
                     diagnostic(node(23), undeclared_relation('Missing'))),
     !.
 
+test(rule_heads_and_bodies_share_expression_lowering) :-
+    Text = "(: User (*))\n(: source (* (: value type)))\n(: Wrap (* (: source type) (: return type)))\n(: sink (* (: value type)))\n(: projected (* (: value type)))\n(: accepted (* (: value type)))\n(source User)\n(Wrap User User)\n(sink User)\n(<- (projected (Wrap ?Value))\n    (source ?Value))\n(<- (accepted ?Value)\n    (source ?Value)\n    (sink (Wrap ?Value)))\n",
+    dl7_text_unit(uniform_expressions, uniform_expressions_source,
+                  Text, Unit, []),
+    compile_unit(Unit,
+                 compiled_unit(_, RuntimeProgram, CompilerRows),
+                 Diagnostics),
+    named_owner(CompilerRows, 'User', User),
+    named_owner(CompilerRows, source, Source),
+    named_owner(CompilerRows, 'Wrap', Wrap),
+    named_owner(CompilerRows, sink, Sink),
+    named_owner(CompilerRows, projected, Projected),
+    named_owner(CompilerRows, accepted, Accepted),
+    RuntimeProgram = checked_datalog(
+                         _, datalog_program(_, _, Rules), _, _),
+    memberchk(
+        rule(call(ref(Projected), [var(ProjectedValue)]),
+             [ checked_goal(
+                   positive,
+                   call(ref(Source), [var(SourceValue)])),
+               checked_goal(
+                   positive,
+                   call(ref(Wrap),
+                        [var(SourceValue), var(ProjectedValue)]))
+             ]),
+        Rules),
+    memberchk(
+        rule(call(ref(Accepted), [var(AcceptedValue)]),
+             [ checked_goal(
+                   positive,
+                   call(ref(Source), [var(AcceptedValue)])),
+               checked_goal(
+                   positive,
+                   call(ref(Wrap),
+                        [var(AcceptedValue), var(WrappedValue)])),
+               checked_goal(
+                   positive,
+                   call(ref(Sink), [var(WrappedValue)]))
+             ]),
+        Rules),
+    row_presence(CompilerRows,
+                 call(ref(Projected), [ref(User)]), ProjectedPresent),
+    row_presence(CompilerRows,
+                 call(ref(Accepted), [ref(User)]), AcceptedPresent),
+    Observed = uniform_expressions(
+                   Diagnostics,
+                   outputs(projected(ProjectedPresent),
+                           accepted(AcceptedPresent))),
+    Observed == uniform_expressions(
+                    [], outputs(projected(true), accepted(true))),
+    !.
+
 nested_expression_diagnostic_receipt(diagnostic(node(NodeIndex), Reason)) :-
     Text = "(: User (*))\n(: Wrap (* (: source type) (: return type)))\n(: Bad (Wrap (Missing User)))\n",
     dl7_text_unit(nested_diagnostic, nested_diagnostic_source,
@@ -601,11 +653,13 @@ test(prefix_negation_is_safe_stratified_and_cleanup_scoped) :-
 
 test(count_groups_completed_lower_proofs_and_rejects_bad_placement) :-
     grouped_count_receipt(Grouped),
+    nested_count_receipt(NestedCount),
     multiple_count_receipt(Multiple),
     misplaced_count_receipt(Misplaced),
     nested_head_receipt(Nested),
     aggregate_cycle_receipt(Cycle),
-    Observed = count_result(Grouped, Multiple, Misplaced, Nested, Cycle),
+    Observed = count_result(
+                   Grouped, NestedCount, Multiple, Misplaced, Nested, Cycle),
     Observed == count_result(
                     grouped(
                         rows(["east"-2, "west"-1]),
@@ -616,6 +670,9 @@ test(count_groups_completed_lower_proofs_and_rejects_bad_placement) :-
                         evaluator(temporary_rules(0), temporary_seeds(0),
                                   temporary_lower_rows(0),
                                   temporary_requests(0))),
+                    nested_count(
+                        rows([1]),
+                        body([positive(source), positive('Wrap')])),
                     multiple(
                         node(27),
                         multiple_count_aggregates(region_count)),
@@ -624,11 +681,38 @@ test(count_groups_completed_lower_proofs_and_rejects_bad_placement) :-
                         aggregate_outside_rule_head),
                     nested(
                         node(25),
-                        nested_call_argument),
+                        undeclared_relation(wrapper)),
                     cycle(
                         node(13),
                         aggregate_dependency_cycle([loop]))),
     !.
+
+nested_count_receipt(nested_count(rows(Counts), body(Body))) :-
+    Text = "(: User (*))\n(: source (* (: value type)))\n(: Wrap (* (: source type) (: return type)))\n(: wrapped_count (* (: total int)))\n(source User)\n(Wrap User User)\n(<- (wrapped_count (count (Wrap ?Value)))\n    (source ?Value))\n",
+    dl7_text_unit(nested_count, nested_count_source, Text, Unit, []),
+    compile_unit(Unit,
+                 compiled_unit(_, RuntimeProgram, CompilerRows), []),
+    named_owner(CompilerRows, source, Source),
+    named_owner(CompilerRows, 'Wrap', Wrap),
+    named_owner(CompilerRows, wrapped_count, WrappedCount),
+    findall(Count,
+            member(call(ref(WrappedCount), [const(Count)]), CompilerRows),
+            Counts),
+    RuntimeProgram = checked_datalog(
+                         _, datalog_program(_, _, Rules), _, _),
+    memberchk(
+        rule(call(ref(WrappedCount),
+                  [aggregate(count, var(WrappedValue))]),
+             [ checked_goal(
+                   positive,
+                   call(ref(Source), [var(SourceValue)])),
+               checked_goal(
+                   positive,
+                   call(ref(Wrap),
+                        [var(SourceValue), var(WrappedValue)]))
+             ]),
+        Rules),
+    Body = [positive(source), positive('Wrap')].
 
 grouped_count_receipt(Receipt) :-
     Text = "(: sale (* (: region text) (: item text)))\n(: region_count (* (: region text) (: total int)))\n(sale \"east\" \"one\")\n(sale \"east\" \"two\")\n(sale \"west\" \"three\")\n(<- (region_count ?Region (count ?Region))\n    (sale ?Region ?Item))\n",
@@ -794,6 +878,11 @@ witness_presence(Closure, Relation, true) :-
     memberchk(call(ref(Relation), []), Closure),
     !.
 witness_presence(_, _, false).
+
+row_presence(Rows, Row, true) :-
+    memberchk(Row, Rows),
+    !.
+row_presence(_, _, false).
 
 underconstrained_cons_diagnostic(Diagnostics) :-
     Text = "(: Source (* (: value any)))\n(: Bad (* (: value any)))\n(Source \"ok\")\n(<- (Bad ?Value)\n    (cons ?Head ?Tail ?List)\n    (Source ?Value))\n",

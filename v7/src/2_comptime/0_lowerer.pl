@@ -34,7 +34,7 @@ lower_after_declarations(
                              DerivedResult),
     (   DerivedResult = ok(DerivedRules, DerivedOrigins)
     ->  length(DerivedRules, RuleIndex),
-        lower_executables(Forms, ModuleOwner, Reservations, Relations,
+        lower_executables(Forms, ModuleOwner, Environment,
                           RuleIndex, ExecutableResult),
         finish_lowered_executables(
             ExecutableResult, DerivedRules, DerivedOrigins,
@@ -252,33 +252,32 @@ continue_bind_list(ok(Nodes0, Edges0, Relations0, Origins0, Reservations0),
     ).
 
 %% Pass 3: lower facts and rules after all declarations are reserved.
-lower_executables(Forms, Owner, Reservations, Relations, RuleIndex, Result) :-
-    lower_executables(Forms, Owner, Reservations, Relations, 0, RuleIndex,
-                      Result).
+lower_executables(Forms, Owner, Environment, RuleIndex, Result) :-
+    lower_executables(Forms, Owner, Environment, 0, RuleIndex, Result).
 
-lower_executables([], _, _, _, _, _, ok([], [], [])).
-lower_executables([Form | Forms], Owner, Reservations, Relations,
+lower_executables([], _, _, _, _, ok([], [], [])).
+lower_executables([Form | Forms], Owner, Environment,
                   SeedIndex, RuleIndex, Result) :-
     (   bind_form(Form, _, _, _)
-    ->  lower_executables(Forms, Owner, Reservations, Relations,
+    ->  lower_executables(Forms, Owner, Environment,
                           SeedIndex, RuleIndex, Result)
     ;   rule_form(Form, RuleNodeId, HeadNode, BodyNodes)
-    ->  lower_rule(HeadNode, BodyNodes, Owner, Reservations, Relations,
+    ->  lower_rule(HeadNode, BodyNodes, Owner, Environment,
                    RuleIndex, RuleNodeId, RuleResult),
         NextRuleIndex is RuleIndex + 1,
-        continue_rule(RuleResult, Forms, Owner, Reservations, Relations,
+        continue_rule(RuleResult, Forms, Owner, Environment,
                       SeedIndex, NextRuleIndex, Result)
-    ;   lower_seed(Form, Owner, Reservations, Relations, SeedIndex,
+    ;   lower_seed(Form, Owner, Environment, SeedIndex,
                    SeedResult),
         NextSeedIndex is SeedIndex + 1,
-        continue_seed(SeedResult, Forms, Owner, Reservations, Relations,
+        continue_seed(SeedResult, Forms, Owner, Environment,
                       NextSeedIndex, RuleIndex, Result)
     ).
 
-continue_rule(error(Diagnostic), _, _, _, _, _, _, error(Diagnostic)).
-continue_rule(ok(Rule, RuleOrigins), Forms, Owner, Reservations, Relations,
+continue_rule(error(Diagnostic), _, _, _, _, _, error(Diagnostic)).
+continue_rule(ok(Rule, RuleOrigins), Forms, Owner, Environment,
               SeedIndex, RuleIndex, Result) :-
-    lower_executables(Forms, Owner, Reservations, Relations,
+    lower_executables(Forms, Owner, Environment,
                       SeedIndex, RuleIndex, RestResult),
     prepend_rule(RestResult, Rule, RuleOrigins, Result).
 
@@ -287,10 +286,10 @@ prepend_rule(ok(Seeds, Rules, Origins0), Rule, RuleOrigins,
              ok(Seeds, [Rule | Rules], Origins)) :-
     append(RuleOrigins, Origins0, Origins).
 
-continue_seed(error(Diagnostic), _, _, _, _, _, _, error(Diagnostic)).
-continue_seed(ok(Seed, SeedOrigin), Forms, Owner, Reservations, Relations,
+continue_seed(error(Diagnostic), _, _, _, _, _, error(Diagnostic)).
+continue_seed(ok(Seed, SeedOrigin), Forms, Owner, Environment,
               SeedIndex, RuleIndex, Result) :-
-    lower_executables(Forms, Owner, Reservations, Relations,
+    lower_executables(Forms, Owner, Environment,
                       SeedIndex, RuleIndex, RestResult),
     prepend_seed(RestResult, Seed, SeedOrigin, Result).
 
@@ -298,131 +297,132 @@ prepend_seed(error(Diagnostic), _, _, error(Diagnostic)).
 prepend_seed(ok(Seeds, Rules, Origins), Seed, SeedOrigin,
              ok([Seed | Seeds], Rules, [SeedOrigin | Origins])).
 
-lower_seed(Node, Owner, Reservations, Relations, SeedIndex, Result) :-
-    lower_call(Node, Owner, Reservations, Relations, CallResult),
+lower_seed(Node, Owner, Environment, SeedIndex, Result) :-
+    lower_call(Node, Owner, Environment, CallResult),
     node_id(Node, NodeId),
-    (   CallResult = ok(Call)
+    (   CallResult = ok(Call, [], [])
     ->  (   call_contains_var(Call)
         ->  Result = error(diagnostic(lower, NodeId, variable_in_seed))
         ;   Result = ok(Call, origin(seed(SeedIndex), NodeId))
         )
+    ;   CallResult = ok(_, [_ | _], _)
+    ->  Result = error(diagnostic(lower, NodeId,
+                                  expression_goals_in_seed))
     ;   Result = CallResult
     ).
 
-lower_rule(HeadNode, BodyNodes, Owner, Reservations, Relations,
+lower_rule(HeadNode, BodyNodes, Owner, Environment,
            RuleIndex, RuleNodeId, Result) :-
-    lower_head_call(HeadNode, Owner, Reservations, Relations, HeadResult),
-    (   HeadResult = ok(Head)
-    ->  lower_goals(BodyNodes, Owner, Reservations, Relations, RuleIndex, 0,
-                    BodyResult),
-        (   BodyResult = ok(Body, GoalOrigins)
-        ->  Result = ok(rule(Head, Body),
+    lower_head_call(HeadNode, Owner, Environment, HeadResult),
+    (   HeadResult = ok(Head, HeadGoals, HeadGoalNodes)
+    ->  lower_goals(BodyNodes, Owner, Environment, BodyResult),
+        (   BodyResult = ok(BodyGoals, BodyGoalNodes)
+        ->  append(BodyGoals, HeadGoals, Body),
+            append(BodyGoalNodes, HeadGoalNodes, GoalNodes),
+            indexed_goal_origins(GoalNodes, RuleIndex, 0, GoalOrigins),
+            Result = ok(rule(Head, Body),
                         [origin(rule(RuleIndex), RuleNodeId) | GoalOrigins])
         ;   Result = BodyResult
         )
     ;   Result = HeadResult
     ).
 
-lower_goals([], _, _, _, _, _, ok([], [])).
-lower_goals([Node | Nodes], Owner, Reservations, Relations, RuleIndex,
-            GoalIndex, Result) :-
-    lower_goal(Node, Owner, Reservations, Relations, GoalResult),
-    (   GoalResult = ok(Goal)
-    ->  node_id(Node, NodeId),
-        NextGoalIndex is GoalIndex + 1,
-        lower_goals(Nodes, Owner, Reservations, Relations, RuleIndex,
-                    NextGoalIndex, RestResult),
-        (   RestResult = ok(Goals, Origins)
-        ->  Result = ok([Goal | Goals],
-                        [origin(goal(RuleIndex, GoalIndex), NodeId) | Origins])
+lower_goals([], _, _, ok([], [])).
+lower_goals([Node | Nodes], Owner, Environment, Result) :-
+    lower_goal(Node, Owner, Environment, GoalResult),
+    (   GoalResult = ok(OwnGoals, OwnGoalNodes)
+    ->  lower_goals(Nodes, Owner, Environment, RestResult),
+        (   RestResult = ok(RestGoals, RestGoalNodes)
+        ->  append(OwnGoals, RestGoals, Goals),
+            append(OwnGoalNodes, RestGoalNodes, GoalNodes),
+            Result = ok(Goals, GoalNodes)
         ;   Result = RestResult
         )
     ;   Result = GoalResult
     ).
 
 %% Prefix not/1 is erased into explicit pending polarity before checking.
-lower_goal(node(_, form([node(_, atom(not)), Inner])),
-           Owner, Reservations, Relations, Result) :-
+lower_goal(node(NodeId, form([node(_, atom(not)), Inner])),
+           Owner, Environment, Result) :-
     !,
-    lower_call(Inner, Owner, Reservations, Relations, CallResult),
-    pending_goal_result(CallResult, negative, Result).
+    lower_call(Inner, Owner, Environment, CallResult),
+    pending_goal_result(CallResult, negative, NodeId, Result).
 lower_goal(node(NodeId, form([node(_, atom(not)) | _])),
-           _, _, _, error(diagnostic(lower, NodeId, invalid_negative_goal))) :-
+           _, _, error(diagnostic(lower, NodeId, invalid_negative_goal))) :-
     !.
 lower_goal(node(NodeId, form([node(_, atom(count)) | _])),
-           _, _, _,
+           _, _,
            error(diagnostic(lower, NodeId,
                             aggregate_outside_rule_head))) :-
     !.
-lower_goal(Node, Owner, Reservations, Relations, Result) :-
-    lower_call(Node, Owner, Reservations, Relations, CallResult),
-    pending_goal_result(CallResult, positive, Result).
+lower_goal(Node, Owner, Environment, Result) :-
+    node_id(Node, NodeId),
+    lower_call(Node, Owner, Environment, CallResult),
+    pending_goal_result(CallResult, positive, NodeId, Result).
 
-pending_goal_result(ok(Call), Polarity, ok(pending_goal(Polarity, Call))).
-pending_goal_result(error(Diagnostic), _, error(Diagnostic)).
+pending_goal_result(ok(Call, PrefixGoals, PrefixNodes), Polarity, NodeId,
+                    ok(Goals, GoalNodes)) :-
+    append(PrefixGoals, [pending_goal(Polarity, Call)], Goals),
+    append(PrefixNodes, [NodeId], GoalNodes).
+pending_goal_result(error(Diagnostic), _, _, error(Diagnostic)).
 
-lower_head_call(Node, Owner, Reservations, Relations, Result) :-
-    lower_call_mode(head, Node, Owner, Reservations, Relations, Result).
+lower_head_call(Node, Owner, Environment, Result) :-
+    lower_call_mode(head, Node, Owner, Environment, Result).
 
-lower_call(Node, Owner, Reservations, Relations, Result) :-
-    lower_call_mode(plain, Node, Owner, Reservations, Relations, Result).
+lower_call(Node, Owner, Environment, Result) :-
+    lower_call_mode(plain, Node, Owner, Environment, Result).
 
 lower_call_mode(Mode,
            node(NodeId, form([node(_, atom(Name)) | ArgumentNodes])),
-           Owner, Reservations, Relations, Result) :-
+           Owner, Environment, Result) :-
     !,
-    (   memberchk(reservation(Owner, Name, target(Target), product),
-                  Reservations)
-    ->  memberchk(relation(Target, Arity, _), Relations),
+    expression_callable(Name, Owner, Environment, CallableResult),
+    (   CallableResult = ok(_, Arity, _)
+    ->
         length(ArgumentNodes, ObservedArity),
         (   ObservedArity =:= Arity
-        ->  lower_arguments(Mode, ArgumentNodes, Owner, ArgumentResult),
+        ->  lower_arguments(Mode, ArgumentNodes, Owner, Environment,
+                            ArgumentResult),
             finish_call_arguments(Mode, Name, NodeId, Owner,
                                   ArgumentResult, Result)
         ;   Result = error(diagnostic(
                                lower, NodeId,
                                arity_mismatch(Name, Arity, ObservedArity)))
         )
-    ;   memberchk(reservation(Owner, Name, _, _), Reservations)
-    ->  Result = error(diagnostic(lower, NodeId, not_relation(Name)))
-    ;   kernel_relation(Name, Arity)
-    ->  length(ArgumentNodes, ObservedArity),
-        (   ObservedArity =:= Arity
-        ->  lower_arguments(Mode, ArgumentNodes, Owner, ArgumentResult),
-            finish_call_arguments(Mode, Name, NodeId, Owner,
-                                  ArgumentResult, Result)
-        ;   Result = error(diagnostic(
-                               lower, NodeId,
-                               arity_mismatch(Name, Arity, ObservedArity)))
-        )
-    ;   Result = error(diagnostic(lower, NodeId, undeclared_relation(Name)))
+    ;   CallableResult = error(Reason),
+        Result = error(diagnostic(lower, NodeId, Reason))
     ).
-lower_call_mode(_, Node, _, _, _,
+lower_call_mode(_, Node, _, _,
                 error(diagnostic(lower, NodeId, expected_call))) :-
     node_id(Node, NodeId).
 
 finish_call_arguments(_, _, _, _, error(Diagnostic), error(Diagnostic)).
-finish_call_arguments(head, Name, NodeId, Owner, ok(Arguments), Result) :-
+finish_call_arguments(head, Name, NodeId, Owner,
+                      ok(Arguments, Goals, GoalNodes), Result) :-
     !,
     include(count_aggregate, Arguments, Aggregates),
     length(Aggregates, AggregateCount),
     (   AggregateCount =< 1
-    ->  Result = ok(call(name(Owner, Name), Arguments))
+    ->  Result = ok(call(name(Owner, Name), Arguments), Goals, GoalNodes)
     ;   Result = error(diagnostic(lower, NodeId,
                                   multiple_count_aggregates(Name)))
     ).
-finish_call_arguments(_, Name, _, Owner, ok(Arguments),
-                      ok(call(name(Owner, Name), Arguments))).
+finish_call_arguments(_, Name, _, Owner,
+                      ok(Arguments, Goals, GoalNodes),
+                      ok(call(name(Owner, Name), Arguments),
+                         Goals, GoalNodes)).
 
 count_aggregate(aggregate(count, _)).
 
-lower_arguments(_, [], _, ok([])).
-lower_arguments(Mode, [Node | Nodes], Owner, Result) :-
-    lower_argument(Mode, Node, Owner, ArgumentResult),
-    (   ArgumentResult = ok(Argument)
-    ->  lower_arguments(Mode, Nodes, Owner, RestResult),
-        (   RestResult = ok(Arguments)
-        ->  Result = ok([Argument | Arguments])
+lower_arguments(_, [], _, _, ok([], [], [])).
+lower_arguments(Mode, [Node | Nodes], Owner, Environment, Result) :-
+    lower_argument(Mode, Node, Owner, Environment, ArgumentResult),
+    (   ArgumentResult = ok(Argument, OwnGoals, OwnGoalNodes)
+    ->  lower_arguments(Mode, Nodes, Owner, Environment, RestResult),
+        (   RestResult = ok(Arguments, RestGoals, RestGoalNodes)
+        ->  append(OwnGoals, RestGoals, Goals),
+            append(OwnGoalNodes, RestGoalNodes, GoalNodes),
+            Result = ok([Argument | Arguments], Goals, GoalNodes)
         ;   Result = RestResult
         )
     ;   Result = ArgumentResult
@@ -615,29 +615,35 @@ kernel_return_position(intern_snapshot, 2).
 
 lower_argument(head,
                node(_, form([node(_, atom(count)), Expression])),
-               Owner, Result) :-
+               Owner, Environment, Result) :-
     !,
-    lower_argument(plain, Expression, Owner, ExpressionResult),
-    aggregate_argument_result(ExpressionResult, Result).
-lower_argument(head, node(NodeId, form([node(_, atom(count)) | _])), _,
+    lower_expression(Expression, Owner, Environment,
+                     Value, Goals, GoalNodes, Diagnostics),
+    aggregate_argument_result(Value, Goals, GoalNodes, Diagnostics, Result).
+lower_argument(head, node(NodeId, form([node(_, atom(count)) | _])), _, _,
                error(diagnostic(lower, NodeId,
                                 invalid_count_aggregate))) :-
     !.
-lower_argument(plain, node(NodeId, form([node(_, atom(count)) | _])), _,
+lower_argument(plain, node(NodeId, form([node(_, atom(count)) | _])), _, _,
                error(diagnostic(lower, NodeId,
                                 aggregate_outside_rule_head))) :-
     !.
-lower_argument(_, node(_, variable(Identity, _)), _, ok(var(Identity))).
-lower_argument(_, node(_, literal(Value)), _, ok(const(Value))).
-lower_argument(_, node(_, atom(Name)), Owner, ok(name(Owner, Name))).
-lower_argument(_, node(NodeId, form(_)), _,
-               error(diagnostic(lower, NodeId, nested_call_argument))).
+lower_argument(_, Node, Owner, Environment, Result) :-
+    lower_expression(Node, Owner, Environment,
+                     Value, Goals, GoalNodes, Diagnostics),
+    expression_argument_result(Value, Goals, GoalNodes, Diagnostics, Result).
 
-aggregate_argument_result(ok(Expression),
-                          ok(aggregate(count, Expression))).
-aggregate_argument_result(error(Diagnostic), error(Diagnostic)).
+expression_argument_result(Value, Goals, GoalNodes, [],
+                           ok(Value, Goals, GoalNodes)) :- !.
+expression_argument_result(_, _, _, [Diagnostic | _], error(Diagnostic)).
 
-call_contains_var(call(_, Arguments)) :- member(var(_), Arguments).
+aggregate_argument_result(Value, Goals, GoalNodes, [],
+                          ok(aggregate(count, Value), Goals, GoalNodes)) :- !.
+aggregate_argument_result(_, _, _, [Diagnostic | _], error(Diagnostic)).
+
+call_contains_var(call(_, Arguments)) :-
+    member(Argument, Arguments),
+    sub_term(var(_), Argument).
 
 bind_form(node(NodeId,
                form([node(_, atom(':')), node(_, atom(Name)), Target])),
