@@ -376,6 +376,65 @@ test(full_tuple_calls_preserve_reverse_relational_queries) :-
                     [], patch_matches(true), source_derived(true)),
     !.
 
+test(compile_known_partial_application_erases_to_one_direct_call) :-
+    Text = "(: User (*))\n(: Order (*))\n(: PairResult (*))\n(: Pair (* (: left type) (: right type) (: return type)))\n(Pair User Order PairResult)\n(: Curried ((Pair User) Order))\n",
+    dl7_text_unit(partial_application, partial_application_source,
+                  Text, Unit, []),
+    compile_unit(Unit,
+                 compiled_unit(_, RuntimeProgram, CompilerRows),
+                 Diagnostics),
+    named_owner(CompilerRows, 'User', User),
+    named_owner(CompilerRows, 'Order', Order),
+    named_owner(CompilerRows, 'PairResult', PairResult),
+    named_owner(CompilerRows, 'Pair', Pair),
+    named_owner(CompilerRows, 'Curried', Curried),
+    equality(Curried, PairResult, CurriedMatches),
+    RuntimeProgram = checked_datalog(
+                         _, datalog_program(_, _, Rules), _, _),
+    memberchk(
+        rule(call(ref(kernel(':')),
+                  [ref(Module), const('Curried'), var(Result), const(4)]),
+             [checked_goal(
+                  positive,
+                  call(ref(Pair),
+                       [ref(User), ref(Order), var(Result)]))]),
+        Rules),
+    memberchk(call(ref(kernel(':')),
+                   [ ref(Module), const('Curried'), ref(PairResult), const(4)
+                   ]),
+              CompilerRows),
+    residual_partial_terms(RuntimeProgram, ResidualPartials),
+    partial_application_escape_receipt(EscapeReceipt),
+    Observed = partial_application(
+                   Diagnostics,
+                   result_matches(CurriedMatches),
+                   residual_partial_terms(ResidualPartials),
+                   EscapeReceipt),
+    Observed == partial_application(
+                    [], result_matches(true), residual_partial_terms(0),
+                    unsaturated(
+                        node(22),
+                        partial_application_requires_more_arguments(
+                            'PairUser'))),
+    !.
+
+partial_application_escape_receipt(unsaturated(node(NodeIndex), Reason)) :-
+    Text = "(: User (*))\n(: Pair (* (: left type) (: right type) (: return type)))\n(: PairUser (Pair User))\n",
+    dl7_text_unit(partial_escape, partial_escape_source, Text, Unit, []),
+    compile_unit(
+        Unit, [],
+        [diagnostic(lower,
+                    reader_node(partial_escape_source, NodeIndex),
+                    Reason)]).
+
+residual_partial_terms(Term, Count) :-
+    findall(Partial,
+            ( sub_term(Partial, Term),
+              Partial = partial_application(_, _)
+            ),
+            Partials),
+    length(Partials, Count).
+
 nested_expression_diagnostic_receipt(diagnostic(node(NodeIndex), Reason)) :-
     Text = "(: User (*))\n(: Wrap (* (: source type) (: return type)))\n(: Bad (Wrap (Missing User)))\n",
     dl7_text_unit(nested_diagnostic, nested_diagnostic_source,

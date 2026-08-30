@@ -68,7 +68,13 @@ lower_derived_bind_rules(
     !,
     lower_expression(TargetNode, Owner, Environment,
                      Value, Goals, GoalNodes, Diagnostics),
-    (   Diagnostics == []
+    (   Diagnostics == [],
+        Value = partial_application(_, _)
+    ->  Result = error(diagnostic(
+                           lower, BindNodeId,
+                           partial_application_requires_more_arguments(
+                               Name)))
+    ;   Diagnostics == []
     ->  BindValue = var(derived_bind(BindNodeId)),
         replace_expression_value(Value, BindValue, Goals, BindGoals),
         Head = call(name(Owner, ':'),
@@ -489,6 +495,17 @@ lower_expression(
     lower_expression_call(
         CallableResult, Name, NodeId, ArgumentNodes, Owner, Environment,
         Value, Goals, Origins, Diagnostics).
+lower_expression(node(NodeId, form([OperatorNode | ArgumentNodes])),
+                 Owner, Environment,
+                 Value, Goals, Origins, Diagnostics) :-
+    !,
+    lower_expression(OperatorNode, Owner, Environment,
+                     Operator, OperatorGoals, OperatorOrigins,
+                     OperatorDiagnostics),
+    apply_expression_operator(
+        OperatorDiagnostics, Operator, NodeId, ArgumentNodes,
+        Owner, Environment, OperatorGoals, OperatorOrigins,
+        Value, Goals, Origins, Diagnostics).
 lower_expression(node(NodeId, form(_)), _, _,
                  none, [], [],
                  [diagnostic(lower, NodeId, unresolved_expression_form)]).
@@ -563,6 +580,16 @@ lower_expression_call(ok(Callable, Arity, KeySets), Name, NodeId,
                 Origins = [],
                 Diagnostics = ModeDiagnostics
             )
+        ;   ObservedArity < ExpectedArity
+        ->  lower_expression_arguments(
+                ArgumentNodes, Owner, Environment,
+                Arguments, ArgumentGoals, ArgumentOrigins,
+                ArgumentDiagnostics),
+            finish_partial_application(
+                ArgumentDiagnostics,
+                callable(Owner, Name, Callable, Arity, KeySets, ReturnIndex),
+                Arguments, ArgumentGoals, ArgumentOrigins,
+                Value, Goals, Origins, Diagnostics)
         ;   Value = none,
             Goals = [],
             Origins = [],
@@ -575,6 +602,75 @@ lower_expression_call(ok(Callable, Arity, KeySets), Name, NodeId,
         Goals = [],
         Origins = [],
         Diagnostics = ReturnDiagnostics
+    ).
+
+finish_partial_application(
+    [], Callable, Arguments, Goals, Origins,
+    partial_application(Callable, Arguments), Goals, Origins, []) :-
+    !.
+finish_partial_application([Diagnostic | _], _, _, _, _,
+                           none, [], [], [Diagnostic]).
+
+apply_expression_operator(
+    [Diagnostic | _], _, _, _, _, _, _, _,
+    none, [], [], [Diagnostic]) :-
+    !.
+apply_expression_operator(
+    [],
+    partial_application(
+        callable(CallOwner, Name, Callable, Arity, KeySets, ReturnIndex),
+        BoundArguments),
+    NodeId, ArgumentNodes, Owner, Environment,
+    OperatorGoals, OperatorOrigins,
+    Value, Goals, Origins, Diagnostics) :-
+    !,
+    lower_expression_arguments(
+        ArgumentNodes, Owner, Environment,
+        Arguments, ArgumentGoals, ArgumentOrigins, ArgumentDiagnostics),
+    append(BoundArguments, Arguments, CombinedArguments),
+    append(OperatorGoals, ArgumentGoals, CombinedGoals),
+    append(OperatorOrigins, ArgumentOrigins, CombinedOrigins),
+    finish_partial_application_step(
+        ArgumentDiagnostics,
+        callable(CallOwner, Name, Callable, Arity, KeySets, ReturnIndex),
+        NodeId, CombinedArguments, CombinedGoals, CombinedOrigins,
+        Value, Goals, Origins, Diagnostics).
+apply_expression_operator([], Operator, NodeId, _, _, _, _, _,
+                          none, [], [],
+                          [diagnostic(lower, NodeId,
+                                      expression_operator_not_callable(
+                                          Operator))]).
+
+finish_partial_application_step(
+    [Diagnostic | _], _, _, _, _, _,
+    none, [], [], [Diagnostic]) :-
+    !.
+finish_partial_application_step(
+    [], Callable,
+    NodeId, Arguments, PrefixGoals, PrefixOrigins,
+    Value, Goals, Origins, Diagnostics) :-
+    Callable = callable(CallOwner, Name, _, Arity, KeySets, ReturnIndex),
+    ExpectedArity is Arity - 1,
+    length(Arguments, ObservedArity),
+    (   ObservedArity < ExpectedArity
+    ->  Value = partial_application(Callable, Arguments),
+        Goals = PrefixGoals,
+        Origins = PrefixOrigins,
+        Diagnostics = []
+    ;   ObservedArity =:= ExpectedArity
+    ->  expression_mode_diagnostics(
+            Name, ReturnIndex, Arity, KeySets, NodeId, ModeDiagnostics),
+        finish_expression_call_arguments(
+            ModeDiagnostics, Name, NodeId, ReturnIndex,
+            Arguments, PrefixGoals, PrefixOrigins, CallOwner,
+            Value, Goals, Origins, Diagnostics)
+    ;   Value = none,
+        Goals = [],
+        Origins = [],
+        Diagnostics = [diagnostic(
+                           lower, NodeId,
+                           expression_arity_mismatch(
+                               Name, ExpectedArity, ObservedArity))]
     ).
 
 expression_mode_diagnostics(Name, ReturnIndex, Arity, KeySets, NodeId,
