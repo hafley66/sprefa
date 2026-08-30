@@ -19,8 +19,14 @@ use std::sync::Mutex;
 use crate::seams::DefIndex;
 use crate::shape::{ContentId, FamilyTag, Span, ZERO_CONTENT_ID};
 
-use super::rust::{build_line_starts, mod_path_attr, module_segments, module_target};
+use super::rust::{build_line_starts, def_span, mod_path_attr, module_segments, module_target, syn_span};
 use super::rust_receivers::{impl_facts, ImplEntry};
+
+use syn::spanned::Spanned as _;
+
+fn spanned<T: syn::spanned::Spanned>(t: &T) -> &T {
+    t
+}
 
 // ── phase-2 facts: one dedicated parse per file ──────────────────────────────
 
@@ -58,6 +64,25 @@ pub struct RustModuleFacts {
     /// Every enum's (name, variant names): a `T::f()` whose `f` is a variant
     /// of corpus enum `T` names the enum, not a method.
     enums: Vec<(String, Vec<String>)>,
+    /// Every trait's (name, fn name, fn def span, default body?) for the
+    /// trait dispatch table: declared (no body) and default (body present)
+    /// fns alike bind to the trait's own def.
+    traits: Vec<TraitEntry>,
+}
+
+/// One trait declaration's fn set.
+#[derive(Clone, Debug)]
+pub(crate) struct TraitEntry {
+    pub(crate) name: String,
+    pub(crate) fns: Vec<TraitFn>,
+}
+
+/// One fn of a trait: `default` marks a fn with a body.
+#[derive(Clone, Debug)]
+pub(crate) struct TraitFn {
+    pub(crate) name: String,
+    pub(crate) span: Span,
+    pub(crate) default: bool,
 }
 
 /// `None` for a non-`.rs` path or a parse that fails: the plane then simply
@@ -71,11 +96,11 @@ pub fn rust_module_facts(path: &str, content: &[u8]) -> Option<RustModuleFacts> 
     let mut facts = RustModuleFacts::default();
     let line_starts = build_line_starts(text);
     facts.impls = impl_facts(&parsed, &line_starts);
-    collect(&parsed.items, &mut facts);
+    collect(&parsed.items, &line_starts, &mut facts);
     Some(facts)
 }
 
-fn collect(items: &[syn::Item], facts: &mut RustModuleFacts) {
+fn collect(items: &[syn::Item], line_starts: &[u32], facts: &mut RustModuleFacts) {
     for item in items {
         match item {
             syn::Item::Use(use_item) => {
@@ -83,10 +108,35 @@ fn collect(items: &[syn::Item], facts: &mut RustModuleFacts) {
                 let mut prefix = Vec::new();
                 walk_use_tree(&use_item.tree, reexport, &mut prefix, facts);
             }
+            syn::Item::Trait(trait_item) => {
+                let fns = trait_item
+                    .items
+                    .iter()
+                    .filter_map(|item| match item {
+                        syn::TraitItem::Fn(f) => {
+                            let span = match &f.default {
+                                Some(block) => def_span(
+                                    line_starts,
+                                    spanned(&f.sig.ident).span(),
+                                    spanned(block).span(),
+                                ),
+                                None => syn_span(line_starts, f.sig.span()),
+                            };
+                            Some(TraitFn {
+                                name: f.sig.ident.to_string(),
+                                span,
+                                default: f.default.is_some(),
+                            })
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                facts.traits.push(TraitEntry { name: trait_item.ident.to_string(), fns });
+            }
             syn::Item::Mod(mod_item) => match &mod_item.content {
                 Some((_, inner)) => {
                     facts.inline_mods.insert(mod_item.ident.to_string());
-                    collect(inner, facts);
+                    collect(inner, line_starts, facts);
                 }
                 None => {
                     let name = mod_item.ident.to_string();
@@ -384,6 +434,12 @@ pub struct RustModuleIndex {
     impl_methods: HashMap<(String, String), Vec<ImplMethodTarget>>,
     /// (enum name, variant name) -> declaring file paths.
     enum_variants: HashMap<(String, String), Vec<String>>,
+    /// trait name -> every fn def it declares or defaults, with its file blob.
+    trait_fns: HashMap<String, Vec<(ContentId, String, Span, bool)>>,
+    /// (trait name, fn name) -> every corpus `impl Trait for T` fn of the pair.
+    trait_impl_fns: HashMap<(String, String), Vec<(ContentId, Span)>>,
+    /// self type -> trait names an `impl Trait for T` block names.
+    type_traits: HashMap<String, Vec<String>>,
 }
 
 /// One corpus impl site of a (self type, fn name) pair. `trait_name` is None
@@ -467,6 +523,37 @@ impl RustModuleIndex {
                         .entry((name.clone(), variant.clone()))
                         .or_default()
                         .push(path.clone());
+                }
+            }
+            if let Some(blob) = index.blobs.get(path) {
+                for entry in &facts.traits {
+                    for f in &entry.fns {
+                        index.trait_fns.entry(entry.name.clone()).or_default().push((
+                            blob.clone(),
+                            f.name.clone(),
+                            f.span,
+                            f.default,
+                        ));
+                    }
+                }
+            }
+            for entry in &facts.impls {
+                let Some(trait_name) = &entry.trait_name else {
+                    continue;
+                };
+                index
+                    .type_traits
+                    .entry(entry.self_type.clone())
+                    .or_default()
+                    .push(trait_name.clone());
+                if let Some(blob) = index.blobs.get(path) {
+                    for (name, span) in &entry.methods {
+                        index
+                            .trait_impl_fns
+                            .entry((trait_name.clone(), name.clone()))
+                            .or_default()
+                            .push((blob.clone(), *span));
+                    }
                 }
             }
         }
@@ -556,6 +643,65 @@ impl RustModuleIndex {
             .find(|(_, name, _)| name == type_name)
             .map(|(span, _, _)| *span)?;
         Some((blob.clone(), span))
+    }
+
+    /// Whether `name` is a trait the corpus declares.
+    pub(crate) fn is_trait(&self, name: &str) -> bool {
+        self.trait_fns.contains_key(name)
+    }
+
+    /// The trait's own fn def for `fn_name`, declared or defaulted (classes
+    /// 12 and 6): a `T::f()` / `x.m()` whose T is a corpus trait binds here.
+    pub(crate) fn trait_fn_target(
+        &self,
+        trait_name: &str,
+        fn_name: &str,
+    ) -> Option<(ContentId, Span)> {
+        let sites = self.trait_fns.get(trait_name)?;
+        let (_, _, span, _) = sites.iter().find(|(_, name, _, _)| name == fn_name)?;
+        Some((sites[0].0.clone(), *span))
+    }
+
+    /// The ONE corpus impl of `trait_name` defining `fn_name` (class 12's
+    /// impl-first rule); 2+ impls stay unbound.
+    pub(crate) fn trait_impl_target(
+        &self,
+        trait_name: &str,
+        fn_name: &str,
+    ) -> Option<(ContentId, Span)> {
+        let [only] = self
+            .trait_impl_fns
+            .get(&(trait_name.to_string(), fn_name.to_string()))?
+            .as_slice()
+        else {
+            return None;
+        };
+        Some(only.clone())
+    }
+
+    /// The one trait default body providing `fn_name` for a type `type_name`
+    /// implements (classes 4 and 8): no impl defines the fn, the trait does.
+    pub(crate) fn trait_default_target(
+        &self,
+        type_name: &str,
+        fn_name: &str,
+    ) -> Option<(ContentId, Span)> {
+        let traits = self.type_traits.get(type_name)?;
+        let mut hit: Option<(ContentId, Span)> = None;
+        for trait_name in traits {
+            let Some(sites) = self.trait_fns.get(trait_name) else {
+                continue;
+            };
+            for (blob, name, span, default) in sites {
+                if *name == fn_name && *default {
+                    if hit.is_some() && hit.as_ref() != Some(&(blob.clone(), *span)) {
+                        return None;
+                    }
+                    hit = Some((blob.clone(), *span));
+                }
+            }
+        }
+        hit
     }
 
     /// Every `use` binding `path` writes, resolved; an ambiguous or

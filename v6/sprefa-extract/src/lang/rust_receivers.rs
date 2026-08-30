@@ -100,6 +100,23 @@ fn principal_ty(ty: &syn::Type) -> Option<String> {
             }
             Some(ident)
         }
+        // `dyn Trait` / `impl Trait`: the receiver's type IS the trait, the
+        // trait-dispatch leg's input.
+        syn::Type::TraitObject(t) => single_bound_trait(&t.bounds),
+        syn::Type::ImplTrait(t) => single_bound_trait(&t.bounds),
+        _ => None,
+    }
+}
+
+/// The one trait a `dyn`/`impl` bound names; `A + B` multi-bounds bind none.
+fn single_bound_trait(bounds: &syn::punctuated::Punctuated<syn::TypeParamBound, syn::token::Plus>) -> Option<String> {
+    if bounds.len() != 1 {
+        return None;
+    }
+    match bounds.first()? {
+        syn::TypeParamBound::Trait(tb) => {
+            Some(tb.path.segments.last()?.ident.to_string())
+        }
         _ => None,
     }
 }
@@ -110,6 +127,39 @@ fn output_ty(sig: &syn::Signature) -> Option<String> {
         syn::ReturnType::Type(_, ty) => principal_ty(ty),
         syn::ReturnType::Default => None,
     }
+}
+
+/// Generic param name -> every trait bound on it, from the param list and
+/// the where clause (`fn f<T: Iter>(t: T)` / `where T: Display`).
+fn trait_bounds_of_generics(generics: &syn::Generics) -> std::collections::HashMap<String, Vec<String>> {
+    let mut out: std::collections::HashMap<String, Vec<String>> = Default::default();
+    let mut push_bound = |name: String, bound: &syn::TypeParamBound| {
+        if let syn::TypeParamBound::Trait(tb) = bound {
+            if let Some(segment) = tb.path.segments.last() {
+                out.entry(name).or_default().push(segment.ident.to_string());
+            }
+        }
+    };
+    for param in &generics.params {
+        if let syn::GenericParam::Type(tp) = param {
+            let name = tp.ident.to_string();
+            for bound in &tp.bounds {
+                push_bound(name.clone(), bound);
+            }
+        }
+    }
+    if let Some(where_clause) = &generics.where_clause {
+        for predicate in &where_clause.predicates {
+            if let syn::WherePredicate::Type(pred) = predicate {
+                if let Some(name) = principal_ty(&pred.bounded_ty) {
+                    for bound in &pred.bounds {
+                        push_bound(name.clone(), bound);
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// One name's binding in a scope frame. `Unknown` covers an untyped `let`
@@ -319,6 +369,7 @@ impl<'a> ReceiverWalk<'a> {
     }
 
     fn seed_params(&mut self, sig: &syn::Signature) {
+        let generic_bounds = trait_bounds_of_generics(&sig.generics);
         for input in &sig.inputs {
             let syn::FnArg::Typed(arg) = input else {
                 continue;
@@ -327,7 +378,14 @@ impl<'a> ReceiverWalk<'a> {
                 continue;
             };
             if let Some(ty) = principal_ty(&arg.ty) {
-                self.insert(pat.ident.to_string(), TypeBinding::Named(ty));
+                // A param typed by the fn's OWN generic param resolves to the
+                // param's single trait bound (class 6b); an unbound or
+                // multi-bound param stays as written.
+                let binding = generic_bounds.get(&ty).and_then(|bounds| match bounds.as_slice() {
+                    [trait_name] => Some(trait_name.clone()),
+                    _ => None,
+                });
+                self.insert(pat.ident.to_string(), TypeBinding::Named(binding.unwrap_or(ty)));
             }
         }
     }

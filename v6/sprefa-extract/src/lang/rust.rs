@@ -1305,7 +1305,20 @@ impl Resolve<CallF> for RustSource {
                 });
             let recv_t = recv_named.as_ref().and_then(|ty| {
                 modules
-                    .and_then(|m| m.impl_target(ty, callee, own_path))
+                    .and_then(|m| {
+                        m.impl_target(ty, callee, own_path)
+                            // The receiver names a corpus trait (`dyn T`,
+                            // `impl T`, a bound param): the trait's own fn
+                            // def (class 6).
+                            .or_else(|| {
+                                m.is_trait(ty)
+                                    .then_some(())
+                                    .and_then(|()| m.trait_fn_target(ty, callee))
+                            })
+                            // No impl defines the method; a trait the type
+                            // implements provides a default body (class 4).
+                            .or_else(|| m.trait_default_target(ty, callee))
+                    })
                     .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
             });
             // The receiver's type was SEEN in scope (even if no impl binds).
@@ -1328,6 +1341,17 @@ impl Resolve<CallF> for RustSource {
                                 |(blob, span)| (blob, span, CallEdgeKind::NameResolve),
                             )
                         })
+                        // Trait dispatch: T a corpus trait (class 12, impl
+                        // first), else a trait-provided fn with no impl
+                        // override (class 8's zero-impl arm).
+                            .or_else(|| {
+                                modules.and_then(|m| {
+                                    m.trait_impl_target(&ty, callee)
+                                        .or_else(|| m.trait_fn_target(&ty, callee))
+                                        .or_else(|| m.trait_default_target(&ty, callee))
+                                        .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                                })
+                            })
                 }),
             );
             let self_t = (qualifier.is_none()
