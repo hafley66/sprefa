@@ -125,6 +125,7 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
     // Occurrences alone never carry the virtual-dispatch hop, so this is the
     // only place the interface-to-impl path exists.
     let mut impls: BTreeSet<(&str, &str)> = BTreeSet::new();
+    let mut relationships: BTreeSet<(&str, &str, bool, bool, bool, bool)> = BTreeSet::new();
     let infos = index
         .documents
         .iter()
@@ -135,9 +136,24 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
             continue;
         }
         for related in &info.relationships {
-            if related.is_implementation && !related.symbol.is_empty() {
+            if related.symbol.is_empty() {
+                continue;
+            }
+            if related.is_implementation {
                 impls.insert((info.symbol.as_str(), related.symbol.as_str()));
             }
+            // The raw relationship row is the v5 family's unprojection: every
+            // flag scip carried rides the wire, so a consumer can answer
+            // subclass-of, trait-member and override questions the impl
+            // projection throws away.
+            relationships.insert((
+                info.symbol.as_str(),
+                related.symbol.as_str(),
+                related.is_reference,
+                related.is_implementation,
+                related.is_type_definition,
+                related.is_definition,
+            ));
         }
     }
 
@@ -155,7 +171,8 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
             + fn_edges.len()
             + callee_types.len()
             + locals.len()
-            + impls.len(),
+            + impls.len()
+            + relationships.len(),
     );
     out.extend(
         defs.into_iter()
@@ -223,6 +240,25 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
                 iface: iface.to_string(),
             }),
     );
+    out.extend(relationships.into_iter().map(
+        |(
+            symbol,
+            related_symbol,
+            is_reference,
+            is_implementation,
+            is_type_definition,
+            is_definition,
+        )| {
+            FlatFact::ScipRelationshipRow {
+                symbol: symbol.to_string(),
+                related_symbol: related_symbol.to_string(),
+                is_reference,
+                is_implementation,
+                is_type_definition,
+                is_definition,
+            }
+        },
+    ));
     out
 }
 

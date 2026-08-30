@@ -14,7 +14,7 @@
 // warnings here are the sharing, not rot.
 #![allow(dead_code)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -161,6 +161,11 @@ pub struct NormalForms {
     pub call: BTreeSet<String>,
     pub type_edges: BTreeSet<String>,
     pub module: BTreeSet<String>,
+    /// call row -> the kind of the `resolved_edge` that produced it. Only the
+    /// go projection reads it (`implements` marks the per-implementer fan-out
+    /// edge); a row seen under several kinds keeps `implements` if it ever
+    /// carried it.
+    pub call_kinds: BTreeMap<String, String>,
 }
 
 /// `FlatFact` rows to the three tsv families, exactly as normalize.py's
@@ -173,6 +178,7 @@ pub fn normal_form(root: &Path, facts: &[FlatFact]) -> NormalForms {
         call: BTreeSet::new(),
         type_edges: BTreeSet::new(),
         module: BTreeSet::new(),
+        call_kinds: BTreeMap::new(),
     };
     for fact in facts {
         match fact {
@@ -181,15 +187,27 @@ pub fn normal_form(root: &Path, facts: &[FlatFact]) -> NormalForms {
                 caller_name,
                 callee_path,
                 callee_name,
+                kind,
                 ..
             } => {
-                forms.call.insert(edge_row(
+                let row = edge_row(
                     root,
                     caller_path,
                     caller_name.as_deref(),
                     callee_path,
                     callee_name.as_deref(),
-                ));
+                );
+                let fanout = kind == "implements";
+                match forms.call_kinds.get(&row) {
+                    Some(existing) if fanout && existing != "implements" => {
+                        forms.call_kinds.insert(row.clone(), kind.clone());
+                    }
+                    None => {
+                        forms.call_kinds.insert(row.clone(), kind.clone());
+                    }
+                    _ => {}
+                }
+                forms.call.insert(row);
             }
             FlatFact::ResolvedTypeEdge {
                 owner_path,
@@ -217,6 +235,175 @@ pub fn normal_form(root: &Path, facts: &[FlatFact]) -> NormalForms {
         }
     }
     forms
+}
+
+// ── the go call projection (GO-PARITY.REPORT.md) ────────────────────────────
+
+/// Which side of an interface call site a row answers. CodeQL names the
+/// interface method (the spec row); vta names per-implementer rows (the
+/// `implements` fan-out edges, go.rs). Ours emits both, so the projection
+/// picks one per oracle. `Both` keeps every row.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum GoIface {
+    Method,
+    Impl,
+}
+
+/// The three scope flags of `plans/extract-bench-2026-08-29/go.project.py`,
+/// one struct. The oracles never saw test files and are already in their own
+/// iface shape, so this applies to OURS only.
+#[derive(Clone, Default)]
+pub struct GoProjection {
+    /// Drop every row whose src_path is absent from the oracle's src_path set
+    /// (test files, packages the oracle never built).
+    pub scope_oracle: Option<BTreeSet<String>>,
+    /// Drop `closure@<n>`-caller rows; the mirrored enclosing-fn row stays.
+    pub closure: bool,
+    pub iface: Option<GoIface>,
+}
+
+impl GoProjection {
+    /// The projection ratchet rows use: `go.codeql2.call.tsv` scores in
+    /// codeql shape, `go.oracle.call.vta.bare.tsv` in vta shape.
+    pub fn per_oracle(oracle_file: &str, oracle_rows: &BTreeSet<String>) -> Option<GoProjection> {
+        let oracle_srcs = || {
+            oracle_rows
+                .iter()
+                .map(|row| row.split('\t').next().unwrap_or("").to_string())
+                .collect::<BTreeSet<String>>()
+        };
+        match oracle_file {
+            "go.codeql2.call.tsv" => Some(GoProjection {
+                scope_oracle: Some(oracle_srcs()),
+                closure: true,
+                iface: Some(GoIface::Method),
+            }),
+            "go.oracle.call.vta.bare.tsv" => Some(GoProjection {
+                scope_oracle: Some(oracle_srcs()),
+                closure: true,
+                iface: Some(GoIface::Impl),
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// go.project.py over a call set, ported. `call_kinds` marks which rows are
+/// `implements` fan-out edges.
+pub fn go_project(
+    call: &BTreeSet<String>,
+    call_kinds: &BTreeMap<String, String>,
+    projection: &GoProjection,
+) -> BTreeSet<String> {
+    let mut rows: BTreeSet<String> = call
+        .iter()
+        .filter(|row| {
+            projection.scope_oracle.as_ref().is_none_or(|scope| {
+                scope.contains(row.split('\t').next().unwrap_or(""))
+            })
+        })
+        .filter(|row| {
+            !projection.closure
+                || !row
+                    .split('\t')
+                    .nth(1)
+                    .unwrap_or("")
+                    .starts_with("closure@")
+        })
+        .cloned()
+        .collect();
+    if projection.iface == Some(GoIface::Method) {
+        // codeql shape: drop the per-implementer fan-out rows, keep the spec.
+        rows.retain(|row| call_kinds.get(row).map(String::as_str) != Some("implements"));
+    } else if projection.iface == Some(GoIface::Impl) {
+        // vta shape: keep the fan-out rows; drop the spec row, detected as the
+        // non-implements row whose (src_path, src_name, dst_name) triple also
+        // occurs on an implements row.
+        let impl_triples: BTreeSet<[String; 3]> = rows
+            .iter()
+            .filter(|row| call_kinds.get(*row).map(String::as_str) == Some("implements"))
+            .map(|row| {
+                let cols: Vec<&str> = row.split('\t').collect();
+                [cols[0].to_string(), cols[1].to_string(), cols[3].to_string()]
+            })
+            .collect();
+        rows.retain(|row| {
+            if call_kinds.get(row).map(String::as_str) == Some("implements") {
+                return true;
+            }
+            let cols: Vec<&str> = row.split('\t').collect();
+            !impl_triples.contains(&[cols[0].to_string(), cols[1].to_string(), cols[3].to_string()])
+        });
+    }
+    rows
+}
+
+#[test]
+fn go_projection_drops_test_closure_and_iface_rows() {
+    // 7 hand-made rows: 2 test-file callers, 1 closure caller, 1 implements
+    // fan-out row, its spec row (same dst_name, the method name, as the
+    // fan-out: that is how impl mode detects a spec), and 2 plain rows. Scope
+    // is everything except the test files, so each iface mode must land on
+    // exactly 3 rows: method mode keeps both plain rows plus the spec and
+    // drops the fan-out; impl mode is the reverse.
+    let plain = "internal/f.go\tHandler\tinternal/x.go\tX";
+    let plain2 = "internal/f.go\tHandler\tinternal/x.go\tY";
+    let spec = "internal/f.go\tHandler\tinternal/ast/ast.go\tWrite";
+    let fanout = "internal/f.go\tHandler\tinternal/printer/textwriter.go\tWrite";
+    let call: BTreeSet<String> = [
+        plain,
+        plain2,
+        spec,
+        fanout,
+        "internal/f.go\tclosure@1\tinternal/x.go\tX",
+        "internal/a_test.go\tCaller\tinternal/x.go\tX",
+        "internal/b_test.go\tTestA\tinternal/x.go\tX",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+    let mut call_kinds = BTreeMap::new();
+    call_kinds.insert(fanout.to_string(), "implements".to_string());
+    call_kinds.insert(spec.to_string(), "name_resolve".to_string());
+    let scope: BTreeSet<String> = [
+        "internal/f.go",
+        "internal/x.go",
+        "internal/ast/ast.go",
+        "internal/printer/textwriter.go",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+
+    let method = go_project(
+        &call,
+        &call_kinds,
+        &GoProjection {
+            scope_oracle: Some(scope.clone()),
+            closure: true,
+            iface: Some(GoIface::Method),
+        },
+    );
+    assert_eq!(
+        method,
+        BTreeSet::from([plain.to_string(), plain2.to_string(), spec.to_string()]),
+        "method mode: test, closure and fan-out rows drop; spec and plain stay"
+    );
+
+    let impl_mode = go_project(
+        &call,
+        &call_kinds,
+        &GoProjection {
+            scope_oracle: Some(scope),
+            closure: true,
+            iface: Some(GoIface::Impl),
+        },
+    );
+    assert_eq!(
+        impl_mode,
+        BTreeSet::from([plain.to_string(), plain2.to_string(), fanout.to_string()]),
+        "impl mode: test, closure and the spec row drop; fan-out and plain stay"
+    );
 }
 
 pub fn family_rows<'a>(forms: &'a NormalForms, family: &str) -> &'a BTreeSet<String> {
@@ -484,8 +671,18 @@ pub fn ratchet(lang: &str) {
             continue;
         }
         let oracle_rows = load_tsv(&oracle_path);
-        let ours = family_rows(&measurement.forms, family);
-        let verdict = score(ours, &oracle_rows);
+        // The go call projection (GO-PARITY.REPORT.md): score our rows in the
+        // oracle's own shape so recall and precision are comparable. Every
+        // other family and corpus scores raw.
+        let ours = match GoProjection::per_oracle(oracle_file, &oracle_rows) {
+            Some(projection) => go_project(
+                family_rows(&measurement.forms, family),
+                &measurement.forms.call_kinds,
+                &projection,
+            ),
+            None => family_rows(&measurement.forms, family).clone(),
+        };
+        let verdict = score(&ours, &oracle_rows);
         let floor = row_key(&floors).map(|index| floors[index].clone());
         let mut line_verdict = String::from("no-floor");
         if let Some(floor) = &floor {
