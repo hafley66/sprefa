@@ -102,7 +102,6 @@
 
 ; Canonical application identities use the shared cons and intern relations.
 (<- (Partial ?Source ?Result)
-    (partial_request ?Source)
     (nil ?Empty)
     (cons ?Source ?Empty ?Arguments)
     (intern Partial ?Arguments ?Result))

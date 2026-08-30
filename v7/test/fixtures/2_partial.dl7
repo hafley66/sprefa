@@ -13,17 +13,13 @@
 (<- (history_request ?Result)
     (HistoryV1 User HistoryOptions ?Result))
 
-(: partial_request
-   (* (: source type)))
-
-(partial_request User)
+(: UserPatch (Partial User))
 
 (: selected_request
    (* (: result type)))
 
 (<- (selected_request ?Result)
-    (partial_request ?Source)
-    (Partial ?Source ?Partial)
+    (Partial User ?Partial)
     (edge_snapshot ?Partial ?FirstName ?FirstType 0)
     (edge_snapshot ?Partial ?SecondName ?SecondType 1)
     (nil ?Empty)
