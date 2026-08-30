@@ -1,3 +1,5 @@
+call_def	function	Fast	9
+call_def	function	Slow	10
 call_def	function	apply	32
 call_def	function	make_engine	19
 call_def	function	trim	15

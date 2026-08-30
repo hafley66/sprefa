@@ -1329,3 +1329,118 @@ Fixture `tests/fixtures/rust_findings/trait_blob/` (`a.rs` and `b.rs` each
 declare `trait Shape` with a default `area`; `a.rs` also impls it), test
 `tests/75_rust_trait_blob.rs` red at HEAD with `got [("f", "a.rs"),
 ("g", "a.rs")]`, green after the fix.
+
+## 22. The leak, classified and cut (lane `fix-extract-rust-grind`, arc 2)
+
+### 22.1 The universe
+
+One process, 873 `crates/*/src` files of rust-analyzer `af4111f`, binary at
+this lane's HEAD, `--resolve --family call,type --project-root .`. The leak is
+`oracle - ours` AFTER `rust.project.py --scope corpus --closure enclosing`:
+**7,826** rows against `rust.oracle.call.tsv` (26,359 projected oracle rows,
+18,533 overlap). **5,055** of the 7,826 are rows `rust.codeql.call.tsv` (arc 1)
+also emits, so two thirds of the leak is reachable, not oracle noise.
+
+Classifier: `rust.leak.classify.py` (committed beside this file). It joins each
+leak row to the call SITES our own parse found inside the named caller whose
+callee name matches, then reads the tier off our own output: `no_site`,
+`misbind_*` (the site bound, elsewhere), or `drop:<reason>`. Not a projection
+from a sample: all 7,826 rows are classified.
+
+### 22.2 Tiers, before and after
+
+| tier | before | after | meaning |
+|---|---:|---:|---|
+| `drop:inferred` | 3,670 | 3,670 | the receiver's type is not visible in scope |
+| `misbind_name` | **1,344** | **5** | right file, wrong name: fixed below |
+| `drop:ambiguous` | 1,329 | 1,362 | 2+ corpus defs of the name |
+| `misbind_other_crate` | 599 | 585 | bound a same-named def in another crate |
+| `no_site` | 432 | 432 | no parse site inside that caller |
+| `drop:no_corpus_def` | 331 | 244 | no corpus def of the name |
+| `misbind_sibling_file` | 119 | 119 | bound a same-named def in a sibling file |
+| `drop:external` | 2 | 0 | |
+| TOTAL | **7,826** | **6,417** | |
+
+Two file:line per tier:
+
+| tier | sites |
+|---|---|
+| `drop:inferred` | `crates/cfg/src/cfg_expr.rs:30` `cmp` -> `crates/intern/src/symbol.rs as_str`; `crates/hir-ty/src/method_resolution.rs:455` `lookup_impl_method_query` -> `next_solver/generic_arg.rs iter` |
+| `misbind_name` | `crates/ide-ssr/src/parsing.rs:223` `parse_pattern` -> `Placeholder` (we said `PatternElement`); `crates/hir/src/has_source.rs:112` `source` -> `Named` (we said `FieldSource`) |
+| `drop:ambiguous` | `crates/hir-def/src/attrs.rs:396` `contains_no_std` -> `syntax/src/ast/generated/nodes.rs meta`; `crates/hir-ty/src/next_solver/inspect.rs:98` `constrain_and` -> `obligation_ctxt.rs evaluate_obligations_error_on_ambiguity` |
+| `misbind_other_crate` | `crates/hir/src/lib.rs:1481` `fields` -> `hir-def/src/signatures.rs fields` (we said `hir/src/lib.rs`); `crates/ide/src/inlay_hints/closure_captures.rs:27` `hints` -> `syntax/.../nodes.rs move_token` |
+| `no_site` | `crates/base-db/src/input.rs` `normalize_dashes` -> `CrateName`; `crates/hir-ty/src/infer/coerce.rs` `fold_const` -> `next_solver/interner.rs iter` |
+| `misbind_sibling_file` | `crates/hir-def/src/nameres.rs:318` `declaration` -> `item_tree.rs file_id`; `crates/tt/src/lib.rs:239` `fmt` -> `tt/src/iter.rs is_empty` |
+
+### 22.3 The class that was fixed: a variant constructor named its enum
+
+1,340 of the 1,344 `misbind_name` rows are one defect. `variant_ctor_target`
+(`rust_modules.rs:702`) looked the pair up in `enum_variants`, which stored only
+the DECLARING FILE, and then read the span of the def whose name is the ENUM.
+The emitted `resolved_edge` therefore read `callee_name = "PatternElement"`
+where every rust call oracle spells the edge `Placeholder`. Each such row cost
+twice: the oracle row leaked and the enum row was excess.
+
+| leg | before | after |
+|---|---|---|
+| `RustModuleFacts.enums` | `(enum, Vec<variant name>)` | `(enum, Vec<(variant name, def span)>)`, the ident span only |
+| `RustModuleIndex.enum_variants` | `(enum, variant) -> Vec<path>` | `(enum, variant) -> Vec<(path, span)>` |
+| `variant_ctor_target` | the enum's def span | the variant's own def span |
+| `call_defs_in_items` (`rust.rs`) | no def for a variant | one `CallKind::Free` def per variant, ident span |
+
+Three more defects fell out of minting those defs, each a pre-existing hazard
+the new defs made visible:
+
+| # | defect | throw site | rule now |
+|---|---|---|---|
+| 1 | a type reference resolved through `corpus_defs`'s single-site rule, which counts CALL-plane defs; a variant or fn sharing a type's name made the pick ambiguous and dropped the edge | `rust.rs:837` `resolve_type_dst` | only `FamilyTag::Type` sites are candidates |
+| 2 | a type reference bound through the module plane landed on the CALL facet's span, so the row read `target_name = null` (the export table prefers the call facet, `rust_modules.rs:1243`) | `rust.rs:832` | the type leg asks `RustModuleIndex::type_target`, which re-aims at the type facet in the same file |
+| 3 | every def spliced out of one macro expansion carries the macro CALL's span (156 defs share span 3136..5229 in `crates/hir/src/diagnostics.rs`), so a span-keyed name lookup returned whichever def won the slot | `rust.rs:938` `same_file_call_match`, `rust_modules.rs:1243` export table | a span several names share binds nothing: `same_file_call_match` returns None, and `named_defs` keeps a collapsed-span def only when its name has no other site |
+
+An mbe-expanded variant reports the whole macro call as its ident span, so
+`variant_def_span` returns None unless the span covers exactly the ident.
+
+### 22.4 Receipt
+
+Single process, 873 files, `rust-analyzer af4111f`, wall 1.45 / 0.56 / 0.56 s.
+
+| leg | before | after |
+|---|---:|---:|
+| call vs `rust.oracle.call.tsv` recall | 70.31 | **75.66** |
+| call vs `rust.oracle.call.tsv` precision | 43.35 | **46.29** |
+| call vs `rust.scip_override.call.tsv` recall | 78.76 | **78.90** |
+| call vs `rust.scip_override.call.tsv` precision | 42.44 | 42.22 |
+| call vs `rust.codeql.call.tsv` recall | 64.97 | 64.96 |
+| call vs `rust.codeql.call.tsv` precision | 71.51 | 71.03 |
+| type vs `rust.oracle.type.typedecl.tsv` recall | 26.27 | 26.23 |
+| type vs `rust.oracle.type.typedecl.tsv` precision | 74.20 | **88.19** |
+| ra overlap | 18,533 | **19,942** |
+| leak rows | 7,826 | **6,417** |
+| unique call rows | 56,336 | 56,591 |
+
+The two precision losses are an oracle-convention disagreement, not a
+regression: codeql's `Call` class excludes tuple-struct and tuple-variant
+instantiation BY CONSTRUCTION (`rust-all/codeql/rust/elements/internal/CallImpl.qll`:
+"a `CallExpr` that is _not_ an instantiation of a tuple struct or a tuple
+variant"), and raw scip mostly follows it, while the ra_ap_ide call hierarchy
+counts the ctor as a call. The trade is +1,409 ra overlap and +22 scip overlap
+against 202 extra scip-scored rows and 315 extra codeql-scored ones. Both
+floors were rewritten with `RATCHET_FORCE=1`; the codeql row is the only floor
+that moved DOWN (71.51 -> 71.03) and this paragraph is its receipt.
+
+### 22.5 What is left, and what needs a type checker
+
+`drop:inferred` is 57% of the remaining 6,417 and is the class section 18
+already priced: the receiver's type is not written anywhere the parse can read
+it (`x.m()` where `x` came out of a chain, a closure param, or an
+`impl Trait` return). Binding it needs type inference, not more name matching.
+Throw site: `rust.rs:1510` (`UnresolvedReason::Inferred`), set when
+`ReceiverOutcome::Inferred` reaches `call_drops`. Nothing short of a checker
+moves it.
+
+`no_site` (432) is the mbe frontier: the caller def our parse mints does not
+cover the call, or the call is inside an expansion we do not splice.
+
+The two `misbind_*_file` tiers (704) are the corpus-unique name match binding a
+same-named def in the wrong file. That is arc 3's excess class seen from the
+other side and is the next largest fixable one.
