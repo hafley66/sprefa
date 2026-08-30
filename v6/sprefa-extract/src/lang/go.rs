@@ -26,7 +26,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use super::astgrep::{AstGrepParser, CstProjector};
 use super::go_modules::{is_exported, GoModuleIndex};
@@ -58,6 +58,30 @@ pub(crate) fn go_parse(content: &str) -> Option<tree_sitter::Tree> {
     let lang = tree_sitter::Language::new(tree_sitter_go::LANGUAGE);
     parser.set_language(&lang).ok()?;
     parser.parse(content, None)
+}
+
+/// Parse Go source, reusing the tree the extract pass already produced for
+/// these exact bytes on this thread (task: one parse per file per language).
+/// The single-entry handoff: `dispatch` parses and stores, the module plane
+/// consumes on the same worker thread.
+pub(crate) fn go_parse_shared(content: &str) -> Option<std::sync::Arc<tree_sitter::Tree>> {
+    use crate::shape::content_id_of;
+    thread_local! {
+        static LAST: std::cell::RefCell<Option<(crate::shape::ContentId, std::sync::Arc<tree_sitter::Tree>)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    let id = content_id_of(content.as_bytes());
+    if let Some((_, tree)) = LAST.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .filter(|(cached, _)| cached == &id)
+            .cloned()
+    }) {
+        return Some(tree);
+    }
+    let tree = std::sync::Arc::new(go_parse(content)?);
+    LAST.with(|slot| *slot.borrow_mut() = Some((id, tree.clone())));
+    Some(tree)
 }
 
 /// UTF-8 text of a tree-sitter node. Port of v5 `go_text`.
@@ -2636,7 +2660,7 @@ impl Source for GoSource {
                 let tree = {
                     let span = trace::parse_span("go", "tree-sitter");
                     let _entered = span.enter();
-                    go_parse(src)
+                    go_parse_shared(src)
                 };
                 if let Some(tree) = tree {
                     let root = tree.root_node();
@@ -3006,9 +3030,11 @@ fn scip_call_target<'a>(
     Some((def_blob.clone(), def_site.span, name))
 }
 
-// One file's method/interface facts, re-read from disk once per blob and
-// cached for the process (not an IndexBag slot; `paths` names the real path).
-struct GoFileFacts {
+// One file's method/interface facts, computed during the module plane's own
+// pass over the shared parse and published for the resolve arms (the
+// process-global `GO_FILE_FACTS` store below); `paths` names the real path.
+#[derive(Default)]
+pub(crate) struct GoFileFacts {
     owner_of: HashMap<(u32, u32), String>,
     methods_of: HashMap<String, BTreeSet<String>>,
     /// Names declared as interface types (method specs, never struct methods).
@@ -3034,27 +3060,98 @@ struct GoFileFacts {
     aliases: HashMap<String, String>,
 }
 
-fn go_file_facts(blob: &ContentId, path: &str) -> Arc<GoFileFacts> {
-    static CACHE: OnceLock<Mutex<HashMap<ContentId, Arc<GoFileFacts>>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().unwrap_or_else(|poison| poison.into_inner());
-    if let Some(existing) = guard.get(blob) {
-        return existing.clone();
+/// The resolve arms' read side for per-file facts. The module plane publishes
+/// every corpus file's facts BEFORE the resolve loop starts (single writer,
+/// then read-only), so the hot path is a read-guard lookup with no parse. The
+/// parse fallback covers library/test use where no module plane ran.
+struct GoFileFactsStore {
+    by_path: RwLock<HashMap<String, Arc<GoFileFacts>>>,
+    by_blob: RwLock<HashMap<ContentId, Arc<GoFileFacts>>>,
+}
+
+static GO_FILE_FACTS: OnceLock<GoFileFactsStore> = OnceLock::new();
+
+fn go_file_facts_store() -> &'static GoFileFactsStore {
+    GO_FILE_FACTS.get_or_init(|| GoFileFactsStore {
+        by_path: RwLock::new(HashMap::new()),
+        by_blob: RwLock::new(HashMap::new()),
+    })
+}
+
+impl GoFileFactsStore {
+    fn get_path(&self, path: &str) -> Option<Arc<GoFileFacts>> {
+        self.by_path
+            .read()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .get(path)
+            .cloned()
     }
-    let facts = Arc::new(go_parse_file_facts(path));
-    guard.insert(blob.clone(), facts.clone());
+
+    fn get_blob(&self, blob: &ContentId) -> Option<Arc<GoFileFacts>> {
+        self.by_blob
+            .read()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .get(blob)
+            .cloned()
+    }
+
+    /// The module plane's publish step: single-threaded, before resolve.
+    fn publish(&self, path: &str, blob: Option<&ContentId>, facts: Arc<GoFileFacts>) {
+        self.by_path
+            .write()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .insert(path.to_string(), facts.clone());
+        if let Some(blob) = blob {
+            self.by_blob
+                .write()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .insert(blob.clone(), facts);
+        }
+    }
+}
+
+/// Publish one file's facts computed from the module plane's shared parse.
+/// `blob` is `None` for a path outside the supplied corpus.
+pub(crate) fn go_publish_file_facts(
+    path: &str,
+    blob: Option<&ContentId>,
+    facts: Arc<GoFileFacts>,
+) {
+    go_file_facts_store().publish(path, blob, facts);
+}
+
+/// Facts for a resolve-side query, keyed by the file's content id: the
+/// published module-plane facts first, the parse fallback second.
+fn go_file_facts(blob: &ContentId, path: &str) -> Arc<GoFileFacts> {
+    if let Some(published) = go_file_facts_store().get_blob(blob) {
+        return published;
+    }
+    let facts = match go_file_facts_store().get_path(path) {
+        Some(published) => published,
+        None => Arc::new(go_parse_file_facts(path)),
+    };
+    go_file_facts_store()
+        .by_blob
+        .write()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .entry(blob.clone())
+        .or_insert(facts.clone());
     facts
 }
 
+/// Path-keyed twin: files resolved by name (the `go_facts_of_path` callers)
+/// before any blob is known for them.
 fn go_facts_of_path(path: &str) -> Arc<GoFileFacts> {
-    static CACHE: OnceLock<Mutex<HashMap<String, Arc<GoFileFacts>>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().unwrap_or_else(|poison| poison.into_inner());
-    if let Some(existing) = guard.get(path) {
-        return existing.clone();
+    if let Some(published) = go_file_facts_store().get_path(path) {
+        return published;
     }
     let facts = Arc::new(go_parse_file_facts(path));
-    guard.insert(path.to_string(), facts.clone());
+    go_file_facts_store()
+        .by_path
+        .write()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .entry(path.to_string())
+        .or_insert(facts.clone());
     facts
 }
 
@@ -3067,28 +3164,29 @@ pub(crate) fn go_is_method_def(path: &str, span: Span) -> bool {
 }
 
 fn go_parse_file_facts(path: &str) -> GoFileFacts {
-    let mut facts = GoFileFacts {
-        owner_of: HashMap::new(),
-        methods_of: HashMap::new(),
-        ifaces: BTreeSet::new(),
-        ret_of: HashMap::new(),
-        generic: std::collections::HashSet::new(),
-        fields: HashMap::new(),
-        embeds: HashMap::new(),
-        imports: HashMap::new(),
-        aliases: HashMap::new(),
-    };
     let Ok(bytes) = std::fs::read(path) else {
-        return facts;
+        return GoFileFacts::default();
     };
     let Ok(src) = std::str::from_utf8(&bytes) else {
-        return facts;
+        return GoFileFacts::default();
     };
-    if let Some(tree) = go_parse(src) {
-        go_collect_file_facts(tree.root_node(), src.as_bytes(), &mut facts);
-        go_collect_file_imports(tree.root_node(), src.as_bytes(), &mut facts.imports);
-        facts.fields = go_field_types(tree.root_node(), src.as_bytes());
+    match go_parse_shared(src) {
+        Some(tree) => go_file_facts_of_source(&tree, src),
+        None => GoFileFacts::default(),
     }
+}
+
+/// The file facts off an already-parsed tree, so the module plane's shared
+/// parse serves the resolve arms without a second parse.
+pub(crate) fn go_file_facts_of_source(
+    tree: &tree_sitter::Tree,
+    src: &str,
+) -> GoFileFacts {
+    let mut facts = GoFileFacts::default();
+    let src = src.as_bytes();
+    go_collect_file_facts(tree.root_node(), src, &mut facts);
+    go_collect_file_imports(tree.root_node(), src, &mut facts.imports);
+    facts.fields = go_field_types(tree.root_node(), src);
     facts
 }
 
