@@ -103,7 +103,50 @@ counted over the FULL excess sets in the bottom rows.
 | interface-dispatch-fanout-capped | 1 | `internal/testutil/lsptestutil/lspclient.go:87` (71 implementers) | `GO_FANOUT_CAP` |
 | func-typed-field-or-value | 1 | `cmd/tsgo/lsp.go:49` | func-value binding |
 
+### 5a. Excess verification, go/types over the FULL sets (2026-08-30, lane fix/extract-go-excess-1)
+
+The three classes named in the brief were verified against `go/types`
+(`packages.Load` over the corpus, 105 packages), full excess sets, no
+sampling. Tool: `plans/extract-crawl-2026-08-29/go_gap_classify/verify/`
+(classify first: `out/go.excess.{vta,codeql2}.classes.tsv`, then
+`/tmp/verify_excess`: `out/go.excess.{vta,codeql2}.verified.tsv`).
+
+**package-qualified-call vs vta: oracle-side, closed.** go/types resolves
+every import-qualified call to the unique package-level object, so the split
+is `our dst == go/types dst`. Split over the 2,209 vta-excess rows of the
+class: 2,066 match (93.5%, our row correct, vta simply lacks the edge), 13
+mismatch (0.6%), 129 no-site, 1 no-qualified-site. The no-site rows are type
+conversions (`ast.Kind(kind)`, `ast.NodeFlags(x)`): the syntactic tier reads a
+conversion as a call, the oracles keep no conversion edges. The 13 mismatches
+share one shape — the qualified call binds the caller's OWN same-named method
+(`emitHost.go GetOutputPathsFor -> emitHost.go GetOutputPathsFor` at
+emitHost.go:96, `osvfs.FS()` bound to the `(*osSys).FS` method in the same
+file). It is corpus-scale dependent: correct with only the two involved files
+supplied, wrong over the full 5,075-file list, correct again when all
+`_test.go` files are dropped. The wrong rows carry `kind=name_resolve` (the
+import-dir leg tags `import_resolve`), so the import facts were unavailable at
+walk time and the call fell through to `call_name_match`'s own-def fast path
+(go.rs `def_named`). That is a real defect but over the 100-line bar and a
+sibling of the filed resolve-is-not-a-function-of-the-input-set defect; not
+fixed here.
+
+**generated-file excess (471 codeql2 / 714 vta dst rows in `*_generated.go`):
+oracle-side, closed.** The callee symbol is declared in the generated source
+for 463 of 464 codeql2 rows and 683 of 684 vta rows (one row each, the same
+row, `internal/ast/utilities.go IsOutermostOptionalChain -> Expression`, binds
+the method's other declaring file — a representational mismatch, the symbol
+exists). The oracles' own generated-file coverage is the gap.
+
+The same pass verified concrete-one-hop-receiver (receipt in ORACLES.REPORT.md
+section 12) and surfaced a small wrong-target receiver class: 58 codeql2 / 128
+vta excess rows where the method exists on the receiver's type but binds a
+different declaring file than ours names (`sync.Pool.Put` rows bound to
+`internal/lsp/dynamic_queue.go Put`; `ast.Node.Type` bound to
+`internal/checker/types.go Type`). Same-name, wrong-owner def; folded into the
+same corpus-scale defect as the 13 pq mismatches.
+
 ### File-shape tags over the FULL excess sets
+
 
 | tag | ours-codeql2 (5,141) | ours-vta (10,525) |
 |---|---|---|
