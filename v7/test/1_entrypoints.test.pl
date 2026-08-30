@@ -223,9 +223,23 @@ test(nested_and_chained_bind_applications_flatten_in_dependency_order) :-
     maplist(equality(User),
             [NestedTarget, FirstTarget, ChainedTarget],
             TargetMatches),
-    Observed = nested_applications(Diagnostics, TargetMatches),
-    Observed == nested_applications([], [true, true, true]),
+    nested_expression_diagnostic_receipt(NestedDiagnostic),
+    Observed = nested_applications(
+                   Diagnostics, TargetMatches, NestedDiagnostic),
+    Observed == nested_applications(
+                    [], [true, true, true],
+                    diagnostic(node(23), undeclared_relation('Missing'))),
     !.
+
+nested_expression_diagnostic_receipt(diagnostic(node(NodeIndex), Reason)) :-
+    Text = "(: User (*))\n(: Wrap (* (: source type) (: return type)))\n(: Bad (Wrap (Missing User)))\n",
+    dl7_text_unit(nested_diagnostic, nested_diagnostic_source,
+                  Text, Unit, []),
+    compile_unit(
+        Unit, [],
+        [diagnostic(lower,
+                    reader_node(nested_diagnostic_source, NodeIndex),
+                    Reason)]).
 
 missing_rhs_application_receipt(
     missing(node(NodeIndex), name(Name), index(Index))) :-
