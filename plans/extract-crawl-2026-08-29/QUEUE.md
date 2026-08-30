@@ -6,7 +6,8 @@
 | live | fix-extract-ts-ns-iface | ts-namespace-iface-destructure.FIX.BRIEF.md | opus (already running, last opus) | |
 | 1 | fix-extract-rust-paths-3 | rust-paths-3.FIX.BRIEF.md | terra | `--reclaim`; partial work in `git stash list` of the worktree |
 | 2 | bench-extract-ratchet | ../extract-bench-2026-08-29/RATCHET.BRIEF.md | glm53 | |
-| 3 | fix-extract-speed | ../extract-bench-2026-08-29/SPEED.BRIEF.md | terra | |
+| 3 | fix-extract-speed | ../extract-bench-2026-08-29/SPEED.BRIEF.md | glm53f | PR #581 |
+| 3b | fix-extract-speed-2 | ../extract-bench-2026-08-29/SPEED2.BRIEF.md | glm53f | go lock convoy + parse once; spawns when #581 merges |
 | 4 | bench-extract-scip-informed | ../extract-bench-2026-08-29/SCIP-INFORMED.BRIEF.md | terra | |
 
 ## Harness receipts (2026-08-29 evening)
