@@ -389,3 +389,8 @@ kernel_relation(cons, 3).
 kernel_relation(intern, 3).
 kernel_relation(intern_snapshot, 3).
 kernel_relation(predecessor, 3).
+kernel_relation(def, 2).
+kernel_relation(head, 2).
+kernel_relation(head_arg, 4).
+kernel_relation(body, 4).
+kernel_relation(body_arg, 5).

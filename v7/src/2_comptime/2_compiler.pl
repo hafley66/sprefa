@@ -10,7 +10,12 @@
                 validate_functional_rows/3
               ]).
 :- use_module('0_lowerer', [lower_datalog/4]).
-:- use_module('1_checker', [check_datalog/4]).
+:- use_module('1_checker',
+              [ check_datalog/4,
+                check_resolved_rules/5
+              ]).
+:- use_module('1a_generated_program_assembler',
+              [assemble_generated_program/5]).
 
 %% compile_dl7(+Path, -CompilerRows, -RuntimeProgram, -Diagnostics) is det.
 %
@@ -78,81 +83,161 @@ evaluate_checked(
     colon_rows(BaseSeeds, InitialEdges),
     intern_rows(BaseSeeds, InitialRequests),
     evaluate_compiler_rounds(Rules, Relations, BaseSeeds, InitialEdges,
-                             InitialRequests, 1,
-                             CompilerFacts, EvaluationDiagnostics),
+                             InitialRequests, [], [], 1,
+                             CompilerFacts, GeneratedProgram,
+                             EvaluationDiagnostics),
     finish_evaluation(EvaluationDiagnostics, Relations, CompilerFacts,
+                      GeneratedProgram,
                       Graph, AuthoredSeeds, Rules, Depends, Strata,
                       Compiled, Diagnostics).
 
-finish_evaluation([], Relations, CompilerFacts, Graph, AuthoredSeeds, Rules,
+finish_evaluation([], Relations, CompilerFacts, GeneratedProgram,
+                  Graph, AuthoredSeeds, Rules,
                   Depends, Strata, Compiled, Diagnostics) :-
     !,
-    validate_functional_rows(Relations, CompilerFacts, KeyDiagnostics),
+    GeneratedProgram = generated_program(GeneratedRelations, _, _, _),
+    append(Relations, GeneratedRelations, AllRelations0),
+    sort(AllRelations0, AllRelations),
+    validate_functional_rows(AllRelations, CompilerFacts, KeyDiagnostics),
     finish_key_validation(KeyDiagnostics, CompilerFacts, Graph, Relations,
                           AuthoredSeeds, Rules, Depends, Strata,
+                          GeneratedProgram,
                           Compiled, Diagnostics).
-finish_evaluation(Diagnostics, _, _, _, _, _, _, _, [], Diagnostics).
+finish_evaluation(Diagnostics, _, _, _, _, _, _, _, _, _, [], Diagnostics).
 
 finish_key_validation([], CompilerFacts, Graph, Relations, AuthoredSeeds,
-                      Rules, Depends, Strata,
+                      Rules, Depends, Strata, GeneratedProgram,
                       compiled_unit(TypeGraphFacts, RuntimeProgram,
                                     CompilerFacts), []) :-
     !,
     type_graph_facts(CompilerFacts, TypeGraphFacts),
+    GeneratedProgram = generated_program(
+                           GeneratedRelations, GeneratedRules,
+                           GeneratedDepends, GeneratedStrata),
+    append(Relations, GeneratedRelations, RuntimeRelations0),
+    sort(RuntimeRelations0, RuntimeRelations),
+    append(Rules, GeneratedRules, RuntimeRules0),
+    sort(RuntimeRules0, RuntimeRules),
+    (   GeneratedRelations == [],
+        GeneratedRules == []
+    ->  RuntimeDepends = Depends,
+        RuntimeStrata = Strata
+    ;   RuntimeDepends = GeneratedDepends,
+        RuntimeStrata = GeneratedStrata
+    ),
     RuntimeProgram = checked_datalog(
                          Graph,
-                         datalog_program(Relations, AuthoredSeeds, Rules),
-                         Depends, Strata).
-finish_key_validation(Diagnostics, _, _, _, _, _, _, _, [], Diagnostics).
+                         datalog_program(RuntimeRelations, AuthoredSeeds,
+                                         RuntimeRules),
+                         RuntimeDepends, RuntimeStrata).
+finish_key_validation(Diagnostics, _, _, _, _, _, _, _, _, [], Diagnostics).
 
 %% evaluate_compiler_rounds(+Rules, +Relations, +BaseSeeds, +FrozenEdges,
-%%                          +FrozenRequests, +Round,
-%%                          -Closure, -Diagnostics) is det.
+%%                          +FrozenRequests, +FrozenGeneratedRelations,
+%%                          +FrozenGeneratedRules, +Round,
+%%                          -Closure, -GeneratedProgram, -Diagnostics) is det.
 %
 % One round exposes the previous round's complete edge set through the
 % read-only edge_snapshot/4 input. Generated colon edges become inputs only
 % after the next freeze. Every round starts again from authored seeds, frozen
 % edges, and deterministic ordering rows, so negation and aggregates never
 % retain stale conclusions from an earlier snapshot.
-evaluate_compiler_rounds(Rules, Relations, BaseSeeds, FrozenEdges,
-                         FrozenRequests, Round, Closure, Diagnostics) :-
+evaluate_compiler_rounds(AuthoredRules, BaseRelations, BaseSeeds, FrozenEdges,
+                         FrozenRequests, FrozenGeneratedRelations,
+                         FrozenGeneratedRules, Round,
+                         Closure, GeneratedProgram, Diagnostics) :-
+    append(BaseRelations, FrozenGeneratedRelations, Relations0),
+    sort(Relations0, Relations),
+    append(AuthoredRules, FrozenGeneratedRules, Rules0),
+    sort(Rules0, Rules),
+    check_resolved_rules(Relations, Rules, Depends, Strata,
+                         ProgramDiagnostics),
     compiler_round_seeds(BaseSeeds, FrozenEdges, FrozenRequests, RoundSeeds),
-    evaluate(Rules, RoundSeeds, RoundClosure0, EvaluationDiagnostics),
+    evaluate_compiler_program(ProgramDiagnostics, Rules, RoundSeeds,
+                              RoundClosure0, EvaluationDiagnostics),
     strip_snapshot_rows(RoundClosure0, RoundClosure),
     continue_compiler_rounds(EvaluationDiagnostics,
-                             Rules, Relations, BaseSeeds,
-                             FrozenEdges, FrozenRequests, Round, RoundClosure,
-                             Closure, Diagnostics).
+                             AuthoredRules, BaseRelations, BaseSeeds,
+                             FrozenEdges, FrozenRequests,
+                             FrozenGeneratedRelations, FrozenGeneratedRules,
+                             Depends, Strata, Round, RoundClosure,
+                             Closure, GeneratedProgram, Diagnostics).
 
-continue_compiler_rounds([], Rules, Relations, BaseSeeds, FrozenEdges,
-                         FrozenRequests, Round, RoundClosure,
-                         Closure, Diagnostics) :-
+evaluate_compiler_program([], Rules, Seeds, Closure, Diagnostics) :-
+    !,
+    evaluate(Rules, Seeds, Closure, Diagnostics).
+evaluate_compiler_program(Diagnostics, _, _, [], Diagnostics).
+
+continue_compiler_rounds([], AuthoredRules, BaseRelations, BaseSeeds,
+                         FrozenEdges, FrozenRequests,
+                         FrozenGeneratedRelations, FrozenGeneratedRules,
+                         Depends, Strata, Round, RoundClosure,
+                         Closure, GeneratedProgram, Diagnostics) :-
     !,
     colon_rows(RoundClosure, NextEdges),
     intern_rows(RoundClosure, NextRequests),
+    assemble_generated_program(RoundClosure, BaseRelations,
+                               NextGeneratedRelations, NextGeneratedRules,
+                               AssemblyDiagnostics),
+    continue_after_assembly(
+        AssemblyDiagnostics,
+        AuthoredRules, BaseRelations, BaseSeeds,
+        FrozenEdges, FrozenRequests,
+        FrozenGeneratedRelations, FrozenGeneratedRules,
+        Depends, Strata, Round, RoundClosure,
+        NextEdges, NextRequests,
+        NextGeneratedRelations, NextGeneratedRules,
+        Closure, GeneratedProgram, Diagnostics).
+continue_compiler_rounds(Diagnostics, _, _, _, _, _, _, _, _, _, _, _, _,
+                         [], generated_program([], [], [], []), Diagnostics).
+
+continue_after_assembly(
+    [], AuthoredRules, BaseRelations, BaseSeeds,
+    FrozenEdges, FrozenRequests,
+    FrozenGeneratedRelations, FrozenGeneratedRules,
+    Depends, Strata, Round, RoundClosure,
+    NextEdges, NextRequests, NextGeneratedRelations, NextGeneratedRules,
+    Closure, GeneratedProgram, Diagnostics) :-
+    !,
     (   NextEdges == FrozenEdges,
-        NextRequests == FrozenRequests
-    ->  validate_functional_rows(Relations, RoundClosure, KeyDiagnostics),
+        NextRequests == FrozenRequests,
+        NextGeneratedRelations == FrozenGeneratedRelations,
+        NextGeneratedRules == FrozenGeneratedRules
+    ->  append(BaseRelations, NextGeneratedRelations, Relations0),
+        sort(Relations0, Relations),
+        validate_functional_rows(Relations, RoundClosure, KeyDiagnostics),
         finish_stable_round(KeyDiagnostics, RoundClosure,
-                            Closure, Diagnostics)
+                            NextGeneratedRelations, NextGeneratedRules,
+                            Depends, Strata,
+                            Closure, GeneratedProgram, Diagnostics)
     ;   compiler_round_limit(Limit),
         (   Round >= Limit
         ->  Closure = [],
+            GeneratedProgram = generated_program([], [], [], []),
             Diagnostics = [diagnostic(
                                compile, none,
                                compiler_round_limit_exhausted(Limit))]
         ;   NextRound is Round + 1,
-            evaluate_compiler_rounds(Rules, Relations, BaseSeeds, NextEdges,
-                                     NextRequests, NextRound,
-                                     Closure, Diagnostics)
+            evaluate_compiler_rounds(
+                AuthoredRules, BaseRelations, BaseSeeds,
+                NextEdges, NextRequests,
+                NextGeneratedRelations, NextGeneratedRules, NextRound,
+                Closure, GeneratedProgram, Diagnostics)
         )
     ).
-continue_compiler_rounds(Diagnostics, _, _, _, _, _, _, _, [], Diagnostics).
+continue_after_assembly(
+    Diagnostics, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _,
+    [], generated_program([], [], [], []), Diagnostics).
 
-finish_stable_round([], RoundClosure, Closure, []) :-
+finish_stable_round([], RoundClosure,
+                    GeneratedRelations, GeneratedRules, Depends, Strata,
+                    Closure,
+                    generated_program(GeneratedRelations, GeneratedRules,
+                                      Depends, Strata), []) :-
     !,
     strip_intern_rows(RoundClosure, Closure).
-finish_stable_round(Diagnostics, _, [], Diagnostics).
+finish_stable_round(Diagnostics, _, _, _, _, _, [],
+                    generated_program([], [], [], []), Diagnostics).
 
 compiler_round_limit(16).
 

@@ -71,14 +71,14 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               RuntimeSnapshot, KeySnapshot, EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 552,
+                    [], [], 615,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(68, 101, 31, 70, 36, 72, 31),
+                    runtime(counts(78, 118, 36, 82, 36, 72, 36),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),

@@ -1,6 +1,7 @@
 :- module(dl7_checker,
           [ check_datalog/4,
-            check_goal_sequence/4
+            check_goal_sequence/4,
+            check_resolved_rules/5
           ]).
 
 :- use_module(library(error), [must_be/2]).
@@ -44,6 +45,93 @@ check_datalog(basement_program(root_graph(Nodes, PendingEdges),
 check_datalog(Program, _, [], Diagnostics) :-
     must_be(ground, Program),
     Diagnostics = [diagnostic(check, none, invalid_basement_program)].
+
+%% check_resolved_rules(+Relations, +Rules, -Depends, -Strata,
+%%                      -Diagnostics) is det.
+%
+% Check compiler-generated checked-IR candidates. Their relation references
+% are already canonical, so this entrypoint performs declaration, arity,
+% mode, safety, and stratification checks without source-name resolution.
+check_resolved_rules(Relations, Rules, Depends, Strata, Diagnostics) :-
+    must_be(ground, Relations),
+    must_be(ground, Rules),
+    resolved_rule_diagnostics(Rules, Relations, RuleDiagnostics),
+    (   RuleDiagnostics == []
+    ->  stratify_rules(Rules, DerivedStrata, StrataDiagnostics),
+        (   StrataDiagnostics == []
+        ->  depends_rows(Rules, Depends0),
+            sort(Depends0, Depends),
+            strata_rows(Relations, DerivedStrata, Strata),
+            Diagnostics = []
+        ;   Depends = [],
+            Strata = [],
+            Diagnostics = StrataDiagnostics
+        )
+    ;   Depends = [],
+        Strata = [],
+        sort(RuleDiagnostics, Diagnostics)
+    ).
+
+resolved_rule_diagnostics([], _, []).
+resolved_rule_diagnostics([Rule | Rules], Relations, Diagnostics) :-
+    resolved_rule_diagnostic(Rule, Relations, OwnDiagnostics),
+    resolved_rule_diagnostics(Rules, Relations, RestDiagnostics),
+    append(OwnDiagnostics, RestDiagnostics, Diagnostics).
+
+resolved_rule_diagnostic(rule(Head, Body), Relations, Diagnostics) :-
+    !,
+    resolved_call_diagnostics(Head, Relations, HeadDiagnostics),
+    resolved_goal_diagnostics(Body, Relations, BodyDiagnostics),
+    head_variables(Head, HeadVariables),
+    check_goal_sequence_failures(Body, 0, HeadVariables, [],
+                                 _, _, ModeFailures),
+    maplist(unlocated_mode_diagnostic, ModeFailures, ModeDiagnostics),
+    head_safety_diagnostics(Head, Body, [], 0, SafetyDiagnostics),
+    append([HeadDiagnostics, BodyDiagnostics,
+            ModeDiagnostics, SafetyDiagnostics], Diagnostics).
+resolved_rule_diagnostic(Rule, _,
+                         [diagnostic(check, none,
+                                     invalid_generated_rule(Rule))]).
+
+resolved_goal_diagnostics([], _, []).
+resolved_goal_diagnostics([checked_goal(Polarity, Call) | Goals],
+                          Relations, Diagnostics) :-
+    !,
+    (   memberchk(Polarity, [positive, negative])
+    ->  PolarityDiagnostics = []
+    ;   PolarityDiagnostics =
+            [diagnostic(check, none,
+                        invalid_generated_polarity(Polarity))]
+    ),
+    resolved_call_diagnostics(Call, Relations, CallDiagnostics),
+    resolved_goal_diagnostics(Goals, Relations, RestDiagnostics),
+    append([PolarityDiagnostics, CallDiagnostics, RestDiagnostics],
+           Diagnostics).
+resolved_goal_diagnostics([Goal | Goals], Relations,
+                          [diagnostic(check, none,
+                                      invalid_generated_goal(Goal))
+                           | Diagnostics]) :-
+    resolved_goal_diagnostics(Goals, Relations, Diagnostics).
+
+resolved_call_diagnostics(call(Relation, Arguments), Relations,
+                          Diagnostics) :-
+    !,
+    (   memberchk(relation(Relation, Arity, _), Relations)
+    ->  length(Arguments, ObservedArity),
+        (   ObservedArity =:= Arity
+        ->  Diagnostics = []
+        ;   Diagnostics =
+                [diagnostic(check, none,
+                            generated_arity_mismatch(
+                                Relation, Arity, ObservedArity))]
+        )
+    ;   Diagnostics =
+            [diagnostic(check, none,
+                        generated_undeclared_relation(Relation))]
+    ).
+resolved_call_diagnostics(Call, _,
+                          [diagnostic(check, none,
+                                      invalid_generated_call(Call))]).
 
 finish_checked([], DerivedStrata, Nodes, ColonEdges, Relations, Seeds, Rules,
                Checked, []) :-
@@ -218,6 +306,11 @@ kernel_relation_keys(cons, [[0, 1], [2]]).
 kernel_relation_keys(intern, [[0, 1]]).
 kernel_relation_keys(intern_snapshot, [[0, 1]]).
 kernel_relation_keys(predecessor, [[0, 1], [0, 2]]).
+kernel_relation_keys(def, [[0]]).
+kernel_relation_keys(head, [[0]]).
+kernel_relation_keys(head_arg, [[0, 1]]).
+kernel_relation_keys(body, [[0, 1]]).
+kernel_relation_keys(body_arg, [[0, 1, 2]]).
 kernel_relation_keys(node, []).
 kernel_relation_keys(module, []).
 kernel_relation_keys(product, []).
@@ -249,7 +342,12 @@ kernel_graph(
       node(kernel(cons)), product(kernel(cons)),
       node(kernel(intern)), product(kernel(intern)),
       node(kernel(intern_snapshot)), product(kernel(intern_snapshot)),
-      node(kernel(predecessor)), product(kernel(predecessor))
+      node(kernel(predecessor)), product(kernel(predecessor)),
+      node(kernel(def)), product(kernel(def)),
+      node(kernel(head)), product(kernel(head)),
+      node(kernel(head_arg)), product(kernel(head_arg)),
+      node(kernel(body)), product(kernel(body)),
+      node(kernel(body_arg)), product(kernel(body_arg))
     ],
     [ ':'(kernel(node), id, ref(primitive(type)), 0),
       ':'(kernel(module), id, ref(primitive(type)), 0),
@@ -275,7 +373,24 @@ kernel_graph(
       ':'(kernel(intern_snapshot), return, ref(primitive(type)), 2),
       ':'(kernel(predecessor), owner, ref(primitive(type)), 0),
       ':'(kernel(predecessor), earlier, ref(primitive(int)), 1),
-      ':'(kernel(predecessor), later, ref(primitive(int)), 2)
+      ':'(kernel(predecessor), later, ref(primitive(int)), 2),
+      ':'(kernel(def), relation, ref(primitive(type)), 0),
+      ':'(kernel(def), arity, ref(primitive(int)), 1),
+      ':'(kernel(head), rule, ref(primitive(type)), 0),
+      ':'(kernel(head), relation, ref(primitive(type)), 1),
+      ':'(kernel(head_arg), rule, ref(primitive(type)), 0),
+      ':'(kernel(head_arg), position, ref(primitive(int)), 1),
+      ':'(kernel(head_arg), kind, ref(primitive(text)), 2),
+      ':'(kernel(head_arg), value, ref(primitive(any)), 3),
+      ':'(kernel(body), rule, ref(primitive(type)), 0),
+      ':'(kernel(body), goal, ref(primitive(int)), 1),
+      ':'(kernel(body), polarity, ref(primitive(text)), 2),
+      ':'(kernel(body), relation, ref(primitive(type)), 3),
+      ':'(kernel(body_arg), rule, ref(primitive(type)), 0),
+      ':'(kernel(body_arg), goal, ref(primitive(int)), 1),
+      ':'(kernel(body_arg), position, ref(primitive(int)), 2),
+      ':'(kernel(body_arg), kind, ref(primitive(text)), 3),
+      ':'(kernel(body_arg), value, ref(primitive(any)), 4)
     ]).
 
 %% Seeds resolve to ground calls over declared product relations.
