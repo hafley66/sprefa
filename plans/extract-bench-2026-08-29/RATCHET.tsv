@@ -1,12 +1,12 @@
 # extract ratchet: diet_scip (resolve call+types, 3 runs per corpus, median wall / process-peak rss) vs the committed oracle tsvs;
 # recall = overlap/|oracle|, precision = overlap/|ours|, percent; check: 0.10 pt / wall +15% / rss +10% (ceilings at the worst of repeated runs); local-only (COMMON.md), never CI; bump: RATCHET_BUMP=1 improves floors/ceilings (walls/rss only by 10%+ margins), RATCHET_FORCE=1 rewrites.
 lang	family	oracle	recall	precision	wall_ms	rss_mb	measured_at_sha
-go	call	go.codeql2.call.tsv	92.97	51.98	3499	833	854be0be3
-go	call	go.oracle.call.vta.bare.tsv	79.57	50.51	3499	833	854be0be3
-go	module	go.oracle.module.tsv	100.00	15.18	3499	833	854be0be3
-go	type	go.oracle.type.typedecl.tsv	73.37	97.04	3499	833	854be0be3
+go	call	go.codeql2.call.tsv	97.42	51.22	5083	630	73bdb1337
+go	call	go.oracle.call.vta.bare.tsv	84.42	50.40	5083	630	73bdb1337
+go	module	go.oracle.module.tsv	100.00	15.18	5083	630	73bdb1337
+go	type	go.oracle.type.typedecl.tsv	73.37	97.04	5083	630	73bdb1337
 rust	call	rust.oracle.call.tsv	67.56	33.68	960	664	854be0be3
-rust	type	rust.oracle.type.typedecl.tsv	26.18	74.13	960	664	854be0be3
-ts5	call	ts.codeql2.call.tsv	88.64	66.53	1468	521	854be0be3
-ts5	call	ts5.oracle.call.tsv	84.88	71.16	1468	521	854be0be3
-ts5	module	ts.madge.module.tsv	50.57	32.85	1468	521	854be0be3
+rust	type	rust.oracle.type.typedecl.tsv	26.18	74.13	1080	623	73bdb1337
+ts5	call	ts.codeql2.call.tsv	88.64	66.53	901	490	73bdb1337
+ts5	call	ts5.oracle.call.tsv	84.88	71.16	901	490	73bdb1337
+ts5	module	ts.madge.module.tsv	50.57	32.85	901	490	73bdb1337

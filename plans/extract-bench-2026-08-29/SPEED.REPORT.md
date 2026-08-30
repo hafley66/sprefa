@@ -178,3 +178,79 @@ same pattern is NOT the ts hot frame (its hottest frame was 3.3, now fixed).
 
 `cargo test --features cli --no-fail-fast`: rc=0, 109/109 suites ok
 (`/tmp/gate3.log` in-lane). No golden updated, no fact changed.
+
+---
+
+# 5. Section 5, `fix-extract-speed-2` (2026-08-29)
+
+Lane: the go lock convoy (4.1) and the double parse (4.2), off PR #581's final
+state (base 5f48d80c, go 10,520 ms). Same command, same corpora, same
+identity check as sections 1-4.
+
+## 5.1 Receipt (3 runs per corpus, median)
+
+| corpus | #581 wall | final wall | #581 RSS | final RSS | lines | identity |
+|---|---|---|---|---|---|---|
+| go (5,097 .go) | 10,520 ms | 6,680 ms | 601 MB | 595 MB | 172,745 | byte-identical after sort, 3/3 runs |
+| ts (704 src/**.ts) | 1,230 ms | 1,230 ms | 454 MB | 461 MB | 149,657 | byte-identical after sort, 3/3 runs |
+| rust (873 crates/*/src/**.rs) | 1,270 ms | 1,280 ms | 486 MB | 496 MB | 158,377 | byte-identical after sort, 3/3 runs |
+
+Per-change rows: `out/goorig` (base rebuild), `out/a1` (4.1 step 1: parse
+outside the guard), `out/go_a2`/`out/ts_a2`/`out/rust_a2` (4.1 step 3 + go's
+4.2: module plane builds the file facts on the shared parse and publishes
+them; the resolve arms read the store instead of re-parsing).
+
+## 5.2 Changes
+
+### 5.2.1 go.rs: parse outside the guard, then the store (4.1)
+
+Step 1 is 4.1's suggested diff verbatim (lock only the map, parse outside
+the guard). Step 3 goes further: `go_modules::go_module_facts` now also
+collects the resolve arms' `GoFileFacts` in the module plane's own pass
+(`go_file_facts_of_source`), and `project.rs` publishes every corpus file's
+facts into a process-global `GoFileFactsStore` (two RwLock maps, path-keyed
+and blob-keyed) BEFORE the resolve loop starts. The read side is
+single-writer-then-read-only, so the resolve arms take read guards with zero
+contention; the old parse-and-cache fallback stays for library/test paths
+with no module plane.
+
+| go | wall (median) |
+|---|---|
+| base rebuild (#581 head) | 10,490 ms |
+| 4.1 step 1 (parse outside guard) | 9,090 ms |
+| 4.1 step 3 + 4.2 go (module plane publishes facts) | 6,680 ms |
+
+The convoy frames (`__psynch_mutexwait` 9,301 samples in 4.1) are gone from
+the profile; `resolve_arm:call` no longer serializes on the facts mutex.
+
+### 5.2.2 Parse once (4.2)
+
+go: the extract pass's tree-sitter parse is handed to the module plane
+through a single-entry thread-local (`go_parse_shared`, dispatch parses and
+stores, `go_module_facts` consumes on the same worker thread). Receipt:
+tree-sitter parse spans 5,095 for 5,097 files (the 2-file delta is the
+content-keyed extract cache hitting on duplicate content), down from
+10,190. The `DL_TRACE_SUMMARY` "parse" row still shows 10,190 because it
+aggregates the ast-grep cst engine's own parse per file, a separate parser
+that 4.2 does not touch.
+
+ts/rust: the module planes use DIFFERENT front ends than the extract pass
+(oxc `ModuleRecord`, `syn::parse_file`), so parse-once needs a handoff in
+the files this lane does not own. The seams are in (`ts_resolve.rs` /
+`rust_modules.rs` at 73bdb1337): `ts_module_facts_from_parsed` +
+`ts_stash_module_facts`, `rust_module_facts_from_parsed` +
+`rust_stash_module_facts`, consumed on read with a path+content-id check,
+falling back to the module plane's own parse. The two call sites in
+`ts.rs` / `rust.rs` were offered to the coordinator for the owning lane.
+Walls on those corpora are unchanged (go-only code path).
+
+## 5.3 Gate and ratchet
+
+`cargo test --features cli --no-fail-fast`: rc=0, 595 passed / 0 failed at
+73bdb1337 (no fact changed; output byte-identical per corpus).
+
+`just extract-ratchet` with `RATCHET_BUMP=1`: green, wall rows moved:
+go 10,520 -> 5,083 ms, ts5 1,230 -> 901 ms, rust 1,270 -> 960 ms
+(ratchet harness walls; recall/precision unchanged within the 0.10 pt
+check, rust call row held at its old sha because its wall did not clear
+the 10% bump margin).
