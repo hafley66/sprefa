@@ -53,10 +53,7 @@ fn one_mirror_edge_per_closure_caller_edge() {
                 m_callee == callee && m_site == site && !m_caller.starts_with("closure@")
             })
             .count();
-        assert_eq!(
-            mirrors, 1,
-            "closure edge {caller} {callee} @{site} among {edges:?}"
-        );
+        assert_eq!(mirrors, 1, "closure edge {caller} {callee} @{site} among {edges:?}");
     }
     assert_eq!(edges.len(), 6, "3 primaries + 3 mirrors: {edges:?}");
 }
@@ -68,9 +65,7 @@ fn nested_closures_mirror_to_the_named_fn() {
     let edges = resolved_edges();
     let mirror_callers: BTreeSet<&str> = edges
         .iter()
-        .filter(|(caller, _, _)| {
-            !caller.starts_with("closure@") && caller != "helper" && caller != "wrap"
-        })
+        .filter(|(caller, _, _)| !caller.starts_with("closure@") && caller != "helper" && caller != "wrap")
         .map(|(caller, _, _)| caller.as_str())
         .collect();
     assert_eq!(

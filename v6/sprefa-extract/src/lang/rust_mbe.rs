@@ -21,17 +21,8 @@ const MAX_GROWTH_FACTOR: usize = 4;
 /// `Verbatim` bytes translate 1:1 to the original file. `Macro` bytes were
 /// minted by one invocation; the whole run collapses to that invocation's span.
 enum Chunk {
-    Verbatim {
-        start: u32,
-        end: u32,
-        orig_start: u32,
-    },
-    Macro {
-        start: u32,
-        end: u32,
-        origin: Span,
-        name: String,
-    },
+    Verbatim { start: u32, end: u32, orig_start: u32 },
+    Macro { start: u32, end: u32, origin: Span, name: String },
 }
 
 impl Chunk {
@@ -273,38 +264,35 @@ fn apply_pass(
     let mut new_chunks = Vec::new();
     let mut cursor: u32 = 0;
 
-    let push_verbatim_range =
-        |from: u32, to: u32, new_text: &mut String, new_chunks: &mut Vec<Chunk>| {
-            if from >= to {
-                return;
+    let push_verbatim_range = |from: u32, to: u32, new_text: &mut String, new_chunks: &mut Vec<Chunk>| {
+        if from >= to {
+            return;
+        }
+        new_text.push_str(&old_text[from as usize..to as usize]);
+        for c in old_chunks {
+            let lo = c.start().max(from);
+            let hi = c.end().min(to);
+            if lo >= hi {
+                continue;
             }
-            new_text.push_str(&old_text[from as usize..to as usize]);
-            for c in old_chunks {
-                let lo = c.start().max(from);
-                let hi = c.end().min(to);
-                if lo >= hi {
-                    continue;
-                }
-                let shift = new_text.len() as u32 - (to - from);
-                let new_start = shift + (lo - from);
-                let new_end = shift + (hi - from);
-                match c {
-                    Chunk::Verbatim {
-                        orig_start, start, ..
-                    } => new_chunks.push(Chunk::Verbatim {
-                        start: new_start,
-                        end: new_end,
-                        orig_start: orig_start + (lo - start),
-                    }),
-                    Chunk::Macro { origin, name, .. } => new_chunks.push(Chunk::Macro {
-                        start: new_start,
-                        end: new_end,
-                        origin: *origin,
-                        name: name.clone(),
-                    }),
-                }
+            let shift = new_text.len() as u32 - (to - from);
+            let new_start = shift + (lo - from);
+            let new_end = shift + (hi - from);
+            match c {
+                Chunk::Verbatim { orig_start, start, .. } => new_chunks.push(Chunk::Verbatim {
+                    start: new_start,
+                    end: new_end,
+                    orig_start: orig_start + (lo - start),
+                }),
+                Chunk::Macro { origin, name, .. } => new_chunks.push(Chunk::Macro {
+                    start: new_start,
+                    end: new_end,
+                    origin: *origin,
+                    name: name.clone(),
+                }),
             }
-        };
+        }
+    };
 
     for (range, replacement, name) in &edits {
         push_verbatim_range(cursor, range.start, &mut new_text, &mut new_chunks);
@@ -319,12 +307,7 @@ fn apply_pass(
         });
         cursor = range.end;
     }
-    push_verbatim_range(
-        cursor,
-        old_text.len() as u32,
-        &mut new_text,
-        &mut new_chunks,
-    );
+    push_verbatim_range(cursor, old_text.len() as u32, &mut new_text, &mut new_chunks);
     (new_text, new_chunks)
 }
 
@@ -334,9 +317,7 @@ fn invocation_origin(old_chunks: &[Chunk], range: Range<u32>, own_name: &str) ->
     for c in old_chunks {
         if c.start() <= range.start && range.end <= c.end() {
             return match c {
-                Chunk::Verbatim {
-                    start, orig_start, ..
-                } => (
+                Chunk::Verbatim { start, orig_start, .. } => (
                     Span {
                         start: orig_start + (range.start - start),
                         len: range.end - range.start,
