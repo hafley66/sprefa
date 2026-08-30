@@ -480,6 +480,9 @@ pub struct RustModuleIndex {
     by_last_segment: HashMap<String, Vec<String>>,
     /// blob -> (span, name, family) of every def in it.
     defs: HashMap<ContentId, Vec<(Span, String, FamilyTag)>>,
+    /// (blob, span) pairs several def NAMES share: one macro expansion's
+    /// items all report the macro call's own span, so the span names nothing.
+    collapsed: BTreeSet<(ContentId, Span)>,
     /// file -> its WHOLE export table, built once and reused by every
     /// importer (a per-name walk over a many-star barrel is quadratic).
     tables: Mutex<HashMap<String, std::sync::Arc<ExportTable>>>,
@@ -574,6 +577,22 @@ impl RustModuleIndex {
                 ));
             }
         }
+        let mut collapsed: BTreeSet<(ContentId, Span)> = BTreeSet::new();
+        for (blob, defs) in &index.defs {
+            let mut first: HashMap<Span, &str> = HashMap::new();
+            for (span, name, _) in defs {
+                match first.get(span) {
+                    Some(seen) if *seen != name.as_str() => {
+                        collapsed.insert((blob.clone(), *span));
+                    }
+                    Some(_) => {}
+                    None => {
+                        first.insert(*span, name.as_str());
+                    }
+                }
+            }
+        }
+        index.collapsed = collapsed;
         for (path, facts) in &files {
             let Some(blob) = index.blobs.get(path) else {
                 continue;
@@ -876,6 +895,12 @@ impl RustModuleIndex {
             .ok()
             .flatten()
             .and_then(callable_target)
+    }
+
+    /// Whether a def coordinate is a COLLAPSED span: one macro expansion's
+    /// items all report the macro call's span, so it names nothing.
+    pub fn is_collapsed(&self, blob: &ContentId, span: Span) -> bool {
+        self.collapsed.contains(&(blob.clone(), span))
     }
 
     /// `target` re-aimed at the TYPE facet: the export table prefers the call
