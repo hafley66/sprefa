@@ -1,6 +1,6 @@
 # DL7 relational expression-flow review
 
-Work only inside the lane worktree created from base `606379b98`. Read
+Work only inside the lane worktree created from plan commit `94a921d95`. Read
 `plans/2026-08-30-dl7-relational-expression-flow.md`, favorites summarized in
 `v7/design/0_KERNEL_RECONCILIATION.md`, and the current V7 lowerer, checker,
 compiler, prelude, fixture, and consolidated tests.

@@ -1,6 +1,6 @@
 # DL7 expression-lowering blast radius
 
-Work only inside the lane worktree created from base `606379b98`. Read
+Work only inside the lane worktree created from plan commit `94a921d95`. Read
 `plans/2026-08-30-dl7-relational-expression-flow.md` first.
 
 Produce `v7/tasks/results/16_EXPRESSION_BLAST_RADIUS.md`. Do not edit production
