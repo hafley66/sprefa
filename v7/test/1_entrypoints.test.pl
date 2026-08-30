@@ -283,6 +283,45 @@ test(rule_heads_and_bodies_share_expression_lowering) :-
                     [], outputs(projected(true), accepted(true))),
     !.
 
+test(full_tuple_calls_preserve_reverse_relational_queries) :-
+    Text = "(: User (*))\n(: Partial (* (: source type) (: return type)))\n(Partial User User)\n(: UserPatch (Partial User))\n(: reversed (* (: source type)))\n(<- (reversed ?Source)\n    (Partial ?Source UserPatch))\n",
+    dl7_text_unit(reverse_query, reverse_query_source, Text, Unit, []),
+    compile_unit(Unit,
+                 compiled_unit(_, RuntimeProgram, CompilerRows),
+                 Diagnostics),
+    named_owner(CompilerRows, 'User', User),
+    named_owner(CompilerRows, 'Partial', Partial),
+    named_owner(CompilerRows, 'UserPatch', UserPatch),
+    named_owner(CompilerRows, reversed, Reversed),
+    equality(UserPatch, User, PatchMatches),
+    row_presence(CompilerRows,
+                 call(ref(Reversed), [ref(User)]), ReversePresent),
+    RuntimeProgram = checked_datalog(
+                         _, datalog_program(_, _, Rules), _, _),
+    memberchk(
+        rule(call(ref(Reversed), [var(Source)]),
+             [ checked_goal(
+                   positive,
+                          call(ref(kernel(':')),
+                        [ ref(Module), const('UserPatch'), var(KnownResult),
+                          const(2)
+                        ])),
+               checked_goal(
+                   positive,
+                   call(ref(Partial), [var(Source), var(KnownResult)]))
+             ]),
+        Rules),
+    memberchk(call(ref(kernel(':')),
+                   [ref(Module), const('UserPatch'), ref(User), const(2)]),
+              CompilerRows),
+    Observed = reverse_query(
+                   Diagnostics,
+                   patch_matches(PatchMatches),
+                   source_derived(ReversePresent)),
+    Observed == reverse_query(
+                    [], patch_matches(true), source_derived(true)),
+    !.
+
 nested_expression_diagnostic_receipt(diagnostic(node(NodeIndex), Reason)) :-
     Text = "(: User (*))\n(: Wrap (* (: source type) (: return type)))\n(: Bad (Wrap (Missing User)))\n",
     dl7_text_unit(nested_diagnostic, nested_diagnostic_source,
