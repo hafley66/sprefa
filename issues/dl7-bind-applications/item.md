@@ -2,7 +2,7 @@
 created: 2026-08-30
 updated: 2026-08-30
 type: task
-status: open
+status: in-progress
 priority: high
 epic: dl7-expression-flow
 labels: [compiler]
