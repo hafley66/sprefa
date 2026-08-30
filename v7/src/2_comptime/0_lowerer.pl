@@ -358,6 +358,41 @@ lower_expression(node(NodeId, form(_)), _, _,
                  none, [], [],
                  [diagnostic(lower, NodeId, unresolved_expression_form)]).
 
+%% expression_return_position(+Callable, +Environment, +NodeId,
+%%                            -ReturnIndex, -Diagnostics) is det.
+%
+% `return` selects one tuple position only when a call is embedded as a value.
+% Explicit full calls do not pass through this predicate.
+expression_return_position(Callable, Environment, NodeId,
+                           ReturnIndex, Diagnostics) :-
+    callable_return_indices(Callable, Environment, Indices),
+    expression_return_indices(Indices, Callable, NodeId,
+                              ReturnIndex, Diagnostics).
+
+callable_return_indices(target(Callable),
+                        expression_environment(_, _, Edges), Indices) :-
+    findall(Index,
+            member(pending_edge(Callable, return, _, Index), Edges),
+            Indices0),
+    sort(Indices0, Indices).
+callable_return_indices(kernel(Name), _, Indices) :-
+    findall(Index, kernel_return_position(Name, Index), Indices).
+
+expression_return_indices([ReturnIndex], _, _, ReturnIndex, []).
+expression_return_indices([], Callable, NodeId, none,
+                          [diagnostic(lower, NodeId,
+                                      expression_without_return(Callable))]).
+expression_return_indices(Indices, Callable, NodeId, none,
+                          [diagnostic(
+                               lower, NodeId,
+                               expression_multiple_returns(Callable,
+                                                           Indices))]).
+
+kernel_return_position(nil, 0).
+kernel_return_position(cons, 2).
+kernel_return_position(intern, 2).
+kernel_return_position(intern_snapshot, 2).
+
 lower_argument(head,
                node(_, form([node(_, atom(count)), Expression])),
                Owner, Result) :-

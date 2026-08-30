@@ -93,6 +93,56 @@ test(expression_carrier_keeps_values_and_rejects_unresolved_forms) :-
                                     unresolved_expression_form)])),
     !.
 
+test(expression_return_position_is_declared_projection_metadata) :-
+    Callable = owner(return_fixture),
+    Missing = owner(missing_return_fixture),
+    Multiple = owner(multiple_return_fixture),
+    Environment = expression_environment(
+                      [], [],
+                      [ pending_edge(Callable, source,
+                                     name(Callable, type), 0),
+                        pending_edge(Callable, return,
+                                     name(Callable, type), 1),
+                        pending_edge(Missing, value,
+                                     name(Missing, type), 0),
+                        pending_edge(Multiple, return,
+                                     name(Multiple, type), 0),
+                        pending_edge(Multiple, return,
+                                     name(Multiple, type), 1)
+                      ]),
+    dl7_lowerer:expression_return_position(
+        target(Callable), Environment, declared_node,
+        DeclaredPosition, DeclaredDiagnostics),
+    dl7_lowerer:expression_return_position(
+        target(Missing), Environment, missing_node,
+        MissingPosition, MissingDiagnostics),
+    dl7_lowerer:expression_return_position(
+        target(Multiple), Environment, multiple_node,
+        MultiplePosition, MultipleDiagnostics),
+    dl7_lowerer:expression_return_position(
+        kernel(cons), Environment, kernel_node,
+        KernelPosition, KernelDiagnostics),
+    Observed = return_positions(
+                   declared(DeclaredPosition, DeclaredDiagnostics),
+                   missing(MissingPosition, MissingDiagnostics),
+                   multiple(MultiplePosition, MultipleDiagnostics),
+                   kernel(KernelPosition, KernelDiagnostics)),
+    Observed == return_positions(
+                    declared(1, []),
+                    missing(
+                        none,
+                        [diagnostic(
+                             lower, missing_node,
+                             expression_without_return(target(Missing)))]),
+                    multiple(
+                        none,
+                        [diagnostic(
+                             lower, multiple_node,
+                             expression_multiple_returns(
+                                 target(Multiple), [0, 1]))]),
+                    kernel(2, [])),
+    !.
+
 test(userland_type_operators_chain_across_compiler_rounds) :-
     compile_dl7('v7/test/fixtures/2_partial.dl7',
                 Rows1, Runtime1, Diagnostics1),
