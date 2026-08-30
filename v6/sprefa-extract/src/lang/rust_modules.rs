@@ -487,12 +487,24 @@ pub struct RustModuleIndex {
     impl_methods: HashMap<(String, String), Vec<ImplMethodTarget>>,
     /// (enum name, variant name) -> declaring file paths.
     enum_variants: HashMap<(String, String), Vec<String>>,
-    /// trait name -> every fn def it declares or defaults, with its file blob.
-    trait_fns: HashMap<String, Vec<(ContentId, String, Span, bool)>>,
+    /// trait name -> every fn def it declares or defaults, one site per
+    /// (file, fn): the same trait NAME can be declared by several files, so
+    /// a target pick needs the site's own blob.
+    trait_fns: HashMap<String, Vec<TraitFnSite>>,
     /// (trait name, fn name) -> every corpus `impl Trait for T` fn of the pair.
     trait_impl_fns: HashMap<(String, String), Vec<(ContentId, Span)>>,
     /// self type -> trait names an `impl Trait for T` block names.
     type_traits: HashMap<String, Vec<String>>,
+}
+
+/// One (file, fn) site a trait declares or defaults. The blob rides along so
+/// a bare trait name shared by several files still resolves per file.
+#[derive(Clone, Debug)]
+pub(crate) struct TraitFnSite {
+    pub(crate) blob: ContentId,
+    pub(crate) fn_name: String,
+    pub(crate) span: Span,
+    pub(crate) default: bool,
 }
 
 /// One corpus impl site of a (self type, fn name) pair. `trait_name` is None
@@ -590,7 +602,12 @@ impl RustModuleIndex {
                             .trait_fns
                             .entry(entry.name.clone())
                             .or_default()
-                            .push((blob.clone(), f.name.clone(), f.span, f.default));
+                            .push(TraitFnSite {
+                                blob: blob.clone(),
+                                fn_name: f.name.clone(),
+                                span: f.span,
+                                default: f.default,
+                            });
                     }
                 }
             }
@@ -709,41 +726,91 @@ impl RustModuleIndex {
         self.trait_fns.contains_key(name)
     }
 
+    /// Which of `candidates` (distinct blobs declaring one trait name) the
+    /// caller binds: its own file when it declares the trait, else the file
+    /// its `use` of the name resolves to, else None (an `unresolved{reason}`
+    /// row, never a guess across files).
+    fn bound_trait_blob(
+        &self,
+        caller: Option<&str>,
+        trait_name: &str,
+        candidates: &[ContentId],
+    ) -> Option<ContentId> {
+        if candidates.len() == 1 {
+            return Some(candidates[0].clone());
+        }
+        let caller = caller?;
+        if let Some(own) = self.blobs.get(caller) {
+            if candidates.iter().any(|c| c == own) {
+                return Some(own.clone());
+            }
+        }
+        let facts = self.facts.get(caller)?;
+        if !facts.uses.iter().any(|binding| binding.local == trait_name) {
+            return None;
+        }
+        let Ok(Some(found)) = self.explicit_binding(caller, trait_name) else {
+            return None;
+        };
+        candidates.iter().find(|c| **c == found.target_blob).cloned()
+    }
+
     /// The trait's own fn def for `fn_name`, declared or defaulted (classes
     /// 12 and 6): a `T::f()` / `x.m()` whose T is a corpus trait binds here.
     pub(crate) fn trait_fn_target(
         &self,
         trait_name: &str,
         fn_name: &str,
+        caller: Option<&str>,
     ) -> Option<(ContentId, Span)> {
-        let sites = self.trait_fns.get(trait_name)?;
-        let (_, _, span, _) = sites.iter().find(|(_, name, _, _)| name == fn_name)?;
-        Some((sites[0].0.clone(), *span))
+        let matched: Vec<&TraitFnSite> = self
+            .trait_fns
+            .get(trait_name)?
+            .iter()
+            .filter(|site| site.fn_name == fn_name)
+            .collect();
+        let blobs: Vec<ContentId> = {
+            let mut blobs: Vec<ContentId> = matched.iter().map(|site| site.blob.clone()).collect();
+            blobs.dedup();
+            blobs
+        };
+        let blob = self.bound_trait_blob(caller, trait_name, &blobs)?;
+        let site = matched.iter().find(|site| site.blob == blob)?;
+        Some((site.blob.clone(), site.span))
     }
 
     /// The ONE corpus impl of `trait_name` defining `fn_name` (class 12's
-    /// impl-first rule); 2+ impls stay unbound.
+    /// impl-first rule); when several files impl the trait, the caller's own
+    /// file or its `use`-bound file wins, 2+ left stay unbound.
     pub(crate) fn trait_impl_target(
         &self,
         trait_name: &str,
         fn_name: &str,
+        caller: Option<&str>,
     ) -> Option<(ContentId, Span)> {
-        let [only] = self
+        let sites = self
             .trait_impl_fns
-            .get(&(trait_name.to_string(), fn_name.to_string()))?
-            .as_slice()
-        else {
-            return None;
-        };
-        Some(only.clone())
+            .get(&(trait_name.to_string(), fn_name.to_string()))?;
+        let mut blobs: Vec<ContentId> = sites.iter().map(|(blob, _)| blob.clone()).collect();
+        blobs.dedup();
+        let blob = self.bound_trait_blob(caller, trait_name, &blobs)?;
+        let mut hits = sites.iter().filter(|(b, _)| *b == blob);
+        let (blob, span) = hits.next()?;
+        hits.next().map(|_| ()).map_or_else(
+            || Some((blob.clone(), *span)),
+            |_| None,
+        )
     }
 
     /// The one trait default body providing `fn_name` for a type `type_name`
     /// implements (classes 4 and 8): no impl defines the fn, the trait does.
+    /// A trait name declared by several files binds per the caller's own
+    /// file or `use`-bound file, else unbound.
     pub(crate) fn trait_default_target(
         &self,
         type_name: &str,
         fn_name: &str,
+        caller: Option<&str>,
     ) -> Option<(ContentId, Span)> {
         let traits = self.type_traits.get(type_name)?;
         let mut hit: Option<(ContentId, Span)> = None;
@@ -751,13 +818,25 @@ impl RustModuleIndex {
             let Some(sites) = self.trait_fns.get(trait_name) else {
                 continue;
             };
-            for (blob, name, span, default) in sites {
-                if *name == fn_name && *default {
-                    if hit.is_some() && hit.as_ref() != Some(&(blob.clone(), *span)) {
-                        return None;
-                    }
-                    hit = Some((blob.clone(), *span));
+            let sites = sites
+                .iter()
+                .filter(|site| site.fn_name == fn_name && site.default)
+                .cloned()
+                .collect::<Vec<TraitFnSite>>();
+            let blobs: Vec<ContentId> = {
+                let mut blobs: Vec<ContentId> =
+                    sites.iter().map(|site| site.blob.clone()).collect();
+                blobs.dedup();
+                blobs
+            };
+            let blob = self.bound_trait_blob(caller, trait_name, &blobs);
+            let Some(blob) = blob else { continue };
+            for site in sites.iter().filter(|site| site.blob == blob) {
+                let target = (site.blob.clone(), site.span);
+                if hit.is_some() && hit.as_ref() != Some(&target) {
+                    return None;
                 }
+                hit = Some(target);
             }
         }
         hit
