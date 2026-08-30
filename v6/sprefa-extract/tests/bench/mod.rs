@@ -73,6 +73,7 @@ pub fn corpus(lang: &str) -> Corpus {
             oracles: &[
                 ("call", "rust.oracle.call.tsv"),
                 ("call", "rust.scip_override.call.tsv"),
+                ("call", "rust.codeql.call.tsv"),
                 ("type", "rust.oracle.type.typedecl.tsv"),
             ],
         },
@@ -425,7 +426,7 @@ pub struct RustProjection {
 }
 
 impl RustProjection {
-    /// Both rust call oracles score under the full projection. The oracle's
+    /// Every rust call oracle scores under the full projection. The oracle's
     /// own rows drive the ours-side scope (a caller file the oracle never
     /// calls from cannot match).
     pub fn per_oracle(
@@ -433,7 +434,9 @@ impl RustProjection {
         corpus_files: &BTreeSet<String>,
     ) -> Option<RustProjection> {
         match oracle_file {
-            "rust.oracle.call.tsv" | "rust.scip_override.call.tsv" => Some(RustProjection {
+            "rust.oracle.call.tsv"
+            | "rust.scip_override.call.tsv"
+            | "rust.codeql.call.tsv" => Some(RustProjection {
                 corpus_files: Some(corpus_files.clone()),
                 closure: true,
             }),
