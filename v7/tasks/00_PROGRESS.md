@@ -2,6 +2,35 @@
 
 Updated: 2026-08-30
 
+## 2026-08-30 relational expression flow
+
+```text
+full relation call
+    -> every tuple position remains explicit
+
+expression-position call
+    -> declaration selects one return position
+    -> lowerer inserts one logical value
+    -> nested calls contribute ordered ordinary goals
+    -> containing bind, head, or body consumes that value
+```
+
+- Plan: `plans/2026-08-30-dl7-relational-expression-flow.md`.
+- Issue lane: `@dl7-expression-flow`, ten sequential cards.
+- Blast-radius receipts:
+  - `v7/tasks/results/15_EXPRESSION_FLOW_REVIEW.md`.
+  - `v7/tasks/results/16_EXPRESSION_BLAST_RADIUS.md`.
+- `lower_expression/7` now carries atomic values, generated goals, source
+  origins, and diagnostics without changing explicit relation calls.
+- `expression_return_position/5` reads one return-labeled declaration edge;
+  missing and multiple declarations retain the expression source position.
+- Completed feature commits: `0c38a71c8`, `b01046b8b`.
+- Focused gate after milestone 2: SWI 13 of 13 passed in 1.4 seconds.
+- Current boundary: a computed bind result is unavailable to declaration-time
+  name resolution. The independent review at
+  `v7/tasks/17_DEFERRED_BIND_REVIEW.OPUS.BRIEF.md` is checking a derived
+  `:/4` rule plus ordinary `:/4` lookup goals before RHS call lowering lands.
+
 ## 2026-08-30 programmable compiler fragments
 
 ```text
