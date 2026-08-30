@@ -1,4 +1,4 @@
-# SCIP.REPORT.md — how far scip gets us past codeql, one process per corpus (2026-08-29)
+# SCIP.REPORT.md how far scip gets us past codeql, one process per corpus (2026-08-29)
 
 Lane: `bench-extract-scip-informed`. Binary: `v6/sprefa-extract/target/release/extract`
 (worktree `bench/extract-scip-informed`, base 8898448a1).
