@@ -1432,6 +1432,11 @@ impl Resolve<CallF> for RustSource {
                         }),
                 }
             };
+            // A def coordinate several names share is one macro expansion's
+            // collapsed span: it names nothing, so no name match binds there.
+            let name_t = name_t.filter(|(blob, span, _)| {
+                !modules.is_some_and(|m| m.is_collapsed(blob, *span))
+            });
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
             });

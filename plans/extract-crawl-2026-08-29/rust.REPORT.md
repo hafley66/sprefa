@@ -1444,3 +1444,92 @@ cover the call, or the call is inside an expansion we do not splice.
 The two `misbind_*_file` tiers (704) are the corpus-unique name match binding a
 same-named def in the wrong file. That is arc 3's excess class seen from the
 other side and is the next largest fixable one.
+
+## 23. The excess, classified and cut (lane `fix-extract-rust-grind`, arc 3)
+
+### 23.1 A stricter excess set
+
+`ours - oracle` against `rust.oracle.call.tsv` alone is 23,142 rows, and
+RUST-PARITY.REPORT.md section 6 measured 80% of it as the ra call hierarchy's
+own per-crate scope rather than over-emission. Arc 1's `rust.codeql.call.tsv`
+gives a second opinion, so this section scores the rows NEITHER oracle emits:
+
+```
+doubly unsupported = ours_projected - rust.oracle.call.tsv - rust.codeql.call.tsv
+```
+
+**10,693** rows at arc 2's HEAD, of 43,084 emitted. Classifier:
+`rust.excess2.classify.py` (committed beside this file), which joins each row
+back to the `resolved_edge` rows that minted it and reports the LEG plus the
+site's shape.
+
+| tier / shape | before | after | example |
+|---|---:|---:|---|
+| `name_resolve` / receiver typed locally | 3,420 | 2,628 | `crates/base-db/src/input.rs:582` `add_dep` -> `input.rs into_iter` |
+| `name_resolve` / bare name, other crate | 3,039 | 909 | `crates/base-db/src/editioned_file_id.rs:36` `parse_errors` -> `intern/src/symbol/symbols.rs create` |
+| `name_resolve` / bare name, sibling file | 1,425 | 1,425 | `editioned_file_id.rs:49` `current_edition` -> the same file's `current_edition` |
+| `no_def_in_dst` / bare name, sibling file | 1,043 | 1,043 | `input.rs:553` `add_crate_root` -> `input.rs CrateBuilder` |
+| `name_resolve` / receiver is own field | 438 | 363 | `editioned_file_id.rs:69` `edition` -> the same file's `edition` |
+| `name_resolve` / bare name, same crate | 403 | 402 | `hir-def/src/attrs/docs.rs:451` `get_horizontal_trim` -> `expr_store/path.rs first` |
+| `import_resolve` / bare name, sibling file | 207 | 200 | `hir-def/src/lang_item.rs:128` `lang_items` -> `nameres.rs crate_local_def_map` |
+| TOTAL | **10,693** | **7,681** | |
+
+### 23.2 The class that was fixed: a collapsed macro span
+
+2,998 of the 10,693 rows, 28%, name ONE coordinate:
+`crates/intern/src/symbol/symbols.rs create`. `define_symbols!` expands to 537
+defs there and `rust_mbe.rs` gives every spliced item the macro CALL's own span
+(`4394..16648`), so `(blob, span)` stops naming a def: `name_at` returns
+whichever def won the span slot, and `create` won. Every bare `x.into()` in the
+corpus name-matched the `into` symbol const declared inside that expansion and
+emitted `-> symbols.rs create`.
+
+The rule now: a def coordinate several NAMES share names nothing, so no name
+match binds there. `RustModuleIndex` carries the `(blob, span)` set at build
+time (`is_collapsed`) and `Resolve<CallF>` filters `name_t` through it. Arc 2
+had already applied the same rule to two narrower paths (`same_file_call_match`
+and the module plane's export table); this is the corpus-wide one.
+
+The guard is per COORDINATE, never per file: `77_rust_collapsed_span.rs` pins
+that a clean def in the same file as a collapsed one still binds.
+
+### 23.3 Receipt
+
+| leg | arc 2 | arc 3 | vs lane start |
+|---|---:|---:|---:|
+| ra_ap_ide recall | 75.66 | 75.66 | 70.31 |
+| ra_ap_ide precision | 46.29 | **49.77** | 43.35 |
+| raw scip recall | 78.90 | 78.90 | 78.76 |
+| raw scip precision | 42.22 | **45.24** | 42.44 |
+| codeql recall | 64.96 | 64.96 | 64.97 |
+| codeql precision | 71.03 | **76.15** | 71.51 |
+| emitted rows (projected) | 43,084 | **40,072** | 42,752 |
+| doubly-unsupported excess | 10,693 | **7,681** | (unmeasured) |
+
+Zero recall cost on all three oracles: the 3,012 rows removed are rows no
+oracle had. Arc 2's two forced floor drops are recovered and passed: every
+precision floor now sits above where the lane found it.
+
+### 23.4 Two rules measured and REJECTED
+
+Both target the same class (`T::f()` falling through to a bare-name match) and
+both cost more recall than they buy precision. Recorded so the next lane does
+not re-derive them.
+
+| rule | ra r/p | scip r/p | codeql r/p | verdict |
+|---|---|---|---|---|
+| (kept baseline) | 75.66 / 49.77 | 78.90 / 45.24 | 64.96 / 76.15 | |
+| `T::f()` with any uppercase path segment never falls through to the bare-name legs | 75.22 / 50.78 | **76.65** / 45.01 | 64.59 / 77.65 | rejected: scip recall -2.25 |
+| same, but only when the corpus declares no TYPE named T | 75.42 / 50.53 | **77.20** / 45.04 | 64.86 / 77.35 | rejected: scip recall -1.70 |
+
+The `1,425 + 1,043` sibling-file rows the rules were aimed at are real
+over-emission, but they must be cut by binding the qualifier, not by refusing
+the fallback: raw scip agrees with the fallback on more rows than it costs.
+
+### 23.5 What is left
+
+| class | rows | why it stays |
+|---|---:|---|
+| receiver typed locally, both oracles disagree | 2,628 | the receiver's declared type has one corpus impl of the method and the compiler picks a std or trait one; needs a checker (`rust.rs:1315` `impl_target`) |
+| bare name, sibling or same file | 2,468 | the qualifier resolution class of 23.4, open |
+| `no_def_in_dst` (the dst def is a TYPE, not a fn) | 1,610 | struct-literal and tuple-struct ctor rows; ra and codeql both exclude a struct ctor from the call graph, and 22.4's variant decision does not extend to them |
