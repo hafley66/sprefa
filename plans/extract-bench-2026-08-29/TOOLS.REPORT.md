@@ -61,12 +61,75 @@ Notes:
 
 ## Rust
 
-| tool | family | edges | ran | exact error |
+| tool | family | edges | ran | wall |
 |---|---|---|---|---|
-| codeql 2.26.4 (rust beta) | all | 0 | no | `thread 'main' panicked at library/core/src/str/mod.rs:861:21` in `rust/tools/index-files.sh`; reproduced twice (whole repo and crates/ only) |
+| codeql 2.26.4 (rust beta), pass 1 `database create` | all | 0 | no | panic, below |
+| codeql 2.26.4 (rust beta), pass 2 `init` + `index-files --exclude '**/test_data/**'` | call | 52,744 | yes | index 1m45s + finalize 57s + query 1m22s |
 
 No other tool in the lane list ships a rust frontend (madge/depcruise ts,
 stack-graphs ts, joern go/ts per run, glean/kythe skipped, below).
+
+### The pass-1 panic, and the one file that causes it
+
+`codeql database create --language=rust --source-root ~/projects/rust-analyzer`
+fails at the 947th file with
+
+```
+thread 'main' panicked at library/core/src/str/mod.rs:861:21:
+end byte index 2 is not a char boundary; it is inside '│' (bytes 1..4 of string)
+   4: <ra_ap_parser::frontmatter::ScriptSource>::parse
+   5: <ra_ap_parser::lexed_str::LexedStr>::new
+   8: <single_arch_extractor::rust_analyzer::RustAnalyzer>::parse
+```
+
+The file is the one archived immediately before the panic line in the
+`progress+` log:
+`crates/parser/test_data/lexer/err/incomplete_frontmatter_before_unicode.rs`.
+It is a lexer error fixture whose first line is a shebang followed by a
+non-ASCII box-drawing character, and `ScriptSource::parse` slices it at byte 2,
+inside the 3-byte `│`. It is outside the bench corpus (`crates/*/src/**`), so
+excluding it costs no measured edge.
+
+`codeql database create` has no path filter in 2.26.4 (`--help` names no
+`--codescanning-config`, `--include` or `--exclude`). The plumbing pair does:
+
+```bash
+codeql database init --language=rust --build-mode=none \
+  --source-root=/Users/chrishafley/projects/rust-analyzer /tmp/ra-ql-db
+codeql database index-files --language=rust --include='**/*.rs' \
+  --exclude='**/test_data/**' --prune='**/target/**' -j 4 -- /tmp/ra-ql-db
+codeql database finalize /tmp/ra-ql-db
+codeql query run --database=/tmp/ra-ql-db --ram=8000 -j 4 \
+  --output=/tmp/ra-calls.bqrs tools/ql/rust/rust_calls.ql
+```
+
+`--ram` is not optional: the default 1,080 MiB heap dies at 3m55s with
+`Out of off-heap array space`. 8,000 MB finishes in 1m22s on this 16 GB machine.
+
+### The query, and the numbers
+
+`tools/ql/rust/rust_calls.ql` asks `Call.getStaticTarget()`
+(`TypeInference::resolveCallTarget`) per call site and names the caller by the
+nearest enclosing `Function`, walking out through `ClosureExpr`. Normalized to
+`rust.codeql.call.tsv`, 52,744 rows.
+
+Scored with `rust.project.py --scope corpus --closure enclosing`, corpus file
+list `out/rust.files.txt` (873 files):
+
+| ours | oracle | ours rows | oracle rows | overlap | recall | precision |
+|---|---|---:|---:|---:|---:|---:|
+| codeql | `rust.oracle.call.tsv` (ra_ap_ide) | 47,402 | 26,359 | 22,576 | **85.65** | 47.63 |
+| codeql | `rust.scip_override.call.tsv` (raw scip) | 32,550 | 15,647 | 10,471 | **66.92** | 32.17 |
+| sprefa-extract | `rust.oracle.call.tsv` | 42,752 | 26,359 | 18,533 | 70.31 | 43.35 |
+| sprefa-extract | `rust.scip_override.call.tsv` | 29,036 | 15,647 | 12,323 | 78.76 | 42.44 |
+| sprefa-extract | `rust.codeql.call.tsv` | 46,952 | 51,679 | 33,576 | 64.97 | **71.51** |
+
+Reading: codeql outscores us by 15.3 points of recall against the ra_ap_ide
+call hierarchy and loses to us by 11.8 against raw scip, which is the same
+oracle-disagreement band RUST-PARITY.REPORT.md section 4 measured (the two
+oracles agree on 5,593 rows). Our precision against codeql (71.51) is 28 points
+above our precision against ra_ap_ide (43.35): most of what ra calls our excess,
+codeql emits too.
 
 ## Costs
 
@@ -74,7 +137,7 @@ stack-graphs ts, joern go/ts per run, glean/kythe skipped, below).
 |---|---|---|---|---|---|
 | madge | preinstalled (`which madge`) | latest via npm | 0 | npm global | yes |
 | dependency-cruiser | `npx --yes dependency-cruiser` | 18.2.0 | 2.7s (npx cache) | npm cache | yes |
-| codeql | `brew install codeql` | 2.26.4 | ~60s | cask ~1GB in Caskroom | ts yes, go yes, rust no |
+| codeql | `brew install codeql` | 2.26.4 | ~60s | cask ~1GB in Caskroom | ts yes, go yes, rust yes (pass 2; db 795 MB in /tmp) |
 | stack-graphs | `cargo install tree-sitter-stack-graphs-typescript --features cli` | 0.4.0 | ~7 min, 169 crates | ~/.cargo | yes |
 | joern | `curl joern-install.sh && ./joern-install.sh --install-dir=/tmp/joern --without-backend` + `brew install openjdk` | 4.0.614 | 34s script + openjdk brew | ~1GB in /tmp/joern | ts yes, go partial |
 | glean | not installed | n/a | skip per docs: "You will need: Linux. The build is only tested on Linux" (glean.software/docs/building); docker demo image is Linux | n/a | no |
@@ -87,6 +150,8 @@ Environment failures encountered and worked around:
 | `NODE_OPTIONS=--stack-size` is rejected by node ("not allowed in NODE_OPTIONS") | dropped the flag; only files under src/ extracted via `--source-root=<corpus>/src` |
 | codeql go autobuild "go: executable file not found in $PATH" | go lives in /usr/local/go/bin, not /opt/homebrew/bin; added to PATH |
 | joern `@main def main(...)` scripts fail to run ("Error during compilation: ScalaReplPP.main") | used `joern <cpg> --runBefore '<query>'` with piped `exit` instead |
+| codeql rust extractor panics on `crates/parser/test_data/lexer/err/incomplete_frontmatter_before_unicode.rs` (`str/mod.rs:861`, `ScriptSource::parse` slices inside `│`) | `database create` has no path filter; used `database init` + `index-files --exclude '**/test_data/**'` + `finalize` |
+| codeql rust call query dies at 3m55s, `Out of off-heap array space` (default heap 1,080 MiB) | `--ram=8000 -j 4`; finishes in 1m22s |
 
 ## Artifacts
 
@@ -104,7 +169,9 @@ Environment failures encountered and worked around:
 | `tools/depcruise2tsv.py` | depcruise json -> normal form |
 | `tools/sgdefs2tsv.py` | stack-graphs `query definition` output -> normal form |
 | `tools/ts_import_positions.py` | import-specifier positions feeding stack-graphs |
+| `rust.codeql.call.tsv` | 52,744 rows |
 | `tools/ql/ts_calls.ql`, `tools/ql/go_calls.ql` | codeql queries |
+| `tools/ql/rust/rust_calls.ql` | codeql rust call query (`Call.getStaticTarget()`) |
 
 ## Pass 2
 
