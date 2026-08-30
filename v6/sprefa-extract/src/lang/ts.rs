@@ -1178,12 +1178,24 @@ impl Project<CallF> for CallProjector<'_> {
         // `ts_push_lambda_defs`). name=None (v5's empty name); span = the
         // arrow/fn-expr's own span (body-covering, like rust's `def_span`) so
         // a site inside the body binds to this lambda by containment.
-        let mut lambdas = LambdaDefs { out: Vec::new() };
+        let mut lambdas = LambdaDefs {
+            out: Vec::new(),
+            named: Vec::new(),
+        };
         for stmt in with_module_bodies(&program.body) {
             lambda_entry_stmt(&mut lambdas, stmt);
         }
         for span in lambdas.out {
-            sink.nodes.push(Node::new(to_span(span), CallKind::Lambda));
+            let name = lambdas
+                .named
+                .iter()
+                .find(|(named_span, _)| *named_span == span)
+                .map(|(_, name)| name.clone());
+            let node = Node::new(to_span(span), CallKind::Lambda);
+            sink.nodes.push(match name {
+                Some(name) => node.with_name(strings.intern(&name)),
+                None => node,
+            });
         }
         // Conditional because v5 has no module-def facet: an unconditional row
         // is a v6-only line in the PORTED `call_def` set (tests/golden_parity.rs).
@@ -1702,11 +1714,38 @@ fn lambda_entry_class(walker: &mut LambdaDefs, class: &ts::Class) {
 /// gap, same class as the rust port's visitor discipline: statement kinds the
 /// DfF walker does not recurse into — try/switch/throw — ARE walked here, so
 /// an inline lambda nested only under those mints a def v5 lacks.)
+/// The span of an arrow / fn-expr value, for property-named lambdas.
+fn lambda_value_span(value: &ts::Expression) -> Option<oxc_span::Span> {
+    match value {
+        ts::Expression::ArrowFunctionExpression(arrow) => Some(arrow.span),
+        ts::Expression::FunctionExpression(func) if func.body.is_some() => Some(func.span),
+        _ => None,
+    }
+}
+
 struct LambdaDefs {
     out: Vec<oxc_span::Span>,
+    /// Arrows / fn-exprs that are an object-literal property's value: the
+    /// oracle names the enclosing callable by that property
+    /// (`getAllCodeActions: context => codeFixAll(...)`), so the lambda def
+    /// carries the property name and its sites name it as their caller.
+    named: Vec<(oxc_span::Span, String)>,
 }
 
 impl<'a> OxcVisit<'a> for LambdaDefs {
+    fn visit_object_property(&mut self, prop: &ts::ObjectProperty<'a>) {
+        use ts::PropertyKey as K;
+        if let Some(name) = match &prop.key {
+            K::StaticIdentifier(id) => Some(id.name.to_string()),
+            _ => None,
+        } {
+            if let Some(body) = lambda_value_span(&prop.value) {
+                self.named.push((body, name));
+            }
+        }
+        oxc_ast_visit::walk::walk_object_property(self, prop);
+    }
+
     fn visit_arrow_function_expression(&mut self, arrow: &ts::ArrowFunctionExpression<'a>) {
         self.out.push(arrow.span);
         oxc_ast_visit::walk::walk_arrow_function_expression(self, arrow);
