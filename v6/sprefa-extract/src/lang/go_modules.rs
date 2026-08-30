@@ -27,8 +27,8 @@ use crate::shape::{ContentId, Span, Strings};
 use crate::types::PathIndex;
 
 use super::go::{
-    go_module_of, go_node_span, go_package_dir, go_parse, go_text, go_walk_import_specs, same_dir,
-    unique_blob,
+    go_is_method_def, go_module_of, go_node_span, go_package_dir, go_parse, go_text,
+    go_walk_import_specs, same_dir, unique_blob,
 };
 
 // ── phase-2 facts: one dedicated parse per file ─────────────────────────────
@@ -298,7 +298,38 @@ impl GoModuleIndex {
         if !is_exported(name) {
             return None;
         }
-        unique_blob(&self.sites_in_dir(dir, def_index, paths, name))
+        unique_blob(&self.free_sites_in_dir(dir, def_index, paths, name))
+    }
+
+    /// The bare-name leg through the referring file's OWN package directory,
+    /// which Go's package block resolves before any corpus-wide name guess.
+    pub fn resolve_call_in_own_dir(
+        &self,
+        dir: &Path,
+        def_index: &DefIndex,
+        paths: &PathIndex,
+        name: &str,
+    ) -> Option<(ContentId, Span)> {
+        unique_blob(&self.free_sites_in_dir(dir, def_index, paths, name))
+    }
+
+    /// `sites_in_dir` with method defs cut: a `pkg.F()` or bare `F()` call
+    /// names a package-level func, never `func (r T) F()` sharing the name.
+    fn free_sites_in_dir<'a>(
+        &self,
+        dir: &Path,
+        def_index: &'a DefIndex,
+        paths: &PathIndex,
+        name: &str,
+    ) -> Vec<&'a DefSite> {
+        self.sites_in_dir(dir, def_index, paths, name)
+            .into_iter()
+            .filter(|site| {
+                paths
+                    .get(&site.blob)
+                    .is_none_or(|path| !go_is_method_def(path, site.span))
+            })
+            .collect()
     }
 
     /// `resolve_in_dir` narrowed to `type` declarations, for the type arm's
