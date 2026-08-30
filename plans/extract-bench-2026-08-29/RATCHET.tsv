@@ -5,9 +5,9 @@ go	call	go.codeql2.call.tsv	97.40	90.68	3100	805	267b51706
 go	call	go.oracle.call.vta.bare.tsv	84.06	81.43	3100	805	267b51706
 go	module	go.oracle.module.tsv	100.00	15.18	3100	805	267b51706
 go	type	go.oracle.type.typedecl.tsv	73.37	97.04	3100	805	267b51706
-rust	call	rust.oracle.call.tsv	70.23	43.32	530	646	267b51706
-rust	call	rust.scip_override.call.tsv	78.75	42.44	530	646	267b51706
-rust	type	rust.oracle.type.typedecl.tsv	26.27	74.20	530	646	267b51706
+rust	call	rust.oracle.call.tsv	70.31	43.35	547	653	f2b6b89d4
+rust	call	rust.scip_override.call.tsv	78.76	42.44	547	653	f2b6b89d4
+rust	type	rust.oracle.type.typedecl.tsv	26.27	74.20	547	653	f2b6b89d4
 ts5	call	ts.codeql2.call.tsv	92.07	71.15	820	506	267b51706
 ts5	call	ts5.oracle.call.tsv	88.20	76.13	820	506	267b51706
 ts5	module	ts.madge.module.tsv	50.57	32.85	820	506	267b51706
