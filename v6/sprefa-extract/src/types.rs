@@ -1506,7 +1506,8 @@ pub struct ProjectCx<'a> {
     pub manifests: &'a ManifestMap,
     /// Rev-correct content reader: project-relative path -> bytes, or None.
     /// Injected by the engine; None in unit tests. Spec: `_2_traits.rs`:41-43.
-    pub reader: Option<&'a dyn Fn(&str) -> Option<Vec<u8>>>,
+    /// Send + Sync so a parallel per-file resolve can share one `&ProjectCx`.
+    pub reader: Option<&'a (dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync)>,
     /// The fold of `files` + `manifests` that invalidates phase-2 on change; the
     /// middle component of the phase-2 cache key (see `Resolve`). Spec:
     /// `_2_traits.rs`:44-45.
@@ -1515,10 +1516,21 @@ pub struct ProjectCx<'a> {
     /// GoIndex). Opaque here; each language module owns its concrete index type
     /// behind a OnceLock. Spec: `_2_traits.rs`:46-51 (field) + :59-61 (IndexBag).
     pub indexes: IndexBag,
-    /// The blob of the output currently being resolved, set by `resolve_project`
-    /// before each per-file resolve. `None` in hand-built contexts (unit tests),
-    /// where `own_blob` falls back to the deterministic span-count rule.
-    pub own: std::cell::RefCell<Option<ContentId>>,
+}
+
+/// The blob of the output currently being resolved. Thread-local rather than a
+/// `ProjectCx` field so the per-file resolve loop can run on the extract pool:
+/// each worker pins its own current blob, and a shared `&ProjectCx` stays Sync.
+/// `None` in hand-built contexts (unit tests), where `own_blob` falls back to
+/// the deterministic span-count rule.
+thread_local! {
+    static OWN: std::cell::RefCell<Option<ContentId>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Pin the calling thread's current blob before a per-file resolve (or clear it
+/// after, so pool threads never leak a stale blob into a later task).
+pub fn set_own(blob: Option<ContentId>) {
+    OWN.with(|own| *own.borrow_mut() = blob);
 }
 
 /// The file set: project-relative paths that exist at this rev. Hollow in 4a
@@ -1691,24 +1703,25 @@ pub fn build_def_index(outputs: &[(ContentId, &ExtractOutput)]) -> DefIndex {
 /// every lang emits body-covering def spans by design, so one sorted-span
 /// search serves ts, rust, and go uniformly. Pure fn over the bundle; zero AST.
 pub fn covering_def(defs: &FamilyBundle<CallF>, site: Span) -> Option<NodeRef> {
-    // Sort (span, ref) by (start, end); every container of `site` starts at or
-    // before it, so binary-search that cut and scan the prefix for the tightest
-    // cover. Def spans nest properly (a body-covering def never partially
-    // overlaps another), so min span length IS the innermost def.
-    let mut sorted: Vec<(Span, NodeRef)> = defs
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(ix, node)| (node.span, NodeRef(ix as u32)))
-        .collect();
-    sorted.sort_by_key(|(span, _)| (span.start, span.end()));
-    let cut = sorted.partition_point(|(span, _)| span.start <= site.start);
+    // One linear pass for the tightest cover, no sort and no allocation. The
+    // previous form sorted the whole bundle per call; ties break the same way
+    // the sorted order did (min length, then min (start, end), then node order).
     let mut best: Option<(Span, NodeRef)> = None;
-    for &(span, r) in &sorted[..cut] {
-        if site.end() <= span.end()
-            && best.map_or(true, |(b, _)| span.end() - span.start < b.end() - b.start)
-        {
-            best = Some((span, r));
+    for (ix, node) in defs.nodes.iter().enumerate() {
+        let span = node.span;
+        if span.start > site.start || site.end() > span.end() {
+            continue;
+        }
+        let key = (span.end() - span.start, span.start, span.end());
+        let better = match best {
+            None => true,
+            Some((b, _)) => {
+                let bkey = (b.end() - b.start, b.start, b.end());
+                key < bkey
+            }
+        };
+        if better {
+            best = Some((span, NodeRef(ix as u32)));
         }
     }
     best.map(|(_, r)| r)
@@ -1741,7 +1754,7 @@ pub fn corpus_defs<'a>(index: &'a DefIndex, name: &str) -> &'a [DefSite] {
 /// order so the fallback stays stable under any later tie-break. One pass
 /// over the index, never one pass per named span.
 pub fn own_blob(cx: &ProjectCx, output: &ExtractOutput) -> Option<ContentId> {
-    if let Some(own) = cx.own.borrow().clone() {
+    if let Some(own) = OWN.with(|own| own.borrow().clone()) {
         return Some(own);
     }
     let index = cx.indexes.def_index.get()?;

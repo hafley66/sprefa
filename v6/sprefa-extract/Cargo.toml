@@ -27,6 +27,11 @@ features = ["cli"]
 # The newline scan behind the per-document line table. Already unified in the
 # workspace lock through regex/aho-corasick, so this pins no new copy.
 memchr = "2"
+# Allocator candidate (2026-08-29 speed lane): the default nanov2 malloc shows
+# ~2% self time in frees on the go corpus. Kept behind a feature until it wins
+# on all three corpora; default build is byte-identical and allocator-unchanged.
+mimalloc = { version = "0.1", optional = true }
+
 # @comment-ok: build-vs-buy candidate table, the law every dep comment here carries.
 # The directory walker soopy itself uses (`soopy/src/_3a_files.rs:6`), already in
 # this lock as an ast-grep transitive, so the pin adds no copy. soopy's own
@@ -190,7 +195,9 @@ features = ["env-filter", "json"]
 optional = true
 
 [features]
-cli = ["dep:clap", "dep:tracing-subscriber", "dep:hafley-observe"]
+cli = ["dep:clap", "dep:tracing-subscriber", "dep:hafley-observe", "mimalloc"]
+# Optional global allocator; measured in plans/extract-bench-2026-08-29/SPEED.REPORT.md.
+mimalloc = ["dep:mimalloc"]
 
 [[bin]]
 name = "extract"
@@ -210,3 +217,4 @@ libc = "0.2"
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
