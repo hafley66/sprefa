@@ -93,7 +93,9 @@ fn drops() -> Vec<(String, String)> {
 #[test]
 fn external_module_qualified_prefix_drops_external() {
     assert!(
-        drops().iter().any(|(detail, reason)| detail == "mem::take" && reason == "external"),
+        drops()
+            .iter()
+            .any(|(detail, reason)| detail == "mem::take" && reason == "external"),
         "{:?}",
         drops()
     );
@@ -103,11 +105,7 @@ fn external_module_qualified_prefix_drops_external() {
 /// trait's own fn def.
 #[test]
 fn trait_assoc_call_binds_the_trait_fn_def() {
-    assert!(
-        binds("bare_trait_call", "level", "traits"),
-        "{:?}",
-        edges()
-    );
+    assert!(binds("bare_trait_call", "level", "traits"), "{:?}", edges());
 }
 
 /// Class 12, impl first: `Robot::helper()` has exactly one impl defining the
@@ -115,22 +113,14 @@ fn trait_assoc_call_binds_the_trait_fn_def() {
 /// stealing a bindable impl pair).
 #[test]
 fn impl_fn_beats_the_trait_fallback() {
-    assert!(
-        binds("robot_volume", "helper", "robot"),
-        "{:?}",
-        edges()
-    );
+    assert!(binds("robot_volume", "helper", "robot"), "{:?}", edges());
 }
 
 /// Class 4: `d.greet()` with Dog's impl of Speak not overriding greet binds
 /// the trait's default body.
 #[test]
 fn trait_default_body_binds_the_unoverridden_method() {
-    assert!(
-        binds("default_call", "greet", "traits"),
-        "{:?}",
-        edges()
-    );
+    assert!(binds("default_call", "greet", "traits"), "{:?}", edges());
 }
 
 /// Class 6: the receiver's type is the corpus trait `dyn Talk`; the call

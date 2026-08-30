@@ -48,7 +48,10 @@ fn run() -> Vec<Value> {
         "--family".to_string(),
         "call,type".to_string(),
     ];
-    args.extend(FILES.iter().map(|tpl| tpl.replace("{CRATE_A}", CRATE_A).replace("{CRATE_B}", CRATE_B)));
+    args.extend(FILES.iter().map(|tpl| {
+        tpl.replace("{CRATE_A}", CRATE_A)
+            .replace("{CRATE_B}", CRATE_B)
+    }));
     let output = Command::new(env!("CARGO_BIN_EXE_extract"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .args(&args)
@@ -124,7 +127,9 @@ fn trait_impl_binds_only_when_the_trait_is_in_scope() {
 #[test]
 fn two_in_scope_traits_stay_ambiguous() {
     assert!(
-        drops().iter().any(|(detail, reason)| detail == "polish" && reason == "ambiguous"),
+        drops()
+            .iter()
+            .any(|(detail, reason)| detail == "polish" && reason == "ambiguous"),
         "gadget.rs g.polish() must stay ambiguous"
     );
 }
@@ -179,11 +184,13 @@ fn module_qualified_prefixes_bind_the_declared_module() {
 fn external_module_prefixes_drop_external() {
     let rows = drops();
     assert!(
-        rows.iter().any(|(detail, reason)| detail == "std::mem::take" && reason == "external"),
+        rows.iter()
+            .any(|(detail, reason)| detail == "std::mem::take" && reason == "external"),
         "{rows:?}"
     );
     assert!(
-        rows.iter().any(|(detail, reason)| detail == "mem::replace" && reason == "external"),
+        rows.iter()
+            .any(|(detail, reason)| detail == "mem::replace" && reason == "external"),
         "{rows:?}"
     );
 }

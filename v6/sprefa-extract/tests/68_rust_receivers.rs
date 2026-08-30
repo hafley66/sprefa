@@ -17,7 +17,11 @@ use serde_json::Value;
 const SRC: &str = "tests/fixtures/rust_findings/receivers/src";
 
 fn run(names: &[&str]) -> Vec<Value> {
-    let mut args: Vec<String> = vec!["--resolve".to_string(), "--family".to_string(), "call".to_string()];
+    let mut args: Vec<String> = vec![
+        "--resolve".to_string(),
+        "--family".to_string(),
+        "call".to_string(),
+    ];
     args.extend(names.iter().map(|name| format!("{SRC}/{name}")));
     let output = Command::new(env!("CARGO_BIN_EXE_extract"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -108,7 +112,8 @@ fn drops(names: &[&str]) -> Vec<(String, String)> {
 }
 
 fn has(rows: &[(String, String, String)], caller: &str, callee: &str, file: &str) -> bool {
-    rows.iter().any(|(c, n, f)| c == caller && n == callee && f == file)
+    rows.iter()
+        .any(|(c, n, f)| c == caller && n == callee && f == file)
 }
 
 #[test]
@@ -160,7 +165,8 @@ fn unknown_receiver_drops_inferred() {
     // site drops with the `inferred` reason, never `ambiguous`.
     let rows = drops(&["lib.rs"]);
     assert!(
-        rows.iter().any(|(detail, reason)| detail == "into" && reason == "inferred"),
+        rows.iter()
+            .any(|(detail, reason)| detail == "into" && reason == "inferred"),
         "{rows:?}"
     );
 }
@@ -178,7 +184,10 @@ const MULTI: [&str; 3] = ["recv_sites.rs", "recv_alpha.rs", "recv_beta.rs"];
 #[test]
 fn tuple_pattern_initializer_binds() {
     let rows = edges(&MULTI);
-    assert!(has(&rows, "tuple_pattern_init", "tick", "recv_alpha"), "{rows:?}");
+    assert!(
+        has(&rows, "tuple_pattern_init", "tick", "recv_alpha"),
+        "{rows:?}"
+    );
 }
 
 /// SABOTAGE RECEIPT: the same hole through a `let ... else`, the shape 2,232
@@ -187,7 +196,10 @@ fn tuple_pattern_initializer_binds() {
 #[test]
 fn let_else_initializer_binds() {
     let rows = edges(&MULTI);
-    assert!(has(&rows, "let_else_init", "tick", "recv_alpha"), "{rows:?}");
+    assert!(
+        has(&rows, "let_else_init", "tick", "recv_alpha"),
+        "{rows:?}"
+    );
 }
 
 /// SABOTAGE RECEIPT: `let a = a.tick()` inserted the new `a` before the
@@ -196,7 +208,10 @@ fn let_else_initializer_binds() {
 #[test]
 fn initializer_reads_the_outer_binding() {
     let rows = edges(&MULTI);
-    assert!(has(&rows, "shadowed_by_own_init", "tick", "recv_alpha"), "{rows:?}");
+    assert!(
+        has(&rows, "shadowed_by_own_init", "tick", "recv_alpha"),
+        "{rows:?}"
+    );
 }
 
 /// SABOTAGE RECEIPT: `fn new() -> Self` put the literal string `Self` in the
@@ -221,8 +236,9 @@ fn self_return_one_hop_binds() {
 fn a_field_named_like_a_type_does_not_capture_the_reference() {
     let rows = type_edges(&["recv_field_shadow.rs", "recv_alpha.rs"]);
     assert!(
-        rows.iter()
-            .any(|(owner, target, file)| owner == "Frame" && target == "Alpha" && file == "recv_alpha"),
+        rows.iter().any(|(owner, target, file)| owner == "Frame"
+            && target == "Alpha"
+            && file == "recv_alpha"),
         "{rows:?}"
     );
 }
@@ -237,7 +253,8 @@ fn single_glob_source_binds() {
 fn two_glob_sources_stay_unresolved() {
     let rows = drops(&["glob_two.rs", "glob_a.rs", "glob_b.rs"]);
     assert!(
-        rows.iter().any(|(detail, reason)| detail == "shadowed" && reason == "ambiguous"),
+        rows.iter()
+            .any(|(detail, reason)| detail == "shadowed" && reason == "ambiguous"),
         "{rows:?}"
     );
 }
