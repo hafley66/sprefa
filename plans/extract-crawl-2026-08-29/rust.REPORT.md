@@ -1210,3 +1210,79 @@ The class 7 shrink is the headline: 621 of its 815 rows named a receiver whose t
 ### 19.3 Gate
 
 `cargo test --features cli --no-fail-fast`: 103 test binaries ok, 1 failure, `tests/45_emit_throughput.rs` `emit_throughput_350k_rows_under_budget` (piped emission 5.74-6.6s vs a 5.5s wall budget). Rerun 3x isolated, same outcome. The test exercises the JSONL emission path, which this lane's files (`rust.rs`, `rust_modules.rs`, `rust_receivers.rs`) do not touch; the run is borderline against the budget and sensitive to ambient machine load.
+
+## 20. Trait dispatch, lane `fix-extract-rust-traits` (12, 4, 6, 6b, 8, 11)
+
+### 20.1 What landed
+
+One trait table in the module plane (`rust_modules.rs`): the second parse now
+collects every trait's fn set (`TraitEntry`, declared and default bodies
+alike) and the type -> traits it implements map, built from the `impl_facts`
+entries the plane already walked. Three index methods do the dispatch:
+
+| method | rule |
+|---|---|
+| `trait_impl_target` | the ONE corpus `impl Trait` defining the fn: class 12's impl-first arm |
+| `trait_fn_target` | the trait's own fn def, declared or defaulted: classes 12 and 6 |
+| `trait_default_target` | the one trait default body providing the fn for a type the caller names: classes 4 and 8's zero-impl arm |
+
+Wiring: the assoc leg chains impl -> variant -> trait-impl -> trait-fn ->
+trait-default; the receiver leg chains `impl_target` -> trait-fn (the
+receiver's type IS a corpus trait) -> trait-default. Class 6b reads the bound
+from the fn generics and where clause in `rust_receivers.rs`
+(`trait_bounds_of_generics`); `principal_ty` now peels `dyn`/`impl Trait` to
+the trait's name. Two span facts make the edges matchable: a declared trait
+fn's span uses `def_span(ident, sig)` so the call facet's def for the bare
+signature resolves the callee name, and `module_call` propagates
+`HomeFile::External` so a `use std::mem; mem::take(..)` drop reads
+`external`, never `ambiguous`.
+
+Tests: `tests/72_rust_traits.rs`, 7 tests, fixtures under
+`tests/fixtures/rust_findings/traits/`. Fail-first receipt: with the three
+src files stashed, 3 of 6 red pre-fix (the impl-first and zero-impl pins were
+green pre-fix because `impl_target` already bound those shapes).
+
+### 20.2 Receipt: one-process run
+
+Universe: section 18's, 873 `crates/*/src` files of rust-analyzer `af4111f`,
+one process, `--resolve --family call,type`, wall 1.86 / 1.36 / 1.35 s over
+three runs.
+
+| | before (19.2) | after |
+|---|---:|---:|
+| `ambiguous` call drops | 11,628 | **11,470** |
+| oracle overlap (`bench.py` vs `rust.oracle.call.tsv`) | 18,296 | **18,513** |
+| recall (overlap / oracle) | 67.56% | **68.56%** |
+| precision (overlap / ours) | 33.68% | 32.87% |
+| `external` drops | 849 | 1,162 |
+| `no_corpus_def` drops | 4,853 | 4,679 |
+| ratchet rust call recall | 67.56 | **68.56** (`RATCHET_BUMP=1`) |
+
+Census (`rust.paths3.census.py` over the throwaway-tagged run; the tag patch
+was reverted before commit, same method as 19.2):
+
+| # | class | 19.2 after | 20.2 after |
+|---|---|---:|---:|
+| 8 | `T::f()`, T corpus struct/enum, 0 or 2+ impls | 1,145 | 1,157 |
+| 11 | module-qualified `mod::f()` | 1,207 | 1,077 |
+| 9 | free fn / bare name / struct literal | 431 | 431 |
+| 10+10a | T external or alias | 1,765 | 1,749 |
+| 6 | receiver type is a corpus-or-external trait | 161 | 260 |
+| 3a/3b/5 | receiver external/alias/external-trait | 6,881 | 6,795 |
+
+Class 11's shape census (seed = the whole population, 1,273 `::`-shaped
+ambiguous drops): 392 heads are a `use` binding to an external module (now
+`external` drops), 573 are grouped-use heads of external crates (`ast::..`),
+174 are multi-segment paths whose tail is an external type (class 10), 57 are
+`crate::` chains needing a crate-root re-export leg, 13 are `super::`, 3 are
+raw-ident mods (`r#type::`). The fixable top shape was the external one.
+Class 6 grew because sites whose receiver names an EXTERNAL trait (`Into`,
+`Iterator`) now carry the trait tag and classify there; those are the same
+ceiling as class 5, and only corpus traits bind.
+
+### 20.3 Gate
+
+`cargo test --features cli --no-fail-fast`: **100 test binaries, 0 failures**
+(the section 19 throughput flake did not reproduce).
+`RATCHET_BUMP=1 just extract-ratchet` green; rust call recall floor
+67.56 -> 68.56, rust type 26.18 -> 26.27, wall floor 960 -> 579 ms.

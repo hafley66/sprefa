@@ -19,8 +19,16 @@ use std::sync::Mutex;
 use crate::seams::DefIndex;
 use crate::shape::{ContentId, FamilyTag, Span, ZERO_CONTENT_ID};
 
-use super::rust::{build_line_starts, mod_path_attr, module_segments, module_target};
+use super::rust::{
+    build_line_starts, def_span, mod_path_attr, module_segments, module_target, syn_span,
+};
 use super::rust_receivers::{impl_facts, ImplEntry};
+
+use syn::spanned::Spanned as _;
+
+fn spanned<T: syn::spanned::Spanned>(t: &T) -> &T {
+    t
+}
 
 // ── phase-2 facts: one dedicated parse per file ──────────────────────────────
 
@@ -58,6 +66,25 @@ pub struct RustModuleFacts {
     /// Every enum's (name, variant names): a `T::f()` whose `f` is a variant
     /// of corpus enum `T` names the enum, not a method.
     enums: Vec<(String, Vec<String>)>,
+    /// Every trait's (name, fn name, fn def span, default body?) for the
+    /// trait dispatch table: declared (no body) and default (body present)
+    /// fns alike bind to the trait's own def.
+    traits: Vec<TraitEntry>,
+}
+
+/// One trait declaration's fn set.
+#[derive(Clone, Debug)]
+pub(crate) struct TraitEntry {
+    pub(crate) name: String,
+    pub(crate) fns: Vec<TraitFn>,
+}
+
+/// One fn of a trait: `default` marks a fn with a body.
+#[derive(Clone, Debug)]
+pub(crate) struct TraitFn {
+    pub(crate) name: String,
+    pub(crate) span: Span,
+    pub(crate) default: bool,
 }
 
 /// `None` for a non-`.rs` path or a parse that fails: the plane then simply
@@ -81,7 +108,7 @@ pub(crate) fn rust_module_facts_from_parsed(text: &str, parsed: &syn::File) -> R
     let mut facts = RustModuleFacts::default();
     let line_starts = build_line_starts(text);
     facts.impls = impl_facts(parsed, &line_starts);
-    collect(&parsed.items, &mut facts);
+    collect(&parsed.items, &line_starts, &mut facts);
     facts
 }
 
@@ -115,7 +142,7 @@ fn take_rust_module_facts(path: &str, content: &[u8]) -> Option<RustModuleFacts>
         .map(|(_, _, facts)| facts)
 }
 
-fn collect(items: &[syn::Item], facts: &mut RustModuleFacts) {
+fn collect(items: &[syn::Item], line_starts: &[u32], facts: &mut RustModuleFacts) {
     for item in items {
         match item {
             syn::Item::Use(use_item) => {
@@ -123,10 +150,46 @@ fn collect(items: &[syn::Item], facts: &mut RustModuleFacts) {
                 let mut prefix = Vec::new();
                 walk_use_tree(&use_item.tree, reexport, &mut prefix, facts);
             }
+            syn::Item::Trait(trait_item) => {
+                let fns = trait_item
+                    .items
+                    .iter()
+                    .filter_map(|item| match item {
+                        syn::TraitItem::Fn(f) => {
+                            let span = match &f.default {
+                                Some(block) => def_span(
+                                    line_starts,
+                                    spanned(&f.sig.ident).span(),
+                                    spanned(block).span(),
+                                ),
+                                // A declared fn has no block: the span must
+                                // match the call facet's def for the fn
+                                // (ident start through the signature end),
+                                // or the emitted edge reads nameless.
+                                None => def_span(
+                                    line_starts,
+                                    spanned(&f.sig.ident).span(),
+                                    spanned(&f.sig).span(),
+                                ),
+                            };
+                            Some(TraitFn {
+                                name: f.sig.ident.to_string(),
+                                span,
+                                default: f.default.is_some(),
+                            })
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                facts.traits.push(TraitEntry {
+                    name: trait_item.ident.to_string(),
+                    fns,
+                });
+            }
             syn::Item::Mod(mod_item) => match &mod_item.content {
                 Some((_, inner)) => {
                     facts.inline_mods.insert(mod_item.ident.to_string());
-                    collect(inner, facts);
+                    collect(inner, line_starts, facts);
                 }
                 None => {
                     let name = mod_item.ident.to_string();
@@ -383,8 +446,12 @@ impl Resolution {
 fn same_target(a: &Resolution, b: &Resolution) -> bool {
     match (a, b) {
         (
-            Resolution::Binding { blob: b1, span: s1, .. },
-            Resolution::Binding { blob: b2, span: s2, .. },
+            Resolution::Binding {
+                blob: b1, span: s1, ..
+            },
+            Resolution::Binding {
+                blob: b2, span: s2, ..
+            },
         ) => b1 == b2 && s1 == s2,
         (Resolution::Module { file: f1, .. }, Resolution::Module { file: f2, .. }) => f1 == f2,
         _ => false,
@@ -424,6 +491,12 @@ pub struct RustModuleIndex {
     impl_methods: HashMap<(String, String), Vec<ImplMethodTarget>>,
     /// (enum name, variant name) -> declaring file paths.
     enum_variants: HashMap<(String, String), Vec<String>>,
+    /// trait name -> every fn def it declares or defaults, with its file blob.
+    trait_fns: HashMap<String, Vec<(ContentId, String, Span, bool)>>,
+    /// (trait name, fn name) -> every corpus `impl Trait for T` fn of the pair.
+    trait_impl_fns: HashMap<(String, String), Vec<(ContentId, Span)>>,
+    /// self type -> trait names an `impl Trait for T` block names.
+    type_traits: HashMap<String, Vec<String>>,
 }
 
 /// One corpus impl site of a (self type, fn name) pair. `trait_name` is None
@@ -448,9 +521,14 @@ impl RustModuleIndex {
         let mut index = RustModuleIndex::default();
         for (path, blob) in corpus {
             index.blobs.insert(path.clone(), blob.clone());
-            index.paths.entry(blob.clone()).or_insert_with(|| path.clone());
+            index
+                .paths
+                .entry(blob.clone())
+                .or_insert_with(|| path.clone());
             if path.ends_with(".rs") {
-                index.module_paths.insert(path.clone(), module_segments(path));
+                index
+                    .module_paths
+                    .insert(path.clone(), module_segments(path));
             }
         }
         for (path, facts) in &files {
@@ -509,6 +587,36 @@ impl RustModuleIndex {
                         .push(path.clone());
                 }
             }
+            if let Some(blob) = index.blobs.get(path) {
+                for entry in &facts.traits {
+                    for f in &entry.fns {
+                        index
+                            .trait_fns
+                            .entry(entry.name.clone())
+                            .or_default()
+                            .push((blob.clone(), f.name.clone(), f.span, f.default));
+                    }
+                }
+            }
+            for entry in &facts.impls {
+                let Some(trait_name) = &entry.trait_name else {
+                    continue;
+                };
+                index
+                    .type_traits
+                    .entry(entry.self_type.clone())
+                    .or_default()
+                    .push(trait_name.clone());
+                if let Some(blob) = index.blobs.get(path) {
+                    for (name, span) in &entry.methods {
+                        index
+                            .trait_impl_fns
+                            .entry((trait_name.clone(), name.clone()))
+                            .or_default()
+                            .push((blob.clone(), *span));
+                    }
+                }
+            }
         }
         index.facts = files.into_iter().collect();
         index
@@ -530,8 +638,10 @@ impl RustModuleIndex {
         match sites {
             [only] => pick(only),
             many => {
-                let inherent: Vec<&ImplMethodTarget> =
-                    many.iter().filter(|site| site.trait_name.is_none()).collect();
+                let inherent: Vec<&ImplMethodTarget> = many
+                    .iter()
+                    .filter(|site| site.trait_name.is_none())
+                    .collect();
                 match inherent.as_slice() {
                     [one] => pick(one),
                     [] => {
@@ -539,9 +649,9 @@ impl RustModuleIndex {
                         let survivors: Vec<&ImplMethodTarget> = many
                             .iter()
                             .filter(|site| {
-                                site.trait_name
-                                    .as_deref()
-                                    .is_some_and(|trait_name| self.trait_in_scope(caller, trait_name))
+                                site.trait_name.as_deref().is_some_and(|trait_name| {
+                                    self.trait_in_scope(caller, trait_name)
+                                })
                             })
                             .collect();
                         match survivors.as_slice() {
@@ -598,6 +708,65 @@ impl RustModuleIndex {
         Some((blob.clone(), span))
     }
 
+    /// Whether `name` is a trait the corpus declares.
+    pub(crate) fn is_trait(&self, name: &str) -> bool {
+        self.trait_fns.contains_key(name)
+    }
+
+    /// The trait's own fn def for `fn_name`, declared or defaulted (classes
+    /// 12 and 6): a `T::f()` / `x.m()` whose T is a corpus trait binds here.
+    pub(crate) fn trait_fn_target(
+        &self,
+        trait_name: &str,
+        fn_name: &str,
+    ) -> Option<(ContentId, Span)> {
+        let sites = self.trait_fns.get(trait_name)?;
+        let (_, _, span, _) = sites.iter().find(|(_, name, _, _)| name == fn_name)?;
+        Some((sites[0].0.clone(), *span))
+    }
+
+    /// The ONE corpus impl of `trait_name` defining `fn_name` (class 12's
+    /// impl-first rule); 2+ impls stay unbound.
+    pub(crate) fn trait_impl_target(
+        &self,
+        trait_name: &str,
+        fn_name: &str,
+    ) -> Option<(ContentId, Span)> {
+        let [only] = self
+            .trait_impl_fns
+            .get(&(trait_name.to_string(), fn_name.to_string()))?
+            .as_slice()
+        else {
+            return None;
+        };
+        Some(only.clone())
+    }
+
+    /// The one trait default body providing `fn_name` for a type `type_name`
+    /// implements (classes 4 and 8): no impl defines the fn, the trait does.
+    pub(crate) fn trait_default_target(
+        &self,
+        type_name: &str,
+        fn_name: &str,
+    ) -> Option<(ContentId, Span)> {
+        let traits = self.type_traits.get(type_name)?;
+        let mut hit: Option<(ContentId, Span)> = None;
+        for trait_name in traits {
+            let Some(sites) = self.trait_fns.get(trait_name) else {
+                continue;
+            };
+            for (blob, name, span, default) in sites {
+                if *name == fn_name && *default {
+                    if hit.is_some() && hit.as_ref() != Some(&(blob.clone(), *span)) {
+                        return None;
+                    }
+                    hit = Some((blob.clone(), *span));
+                }
+            }
+        }
+        hit
+    }
+
     /// Every `use` binding `path` writes, resolved; an ambiguous or
     /// corpus-external binding has no row.
     pub fn bindings(&self, path: &str) -> Vec<ImportRow> {
@@ -629,7 +798,10 @@ impl RustModuleIndex {
         }
         let mut stack = Vec::new();
         let resolution = self.wildcard_scope(path, local, &mut stack);
-        self.finish(local, local, resolution).ok().flatten().and_then(callable_target)
+        self.finish(local, local, resolution)
+            .ok()
+            .flatten()
+            .and_then(callable_target)
     }
 
     /// `local`'s EXPLICIT `use` binding in `path`. `Err(())` is AMBIGUOUS: a
@@ -638,27 +810,49 @@ impl RustModuleIndex {
         let Some(facts) = self.facts.get(path) else {
             return Ok(None);
         };
-        let Some(binding) = facts.uses.iter().find(|use_binding| use_binding.local == local)
+        let Some(binding) = facts
+            .uses
+            .iter()
+            .find(|use_binding| use_binding.local == local)
         else {
             return Ok(None);
         };
         let mut stack = Vec::new();
-        let resolution =
-            self.resolve_qualified(path, &binding.qualifier, &binding.asked, &mut stack, &mut Vec::new())
-                .0;
+        let resolution = self
+            .resolve_qualified(
+                path,
+                &binding.qualifier,
+                &binding.asked,
+                &mut stack,
+                &mut Vec::new(),
+            )
+            .0;
         self.finish(local, &binding.asked, resolution)
     }
 
     /// `name` as ANY glob in `path` brings it into scope, reexported or not
     /// (unlike `export_table`'s star leg, which only follows a REEXPORT glob).
     fn wildcard_scope(&self, path: &str, name: &str, stack: &mut Vec<String>) -> Resolution {
-        self.local_scope_table(path, stack).0.get(name).cloned().unwrap_or(Resolution::None)
+        self.local_scope_table(path, stack)
+            .0
+            .get(name)
+            .cloned()
+            .unwrap_or(Resolution::None)
     }
 
     /// `path`'s own export table, plus every name a non-reexport glob adds
     /// that the export table does not already carry. Built ONCE per file.
-    fn local_scope_table(&self, path: &str, stack: &mut Vec<String>) -> (std::sync::Arc<ExportTable>, bool) {
-        if let Some(hit) = self.scope_tables.lock().expect("rust scope tables").get(path) {
+    fn local_scope_table(
+        &self,
+        path: &str,
+        stack: &mut Vec<String>,
+    ) -> (std::sync::Arc<ExportTable>, bool) {
+        if let Some(hit) = self
+            .scope_tables
+            .lock()
+            .expect("rust scope tables")
+            .get(path)
+        {
             return (hit.clone(), true);
         }
         let (public, mut complete) = self.export_table(path, stack);
@@ -666,7 +860,13 @@ impl RustModuleIndex {
             return (public, complete);
         };
         let mut table = (*public).clone();
-        let starred = self.star_contributions(path, facts.stars.iter().filter(|star| !star.reexport), &table, stack, &mut complete);
+        let starred = self.star_contributions(
+            path,
+            facts.stars.iter().filter(|star| !star.reexport),
+            &table,
+            stack,
+            &mut complete,
+        );
         for (name, resolution) in starred {
             table.entry(name).or_insert(resolution);
         }
@@ -748,7 +948,11 @@ impl RustModuleIndex {
             return HomeFile::None;
         }
         if let [only] = qualifier {
-            if self.facts.get(from).is_some_and(|facts| facts.inline_mods.contains(only)) {
+            if self
+                .facts
+                .get(from)
+                .is_some_and(|facts| facts.inline_mods.contains(only))
+            {
                 return HomeFile::Unique(from.to_string());
             }
         }
@@ -807,7 +1011,10 @@ impl RustModuleIndex {
     fn declared_home(&self, from: &str, qualifier: &[String]) -> Option<HomeFile> {
         let facts = self.facts.get(from)?;
         let declared = facts.inline_mods.contains(&qualifier[0])
-            || facts.mod_decls.iter().any(|(name, _)| name == &qualifier[0]);
+            || facts
+                .mod_decls
+                .iter()
+                .any(|(name, _)| name == &qualifier[0]);
         if !declared {
             return None;
         }
@@ -820,9 +1027,17 @@ impl RustModuleIndex {
     /// naming no corpus module is External.
     /// `seen` carries the binding heads already followed on this query: a
     /// `use b::a; use a::b;` pair would otherwise recurse forever.
-    fn bound_home(&self, from: &str, qualifier: &[String], seen: &mut Vec<String>) -> Option<HomeFile> {
+    fn bound_home(
+        &self,
+        from: &str,
+        qualifier: &[String],
+        seen: &mut Vec<String>,
+    ) -> Option<HomeFile> {
         let facts = self.facts.get(from)?;
-        let binding = facts.uses.iter().find(|binding| binding.local == qualifier[0])?;
+        let binding = facts
+            .uses
+            .iter()
+            .find(|binding| binding.local == qualifier[0])?;
         if binding.qualifier.is_empty() && binding.asked == binding.local {
             return Some(HomeFile::External);
         }
@@ -870,14 +1085,17 @@ impl RustModuleIndex {
     ) -> ModuleCallTarget {
         if !matches!(qualifier[0].as_str(), "crate" | "self" | "super")
             && !qualifier[0].is_empty()
-            && self
-                .facts
-                .get(from)
-                .is_none_or(|facts| {
-                    !facts.inline_mods.contains(&qualifier[0])
-                        && !facts.mod_decls.iter().any(|(name, _)| name == &qualifier[0])
-                        && !facts.uses.iter().any(|binding| binding.local == qualifier[0])
-                })
+            && self.facts.get(from).is_none_or(|facts| {
+                !facts.inline_mods.contains(&qualifier[0])
+                    && !facts
+                        .mod_decls
+                        .iter()
+                        .any(|(name, _)| name == &qualifier[0])
+                    && !facts
+                        .uses
+                        .iter()
+                        .any(|binding| binding.local == qualifier[0])
+            })
             && !self
                 .module_paths
                 .values()
@@ -893,19 +1111,34 @@ impl RustModuleIndex {
                     _ => ModuleCallTarget::Miss,
                 }
             }
-            HomeFile::Ambiguous | HomeFile::None | HomeFile::External => ModuleCallTarget::Miss,
+            HomeFile::Ambiguous | HomeFile::None => ModuleCallTarget::Miss,
+            // The prefix's own home resolves outside the corpus (`use
+            // std::mem;` then `mem::take`): no name-match leg can bind.
+            HomeFile::External => ModuleCallTarget::External,
         }
     }
 
     /// `name`'s resolution inside `file`'s WHOLE export table (built once).
-    fn resolve_in_module(&self, file: &str, name: &str, stack: &mut Vec<String>) -> (Resolution, bool) {
+    fn resolve_in_module(
+        &self,
+        file: &str,
+        name: &str,
+        stack: &mut Vec<String>,
+    ) -> (Resolution, bool) {
         let (table, complete) = self.export_table(file, stack);
-        (table.get(name).cloned().unwrap_or(Resolution::None), complete)
+        (
+            table.get(name).cloned().unwrap_or(Resolution::None),
+            complete,
+        )
     }
 
     /// `file`'s WHOLE export table, each name settled ONCE regardless of how
     /// many importers ask; cached outside any re-export cycle.
-    fn export_table(&self, file: &str, stack: &mut Vec<String>) -> (std::sync::Arc<ExportTable>, bool) {
+    fn export_table(
+        &self,
+        file: &str,
+        stack: &mut Vec<String>,
+    ) -> (std::sync::Arc<ExportTable>, bool) {
         if let Some(hit) = self.tables.lock().expect("rust module tables").get(file) {
             return (hit.clone(), true);
         }
@@ -942,22 +1175,35 @@ impl RustModuleIndex {
             if table.contains_key(&reexport.local) {
                 continue;
             }
-            let (sub, sub_complete) =
-                self.resolve_qualified(file, &reexport.qualifier, &reexport.asked, stack, &mut Vec::new());
+            let (sub, sub_complete) = self.resolve_qualified(
+                file,
+                &reexport.qualifier,
+                &reexport.asked,
+                stack,
+                &mut Vec::new(),
+            );
             complete &= sub_complete;
             if let Some(found) = sub.promoted_option(ResolvedImportKind::Indirect) {
                 table.insert(reexport.local.clone(), found);
             }
         }
-        let starred =
-            self.star_contributions(file, facts.stars.iter().filter(|star| star.reexport), &table, stack, &mut complete);
+        let starred = self.star_contributions(
+            file,
+            facts.stars.iter().filter(|star| star.reexport),
+            &table,
+            stack,
+            &mut complete,
+        );
         for (name, resolution) in starred {
             table.entry(name).or_insert(resolution);
         }
         stack.pop();
         let table = std::sync::Arc::new(table);
         if complete {
-            self.tables.lock().expect("rust module tables").insert(file.to_string(), table.clone());
+            self.tables
+                .lock()
+                .expect("rust module tables")
+                .insert(file.to_string(), table.clone());
         }
         (table, complete)
     }
@@ -974,7 +1220,8 @@ impl RustModuleIndex {
     ) -> ExportTable {
         let mut starred = ExportTable::new();
         for star in stars {
-            let HomeFile::Unique(target) = self.home_file(file, &star.qualifier, &mut Vec::new()) else {
+            let HomeFile::Unique(target) = self.home_file(file, &star.qualifier, &mut Vec::new())
+            else {
                 continue;
             };
             let (sub_table, sub_complete) = self.export_table(&target, stack);
@@ -983,7 +1230,8 @@ impl RustModuleIndex {
                 if existing.contains_key(name) {
                     continue;
                 }
-                let Some(promoted) = resolution.clone().promoted_option(ResolvedImportKind::Star) else {
+                let Some(promoted) = resolution.clone().promoted_option(ResolvedImportKind::Star)
+                else {
                     continue;
                 };
                 starred.insert(

@@ -49,7 +49,10 @@ use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
 use crate::types::LangKind;
 use crate::types::ScipIndex;
-use crate::types::{CfgScope, DefSite, MacroSite, MacroSiteSource, PathIndex, ReceiverOutcome, TestOnlyCall, UnresolvedReason};
+use crate::types::{
+    CfgScope, DefSite, MacroSite, MacroSiteSource, PathIndex, ReceiverOutcome, TestOnlyCall,
+    UnresolvedReason,
+};
 
 // ── span bridge: proc_macro2 line/col -> v6 byte Span ───────────────────────
 
@@ -1050,16 +1053,13 @@ fn self_impl_type(
                 && owner.span.start <= caller_span.start
                 && caller_span.end() <= owner.span.end()
         })
-        .and_then(|owner| {
-            owner
-                .self_type
-                .map(|name| strings.lookup(name).to_string())
-        })
+        .and_then(|owner| owner.self_type.map(|name| strings.lookup(name).to_string()))
 }
 
 /// A `callee_path`'s leading segments when every one is MODULE-shaped, else
 /// None: receiver typing is out of scope, so `Widget::build` keeps the name leg.
-fn module_qualifier(callee_path: &str) -> Option<Vec<&str>> {    let mut segments: Vec<&str> = callee_path.split("::").collect();
+fn module_qualifier(callee_path: &str) -> Option<Vec<&str>> {
+    let mut segments: Vec<&str> = callee_path.split("::").collect();
     segments.pop()?;
     if segments.is_empty() {
         return None;
@@ -1305,42 +1305,65 @@ impl Resolve<CallF> for RustSource {
                 });
             let recv_t = recv_named.as_ref().and_then(|ty| {
                 modules
-                    .and_then(|m| m.impl_target(ty, callee, own_path))
+                    .and_then(|m| {
+                        m.impl_target(ty, callee, own_path)
+                            // The receiver names a corpus trait (`dyn T`,
+                            // `impl T`, a bound param): the trait's own fn
+                            // def (class 6).
+                            .or_else(|| {
+                                m.is_trait(ty)
+                                    .then_some(())
+                                    .and_then(|()| m.trait_fn_target(ty, callee))
+                            })
+                            // No impl defines the method; a trait the type
+                            // implements provides a default body (class 4).
+                            .or_else(|| m.trait_default_target(ty, callee))
+                    })
                     .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
             });
             // The receiver's type was SEEN in scope (even if no impl binds).
             let recv_known = call.aux.receivers.iter().any(|r| {
-                r.call_site == site.span
-                    && matches!(r.outcome, ReceiverOutcome::Named(_))
+                r.call_site == site.span && matches!(r.outcome, ReceiverOutcome::Named(_))
             });
             // The associated leg: `T::f()` / `a::T::f()` names T's impl block;
             // `Self::f()` names the enclosing impl's self type via the file's
             // own method-owner rows.
-            let assoc_t = (qualifier.is_none() && recv_named.is_none()).then_some(()).and_then(
-                |()| assoc_path_type(site.callee_path.map(|id| output.strings.lookup(id))).and_then(|ty| {
-                    modules
-                        .and_then(|m| m.impl_target(&ty, callee, own_path))
-                        .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
-                        // 0 impls and a variant of the enum: the path names
-                        // the enum itself.
-                        .or_else(|| {
-                            modules.and_then(|m| m.variant_ctor_target(&ty, callee)).map(
-                                |(blob, span)| (blob, span, CallEdgeKind::NameResolve),
-                            )
-                        })
-                }),
-            );
+            let assoc_t = (qualifier.is_none() && recv_named.is_none())
+                .then_some(())
+                .and_then(|()| {
+                    assoc_path_type(site.callee_path.map(|id| output.strings.lookup(id))).and_then(
+                        |ty| {
+                            modules
+                                .and_then(|m| m.impl_target(&ty, callee, own_path))
+                                .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                                // 0 impls and a variant of the enum: the path names
+                                // the enum itself.
+                                .or_else(|| {
+                                    modules
+                                        .and_then(|m| m.variant_ctor_target(&ty, callee))
+                                        .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                                })
+                                // Trait dispatch: T a corpus trait (class 12, impl
+                                // first), else a trait-provided fn with no impl
+                                // override (class 8's zero-impl arm).
+                                .or_else(|| {
+                                    modules.and_then(|m| {
+                                        m.trait_impl_target(&ty, callee)
+                                            .or_else(|| m.trait_fn_target(&ty, callee))
+                                            .or_else(|| m.trait_default_target(&ty, callee))
+                                            .map(|(blob, span)| {
+                                                (blob, span, CallEdgeKind::NameResolve)
+                                            })
+                                    })
+                                })
+                        },
+                    )
+                });
             let self_t = (qualifier.is_none()
                 && recv_named.is_none()
                 && site
                     .callee_path
-                    .map(|id| {
-                        output.strings
-                            .lookup(id)
-                            .split("::")
-                            .next()
-                            == Some("Self")
-                    })
+                    .map(|id| output.strings.lookup(id).split("::").next() == Some("Self"))
                     .unwrap_or(false))
             .then_some(())
             .and_then(|()| self_impl_type(call, &output.strings, caller))
@@ -1358,8 +1381,10 @@ impl Resolve<CallF> for RustSource {
             } else {
                 match (qualifier, own_path, paths) {
                     (Some(qualifier), Some(from), Some(paths)) => {
-                        let segments: Vec<String> =
-                            qualifier.iter().map(|segment| segment.to_string()).collect();
+                        let segments: Vec<String> = qualifier
+                            .iter()
+                            .map(|segment| segment.to_string())
+                            .collect();
                         match modules
                             .map(|m| m.module_call(from, &segments, callee))
                             .unwrap_or(crate::lang::rust_modules::ModuleCallTarget::Miss)
@@ -1368,11 +1393,7 @@ impl Resolve<CallF> for RustSource {
                                 Some((blob, span, CallEdgeKind::NameResolve))
                             }
                             _ => RustSource::call_name_match_in_module(
-                                def_index,
-                                paths,
-                                from,
-                                &qualifier,
-                                callee,
+                                def_index, paths, from, &qualifier, callee,
                             )
                             .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve)),
                         }
@@ -1472,19 +1493,20 @@ pub fn call_drops(
                 .callee_path
                 .map(|id| output.strings.lookup(id))
                 .and_then(|path| module_qualifier(path));
-            let external_prefix =
-                qualifier
-                    .as_ref()
-                    .zip(own_path)
-                    .and_then(|(qualifier, from)| {
-                        let segments: Vec<String> =
-                            qualifier.iter().map(|segment| segment.to_string()).collect();
-                        matches!(
-                            modules.map(|m| m.module_call(from, &segments, callee)),
-                            Some(crate::lang::rust_modules::ModuleCallTarget::External)
-                        )
-                        .then_some(())
-                    });
+            let external_prefix = qualifier
+                .as_ref()
+                .zip(own_path)
+                .and_then(|(qualifier, from)| {
+                    let segments: Vec<String> = qualifier
+                        .iter()
+                        .map(|segment| segment.to_string())
+                        .collect();
+                    matches!(
+                        modules.map(|m| m.module_call(from, &segments, callee)),
+                        Some(crate::lang::rust_modules::ModuleCallTarget::External)
+                    )
+                    .then_some(())
+                });
             let reason = if inferred.contains(&(site.span.start, site.span.end())) {
                 UnresolvedReason::Inferred
             } else if external_prefix.is_some()
@@ -1551,7 +1573,11 @@ fn enclosing_named_def(sorted: &[(Span, NodeRef)], site: Span) -> Option<NodeRef
 
 /// A proc_macro2 span pair -> v6 byte Span covering `[start.start, end.end)`.
 /// The def span covers the whole callable body for span-containment resolution.
-pub(crate) fn def_span(line_starts: &[u32], start: proc_macro2::Span, end: proc_macro2::Span) -> Span {
+pub(crate) fn def_span(
+    line_starts: &[u32],
+    start: proc_macro2::Span,
+    end: proc_macro2::Span,
+) -> Span {
     let start_lc = start.start();
     let end_lc = end.end();
     let start_byte = line_col_to_byte(line_starts, start_lc.line as u32, start_lc.column as u32);
