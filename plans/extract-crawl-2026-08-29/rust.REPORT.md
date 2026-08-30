@@ -24,6 +24,7 @@ Every `extract` call ran under `timeout 10`. Raw tables sit beside this file.
 16. [The 52,101 `ambiguous` drops classified](#16-the-52101-ambiguous-drops-classified-lane-fix-extract-rust-cross-crate)
 17. [The receiver leg](#17-the-receiver-leg-lane-fix-extract-rust-cross-crate)
 18. [The receiver leg, pass 2](#18-the-receiver-leg-pass-2-lane-fix-extract-rust-receivers-2)
+24. [The checker tier](#24-the-checker-tier-lane-fix-extract-rust-checker)
 
 ## 1. What was measured
 
@@ -1533,3 +1534,131 @@ the fallback: raw scip agrees with the fallback on more rows than it costs.
 | receiver typed locally, both oracles disagree | 2,628 | the receiver's declared type has one corpus impl of the method and the compiler picks a std or trait one; needs a checker (`rust.rs:1315` `impl_target`) |
 | bare name, sibling or same file | 2,468 | the qualifier resolution class of 23.4, open |
 | `no_def_in_dst` (the dst def is a TYPE, not a fn) | 1,610 | struct-literal and tuple-struct ctor rows; ra and codeql both exclude a struct ctor from the call graph, and 22.4's variant decision does not extend to them |
+
+## 24. The checker tier (lane `fix-extract-rust-checker`)
+
+User decision, 2026-08-30: scip is the standard for modules and references;
+calls and types are syntactically variable; rust is complex, so the rust arm
+runs WITH the language's own machinery. go and ts stay on the syntax leg.
+
+### 24.1 What the tier is, and what it is not
+
+rust-analyzer is loaded in-process (`ra_ap_load-cargo` reads `cargo metadata`,
+never `cargo build`) and answers the DESTINATION of a reference. Everything
+else stays this crate's: the parse enumerates the sites, `covering_def` names
+the caller, the site span is ours, and `call_drops` still emits a row per
+unbound site. No bespoke trait solver and no bespoke inference exist anywhere
+in the tier.
+
+| piece | file | role |
+|---|---|---|
+| seam | `src/lang/rust_checker.rs` | plain data plus the corpus join; NO ra crate in the build graph |
+| loader | `src/lang/rust_checker_ra.rs` | `#[cfg(feature = "rust-checker")]`; the walk and the ra calls |
+| call leg | `src/lang/rust.rs` `Resolve<CallF>` | the checker answers before the name match and before scip |
+| type leg | `src/lang/rust.rs` `resolve_type_dst` | same, keyed on (file, name) |
+| drops | `src/lang/rust.rs` `call_drops` | a checker-external site reads `external` |
+| plumbing | `src/project.rs` `load_rust_checker` | build, log, and fall back |
+
+Three answers, not two. `Corpus(blob, span)` is a corpus definition;
+`External` is the checker resolving the reference OUTSIDE the corpus, which is
+KNOWLEDGE and suppresses the name match; absent is the syntax leg's turn.
+`External` alone moved ra precision 55.40 -> 55.98 and codeql precision
+78.03 -> 78.78 at zero recall cost.
+
+### 24.2 Two offset planes joined
+
+`syn_span` writes a line's start byte plus its CHARACTER column; rust-analyzer
+writes raw byte offsets. `OffsetMap` converts every ra offset into the parse
+plane's unit, so a reference joins to a site by containment with no second
+index. The call plane keys on the reference's own range (rightmost match
+inside the site span, name-checked); the type plane keys on (file, name)
+because a `TypeEdgeCandidate` carries no reference span, and a name one file
+resolves two ways binds nothing.
+
+### 24.3 Receipt
+
+873 `crates/*/src` files of rust-analyzer `af4111f`, one process,
+`--resolve --family call,type`, ratchet projection (`--scope corpus
+--closure enclosing`, the Rust port in `tests/bench/mod.rs`).
+
+| oracle | syntax leg | checker tier | delta |
+|---|---|---|---|
+| `rust.oracle.call.tsv` (ra_ap_ide) | 75.66 / 49.77 | **93.68 / 55.98** | +18.02 / +6.21 |
+| `rust.codeql.call.tsv` | 64.96 / 76.15 | **73.36 / 78.78** | +8.40 / +2.63 |
+| `rust.scip_override.call.tsv` (raw scip) | 78.90 / 45.24 | 77.89 / 41.02 | -1.01 / -4.22 |
+| `rust.oracle.type.typedecl.tsv` | 26.23 / 88.19 | **27.33 / 89.31** | +1.10 / +1.12 |
+
+**ra_ap_ide is the checker, so its row is partly a self-comparison.** The
+independent receipt is codeql: a different tool with its own extractor, whose
+recall moves 64.96 -> 73.36 and whose precision moves 76.15 -> 78.78 at the
+same time. Both directions on an independent oracle is the claim that survives.
+
+Row movement, unprojected, checker minus syntax:
+
+| set | rows | in ra | in codeql | in raw scip | in no oracle |
+|---|---:|---:|---:|---:|---:|
+| added | 6,099 | 4,755 | 4,353 | 287 | 1,273 |
+| removed | 513 | 3 | 9 | 315 | 192 |
+
+### 24.4 The one floor that moved down
+
+Raw scip loses 1.01 pt of recall and 4.22 pt of precision. Both oracles in
+that comparison are rust-analyzer: `rust.scip_override.call.tsv` is its scip
+output and `rust.oracle.call.tsv` is its call hierarchy, and they disagree by
+convention at method sites. 315 of the 513 removed rows are scip rows, and
+their shape is one class: a same-file name match (`editioned_file_id.rs
+current_edition -> editioned_file_id.rs current_edition`, `find_path.rs
+find_path -> find_path.rs crate_root`) that the checker re-aims at the
+declaring crate. The precision drop is arithmetic: the tier emits 2,420 more
+projected rows against a 15,647-row oracle.
+
+Section 23.4 rejected two heuristics for costing scip recall. This is not a
+heuristic; it is the compiler's own answer, and the user decision names it as
+the rust door. Both floors are written with `RATCHET_FORCE=1` and this section
+is their receipt.
+
+### 24.5 Cost
+
+| leg | measure |
+|---|---|
+| `cargo metadata` + salsa workspace load | **0.50-0.53 s** |
+| the resolve walk over the loaded workspace | **9.6-10.8 s** |
+| whole run, 873 files, one process | **10.4-10.7 s** median of 3, over 5 repeats (was 0.54 s) |
+| process-peak RSS | **2,122-2,537 MB** over the same 5 repeats (was 597 MB) |
+| cold build of the ra crate graph | ~380 s, 239 crates, `--features rust-checker` |
+
+The load is index-build class and carries the SCIP exception to the 10-second
+law. The WALK is not: 9.6 s of per-run resolve is the tier's real price and it
+recurs on every run, because `resolve_project` holds no state between calls.
+RSS is 3.5x the syntax leg and over the 700 MB working ceiling; the salsa
+database for a 30-crate workspace is the whole of it.
+
+Recall and precision are byte-stable across all 5 repeats; only wall and RSS
+move, and the RATCHET.tsv ceilings carry the worst of the 5.
+
+The tier is OFF by default and out of the `cli` feature. `--rust-checker` on a
+binary built without `--features rust-checker` logs one line and changes
+nothing. `just extract-ratchet` builds the rust leg with the feature and the
+other two legs without it.
+
+### 24.7 The trap: `project_root` is not a free parameter
+
+The tier's first ratchet measurement read ra 93.71 / codeql 86.36, and it was
+wrong. Giving the ratchet's rust request a `project_root` so the checker could
+find its workspace also tripped `load_scip`'s informed-by-default leg
+(`project.rs:844`), which adopts any FRESH cached index for the file set. The
+run was no longer diet: 12,234 `scip_override` and 4,403 `scip_macro` edges
+rode in with it, and codeql recall inherited most of the difference.
+
+The tier now carries its own root (`ResolveRequest.rust_checker:
+Option<&Path>`) and the ratchet keeps `project_root: None`. The check that
+catches this class is a record-kind census of the raw JSONL: a diet run emits
+`name_resolve`, `import_resolve` and nothing else.
+
+### 24.6 What the tier does not fix
+
+| class | count | why |
+|---|---:|---|
+| answers naming a corpus file whose parse minted no def there | 14,069 | the coordinate join misses (mbe-expanded defs, defs our parse does not mint); those sites fall back to the syntax leg |
+| type recall | 27.33 | the checker re-aims destinations and cannot add candidates; `type_edge_candidates` enumerates 2,553 rows against an 8,343-row oracle, so candidate coverage is the ceiling, not resolution |
+| calls inside macro invocations | unchanged | the parse mints no site there, so there is nothing for the checker to answer; `scip_macro` is still the only leg that reaches them |

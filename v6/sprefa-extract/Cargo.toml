@@ -85,6 +85,22 @@ ra_ap_span = "0.0.349"
 ra_ap_syntax-bridge = "0.0.349"
 ra_ap_intern = "0.0.349"
 salsa = { version = "0.28.2", default-features = false, features = ["macros", "rayon"] }
+# @comment-ok: build-vs-buy candidate table, the law every dep comment here carries.
+# The rust CHECKER tier: rust-analyzer's own name resolution and type inference,
+# in-process, same pins as the expander above. `load-cargo` reads `cargo
+# metadata` (never a build) into a salsa db; `hir` answers a method call's
+# receiver type and a path's def; `ide_db`/`vfs` carry the file ids the answers
+# name. REJECTED: a bespoke trait solver or inference pass (the standing
+# build-vs-buy law, and rustc's own solver is the thing being asked); `rustc_*`
+# via rustc-dev (nightly-only, unstable ABI, no semver); running `rust-analyzer
+# scip` as a subprocess (measured already as `rust.scip_override.call.tsv`, and
+# it re-parses instead of sharing this crate's arena).
+ra_ap_hir = { version = "0.0.349", optional = true }
+ra_ap_ide = { version = "0.0.349", optional = true }
+ra_ap_ide_db = { version = "0.0.349", optional = true }
+ra_ap_load-cargo = { version = "0.0.349", optional = true }
+ra_ap_project_model = { version = "0.0.349", optional = true }
+ra_ap_vfs = { version = "0.0.349", optional = true }
 # tree-sitter is the Go AST front-end v5 carried (src/graph/typegraph/go.rs).
 # These versions match what ast-grep-language already transitively pulls
 # (tree-sitter 0.25.10 + tree-sitter-go 0.23.4), so cargo UNIFIES them: one copy
@@ -198,6 +214,16 @@ optional = true
 cli = ["dep:clap", "dep:tracing-subscriber", "dep:hafley-observe", "mimalloc"]
 # Optional global allocator; measured in plans/extract-bench-2026-08-29/SPEED.REPORT.md.
 mimalloc = ["dep:mimalloc"]
+# The rust checker tier, `--features cli,rust-checker`. Off by default and out
+# of `cli`: it pulls the whole rust-analyzer crate graph (380s cold build).
+rust-checker = [
+    "dep:ra_ap_hir",
+    "dep:ra_ap_ide",
+    "dep:ra_ap_ide_db",
+    "dep:ra_ap_load-cargo",
+    "dep:ra_ap_project_model",
+    "dep:ra_ap_vfs",
+]
 
 [[bin]]
 name = "extract"

@@ -107,6 +107,9 @@ pub struct ResolveRequest<'a> {
     /// Whether `scip_occurrence` rows also carry the source slice at their
     /// span. Off by default so a plain `--scip-facts` run stays byte-identical.
     pub occurrence_text: bool,
+    /// The cargo workspace root the rust CHECKER tier loads. Its own field
+    /// because `project_root` also adopts a fresh SCIP index by freshness.
+    pub rust_checker: Option<&'a Path>,
 }
 
 /// Why a project resolve could not run. Distinct from a resolve that ran and
@@ -285,6 +288,16 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         .ok()
         .expect("fresh project module plane (go)");
 
+    if let Some(checker_root) = request.rust_checker {
+        if let Some(index) = load_rust_checker(checker_root, &inputs, &corpus, &cx) {
+            cx.indexes
+                .rust_checker
+                .set(index)
+                .ok()
+                .expect("fresh project checker tier (rust)");
+        }
+    }
+
     // One resolve per input, shared by the `call` arm and the `flow` join: the
     // N+1 law applied to work rather than to rows.
     let mut resolved_calls: Vec<(ContentId, Vec<ProjectEdge<CallF>>)> =
@@ -366,6 +379,53 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         facts.extend(flatten_flow(&flow_edges(&pairs, &resolved_calls)));
     }
     Ok(facts)
+}
+
+/// The workspace load is an index-build-class cost, so it carries the SCIP
+/// exception to the 10-second law rather than the per-run ceiling.
+const CHECKER_BUDGET: std::time::Duration = std::time::Duration::from_secs(900);
+
+/// Every failure is one `tracing::info` line and a `None`: the syntax leg then
+/// answers every site exactly as it did before.
+fn load_rust_checker(
+    root: &Path,
+    inputs: &[ProjectInput],
+    corpus: &[(String, ContentId)],
+    cx: &ProjectCx,
+) -> Option<crate::lang::rust_checker::RustCheckerIndex> {
+    // A relative root reaches rust-analyzer as a relative `AbsPathBuf` and its
+    // workspace discovery then finds only part of the crate graph.
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let files: Vec<(String, PathBuf)> = inputs
+        .iter()
+        .filter(|input| input.path.ends_with(".rs"))
+        .map(|input| {
+            let absolute = std::fs::canonicalize(&input.path)
+                .unwrap_or_else(|_| PathBuf::from(&input.path));
+            (input.path.clone(), absolute)
+        })
+        .collect();
+    let answers = match crate::lang::rust_checker::answer(&root, &files, CHECKER_BUDGET) {
+        Ok(answers) => answers,
+        Err(err) => {
+            tracing::info!("rust checker tier off: {err}");
+            return None;
+        }
+    };
+    let index = crate::lang::rust_checker::RustCheckerIndex::build(
+        answers,
+        corpus,
+        cx.indexes.def_index.get().expect("the def index is set"),
+    );
+    tracing::info!(
+        load_ms = index.load.as_millis() as u64,
+        walk_ms = index.walk.as_millis() as u64,
+        files = index.files_answered,
+        unjoined = index.unjoined,
+        external = index.external,
+        "rust checker tier loaded"
+    );
+    Some(index)
 }
 
 /// Load the SCIP index the request names and flatten it to raw index facts:
@@ -562,6 +622,7 @@ pub fn diet_scip(paths: &[PathBuf]) -> Result<Vec<FlatFact>, ProjectError> {
         project_root: None,
         scip_records: ScipRecords::all(),
         occurrence_text: false,
+        rust_checker: None,
     })
 }
 
