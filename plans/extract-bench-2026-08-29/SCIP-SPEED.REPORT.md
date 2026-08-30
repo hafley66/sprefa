@@ -174,3 +174,50 @@ it is the named next frame for the remaining ~185 MB.
   and shows a phantom 4x regression; every wall in this report is field 1
   (real).
 
+## 10a. The statics leave the process (2026-08-30, lane fix-extract-scip-caches)
+
+Item 1 (DOC_CACHES/DEF_MAPS, checkpoint c11f80962) and item 1b (LINE_TABLES,
+LINE_READS) landed together: every per-document cache now lives ON the owning
+struct. `ScipDocument::spans` is a `OnceLock<DocSpans>` holding the sorted
+`(start, end, SymbolId)` span vector AND the document's `LineTable`, built on
+the first `site_occurrence` or `byte_range_cached` call against that document;
+`ScipIndex::defs` is a `OnceLock<DefMap>` filled at the end of
+`scip_decode::load_index` (lazily on first `definition_of` for hand-built
+indexes). Lazy-via-OnceLock rather than eager-at-decode because both caches
+need the document CONTENT, which only the consumer holds through the
+`join_documents` pass; the decode boundary has no bytes. `byte_range_cached`
+now takes the owning `&ScipDocument` (the join pairs doc and bytes, so the
+content argument is always that document's). `grep -c '^static' src/scip.rs`
+prints 0; `LineKey`, `path_digest`, `doc_cache`, `def_map`, `DocKey`,
+`IndexKey` are gone. Fail-first:
+`tests/scip_freshness.rs::two_indexes_in_one_process_never_share_a_span_table`.
+`tests/n_plus_one.rs`'s read-count probe (`line_reads()`) retired with the
+counter static; the elapsed gates (< 2 s at N=4000/2000) still catch the scan
+shape.
+
+Receipt, informed arm, 3 runs, `nice -n 15`, `/usr/bin/time -l`, wall = field
+1. Baseline = the a60e11e94 binary (`/tmp/base-target`, left by #590);
+identity = sorted
+byte-compare of run 1, IDENTICAL on all three corpora (no behavior change):
+
+| corpus | baseline wall / RSS | this lane wall / RSS | ceilings (wall/RSS) |
+|---|---|---|---|
+| ts | 3.38-3.45 s / 589-605 MB | 1.66-2.53 s / 554-571 MB | pass / pass |
+| rust | 5.16-5.46 s / 749-763 MB | 2.40-2.66 s / 688-714 MB | pass / pass |
+| go | 23.29-23.86 s / 970-1013 MB | 7.79-8.72 s / 852-908 MB | pass / **miss, 852-908 vs 700** |
+
+The baseline binaries predate #590 (a60e11e94, `/tmp/base-target`), hence the
+wide wall drop; the wall delta is #590's, measured here only as a sanity row.
+Against #590's own receipt (section 6: go 883-890, rust 687-705, ts 555-578
+MB) this lane's RSS is flat to slightly better: the def-span tables and def
+maps already lived on the index at the checkpoint, so item 1b's freed second
+copy (per-buffer `LineTable`s under `LINE_TABLES`, one per distinct content
+pointer) is the only reclamation, and it is small on corpora where def
+conversions reuse the site documents' tables. Go still exceeds the 700 MB
+ceiling by 152-208 MB; the named next frame (compact `ScipOccurrence`, item
+1 of section 9) is unchanged. Gate `nice -n 15 cargo test --release
+--features cli` green, 618 passed / 0 failed (log `/tmp/gate-scip-caches.log`).
+`just extract-ratchet` plain (no BUMP): every row holds, ts5/go/rust +
+normal-form parity.
+
+

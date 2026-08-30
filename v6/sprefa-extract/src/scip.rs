@@ -33,7 +33,6 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 use crate::scip_decode::load_index;
 use crate::scip_ensure::{run_capped, Capped};
@@ -494,49 +493,19 @@ pub fn byte_range(content: &[u8], range: [i32; 4], encoding: PositionEncoding) -
     byte_range_at(content, &LineTable::build(content), range, encoding)
 }
 
-/// (content address, len, head bytes) -> the shared line table. The resolve
-/// arms convert one def range per call site against the same def document's
-/// bytes, so the table is built once per buffer, never per call. Keyed like
-/// `DocKey`: within one process a freed buffer's address can be reused by a
-/// later allocation, so len and the head bytes ride the key to keep a stale
-/// entry from answering for different content.
-#[derive(Hash, PartialEq, Eq)]
-struct LineKey {
-    content: usize,
-    len: usize,
-    head: u64,
-}
-
-fn content_head(content: &[u8]) -> u64 {
-    let mut head = [0u8; 8];
-    let n = content.len().min(8);
-    head[..n].copy_from_slice(&content[..n]);
-    u64::from_le_bytes(head)
-}
-
-static LINE_TABLES: Mutex<Option<HashMap<LineKey, Arc<LineTable>>>> = Mutex::new(None);
-
-/// The cached-content form of `byte_range`: same answer, one line table per
-/// distinct buffer instead of one per call.
+/// The cached-content form of `byte_range`: the def document's line table
+/// rides the document's span cache (`ScipDocument::spans`), so one table per
+/// document serves every site conversion and every def conversion. The
+/// content passed here is the join's pairing of this very document
+/// (`join_documents`), the same bytes that built the cache.
 pub fn byte_range_cached(
+    doc: &ScipDocument,
     content: &[u8],
     range: [i32; 4],
     encoding: PositionEncoding,
 ) -> Option<Span> {
-    let key = LineKey {
-        content: content.as_ptr() as usize,
-        len: content.len(),
-        head: content_head(content),
-    };
-    let table = {
-        let mut guard = LINE_TABLES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard
-            .get_or_insert_with(HashMap::new)
-            .entry(key)
-            .or_insert_with(|| Arc::new(LineTable::build(content)))
-            .clone()
-    };
-    byte_range_at(content, &table, range, encoding)
+    let cache = doc.spans.get_or_init(|| build_doc_spans(doc, content));
+    byte_range_at(content, &cache.lines, range, encoding)
 }
 
 /// Byte offset of each 0-based line start, with the document end as the final
@@ -546,17 +515,8 @@ pub struct LineTable {
     starts: Vec<u32>,
 }
 
-/// Document bytes a range conversion reads: one per line lookup under the
-/// table, one per byte of the document under a scan.
-static LINE_READS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-pub fn line_reads() -> u64 {
-    LINE_READS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
 impl LineTable {
     pub fn build(content: &[u8]) -> LineTable {
-        LINE_READS.fetch_add(content.len() as u64, std::sync::atomic::Ordering::Relaxed);
         let mut starts = Vec::new();
         starts.push(0u32);
         for at in memchr::memchr_iter(b'\n', content) {
@@ -571,7 +531,6 @@ impl LineTable {
     }
 
     fn line_start(&self, line: i32) -> Option<usize> {
-        LINE_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if line < 0 {
             return None;
         }
