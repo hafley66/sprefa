@@ -1758,6 +1758,12 @@ impl<'a> OxcVisit<'a> for LambdaDefs {
         // (Method defs) are not lambdas.
         if func.r#type == ts::FunctionType::FunctionExpression && func.body.is_some() {
             self.out.push(func.span);
+            // A fn-expr with its own identifier (`[K.A]: function forEachChildInX
+            // (...) {}`, `setTimeout(function handler() {})`) is named by that
+            // identifier; the oracle calls sites inside it by this name.
+            if let Some(id) = &func.id {
+                self.named.push((func.span, id.name.to_string()));
+            }
         }
         oxc_ast_visit::walk::walk_function(self, func, flags);
     }
