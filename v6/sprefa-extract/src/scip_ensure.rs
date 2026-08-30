@@ -701,6 +701,14 @@ pub fn index_path(root: &Path, cache_dir: &Path) -> Option<PathBuf> {
     index_path_for_set(root, cache_dir, None)
 }
 
+/// The informed-by-default probe for a resolve run with no explicit SCIP
+/// flags: the index that matches the file set's freshness digest exactly, in
+/// v5's default cache location. `None` means the resolve falls back to the
+/// plain name-match leg; a stale or sidecar-less index is never adopted.
+pub fn fresh_index_for_set(root: &Path, set_digest: &str) -> Option<PathBuf> {
+    index_path_for_set(root, &default_cache_dir(root), Some(set_digest))
+}
+
 /// `index_path` with the freshness ask. `Some(digest)` keeps only candidates
 /// whose recorded set digest equals it; mtime then breaks the remaining tie.
 pub fn index_path_for_set(root: &Path, cache_dir: &Path, want: Option<&str>) -> Option<PathBuf> {

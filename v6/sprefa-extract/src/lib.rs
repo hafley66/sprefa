@@ -96,9 +96,9 @@ pub use scip::{
     IndexerSpec, ScipClang, ScipGo, ScipJava, ScipPython, ScipRust, ScipTypescript, Staging,
 };
 pub use scip_ensure::{
-    default_cache_dir, detect, ensure_index, ensure_index_for_set, external_cache_dir, index_path,
-    index_path_for_set, record_index_set, root_key, EnsureReport, IndexBudget, IndexSet, Indexer,
-    IndexerSkip, SkipReason, INDEXERS,
+    default_cache_dir, detect, ensure_index, ensure_index_for_set, external_cache_dir,
+    fresh_index_for_set, index_path, index_path_for_set, record_index_set, root_key, EnsureReport,
+    IndexBudget, IndexSet, Indexer, IndexerSkip, SkipReason, INDEXERS,
 };
 pub use scip_rows::{flatten_scip_records, ScipRecords, SCIP_RECORD_KINDS};
 pub use scip_v5_rels::v5_rel_rows;
