@@ -176,6 +176,57 @@ test(rhs_relation_application_derives_the_bound_edge) :-
                     missing(node(18), name('Alias'), index(2))),
     !.
 
+test(nested_and_chained_bind_applications_flatten_in_dependency_order) :-
+    Text = "(: User (*))\n(: Echo (* (: source type) (: return type)))\n(: Wrap (* (: source type) (: return type)))\n(Echo User User)\n(Wrap User User)\n(: Nested (Wrap (Echo User)))\n(: First (Echo User))\n(: Chained (Wrap First))\n",
+    dl7_text_unit(nested_applications, nested_applications_source,
+                  Text, Unit, []),
+    compile_unit(Unit,
+                 compiled_unit(_, RuntimeProgram, CompilerRows),
+                 Diagnostics),
+    named_owner(CompilerRows, 'User', User),
+    named_owner(CompilerRows, 'Echo', Echo),
+    named_owner(CompilerRows, 'Wrap', Wrap),
+    named_owner(CompilerRows, 'Nested', NestedTarget),
+    named_owner(CompilerRows, 'First', FirstTarget),
+    named_owner(CompilerRows, 'Chained', ChainedTarget),
+    RuntimeProgram = checked_datalog(
+                         _, datalog_program(_, _, Rules), _, _),
+    memberchk(
+        rule(call(ref(kernel(':')),
+                  [ref(Module), const('Nested'), var(NestedResult), const(3)]),
+             [ checked_goal(
+                   positive,
+                   call(ref(Echo),
+                        [ref(User), var(InnerResult)])),
+               checked_goal(
+                   positive,
+                   call(ref(Wrap),
+                        [var(InnerResult), var(NestedResult)]))
+             ]),
+        Rules),
+    memberchk(
+        rule(call(ref(kernel(':')),
+                  [ref(Module), const('Chained'), var(ChainedResult),
+                   const(5)]),
+             [ checked_goal(
+                   positive,
+                   call(ref(kernel(':')),
+                        [ ref(Module), const('First'), var(FirstValue),
+                          const(4)
+                        ])),
+               checked_goal(
+                   positive,
+                   call(ref(Wrap),
+                        [var(FirstValue), var(ChainedResult)]))
+             ]),
+        Rules),
+    maplist(equality(User),
+            [NestedTarget, FirstTarget, ChainedTarget],
+            TargetMatches),
+    Observed = nested_applications(Diagnostics, TargetMatches),
+    Observed == nested_applications([], [true, true, true]),
+    !.
+
 missing_rhs_application_receipt(
     missing(node(NodeIndex), name(Name), index(Index))) :-
     Text = "(: User (*))\n(: Empty (* (: source type) (: return type)))\n(: Alias (Empty User))\n",

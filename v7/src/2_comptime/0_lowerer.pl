@@ -438,6 +438,21 @@ lower_expression(node(_, variable(Identity, _)), _, _,
                  var(Identity), [], [], []).
 lower_expression(node(_, literal(Value)), _, _,
                  const(Value), [], [], []).
+lower_expression(node(NodeId, atom(Name)), Owner,
+                 expression_environment(Reservations, _, _),
+                 Value, Goals, Origins, []) :-
+    scoped_reservation(Owner, Name, Reservations, [],
+                       reservation(BindOwner, Name,
+                                   deferred_expression(_, _, Index),
+                                   expression)),
+    !,
+    Value = var(derived_lookup(NodeId)),
+    Goals = [pending_goal(
+                 positive,
+                 call(name(Owner, ':'),
+                      [ ref(BindOwner), const(Name), Value, const(Index)
+                      ]))],
+    Origins = [NodeId].
 lower_expression(node(_, atom(Name)), Owner, _,
                  name(Owner, Name), [], [], []).
 lower_expression(
