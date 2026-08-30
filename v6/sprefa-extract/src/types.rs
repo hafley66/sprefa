@@ -1651,6 +1651,26 @@ pub struct DefSite {
 #[derive(Clone, Debug, Default)]
 pub struct DefIndex {
     pub map: std::collections::HashMap<String, Vec<DefSite>>,
+    /// Per-blob span index over the SAME sites `map` holds, sorted by span
+    /// start, each entry carrying the max end of every entry up to and
+    /// including it (the prefix max). `containing_def_site` binary-searches
+    /// this instead of scanning every name's site list per call.
+    spans: std::collections::HashMap<ContentId, Vec<DefSpanEntry>>,
+    /// The name behind each `DefSpanEntry::name_ix` (one String per indexed
+    /// name, mirrored from `map`'s keys at build time).
+    names: Vec<String>,
+}
+
+/// One entry of the per-blob span index. `max_end` is the running max of
+/// `span.end()` over the blob's entries [0..=self] in sorted order: once it
+/// drops below the probe's end while walking left, no earlier entry contains
+/// the probe either.
+#[derive(Clone, Debug)]
+struct DefSpanEntry {
+    span: Span,
+    family: FamilyTag,
+    name_ix: u32,
+    max_end: u32,
 }
 
 /// Build THE `DefIndex` ONCE per refresh, from every file's phase-1
@@ -1694,7 +1714,41 @@ pub fn build_def_index(outputs: &[(ContentId, &ExtractOutput)]) -> DefIndex {
             }
         }
     }
+    index.build_span_index();
     index
+}
+
+impl DefIndex {
+    /// Fill the per-blob span index from `map`: one entry per site, sorted by
+    /// (start, end), each carrying the prefix max end. The name vector is
+    /// rebuilt in the same pass, so entries can name their def by index.
+    fn build_span_index(&mut self) {
+        self.names.clear();
+        self.spans.clear();
+        let mut spans: std::collections::HashMap<ContentId, Vec<DefSpanEntry>> =
+            std::collections::HashMap::new();
+        for (name, sites) in &self.map {
+            let name_ix = self.names.len() as u32;
+            self.names.push(name.clone());
+            for site in sites {
+                spans.entry(site.blob.clone()).or_default().push(DefSpanEntry {
+                    span: site.span,
+                    family: site.family,
+                    name_ix,
+                    max_end: 0,
+                });
+            }
+        }
+        for entries in spans.values_mut() {
+            entries.sort_unstable_by_key(|e| (e.span.start, e.span.end()));
+            let mut running_max = 0u32;
+            for entry in entries.iter_mut() {
+                running_max = running_max.max(entry.span.end());
+                entry.max_end = running_max;
+            }
+        }
+        self.spans = spans;
+    }
 }
 
 /// Caller binding: the CallF def node whose span most tightly CONTAINS `site`
@@ -1811,26 +1865,56 @@ pub fn containing_def_site(
     blob: ContentId,
     span: Span,
 ) -> Option<(&str, DefSite)> {
+    containing_def_site_in(index, blob, span, None)
+}
+
+/// The same containment join with one name excluded (`containing_ts_def`
+/// skips the module-synthesis name). The search is a binary search over the
+/// blob's span-sorted entries (built by `build_def_index`) plus a bounded
+/// leftward walk whose prefix-max-end prune guarantees every visited entry
+/// could contain `span`: candidate starts all sit at or before `span.start`,
+/// and once the running max end of everything at or before the cursor drops
+/// below `span.end()` no earlier entry contains it either.
+pub fn containing_def_site_in<'a>(
+    index: &'a DefIndex,
+    blob: ContentId,
+    span: Span,
+    skip_name: Option<&str>,
+) -> Option<(&'a str, DefSite)> {
+    let entries = index.spans.get(&blob)?;
+    // Every container has span.start <= probe.start, so candidates live in
+    // entries[..p). Walk left from the innermost candidate.
+    let p = entries.partition_point(|entry| entry.span.start <= span.start);
     let mut best: Option<(&str, DefSite)> = None;
-    for (name, sites) in &index.map {
-        for site in sites {
-            if site.blob != blob
-                || !(site.span.start <= span.start && span.end() <= site.span.end())
-            {
-                continue;
+    for entry in entries[..p].iter().rev() {
+        if entry.max_end < span.end() {
+            break;
+        }
+        if entry.span.end() < span.end() {
+            continue;
+        }
+        let name = index.names[entry.name_ix as usize].as_str();
+        if skip_name == Some(name) {
+            continue;
+        }
+        let better = match &best {
+            None => true,
+            Some((_, b)) => {
+                let call_bias = (entry.family == CallF::TAG, b.family == CallF::TAG);
+                call_bias.0 && !call_bias.1
+                    || (call_bias.0 == call_bias.1
+                        && entry.span.end() - entry.span.start < b.span.end() - b.span.start)
             }
-            let better = match best {
-                None => true,
-                Some((_, ref b)) => {
-                    let call_bias = (site.family == CallF::TAG, b.family == CallF::TAG);
-                    call_bias.0 && !call_bias.1
-                        || (call_bias.0 == call_bias.1
-                            && site.span.end() - site.span.start < b.span.end() - b.span.start)
-                }
-            };
-            if better {
-                best = Some((name.as_str(), site.clone()));
-            }
+        };
+        if better {
+            best = Some((
+                name,
+                DefSite {
+                    blob: blob.clone(),
+                    span: entry.span,
+                    family: entry.family,
+                },
+            ));
         }
     }
     best

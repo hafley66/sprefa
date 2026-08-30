@@ -103,7 +103,7 @@ pub use scip_ensure::{
 pub use scip_rows::{flatten_scip_records, ScipRecords, SCIP_RECORD_KINDS};
 pub use scip_v5_rels::v5_rel_rows;
 pub use seams::{
-    build_def_index, containing_def_site, corpus_defs, covering_def,
+    build_def_index, containing_def_site, containing_def_site_in, corpus_defs, covering_def,
     def_named, own_blob, BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap,
     OccurrenceRole, ParseError, Parser, PositionEncoding, Project, ProjectCx, ProjectDigest,
     Resolve, ScipDiagnostic, ScipDocument, ScipError, ScipIndex, ScipMetadata, ScipOccurrence,
