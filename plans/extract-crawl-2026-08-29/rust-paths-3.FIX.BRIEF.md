@@ -77,3 +77,17 @@ plus `tests/71_rust_paths.rs`. `git reset --hard origin/fix/extract-rust-paths-3
 after the ff-only merge, run the test file, then finish the receipt and
 post the PR. Commit after every green test; the previous two agents died
 mid-turn with work uncommitted.
+
+## Fourth run (the only instructions that matter now)
+Three agents built this; the last one went silent for an hour with the
+tree clean. Do exactly this, in order, committing after each step:
+1. `git merge --ff-only <sha>` then `git reset --hard origin/fix/extract-rust-paths-3`.
+2. `cd v6/sprefa-extract && cargo test --features cli --test 71_rust_paths 2>&1 | tail -20`.
+   Red tests: fix the smallest thing that turns them green, commit.
+3. `cargo build --release --features cli`, the one-process corpus run, the
+   census script (`plans/extract-crawl-2026-08-29/rust.census.py` if
+   present, else section 18's method), `bench.py` against
+   `rust.oracle.call.tsv`. Write the numbers into rust.REPORT.md section 19.
+4. Full gate in background with a log; `git push`; `gh pr create --base main`;
+   hail the coordinator with the numbers. Total budget: 40 minutes. If a step
+   cannot finish, post the PR anyway with what you have and say which step.
