@@ -11,7 +11,7 @@ arm.
 
 ## First action
 ```
-git merge --ff-only 2423127ad687a8773f8c2f76acc987f159e83d70
+git merge --ff-only 6511fa1d974e476d537acb3c6d63a2c052c0f9ab
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 scip indexes: find the existing ones first (`ls **/index.scip` under the
