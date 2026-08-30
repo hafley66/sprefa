@@ -153,7 +153,7 @@ fn variant_constructor_binds_the_enum_def() {
     );
 }
 
-/// HEAD: every `util_fn` shape in lib.rs drops `ambiguous` — the bare
+/// HEAD: every `util_fn` shape in lib.rs drops `ambiguous` the bare
 /// suffix `helpers` covers crate_a, crate_a/deep and crate_b.
 #[test]
 fn module_qualified_prefixes_bind_the_declared_module() {
