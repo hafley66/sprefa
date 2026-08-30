@@ -13,7 +13,7 @@
 //! `Inferred`; resolution never guesses and never invents an edge.
 
 use crate::shape::{Span, Strings};
-use crate::types::{FamilyBundle, CallF, ReceiverBinding, ReceiverOutcome};
+use crate::types::{CallF, FamilyBundle, ReceiverBinding, ReceiverOutcome};
 
 use super::rust::{def_span, syn_span};
 
@@ -49,7 +49,9 @@ fn impls_in_items(items: &[syn::Item], line_starts: &[u32], out: &mut Vec<ImplEn
             syn::Item::Impl(imp) => {
                 if let Some(self_type) = principal_ty(&imp.self_ty) {
                     let trait_name = imp.trait_.as_ref().and_then(|(_, path, _)| {
-                        path.segments.last().map(|segment| segment.ident.to_string())
+                        path.segments
+                            .last()
+                            .map(|segment| segment.ident.to_string())
                     });
                     let methods = imp
                         .items
@@ -66,7 +68,11 @@ fn impls_in_items(items: &[syn::Item], line_starts: &[u32], out: &mut Vec<ImplEn
                             _ => None,
                         })
                         .collect();
-                    out.push(ImplEntry { self_type, trait_name, methods });
+                    out.push(ImplEntry {
+                        self_type,
+                        trait_name,
+                        methods,
+                    });
                 }
             }
             syn::Item::Mod(m) => {
@@ -109,14 +115,14 @@ fn principal_ty(ty: &syn::Type) -> Option<String> {
 }
 
 /// The one trait a `dyn`/`impl` bound names; `A + B` multi-bounds bind none.
-fn single_bound_trait(bounds: &syn::punctuated::Punctuated<syn::TypeParamBound, syn::token::Plus>) -> Option<String> {
+fn single_bound_trait(
+    bounds: &syn::punctuated::Punctuated<syn::TypeParamBound, syn::token::Plus>,
+) -> Option<String> {
     if bounds.len() != 1 {
         return None;
     }
     match bounds.first()? {
-        syn::TypeParamBound::Trait(tb) => {
-            Some(tb.path.segments.last()?.ident.to_string())
-        }
+        syn::TypeParamBound::Trait(tb) => Some(tb.path.segments.last()?.ident.to_string()),
         _ => None,
     }
 }
@@ -131,7 +137,9 @@ fn output_ty(sig: &syn::Signature) -> Option<String> {
 
 /// Generic param name -> every trait bound on it, from the param list and
 /// the where clause (`fn f<T: Iter>(t: T)` / `where T: Display`).
-fn trait_bounds_of_generics(generics: &syn::Generics) -> std::collections::HashMap<String, Vec<String>> {
+fn trait_bounds_of_generics(
+    generics: &syn::Generics,
+) -> std::collections::HashMap<String, Vec<String>> {
     let mut out: std::collections::HashMap<String, Vec<String>> = Default::default();
     let mut push_bound = |name: String, bound: &syn::TypeParamBound| {
         if let syn::TypeParamBound::Trait(tb) = bound {
@@ -214,7 +222,8 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for ReceiverWalk<'a> {
         let bound = match &local.pat {
             syn::Pat::Ident(pat) => Some((
                 pat.ident.to_string(),
-                self.one_hop_init(local.init.as_ref().map(|i| i.expr.as_ref())).unwrap_or(TypeBinding::Unknown),
+                self.one_hop_init(local.init.as_ref().map(|i| i.expr.as_ref()))
+                    .unwrap_or(TypeBinding::Unknown),
             )),
             syn::Pat::Type(pat) => match &*pat.pat {
                 syn::Pat::Ident(inner) => {
@@ -241,7 +250,10 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for ReceiverWalk<'a> {
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         let outcome = self.receiver_outcome(&call.receiver);
         let span = syn_span(self.line_starts, call.method.span());
-        self.out.push(ReceiverBinding { call_site: span, outcome });
+        self.out.push(ReceiverBinding {
+            call_site: span,
+            outcome,
+        });
         syn::visit::visit_expr_method_call(self, call);
     }
 }
@@ -261,10 +273,7 @@ impl<'a> ReceiverWalk<'a> {
     }
 
     fn lookup(&self, name: &str) -> Option<&TypeBinding> {
-        self.scopes
-            .iter()
-            .rev()
-            .find_map(|frame| frame.get(name))
+        self.scopes.iter().rev().find_map(|frame| frame.get(name))
     }
 
     /// `let x = f(..)`: the callee's same-file declared return type, one hop.
@@ -381,18 +390,27 @@ impl<'a> ReceiverWalk<'a> {
                 // A param typed by the fn's OWN generic param resolves to the
                 // param's single trait bound (class 6b); an unbound or
                 // multi-bound param stays as written.
-                let binding = generic_bounds.get(&ty).and_then(|bounds| match bounds.as_slice() {
-                    [trait_name] => Some(trait_name.clone()),
-                    _ => None,
-                });
-                self.insert(pat.ident.to_string(), TypeBinding::Named(binding.unwrap_or(ty)));
+                let binding = generic_bounds
+                    .get(&ty)
+                    .and_then(|bounds| match bounds.as_slice() {
+                        [trait_name] => Some(trait_name.clone()),
+                        _ => None,
+                    });
+                self.insert(
+                    pat.ident.to_string(),
+                    TypeBinding::Named(binding.unwrap_or(ty)),
+                );
             }
         }
     }
 }
 
 /// Pre-pass: fn return types and struct field types, one walk.
-fn tables(items: &[syn::Item], rets: &mut std::collections::HashMap<String, String>, fields: &mut std::collections::HashMap<(String, String), String>) {
+fn tables(
+    items: &[syn::Item],
+    rets: &mut std::collections::HashMap<String, String>,
+    fields: &mut std::collections::HashMap<(String, String), String>,
+) {
     for item in items {
         match item {
             syn::Item::Fn(f) => {

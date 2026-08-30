@@ -19,7 +19,9 @@ use std::sync::Mutex;
 use crate::seams::DefIndex;
 use crate::shape::{ContentId, FamilyTag, Span, ZERO_CONTENT_ID};
 
-use super::rust::{build_line_starts, def_span, mod_path_attr, module_segments, module_target, syn_span};
+use super::rust::{
+    build_line_starts, def_span, mod_path_attr, module_segments, module_target, syn_span,
+};
 use super::rust_receivers::{impl_facts, ImplEntry};
 
 use syn::spanned::Spanned as _;
@@ -139,7 +141,10 @@ fn collect(items: &[syn::Item], line_starts: &[u32], facts: &mut RustModuleFacts
                         _ => None,
                     })
                     .collect();
-                facts.traits.push(TraitEntry { name: trait_item.ident.to_string(), fns });
+                facts.traits.push(TraitEntry {
+                    name: trait_item.ident.to_string(),
+                    fns,
+                });
             }
             syn::Item::Mod(mod_item) => match &mod_item.content {
                 Some((_, inner)) => {
@@ -401,8 +406,12 @@ impl Resolution {
 fn same_target(a: &Resolution, b: &Resolution) -> bool {
     match (a, b) {
         (
-            Resolution::Binding { blob: b1, span: s1, .. },
-            Resolution::Binding { blob: b2, span: s2, .. },
+            Resolution::Binding {
+                blob: b1, span: s1, ..
+            },
+            Resolution::Binding {
+                blob: b2, span: s2, ..
+            },
         ) => b1 == b2 && s1 == s2,
         (Resolution::Module { file: f1, .. }, Resolution::Module { file: f2, .. }) => f1 == f2,
         _ => false,
@@ -472,9 +481,14 @@ impl RustModuleIndex {
         let mut index = RustModuleIndex::default();
         for (path, blob) in corpus {
             index.blobs.insert(path.clone(), blob.clone());
-            index.paths.entry(blob.clone()).or_insert_with(|| path.clone());
+            index
+                .paths
+                .entry(blob.clone())
+                .or_insert_with(|| path.clone());
             if path.ends_with(".rs") {
-                index.module_paths.insert(path.clone(), module_segments(path));
+                index
+                    .module_paths
+                    .insert(path.clone(), module_segments(path));
             }
         }
         for (path, facts) in &files {
@@ -536,12 +550,11 @@ impl RustModuleIndex {
             if let Some(blob) = index.blobs.get(path) {
                 for entry in &facts.traits {
                     for f in &entry.fns {
-                        index.trait_fns.entry(entry.name.clone()).or_default().push((
-                            blob.clone(),
-                            f.name.clone(),
-                            f.span,
-                            f.default,
-                        ));
+                        index
+                            .trait_fns
+                            .entry(entry.name.clone())
+                            .or_default()
+                            .push((blob.clone(), f.name.clone(), f.span, f.default));
                     }
                 }
             }
@@ -585,8 +598,10 @@ impl RustModuleIndex {
         match sites {
             [only] => pick(only),
             many => {
-                let inherent: Vec<&ImplMethodTarget> =
-                    many.iter().filter(|site| site.trait_name.is_none()).collect();
+                let inherent: Vec<&ImplMethodTarget> = many
+                    .iter()
+                    .filter(|site| site.trait_name.is_none())
+                    .collect();
                 match inherent.as_slice() {
                     [one] => pick(one),
                     [] => {
@@ -594,9 +609,9 @@ impl RustModuleIndex {
                         let survivors: Vec<&ImplMethodTarget> = many
                             .iter()
                             .filter(|site| {
-                                site.trait_name
-                                    .as_deref()
-                                    .is_some_and(|trait_name| self.trait_in_scope(caller, trait_name))
+                                site.trait_name.as_deref().is_some_and(|trait_name| {
+                                    self.trait_in_scope(caller, trait_name)
+                                })
                             })
                             .collect();
                         match survivors.as_slice() {
@@ -743,7 +758,10 @@ impl RustModuleIndex {
         }
         let mut stack = Vec::new();
         let resolution = self.wildcard_scope(path, local, &mut stack);
-        self.finish(local, local, resolution).ok().flatten().and_then(callable_target)
+        self.finish(local, local, resolution)
+            .ok()
+            .flatten()
+            .and_then(callable_target)
     }
 
     /// `local`'s EXPLICIT `use` binding in `path`. `Err(())` is AMBIGUOUS: a
@@ -752,27 +770,49 @@ impl RustModuleIndex {
         let Some(facts) = self.facts.get(path) else {
             return Ok(None);
         };
-        let Some(binding) = facts.uses.iter().find(|use_binding| use_binding.local == local)
+        let Some(binding) = facts
+            .uses
+            .iter()
+            .find(|use_binding| use_binding.local == local)
         else {
             return Ok(None);
         };
         let mut stack = Vec::new();
-        let resolution =
-            self.resolve_qualified(path, &binding.qualifier, &binding.asked, &mut stack, &mut Vec::new())
-                .0;
+        let resolution = self
+            .resolve_qualified(
+                path,
+                &binding.qualifier,
+                &binding.asked,
+                &mut stack,
+                &mut Vec::new(),
+            )
+            .0;
         self.finish(local, &binding.asked, resolution)
     }
 
     /// `name` as ANY glob in `path` brings it into scope, reexported or not
     /// (unlike `export_table`'s star leg, which only follows a REEXPORT glob).
     fn wildcard_scope(&self, path: &str, name: &str, stack: &mut Vec<String>) -> Resolution {
-        self.local_scope_table(path, stack).0.get(name).cloned().unwrap_or(Resolution::None)
+        self.local_scope_table(path, stack)
+            .0
+            .get(name)
+            .cloned()
+            .unwrap_or(Resolution::None)
     }
 
     /// `path`'s own export table, plus every name a non-reexport glob adds
     /// that the export table does not already carry. Built ONCE per file.
-    fn local_scope_table(&self, path: &str, stack: &mut Vec<String>) -> (std::sync::Arc<ExportTable>, bool) {
-        if let Some(hit) = self.scope_tables.lock().expect("rust scope tables").get(path) {
+    fn local_scope_table(
+        &self,
+        path: &str,
+        stack: &mut Vec<String>,
+    ) -> (std::sync::Arc<ExportTable>, bool) {
+        if let Some(hit) = self
+            .scope_tables
+            .lock()
+            .expect("rust scope tables")
+            .get(path)
+        {
             return (hit.clone(), true);
         }
         let (public, mut complete) = self.export_table(path, stack);
@@ -780,7 +820,13 @@ impl RustModuleIndex {
             return (public, complete);
         };
         let mut table = (*public).clone();
-        let starred = self.star_contributions(path, facts.stars.iter().filter(|star| !star.reexport), &table, stack, &mut complete);
+        let starred = self.star_contributions(
+            path,
+            facts.stars.iter().filter(|star| !star.reexport),
+            &table,
+            stack,
+            &mut complete,
+        );
         for (name, resolution) in starred {
             table.entry(name).or_insert(resolution);
         }
@@ -862,7 +908,11 @@ impl RustModuleIndex {
             return HomeFile::None;
         }
         if let [only] = qualifier {
-            if self.facts.get(from).is_some_and(|facts| facts.inline_mods.contains(only)) {
+            if self
+                .facts
+                .get(from)
+                .is_some_and(|facts| facts.inline_mods.contains(only))
+            {
                 return HomeFile::Unique(from.to_string());
             }
         }
@@ -921,7 +971,10 @@ impl RustModuleIndex {
     fn declared_home(&self, from: &str, qualifier: &[String]) -> Option<HomeFile> {
         let facts = self.facts.get(from)?;
         let declared = facts.inline_mods.contains(&qualifier[0])
-            || facts.mod_decls.iter().any(|(name, _)| name == &qualifier[0]);
+            || facts
+                .mod_decls
+                .iter()
+                .any(|(name, _)| name == &qualifier[0]);
         if !declared {
             return None;
         }
@@ -934,9 +987,17 @@ impl RustModuleIndex {
     /// naming no corpus module is External.
     /// `seen` carries the binding heads already followed on this query: a
     /// `use b::a; use a::b;` pair would otherwise recurse forever.
-    fn bound_home(&self, from: &str, qualifier: &[String], seen: &mut Vec<String>) -> Option<HomeFile> {
+    fn bound_home(
+        &self,
+        from: &str,
+        qualifier: &[String],
+        seen: &mut Vec<String>,
+    ) -> Option<HomeFile> {
         let facts = self.facts.get(from)?;
-        let binding = facts.uses.iter().find(|binding| binding.local == qualifier[0])?;
+        let binding = facts
+            .uses
+            .iter()
+            .find(|binding| binding.local == qualifier[0])?;
         if binding.qualifier.is_empty() && binding.asked == binding.local {
             return Some(HomeFile::External);
         }
@@ -984,14 +1045,17 @@ impl RustModuleIndex {
     ) -> ModuleCallTarget {
         if !matches!(qualifier[0].as_str(), "crate" | "self" | "super")
             && !qualifier[0].is_empty()
-            && self
-                .facts
-                .get(from)
-                .is_none_or(|facts| {
-                    !facts.inline_mods.contains(&qualifier[0])
-                        && !facts.mod_decls.iter().any(|(name, _)| name == &qualifier[0])
-                        && !facts.uses.iter().any(|binding| binding.local == qualifier[0])
-                })
+            && self.facts.get(from).is_none_or(|facts| {
+                !facts.inline_mods.contains(&qualifier[0])
+                    && !facts
+                        .mod_decls
+                        .iter()
+                        .any(|(name, _)| name == &qualifier[0])
+                    && !facts
+                        .uses
+                        .iter()
+                        .any(|binding| binding.local == qualifier[0])
+            })
             && !self
                 .module_paths
                 .values()
@@ -1015,14 +1079,26 @@ impl RustModuleIndex {
     }
 
     /// `name`'s resolution inside `file`'s WHOLE export table (built once).
-    fn resolve_in_module(&self, file: &str, name: &str, stack: &mut Vec<String>) -> (Resolution, bool) {
+    fn resolve_in_module(
+        &self,
+        file: &str,
+        name: &str,
+        stack: &mut Vec<String>,
+    ) -> (Resolution, bool) {
         let (table, complete) = self.export_table(file, stack);
-        (table.get(name).cloned().unwrap_or(Resolution::None), complete)
+        (
+            table.get(name).cloned().unwrap_or(Resolution::None),
+            complete,
+        )
     }
 
     /// `file`'s WHOLE export table, each name settled ONCE regardless of how
     /// many importers ask; cached outside any re-export cycle.
-    fn export_table(&self, file: &str, stack: &mut Vec<String>) -> (std::sync::Arc<ExportTable>, bool) {
+    fn export_table(
+        &self,
+        file: &str,
+        stack: &mut Vec<String>,
+    ) -> (std::sync::Arc<ExportTable>, bool) {
         if let Some(hit) = self.tables.lock().expect("rust module tables").get(file) {
             return (hit.clone(), true);
         }
@@ -1059,22 +1135,35 @@ impl RustModuleIndex {
             if table.contains_key(&reexport.local) {
                 continue;
             }
-            let (sub, sub_complete) =
-                self.resolve_qualified(file, &reexport.qualifier, &reexport.asked, stack, &mut Vec::new());
+            let (sub, sub_complete) = self.resolve_qualified(
+                file,
+                &reexport.qualifier,
+                &reexport.asked,
+                stack,
+                &mut Vec::new(),
+            );
             complete &= sub_complete;
             if let Some(found) = sub.promoted_option(ResolvedImportKind::Indirect) {
                 table.insert(reexport.local.clone(), found);
             }
         }
-        let starred =
-            self.star_contributions(file, facts.stars.iter().filter(|star| star.reexport), &table, stack, &mut complete);
+        let starred = self.star_contributions(
+            file,
+            facts.stars.iter().filter(|star| star.reexport),
+            &table,
+            stack,
+            &mut complete,
+        );
         for (name, resolution) in starred {
             table.entry(name).or_insert(resolution);
         }
         stack.pop();
         let table = std::sync::Arc::new(table);
         if complete {
-            self.tables.lock().expect("rust module tables").insert(file.to_string(), table.clone());
+            self.tables
+                .lock()
+                .expect("rust module tables")
+                .insert(file.to_string(), table.clone());
         }
         (table, complete)
     }
@@ -1091,7 +1180,8 @@ impl RustModuleIndex {
     ) -> ExportTable {
         let mut starred = ExportTable::new();
         for star in stars {
-            let HomeFile::Unique(target) = self.home_file(file, &star.qualifier, &mut Vec::new()) else {
+            let HomeFile::Unique(target) = self.home_file(file, &star.qualifier, &mut Vec::new())
+            else {
                 continue;
             };
             let (sub_table, sub_complete) = self.export_table(&target, stack);
@@ -1100,7 +1190,8 @@ impl RustModuleIndex {
                 if existing.contains_key(name) {
                     continue;
                 }
-                let Some(promoted) = resolution.clone().promoted_option(ResolvedImportKind::Star) else {
+                let Some(promoted) = resolution.clone().promoted_option(ResolvedImportKind::Star)
+                else {
                     continue;
                 };
                 starred.insert(
