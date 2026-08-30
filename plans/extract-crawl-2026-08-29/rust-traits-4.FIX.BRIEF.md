@@ -16,7 +16,7 @@ What is left in-corpus:
 
 ## First action
 ```
-git merge --ff-only <sha>
+git merge --ff-only cb94fae203f1dd2f55e87cb06c68eb02daac4f2c
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Corpus `/Users/chrishafley/projects/rust-analyzer`, `find crates -name '*.rs' -path '*/src/*'`,
