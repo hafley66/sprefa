@@ -13,6 +13,8 @@
               [ check_datalog/4,
                 check_goal_sequence/4
               ]).
+:- use_module('../src/2_comptime/1a_generated_program_assembler',
+              [assemble_generated_program/5]).
 :- use_module('../src/1_libtime/0_evaluator',
               [ evaluate/4,
                 stratify_rules/3,
@@ -62,23 +64,25 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
     once(type_operator_snapshot(Rows1, Snapshot)),
     runtime_snapshot(Runtime1, RuntimeSnapshot),
     runtime_key_snapshot(Runtime1, KeySnapshot),
+    history_v1_snapshot(Rows1, Runtime1, HistorySnapshot),
     evaluator_snapshot(EvaluatorSnapshot),
     equality(Rows1, Rows2, RowsEqual),
     equality(Runtime1, Runtime2, RuntimeEqual),
     length(Rows1, CompilerRowCount),
     Observed = partial_result(Diagnostics1, Diagnostics2,
                               CompilerRowCount, Snapshot,
-                              RuntimeSnapshot, KeySnapshot, EvaluatorSnapshot,
+                              RuntimeSnapshot, KeySnapshot, HistorySnapshot,
+                              EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 615,
+                    [], [], 805,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(78, 118, 36, 82, 36, 72, 36),
+                    runtime(counts(88, 136, 42, 96, 50, 90, 42),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
@@ -86,7 +90,18 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                          cons([[0, 1], [2]]),
                          intern([[0, 1]]),
                          intern_snapshot([[0, 1]]),
-                         predecessor([[0, 1], [0, 2]])),
+                         predecessor([[0, 1], [0, 2]]),
+                         def([[0]]), head([[0]]),
+                         head_arg([[0, 1]]), body([[0, 1]]),
+                         body_arg([[0, 1, 2]])),
+                    history_v1(
+                        specialization(copy,
+                                       [edge(id, int, 0),
+                                        edge(name, text, 1)]),
+                        carrier(definition(2), head(2), body(1)),
+                        compiler_output([7, "Ada"]),
+                        runtime(relation(2, []), rule(copy),
+                                dependency(positive), stratum(0))),
                     evaluator(temporary_rules(0), temporary_seeds(0),
                               temporary_lower_rows(0), temporary_requests(0)),
                     true, true),
@@ -110,6 +125,41 @@ test(final_closure_rejects_declared_functional_key_conflicts) :-
                         call(Relation,
                              [ref(owner), const(name), ref(second), const(1)]))
                    )].
+
+test(generated_program_rejects_identity_collisions_and_orphan_arguments) :-
+    Existing = ref(existing),
+    BaseRelations = [relation(Existing, 1, [])],
+    assemble_generated_program(
+        [call(ref(kernel(def)), [Existing, const(1)])],
+        BaseRelations, CollisionRelations, CollisionRules,
+        CollisionDiagnostics),
+    assemble_generated_program(
+        [call(ref(kernel(body_arg)),
+              [ ref(orphan), const(0), const(0),
+                const("variable"), const(value)
+              ])],
+        BaseRelations, OrphanRelations, OrphanRules, OrphanDiagnostics),
+    Observed = generated_program_rejections(
+                   collision(CollisionRelations, CollisionRules,
+                             CollisionDiagnostics),
+                   orphan(OrphanRelations, OrphanRules,
+                          OrphanDiagnostics)),
+    Observed == generated_program_rejections(
+                    collision(
+                        [], [],
+                        [diagnostic(
+                             assemble, none,
+                             generated_relation_already_declared(
+                                 Existing))]),
+                    orphan(
+                        [], [],
+                        [ diagnostic(
+                              assemble, none,
+                              orphan_generated_rule_fragment(orphan)),
+                          diagnostic(
+                              assemble, none,
+                              orphan_generated_body_arguments(orphan, 0))
+                        ])).
 
 test(authored_order_kernel_modes_are_checked_left_to_right) :-
     Construct = checked_goal(
@@ -627,7 +677,8 @@ runtime_key_snapshot(
     keys(colon(ColonKeys), edge_snapshot(SnapshotKeys),
          nil(NilKeys), cons(ConsKeys), intern(InternKeys),
          intern_snapshot(InternSnapshotKeys),
-         predecessor(PredecessorKeys))) :-
+         predecessor(PredecessorKeys), def(DefKeys), head(HeadKeys),
+         head_arg(HeadArgKeys), body(BodyKeys), body_arg(BodyArgKeys))) :-
     memberchk(relation(ref(kernel(':')), 4, ColonKeys), Relations),
     memberchk(relation(ref(kernel(edge_snapshot)), 4, SnapshotKeys),
               Relations),
@@ -637,7 +688,68 @@ runtime_key_snapshot(
     memberchk(relation(ref(kernel(intern_snapshot)), 3,
                        InternSnapshotKeys), Relations),
     memberchk(relation(ref(kernel(predecessor)), 3, PredecessorKeys),
-              Relations).
+              Relations),
+    memberchk(relation(ref(kernel(def)), 2, DefKeys), Relations),
+    memberchk(relation(ref(kernel(head)), 2, HeadKeys), Relations),
+    memberchk(relation(ref(kernel(head_arg)), 4, HeadArgKeys), Relations),
+    memberchk(relation(ref(kernel(body)), 4, BodyKeys), Relations),
+    memberchk(relation(ref(kernel(body_arg)), 5, BodyArgKeys), Relations).
+
+history_v1_snapshot(
+    Rows,
+    checked_datalog(_, datalog_program(Relations, _, Rules),
+                    Depends, Strata),
+    history_v1(
+        specialization(copy, Edges),
+        carrier(definition(2), head(2), body(1)),
+        compiler_output([7, "Ada"]),
+        runtime(relation(2, []), rule(copy),
+                dependency(positive), stratum(0)))) :-
+    member(call(ref(kernel(':')),
+                [ref(Module), const('HistoryV1'), ref(Constructor),
+                 const(_)]), Rows),
+    member(call(ref(kernel(':')),
+                [ref(Module), const('User'), ref(User), const(_)]), Rows),
+    member(call(ref(kernel(':')),
+                [ref(Module), const('HistoryOptions'), ref(Options),
+                 const(_)]), Rows),
+    memberchk(call(ref(kernel(':')),
+                   [ref(Options), const(mode), const("copy"), const(0)]),
+              Rows),
+    History = application(Constructor, [User, Options]),
+    findall(edge(Name, Primitive, Index),
+            member(call(ref(kernel(':')),
+                        [ ref(History), const(Name),
+                          ref(primitive(Primitive)), const(Index)
+                        ]), Rows),
+            Edges),
+    memberchk(call(ref(kernel(def)), [ref(History), const(2)]), Rows),
+    findall(Position,
+            member(call(ref(kernel(head_arg)),
+                        [ ref(History), const(Position),
+                          const("variable"), const(_)
+                        ]), Rows),
+            HeadPositions),
+    memberchk(call(ref(kernel(head)), [ref(History), ref(History)]), Rows),
+    findall(Goal,
+            member(call(ref(kernel(body)),
+                        [ ref(History), const(Goal), const("positive"),
+                          ref(User)
+                        ]), Rows),
+            BodyGoals),
+    length(HeadPositions, 2),
+    length(BodyGoals, 1),
+    memberchk(call(ref(History), [const(7), const("Ada")]), Rows),
+    memberchk(relation(ref(History), 2, []), Relations),
+    GeneratedArguments =
+        [var(generated(History, id)), var(generated(History, name))],
+    memberchk(rule(call(ref(History), GeneratedArguments),
+                   [checked_goal(
+                        positive,
+                        call(ref(User), GeneratedArguments))]),
+              Rules),
+    memberchk(depends(ref(History), ref(User), positive), Depends),
+    memberchk(stratum(ref(History), 0), Strata).
 
 named_owner(Rows, Name, Owner) :-
     member(call(ref(kernel(':')),

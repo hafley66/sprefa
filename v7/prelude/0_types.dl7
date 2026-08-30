@@ -54,6 +54,23 @@
       (: names any)
       (: return type)))
 
+(: HistoryV1
+   (* (: source type)
+      (: options type)
+      (: return type)))
+
+(: history_v1_edge
+   (* (: source type)
+      (: options type)
+      (: result type)
+      (: name text)
+      (: target any)
+      (: source_index int)))
+
+(: history_v1_arity
+   (* (: result type)
+      (: arity int)))
+
 (: excluded_name
    (* (: source type)
       (: names any)
@@ -128,6 +145,22 @@
     (cons ?Source ?TailArguments ?Arguments)
     (nil ?Empty)
     (cons ?Names ?Empty ?TailArguments))
+
+; HistoryV1 options are ordinary typed data. The first version accepts copy
+; mode and interns source plus options as the specialization identity.
+(<- (HistoryV1 ?Source ?Options ?Result)
+    (edge_snapshot ?Options ?Mode "copy" 0)
+    (nil ?Empty)
+    (cons ?Options ?Empty ?TailArguments)
+    (cons ?Source ?TailArguments ?Arguments)
+    (intern HistoryV1 ?Arguments ?Result))
+
+(<- (HistoryV1 ?Source ?Options ?Result)
+    (intern_snapshot HistoryV1 ?Arguments ?Result)
+    (cons ?Source ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Options ?Empty ?TailArguments)
+    (edge_snapshot ?Options ?Mode "copy" 0))
 
 (<- (contains ?List ?Value)
     (cons ?Value ?Tail ?List))
@@ -230,3 +263,41 @@
     (Partial ?Source ?Result)
     (edge_snapshot ?Source ?Name ?Target ?Index)
     (Option ?Target ?OptionalTarget))
+
+; HistoryV1 emits both type-graph rows and a checked executable rule through
+; the public generated-program carrier. The generated rule copies source rows
+; in this first proof; temporal storage policy remains a later userland layer.
+(<- (history_v1_edge ?Source ?Options ?Result ?Name ?Target ?SourceIndex)
+    (HistoryV1 ?Source ?Options ?Result)
+    (edge_snapshot ?Source ?Name ?Target ?SourceIndex))
+
+(<- (node ?Result)
+    (HistoryV1 ?Source ?Options ?Result))
+
+(<- (product ?Result)
+    (HistoryV1 ?Source ?Options ?Result))
+
+(<- (: ?Result ?Name ?Target ?SourceIndex)
+    (history_v1_edge ?Source ?Options ?Result
+                     ?Name ?Target ?SourceIndex))
+
+(<- (history_v1_arity ?Result (count ?SourceIndex))
+    (history_v1_edge ?Source ?Options ?Result
+                     ?Name ?Target ?SourceIndex))
+
+(<- (def ?Result ?Arity)
+    (history_v1_arity ?Result ?Arity))
+
+(<- (head ?Result ?Result)
+    (HistoryV1 ?Source ?Options ?Result))
+
+(<- (head_arg ?Result ?Position "variable" ?Name)
+    (history_v1_edge ?Source ?Options ?Result
+                     ?Name ?Target ?Position))
+
+(<- (body ?Result 0 "positive" ?Source)
+    (HistoryV1 ?Source ?Options ?Result))
+
+(<- (body_arg ?Result 0 ?Position "variable" ?Name)
+    (history_v1_edge ?Source ?Options ?Result
+                     ?Name ?Target ?Position))

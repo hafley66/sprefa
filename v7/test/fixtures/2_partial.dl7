@@ -2,6 +2,17 @@
    (* (: id int)
       (: name text)))
 
+(User 7 "Ada")
+
+(: HistoryOptions
+   (* (: mode "copy")))
+
+(: history_request
+   (* (: result type)))
+
+(<- (history_request ?Result)
+    (HistoryV1 User HistoryOptions ?Result))
+
 (: partial_request
    (* (: source type)))
 

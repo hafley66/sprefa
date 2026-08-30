@@ -17,10 +17,14 @@ assemble_generated_program(CompilerRows, BaseRelations,
     must_be(ground, CompilerRows),
     must_be(ground, BaseRelations),
     assemble_definitions(CompilerRows, Relations0, DefinitionDiagnostics),
+    generated_relation_collision_diagnostics(Relations0, BaseRelations,
+                                             CollisionDiagnostics),
     append(BaseRelations, Relations0, AllRelations0),
     sort(AllRelations0, AllRelations),
     assemble_rules(CompilerRows, AllRelations, Rules0, RuleDiagnostics),
-    append(DefinitionDiagnostics, RuleDiagnostics, Diagnostics0),
+    orphan_fragment_diagnostics(CompilerRows, OrphanDiagnostics),
+    append([DefinitionDiagnostics, CollisionDiagnostics,
+            RuleDiagnostics, OrphanDiagnostics], Diagnostics0),
     sort(Diagnostics0, Diagnostics),
     (   Diagnostics == []
     ->  sort(Relations0, GeneratedRelations),
@@ -67,6 +71,19 @@ definition_result(Relation, Arities, none,
 
 append_relation_result(none, Relations, Relations).
 append_relation_result(Relation, Relations, [Relation | Relations]).
+
+generated_relation_collision_diagnostics([], _, []).
+generated_relation_collision_diagnostics(
+    [relation(Relation, _, _) | Relations], BaseRelations, Diagnostics) :-
+    (   memberchk(relation(Relation, _, _), BaseRelations)
+    ->  Diagnostics =
+            [diagnostic(assemble, none,
+                        generated_relation_already_declared(Relation))
+             | RestDiagnostics]
+    ;   Diagnostics = RestDiagnostics
+    ),
+    generated_relation_collision_diagnostics(Relations, BaseRelations,
+                                             RestDiagnostics).
 
 assemble_rules(Rows, Relations, Rules, Diagnostics) :-
     findall(Rule,
@@ -117,6 +134,58 @@ assemble_rule(RuleId, Rows, Relations, RuleResult, Diagnostics) :-
 
 append_rule_result(none, Rules, Rules).
 append_rule_result(Rule, Rules, [Rule | Rules]).
+
+orphan_fragment_diagnostics(Rows, Diagnostics) :-
+    generated_head_ids(Rows, HeadIds),
+    generated_fragment_ids(Rows, FragmentIds),
+    findall(diagnostic(assemble, none,
+                       orphan_generated_rule_fragment(RuleId)),
+            ( member(RuleId, FragmentIds),
+              \+ memberchk(RuleId, HeadIds)
+            ),
+            RuleDiagnostics),
+    generated_body_goal_pairs(Rows, BodyGoals),
+    generated_body_argument_pairs(Rows, BodyArgumentGoals),
+    findall(diagnostic(assemble, none,
+                       orphan_generated_body_arguments(RuleId, GoalIndex)),
+            ( member(RuleId-GoalIndex, BodyArgumentGoals),
+              \+ memberchk(RuleId-GoalIndex, BodyGoals)
+            ),
+            BodyDiagnostics),
+    append(RuleDiagnostics, BodyDiagnostics, Diagnostics).
+
+generated_head_ids(Rows, HeadIds) :-
+    findall(RuleId,
+            member(call(ref(kernel(head)), [ref(RuleId), _]), Rows),
+            HeadIds0),
+    sort(HeadIds0, HeadIds).
+
+generated_fragment_ids(Rows, FragmentIds) :-
+    findall(RuleId,
+            generated_fragment_id(Rows, RuleId),
+            FragmentIds0),
+    sort(FragmentIds0, FragmentIds).
+
+generated_fragment_id(Rows, RuleId) :-
+    member(call(ref(kernel(head_arg)), [ref(RuleId) | _]), Rows).
+generated_fragment_id(Rows, RuleId) :-
+    member(call(ref(kernel(body)), [ref(RuleId) | _]), Rows).
+generated_fragment_id(Rows, RuleId) :-
+    member(call(ref(kernel(body_arg)), [ref(RuleId) | _]), Rows).
+
+generated_body_goal_pairs(Rows, Pairs) :-
+    findall(RuleId-GoalIndex,
+            member(call(ref(kernel(body)),
+                        [ref(RuleId), const(GoalIndex) | _]), Rows),
+            Pairs0),
+    sort(Pairs0, Pairs).
+
+generated_body_argument_pairs(Rows, Pairs) :-
+    findall(RuleId-GoalIndex,
+            member(call(ref(kernel(body_arg)),
+                        [ref(RuleId), const(GoalIndex) | _]), Rows),
+            Pairs0),
+    sort(Pairs0, Pairs).
 
 assemble_body(RuleId, Rows, Relations, Body, Diagnostics) :-
     findall(GoalIndex,
