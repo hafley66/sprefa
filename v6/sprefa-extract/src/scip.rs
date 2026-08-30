@@ -616,9 +616,9 @@ struct DocKey {
 }
 
 fn path_digest(path: &str) -> u64 {
-    use std::hash::{BuildHasher, Hasher};
-    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-    hasher.write(path.as_bytes());
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut hasher);
     hasher.finish()
 }
 
