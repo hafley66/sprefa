@@ -1101,11 +1101,13 @@ pub(crate) struct ModuleTarget {
 }
 
 impl ModuleTarget {
+    /// `crate::a::b` is anchored at the crate root: root ++ suffix EXACTLY,
+    /// so `crate::tests` never also names `src/context/tests.rs`.
     pub(crate) fn covers(&self, candidate: &[String]) -> bool {
         if let Some(root) = &self.crate_root {
-            if !candidate.starts_with(&module_segments(root)) {
-                return false;
-            }
+            let mut anchored = module_segments(root);
+            anchored.extend(self.suffix.iter().cloned());
+            return candidate == anchored.as_slice();
         }
         candidate.ends_with(&self.suffix)
     }
@@ -1302,9 +1304,9 @@ impl Resolve<CallF> for RustSource {
                     _ => None,
                 });
             let recv_t = recv_named.as_ref().and_then(|ty| {
-                modules.and_then(|m| m.impl_target(ty, callee)).map(
-                    |(blob, span)| (blob, span, CallEdgeKind::NameResolve),
-                )
+                modules
+                    .and_then(|m| m.impl_target(ty, callee, own_path))
+                    .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
             });
             // The receiver's type was SEEN in scope (even if no impl binds).
             let recv_known = call.aux.receivers.iter().any(|r| {
@@ -1316,9 +1318,16 @@ impl Resolve<CallF> for RustSource {
             // own method-owner rows.
             let assoc_t = (qualifier.is_none() && recv_named.is_none()).then_some(()).and_then(
                 |()| assoc_path_type(site.callee_path.map(|id| output.strings.lookup(id))).and_then(|ty| {
-                    modules.and_then(|m| m.impl_target(&ty, callee)).map(
-                        |(blob, span)| (blob, span, CallEdgeKind::NameResolve),
-                    )
+                    modules
+                        .and_then(|m| m.impl_target(&ty, callee, own_path))
+                        .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                        // 0 impls and a variant of the enum: the path names
+                        // the enum itself.
+                        .or_else(|| {
+                            modules.and_then(|m| m.variant_ctor_target(&ty, callee)).map(
+                                |(blob, span)| (blob, span, CallEdgeKind::NameResolve),
+                            )
+                        })
                 }),
             );
             let self_t = (qualifier.is_none()
@@ -1336,9 +1345,9 @@ impl Resolve<CallF> for RustSource {
             .then_some(())
             .and_then(|()| self_impl_type(call, &output.strings, caller))
             .and_then(|ty| {
-                modules.and_then(|m| m.impl_target(&ty, callee)).map(
-                    |(blob, span)| (blob, span, CallEdgeKind::NameResolve),
-                )
+                modules
+                    .and_then(|m| m.impl_target(&ty, callee, own_path))
+                    .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
             });
             let name_t: Option<(ContentId, Span, CallEdgeKind)> = if let Some(t) = recv_t {
                 Some(t)
@@ -1348,14 +1357,26 @@ impl Resolve<CallF> for RustSource {
                 None
             } else {
                 match (qualifier, own_path, paths) {
-                    (Some(qualifier), Some(from), Some(paths)) => RustSource::call_name_match_in_module(
-                        def_index,
-                        paths,
-                        from,
-                        &qualifier,
-                        callee,
-                    )
-                    .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve)),
+                    (Some(qualifier), Some(from), Some(paths)) => {
+                        let segments: Vec<String> =
+                            qualifier.iter().map(|segment| segment.to_string()).collect();
+                        match modules
+                            .map(|m| m.module_call(from, &segments, callee))
+                            .unwrap_or(crate::lang::rust_modules::ModuleCallTarget::Miss)
+                        {
+                            crate::lang::rust_modules::ModuleCallTarget::Target(blob, span) => {
+                                Some((blob, span, CallEdgeKind::NameResolve))
+                            }
+                            _ => RustSource::call_name_match_in_module(
+                                def_index,
+                                paths,
+                                from,
+                                &qualifier,
+                                callee,
+                            )
+                            .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve)),
+                        }
+                    }
                     _ => assoc_t
                         .or(self_t)
                         .or_else(|| {
@@ -1411,6 +1432,12 @@ impl Resolve<CallF> for RustSource {
 
 /// One `unresolved` row per site the `Resolve<CallF>` pass dropped. The reason
 /// reads the corpus def count for the callee's name: none, or more than one.
+/// std::prelude::v1's callable items: a bare name here is never a corpus
+/// reference, so its drop says `external`.
+const PRELUDE_ITEMS: &[&str] = &[
+    "Box", "Err", "Ok", "Option", "Result", "Some", "String", "Vec", "drop", "format",
+];
+
 pub fn call_drops(
     output: &ExtractOutput,
     cx: &ProjectCx,
@@ -1419,6 +1446,11 @@ pub fn call_drops(
     let (Some(call), Some(def_index)) = (&output.call, cx.indexes.def_index.get()) else {
         return Vec::new();
     };
+    let modules = cx.indexes.rust_modules.get();
+    let own_path = own_file_blob(output, def_index)
+        .as_ref()
+        .zip(cx.indexes.paths.get())
+        .and_then(|(blob, paths)| paths.get(blob));
     let bound: BTreeSet<(u32, u32)> = edges
         .iter()
         .filter_map(|edge| edge.call_site.map(|span| (span.start, span.end())))
@@ -1436,8 +1468,29 @@ pub fn call_drops(
         .filter(|site| !bound.contains(&(site.span.start, site.span.end())))
         .map(|site| {
             let callee = output.strings.lookup(site.callee);
+            let qualifier = site
+                .callee_path
+                .map(|id| output.strings.lookup(id))
+                .and_then(|path| module_qualifier(path));
+            let external_prefix =
+                qualifier
+                    .as_ref()
+                    .zip(own_path)
+                    .and_then(|(qualifier, from)| {
+                        let segments: Vec<String> =
+                            qualifier.iter().map(|segment| segment.to_string()).collect();
+                        matches!(
+                            modules.map(|m| m.module_call(from, &segments, callee)),
+                            Some(crate::lang::rust_modules::ModuleCallTarget::External)
+                        )
+                        .then_some(())
+                    });
             let reason = if inferred.contains(&(site.span.start, site.span.end())) {
                 UnresolvedReason::Inferred
+            } else if external_prefix.is_some()
+                || (qualifier.is_none() && PRELUDE_ITEMS.contains(&callee))
+            {
+                UnresolvedReason::External
             } else if corpus_defs(def_index, callee).is_empty() {
                 UnresolvedReason::NoCorpusDef
             } else {
