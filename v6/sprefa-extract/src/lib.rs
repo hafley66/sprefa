@@ -92,8 +92,9 @@ pub use project::{
 pub use rename_cx::{RenameCx, RenameRequest};
 pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{
-    byte_range, copy_sources, definition_of, join_documents, site_occurrence, Fallback,
-    IndexerSpec, ScipClang, ScipGo, ScipJava, ScipPython, ScipRust, ScipTypescript, Staging,
+    byte_range, byte_range_cached, copy_sources, definition_of, join_documents, site_occurrence,
+    Fallback, IndexerSpec, ScipClang, ScipGo, ScipJava, ScipPython, ScipRust, ScipTypescript,
+    Staging,
 };
 pub use scip_ensure::{
     default_cache_dir, detect, ensure_index, ensure_index_for_set, external_cache_dir,

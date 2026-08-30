@@ -494,6 +494,51 @@ pub fn byte_range(content: &[u8], range: [i32; 4], encoding: PositionEncoding) -
     byte_range_at(content, &LineTable::build(content), range, encoding)
 }
 
+/// (content address, len, head bytes) -> the shared line table. The resolve
+/// arms convert one def range per call site against the same def document's
+/// bytes, so the table is built once per buffer, never per call. Keyed like
+/// `DocKey`: within one process a freed buffer's address can be reused by a
+/// later allocation, so len and the head bytes ride the key to keep a stale
+/// entry from answering for different content.
+#[derive(Hash, PartialEq, Eq)]
+struct LineKey {
+    content: usize,
+    len: usize,
+    head: u64,
+}
+
+fn content_head(content: &[u8]) -> u64 {
+    let mut head = [0u8; 8];
+    let n = content.len().min(8);
+    head[..n].copy_from_slice(&content[..n]);
+    u64::from_le_bytes(head)
+}
+
+static LINE_TABLES: Mutex<Option<HashMap<LineKey, Arc<LineTable>>>> = Mutex::new(None);
+
+/// The cached-content form of `byte_range`: same answer, one line table per
+/// distinct buffer instead of one per call.
+pub fn byte_range_cached(
+    content: &[u8],
+    range: [i32; 4],
+    encoding: PositionEncoding,
+) -> Option<Span> {
+    let key = LineKey {
+        content: content.as_ptr() as usize,
+        len: content.len(),
+        head: content_head(content),
+    };
+    let table = {
+        let mut guard = LINE_TABLES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard
+            .get_or_insert_with(HashMap::new)
+            .entry(key)
+            .or_insert_with(|| Arc::new(LineTable::build(content)))
+            .clone()
+    };
+    byte_range_at(content, &table, range, encoding)
+}
+
 /// Byte offset of each 0-based line start, with the document end as the final
 /// entry. One per document, never one per range.
 pub struct LineTable {

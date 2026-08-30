@@ -30,7 +30,7 @@ use crate::family::{
     SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
+use crate::scip::{byte_range_cached, definition_of, join_documents, site_occurrence};
 use crate::seams::{
     containing_def_site_in, corpus_defs, covering_def, def_named, own_blob, DefIndex, DefSite,
     ParseError, Parser, Project, Resolve,
@@ -3723,7 +3723,7 @@ fn scip_call_target<'a>(
     let (def_doc_ix, def_range) = definition_of(index, doc_ix, occ)?;
     let def_doc = &index.documents[def_doc_ix];
     let (def_blob, def_content) = joined[def_doc_ix].as_ref()?;
-    let ident = byte_range(def_content, def_range, def_doc.position_encoding)?;
+    let ident = byte_range_cached(def_content, def_range, def_doc.position_encoding)?;
     let (name, def_site) = containing_ts_def(def_index, def_blob.clone(), ident)?;
     Some((def_blob.clone(), def_site.span, name))
 }
