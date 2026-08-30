@@ -829,11 +829,18 @@ fn resolve_type_dst(
             return Some(found);
         }
     }
-    if let Some(found) = import_bound_target(modules, own_path, name) {
+    if let Some(found) = modules.zip(own_path).and_then(|(m, from)| m.type_target(from, name)) {
         return Some(found);
     }
-    let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
-    match sites {
+    // Type declarations first: a call-plane def sharing the name (an enum
+    // variant, a fn) must not make the corpus-unique pick ambiguous.
+    let declared: Vec<&DefSite> = index
+        .map(|index| corpus_defs(index, name))
+        .unwrap_or(&[])
+        .iter()
+        .filter(|site| site.family == FamilyTag::Type)
+        .collect();
+    match declared.as_slice() {
         [only] => Some((only.blob.clone(), only.span)),
         _ => None,
     }
@@ -930,6 +937,17 @@ fn same_file_call_match(
     let call = output.call.as_ref()?;
     let r = def_named(call, &output.strings, callee)?;
     let span = call.node(r).span;
+    // Every def spliced out of one macro expansion carries the macro call's
+    // span, so a span several names share cannot name one target.
+    let shared = call.nodes.iter().any(|node| {
+        node.span == span
+            && node
+                .name
+                .is_some_and(|id| output.strings.lookup(id) != callee)
+    });
+    if shared {
+        return None;
+    }
     // The span join must land on THIS file's DefSite: a byte-identical
     // (name, span) def can exist in two files.
     let blob = own?;
@@ -1588,6 +1606,13 @@ pub(crate) fn def_span(
     }
 }
 
+/// One enum variant's def span, the ident alone. None unless the span covers
+/// exactly the ident: wider is an mbe-expanded variant reporting the macro call.
+pub(crate) fn variant_def_span(line_starts: &[u32], variant: &syn::Variant) -> Option<Span> {
+    let span = syn_span(line_starts, variant.ident.span());
+    (span.len as usize == variant.ident.to_string().len()).then_some(span)
+}
+
 /// Descends inline `mod name { .. }`: the SITE half walks the whole file, so a
 /// callable declared in one needs a def or the file reports uses without them.
 fn call_defs_in_items(
@@ -1654,6 +1679,17 @@ fn call_defs_in_items(
                             syn::visit::visit_block(defs, block);
                         }
                     }
+                }
+            }
+            // A variant constructor is a call target in every rust call oracle:
+            // `Alpha::First(3)` names `First`, never `Alpha`.
+            syn::Item::Enum(e) => {
+                for variant in &e.variants {
+                    let Some(span) = variant_def_span(line_starts, variant) else {
+                        continue;
+                    };
+                    defs.push(span, Some(variant.ident.to_string()), CallKind::Free);
+                    note(span, scopes);
                 }
             }
             syn::Item::Mod(m) => {

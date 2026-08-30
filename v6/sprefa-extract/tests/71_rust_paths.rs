@@ -10,7 +10,7 @@
 //! SABOTAGE RECEIPT (fail-pre-fix, whole file, 6 of 7 red): the edge asserts
 //! panicked `assertion failed` (`inherent_impl_beats_trait_impl`,
 //! `trait_impl_binds_only_when_the_trait_is_in_scope`,
-//! `variant_constructor_binds_the_enum_def`,
+//! `variant_constructor_binds_the_variant_def`,
 //! `prelude_trait_counts_as_in_scope`,
 //! `module_qualified_prefixes_bind_the_declared_module`) and
 //! `external_module_prefixes_drop_external` failed its reason asserts; only
@@ -147,14 +147,16 @@ fn prelude_trait_counts_as_in_scope() {
 }
 
 /// HEAD: Alpha::First(3) drops `no_corpus_def` (no fn named First exists);
-/// First is a variant of the corpus enum Alpha, so the call binds the enum.
+/// First is a variant of the corpus enum Alpha, so the call binds it. The
+/// callee NAME moved from the enum to the variant with `76_rust_variant_names`
+/// (the ra_ap_ide oracle spells the edge `First`).
 #[test]
-fn variant_constructor_binds_the_enum_def() {
+fn variant_constructor_binds_the_variant_def() {
     assert!(
         edges().iter().any(|(caller, callee, stem)| {
-            caller == "alpha_user" && callee == "Alpha" && stem == "alpha"
+            caller == "alpha_user" && callee == "First" && stem == "alpha"
         }),
-        "Alpha::First(3) must bind the enum def in alpha.rs"
+        "Alpha::First(3) must bind the First variant in alpha.rs"
     );
 }
 
