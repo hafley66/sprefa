@@ -7,6 +7,6 @@ go	module	go.oracle.module.tsv	100.00	15.18	2927	692	98f9cac1f
 go	type	go.oracle.type.typedecl.tsv	73.37	97.04	2927	692	98f9cac1f
 rust	call	rust.oracle.call.tsv	67.56	33.68	960	664	854be0be3
 rust	type	rust.oracle.type.typedecl.tsv	26.18	74.13	1080	623	73bdb1337
-ts5	call	ts.codeql2.call.tsv	88.64	66.53	901	490	73bdb1337
-ts5	call	ts5.oracle.call.tsv	84.88	71.16	901	490	73bdb1337
+ts5	call	ts.codeql2.call.tsv	92.07	71.15	989	500	6c33cefc4
+ts5	call	ts5.oracle.call.tsv	88.20	76.13	989	500	6c33cefc4
 ts5	module	ts.madge.module.tsv	50.57	32.85	901	490	73bdb1337
