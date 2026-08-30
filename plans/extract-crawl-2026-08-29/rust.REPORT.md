@@ -1286,3 +1286,46 @@ ceiling as class 5, and only corpus traits bind.
 (the section 19 throughput flake did not reproduce).
 `RATCHET_BUMP=1 just extract-ratchet` green; rust call recall floor
 67.56 -> 68.56, rust type 26.18 -> 26.27, wall floor 960 -> 579 ms.
+
+## 21. The trait blob, lane `fix-extract-rust-trait-blob`
+
+Defect: `trait_fn_target` looked up `self.trait_fns[trait_name]` (bare trait
+name key), found the entry whose fn name matched, and returned
+`(sites[0].0, matched.span)` — the FIRST entry's blob with ANOTHER entry's
+span. 139 of 390 trait names in the rust-analyzer corpus are declared in more
+than one file, so those edges landed in the wrong file. `trait_impl_target`
+and `trait_default_target` carried the same bare-name key.
+
+### 21.1 Fix
+
+`trait_fns` entries are now `TraitFnSite { blob, fn_name, span, default }`.
+All three target fns take `caller: Option<&str>` and resolve a trait name
+declared by several files as: the caller's own file, else the file the
+caller's `use` of the name binds (`explicit_binding`), else unbound
+(`unresolved{reason}`, never a guess). `trait_impl_target` keeps the
+2+-remaining-unbound rule after the caller filter.
+
+### 21.2 Numbers (single process, 873 files, rust-analyzer crates)
+
+| leg | before | after |
+|---|---|---|
+| call vs `rust.oracle.call.tsv` recall | 70.23 | 70.31 |
+| call vs `rust.oracle.call.tsv` precision | 43.32 | 43.35 |
+| call vs `rust.scip_override.call.tsv` recall | 78.75 | 78.76 |
+| call vs `rust.scip_override.call.tsv` precision | 42.44 | 42.44 |
+
+Edge movement (before run at base vs after, same normal form):
+5 edges changed `dst_path`, 19 edges appeared (previously unbound
+`(trait, fn)` pairs that now bind per caller), 7 disappeared (previously
+wrongly bound). `RATCHET_BUMP=1 just extract-ratchet` rust rows bumped:
+70.31/43.35, 78.76/42.44, 26.27/74.20; wall 547 ms, RSS 653 MB. The first
+bump run wrote wall 613 ms and FAILED the +15% tolerance; three isolated
+reruns read 564/553/550/547 ms, all `ok`, so the FAIL was a wall-ratio flake
+and the committed floor is the isolated median.
+
+### 21.3 Gate
+
+Fixture `tests/fixtures/rust_findings/trait_blob/` (`a.rs` and `b.rs` each
+declare `trait Shape` with a default `area`; `a.rs` also impls it), test
+`tests/75_rust_trait_blob.rs` red at HEAD with `got [("f", "a.rs"),
+("g", "a.rs")]`, green after the fix.

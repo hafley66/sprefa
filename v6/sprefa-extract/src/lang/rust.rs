@@ -1313,11 +1313,11 @@ impl Resolve<CallF> for RustSource {
                             .or_else(|| {
                                 m.is_trait(ty)
                                     .then_some(())
-                                    .and_then(|()| m.trait_fn_target(ty, callee))
+                                    .and_then(|()| m.trait_fn_target(ty, callee, own_path))
                             })
                             // No impl defines the method; a trait the type
                             // implements provides a default body (class 4).
-                            .or_else(|| m.trait_default_target(ty, callee))
+                            .or_else(|| m.trait_default_target(ty, callee, own_path))
                     })
                     .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
             });
@@ -1348,9 +1348,9 @@ impl Resolve<CallF> for RustSource {
                                 // override (class 8's zero-impl arm).
                                 .or_else(|| {
                                     modules.and_then(|m| {
-                                        m.trait_impl_target(&ty, callee)
-                                            .or_else(|| m.trait_fn_target(&ty, callee))
-                                            .or_else(|| m.trait_default_target(&ty, callee))
+                                        m.trait_impl_target(&ty, callee, own_path)
+                                            .or_else(|| m.trait_fn_target(&ty, callee, own_path))
+                                            .or_else(|| m.trait_default_target(&ty, callee, own_path))
                                             .map(|(blob, span)| {
                                                 (blob, span, CallEdgeKind::NameResolve)
                                             })
