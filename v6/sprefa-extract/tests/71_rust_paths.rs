@@ -30,6 +30,7 @@ const CRATE_B: &str = "tests/fixtures/rust_findings/paths3/crate_b/src";
 const FILES: &[&str] = &[
     "{CRATE_A}/lib.rs",
     "{CRATE_A}/alpha.rs",
+    "{CRATE_A}/cycle.rs",
     "{CRATE_A}/gadget.rs",
     "{CRATE_A}/gem.rs",
     "{CRATE_A}/helpers.rs",
@@ -184,5 +185,19 @@ fn external_module_prefixes_drop_external() {
     assert!(
         rows.iter().any(|(detail, reason)| detail == "mem::replace" && reason == "external"),
         "{rows:?}"
+    );
+}
+
+/// HEAD (pre-guard): the `use alpha as beta; use beta as alpha;` pair in
+/// cycle.rs sent bound_home -> resolve_qualified -> home_file around forever
+/// and the extract binary died with `fatal runtime error: stack overflow`
+/// (reproduced on the whole rust-analyzer corpus, rc=134). The run must
+/// complete and the cycle-bound name must simply stay unresolved.
+#[test]
+fn use_binding_cycles_terminate() {
+    let rows = drops();
+    assert!(
+        rows.iter().any(|(detail, _)| detail == "deep"),
+        "deep binds through nothing, so it must drop"
     );
 }

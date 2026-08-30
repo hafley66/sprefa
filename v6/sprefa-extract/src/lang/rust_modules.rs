@@ -604,7 +604,8 @@ impl RustModuleIndex {
         };
         let mut stack = Vec::new();
         let resolution =
-            self.resolve_qualified(path, &binding.qualifier, &binding.asked, &mut stack).0;
+            self.resolve_qualified(path, &binding.qualifier, &binding.asked, &mut stack, &mut Vec::new())
+                .0;
         self.finish(local, &binding.asked, resolution)
     }
 
@@ -685,13 +686,14 @@ impl RustModuleIndex {
         qualifier: &[String],
         asked: &str,
         stack: &mut Vec<String>,
+        seen: &mut Vec<String>,
     ) -> (Resolution, bool) {
         let mut full = qualifier.to_vec();
         full.push(asked.to_string());
-        if let HomeFile::Unique(file) = self.home_file(from, &full) {
+        if let HomeFile::Unique(file) = self.home_file(from, &full, seen) {
             return (Resolution::Module { file, hops: 1 }, true);
         }
-        match self.home_file(from, qualifier) {
+        match self.home_file(from, qualifier, seen) {
             HomeFile::Unique(file) => self.resolve_in_module(&file, asked, stack),
             HomeFile::None | HomeFile::External => (Resolution::None, true),
             HomeFile::Ambiguous => (Resolution::Ambiguous, true),
@@ -701,7 +703,7 @@ impl RustModuleIndex {
     /// A one-segment qualifier naming THIS file's own inline `mod` is a
     /// same-blob hit; a bare declared or `use`-bound head resolves relative
     /// to the caller; else a corpus-wide suffix search on the module path.
-    fn home_file(&self, from: &str, qualifier: &[String]) -> HomeFile {
+    fn home_file(&self, from: &str, qualifier: &[String], seen: &mut Vec<String>) -> HomeFile {
         if qualifier.is_empty() {
             return HomeFile::None;
         }
@@ -714,7 +716,7 @@ impl RustModuleIndex {
             if let Some(home) = self.declared_home(from, qualifier) {
                 return home;
             }
-            if let Some(home) = self.bound_home(from, qualifier) {
+            if let Some(home) = self.bound_home(from, qualifier, seen) {
                 return home;
             }
         }
@@ -776,15 +778,21 @@ impl RustModuleIndex {
 
     /// A bare head a `use` binding names; a binding from outside the crate
     /// naming no corpus module is External.
-    fn bound_home(&self, from: &str, qualifier: &[String]) -> Option<HomeFile> {
+    /// `seen` carries the binding heads already followed on this query: a
+    /// `use b::a; use a::b;` pair would otherwise recurse forever.
+    fn bound_home(&self, from: &str, qualifier: &[String], seen: &mut Vec<String>) -> Option<HomeFile> {
         let facts = self.facts.get(from)?;
         let binding = facts.uses.iter().find(|binding| binding.local == qualifier[0])?;
         if binding.qualifier.is_empty() && binding.asked == binding.local {
             return Some(HomeFile::External);
         }
+        if seen.iter().any(|head| head == &qualifier[0]) {
+            return None;
+        }
+        seen.push(qualifier[0].clone());
         let mut stack = Vec::new();
         let home = match self
-            .resolve_qualified(from, &binding.qualifier, &binding.asked, &mut stack)
+            .resolve_qualified(from, &binding.qualifier, &binding.asked, &mut stack, seen)
             .0
         {
             Resolution::Module { file, .. } => {
@@ -837,7 +845,7 @@ impl RustModuleIndex {
         {
             return ModuleCallTarget::External;
         }
-        match self.home_file(from, qualifier) {
+        match self.home_file(from, qualifier, &mut Vec::new()) {
             HomeFile::Unique(file) => {
                 let mut stack = Vec::new();
                 match self.resolve_in_module(&file, callee, &mut stack).0 {
@@ -895,7 +903,7 @@ impl RustModuleIndex {
                 continue;
             }
             let (sub, sub_complete) =
-                self.resolve_qualified(file, &reexport.qualifier, &reexport.asked, stack);
+                self.resolve_qualified(file, &reexport.qualifier, &reexport.asked, stack, &mut Vec::new());
             complete &= sub_complete;
             if let Some(found) = sub.promoted_option(ResolvedImportKind::Indirect) {
                 table.insert(reexport.local.clone(), found);
@@ -926,7 +934,7 @@ impl RustModuleIndex {
     ) -> ExportTable {
         let mut starred = ExportTable::new();
         for star in stars {
-            let HomeFile::Unique(target) = self.home_file(file, &star.qualifier) else {
+            let HomeFile::Unique(target) = self.home_file(file, &star.qualifier, &mut Vec::new()) else {
                 continue;
             };
             let (sub_table, sub_complete) = self.export_table(&target, stack);
