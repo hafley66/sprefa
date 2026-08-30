@@ -20,6 +20,7 @@ const FILES: &[&str] = &[
     "{SRC}/dog.rs",
     "{SRC}/robot.rs",
     "{SRC}/users.rs",
+    "{SRC}/ext.rs",
 ];
 
 fn run() -> Vec<Value> {
@@ -76,6 +77,26 @@ fn binds(caller: &str, callee: &str, stem: &str) -> bool {
     edges()
         .iter()
         .any(|(c, f, s)| c == caller && f == callee && s == stem)
+}
+
+/// (detail, reason) per unresolved call row.
+fn drops() -> Vec<(String, String)> {
+    run()
+        .iter()
+        .filter(|row| row["record"] == "unresolved" && row["family"] == "call")
+        .map(|row| (text(row, "detail"), text(row, "reason")))
+        .collect()
+}
+
+/// Class 11: `mem::take`'s prefix is a `use` binding to an external module,
+/// so the drop reads `external`, never `ambiguous`.
+#[test]
+fn external_module_qualified_prefix_drops_external() {
+    assert!(
+        drops().iter().any(|(detail, reason)| detail == "mem::take" && reason == "external"),
+        "{:?}",
+        drops()
+    );
 }
 
 /// Class 12: `Talk::level()` names a corpus trait; the call binds the
