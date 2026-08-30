@@ -1007,7 +1007,10 @@ impl RustModuleIndex {
                     _ => ModuleCallTarget::Miss,
                 }
             }
-            HomeFile::Ambiguous | HomeFile::None | HomeFile::External => ModuleCallTarget::Miss,
+            HomeFile::Ambiguous | HomeFile::None => ModuleCallTarget::Miss,
+            // The prefix's own home resolves outside the corpus (`use
+            // std::mem;` then `mem::take`): no name-match leg can bind.
+            HomeFile::External => ModuleCallTarget::External,
         }
     }
 
