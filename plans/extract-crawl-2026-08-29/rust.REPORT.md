@@ -1181,3 +1181,32 @@ whole-corpus rows were both measured on this lane.
 The oracle is `rust.oracle.call.tsv` (`ra_ap_ide`, 27,004 rows). `bench.py`
 prints its two ratios as recall and precision with `a` = ours; the rows above
 spell out which denominator each uses.
+
+## 19. The path classes, lane `fix-extract-rust-paths-3` (8, 11, 9, 7)
+
+### 19.1 What landed
+
+Three commits on top of the receiver pass: `384336ef2` (inherent-impl-beats-trait tiebreak in `impl_target`, trait-in-scope filter through the module plane, module-qualified prefix resolution `use`/`self::`/`super::`/`crate::`/sibling-file `mod`, variant-constructor binding for `T::Variant` with 0 impls), `1d4f516a4` (use-binding cycle guard in `home_file`), `0bd4442e5` (crawl-kinks test adjustment). Tests: `tests/71_rust_paths.rs`, 8 tests, all green. The reclaimed stash ("rust-paths-3 opus partial") hunk for `ModuleTarget::covers` crate-root anchoring was superseded by the committed prefix work; the rest of the stash was census instrumentation, re-derived here. Nothing from the untracked second-reclaim files survived: `tests/71_rust_paths.rs` and `tests/fixtures/rust_findings/paths3/` were already committed by agent 3.
+
+### 19.2 Receipt: one-process run, per-class census
+
+Universe: section 18's, 873 `crates/*/src` files of rust-analyzer `af4111f`, one process, `--resolve --family call,type`, wall **2.06s / 1.82s / 2.39s** over three runs (section 18 measured 3.01s at #576).
+
+`ambiguous` call drops: **13,532 -> 11,628**. Oracle overlap (`bench.py` vs `rust.oracle.call.tsv`, 27,004 rows): **18,243 -> 18,296**.
+
+Census method: the section-18 throwaway tag rebuilt (`#recv=<T>#impls=<n>` on receiver drops, `#ty=<T>#impls=<n>` on path drops), classified by `rust.paths3.census.py` (committed beside this file; the tag patch reverted before commit). Corpus struct/enum/trait/alias tables from the same 873 files; test-module stub decls (`pub struct Arc;` in test mods) add some noise to class 8/10, so the before/after per-class numbers carry that caveat.
+
+| # | class | before (18.2) | after | note |
+|---|---|---:|---:|---|
+| 8 | `T::f()`, T corpus struct/enum, 0 or 2+ corpus impls | 1,366 | 1,145 | variant ctors bind; inherent/trait tiebreak |
+| 11 | module-qualified `mod::f()` | 1,367 | 1,207 | prefixes through the module plane |
+| 9 | free fn / bare name / struct literal | 1,178 | 431 | glob leg + use bindings + prelude |
+| 7 | named receiver, 2+ corpus impls | 815 | 194 | trait-in-scope tiebreak; the rest are external receivers (now class 3a/3b) |
+| 10 | T external or alias | 1,977 | 1,765 | ceiling class, no correct corpus edge |
+| 3a/3b/5 | receiver external/alias/external-trait | 6,053 | 6,881 | grew because class 7's external receivers reclassify here |
+
+The class 7 shrink is the headline: 621 of its 815 rows named a receiver whose type has exactly one in-scope trait impl or one inherent impl, and those bind now; the remaining 194 are 2+ survivors after the tiebreak, which stay `ambiguous` by rule.
+
+### 19.3 Gate
+
+`cargo test --features cli --no-fail-fast`: 103 test binaries ok, 1 failure, `tests/45_emit_throughput.rs` `emit_throughput_350k_rows_under_budget` (piped emission 5.74-6.6s vs a 5.5s wall budget). Rerun 3x isolated, same outcome. The test exercises the JSONL emission path, which this lane's files (`rust.rs`, `rust_modules.rs`, `rust_receivers.rs`) do not touch; the run is borderline against the budget and sensitive to ambient machine load.

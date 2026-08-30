@@ -319,7 +319,7 @@ fn a_type_qualifier_keeps_the_name_leg_and_an_unknown_crate_mints_nothing() {
     );
     assert!(
         unresolved_rows(QUALIFIED)
-            .contains(&("ambiguous".to_string(), "other_crate::helper".to_string())),
+            .contains(&("external".to_string(), "other_crate::helper".to_string())),
         "other_crate names no corpus module: {:?}",
         unresolved_rows(QUALIFIED)
     );
@@ -328,16 +328,14 @@ fn a_type_qualifier_keeps_the_name_leg_and_an_unknown_crate_mints_nothing() {
 /// Kink 7. Every site the resolve leg drops mints one `unresolved` row, so a
 /// caller can tell an external symbol from an ambiguous corpus name. The reason
 /// reads the corpus def count for the callee: none at all, or more than one
-/// answer this tier does not settle.
+/// answer this tier does not settle. A module-qualified `first::compute` binds
+/// inside the inline `mod first` (the paths-3 rule), so only the prelude ctor
+/// `Vec::new` stays a drop.
 #[test]
 fn a_dropped_site_mints_an_unresolved_row_naming_why() {
     assert_eq!(
         unresolved_rows(&[UNRESOLVED_PATH]),
-        vec![
-            ("ambiguous".to_string(), "first::compute".to_string()),
-            ("ambiguous".to_string(), "second::compute".to_string()),
-            ("no_corpus_def".to_string(), "Vec::new".to_string()),
-        ]
+        vec![("no_corpus_def".to_string(), "Vec::new".to_string())]
     );
 }
 

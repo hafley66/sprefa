@@ -55,6 +55,9 @@ pub struct RustModuleFacts {
     /// Every impl block's (self type, fn name, fn def span), for the corpus
     /// receiver leg's (T, m) table.
     impls: Vec<ImplEntry>,
+    /// Every enum's (name, variant names): a `T::f()` whose `f` is a variant
+    /// of corpus enum `T` names the enum, not a method.
+    enums: Vec<(String, Vec<String>)>,
 }
 
 /// `None` for a non-`.rs` path or a parse that fails: the plane then simply
@@ -91,6 +94,14 @@ fn collect(items: &[syn::Item], facts: &mut RustModuleFacts) {
                     facts.mod_decls.push((name, path_attr));
                 }
             },
+            syn::Item::Enum(enum_item) => {
+                let variants = enum_item
+                    .variants
+                    .iter()
+                    .map(|variant| variant.ident.to_string())
+                    .collect();
+                facts.enums.push((enum_item.ident.to_string(), variants));
+            }
             _ => {}
         }
     }
@@ -180,6 +191,36 @@ fn normalize_join(dir: &str, literal: &str) -> String {
 
 // ── the module plane proper ──────────────────────────────────────────────────
 
+/// std::prelude::v1's trait set: in scope in every module without an import.
+const PRELUDE_TRAITS: &[&str] = &[
+    "AsMut",
+    "AsRef",
+    "Clone",
+    "Copy",
+    "Default",
+    "DoubleEndedIterator",
+    "Drop",
+    "Eq",
+    "ExactSizeIterator",
+    "Extend",
+    "From",
+    "Fn",
+    "FnMut",
+    "FnOnce",
+    "Into",
+    "IntoIterator",
+    "Iterator",
+    "Ord",
+    "PartialEq",
+    "PartialOrd",
+    "Send",
+    "Sized",
+    "Sync",
+    "ToOwned",
+    "ToString",
+    "Unpin",
+];
+
 /// How an import binding reached its target. Rust has no `default` export
 /// form, so this arm's wire vocabulary stops at four values.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -238,11 +279,13 @@ pub struct ImportRow {
 }
 
 /// One qualifier's home file: the corpus file whose module path IS it.
-/// `Ambiguous` when 2+ files tie (the kink-4 discipline).
+/// `Ambiguous` when 2+ files tie (the kink-4 discipline), `External` when the
+/// qualifier names a module no corpus file spells (an external crate).
 enum HomeFile {
     Unique(String),
     None,
     Ambiguous,
+    External,
 }
 
 /// One name's resolution inside a module: a declaration, a whole submodule
@@ -308,6 +351,15 @@ fn same_target(a: &Resolution, b: &Resolution) -> bool {
     }
 }
 
+/// The outcome of a module-qualified call's prefix resolution.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ModuleCallTarget {
+    Target(ContentId, Span),
+    /// The prefix names a module no corpus file spells: an external crate.
+    External,
+    Miss,
+}
+
 /// THE corpus Rust module plane, built ONCE per refresh in `resolve_project`.
 #[derive(Default)]
 pub struct RustModuleIndex {
@@ -327,9 +379,20 @@ pub struct RustModuleIndex {
     /// file -> its WHOLE local scope (the export table plus non-reexport
     /// globs), for a bare name with no explicit `use` in the SAME file.
     scope_tables: Mutex<HashMap<String, std::sync::Arc<ExportTable>>>,
-    /// (self type, fn name) -> the ONE corpus def site the impl block names.
-    /// 2+ impls of the same pair is the ambiguity this table declines.
-    impl_methods: HashMap<(String, String), Vec<(ContentId, Span)>>,
+    /// (self type, fn name) -> every corpus impl site of the pair, with the
+    /// impl's trait name where the block is `impl Trait for T`.
+    impl_methods: HashMap<(String, String), Vec<ImplMethodTarget>>,
+    /// (enum name, variant name) -> declaring file paths.
+    enum_variants: HashMap<(String, String), Vec<String>>,
+}
+
+/// One corpus impl site of a (self type, fn name) pair. `trait_name` is None
+/// for an inherent `impl T`.
+#[derive(Clone, Debug)]
+pub(crate) struct ImplMethodTarget {
+    pub(crate) blob: ContentId,
+    pub(crate) span: Span,
+    pub(crate) trait_name: Option<String>,
 }
 
 type ExportTable = HashMap<String, Resolution>;
@@ -390,7 +453,20 @@ impl RustModuleIndex {
                         .impl_methods
                         .entry((entry.self_type.clone(), name.clone()))
                         .or_default()
-                        .push((blob.clone(), *span));
+                        .push(ImplMethodTarget {
+                            blob: blob.clone(),
+                            span: *span,
+                            trait_name: entry.trait_name.clone(),
+                        });
+                }
+            }
+            for (name, variants) in &facts.enums {
+                for variant in variants {
+                    index
+                        .enum_variants
+                        .entry((name.clone(), variant.clone()))
+                        .or_default()
+                        .push(path.clone());
                 }
             }
         }
@@ -398,13 +474,88 @@ impl RustModuleIndex {
         index
     }
 
-    /// The ONE def site an impl block names for (self type, fn); 2+ corpus
-    /// impls of the pair is an ambiguity this tier does not settle.
-    pub(crate) fn impl_target(&self, self_type: &str, method: &str) -> Option<(ContentId, Span)> {
-        match self.impl_methods.get(&(self_type.to_string(), method.to_string()))?.as_slice() {
-            [only] => Some(only.clone()),
-            _ => None,
+    /// The ONE def site an impl block names for (self type, fn); 2+ settle by
+    /// inherent-beats-trait with the trait-in-scope filter.
+    pub(crate) fn impl_target(
+        &self,
+        self_type: &str,
+        method: &str,
+        caller: Option<&str>,
+    ) -> Option<(ContentId, Span)> {
+        let sites = self
+            .impl_methods
+            .get(&(self_type.to_string(), method.to_string()))?
+            .as_slice();
+        let pick = |site: &ImplMethodTarget| Some((site.blob.clone(), site.span));
+        match sites {
+            [only] => pick(only),
+            many => {
+                let inherent: Vec<&ImplMethodTarget> =
+                    many.iter().filter(|site| site.trait_name.is_none()).collect();
+                match inherent.as_slice() {
+                    [one] => pick(one),
+                    [] => {
+                        let caller = caller?;
+                        let survivors: Vec<&ImplMethodTarget> = many
+                            .iter()
+                            .filter(|site| {
+                                site.trait_name
+                                    .as_deref()
+                                    .is_some_and(|trait_name| self.trait_in_scope(caller, trait_name))
+                            })
+                            .collect();
+                        match survivors.as_slice() {
+                            [one] => pick(one),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
         }
+    }
+
+    /// A trait's presence in the caller's scope: prelude, explicit `use`
+    /// (even an external trait), or the scope table's globs and locals.
+    fn trait_in_scope(&self, caller: &str, trait_name: &str) -> bool {
+        if PRELUDE_TRAITS.contains(&trait_name) {
+            return true;
+        }
+        let Some(facts) = self.facts.get(caller) else {
+            return false;
+        };
+        if facts.uses.iter().any(|binding| binding.local == trait_name) {
+            return true;
+        }
+        let mut stack = Vec::new();
+        !matches!(
+            self.wildcard_scope(caller, trait_name, &mut stack),
+            Resolution::None
+        )
+    }
+
+    /// The enum def a `T::f` constructor names when `f` is a variant of
+    /// exactly one corpus enum `T`: the call binds the enum, not a method.
+    pub(crate) fn variant_ctor_target(
+        &self,
+        type_name: &str,
+        variant: &str,
+    ) -> Option<(ContentId, Span)> {
+        let [only] = self
+            .enum_variants
+            .get(&(type_name.to_string(), variant.to_string()))?
+            .as_slice()
+        else {
+            return None;
+        };
+        let blob = self.blobs.get(only)?;
+        let span = self
+            .defs
+            .get(blob)?
+            .iter()
+            .find(|(_, name, _)| name == type_name)
+            .map(|(span, _, _)| *span)?;
+        Some((blob.clone(), span))
     }
 
     /// Every `use` binding `path` writes, resolved; an ambiguous or
@@ -453,7 +604,8 @@ impl RustModuleIndex {
         };
         let mut stack = Vec::new();
         let resolution =
-            self.resolve_qualified(path, &binding.qualifier, &binding.asked, &mut stack).0;
+            self.resolve_qualified(path, &binding.qualifier, &binding.asked, &mut stack, &mut Vec::new())
+                .0;
         self.finish(local, &binding.asked, resolution)
     }
 
@@ -534,28 +686,38 @@ impl RustModuleIndex {
         qualifier: &[String],
         asked: &str,
         stack: &mut Vec<String>,
+        seen: &mut Vec<String>,
     ) -> (Resolution, bool) {
         let mut full = qualifier.to_vec();
         full.push(asked.to_string());
-        if let HomeFile::Unique(file) = self.home_file(from, &full) {
+        if let HomeFile::Unique(file) = self.home_file(from, &full, seen) {
             return (Resolution::Module { file, hops: 1 }, true);
         }
-        match self.home_file(from, qualifier) {
+        match self.home_file(from, qualifier, seen) {
             HomeFile::Unique(file) => self.resolve_in_module(&file, asked, stack),
-            HomeFile::None => (Resolution::None, true),
+            HomeFile::None | HomeFile::External => (Resolution::None, true),
             HomeFile::Ambiguous => (Resolution::Ambiguous, true),
         }
     }
 
     /// A one-segment qualifier naming THIS file's own inline `mod` is a
-    /// same-blob hit; else a corpus-wide suffix search on the module path.
-    fn home_file(&self, from: &str, qualifier: &[String]) -> HomeFile {
+    /// same-blob hit; a bare declared or `use`-bound head resolves relative
+    /// to the caller; else a corpus-wide suffix search on the module path.
+    fn home_file(&self, from: &str, qualifier: &[String], seen: &mut Vec<String>) -> HomeFile {
         if qualifier.is_empty() {
             return HomeFile::None;
         }
         if let [only] = qualifier {
             if self.facts.get(from).is_some_and(|facts| facts.inline_mods.contains(only)) {
                 return HomeFile::Unique(from.to_string());
+            }
+        }
+        if !matches!(qualifier[0].as_str(), "crate" | "self" | "super") {
+            if let Some(home) = self.declared_home(from, qualifier) {
+                return home;
+            }
+            if let Some(home) = self.bound_home(from, qualifier, seen) {
+                return home;
             }
         }
         let refs: Vec<&str> = qualifier.iter().map(String::as_str).collect();
@@ -582,6 +744,116 @@ impl RustModuleIndex {
             [] => HomeFile::None,
             [only] => HomeFile::Unique((*only).clone()),
             _ => HomeFile::Ambiguous,
+        }
+    }
+
+    /// The files whose module path IS `full`, settled by the kink-4 rule.
+    fn exact_module(&self, full: &[String]) -> HomeFile {
+        let hits: Vec<&String> = self
+            .module_paths
+            .iter()
+            .filter(|(_, segments)| segments.as_slice() == full)
+            .map(|(path, _)| path)
+            .collect();
+        match hits.as_slice() {
+            [] => HomeFile::None,
+            [only] => HomeFile::Unique((*only).clone()),
+            _ => HomeFile::Ambiguous,
+        }
+    }
+
+    /// A bare head the caller's own file declares (`mod x;`): the module path
+    /// is the caller's own path extended by the qualifier.
+    fn declared_home(&self, from: &str, qualifier: &[String]) -> Option<HomeFile> {
+        let facts = self.facts.get(from)?;
+        let declared = facts.inline_mods.contains(&qualifier[0])
+            || facts.mod_decls.iter().any(|(name, _)| name == &qualifier[0]);
+        if !declared {
+            return None;
+        }
+        let mut full = module_segments(from);
+        full.extend(qualifier.iter().cloned());
+        Some(self.exact_module(&full))
+    }
+
+    /// A bare head a `use` binding names; a binding from outside the crate
+    /// naming no corpus module is External.
+    /// `seen` carries the binding heads already followed on this query: a
+    /// `use b::a; use a::b;` pair would otherwise recurse forever.
+    fn bound_home(&self, from: &str, qualifier: &[String], seen: &mut Vec<String>) -> Option<HomeFile> {
+        let facts = self.facts.get(from)?;
+        let binding = facts.uses.iter().find(|binding| binding.local == qualifier[0])?;
+        if binding.qualifier.is_empty() && binding.asked == binding.local {
+            return Some(HomeFile::External);
+        }
+        if seen.iter().any(|head| head == &qualifier[0]) {
+            return None;
+        }
+        seen.push(qualifier[0].clone());
+        let mut stack = Vec::new();
+        let home = match self
+            .resolve_qualified(from, &binding.qualifier, &binding.asked, &mut stack, seen)
+            .0
+        {
+            Resolution::Module { file, .. } => {
+                if qualifier.len() == 1 {
+                    HomeFile::Unique(file)
+                } else {
+                    let mut full = module_segments(&file);
+                    full.extend(qualifier[1..].iter().cloned());
+                    self.exact_module(&full)
+                }
+            }
+            Resolution::Ambiguous => HomeFile::Ambiguous,
+            _ => {
+                let external_source = binding
+                    .qualifier
+                    .first()
+                    .is_none_or(|head| !matches!(head.as_str(), "crate" | "self" | "super"));
+                return if external_source {
+                    Some(HomeFile::External)
+                } else {
+                    Some(HomeFile::None)
+                };
+            }
+        };
+        Some(home)
+    }
+
+    /// The outcome of a module-qualified call `qualifier::callee` from
+    /// `from`: a corpus def, an external module, or a miss.
+    pub(crate) fn module_call(
+        &self,
+        from: &str,
+        qualifier: &[String],
+        callee: &str,
+    ) -> ModuleCallTarget {
+        if !matches!(qualifier[0].as_str(), "crate" | "self" | "super")
+            && !qualifier[0].is_empty()
+            && self
+                .facts
+                .get(from)
+                .is_none_or(|facts| {
+                    !facts.inline_mods.contains(&qualifier[0])
+                        && !facts.mod_decls.iter().any(|(name, _)| name == &qualifier[0])
+                        && !facts.uses.iter().any(|binding| binding.local == qualifier[0])
+                })
+            && !self
+                .module_paths
+                .values()
+                .any(|segments| segments.contains(&qualifier[0]))
+        {
+            return ModuleCallTarget::External;
+        }
+        match self.home_file(from, qualifier, &mut Vec::new()) {
+            HomeFile::Unique(file) => {
+                let mut stack = Vec::new();
+                match self.resolve_in_module(&file, callee, &mut stack).0 {
+                    Resolution::Binding { blob, span, .. } => ModuleCallTarget::Target(blob, span),
+                    _ => ModuleCallTarget::Miss,
+                }
+            }
+            HomeFile::Ambiguous | HomeFile::None | HomeFile::External => ModuleCallTarget::Miss,
         }
     }
 
@@ -631,7 +903,7 @@ impl RustModuleIndex {
                 continue;
             }
             let (sub, sub_complete) =
-                self.resolve_qualified(file, &reexport.qualifier, &reexport.asked, stack);
+                self.resolve_qualified(file, &reexport.qualifier, &reexport.asked, stack, &mut Vec::new());
             complete &= sub_complete;
             if let Some(found) = sub.promoted_option(ResolvedImportKind::Indirect) {
                 table.insert(reexport.local.clone(), found);
@@ -662,7 +934,7 @@ impl RustModuleIndex {
     ) -> ExportTable {
         let mut starred = ExportTable::new();
         for star in stars {
-            let HomeFile::Unique(target) = self.home_file(file, &star.qualifier) else {
+            let HomeFile::Unique(target) = self.home_file(file, &star.qualifier, &mut Vec::new()) else {
                 continue;
             };
             let (sub_table, sub_complete) = self.export_table(&target, stack);

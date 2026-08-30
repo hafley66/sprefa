@@ -30,6 +30,9 @@ fn spanned<T: syn::spanned::Spanned>(t: &T) -> &T {
 #[derive(Clone, Debug)]
 pub(crate) struct ImplEntry {
     pub(crate) self_type: String,
+    /// `Some` for `impl Trait for T`: the trait's principal name, which the
+    /// inherent-before-trait tiebreak reads.
+    pub(crate) trait_name: Option<String>,
     pub(crate) methods: Vec<(String, Span)>,
 }
 
@@ -45,6 +48,9 @@ fn impls_in_items(items: &[syn::Item], line_starts: &[u32], out: &mut Vec<ImplEn
         match item {
             syn::Item::Impl(imp) => {
                 if let Some(self_type) = principal_ty(&imp.self_ty) {
+                    let trait_name = imp.trait_.as_ref().and_then(|(_, path, _)| {
+                        path.segments.last().map(|segment| segment.ident.to_string())
+                    });
                     let methods = imp
                         .items
                         .iter()
@@ -60,7 +66,7 @@ fn impls_in_items(items: &[syn::Item], line_starts: &[u32], out: &mut Vec<ImplEn
                             _ => None,
                         })
                         .collect();
-                    out.push(ImplEntry { self_type, methods });
+                    out.push(ImplEntry { self_type, trait_name, methods });
                 }
             }
             syn::Item::Mod(m) => {
