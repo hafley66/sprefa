@@ -56,6 +56,43 @@ test(driver_is_canonical_on_two_consecutive_runs) :-
     Observed == driver_result(exit(0), exit(0), true,
                               true, true, "", "").
 
+test(expression_carrier_keeps_values_and_rejects_unresolved_forms) :-
+    Owner = owner(expression_fixture),
+    Environment = expression_environment([], [], []),
+    dl7_lowerer:lower_expression(
+        node(variable_node, variable(value, "?Value")),
+        Owner, Environment,
+        Variable, VariableGoals, VariableOrigins, VariableDiagnostics),
+    dl7_lowerer:lower_expression(
+        node(literal_node, literal("Ada")),
+        Owner, Environment,
+        Literal, LiteralGoals, LiteralOrigins, LiteralDiagnostics),
+    dl7_lowerer:lower_expression(
+        node(atom_node, atom('User')),
+        Owner, Environment,
+        Atom, AtomGoals, AtomOrigins, AtomDiagnostics),
+    dl7_lowerer:lower_expression(
+        node(form_node, form([node(operator_node, atom('Partial'))])),
+        Owner, Environment,
+        Form, FormGoals, FormOrigins, FormDiagnostics),
+    Observed = expression_carrier(
+                   variable(Variable, VariableGoals, VariableOrigins,
+                            VariableDiagnostics),
+                   literal(Literal, LiteralGoals, LiteralOrigins,
+                           LiteralDiagnostics),
+                   atom(Atom, AtomGoals, AtomOrigins, AtomDiagnostics),
+                   unresolved(Form, FormGoals, FormOrigins,
+                              FormDiagnostics)),
+    Observed == expression_carrier(
+                    variable(var(value), [], [], []),
+                    literal(const("Ada"), [], [], []),
+                    atom(name(Owner, 'User'), [], [], []),
+                    unresolved(
+                        none, [], [],
+                        [diagnostic(lower, form_node,
+                                    unresolved_expression_form)])),
+    !.
+
 test(userland_type_operators_chain_across_compiler_rounds) :-
     compile_dl7('v7/test/fixtures/2_partial.dl7',
                 Rows1, Runtime1, Diagnostics1),

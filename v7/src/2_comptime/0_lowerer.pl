@@ -342,6 +342,22 @@ lower_arguments(Mode, [Node | Nodes], Owner, Result) :-
     ;   Result = ArgumentResult
     ).
 
+%% lower_expression(+Node, +Owner, +Environment,
+%%                  -Value, -Goals, -Origins, -Diagnostics) is det.
+%
+% Carry one value-position reader node toward flat Datalog. Goals and their
+% source nodes stay parallel so a containing rule can assign final goal
+% indices after nested applications have been flattened.
+lower_expression(node(_, variable(Identity, _)), _, _,
+                 var(Identity), [], [], []).
+lower_expression(node(_, literal(Value)), _, _,
+                 const(Value), [], [], []).
+lower_expression(node(_, atom(Name)), Owner, _,
+                 name(Owner, Name), [], [], []).
+lower_expression(node(NodeId, form(_)), _, _,
+                 none, [], [],
+                 [diagnostic(lower, NodeId, unresolved_expression_form)]).
+
 lower_argument(head,
                node(_, form([node(_, atom(count)), Expression])),
                Owner, Result) :-
