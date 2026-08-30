@@ -817,6 +817,8 @@ fn deferred_and_v6_only_ledger() {
                             // arm: the name-match leg the ledger counts here
                             // never produces one.
                             CallEdgeKind::ScipMacro => {}
+                            // The checker tier is off in the goldens.
+                            CallEdgeKind::CheckerResolve => {}
                         }
                     }
                 }
@@ -835,6 +837,8 @@ fn deferred_and_v6_only_ledger() {
                             // arm: the name-match leg the ledger counts here
                             // never produces one.
                             CallEdgeKind::ScipMacro => {}
+                            // The checker tier is off in the goldens.
+                            CallEdgeKind::CheckerResolve => {}
                         }
                     }
                 }
@@ -853,6 +857,8 @@ fn deferred_and_v6_only_ledger() {
                             // arm: the name-match leg the ledger counts here
                             // never produces one.
                             CallEdgeKind::ScipMacro => {}
+                            // The checker tier is off in the goldens.
+                            CallEdgeKind::CheckerResolve => {}
                         }
                     }
                 }
@@ -1096,6 +1102,8 @@ fn call_resolve_scip_ratchet_ts() {
                 // The twin re-derives the per-site legs only; a ScipMacro
                 // edge is minted by the project post-pass, not by a site.
                 (Some((_, _, CallEdgeKind::ScipMacro)), _) => {}
+                // The checker tier is off in the goldens.
+                (Some((_, _, CallEdgeKind::CheckerResolve)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(
@@ -1400,6 +1408,8 @@ fn call_resolve_scip_ratchet_go() {
                 // The twin re-derives the per-site legs only; a ScipMacro
                 // edge is minted by the project post-pass, not by a site.
                 (Some((_, _, CallEdgeKind::ScipMacro)), _) => {}
+                // The checker tier is off in the goldens.
+                (Some((_, _, CallEdgeKind::CheckerResolve)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(
@@ -1694,6 +1704,8 @@ fn call_resolve_scip_ratchet_rust() {
                 // The twin re-derives the per-site legs only; a ScipMacro
                 // edge is minted by the project post-pass, not by a site.
                 (Some((_, _, CallEdgeKind::ScipMacro)), _) => {}
+                // The checker tier is off in the goldens.
+                (Some((_, _, CallEdgeKind::CheckerResolve)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(

@@ -80,9 +80,12 @@ extract-ratchet:
     #!/usr/bin/env bash
     set -euo pipefail
     cd {{ v6 }}/sprefa-extract
-    for lang in ts5 go rust; do
+    # rust runs WITH the language's own machinery (user 2026-08-30), so its
+    # floors are the checker tier's and its leg needs the ra_ap crate graph.
+    for lang in ts5 go; do
       {{ capped }} "${EXTRACT_RATCHET_BUDGET_S:-900}" cargo test --release --features cli --test ratchet_recall -- --exact --ignored --nocapture "ratchet_${lang}"
     done
+    {{ capped }} "${EXTRACT_RATCHET_BUDGET_S:-900}" cargo test --release --features cli,rust-checker --test ratchet_recall -- --exact --ignored --nocapture ratchet_rust
     {{ capped }} "${EXTRACT_RATCHET_BUDGET_S:-900}" cargo test --release --features cli --test bench_normal_form -- --exact --ignored --nocapture rust_normal_form_agrees_with_normalize_py_over_the_go_corpus
 
 # architecture claims machine-check + atlas re-emit

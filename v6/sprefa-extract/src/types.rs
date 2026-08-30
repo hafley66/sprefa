@@ -462,6 +462,9 @@ pub enum CallEdgeKind {
     /// a site, so the scip occurrence at the expanded position bound the edge.
     /// Minted by the project post-pass, never by a per-file `Resolve` arm.
     ScipMacro,
+    /// The language's own checker named the destination; the syntax leg's
+    /// answer, where it had one, was overridden.
+    CheckerResolve,
 }
 
 impl CallEdgeKind {
@@ -473,6 +476,7 @@ impl CallEdgeKind {
             CallEdgeKind::ImportResolve => "import_resolve",
             CallEdgeKind::Implements => "implements",
             CallEdgeKind::ScipMacro => "scip_macro",
+            CallEdgeKind::CheckerResolve => "checker_resolve",
         }
     }
 }
@@ -1569,6 +1573,9 @@ pub struct IndexBag {
     pub rust_modules: std::sync::OnceLock<crate::lang::rust_modules::RustModuleIndex>,
     /// the go module plane, same discipline as `ts_modules`/`rust_modules`.
     pub go_modules: std::sync::OnceLock<crate::lang::go_modules::GoModuleIndex>,
+    /// the rust CHECKER tier's answers, joined to corpus def coordinates. Unset
+    /// without `--rust-checker`, and unset when the workspace load fell back.
+    pub rust_checker: std::sync::OnceLock<crate::lang::rust_checker::RustCheckerIndex>,
 }
 
 /// Blob -> supplied path, for the whole resolve universe. Built ONCE per

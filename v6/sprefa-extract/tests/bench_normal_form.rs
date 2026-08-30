@@ -127,6 +127,7 @@ fn rust_normal_form_agrees_with_normalize_py_over_the_go_corpus() {
         project_root: None,
         scip_records: sprefa_extract::ScipRecords::all(),
         occurrence_text: false,
+        rust_checker: None,
     })
     .expect("go corpus resolves");
     let scratch = std::env::temp_dir().join("extract_ratchet_parity");

@@ -631,10 +631,11 @@ pub struct Measurement {
     pub forms: NormalForms,
 }
 
-fn request<'a>(files: &'a [PathBuf]) -> ResolveRequest<'a> {
+fn request<'a>(files: &'a [PathBuf], corpus: &'a Corpus) -> ResolveRequest<'a> {
     // The diet_scip arms the CLI builds for `--family diet_scip` / `--resolve
     // --family call,type` (parse_arms in src/bin/extract.rs; diet_scip in
     // src/project.rs). ScipMode::Off is what makes the family diet.
+    let checker = corpus.lang == "rust";
     ResolveRequest {
         paths: files,
         arms: ResolveArms {
@@ -643,9 +644,12 @@ fn request<'a>(files: &'a [PathBuf]) -> ResolveRequest<'a> {
             flow: false,
         },
         scip: ScipMode::Off,
+        // `project_root` stays None or a fresh cached index gets adopted and
+        // the family is no longer diet. The checker carries its own root.
         project_root: None,
         scip_records: ScipRecords::all(),
         occurrence_text: false,
+        rust_checker: checker.then_some(corpus.root.as_path()),
     }
 }
 
@@ -671,7 +675,7 @@ pub fn measure(corpus: &Corpus) -> Measurement {
     let mut facts = Vec::new();
     for run in 0..3 {
         let start = Instant::now();
-        let out = resolve_project(&request(&files))
+        let out = resolve_project(&request(&files, corpus))
             .unwrap_or_else(|err| panic!("ratchet {}: resolve failed: {err}", corpus.lang));
         let wall_ms = start.elapsed().as_millis();
         assert!(

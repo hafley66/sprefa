@@ -24,6 +24,9 @@ pub mod markdown;
 pub mod prolog;
 pub mod python;
 pub mod rust;
+pub mod rust_checker;
+#[cfg(feature = "rust-checker")]
+mod rust_checker_ra;
 pub mod rust_mbe;
 pub mod rust_modules;
 pub mod rust_receivers;

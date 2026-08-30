@@ -32,6 +32,7 @@ use syn::{
 };
 
 use super::astgrep::{AstGrepParser, CstProjector};
+use super::rust_checker::CheckerAnswer;
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
     DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, MethodOwner, ProjectEdge, SigSlot,
@@ -808,14 +809,26 @@ impl RustSource {
 /// (text stays text — the zero leg). Name-only resolution, per the 4a ADDENDUM
 /// site-key discipline. Mirror of the ts arm's `resolve_type_dst` (the post-4d
 /// dedup sweep owns unifying the per-lang copies).
+#[allow(clippy::too_many_arguments)]
 fn resolve_type_dst(
     types: &FamilyBundle<TypeF>,
     strings: &Strings,
     index: Option<&DefIndex>,
     modules: Option<&crate::lang::rust_modules::RustModuleIndex>,
+    checker: Option<&crate::lang::rust_checker::RustCheckerIndex>,
     own_path: Option<&str>,
     name: &str,
 ) -> Option<(ContentId, Span)> {
+    // The CHECKER tier answers first: a name one file resolves two ways is the
+    // only shape it declines, and the name-match legs below then run.
+    match checker
+        .zip(own_path)
+        .and_then(|(checker, from)| checker.type_at(from, name))
+    {
+        Some(CheckerAnswer::Corpus(blob, span)) => return Some((blob, span)),
+        Some(CheckerAnswer::External) => return None,
+        None => {}
+    }
     let same_file = types
         .nodes
         .iter()
@@ -863,6 +876,7 @@ impl Resolve<TypeF> for RustSource {
         };
         let index = cx.indexes.def_index.get();
         let modules = cx.indexes.rust_modules.get();
+        let checker = cx.indexes.rust_checker.get();
         let own_path = own_blob(cx, output)
             .zip(cx.indexes.paths.get())
             .and_then(|(blob, paths)| paths.get(&blob).map(str::to_string));
@@ -881,6 +895,7 @@ impl Resolve<TypeF> for RustSource {
                 &output.strings,
                 index,
                 modules,
+                checker,
                 own_path.as_deref(),
                 output.strings.lookup(candidate.to),
             )
@@ -1293,6 +1308,7 @@ impl Resolve<CallF> for RustSource {
             .zip(paths)
             .and_then(|(blob, paths)| paths.get(blob));
         let modules = cx.indexes.rust_modules.get();
+        let checker = cx.indexes.rust_checker.get();
         // Sorted once per file: the mirror lookup runs per closure-caller site,
         // and a per-site scan of the def table is the shape kink 1 was.
         let named = named_def_spans(call);
@@ -1437,6 +1453,30 @@ impl Resolve<CallF> for RustSource {
             let name_t = name_t.filter(|(blob, span, _)| {
                 !modules.is_some_and(|m| m.is_collapsed(blob, *span))
             });
+            // The CHECKER tier: rust-analyzer's own answer for this site wins
+            // over both the name match and scip, and only where it has one.
+            match checker
+                .zip(own_path)
+                .and_then(|(index, path)| index.call_at(path, site.span, callee))
+            {
+                Some(CheckerAnswer::Corpus(dst_blob, dst_span)) => {
+                    push_call_edge(
+                        &mut edges,
+                        call,
+                        &named,
+                        caller,
+                        site.span,
+                        dst_blob,
+                        dst_span,
+                        CallEdgeKind::CheckerResolve,
+                    );
+                    continue;
+                }
+                // No corpus definition IS this callee, so no name-match leg
+                // may invent one; `call_drops` reads the same answer.
+                Some(CheckerAnswer::External) => continue,
+                None => {}
+            }
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
             });
@@ -1452,26 +1492,36 @@ impl Resolve<CallF> for RustSource {
                 (Some((blob, span, kind)), None) => ((blob, span), kind),
                 (None, None) => continue,
             };
-            // Nothing names `closure@<n>` as a callee, so a walk over named
-            // defs stops at one. The closure row stays; it names the frame.
-            if call.node(caller).name.is_none() {
-                if let Some(enclosing) = enclosing_named_def(&named, site.span) {
-                    edges.push(
-                        ProjectEdge::new(
-                            enclosing,
-                            dst_blob.clone(),
-                            dst_span,
-                            CallEdgeKind::NameResolve,
-                        )
-                        .with_call_site(site.span),
-                    );
-                }
-            }
-            edges
-                .push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
+            push_call_edge(
+                &mut edges, call, &named, caller, site.span, dst_blob, dst_span, kind,
+            );
         }
         edges
     }
+}
+
+/// One site's edge, plus the mirror row a closure caller needs: nothing names
+/// `closure@<n>` as a callee, so a walk over named defs stops at one.
+#[allow(clippy::too_many_arguments)]
+fn push_call_edge(
+    edges: &mut Vec<ProjectEdge<CallF>>,
+    call: &FamilyBundle<CallF>,
+    named: &[(Span, NodeRef)],
+    caller: NodeRef,
+    site: Span,
+    dst_blob: ContentId,
+    dst_span: Span,
+    kind: CallEdgeKind,
+) {
+    if call.node(caller).name.is_none() {
+        if let Some(enclosing) = enclosing_named_def(named, site) {
+            edges.push(
+                ProjectEdge::new(enclosing, dst_blob.clone(), dst_span, CallEdgeKind::NameResolve)
+                    .with_call_site(site),
+            );
+        }
+    }
+    edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site));
 }
 
 /// One `unresolved` row per site the `Resolve<CallF>` pass dropped. The reason
@@ -1491,6 +1541,7 @@ pub fn call_drops(
         return Vec::new();
     };
     let modules = cx.indexes.rust_modules.get();
+    let checker = cx.indexes.rust_checker.get();
     let own_path = own_file_blob(output, def_index)
         .as_ref()
         .zip(cx.indexes.paths.get())
@@ -1530,7 +1581,15 @@ pub fn call_drops(
                     )
                     .then_some(())
                 });
-            let reason = if inferred.contains(&(site.span.start, site.span.end())) {
+            let checker_external = matches!(
+                checker
+                    .zip(own_path)
+                    .and_then(|(index, path)| index.call_at(path, site.span, callee)),
+                Some(CheckerAnswer::External)
+            );
+            let reason = if checker_external {
+                UnresolvedReason::External
+            } else if inferred.contains(&(site.span.start, site.span.end())) {
                 UnresolvedReason::Inferred
             } else if external_prefix.is_some()
                 || (qualifier.is_none() && PRELUDE_ITEMS.contains(&callee))

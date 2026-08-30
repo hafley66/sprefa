@@ -86,6 +86,7 @@ fn resolve_probes(paths: &[std::path::PathBuf]) -> u64 {
         project_root: None,
         scip_records: Default::default(),
         occurrence_text: false,
+        rust_checker: None,
     })
     .expect("the corpus resolves");
     assert!(
