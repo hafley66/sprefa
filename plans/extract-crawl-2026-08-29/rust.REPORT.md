@@ -1623,8 +1623,8 @@ is their receipt.
 |---|---|
 | `cargo metadata` + salsa workspace load | **0.50-0.53 s** |
 | the resolve walk over the loaded workspace | **9.6-10.8 s** |
-| whole run, 873 files, one process | **10.4 s** median of 3 (was 0.54 s) |
-| process-peak RSS | **2,122 MB** (was 597 MB) |
+| whole run, 873 files, one process | **10.4-10.7 s** median of 3, over 5 repeats (was 0.54 s) |
+| process-peak RSS | **2,122-2,537 MB** over the same 5 repeats (was 597 MB) |
 | cold build of the ra crate graph | ~380 s, 239 crates, `--features rust-checker` |
 
 The load is index-build class and carries the SCIP exception to the 10-second
@@ -1633,9 +1633,27 @@ recurs on every run, because `resolve_project` holds no state between calls.
 RSS is 3.5x the syntax leg and over the 700 MB working ceiling; the salsa
 database for a 30-crate workspace is the whole of it.
 
+Recall and precision are byte-stable across all 5 repeats; only wall and RSS
+move, and the RATCHET.tsv ceilings carry the worst of the 5.
+
 The tier is OFF by default and out of the `cli` feature. `--rust-checker` on a
 binary built without `--features rust-checker` logs one line and changes
-nothing.
+nothing. `just extract-ratchet` builds the rust leg with the feature and the
+other two legs without it.
+
+### 24.7 The trap: `project_root` is not a free parameter
+
+The tier's first ratchet measurement read ra 93.71 / codeql 86.36, and it was
+wrong. Giving the ratchet's rust request a `project_root` so the checker could
+find its workspace also tripped `load_scip`'s informed-by-default leg
+(`project.rs:844`), which adopts any FRESH cached index for the file set. The
+run was no longer diet: 12,234 `scip_override` and 4,403 `scip_macro` edges
+rode in with it, and codeql recall inherited most of the difference.
+
+The tier now carries its own root (`ResolveRequest.rust_checker:
+Option<&Path>`) and the ratchet keeps `project_root: None`. The check that
+catches this class is a record-kind census of the raw JSONL: a diet run emits
+`name_resolve`, `import_resolve` and nothing else.
 
 ### 24.6 What the tier does not fix
 
