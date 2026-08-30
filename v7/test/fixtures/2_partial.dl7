@@ -14,6 +14,7 @@
     (HistoryV1 User HistoryOptions ?Result))
 
 (: UserPatch (Partial User))
+(: MaybePatch (Option (Partial User)))
 
 (: selected_request
    (* (: result type)))

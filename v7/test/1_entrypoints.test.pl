@@ -258,14 +258,14 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 801,
+                    [], [], 829,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(86, 134, 41, 94, 51, 88, 41),
+                    runtime(counts(86, 134, 41, 94, 52, 88, 41),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
@@ -803,6 +803,11 @@ type_operator_snapshot(Rows, Snapshot) :-
                  const(_)]), Rows),
     member(call(ref(kernel(':')),
                 [ref(Module), const('UserPatch'), ref(Partial), const(_)]),
+           Rows),
+    member(call(ref(kernel(':')),
+                [ ref(Module), const('MaybePatch'),
+                  ref(application(OptionConstructor, [Partial])), const(_)
+                ]),
            Rows),
     named_owner(Rows, selected_request, SelectedRequest),
     named_owner(Rows, excluded_request, ExcludedRequest),
