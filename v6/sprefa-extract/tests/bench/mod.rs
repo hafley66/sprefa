@@ -72,6 +72,7 @@ pub fn corpus(lang: &str) -> Corpus {
             root: root("RATCHET_RUST_ROOT", "/Users/chrishafley/projects/rust-analyzer"),
             oracles: &[
                 ("call", "rust.oracle.call.tsv"),
+                ("call", "rust.scip_override.call.tsv"),
                 ("type", "rust.oracle.type.typedecl.tsv"),
             ],
         },
@@ -406,6 +407,165 @@ fn go_projection_drops_test_closure_and_iface_rows() {
     );
 }
 
+// ── the rust call projection (RUST-PARITY.REPORT.md) ────────────────────────
+
+/// The two live flags of `plans/extract-bench-2026-08-29/rust.project.py`.
+/// The third flag, `--generic`, is inert on this corpus (no rust*.call.tsv
+/// row carries a `<`) and has no port: it would be dead code here.
+#[derive(Clone, Default)]
+pub struct RustProjection {
+    /// The corpus file list as root-relative paths; an oracle row whose
+    /// dst_path is absent from it targets a file outside the corpus and
+    /// cannot be hit.
+    pub corpus_files: Option<BTreeSet<String>>,
+    /// Drop a `closure@<n>` caller row when a mirrored enclosing-fn row
+    /// exists: same src_path, dst_path and dst_name with a non-closure
+    /// caller. The ra_ap_ide oracle has no closure rows; raw scip does.
+    pub closure: bool,
+}
+
+impl RustProjection {
+    /// Both rust call oracles score under the full projection. The oracle's
+    /// own rows drive the ours-side scope (a caller file the oracle never
+    /// calls from cannot match).
+    pub fn per_oracle(
+        oracle_file: &str,
+        corpus_files: &BTreeSet<String>,
+    ) -> Option<RustProjection> {
+        match oracle_file {
+            "rust.oracle.call.tsv" | "rust.scip_override.call.tsv" => Some(RustProjection {
+                corpus_files: Some(corpus_files.clone()),
+                closure: true,
+            }),
+            _ => None,
+        }
+    }
+}
+
+fn row_cols(row: &str) -> [&str; 4] {
+    let mut cols = row.split('\t');
+    [
+        cols.next().unwrap_or(""),
+        cols.next().unwrap_or(""),
+        cols.next().unwrap_or(""),
+        cols.next().unwrap_or(""),
+    ]
+}
+
+/// rust.project.py over a call pair, ported. Returns both projected sets:
+/// the oracle side drops rows whose dst_path is outside the corpus and
+/// closure rows with a mirror; the ours side drops rows whose src_path the
+/// (dst-scoped) oracle never calls from, then mirrors the closure leg.
+pub fn rust_project(
+    ours: &BTreeSet<String>,
+    oracle: &BTreeSet<String>,
+    projection: &RustProjection,
+) -> (BTreeSet<String>, BTreeSet<String>) {
+    let corpus_files = projection.corpus_files.as_ref();
+    let oracle_scoped: BTreeSet<String> = oracle
+        .iter()
+        .filter(|row| {
+            corpus_files.is_none_or(|files| {
+                files.contains(row.split('\t').nth(2).unwrap_or(""))
+            })
+        })
+        .cloned()
+        .collect();
+    // Our side: the caller must be a file the (dst-scoped) oracle calls
+    // from, the `--scope corpus` ours leg.
+    let oracle_srcs: BTreeSet<&str> = oracle_scoped
+        .iter()
+        .map(|row| row.split('\t').next().unwrap_or(""))
+        .collect();
+    let ours_scoped: BTreeSet<String> = ours
+        .iter()
+        .filter(|row| oracle_srcs.contains(row.split('\t').next().unwrap_or("")))
+        .cloned()
+        .collect();
+    if projection.closure {
+        (
+            closure_enclosing(&ours_scoped),
+            closure_enclosing(&oracle_scoped),
+        )
+    } else {
+        (ours_scoped, oracle_scoped)
+    }
+}
+
+/// The `--closure enclosing` leg: a `closure@<n>` caller row drops when a
+/// non-closure row shares its (src_path, dst_path, dst_name) triple.
+fn closure_enclosing(rows: &BTreeSet<String>) -> BTreeSet<String> {
+    let plain_triples: BTreeSet<[&str; 3]> = rows
+        .iter()
+        .filter_map(|row| {
+            let c = row_cols(row);
+            (!c[1].starts_with("closure@")).then_some([c[0], c[2], c[3]])
+        })
+        .collect();
+    rows.iter()
+        .filter(|row| {
+            let c = row_cols(row);
+            !c[1].starts_with("closure@") || !plain_triples.contains(&[c[0], c[2], c[3]])
+        })
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn rust_projection_drops_out_of_corpus_and_mirrored_closure_rows() {
+    // 6 hand rows: 1 oracle row whose dst is outside the corpus, 1 of ours
+    // from a file the oracle never calls from, 1 closure row with its
+    // enclosing mirror (drops), 1 closure row with no mirror (stays), and 2
+    // plain rows that must survive on both sides.
+    let plain = "crates/a/src/lib.rs\tf\tcrates/a/src/other.rs\tg";
+    let plain2 = "crates/b/src/lib.rs\tf\tcrates/b/src/other.rs\tg";
+    let outside = "crates/a/src/lib.rs\tf\tcrates/x/src/gen.rs\tg";
+    let closure = "crates/a/src/lib.rs\tclosure@7\tcrates/a/src/other.rs\tg";
+    let lone_closure = "crates/c/src/lib.rs\tclosure@9\tcrates/c/src/lib.rs\tinner";
+    let ours_stray = "crates/z/src/tests.rs\tt\tcrates/a/src/other.rs\tg";
+    let ours: BTreeSet<String> = [plain, plain2, closure, lone_closure, ours_stray]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let oracle: BTreeSet<String> = [plain, plain2, outside, closure]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let corpus_files: BTreeSet<String> = [
+        "crates/a/src/lib.rs",
+        "crates/a/src/other.rs",
+        "crates/b/src/lib.rs",
+        "crates/b/src/other.rs",
+        "crates/c/src/lib.rs",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+
+    let (ours_p, oracle_p) = rust_project(
+        &ours,
+        &oracle,
+        &RustProjection {
+            corpus_files: Some(corpus_files),
+            closure: true,
+        },
+    );
+    assert_eq!(
+        oracle_p,
+        BTreeSet::from([plain.to_string(), plain2.to_string()]),
+        "oracle: the out-of-corpus dst drops; the mirrored closure drops because its mirror is the plain row"
+    );
+    assert_eq!(
+        ours_p,
+        BTreeSet::from([plain.to_string(), plain2.to_string()]),
+        "ours: the stray caller (a file the oracle never calls from) drops; the mirrored closure drops on the closure leg"
+    );
+    // The lone closure row drops on scope: its file is in the corpus, but
+    // the oracle never calls from it.
+    assert!(!ours_p.contains(lone_closure));
+    assert!(!ours_p.contains(ours_stray));
+}
+
 pub fn family_rows<'a>(forms: &'a NormalForms, family: &str) -> &'a BTreeSet<String> {
     match family {
         "call" => &forms.call,
@@ -458,6 +618,9 @@ pub fn score(ours: &BTreeSet<String>, oracle: &BTreeSet<String>) -> Score {
 
 pub struct Measurement {
     pub files: usize,
+    /// Corpus files as root-relative paths, the enumeration that produced
+    /// the rows; the rust projection scopes oracle rows against it.
+    pub files_rel: BTreeSet<String>,
     /// Median of the 3 in-process runs.
     pub wall_ms: u128,
     /// Process-peak RSS after the runs (getrusage high-water mark).
@@ -522,6 +685,11 @@ pub fn measure(corpus: &Corpus) -> Measurement {
     walls.sort();
     Measurement {
         files: files.len(),
+        files_rel: files
+            .iter()
+            .filter_map(|path| path.strip_prefix(&corpus.root).ok())
+            .filter_map(|rel| rel.to_str().map(String::from))
+            .collect(),
         wall_ms: walls[1],
         rss_mb: peak_rss_mb(),
         forms: normal_form(&corpus.root, &facts),
@@ -670,11 +838,13 @@ pub fn ratchet(lang: &str) {
             );
             continue;
         }
-        let oracle_rows = load_tsv(&oracle_path);
+        let mut oracle_rows = load_tsv(&oracle_path);
         // The go call projection (GO-PARITY.REPORT.md): score our rows in the
-        // oracle's own shape so recall and precision are comparable. Every
-        // other family and corpus scores raw.
-        let ours = match GoProjection::per_oracle(oracle_file, &oracle_rows) {
+        // oracle's own shape so recall and precision are comparable. The rust
+        // call projection (RUST-PARITY.REPORT.md) scopes to the corpus file
+        // list and mirrors closure rows on both sides. Every other family
+        // and corpus scores raw.
+        let mut ours = match GoProjection::per_oracle(oracle_file, &oracle_rows) {
             Some(projection) => go_project(
                 family_rows(&measurement.forms, family),
                 &measurement.forms.call_kinds,
@@ -682,6 +852,12 @@ pub fn ratchet(lang: &str) {
             ),
             None => family_rows(&measurement.forms, family).clone(),
         };
+        if let Some(projection) = RustProjection::per_oracle(oracle_file, &measurement.files_rel) {
+            let (ours_projected, oracle_projected) =
+                rust_project(&ours, &oracle_rows, &projection);
+            ours = ours_projected;
+            oracle_rows = oracle_projected;
+        }
         let verdict = score(&ours, &oracle_rows);
         let floor = row_key(&floors).map(|index| floors[index].clone());
         let mut line_verdict = String::from("no-floor");
