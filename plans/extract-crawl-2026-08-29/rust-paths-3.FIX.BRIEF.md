@@ -1,4 +1,4 @@
-# Lane `fix-extract-rust-paths-3` (terra): rust classes 8, 11, 9, 7 from the census
+# Lane `fix-extract-rust-paths-3` (glm53): rust classes 8, 11, 9, 7 from the census
 
 Read `plans/extract-crawl-2026-08-29/rust.REPORT.md` section 18 (the
 15,444-row census, table 18.2). After #576 one-process `ambiguous` is 13,532.
@@ -63,3 +63,9 @@ A previous agent left partial work in this worktree's stash
 (`git stash list`, "rust-paths-3 opus partial"). After the ff-only merge run
 `git stash show -p stash@{0} | head -200` and decide per hunk: keep what
 matches the rules above, drop the rest. Say in the PR body what you kept.
+
+## Second reclaim
+The worktree already carries an untracked `tests/71_rust_paths.rs` and
+`tests/fixtures/rust_findings/paths3/` from the previous agent. Read them
+first, keep them if they match the rules, and continue from there; the
+src changes are still to do. Commit early and often (every passing test).

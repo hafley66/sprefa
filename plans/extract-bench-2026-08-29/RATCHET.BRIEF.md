@@ -1,4 +1,4 @@
-# Lane `bench-extract-ratchet` (opus): recall, precision and wall ratchets over the committed oracles
+# Lane `bench-extract-ratchet` (glm53): recall, precision and wall ratchets over the committed oracles
 
 User word (2026-08-29): "diet-scip ratcheted as high as possible so it is
 fast". `diet_scip` is plain `--resolve` (`src/project.rs:491`). Nothing
@@ -60,3 +60,8 @@ Commit RATCHET.tsv at the measured values of this sha. Push
 `boop beep --no-wait --as bench-extract-ratchet sprefa-coordinator "ratchet: PR #N, go call x% ts call y% rust call z%, walls a/b/c ms"`.
 Laws: no em dashes, no words provenance/substrate/load-bearing/regime,
 never "ground truth" (say oracle), every extract call under timeout 30.
+
+## Known red at the first measurement
+The go corpus wall is 11,969 ms median at #579, over the 10-second law; the
+speed lane (SPEED.BRIEF.md) owns that. Record the wall as measured; do not
+wait for it, do not raise any timeout past 30 s.
