@@ -120,7 +120,15 @@ fn collect(items: &[syn::Item], line_starts: &[u32], facts: &mut RustModuleFacts
                                     spanned(&f.sig.ident).span(),
                                     spanned(block).span(),
                                 ),
-                                None => syn_span(line_starts, f.sig.span()),
+                                // A declared fn has no block: the span must
+                                // match the call facet's def for the fn
+                                // (ident start through the signature end),
+                                // or the emitted edge reads nameless.
+                                None => def_span(
+                                    line_starts,
+                                    spanned(&f.sig.ident).span(),
+                                    spanned(&f.sig).span(),
+                                ),
                             };
                             Some(TraitFn {
                                 name: f.sig.ident.to_string(),

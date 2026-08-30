@@ -78,13 +78,6 @@ fn binds(caller: &str, callee: &str, stem: &str) -> bool {
         .any(|(c, f, s)| c == caller && f == callee && s == stem)
 }
 
-/// `binds` for a trait fn declared without a body: phase 1 mints no entity
-/// row for a bare signature, so the edge's callee name reads empty while the
-/// dst span still points at the trait's declaration.
-fn binds_stem_only(caller: &str, stem: &str) -> bool {
-    edges().iter().any(|(c, _, s)| c == caller && s == stem)
-}
-
 /// Class 12: `Talk::level()` names a corpus trait; the call binds the
 /// trait's own fn def.
 #[test]
@@ -120,24 +113,17 @@ fn trait_default_body_binds_the_unoverridden_method() {
 }
 
 /// Class 6: the receiver's type is the corpus trait `dyn Talk`; the call
-/// binds the trait's fn def.
+/// binds the trait's fn def, named via the call facet's def for the bare
+/// signature.
 #[test]
 fn dyn_trait_receiver_binds_the_trait_fn_def() {
-    assert!(
-        binds_stem_only("dyn_call", "traits"),
-        "{:?}",
-        edges()
-    );
+    assert!(binds("dyn_call", "chat", "traits"), "{:?}", edges());
 }
 
 /// Class 6b: the receiver is a generic param whose bound names the trait.
 #[test]
 fn bound_generic_receiver_binds_the_trait_fn_def() {
-    assert!(
-        binds_stem_only("generic_call", "traits"),
-        "{:?}",
-        edges()
-    );
+    assert!(binds("generic_call", "chat", "traits"), "{:?}", edges());
 }
 
 /// Class 8, zero impls: `Dog::helper()` has no impl of (Dog, helper); the
