@@ -69,3 +69,11 @@ The worktree already carries an untracked `tests/71_rust_paths.rs` and
 `tests/fixtures/rust_findings/paths3/` from the previous agent. Read them
 first, keep them if they match the rules, and continue from there; the
 src changes are still to do. Commit early and often (every passing test).
+
+## Third run
+`origin/fix/extract-rust-paths-3` now carries two real commits (impl
+tiebreak, module-qualified prefixes, variant ctors; use-binding cycle guard)
+plus `tests/71_rust_paths.rs`. `git reset --hard origin/fix/extract-rust-paths-3`
+after the ff-only merge, run the test file, then finish the receipt and
+post the PR. Commit after every green test; the previous two agents died
+mid-turn with work uncommitted.
