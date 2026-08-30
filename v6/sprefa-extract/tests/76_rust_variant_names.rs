@@ -8,7 +8,7 @@
 //!
 //! SABOTAGE RECEIPT (fail-pre-fix, at cbf7eb6da): both edge tests red,
 //! `variant_ctor_names_the_variant` got `[("alpha_user", "Alpha", "alpha")]`
-//! and `variant_ctor_through_Self_names_the_variant` got
+//! and `variant_ctor_through_self_names_the_variant` got
 //! `[("make", "Shape", "shape")]`.
 //!
 //! Fixtures: `tests/fixtures/rust_findings/variant_names/`.
@@ -90,7 +90,7 @@ fn variant_ctor_names_the_variant() {
 }
 
 #[test]
-fn variant_ctor_through_Self_names_the_variant() {
+fn variant_ctor_through_self_names_the_variant() {
     let rows = edges();
     assert!(
         rows.iter().any(|(caller, callee, stem)| {

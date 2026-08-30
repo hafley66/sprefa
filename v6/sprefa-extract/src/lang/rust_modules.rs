@@ -21,6 +21,7 @@ use crate::shape::{ContentId, FamilyTag, Span, ZERO_CONTENT_ID};
 
 use super::rust::{
     build_line_starts, def_span, mod_path_attr, module_segments, module_target, syn_span,
+    variant_def_span,
 };
 use super::rust_receivers::{impl_facts, ImplEntry};
 
@@ -59,9 +60,9 @@ pub struct RustModuleFacts {
     /// Every impl block's (self type, fn name, fn def span), for the corpus
     /// receiver leg's (T, m) table.
     impls: Vec<ImplEntry>,
-    /// Every enum's (name, variant names): a `T::f()` whose `f` is a variant
-    /// of corpus enum `T` names the enum, not a method.
-    enums: Vec<(String, Vec<String>)>,
+    /// Every enum's (name, variant name + def span): a `T::f()` whose `f` is
+    /// a variant of corpus enum `T` names the VARIANT, not the enum.
+    enums: Vec<(String, Vec<(String, Span)>)>,
     /// Every trait's (name, fn name, fn def span, default body?) for the
     /// trait dispatch table: declared (no body) and default (body present)
     /// fns alike bind to the trait's own def.
@@ -197,7 +198,10 @@ fn collect(items: &[syn::Item], line_starts: &[u32], facts: &mut RustModuleFacts
                 let variants = enum_item
                     .variants
                     .iter()
-                    .map(|variant| variant.ident.to_string())
+                    .filter_map(|variant| {
+                        variant_def_span(line_starts, variant)
+                            .map(|span| (variant.ident.to_string(), span))
+                    })
                     .collect();
                 facts.enums.push((enum_item.ident.to_string(), variants));
             }
@@ -485,8 +489,9 @@ pub struct RustModuleIndex {
     /// (self type, fn name) -> every corpus impl site of the pair, with the
     /// impl's trait name where the block is `impl Trait for T`.
     impl_methods: HashMap<(String, String), Vec<ImplMethodTarget>>,
-    /// (enum name, variant name) -> declaring file paths.
-    enum_variants: HashMap<(String, String), Vec<String>>,
+    /// (enum name, variant name) -> declaring file path plus the variant's
+    /// own def span.
+    enum_variants: HashMap<(String, String), Vec<(String, Span)>>,
     /// trait name -> every fn def it declares or defaults, one site per
     /// (file, fn): the same trait NAME can be declared by several files, so
     /// a target pick needs the site's own blob.
@@ -587,12 +592,12 @@ impl RustModuleIndex {
                 }
             }
             for (name, variants) in &facts.enums {
-                for variant in variants {
+                for (variant, span) in variants {
                     index
                         .enum_variants
                         .entry((name.clone(), variant.clone()))
                         .or_default()
-                        .push(path.clone());
+                        .push((path.clone(), *span));
                 }
             }
             if let Some(blob) = index.blobs.get(path) {
@@ -704,7 +709,7 @@ impl RustModuleIndex {
         type_name: &str,
         variant: &str,
     ) -> Option<(ContentId, Span)> {
-        let [only] = self
+        let [(only, span)] = self
             .enum_variants
             .get(&(type_name.to_string(), variant.to_string()))?
             .as_slice()
@@ -712,13 +717,7 @@ impl RustModuleIndex {
             return None;
         };
         let blob = self.blobs.get(only)?;
-        let span = self
-            .defs
-            .get(blob)?
-            .iter()
-            .find(|(_, name, _)| name == type_name)
-            .map(|(span, _, _)| *span)?;
-        Some((blob.clone(), span))
+        Some((blob.clone(), *span))
     }
 
     /// Whether `name` is a trait the corpus declares.
@@ -877,6 +876,21 @@ impl RustModuleIndex {
             .ok()
             .flatten()
             .and_then(callable_target)
+    }
+
+    /// `target` re-aimed at the TYPE facet: the export table prefers the call
+    /// facet, and a type reference to it emits a nameless row.
+    pub fn type_target(&self, path: &str, local: &str) -> Option<(ContentId, Span)> {
+        let (blob, span) = self.target(path, local)?;
+        let defs = self.defs.get(&blob)?;
+        let bound_name = defs
+            .iter()
+            .find(|(def_span, _, _)| *def_span == span)
+            .map(|(_, name, _)| name.as_str())?;
+        let declared = defs
+            .iter()
+            .find(|(_, name, family)| name == bound_name && *family == FamilyTag::Type);
+        Some(declared.map_or((blob.clone(), span), |(span, _, _)| (blob, *span)))
     }
 
     /// `local`'s EXPLICIT `use` binding in `path`. `Err(())` is AMBIGUOUS: a
@@ -1225,7 +1239,8 @@ impl RustModuleIndex {
         };
         let mut table = ExportTable::new();
         if let Some(blob) = self.blobs.get(file) {
-            for (span, name, family) in self.defs.get(blob).into_iter().flatten() {
+            let defs = self.defs.get(blob).map(Vec::as_slice).unwrap_or(&[]);
+            for (span, name, family) in named_defs(defs) {
                 let better = table
                     .get(name)
                     .is_none_or(|existing| !matches!(existing, Resolution::Binding { .. }))
@@ -1333,4 +1348,32 @@ impl RustModuleIndex {
 /// through one.
 fn callable_target(found: ResolvedImport) -> Option<(ContentId, Span)> {
     (found.kind != ResolvedImportKind::Namespace).then_some((found.target_blob, found.target_span))
+}
+
+/// One file's defs minus the ones at a COLLAPSED span. Every def spliced out
+/// of one macro expansion reports the macro call's own span, so such a span
+/// names nothing; a def there survives only when its name has no other site.
+fn named_defs(
+    defs: &[(Span, String, FamilyTag)],
+) -> impl Iterator<Item = &(Span, String, FamilyTag)> {
+    let mut first: HashMap<Span, &str> = HashMap::new();
+    let mut shared: BTreeSet<Span> = BTreeSet::new();
+    for (span, name, _) in defs {
+        match first.get(span) {
+            Some(seen) if *seen != name.as_str() => {
+                shared.insert(*span);
+            }
+            Some(_) => {}
+            None => {
+                first.insert(*span, name.as_str());
+            }
+        }
+    }
+    let clean: BTreeSet<&str> = defs
+        .iter()
+        .filter(|(span, _, _)| !shared.contains(span))
+        .map(|(_, name, _)| name.as_str())
+        .collect();
+    defs.iter()
+        .filter(move |(span, name, _)| !shared.contains(span) || !clean.contains(name.as_str()))
 }
