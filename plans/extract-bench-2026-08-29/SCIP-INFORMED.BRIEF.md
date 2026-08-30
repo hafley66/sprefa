@@ -1,6 +1,6 @@
-# Lane `bench-extract-scip-informed` (opus): how far scip gets us past codeql, measured one process
+# Lane `bench-extract-scip-informed` (glm53f): how far scip gets us past codeql, measured one process
 
-User word (2026-08-29): beat codeql (go call 82.4%, ts call 88.6% of the
+User word (2026-08-29): beat codeql (go call 82.4%, ts call 88.6% of the compiler oracles; ours after #579 and #578: go 84.42%, ts 84.88%, rust 67.56% of the
 compiler oracles) using scip and dataflow. Today's scip-informed leg
 (`--resolve --scip-index`, `resolved_edge kind=scip_override`) was measured
 only under the chunked driver: ts 69.3% recall, rust 29.9%, go never
