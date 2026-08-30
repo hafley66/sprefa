@@ -209,7 +209,7 @@ pub(crate) fn mint_macro_edges(
             if occ.roles.contains(crate::types::OccurrenceRole::DEFINITION) {
                 continue;
             }
-            if occ.symbol.starts_with("local ") {
+            if index.symbol(occ.symbol).starts_with("local ") {
                 continue;
             }
             let Some(span) = byte_range_at(content, &lines, occ.range, doc.position_encoding)
@@ -234,7 +234,7 @@ pub(crate) fn mint_macro_edges(
             // scip's word on the target: symbol -> its definition occurrence
             // -> the corpus def containing it. A symbol with no in-corpus
             // definition (external, generated) mints nothing.
-            let Some((def_doc_ix, def_occ)) = definition_of(index, doc_ix, &occ.symbol) else {
+            let Some((def_doc_ix, def_range)) = definition_of(index, doc_ix, occ.symbol) else {
                 continue;
             };
             let Some((def_blob, def_content)) = joined[def_doc_ix].as_ref() else {
@@ -247,7 +247,7 @@ pub(crate) fn mint_macro_edges(
             let Some(ident) = byte_range_at(
                 def_content,
                 def_table,
-                def_occ.range,
+                def_range,
                 def_doc.position_encoding,
             ) else {
                 continue;

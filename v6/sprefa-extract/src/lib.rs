@@ -92,8 +92,9 @@ pub use project::{
 pub use rename_cx::{RenameCx, RenameRequest};
 pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{
-    byte_range, copy_sources, definition_of, join_documents, site_occurrence, Fallback,
-    IndexerSpec, ScipClang, ScipGo, ScipJava, ScipPython, ScipRust, ScipTypescript, Staging,
+    byte_range, byte_range_cached, copy_sources, definition_of, join_documents, site_occurrence,
+    Fallback, IndexerSpec, ScipClang, ScipGo, ScipJava, ScipPython, ScipRust, ScipTypescript,
+    Staging,
 };
 pub use scip_ensure::{
     default_cache_dir, detect, ensure_index, ensure_index_for_set, external_cache_dir,
@@ -103,11 +104,11 @@ pub use scip_ensure::{
 pub use scip_rows::{flatten_scip_records, ScipRecords, SCIP_RECORD_KINDS};
 pub use scip_v5_rels::v5_rel_rows;
 pub use seams::{
-    build_def_index, containing_def_site, corpus_defs, covering_def, def_named, own_blob,
-    BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap, OccurrenceRole, ParseError,
-    Parser, PositionEncoding, Project, ProjectCx, ProjectDigest, Resolve, ScipDiagnostic,
-    ScipDocument, ScipError, ScipIndex, ScipMetadata, ScipOccurrence, ScipRelationship,
-    ScipSignature, ScipSource, ScipSymbolInfo,
+    build_def_index, containing_def_site, containing_def_site_in, corpus_defs, covering_def,
+    def_named, own_blob, BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap,
+    OccurrenceRole, ParseError, Parser, PositionEncoding, Project, ProjectCx, ProjectDigest,
+    Resolve, ScipDiagnostic, ScipDocument, ScipError, ScipIndex, ScipMetadata, ScipOccurrence,
+    ScipRelationship, ScipSignature, ScipSource, ScipSymbolInfo,
 };
 pub use shape::{
     content_id_of, ContentId, FamilyTag, NameId, NodeRef, Span, Strings, ZERO_CONTENT_ID,
@@ -121,7 +122,7 @@ pub use source::{ExtractOutput, FamilyMask, Source};
 pub use types::{
     CfgEdgeKind, CfgF, CfgNodeKind, ImportRef, ImportRefKind, RefRole, Rehome, RehomeArm,
     RehomeManifests, RehomePlanCheck, RehomeShim, RehomeTextSpellings, Rename, RenameStop, Respell,
-    SymbolRef, SymbolSeat,
+    SymbolId, SymbolInterner, SymbolRef, SymbolSeat,
 };
 pub use wire::{
     file_fact, flatten, flatten_cfg, flatten_cfg_each, flatten_each, flatten_flow, flatten_jsonl,

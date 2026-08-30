@@ -30,10 +30,10 @@ use crate::family::{
     SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
+use crate::scip::{byte_range_cached, definition_of, join_documents, site_occurrence};
 use crate::seams::{
-    corpus_defs, covering_def, def_named, own_blob, DefIndex, DefSite, ParseError, Parser, Project,
-    Resolve,
+    containing_def_site_in, corpus_defs, covering_def, def_named, own_blob, DefIndex, DefSite,
+    ParseError, Parser, Project, Resolve,
 };
 use crate::shape::{ContentId, FamilyTag, NameId, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
@@ -3720,10 +3720,10 @@ fn scip_call_target<'a>(
     let doc = &index.documents[doc_ix];
     let (_, content) = joined[doc_ix].as_ref()?;
     let occ = site_occurrence(doc, content, site.span, callee)?;
-    let (def_doc_ix, def_occ) = definition_of(index, doc_ix, &occ.symbol)?;
+    let (def_doc_ix, def_range) = definition_of(index, doc_ix, occ)?;
     let def_doc = &index.documents[def_doc_ix];
     let (def_blob, def_content) = joined[def_doc_ix].as_ref()?;
-    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+    let ident = byte_range_cached(def_content, def_range, def_doc.position_encoding)?;
     let (name, def_site) = containing_ts_def(def_index, def_blob.clone(), ident)?;
     Some((def_blob.clone(), def_site.span, name))
 }
@@ -3731,36 +3731,9 @@ fn scip_call_target<'a>(
 /// `containing_def_site` minus the `<module>` def, which spans the whole file
 /// and would win the shared seam's CallF bias over any module-level entity.
 fn containing_ts_def(index: &DefIndex, blob: ContentId, span: Span) -> Option<(&str, DefSite)> {
-    let mut best: Option<(&str, DefSite)> = None;
-    for (name, sites) in &index.map {
-        if name == MODULE_DEF_NAME {
-            continue;
-        }
-        for site in sites {
-            if site.blob != blob
-                || !(site.span.start <= span.start && span.end() <= site.span.end())
-            {
-                continue;
-            }
-            let better = match best {
-                None => true,
-                Some((_, ref incumbent)) => {
-                    let call_bias = (
-                        site.family == FamilyTag::Call,
-                        incumbent.family == FamilyTag::Call,
-                    );
-                    call_bias.0 && !call_bias.1
-                        || (call_bias.0 == call_bias.1
-                            && site.span.end() - site.span.start
-                                < incumbent.span.end() - incumbent.span.start)
-                }
-            };
-            if better {
-                best = Some((name.as_str(), site.clone()));
-            }
-        }
-    }
-    best
+    // The shared binary-searched containment join, minus the module-synthesis
+    // name: a module def covers the whole file and would win every probe.
+    containing_def_site_in(index, blob, span, Some(MODULE_DEF_NAME))
 }
 
 /// ECMAScript standard-library member and global-object function names. A

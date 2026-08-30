@@ -101,3 +101,76 @@ Committed: this report, `out/scip_runs.sh` (bare-oracle bench step),
 `src/scip_ensure.rs::fresh_index_for_set`, `examples/{rss_probe,gen_scip_sidecar}.rs`
 (machine receipts), the freshness test. Machine-local: `out/*.raw.jsonl`,
 `out/*.call.tsv`, sidecar stamps on the three corpora's indexes.
+
+---
+
+# Section 6+: the scip-rss lane (2026-08-30)
+
+Lane: `fix-extract-scip-rss`, base a60e11e94 (PR #589). Ceilings per corpus,
+3 runs, `nice -n 15`, `/usr/bin/time -l`, `timeout 60`: wall < 10 s AND peak
+RSS < 700 MB. Baseline binary = origin/main (a60e11e94) built in a separate
+target dir; identity = `sort a.jsonl | cmp - b.sorted` per corpus.
+
+## 6. Receipt (both tasks, 3 runs per corpus)
+
+| lang | walls real (3 runs) | peak RSS | wall ceiling | RSS ceiling | identity |
+|---|---|---|---|---|---|
+| ts | 1.65 / 1.66 / 1.99 s | 555-578 MB | pass | pass | IDENTICAL |
+| rust | 2.24 / 2.25 / 2.37 s | 687 / 696 / 705 MB | pass | pass (borderline, one run at 705) | IDENTICAL |
+| go | 7.13 / 7.13 / 8.15 s | 883-890 MB | pass | **miss by ~185 MB** | IDENTICAL |
+
+Baseline (pre-fix binary) for comparison: ts 3.33 s / 591 MB, rust 4.89 s /
+776 MB, go 22.76 s / 971 MB. Recall/precision: byte-identical jsonl on all
+three corpora on every commit, so floors are unchanged by construction.
+
+## 7. Changes, each with a before/after row
+
+| commit | what | effect |
+|---|---|---|
+| af507ca25 | interned symbols: `SymbolId(u32)` into one `ScipIndex::symbols` table built at decode (`scip_decode.rs`), `ScipIndex::symbol` accessor, `ScipOccurrence`/`ScipSymbolInfo`/`ScipRelationship` carry ids, `def_map` keyed by id, per-doc span vectors hold `(start, end, SymbolId)`; the resolve arms read symbols through `ScipIndex::symbol` | go 971 -> 886 MB, rust 776 -> 700 MB, ts 591 -> 565 MB; walls unchanged |
+| a2dce88da | `containing_def_site` binary search: `DefIndex` gains a per-blob span index (sorted by start, prefix max end) built once in `build_def_index`; the leftward walk prunes on the prefix max | go walls 22.4 -> 12.5 s, rust 5.0 -> 2.6 s, ts 3.3 -> 2.1 s; RSS unchanged; `containing_ts_def` rides the same index with a name exclusion |
+| 267b51706 | `byte_range_cached`: the def range conversion per call site rebuilt the def document's `LineTable` every time (5,122 top-of-stack hits in the go sample); the table is now built once per buffer | go walls 12.5 -> 7.1 s, rust 2.6 -> 2.3 s, ts 2.1 -> 1.7 s; RSS unchanged |
+
+## 8. Profile, before and after
+
+Before (go informed, macOS `sample`, top of stack, self hits): pre-fix the
+profile was dominated by `containing_def_site`'s scan (6,783 of ~14,500
+on-CPU samples, the coordinator's samply count) plus `LineTable::build`
+(5,122 top-of-stack hits) and `ts_tree_cursor`/parse frames. After: parse and
+emit frames dominate; no scip-join function appears in the top 10
+(`LineTable::build` drops out of the ranking entirely once cached).
+
+## 9. Where the go RSS still lives, and the next frame
+
+`load_index` on the go index now peaks at 295 MB resident (was 391 MB pre-
+interning; probe: 952,588 occurrences, 137,919 symbol infos, 6.1 MB of
+distinct symbol text in the interner table). The informed go run reads 883-
+890 MB vs the plain leg's 623 MB, so the scip side holds ~260 MB. Measured
+components:
+
+- `ScipOccurrence` is 96 B x 952,588 = 91 MB. `override_documentation` and
+  `diagnostics` are empty `Vec`s on ~99% of occurrences (48 B of the 96).
+  Next frame: move both into side tables keyed by (document, occurrence) and
+  the struct compacts to ~48 B -> ~46 MB back.
+- `DocOccCache` span vectors: 952,588 x 12 B = 11 MB, plus per-document
+  `LineTable`s kept forever in the static caches.
+- The joined-corpus content buffers (`join_documents`) hold every corpus
+  file's bytes for the whole resolve.
+- ScipSymbolInfo 176 B x 137,919 = 23 MB plus their relationship/doc strings.
+
+Compacting the occurrence struct is a `types.rs` + `scip_rows.rs` wire change;
+it is the named next frame for the remaining ~185 MB.
+
+## 10. Gate, ratchet, measurement notes
+
+- Full gate `nice -n 15 cargo test --release --features cli` green (log
+  `/tmp/gate.log`); targeted scip suites (golden_parity, 5_scip_facts_cli,
+  n_plus_one, 32_join_documents_once, 5_move_scip, scip_freshness,
+  8_scip_families_cli, 74_scip_relationship_family) 43 passed / 0 failed
+  before the informed receipt runs.
+- `RATCHET_BUMP=1 just extract-ratchet` run at the end (section 11).
+- Measurement trap worth recording: parsing `/usr/bin/time -l` output by
+  field index reads the USER column as the wall (field 3 vs field 2 on macOS)
+  and shows a phantom 4x regression; every wall in this report is field 1
+  (real).
+

@@ -14,18 +14,12 @@ fn main() {
     let occs: usize = index.documents.iter().map(|d| d.occurrences.len()).sum();
     let syms: usize = index.documents.iter().map(|d| d.symbols.len()).sum();
     let doc_bytes: usize = index.documents.iter().map(|d| d.relative_path.len()).sum();
-    let sym_str: usize = index
-        .documents
-        .iter()
-        .map(|d| d.occurrences.iter().map(|o| o.symbol.len()).sum::<usize>())
-        .sum();
-    let info: usize = index
-        .documents
-        .iter()
-        .map(|d| d.symbols.iter().map(|s| s.symbol.len()).sum::<usize>())
-        .sum();
+    // Interned ids hold no text; the table IS the symbol bytes now.
+    let occ_symbol_bytes: usize = index.symbols.iter().map(|s| s.len()).sum();
+    let sym_str = 0;
+    let info = 0;
     eprintln!(
-        "occurrences={occs} symbol_infos={syms} path_bytes={doc_bytes} occ_symbol_bytes={sym_str} info_symbol_bytes={info}"
+        "occurrences={occs} symbol_infos={syms} path_bytes={doc_bytes} occ_symbol_bytes={occ_symbol_bytes} info_symbol_bytes={info}"
     );
     eprintln!("end: {} KB", rss() / 1024);
 }

@@ -1651,6 +1651,26 @@ pub struct DefSite {
 #[derive(Clone, Debug, Default)]
 pub struct DefIndex {
     pub map: std::collections::HashMap<String, Vec<DefSite>>,
+    /// Per-blob span index over the SAME sites `map` holds, sorted by span
+    /// start, each entry carrying the max end of every entry up to and
+    /// including it (the prefix max). `containing_def_site` binary-searches
+    /// this instead of scanning every name's site list per call.
+    spans: std::collections::HashMap<ContentId, Vec<DefSpanEntry>>,
+    /// The name behind each `DefSpanEntry::name_ix` (one String per indexed
+    /// name, mirrored from `map`'s keys at build time).
+    names: Vec<String>,
+}
+
+/// One entry of the per-blob span index. `max_end` is the running max of
+/// `span.end()` over the blob's entries [0..=self] in sorted order: once it
+/// drops below the probe's end while walking left, no earlier entry contains
+/// the probe either.
+#[derive(Clone, Debug)]
+struct DefSpanEntry {
+    span: Span,
+    family: FamilyTag,
+    name_ix: u32,
+    max_end: u32,
 }
 
 /// Build THE `DefIndex` ONCE per refresh, from every file's phase-1
@@ -1694,7 +1714,41 @@ pub fn build_def_index(outputs: &[(ContentId, &ExtractOutput)]) -> DefIndex {
             }
         }
     }
+    index.build_span_index();
     index
+}
+
+impl DefIndex {
+    /// Fill the per-blob span index from `map`: one entry per site, sorted by
+    /// (start, end), each carrying the prefix max end. The name vector is
+    /// rebuilt in the same pass, so entries can name their def by index.
+    fn build_span_index(&mut self) {
+        self.names.clear();
+        self.spans.clear();
+        let mut spans: std::collections::HashMap<ContentId, Vec<DefSpanEntry>> =
+            std::collections::HashMap::new();
+        for (name, sites) in &self.map {
+            let name_ix = self.names.len() as u32;
+            self.names.push(name.clone());
+            for site in sites {
+                spans.entry(site.blob.clone()).or_default().push(DefSpanEntry {
+                    span: site.span,
+                    family: site.family,
+                    name_ix,
+                    max_end: 0,
+                });
+            }
+        }
+        for entries in spans.values_mut() {
+            entries.sort_unstable_by_key(|e| (e.span.start, e.span.end()));
+            let mut running_max = 0u32;
+            for entry in entries.iter_mut() {
+                running_max = running_max.max(entry.span.end());
+                entry.max_end = running_max;
+            }
+        }
+        self.spans = spans;
+    }
 }
 
 /// Caller binding: the CallF def node whose span most tightly CONTAINS `site`
@@ -1811,26 +1865,56 @@ pub fn containing_def_site(
     blob: ContentId,
     span: Span,
 ) -> Option<(&str, DefSite)> {
+    containing_def_site_in(index, blob, span, None)
+}
+
+/// The same containment join with one name excluded (`containing_ts_def`
+/// skips the module-synthesis name). The search is a binary search over the
+/// blob's span-sorted entries (built by `build_def_index`) plus a bounded
+/// leftward walk whose prefix-max-end prune guarantees every visited entry
+/// could contain `span`: candidate starts all sit at or before `span.start`,
+/// and once the running max end of everything at or before the cursor drops
+/// below `span.end()` no earlier entry contains it either.
+pub fn containing_def_site_in<'a>(
+    index: &'a DefIndex,
+    blob: ContentId,
+    span: Span,
+    skip_name: Option<&str>,
+) -> Option<(&'a str, DefSite)> {
+    let entries = index.spans.get(&blob)?;
+    // Every container has span.start <= probe.start, so candidates live in
+    // entries[..p). Walk left from the innermost candidate.
+    let p = entries.partition_point(|entry| entry.span.start <= span.start);
     let mut best: Option<(&str, DefSite)> = None;
-    for (name, sites) in &index.map {
-        for site in sites {
-            if site.blob != blob
-                || !(site.span.start <= span.start && span.end() <= site.span.end())
-            {
-                continue;
+    for entry in entries[..p].iter().rev() {
+        if entry.max_end < span.end() {
+            break;
+        }
+        if entry.span.end() < span.end() {
+            continue;
+        }
+        let name = index.names[entry.name_ix as usize].as_str();
+        if skip_name == Some(name) {
+            continue;
+        }
+        let better = match &best {
+            None => true,
+            Some((_, b)) => {
+                let call_bias = (entry.family == CallF::TAG, b.family == CallF::TAG);
+                call_bias.0 && !call_bias.1
+                    || (call_bias.0 == call_bias.1
+                        && entry.span.end() - entry.span.start < b.span.end() - b.span.start)
             }
-            let better = match best {
-                None => true,
-                Some((_, ref b)) => {
-                    let call_bias = (site.family == CallF::TAG, b.family == CallF::TAG);
-                    call_bias.0 && !call_bias.1
-                        || (call_bias.0 == call_bias.1
-                            && site.span.end() - site.span.start < b.span.end() - b.span.start)
-                }
-            };
-            if better {
-                best = Some((name.as_str(), site.clone()));
-            }
+        };
+        if better {
+            best = Some((
+                name,
+                DefSite {
+                    blob: blob.clone(),
+                    span: entry.span,
+                    family: entry.family,
+                },
+            ));
         }
     }
     best
@@ -1926,6 +2010,42 @@ impl PositionEncoding {
     }
 }
 
+/// An interned scip symbol: an index into `ScipIndex::symbols`, minted at
+/// decode. One copy of each distinct symbol string serves every occurrence,
+/// symbol information and relationship that references it (a 950k-occurrence
+/// index holds ~30k distinct symbols; per-occurrence `String`s held 75 MB of
+/// duplicated text on the go corpus).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SymbolId(pub u32);
+
+/// The decode-time interner: dedupes symbol strings into `SymbolId`s and
+/// yields the finished `ScipIndex::symbols` table.
+#[derive(Default)]
+pub struct SymbolInterner {
+    ids: std::collections::HashMap<String, SymbolId>,
+    table: Vec<String>,
+}
+
+impl SymbolInterner {
+    /// Mint (or reuse) the id for one symbol string.
+    pub fn intern(&mut self, symbol: impl Into<String>) -> SymbolId {
+        let symbol = symbol.into();
+        let next = SymbolId(self.table.len() as u32);
+        *self
+            .ids
+            .entry(symbol.clone())
+            .or_insert_with(|| {
+                self.table.push(symbol);
+                next
+            })
+    }
+
+    /// The finished table: `ScipIndex::symbols`, `SymbolId`s index into it.
+    pub fn table(self) -> Vec<String> {
+        self.table
+    }
+}
+
 /// One occurrence: a (symbol, range, roles) triple — a definition or a
 /// reference site (seed `_4_scip.rs`:26-35). `range` is scip.proto's packed
 /// quad normalized to `[start_line, start_col, end_line, end_col]` (the 3-
@@ -1941,7 +2061,8 @@ impl PositionEncoding {
 /// is the dl layer's call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScipOccurrence {
-    pub symbol: String,
+    /// The interned symbol; resolve the text with `ScipIndex::symbol`.
+    pub symbol: SymbolId,
     pub range: [i32; 4],
     pub roles: OccurrenceRole,
     /// scip.proto `SyntaxKind` ordinal (0 = UnspecifiedSyntaxKind).
@@ -1983,7 +2104,8 @@ pub struct ScipSignature {
 /// diet and are passed through as of the scip-passthrough lane.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScipSymbolInfo {
-    pub symbol: String,
+    /// The interned symbol; resolve the text with `ScipIndex::symbol`.
+    pub symbol: SymbolId,
     pub display_name: String,
     pub kind: i32,
     /// Relationships to other symbols (implements / type-definition /
@@ -2006,7 +2128,8 @@ pub struct ScipSymbolInfo {
 /// (an overriding method is both a reference and an implementation).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ScipRelationship {
-    pub symbol: String,
+    /// The interned related symbol; resolve the text with `ScipIndex::symbol`.
+    pub symbol: SymbolId,
     pub is_reference: bool,
     pub is_implementation: bool,
     pub is_type_definition: bool,
@@ -2038,6 +2161,8 @@ pub struct ScipIndex {
     pub documents: Vec<ScipDocument>,
     pub external_symbols: Vec<ScipSymbolInfo>,
     pub metadata: ScipMetadata,
+    /// The symbol interner table built at decode; `SymbolId`s index into it.
+    pub symbols: Vec<String>,
 }
 
 impl ScipIndex {
@@ -2045,6 +2170,12 @@ impl ScipIndex {
     /// parity goldens print). Derived from metadata rather than stored twice.
     pub fn tool(&self) -> String {
         format!("{} {}", self.metadata.tool_name, self.metadata.tool_version)
+    }
+
+    /// The text behind an interned symbol. Unknown ids (a hand-built index
+    /// with an empty table) read as the empty string, never a panic.
+    pub fn symbol(&self, id: SymbolId) -> &str {
+        self.symbols.get(id.0 as usize).map(String::as_str).unwrap_or("")
     }
 }
 

@@ -6,6 +6,7 @@
 
 use sprefa_extract::{
     OccurrenceRole, PositionEncoding, ScipDocument, ScipOccurrence, ScipSignature, ScipSymbolInfo,
+    SymbolInterner,
 };
 
 /// The probe counters are process-wide, so two cases reading them at once
@@ -13,13 +14,14 @@ use sprefa_extract::{
 static PROBE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// One occurrence per line, each naming the identifier at column 0.
-fn document(lines: usize) -> (ScipDocument, Vec<u8>) {
+fn document(lines: usize) -> (ScipDocument, Vec<u8>, Vec<String>) {
     let mut content = String::new();
     let mut occurrences = Vec::with_capacity(lines);
+    let mut syms = SymbolInterner::default();
     for line in 0..lines {
         content.push_str("callee(argument, other);\n");
         occurrences.push(ScipOccurrence {
-            symbol: format!("scip crate . symbol{line}#"),
+            symbol: syms.intern(format!("scip crate . symbol{line}#")),
             range: [line as i32, 0, line as i32, 6],
             roles: OccurrenceRole(0),
             syntax_kind: 0,
@@ -39,6 +41,7 @@ fn document(lines: usize) -> (ScipDocument, Vec<u8>) {
             text: String::new(),
         },
         bytes,
+        syms.table(),
     )
 }
 
@@ -50,7 +53,7 @@ fn document(lines: usize) -> (ScipDocument, Vec<u8>) {
 #[test]
 fn a_call_site_reads_the_document_once_not_once_per_occurrence() {
     let lines = 4_000usize;
-    let (doc, content) = document(lines);
+    let (doc, content, _symbols) = document(lines);
     let site = sprefa_extract::Span { start: 0, len: 6 };
     let _serial = PROBE_LOCK
         .lock()
@@ -81,11 +84,12 @@ fn a_call_site_reads_the_document_once_not_once_per_occurrence() {
 #[test]
 fn flattening_occurrences_reads_the_document_once() {
     let lines = 4_000usize;
-    let (doc, content) = document(lines);
+    let (doc, content, symbols) = document(lines);
     let index = sprefa_extract::ScipIndex {
         metadata: Default::default(),
         documents: vec![doc],
         external_symbols: Vec::new(),
+        symbols,
     };
     let reader = |_path: &str| -> Option<Vec<u8>> { Some(content.clone()) };
     let _serial = PROBE_LOCK
@@ -125,10 +129,11 @@ fn signature_occurrences_read_the_signature_once() {
     let occurrences = 2_000usize;
     let mut text = String::new();
     let mut signature_occurrences = Vec::with_capacity(occurrences);
+    let mut syms = SymbolInterner::default();
     for line in 0..occurrences {
         text.push_str("field: Type,\n");
         signature_occurrences.push(ScipOccurrence {
-            symbol: format!("scip crate . type{line}#"),
+            symbol: syms.intern(format!("scip crate . type{line}#")),
             range: [line as i32, 7, line as i32, 11],
             roles: OccurrenceRole(0),
             syntax_kind: 0,
@@ -139,7 +144,7 @@ fn signature_occurrences_read_the_signature_once() {
     }
     let bytes = text.len() as u64;
     let info = ScipSymbolInfo {
-        symbol: "scip crate . Owner#".to_string(),
+        symbol: syms.intern("scip crate . Owner#"),
         display_name: "Owner".to_string(),
         kind: 0,
         relationships: Vec::new(),
@@ -162,6 +167,7 @@ fn signature_occurrences_read_the_signature_once() {
             text: String::new(),
         }],
         external_symbols: Vec::new(),
+        symbols: syms.table(),
     };
     let reader = |_path: &str| -> Option<Vec<u8>> { None };
     let _serial = PROBE_LOCK
