@@ -11,6 +11,7 @@
 | 4 | bench-extract-scip-informed | ../extract-bench-2026-08-29/SCIP-INFORMED.BRIEF.md | glm53f | live |
 | 5 | fix-extract-rust-traits | rust-traits-4.FIX.BRIEF.md | glm53f | live |
 | 6 | fix-extract-ts-codeql-gap | ts-codeql-gap.FIX.BRIEF.md | glm53f | pin sha before spawn |
+| 6b | fix-extract-scip-speed | ../extract-bench-2026-08-29/SCIP-SPEED.BRIEF.md | glm53f | live: scip-informed under 10 s, go scip normal form, informed-by-default |
 | 7 | fix-extract-go-residual-6 | go-residual-6.FIX.BRIEF.md | glm53f | pin sha before spawn |
 
 ## Harness receipts (2026-08-29 evening)
