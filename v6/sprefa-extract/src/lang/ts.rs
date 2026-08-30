@@ -1687,6 +1687,7 @@ fn lambda_entry_decl(walker: &mut LambdaDefs, decl: &ts::Declaration) {
             }
         }
         ts::Declaration::ClassDeclaration(class) => lambda_entry_class(walker, class),
+        ts::Declaration::VariableDeclaration(var) => walker.visit_variable_declaration(var),
         _ => {}
     }
 }
