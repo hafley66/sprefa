@@ -478,7 +478,6 @@ fn with_resolve_cx<R>(
         reader: None,
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
-        own: std::cell::RefCell::new(None),
     };
     cx.indexes
         .def_index
@@ -956,7 +955,6 @@ fn call_resolve_scip_ratchet_ts() {
         reader: Some(&reader),
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
-        own: std::cell::RefCell::new(None),
     };
     cx.indexes
         .def_index
@@ -1261,7 +1259,6 @@ fn call_resolve_scip_ratchet_go() {
         reader: Some(&reader),
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
-        own: std::cell::RefCell::new(None),
     };
     cx.indexes
         .def_index
@@ -1554,7 +1551,6 @@ fn call_resolve_scip_ratchet_rust() {
         reader: Some(&reader),
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
-        own: std::cell::RefCell::new(None),
     };
     cx.indexes
         .def_index

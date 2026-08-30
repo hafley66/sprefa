@@ -212,7 +212,6 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         reader: scip_index.is_some().then_some(&reader),
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
-        own: std::cell::RefCell::new(None),
     };
     cx.indexes
         .def_index
@@ -282,20 +281,22 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
     // N+1 law applied to work rather than to rows.
     let mut resolved_calls: Vec<(ContentId, Vec<ProjectEdge<CallF>>)> =
         if request.arms.call || request.arms.flow {
-            inputs
-                .iter()
-                .map(|input| {
-                    // The per-file identity the resolve seam carries: each
-                    // arm reads its own blob off `cx.own` instead of guessing
-                    // it from span matches (a wrong guess when two files
-                    // share a named span).
-                    cx.own.replace(Some(input.blob.clone()));
-                    (
-                        input.blob.clone(),
-                        resolve_call_edges(&input.path, &input.output, &cx),
-                    )
-                })
-                .collect()
+            use rayon::prelude::*;
+            EXTRACT_POOL.install(|| {
+                inputs
+                    .par_iter()
+                    .map(|input| {
+                        // The per-file identity the resolve seam carries: each
+                        // arm reads its own blob off the thread-local pin
+                        // instead of guessing it from span matches (a wrong
+                        // guess when two files share a named span).
+                        crate::types::set_own(Some(input.blob.clone()));
+                        let edges = resolve_call_edges(&input.path, &input.output, &cx);
+                        crate::types::set_own(None);
+                        (input.blob.clone(), edges)
+                    })
+                    .collect()
+            })
         } else {
             Vec::new()
         };
@@ -315,11 +316,8 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
                 output: input.output.as_ref(),
             })
             .collect();
-        macro_rows = crate::lang::rust_scip_macros::mint_macro_edges(
-            &macro_files,
-            &cx,
-            &mut resolved_calls,
-        );
+        macro_rows =
+            crate::lang::rust_scip_macros::mint_macro_edges(&macro_files, &cx, &mut resolved_calls);
     }
 
     let mut facts = Vec::new();
@@ -330,7 +328,7 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
             .zip(resolved_calls.iter())
             .zip(macro_rows.into_iter().chain(std::iter::repeat(Vec::new())))
         {
-            cx.own.replace(Some(input.blob.clone()));
+            crate::types::set_own(Some(input.blob.clone()));
             facts.extend(call_facts(input, &targets, edges));
             facts.extend(call_drop_facts(input, &cx, edges));
             for row in rows {
@@ -346,13 +344,13 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
 
     if request.arms.call || request.arms.types {
         for input in &inputs {
-            cx.own.replace(Some(input.blob.clone()));
+            crate::types::set_own(Some(input.blob.clone()));
             facts.extend(import_facts(input, &cx));
         }
     }
     for input in &inputs {
         if request.arms.types {
-            cx.own.replace(Some(input.blob.clone()));
+            crate::types::set_own(Some(input.blob.clone()));
             facts.extend(type_facts(input, &targets, &cx));
         }
     }
@@ -1128,37 +1126,51 @@ fn call_facts(
 /// language's plane, so only one of the two closures below yields rows.
 fn import_facts(input: &ProjectInput, cx: &ProjectCx) -> Vec<FlatFact> {
     let ts_rows = cx.indexes.ts_modules.get().into_iter().flat_map(|modules| {
-        modules.bindings(&input.path).into_iter().map(|row| FlatFact::ResolvedImportRow {
-            src_path: input.path.clone(),
-            name: row.name,
-            local: row.local,
-            target_path: row.target_path,
-            target_name: row.target_name,
-            kind: row.kind.as_str().to_string(),
-            hops: row.hops,
-        })
+        modules
+            .bindings(&input.path)
+            .into_iter()
+            .map(|row| FlatFact::ResolvedImportRow {
+                src_path: input.path.clone(),
+                name: row.name,
+                local: row.local,
+                target_path: row.target_path,
+                target_name: row.target_name,
+                kind: row.kind.as_str().to_string(),
+                hops: row.hops,
+            })
     });
-    let rust_rows = cx.indexes.rust_modules.get().into_iter().flat_map(|modules| {
-        modules.bindings(&input.path).into_iter().map(|row| FlatFact::ResolvedImportRow {
-            src_path: input.path.clone(),
-            name: row.name,
-            local: row.local,
-            target_path: row.target_path,
-            target_name: row.target_name,
-            kind: row.kind.as_str().to_string(),
-            hops: row.hops,
-        })
-    });
+    let rust_rows = cx
+        .indexes
+        .rust_modules
+        .get()
+        .into_iter()
+        .flat_map(|modules| {
+            modules
+                .bindings(&input.path)
+                .into_iter()
+                .map(|row| FlatFact::ResolvedImportRow {
+                    src_path: input.path.clone(),
+                    name: row.name,
+                    local: row.local,
+                    target_path: row.target_path,
+                    target_name: row.target_name,
+                    kind: row.kind.as_str().to_string(),
+                    hops: row.hops,
+                })
+        });
     let go_rows = cx.indexes.go_modules.get().into_iter().flat_map(|modules| {
-        modules.bindings(&input.path).into_iter().map(|row| FlatFact::ResolvedImportRow {
-            src_path: input.path.clone(),
-            name: row.name,
-            local: row.local,
-            target_path: row.target_path,
-            target_name: row.target_name,
-            kind: row.kind.as_str().to_string(),
-            hops: 0,
-        })
+        modules
+            .bindings(&input.path)
+            .into_iter()
+            .map(|row| FlatFact::ResolvedImportRow {
+                src_path: input.path.clone(),
+                name: row.name,
+                local: row.local,
+                target_path: row.target_path,
+                target_name: row.target_name,
+                kind: row.kind.as_str().to_string(),
+                hops: 0,
+            })
     });
     ts_rows.chain(rust_rows).chain(go_rows).collect()
 }

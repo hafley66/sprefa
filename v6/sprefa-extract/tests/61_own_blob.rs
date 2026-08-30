@@ -44,7 +44,6 @@ fn with_fallback_cx<R>(
         reader: None,
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
-        own: std::cell::RefCell::new(None),
     };
     cx.indexes
         .def_index
@@ -92,7 +91,7 @@ fn own_set_wins_over_span_search() {
         .map(|(blob, out)| (blob.clone(), out.as_ref()))
         .collect();
     with_fallback_cx(&pairs, |cx| {
-        cx.own.replace(Some(corpus[1].0.clone()));
+        sprefa_extract::types::set_own(Some(corpus[1].0.clone()));
         assert_eq!(
             own_blob(cx, &corpus[0].1),
             Some(corpus[1].0.clone()),

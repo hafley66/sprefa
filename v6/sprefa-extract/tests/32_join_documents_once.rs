@@ -59,7 +59,7 @@ fn the_document_join_reads_each_document_once_per_project() {
             .find(|(path, _)| *path == relative)
             .map(|(_, text)| text.as_bytes().to_vec())
     };
-    let reader: &dyn Fn(&str) -> Option<Vec<u8>> = &counting_reader;
+    let reader: &(dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync) = &counting_reader;
     let files = FileSet;
     let manifests = ManifestMap;
     let cx = ProjectCx {
@@ -68,7 +68,6 @@ fn the_document_join_reads_each_document_once_per_project() {
         reader: Some(reader),
         digest: ProjectDigest::default(),
         indexes,
-        own: std::cell::RefCell::new(None),
     };
 
     for (_, output) in &extracted {

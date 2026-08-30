@@ -78,7 +78,6 @@ fn library_doc_ref_count() -> usize {
         reader: None,
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
-        own: std::cell::RefCell::new(None),
     };
     cx.indexes
         .def_index
