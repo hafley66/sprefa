@@ -35,3 +35,16 @@ Deliverables per lane: the tsvs, a REPORT.md with one table per language
 overlap with raw scip), and a "what it took to run" table (install steps,
 wall, disk, failures). Zero prose paragraphs; tables and file paths.
 Laws: no em dashes, no eprintln, descriptive names, never --no-verify.
+
+## Ratchet (2026-08-29, `just extract-ratchet`, LOCAL-ONLY)
+
+The corpora above are machine-local checkouts under `/Users/chrishafley/projects`,
+so the ratchet leg (`v6/sprefa-extract/tests/ratchet_recall.rs`, RATCHET.tsv in
+this dir) never runs in CI and is not a CI-KNOWN-RED row. It runs in-process on
+this machine only: 3 `diet_scip` (resolve call+types) runs per corpus, median
+wall, process-peak RSS, recall/precision against the oracle tsvs, floors in
+RATCHET.tsv (tolerances 0.10 pt / +15% wall / +10% rss; `RATCHET_BUMP=1`
+improves only, `RATCHET_FORCE=1` rewrites). File rules: ts5 `src/**` minus
+`src/lib`, go every `.go` under the root, rust every `.rs` under `crates/`
+with a `src` path component; roots overridable via `RATCHET_TS_ROOT`,
+`RATCHET_GO_ROOT`, `RATCHET_RUST_ROOT`.

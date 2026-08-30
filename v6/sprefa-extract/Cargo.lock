@@ -2119,6 +2119,7 @@ dependencies = [
  "gomod-parser",
  "hafley-observe",
  "ignore",
+ "libc",
  "memchr",
  "oxc_allocator",
  "oxc_ast",
