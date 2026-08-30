@@ -117,3 +117,22 @@ Actual counts, every row. `inferred:` rows are 7,095; `ambiguous:` rows are
 - Receiver decl lookup is nearest-before-site text matching; nested arrows
   sharing a param name can mislabel, and the long tail of
   "concrete declared type" names was not individually opened.
+
+## gap 2: bare calls (lane fix-extract-ts-codeql-gap-2, 2026-08-30)
+
+Sample: 20 rows each of "other: bare call, local function" (61/300) and
+"bare call, callee imported" (46/300) from
+`ts.codeql_agreed_missed.sample300.classes.tsv`, site probe per caller file
+(`extract --resolve --project-root`, grep the site byte span).
+
+Reason histogram: there is none to write. A bare call that does not bind
+emits NO record at all (neither resolved_edge nor unresolved; unresolved rows
+carry only member calls, dynamic imports, computed members, spreads). The
+miss is therefore a caller-naming or binding miss, read off the site span:
+
+| mechanism | sample evidence | fix |
+|---|---|---|
+| arrow / fn-expr as the value of an `export const` object literal: lambda_entry_decl dropped VariableDeclaration, so the site fell back to `<module>` | program.ts `moduleResolutionNameAndModeGetter.getMode -> getModeForUsageLocation` | FIXED (commit 56892525c) |
+| named fn-expr as an object property value (`[SyntaxKind.X]: function forEachChildInY(){}`): sites bound to `closure@N` / `<module>` instead of the fn-expr's own identifier | parser.ts forEachChildTable, 369 forEachChildIn* sites in that one file | FIXED (commit ec54f0c17) |
+| bare callee bound to a destructured local whose initializer is unresolvable cross-file (`const { enter } = performance.createTimer(...)`): site dropped silently, needs one-hop return-type inference through an imported namespace | emitter.ts `emitFiles -> enter`, utilities.ts `createEvaluator` destructure f1-shape resolves, f2-shape does not | open, one-hop inference through imported namespaces |
+| destructured function parameter binds fine (f1 shape) | utilities.ts `evaluate -> evaluateEntityNameExpression` | not the failing shape; the utilities miss is the f2 shape at a nested `const { ... } = <member call>` binding |

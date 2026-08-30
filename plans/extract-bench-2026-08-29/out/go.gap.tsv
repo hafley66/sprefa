@@ -1,0 +1,6 @@
+internal/ls/completions.go	CompareCompletionEntries	internal/stringutil/compare.go	CompareStringsCaseInsensitiveThenSensitive
+internal/ls/completions.go	tryGetObjectTypeDeclarationCompletionContainer	internal/ls/completions.go	isClassMemberCompletionKeyword
+internal/ls/completions.go	tryGetObjectTypeDeclarationCompletionContainer	internal/ls/completions.go	isInterfaceOrTypeLiteralCompletionKeyword
+internal/ls/lsconv/converters.go	diagnosticToLSP	internal/ls/lsconv/converters.go	messageChainToString
+internal/ls/string_completions.go	getDirectoryFragmentRange	internal/core/text.go	NewTextRange
+internal/tspath/path.go	ContainsPath	internal/stringutil/compare.go	EquateStringCaseInsensitive

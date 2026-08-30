@@ -88,18 +88,58 @@ pub(crate) struct TraitFn {
 }
 
 /// `None` for a non-`.rs` path or a parse that fails: the plane then simply
-/// carries no facts for that file.
+/// carries no facts for that file. Consumes the handoff the rust extract pass
+/// stashed for these exact bytes (`rust_stash_module_facts`), so one syn
+/// parse serves both.
 pub fn rust_module_facts(path: &str, content: &[u8]) -> Option<RustModuleFacts> {
     if !path.ends_with(".rs") {
         return None;
     }
+    if let Some(stashed) = take_rust_module_facts(path, content) {
+        return Some(stashed);
+    }
     let text = std::str::from_utf8(content).ok()?;
     let parsed = syn::parse_file(text).ok()?;
+    Some(rust_module_facts_from_parsed(text, &parsed))
+}
+
+/// The module facts off the extract pass's own syn parse, so no second parse.
+pub(crate) fn rust_module_facts_from_parsed(text: &str, parsed: &syn::File) -> RustModuleFacts {
     let mut facts = RustModuleFacts::default();
     let line_starts = build_line_starts(text);
-    facts.impls = impl_facts(&parsed, &line_starts);
+    facts.impls = impl_facts(parsed, &line_starts);
     collect(&parsed.items, &line_starts, &mut facts);
-    Some(facts)
+    facts
+}
+
+/// The extract pass's handoff slot: dispatch parses, the module plane
+/// consumes on the same worker thread. Single entry, consumed on read.
+static RUST_MODULE_FACTS_HANDOFF: std::sync::Mutex<
+    Option<(String, crate::shape::ContentId, RustModuleFacts)>,
+> = std::sync::Mutex::new(None);
+
+/// Stash the module facts computed off the extract parse. The next
+/// `rust_module_facts` call for the same content consumes it.
+pub(crate) fn rust_stash_module_facts(path: &str, content: &[u8], facts: RustModuleFacts) {
+    let mut slot = RUST_MODULE_FACTS_HANDOFF
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    *slot = Some((
+        path.to_string(),
+        crate::shape::content_id_of(content),
+        facts,
+    ));
+}
+
+fn take_rust_module_facts(path: &str, content: &[u8]) -> Option<RustModuleFacts> {
+    let mut slot = RUST_MODULE_FACTS_HANDOFF
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    slot.take()
+        .filter(|(stashed_path, id, _)| {
+            stashed_path == path && *id == crate::shape::content_id_of(content)
+        })
+        .map(|(_, _, facts)| facts)
 }
 
 fn collect(items: &[syn::Item], line_starts: &[u32], facts: &mut RustModuleFacts) {

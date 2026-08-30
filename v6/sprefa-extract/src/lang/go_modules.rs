@@ -27,8 +27,8 @@ use crate::shape::{ContentId, Span, Strings};
 use crate::types::PathIndex;
 
 use super::go::{
-    go_is_method_def, go_module_of, go_node_span, go_package_dir, go_parse, go_text,
-    go_walk_import_specs, same_dir, unique_blob,
+    go_file_facts_of_source, go_is_method_def, go_module_of, go_node_span, go_package_dir,
+    go_parse_shared, go_text, go_walk_import_specs, same_dir, unique_blob, GoFileFacts,
 };
 
 // ── phase-2 facts: one dedicated parse per file ─────────────────────────────
@@ -46,15 +46,37 @@ struct GoSpecifier {
     module: Option<String>,
 }
 
-/// One file's package clause + import specs, off a dedicated parse; phase 1's
-/// CallF bundle (and its mask gate) is gone by the time the plane builds.
-#[derive(Clone, Debug, Default)]
+/// One file's package clause + import specs, off the SHARED parse (the same
+/// tree `dispatch` produced for the extract pass, handed over through
+/// `go_parse_shared`); phase 1's CallF bundle (and its mask gate) is gone by
+/// the time the plane builds. The same parse also collects the file's
+/// method/interface facts (`go.rs`'s `GoFileFacts`) for the resolve arms.
+#[derive(Clone, Default)]
 pub struct GoModuleFacts {
     package_name: Option<String>,
     specifiers: Vec<GoSpecifier>,
     /// This file's `type` declaration spans. The corpus `DefIndex` carries no
     /// entity kind, and a go method shares the name index with its type.
     type_decls: HashSet<Span>,
+    /// The resolve arms' per-file facts, collected in this one pass.
+    file_facts: Option<std::sync::Arc<GoFileFacts>>,
+}
+
+impl std::fmt::Debug for GoModuleFacts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GoModuleFacts")
+            .field("package_name", &self.package_name)
+            .field("specifiers", &self.specifiers)
+            .field("type_decls", &self.type_decls)
+            .finish_non_exhaustive()
+    }
+}
+
+impl GoModuleFacts {
+    /// The resolve arms' per-file facts, when this file contributed them.
+    pub(crate) fn file_facts(&self) -> Option<&std::sync::Arc<GoFileFacts>> {
+        self.file_facts.as_ref()
+    }
 }
 
 /// `None`: a non-`.go` path, or a parse that fails.
@@ -63,7 +85,7 @@ pub fn go_module_facts(path: &str, content: &[u8]) -> Option<GoModuleFacts> {
         return None;
     }
     let text = std::str::from_utf8(content).ok()?;
-    let tree = go_parse(text)?;
+    let tree = go_parse_shared(text)?;
     let root = tree.root_node();
     let src = text.as_bytes();
     let package_name = package_clause_name(root, src);
@@ -81,10 +103,12 @@ pub fn go_module_facts(path: &str, content: &[u8]) -> Option<GoModuleFacts> {
         .collect();
     let mut type_decls = HashSet::new();
     walk_type_decls(root, &mut type_decls);
+    let file_facts = std::sync::Arc::new(go_file_facts_of_source(&tree, text));
     Some(GoModuleFacts {
         package_name,
         specifiers,
         type_decls,
+        file_facts: Some(file_facts),
     })
 }
 

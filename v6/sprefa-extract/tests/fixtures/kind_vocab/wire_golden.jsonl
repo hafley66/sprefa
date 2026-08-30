@@ -300,6 +300,11 @@
 {"record":"edge","family":"cst","kind":"child","from":{"start":617,"end":621},"to":{"start":617,"end":621}}
 {"record":"edge","family":"cst","kind":"child","from":{"start":616,"end":630},"to":{"start":626,"end":630}}
 {"record":"node","family":"type","span":{"start":0,"end":53},"kind":"function","name":"createApi"}
+{"record":"node","family":"call","span":{"start":319,"end":471},"kind":"lambda","name":"endpoints"}
+{"record":"node","family":"call","span":{"start":385,"end":407},"kind":"lambda","name":"query"}
+{"record":"node","family":"call","span":{"start":447,"end":462},"kind":"lambda","name":"query"}
+{"record":"node","family":"call","span":{"start":540,"end":639},"kind":"lambda","name":"endpoints"}
+{"record":"node","family":"call","span":{"start":616,"end":630},"kind":"lambda","name":"query"}
 {"record":"node","family":"call","span":{"start":0,"end":645},"kind":"module","name":"<module>"}
 {"record":"site","family":"call","span":{"start":271,"end":280},"callee":"createApi","callee_path":null}
 {"record":"site","family":"call","span":{"start":348,"end":361},"callee":"query","callee_path":"builder.query"}
@@ -618,6 +623,9 @@
 {"record":"edge","family":"cst","kind":"child","from":{"start":441,"end":455},"to":{"start":447,"end":455}}
 {"record":"edge","family":"cst","kind":"child","from":{"start":447,"end":455},"to":{"start":448,"end":454}}
 {"record":"node","family":"type","span":{"start":0,"end":53},"kind":"function","name":"createApi"}
+{"record":"node","family":"call","span":{"start":307,"end":464},"kind":"lambda","name":"endpoints"}
+{"record":"node","family":"call","span":{"start":382,"end":398},"kind":"lambda","name":"query"}
+{"record":"node","family":"call","span":{"start":441,"end":455},"kind":"lambda","name":"query"}
 {"record":"node","family":"call","span":{"start":0,"end":470},"kind":"module","name":"<module>"}
 {"record":"site","family":"call","span":{"start":272,"end":291},"callee":"injectEndpoints","callee_path":"api.injectEndpoints"}
 {"record":"site","family":"call","span":{"start":339,"end":355},"callee":"mutation","callee_path":"builder.mutation"}
@@ -13856,6 +13864,8 @@
 {"record":"data_doc","family":"data","ordinal":12,"span":{"start":1371,"end":1458},"format":"jsonl","doc":{"name":"Dog","record":"scip_name","symbol":"scip-typescript npm . . `animal.ts`/Dog#"}}
 {"record":"data_doc","family":"data","ordinal":13,"span":{"start":1459,"end":1556},"format":"jsonl","doc":{"name":"sound","record":"scip_name","symbol":"scip-typescript npm . . `animal.ts`/Dog#sound()."}}
 {"record":"data_doc","family":"data","ordinal":14,"span":{"start":1557,"end":1693},"format":"jsonl","doc":{"def_file":"animal.ts","file":"animal.ts","record":"scip_ref","repo":"scip_rel","symbol":"scip-typescript npm . . `animal.ts`/Animal#"}}
+{"record":"data_doc","family":"data","ordinal":15,"span":{"start":1694,"end":1934},"format":"jsonl","doc":{"is_definition":false,"is_implementation":true,"is_reference":false,"is_type_definition":false,"record":"scip_relationship","related_symbol":"scip-typescript npm . . `animal.ts`/Animal#","symbol":"scip-typescript npm . . `animal.ts`/Dog#"}}
+{"record":"data_doc","family":"data","ordinal":16,"span":{"start":1935,"end":2190},"format":"jsonl","doc":{"is_definition":false,"is_implementation":true,"is_reference":true,"is_type_definition":false,"record":"scip_relationship","related_symbol":"scip-typescript npm . . `animal.ts`/Animal#sound().","symbol":"scip-typescript npm . . `animal.ts`/Dog#sound()."}}
 {"record":"data_value","family":"data","ordinal":0,"path":"","kind":"object","text":null,"span":{"start":0,"end":106}}
 {"record":"data_value","family":"data","ordinal":0,"path":"record","kind":"string","text":"scip_def","span":{"start":11,"end":19}}
 {"record":"data_value","family":"data","ordinal":0,"path":"symbol","kind":"string","text":"scip-typescript npm . . `animal.ts`/","span":{"start":31,"end":67}}
@@ -13925,6 +13935,22 @@
 {"record":"data_value","family":"data","ordinal":14,"path":"symbol","kind":"string","text":"scip-typescript npm . . `animal.ts`/Animal#","span":{"start":1607,"end":1650}}
 {"record":"data_value","family":"data","ordinal":14,"path":"def_file","kind":"string","text":"animal.ts","span":{"start":1664,"end":1673}}
 {"record":"data_value","family":"data","ordinal":14,"path":"repo","kind":"string","text":"scip_rel","span":{"start":1683,"end":1691}}
+{"record":"data_value","family":"data","ordinal":15,"path":"","kind":"object","text":null,"span":{"start":1694,"end":1934}}
+{"record":"data_value","family":"data","ordinal":15,"path":"record","kind":"string","text":"scip_relationship","span":{"start":1705,"end":1722}}
+{"record":"data_value","family":"data","ordinal":15,"path":"symbol","kind":"string","text":"scip-typescript npm . . `animal.ts`/Dog#","span":{"start":1734,"end":1774}}
+{"record":"data_value","family":"data","ordinal":15,"path":"related_symbol","kind":"string","text":"scip-typescript npm . . `animal.ts`/Animal#","span":{"start":1794,"end":1837}}
+{"record":"data_value","family":"data","ordinal":15,"path":"is_reference","kind":"boolean","text":"false","span":{"start":1854,"end":1859}}
+{"record":"data_value","family":"data","ordinal":15,"path":"is_implementation","kind":"boolean","text":"true","span":{"start":1880,"end":1884}}
+{"record":"data_value","family":"data","ordinal":15,"path":"is_type_definition","kind":"boolean","text":"false","span":{"start":1906,"end":1911}}
+{"record":"data_value","family":"data","ordinal":15,"path":"is_definition","kind":"boolean","text":"false","span":{"start":1928,"end":1933}}
+{"record":"data_value","family":"data","ordinal":16,"path":"","kind":"object","text":null,"span":{"start":1935,"end":2190}}
+{"record":"data_value","family":"data","ordinal":16,"path":"record","kind":"string","text":"scip_relationship","span":{"start":1946,"end":1963}}
+{"record":"data_value","family":"data","ordinal":16,"path":"symbol","kind":"string","text":"scip-typescript npm . . `animal.ts`/Dog#sound().","span":{"start":1975,"end":2023}}
+{"record":"data_value","family":"data","ordinal":16,"path":"related_symbol","kind":"string","text":"scip-typescript npm . . `animal.ts`/Animal#sound().","span":{"start":2043,"end":2094}}
+{"record":"data_value","family":"data","ordinal":16,"path":"is_reference","kind":"boolean","text":"true","span":{"start":2111,"end":2115}}
+{"record":"data_value","family":"data","ordinal":16,"path":"is_implementation","kind":"boolean","text":"true","span":{"start":2136,"end":2140}}
+{"record":"data_value","family":"data","ordinal":16,"path":"is_type_definition","kind":"boolean","text":"false","span":{"start":2162,"end":2167}}
+{"record":"data_value","family":"data","ordinal":16,"path":"is_definition","kind":"boolean","text":"false","span":{"start":2184,"end":2189}}
 {"record":"node","family":"cst","span":{"start":0,"end":1884},"kind":"document","name":null}
 {"record":"node","family":"cst","span":{"start":0,"end":1884},"kind":"section","name":null}
 {"record":"node","family":"cst","span":{"start":0,"end":20},"kind":"atx_heading","name":null}
@@ -19336,7 +19362,7 @@
 {"record":"edge","family":"cst","kind":"child","from":{"start":190,"end":196},"to":{"start":194,"end":195}}
 {"record":"node","family":"type","span":{"start":50,"end":69},"kind":"function","name":"f"}
 {"record":"node","family":"call","span":{"start":50,"end":69},"kind":"function","name":"f"}
-{"record":"node","family":"call","span":{"start":96,"end":112},"kind":"lambda","name":null}
+{"record":"node","family":"call","span":{"start":96,"end":112},"kind":"lambda","name":"m"}
 {"record":"node","family":"call","span":{"start":0,"end":198},"kind":"module","name":"<module>"}
 {"record":"site","family":"call","span":{"start":31,"end":39},"callee":"loadPath","callee_path":null}
 {"record":"site","family":"call","span":{"start":71,"end":72},"callee":"f","callee_path":null}

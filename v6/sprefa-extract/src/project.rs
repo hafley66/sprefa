@@ -271,6 +271,14 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         .iter()
         .filter_map(|input| Some((input.path.clone(), input.go_module.clone()?)))
         .collect();
+    // The go resolve arms read their per-file facts from this publish step
+    // (computed in the module plane's shared parse); the parse fallback in
+    // go.rs only serves library/test paths with no module plane.
+    for input in inputs.iter() {
+        if let Some(facts) = input.go_module.as_ref().and_then(GoModuleFacts::file_facts) {
+            crate::lang::go::go_publish_file_facts(&input.path, Some(&input.blob), facts.clone());
+        }
+    }
     cx.indexes
         .go_modules
         .set(GoModuleIndex::build(go_module_files))

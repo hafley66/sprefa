@@ -9,7 +9,7 @@
 //! a rename is a breaking change and has to show up as a diff. The `scip` golden
 //! additionally pins the v5 relation vocabulary: `scip_def`, `scip_name`,
 //! `scip_ref`, `scip_edge`, `scip_fn_edge`, `scip_callee_type`, `scip_local`,
-//! `scip_impl`. A program written against v5's `scip_*` relations reads these
+//! `scip_impl`, `scip_relationship`. A program written against v5's `scip_*` relations reads these
 //! rows unchanged, and that is the whole contract.
 //!
 //! THE SCIP TESTS RUN THE REAL INDEXERS, matching the ratchet law in
@@ -126,7 +126,11 @@ fn only_real_scip_resolves_the_cross_file_call_the_heuristic_cannot() {
         .filter(|line| line.contains(r#""record":"resolved_edge""#))
         .filter(|line| line.contains(r#""callee_name":"probe""#))
         .collect::<Vec<_>>();
-    assert_eq!(probe_edges.len(), 1, "only the typed receiver binds: {heuristic}");
+    assert_eq!(
+        probe_edges.len(),
+        1,
+        "only the typed receiver binds: {heuristic}"
+    );
     assert!(
         probe_edges[0].contains(r#""callee_path":"tests/fixtures/ts/scip/delta.ts""#),
         "the receiver leg takes the same-file probe: {heuristic}"
@@ -134,7 +138,8 @@ fn only_real_scip_resolves_the_cross_file_call_the_heuristic_cannot() {
     assert!(
         heuristic
             .lines()
-            .any(|line| line.contains(r#""reason":"inferred""#) && line.contains(r#""detail":"probe""#)),
+            .any(|line| line.contains(r#""reason":"inferred""#)
+                && line.contains(r#""detail":"probe""#)),
         "the untyped far site drops reason=inferred: {heuristic}"
     );
 
@@ -265,11 +270,9 @@ fn the_diet_scip_family_stream_is_the_resolve_pass_output() {
     ]);
     assert_eq!(stream, DIET_SCIP_GOLDEN);
     assert!(
-        stream
-            .lines()
-            .all(|line| line.contains("\"resolved_edge\"")
-                || line.contains("\"resolved_type_edge\"")
-                || line.contains("\"record\":\"unresolved\"")),
+        stream.lines().all(|line| line.contains("\"resolved_edge\"")
+            || line.contains("\"resolved_type_edge\"")
+            || line.contains("\"record\":\"unresolved\"")),
         "a diet stream carries only resolve-pass records (edges + drops): {stream}"
     );
 }
