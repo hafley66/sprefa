@@ -1009,11 +1009,11 @@ fn call_resolve_scip_ratchet_ts() {
                 lines.push(format!("MISSING-OCCURRENCE {rel}:{line} {callee}"));
             }
             let scip_t = occ
-                .and_then(|o| definition_of(scip_index, doc_ix, &o.symbol))
-                .and_then(|(def_doc_ix, def_occ)| {
+                .and_then(|sym| definition_of(scip_index, doc_ix, sym))
+                .and_then(|(def_doc_ix, def_range)| {
                     let def_doc = &scip_index.documents[def_doc_ix];
                     let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
-                    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+                    let ident = byte_range(def_content, def_range, def_doc.position_encoding)?;
                     containing_def_site(def_index, def_blob.clone(), ident)
                         .map(|(name, s)| (def_blob.clone(), s.span, name))
                 });
@@ -1313,11 +1313,11 @@ fn call_resolve_scip_ratchet_go() {
                 lines.push(format!("MISSING-OCCURRENCE {rel}:{line} {callee}"));
             }
             let scip_t = occ
-                .and_then(|o| definition_of(scip_index, doc_ix, &o.symbol))
-                .and_then(|(def_doc_ix, def_occ)| {
+                .and_then(|sym| definition_of(scip_index, doc_ix, sym))
+                .and_then(|(def_doc_ix, def_range)| {
                     let def_doc = &scip_index.documents[def_doc_ix];
                     let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
-                    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+                    let ident = byte_range(def_content, def_range, def_doc.position_encoding)?;
                     containing_def_site(def_index, def_blob.clone(), ident)
                         .map(|(name, s)| (def_blob.clone(), s.span, name))
                 });
@@ -1606,12 +1606,12 @@ fn call_resolve_scip_ratchet_rust() {
                 lines.push(format!("MISSING-OCCURRENCE {rel}:{line} {callee}"));
             }
             let scip_t = occ
-                .filter(|o| !o.symbol.starts_with("local "))
-                .and_then(|o| definition_of(scip_index, doc_ix, &o.symbol))
-                .and_then(|(def_doc_ix, def_occ)| {
+                .filter(|sym| !scip_index.symbol(*sym).starts_with("local "))
+                .and_then(|sym| definition_of(scip_index, doc_ix, sym))
+                .and_then(|(def_doc_ix, def_range)| {
                     let def_doc = &scip_index.documents[def_doc_ix];
                     let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
-                    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+                    let ident = byte_range(def_content, def_range, def_doc.position_encoding)?;
                     containing_def_site(def_index, def_blob.clone(), ident)
                         .map(|(name, s)| (def_blob.clone(), s.span, name))
                 });

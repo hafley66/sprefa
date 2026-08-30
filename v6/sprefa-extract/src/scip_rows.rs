@@ -148,6 +148,7 @@ pub fn flatten_scip_records(
                 let lines = LineTable::build(&content);
                 for occurrence in &document.occurrences {
                     out.extend(occurrence_rows(
+                        index,
                         document,
                         occurrence,
                         &content,
@@ -159,14 +160,14 @@ pub fn flatten_scip_records(
             }
         }
         for info in &document.symbols {
-            out.extend(symbol_rows(info, Some(&document.relative_path), records));
+            out.extend(symbol_rows(index, info, Some(&document.relative_path), records));
         }
     }
     // External symbols belong to no document: they are what the corpus
     // references and does not define, which is exactly how a consumer tells a
     // library call from a corpus call.
     for info in &index.external_symbols {
-        out.extend(symbol_rows(info, None, records));
+        out.extend(symbol_rows(index, info, None, records));
     }
     out
 }
@@ -181,6 +182,7 @@ fn wants_occurrences(records: &ScipRecords) -> bool {
 /// documentation and its diagnostics as child rows keyed by the same
 /// (path, start, end) coordinate.
 fn occurrence_rows(
+    index: &ScipIndex,
     document: &ScipDocument,
     occurrence: &ScipOccurrence,
     content: &[u8],
@@ -209,7 +211,7 @@ fn occurrence_rows(
     if records.wants("scip_occurrence") {
         out.push(FlatFact::ScipOccurrenceRow {
             path: path.clone(),
-            symbol: occurrence.symbol.clone(),
+            symbol: index.symbol(occurrence.symbol).to_string(),
             start,
             end,
             roles: roles.0,
@@ -261,12 +263,17 @@ fn occurrence_rows(
 
 /// One symbol information's rows: the symbol itself, its relationships, its
 /// docstrings, and its signature with the references inside the signature text.
-fn symbol_rows(info: &ScipSymbolInfo, path: Option<&str>, records: &ScipRecords) -> Vec<FlatFact> {
+fn symbol_rows(
+    index: &ScipIndex,
+    info: &ScipSymbolInfo,
+    path: Option<&str>,
+    records: &ScipRecords,
+) -> Vec<FlatFact> {
     let mut out = Vec::new();
     if records.wants("scip_symbol") {
         out.push(FlatFact::ScipSymbolRow {
             path: path.map(str::to_string),
-            symbol: info.symbol.clone(),
+            symbol: index.symbol(info.symbol).to_string(),
             display_name: info.display_name.clone(),
             kind: info.kind,
             enclosing_symbol: info.enclosing_symbol.clone(),
@@ -278,8 +285,8 @@ fn symbol_rows(info: &ScipSymbolInfo, path: Option<&str>, records: &ScipRecords)
         .filter(|_| records.wants("scip_relationship"))
     {
         out.push(FlatFact::ScipRelationshipRow {
-            symbol: info.symbol.clone(),
-            related_symbol: related.symbol.clone(),
+            symbol: index.symbol(info.symbol).to_string(),
+            related_symbol: index.symbol(related.symbol).to_string(),
             is_reference: related.is_reference,
             is_implementation: related.is_implementation,
             is_type_definition: related.is_type_definition,
@@ -293,7 +300,7 @@ fn symbol_rows(info: &ScipSymbolInfo, path: Option<&str>, records: &ScipRecords)
         .filter(|_| records.wants("scip_documentation"))
     {
         out.push(FlatFact::ScipDocumentationRow {
-            symbol: info.symbol.clone(),
+            symbol: index.symbol(info.symbol).to_string(),
             pos: pos as u32,
             text: text.clone(),
         });
@@ -301,7 +308,7 @@ fn symbol_rows(info: &ScipSymbolInfo, path: Option<&str>, records: &ScipRecords)
     if let Some(signature) = &info.signature {
         if records.wants("scip_signature") {
             out.push(FlatFact::ScipSignatureRow {
-                symbol: info.symbol.clone(),
+                symbol: index.symbol(info.symbol).to_string(),
                 language: signature.language.clone(),
                 text: signature.text.clone(),
             });
@@ -324,8 +331,8 @@ fn symbol_rows(info: &ScipSymbolInfo, path: Option<&str>, records: &ScipRecords)
                 continue;
             };
             out.push(FlatFact::ScipSignatureOccurrenceRow {
-                symbol: info.symbol.clone(),
-                ref_symbol: occurrence.symbol.clone(),
+                symbol: index.symbol(info.symbol).to_string(),
+                ref_symbol: index.symbol(occurrence.symbol).to_string(),
                 start: span.start,
                 end: span.end(),
                 roles: occurrence.roles.0,
@@ -371,12 +378,12 @@ pub fn scip_file_edges(index: &ScipIndex) -> Vec<FlatFact> {
     for document in &index.documents {
         for occurrence in &document.occurrences {
             if !occurrence.roles.contains(OccurrenceRole::DEFINITION)
-                || occurrence.symbol.starts_with("local ")
+                || index.symbol(occurrence.symbol).starts_with("local ")
             {
                 continue;
             }
             defining_document
-                .entry(&occurrence.symbol)
+                .entry(index.symbol(occurrence.symbol))
                 .or_insert(&document.relative_path);
         }
     }
@@ -387,11 +394,11 @@ pub fn scip_file_edges(index: &ScipIndex) -> Vec<FlatFact> {
     for document in &index.documents {
         for occurrence in &document.occurrences {
             if occurrence.roles.contains(OccurrenceRole::DEFINITION)
-                || occurrence.symbol.starts_with("local ")
+                || index.symbol(occurrence.symbol).starts_with("local ")
             {
                 continue;
             }
-            let Some(target) = defining_document.get(occurrence.symbol.as_str()) else {
+            let Some(target) = defining_document.get(index.symbol(occurrence.symbol)) else {
                 continue;
             };
             if *target == document.relative_path {
@@ -400,7 +407,7 @@ pub fn scip_file_edges(index: &ScipIndex) -> Vec<FlatFact> {
             crossings
                 .entry((&document.relative_path, target))
                 .or_default()
-                .insert(&occurrence.symbol);
+                .insert(index.symbol(occurrence.symbol));
         }
     }
 

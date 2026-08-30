@@ -39,7 +39,7 @@ use crate::scip_decode::load_index;
 use crate::scip_ensure::{run_capped, Capped};
 use crate::shape::Span;
 use crate::types::{
-    OccurrenceRole, PositionEncoding, ScipDocument, ScipError, ScipIndex, ScipOccurrence,
+    OccurrenceRole, PositionEncoding, ScipDocument, ScipError, ScipIndex, SymbolId,
     ScipSource,
 };
 
@@ -601,9 +601,10 @@ pub fn byte_range_at(
 /// Per document: the byte span of every convertible occurrence, sorted by
 /// (start, end), plus the document's line table. `site_occurrence` binary
 /// searches this instead of scanning `doc.occurrences` and rebuilding the
-/// line table per site.
+/// line table per site. The third slot is the occurrence's interned symbol
+/// (`ScipIndex::symbol`), so the search never touches the occurrence rows.
 struct DocOccCache {
-    spans: Vec<(u32, u32, usize)>,
+    spans: Vec<(u32, u32, SymbolId)>,
     lines: LineTable,
 }
 
@@ -636,10 +637,10 @@ fn doc_cache(doc: &ScipDocument, content: &[u8]) -> Arc<DocOccCache> {
         }
     }
     let lines = LineTable::build(content);
-    let mut spans: Vec<(u32, u32, usize)> = Vec::with_capacity(doc.occurrences.len());
-    for (ix, occ) in doc.occurrences.iter().enumerate() {
+    let mut spans: Vec<(u32, u32, SymbolId)> = Vec::with_capacity(doc.occurrences.len());
+    for occ in &doc.occurrences {
         if let Some(span) = byte_range_at(content, &lines, occ.range, doc.position_encoding) {
-            spans.push((span.start, span.end(), ix));
+            spans.push((span.start, span.end(), occ.symbol));
         }
     }
     spans.sort_unstable_by_key(|(start, end, _)| (*start, *end));
@@ -655,7 +656,7 @@ static DOC_CACHES: Mutex<Option<HashMap<DocKey, Arc<DocOccCache>>>> = Mutex::new
 /// symbol -> (document ix, occurrence ix) for the first definition-role
 /// occurrence, first-wins in document order — the same resolution
 /// `definition_of` answers by scan.
-type DefMap = HashMap<String, (usize, u32)>;
+type DefMap = HashMap<SymbolId, (usize, u32)>;
 
 #[derive(Hash, PartialEq, Eq)]
 struct IndexKey {
@@ -688,8 +689,7 @@ fn def_map(index: &ScipIndex) -> Arc<DefMap> {
             if !occ.roles.contains(OccurrenceRole::DEFINITION) {
                 continue;
             }
-            map.entry(occ.symbol.clone())
-                .or_insert((doc_ix, occ_ix as u32));
+            map.entry(occ.symbol).or_insert((doc_ix, occ_ix as u32));
         }
     }
     let map = Arc::new(map);
@@ -726,62 +726,53 @@ pub fn join_documents(
 /// inside either) whose source text equals the callee name (the trailing
 /// segment; filters the receiver/path occurrences — `Math` in `Math.sqrt` —
 /// and the argument occurrences inside a new-expression). Deterministic:
-/// first by (start, end).
-pub fn site_occurrence<'a>(
-    doc: &'a ScipDocument,
+/// first by (start, end). Returns the site's interned symbol.
+pub fn site_occurrence(
+    doc: &ScipDocument,
     content: &[u8],
     site: Span,
     callee: &str,
-) -> Option<&'a ScipOccurrence> {
+) -> Option<SymbolId> {
     let cache = doc_cache(doc, content);
     // Containment needs span.start >= site.start, so the first candidate is
     // the first cached span at or after the site's start byte.
     let first = cache
         .spans
         .partition_point(|(start, _, _)| *start < site.start);
-    let mut hit: Option<(usize, [i32; 4])> = None;
-    for &(start, end, occ_ix) in &cache.spans[first..] {
-        if start > site.end() {
-            break;
-        }
-        if end > site.end() {
-            continue;
-        }
-        let occ = &doc.occurrences[occ_ix];
-        if &content[start as usize..end as usize] != callee.as_bytes() {
-            continue;
-        }
-        if hit.as_ref().is_none_or(|(_, best)| occ.range < *best) {
-            hit = Some((occ_ix, occ.range));
-        }
-    }
-    hit.map(|(occ_ix, _)| &doc.occurrences[occ_ix])
+    // The spans are sorted by (start, end), so the first text match IS the
+    // min-(start, end) hit the range comparison used to pick.
+    cache.spans[first..]
+        .iter()
+        .take_while(|&&(start, _, _)| start <= site.end())
+        .filter(|&&(_, end, _)| end <= site.end())
+        .find(|&&(start, end, _)| &content[start as usize..end as usize] == callee.as_bytes())
+        .map(|&(_, _, symbol)| symbol)
 }
 
 /// The definition occurrence of a symbol: `local ` symbols are DOCUMENT-
 /// scoped (scip reuses `local 0` per file — v5's per-document keying), so the
 /// search starts and ends at the site's own document; global symbols are
 /// corpus-unique, so the first definition-role occurrence across all
-/// documents answers. Returns (document_ix, occurrence) — None means the
+/// documents answers. Returns (document_ix, def range) — None means the
 /// symbol has no definition in the indexed corpus (an EXTERNAL: a library
 /// symbol, or an unresolved reference).
-pub fn definition_of<'a>(
-    index: &'a ScipIndex,
+pub fn definition_of(
+    index: &ScipIndex,
     doc_ix: usize,
-    symbol: &str,
-) -> Option<(usize, &'a ScipOccurrence)> {
-    if symbol.starts_with("local ") {
+    symbol: SymbolId,
+) -> Option<(usize, [i32; 4])> {
+    if index.symbol(symbol).starts_with("local ") {
         // `local N` is per-document: the map's first-wins entry names some
         // other file's local, so the search stays at the site's own document.
         let doc = &index.documents[doc_ix];
         return doc
             .occurrences
             .iter()
-            .position(|occ| occ.symbol == symbol && occ.roles.contains(OccurrenceRole::DEFINITION))
-            .map(|occ_ix| (doc_ix, &doc.occurrences[occ_ix]));
+            .find(|occ| occ.symbol == symbol && occ.roles.contains(OccurrenceRole::DEFINITION))
+            .map(|occ| (doc_ix, occ.range));
     }
     let map = def_map(index);
-    let (def_doc_ix, occ_ix) = map.get(symbol)?;
+    let (def_doc_ix, occ_ix) = map.get(&symbol)?;
     let occ = &index.documents[*def_doc_ix].occurrences[*occ_ix as usize];
-    Some((*def_doc_ix, occ))
+    Some((*def_doc_ix, occ.range))
 }

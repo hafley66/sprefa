@@ -1926,6 +1926,42 @@ impl PositionEncoding {
     }
 }
 
+/// An interned scip symbol: an index into `ScipIndex::symbols`, minted at
+/// decode. One copy of each distinct symbol string serves every occurrence,
+/// symbol information and relationship that references it (a 950k-occurrence
+/// index holds ~30k distinct symbols; per-occurrence `String`s held 75 MB of
+/// duplicated text on the go corpus).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SymbolId(pub u32);
+
+/// The decode-time interner: dedupes symbol strings into `SymbolId`s and
+/// yields the finished `ScipIndex::symbols` table.
+#[derive(Default)]
+pub struct SymbolInterner {
+    ids: std::collections::HashMap<String, SymbolId>,
+    table: Vec<String>,
+}
+
+impl SymbolInterner {
+    /// Mint (or reuse) the id for one symbol string.
+    pub fn intern(&mut self, symbol: impl Into<String>) -> SymbolId {
+        let symbol = symbol.into();
+        let next = SymbolId(self.table.len() as u32);
+        *self
+            .ids
+            .entry(symbol.clone())
+            .or_insert_with(|| {
+                self.table.push(symbol);
+                next
+            })
+    }
+
+    /// The finished table: `ScipIndex::symbols`, `SymbolId`s index into it.
+    pub fn table(self) -> Vec<String> {
+        self.table
+    }
+}
+
 /// One occurrence: a (symbol, range, roles) triple — a definition or a
 /// reference site (seed `_4_scip.rs`:26-35). `range` is scip.proto's packed
 /// quad normalized to `[start_line, start_col, end_line, end_col]` (the 3-
@@ -1941,7 +1977,8 @@ impl PositionEncoding {
 /// is the dl layer's call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScipOccurrence {
-    pub symbol: String,
+    /// The interned symbol; resolve the text with `ScipIndex::symbol`.
+    pub symbol: SymbolId,
     pub range: [i32; 4],
     pub roles: OccurrenceRole,
     /// scip.proto `SyntaxKind` ordinal (0 = UnspecifiedSyntaxKind).
@@ -1983,7 +2020,8 @@ pub struct ScipSignature {
 /// diet and are passed through as of the scip-passthrough lane.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScipSymbolInfo {
-    pub symbol: String,
+    /// The interned symbol; resolve the text with `ScipIndex::symbol`.
+    pub symbol: SymbolId,
     pub display_name: String,
     pub kind: i32,
     /// Relationships to other symbols (implements / type-definition /
@@ -2006,7 +2044,8 @@ pub struct ScipSymbolInfo {
 /// (an overriding method is both a reference and an implementation).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ScipRelationship {
-    pub symbol: String,
+    /// The interned related symbol; resolve the text with `ScipIndex::symbol`.
+    pub symbol: SymbolId,
     pub is_reference: bool,
     pub is_implementation: bool,
     pub is_type_definition: bool,
@@ -2038,6 +2077,8 @@ pub struct ScipIndex {
     pub documents: Vec<ScipDocument>,
     pub external_symbols: Vec<ScipSymbolInfo>,
     pub metadata: ScipMetadata,
+    /// The symbol interner table built at decode; `SymbolId`s index into it.
+    pub symbols: Vec<String>,
 }
 
 impl ScipIndex {
@@ -2045,6 +2086,12 @@ impl ScipIndex {
     /// parity goldens print). Derived from metadata rather than stored twice.
     pub fn tool(&self) -> String {
         format!("{} {}", self.metadata.tool_name, self.metadata.tool_version)
+    }
+
+    /// The text behind an interned symbol. Unknown ids (a hand-built index
+    /// with an empty table) read as the empty string, never a panic.
+    pub fn symbol(&self, id: SymbolId) -> &str {
+        self.symbols.get(id.0 as usize).map(String::as_str).unwrap_or("")
     }
 }
 

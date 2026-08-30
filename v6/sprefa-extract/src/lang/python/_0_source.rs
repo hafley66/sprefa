@@ -1973,10 +1973,10 @@ fn scip_call_target<'a>(
     let doc = &index.documents[doc_ix];
     let (_, content) = joined[doc_ix].as_ref()?;
     let occ = site_occurrence(doc, content, site.span, callee)?;
-    let (def_doc_ix, def_occ) = definition_of(index, doc_ix, &occ.symbol)?;
+    let (def_doc_ix, def_range) = definition_of(index, doc_ix, occ)?;
     let def_doc = &index.documents[def_doc_ix];
     let (def_blob, def_content) = joined[def_doc_ix].as_ref()?;
-    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+    let ident = byte_range(def_content, def_range, def_doc.position_encoding)?;
     let (name, def_site) = containing_def_site(def_index, def_blob.clone(), ident)?;
     Some((def_blob.clone(), def_site.span, name))
 }

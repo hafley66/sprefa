@@ -11,7 +11,7 @@ use prost::Message;
 
 use crate::types::{
     OccurrenceRole, PositionEncoding, ScipDiagnostic, ScipDocument, ScipError, ScipIndex,
-    ScipMetadata, ScipOccurrence, ScipRelationship, ScipSignature, ScipSymbolInfo,
+    ScipMetadata, ScipOccurrence, ScipRelationship, ScipSignature, ScipSymbolInfo, SymbolInterner,
 };
 
 // doc(hidden): the generated rustdoc carries fenced symbol-grammar examples
@@ -35,6 +35,7 @@ pub fn load_index(index_path: &Path) -> Result<ScipIndex, ScipError> {
     let mut documents = Vec::new();
     let mut external_symbols: Vec<ScipSymbolInfo> = Vec::new();
     let mut metadata: Option<proto::Metadata> = None;
+    let mut symbols = SymbolInterner::default();
     for_each_message(&bytes, &mut |field, buf| match field {
         1 => {
             metadata = Some(
@@ -46,13 +47,13 @@ pub fn load_index(index_path: &Path) -> Result<ScipIndex, ScipError> {
         2 => {
             let doc = proto::Document::decode(buf)
                 .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
-            documents.push(diet_document(&doc));
+            documents.push(diet_document(&doc, &mut symbols));
             Ok(())
         }
         3 => {
             let info = proto::SymbolInformation::decode(buf)
                 .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
-            external_symbols.push(diet_symbol(&info));
+            external_symbols.push(diet_symbol(&info, &mut symbols));
             Ok(())
         }
         _ => Ok(()),
@@ -63,6 +64,7 @@ pub fn load_index(index_path: &Path) -> Result<ScipIndex, ScipError> {
         documents,
         external_symbols,
         metadata: diet_metadata(metadata, tool),
+        symbols: symbols.table(),
     })
 }
 
@@ -146,16 +148,16 @@ pub fn merge_indexes(inputs: &[std::path::PathBuf], out: &Path) -> Result<usize,
 /// verbatim. Splitting a symbol into scheme / package manager / package name /
 /// version / descriptors is a string parse over a field the consumer already
 /// holds, and string work is the dl layer's, same as the joins.
-fn diet_symbol(si: &proto::SymbolInformation) -> ScipSymbolInfo {
+fn diet_symbol(si: &proto::SymbolInformation, symbols: &mut SymbolInterner) -> ScipSymbolInfo {
     ScipSymbolInfo {
-        symbol: si.symbol.clone(),
+        symbol: symbols.intern(&si.symbol),
         display_name: si.display_name.clone(),
         kind: si.kind,
         relationships: si
             .relationships
             .iter()
             .map(|rel| ScipRelationship {
-                symbol: rel.symbol.clone(),
+                symbol: symbols.intern(&rel.symbol),
                 is_reference: rel.is_reference,
                 is_implementation: rel.is_implementation,
                 is_type_definition: rel.is_type_definition,
@@ -169,13 +171,17 @@ fn diet_symbol(si: &proto::SymbolInformation) -> ScipSymbolInfo {
             .map(|sig| ScipSignature {
                 language: sig.language.clone(),
                 text: sig.text.clone(),
-                occurrences: sig.occurrences.iter().filter_map(occurrence).collect(),
+                occurrences: sig
+                    .occurrences
+                    .iter()
+                    .filter_map(|occ| occurrence(occ, symbols))
+                    .collect(),
             }),
         enclosing_symbol: si.enclosing_symbol.clone(),
     }
 }
 
-fn diet_document(doc: &proto::Document) -> ScipDocument {
+fn diet_document(doc: &proto::Document, symbols: &mut SymbolInterner) -> ScipDocument {
     ScipDocument {
         relative_path: doc.relative_path.clone(),
         position_encoding: match doc.position_encoding {
@@ -184,8 +190,12 @@ fn diet_document(doc: &proto::Document) -> ScipDocument {
             3 => PositionEncoding::Utf32,
             _ => PositionEncoding::Unspecified,
         },
-        occurrences: doc.occurrences.iter().filter_map(occurrence).collect(),
-        symbols: doc.symbols.iter().map(diet_symbol).collect(),
+        occurrences: doc
+            .occurrences
+            .iter()
+            .filter_map(|occ| occurrence(occ, symbols))
+            .collect(),
+        symbols: doc.symbols.iter().map(|si| diet_symbol(si, symbols)).collect(),
         language: doc.language.clone(),
         text: doc.text.clone(),
     }
@@ -210,9 +220,9 @@ fn diet_metadata(
 /// proto -> diet for one occurrence. An occurrence whose range does not
 /// normalize is dropped (the `occurrence_range` law); the enclosing range is
 /// optional and a malformed one is `None` rather than a dropped occurrence.
-fn occurrence(occ: &proto::Occurrence) -> Option<ScipOccurrence> {
+fn occurrence(occ: &proto::Occurrence, symbols: &mut SymbolInterner) -> Option<ScipOccurrence> {
     Some(ScipOccurrence {
-        symbol: occ.symbol.clone(),
+        symbol: symbols.intern(&occ.symbol),
         range: occurrence_range(occ)?,
         roles: OccurrenceRole(occ.symbol_roles),
         syntax_kind: occ.syntax_kind,

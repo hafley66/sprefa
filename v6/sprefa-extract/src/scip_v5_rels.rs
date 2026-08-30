@@ -48,7 +48,7 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
     for document in &index.documents {
         let path = document.relative_path.as_str();
         for occurrence in &document.occurrences {
-            let symbol = occurrence.symbol.as_str();
+            let symbol = index.symbol(occurrence.symbol);
             if !usable_symbol(symbol) || !is_definition(occurrence) {
                 continue;
             }
@@ -77,7 +77,7 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
         let path = document.relative_path.as_str();
         let callables = fn_defs.get(path);
         for occurrence in &document.occurrences {
-            let symbol = occurrence.symbol.as_str();
+            let symbol = index.symbol(occurrence.symbol);
             // Locals are filtered out of the main path by `usable_symbol` and
             // collected here instead: a local DEFINITION is the binding site,
             // attributed to its enclosing callable by the same predecessor
@@ -132,23 +132,23 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
         .flat_map(|document| document.symbols.iter())
         .chain(index.external_symbols.iter());
     for info in infos {
-        if info.symbol.is_empty() {
+        if index.symbol(info.symbol).is_empty() {
             continue;
         }
         for related in &info.relationships {
-            if related.symbol.is_empty() {
+            if index.symbol(related.symbol).is_empty() {
                 continue;
             }
             if related.is_implementation {
-                impls.insert((info.symbol.as_str(), related.symbol.as_str()));
+                impls.insert((index.symbol(info.symbol), index.symbol(related.symbol)));
             }
             // The raw relationship row is the v5 family's unprojection: every
             // flag scip carried rides the wire, so a consumer can answer
             // subclass-of, trait-member and override questions the impl
             // projection throws away.
             relationships.insert((
-                info.symbol.as_str(),
-                related.symbol.as_str(),
+                index.symbol(info.symbol),
+                index.symbol(related.symbol),
                 related.is_reference,
                 related.is_implementation,
                 related.is_type_definition,
@@ -412,7 +412,7 @@ fn display_names(index: &ScipIndex) -> BTreeMap<(&str, &str), &str> {
         for info in &document.symbols {
             if !info.display_name.is_empty() {
                 names.insert(
-                    (document.relative_path.as_str(), info.symbol.as_str()),
+                    (document.relative_path.as_str(), index.symbol(info.symbol)),
                     info.display_name.as_str(),
                 );
             }
