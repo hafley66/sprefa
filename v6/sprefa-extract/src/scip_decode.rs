@@ -23,12 +23,80 @@ mod proto;
 
 /// The shared `load` body (one prost decode serves every indexer — the wire is
 /// indexer-agnostic by construction).
+///
+/// STREAMING over the top-level fields: only one proto `Document` is ever
+/// alive at a time and the raw bytes are the only whole-index copy resident.
+/// A whole-`Index` decode holds the protobuf tree AND its flat twin
+/// simultaneously and that pair, not the resolved graph, is the run's memory
+/// peak.
 pub fn load_index(index_path: &Path) -> Result<ScipIndex, ScipError> {
     let bytes = std::fs::read(index_path)
         .map_err(|e| ScipError::Parse(format!("read {}: {e}", index_path.display())))?;
-    let index = proto::Index::decode(bytes.as_slice())
-        .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
-    Ok(diet(&index))
+    let mut documents = Vec::new();
+    let mut external_symbols: Vec<ScipSymbolInfo> = Vec::new();
+    let mut metadata: Option<proto::Metadata> = None;
+    for_each_message(&bytes, &mut |field, buf| match field {
+        1 => {
+            metadata = Some(
+                proto::Metadata::decode(buf)
+                    .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?,
+            );
+            Ok(())
+        }
+        2 => {
+            let doc = proto::Document::decode(buf)
+                .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
+            documents.push(diet_document(&doc));
+            Ok(())
+        }
+        3 => {
+            let info = proto::SymbolInformation::decode(buf)
+                .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
+            external_symbols.push(diet_symbol(&info));
+            Ok(())
+        }
+        _ => Ok(()),
+    })?;
+    let metadata = metadata.as_ref();
+    let tool = metadata.and_then(|m| m.tool_info.as_ref());
+    Ok(ScipIndex {
+        documents,
+        external_symbols,
+        metadata: diet_metadata(metadata, tool),
+    })
+}
+
+/// Walk the length-delimited message fields of a top-level index buffer,
+/// handing each (field number, encoded message bytes) to `visit`. Unknown
+/// fields are skipped by wire type; a varint or fixed field on this level is
+/// skipped the same way. `proto::Index` is only ever these three message
+/// fields (metadata 1, documents 2, external_symbols 3).
+fn for_each_message(
+    bytes: &[u8],
+    visit: &mut dyn FnMut(u32, &[u8]) -> Result<(), ScipError>,
+) -> Result<(), ScipError> {
+    use prost::encoding::{decode_key, decode_varint, skip_field, WireType};
+    let mut buf = bytes;
+    let mut scratch: std::vec::Vec<u8> = std::vec::Vec::new();
+    while !buf.is_empty() {
+        let (field, wire) = decode_key(&mut buf)
+            .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
+        match wire {
+            WireType::LengthDelimited => {
+                let len = decode_varint(&mut buf)
+                    .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
+                let len = len as usize;
+                if buf.len() < len {
+                    return Err(ScipError::Parse("protobuf decode: truncated message".into()));
+                }
+                visit(field, &buf[..len])?;
+                buf = &buf[len..];
+            }
+            _ => skip_field(wire, field, &mut buf, prost::encoding::DecodeContext::default())
+                .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?,
+        }
+    }
+    Ok(())
 }
 
 /// Merge several per-language SCIP indexes into one on disk (v5
@@ -78,8 +146,8 @@ pub fn merge_indexes(inputs: &[std::path::PathBuf], out: &Path) -> Result<usize,
 /// verbatim. Splitting a symbol into scheme / package manager / package name /
 /// version / descriptors is a string parse over a field the consumer already
 /// holds, and string work is the dl layer's, same as the joins.
-fn diet(index: &proto::Index) -> ScipIndex {
-    let symbol = |si: &proto::SymbolInformation| ScipSymbolInfo {
+fn diet_symbol(si: &proto::SymbolInformation) -> ScipSymbolInfo {
+    ScipSymbolInfo {
         symbol: si.symbol.clone(),
         display_name: si.display_name.clone(),
         kind: si.kind,
@@ -104,38 +172,38 @@ fn diet(index: &proto::Index) -> ScipIndex {
                 occurrences: sig.occurrences.iter().filter_map(occurrence).collect(),
             }),
         enclosing_symbol: si.enclosing_symbol.clone(),
-    };
-    let metadata = index.metadata.as_ref();
-    let tool = metadata.and_then(|m| m.tool_info.as_ref());
-    ScipIndex {
-        documents: index
-            .documents
-            .iter()
-            .map(|doc| ScipDocument {
-                relative_path: doc.relative_path.clone(),
-                position_encoding: match doc.position_encoding {
-                    1 => PositionEncoding::Utf8,
-                    2 => PositionEncoding::Utf16,
-                    3 => PositionEncoding::Utf32,
-                    _ => PositionEncoding::Unspecified,
-                },
-                occurrences: doc.occurrences.iter().filter_map(occurrence).collect(),
-                symbols: doc.symbols.iter().map(symbol).collect(),
-                language: doc.language.clone(),
-                text: doc.text.clone(),
-            })
-            .collect(),
-        external_symbols: index.external_symbols.iter().map(symbol).collect(),
-        metadata: ScipMetadata {
-            version: metadata.map(|m| m.version).unwrap_or_default(),
-            tool_name: tool.map(|t| t.name.clone()).unwrap_or_default(),
-            tool_version: tool.map(|t| t.version.clone()).unwrap_or_default(),
-            tool_arguments: tool.map(|t| t.arguments.clone()).unwrap_or_default(),
-            project_root: metadata.map(|m| m.project_root.clone()).unwrap_or_default(),
-            text_document_encoding: metadata
-                .map(|m| m.text_document_encoding)
-                .unwrap_or_default(),
+    }
+}
+
+fn diet_document(doc: &proto::Document) -> ScipDocument {
+    ScipDocument {
+        relative_path: doc.relative_path.clone(),
+        position_encoding: match doc.position_encoding {
+            1 => PositionEncoding::Utf8,
+            2 => PositionEncoding::Utf16,
+            3 => PositionEncoding::Utf32,
+            _ => PositionEncoding::Unspecified,
         },
+        occurrences: doc.occurrences.iter().filter_map(occurrence).collect(),
+        symbols: doc.symbols.iter().map(diet_symbol).collect(),
+        language: doc.language.clone(),
+        text: doc.text.clone(),
+    }
+}
+
+fn diet_metadata(
+    metadata: Option<&proto::Metadata>,
+    tool: Option<&proto::ToolInfo>,
+) -> ScipMetadata {
+    ScipMetadata {
+        version: metadata.map(|m| m.version).unwrap_or_default(),
+        tool_name: tool.map(|t| t.name.clone()).unwrap_or_default(),
+        tool_version: tool.map(|t| t.version.clone()).unwrap_or_default(),
+        tool_arguments: tool.map(|t| t.arguments.clone()).unwrap_or_default(),
+        project_root: metadata.map(|m| m.project_root.clone()).unwrap_or_default(),
+        text_document_encoding: metadata
+            .map(|m| m.text_document_encoding)
+            .unwrap_or_default(),
     }
 }
 

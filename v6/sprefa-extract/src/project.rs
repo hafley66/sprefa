@@ -772,7 +772,30 @@ fn load_scip(
     inputs: &[ProjectInput],
 ) -> Result<Option<ScipIndex>, ProjectError> {
     let source = match request.scip {
-        ScipMode::Off => return Ok(None),
+        ScipMode::Off => {
+            // Informed-by-default: a resolve with no explicit SCIP flags still
+            // adopts a FRESH index (one whose recorded set matches this file
+            // set) so the scip leg pays for itself; anything else stays plain.
+            if let Some(root) = request.project_root {
+                if let Some(path) =
+                    crate::scip_ensure::fresh_index_for_set(root, &index_set_of(inputs).digest())
+                {
+                    tracing::info!(
+                        "scip-informed resolve: fresh index {} (plain flags, adopted by freshness)",
+                        path.display()
+                    );
+                    return ScipTypescript
+                        .load(&path)
+                        .map(Some)
+                        .map_err(ProjectError::Scip);
+                }
+                tracing::info!(
+                    "scip-informed resolve: no fresh index under {}, plain name-match leg",
+                    root.display()
+                );
+            }
+            return Ok(None);
+        }
         ScipMode::Load(path) => {
             let Some(_) = request.project_root else {
                 return Err(ProjectError::ScipNeedsRoot);

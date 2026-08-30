@@ -251,3 +251,31 @@ fn a_persistent_stage_drops_a_source_the_corpus_deleted() {
         "the warm target is what the persistent stage exists to keep"
     );
 }
+
+#[test]
+fn the_informed_default_adopts_a_fresh_index_and_a_stale_one_stays_plain() {
+    let root = temp_root("informed-default");
+    let cache = root.join(".dl").join(".state");
+    let index = place_fake_index(&cache);
+
+    let built_from = set_of(&[("a.ts", "digest-a"), ("b.ts", "digest-b")]);
+    record_index_set(&index, &built_from);
+
+    assert_eq!(
+        sprefa_extract::fresh_index_for_set(&root, built_from.digest()),
+        Some(index.clone()),
+        "the plain resolve leg adopts the index whose set matches the file set"
+    );
+
+    let other_set = set_of(&[("a.ts", "digest-a"), ("b.ts", "digest-b-MOVED")]);
+    assert_eq!(
+        sprefa_extract::fresh_index_for_set(&root, other_set.digest()),
+        None,
+        "a set the index was not built from stays on the plain name-match leg"
+    );
+    assert_eq!(
+        sprefa_extract::fresh_index_for_set(&root, "no-sidecar-anywhere"),
+        None,
+        "an index without a recorded set is never adopted"
+    );
+}
