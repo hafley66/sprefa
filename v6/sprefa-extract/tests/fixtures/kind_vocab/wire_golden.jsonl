@@ -300,6 +300,11 @@
 {"record":"edge","family":"cst","kind":"child","from":{"start":617,"end":621},"to":{"start":617,"end":621}}
 {"record":"edge","family":"cst","kind":"child","from":{"start":616,"end":630},"to":{"start":626,"end":630}}
 {"record":"node","family":"type","span":{"start":0,"end":53},"kind":"function","name":"createApi"}
+{"record":"node","family":"call","span":{"start":319,"end":471},"kind":"lambda","name":"endpoints"}
+{"record":"node","family":"call","span":{"start":385,"end":407},"kind":"lambda","name":"query"}
+{"record":"node","family":"call","span":{"start":447,"end":462},"kind":"lambda","name":"query"}
+{"record":"node","family":"call","span":{"start":540,"end":639},"kind":"lambda","name":"endpoints"}
+{"record":"node","family":"call","span":{"start":616,"end":630},"kind":"lambda","name":"query"}
 {"record":"node","family":"call","span":{"start":0,"end":645},"kind":"module","name":"<module>"}
 {"record":"site","family":"call","span":{"start":271,"end":280},"callee":"createApi","callee_path":null}
 {"record":"site","family":"call","span":{"start":348,"end":361},"callee":"query","callee_path":"builder.query"}
@@ -618,6 +623,9 @@
 {"record":"edge","family":"cst","kind":"child","from":{"start":441,"end":455},"to":{"start":447,"end":455}}
 {"record":"edge","family":"cst","kind":"child","from":{"start":447,"end":455},"to":{"start":448,"end":454}}
 {"record":"node","family":"type","span":{"start":0,"end":53},"kind":"function","name":"createApi"}
+{"record":"node","family":"call","span":{"start":307,"end":464},"kind":"lambda","name":"endpoints"}
+{"record":"node","family":"call","span":{"start":382,"end":398},"kind":"lambda","name":"query"}
+{"record":"node","family":"call","span":{"start":441,"end":455},"kind":"lambda","name":"query"}
 {"record":"node","family":"call","span":{"start":0,"end":470},"kind":"module","name":"<module>"}
 {"record":"site","family":"call","span":{"start":272,"end":291},"callee":"injectEndpoints","callee_path":"api.injectEndpoints"}
 {"record":"site","family":"call","span":{"start":339,"end":355},"callee":"mutation","callee_path":"builder.mutation"}
@@ -19336,7 +19344,7 @@
 {"record":"edge","family":"cst","kind":"child","from":{"start":190,"end":196},"to":{"start":194,"end":195}}
 {"record":"node","family":"type","span":{"start":50,"end":69},"kind":"function","name":"f"}
 {"record":"node","family":"call","span":{"start":50,"end":69},"kind":"function","name":"f"}
-{"record":"node","family":"call","span":{"start":96,"end":112},"kind":"lambda","name":null}
+{"record":"node","family":"call","span":{"start":96,"end":112},"kind":"lambda","name":"m"}
 {"record":"node","family":"call","span":{"start":0,"end":198},"kind":"module","name":"<module>"}
 {"record":"site","family":"call","span":{"start":31,"end":39},"callee":"loadPath","callee_path":null}
 {"record":"site","family":"call","span":{"start":71,"end":72},"callee":"f","callee_path":null}
