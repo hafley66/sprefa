@@ -197,6 +197,15 @@ name = "extract"
 path = "src/bin/extract.rs"
 required-features = ["cli"]
 
+# @comment-ok: build-vs-buy candidate table, the law this file's every dep
+# comment carries. getrusage for the ratchet's peak-RSS row: libc is one
+# syscall wrapper already unified in this lock (soopy -> rustix -> errno pins
+# 0.2.189), so it adds no copy. REJECTED: `memory-stats` (+sysinfo on linux,
+# mach-sysbindings on mac, a second copy of the same call behind its own
+# types) and `sysinfo` (a whole process/CPU/NIC survey for one field).
+[dev-dependencies]
+libc = "0.2"
+
 # cargo-dist builds with this profile; mirrors the root workspace's.
 [profile.dist]
 inherits = "release"
