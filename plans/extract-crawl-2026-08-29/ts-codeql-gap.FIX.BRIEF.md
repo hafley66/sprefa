@@ -9,7 +9,7 @@ go #577 method.
 
 ## First action
 ```
-git merge --ff-only <sha>
+git merge --ff-only 807f091546a49d4f5d831fd289573872ea1af67d
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 ```
 Corpus `/Users/chrishafley/projects/TypeScript-5.9`, `find src -name '*.ts' ! -name '*.d.ts'`,
