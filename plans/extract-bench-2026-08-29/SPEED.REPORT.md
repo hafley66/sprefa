@@ -1,4 +1,4 @@
-# SPEED.REPORT.md — `fix-extract-speed` (2026-08-29)
+# SPEED.REPORT.md `fix-extract-speed` (2026-08-29)
 
 Lane: go corpus wall from 11.9 s toward 3 s, RSS down, no fact lost.
 Binary: `v6/sprefa-extract/target/release/extract`, built at the lane head.
