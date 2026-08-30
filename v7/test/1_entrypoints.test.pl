@@ -72,7 +72,7 @@ test(expression_carrier_keeps_values_and_rejects_unresolved_forms) :-
         Owner, Environment,
         Atom, AtomGoals, AtomOrigins, AtomDiagnostics),
     dl7_lowerer:lower_expression(
-        node(form_node, form([node(operator_node, atom('Partial'))])),
+        node(form_node, form([])),
         Owner, Environment,
         Form, FormGoals, FormOrigins, FormDiagnostics),
     Observed = expression_carrier(
@@ -142,6 +142,51 @@ test(expression_return_position_is_declared_projection_metadata) :-
                                  target(Multiple), [0, 1]))]),
                     kernel(2, [])),
     !.
+
+test(rhs_relation_application_derives_the_bound_edge) :-
+    Text = "(: User (*))\n(: Echo (* (: source type) (: return type)))\n(Echo User User)\n(: Alias (Echo User))\n",
+    dl7_text_unit(rhs_application, rhs_application_source, Text, Unit, []),
+    compile_unit(Unit,
+                 compiled_unit(TypeGraph, RuntimeProgram, CompilerRows),
+                 Diagnostics),
+    named_owner(CompilerRows, 'User', User),
+    named_owner(CompilerRows, 'Alias', AliasTarget),
+    named_owner(CompilerRows, 'Echo', Echo),
+    RuntimeProgram = checked_datalog(
+                         _, datalog_program(_, _, Rules), _, _),
+    memberchk(
+        rule(call(ref(kernel(':')),
+                  [ref(Module), const('Alias'), var(Result), const(2)]),
+             [checked_goal(
+                  positive,
+                  call(ref(Echo), [ref(User), var(Result)]))]),
+        Rules),
+    memberchk(':'(Module, 'Alias', ref(User), 2), TypeGraph),
+    memberchk(call(ref(kernel(':')),
+                   [ ref(Module), const('Alias'), ref(User), const(2)
+                   ]),
+              CompilerRows),
+    equality(AliasTarget, User, AliasMatches),
+    missing_rhs_application_receipt(MissingReceipt),
+    Observed = rhs_application(
+                   success(Diagnostics, alias_matches(AliasMatches)),
+                   MissingReceipt),
+    Observed == rhs_application(
+                    success([], alias_matches(true)),
+                    missing(node(18), name('Alias'), index(2))),
+    !.
+
+missing_rhs_application_receipt(
+    missing(node(NodeIndex), name(Name), index(Index))) :-
+    Text = "(: User (*))\n(: Empty (* (: source type) (: return type)))\n(: Alias (Empty User))\n",
+    dl7_text_unit(missing_rhs_application, missing_rhs_application_source,
+                  Text, Unit, []),
+    compile_unit(
+        Unit, [],
+        [diagnostic(
+             compile,
+             reader_node(missing_rhs_application_source, NodeIndex),
+             missing_derived_bind(_, Name, Index))]).
 
 test(userland_type_operators_chain_across_compiler_rounds) :-
     compile_dl7('v7/test/fixtures/2_partial.dl7',

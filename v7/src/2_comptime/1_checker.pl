@@ -250,6 +250,10 @@ count_owner_edges([_|Rest], Owner, Count) :-
 
 %% Pending edges become canonical ':'(Owner, Name, Target, Index) edges.
 resolve_edges([], _, _, _, [], []).
+resolve_edges([pending_edge(_, _, deferred_expression(_), _) | Rest],
+              All, Nodes, Origins, Edges, Diags) :-
+    !,
+    resolve_edges(Rest, All, Nodes, Origins, Edges, Diags).
 resolve_edges([pending_edge(Owner, Name, Target, Index) | Rest], All, Nodes,
               Origins, [':'(Owner, Name, Resolved, Index) | Edges], Diags) :-
     edge_origin(Origins, Owner, Name, Index, NodeId),

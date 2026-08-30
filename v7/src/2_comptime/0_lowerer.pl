@@ -29,19 +29,87 @@ lower_after_declarations(error(Diagnostic), _, _, [], [], [Diagnostic]).
 lower_after_declarations(
     ok(Nodes0, Edges, Relations, DeclarationOrigins, Reservations),
     Forms, ModuleOwner, Program, Origins, Diagnostics) :-
-    lower_executables(Forms, ModuleOwner, Reservations, Relations,
-                      ExecutableResult),
-    (   ExecutableResult = ok(Seeds, Rules, ExecutableOrigins)
-    ->  Nodes = [node(ModuleOwner), module(ModuleOwner) | Nodes0],
-        Program = basement_program(
-                      root_graph(Nodes, Edges),
-                      datalog_program(Relations, Seeds, Rules)),
-        append(DeclarationOrigins, ExecutableOrigins, Origins),
-        Diagnostics = []
-    ;   ExecutableResult = error(Diagnostic),
+    Environment = expression_environment(Reservations, Relations, Edges),
+    lower_derived_bind_rules(Reservations, Environment, 0,
+                             DerivedResult),
+    (   DerivedResult = ok(DerivedRules, DerivedOrigins)
+    ->  length(DerivedRules, RuleIndex),
+        lower_executables(Forms, ModuleOwner, Reservations, Relations,
+                          RuleIndex, ExecutableResult),
+        finish_lowered_executables(
+            ExecutableResult, DerivedRules, DerivedOrigins,
+            Nodes0, Edges, Relations, DeclarationOrigins, ModuleOwner,
+            Program, Origins, Diagnostics)
+    ;   DerivedResult = error(Diagnostic),
         Program = [],
         Origins = [],
         Diagnostics = [Diagnostic]
+    ).
+
+finish_lowered_executables(
+    ok(Seeds, AuthoredRules, ExecutableOrigins),
+    DerivedRules, DerivedOrigins,
+    Nodes0, Edges, Relations, DeclarationOrigins, ModuleOwner,
+    basement_program(root_graph(Nodes, Edges),
+                     datalog_program(Relations, Seeds, Rules)),
+    Origins, []) :-
+    Nodes = [node(ModuleOwner), module(ModuleOwner) | Nodes0],
+    append(DerivedRules, AuthoredRules, Rules),
+    append([DeclarationOrigins, DerivedOrigins, ExecutableOrigins], Origins).
+finish_lowered_executables(
+    error(Diagnostic), _, _, _, _, _, _, _, _, [], [Diagnostic]).
+
+lower_derived_bind_rules([], _, _, ok([], [])).
+lower_derived_bind_rules(
+    [reservation(Owner, Name,
+                 deferred_expression(TargetNode, BindNodeId, Index),
+                 expression) | Reservations],
+    Environment, RuleIndex, Result) :-
+    !,
+    lower_expression(TargetNode, Owner, Environment,
+                     Value, Goals, GoalNodes, Diagnostics),
+    (   Diagnostics == []
+    ->  BindValue = var(derived_bind(BindNodeId)),
+        replace_expression_value(Value, BindValue, Goals, BindGoals),
+        Head = call(name(Owner, ':'),
+                    [ref(Owner), const(Name), BindValue, const(Index)]),
+        Rule = rule(Head, BindGoals),
+        indexed_goal_origins(GoalNodes, RuleIndex, 0, GoalOrigins),
+        RuleOrigins = [origin(rule(RuleIndex), BindNodeId) | GoalOrigins],
+        NextRuleIndex is RuleIndex + 1,
+        lower_derived_bind_rules(Reservations, Environment, NextRuleIndex,
+                                 RestResult),
+        prepend_derived_rule(RestResult, Rule, RuleOrigins, Result)
+    ;   Diagnostics = [Diagnostic | _],
+        Result = error(Diagnostic)
+    ).
+lower_derived_bind_rules([_ | Reservations], Environment, RuleIndex,
+                         Result) :-
+    lower_derived_bind_rules(Reservations, Environment, RuleIndex, Result).
+
+prepend_derived_rule(error(Diagnostic), _, _, error(Diagnostic)).
+prepend_derived_rule(ok(Rules, Origins0), Rule, RuleOrigins,
+                     ok([Rule | Rules], Origins)) :-
+    append(RuleOrigins, Origins0, Origins).
+
+indexed_goal_origins([], _, _, []).
+indexed_goal_origins([NodeId | NodeIds], RuleIndex, GoalIndex,
+                     [origin(goal(RuleIndex, GoalIndex), NodeId) | Origins]) :-
+    NextGoalIndex is GoalIndex + 1,
+    indexed_goal_origins(NodeIds, RuleIndex, NextGoalIndex, Origins).
+
+replace_expression_value(Value, BindValue, Goals, BindGoals) :-
+    maplist(replace_reified_term(Value, BindValue), Goals, BindGoals).
+
+replace_reified_term(From, To, Term, Replaced) :-
+    (   Term == From
+    ->  Replaced = To
+    ;   compound(Term)
+    ->  Term =.. [Functor | Arguments],
+        maplist(replace_reified_term(From, To), Arguments,
+                ReplacedArguments),
+        Replaced =.. [Functor | ReplacedArguments]
+    ;   Replaced = Term
     ).
 
 %% Pass 1 and 2: mint every nested owner and reserve every bind in that owner.
@@ -75,11 +143,28 @@ continue_declarations(ok(Nodes0, Edges0, Relations0, Origins0,
 
 lower_bind(BindNode, Owner, UnitIdentity, Index, Result) :-
     (   bind_form(BindNode, BindNodeId, Name, TargetNode)
-    ->  lower_target(TargetNode, Owner, UnitIdentity, TargetResult),
-        finish_bind(TargetResult, BindNodeId, Owner, Name, Index, Result)
+    ->  (   expression_bind_target(TargetNode)
+        ->  finish_derived_bind(BindNodeId, Owner, Name, TargetNode, Index,
+                               Result)
+        ;   lower_target(TargetNode, Owner, UnitIdentity, TargetResult),
+            finish_bind(TargetResult, BindNodeId, Owner, Name, Index, Result)
+        )
     ;   node_id(BindNode, NodeId),
         Result = error(diagnostic(lower, NodeId, expected_bind))
     ).
+
+expression_bind_target(node(_, form([node(_, atom('*')) | _]))) :- !, fail.
+expression_bind_target(node(_, form([node(_, atom('+')) | _]))) :- !, fail.
+expression_bind_target(node(_, form(_))).
+
+finish_derived_bind(BindNodeId, Owner, Name, TargetNode, Index,
+                    ok([], [Edge], [], Origins, [Reservation])) :-
+    Edge = pending_edge(Owner, Name, deferred_expression(TargetNode), Index),
+    Reservation = reservation(
+                      Owner, Name,
+                      deferred_expression(TargetNode, BindNodeId, Index),
+                      expression),
+    Origins = [origin(edge(Owner, Name, Index), BindNodeId)].
 
 finish_bind(error(Diagnostic), _, _, _, _, error(Diagnostic)).
 finish_bind(ok(TargetTerm, Kind, Nodes, NestedEdges, Relations,
@@ -167,8 +252,9 @@ continue_bind_list(ok(Nodes0, Edges0, Relations0, Origins0, Reservations0),
     ).
 
 %% Pass 3: lower facts and rules after all declarations are reserved.
-lower_executables(Forms, Owner, Reservations, Relations, Result) :-
-    lower_executables(Forms, Owner, Reservations, Relations, 0, 0, Result).
+lower_executables(Forms, Owner, Reservations, Relations, RuleIndex, Result) :-
+    lower_executables(Forms, Owner, Reservations, Relations, 0, RuleIndex,
+                      Result).
 
 lower_executables([], _, _, _, _, _, ok([], [], [])).
 lower_executables([Form | Forms], Owner, Reservations, Relations,
@@ -354,9 +440,127 @@ lower_expression(node(_, literal(Value)), _, _,
                  const(Value), [], [], []).
 lower_expression(node(_, atom(Name)), Owner, _,
                  name(Owner, Name), [], [], []).
+lower_expression(
+    node(NodeId, form([node(_, atom(Name)) | ArgumentNodes])),
+    Owner, Environment, Value, Goals, Origins, Diagnostics) :-
+    !,
+    expression_callable(Name, Owner, Environment, CallableResult),
+    lower_expression_call(
+        CallableResult, Name, NodeId, ArgumentNodes, Owner, Environment,
+        Value, Goals, Origins, Diagnostics).
 lower_expression(node(NodeId, form(_)), _, _,
                  none, [], [],
                  [diagnostic(lower, NodeId, unresolved_expression_form)]).
+
+expression_callable(Name, Owner,
+                    expression_environment(Reservations, Relations, _),
+                    Result) :-
+    (   scoped_reservation(Owner, Name, Reservations, [], Reservation)
+    ->  expression_reserved_callable(Reservation, Relations, Name, Result)
+    ;   kernel_relation(Name, Arity)
+    ->  kernel_relation_keys_for_expression(Name, KeySets),
+        Result = ok(kernel(Name), Arity, KeySets)
+    ;   Result = error(undeclared_relation(Name))
+    ).
+
+scoped_reservation(Owner, Name, Reservations, Visited, Reservation) :-
+    \+ memberchk(Owner, Visited),
+    (   memberchk(reservation(Owner, Name, Target, Kind), Reservations)
+    ->  Reservation = reservation(Owner, Name, Target, Kind)
+    ;   reservation_parent(Owner, Reservations, Parent),
+        scoped_reservation(Parent, Name, Reservations, [Owner | Visited],
+                           Reservation)
+    ).
+
+reservation_parent(Owner, Reservations, Parent) :-
+    memberchk(reservation(Parent, _, target(Owner), product), Reservations).
+
+expression_reserved_callable(
+    reservation(_, _, target(Callable), product), Relations, _, Result) :-
+    !,
+    (   memberchk(relation(Callable, Arity, KeySets), Relations)
+    ->  Result = ok(target(Callable), Arity, KeySets)
+    ;   Result = error(undeclared_relation(Callable))
+    ).
+expression_reserved_callable(_, _, Name, error(not_relation(Name))).
+
+kernel_relation_keys_for_expression(':', [[0, 1], [0, 3]]).
+kernel_relation_keys_for_expression(edge_snapshot, [[0, 1], [0, 3]]).
+kernel_relation_keys_for_expression(nil, [[0]]).
+kernel_relation_keys_for_expression(cons, [[0, 1], [2]]).
+kernel_relation_keys_for_expression(intern, [[0, 1]]).
+kernel_relation_keys_for_expression(intern_snapshot, [[0, 1]]).
+kernel_relation_keys_for_expression(predecessor, [[0, 1], [0, 2]]).
+kernel_relation_keys_for_expression(_, []).
+
+lower_expression_call(error(Reason), _, NodeId, _, _, _,
+                      none, [], [], [diagnostic(lower, NodeId, Reason)]) :-
+    !.
+lower_expression_call(ok(Callable, Arity, _), Name, NodeId, ArgumentNodes,
+                      Owner, Environment,
+                      Value, Goals, Origins, Diagnostics) :-
+    expression_return_position(Callable, Environment, NodeId,
+                               ReturnIndex, ReturnDiagnostics),
+    (   ReturnDiagnostics == []
+    ->  ExpectedArity is Arity - 1,
+        length(ArgumentNodes, ObservedArity),
+        (   ObservedArity =:= ExpectedArity
+        ->  lower_expression_arguments(
+                ArgumentNodes, Owner, Environment,
+                Arguments, ArgumentGoals, ArgumentOrigins,
+                ArgumentDiagnostics),
+            finish_expression_call_arguments(
+                ArgumentDiagnostics, Name, NodeId, ReturnIndex,
+                Arguments, ArgumentGoals, ArgumentOrigins, Owner,
+                Value, Goals, Origins, Diagnostics)
+        ;   Value = none,
+            Goals = [],
+            Origins = [],
+            Diagnostics = [diagnostic(
+                               lower, NodeId,
+                               expression_arity_mismatch(
+                                   Name, ExpectedArity, ObservedArity))]
+        )
+    ;   Value = none,
+        Goals = [],
+        Origins = [],
+        Diagnostics = ReturnDiagnostics
+    ).
+
+lower_expression_arguments([], _, _, [], [], [], []).
+lower_expression_arguments([Node | Nodes], Owner, Environment,
+                           [Value | Values], Goals, Origins, Diagnostics) :-
+    lower_expression(Node, Owner, Environment,
+                     Value, OwnGoals, OwnOrigins, OwnDiagnostics),
+    lower_expression_arguments(Nodes, Owner, Environment,
+                               Values, RestGoals, RestOrigins,
+                               RestDiagnostics),
+    append(OwnGoals, RestGoals, Goals),
+    append(OwnOrigins, RestOrigins, Origins),
+    append(OwnDiagnostics, RestDiagnostics, Diagnostics).
+
+finish_expression_call_arguments([], Name, NodeId, ReturnIndex,
+                                 Arguments, ArgumentGoals, ArgumentOrigins,
+                                 Owner,
+                                 Value, Goals, Origins, []) :-
+    !,
+    Value = var(expression(NodeId)),
+    insert_argument(ReturnIndex, Value, Arguments, FullArguments),
+    append(ArgumentGoals,
+           [pending_goal(
+                positive,
+                call(name(Owner, Name), FullArguments))],
+           Goals),
+    append(ArgumentOrigins, [NodeId], Origins).
+finish_expression_call_arguments(Diagnostics, _, _, _, _, _, _, _,
+                                 none, [], [], Diagnostics).
+
+insert_argument(0, Value, Arguments, [Value | Arguments]) :- !.
+insert_argument(Index, Value, [Argument | Arguments],
+                [Argument | FullArguments]) :-
+    Index > 0,
+    NextIndex is Index - 1,
+    insert_argument(NextIndex, Value, Arguments, FullArguments).
 
 %% expression_return_position(+Callable, +Environment, +NodeId,
 %%                            -ReturnIndex, -Diagnostics) is det.
@@ -378,10 +582,11 @@ callable_return_indices(target(Callable),
 callable_return_indices(kernel(Name), _, Indices) :-
     findall(Index, kernel_return_position(Name, Index), Indices).
 
-expression_return_indices([ReturnIndex], _, _, ReturnIndex, []).
+expression_return_indices([ReturnIndex], _, _, ReturnIndex, []) :- !.
 expression_return_indices([], Callable, NodeId, none,
                           [diagnostic(lower, NodeId,
-                                      expression_without_return(Callable))]).
+                                      expression_without_return(Callable))]) :-
+    !.
 expression_return_indices(Indices, Callable, NodeId, none,
                           [diagnostic(
                                lower, NodeId,

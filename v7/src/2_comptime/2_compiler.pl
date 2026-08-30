@@ -103,7 +103,7 @@ finish_evaluation([], Relations, CompilerFacts, GeneratedProgram,
                           AuthoredSeeds, Rules, Depends, Strata,
                           GeneratedProgram,
                           Compiled, Diagnostics).
-finish_evaluation(Diagnostics, _, _, _, _, _, _, _, _, _, [], Diagnostics).
+finish_evaluation(Diagnostics, _, _, _, _, _, _, _, _, [], Diagnostics).
 
 finish_key_validation([], CompilerFacts, Graph, Relations, AuthoredSeeds,
                       Rules, Depends, Strata, GeneratedProgram,
@@ -205,8 +205,12 @@ continue_after_assembly(
         NextGeneratedRules == FrozenGeneratedRules
     ->  append(BaseRelations, NextGeneratedRelations, Relations0),
         sort(Relations0, Relations),
+        derived_bind_diagnostics(AuthoredRules, RoundClosure,
+                                 DerivedBindDiagnostics),
         validate_functional_rows(Relations, RoundClosure, KeyDiagnostics),
-        finish_stable_round(KeyDiagnostics, RoundClosure,
+        append(DerivedBindDiagnostics, KeyDiagnostics, StableDiagnostics0),
+        sort(StableDiagnostics0, StableDiagnostics),
+        finish_stable_round(StableDiagnostics, RoundClosure,
                             NextGeneratedRelations, NextGeneratedRules,
                             Depends, Strata,
                             Closure, GeneratedProgram, Diagnostics)
@@ -240,6 +244,25 @@ finish_stable_round(Diagnostics, _, _, _, _, _, [],
                     generated_program([], [], [], []), Diagnostics).
 
 compiler_round_limit(16).
+
+derived_bind_diagnostics(Rules, Rows, Diagnostics) :-
+    findall(
+        diagnostic(compile, NodeId,
+                   missing_derived_bind(Owner, Name, Index)),
+        ( member(
+              rule(call(ref(kernel(':')),
+                        [ ref(Owner), const(Name),
+                          var(derived_bind(NodeId)), const(Index)
+                        ]),
+                   _),
+              Rules),
+          \+ memberchk(
+                 call(ref(kernel(':')),
+                      [ref(Owner), const(Name), _, const(Index)]),
+                 Rows)
+        ),
+        Diagnostics0),
+    sort(Diagnostics0, Diagnostics).
 
 compiler_round_seeds(BaseSeeds, FrozenEdges, FrozenRequests, Seeds) :-
     maplist(snapshot_edge, FrozenEdges, SnapshotRows),
