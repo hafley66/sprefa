@@ -982,21 +982,23 @@ struct GoBindPlan {
 
 /// The leftmost value of a selector chain: a name in scope, or an
 /// import-qualified func call `pkg.F()` whose result type resolve re-derives.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum GoChainBase {
     Var { name: String, decl: Option<String> },
     Import { callee: String, path: String },
 }
 
 /// One hop of a chain, in source order. `Field` folds through a struct field's
-/// declared type; `Call` through the method's declared first result.
-#[derive(Clone, Debug)]
+/// declared type, `Call` through the method's declared first result, `Elem`
+/// through a slice/array/map's element.
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum GoChainStep {
     Field(String),
     Call(String),
+    Elem,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct GoChain {
     base: GoChainBase,
     steps: Vec<GoChainStep>,
@@ -1026,6 +1028,10 @@ fn go_chain_of(
                     name: name.to_string(),
                     decl: Some(t.clone()),
                 }),
+                Some(TypeBinding::Chained(recorded)) => {
+                    steps.splice(0..0, recorded.steps.iter().cloned());
+                    Some(recorded.base.clone())
+                }
                 Some(TypeBinding::Inferred) | None => {
                     if imports.contains_key(name) {
                         None
@@ -1049,6 +1055,13 @@ fn go_chain_of(
             steps.push(GoChainStep::Field(go_text(field, src).to_string()));
             Some(base)
         }
+        "index_expression" => {
+            let operand = expr.child_by_field_name("operand")?;
+            let base = go_chain_of(operand, src, scope, imports, steps)?;
+            steps.push(GoChainStep::Elem);
+            Some(base)
+        }
+        "parenthesized_expression" => go_chain_of(expr.named_child(0)?, src, scope, imports, steps),
         "call_expression" => {
             let function = expr.child_by_field_name("function")?;
             if function.kind() != "selector_expression" {
@@ -1098,17 +1111,22 @@ fn go_bind_plan_store(blob: ContentId, plan: GoBindPlan) {
 }
 
 /// A declared type, unwrapped one level. `Indexable` is a slice/array/map's
-/// element/value type, reachable only via `s[i]`, never through `s` itself.
+/// element/value type, reachable via `s[i]` or a two-name `range`, never
+/// through `s` itself; `Streamed` is a channel's, reachable by `range` alone.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum DeclType {
     Named(String),
     Indexable(String),
+    Streamed(String),
 }
 
 /// One name's binding within the innermost enclosing scope frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TypeBinding {
     Decl(DeclType),
+    /// `x := <selector chain>` whose type this file cannot name: the chain is
+    /// kept verbatim and replayed at the USE site, where the corpus is joined.
+    Chained(GoChain),
     Inferred,
     Ambiguous,
 }
@@ -1152,14 +1170,21 @@ fn go_decl_type_of(ty: tree_sitter::Node, src: &[u8]) -> Option<DeclType> {
             let elem = ty.child_by_field_name("element")?;
             match go_decl_type_of(elem, src)? {
                 DeclType::Named(name) => Some(DeclType::Indexable(name)),
-                DeclType::Indexable(_) => None,
+                _ => None,
             }
         }
         "map_type" => {
             let value = ty.child_by_field_name("value")?;
             match go_decl_type_of(value, src)? {
                 DeclType::Named(name) => Some(DeclType::Indexable(name)),
-                DeclType::Indexable(_) => None,
+                _ => None,
+            }
+        }
+        "channel_type" => {
+            let value = ty.child_by_field_name("value")?;
+            match go_decl_type_of(value, src)? {
+                DeclType::Named(name) => Some(DeclType::Streamed(name)),
+                _ => None,
             }
         }
         _ => None,
@@ -1296,8 +1321,15 @@ fn go_seed_top_scope(fn_node: tree_sitter::Node, src: &[u8]) -> TypeScope {
 }
 
 /// The rhs binding a `:=`/`var` name gets: a (possibly `&`-taken) composite
-/// literal names its type; a call result is `Inferred`; `y := x` copies x's own binding.
-fn go_binding_of_rhs(rhs: tree_sitter::Node, src: &[u8], scope: &TypeScope) -> Option<TypeBinding> {
+/// literal names its type; a call result is `Inferred`; every other shape is
+/// whatever `go_operand_decl` can type (a name, a field read, an index read).
+fn go_binding_of_rhs(
+    rhs: tree_sitter::Node,
+    src: &[u8],
+    scope: &TypeScope,
+    imports: &HashMap<String, String>,
+    field_types: &HashMap<(String, String), DeclType>,
+) -> Option<TypeBinding> {
     match rhs.kind() {
         "composite_literal" => {
             let ty = rhs.child_by_field_name("type")?;
@@ -1309,35 +1341,64 @@ fn go_binding_of_rhs(rhs: tree_sitter::Node, src: &[u8], scope: &TypeScope) -> O
                 return None;
             }
             let operand = rhs.child_by_field_name("operand")?;
-            go_binding_of_rhs(operand, src, scope)
+            go_binding_of_rhs(operand, src, scope, imports, field_types)
         }
-        "call_expression" => Some(TypeBinding::Inferred),
-        "identifier" => scope_lookup(scope, go_text(rhs, src)).cloned(),
+        "call_expression" => Some(match go_paren_conversion_type(rhs, src) {
+            Some(name) => TypeBinding::Decl(DeclType::Named(name)),
+            None => TypeBinding::Inferred,
+        }),
+        "type_assertion_expression" => {
+            let ty = rhs.child_by_field_name("type")?;
+            go_decl_type_of(ty, src).map(TypeBinding::Decl)
+        }
+        _ => go_operand_decl(rhs, src, scope, field_types).or_else(|| {
+            let mut steps = Vec::new();
+            let base = go_chain_of(rhs, src, scope, imports, &mut steps)?;
+            (!steps.is_empty() && steps.len() < GO_CHAIN_MAX_STEPS)
+                .then_some(TypeBinding::Chained(GoChain { base, steps }))
+        }),
+    }
+}
+
+/// The type a PARENTHESIZED conversion `(*T)(x)` names. Bare `T(x)` is a call
+/// to the parser; the resolve phase settles that one by the target's decl kind.
+fn go_paren_conversion_type(call: tree_sitter::Node, src: &[u8]) -> Option<String> {
+    let function = call.child_by_field_name("function")?;
+    if function.kind() != "parenthesized_expression" {
+        return None;
+    }
+    let inner = function.named_child(0)?;
+    let named = match inner.kind() {
+        "unary_expression" if go_text(inner.child_by_field_name("operator")?, src) == "*" => {
+            inner.child_by_field_name("operand")?
+        }
+        "identifier" | "selector_expression" => inner,
+        _ => return None,
+    };
+    match named.kind() {
+        "identifier" | "selector_expression" => Some(go_text(named, src).to_string()),
         _ => None,
     }
 }
 
-/// The receiver-type outcome of a selector call's operand: a bare identifier,
-/// an index into a slice/array/map var, or one field (one level: `r.f.M()`).
-fn go_receiver_binding(
+/// The type an operand expression carries: an identifier, an index into a
+/// slice/array/map, or a field read. Collection shapes survive; the gate cuts.
+fn go_operand_decl(
     operand: tree_sitter::Node,
     src: &[u8],
     scope: &TypeScope,
     field_types: &HashMap<(String, String), DeclType>,
 ) -> Option<TypeBinding> {
     match operand.kind() {
-        "identifier" => match scope_lookup(scope, go_text(operand, src))?.clone() {
-            TypeBinding::Decl(DeclType::Indexable(_)) => None,
-            other => Some(other),
-        },
+        "identifier" => scope_lookup(scope, go_text(operand, src)).cloned(),
+        "parenthesized_expression" => {
+            go_operand_decl(operand.named_child(0)?, src, scope, field_types)
+        }
         "index_expression" => {
             let base = operand.child_by_field_name("operand")?;
-            if base.kind() != "identifier" {
-                return None;
-            }
-            match scope_lookup(scope, go_text(base, src))? {
+            match go_operand_decl(base, src, scope, field_types)? {
                 TypeBinding::Decl(DeclType::Indexable(t)) => {
-                    Some(TypeBinding::Decl(DeclType::Named(t.clone())))
+                    Some(TypeBinding::Decl(DeclType::Named(t)))
                 }
                 _ => None,
             }
@@ -1345,18 +1406,31 @@ fn go_receiver_binding(
         "selector_expression" => {
             let base = operand.child_by_field_name("operand")?;
             let field = operand.child_by_field_name("field")?;
-            if base.kind() != "identifier" {
-                return None;
-            }
-            match scope_lookup(scope, go_text(base, src))? {
+            match go_operand_decl(base, src, scope, field_types)? {
                 TypeBinding::Decl(DeclType::Named(struct_name)) => field_types
-                    .get(&(struct_name.clone(), go_text(field, src).to_string()))
+                    .get(&(struct_name, go_text(field, src).to_string()))
                     .cloned()
                     .map(TypeBinding::Decl),
                 _ => None,
             }
         }
         _ => None,
+    }
+}
+
+/// `go_operand_decl` under the receiver gate: a slice/map/channel var is no
+/// receiver, so it binds nothing rather than its element type.
+fn go_receiver_binding(
+    operand: tree_sitter::Node,
+    src: &[u8],
+    scope: &TypeScope,
+    field_types: &HashMap<(String, String), DeclType>,
+) -> Option<TypeBinding> {
+    match go_operand_decl(operand, src, scope, field_types)? {
+        TypeBinding::Decl(DeclType::Indexable(_))
+        | TypeBinding::Decl(DeclType::Streamed(_))
+        | TypeBinding::Chained(_) => None,
+        other => Some(other),
     }
 }
 
@@ -1373,11 +1447,7 @@ fn go_walk_receivers(
     top: (u32, u32),
 ) {
     match node.kind() {
-        "block"
-        | "if_statement"
-        | "for_statement"
-        | "type_switch_statement"
-        | "expression_switch_statement" => {
+        "block" | "if_statement" | "for_statement" | "expression_switch_statement" => {
             scope.push(HashMap::new());
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
@@ -1390,28 +1460,50 @@ fn go_walk_receivers(
                 node.child_by_field_name("left"),
                 node.child_by_field_name("right"),
             ) {
-                let elem = if right.kind() == "identifier" {
-                    match scope_lookup(scope, go_text(right, src)) {
-                        Some(TypeBinding::Decl(DeclType::Indexable(t))) => Some(t.clone()),
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
                 let mut lc = left.walk();
                 let idents: Vec<tree_sitter::Node> = left
                     .children(&mut lc)
                     .filter(|n| n.kind() == "identifier")
                     .collect();
-                if let (Some(value_ident), Some(t)) = (idents.last(), elem) {
-                    scope_insert(
-                        scope,
-                        go_text(*value_ident, src).to_string(),
-                        TypeBinding::Decl(DeclType::Named(t)),
-                    );
-                }
+                // Go's arity rule: a slice/map puts the element in a SECOND
+                // name, a channel in the first.
                 go_walk_receivers(right, src, scope, imports, field_types, out, plan, top);
+                let local = match go_operand_decl(right, src, scope, field_types) {
+                    Some(TypeBinding::Decl(DeclType::Indexable(t))) if idents.len() == 2 => {
+                        Some((idents[1], t))
+                    }
+                    Some(TypeBinding::Decl(DeclType::Streamed(t))) if idents.len() == 1 => {
+                        Some((idents[0], t))
+                    }
+                    _ => None,
+                };
+                match local {
+                    Some((name_node, t)) => scope_insert(
+                        scope,
+                        go_text(name_node, src).to_string(),
+                        TypeBinding::Decl(DeclType::Named(t)),
+                    ),
+                    // A two-name range over a chain this file cannot type:
+                    // record the chain plus one `Elem` hop for the use site.
+                    None if idents.len() == 2 => {
+                        let mut steps = Vec::new();
+                        if let Some(base) = go_chain_of(right, src, scope, imports, &mut steps) {
+                            steps.push(GoChainStep::Elem);
+                            if steps.len() < GO_CHAIN_MAX_STEPS {
+                                scope_insert(
+                                    scope,
+                                    go_text(idents[1], src).to_string(),
+                                    TypeBinding::Chained(GoChain { base, steps }),
+                                );
+                            }
+                        }
+                    }
+                    None => {}
+                }
             }
+        }
+        "type_switch_statement" => {
+            go_walk_type_switch(node, src, scope, imports, field_types, out, plan, top);
         }
         "var_declaration" => {
             let mut cursor = node.walk();
@@ -1458,6 +1550,9 @@ fn go_walk_receivers(
                 node.child_by_field_name("left"),
                 node.child_by_field_name("right"),
             ) {
+                // Walked BEFORE the names bind: a `:=` name's scope starts
+                // after the statement, so `x := x.M()` reads the OUTER x.
+                go_walk_receivers(right, src, scope, imports, field_types, out, plan, top);
                 let mut lc = left.walk();
                 let names: Vec<tree_sitter::Node> = left
                     .children(&mut lc)
@@ -1467,7 +1562,9 @@ fn go_walk_receivers(
                 let rhss: Vec<tree_sitter::Node> = right.children(&mut rc).collect();
                 if names.len() == rhss.len() {
                     for (name_node, rhs) in names.iter().zip(rhss.iter()) {
-                        if let Some(binding) = go_binding_of_rhs(*rhs, src, scope) {
+                        if let Some(binding) =
+                            go_binding_of_rhs(*rhs, src, scope, imports, field_types)
+                        {
                             scope_insert(scope, go_text(*name_node, src).to_string(), binding);
                         }
                         if rhs.kind() == "call_expression" {
@@ -1493,7 +1590,6 @@ fn go_walk_receivers(
                         plan.binds.insert(go_node_span(*rhs).start, (top, bound));
                     }
                 }
-                go_walk_receivers(right, src, scope, imports, field_types, out, plan, top);
             }
         }
         "func_literal" => {
@@ -1511,7 +1607,8 @@ fn go_walk_receivers(
                 if func.kind() == "selector_expression" {
                     if let Some(operand) = func.child_by_field_name("operand") {
                         let is_import = operand.kind() == "identifier"
-                            && imports.contains_key(go_text(operand, src));
+                            && imports.contains_key(go_text(operand, src))
+                            && scope_lookup(scope, go_text(operand, src)).is_none();
                         if !is_import {
                             match go_receiver_binding(operand, src, scope, field_types) {
                                 Some(binding) => {
@@ -1531,11 +1628,11 @@ fn go_walk_receivers(
                                     if let Some(base) =
                                         go_chain_of(operand, src, scope, imports, &mut steps)
                                     {
-                                        if steps.len() < GO_CHAIN_MAX_STEPS
-                                            && steps
-                                                .iter()
-                                                .any(|s| matches!(s, GoChainStep::Call(_)))
-                                        {
+                                        // A hopless `Var` base is the one-hop
+                                        // leg's own job, and it already declined.
+                                        let hopless = steps.is_empty()
+                                            && matches!(base, GoChainBase::Var { .. });
+                                        if steps.len() < GO_CHAIN_MAX_STEPS && !hopless {
                                             let span = go_node_span(func);
                                             plan.multihop.insert(
                                                 (span.start, span.end()),
@@ -1561,6 +1658,51 @@ fn go_walk_receivers(
             }
         }
     }
+}
+
+/// `switch alias := value.(type)`: inside a case naming exactly ONE type, the
+/// alias HAS that type. A multi-type case or `default` leaves it untyped.
+#[allow(clippy::too_many_arguments)]
+fn go_walk_type_switch(
+    node: tree_sitter::Node,
+    src: &[u8],
+    scope: &mut TypeScope,
+    imports: &HashMap<String, String>,
+    field_types: &HashMap<(String, String), DeclType>,
+    out: &mut Vec<(Span, TypeBinding)>,
+    plan: &mut GoBindPlan,
+    top: (u32, u32),
+) {
+    scope.push(HashMap::new());
+    let mut alias: Option<String> = None;
+    if let Some(list) = node.child_by_field_name("alias") {
+        let mut c = list.walk();
+        alias = list
+            .children(&mut c)
+            .find(|n| n.kind() == "identifier")
+            .map(|n| go_text(n, src).to_string());
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "type_case" {
+            go_walk_receivers(child, src, scope, imports, field_types, out, plan, top);
+            continue;
+        }
+        scope.push(HashMap::new());
+        let mut tc = child.walk();
+        let types: Vec<tree_sitter::Node> = child.children_by_field_name("type", &mut tc).collect();
+        if let (Some(name), [ty]) = (alias.as_ref(), types.as_slice()) {
+            if let Some(decl) = go_decl_type_of(*ty, src) {
+                scope_insert(scope, name.clone(), TypeBinding::Decl(decl));
+            }
+        }
+        let mut cc = child.walk();
+        for stmt in child.children(&mut cc) {
+            go_walk_receivers(stmt, src, scope, imports, field_types, out, plan, top);
+        }
+        scope.pop();
+    }
+    scope.pop();
 }
 
 /// Drive `go_walk_receivers` over every top-level function/method, appending
@@ -1604,7 +1746,7 @@ fn go_collect_receivers(
                 TypeBinding::Decl(DeclType::Named(name)) => {
                     ReceiverOutcome::Named(strings.intern(&name))
                 }
-                TypeBinding::Decl(DeclType::Indexable(_)) => continue,
+                TypeBinding::Decl(_) | TypeBinding::Chained(_) => continue,
                 TypeBinding::Inferred => ReceiverOutcome::Inferred,
                 TypeBinding::Ambiguous => ReceiverOutcome::Ambiguous,
             };
@@ -2877,16 +3019,19 @@ struct GoFileFacts {
     /// def_spans whose result is a generic instantiation; a multi-hop chain
     /// stops there (a cut type-argument result is not a type this tier names).
     generic: std::collections::HashSet<(u32, u32)>,
-    /// (struct, field) -> the field's declared type name, this file's own
-    /// struct declarations. Named types only; a slice/array/map field is no
-    /// receiver and so is absent.
-    fields: HashMap<(String, String), String>,
+    /// (struct, field) -> the field's declared type, this file's own struct
+    /// declarations. A collection field keeps its shape: no receiver itself,
+    /// but a `range` or an index over it names its element.
+    fields: HashMap<(String, String), DeclType>,
     /// struct -> its EMBEDDED types as written, `*` and type arguments cut, a
     /// `pkg.T` embed keeping its qualifier. Go's method promotion walks these.
     embeds: HashMap<String, Vec<String>>,
     /// Import qualifier -> import path, so a `pkg.T` embed resolves through
     /// the DECLARING file's own imports rather than the resolving file's.
     imports: HashMap<String, String>,
+    /// `type A = B` alias name -> the type it names, as written. Go makes A and
+    /// B one type, so A's method set is B's.
+    aliases: HashMap<String, String>,
 }
 
 fn go_file_facts(blob: &ContentId, path: &str) -> Arc<GoFileFacts> {
@@ -2913,6 +3058,14 @@ fn go_facts_of_path(path: &str) -> Arc<GoFileFacts> {
     facts
 }
 
+/// Is the def at `(path, span)` a METHOD (or an interface method spec)? A
+/// free-function leg must never take one: `f()` cannot name `(r T) f()`.
+pub(crate) fn go_is_method_def(path: &str, span: Span) -> bool {
+    go_facts_of_path(path)
+        .owner_of
+        .contains_key(&(span.start, span.end()))
+}
+
 fn go_parse_file_facts(path: &str) -> GoFileFacts {
     let mut facts = GoFileFacts {
         owner_of: HashMap::new(),
@@ -2923,6 +3076,7 @@ fn go_parse_file_facts(path: &str) -> GoFileFacts {
         fields: HashMap::new(),
         embeds: HashMap::new(),
         imports: HashMap::new(),
+        aliases: HashMap::new(),
     };
     let Ok(bytes) = std::fs::read(path) else {
         return facts;
@@ -2933,11 +3087,7 @@ fn go_parse_file_facts(path: &str) -> GoFileFacts {
     if let Some(tree) = go_parse(src) {
         go_collect_file_facts(tree.root_node(), src.as_bytes(), &mut facts);
         go_collect_file_imports(tree.root_node(), src.as_bytes(), &mut facts.imports);
-        for ((s, f), decl) in go_field_types(tree.root_node(), src.as_bytes()) {
-            if let DeclType::Named(name) = decl {
-                facts.fields.insert((s, f), name);
-            }
-        }
+        facts.fields = go_field_types(tree.root_node(), src.as_bytes());
     }
     facts
 }
@@ -2970,9 +3120,15 @@ fn go_collect_file_facts(node: tree_sitter::Node, src: &[u8], facts: &mut GoFile
             }
             "type_declaration" => {
                 let mut sc = child.walk();
-                for spec in child.children(&mut sc).filter(|n| n.kind() == "type_spec") {
-                    go_collect_interface_facts(spec, src, facts);
-                    go_collect_embed_facts(spec, src, facts);
+                for spec in child.children(&mut sc) {
+                    match spec.kind() {
+                        "type_spec" => {
+                            go_collect_interface_facts(spec, src, facts);
+                            go_collect_embed_facts(spec, src, facts);
+                        }
+                        "type_alias" => go_collect_alias_facts(spec, src, facts),
+                        _ => {}
+                    }
                 }
             }
             _ => {}
@@ -3096,6 +3252,24 @@ fn go_collect_interface_facts(spec: tree_sitter::Node, src: &[u8], facts: &mut G
     }
 }
 
+/// `type A = B`: tree-sitter-go spells an alias `type_alias`, never `type_spec`,
+/// so the two never collide in one table.
+fn go_collect_alias_facts(spec: tree_sitter::Node, src: &[u8], facts: &mut GoFileFacts) {
+    let (Some(name_node), Some(ty)) = (
+        spec.child_by_field_name("name"),
+        spec.child_by_field_name("type"),
+    ) else {
+        return;
+    };
+    let target = go_named_type_text(ty, src);
+    if target.is_empty() {
+        return;
+    }
+    facts
+        .aliases
+        .insert(go_text(name_node, src).to_string(), target);
+}
+
 /// A struct's embedded fields: tree-sitter-go's `field_declaration` carries a
 /// `type` and NO `field_identifier` for exactly those.
 fn go_collect_embed_facts(spec: tree_sitter::Node, src: &[u8], facts: &mut GoFileFacts) {
@@ -3145,11 +3319,7 @@ fn go_collect_embed_facts(spec: tree_sitter::Node, src: &[u8], facts: &mut GoFil
 
 /// The `go_import_bindings` table off a dedicated parse: a plain spec binds
 /// its path's last segment, `_` and `.` bind no qualifier.
-fn go_collect_file_imports(
-    node: tree_sitter::Node,
-    src: &[u8],
-    out: &mut HashMap<String, String>,
-) {
+fn go_collect_file_imports(node: tree_sitter::Node, src: &[u8], out: &mut HashMap<String, String>) {
     if node.kind() == "import_spec" {
         let path = path_of_import_spec(node, src);
         match leading_name(node) {
@@ -3207,6 +3377,85 @@ fn go_qualify_bound_type(
     }
 }
 
+/// A named type's identity: its DECLARING package directory plus its bare name.
+/// `pkg.T` and the same type written bare in its own package are one key here.
+type GoTypeId = (PathBuf, String);
+
+/// A type name as written in the file `own` names, resolved to a `GoTypeId`
+/// through that file's own import bindings.
+fn go_type_id(
+    module: &Option<GoModule>,
+    paths: &PathIndex,
+    own: Option<&ContentId>,
+    imports: &HashMap<String, String>,
+    type_name: &str,
+) -> Option<GoTypeId> {
+    match type_name.split_once('.') {
+        Some((pkg, bare)) => Some((
+            go_package_dir(module.as_ref()?, imports.get(pkg)?)?,
+            bare.to_string(),
+        )),
+        None => Some((
+            Path::new(paths.get(own?)?)
+                .parent()
+                .map(Path::to_path_buf)?,
+            type_name.to_string(),
+        )),
+    }
+}
+
+/// The same for a type name read out of `path`'s OWN declarations: the
+/// qualifier binds through `path`'s imports, never the resolving file's.
+fn go_type_id_in_file(path: &str, type_name: &str) -> Option<GoTypeId> {
+    match type_name.split_once('.') {
+        Some((pkg, bare)) => {
+            let facts = go_facts_of_path(path);
+            let import = facts.imports.get(pkg)?;
+            Some((
+                go_package_dir(&go_module_of(path)?, import)?,
+                bare.to_string(),
+            ))
+        }
+        None => Some((
+            Path::new(path).parent().map(Path::to_path_buf)?,
+            type_name.to_string(),
+        )),
+    }
+}
+
+/// `pkg.M()` where a LOCAL named `pkg` shadows the import: phase 1 records a
+/// receiver for exactly those, so a binding here means the local wins.
+#[allow(clippy::too_many_arguments)]
+fn go_shadowing_receiver_target(
+    call: &FamilyBundle<CallF>,
+    def_index: &DefIndex,
+    paths: Option<&PathIndex>,
+    module: &Option<GoModule>,
+    own: Option<&ContentId>,
+    imports: &HashMap<String, String>,
+    output: &ExtractOutput,
+    plan: Option<&GoBindPlan>,
+    bound_types: &HashMap<(u32, u32), HashMap<String, String>>,
+    site: &CallSite,
+    callee: &str,
+) -> Option<(ContentId, Span)> {
+    let binding = call
+        .aux
+        .receivers
+        .iter()
+        .find(|r| r.call_site == site.span)?;
+    let type_name = match &binding.outcome {
+        ReceiverOutcome::Named(type_id) => output.strings.lookup(*type_id).to_string(),
+        ReceiverOutcome::Inferred => plan?
+            .inferred_recv
+            .get(&(site.span.start, site.span.end()))
+            .and_then(|(top, var)| bound_types.get(top)?.get(var))?
+            .clone(),
+        ReceiverOutcome::Ambiguous => return None,
+    };
+    go_receiver_target(def_index, paths, module, own, imports, &type_name, callee)
+}
+
 /// Leg 1: `callee` among `type_name`'s methods, same package first else the
 /// package the `pkg.` qualifier names, and only then the promotion walk.
 fn go_receiver_target(
@@ -3219,18 +3468,67 @@ fn go_receiver_target(
     callee: &str,
 ) -> Option<(ContentId, Span)> {
     let paths = paths?;
-    let (dir, base_name) = match type_name.split_once('.') {
-        Some((pkg, bare)) => (go_package_dir(module.as_ref()?, imports.get(pkg)?)?, bare),
-        None => (
-            Path::new(paths.get(own?)?)
-                .parent()
-                .map(Path::to_path_buf)?,
-            type_name,
-        ),
-    };
-    go_method_in_dir(def_index, paths, &dir, base_name, callee)
-        .or_else(|| go_promoted_method(def_index, paths, &dir, base_name, callee))
+    let ty = go_type_id(module, paths, own, imports, type_name)?;
+    go_method_on_type(def_index, paths, &ty, callee)
 }
+
+/// Alias hops the method lookup takes before it stops.
+const GO_ALIAS_DEPTH: usize = 4;
+
+/// `callee` among the type's own methods, the ones it promotes, then the same
+/// two on what `type A = B` names it (`owner_of` holds the WRITTEN receiver).
+fn go_method_on_type(
+    def_index: &DefIndex,
+    paths: &PathIndex,
+    ty: &GoTypeId,
+    callee: &str,
+) -> Option<(ContentId, Span)> {
+    let mut cur = ty.clone();
+    let mut seen: std::collections::HashSet<GoTypeId> =
+        std::collections::HashSet::from([cur.clone()]);
+    for _ in 0..=GO_ALIAS_DEPTH {
+        if let Some(hit) = go_method_in_dir(def_index, paths, &cur.0, &cur.1, callee)
+            .or_else(|| go_promoted_method(def_index, paths, &cur.0, &cur.1, callee))
+        {
+            return Some(hit);
+        }
+        let next = go_aliases_of_dir(&cur.0, paths).get(&cur.1)?.clone();
+        if !seen.insert(next.clone()) {
+            return None;
+        }
+        cur = next;
+    }
+    None
+}
+
+/// One directory's `type A = B` table, alias name -> the aliased type's id. A
+/// `pkg.T` target resolves through the DECLARING file's imports, like an embed.
+fn go_aliases_of_dir(dir: &Path, paths: &PathIndex) -> Arc<AliasesOfDir> {
+    static CACHE: OnceLock<Mutex<AliasesCache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = (std::ptr::from_ref(paths) as usize, normalize_dir(dir));
+    let mut guard = cache.lock().unwrap_or_else(|poison| poison.into_inner());
+    if let Some(hit) = guard.get(&key) {
+        return hit.clone();
+    }
+    let mut out: AliasesOfDir = HashMap::new();
+    for path in go_dir_index(paths).get(&key.1).into_iter().flatten() {
+        for (alias, target) in &go_facts_of_path(path).aliases {
+            if let Some(id) = go_type_id_in_file(path, target) {
+                out.insert(alias.clone(), id);
+            }
+        }
+    }
+    let out = Arc::new(out);
+    guard.insert(key, out.clone());
+    out
+}
+
+/// Alias name -> the aliased type's id, one directory.
+type AliasesOfDir = HashMap<String, GoTypeId>;
+
+/// (resolve-run identity, normalized dir) -> that dir's alias table.
+type AliasesCache = HashMap<(usize, PathBuf), Arc<AliasesOfDir>>;
 
 /// `callee` among the methods declared on `(dir, type_name)`.
 fn go_method_in_dir(
@@ -3384,13 +3682,8 @@ type EmbedsOfDir = HashMap<String, Vec<(PathBuf, String)>>;
 /// (resolve-run identity, normalized dir) -> that dir's embed table.
 type EmbedsCache = HashMap<(usize, PathBuf), Arc<EmbedsOfDir>>;
 
-/// The multi-hop replay: type the chain's operand left to right in one pass,
-/// then bind `callee` on the resulting type. The base is a scope name (its
-/// declared type, else the #562 bind table) or an import-qualified func's
-/// first result. A `Field` hop folds through this file's struct field types;
-/// a `Call` hop through the method's declared first result, stopping at a
-/// builtin, a generic result, or a type the corpus does not name. Returns the
-/// target plus the final receiver type (the fan-out gate reads it).
+/// The multi-hop replay: type the chain's operand left to right as `GoTypeId`s,
+/// then bind `callee` on it. Third result: the fan-out gate's receiver name.
 #[allow(clippy::too_many_arguments)]
 fn go_chain_receiver_target(
     def_index: &DefIndex,
@@ -3406,81 +3699,58 @@ fn go_chain_receiver_target(
 ) -> Option<(ContentId, Span, String)> {
     let paths = paths?;
     let (top, chain) = plan.multihop.get(&site_span)?;
-    let mut ty: Option<String> = match &chain.base {
-        GoChainBase::Var { name, decl } => match decl {
-            Some(t) => Some(t.clone()),
-            None => bound_types.get(top)?.get(name).cloned(),
-        },
-        GoChainBase::Import { callee, path } => {
+    // `bool`: the type is a slice/array/map OF that element, so only an `Elem`
+    // hop may follow it.
+    let mut ty: Option<(GoTypeId, bool)> = match &chain.base {
+        GoChainBase::Var { name, decl } => {
+            let written = match decl {
+                Some(t) => t.clone(),
+                None => bound_types.get(top)?.get(name)?.clone(),
+            };
+            go_type_id(module, paths, own, imports, &written).map(|id| (id, false))
+        }
+        GoChainBase::Import {
+            callee: base_callee,
+            path,
+        } => {
             let (blob, span) = match (module, modules) {
                 (Some(module), Some(modules)) => go_package_dir(module, path)
-                    .and_then(|dir| modules.resolve_in_dir(&dir, def_index, paths, callee))?,
+                    .and_then(|dir| modules.resolve_in_dir(&dir, def_index, paths, base_callee))?,
                 _ => return None,
             };
-            let ret = ret_first_of(&blob, span, paths)?;
-            Some(go_qualify_bound_type(
-                module,
-                Some(paths),
-                imports,
-                own,
-                &blob,
-                &ret,
-            ))
+            go_ret_type_id(&blob, span, paths).map(|id| (id, false))
         }
     };
     for step in &chain.steps {
-        let cur = ty?;
+        let (cur, collection) = ty?;
+        if is_noise_go(&cur.1) {
+            return None;
+        }
         ty = match step {
-            GoChainStep::Field(field) => {
-                let (bare, pkg) = match cur.rsplit_once('.') {
-                    Some((pkg, bare)) => (bare.to_string(), Some(pkg.to_string())),
-                    None => (cur.clone(), None),
-                };
-                let local = plan
-                    .fields
-                    .get(&(bare.clone(), field.clone()))
-                    .and_then(|decl| match decl {
-                        DeclType::Named(t) => Some(t.clone()),
-                        DeclType::Indexable(_) => None,
-                    });
-                match local {
-                    Some(t) => Some(t),
-                    None => {
-                        let dir = match pkg {
-                            Some(pkg) => go_package_dir(module.as_ref()?, imports.get(&pkg)?)?,
-                            None => Path::new(paths.get(own?)?)
-                                .parent()
-                                .map(Path::to_path_buf)?,
-                        };
-                        go_field_type_in_dir(&dir, &bare, field, paths)
-                    }
-                }
-            }
+            GoChainStep::Elem if collection => Some((cur, false)),
+            _ if collection => return None,
+            GoChainStep::Elem => return None,
+            GoChainStep::Field(field) => go_field_type_of(&cur, field, paths),
             GoChainStep::Call(method) => {
-                if is_noise_go(&cur) {
-                    return None;
-                }
-                let (blob, span) =
-                    go_receiver_target(def_index, Some(paths), module, own, imports, &cur, method)?;
-                let ret = ret_first_of(&blob, span, paths)?;
-                Some(go_qualify_bound_type(
-                    module,
-                    Some(paths),
-                    imports,
-                    own,
-                    &blob,
-                    &ret,
-                ))
+                let (blob, span) = go_method_on_type(def_index, paths, &cur, method)?;
+                go_ret_type_id(&blob, span, paths).map(|id| (id, false))
             }
         };
     }
-    let ty = ty?;
-    if is_noise_go(&ty) {
+    let (ty, collection) = ty?;
+    if collection || is_noise_go(&ty.1) {
         return None;
     }
-    let (blob, span) =
-        go_receiver_target(def_index, Some(paths), module, own, imports, &ty, callee)?;
-    Some((blob, span, ty))
+    let (blob, span) = go_method_on_type(def_index, paths, &ty, callee)?;
+    Some((blob, span, ty.1))
+}
+
+/// A def's declared first result as a `GoTypeId`, read through the DECLARING
+/// file's imports. None when the def declares none or its result is generic.
+fn go_ret_type_id(blob: &ContentId, span: Span, paths: &PathIndex) -> Option<GoTypeId> {
+    let path = paths.get(blob)?;
+    let written = ret_first_of(blob, span, paths)?;
+    go_type_id_in_file(path, &written)
 }
 
 /// A def's declared first result type from its file facts; None when the def
@@ -3495,40 +3765,46 @@ fn ret_first_of(blob: &ContentId, span: Span, paths: &PathIndex) -> Option<Strin
     facts.ret_of.get(&key)?.first().cloned()
 }
 
-/// (dir, struct, field) -> the field's declared type, memoized per process.
-/// A miss scans the resolve universe's paths once for the dir's files; every
-/// later hop on the same triple is a map hit.
-fn go_field_type_in_dir(
-    dir: &Path,
-    struct_name: &str,
-    field: &str,
-    paths: &PathIndex,
-) -> Option<String> {
-    static CACHE: OnceLock<Mutex<HashMap<(PathBuf, String, String), Option<String>>>> =
-        OnceLock::new();
+/// `ty`'s `field`, as (the field type's id, is it a collection OF that type).
+/// Reads the whole DECLARING package, so a struct split across files answers.
+fn go_field_type_of(ty: &GoTypeId, field: &str, paths: &PathIndex) -> Option<(GoTypeId, bool)> {
+    go_fields_of_dir(&ty.0, paths)
+        .get(&(ty.1.clone(), field.to_string()))
+        .cloned()
+}
+
+/// One directory's (struct, field) -> the field type's id, ONE pass per run.
+fn go_fields_of_dir(dir: &Path, paths: &PathIndex) -> Arc<FieldsOfDir> {
+    static CACHE: OnceLock<Mutex<FieldsCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = (std::ptr::from_ref(paths) as usize, normalize_dir(dir));
     let mut guard = cache.lock().unwrap_or_else(|poison| poison.into_inner());
-    let key = (
-        dir.to_path_buf(),
-        struct_name.to_string(),
-        field.to_string(),
-    );
     if let Some(hit) = guard.get(&key) {
         return hit.clone();
     }
-    let hit = paths
-        .map
-        .values()
-        .filter(|path| Path::new(path).parent().is_some_and(|parent| parent == dir))
-        .find_map(|path| {
-            go_facts_of_path(path)
-                .fields
-                .get(&(struct_name.to_string(), field.to_string()))
-                .cloned()
-        });
-    guard.insert(key, hit.clone());
-    hit
+    let mut out: FieldsOfDir = HashMap::new();
+    for path in go_dir_index(paths).get(&key.1).into_iter().flatten() {
+        for (owner_field, decl) in &go_facts_of_path(path).fields {
+            let (written, collection) = match decl {
+                DeclType::Named(name) => (name, false),
+                DeclType::Indexable(name) => (name, true),
+                DeclType::Streamed(name) => (name, true),
+            };
+            if let Some(id) = go_type_id_in_file(path, written) {
+                out.insert(owner_field.clone(), (id, collection));
+            }
+        }
+    }
+    let out = Arc::new(out);
+    guard.insert(key, out.clone());
+    out
 }
+
+/// (struct, field) -> (the field type's id, is it a collection), one directory.
+type FieldsOfDir = HashMap<(String, String), (GoTypeId, bool)>;
+
+/// (resolve-run identity, normalized dir) -> that dir's field table.
+type FieldsCache = HashMap<(usize, PathBuf), Arc<FieldsOfDir>>;
 
 impl Resolve<CallF> for GoSource {
     fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<CallF>> {
@@ -3645,16 +3921,23 @@ impl Resolve<CallF> for GoSource {
                 }
                 Some(ReceiverOutcome::Ambiguous) => None,
                 None => match site.callee_path.map(|id| output.strings.lookup(id)) {
-                    // The import path names ONE directory through the module; the
-                    // plane's own directory-scoped, exported-only lookup binds it.
-                    // The v5-shaped name match stays the LAST leg, and only for
-                    // an EXPORTED name on an in-module import whose directory
-                    // leg declined (the target's files may sit outside this
-                    // invocation): a unique corpus name still binds, kind
-                    // NameResolve. An unexported callee can never be referenced
-                    // from another package, and an EXTERNAL import (stdlib,
-                    // third-party) stays nothing.
-                    Some(import) => match (&module, paths, modules) {
+                    // A local shadowing the package name wins; the directory
+                    // leg is exported-only, corpus-wide name match last.
+                    Some(import) => go_shadowing_receiver_target(
+                        call,
+                        def_index,
+                        paths,
+                        &module,
+                        own.as_ref(),
+                        &imports,
+                        output,
+                        plan.as_deref(),
+                        &bound_types,
+                        site,
+                        callee,
+                    )
+                    .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                    .or_else(|| match (&module, paths, modules) {
                         (Some(module), Some(paths), Some(modules)) => {
                             go_package_dir(module, import).and_then(|dir| {
                                 modules
@@ -3671,7 +3954,7 @@ impl Resolve<CallF> for GoSource {
                             })
                         }
                         _ => None,
-                    },
+                    }),
                     None => {
                         // The multi-hop chain leg: replay the operand's hops
                         // left to right and bind the final `.c()` the way a
@@ -3698,8 +3981,19 @@ impl Resolve<CallF> for GoSource {
                             }
                             Some((blob, span, CallEdgeKind::NameResolve))
                         } else {
-                            GoSource::call_name_match(output, def_index, callee)
+                            // Go's package block first: a same-package func
+                            // shadows every corpus-wide name guess.
+                            modules
+                                .zip(own_path)
+                                .and_then(|(modules, path)| {
+                                    let dir = Path::new(path).parent()?;
+                                    modules.resolve_call_in_own_dir(dir, def_index, paths?, callee)
+                                })
                                 .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                                .or_else(|| {
+                                    GoSource::call_name_match(output, def_index, callee)
+                                        .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                                })
                                 .or_else(|| {
                                     modules.zip(own_path).and_then(|(modules, path)| {
                                         modules
@@ -3742,6 +4036,21 @@ impl Resolve<CallF> for GoSource {
                                 .unwrap_or_default()
                         })
                         .unwrap_or_default();
+                    // A conversion `T(x)` parses as a call; a target that is a
+                    // TYPE decl with no result list is what names it one.
+                    let converted = rets.is_empty()
+                        && paths
+                            .zip(modules)
+                            .and_then(|(paths, modules)| {
+                                let path = paths.get(dst_blob)?;
+                                Some(modules.is_type_decl(path, *dst_span))
+                            })
+                            .unwrap_or(false);
+                    let rets = if converted {
+                        vec![callee.to_string()]
+                    } else {
+                        rets
+                    };
                     let entry = bound_types.entry(*top).or_default();
                     for (slot, name) in names.iter().enumerate() {
                         if let Some(t) = rets.get(slot) {

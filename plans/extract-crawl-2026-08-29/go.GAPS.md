@@ -19,6 +19,7 @@ Per-row classes beside this file: `go.gaps.vta_only.classes.tsv`,
 - [ours-only classes](#ours-only-classes)
 - [Which leg takes each class](#legs)
 - [The codeql-agreed set: edges two tools bind and we did not](#codeql-agreed)
+- [The residual five, taken](#residual-five)
 
 ## vta-only classes
 
@@ -130,3 +131,75 @@ paths by directory in ONE pass and put the wall back under the law.
 
 Pins: `tests/69_go_promoted.rs`, 8 tests, fixtures `tests/fixtures/go_promoted`.
 HEAD failure before the fix is in that file's header.
+
+<a id="residual-five"></a>
+## The residual five, taken
+
+Same corpus and same one-process recipe, this lane's own build. The recipe is
+order sensitive: `find internal cmd -name '*.go'` order reproduces the #577
+receipt row for row, `| sort` loses 5,147 edges, and the two runs otherwise
+differ in nothing. That is a separate defect, filed below, not measured here.
+
+```
+cd /Users/chrishafley/projects/typescript-go
+find internal cmd -name '*.go' > relfiles.txt          # 5,075 files, find order
+xargs -s 900000 timeout 30 <extract> --resolve < relfiles.txt > all_resolved.jsonl
+python3 plans/extract-bench-2026-08-29/normalize.py resolved all_resolved.jsonl \
+  /Users/chrishafley/projects/typescript-go go.parse.call.tsv go.parse.type.tsv
+python3 plans/extract-crawl-2026-08-29/go.codeql_gap.py go.parse.call.tsv \
+  plans/extract-bench-2026-08-29/go.oracle.call.vta.bare.tsv \
+  plans/extract-bench-2026-08-29/go.codeql2.call.tsv --out missed.tsv
+plans/extract-crawl-2026-08-29/go_gap_classify <corpus> missed.tsv classes.tsv
+```
+
+| receipt | #577 | this lane |
+|---|---:|---:|
+| ours rows | 86,324 | 91,837 |
+| overlap with vta bare | 43,843 | 46,517 |
+| recall (overlap / 55,099) | 79.57% | **84.42%** |
+| precision (overlap / ours) | 50.79% | 50.65% |
+| unique call rows lost | | 93 |
+| recall against codeql (overlap / 48,529) | 92.72% | 97.17% |
+| agreed and missed | 3,041 | **1,083** |
+| median wall, one process, 3 alternating runs | 11,684 ms | 11,969 ms |
+
+`go_gap_classify` rerun over the 1,083, full-set classification:
+
+| class | #577 | this lane | what took it |
+|---|---:|---:|---|
+| one-hop receiver never typed | 811 | 487 | range element by Go's own arity rule, type switch case, field read, index read, type assertion, parenthesized conversion `(*T)(x)`, and `TypeBinding::Chained` for an rhs chain this file cannot name |
+| embedded-struct promoted method | 302 | 289 | untouched; the residual sits past the depth-4 cap |
+| multi-hop receiver chain | 816 | 195 | the plan no longer demands a call hop, so `a.b.M()` and `pkg.F().M()` record; hops replay as `GoTypeId` (declaring dir + bare name) so a cross-package field or result resolves through its OWN file's imports |
+| alias receiver `type A = B` | 926 | 89 | `GoFileFacts.aliases` + `go_aliases_of_dir`; `go_method_on_type` follows the chain, cap 4, cycle guarded |
+| bare in-package call, name not unique | 105 | 12 | `resolve_call_in_own_dir`: Go's package block runs before any corpus-wide name guess |
+| import-qualified call shadowed by a method | 81 | 11 | `free_sites_in_dir` cuts every def carrying an `owner_of` entry |
+
+Row movement against #577: 5,220 rows gained (2,442 of them in the vta oracle),
+93 lost (22 in the oracle). The 22 are receivers the new typing binds to a
+concrete type that declares no such method, where the old corpus-wide name
+guess happened to be right.
+
+Two corrections to the table above this section. `multi-value define` was
+already built (the i-th result slot binding), so it cost nothing here; and the
+81-row import-qualified class also needed the phase-1 `is_import` test to lose
+to a local of the same name (`checker, done := ...; checker.GetSymbolAtLocation`),
+which `go_shadowing_receiver_target` now settles.
+
+Filed, not taken:
+
+- **Resolve output depends on input file ORDER.** Same 5,075 files, one
+  process, the #577 binary: `find` order gives 86,324 call rows, the same list
+  through `sort` gives 81,177. A resolve run must be a function of its input
+  SET, and every number in this file is `find`-order only.
+- `tests/fixtures/go_modules/module_a/shadow.go` was not valid Go: a
+  package-level `Widget` plus a dot-imported `Widget` in one package is a
+  redeclaration, and the test pinned the accident. Moved to its own package
+  `module_a/shadowpkg`.
+- The wall is over the 10-second law on this machine at HEAD too (11,684 ms
+  before, 11,969 ms after, +2.4%), where the #577 lane measured 9,147 ms. The
+  law is broken by the pre-existing cost, not by this change.
+
+Pins: `tests/71_go_residual.rs`, 17 tests, fixtures `tests/fixtures/go_residual`.
+HEAD failure (13 of 17) is in that file's header. Classes beside this file:
+`go.codeql_agreed_missed.residual5.classes.tsv`; run row
+`go.resolve.residual5.runs.tsv`.

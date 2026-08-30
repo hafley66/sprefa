@@ -20,7 +20,7 @@ const FILES: &[&str] = &[
     "module_a/blankpkg/blank.go",
     "module_a/vendorlike/yaml.v3/yaml.go",
     "module_a/main.go",
-    "module_a/shadow.go",
+    "module_a/shadowpkg/shadow.go",
     "module_b/pkgutil/util.go",
     "module_b/main.go",
 ];
@@ -210,8 +210,8 @@ fn a_dot_import_mints_a_namespace_row_per_file() {
 }
 
 /// `Widget()` bare in `main.go`: BOTH pkgutil2 and pkgutil3 export `Widget`
-/// (corpus-wide ambiguous), so only `main.go`'s OWN dot import of pkgutil2
-/// disambiguates the call.
+/// (corpus-wide ambiguous) and main's own package declares none, so only
+/// `main.go`'s OWN dot import of pkgutil2 disambiguates the call.
 #[test]
 fn a_bare_name_binds_through_its_files_own_dot_import() {
     assert!(call_edges("call").contains(&(
@@ -222,9 +222,8 @@ fn a_bare_name_binds_through_its_files_own_dot_import() {
     )));
 }
 
-/// `shadow.go` declares its OWN `Widget`, dot-imports pkgutil2 too: the
-/// same-file declaration wins, never the dot import (`name_resolve`, not
-/// `import_resolve`), and the edge lands in `shadow.go` itself.
+/// `shadow.go` declares its OWN `Widget` and dot-imports pkgutil2 from its own
+/// package, so the package block wins (`name_resolve`, not `import_resolve`).
 #[test]
 fn a_local_declaration_shadows_a_dot_imported_name() {
     assert!(call_edges("call").contains(&(
