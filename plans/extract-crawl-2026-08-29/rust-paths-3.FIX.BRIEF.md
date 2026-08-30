@@ -1,4 +1,4 @@
-# Lane `fix-extract-rust-paths-3` (glm53): rust classes 8, 11, 9, 7 from the census
+# Lane `fix-extract-rust-paths-3` (glm53f): rust classes 8, 11, 9, 7 from the census
 
 Read `plans/extract-crawl-2026-08-29/rust.REPORT.md` section 18 (the
 15,444-row census, table 18.2). After #576 one-process `ambiguous` is 13,532.

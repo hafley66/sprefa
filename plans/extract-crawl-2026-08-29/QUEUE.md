@@ -8,3 +8,13 @@
 | 2 | bench-extract-ratchet | ../extract-bench-2026-08-29/RATCHET.BRIEF.md | glm53 | |
 | 3 | fix-extract-speed | ../extract-bench-2026-08-29/SPEED.BRIEF.md | terra | |
 | 4 | bench-extract-scip-informed | ../extract-bench-2026-08-29/SCIP-INFORMED.BRIEF.md | terra | |
+
+## Harness receipts (2026-08-29 evening)
+| preset | runs | outcome |
+|---|---|---|
+| opus | many | reliable; banned by user (cost) |
+| terra | 1 | acp handshake failed: Internal error |
+| sonnet | 2 | acp handshake failed: Internal error |
+| glm53 (ccz, z.ai plan) | 5 | 1 completed (ratchet, PR #580); 4 died rc=1 at 15 to 20 min, `[claude-code:unrecognized_model] {"model":"glm-5.3"}` the only stderr line, conversation file 36 bytes, no error text |
+| glm53f (opencode, openrouter) | many | completes; cargo-fmt churn and partial gate counts, sanded by the coordinator |
+Fallback order until terra is fixed: glm53f, then glm53 for short tasks only.

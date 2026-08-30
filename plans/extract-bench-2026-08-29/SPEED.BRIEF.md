@@ -1,4 +1,4 @@
-# Lane `fix-extract-speed` (glm53): the go corpus wall from 9.1 s toward 3 s, RSS down, no fact lost
+# Lane `fix-extract-speed` (glm53f): the go corpus wall from 9.1 s toward 3 s, RSS down, no fact lost
 
 User word (2026-08-29): fast. `extract --resolve` over typescript-go
 (5,075 files) is 11,969 ms median at #579 (over the 10-second law), 666 MB peak, and `sample` says
