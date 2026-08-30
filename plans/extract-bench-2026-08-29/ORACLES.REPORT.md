@@ -353,6 +353,19 @@ enclosing function; those and the fourslash test harness
 ours-only. `go.parse.call.tsv` predates #558, #560 and #562; the receipt
 lane for the next go arc re-emits it on the current binary.
 
+### 12a. concrete-one-hop-receiver excess vs codeql2: codeql-side (2026-08-30)
+
+The `ours - codeql2` full-projection excess holds 1,348 rows of the class
+(`out/go.excess.codeql2.classes.tsv`, full set). Each row's call site was
+loaded with `go/types` (the `go_gap_classify` `packages.Load` scaffold, 105
+packages) and the callee asserted against the receiver's type
+(`types.LookupFieldOrMethod`): 1,290 of 1,348 assert-passes (95.7%), well over
+the 90% bar. The class is codeql-side — both endpoints exist and the binding
+is concrete; codeql2's caller simply lacks the edge (its callers carry other
+edges in `go.codeql2.call.tsv`). Written into GO-PARITY.REPORT.md section 5a
+instead of touching the extractor. The 58 residual rows (4.3%) are wrong-file
+bindings folded into the corpus-scale defect documented there.
+
 ## 13. type oracles
 
 Corpora and shas unchanged from section 1. Two new probes, both extensions of
