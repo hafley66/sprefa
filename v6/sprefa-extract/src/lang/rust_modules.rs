@@ -26,10 +26,6 @@ use super::rust_receivers::{impl_facts, ImplEntry};
 
 use syn::spanned::Spanned as _;
 
-fn spanned<T: syn::spanned::Spanned>(t: &T) -> &T {
-    t
-}
-
 // ── phase-2 facts: one dedicated parse per file ──────────────────────────────
 
 /// What one `use` leaf binds a local name to. `qualifier` is the source
@@ -159,8 +155,8 @@ fn collect(items: &[syn::Item], line_starts: &[u32], facts: &mut RustModuleFacts
                             let span = match &f.default {
                                 Some(block) => def_span(
                                     line_starts,
-                                    spanned(&f.sig.ident).span(),
-                                    spanned(block).span(),
+                                    f.sig.ident.span(),
+                                    block.span(),
                                 ),
                                 // A declared fn has no block: the span must
                                 // match the call facet's def for the fn
@@ -168,8 +164,8 @@ fn collect(items: &[syn::Item], line_starts: &[u32], facts: &mut RustModuleFacts
                                 // or the emitted edge reads nameless.
                                 None => def_span(
                                     line_starts,
-                                    spanned(&f.sig.ident).span(),
-                                    spanned(&f.sig).span(),
+                                    f.sig.ident.span(),
+                                    f.sig.span(),
                                 ),
                             };
                             Some(TraitFn {

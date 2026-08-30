@@ -279,3 +279,95 @@ fn the_informed_default_adopts_a_fresh_index_and_a_stale_one_stays_plain() {
         "an index without a recorded set is never adopted"
     );
 }
+
+// FAIL-FIRST for the index-the-index caches: before the span tables and the
+// def maps lived ON `ScipDocument` / `ScipIndex`, they lived in process-global
+// statics keyed on the document/index ADDRESS plus a cheap fingerprint. Two
+// indexes in one process with the same document count and paths could only be
+// told apart by that fingerprint; an address reuse by a later allocation was
+// the documented hazard. Keyed on the owning struct, no second index can ever
+// read the first's table.
+#[test]
+fn two_indexes_in_one_process_never_share_a_span_table() {
+    use sprefa_extract::types::{
+        OccurrenceRole, PositionEncoding, ScipDocument, ScipIndex, ScipOccurrence, SymbolId,
+        SymbolInterner,
+    };
+    use sprefa_extract::{shape::Span, site_occurrence};
+
+    let doc_at_same_path = |symbol: SymbolId| ScipDocument {
+        relative_path: "same.ts".to_string(),
+        position_encoding: PositionEncoding::Utf8,
+        occurrences: vec![ScipOccurrence {
+            symbol,
+            range: [0, 0, 0, 2],
+            roles: OccurrenceRole::DEFINITION,
+            syntax_kind: 0,
+            enclosing_range: None,
+            override_documentation: Vec::new(),
+            diagnostics: Vec::new(),
+        }],
+        ..ScipDocument::default()
+    };
+    let index_of = |symbol: SymbolId, text: &str| ScipIndex {
+        documents: vec![doc_at_same_path(symbol)],
+        symbols: vec![text.to_string()],
+        ..ScipIndex::default()
+    };
+
+    let mut one = SymbolInterner::default();
+    let mut two = SymbolInterner::default();
+    let alpha = one.intern("alpha");
+    let beta = two.intern("beta");
+    let index_one = index_of(alpha, "alpha");
+    let index_two = index_of(beta, "beta");
+    // Same relative path, same occurrence quad, DIFFERENT content: only the
+    // owning document can tell the two span tables apart.
+    let content_one = b"al\nzz\n".to_vec();
+    let content_two = b"be\nzz\n".to_vec();
+    let site = Span { start: 0, len: 2 };
+
+    // Interleaved: the second index caches before the first ever asks.
+    assert_eq!(
+        site_occurrence(&index_two.documents[0], &content_two, site, "be"),
+        Some(beta),
+        "the second index answers from its own table, never the first's"
+    );
+    assert_eq!(
+        site_occurrence(&index_one.documents[0], &content_one, site, "al"),
+        Some(alpha),
+        "the first index answers from its own table after the second cached"
+    );
+    assert_eq!(
+        site_occurrence(&index_two.documents[0], &content_two, site, "be"),
+        Some(beta),
+        "the second index still answers from its own table"
+    );
+
+    let cached_one = index_one.documents[0]
+        .spans
+        .get()
+        .expect("first document cached its spans")
+        .spans
+        .clone();
+    let cached_two = index_two.documents[0]
+        .spans
+        .get()
+        .expect("second document cached its spans")
+        .spans
+        .clone();
+    // Both tables hold SymbolId(0); the TEXT each id resolves to is what
+    // proves the tables came from different indexes.
+    let text_one: Vec<&str> = cached_one
+        .iter()
+        .map(|&(_, _, symbol)| index_one.symbol(symbol))
+        .collect();
+    let text_two: Vec<&str> = cached_two
+        .iter()
+        .map(|&(_, _, symbol)| index_two.symbol(symbol))
+        .collect();
+    assert_ne!(
+        text_one, text_two,
+        "same path, same quad, different index: the tables must differ"
+    );
+}

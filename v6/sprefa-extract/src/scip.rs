@@ -33,13 +33,12 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 use crate::scip_decode::load_index;
 use crate::scip_ensure::{run_capped, Capped};
 use crate::shape::Span;
 use crate::types::{
-    OccurrenceRole, PositionEncoding, ScipDocument, ScipError, ScipIndex, SymbolId,
+    DefMap, OccurrenceRole, PositionEncoding, ScipDocument, ScipError, ScipIndex, SymbolId,
     ScipSource,
 };
 
@@ -494,68 +493,30 @@ pub fn byte_range(content: &[u8], range: [i32; 4], encoding: PositionEncoding) -
     byte_range_at(content, &LineTable::build(content), range, encoding)
 }
 
-/// (content address, len, head bytes) -> the shared line table. The resolve
-/// arms convert one def range per call site against the same def document's
-/// bytes, so the table is built once per buffer, never per call. Keyed like
-/// `DocKey`: within one process a freed buffer's address can be reused by a
-/// later allocation, so len and the head bytes ride the key to keep a stale
-/// entry from answering for different content.
-#[derive(Hash, PartialEq, Eq)]
-struct LineKey {
-    content: usize,
-    len: usize,
-    head: u64,
-}
-
-fn content_head(content: &[u8]) -> u64 {
-    let mut head = [0u8; 8];
-    let n = content.len().min(8);
-    head[..n].copy_from_slice(&content[..n]);
-    u64::from_le_bytes(head)
-}
-
-static LINE_TABLES: Mutex<Option<HashMap<LineKey, Arc<LineTable>>>> = Mutex::new(None);
-
-/// The cached-content form of `byte_range`: same answer, one line table per
-/// distinct buffer instead of one per call.
+/// The cached-content form of `byte_range`: the def document's line table
+/// rides the document's span cache (`ScipDocument::spans`), so one table per
+/// document serves every site conversion and every def conversion. The
+/// content passed here is the join's pairing of this very document
+/// (`join_documents`), the same bytes that built the cache.
 pub fn byte_range_cached(
+    doc: &ScipDocument,
     content: &[u8],
     range: [i32; 4],
     encoding: PositionEncoding,
 ) -> Option<Span> {
-    let key = LineKey {
-        content: content.as_ptr() as usize,
-        len: content.len(),
-        head: content_head(content),
-    };
-    let table = {
-        let mut guard = LINE_TABLES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard
-            .get_or_insert_with(HashMap::new)
-            .entry(key)
-            .or_insert_with(|| Arc::new(LineTable::build(content)))
-            .clone()
-    };
-    byte_range_at(content, &table, range, encoding)
+    let cache = doc.spans.get_or_init(|| build_doc_spans(doc, content));
+    byte_range_at(content, &cache.lines, range, encoding)
 }
 
 /// Byte offset of each 0-based line start, with the document end as the final
 /// entry. One per document, never one per range.
+#[derive(Clone, Debug)]
 pub struct LineTable {
     starts: Vec<u32>,
 }
 
-/// Document bytes a range conversion reads: one per line lookup under the
-/// table, one per byte of the document under a scan.
-static LINE_READS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-pub fn line_reads() -> u64 {
-    LINE_READS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
 impl LineTable {
     pub fn build(content: &[u8]) -> LineTable {
-        LINE_READS.fetch_add(content.len() as u64, std::sync::atomic::Ordering::Relaxed);
         let mut starts = Vec::new();
         starts.push(0u32);
         for at in memchr::memchr_iter(b'\n', content) {
@@ -570,7 +531,6 @@ impl LineTable {
     }
 
     fn line_start(&self, line: i32) -> Option<usize> {
-        LINE_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if line < 0 {
             return None;
         }
@@ -636,51 +596,25 @@ pub fn byte_range_at(
 
 // ── the index-the-index caches ────────────────────────────────────────────────
 // The seam functions below are called once per call site over an immutable
-// `ScipIndex`, so each doc's range->span table and the index's symbol->def
-// map are computed once and reused. The caches key on the document/index
-// address plus a cheap fingerprint (occurrence count, content length, path
-// digest): within one process a freed index's address can be reused by a
-// later allocation, and the fingerprint is what keeps a stale entry from
-// answering for a different index.
+// `ScipIndex`. Each doc's range->span table lives ON the document
+// (`ScipDocument::spans`, filled lazily on the first `site_occurrence` call,
+// since the spans need the document's content) and the index's symbol->def
+// map lives on the index (`ScipIndex::defs`, filled at the end of decode, or
+// on first use for a hand-built index). Nothing is keyed on an address, so
+// two indexes in one process never share a cache.
 
 /// Per document: the byte span of every convertible occurrence, sorted by
 /// (start, end), plus the document's line table. `site_occurrence` binary
 /// searches this instead of scanning `doc.occurrences` and rebuilding the
 /// line table per site. The third slot is the occurrence's interned symbol
 /// (`ScipIndex::symbol`), so the search never touches the occurrence rows.
-struct DocOccCache {
-    spans: Vec<(u32, u32, SymbolId)>,
-    lines: LineTable,
+#[derive(Clone, Debug)]
+pub struct DocSpans {
+    pub spans: Vec<(u32, u32, SymbolId)>,
+    pub lines: LineTable,
 }
 
-#[derive(Hash, PartialEq, Eq)]
-struct DocKey {
-    doc: usize,
-    occ_len: usize,
-    content_len: usize,
-    path_hash: u64,
-}
-
-fn path_digest(path: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    path.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn doc_cache(doc: &ScipDocument, content: &[u8]) -> Arc<DocOccCache> {
-    let key = DocKey {
-        doc: doc as *const ScipDocument as usize,
-        occ_len: doc.occurrences.len(),
-        content_len: content.len(),
-        path_hash: path_digest(&doc.relative_path),
-    };
-    let mut guard = DOC_CACHES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(map) = guard.as_ref() {
-        if let Some(hit) = map.get(&key) {
-            return hit.clone();
-        }
-    }
+pub(crate) fn build_doc_spans(doc: &ScipDocument, content: &[u8]) -> DocSpans {
     let lines = LineTable::build(content);
     let mut spans: Vec<(u32, u32, SymbolId)> = Vec::with_capacity(doc.occurrences.len());
     for occ in &doc.occurrences {
@@ -689,45 +623,12 @@ fn doc_cache(doc: &ScipDocument, content: &[u8]) -> Arc<DocOccCache> {
         }
     }
     spans.sort_unstable_by_key(|(start, end, _)| (*start, *end));
-    let cache = Arc::new(DocOccCache { spans, lines });
-    guard
-        .get_or_insert_with(HashMap::new)
-        .insert(key, cache.clone());
-    cache
+    DocSpans { spans, lines }
 }
 
-static DOC_CACHES: Mutex<Option<HashMap<DocKey, Arc<DocOccCache>>>> = Mutex::new(None);
-
-/// symbol -> (document ix, occurrence ix) for the first definition-role
-/// occurrence, first-wins in document order — the same resolution
-/// `definition_of` answers by scan.
-type DefMap = HashMap<SymbolId, (usize, u32)>;
-
-#[derive(Hash, PartialEq, Eq)]
-struct IndexKey {
-    index: usize,
-    doc_len: usize,
-    external_len: usize,
-    first_path_hash: u64,
-}
-
-fn def_map(index: &ScipIndex) -> Arc<DefMap> {
-    let key = IndexKey {
-        index: index as *const ScipIndex as usize,
-        doc_len: index.documents.len(),
-        external_len: index.external_symbols.len(),
-        first_path_hash: index
-            .documents
-            .first()
-            .map(|d| path_digest(&d.relative_path))
-            .unwrap_or(0),
-    };
-    let mut guard = DEF_MAPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(map) = guard.as_ref() {
-        if let Some(hit) = map.get(&key) {
-            return hit.clone();
-        }
-    }
+/// The definition-role map for one index, first-wins in document order —
+/// the same resolution `definition_of` answers by scan.
+pub(crate) fn build_def_map(index: &ScipIndex) -> DefMap {
     let mut map: DefMap = HashMap::new();
     for (doc_ix, doc) in index.documents.iter().enumerate() {
         for (occ_ix, occ) in doc.occurrences.iter().enumerate() {
@@ -737,12 +638,8 @@ fn def_map(index: &ScipIndex) -> Arc<DefMap> {
             map.entry(occ.symbol).or_insert((doc_ix, occ_ix as u32));
         }
     }
-    let map = Arc::new(map);
-    guard.get_or_insert_with(HashMap::new).insert(key, map.clone());
     map
 }
-
-static DEF_MAPS: Mutex<Option<HashMap<IndexKey, Arc<DefMap>>>> = Mutex::new(None);
 
 /// The content join for one loaded index: for every document, its content id +
 /// bytes from the rev-correct reader (None when the reader can't read the
@@ -778,7 +675,7 @@ pub fn site_occurrence(
     site: Span,
     callee: &str,
 ) -> Option<SymbolId> {
-    let cache = doc_cache(doc, content);
+    let cache = doc.spans.get_or_init(|| build_doc_spans(doc, content));
     // Containment needs span.start >= site.start, so the first candidate is
     // the first cached span at or after the site's start byte.
     let first = cache
@@ -816,7 +713,7 @@ pub fn definition_of(
             .find(|occ| occ.symbol == symbol && occ.roles.contains(OccurrenceRole::DEFINITION))
             .map(|occ| (doc_ix, occ.range));
     }
-    let map = def_map(index);
+    let map = index.defs.get_or_init(|| build_def_map(index));
     let (def_doc_ix, occ_ix) = map.get(&symbol)?;
     let occ = &index.documents[*def_doc_ix].occurrences[*occ_ix as usize];
     Some((*def_doc_ix, occ.range))
