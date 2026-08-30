@@ -7,7 +7,7 @@ own; you own them now.
 
 ## First action
 ```
-git merge --ff-only <origin/main sha the coordinator states; if #581 is merged this is after it>
+git merge --ff-only 5f48d80c7f2acf9a0d6d6434b6a4130fd2fde12c
 cd v6/sprefa-extract && cargo build --release --features cli 2>&1 | tail -1
 bash plans/extract-bench-2026-08-29/tools/speedbench.sh   # the receipt tool #581 wrote; read it first
 ```
