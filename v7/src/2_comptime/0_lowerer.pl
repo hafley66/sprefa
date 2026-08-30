@@ -223,12 +223,38 @@ finish_constructor_target(
 classifier_row(product, Owner, product(Owner)).
 classifier_row(sum, Owner, sum(Owner)).
 
-constructor_relations(product, Owner, Edges, [relation(Owner, Arity, [])]) :-
+constructor_relations(product, Owner, Edges,
+                      [relation(Owner, Arity, KeySets)]) :-
     include(edge_owned_by(Owner), Edges, OwnEdges),
-    length(OwnEdges, Arity).
+    length(OwnEdges, Arity),
+    return_key_sets(Owner, OwnEdges, Arity, KeySets).
 constructor_relations(sum, _, _, []).
 
 edge_owned_by(Owner, pending_edge(Owner, _, _, _)).
+
+return_key_sets(Owner, Edges, Arity, KeySets) :-
+    findall(Index,
+            member(pending_edge(Owner, return, _, Index), Edges),
+            ReturnIndices),
+    (   ReturnIndices = [ReturnIndex]
+    ->  positions_except(Arity, ReturnIndex, Inputs),
+        KeySets = [Inputs]
+    ;   KeySets = []
+    ).
+
+positions_except(Arity, Except, Positions) :-
+    positions_except(0, Arity, Except, Positions).
+
+positions_except(Index, Arity, _, []) :-
+    Index >= Arity,
+    !.
+positions_except(Index, Arity, Except, Positions) :-
+    NextIndex is Index + 1,
+    positions_except(NextIndex, Arity, Except, Rest),
+    (   Index =:= Except
+    ->  Positions = Rest
+    ;   Positions = [Index | Rest]
+    ).
 
 lower_bind_list([], _, _, _, ok([], [], [], [], [])).
 lower_bind_list([Bind | Binds], Owner, UnitIdentity, Index, Result) :-
@@ -501,7 +527,7 @@ expression_reserved_callable(_, _, Name, error(not_relation(Name))).
 
 kernel_relation_keys_for_expression(':', [[0, 1], [0, 3]]).
 kernel_relation_keys_for_expression(edge_snapshot, [[0, 1], [0, 3]]).
-kernel_relation_keys_for_expression(nil, [[0]]).
+kernel_relation_keys_for_expression(nil, [[]]).
 kernel_relation_keys_for_expression(cons, [[0, 1], [2]]).
 kernel_relation_keys_for_expression(intern, [[0, 1]]).
 kernel_relation_keys_for_expression(intern_snapshot, [[0, 1]]).
@@ -511,7 +537,8 @@ kernel_relation_keys_for_expression(_, []).
 lower_expression_call(error(Reason), _, NodeId, _, _, _,
                       none, [], [], [diagnostic(lower, NodeId, Reason)]) :-
     !.
-lower_expression_call(ok(Callable, Arity, _), Name, NodeId, ArgumentNodes,
+lower_expression_call(ok(Callable, Arity, KeySets), Name, NodeId,
+                      ArgumentNodes,
                       Owner, Environment,
                       Value, Goals, Origins, Diagnostics) :-
     expression_return_position(Callable, Environment, NodeId,
@@ -520,14 +547,22 @@ lower_expression_call(ok(Callable, Arity, _), Name, NodeId, ArgumentNodes,
     ->  ExpectedArity is Arity - 1,
         length(ArgumentNodes, ObservedArity),
         (   ObservedArity =:= ExpectedArity
-        ->  lower_expression_arguments(
-                ArgumentNodes, Owner, Environment,
-                Arguments, ArgumentGoals, ArgumentOrigins,
-                ArgumentDiagnostics),
-            finish_expression_call_arguments(
-                ArgumentDiagnostics, Name, NodeId, ReturnIndex,
-                Arguments, ArgumentGoals, ArgumentOrigins, Owner,
-                Value, Goals, Origins, Diagnostics)
+        ->  expression_mode_diagnostics(
+                Name, ReturnIndex, Arity, KeySets, NodeId, ModeDiagnostics),
+            (   ModeDiagnostics == []
+            ->  lower_expression_arguments(
+                    ArgumentNodes, Owner, Environment,
+                    Arguments, ArgumentGoals, ArgumentOrigins,
+                    ArgumentDiagnostics),
+                finish_expression_call_arguments(
+                    ArgumentDiagnostics, Name, NodeId, ReturnIndex,
+                    Arguments, ArgumentGoals, ArgumentOrigins, Owner,
+                    Value, Goals, Origins, Diagnostics)
+            ;   Value = none,
+                Goals = [],
+                Origins = [],
+                Diagnostics = ModeDiagnostics
+            )
         ;   Value = none,
             Goals = [],
             Origins = [],
@@ -541,6 +576,26 @@ lower_expression_call(ok(Callable, Arity, _), Name, NodeId, ArgumentNodes,
         Origins = [],
         Diagnostics = ReturnDiagnostics
     ).
+
+expression_mode_diagnostics(Name, ReturnIndex, Arity, KeySets, NodeId,
+                            Diagnostics) :-
+    positions_except(Arity, ReturnIndex, SuppliedPositions),
+    (   member(KeySet, KeySets),
+        positions_subset(KeySet, SuppliedPositions)
+    ->  Diagnostics = []
+    ;   Diagnostics = [diagnostic(
+                            lower, NodeId,
+                            ambiguous_expression_projection(
+                                Name,
+                                supplied(SuppliedPositions),
+                                keys(KeySets),
+                                return(ReturnIndex)))]
+    ).
+
+positions_subset([], _).
+positions_subset([Position | Positions], Supplied) :-
+    memberchk(Position, Supplied),
+    positions_subset(Positions, Supplied).
 
 lower_expression_arguments([], _, _, [], [], [], []).
 lower_expression_arguments([Node | Nodes], Owner, Environment,

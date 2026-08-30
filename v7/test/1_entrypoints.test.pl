@@ -143,6 +143,60 @@ test(expression_return_position_is_declared_projection_metadata) :-
                     kernel(2, [])),
     !.
 
+test(expression_modes_use_return_keys_without_restricting_full_calls) :-
+    Text = "(: Source (*))\n(: Left (*))\n(: Right (*))\n(: Choice (* (: source type) (: return type)))\n(: many (* (: source type) (: result type)))\n(many Source Left)\n(many Source Right)\n",
+    dl7_text_unit(expression_modes, expression_modes_source,
+                  Text, Unit, []),
+    compile_unit(Unit,
+                 compiled_unit(_, RuntimeProgram, CompilerRows),
+                 Diagnostics),
+    named_owner(CompilerRows, 'Source', Source),
+    named_owner(CompilerRows, 'Choice', Choice),
+    named_owner(CompilerRows, many, Many),
+    RuntimeProgram = checked_datalog(
+                         _, datalog_program(Relations, _, _), _, _),
+    memberchk(relation(ref(Choice), 2, ChoiceKeys), Relations),
+    findall(Result,
+            member(call(ref(Many), [ref(Source), Result]), CompilerRows),
+            Results),
+    sort(Results, DistinctResults),
+    length(DistinctResults, ResultCount),
+    ModeOwner = owner(mode_fixture),
+    ModeCallable = owner(mode_callable),
+    ModeEnvironment = expression_environment(
+                          [reservation(
+                               ModeOwner, 'Choice', target(ModeCallable),
+                               product)],
+                          [relation(ModeCallable, 2, [[1]])],
+                          [ pending_edge(ModeCallable, source,
+                                         name(ModeCallable, type), 0),
+                            pending_edge(ModeCallable, return,
+                                         name(ModeCallable, type), 1)
+                          ]),
+    dl7_lowerer:lower_expression(
+        node(mode_node,
+             form([ node(mode_operator, atom('Choice')),
+                    node(mode_argument, literal("value"))
+                  ])),
+        ModeOwner, ModeEnvironment,
+        none, [], [], ModeDiagnostics),
+    Observed = expression_modes(
+                   Diagnostics,
+                   inferred_keys(ChoiceKeys),
+                   ambiguous(ModeDiagnostics),
+                   explicit_full_call_answers(ResultCount)),
+    Observed == expression_modes(
+                    [],
+                    inferred_keys([[0]]),
+                    ambiguous(
+                        [diagnostic(
+                             lower, mode_node,
+                             ambiguous_expression_projection(
+                                 'Choice', supplied([0]), keys([[1]]),
+                                 return(1)))]),
+                    explicit_full_call_answers(2)),
+    !.
+
 test(rhs_relation_application_derives_the_bound_edge) :-
     Text = "(: User (*))\n(: Echo (* (: source type) (: return type)))\n(Echo User User)\n(: Alias (Echo User))\n",
     dl7_text_unit(rhs_application, rhs_application_source, Text, Unit, []),
