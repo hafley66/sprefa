@@ -31,7 +31,9 @@
 //! EVERY SPAWN HERE IS BUDGETED. The child runs in its own process group and
 //! the whole group dies on the deadline: these indexers fork.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use crate::scip_decode::load_index;
 use crate::scip_ensure::{run_capped, Capped};
@@ -587,6 +589,116 @@ pub fn byte_range_at(
 //    golden_parity scip ratchet — the arm and the test MUST read the same
 //    occurrence the same way, so the conventions live here exactly once) ────
 
+// ── the index-the-index caches ────────────────────────────────────────────────
+// The seam functions below are called once per call site over an immutable
+// `ScipIndex`, so each doc's range->span table and the index's symbol->def
+// map are computed once and reused. The caches key on the document/index
+// address plus a cheap fingerprint (occurrence count, content length, path
+// digest): within one process a freed index's address can be reused by a
+// later allocation, and the fingerprint is what keeps a stale entry from
+// answering for a different index.
+
+/// Per document: the byte span of every convertible occurrence, sorted by
+/// (start, end), plus the document's line table. `site_occurrence` binary
+/// searches this instead of scanning `doc.occurrences` and rebuilding the
+/// line table per site.
+struct DocOccCache {
+    spans: Vec<(u32, u32, usize)>,
+    lines: LineTable,
+}
+
+#[derive(Hash, PartialEq, Eq)]
+struct DocKey {
+    doc: usize,
+    occ_len: usize,
+    content_len: usize,
+    path_hash: u64,
+}
+
+fn path_digest(path: &str) -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write(path.as_bytes());
+    hasher.finish()
+}
+
+fn doc_cache(doc: &ScipDocument, content: &[u8]) -> Arc<DocOccCache> {
+    let key = DocKey {
+        doc: doc as *const ScipDocument as usize,
+        occ_len: doc.occurrences.len(),
+        content_len: content.len(),
+        path_hash: path_digest(&doc.relative_path),
+    };
+    let mut guard = DOC_CACHES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(map) = guard.as_ref() {
+        if let Some(hit) = map.get(&key) {
+            return hit.clone();
+        }
+    }
+    let lines = LineTable::build(content);
+    let mut spans: Vec<(u32, u32, usize)> = Vec::with_capacity(doc.occurrences.len());
+    for (ix, occ) in doc.occurrences.iter().enumerate() {
+        if let Some(span) = byte_range_at(content, &lines, occ.range, doc.position_encoding) {
+            spans.push((span.start, span.end(), ix));
+        }
+    }
+    spans.sort_unstable_by_key(|(start, end, _)| (*start, *end));
+    let cache = Arc::new(DocOccCache { spans, lines });
+    guard
+        .get_or_insert_with(HashMap::new)
+        .insert(key, cache.clone());
+    cache
+}
+
+static DOC_CACHES: Mutex<Option<HashMap<DocKey, Arc<DocOccCache>>>> = Mutex::new(None);
+
+/// symbol -> (document ix, occurrence ix) for the first definition-role
+/// occurrence, first-wins in document order — the same resolution
+/// `definition_of` answers by scan.
+type DefMap = HashMap<String, (usize, u32)>;
+
+#[derive(Hash, PartialEq, Eq)]
+struct IndexKey {
+    index: usize,
+    doc_len: usize,
+    external_len: usize,
+    first_path_hash: u64,
+}
+
+fn def_map(index: &ScipIndex) -> Arc<DefMap> {
+    let key = IndexKey {
+        index: index as *const ScipIndex as usize,
+        doc_len: index.documents.len(),
+        external_len: index.external_symbols.len(),
+        first_path_hash: index
+            .documents
+            .first()
+            .map(|d| path_digest(&d.relative_path))
+            .unwrap_or(0),
+    };
+    let mut guard = DEF_MAPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(map) = guard.as_ref() {
+        if let Some(hit) = map.get(&key) {
+            return hit.clone();
+        }
+    }
+    let mut map: DefMap = HashMap::new();
+    for (doc_ix, doc) in index.documents.iter().enumerate() {
+        for (occ_ix, occ) in doc.occurrences.iter().enumerate() {
+            if !occ.roles.contains(OccurrenceRole::DEFINITION) {
+                continue;
+            }
+            map.entry(occ.symbol.clone())
+                .or_insert((doc_ix, occ_ix as u32));
+        }
+    }
+    let map = Arc::new(map);
+    guard.get_or_insert_with(HashMap::new).insert(key, map.clone());
+    map
+}
+
+static DEF_MAPS: Mutex<Option<HashMap<IndexKey, Arc<DefMap>>>> = Mutex::new(None);
+
 /// The content join for one loaded index: for every document, its content id +
 /// bytes from the rev-correct reader (None when the reader can't read the
 /// document — it is then external to the corpus). Parallel to
@@ -621,24 +733,29 @@ pub fn site_occurrence<'a>(
     site: Span,
     callee: &str,
 ) -> Option<&'a ScipOccurrence> {
-    let lines = LineTable::build(content);
-    let mut hit: Option<(&'a ScipOccurrence, [i32; 4])> = None;
-    for occ in &doc.occurrences {
-        let Some(span) = byte_range_at(content, &lines, occ.range, doc.position_encoding) else {
-            continue;
-        };
-        if !(site.start <= span.start && span.end() <= site.end()) {
+    let cache = doc_cache(doc, content);
+    // Containment needs span.start >= site.start, so the first candidate is
+    // the first cached span at or after the site's start byte.
+    let first = cache
+        .spans
+        .partition_point(|(start, _, _)| *start < site.start);
+    let mut hit: Option<(usize, [i32; 4])> = None;
+    for &(start, end, occ_ix) in &cache.spans[first..] {
+        if start > site.end() {
+            break;
+        }
+        if end > site.end() {
             continue;
         }
-        let text = &content[span.start as usize..span.end() as usize];
-        if text != callee.as_bytes() {
+        let occ = &doc.occurrences[occ_ix];
+        if &content[start as usize..end as usize] != callee.as_bytes() {
             continue;
         }
-        if hit.map_or(true, |(_, r)| occ.range < r) {
-            hit = Some((occ, occ.range));
+        if hit.as_ref().is_none_or(|(_, best)| occ.range < *best) {
+            hit = Some((occ_ix, occ.range));
         }
     }
-    hit.map(|(occ, _)| occ)
+    hit.map(|(occ_ix, _)| &doc.occurrences[occ_ix])
 }
 
 /// The definition occurrence of a symbol: `local ` symbols are DOCUMENT-
@@ -653,21 +770,18 @@ pub fn definition_of<'a>(
     doc_ix: usize,
     symbol: &str,
 ) -> Option<(usize, &'a ScipOccurrence)> {
-    let is_def = |occ: &'a ScipOccurrence| {
-        occ.symbol == symbol && occ.roles.contains(OccurrenceRole::DEFINITION)
-    };
     if symbol.starts_with("local ") {
+        // `local N` is per-document: the map's first-wins entry names some
+        // other file's local, so the search stays at the site's own document.
         let doc = &index.documents[doc_ix];
         return doc
             .occurrences
             .iter()
-            .find(|occ| is_def(occ))
-            .map(|occ| (doc_ix, occ));
+            .position(|occ| occ.symbol == symbol && occ.roles.contains(OccurrenceRole::DEFINITION))
+            .map(|occ_ix| (doc_ix, &doc.occurrences[occ_ix]));
     }
-    for (ix, doc) in index.documents.iter().enumerate() {
-        if let Some(occ) = doc.occurrences.iter().find(|occ| is_def(occ)) {
-            return Some((ix, occ));
-        }
-    }
-    None
+    let map = def_map(index);
+    let (def_doc_ix, occ_ix) = map.get(symbol)?;
+    let occ = &index.documents[*def_doc_ix].occurrences[*occ_ix as usize];
+    Some((*def_doc_ix, occ))
 }
