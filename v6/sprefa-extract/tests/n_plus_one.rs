@@ -5,8 +5,8 @@
 // stay under 2s at these sizes.
 
 use sprefa_extract::{
-    OccurrenceRole, PositionEncoding, ScipDocument, ScipOccurrence, ScipSignature, ScipSymbolInfo,
-    SymbolInterner,
+    OccurrenceRole, PositionEncoding, ScipDocument, ScipIndex, ScipOccurrence, ScipSignature,
+    ScipSymbolInfo, SymbolInterner,
 };
 
 /// The probe counters are process-wide, so two cases reading them at once
@@ -39,6 +39,7 @@ fn document(lines: usize) -> (ScipDocument, Vec<u8>, Vec<String>) {
             symbols: Vec::new(),
             language: "Rust".to_string(),
             text: String::new(),
+            ..ScipDocument::default()
         },
         bytes,
         syms.table(),
@@ -90,6 +91,7 @@ fn flattening_occurrences_reads_the_document_once() {
         documents: vec![doc],
         external_symbols: Vec::new(),
         symbols,
+        ..ScipIndex::default()
     };
     let reader = |_path: &str| -> Option<Vec<u8>> { Some(content.clone()) };
     let _serial = PROBE_LOCK
@@ -165,9 +167,11 @@ fn signature_occurrences_read_the_signature_once() {
             symbols: vec![info],
             language: "Rust".to_string(),
             text: String::new(),
+            ..ScipDocument::default()
         }],
         external_symbols: Vec::new(),
         symbols: syms.table(),
+        ..ScipIndex::default()
     };
     let reader = |_path: &str| -> Option<Vec<u8>> { None };
     let _serial = PROBE_LOCK

@@ -784,8 +784,7 @@ fn load_scip(
                         "scip-informed resolve: fresh index {} (plain flags, adopted by freshness)",
                         path.display()
                     );
-                    return ScipTypescript
-                        .load(&path)
+                    return crate::scip_decode::load_index(&path)
                         .map(Some)
                         .map_err(ProjectError::Scip);
                 }

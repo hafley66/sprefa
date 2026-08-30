@@ -60,12 +60,17 @@ pub fn load_index(index_path: &Path) -> Result<ScipIndex, ScipError> {
     })?;
     let metadata = metadata.as_ref();
     let tool = metadata.and_then(|m| m.tool_info.as_ref());
-    Ok(ScipIndex {
+    let index = ScipIndex {
         documents,
         external_symbols,
         metadata: diet_metadata(metadata, tool),
         symbols: symbols.table(),
-    })
+        defs: std::sync::OnceLock::new(),
+    };
+    // The symbol->def map is a pure function of the decoded documents, so it
+    // is built once here, on the decode path, and never re-derived per call.
+    index.defs.get_or_init(|| crate::scip::build_def_map(&index));
+    Ok(index)
 }
 
 /// Walk the length-delimited message fields of a top-level index buffer,
@@ -79,7 +84,6 @@ fn for_each_message(
 ) -> Result<(), ScipError> {
     use prost::encoding::{decode_key, decode_varint, skip_field, WireType};
     let mut buf = bytes;
-    let mut scratch: std::vec::Vec<u8> = std::vec::Vec::new();
     while !buf.is_empty() {
         let (field, wire) = decode_key(&mut buf)
             .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
@@ -198,6 +202,7 @@ fn diet_document(doc: &proto::Document, symbols: &mut SymbolInterner) -> ScipDoc
         symbols: doc.symbols.iter().map(|si| diet_symbol(si, symbols)).collect(),
         language: doc.language.clone(),
         text: doc.text.clone(),
+        spans: std::sync::OnceLock::new(),
     }
 }
 

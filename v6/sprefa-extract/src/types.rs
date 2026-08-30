@@ -18,7 +18,7 @@
 //! family. The sketch below stays as the shape a revival would take.
 // @comment-ok: the module header is a crate-level doc block predating the rail
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -2140,7 +2140,7 @@ pub struct ScipRelationship {
 /// symbol infos (seed `_4_scip.rs`:96-104). NO blob leg: the content join
 /// (relative_path -> reader/content) is the consumer's — the seed's
 /// `ScipDocument.blob` is a join product, not a parse product.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct ScipDocument {
     pub relative_path: String,
     pub position_encoding: PositionEncoding,
@@ -2152,7 +2152,30 @@ pub struct ScipDocument {
     /// the client to read the file; it is set for virtual/in-memory documents,
     /// where the file system has no copy to read.
     pub text: String,
+    /// The occurrence span table (`crate::scip::DocSpans`): the byte span of
+    /// every convertible occurrence, sorted by (start, end), plus the
+    /// document's line table. Built on the first `site_occurrence` call
+    /// against this document and stored HERE, so two indexes in one process
+    /// never share a table. Lazy because the spans need the document's
+    /// content, which only the consumer holds.
+    pub spans: std::sync::OnceLock<crate::scip::DocSpans>,
 }
+
+impl PartialEq for ScipDocument {
+    fn eq(&self, other: &Self) -> bool {
+        // The span table is a content-derived cache: two documents equal in
+        // their parsed fields answer equally no matter which content each
+        // was joined against.
+        self.relative_path == other.relative_path
+            && self.position_encoding == other.position_encoding
+            && self.occurrences == other.occurrences
+            && self.symbols == other.symbols
+            && self.language == other.language
+            && self.text == other.text
+    }
+}
+
+impl Eq for ScipDocument {}
 
 /// One parsed index.scip: the index metadata + documents + the symbols the
 /// corpus references and does not define.
@@ -2163,7 +2186,17 @@ pub struct ScipIndex {
     pub metadata: ScipMetadata,
     /// The symbol interner table built at decode; `SymbolId`s index into it.
     pub symbols: Vec<String>,
+    /// symbol -> (document ix, occurrence ix) for the first definition-role
+    /// occurrence, first-wins in document order. Filled at the end of
+    /// `scip_decode::load_index`; a hand-built index (tests, fixtures) fills
+    /// it on the first `definition_of` call instead.
+    pub defs: std::sync::OnceLock<DefMap>,
 }
+
+/// symbol -> (document ix, occurrence ix) for the first definition-role
+/// occurrence, first-wins in document order — the same resolution
+/// `definition_of` answers by scan.
+pub type DefMap = HashMap<SymbolId, (usize, u32)>;
 
 impl ScipIndex {
     /// The producing indexer's identity, "name version" (the ledger line the
