@@ -81,7 +81,7 @@ mid-turn with work uncommitted.
 ## Fourth run (the only instructions that matter now)
 Three agents built this; the last one went silent for an hour with the
 tree clean. Do exactly this, in order, committing after each step:
-1. `git merge --ff-only <sha>` then `git reset --hard origin/fix/extract-rust-paths-3`.
+1. `git merge --ff-only e0faf865fe81150b126646cdb38ef2b1dfd0ac2b` then `git reset --hard origin/fix/extract-rust-paths-3`.
 2. `cd v6/sprefa-extract && cargo test --features cli --test 71_rust_paths 2>&1 | tail -20`.
    Red tests: fix the smallest thing that turns them green, commit.
 3. `cargo build --release --features cli`, the one-process corpus run, the
