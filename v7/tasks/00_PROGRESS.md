@@ -1,6 +1,39 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-29 19:39 EDT
+Updated: 2026-08-30
+
+## 2026-08-30 programmable compiler fragments
+
+```text
+ordinary DL7 compiler rules
+    -> def/head/head_arg/body/body_arg rows
+    -> deterministic generated-program assembly
+    -> ordinary declaration, arity, mode, safety, and strata checks
+    -> freeze generated program
+    -> execute generated rules in the next compiler round
+```
+
+- `def/2` emits checked relation declarations.
+- `head/2`, `head_arg/4`, `body/4`, and `body_arg/5` emit checked rule IR.
+- Generated variable names are scoped by rule identity.
+- Compiler stability now compares type edges, intern requests, generated
+  relations, and generated rules.
+- `HistoryV1(Source, Options, Result)` interns one specialization, copies source
+  edges, emits a declaration and copy rule, and derives the source row after
+  refreeze.
+- Generated relation collisions and orphan rule fragments are diagnostics.
+- Plan: `v7/design/4_PROGRAMMABLE_COMPILER.PLAN.md`.
+- Commits: `890e08ef3`, `67ab6c44b`, `4c1e7f88a`.
+- Gates: SWI 15 of 15 passed; Tree-sitter 1 of 1 passed.
+
+Issue DAG:
+
+```text
+@dl7-generated-definitions
+    -> @dl7-generated-rules
+        -> @dl7-generated-refreeze
+            -> @dl7-history-v1
+```
 
 ## 2026-08-29 type-operator closure
 
