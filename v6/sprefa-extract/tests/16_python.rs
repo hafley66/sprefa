@@ -81,6 +81,10 @@ fn python_call_defs_and_sites() {
     assert_eq!(
         defs,
         [
+            // The module-as-caller def: a nameless whole-file cover so a
+            // module-level site has a caller under Resolve<CallF>. Not a
+            // call_def wire row (skipped in flatten_call, v5 parity).
+            ("module", None),
             ("function", Some("add")),
             ("method", Some("speak")),
             ("method", Some("bark")),

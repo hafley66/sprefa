@@ -1,16 +1,10 @@
-args/assigned_call	args/assigned_call/main.py		args/assigned_call/main.py	func
 args/assigned_call	args/assigned_call/main.py	func	args/assigned_call/main.py	param_func
-args/call	args/call/main.py		args/call/main.py	func
 args/call	args/call/main.py	func	args/call/main.py	param_func
-args/imported_assigned_call	args/imported_assigned_call/main.py		args/imported_assigned_call/to_import.py	func
 args/imported_assigned_call	args/imported_assigned_call/to_import.py	func	args/imported_assigned_call/main.py	param_func
-args/imported_call	args/imported_call/main.py		args/imported_call/to_import.py	func
 args/imported_call	args/imported_call/to_import.py	func	args/imported_call/main.py	param_func
 args/nested_call	args/nested_call/main.py		args/nested_call/main.py	func
 args/nested_call	args/nested_call/main.py	func	args/nested_call/main.py	param_func
 args/nested_call	args/nested_call/main.py	param_func	args/nested_call/main.py	nested_func
-args/param_call	args/param_call/main.py		args/param_call/main.py	func
-args/param_call	args/param_call/main.py		args/param_call/main.py	func2
 args/param_call	args/param_call/main.py	func	args/param_call/main.py	func3
 assignments/chained	assignments/chained/main.py		assignments/chained/main.py	func1
 assignments/chained	assignments/chained/main.py		assignments/chained/main.py	func2
@@ -31,69 +25,28 @@ builtins/map	builtins/map/main.py		builtins/map/main.py	func
 builtins/map	builtins/map/main.py		builtins/map/main.py	func2
 builtins/map	builtins/map/main.py		builtins/map/main.py	func3
 classes/assigned_call	classes/assigned_call/main.py		classes/assigned_call/main.py	func
-classes/assigned_self_call	classes/assigned_self_call/main.py		classes/assigned_self_call/main.py	func2
-classes/base_class_attr	classes/base_class_attr/main.py		classes/base_class_attr/main.py	bfunc
-classes/base_class_attr	classes/base_class_attr/main.py		classes/base_class_attr/main.py	cfunc
-classes/base_class_calls_child	classes/base_class_calls_child/main.py		classes/base_class_calls_child/main.py	__init__
-classes/base_class_calls_child	classes/base_class_calls_child/main.py		classes/base_class_calls_child/main.py	func
 classes/base_class_calls_child	classes/base_class_calls_child/main.py	func	classes/base_class_calls_child/main.py	func2
-classes/call	classes/call/main.py		classes/call/main.py	func
-classes/direct_call	classes/direct_call/main.py		classes/direct_call/main.py	__init__
-classes/direct_call	classes/direct_call/main.py		classes/direct_call/main.py	func
-classes/imported_attr_access	classes/imported_attr_access/main.py		classes/imported_attr_access/to_import.py	func
-classes/imported_call	classes/imported_call/main.py		classes/imported_call/to_import.py	__init__
-classes/imported_call	classes/imported_call/main.py		classes/imported_call/to_import.py	func
-classes/imported_call_without_init	classes/imported_call_without_init/main.py		classes/imported_call_without_init/to_import.py	func
-classes/imported_nested_attr_access	classes/imported_nested_attr_access/main.py		classes/imported_nested_attr_access/nest/imported.py	func
-classes/instance	classes/instance/main.py		classes/instance/main.py	__init__
-classes/instance	classes/instance/main.py		classes/instance/main.py	func
-classes/nested_call	classes/nested_call/main.py		classes/nested_call/main.py	func
-classes/nested_class_calls	classes/nested_class_calls/main.py		classes/nested_class_calls/main.py	__init__
-classes/nested_class_calls	classes/nested_class_calls/main.py		classes/nested_class_calls/main.py	func
-classes/nested_class_calls	classes/nested_class_calls/main.py	func	classes/nested_class_calls/main.py	__init__
-classes/nested_class_calls	OURS_ONLY	classes/nested_class_calls/main.py	__init__	classes/nested_class_calls/main.py	C
-classes/nested_class_calls	OURS_ONLY	classes/nested_class_calls/main.py	func	classes/nested_class_calls/main.py	B
-classes/parameter_call	classes/parameter_call/main.py		classes/parameter_call/main.py	func1
 classes/parameter_call	classes/parameter_call/main.py	func1	classes/parameter_call/main.py	func2
 classes/parameter_call	classes/parameter_call/main.py	func2	classes/parameter_call/main.py	func3
-classes/return_call	classes/return_call/main.py		classes/return_call/main.py	func1
 classes/return_call	classes/return_call/main.py		classes/return_call/main.py	func2
-classes/return_call_direct	classes/return_call_direct/main.py		classes/return_call_direct/main.py	func1
 classes/return_call_direct	classes/return_call_direct/main.py		classes/return_call_direct/main.py	func2
-classes/self_assign_func	classes/self_assign_func/main.py		classes/self_assign_func/main.py	__init__
-classes/self_assign_func	classes/self_assign_func/main.py		classes/self_assign_func/main.py	func
-classes/self_assignment	classes/self_assignment/main.py		classes/self_assignment/main.py	__init__
-classes/self_assignment	classes/self_assignment/main.py		classes/self_assignment/main.py	func
 classes/self_assignment	classes/self_assignment/main.py	func	classes/self_assignment/main.py	func2
-classes/self_call	classes/self_call/main.py		classes/self_call/main.py	__init__
-classes/self_call	classes/self_call/main.py		classes/self_call/main.py	func2
-classes/static_method_call	classes/static_method_call/main.py		classes/static_method_call/main.py	func
 classes/super_class_return	classes/super_class_return/main.py		classes/super_class_return/main.py	func1
-classes/super_class_return	classes/super_class_return/main.py		classes/super_class_return/main.py	func2
-classes/tuple_assignment	classes/tuple_assignment/main.py		classes/tuple_assignment/main.py	__init__
 classes/tuple_assignment	classes/tuple_assignment/main.py		classes/tuple_assignment/main.py	func1
 classes/tuple_assignment	classes/tuple_assignment/main.py		classes/tuple_assignment/main.py	func2
 classes/tuple_assignment	classes/tuple_assignment/main.py		classes/tuple_assignment/main.py	func3
 decorators/assigned	decorators/assigned/main.py		decorators/assigned/main.py	dec2
-decorators/assigned	decorators/assigned/main.py		decorators/assigned/main.py	func
 decorators/call	decorators/call/main.py		decorators/call/main.py	dec
-decorators/call	decorators/call/main.py		decorators/call/main.py	func
-decorators/nested	decorators/nested/main.py		decorators/nested/main.py	func
 decorators/nested	decorators/nested/main.py	func	decorators/nested/main.py	dec
 decorators/nested_decorators	decorators/nested_decorators/main.py		decorators/nested_decorators/main.py	dec1
 decorators/nested_decorators	decorators/nested_decorators/main.py		decorators/nested_decorators/main.py	dec2
-decorators/nested_decorators	decorators/nested_decorators/main.py		decorators/nested_decorators/main.py	func
 decorators/nested_decorators	decorators/nested_decorators/main.py		decorators/nested_decorators/main.py	inner
 decorators/nested_decorators	decorators/nested_decorators/main.py	inner	decorators/nested_decorators/main.py	func
 decorators/nested_decorators	decorators/nested_decorators/main.py	inner	decorators/nested_decorators/main.py	inner
 decorators/param_call	decorators/param_call/main.py		decorators/param_call/main.py	dec
-decorators/param_call	decorators/param_call/main.py		decorators/param_call/main.py	func
 decorators/param_call	decorators/param_call/main.py	dec	decorators/param_call/main.py	func
 decorators/return	decorators/return/main.py		decorators/return/main.py	dec
-decorators/return	decorators/return/main.py		decorators/return/main.py	func1
-decorators/return	decorators/return/main.py		decorators/return/main.py	func2
 decorators/return_different_func	decorators/return_different_func/main.py		decorators/return_different_func/main.py	dec
-decorators/return_different_func	decorators/return_different_func/main.py		decorators/return_different_func/main.py	func2
 decorators/return_different_func	decorators/return_different_func/main.py	func2	decorators/return_different_func/main.py	inner
 decorators/return_different_func	decorators/return_different_func/main.py	inner	decorators/return_different_func/main.py	func
 decorators/return_different_func	OURS_ONLY	decorators/return_different_func/main.py	func2	decorators/return_different_func/main.py	func
@@ -103,75 +56,43 @@ dicts/call	dicts/call/main.py		dicts/call/main.py	func1
 dicts/call	dicts/call/main.py		dicts/call/main.py	func2
 dicts/ext_key	dicts/ext_key/main.py		dicts/ext_key/main.py	func
 dicts/nested	dicts/nested/main.py		dicts/nested/main.py	func2
-dicts/new_key_param	dicts/new_key_param/main.py		dicts/new_key_param/main.py	func
 dicts/new_key_param	dicts/new_key_param/main.py		dicts/new_key_param/main.py	func2
-dicts/param	dicts/param/main.py		dicts/param/main.py	func1
 dicts/param	dicts/param/main.py	func1	dicts/param/main.py	func2
-dicts/param_key	dicts/param_key/main.py		dicts/param_key/main.py	func1
 dicts/param_key	dicts/param_key/main.py	func1	dicts/param_key/main.py	func2
 dicts/param_key	dicts/param_key/main.py	func1	dicts/param_key/main.py	func3
-dicts/return	dicts/return/main.py		dicts/return/main.py	func1
 dicts/return	dicts/return/main.py		dicts/return/main.py	func2
-dicts/return_assign	dicts/return_assign/main.py		dicts/return_assign/main.py	func1
 dicts/return_assign	dicts/return_assign/main.py		dicts/return_assign/main.py	func2
 dicts/type_coercion	dicts/type_coercion/main.py		dicts/type_coercion/main.py	func1
 dicts/update	dicts/update/main.py		dicts/update/main.py	func2
 direct_calls/assigned_call	direct_calls/assigned_call/main.py		direct_calls/assigned_call/main.py	func
 direct_calls/assigned_call	direct_calls/assigned_call/main.py		direct_calls/assigned_call/main.py	return_func
-direct_calls/imported_return_call	direct_calls/imported_return_call/main.py		direct_calls/imported_return_call/to_import.py	func
 direct_calls/imported_return_call	direct_calls/imported_return_call/main.py		direct_calls/imported_return_call/to_import.py	return_func
-direct_calls/return_call	direct_calls/return_call/main.py		direct_calls/return_call/main.py	func
 direct_calls/return_call	direct_calls/return_call/main.py		direct_calls/return_call/main.py	nested_return_func
 direct_calls/return_call	direct_calls/return_call/main.py		direct_calls/return_call/main.py	return_func
 direct_calls/with_parameters	direct_calls/with_parameters/main.py		direct_calls/with_parameters/main.py	func
 direct_calls/with_parameters	direct_calls/with_parameters/main.py		direct_calls/with_parameters/main.py	func2
-direct_calls/with_parameters	direct_calls/with_parameters/main.py		direct_calls/with_parameters/main.py	func3
 dynamic/eval	dynamic/eval/main.py		dynamic/eval/main.py	func
 exceptions/raise	exceptions/raise/main.py		exceptions/raise/main.py	__init__
 exceptions/raise_assigned	exceptions/raise_assigned/main.py		exceptions/raise_assigned/main.py	__init__
 exceptions/raise_attr	exceptions/raise_attr/main.py		exceptions/raise_attr/main.py	__init__
-external/attribute_assigned	external/attribute_assigned/main.py		external/attribute_assigned/main.py	fn
-external/cls_parent	external/cls_parent/main.py		external/cls_parent/main.py	fn
 functions/assigned_call	functions/assigned_call/main.py		functions/assigned_call/main.py	func
 functions/assigned_call_lit_param	functions/assigned_call_lit_param/main.py		functions/assigned_call_lit_param/main.py	func
-functions/call	functions/call/main.py		functions/call/main.py	func
 functions/imported_call	functions/imported_call/main.py		functions/imported_call/to_import.py	func
-generators/iter_param	generators/iter_param/main.py		generators/iter_param/main.py	__init__
-generators/iter_param	generators/iter_param/main.py		generators/iter_param/main.py	func
 generators/iter_param	generators/iter_param/main.py	func	generators/iter_param/main.py	__iter__
 generators/iter_param	generators/iter_param/main.py	func	generators/iter_param/main.py	__next__
-generators/iter_return	generators/iter_return/main.py		generators/iter_return/main.py	__init__
 generators/iter_return	generators/iter_return/main.py		generators/iter_return/main.py	__iter__
 generators/iter_return	generators/iter_return/main.py		generators/iter_return/main.py	__next__
 generators/iter_return	generators/iter_return/main.py		generators/iter_return/main.py	func
-generators/iterable	generators/iterable/main.py		generators/iterable/main.py	__init__
 generators/iterable	generators/iterable/main.py		generators/iterable/main.py	__iter__
 generators/iterable	generators/iterable/main.py		generators/iterable/main.py	__next__
-generators/iterable_assigned	generators/iterable_assigned/main.py		generators/iterable_assigned/main.py	__init__
 generators/iterable_assigned	generators/iterable_assigned/main.py		generators/iterable_assigned/main.py	__iter__
 generators/iterable_assigned	generators/iterable_assigned/main.py		generators/iterable_assigned/main.py	__next__
-generators/no_iter	generators/no_iter/main.py		generators/no_iter/main.py	__init__
-generators/yield	generators/yield/main.py		generators/yield/main.py	func1
 generators/yield	generators/yield/main.py		generators/yield/main.py	func2
-imports/chained_import	imports/chained_import/main.py		imports/chained_import/from_import.py	func2
-imports/import_all	imports/import_all/main.py		imports/import_all/from_module.py	func1
-imports/import_all	imports/import_all/main.py		imports/import_all/from_module.py	func2
-imports/import_from	imports/import_from/main.py		imports/import_from/from_module.py	func
-imports/init_func_import	imports/init_func_import/main.py		imports/init_func_import/nested/__init__.py	func
-imports/init_func_import	imports/init_func_import/main.py		imports/init_func_import/nested/mod.py	func2
-imports/init_import	imports/init_import/main.py		imports/init_import/nested/nested.py	func
-imports/relative_import_with_name	imports/relative_import_with_name/main.py		imports/relative_import_with_name/nested/to_import.py	func1
-imports/submodule_import_all	imports/submodule_import_all/main.py		imports/submodule_import_all/from_module/nested_module.py	func1
-imports/submodule_import_all	imports/submodule_import_all/main.py		imports/submodule_import_all/from_module/nested_module.py	func2
-imports/submodule_import_from	imports/submodule_import_from/main.py		imports/submodule_import_from/from_module/nested_module.py	func1
-imports/submodule_import_from	imports/submodule_import_from/main.py		imports/submodule_import_from/from_module/nested_module.py	func2
 kwargs/assigned_call	kwargs/assigned_call/main.py		kwargs/assigned_call/main.py	func
 kwargs/assigned_call	kwargs/assigned_call/main.py	func	kwargs/assigned_call/main.py	func2
-kwargs/call	kwargs/call/main.py		kwargs/call/main.py	func
 kwargs/call	kwargs/call/main.py	func	kwargs/call/main.py	func2
 kwargs/call	kwargs/call/main.py	func	kwargs/call/main.py	func3
 kwargs/call	kwargs/call/main.py	func	kwargs/call/main.py	func4
-kwargs/chained_call	kwargs/chained_call/main.py		kwargs/chained_call/main.py	func1
 kwargs/chained_call	kwargs/chained_call/main.py	func1	kwargs/chained_call/main.py	func2
 kwargs/chained_call	kwargs/chained_call/main.py	func2	kwargs/chained_call/main.py	func2
 kwargs/chained_call	kwargs/chained_call/main.py	func2	kwargs/chained_call/main.py	func3
@@ -179,47 +100,24 @@ lambdas/call	lambdas/call/main.py		lambdas/call/main.py	<lambda1>
 lambdas/calls_parameter	lambdas/calls_parameter/main.py		lambdas/calls_parameter/main.py	<lambda1>
 lambdas/calls_parameter	lambdas/calls_parameter/main.py	<lambda1>	lambdas/calls_parameter/main.py	func1
 lambdas/calls_parameter	lambdas/calls_parameter/main.py	<lambda1>	lambdas/calls_parameter/main.py	func2
-lambdas/chained_calls	lambdas/chained_calls/main.py		lambdas/chained_calls/main.py	func1
 lambdas/chained_calls	lambdas/chained_calls/main.py	func1	lambdas/chained_calls/main.py	<lambda1>
 lambdas/chained_calls	lambdas/chained_calls/main.py	func2	lambdas/chained_calls/main.py	<lambda2>
 lambdas/chained_calls	lambdas/chained_calls/main.py	func3	lambdas/chained_calls/main.py	<lambda3>
-lambdas/parameter_call	lambdas/parameter_call/main.py		lambdas/parameter_call/main.py	func
 lambdas/parameter_call	lambdas/parameter_call/main.py	func	lambdas/parameter_call/main.py	<lambda1>
 lambdas/return_call	lambdas/return_call/main.py		lambdas/return_call/main.py	<lambda1>
-lambdas/return_call	lambdas/return_call/main.py		lambdas/return_call/main.py	func
-lists/comprehension_if	lists/comprehension_if/main.py		lists/comprehension_if/main.py	func
-lists/comprehension_val	lists/comprehension_val/main.py		lists/comprehension_val/main.py	func
 lists/ext_index	lists/ext_index/main.py		lists/ext_index/main.py	func2
 lists/nested	lists/nested/main.py		lists/nested/main.py	func1
-lists/nested_comprehension	lists/nested_comprehension/main.py		lists/nested_comprehension/main.py	func1
-lists/nested_comprehension	lists/nested_comprehension/main.py		lists/nested_comprehension/main.py	func2
-lists/param_index	lists/param_index/main.py		lists/param_index/main.py	func1
 lists/param_index	lists/param_index/main.py	func1	lists/param_index/main.py	func2
 lists/simple	lists/simple/main.py		lists/simple/main.py	func1
 lists/simple	lists/simple/main.py		lists/simple/main.py	func2
 lists/simple	lists/simple/main.py		lists/simple/main.py	func3
 lists/simple	lists/simple/main.py		lists/simple/main.py	func4
 lists/slice	lists/slice/main.py		lists/slice/main.py	func2
-mro/basic	mro/basic/main.py		mro/basic/main.py	func
 mro/basic_init	mro/basic_init/main.py		mro/basic_init/main.py	__init__
-mro/basic_init	mro/basic_init/main.py		mro/basic_init/main.py	func
 mro/parents_same_superclass	mro/parents_same_superclass/main.py		mro/parents_same_superclass/main.py	__init__
-mro/parents_same_superclass	mro/parents_same_superclass/main.py		mro/parents_same_superclass/main.py	func
 mro/self_assignment	mro/self_assignment/main.py		mro/self_assignment/main.py	func
-mro/self_assignment	mro/self_assignment/main.py		mro/self_assignment/main.py	funca
-mro/self_assignment	mro/self_assignment/main.py		mro/self_assignment/main.py	funcb
-mro/super_call	mro/super_call/main.py		mro/super_call/main.py	__init__
 mro/two_parents	mro/two_parents/main.py		mro/two_parents/main.py	__init__
-mro/two_parents	mro/two_parents/main.py		mro/two_parents/main.py	func
-mro/two_parents_method_defined	mro/two_parents_method_defined/main.py		mro/two_parents_method_defined/main.py	__init__
-mro/two_parents_method_defined	mro/two_parents_method_defined/main.py		mro/two_parents_method_defined/main.py	func
-returns/call	returns/call/main.py		returns/call/main.py	func
 returns/call	returns/call/main.py		returns/call/main.py	return_func
-returns/imported_call	returns/imported_call/main.py		returns/imported_call/to_import.py	func
 returns/imported_call	returns/imported_call/main.py		returns/imported_call/to_import.py	return_func
-returns/nested_import_call	returns/nested_import_call/main.py		returns/nested_import_call/to_import.py	func
 returns/nested_import_call	returns/nested_import_call/main.py		returns/nested_import_call/to_import2.py	return_func
-returns/return_complex	returns/return_complex/main.py		returns/return_complex/main.py	func
 returns/return_complex	returns/return_complex/main.py		returns/return_complex/main.py	func2
-returns/return_complex	returns/return_complex/main.py		returns/return_complex/main.py	func4
-returns/return_complex	returns/return_complex/main.py		returns/return_complex/main.py	func5

@@ -9,8 +9,7 @@
 use std::collections::BTreeSet;
 use std::process::Command;
 
-use sprefa_extract::lang::rust;
-use sprefa_extract::lang::ts;
+use sprefa_extract::lang::{python, rust, ts};
 use sprefa_extract::{CallKind, DfNodeKind, TypeEntityKind};
 
 /// Every tag the core variants answer. An ext tag must never land in this set
@@ -60,6 +59,7 @@ const EXT_KINDS: &[(&str, &'static str)] = &[
     ("ts::COND", ts::COND.as_str()),
     ("ts::CONCAT", ts::CONCAT.as_str()),
     ("ts::TEMPLATE", ts::TEMPLATE.as_str()),
+    ("python::MODULE_CALLER", python::MODULE_CALLER.as_str()),
 ];
 
 fn every_core_kind_tag() -> Vec<&'static str> {
