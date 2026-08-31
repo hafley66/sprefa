@@ -182,6 +182,9 @@ impl TsCheckerIndex {
 /// A call answer prefers the call facet and settles for the type facet: a class
 /// named by `new C()` is a call whose only def may be a type entity.
 const CALL_FACETS: &[FamilyTag] = &[FamilyTag::Call, FamilyTag::Type];
+/// Type prefers type and SETTLES FOR CALL, unlike the rust tier: ts's own
+/// `resolve_type_dst` joins through facet-agnostic `corpus_defs`, so a
+/// type-only fallback would answer less than the leg it displaces.
 const TYPE_FACETS: &[FamilyTag] = &[FamilyTag::Type, FamilyTag::Call];
 
 /// The declaration identifier's offset picks between several defs of one name
