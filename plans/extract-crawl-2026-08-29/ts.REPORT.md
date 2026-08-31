@@ -562,3 +562,30 @@ fact". Encoding has no such named skip. A UTF-8 BOM works correctly.
 | any fix to `v6/sprefa-extract/src/**` | forbidden to this lane; two fix lanes own that tree |
 | a serial rerun of all 13238 files | the parallel `ms_parallel8` column is inflated 3x to 8x; the files that matter were remeasured serially in section 3.3 and the rest carry no claim |
 | `tests/baselines/**` and `tests/cases/**` as separate sets | the corpus has neither path; the equivalent tree is `tsc/testdata/**`, measured in step 1 and excluded from steps 2 to 4 |
+
+---
+
+## 9. Jelly as a second call oracle (lane feat-extract-jelly-comparator, 2026-08-31)
+
+Tool: `@cs-au-dk/jelly` 0.13.0 via `npm exec`, run over the ts5 corpus
+(`/Users/chrishafley/projects/TypeScript-5.9`, `src/**` minus `src/lib`).
+Full details, flags, failures, and per-chunk numbers:
+`plans/extract-bench-2026-08-29/jelly.ORACLE.md`; conversion:
+`plans/extract-bench-2026-08-29/jelly_convert.py`; oracle rows:
+`plans/extract-bench-2026-08-29/ts5.jelly.call.tsv` (49,290 rows).
+
+| fact | value |
+|---|---|
+| single run, 600 entries | node heap OOM at 4 GB cap, exit 134, no output |
+| chunked workaround | 4 chunks (compiler 77 / misc 76 / services 168 / testRunner 279 files), all ok, worst 80 s |
+| files analyzed | 595 of 600; 5 dropped by Babel TS transform failures (checker.ts, debug.ts, factory/nodeFactory.ts, utilities.ts, harness/harnessIO.ts) |
+| rows | 49,290 unique 4-col rows after union + ts5 file rule + source-text name recovery |
+| ours (`ts5.parse.call.tsv`) vs jelly | recall 38.58% / precision 32.06% |
+| jelly vs tsc oracle | recall 35.69% / precision 42.98% |
+| jelly vs codeql2 | recall 36.79% / precision 39.66% |
+| context: tsc vs codeql2 | recall 98.91% / precision 88.56% |
+
+Verdict: no discriminating signal beyond tsc + codeql2. 28,096 jelly-only
+rows reduce to mostly `sys.ts callback` natives-model fan-in, module-init
+`<module>` edges, and edges into the 4 Babel-dropped files; jelly misses
+33,021 rows tsc and codeql2 agree on. Negative result, report-only.
