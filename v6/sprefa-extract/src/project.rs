@@ -1298,10 +1298,16 @@ fn type_owner(
     src: crate::shape::NodeRef,
 ) -> Option<(Span, Option<String>)> {
     match plane {
-        TypePlane::Nodes => {
-            let span = types.nodes.get(src.0 as usize)?.span;
-            Some((span, name_at(names, &input.output, span)))
-        }
+        // Past the node vec is an `ImplOwner`, which carries its own name for
+        // the same reason a doc node does: it is not in the span table.
+        TypePlane::Nodes => match types.nodes.get(src.0 as usize) {
+            Some(node) => Some((node.span, name_at(names, &input.output, node.span))),
+            None => {
+                let owner = types.aux.impl_owners.get(src.0 as usize - types.nodes.len())?;
+                let name = input.output.strings.lookup(owner.name).to_string();
+                Some((owner.span, Some(name)))
+            }
+        },
         TypePlane::DocNodes => {
             let node = types.aux.doc_nodes.get(src.0 as usize)?;
             let name = input.output.strings.lookup(node.name).to_string();

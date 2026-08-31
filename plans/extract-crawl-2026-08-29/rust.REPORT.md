@@ -2026,3 +2026,273 @@ repo. Two costs carry over: RSS (checker peaks 609-934 MB, above the
 section-24.5 700 MB working ceiling on tokio and alacritty) and precision
 (same 54-72 band). The one recipe change worth making is the caller-symmetric
 oracle scope, owned by the ratchet, not this lane.
+
+## 28. The type residual re-censused after #605 (lane `fix-extract-rust-type-residual`, 2026-08-31)
+
+Section 26.6 classified the residual by hand. This section re-runs it on
+`cdc3018b9` with the join committed as a script, so the next lane re-measures
+instead of re-deriving.
+
+### 28.1 The recipe
+
+```bash
+cd v6/sprefa-extract
+RUST_TYPE_DUMP=/tmp/ours.tsv SHAPE_CENSUS=/tmp/census.tsv \
+  cargo test --release --features cli,rust-checker --test 79_rust_type_dump \
+  -- --ignored --nocapture --test-threads=1
+python3 plans/extract-bench-2026-08-29/rust.type_census.py /tmp/ours.tsv /tmp/census.tsv
+```
+
+`oracle 8343 / ours 5491 / overlap 5148 / missing 3195 / excess 343`, recall
+**61.70**, precision **93.75** — the RATCHET.tsv rust type row reproduced from
+the dump, so the classification below scores the same set the ratchet does.
+
+Two corrections to the section-26 instrument, both in `tests/79_rust_type_dump.rs`:
+
+| what | was | now |
+|---|---|---|
+| `syn::ImplItem::Type` owner | the impl's self-type head | the assoc type's own ident |
+| `syn::TraitItem::Type` owner | the enclosing trait | the assoc type's own ident |
+
+An associated type is an `ast::TypeAlias`, so the oracle's `owner_of` names IT.
+The old port attributed its rows to the enclosing impl or trait, which scattered
+204 rows across `X3` and an unexplained bucket. Census rows 16,126 -> 16,043.
+
+### 28.2 The table
+
+Class order is row count. `root`/`leaf` are the census positions of 26.1.
+
+| class | rows | % oracle | what it is |
+|---|---:|---:|---|
+| **X2** self-edge, same file | 1,374 | 16.47% | `impl Foo` mints `Foo -> Foo`, oracle convention (26.3) |
+| **X2b** self-edge, cross-file | 304 | 3.64% | same artifact; `Foo`'s declaration is in another file, so the row is not `src == dst_file` |
+| **E1** implements | 279 | 3.34% | `entity_span_named` finds no in-file entity, `item_edge_candidates` returns |
+| **K** field | 215 | 2.58% | candidate EXISTS (`type_refs` walks the whole field type); resolution declines |
+| **A1** assoc-type body | 204 | 2.45% | measured and rejected on precision, 26.7 |
+| **X3** owner is a path prefix | 202 | 2.42% | oracle convention (26.3): owners are `ast`, `hir`, `crate`, `tt`, `flags`, `span` |
+| **X1** outside the corpus | 192 | 2.30% | `lib/**`, `xtask/**`: the type family gets no `RustProjection` |
+| **E1b** implements, declared in another file | 180 | 2.16% | the oracle keys the row on the ADT's DECLARING file, not the impl's |
+| **B** enum variant payload | 162 | 1.94% | candidate exists; resolution declines |
+| **F** bound head | 27 | 0.32% | candidate exists; resolution declines |
+| **A** alias rhs | 18 | 0.22% | candidate exists; resolution declines |
+| **D1** bound generic args | 17 | 0.20% | candidate exists; resolution declines |
+| **D2** impl self type | 15 | 0.18% | generic args under an impl header whose head is not an in-file entity |
+| **J** residual | 6 | 0.07% | enumerated in 28.5 |
+
+Sums to 3,195. Five examples per class print with `--examples 5`; `--class X` filters.
+
+### 28.3 The residual splits three ways, not into shapes
+
+| block | classes | rows | pt | why the rows are absent |
+|---|---|---:|---:|---|
+| oracle convention or scope | X2, X2b, X3, X1 | 2,072 | 24.83 | warranted in 26.3; X2b is new and gets its warrant in 28.4 |
+| the impl-owner drop | E1, E1b, D2 | 474 | 5.68 | ONE root cause, `rust_type_edges.rs:89` |
+| resolution declines | K, B, F, A, D1 | 439 | 5.26 | the candidate is already minted and binds nothing |
+| measured and rejected | A1 | 204 | 2.45 | 26.7, best shape 92.87 against a 93.65 floor |
+| residual | J | 6 | 0.07 | 28.5 |
+
+**The impl-owner drop is one defect.** `item_edge_candidates`
+(`src/lang/rust_type_edges.rs:86-91`) needs the impl's self type to name an
+entity of the impl's OWN file; `impl HasResolver for UseId` at
+`crates/hir-def/src/resolver.rs:1432` declares `UseId` in
+`crates/hir-def/src/lib.rs`, so `entity_span_named` returns `None` and the
+`return` drops the whole impl block — its trait leg, its self-type generic
+arguments and its bounds together. 474 rows, five examples:
+
+| file:line | row | census position |
+|---|---|---|
+| `crates/hir-def/src/resolver.rs:1500` | `MacroId -> HasResolver` | impl-trait head |
+| `crates/hir-ty/src/next_solver/infer/at.rs:292` | `PolyFnSig -> ToTrace` | impl-trait head |
+| `crates/hir-def/src/src.rs:66` | `UseId -> UseTree` | impl-trait generic-arg |
+| `crates/hir-ty/src/next_solver/binder.rs:50` | `StoredEarlyBinder -> StoredClauses` | impl-self-ty generic-arg |
+| `crates/hir-ty/src/autoderef.rs:79` | `Vec -> Ty` | impl-self-ty tuple-elem |
+
+**The resolution block is not a candidate-coverage problem.** Every one of its
+439 rows already carries a `TypeEdgeCandidate`; `resolve_type_dst` returns
+`None`, the edge takes `ZERO_CONTENT_ID`, and `type_facts`
+(`src/project.rs:1321`) drops it. Counting corpus declarations of each dst with
+a `struct|enum|union|trait|type` scan:
+
+| class | rows | dst has 0 top-level decls | exactly 1 | 2+ |
+|---|---:|---:|---:|---:|
+| K field | 215 | 123 | 46 | 46 |
+| B variant payload | 162 | 126 | 21 | 15 |
+| A alias rhs | 18 | 3 | 6 | 9 |
+| D1 bound generic args | 13 | 1 | 6 | 6 |
+| F bound head | 10 | 2 | 6 | 2 |
+| **total** | **418** | **255** | **85** | **78** |
+
+The `2+` column is the corpus-uniqueness bail in `unique_declared_type`
+(`src/lang/rust.rs:450-453`) doing its job. **255 rows, 61% of the block, name a
+dst with NO top-level declaration anywhere in the corpus** — section 30 names
+the mechanism.
+
+Count declarations at COLUMN 0 only. An earlier cut of this table counted any
+indented `type X = ..` as a declaration and read `0/1/2+` as `157/142/119`; that
+made an associated type look like a declaration (`type TraitId =
+TraitIdWrapper`, `crates/hir-ty/src/next_solver/interner.rs:904`) and put 42
+`TraitId`/`ImplId` rows in the "should already bind" column when the real
+declarations are macro-minted. The corrected split is above.
+
+**We almost never point at the wrong file.** Across all 3,195 missing rows, only
+17 have an `ours` row sharing `(src_file, owner, dst_name)` with a different
+`dst_file` — 8 in X2, 7 in K, 2 in B. Class `G` of section 26.2 is effectively
+closed. The 343 excess rows are therefore not misdirected versions of the
+missing ones.
+
+### 28.4 X2b, the cross-file self-edge, and its warrant
+
+Section 26.3 excluded X2 as an artifact: `impl Foo` contains a path spelled like
+the type the block belongs to, `owner_of` names that same type as the owner, and
+the edge is `Foo -> Foo`. 1,374 rows have `src == dst_file`. **304 more have the
+identical shape with `Foo` declared in another file**, so the old same-file test
+missed them; every one of the 304 sits at census position `impl-self-ty head`.
+
+`crates/hir-expand/src/files.rs:10 MacroCallId -> MacroCallId` and
+`crates/parser/src/syntax_kind.rs:1 SyntaxKind -> SyntaxKind` are two. The edge
+is still a self-loop in the type graph and still carries nothing a type graph
+can traverse. Excluded on the same warrant, and named here rather than left
+silent. Self-edges are now **1,678 rows, 20.11% of the oracle**.
+
+Recall against the oracle minus the four convention/scope classes (2,072 rows):
+**82.20%** (5,148 / 6,271). The RATCHET row keeps scoring raw against the
+committed 8,343-row file, so the number that has to move is still the 61.70.
+
+### 28.5 The residual, all six rows
+
+Section 26.2 carried 9 unexplained rows and section 26.6 folded them into a
+`53`-row bucket. At `cdc3018b9` the bucket is 6, each named:
+
+| row | cause |
+|---|---|
+| `hir-def/src/lib.rs ModuleIdLt -> HasResolver` | `pub type ModuleId = ModuleIdLt<'static>` (`lib.rs:557`) and `impl HasResolver for ModuleId` (`resolver.rs:1342`): the oracle resolves THROUGH the alias to the underlying struct and keys the row on `ModuleIdLt`'s file. We keep the alias spelling and key it on `resolver.rs`. |
+| `hir-def/src/lib.rs ModuleIdLt -> HasModule` | same alias transparency |
+| `hir-def/src/lib.rs ModuleIdLt -> ChildBySource` | same alias transparency |
+| `hir-def/src/dyn_map.rs:148 K -> Policy` | `impl<K, V> Policy for (K, V)` — a TUPLE self type. `primary_type` returns `None`, so the impl is skipped. The oracle names the tuple's first element, a generic PARAMETER, as the owner. Dead: `K` is not a type declaration. |
+| `span/src/hygiene.rs:116 Struct -> SyntaxContext` | `type Struct<'a> = SyntaxContext;`, an assoc type inside an impl inside `const _: () = { .. }` (`hygiene.rs:39`). Neither the census nor `item_edge_candidates` walks a const body. |
+| `base-db/src/input.rs Dependency -> AsName` | `AsName` occurs zero times in `input.rs`. The oracle read it out of macro-expanded code through ra's HIR. Dead for any syntactic walk. |
+
+Three are one mechanism (alias transparency on the owner leg), three are dead
+with the reason above.
+
+## 29. The impl-owner drop, cut (lane `fix-extract-rust-type-residual`, arc 2)
+
+Section 28.3's largest buildable block. `item_edge_candidates` required the
+impl's self type to name an entity of the impl's OWN file
+(`src/lang/rust_type_edges.rs:89`); `entity_span_named` returned `None` and the
+`return` dropped the whole block — its trait leg, its self-type generic
+arguments and its bounds together.
+
+### 29.1 Why the owner is not a node
+
+Section 26.6 held this open because "a `TypeEdgeCandidate` carries an owner
+SPAN, so the owner must be a node of this file's `TypeF` bundle; minting one for
+every `impl X` header would register X as a definition in every file that impls
+it, and the corpus-unique lookups both planes rely on would go ambiguous
+corpus-wide." That is correct and `build_def_index` (`src/types.rs:1717`) is
+where it bites: it indexes EVERY named `TypeF` node.
+
+So the owner is not a node. `TypeFAux` gains `impl_owners: Vec<ImplOwner>`, and
+the candidate's `NodeRef` addresses it PAST the node vec — the same trick
+`TypePlane::DocNodes` already uses to address an aux vec by `NodeRef`, with an
+offset because rust mixes the two. Three consequences, each checked by a test:
+
+| index | sees the impl owner? | why |
+|---|---|---|
+| `build_def_index` | no | walks `types.nodes` only, so `Widget` stays declared once |
+| `flatten_type` (the wire) | no | walks `bundle.nodes`, so no new `type_entity` row |
+| `name_match_type_dst` same-file leg | no | walks `types.nodes`, so an impl does not make its type resolvable in the impl's file |
+
+### 29.2 A qualified self type is excluded, with its warrant
+
+The first shape scored recall **64.99** / precision **92.56** against a 93.65
+floor: 367 new rows, 274 right, 93 wrong. 77 of the 93 have a QUALIFIED impl
+self type, and the reason is section 26.3's X3 convention — the oracle's
+`impl_self_name` takes the FIRST path segment, so `impl AsName for tt::Ident`
+(`crates/hir-expand/src/name.rs`) is owned by `tt`, and a row keyed on the
+trailing segment names an owner the oracle never writes. `self_ty_head` mints
+only for a single-segment self type. That cut 87 wrong rows and lost 1 right
+one.
+
+### 29.3 What the arc moved
+
+| shape | recall | precision | ours | overlap | excess |
+|---|---:|---:|---:|---:|---:|
+| the floor this arc inherited (`bb1d46441`) | 61.70 | 93.75 | 5,491 | 5,148 | 343 |
+| every impl self type | 64.99 | 92.56 | 5,858 | 5,422 | 436 |
+| bare self types only | **64.98** | **93.95** | 5,770 | 5,421 | 349 |
+
+Recall +3.28 pt and precision +0.20 pt, against a 93.65 precision floor. The
+class the arc targeted, by the section-28 census:
+
+| class | before | after |
+|---|---:|---:|
+| E1 implements | 279 | 40 |
+| D2 impl self type | 15 | 4 |
+| F bound head | 27 | 10 |
+| D1 bound generic args | 17 | 13 |
+
+The 180 `E1b` rows do NOT move and cannot: the oracle keys those on the ADT's
+DECLARING file, and a file-local candidate walk has no owner there. Minting them
+on the impl's file is exactly what produced the 67 remaining wrong rows in the
+first shape. The realistic ceiling for this shape was 294 rows, not 474.
+
+Fixture `tests/fixtures/rust_findings/impl_owner/`, test
+`tests/80_rust_impl_owner.rs`. Fail-first receipt at `bb1d46441`: the fixture
+emitted ZERO `resolved_type_edge` rows, all three impls dropped.
+
+## 30. The resolution block is one mechanism: macro-minted types (arc 3, diagnosed not built)
+
+Section 28.3's second block is 418 rows whose candidate already exists and binds
+nothing. It is not a resolution-tuning problem.
+
+### 30.1 The checker is not the cause
+
+`resolve_type_dst` (`src/lang/rust.rs:384-391`) lets the checker tier answer
+first, and `CheckerAnswer::External` returns `None` before the name-match legs
+run, so the checker declining is the obvious suspect. Measured by re-dumping the
+same tree with `--features cli` (no `rust-checker`):
+
+| tier | recall | precision | K field misses |
+|---|---:|---:|---:|
+| checker on | **64.98** | **93.95** | 215 |
+| checker off | 59.25 | 92.31 | 395 |
+
+The checker already RECOVERS 180 K rows. Hypothesis closed.
+
+### 30.2 The cause: `macro_rules!` mints types the type plane never sees
+
+`impl_intern!(TraitId, TraitLoc)` (`crates/hir-def/src/lib.rs:319`) and its 40-odd
+siblings mint the ID structs hir-def's whole API is built from. `item_entity`
+(`src/lang/rust.rs:133-207`) matches `syn::Item::{Struct,Enum,Union,Type,Trait,
+Fn,Impl,Mod}` and never a `syn::Item::Macro`, so no `TypeF` node exists for any
+of them, `build_def_index` has no site, and `unique_declared_type` returns
+`None` for every reference.
+
+The dst names that carry the block, all macro-minted:
+
+| dst | rows | minted at |
+|---|---:|---|
+| `TraitId` | 25 | `hir-def/src/lib.rs:319` `impl_intern!` |
+| `ImplId` | 17 | `hir-def/src/lib.rs:332` `impl_intern!` |
+| `FunctionId` | 23 | `hir-def/src/lib.rs:258` `impl_intern!` |
+
+`FunctionId` is the sharpest receipt: the only column-0 `struct FunctionId` in
+the corpus is `crates/hir-ty/src/tests/traits.rs:4102`, inside an inline test
+FIXTURE STRING, and the real one is macro-minted.
+
+### 30.3 Why this is a lane, not a grind
+
+The MBE machinery already exists — section 14 landed `macro_rules` expansion for
+the CALL plane (`feature-extract-rust-mbe`, kink 2). The type plane does not
+consume it. Wiring it means deciding what span a macro-minted type declares at,
+whether an expanded declaration may answer a corpus-unique lookup, and what
+happens when one macro mints the same name in two crates — the same
+`is_alias`-shaped refusal question arc 2 of #605 had to answer, at four resolve
+points. That is a design arc with the user in the room, not a class grind, so
+this lane stops here and hands it over with the receipt.
+
+Ceiling if fully landed: 255 rows, **3.06 pt**, plus an unknown share of the 78
+ambiguous rows that are ambiguous only because one of the two candidates is
+macro-minted (`GenericArgs`, 13 rows, is one: `hir-def/src/expr_store/path.rs:59`
+is syntactic, `next_solver/generic_arg.rs`'s is not, and we bind the wrong one).

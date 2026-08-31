@@ -399,6 +399,15 @@ pub struct TypeFAux {
     pub candidates: Vec<TypeEdgeCandidate>,
     pub docs: Vec<DocFact>,
     pub doc_nodes: Vec<DocNode>,
+    pub impl_owners: Vec<ImplOwner>,
+}
+
+/// An impl's owner when its self type is declared in ANOTHER file. Never a
+/// node: `build_def_index` indexes every named node and lookups would go ambiguous.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImplOwner {
+    pub span: Span,
+    pub name: NameId,
 }
 
 impl Family for TypeF {
