@@ -19,6 +19,11 @@ fn dump_rust_type_rows() {
     let body: Vec<&str> = measurement.forms.type_edges.iter().map(String::as_str).collect();
     std::fs::write(&out, body.join("\n") + "\n").unwrap();
     println!("wrote {} rows to {out}", body.len());
+    if let Ok(calls) = std::env::var("RUST_CALL_DUMP") {
+        let body: Vec<&str> = measurement.forms.call.iter().map(String::as_str).collect();
+        std::fs::write(&calls, body.join("\n") + "\n").unwrap();
+        println!("wrote {} call rows to {calls}", body.len());
+    }
 }
 
 // ── the shape census ────────────────────────────────────────────────────────

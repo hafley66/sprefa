@@ -290,6 +290,16 @@ fn item_entity(
             &u.ident.to_string(),
             TypeEntityKind::Struct,
         ),
+        // A `type X = ..` declaration is a type on BOTH legs: the destination a
+        // candidate names, and an owner whose right-hand side names types.
+        syn::Item::Type(a) => push_entity(
+            sink,
+            strings,
+            line_starts,
+            a.ident.span(),
+            &a.ident.to_string(),
+            TypeEntityKind::Alias,
+        ),
         syn::Item::Trait(t) => {
             push_entity(
                 sink,
@@ -668,6 +678,15 @@ fn item_edge_candidates(
             generic_candidates(owner, &t.generics, strings, sink);
             for bound in &t.supertraits {
                 bound_candidate(owner, bound, strings, sink);
+            }
+        }
+        // The right-hand side is walked as a field type is: head plus every
+        // generic argument, the `type_refs` recursion.
+        syn::Item::Type(a) => {
+            let owner = syn_span(line_starts, a.ident.span());
+            generic_candidates(owner, &a.generics, strings, sink);
+            for to in type_refs(&a.ty) {
+                push_candidate(sink, strings, owner, &to, TypeEdgeKind::Uses);
             }
         }
         syn::Item::Impl(i) => {
@@ -1450,14 +1469,21 @@ impl Resolve<CallF> for RustSource {
             };
             // A def coordinate several names share is one macro expansion's
             // collapsed span: it names nothing, so no name match binds there.
-            let name_t = name_t.filter(|(blob, span, _)| {
-                !modules.is_some_and(|m| m.is_collapsed(blob, *span))
-            });
+            // A `type X = ..` coordinate names no CALLABLE: `X(..)` constructs
+            // the aliased item, and the alias's own def is not it.
+            let callable = |blob: &ContentId, span: Span| {
+                !modules.is_some_and(|m| m.is_collapsed(blob, span) || m.is_alias(blob, span))
+            };
+            let name_t = name_t.filter(|(blob, span, _)| callable(blob, *span));
             // The CHECKER tier: rust-analyzer's own answer for this site wins
             // over both the name match and scip, and only where it has one.
             match checker
                 .zip(own_path)
                 .and_then(|(index, path)| index.call_at(path, site.span, callee))
+                .filter(|answer| match answer {
+                    CheckerAnswer::Corpus(blob, span) => callable(blob, *span),
+                    CheckerAnswer::External => true,
+                })
             {
                 Some(CheckerAnswer::Corpus(dst_blob, dst_span)) => {
                     push_call_edge(
@@ -1477,9 +1503,12 @@ impl Resolve<CallF> for RustSource {
                 Some(CheckerAnswer::External) => continue,
                 None => {}
             }
-            let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
-                scip_call_target(index, joined, *doc_ix, site, callee, def_index)
-            });
+            let scip_t = scip
+                .as_ref()
+                .and_then(|(index, joined, doc_ix)| {
+                    scip_call_target(index, joined, *doc_ix, site, callee, def_index)
+                })
+                .filter(|target| callable(&target.0, target.1));
             // Agreement is judged at (blob, name): the name-match binds the
             // call FACET while scip can name the type facet — one definition,
             // two facet coordinates (the ORACLE entry's "the models differ by
