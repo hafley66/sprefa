@@ -34,8 +34,25 @@ test(module_loader_preserves_separate_file_units) :-
     Observed = module_units(Diagnostics, FileNames),
     Observed == module_units([], ['0_minimal.dl7', '2_partial.dl7']).
 
+test(module_owner_is_stable_across_content_revisions) :-
+    Origin = file('/virtual/module.dl7'),
+    UnitA = dl7_unit(Origin, content_sha256(first), [], [], []),
+    UnitB = dl7_unit(Origin, content_sha256(second), [], [], []),
+    lower_datalog(UnitA, BasementA, _, []),
+    lower_datalog(UnitB, BasementB, _, []),
+    basement_module_owner(BasementA, OwnerA),
+    basement_module_owner(BasementB, OwnerB),
+    Observed = module_owners(OwnerA, OwnerB),
+    Observed ==
+        module_owners(module(file('/virtual/module.dl7')),
+                      module(file('/virtual/module.dl7'))).
+
 unit_file_name(dl7_unit(file(Path), _, _, _, _), FileName) :-
     file_base_name(Path, FileName).
+
+basement_module_owner(
+    basement_program(root_graph(Nodes, _), _), Owner) :-
+    memberchk(module(Owner), Nodes).
 
 test(numbered_prelude_files_are_loaded_in_lexical_order) :-
     type_prelude_paths(Paths),

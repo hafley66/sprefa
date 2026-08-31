@@ -13,10 +13,10 @@
 % data; reference resolution and Datalog checks run later in this module.
 lower_datalog(Unit, Program, Origins, Diagnostics) :-
     must_be(ground, Unit),
-    (   Unit = dl7_unit(Origin, ContentIdentity, Forms, _, _)
-    ->  UnitIdentity = unit(Origin, ContentIdentity),
-        ModuleOwner = module(UnitIdentity),
-        lower_declarations(Forms, ModuleOwner, UnitIdentity,
+    (   Unit = dl7_unit(Origin, _, Forms, _, _)
+    ->  ModuleIdentity = Origin,
+        ModuleOwner = module(ModuleIdentity),
+        lower_declarations(Forms, ModuleOwner, ModuleIdentity,
                            DeclarationResult),
         lower_after_declarations(DeclarationResult, Forms, ModuleOwner,
                                  Program, Origins, Diagnostics)
@@ -153,24 +153,24 @@ replace_reified_term(From, To, Term, Replaced) :-
     ).
 
 %% Pass 1 and 2: mint every nested owner and reserve every bind in that owner.
-lower_declarations(Forms, Owner, UnitIdentity, Result) :-
-    lower_declarations(Forms, Owner, UnitIdentity, 0, Result).
+lower_declarations(Forms, Owner, ModuleIdentity, Result) :-
+    lower_declarations(Forms, Owner, ModuleIdentity, 0, Result).
 
 lower_declarations([], _, _, _, ok([], [], [], [], [])).
-lower_declarations([Form | Forms], Owner, UnitIdentity, Index, Result) :-
+lower_declarations([Form | Forms], Owner, ModuleIdentity, Index, Result) :-
     (   bind_form(Form, _, _, _)
-    ->  lower_bind(Form, Owner, UnitIdentity, Index, BindResult),
+    ->  lower_bind(Form, Owner, ModuleIdentity, Index, BindResult),
         NextIndex is Index + 1,
-        continue_declarations(BindResult, Forms, Owner, UnitIdentity,
+        continue_declarations(BindResult, Forms, Owner, ModuleIdentity,
                               NextIndex, Result)
-    ;   lower_declarations(Forms, Owner, UnitIdentity, Index, Result)
+    ;   lower_declarations(Forms, Owner, ModuleIdentity, Index, Result)
     ).
 
 continue_declarations(error(Diagnostic), _, _, _, _, error(Diagnostic)).
 continue_declarations(ok(Nodes0, Edges0, Relations0, Origins0,
                          Reservations0),
-                      Forms, Owner, UnitIdentity, Index, Result) :-
-    lower_declarations(Forms, Owner, UnitIdentity, Index, RestResult),
+                      Forms, Owner, ModuleIdentity, Index, Result) :-
+    lower_declarations(Forms, Owner, ModuleIdentity, Index, RestResult),
     (   RestResult = ok(Nodes1, Edges1, Relations1, Origins1, Reservations1)
     ->  append(Nodes0, Nodes1, Nodes),
         append(Edges0, Edges1, Edges),
@@ -181,12 +181,12 @@ continue_declarations(ok(Nodes0, Edges0, Relations0, Origins0,
     ;   Result = RestResult
     ).
 
-lower_bind(BindNode, Owner, UnitIdentity, Index, Result) :-
+lower_bind(BindNode, Owner, ModuleIdentity, Index, Result) :-
     (   bind_form(BindNode, BindNodeId, Name, TargetNode)
     ->  (   expression_bind_target(TargetNode)
         ->  finish_derived_bind(BindNodeId, Owner, Name, TargetNode, Index,
                                Result)
-        ;   lower_target(TargetNode, Owner, UnitIdentity, TargetResult),
+        ;   lower_target(TargetNode, Owner, ModuleIdentity, TargetResult),
             finish_bind(TargetResult, BindNodeId, Owner, Name, Index, Result)
         )
     ;   node_id(BindNode, NodeId),
@@ -227,16 +227,16 @@ bind_origins(_, _, Owner, Name, Index, BindNodeId,
              [origin(edge(Owner, Name, Index), BindNodeId)]).
 
 lower_target(node(NodeId, form([node(_, atom('*')) | Bindings])),
-             _ParentOwner, UnitIdentity, Result) :-
+             _ParentOwner, ModuleIdentity, Result) :-
     !,
-    Owner = owner(UnitIdentity, NodeId),
-    lower_bind_list(Bindings, Owner, UnitIdentity, 0, BindResult),
+    Owner = owner(ModuleIdentity, NodeId),
+    lower_bind_list(Bindings, Owner, ModuleIdentity, 0, BindResult),
     finish_constructor_target(BindResult, NodeId, Owner, product, Result).
 lower_target(node(NodeId, form([node(_, atom('+')) | Bindings])),
-             _ParentOwner, UnitIdentity, Result) :-
+             _ParentOwner, ModuleIdentity, Result) :-
     !,
-    Owner = owner(UnitIdentity, NodeId),
-    lower_bind_list(Bindings, Owner, UnitIdentity, 0, BindResult),
+    Owner = owner(ModuleIdentity, NodeId),
+    lower_bind_list(Bindings, Owner, ModuleIdentity, 0, BindResult),
     finish_constructor_target(BindResult, NodeId, Owner, sum, Result).
 lower_target(node(_, atom(Name)), Owner, _,
              ok(name(Owner, Name), reference, [], [], [], [], [])).
@@ -297,16 +297,16 @@ positions_except(Index, Arity, Except, Positions) :-
     ).
 
 lower_bind_list([], _, _, _, ok([], [], [], [], [])).
-lower_bind_list([Bind | Binds], Owner, UnitIdentity, Index, Result) :-
-    lower_edge_bind(Bind, Owner, UnitIdentity, Index, BindResult),
+lower_bind_list([Bind | Binds], Owner, ModuleIdentity, Index, Result) :-
+    lower_edge_bind(Bind, Owner, ModuleIdentity, Index, BindResult),
     NextIndex is Index + 1,
-    continue_bind_list(BindResult, Binds, Owner, UnitIdentity, NextIndex,
+    continue_bind_list(BindResult, Binds, Owner, ModuleIdentity, NextIndex,
                        Result).
 
 continue_bind_list(error(Diagnostic), _, _, _, _, error(Diagnostic)).
 continue_bind_list(ok(Nodes0, Edges0, Relations0, Origins0, Reservations0),
-                   Binds, Owner, UnitIdentity, Index, Result) :-
-    lower_bind_list(Binds, Owner, UnitIdentity, Index, RestResult),
+                   Binds, Owner, ModuleIdentity, Index, Result) :-
+    lower_bind_list(Binds, Owner, ModuleIdentity, Index, RestResult),
     (   RestResult = ok(Nodes1, Edges1, Relations1, Origins1, Reservations1)
     ->  append(Nodes0, Nodes1, Nodes),
         append(Edges0, Edges1, Edges),
@@ -317,12 +317,12 @@ continue_bind_list(ok(Nodes0, Edges0, Relations0, Origins0, Reservations0),
     ;   Result = RestResult
     ).
 
-lower_edge_bind(BindNode, Owner, UnitIdentity, Index, Result) :-
+lower_edge_bind(BindNode, Owner, ModuleIdentity, Index, Result) :-
     (   edge_bind_form(BindNode, BindNodeId, LabelNode, TargetNode)
     ->  (   LabelNode = node(_, atom(_))
-        ->  lower_bind(BindNode, Owner, UnitIdentity, Index, Result)
+        ->  lower_bind(BindNode, Owner, ModuleIdentity, Index, Result)
         ;   LabelNode = node(_, form(_))
-        ->  lower_target(TargetNode, Owner, UnitIdentity, TargetResult),
+        ->  lower_target(TargetNode, Owner, ModuleIdentity, TargetResult),
             finish_compound_edge_bind(
                 TargetResult, BindNodeId, Owner, LabelNode, Index, Result)
         ;   node_id(LabelNode, LabelNodeId),
