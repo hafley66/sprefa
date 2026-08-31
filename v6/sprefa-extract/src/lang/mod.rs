@@ -33,6 +33,7 @@ pub mod rust_receivers;
 pub mod rust_rehome;
 pub mod rust_rename;
 pub mod rust_scip_macros;
+pub mod rust_type_refs;
 pub mod ts;
 pub mod ts_paths;
 pub mod ts_receivers;
