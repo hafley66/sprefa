@@ -10,7 +10,7 @@ Date: 2026-08-29
 | reader | `v7/src/0_reader/1_expander.pl` | 201 | 179 |
 | reader | `v7/src/0_reader/2_embedder.pl` | 82 | 74 |
 | reader | `v7/src/0_reader/3_file_loader.pl` | 28 | 24 |
-| reader | `v7/src/0_reader/4_cli_mainer.pl` | 53 | 45 |
+| reader | `v7/src/0_reader/5_cli_mainer.pl` | 53 | 45 |
 | libtime | `v7/src/1_libtime/0_evaluator.pl` | 115 | 86 |
 | comptime | `v7/src/2_comptime/0_compiler.pl` | 667 | 574 |
 | comptime | `v7/src/2_comptime/1_type_compiler.pl` | 113 | 90 |
@@ -23,7 +23,7 @@ Date: 2026-08-29
 0_reader/1_expander.pl
     -> 0_reader/2_embedder.pl
         -> 0_reader/3_file_loader.pl
-            -> 0_reader/4_cli_mainer.pl
+            -> 0_reader/5_cli_mainer.pl
 
 1_libtime/0_evaluator.pl
 

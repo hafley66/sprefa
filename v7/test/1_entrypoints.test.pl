@@ -4,6 +4,7 @@
 :- use_module(library(process), [process_create/3, process_wait/2]).
 :- use_module('../src/0_reader/2_embedder', [dl7_text_unit/5]).
 :- use_module('../src/0_reader/3_file_loader', [load_dl7/3]).
+:- use_module('../src/0_reader/4_module_loader', [load_dl7_units/3]).
 :- use_module('../src/2_comptime/2_compiler',
               [ compile_dl7/4,
                 compile_unit/3,
@@ -22,6 +23,19 @@
                 validate_functional_rows/3
               ]).
 :- use_module('fixtures/1_embedded', []).
+
+test(module_loader_preserves_separate_file_units) :-
+    load_dl7_units(
+        [ 'v7/test/fixtures/0_minimal.dl7',
+          'v7/test/fixtures/2_partial.dl7'
+        ],
+        Units, Diagnostics),
+    maplist(unit_file_name, Units, FileNames),
+    Observed = module_units(Diagnostics, FileNames),
+    Observed == module_units([], ['0_minimal.dl7', '2_partial.dl7']).
+
+unit_file_name(dl7_unit(file(Path), _, _, _, _), FileName) :-
+    file_base_name(Path, FileName).
 
 test(numbered_prelude_files_are_loaded_in_lexical_order) :-
     type_prelude_paths(Paths),
@@ -1493,7 +1507,7 @@ driver_run(Status, Stdout, Stderr) :-
     process_create(
         path(swipl),
         [ '-q',
-          '-s', 'v7/src/0_reader/4_cli_mainer.pl',
+          '-s', 'v7/src/0_reader/5_cli_mainer.pl',
           '--', 'v7/test/fixtures/0_minimal.dl7'
         ],
         [ stdout(pipe(StdoutStream)),

@@ -15,7 +15,8 @@ v7/src/0_reader/
   1_expander.pl
   2_embedder.pl
   3_file_loader.pl
-  4_cli_mainer.pl
+  4_module_loader.pl
+  5_cli_mainer.pl
   test/
     0_reader.test.pl
     1_entrypoints.test.pl
@@ -28,8 +29,8 @@ v7/src/0_reader/
 `1_expander.pl` owns the static rewrite registry and expansion fixpoint.
 `2_embedder.pl` imports both and owns the shared text-to-unit pipeline plus the
 `dl7/4` quasi quoter. `3_file_loader.pl` imports that pipeline for files.
-`4_cli_mainer.pl` imports only the loader. No dependency requires a change from the
-brief's target shape.
+`4_module_loader.pl` retains several files as separate units. `5_cli_mainer.pl`
+imports only the single-file loader.
 
 Production modules remain below 300 nonblank, noncomment lines. A module that
 would cross 500 lines is stopped and split in dependency order before further
@@ -118,7 +119,7 @@ load_dl7('path/to/program.dl7', Unit, Diagnostics).
 The command-line spelling is:
 
 ```text
-swipl -q -s v7/src/0_reader/4_cli_mainer.pl -- path/to/program.dl7
+swipl -q -s v7/src/0_reader/5_cli_mainer.pl -- path/to/program.dl7
 ```
 
 The driver writes one canonical `dl7_unit/5` term to stdout. It writes source
