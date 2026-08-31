@@ -726,6 +726,119 @@ pub struct CallFAux {
     /// One row per macro invocation that minted a def/site elsewhere in this
     /// bundle, joined by span to whatever phase-1 arm found the expansion.
     pub macro_sites: Vec<MacroSite>,
+    /// Python-only dynamic-shape rows (one seat on the shared aux, exactly like
+    /// `refs` for prolog; every other language leaves these empty). Collected
+    /// by the python `project_call`, consumed by `Resolve<CallF>` for the call
+    /// shapes a bare callee name cannot carry: same-file value bindings, call
+    /// arguments, params, single returns, subscript/return-call sites.
+    pub py_binds: Vec<PyBind>,
+    pub py_args: Vec<PyCallArg>,
+    pub py_params: Vec<PyParam>,
+    pub py_defaults: Vec<PyDefault>,
+    pub py_returns: Vec<PyReturn>,
+    pub py_sub_calls: Vec<PySubCall>,
+    pub py_ret_calls: Vec<PyRetCall>,
+    /// One row per decorated def, from the OUTERMOST decorator only: the
+    /// decorator call site (`span`), its callee, and the decorated def name.
+    /// A decorator whose def's single return names a same-file def rebinds the
+    /// decorated name to it.
+    pub py_decorators: Vec<PyDecor>,
+}
+
+/// A same-file value binding: `target = <bare identifier>` (simple alias,
+/// chained assignment, tuple/starred unpack element), or a container element
+/// `target[key] = value` / a literal pair / a list slot (`key` = the literal's
+/// text: unquoted string content or integer decimal; None for a plain name
+/// binding). Emitted in file order. `value` None marks a KILL: the target was
+/// rebound to something this tier does not carry, so an earlier binding must
+/// not survive it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PyBind {
+    /// The binding's own span (the assignment or the literal element), the
+    /// byte-order key a lookup uses.
+    pub span: Span,
+    /// The bound name (LHS identifier; for `Elem`, the container's base name).
+    pub target: NameId,
+    /// Literal dict key / list index, when the binding is a container element.
+    pub key: Option<NameId>,
+    /// The value as written (a bare identifier), or None (a non-name kill).
+    pub value: Option<NameId>,
+}
+
+/// One call argument that is a bare identifier: `f(g)` / `f(x=g)`, keyed by the
+/// call site's span. The param rule reads these; a decorator application
+/// emits one too (the decorated def is the decorator's slot-0 argument).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PyCallArg {
+    /// The owning call site's span (the function-node span).
+    pub site: Span,
+    /// 0-based positional slot; a keyword argument keeps its position too.
+    pub pos: i64,
+    /// The keyword name, when the argument is spelled `name=value`.
+    pub kw: Option<NameId>,
+    /// The argument's identifier text.
+    pub value: NameId,
+}
+
+/// A parameter `name` (slot `pos`) of the def spanning `def`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PyParam {
+    pub def: Span,
+    pub name: NameId,
+    pub pos: u32,
+}
+
+/// A parameter default that is a bare identifier: `def f(a=func)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PyDefault {
+    pub def: Span,
+    pub name: NameId,
+    pub value: NameId,
+}
+
+/// The def spanning `def` has exactly ONE return statement and its value is a
+/// bare identifier. Resolution checks the value against the corpus; a value
+/// naming no def (a param, say) simply resolves to nothing there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PyReturn {
+    pub def: Span,
+    pub value: NameId,
+}
+
+/// A call whose callee is `base[key]` with a literal key: the `CallSite` with
+/// the same span resolves through `PyBind`'s Elem rows, never through the bare
+/// base name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PySubCall {
+    /// The subscript node's span (the CallSite span for this site).
+    pub span: Span,
+    pub base: NameId,
+    pub key: NameId,
+}
+
+/// A call whose function is itself a call (`f()(...)`): the `CallSite` with
+/// span `span` has no name; its callee is whatever the inner call (whose site
+/// has span `inner`) returns, traced through the def's single return.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PyRetCall {
+    /// The outer site's span (the inner call node's extent).
+    pub span: Span,
+    /// The inner call site's span (the inner call's function-node span).
+    pub inner: Span,
+}
+
+/// One decorated def, from its outermost decorator: the decorator expression's
+/// span (a `CallSite` with the same span carries the edge), the callee, and
+/// the decorated def's name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PyDecor {
+    pub span: Span,
+    pub callee: NameId,
+    pub decorated: NameId,
+    /// The decorator expression was itself a call (`@factory()`): the def it
+    /// resolves to may return the APPLIED decorator, and that application is
+    /// its own call edge.
+    pub call_expr: bool,
 }
 
 /// One macro invocation whose expansion is folded into this bundle's own
@@ -1747,12 +1860,15 @@ impl DefIndex {
             let name_ix = self.names.len() as u32;
             self.names.push(name.clone());
             for site in sites {
-                spans.entry(site.blob.clone()).or_default().push(DefSpanEntry {
-                    span: site.span,
-                    family: site.family,
-                    name_ix,
-                    max_end: 0,
-                });
+                spans
+                    .entry(site.blob.clone())
+                    .or_default()
+                    .push(DefSpanEntry {
+                        span: site.span,
+                        family: site.family,
+                        name_ix,
+                        max_end: 0,
+                    });
             }
         }
         for entries in spans.values_mut() {
@@ -2047,13 +2163,10 @@ impl SymbolInterner {
     pub fn intern(&mut self, symbol: impl Into<String>) -> SymbolId {
         let symbol = symbol.into();
         let next = SymbolId(self.table.len() as u32);
-        *self
-            .ids
-            .entry(symbol.clone())
-            .or_insert_with(|| {
-                self.table.push(symbol);
-                next
-            })
+        *self.ids.entry(symbol.clone()).or_insert_with(|| {
+            self.table.push(symbol);
+            next
+        })
     }
 
     /// The finished table: `ScipIndex::symbols`, `SymbolId`s index into it.
@@ -2224,7 +2337,10 @@ impl ScipIndex {
     /// The text behind an interned symbol. Unknown ids (a hand-built index
     /// with an empty table) read as the empty string, never a panic.
     pub fn symbol(&self, id: SymbolId) -> &str {
-        self.symbols.get(id.0 as usize).map(String::as_str).unwrap_or("")
+        self.symbols
+            .get(id.0 as usize)
+            .map(String::as_str)
+            .unwrap_or("")
     }
 }
 
