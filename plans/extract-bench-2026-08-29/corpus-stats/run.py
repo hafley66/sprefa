@@ -160,10 +160,10 @@ def upsert_stats(stats_path, row_cells):
         header = lines[0] if (lines and lines[0].startswith("repo\t")) else None
         body = lines[1:] if header else lines
         rows = [ln for ln in body if ln.split("\t")[:3] != list(key)]
-    rows.append("\t".join(row_cells) + "\n")
+    rows.append("\t".join(row_cells))
     with open(stats_path, "w") as f:
         f.write(STATS_HEADER)
-        f.writelines(rows)
+        f.write("\n".join(rows) + "\n")
 
 
 def main():
