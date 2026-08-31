@@ -386,7 +386,6 @@ fn duplicate_def_python_cross_file() {
 /// The cross-file twin above does flip to absent, so the leg's
 /// drop-on-ambiguity behavior depends on where the surviving def sits.
 #[test]
-#[ignore = "FINDING F5: same-file def survives duplication still labeled corpus_unique"]
 fn duplicate_def_python_same_file() {
     let (base, after) = run(&python_scenarios()[1]);
     assert_duplicate_def(&base, &after, "local_fn");
