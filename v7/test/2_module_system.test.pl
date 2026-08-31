@@ -2,7 +2,7 @@
 
 :- use_module('../src/0_reader/2_embedder', [dl7_text_unit/5]).
 :- use_module('../src/2_comptime/0_lowerer', [lower_datalog/4]).
-:- use_module('../src/2_comptime/0b_module_resolver',
+:- use_module('../src/2_comptime/0c_module_resolver',
               [ resolve_path/6,
                 check_visible_name_collisions/3,
                 check_module_cycles/2
