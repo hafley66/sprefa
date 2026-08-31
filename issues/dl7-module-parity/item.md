@@ -8,8 +8,8 @@ epic: dl7-module-system
 labels:
 - size:med
 size: M
-lane: dl7-type-algebra
-lane_seq: 13
+lane: dl7-module-system
+lane_seq: 0
 collision: [v7-reader, v7-compiler, v7-test]
 blocked_by: ['@dl7-type-algebra-oracle']
 ---

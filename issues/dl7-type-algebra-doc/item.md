@@ -2,7 +2,7 @@
 created: 2026-08-31
 updated: 2026-08-31
 type: task
-status: open
+status: done
 priority: normal
 epic: dl7-type-algebra
 labels:
@@ -12,6 +12,10 @@ lane: dl7-type-algebra
 lane_seq: 12
 collision: [v7-docs]
 blocked_by: ['@dl7-type-algebra-oracle']
+commits:
+- hash: faf5f11ef
+  summary: Document the DL7 type algebra
+closed: 2026-08-31
 ---
 
 # Document the DL7 type algebra
@@ -24,9 +28,9 @@ Record relation signatures, compiler-round timelines, proof failure data, orderi
 
 ## Acceptance Criteria
 
-- [ ] Documentation matches executable relation names.
-- [ ] Progress log records commits and current CI counts.
+- [x] Documentation matches executable relation names.
+- [x] Progress log records commits and current CI counts.
 
 ## Tests Run
 
-- [ ] Documentation examples parse where executable.
+- [x] Documentation examples parse where executable.
