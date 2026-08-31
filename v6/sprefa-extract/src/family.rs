@@ -31,8 +31,8 @@
 pub use crate::types::{
     flow_edges, CallEdgeKind, CallF, CallFAux, CallKind, CallSite, ConstKind, ConstValue,
     CstEdgeKind, CstF, DfArg, DfEdgeKind, DfF, DfFAux, DfField, DfLit, DfNodeKind, DfParam,
-    DocFact, DocTag, Family, FlowEdge, FlowEdgeKind, FlowF, MethodOwner, ProjectEdge, PyBind,
-    PyCallArg, PyDecor, PyDefault, PyParam, PyRetCall, PyReturn, PySubCall, ReceiverBinding,
-    ReceiverOutcome, RefPosition, Reference, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
-    TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
+    DocFact, DocTag, Family, FlowEdge, FlowEdgeKind, FlowF, ImplOwner, MethodOwner, ProjectEdge,
+    PyBind, PyCallArg, PyDecor, PyDefault, PyParam, PyRetCall, PyReturn, PySubCall,
+    ReceiverBinding, ReceiverOutcome, RefPosition, Reference, SigSlot, Specifier, SpecifierKind,
+    TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };

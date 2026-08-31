@@ -242,7 +242,10 @@ impl Census<'_> {
                 }
                 for member in &t.items {
                     match member {
+                        // An assoc type is an `ast::TypeAlias`, so `owner_of`
+                        // names IT, not the enclosing trait.
                         syn::TraitItem::Type(assoc) => {
+                            let owner = assoc.ident.to_string();
                             self.generics(&owner, &assoc.generics);
                             for bound in &assoc.bounds {
                                 self.bound(&owner, bound, "assoc-type", "head");
@@ -275,6 +278,8 @@ impl Census<'_> {
                 for member in &imp.items {
                     match member {
                         syn::ImplItem::Type(assoc) => {
+                            let owner = assoc.ident.to_string();
+                            self.generics(&owner, &assoc.generics);
                             self.ty(&owner, &assoc.ty, "assoc-type", "head");
                         }
                         syn::ImplItem::Fn(f) => self.block(&f.block),

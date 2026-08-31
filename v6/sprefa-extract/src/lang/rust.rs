@@ -503,11 +503,20 @@ impl Resolve<TypeF> for RustSource {
             .and_then(|(blob, paths)| paths.get(&blob).map(str::to_string));
         let mut edges = Vec::new();
         for candidate in RustSource::type_edge_candidates(output) {
-            // src: the TypeF entity at the owner span, exists by construction.
+            // src: the TypeF entity at the owner span, else the `ImplOwner` at
+            // it, addressed past the node vec the way a doc node is addressed.
             let Some(src_ix) = types
                 .nodes
                 .iter()
                 .position(|node| node.span == candidate.owner)
+                .or_else(|| {
+                    types
+                        .aux
+                        .impl_owners
+                        .iter()
+                        .position(|owner| owner.span == candidate.owner)
+                        .map(|ix| types.nodes.len() + ix)
+                })
             else {
                 continue;
             };
