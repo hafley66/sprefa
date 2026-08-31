@@ -133,6 +133,7 @@ fn resolve(dir: &Path, rels: &[&str]) -> Rows {
         scip_records: Default::default(),
         occurrence_text: false,
         rust_checker: None,
+        ts_checker: None,
     })
     .expect("the mutated corpus resolves");
     let mut rows = Rows::default();
@@ -385,7 +386,6 @@ fn duplicate_def_python_cross_file() {
 /// The cross-file twin above does flip to absent, so the leg's
 /// drop-on-ambiguity behavior depends on where the surviving def sits.
 #[test]
-#[ignore = "FINDING F5: same-file def survives duplication still labeled corpus_unique"]
 fn duplicate_def_python_same_file() {
     let (base, after) = run(&python_scenarios()[1]);
     assert_duplicate_def(&base, &after, "local_fn");
@@ -397,7 +397,6 @@ fn duplicate_def_python_same_file() {
 /// leg exists (py_findings/args mints origin `param`) but loses precedence to
 /// the corpus name match.
 #[test]
-#[ignore = "FINDING F1: a same-named parameter does not shadow the corpus def"]
 fn shadow_python() {
     let (base, after) = run(&python_scenarios()[3]);
     assert!(
