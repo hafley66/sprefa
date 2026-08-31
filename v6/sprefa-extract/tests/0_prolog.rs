@@ -96,9 +96,7 @@ fn prolog_name_arity_resolution() {
 }
 
 /// Only its own job: catch a mis-rooted or empty walk. It is NOT a pin on how
-/// many prolog files v6 has. The previous shape asserted an exact corpus size
-/// and rotted three times (53 -> 56 -> red at 92) because it was reading a
-/// number nothing depends on.
+/// many prolog files v6 has, only that the corpus stays non-trivial.
 const CORPUS_FLOOR: usize = 60;
 
 /// The ratchet, and the only durable fact in this ledger: these v6 prolog files
@@ -145,8 +143,7 @@ const PARSES_CLEAN: &[&str] = &[
 ///
 /// `labs/` is excluded from the walk. Lab files are transient by the standing
 /// lab protocol (labs die on landing, git history is their archive), so their
-/// parse status is not a durable fact and their churn is what rotted the old
-/// exact-count assertion.
+/// parse status is not a durable fact.
 ///
 /// SABOTAGE RECEIPTS (both run, both red, then reverted):
 ///  - listing `compile/lower.pl` (a known-erroring file) in `PARSES_CLEAN`

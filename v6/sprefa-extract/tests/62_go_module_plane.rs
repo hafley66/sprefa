@@ -274,7 +274,7 @@ fn import_count_matches_the_fixtures_written_bindings() {
 
 /// `(record-filtered rows)` of one `--resolve` run over EXPLICIT paths (the
 /// twin-package fixtures get their own file list, so `FILES` stays the
-/// two-module workspace set the older tests pin).
+/// two-module workspace set the other tests pin).
 fn run_paths(paths: &[String]) -> Vec<Value> {
     let output = Command::new(env!("CARGO_BIN_EXE_extract"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
