@@ -13,7 +13,8 @@
 :- use_module('../src/2_comptime/0_lowerer', [lower_datalog/4]).
 :- use_module('../src/2_comptime/0a_module_lowerer',
               [ lower_units/4,
-                merge_module_basements/4
+                merge_module_basements/4,
+                install_module_aliases/6
               ]).
 :- use_module('../src/2_comptime/1_checker',
               [ check_datalog/4,
@@ -78,6 +79,27 @@ test(separate_module_basements_merge_without_local_name_collapse) :-
               module(file('/virtual/b.dl7'))-4
             ],
             2, 8).
+
+test(module_alias_edges_preserve_exporting_type_identity) :-
+    PreludeOwner = module(prelude),
+    ProgramOwner = module(file('/virtual/program.dl7')),
+    dl7_text_unit(prelude, prelude,
+                  "(: Box (* (: value int)))", PreludeUnit, []),
+    dl7_text_unit(file('/virtual/program.dl7'), '/virtual/program.dl7',
+                  "(: Use (* (: field Box)))", ProgramUnit, []),
+    lower_units([PreludeUnit, ProgramUnit],
+                Basements0, Origins0, []),
+    install_module_aliases(PreludeOwner, [ProgramOwner],
+                           Basements0, Origins0, Basements, ModuleOrigins),
+    merge_module_basements(Basements, ModuleOrigins, Basement, Origins),
+    check_datalog(Basement, Origins, Checked, Diagnostics),
+    Checked = checked_datalog(root_graph(_, Edges), _, _, _),
+    memberchk(':'(PreludeOwner, 'Box', ref(Box), 0), Edges),
+    memberchk(':'(ProgramOwner, 'Box', ref(Box), 1), Edges),
+    memberchk(':'(ProgramOwner, 'Use', ref(Use), 0), Edges),
+    memberchk(':'(Use, field, ref(Box), 0), Edges),
+    Observed = module_alias(Diagnostics, same_target, alias_index(1)),
+    Observed == module_alias([], same_target, alias_index(1)).
 
 unit_file_name(dl7_unit(file(Path), _, _, _, _), FileName) :-
     file_base_name(Path, FileName).

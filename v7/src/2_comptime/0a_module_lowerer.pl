@@ -1,6 +1,7 @@
 :- module(dl7_module_lowerer,
           [ lower_units/4,
-            merge_module_basements/4
+            merge_module_basements/4,
+            install_module_aliases/6
           ]).
 
 :- use_module('0_lowerer', [lower_datalog/4]).
@@ -56,3 +57,97 @@ merge_module_origins([module_origins(_, UnitOrigins) | ModuleOrigins],
                      Origins) :-
     merge_module_origins(ModuleOrigins, RestOrigins),
     append(UnitOrigins, RestOrigins, Origins).
+
+%% install_module_aliases(+Exporter, +Importers,
+%%                        +Basements0, +Origins0,
+%%                        -Basements, -Origins) is det.
+%
+% Expose every concrete top-level exporter edge through each importer. Local
+% names shadow these implicit aliases. Alias ordinals follow authored local
+% ordinals and retain the exporting edge's source node as provenance.
+install_module_aliases(_, [], Basements, Origins, Basements, Origins).
+install_module_aliases(Exporter, [Importer | Importers],
+                       Basements0, Origins0, Basements, Origins) :-
+    module_top_edges(Exporter, Basements0, ExportEdges),
+    install_importer_aliases(Importer, Exporter, ExportEdges,
+                             Basements0, Origins0,
+                             Basements1, Origins1),
+    install_module_aliases(Exporter, Importers,
+                           Basements1, Origins1, Basements, Origins).
+
+module_top_edges(Owner, Basements, Edges) :-
+    memberchk(module_basement(Owner, Basement), Basements),
+    Basement = basement_program(root_graph(_, AllEdges), _),
+    include(edge_owned_by(Owner), AllEdges, Edges).
+
+edge_owned_by(Owner, pending_edge(Owner, _, _, _)).
+
+install_importer_aliases(Importer, Exporter, ExportEdges,
+                         Basements0, Origins0, Basements, Origins) :-
+    memberchk(module_basement(Importer, ImporterBasement0), Basements0),
+    ImporterBasement0 = basement_program(root_graph(Nodes, Edges0), Program),
+    next_owner_index(Importer, Edges0, FirstAliasIndex),
+    alias_edges(ExportEdges, Importer, Exporter, Edges0, Origins0,
+                FirstAliasIndex, AliasEdges, AliasOrigins),
+    append(Edges0, AliasEdges, Edges),
+    ImporterBasement = basement_program(root_graph(Nodes, Edges), Program),
+    replace_module_basement(Importer, ImporterBasement,
+                            Basements0, Basements),
+    append_module_origins(Importer, AliasOrigins, Origins0, Origins).
+
+next_owner_index(Owner, Edges, Index) :-
+    findall(EdgeIndex,
+            member(pending_edge(Owner, _, _, EdgeIndex), Edges),
+            Indices),
+    (   Indices == []
+    ->  Index = 0
+    ;   max_list(Indices, Maximum),
+        Index is Maximum + 1
+    ).
+
+alias_edges([], _, _, _, _, _, [], []).
+alias_edges([pending_edge(Exporter, Name, Target, ExportIndex) | ExportEdges],
+            Importer, Exporter, ImporterEdges, ModuleOrigins,
+            AliasIndex, AliasEdges, AliasOrigins) :-
+    (   importable_target(Target),
+        \+ memberchk(pending_edge(Importer, Name, _, _), ImporterEdges)
+    ->  source_edge_node(ModuleOrigins, Exporter, Name, ExportIndex, NodeId),
+        AliasEdges = [pending_edge(Importer, Name, Target, AliasIndex)
+                     | RestAliasEdges],
+        AliasOrigins = [origin(edge(Importer, Name, AliasIndex), NodeId)
+                       | RestAliasOrigins],
+        NextAliasIndex is AliasIndex + 1
+    ;   AliasEdges = RestAliasEdges,
+        AliasOrigins = RestAliasOrigins,
+        NextAliasIndex = AliasIndex
+    ),
+    alias_edges(ExportEdges, Importer, Exporter,
+                ImporterEdges, ModuleOrigins, NextAliasIndex,
+                RestAliasEdges, RestAliasOrigins).
+
+importable_target(deferred_expression(_)) :- !, fail.
+importable_target(deferred_compound_edge(_, _)) :- !, fail.
+importable_target(_).
+
+source_edge_node(ModuleOrigins, Module, Name, Index, NodeId) :-
+    memberchk(module_origins(Module, Origins), ModuleOrigins),
+    memberchk(origin(edge(Module, Name, Index), NodeId), Origins).
+
+replace_module_basement(Module, Replacement,
+                        [module_basement(Module, _) | Basements],
+                        [module_basement(Module, Replacement) | Basements]) :-
+    !.
+replace_module_basement(Module, Replacement,
+                        [Basement | Basements0],
+                        [Basement | Basements]) :-
+    replace_module_basement(Module, Replacement, Basements0, Basements).
+
+append_module_origins(Module, Added,
+                      [module_origins(Module, Existing) | ModuleOrigins],
+                      [module_origins(Module, Combined) | ModuleOrigins]) :-
+    !,
+    append(Existing, Added, Combined).
+append_module_origins(Module, Added,
+                      [Origins | ModuleOrigins0],
+                      [Origins | ModuleOrigins]) :-
+    append_module_origins(Module, Added, ModuleOrigins0, ModuleOrigins).
