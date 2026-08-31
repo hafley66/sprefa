@@ -109,7 +109,7 @@ fn parent_pid() -> u32 {
 /// One `ps -eo pid=,ppid=,comm=` snapshot, then walk `ppid` links from
 /// `start_ppid` up to `ANCESTRY_MAX_DEPTH` hops or pid 1/0 (init/none).
 /// `cfg(unix)`; empty string on any failure (no `ps`, non-unix, parse error) —
-/// this is diagnostic best-effort, never load-bearing for anything else.
+/// this is diagnostic best-effort, never critical for anything else.
 #[cfg(unix)]
 fn ancestry_line(start_ppid: u32) -> String {
     let Ok(out) = std::process::Command::new("ps")
