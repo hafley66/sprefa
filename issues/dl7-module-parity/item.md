@@ -2,7 +2,7 @@
 created: 2026-08-31
 updated: 2026-08-31
 type: task
-status: open
+status: done
 priority: high
 epic: dl7-module-system
 labels:
@@ -12,31 +12,47 @@ lane: dl7-module-system
 lane_seq: 0
 collision: [v7-reader, v7-compiler, v7-test]
 blocked_by: ['@dl7-type-algebra-oracle']
+commits:
+- hash: 8aa7aa9e1
+  summary: Compile DL7 filesystem modules through colon edges
+closed: 2026-08-31
+closed_by: codex
 ---
 
-# Port DL6 module semantics into DL7
+# Compile DL7 filesystem modules through colon edges
 
 ## Description
 
-## Description
-
-Port the reusable module ownership and import semantics from v6/prolog/use_resolve.pl and v6/prolog/0_dot_expand.pl into the DL7 prefix reader and checker. Preserve file-owned identities, aliases, mounted paths, dotted type references, and cycle diagnostics.
+Port the reusable file ownership and basement merge mechanics into V7, then
+represent module containment with the same node and edge model used by types.
 
 ## Acceptance Criteria
 
 - [x] V7 files compile as separate module-owned units.
-- [x] Imports preserve declaring-module type identity.
-- [ ] Alias and dotted reference fixtures reach the same owner.
-- [x] Import cycles and ambiguous unqualified names are diagnosed.
-- [x] Reused DL6 predicates are listed with source signatures and adaptations.
+- [x] Canonical source paths provide stable file-module identities.
+- [x] Prelude constructors remain available without copying user modules.
+- [x] Filesystem products and containment edges join the merged basement.
+- [x] `:/4` works in rule heads and bodies.
+- [x] Bare argument-2 labels in `:/4` lower as constants.
+- [x] A sibling file's type identity is reached through an ordinary colon goal.
+- [x] Host path-list and import-row resolution code is removed.
 
 ## Tests Run
 
-- [x] Consolidated V7 module fixture passes.
-- [x] Existing V7 SWI and Tree-sitter gates pass.
+- [x] Nested filesystem graph fixture passes.
+- [x] Cross-module compiler fixture passes.
+- [x] V7 SWI suite passes 32/32.
+- [x] V7 Tree-sitter corpus passes 1/1.
 
 ## Agent Runs
 
-### 2026-08-31T06:20:41Z · @codex
+### 2026-08-31 · @codex
 
-Implementation receipts on feature/dl7-module-system: 9f192e498 plan, b844f6da2 separate-unit loader, 7c82520cb stable source owners, a429ef1a4 independent merge, cd0071d90 alias identity, 86b81c064 separate prelude compilation, 4029fc865 path proofs/collisions/cycles. Gates: SWI 34/34; Tree-sitter 1/1. Prefix import/export spelling and source-position wiring remain open.
+Implemented in commits `349de4645`, `4148743e0`, and `8c2f3d65e`, merged by
+PR 618 as `8aa7aa9e1`.
+
+## Resolution
+
+### 2026-08-31T22:19:26Z · @codex
+
+Filesystem products and colon traversal merged in PR 618. Deferred edge syntax remains outside this task.
