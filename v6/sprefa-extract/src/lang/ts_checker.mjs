@@ -80,8 +80,13 @@ function byteMapper(text) {
 
 /// The project's own options, every emit-shaped constraint cleared: `composite`
 /// and `isolatedDeclarations` reject a root set the tsconfig did not choose.
-function compilerOptions(ts, root) {
-    const found = ts.findConfigFile(root, ts.sys.fileExists, "tsconfig.json");
+function compilerOptions(ts, root, near) {
+    // Searched from a SUPPLIED FILE first: a repo whose projects each carry
+    // their own tsconfig has none at its root, and default options resolve no
+    // ESM import in it.
+    const found =
+        (near && ts.findConfigFile(near, ts.sys.fileExists, "tsconfig.json")) ||
+        ts.findConfigFile(root, ts.sys.fileExists, "tsconfig.json");
     let options = {};
     if (found) {
         const read = ts.readConfigFile(found, ts.sys.readFile);
@@ -218,7 +223,8 @@ function main() {
     process.stderr.write(`ts checker: typescript from ${from}\n`);
 
     const loadStarted = Date.now();
-    const options = compilerOptions(ts, root);
+    const near = request.files.length > 0 ? path.dirname(request.files[0][1]) : undefined;
+    const options = compilerOptions(ts, root, near);
     const supplied = new Map();
     const rootNames = [];
     for (const [name, absolute] of request.files) {
