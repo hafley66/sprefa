@@ -3697,7 +3697,7 @@ fn go_method_in_dir(
 }
 
 /// Embedded-field hops the promotion walk takes before it stops.
-const GO_EMBED_DEPTH: usize = 4;
+const GO_EMBED_DEPTH: usize = 9;
 
 /// `callee` among the methods `(dir, type_name)` promotes through its embedded
 /// fields. Go's rule: shallowest wins, a tie at one depth binds nothing.

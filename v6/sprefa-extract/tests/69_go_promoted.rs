@@ -15,7 +15,7 @@
 //!   depth_four_embed         FAILED  one Deep5 edge: []
 //!   inferred_receiver_embed  FAILED  one InnerPing edge: []
 //!   own_method_shadows_promoted  ok
-//!   depth_five_declines          ok
+//!   depth_five_embed             ok (was depth_five_declines: the cap was 4)
 //!   ambiguous_embeds_decline     ok
 
 use std::process::Command;
@@ -123,12 +123,14 @@ fn depth_four_embed() {
     assert!(hit[0].2.ends_with("lib.go"), "bound in lib.go: {hit:?}");
 }
 
-/// `D0` is one hop past the cap and binds nothing.
+/// The cap is 9 (the ast.Node hierarchy reaches 9 embeds, #577), so `D0` at
+/// five embeds binds, and the corpus wall stays under the 10 s law.
 #[test]
-fn depth_five_declines() {
+fn depth_five_embed() {
     let edges = resolved_edges();
     let hit = callables(&edges, "callDepthFive", "Deep5");
-    assert!(hit.is_empty(), "past the cap, no edge: {hit:?}");
+    assert_eq!(hit.len(), 1, "one Deep5 edge: {hit:?}");
+    assert!(hit[0].2.ends_with("lib.go"), "bound in lib.go: {hit:?}");
 }
 
 /// `Ambiguous` embeds two types that each declare `Tied` at depth one. Go
