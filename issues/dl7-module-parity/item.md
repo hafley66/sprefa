@@ -4,7 +4,7 @@ updated: 2026-08-31
 type: task
 status: open
 priority: high
-epic: dl7-type-algebra
+epic: dl7-module-system
 labels:
 - size:med
 size: M
