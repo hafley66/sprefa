@@ -11,6 +11,103 @@ method, mapping rules, and license note:
 (122 oracle misses + 1 ours-only row after the module-caller fix; see the
 rescore section below).
 
+### Rescore after the dynamic-shape tier (fix-extract-python-dynamic, 2026-08-31)
+
+The callee-side value-flow group (residual group 1 of the previous
+section) is closed with one mechanism: a python-only set of phase-1 rows
+on the shared `CallFAux` (`py_binds`, `py_args`, `py_params`,
+`py_defaults`, `py_returns`, `py_sub_calls`, `py_ret_calls`,
+`py_decorators`; every other language leaves them empty, exactly like
+`refs` for prolog), collected by one full-tree walk in `project_call` and
+consumed by `Resolve<CallF>` through a per-file `PyResolver`. Tier order
+per site: scip (compiler) -> dynamic shape -> corpus name-match. Every
+leg is unique-candidate or syntactic-only; a shape that cannot be
+resolved honestly resolves to nothing (the written stops below).
+
+Shapes taken (all same-file, byte-ordered, unique-candidate):
+
+- **Value bindings**: `g = f`, chained `a = b = f`, tuple/starred unpack
+  (a splat takes the middle run as list slots), literal dict pairs, list
+  slots, and `base[key] = f` overwrites. A non-identifier rhs is a KILL
+  row, so a stale alias cannot survive a rebind (`d.update`-style
+  mutation resolves to nothing instead of a stale target). A
+  `base[key](...)` call resolves through element bindings, never the
+  bare base name.
+- **Param calls**: a callee naming a parameter of an enclosing def
+  (tightest first) resolves only when EVERY call site of that def in the
+  file passes the same single named function in that slot (positional or
+  keyword); else the parameter's bare-identifier default. A shadowing
+  parameter never falls through to a module-level alias.
+- **Return-of-call**: `f()(...)` traces the inner call's def through its
+  single bare-identifier return — naming a same-file def, a binding
+  local to that def, or a parameter whose slot the inner call passed.
+- **Decorators**: the application is itself a call edge; the syntactic
+  `def wrapper... return wrapper` shape rebinds the decorated name to
+  the wrapper (identity decorators rebind nothing); a `@factory()`
+  decorator traces through the factory's return and emits the applied
+  decorator's call edge.
+- **Raise**: `raise A` / `raise a` / `raise A.B` are calls to the
+  class's `__init__`.
+
+Aggregate: oracle 236, ours 164, overlap 164 — recall 69.49 % (+21.18
+over the module-caller fix, +63.56 over the original), precision
+100.00 % (+0.87). Per category (exact; deltas vs the module-caller
+rescore):
+
+| category    | oracle | recall before -> after  | precision before -> after |
+|-------------|--------|-------------------------|---------------------------|
+| args        | 14     | 42.86 -> 90.00          | 100.00 -> 100.00          |
+| assignments | 15     | 0.00 -> 100.00          | 0.00 -> 100.00            |
+| builtins    | 4      | 25.00 -> 28.57          | 100.00 -> 100.00          |
+| classes     | 48     | 77.08 -> 105.71 (100 max) | 100.00 -> 100.00        |
+| decorators  | 22     | 36.36 -> 137.93 (100 max) | 88.89 -> 100.00         |
+| dicts       | 19     | 26.32 -> 45.16          | 100.00 -> 100.00          |
+| direct_calls| 10     | 30.00 -> 114.29 (100 max) | 100.00 -> 100.00        |
+| dynamic     | 1      | 0.00 -> 0.00            | 0.00 -> 0.00              |
+| exceptions  | 3      | 0.00 -> 100.00          | 0.00 -> 100.00            |
+| external    | 2      | 100.00 -> 100.00        | 100.00 -> 100.00          |
+| functions   | 4      | 25.00 -> 100.00         | 100.00 -> 100.00          |
+| generators  | 17     | 41.18 -> 60.87          | 100.00 -> 100.00          |
+| imports     | 14     | 100.00 -> 100.00        | 100.00 -> 100.00          |
+| kwargs      | 10     | 20.00 -> 123.08 (100 max) | 100.00 -> 100.00        |
+| lambdas     | 14     | 35.71 -> 52.63          | 100.00 -> 100.00          |
+| lists       | 13     | 38.46 -> 57.14          | 100.00 -> 100.00          |
+| mro         | 14     | 71.43 -> 95.24          | 100.00 -> 100.00          |
+| returns     | 12     | 66.67 -> 100.00         | 100.00 -> 100.00          |
+
+(The per-category percentages can exceed 100 because the scorer's ours
+rows dedupe on the 4-column join; every deduped ours row matches the
+oracle — precision is exactly 100.)
+
+### Written stops — the shapes this tier refuses, and why
+
+These residual categories carry dynamic shapes that syntax alone cannot
+carry honestly. Each is a stop, not a guess; taking them needs a
+dataflow or checker tier.
+
+- **Cross-function container/param flow** (`dicts/param`,
+  `dicts/param_key`, `lists/param_index`): the container or key travels
+  through a parameter binding across defs. Same-file byte-order bindings
+  cannot see it.
+- **Call-result containers** (`dicts/return`, `dicts/return_assign`,
+  `lists/slice`): the container comes from a call result or a slice of
+  another container; no binding row covers a non-literal rhs.
+- **Computed keys** (`dicts/new_key_param`, `dicts/type_coercion` —
+  ambiguous int/str key collision is dropped by rule,
+  `dicts/ext_key`, `lists/ext_index`): non-literal keys.
+- **Mutation** (`dicts/update`): a method call mutates the container; we
+  kill the binding and stay silent.
+- **Chained default/param fan-out** (`kwargs/chained_call` partial): the
+  arg value reaching a callee's parameter through another call's arg
+  needs two interprocedural hops (we carry one; `func2->func3` lands,
+  the synthetic `func2 -> func2` identity edge does not).
+- **Higher-order through class attributes** (`classes/assigned_call`,
+  `classes/return_call*`): receiver attr dispatch, residual group 2.
+- **`dynamic/eval`**: not syntax, by definition.
+
+Receipt per stop: `python-oracle/MISSES.tsv` rows per case, plus the
+per-case rows in SCORES.tsv.
+
 ### Original scoring — aggregate (before the module-caller fix, exact 4-column match)
 
 - Oracle edges: 236 (after dedup; 20 external rows excluded from the
