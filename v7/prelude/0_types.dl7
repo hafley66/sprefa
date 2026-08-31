@@ -59,6 +59,38 @@
       (: options type)
       (: return type)))
 
+(: Key
+   (* (: name text)
+      (: options type)
+      (: return type)))
+
+(: keyed_edge
+   (* (: source type)
+      (: name text)
+      (: options type)
+      (: target any)
+      (: source_index int)))
+
+(: key_predecessor
+   (* (: source type)
+      (: source_index int)
+      (: prior_index int)))
+
+(: key_has_predecessor
+   (* (: source type)
+      (: source_index int)))
+
+(: key_rank
+   (* (: source type)
+      (: source_index int)
+      (: result_index int)))
+
+(: composite_key
+   (* (: source type)
+      (: position int)
+      (: name text)
+      (: options type)))
+
 (: history_v1_edge
    (* (: source type)
       (: options type)
@@ -121,6 +153,18 @@
     (nil ?Empty)
     (cons ?Source ?Empty ?Arguments))
 
+(<- (Key ?Name ?Options ?Result)
+    (nil ?Empty)
+    (cons ?Options ?Empty ?TailArguments)
+    (cons ?Name ?TailArguments ?Arguments)
+    (intern Key ?Arguments ?Result))
+
+(<- (Key ?Name ?Options ?Result)
+    (intern_snapshot Key ?Arguments ?Result)
+    (cons ?Name ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Options ?Empty ?TailArguments))
+
 (<- (Pick ?Source ?Names ?Result)
     (nil ?Empty)
     (cons ?Names ?Empty ?TailArguments)
@@ -181,6 +225,32 @@
 (<- (before ?Owner ?Earlier ?Later)
     (predecessor ?Owner ?Earlier ?Middle)
     (before ?Owner ?Middle ?Later))
+
+(<- (keyed_edge ?Source ?Name ?Options ?Target ?SourceIndex)
+    (edge_snapshot ?Source ?Label ?Target ?SourceIndex)
+    (intern_snapshot Key ?Arguments ?Label)
+    (cons ?Name ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Options ?Empty ?TailArguments))
+
+(<- (key_predecessor ?Source ?SourceIndex ?PriorIndex)
+    (keyed_edge ?Source ?Name ?Options ?Target ?SourceIndex)
+    (keyed_edge ?Source ?PriorName ?PriorOptions ?PriorTarget ?PriorIndex)
+    (before ?Source ?PriorIndex ?SourceIndex))
+
+(<- (key_has_predecessor ?Source ?SourceIndex)
+    (key_predecessor ?Source ?SourceIndex ?PriorIndex))
+
+(<- (key_rank ?Source ?SourceIndex (count ?PriorIndex))
+    (key_predecessor ?Source ?SourceIndex ?PriorIndex))
+
+(<- (key_rank ?Source ?SourceIndex 0)
+    (keyed_edge ?Source ?Name ?Options ?Target ?SourceIndex)
+    (not (key_has_predecessor ?Source ?SourceIndex)))
+
+(<- (composite_key ?Source ?ResultIndex ?Name ?Options)
+    (keyed_edge ?Source ?Name ?Options ?Target ?SourceIndex)
+    (key_rank ?Source ?SourceIndex ?ResultIndex))
 
 (<- (pick_edge ?Source ?Names ?Name ?Target ?SourceIndex)
     (Pick ?Source ?Names ?Result)
@@ -256,6 +326,9 @@
 
 (<- (product ?Result)
     (Exclude ?Source ?Names ?Result))
+
+(<- (node ?Result)
+    (Key ?Name ?Options ?Result))
 
 ; Each source edge keeps its label and ordinal while Option maps the target.
 (<- (: ?Result ?Name ?OptionalTarget ?Index)

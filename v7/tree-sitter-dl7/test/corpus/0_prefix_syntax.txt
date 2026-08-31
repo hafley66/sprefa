@@ -3,6 +3,7 @@ Prefix syntax
 ==================
 
 (: Pair (* (: left int)))
+(: Ledger (* (: (Key "account" PrimaryKeyOptions) int)))
 (<- (copy ?Value ?_) (source ?Value))
 ((Pair User) Order)
 "hello\nworld"
@@ -23,6 +24,18 @@ Prefix syntax
       (parenthesized_expression
         (bare_token)
         (bare_token)
+        (bare_token))))
+  (parenthesized_expression
+    (bare_token)
+    (bare_token)
+    (parenthesized_expression
+      (bare_token)
+      (parenthesized_expression
+        (bare_token)
+        (parenthesized_expression
+          (bare_token)
+          (string_literal)
+          (bare_token))
         (bare_token))))
   (parenthesized_expression
     (bare_token)

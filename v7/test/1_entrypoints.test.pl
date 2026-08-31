@@ -465,6 +465,7 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
     once(type_operator_snapshot(Rows1, Snapshot)),
     runtime_snapshot(Runtime1, RuntimeSnapshot),
     runtime_key_snapshot(Runtime1, KeySnapshot),
+    compound_key_snapshot(Rows1, CompoundKeySnapshot),
     history_v1_snapshot(Rows1, Runtime1, HistorySnapshot),
     evaluator_snapshot(EvaluatorSnapshot),
     equality(Rows1, Rows2, RowsEqual),
@@ -472,18 +473,19 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
     length(Rows1, CompilerRowCount),
     Observed = partial_result(Diagnostics1, Diagnostics2,
                               CompilerRowCount, Snapshot,
-                              RuntimeSnapshot, KeySnapshot, HistorySnapshot,
+                              RuntimeSnapshot, KeySnapshot,
+                              CompoundKeySnapshot, HistorySnapshot,
                               EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 829,
+                    [], [], 1178,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(86, 134, 41, 94, 52, 88, 41),
+                    runtime(counts(102, 164, 49, 117, 63, 106, 49),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
@@ -495,6 +497,14 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                          def([[0]]), head([[0]]),
                          head_arg([[0, 1]]), body([[0, 1]]),
                          body_arg([[0, 1, 2]])),
+                    compound_key(
+                        edges([key("account", int, 0),
+                               field(payload, text, 1),
+                               key("revision", int, 2)]),
+                        rows([key(0, "account"),
+                              key(1, "revision")]),
+                        options_preserved(true),
+                        labels_are_nodes(true)),
                     history_v1(
                         specialization(copy,
                                        [edge(id, int, 0),
@@ -1140,6 +1150,50 @@ runtime_key_snapshot(
     memberchk(relation(ref(kernel(head_arg)), 4, HeadArgKeys), Relations),
     memberchk(relation(ref(kernel(body)), 4, BodyKeys), Relations),
     memberchk(relation(ref(kernel(body_arg)), 5, BodyArgKeys), Relations).
+
+compound_key_snapshot(
+    Rows,
+    compound_key(
+        edges([key("account", int, 0),
+               field(payload, text, 1),
+               key("revision", int, 2)]),
+        rows([key(0, "account"), key(1, "revision")]),
+        options_preserved(OptionsPreserved),
+        labels_are_nodes(LabelsAreNodes))) :-
+    named_owner(Rows, 'Ledger', Ledger),
+    named_owner(Rows, 'PrimaryKeyOptions', Options),
+    named_owner(Rows, 'Key', KeyConstructor),
+    named_owner(Rows, composite_key, CompositeKey),
+    AccountLabel = application(KeyConstructor, ["account", Options]),
+    RevisionLabel = application(KeyConstructor, ["revision", Options]),
+    memberchk(call(ref(kernel(':')),
+                   [ ref(Ledger), ref(AccountLabel), ref(primitive(int)),
+                     const(0)
+                   ]), Rows),
+    memberchk(call(ref(kernel(':')),
+                   [ ref(Ledger), const(payload), ref(primitive(text)),
+                     const(1)
+                   ]), Rows),
+    memberchk(call(ref(kernel(':')),
+                   [ ref(Ledger), ref(RevisionLabel), ref(primitive(int)),
+                     const(2)
+                   ]), Rows),
+    memberchk(call(ref(CompositeKey),
+                   [ref(Ledger), const(0), const("account"), ref(Options)]),
+              Rows),
+    memberchk(call(ref(CompositeKey),
+                   [ref(Ledger), const(1), const("revision"), ref(Options)]),
+              Rows),
+    (   AccountLabel = application(KeyConstructor, ["account", Options]),
+        RevisionLabel = application(KeyConstructor, ["revision", Options])
+    ->  OptionsPreserved = true
+    ;   OptionsPreserved = false
+    ),
+    (   memberchk(call(ref(kernel(node)), [ref(AccountLabel)]), Rows),
+        memberchk(call(ref(kernel(node)), [ref(RevisionLabel)]), Rows)
+    ->  LabelsAreNodes = true
+    ;   LabelsAreNodes = false
+    ).
 
 history_v1_snapshot(
     Rows,

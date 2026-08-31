@@ -261,7 +261,24 @@ derived_bind_diagnostics(Rules, Rows, Diagnostics) :-
                       [ref(Owner), const(Name), _, const(Index)]),
                  Rows)
         ),
-        Diagnostics0),
+        BindDiagnostics),
+    findall(
+        diagnostic(compile, NodeId,
+                   missing_derived_edge_label(Owner, Index)),
+        ( member(
+              rule(call(ref(kernel(':')),
+                        [ ref(Owner), var(derived_label(NodeId)), _,
+                          const(Index)
+                        ]),
+                   _),
+              Rules),
+          \+ memberchk(
+                 call(ref(kernel(':')),
+                      [ref(Owner), _, _, const(Index)]),
+                 Rows)
+        ),
+        LabelDiagnostics),
+    append(BindDiagnostics, LabelDiagnostics, Diagnostics0),
     sort(Diagnostics0, Diagnostics).
 
 compiler_round_seeds(BaseSeeds, FrozenEdges, FrozenRequests, Seeds) :-
@@ -346,5 +363,9 @@ type_graph_fact(call(ref(kernel(product)), [ref(Identity)]), product(Identity)).
 type_graph_fact(call(ref(kernel(sum)), [ref(Identity)]), sum(Identity)).
 type_graph_fact(
     call(ref(kernel(':')),
-         [ref(Owner), const(Name), Target, const(Index)]),
-    ':'(Owner, Name, Target, Index)).
+         [ref(Owner), Label, Target, const(Index)]),
+    ':'(Owner, SemanticLabel, Target, Index)) :-
+    semantic_label(Label, SemanticLabel).
+
+semantic_label(const(Value), Value).
+semantic_label(ref(Identity), Identity).

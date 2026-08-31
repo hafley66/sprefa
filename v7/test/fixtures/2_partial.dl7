@@ -16,6 +16,14 @@
 (: UserPatch (Partial User))
 (: MaybePatch (Option (Partial User)))
 
+(: PrimaryKeyOptions
+   (* (: unique "yes")))
+
+(: Ledger
+   (* (: (Key "account" PrimaryKeyOptions) int)
+      (: payload text)
+      (: (Key "revision" PrimaryKeyOptions) int)))
+
 (: selected_request
    (* (: result type)))
 

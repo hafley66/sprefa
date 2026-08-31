@@ -254,6 +254,10 @@ resolve_edges([pending_edge(_, _, deferred_expression(_), _) | Rest],
               All, Nodes, Origins, Edges, Diags) :-
     !,
     resolve_edges(Rest, All, Nodes, Origins, Edges, Diags).
+resolve_edges([pending_edge(_, _, deferred_compound_edge(_, _), _) | Rest],
+              All, Nodes, Origins, Edges, Diags) :-
+    !,
+    resolve_edges(Rest, All, Nodes, Origins, Edges, Diags).
 resolve_edges([pending_edge(Owner, Name, Target, Index) | Rest], All, Nodes,
               Origins, [':'(Owner, Name, Resolved, Index) | Edges], Diags) :-
     edge_origin(Origins, Owner, Name, Index, NodeId),
@@ -358,11 +362,11 @@ kernel_graph(
       ':'(kernel(product), id, ref(primitive(type)), 0),
       ':'(kernel(sum), id, ref(primitive(type)), 0),
       ':'(kernel(':'), owner, ref(primitive(type)), 0),
-      ':'(kernel(':'), name, ref(primitive(text)), 1),
+      ':'(kernel(':'), name, ref(primitive(any)), 1),
       ':'(kernel(':'), target, ref(primitive(any)), 2),
       ':'(kernel(':'), index, ref(primitive(int)), 3),
       ':'(kernel(edge_snapshot), owner, ref(primitive(type)), 0),
-      ':'(kernel(edge_snapshot), name, ref(primitive(text)), 1),
+      ':'(kernel(edge_snapshot), name, ref(primitive(any)), 1),
       ':'(kernel(edge_snapshot), target, ref(primitive(any)), 2),
       ':'(kernel(edge_snapshot), index, ref(primitive(int)), 3),
       ':'(kernel(nil), return, ref(primitive(any)), 0),

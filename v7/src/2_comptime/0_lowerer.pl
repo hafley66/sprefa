@@ -61,6 +61,37 @@ finish_lowered_executables(
 
 lower_derived_bind_rules([], _, _, ok([], [])).
 lower_derived_bind_rules(
+    [reservation(Owner, _,
+                 derived_compound_edge(
+                     LabelNode, TargetTerm, BindNodeId, Index),
+                 compound_edge) | Reservations],
+    Environment, RuleIndex, Result) :-
+    !,
+    lower_expression(LabelNode, Owner, Environment,
+                     LabelValue, Goals, GoalNodes, Diagnostics),
+    (   Diagnostics == [],
+        LabelValue = partial_application(_, _)
+    ->  Result = error(diagnostic(
+                           lower, BindNodeId,
+                           partial_edge_label_requires_more_arguments))
+    ;   Diagnostics == []
+    ->  DerivedLabel = var(derived_label(BindNodeId)),
+        replace_expression_value(
+            LabelValue, DerivedLabel, Goals, LabelGoals),
+        edge_rule_target(TargetTerm, RuleTarget),
+        Head = call(name(Owner, ':'),
+                    [ref(Owner), DerivedLabel, RuleTarget, const(Index)]),
+        Rule = rule(Head, LabelGoals),
+        indexed_goal_origins(GoalNodes, RuleIndex, 0, GoalOrigins),
+        RuleOrigins = [origin(rule(RuleIndex), BindNodeId) | GoalOrigins],
+        NextRuleIndex is RuleIndex + 1,
+        lower_derived_bind_rules(Reservations, Environment, NextRuleIndex,
+                                 RestResult),
+        prepend_derived_rule(RestResult, Rule, RuleOrigins, Result)
+    ;   Diagnostics = [Diagnostic | _],
+        Result = error(Diagnostic)
+    ).
+lower_derived_bind_rules(
     [reservation(Owner, Name,
                  deferred_expression(TargetNode, BindNodeId, Index),
                  expression) | Reservations],
@@ -92,6 +123,9 @@ lower_derived_bind_rules(
 lower_derived_bind_rules([_ | Reservations], Environment, RuleIndex,
                          Result) :-
     lower_derived_bind_rules(Reservations, Environment, RuleIndex, Result).
+
+edge_rule_target(target(Target), ref(Target)).
+edge_rule_target(Target, Target).
 
 prepend_derived_rule(error(Diagnostic), _, _, error(Diagnostic)).
 prepend_derived_rule(ok(Rules, Origins0), Rule, RuleOrigins,
@@ -264,7 +298,7 @@ positions_except(Index, Arity, Except, Positions) :-
 
 lower_bind_list([], _, _, _, ok([], [], [], [], [])).
 lower_bind_list([Bind | Binds], Owner, UnitIdentity, Index, Result) :-
-    lower_bind(Bind, Owner, UnitIdentity, Index, BindResult),
+    lower_edge_bind(Bind, Owner, UnitIdentity, Index, BindResult),
     NextIndex is Index + 1,
     continue_bind_list(BindResult, Binds, Owner, UnitIdentity, NextIndex,
                        Result).
@@ -282,6 +316,42 @@ continue_bind_list(ok(Nodes0, Edges0, Relations0, Origins0, Reservations0),
         Result = ok(Nodes, Edges, Relations, Origins, Reservations)
     ;   Result = RestResult
     ).
+
+lower_edge_bind(BindNode, Owner, UnitIdentity, Index, Result) :-
+    (   edge_bind_form(BindNode, BindNodeId, LabelNode, TargetNode)
+    ->  (   LabelNode = node(_, atom(_))
+        ->  lower_bind(BindNode, Owner, UnitIdentity, Index, Result)
+        ;   LabelNode = node(_, form(_))
+        ->  lower_target(TargetNode, Owner, UnitIdentity, TargetResult),
+            finish_compound_edge_bind(
+                TargetResult, BindNodeId, Owner, LabelNode, Index, Result)
+        ;   node_id(LabelNode, LabelNodeId),
+            Result = error(diagnostic(
+                               lower, LabelNodeId,
+                               edge_label_must_be_atom_or_expression))
+        )
+    ;   node_id(BindNode, NodeId),
+        Result = error(diagnostic(lower, NodeId, expected_bind))
+    ).
+
+finish_compound_edge_bind(error(Diagnostic), _, _, _, _,
+                          error(Diagnostic)).
+finish_compound_edge_bind(
+    ok(TargetTerm, _, Nodes, NestedEdges, Relations,
+       Origins0, Reservations0),
+    BindNodeId, Owner, LabelNode, Index,
+    ok(Nodes, [Edge | NestedEdges], Relations, Origins,
+       [Reservation | Reservations0])) :-
+    Marker = compound_label(BindNodeId),
+    Edge = pending_edge(
+               Owner, Marker,
+               deferred_compound_edge(LabelNode, TargetTerm), Index),
+    Reservation = reservation(
+                      Owner, Marker,
+                      derived_compound_edge(
+                          LabelNode, TargetTerm, BindNodeId, Index),
+                      compound_edge),
+    Origins = [origin(edge(Owner, Marker, Index), BindNodeId) | Origins0].
 
 %% Pass 3: lower facts and rules after all declarations are reserved.
 lower_executables(Forms, Owner, Environment, RuleIndex, Result) :-
@@ -799,6 +869,10 @@ call_contains_var(call(_, Arguments)) :-
 bind_form(node(NodeId,
                form([node(_, atom(':')), node(_, atom(Name)), Target])),
           NodeId, Name, Target).
+
+edge_bind_form(node(NodeId,
+                    form([node(_, atom(':')), Label, Target])),
+               NodeId, Label, Target).
 
 rule_form(node(NodeId,
                form([node(_, atom('<-')), Head | Body])),
