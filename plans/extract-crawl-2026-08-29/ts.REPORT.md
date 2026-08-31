@@ -644,12 +644,24 @@ Deltas, checker minus syntax:
 | `ts.codeql2.call.tsv` | +5.25 | -0.78 | +578 | 11.03 -> 11.11 |
 
 **Flat precision against codeql fell 0.78 points and that is arithmetic, not a
-regression in agreement.** The tier adds 4733 call rows; codeql matches
-2791 of them, contradicts 578, and is silent about 1364. Real
-disagreement per emitted row is flat (11.03% -> 11.11%), and against the
-ts5 oracle it FALLS (6.82% -> 5.61%). This is the split arc C's
-3-bucket instrument exists to show: flat precision charges every row the
-oracle never spoke about, and 1364 of the new rows are exactly that.
+regression in agreement.** The row sets are not nested: the tier ADDS 5,458
+rows and REMOVES 725, for a net +4,733.
+
+| | added (5,458) | removed (725) |
+|---|---|---|
+| matched by `ts.codeql2` | 2,791 | **0** |
+| contradicted by `ts.codeql2` | 1,167 | 589 |
+| unjudged by `ts.codeql2` | 1,500 | 136 |
+| matched by `ts5.oracle` | 4,047 | 1 |
+| contradicted by `ts5.oracle` | 33 | 603 |
+| unjudged by `ts5.oracle` | 1,378 | 121 |
+
+**The tier removes 589 codeql-contradicted rows and ZERO codeql-matched ones**:
+nothing the oracle confirms is displaced. Real disagreement per emitted row is
+flat against codeql (11.03% -> 11.11%) and FALLS against the ts5 oracle
+(6.82% -> 5.61%). Against `ts5.oracle` the added rows are 74% matched and 0.6%
+contradicted. Flat precision charges every row the oracle never spoke about,
+and 1,500 of the added rows are exactly that.
 
 The user's want was "non syntax tier working at codeql level" on the worst
 precision row. Recall reaches it and passes it (+5.25 to 97.33%); flat
@@ -685,6 +697,29 @@ takes 728 MB more than the syntax leg to hold 18 MB of driver output plus
 the joined index. The seam reads the driver's stdout with one
 `read_to_string`; streaming it per line is the obvious first cut and is not
 done here.
+
+### 10.6 The one number that moved the wrong way: interface members
+
+1,167 added rows are codeql-contradicted, and **675 of them (57.8%) name a
+`types.ts`**: `src/services/types.ts` (353) and `src/compiler/types.ts` (321).
+
+| caller | our destination | codeql's destinations for that caller |
+|---|---|---|
+| `services/jsDoc.ts::getCommentDisplayParts` | `services/types.ts::getText` | `core.ts::forEach`, `jsDoc.ts::getDisplayPartsFromComment`, ... |
+| `compiler/program.ts::getGlobalDiagnostics` | `compiler/types.ts::getGlobalDiagnostics` | `program.ts::getTypeChecker`, `utilitiesPublic.ts::sortAndDeduplicateDiagnostics` |
+| `factory/nodeFactory.ts::createNewExpression` | `compiler/types.ts::parenthesizeExpressionOfNew` | `nodeFactory.ts::createBaseDeclaration`, `propagateChildFlags`, ... |
+
+One cause, not a driver defect: `getResolvedSignature` on a call through an
+INTERFACE-typed receiver returns the interface's method SIGNATURE, which in
+this corpus is declared in `types.ts`. CodeQL binds the IMPLEMENTATION. Both
+answers are defensible and the two models differ by construction, the way the
+ORACLES entry already records for the scip comparison.
+
+Closing the gap means fanning a call through an interface member out to its
+implementers, the shape the go arm spells `implements`. **That changes the
+call-graph model, so it is not decided here.** It is the single largest lever
+left on this row: 675 of 8,166 contradicted rows, and it is what stands between
+this tier and codeql-level flat precision.
 
 ### 10.5 What stays untested and why
 
