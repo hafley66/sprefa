@@ -3,88 +3,97 @@
 ## Current map
 
 ```text
-source files
-    │ one dl7_unit per file
-    ▼
-stable module owners
-    │ lower independently
-    ├───────────────┐
-    ▼               ▼
-prelude basement    source basement
-    │ callable rows │ local rows only
-    └──────┬────────┘
-           │ ordinary alias edges
-           ▼
-      merged basement
-           │
-           ├── path traversal + proof
-           ├── visible-name checks
-           ├── module-cycle checks
-           ▼
-      existing checker
-           ▼
-      comptime fixpoint
-           ▼
-      runtime program
+project root + source paths
+          |
+          v
+dl7_project(Root, Units)
+          |
+          +--> each unit lowers under module(file(CanonicalPath))
+          |
+          +--> filesystem directories lower to product nodes
+          |
+          +--> directory/file containment lowers to :/4 edges
+          v
+merged basement
+          |
+          v
+existing checker -> comptime fixpoint -> runtime program
 ```
 
-## Milestones
+Source traversal uses the same `:/4` relation as every other edge:
 
-| # | State | Receipt |
-|---:|---|---|
-| 1 | done | `b844f6da2` separate-unit loader |
-| 2 | done | `7c82520cb` source-stable module owners |
-| 3 | done | `a429ef1a4` independent lowering wrappers |
-| 4 | done | `a429ef1a4` owner-preserving basement merge |
-| 5 | done | `86b81c064` synthetic prelude module |
-| 6 | done | `4029fc865` segment traversal with exact proofs |
-| 7 | done | `4029fc865` local and imported visibility diagnostics |
-| 8 | done | `4029fc865` host-supplied module cycle checking |
-| 9 | done | `4029fc865` `Option.some.value` sum/product fixture |
-| 10 | open | prefix import, alias, and export syntax |
+```dl7
+(<- (found_user ?UserType)
+    (: accounts User ?UserType ?Index))
+```
 
-`cd0071d90` proves that an importer alias and exporter edge target the same
-type identity. `86b81c064` supplies exporter relation signatures and return
-edges while nested importer expressions lower, without copying those
-declarations into the importer basement.
+`accounts` is the filesystem-generated module node. `User` is the edge label.
+`?UserType` and `?Index` are ordinary logic variables. No dot, path resolver,
+import row, or export row participates.
+
+## Surface rulings
+
+| Surface | Meaning |
+|---|---|
+| `(: Name Target)` | lexical bind syntax that creates an owned edge |
+| `(: Owner Label Target Ordinal)` | canonical edge relation in rule heads and bodies |
+| `?Name` | logic variable |
+| bare label in argument 2 of `:/4` | constant edge label |
+| numbered filesystem segment | semantic label with author-order prefix removed |
+
+Dot projection, `::`, punning, keyword arguments, private/export declarations,
+and compound edge identities remain outside this wave.
 
 ## Implemented APIs
 
 ```prolog
-load_dl7_units(+Paths, -Units, -Diagnostics).
+load_dl7_project(+Root, +Paths, -Project, -Diagnostics).
 lower_units(+Units, -ModuleBasements, -ModuleOrigins, -Diagnostics).
-lower_units_with_exporter(+ExporterUnit, +ImporterUnits,
-                          -ModuleBasements, -ModuleOrigins, -Diagnostics).
-install_module_aliases(+Exporter, +Importers,
-                       +Basements0, +Origins0, -Basements, -Origins).
 merge_module_basements(+ModuleBasements, +ModuleOrigins,
                        -Program, -Origins).
-resolve_path(+StartOwner, +Segments, +Edges,
-             -Target, -Proof, -Diagnostics).
-check_visible_name_collisions(+LocalEdges, +Imports, -Diagnostics).
-check_module_cycles(+Imports, -Diagnostics).
-compile_units(+Units, -CompiledUnit, -Diagnostics).
+install_project_graph(+Project, +Basements0, +Origins0,
+                      -Basements, -Origins, -Diagnostics).
+compile_dl7_project(+Root, +Paths,
+                    -CompilerRows, -RuntimeProgram, -Diagnostics).
 ```
 
-## Open surface work
+The prelude still enters lowering as an ambient exporter. That mechanism only
+makes prelude type constructors available to source units. User modules do not
+receive implicit aliases to sibling modules.
 
-```text
-prefix syntax decision
-    -> reader rows for imports and exports
-    -> source positions on import rows
-    -> resolve_module_graph orchestration
-    -> dotted and aliased source fixtures
-    -> positioned ambiguity and cycle diagnostics
-```
+## Receipts
 
-No parser syntax was selected by the implementation branch.
+| State | Receipt |
+|---|---|
+| done | separate source units and stable source-owned module identities |
+| done | independent lowering and owner-preserving basement merge |
+| done | synthetic prelude module |
+| done | project root, directory, and file product nodes |
+| done | deterministic filesystem `:/4` edges with dense per-owner ordinals |
+| done | author-order prefix removal from semantic filesystem labels |
+| done | cross-module rule traversal through an ordinary colon goal |
+| removed | host `resolve_path/6` traversal |
+| removed | host import alias, visibility, and module-cycle rows |
+
+Commits for the current wave:
+
+- `349de4645` makes room for filesystem graphing.
+- `4148743e0` compiles filesystem modules through colon edges.
+
+## Deferred mechanics
+
+- A userland operation that allocates the next dense edge ordinal when a rule
+  generates a new owned edge.
+- Edge identity as a first-class value if edge metadata requires it.
+- A source shorthand for chained traversal, if one is later selected.
 
 ## Gates
 
 ```text
-SWI Prolog:  34 / 34
+SWI Prolog:  32 / 32
 Tree-sitter:  1 / 1
 ```
 
-CI coverage changed by adding four deterministic module-system SWI tests.
-Tree-sitter coverage is unchanged because milestone 10 remains open.
+This wave adds two deterministic module-system SWI tests and removes four
+tests whose only subject was the deleted host resolver. Tree-sitter coverage
+is unchanged because no source grammar was added.
