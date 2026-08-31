@@ -25,6 +25,7 @@ Every `extract` call ran under `timeout 10`. Raw tables sit beside this file.
 17. [The receiver leg](#17-the-receiver-leg-lane-fix-extract-rust-cross-crate)
 18. [The receiver leg, pass 2](#18-the-receiver-leg-pass-2-lane-fix-extract-rust-receivers-2)
 24. [The checker tier](#24-the-checker-tier-lane-fix-extract-rust-checker)
+26. [The type leg's 6,063 missing rows, classified](#26-the-type-legs-6063-missing-rows-classified-lane-fix-extract-rust-type-recall)
 
 ## 1. What was measured
 
@@ -1748,3 +1749,186 @@ different callee function within the right file pair (and oracle fan-out
 that no one-to-one match can absorb), with spelling contributing ~0. The
 go vta row is the one real spelling story (+5.23 pt), consistent with its
 known `Type.Method` shape mismatch; ts5 and rust codeql sit near +1.3 pt.
+
+## 26. The type leg's 6,063 missing rows, classified (lane `fix-extract-rust-type-recall`, 2026-08-31)
+
+Section 24.6 named candidate coverage as the ceiling and stopped there. This
+section says WHICH candidates, with a reproducible join.
+
+### 26.1 How the classification is made
+
+Two dumps, both `tests/79_rust_type_dump.rs`, both ignored by default because
+the corpus is a machine-local checkout:
+
+| test | env var | output |
+|---|---|---|
+| `dump_rust_type_rows` | `RUST_TYPE_DUMP` | our own 2,553 projected rows, the exact set the ratchet scores |
+| `dump_shape_census` | `SHAPE_CENSUS` | 16,126 rows `file owner dst root leaf qualified`, a syn walk that reproduces the oracle's `owner_of` |
+
+`root` is the top-level declaration position the reference sits under
+(`field`, `variant-payload`, `alias-rhs`, `impl-self-ty`, `impl-trait`,
+`bound`, `supertrait`, `assoc-type`); `leaf` its position inside that type
+expression (`head`, `generic-arg`, `tuple-elem`, `path-prefix`, ...);
+`qualified` whether the path carries more than one segment. The census port of
+`owner_of` (`plans/extract-bench-2026-08-29/ra_ide_probe/main.rs:130-147`) is
+what makes the join exact: the nearest enclosing Struct/Enum/Union/Trait/
+TypeAlias/Impl names the owner, a nearer Fn/Const/Static takes ownership away.
+
+An oracle row joins on `(src_file, owner, dst_name)`. The class is read off
+which `(root, leaf)` positions that key occupies and whether our candidate walk
+visits them: `type_refs` recurses a whole field type (`rust.rs:713-724`);
+`bound_candidate` and the impl `trait_` leg take the path HEAD only
+(`rust.rs:753-764`, `rust.rs:684-688`); every other root is unvisited.
+
+### 26.2 The table
+
+873 files of rust-analyzer `af4111f`, ratchet request (`--resolve --family
+call,type`, `ScipMode::Off`, checker tier on). Oracle 8,343 / ours 2,553 /
+overlap 2,280 / missing 6,063 / excess 273.
+
+| class | rows | % oracle | what it is |
+|---|---:|---:|---|
+| **X2** self-edge | 1,386 | 16.61% | `impl Foo` mints `Foo -> Foo`: owner and reference are the SAME token |
+| **B** enum variant payload | 1,270 | 15.22% | `edge_candidates` walks a variant's NAME and never its field types (`rust.rs:647-658`) |
+| **A2** alias destination | 680 | 8.15% | `type X = ..` mints no `TypeF` entity (`item_entity`, `rust.rs:261-339`), so a candidate naming it joins to no def |
+| **A1** alias / assoc-type owner | 621 | 7.44% | same defect on the owner leg: no entity, so no candidate is ever minted for the declaration |
+| **C** qualified path | 461 | 5.53% | `path_name` joins every segment (`rust.rs:513-524`), so `hir::Struct` is looked up as the literal string `hir::Struct` |
+| **D1** bound generic args | 362 | 4.34% | `bound_candidate` takes `path_name` only; `collect_path_args` is not run on a bound or an impl `trait_` path |
+| **D2** impl self-type args | 271 | 3.25% | the impl header's self type names the OWNER and is never walked for references |
+| **E1** impl self type declared elsewhere | 206 | 2.47% | `entity_span_named` returns None and `item_edge_candidates` returns, dropping the whole impl (`rust.rs:673-682`) |
+| **H** bare name, unresolved | 196 | 2.35% | candidate exists, name is bare, all four resolve legs decline |
+| **X3** owner is a path prefix | 193 | 2.31% | oracle `impl_self_name` takes the FIRST path segment: `impl T for ast::Union` owns under `ast` |
+| **X1** outside the corpus | 192 | 2.30% | `crates/*/tests/**`, `lib/**`, `xtask/**`: files the corpus rule never enumerates |
+| **E2** implements, impl in another file | 184 | 2.21% | the oracle keys `implements` on the ADT's DECLARING file, not the impl's |
+| **A3** alias RHS never walked | 26 | 0.31% | the alias/assoc-type body, once the owner exists |
+| **J** unexplained | 9 | 0.11% | residual |
+| **G** dst file disagrees | 6 | 0.07% | we mint the triple and point at the wrong file |
+
+300-row sample, seed 7, same order: 68 / 67 / 29 / 33 / 19 / 21 / 12 / 13 / 8 /
+12 / 7 / 9 / 1 / 1 / 0.
+
+### 26.3 The three classes excluded, with warrants
+
+`X1`, `X2` and `X3` total **1,771 rows, 21.23% of the oracle**. They are not
+chased and the reason is written here rather than left silent.
+
+**X1, 192 rows: the oracle ran over a wider file set.** The probe was handed
+900 files; the ratchet's corpus rule is `crates/*/src/**`, 873 files
+(`tests/bench/mod.rs:99-104`). Every X1 row's src_path is
+`crates/rust-analyzer/tests/slow-tests/*`, `lib/*` or `xtask/*`. The rust CALL
+family already scopes oracle rows to the corpus file list
+(`RustProjection::per_oracle`, `tests/bench/mod.rs:432-445`); the type family
+gets no projection, so these rows sit in the denominator unreachable by
+construction. Adding a type-family projection is the fix and it lives in
+`tests/bench/mod.rs`, outside this lane's ownership.
+
+**X2, 1,386 rows: `impl Foo` referencing `Foo`.** The oracle walks every
+`ast::Path`; an impl header contains a path spelled exactly like the type the
+block belongs to, and `owner_of` names that same type as the owner. The edge is
+`Foo -> Foo` in one file. It carries no information a type graph can use, and
+minting it is a one-line change that would buy 16.61 pt of recall for nothing.
+Section 13.3 of `ORACLES.REPORT.md` already called the self-edge set an
+artifact and quoted the self-edge-free number instead.
+
+**X3, 193 rows: the owner is not a type.** `impl_self_name`
+(`ra_ide_probe/main.rs:118-126`) takes the FIRST `PathSegment` of the self
+type, so `impl ToTokenTree for crate::tt::Subtree` reports the owner as
+`crate`, and `impl Removable for ast::Union` reports it as `ast`. The owners in
+this class are `ast`, `crate`, `std`, `fmt`, `char`, `span`, `intern`,
+`target`. No extractor can produce a row whose owner is a module qualifier.
+
+**Recall against the oracle minus those 1,771 rows: 34.69%** (2,280 / 6,572).
+The RATCHET row keeps scoring raw against the committed 8,343-row file, so the
+number that has to move is still the 27.33.
+
+### 26.4 The buildable classes, in the order this lane takes them
+
+| arc | classes | rows | ceiling if fully landed |
+|---|---|---:|---:|
+| 2 | A1 + A2 + A3, the alias and assoc-type entity | 1,327 | +15.90 pt |
+| 3 | B, enum variant payload | 1,270 | +15.22 pt |
+| 4 | D1 + D2, generic args in bounds and impl headers | 633 | +7.59 pt |
+| 5 | C, the qualified path's trailing segment | 461 | +5.53 pt |
+| 6 | E1 + E2, an impl whose owner is not an in-file entity | 390 | +4.67 pt |
+| — | H + G + J, residual | 211 | +2.53 pt |
+
+A2 is the one arc with no precision risk in either direction: those 680 rows
+are candidates that ALREADY exist and resolve to nothing, so minting the alias
+entity converts unresolved candidates into resolved rows and moves precision
+UP. Every other arc mints new candidates and pays a precision toll; the floor
+is 89.31 - 0.10 = 89.21, which allows roughly 156 wrong rows across the whole
+grind at the arc-2 row count.
+
+### 26.5 What the four arcs moved
+
+| arc | class | commit | recall | precision |
+|---|---|---|---:|---:|
+| — | the floor this lane inherited | `01be4114e` | 27.33 | 89.31 |
+| 2 | A, the type alias on both legs | `9db85027e` | **38.97** | 93.07 |
+| 3 | B, the enum variant payload | `012f784ae` | **50.46** | 93.20 |
+| 4 | C, the qualified path's trailing segment | `0e29983b7` | **57.88** | 93.62 |
+| 5 | D, generic arguments in bounds and impl headers | `da9d4c359` | **61.70** | 93.75 |
+
+Recall +34.37 pt and precision +4.44 pt over the four. Ours grew 2,553 -> 5,491
+rows; the oracle-agreeing overlap grew 2,280 -> 5,148. The three call rows moved
+too, all inside tolerance: ra 93.68/55.98 -> 93.69/55.93, raw scip 77.89/41.02 ->
+78.26/41.15, codeql 73.36/78.78 -> 73.37/78.71.
+
+Arc 2 carries one finding the other three do not. An alias rides the shared
+`DefIndex` as a type entity, and the call plane's type-facet fallback exists for
+tuple-struct and variant constructors, whose def IS the constructed item. An
+alias's is not: `InFile(a, b)` constructs `InFileWrapper`, and without a refusal
+the checker tier and the name match both bound the alias, 319 wrong call rows.
+`RustModuleIndex::is_alias` carries the coordinates; the checker, name-match and
+scip legs all filter on it.
+
+### 26.6 The residual, same classification, same join
+
+Missing 6,063 -> **3,195**. Recall against the oracle minus the three
+warranted-exclusion classes (X1 192, X2 1,374, X3 193 = 1,759): **78.19%**.
+
+| class | rows | % oracle | still open because |
+|---|---:|---:|---|
+| X2 self-edge | 1,374 | 16.47% | oracle convention, 26.3 |
+| A1 alias / assoc-type owner | 276 | 3.31% | the ASSOC-type half; see 26.7 |
+| D2 impl self type | 257 | 3.08% | its head names a type declared in ANOTHER file, so it is class E, not a generic argument |
+| E1 impl self type declared elsewhere | 205 | 2.46% | `entity_span_named` finds no in-file entity and `item_edge_candidates` returns |
+| X3 owner is a path prefix | 193 | 2.31% | oracle convention, 26.3 |
+| H bare name, unresolved | 192 | 2.30% | residual resolution |
+| X1 outside the corpus | 192 | 2.30% | oracle scope, 26.3 |
+| E2 implements, impl in another file | 184 | 2.21% | the oracle keys the row on the ADT's DECLARING file; a file-local candidate walk cannot mint it |
+| B enum variant payload | 162 | 1.94% | residual resolution, not candidate coverage |
+| D1 bound generic args | 74 | 0.89% | residual resolution |
+| C qualified path | 33 | 0.40% | residual resolution |
+| A3, A2, J, G | 53 | 0.64% | residual |
+
+**E1 + D2 + E2 = 646 rows, 7.75 pt, is the largest buildable block left**, and
+all three are one shape: the impl's owner is not an entity of the impl's own
+file. A `TypeEdgeCandidate` carries an owner SPAN, so the owner must be a node
+of this file's `TypeF` bundle; minting one for every `impl X` header would
+register X as a definition in every file that impls it, and the corpus-unique
+lookups both planes rely on would go ambiguous corpus-wide. The fix is a
+candidate-shape evolution plus the `is_alias`-style refusal at four resolve
+points, and it wants its own lane.
+
+### 26.7 The associated-type arc, measured and dropped
+
+`type Made = Payload;` inside an impl is an `ast::TypeAlias` to the oracle's
+`owner_of`, so its row is owned by `Made`. Minting the entity and walking the
+right-hand side was built, measured and reverted, twice:
+
+| shape | recall | precision | new rows | of them wrong | oracle rows lost |
+|---|---:|---:|---:|---:|---:|
+| entity + candidates, no ranking | 63.67 | 92.14 | 322 | 118 | 40 |
+| + one non-alias declaration outranks the alias set | 64.16 | 92.10 | 330 | 123 | 2 |
+| + an associated type never answers a unique lookup | 64.16 | **92.87** | 282 | 75 | 2 |
+
+The floor is 93.75 - 0.10 = 93.65 and the best of the three is 92.87, so the arc
+does not ship. The 40 lost rows in the first shape name the mechanism: `type Ty
+= ..` appears in a dozen impl blocks, so `Ty` stops being a corpus-unique type
+declaration and every reference to the real `next_solver/ty.rs Ty` unbinds. The
+two ranking rules recover them. What remains is 75 rows whose owner is the
+associated type itself (`Result`, `DefaultEmpty`, `Span`, `TokenStream`) binding
+a right-hand side loosely, plus generic PARAMETERS (`Key -> K`, `Key -> V`)
+which cannot be blanket-filtered because the oracle itself holds
+`dyn_map.rs KeyMap -> K`. Worth 2.46 pt of recall to whoever clears them.

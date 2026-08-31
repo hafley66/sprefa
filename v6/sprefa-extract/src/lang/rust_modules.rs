@@ -67,6 +67,9 @@ pub struct RustModuleFacts {
     /// trait dispatch table: declared (no body) and default (body present)
     /// fns alike bind to the trait's own def.
     traits: Vec<TraitEntry>,
+    /// Every `type X = ..` def span. An alias rides the shared `DefIndex` as a
+    /// type entity and is never the item a `X(..)` call constructs.
+    aliases: Vec<Span>,
 }
 
 /// One trait declaration's fn set.
@@ -204,6 +207,9 @@ fn collect(items: &[syn::Item], line_starts: &[u32], facts: &mut RustModuleFacts
                     })
                     .collect();
                 facts.enums.push((enum_item.ident.to_string(), variants));
+            }
+            syn::Item::Type(alias) => {
+                facts.aliases.push(syn_span(line_starts, alias.ident.span()));
             }
             _ => {}
         }
@@ -483,6 +489,8 @@ pub struct RustModuleIndex {
     /// (blob, span) pairs several def NAMES share: one macro expansion's
     /// items all report the macro call's own span, so the span names nothing.
     collapsed: BTreeSet<(ContentId, Span)>,
+    /// (blob, span) of every `type X = ..` declaration.
+    aliases: BTreeSet<(ContentId, Span)>,
     /// file -> its WHOLE export table, built once and reused by every
     /// importer (a per-name walk over a many-star barrel is quadratic).
     tables: Mutex<HashMap<String, std::sync::Arc<ExportTable>>>,
@@ -593,6 +601,13 @@ impl RustModuleIndex {
             }
         }
         index.collapsed = collapsed;
+        for (path, facts) in &files {
+            if let Some(blob) = index.blobs.get(path) {
+                for span in &facts.aliases {
+                    index.aliases.insert((blob.clone(), *span));
+                }
+            }
+        }
         for (path, facts) in &files {
             let Some(blob) = index.blobs.get(path) else {
                 continue;
@@ -901,6 +916,18 @@ impl RustModuleIndex {
     /// items all report the macro call's span, so it names nothing.
     pub fn is_collapsed(&self, blob: &ContentId, span: Span) -> bool {
         self.collapsed.contains(&(blob.clone(), span))
+    }
+
+    /// The call plane's type-facet fallback exists for tuple-struct and variant
+    /// constructors, whose def IS the constructed item; an alias's is not.
+    pub fn is_alias(&self, blob: &ContentId, span: Span) -> bool {
+        self.aliases.contains(&(blob.clone(), span))
+    }
+
+    /// Whether any corpus file's module path ends in `segment`. A qualifier no
+    /// corpus module answers (`std::result`) names an EXTERNAL declaration.
+    pub fn names_a_module(&self, segment: &str) -> bool {
+        self.by_last_segment.contains_key(segment)
     }
 
     /// `target` re-aimed at the TYPE facet: the export table prefers the call

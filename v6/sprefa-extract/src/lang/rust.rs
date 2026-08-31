@@ -290,6 +290,16 @@ fn item_entity(
             &u.ident.to_string(),
             TypeEntityKind::Struct,
         ),
+        // A `type X = ..` declaration is a type on BOTH legs: the destination a
+        // candidate names, and an owner whose right-hand side names types.
+        syn::Item::Type(a) => push_entity(
+            sink,
+            strings,
+            line_starts,
+            a.ident.span(),
+            &a.ident.to_string(),
+            TypeEntityKind::Alias,
+        ),
         syn::Item::Trait(t) => {
             push_entity(
                 sink,
@@ -597,24 +607,8 @@ fn const_values_in_items(
 
 // ── type-edge candidates (4d-i; the Resolve<TypeF> input) ───────────────────
 //
-// Port of v5 `edges_from` (src/graph/typegraph/rust/mod.rs:88-183), collected
-// during the ONE syn parse into TypeFAux.candidates — the 4b-iii ruling (the
-// CallFAux.specifiers pattern: unresolved rows; owner span + to-name as
-// written + kind; resolve binds purely, phase 2 stays zero-AST). v5 rust emits
-// field/variant/generic/impl ONLY — NO param/returns (v5's rust edges_from
-// never walks a fn signature, so the ts arm's Function-only sig filter has no
-// rust analogue; per-lang toward v5 per the v5-is-correct ruling) and NO uses
-// (ts-only). TWO v5 rows are unrepresentable in the candidate shape (the
-// owner is a Span; v5's `from` is free text) and are SKIPPED with this comment
-// as the loud marker — NEITHER is exercised by any fixture or oracle row, so
-// the asserted oracle diff stays green; the honest fix is a candidate-shape
-// evolution (an adjudicated increment, not a silent skip):
-//  - enum-variant FIELD edges: v5's from is the synthetic `Owner::Variant`
-//    text and no entity exists for the owner span to point at.
-//  - impl-owned edges (generic bounds + the trait `impl` edge) on a self-type
-//    declared OUTSIDE this file: no in-file entity carries the owner name.
-//    An impl on an IN-FILE self-type IS minted (owner = that entity's span;
-//    v5's from-text is exactly the entity name).
+// A candidate carries an owner SPAN, so an impl on a self type declared
+// OUTSIDE this file has no owner to point at and is skipped.
 
 /// Collect one file's unresolved type-edge candidates. Port of v5 `edges_from`
 /// + `item_edges`.
@@ -646,8 +640,7 @@ fn item_edge_candidates(
             generic_candidates(owner, &e.generics, strings, sink);
             for variant in &e.variants {
                 // The `to` is v5's synthetic `Owner::Member` text — text dsts
-                // STAY text (the 4b-iii ruling). The variant's own field edges
-                // are unrepresentable (see the section comment).
+                // STAY text (the 4b-iii ruling).
                 push_candidate(
                     sink,
                     strings,
@@ -655,6 +648,7 @@ fn item_edge_candidates(
                     &format!("{}::{}", e.ident, variant.ident),
                     TypeEdgeKind::Variant,
                 );
+                field_candidates(owner, &variant.fields, strings, sink);
             }
         }
         // v5 maps Union to Struct for entities and walks its fields the same way.
@@ -668,6 +662,15 @@ fn item_edge_candidates(
             generic_candidates(owner, &t.generics, strings, sink);
             for bound in &t.supertraits {
                 bound_candidate(owner, bound, strings, sink);
+            }
+        }
+        // The right-hand side is walked as a field type is: head plus every
+        // generic argument, the `type_refs` recursion.
+        syn::Item::Type(a) => {
+            let owner = syn_span(line_starts, a.ident.span());
+            generic_candidates(owner, &a.generics, strings, sink);
+            for to in type_refs(&a.ty) {
+                push_candidate(sink, strings, owner, &to, TypeEdgeKind::Uses);
             }
         }
         syn::Item::Impl(i) => {
@@ -685,6 +688,12 @@ fn item_edge_candidates(
                 if let Some(to) = path_name(path) {
                     push_candidate(sink, strings, owner, &to, TypeEdgeKind::Impl);
                 }
+                arg_candidates(owner, path, strings, sink);
+            }
+            // The self type's own HEAD names the owner; only its arguments are
+            // references.
+            if let Type::Path(self_path) = strip_type(&i.self_ty) {
+                arg_candidates(owner, &self_path.path, strings, sink);
             }
         }
         syn::Item::Mod(m) => {
@@ -760,6 +769,35 @@ fn bound_candidate(
         if let Some(to) = path_name(&t.path) {
             push_candidate(sink, strings, owner, &to, TypeEdgeKind::Generic);
         }
+        arg_candidates(owner, &t.path, strings, sink);
+    }
+}
+
+/// One candidate per named reference under a path's GENERIC ARGUMENTS, the
+/// `collect_path_args` recursion a field type already gets through `type_refs`.
+fn arg_candidates(
+    owner: Span,
+    path: &Path,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    let mut args = Vec::new();
+    collect_path_args(path, &mut args);
+    args.sort();
+    args.dedup();
+    for to in args {
+        push_candidate(sink, strings, owner, &to, TypeEdgeKind::Generic);
+    }
+}
+
+/// A type with its wrappers peeled: `&mut Foo<T>` and `(Foo<T>)` are `Foo<T>`.
+fn strip_type(ty: &Type) -> &Type {
+    match ty {
+        Type::Group(t) => strip_type(&t.elem),
+        Type::Paren(t) => strip_type(&t.elem),
+        Type::Ptr(t) => strip_type(&t.elem),
+        Type::Reference(t) => strip_type(&t.elem),
+        other => other,
     }
 }
 
@@ -816,19 +854,59 @@ fn resolve_type_dst(
     index: Option<&DefIndex>,
     modules: Option<&crate::lang::rust_modules::RustModuleIndex>,
     checker: Option<&crate::lang::rust_checker::RustCheckerIndex>,
+    paths: Option<&PathIndex>,
     own_path: Option<&str>,
     name: &str,
+    kind: TypeEdgeKind,
 ) -> Option<(ContentId, Span)> {
+    // A candidate is interned AS WRITTEN (`hir::Struct`), and every index here
+    // keys on a bare declaration name, so the trailing segment is the key. A
+    // Variant candidate's `to` is v5's synthetic `Enum::Variant` text, not a
+    // path: text dsts stay text (the 4b-iii ruling).
+    let (qualifier, trailing) = match name.rsplit_once("::") {
+        Some((qualifier, trailing)) if kind != TypeEdgeKind::Variant => (Some(qualifier), trailing),
+        _ => (None, name),
+    };
     // The CHECKER tier answers first: a name one file resolves two ways is the
     // only shape it declines, and the name-match legs below then run.
     match checker
         .zip(own_path)
-        .and_then(|(checker, from)| checker.type_at(from, name))
+        .and_then(|(checker, from)| checker.type_at(from, trailing))
     {
         Some(CheckerAnswer::Corpus(blob, span)) => return Some((blob, span)),
         Some(CheckerAnswer::External) => return None,
         None => {}
     }
+    if let Some(found) = name_match_type_dst(types, strings, index, modules, own_path, name) {
+        return Some(found);
+    }
+    let Some(qualifier) = qualifier else {
+        return None;
+    };
+    // The qualifier narrows: only a declaration whose FILE spells a module path
+    // ending in it is the one `a::b::C` names.
+    let segments: Vec<&str> = qualifier.split("::").collect();
+    // The file's `use` bindings answer a BARE name; a qualified one carries its
+    // own scope, so only the qualifier-narrowed leg and corpus uniqueness apply,
+    // and uniqueness only where the qualifier names a corpus module at all.
+    let in_corpus = matches!(segments[0], "crate" | "self" | "super")
+        || segments
+            .last()
+            .is_some_and(|last| modules.is_some_and(|m| m.names_a_module(last)));
+    module_scoped_type(index, paths, own_path, &segments, trailing)
+        .or_else(|| in_corpus.then(|| unique_declared_type(index, trailing)).flatten())
+}
+
+/// The name-match legs over ONE key: this file's own entity, the file's `use`
+/// bindings, then a corpus-unique type declaration.
+fn name_match_type_dst(
+    types: &FamilyBundle<TypeF>,
+    strings: &Strings,
+    index: Option<&DefIndex>,
+    modules: Option<&crate::lang::rust_modules::RustModuleIndex>,
+    own_path: Option<&str>,
+    name: &str,
+) -> Option<(ContentId, Span)> {
     let same_file = types
         .nodes
         .iter()
@@ -845,8 +923,12 @@ fn resolve_type_dst(
     if let Some(found) = modules.zip(own_path).and_then(|(m, from)| m.type_target(from, name)) {
         return Some(found);
     }
-    // Type declarations first: a call-plane def sharing the name (an enum
-    // variant, a fn) must not make the corpus-unique pick ambiguous.
+    unique_declared_type(index, name)
+}
+
+/// The one corpus TYPE declaration of `name`, or nothing. A call-plane def
+/// sharing the name (an enum variant, a fn) never makes the pick ambiguous.
+fn unique_declared_type(index: Option<&DefIndex>, name: &str) -> Option<(ContentId, Span)> {
     let declared: Vec<&DefSite> = index
         .map(|index| corpus_defs(index, name))
         .unwrap_or(&[])
@@ -854,6 +936,32 @@ fn resolve_type_dst(
         .filter(|site| site.family == FamilyTag::Type)
         .collect();
     match declared.as_slice() {
+        [only] => Some((only.blob.clone(), only.span)),
+        _ => None,
+    }
+}
+
+/// `call_name_match_in_module` on the TYPE facet: the declarations of `name`
+/// whose file's module path ends in `qualifier`, unique blob only.
+fn module_scoped_type(
+    index: Option<&DefIndex>,
+    paths: Option<&PathIndex>,
+    own_path: Option<&str>,
+    qualifier: &[&str],
+    name: &str,
+) -> Option<(ContentId, Span)> {
+    let paths = paths?;
+    let want = module_target(own_path?, qualifier)?;
+    let sites: Vec<&DefSite> = corpus_defs(index?, name)
+        .iter()
+        .filter(|site| site.family == FamilyTag::Type)
+        .filter(|site| {
+            paths
+                .get(&site.blob)
+                .is_some_and(|path| want.covers(&module_segments(path)))
+        })
+        .collect();
+    match sites.as_slice() {
         [only] => Some((only.blob.clone(), only.span)),
         _ => None,
     }
@@ -877,6 +985,7 @@ impl Resolve<TypeF> for RustSource {
         let index = cx.indexes.def_index.get();
         let modules = cx.indexes.rust_modules.get();
         let checker = cx.indexes.rust_checker.get();
+        let paths = cx.indexes.paths.get();
         let own_path = own_blob(cx, output)
             .zip(cx.indexes.paths.get())
             .and_then(|(blob, paths)| paths.get(&blob).map(str::to_string));
@@ -896,8 +1005,10 @@ impl Resolve<TypeF> for RustSource {
                 index,
                 modules,
                 checker,
+                paths,
                 own_path.as_deref(),
                 output.strings.lookup(candidate.to),
+                candidate.kind,
             )
             .unwrap_or((ZERO_CONTENT_ID, Span::empty()));
             edges.push(ProjectEdge::new(
@@ -1450,14 +1561,21 @@ impl Resolve<CallF> for RustSource {
             };
             // A def coordinate several names share is one macro expansion's
             // collapsed span: it names nothing, so no name match binds there.
-            let name_t = name_t.filter(|(blob, span, _)| {
-                !modules.is_some_and(|m| m.is_collapsed(blob, *span))
-            });
+            // A `type X = ..` coordinate names no CALLABLE: `X(..)` constructs
+            // the aliased item, and the alias's own def is not it.
+            let callable = |blob: &ContentId, span: Span| {
+                !modules.is_some_and(|m| m.is_collapsed(blob, span) || m.is_alias(blob, span))
+            };
+            let name_t = name_t.filter(|(blob, span, _)| callable(blob, *span));
             // The CHECKER tier: rust-analyzer's own answer for this site wins
             // over both the name match and scip, and only where it has one.
             match checker
                 .zip(own_path)
                 .and_then(|(index, path)| index.call_at(path, site.span, callee))
+                .filter(|answer| match answer {
+                    CheckerAnswer::Corpus(blob, span) => callable(blob, *span),
+                    CheckerAnswer::External => true,
+                })
             {
                 Some(CheckerAnswer::Corpus(dst_blob, dst_span)) => {
                     push_call_edge(
@@ -1477,9 +1595,12 @@ impl Resolve<CallF> for RustSource {
                 Some(CheckerAnswer::External) => continue,
                 None => {}
             }
-            let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
-                scip_call_target(index, joined, *doc_ix, site, callee, def_index)
-            });
+            let scip_t = scip
+                .as_ref()
+                .and_then(|(index, joined, doc_ix)| {
+                    scip_call_target(index, joined, *doc_ix, site, callee, def_index)
+                })
+                .filter(|target| callable(&target.0, target.1));
             // Agreement is judged at (blob, name): the name-match binds the
             // call FACET while scip can name the type facet — one definition,
             // two facet coordinates (the ORACLE entry's "the models differ by
