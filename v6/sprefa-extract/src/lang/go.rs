@@ -3456,21 +3456,25 @@ fn go_qualify_bound_type(
     else {
         return type_name.to_string();
     };
-    let (Some(dst_dir), Some(own_dir)) =
-        (Path::new(dst_path).parent(), Path::new(own_path).parent())
-    else {
+    // The written name resolves through the DECLARING file's imports to the
+    // result type's real (dir, bare name) pair; a written `*types.Widget` and
+    // a bare `Widget` in the declaring package are one identity here.
+    let Some((dir, bare)) = go_type_id_in_file(dst_path, type_name) else {
         return type_name.to_string();
     };
-    if same_dir(dst_dir, own_dir) {
-        return type_name.to_string();
+    if same_dir(&dir, Path::new(own_path).parent().unwrap_or(Path::new(own_path))) {
+        return bare;
     }
+    // The caller names that directory through its own imports; without such
+    // an import the written name rides unchanged (the caller may import the
+    // result's package itself, which `go_type_id` then resolves directly).
     let qualifier = imports.iter().find_map(|(qualifier, import)| {
         go_package_dir(module, import)
-            .filter(|dir| same_dir(dir, dst_dir))
+            .filter(|imported| same_dir(imported, &dir))
             .map(|_| qualifier)
     });
     match qualifier {
-        Some(q) => format!("{q}.{type_name}"),
+        Some(q) => format!("{q}.{bare}"),
         None => type_name.to_string(),
     }
 }
