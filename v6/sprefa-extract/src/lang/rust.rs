@@ -1,41 +1,34 @@
 //! The Rust extractor arm: syn front-end for type/call/df/const, ast-grep for cst.
 //! Mirrors TsSource (same shape, different front-end): cst via ast-grep's rust
 //! grammar + one `syn::parse_file` feeding the type/call/df/const projections.
-//!
-//! Commit A (skeleton): RustSource wires cst via ast-grep + a syn parse.
-//! Commit B (this): TypeF entity nodes + arrow-type sigs + the const facet.
-//! Commits C/D port `rust_call_defs_from`/`rust_call_sites_from` and
-//! `rust_dataflow_from` from v5 (`src/graph/typegraph/rust/mod.rs`).
+//! Type edges ride `TypeFAux` candidates out of the one parse (port of v5
+//! `edges_from`: field/variant/generic/impl — v5 rust emits NO param/returns
+//! and NO uses). Resolve<CallF> is NameResolve primary, ScipOverride on scip
+//! disagreement; the rust-analyzer `local `-symbol adaptation is documented on
+//! the arm. Df argument slots, parameter positions, field names and literal
+//! texts are emitted.
 //!
 //! Span bridge: syn's proc_macro2 spans are line/col; v6 `Span` is byte offsets,
 //! so one `line_starts` table + `line_col_to_byte` converts (the rust-specific
 //! bit oxc gives for free). v5's `rust_line` used `span.start().line`; the
 //! parity oracle (v5_normalize) reconstructs the byte as `line_starts[line-1] +
 //! col`, which is exactly `line_col_to_byte`.
-//!
-//! Commit 4d-i lands the type EDGES: unresolved candidates ride `TypeFAux` out
-//! of the one parse (port of v5 `edges_from`: field/variant/generic/impl — v5
-//! rust emits NO param/returns and NO uses), and `Resolve<TypeF>` binds them
-//! (the 4b-iii discipline, mirrored from the ts arm). Commit 4d-ii lands
-//! `Resolve<CallF>` (the 4c-ii ts arm mirrored: NameResolve primary,
-//! ScipOverride on scip disagreement; the rust-analyzer `local `-symbol
-//! adaptation documented on the arm) + the scip ratchet. Deferred follow-ups:
-//! the docs facet (`rust_docs_from`); df loop/nesting aux. Df argument slots,
-//! parameter positions, field names and literal texts are emitted.
 
 use std::collections::BTreeSet;
 
 use syn::spanned::Spanned;
 use syn::{
-    AngleBracketedGenericArguments, Fields, GenericArgument, GenericParam, Path, PathArguments,
-    ReturnType, Type, TypeParamBound, WherePredicate,
+    ReturnType,
 };
 
 use super::astgrep::{AstGrepParser, CstProjector};
 use super::rust_checker::CheckerAnswer;
+use super::rust_docs::doc_facts;
+use super::rust_type_edges::edge_candidates;
+use super::rust_type_refs::{primary_type, type_refs};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
-    DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, MethodOwner, ProjectEdge, SigSlot,
+    DfField, DfLit, DfNodeKind, DfParam, MethodOwner, ProjectEdge, SigSlot,
     Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::project::ResolveDrop;
@@ -95,12 +88,12 @@ pub(crate) fn syn_span(line_starts: &[u32], span: proc_macro2::Span) -> Span {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// TypeF: entity nodes + arrow-type sigs + the const facet. Commit B.
+// TypeF: entity nodes + arrow-type sigs + the const facet.
 //
 // Ports v5 `rust_entities_from` (the entity half) + `rust_fn_type` (the arrow-
 // type payload) + `rust_const_values_from` (Const entities + ConstValue rows).
-// The name-resolved type EDGES (field/impl/variant/uses/generic) land with
-// `Resolve<TypeF>` (commit 4); phase 1 stays pure-content span nodes.
+// The name-resolved type EDGES (field/impl/variant/uses/generic) are bound by
+// `Resolve<TypeF>`; phase 1 stays pure-content span nodes.
 //
 // v5 stores `parent`/`sym`/`mint_sym`; v6 drops them (a node is span+kind+name;
 // the parent linkage is span-containment at the seam). v5 maps Union -> Struct
@@ -126,134 +119,6 @@ fn project_types(
     // impl-owned candidate finds its in-file self-type entity regardless of
     // item order (v5's text-keyed pass has no order sensitivity; spans do).
     edge_candidates(parsed, line_starts, strings, sink);
-}
-
-/// Port of v5 `rust_docs_from`. The walked set is v5's: struct, enum, union,
-/// trait, fn and impl methods. A documented const or alias mints no row.
-fn doc_facts(
-    parsed: &syn::File,
-    line_starts: &[u32],
-    strings: &mut Strings,
-    sink: &mut FamilyBundle<TypeF>,
-) {
-    doc_facts_in_items(&parsed.items, line_starts, strings, sink);
-}
-
-fn doc_facts_in_items(
-    items: &[syn::Item],
-    line_starts: &[u32],
-    strings: &mut Strings,
-    sink: &mut FamilyBundle<TypeF>,
-) {
-    for item in items {
-        match item {
-            syn::Item::Struct(s) => {
-                push_doc(sink, strings, line_starts, s.ident.span(), &s.attrs, None)
-            }
-            syn::Item::Enum(en) => {
-                push_doc(sink, strings, line_starts, en.ident.span(), &en.attrs, None)
-            }
-            syn::Item::Union(u) => {
-                push_doc(sink, strings, line_starts, u.ident.span(), &u.attrs, None)
-            }
-            syn::Item::Trait(t) => {
-                push_doc(sink, strings, line_starts, t.ident.span(), &t.attrs, None)
-            }
-            syn::Item::Fn(f) => push_doc(
-                sink,
-                strings,
-                line_starts,
-                f.sig.ident.span(),
-                &f.attrs,
-                None,
-            ),
-            syn::Item::Impl(i) => {
-                let owner = primary_type(&i.self_ty);
-                for ii in &i.items {
-                    if let syn::ImplItem::Fn(m) = ii {
-                        push_doc(
-                            sink,
-                            strings,
-                            line_starts,
-                            m.sig.ident.span(),
-                            &m.attrs,
-                            owner.as_deref(),
-                        );
-                    }
-                }
-            }
-            syn::Item::Mod(m) => {
-                if let Some((_, inner)) = &m.content {
-                    doc_facts_in_items(inner, line_starts, strings, sink);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn push_doc(
-    sink: &mut FamilyBundle<TypeF>,
-    strings: &mut Strings,
-    line_starts: &[u32],
-    span: proc_macro2::Span,
-    attrs: &[syn::Attribute],
-    parent: Option<&str>,
-) {
-    let lines = doc_lines(attrs);
-    if lines.is_empty() {
-        return;
-    }
-    let text = lines.join("\n");
-    let tags = doc_sections(&text, strings);
-    sink.aux.docs.push(DocFact {
-        owner: syn_span(line_starts, span),
-        parent: parent.map(|name| strings.intern(name)),
-        text: strings.intern(&text),
-        tags,
-    });
-}
-
-/// Each `#[doc = "..."]` value, the single leading space syn keeps from `/// x`
-/// stripped. Port of v5 `rust_doc_lines`.
-fn doc_lines(attrs: &[syn::Attribute]) -> Vec<String> {
-    let mut lines = Vec::new();
-    for attr in attrs {
-        if !attr.path().is_ident("doc") {
-            continue;
-        }
-        if let syn::Meta::NameValue(nv) = &attr.meta {
-            if let syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Str(s),
-                ..
-            }) = &nv.value
-            {
-                let value = s.value();
-                lines.push(value.strip_prefix(' ').unwrap_or(&value).to_string());
-            }
-        }
-    }
-    lines
-}
-
-/// Rustdoc `# Heading` sections, each a `section` tag whose `arg` is the heading
-/// and whose text is the body. Port of v5 `parse_rust_sections`.
-fn doc_sections(text: &str, strings: &mut Strings) -> Vec<DocTag> {
-    let mut out: Vec<(String, Vec<&str>)> = Vec::new();
-    for line in text.lines() {
-        if let Some(rest) = line.trim_start().strip_prefix("# ") {
-            out.push((rest.trim().to_string(), Vec::new()));
-        } else if let Some((_, body)) = out.last_mut() {
-            body.push(line);
-        }
-    }
-    out.into_iter()
-        .map(|(heading, body)| DocTag {
-            tag: strings.intern("section"),
-            arg: Some(strings.intern(&heading)),
-            text: strings.intern(body.join("\n").trim()),
-        })
-        .collect()
 }
 
 /// One declared entity per item, mirroring v5 `rust_item_entity`. A callable
@@ -416,149 +281,6 @@ fn push_sig(
     });
 }
 
-// ── type-reference collection (the arrow-type payload) ──────────────────────
-//
-// Port of v5 `type_refs`/`collect_type_refs`/`collect_bound_ref`/
-// `collect_path_args`/`path_name`/`is_noise_type`. Collects the trailing path
-// name of every named type reference under a signature annotation, filtering
-// primitive names (`u32`, `str`, ...). One name per reference; a union slot
-// stays one name (Rust has no inline union type syntax).
-
-/// Every named type reference under `ty`, de-duplicated and sorted (port of v5
-/// `type_refs`). Sorting makes the emitted sig order deterministic regardless of
-/// syn traversal order.
-fn type_refs(ty: &Type) -> Vec<String> {
-    let mut out = Vec::new();
-    collect_type_refs(ty, &mut out);
-    out.sort();
-    out.dedup();
-    out
-}
-
-fn collect_type_refs(ty: &Type, out: &mut Vec<String>) {
-    match ty {
-        Type::Array(t) => collect_type_refs(&t.elem, out),
-        Type::BareFn(t) => {
-            for input in &t.inputs {
-                collect_type_refs(&input.ty, out);
-            }
-            if let ReturnType::Type(_, ty) = &t.output {
-                collect_type_refs(ty, out);
-            }
-        }
-        Type::Group(t) => collect_type_refs(&t.elem, out),
-        Type::ImplTrait(t) => {
-            for bound in &t.bounds {
-                collect_bound_ref(bound, out);
-            }
-        }
-        Type::Paren(t) => collect_type_refs(&t.elem, out),
-        Type::Path(t) => {
-            if let Some(qself) = &t.qself {
-                collect_type_refs(&qself.ty, out);
-            }
-            if let Some(name) = path_name(&t.path) {
-                out.push(name);
-            }
-            collect_path_args(&t.path, out);
-        }
-        Type::Ptr(t) => collect_type_refs(&t.elem, out),
-        Type::Reference(t) => collect_type_refs(&t.elem, out),
-        Type::Slice(t) => collect_type_refs(&t.elem, out),
-        Type::TraitObject(t) => {
-            for bound in &t.bounds {
-                collect_bound_ref(bound, out);
-            }
-        }
-        Type::Tuple(t) => {
-            for elem in &t.elems {
-                collect_type_refs(elem, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn collect_bound_ref(bound: &TypeParamBound, out: &mut Vec<String>) {
-    if let TypeParamBound::Trait(t) = bound {
-        if let Some(name) = path_name(&t.path) {
-            out.push(name);
-        }
-        collect_path_args(&t.path, out);
-    }
-}
-
-fn collect_path_args(path: &Path, out: &mut Vec<String>) {
-    for seg in &path.segments {
-        match &seg.arguments {
-            PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }) => {
-                for arg in args {
-                    match arg {
-                        GenericArgument::Type(t) => collect_type_refs(t, out),
-                        GenericArgument::AssocType(t) => collect_type_refs(&t.ty, out),
-                        GenericArgument::Constraint(c) => {
-                            for bound in &c.bounds {
-                                collect_bound_ref(bound, out);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            PathArguments::Parenthesized(p) => {
-                for input in &p.inputs {
-                    collect_type_refs(input, out);
-                }
-                if let ReturnType::Type(_, ty) = &p.output {
-                    collect_type_refs(ty, out);
-                }
-            }
-            PathArguments::None => {}
-        }
-    }
-}
-
-/// The trailing path name (`a::b::c` -> `a::b::c`), or None for a primitive /
-/// `Self`. Port of v5 `path_name`.
-fn path_name(path: &Path) -> Option<String> {
-    let parts: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
-    if parts.is_empty() {
-        return None;
-    }
-    let name = parts.join("::");
-    if is_noise_type(&name) {
-        None
-    } else {
-        Some(name)
-    }
-}
-
-/// Primitive + `Self` filter: a reference to `u32`/`str`/`Self` carries no
-/// resolvable declaration. Port of v5 `is_noise_type`.
-fn is_noise_type(name: &str) -> bool {
-    matches!(
-        name,
-        "Self"
-            | "bool"
-            | "char"
-            | "str"
-            | "u8"
-            | "u16"
-            | "u32"
-            | "u64"
-            | "u128"
-            | "usize"
-            | "i8"
-            | "i16"
-            | "i32"
-            | "i64"
-            | "i128"
-            | "isize"
-            | "f32"
-            | "f64"
-    )
-}
-
 // ── const facet: Const entities + ConstValue rows ───────────────────────────
 
 /// Item-level `const X: &str = "...";` string values, inline `mod` bodies
@@ -605,218 +327,8 @@ fn const_values_in_items(
     }
 }
 
-// ── type-edge candidates (4d-i; the Resolve<TypeF> input) ───────────────────
-//
-// A candidate carries an owner SPAN, so an impl on a self type declared
-// OUTSIDE this file has no owner to point at and is skipped.
-
-/// Collect one file's unresolved type-edge candidates. Port of v5 `edges_from`
-/// + `item_edges`.
-fn edge_candidates(
-    parsed: &syn::File,
-    line_starts: &[u32],
-    strings: &mut Strings,
-    sink: &mut FamilyBundle<TypeF>,
-) {
-    for item in &parsed.items {
-        item_edge_candidates(item, line_starts, strings, sink);
-    }
-}
-
-fn item_edge_candidates(
-    item: &syn::Item,
-    line_starts: &[u32],
-    strings: &mut Strings,
-    sink: &mut FamilyBundle<TypeF>,
-) {
-    match item {
-        syn::Item::Struct(s) => {
-            let owner = syn_span(line_starts, s.ident.span());
-            generic_candidates(owner, &s.generics, strings, sink);
-            field_candidates(owner, &s.fields, strings, sink);
-        }
-        syn::Item::Enum(e) => {
-            let owner = syn_span(line_starts, e.ident.span());
-            generic_candidates(owner, &e.generics, strings, sink);
-            for variant in &e.variants {
-                // The `to` is v5's synthetic `Owner::Member` text — text dsts
-                // STAY text (the 4b-iii ruling).
-                push_candidate(
-                    sink,
-                    strings,
-                    owner,
-                    &format!("{}::{}", e.ident, variant.ident),
-                    TypeEdgeKind::Variant,
-                );
-                field_candidates(owner, &variant.fields, strings, sink);
-            }
-        }
-        // v5 maps Union to Struct for entities and walks its fields the same way.
-        syn::Item::Union(u) => {
-            let owner = syn_span(line_starts, u.ident.span());
-            generic_candidates(owner, &u.generics, strings, sink);
-            field_candidates(owner, &Fields::Named(u.fields.clone()), strings, sink);
-        }
-        syn::Item::Trait(t) => {
-            let owner = syn_span(line_starts, t.ident.span());
-            generic_candidates(owner, &t.generics, strings, sink);
-            for bound in &t.supertraits {
-                bound_candidate(owner, bound, strings, sink);
-            }
-        }
-        // The right-hand side is walked as a field type is: head plus every
-        // generic argument, the `type_refs` recursion.
-        syn::Item::Type(a) => {
-            let owner = syn_span(line_starts, a.ident.span());
-            generic_candidates(owner, &a.generics, strings, sink);
-            for to in type_refs(&a.ty) {
-                push_candidate(sink, strings, owner, &to, TypeEdgeKind::Uses);
-            }
-        }
-        syn::Item::Impl(i) => {
-            // Port of v5: the whole impl is skipped when the self-type has no
-            // primary name. The owner is the IN-FILE entity of that name; an
-            // external self-type is unrepresentable (see the section comment).
-            let Some(owner_name) = primary_type(&i.self_ty) else {
-                return;
-            };
-            let Some(owner) = entity_span_named(sink, strings, &owner_name) else {
-                return;
-            };
-            generic_candidates(owner, &i.generics, strings, sink);
-            if let Some((_, path, _)) = &i.trait_ {
-                if let Some(to) = path_name(path) {
-                    push_candidate(sink, strings, owner, &to, TypeEdgeKind::Impl);
-                }
-                arg_candidates(owner, path, strings, sink);
-            }
-            // The self type's own HEAD names the owner; only its arguments are
-            // references.
-            if let Type::Path(self_path) = strip_type(&i.self_ty) {
-                arg_candidates(owner, &self_path.path, strings, sink);
-            }
-        }
-        syn::Item::Mod(m) => {
-            if let Some((_, inner)) = &m.content {
-                for nested in inner {
-                    item_edge_candidates(nested, line_starts, strings, sink);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-/// The span of the TypeF entity interned as `name` in this bundle (the owner
-/// leg of an impl-owned candidate: v5's from-text is the self-type name, which
-/// the in-file entity carries verbatim).
-fn entity_span_named(sink: &FamilyBundle<TypeF>, strings: &Strings, name: &str) -> Option<Span> {
-    sink.nodes
-        .iter()
-        .find(|node| node.name.map_or(false, |id| strings.lookup(id) == name))
-        .map(|node| node.span)
-}
-
-/// One field candidate per named type reference under each field's type. Port
-/// of v5 `field_edges` (`type_refs` is the shared port above).
-fn field_candidates(
-    owner: Span,
-    fields: &Fields,
-    strings: &mut Strings,
-    sink: &mut FamilyBundle<TypeF>,
-) {
-    for field in fields.iter() {
-        for to in type_refs(&field.ty) {
-            push_candidate(sink, strings, owner, &to, TypeEdgeKind::Field);
-        }
-    }
-}
-
-/// Generic-bound + where-clause candidates. Port of v5 `generic_edges`.
-fn generic_candidates(
-    owner: Span,
-    generics: &syn::Generics,
-    strings: &mut Strings,
-    sink: &mut FamilyBundle<TypeF>,
-) {
-    for param in &generics.params {
-        if let GenericParam::Type(t) = param {
-            for bound in &t.bounds {
-                bound_candidate(owner, bound, strings, sink);
-            }
-        }
-    }
-    if let Some(where_clause) = &generics.where_clause {
-        for pred in &where_clause.predicates {
-            if let WherePredicate::Type(t) = pred {
-                for bound in &t.bounds {
-                    bound_candidate(owner, bound, strings, sink);
-                }
-            }
-        }
-    }
-}
-
-/// One generic candidate per trait bound. Port of v5 `bound_edge` (the kind is
-/// always Generic here — v5 rust binds bounds under no other edge kind).
-fn bound_candidate(
-    owner: Span,
-    bound: &TypeParamBound,
-    strings: &mut Strings,
-    sink: &mut FamilyBundle<TypeF>,
-) {
-    if let TypeParamBound::Trait(t) = bound {
-        if let Some(to) = path_name(&t.path) {
-            push_candidate(sink, strings, owner, &to, TypeEdgeKind::Generic);
-        }
-        arg_candidates(owner, &t.path, strings, sink);
-    }
-}
-
-/// One candidate per named reference under a path's GENERIC ARGUMENTS, the
-/// `collect_path_args` recursion a field type already gets through `type_refs`.
-fn arg_candidates(
-    owner: Span,
-    path: &Path,
-    strings: &mut Strings,
-    sink: &mut FamilyBundle<TypeF>,
-) {
-    let mut args = Vec::new();
-    collect_path_args(path, &mut args);
-    args.sort();
-    args.dedup();
-    for to in args {
-        push_candidate(sink, strings, owner, &to, TypeEdgeKind::Generic);
-    }
-}
-
-/// A type with its wrappers peeled: `&mut Foo<T>` and `(Foo<T>)` are `Foo<T>`.
-fn strip_type(ty: &Type) -> &Type {
-    match ty {
-        Type::Group(t) => strip_type(&t.elem),
-        Type::Paren(t) => strip_type(&t.elem),
-        Type::Ptr(t) => strip_type(&t.elem),
-        Type::Reference(t) => strip_type(&t.elem),
-        other => other,
-    }
-}
-
-fn push_candidate(
-    sink: &mut FamilyBundle<TypeF>,
-    strings: &mut Strings,
-    owner: Span,
-    to: &str,
-    kind: TypeEdgeKind,
-) {
-    sink.aux.candidates.push(TypeEdgeCandidate {
-        owner,
-        to: strings.intern(to),
-        kind,
-    });
-}
-
 // ════════════════════════════════════════════════════════════════════════════
-// Resolve<TypeF> for RustSource (commit 4d-i). The 4b-iii discipline, mirrored
+// Resolve<TypeF> for RustSource.
 // from the ts arm: the candidate row IS the parity target; text dsts STAY
 // text — a candidate whose `to` names no corpus node (v5's synthetic
 // `Owner::Member` variant text, externals) emits a ZERO dst leg. The
@@ -862,7 +374,7 @@ fn resolve_type_dst(
     // A candidate is interned AS WRITTEN (`hir::Struct`), and every index here
     // keys on a bare declaration name, so the trailing segment is the key. A
     // Variant candidate's `to` is v5's synthetic `Enum::Variant` text, not a
-    // path: text dsts stay text (the 4b-iii ruling).
+    // path: text dsts stay text.
     let (qualifier, trailing) = match name.rsplit_once("::") {
         Some((qualifier, trailing)) if kind != TypeEdgeKind::Variant => (Some(qualifier), trailing),
         _ => (None, name),
@@ -1023,13 +535,13 @@ impl Resolve<TypeF> for RustSource {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Resolve<CallF> for RustSource (commit 4d-ii). The 4c-ii ts arm mirrored, two
+// Resolve<CallF> for RustSource, two
 // legs per the user rulings (scip-override ALLOWED; the v5-shaped name-match
 // stays primary):
 //   NameResolve — callee name -> unique def. Same-file WINS via the span-join
 //     (def_named in THIS CallF bundle -> its span -> the DefIndex gives the
 //     blob); cross-file a UNIQUE corpus blob (CallF facet preferred);
-//     ambiguous/absent -> NO ROW (the 4b-iii discipline).
+//     ambiguous/absent -> NO ROW.
 //   ScipOverride — scip's occurrence resolution for the site disagrees with
 //     the name-match outcome: scip's corpus target WINS the edge, the
 //     name-match is displaced. Needs the corpus scip index
@@ -1086,7 +598,7 @@ fn same_file_call_match(
 impl RustSource {
     /// The name-match target of one callee (the NameResolve leg). Pub so the
     /// scip ratchet re-runs it to classify overrides — same discipline as
-    /// `type_edge_candidates` in 4d-i. Mirror of `TsSource::call_name_match`
+    /// `type_edge_candidates`. Mirror of `TsSource::call_name_match`
     /// (the post-4d dedup sweep owns unifying the per-lang copies).
     pub fn call_name_match(
         output: &ExtractOutput,
@@ -1764,7 +1276,7 @@ fn enclosing_named_def(sorted: &[(Span, NodeRef)], site: Span) -> Option<NodeRef
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// CallF: callable definitions (nodes) + call sites (aux). Commit C.
+// CallF: callable definitions (nodes) + call sites (aux).
 //
 // Ports v5 `rust_call_defs_from` (defs, incl. the nested-fn/closure walker) +
 // `rust_call_sites_from` (sites). v5's `mint_sym`/`lambda_sym`/`end` line are
@@ -2432,7 +1944,7 @@ fn peel_parens(expr: &syn::Expr) -> &syn::Expr {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// DfF: intra-procedural value flow (nodes + Direct edges). Commit D.
+// DfF: intra-procedural value flow (nodes + Direct edges).
 //
 // Ports v5 `rust_dataflow_from` (src/graph/typegraph/rust/mod.rs:746-1332). Every
 // value-bearing position in a callable's body becomes a NODE; local value flow
@@ -2623,21 +2135,6 @@ fn df_loop_row(
         sink.aux
             .loop_collection_spans
             .push((index, span.start, span.end()));
-    }
-}
-
-/// The impl self-type's primary name (`&Foo` / `Foo<T>` / `(Foo)` -> `Foo`),
-/// None for noise/primitive/unnamable types. Port of v5 `primary_type` — the
-/// method sym's owner. (`path_name` / `is_noise_type` are the existing ports
-/// above, shared with the type-edge walk.)
-fn primary_type(ty: &Type) -> Option<String> {
-    match ty {
-        Type::Group(t) => primary_type(&t.elem),
-        Type::Paren(t) => primary_type(&t.elem),
-        Type::Path(t) => path_name(&t.path),
-        Type::Ptr(t) => primary_type(&t.elem),
-        Type::Reference(t) => primary_type(&t.elem),
-        _ => None,
     }
 }
 

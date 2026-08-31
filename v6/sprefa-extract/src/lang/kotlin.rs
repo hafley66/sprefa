@@ -17,18 +17,18 @@
 //! (`start_byte`/`end_byte`), so `Span { start: node.start_byte(), len:
 //! node.end_byte() - node.start_byte() }` is the whole story.
 //!
-//! Commit A (skeleton): KotlinSource wires cst via ast-grep + a
+//! KotlinSource wires cst via ast-grep + a
 //! tree-sitter-kotlin parse; type/call/df projections are stubbed empty.
-//! Commit B ports `walk_kotlin_entities` + `kotlin_fn_type` (TypeF nodes +
-//! arrow-type sigs); commit C ports `kt_walk_call_defs` + `kt_walk_call_sites`
-//! (CallF); commit D ports `kotlin_dataflow_from` (DfF nodes + Direct edges,
+//! `walk_kotlin_entities` + `kotlin_fn_type` cover TypeF (nodes +
+//! arrow-type sigs); `kt_walk_call_defs` + `kt_walk_call_sites` cover CallF;
+//! `kotlin_dataflow_from` covers DfF (nodes + Direct edges,
 //! incl. the `lam_sym` closure naming).
 //!
 //! Deferred follow-ups (the same set the other langs parked): df literal/loop/
 //! nesting aux. Named-argument field names are emitted. The type_edge
 //! candidates (`kotlin_decl_edges`) +
 //! `Resolve<TypeF>` land here (v5 kotlin DOES emit type_edge); `Resolve<CallF>`
-//! landed with the call port. The const facet is NOT ported: v5 kotlin emits no
+//! lives with the call port. The const facet is NOT ported: v5 kotlin emits no
 //! const entities and no
 //! const_value rows (`extract` leaves `consts` at Default), so v6 matches by
 //! emitting none either.
@@ -86,7 +86,7 @@ pub(crate) fn kt_first_child<'a>(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// TypeF: entity nodes + arrow-type sigs. Commit B.
+// TypeF: entity nodes + arrow-type sigs.
 //
 // Ports v5 `walk_kotlin_entities` (src/graph/typegraph/kotlin.rs:741) +
 // `kotlin_fn_type` (kotlin.rs:847, the arrow-type payload). Entities:
@@ -568,7 +568,7 @@ fn is_noise_kotlin(name: &str) -> bool {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// CallF: callable definitions (nodes) + call sites (aux). Commit C.
+// CallF: callable definitions (nodes) + call sites (aux).
 //
 // Ports v5 `kt_walk_call_defs` (defs, incl. ctors + lambda literals) +
 // `kt_walk_call_sites`/`kt_callee` (sites). v5's `sym`/`end` line are dropped:
@@ -995,7 +995,7 @@ fn kt_callee<'a>(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// DfF: intra-procedural value flow (nodes + Direct edges). Commit D.
+// DfF: intra-procedural value flow (nodes + Direct edges).
 //
 // Ports v5 `kotlin_dataflow_from` (src/graph/typegraph/kotlin.rs:73): every
 // value-bearing position in a callable's body becomes a NODE; local value flow
@@ -1772,7 +1772,7 @@ impl KotlinSource {
 /// The dst leg of one candidate: same-file TypeF entity first (its span joined
 /// through the `DefIndex` for the blob), else a unique corpus site, else None
 /// (text stays text, the zero leg). Name-only resolution, per the 4a ADDENDUM
-/// site-key discipline (no receiver typing anywhere in commit 4).
+/// site-key discipline (no receiver typing).
 // @comment-ok: helper doc mirroring the go/rust resolve_type_dst
 fn resolve_type_dst(
     types: &FamilyBundle<TypeF>,

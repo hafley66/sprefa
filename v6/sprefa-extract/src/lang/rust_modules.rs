@@ -9,7 +9,7 @@
 //! `use a::b::{self}` and `use a::b::*` onto one (name, module,
 //! kind=Reexport) shape, and an inline `mod x { .. }` mints NO row at all
 //! (`rust.rs:1690`, documented `NO ROW`). This file re-walks the AST once and
-//! reuses the module-path text math already landed for kink 4
+//! reuses the module-path text math from
 //! (`module_segments` / `module_target` / `crate_root_of` / `mod_path_attr`,
 //! `rust.rs`) instead of duplicating it.
 
