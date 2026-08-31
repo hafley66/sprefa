@@ -60,6 +60,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      - name: Clone hafley-rs beside the workspace
+        shell: bash
+        run: git clone --depth 1 https://github.com/hafley66/hafley-rs "$GITHUB_WORKSPACE/../hafley-rs"
       - name: Install dist
         # we specify bash to get pipefail; it guards against the `curl` command
         # failing. otherwise `sh` won't catch that `curl` returned non-0
@@ -120,6 +123,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      - name: Clone hafley-rs beside the workspace
+        shell: bash
+        run: git clone --depth 1 https://github.com/hafley66/hafley-rs "$GITHUB_WORKSPACE/../hafley-rs"
       - name: Install Rust non-interactively if not already installed
         if: ${{ matrix.container }}
         run: |
@@ -179,6 +185,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      - name: Clone hafley-rs beside the workspace
+        shell: bash
+        run: git clone --depth 1 https://github.com/hafley66/hafley-rs "$GITHUB_WORKSPACE/../hafley-rs"
       - name: Install cached dist
         uses: actions/download-artifact@v8
         with:
@@ -229,6 +238,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      - name: Clone hafley-rs beside the workspace
+        shell: bash
+        run: git clone --depth 1 https://github.com/hafley66/hafley-rs "$GITHUB_WORKSPACE/../hafley-rs"
       - name: Install cached dist
         uses: actions/download-artifact@v8
         with:
