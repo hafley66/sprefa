@@ -1,0 +1,29 @@
+lang	oracle	mode	threshold	recall	precision	ours	oracle	overlap
+go	go.codeql2.call.tsv	exact		98.96	90.78	52902	48529	48025
+go	go.codeql2.call.tsv	filepair		99.68	97.90	52902	48529	
+go	go.codeql2.call.tsv	fuzzy	0.8	99.04	90.86	52902	48529	
+go	go.codeql2.call.tsv	fuzzy	0.5	99.07	90.89	52902	48529	
+go	go.oracle.call.vta.bare.tsv	exact		85.39	81.60	57661	55099	47050
+go	go.oracle.call.vta.bare.tsv	filepair		96.23	90.89	57661	55099	
+go	go.oracle.call.vta.bare.tsv	fuzzy	0.8	90.87	86.83	57661	55099	
+go	go.oracle.call.vta.bare.tsv	fuzzy	0.5	90.92	86.88	57661	55099	
+rust	rust.oracle.call.tsv	exact		93.68	55.98	44110	26359	24694
+rust	rust.oracle.call.tsv	filepair		98.81	81.55	44110	26359	
+rust	rust.oracle.call.tsv	fuzzy	0.8	93.83	56.07	44110	26359	
+rust	rust.oracle.call.tsv	fuzzy	0.5	93.85	56.08	44110	26359	
+rust	rust.scip_override.call.tsv	exact		77.89	41.02	29709	15647	12187
+rust	rust.scip_override.call.tsv	filepair		90.86	44.27	29709	15647	
+rust	rust.scip_override.call.tsv	fuzzy	0.8	78.26	41.22	29709	15647	
+rust	rust.scip_override.call.tsv	fuzzy	0.5	78.26	41.22	29709	15647	
+rust	rust.codeql.call.tsv	exact		73.36	78.78	48122	51679	37912
+rust	rust.codeql.call.tsv	filepair		94.09	94.19	48122	51679	
+rust	rust.codeql.call.tsv	fuzzy	0.8	74.61	80.13	48122	51679	
+rust	rust.codeql.call.tsv	fuzzy	0.5	74.65	80.17	48122	51679	
+ts5	ts.codeql2.call.tsv	exact		92.07	71.15	68769	53140	48928
+ts5	ts.codeql2.call.tsv	filepair		98.51	99.05	68769	53140	
+ts5	ts.codeql2.call.tsv	fuzzy	0.8	93.72	72.42	68769	53140	
+ts5	ts.codeql2.call.tsv	fuzzy	0.5	94.40	72.95	68769	53140	
+ts5	ts5.oracle.call.tsv	exact		88.20	76.13	68769	59356	52353
+ts5	ts5.oracle.call.tsv	filepair		97.85	99.40	68769	59356	
+ts5	ts5.oracle.call.tsv	fuzzy	0.8	89.68	77.40	68769	59356	
+ts5	ts5.oracle.call.tsv	fuzzy	0.5	90.38	78.01	68769	59356	

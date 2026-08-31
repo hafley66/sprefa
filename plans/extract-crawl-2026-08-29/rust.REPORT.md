@@ -1662,3 +1662,89 @@ catches this class is a record-kind census of the raw JSONL: a diet run emits
 | answers naming a corpus file whose parse minted no def there | 14,069 | the coordinate join misses (mbe-expanded defs, defs our parse does not mint); those sites fall back to the syntax leg |
 | type recall | 27.33 | the checker re-aims destinations and cannot add candidates; `type_edge_candidates` enumerates 2,553 rows against an 8,343-row oracle, so candidate coverage is the ceiling, not resolution |
 | calls inside macro invocations | unchanged | the parse mints no site there, so there is nothing for the checker to answer; `scip_macro` is still the only leg that reaches them |
+
+## 25. Fuzzy re-measure: is rust call precision a spelling penalty? (lane `fix-extract-bench-fuzzy`, 2026-08-31)
+
+The bench joins ours-vs-oracle rows by exact 4-column equality
+(`src_path src_name dst_path dst_name`), so a row pointing at the right
+function under a different spelling scores as a miss. This section re-scores
+the SAME projected row sets (the ratchet's own emission and projections,
+dumped verbatim by a temporary harness over `tests/bench/mod.rs`; ours tsvs
+are machine-local under `out/`, gitignored) under three match modes:
+`exact` (the ratchet's join), `filepair` (match on the file pair only,
+names ignored, one-to-many upper bound), and `fuzzy` (one-to-one greedy
+Jaccard over identifier tokens, split on `:: . # / ->` and camelCase,
+lowercase, at 0.8 and 0.5). Script: `plans/extract-bench-2026-08-29/fuzzy_bench.py`;
+committed results: `plans/extract-bench-2026-08-29/fuzzy.RESULTS.tsv`.
+RATCHET.tsv floors are NOT changed; exact-match stays canonical.
+
+### 25.1 Exact-mode check (the script's license to run)
+
+All 7 pairs reproduce the RATCHET.tsv row to 0.01 pt on both recall and
+precision (98.96/90.78, 85.39/81.60, 93.68/55.98, 77.89/41.02,
+73.36/78.78, 92.07/71.15, 88.20/76.13). The projections
+(`tests/bench/mod.rs` `go_project`, `rust_project`) are re-implemented in
+python and verified by that reproduction.
+
+### 25.2 The table (call family; recall = overlap/|oracle|, precision = overlap/|ours|)
+
+| lang | oracle | exact R/P | filepair R/P | fuzzy@0.8 R/P | fuzzy@0.5 R/P |
+|---|---|---|---|---|---|
+| go | go.codeql2.call.tsv | 98.96 / 90.78 | 99.68 / 97.90 | 99.04 / 90.86 | 99.07 / 90.89 |
+| go | go.oracle.call.vta.bare.tsv | 85.39 / 81.60 | 96.23 / 90.89 | 90.87 / 86.83 | 90.92 / 86.88 |
+| rust | rust.oracle.call.tsv | 93.68 / 55.98 | 98.81 / 81.55 | 93.83 / 56.07 | 93.85 / 56.08 |
+| rust | rust.scip_override.call.tsv | 77.89 / 41.02 | 90.86 / 44.27 | 78.26 / 41.22 | 78.26 / 41.22 |
+| rust | rust.codeql.call.tsv | 73.36 / 78.78 | 94.09 / 94.19 | 74.61 / 80.13 | 74.65 / 80.17 |
+| ts5 | ts.codeql2.call.tsv | 92.07 / 71.15 | 98.51 / 99.05 | 93.72 / 72.42 | 94.40 / 72.95 |
+| ts5 | ts5.oracle.call.tsv | 88.20 / 76.13 | 97.85 / 99.40 | 89.68 / 77.40 | 90.38 / 78.01 |
+
+Spelling-penalty column (fuzzy@0.8 precision minus exact precision):
+
+| pair | penalty (pt) |
+|---|---:|
+| go codeql2 | +0.08 |
+| go vta | +5.23 |
+| rust oracle | +0.09 |
+| rust scip_override | +0.20 |
+| rust codeql | +1.35 |
+| ts5 codeql2 | +1.27 |
+| ts5 oracle | +1.27 |
+
+### 25.3 Example rows that miss at exact and match at fuzzy@0.8 (rust vs rust.oracle.call.tsv)
+
+Of the 2,055 fuzzy@0.8 one-to-one matches whose strings differ, 2 share the
+caller name; the remaining 2,053 pair DIFFERENT callers to DIFFERENT
+callees through short-token collisions (`new`, `go`, `Flag`, `intern` are
+single tokens, so any two single-token callee names score Jaccard 1.0).
+There are no genuine spelling-variant examples at 0.8; the two same-caller
+cases are the closest thing to real spelling variants:
+
+```
+ours   crates/hir-def/src/resolver.rs	resolver	crates/hir-def/src/resolver.rs	Resolver
+oracle crates/hir-def/src/resolver.rs	resolver	crates/hir-def/src/resolver.rs	resolver
+
+ours   crates/ide-db/src/text_edit.rs	replace	crates/ide-db/src/text_edit.rs	Indel
+oracle crates/ide-db/src/text_edit.rs	replace	crates/ide-db/src/text_edit.rs	indel
+```
+
+All other examples from the matched set are artifact pairs, e.g.:
+
+```
+ours   crates/base-db/src/input.rs	crates_in_topological_order	crates/base-db/src/input.rs	go
+oracle crates/base-db/src/input.rs	go	crates/base-db/src/input.rs	go
+```
+
+(a different caller, a different callee, joined only because both callee
+names are the single token `go`).
+
+### 25.4 Verdict: rust 55.98% precision is real disagreement
+
+The numbers: spelling penalty at fuzzy@0.8 is +0.09 pt (55.98 -> 56.07).
+Loosening to 0.5 adds another +0.01. The filepair upper bound sits at
+81.55%: 81.55% of our rows point at SOME oracle edge between the same two
+files, but the one-to-one fuzzy match recovers only 0.09 pt of that with
+name tolerance. So the ~25.6 pt filepair-minus-exact gap is ours choosing a
+different callee function within the right file pair (and oracle fan-out
+that no one-to-one match can absorb), with spelling contributing ~0. The
+go vta row is the one real spelling story (+5.23 pt), consistent with its
+known `Type.Method` shape mismatch; ts5 and rust codeql sit near +1.3 pt.
