@@ -1,0 +1,30 @@
+# DL7 development entrypoints. Run from this directory with `just`.
+
+v7 := justfile_directory()
+grammar := v7 + "/tree-sitter-dl7"
+
+default:
+    @just --list
+
+# Generate the C parser and grammar metadata from grammar.js.
+tree-sitter-generate:
+    cd "{{ grammar }}" && tree-sitter generate
+
+# Verify the generated parser against the focused grammar corpus.
+tree-sitter-test: tree-sitter-generate
+    cd "{{ grammar }}" && tree-sitter test
+
+# Parse one DL7 file and print its concrete syntax tree.
+tree-sitter-parse path:
+    cd "{{ grammar }}" && tree-sitter parse "{{ v7 }}/{{ path }}"
+
+# Step 1 compiler-front build gate.
+build: tree-sitter-test
+
+# Validate exact closure counts on tiny chain and ring graphs.
+runtime-shootout-smoke:
+    bash "{{ v7 }}/labs/18_runtime_shootout/4_run.sh" smoke 4
+
+# Run one warmup and five measured repetitions for every native-logic arm.
+runtime-shootout n="48":
+    bash "{{ v7 }}/labs/18_runtime_shootout/4_run.sh" full "{{ n }}"

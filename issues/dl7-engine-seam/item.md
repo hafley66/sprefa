@@ -1,9 +1,9 @@
 ---
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
 type: task
 assignee: terra
-status: open
+status: done
 priority: normal
 epic: dl7-minimal-kernel
 labels: [dl7, model-terra]
@@ -12,6 +12,8 @@ lane: dl7-engine
 lane_seq: 0
 collision: [v7-engine-contract]
 blocked_by: ['@dl7-luna-review']
+closed: 2026-08-29
+closed_by: codex
 ---
 
 # Pin the DL7 to existing Rust engine seam
@@ -25,11 +27,11 @@ existing ProgramJson and Rust engine door. This is a contract task first.
 
 ## Acceptance Criteria
 
-- [ ] Name exact existing Rust type, loader, command, and `ir_version` source.
-- [ ] Name the minimum ProgramJson fields for one inert or one-row program.
-- [ ] Confirm zero engine source changes are required, or record the blocker.
-- [ ] Define an adapter signature without importing V6 parser terms.
-- [ ] Write `v7/3_TASKS/results/9_ENGINE_SEAM.md`.
+- [x] Name exact existing Rust type, loader, command, and `ir_version` source.
+- [x] Name the minimum ProgramJson fields for one inert or one-row program.
+- [x] Confirm zero engine source changes are required, or record the blocker.
+- [x] Define an adapter signature without importing V6 parser terms.
+- [x] Write `v7/tasks/results/9_ENGINE_SEAM.md`.
 
 ## Tests Run
 

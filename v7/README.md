@@ -15,8 +15,14 @@ Initial boundary under examination:
 
 ```text
 .dl7 source
-    -> prefix reader and evaluator
+    -> generated Tree-sitter C parser
+    -> canonical syntax adapter
+    -> evaluator
     -> V7 semantic facts and fixpoints
     -> execution-plan contract
     -> existing sprefa-engine-rs
 ```
+
+The first build gate is `cd v7 && just build`. It regenerates and tests the
+DL7 Tree-sitter parser. The generated parser exposes a C ABI usable from C,
+C++, Zig, and a later compiler-host adapter.

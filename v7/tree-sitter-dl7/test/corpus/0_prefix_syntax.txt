@@ -1,0 +1,59 @@
+==================
+Prefix syntax
+==================
+
+(: Pair (* (: left int)))
+(: Ledger (* (: (Key "account" PrimaryKeyOptions) int)))
+(<- (copy ?Value ?_) (source ?Value))
+((Pair User) Order)
+"hello\nworld"
+'spot
+-12
+-12abc
+'a'b
+()
+
+---
+
+(source_file
+  (parenthesized_expression
+    (bare_token)
+    (bare_token)
+    (parenthesized_expression
+      (bare_token)
+      (parenthesized_expression
+        (bare_token)
+        (bare_token)
+        (bare_token))))
+  (parenthesized_expression
+    (bare_token)
+    (bare_token)
+    (parenthesized_expression
+      (bare_token)
+      (parenthesized_expression
+        (bare_token)
+        (parenthesized_expression
+          (bare_token)
+          (string_literal)
+          (bare_token))
+        (bare_token))))
+  (parenthesized_expression
+    (bare_token)
+    (parenthesized_expression
+      (bare_token)
+      (bare_token)
+      (bare_token))
+    (parenthesized_expression
+      (bare_token)
+      (bare_token)))
+  (parenthesized_expression
+    (parenthesized_expression
+      (bare_token)
+      (bare_token))
+    (bare_token))
+  (string_literal)
+  (bare_token)
+  (bare_token)
+  (bare_token)
+  (bare_token)
+  (parenthesized_expression))

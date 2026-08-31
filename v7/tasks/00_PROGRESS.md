@@ -1,6 +1,207 @@
 # DL7 minimal kernel progress
 
-Updated: 2026-08-29 00:38 EDT
+Updated: 2026-08-30
+
+## 2026-08-30 relational expression flow
+
+```text
+full relation call
+    -> every tuple position remains explicit
+
+expression-position call
+    -> declaration selects one return position
+    -> lowerer inserts one logical value
+    -> nested calls contribute ordered ordinary goals
+    -> containing bind, head, or body consumes that value
+```
+
+- Plan: `plans/2026-08-30-dl7-relational-expression-flow.md`.
+- Issue lane: `@dl7-expression-flow`, ten sequential cards.
+- Blast-radius receipts:
+  - `v7/tasks/results/15_EXPRESSION_FLOW_REVIEW.md`.
+  - `v7/tasks/results/16_EXPRESSION_BLAST_RADIUS.md`.
+  - `v7/tasks/results/17_DEFERRED_BIND_REVIEW.md`.
+- Milestones 1 through 10 are implemented:
+  1. expression result carrier;
+  2. declared return position;
+  3. RHS relation application;
+  4. nested application flattening;
+  5. one expression lowerer for binds, heads, and bodies;
+  6. removal of `partial_request` from executable V7 sources;
+  7. full-tuple reverse-query parity;
+  8. expression projection mode checks;
+  9. compile-known partial application erased to a direct call;
+  10. expression-produced edge labels and userland composite `Key` rows.
+- A full call retains every relation column. An expression call omits the one
+  declared `return` column and lowers to an ordinary goal carrying a fresh
+  logical value.
+- `((Pair User) Order)` lowers to `Pair(User, Order, Result)` and leaves no
+  partial-application carrier in checked runtime Datalog.
+- `(: (Key "account" Options) int)` derives an ordered edge whose label is the
+  interned `Key` node. Multiple keyed edges produce dense `composite_key`
+  positions while preserving the same options node.
+- Feature commits: `0c38a71c8`, `b01046b8b`, `504aed475`, `a7bf8c2ef`,
+  `5d79f6f73`, `1636e9795`, `04f4f010b`, `27b621fb3`, `0dd3d92d4`,
+  `1641f78c3`, `37ed50976`, `3f90e7b5a`, `ff9884516`.
+- Final gates: SWI 23 of 23 passed in 2.67 seconds; Tree-sitter 1 of 1 passed.
+
+## 2026-08-30 programmable compiler fragments
+
+```text
+ordinary DL7 compiler rules
+    -> def/head/head_arg/body/body_arg rows
+    -> deterministic generated-program assembly
+    -> ordinary declaration, arity, mode, safety, and strata checks
+    -> freeze generated program
+    -> execute generated rules in the next compiler round
+```
+
+- `def/2` emits checked relation declarations.
+- `head/2`, `head_arg/4`, `body/4`, and `body_arg/5` emit checked rule IR.
+- Generated variable names are scoped by rule identity.
+- Compiler stability now compares type edges, intern requests, generated
+  relations, and generated rules.
+- `HistoryV1(Source, Options, Result)` interns one specialization, copies source
+  edges, emits a declaration and copy rule, and derives the source row after
+  refreeze.
+- Generated relation collisions and orphan rule fragments are diagnostics.
+- Plan: `v7/design/4_PROGRAMMABLE_COMPILER.PLAN.md`.
+- Commits: `890e08ef3`, `67ab6c44b`, `4c1e7f88a`.
+- Gates: SWI 15 of 15 passed; Tree-sitter 1 of 1 passed.
+
+Issue DAG:
+
+```text
+@dl7-generated-definitions
+    -> @dl7-generated-rules
+        -> @dl7-generated-refreeze
+            -> @dl7-history-v1
+```
+
+## 2026-08-29 type-operator closure
+
+```text
+authored and kernel ':' rows
+          |
+          v
+edge_snapshot round N
+          |
+          v
+Partial<User>
+          |
+          v
+edge_snapshot round N+1
+          |
+          v
+Pick<Partial<User>, [id, name]>
+          |
+          v
+edge_snapshot round N+2
+          |
+          v
+Exclude<Pick<...>, [id]>
+          |
+          v
+stable closure and functional-key validation
+```
+
+- `@dl7-edge-snapshot-ruling`: done.
+- `@dl7-pick-exclude`: done.
+- `@dl7-datalog-extensions`: done.
+- `edge_snapshot/4` carries frozen type edges between compiler evaluations.
+- `intern_snapshot/3` carries the current application-demand set between
+  compiler evaluations. Requests that disappear are removed on the next
+  round.
+- `nil/1` supplies `const([])` to relational `cons/3`; the quoted `'nil`
+  sentinel is absent from the V7 compiler, prelude, fixture, and oracle.
+- `Pick` uses positive membership. `Exclude` materializes
+  `excluded_name/3`, then performs a completed lower-stratum anti-join.
+- The existing type-operator oracle proves preserved relative order and dense
+  indices through `Partial`, `Pick`, and `Exclude`.
+- Commit: `d2d7410c0`.
+- Gates: SWI 14 of 14 passed; Tree-sitter 1 of 1 passed.
+- Next DL7 head of line: `@dl7-layout-rulings` (`needs-info`). Its decisions
+  govern target-neutral layout rows before the planner and ProgramJson adapter
+  can proceed.
+
+## Current execution state
+
+```text
+Tree-sitter reader                    done
+root datums -> checked Datalog        done
+shared positive evaluator            done
+userland Partial                      done
+compiler stage split                  done
+engine seam contract                  done
+checked positive goal IR              done
+
+semantic rulings -> checked foundation -> relational cons
+                                      \-> ordered index
+relational cons -> stratified negation -> count
+ordered index + count + negation -> Pick/Exclude
+
+layout rulings -> layout -> ProgramJson -> engine smoke
+```
+
+- Runtime shootout landed through `1f1a67a30`: SBCL, SWI, and Racket all
+  materialize exact chain and ring closures. The independent full run emitted
+  45 measurement records in 24 seconds.
+- `@dl7-pick-exclude` reached its planned stop. The checked program currently
+  has positive calls, positive dependency rows, stratum 0, constructing
+  `cons/3`, and no dense-rank representation. Receipt: `16abb82ad` and
+  `v7/tasks/results/8_PICK_EXCLUDE.md`.
+- The engine contract report landed as `1c5523a1c`. Existing Rust source
+  changes required: 0. V7 still owes a layout graph and ProgramJson/module
+  writer before `@dl7-engine-smoke` can run.
+- The comptime compiler split landed as `8fda71fa7` and its issue receipt as
+  `f86f924a2`. Nonblank, noncomment lines are 287 in `0_lowerer.pl`, 293 in
+  `1_checker.pl`, and 91 in `2_compiler.pl`. Predicate-name inventory is
+  unchanged; SWI passed 7 of 7 and Tree-sitter passed 1 of 1.
+- The extension review landed as `780e2bfaa`. It found that checked-goal
+  polarity, authored-order mode safety, functional keys, closure validation,
+  and pure stratification must land together before cons, negation, or count.
+  Count also needs an ordered-index source and explicit zero-rank handling to
+  support Pick and Exclude.
+- The corrected issue graph landed as `57a9d24c9`. Semantic choices are held in
+  `@dl7-datalog-rulings`; implementation cards depend on that ruling task.
+- The decision-free positive-goal slice landed as `ea876b7db`. Every checked
+  body row is now `checked_goal(positive, call(ref(...), Arguments))`.
+  Dependency analysis, variable analysis, instantiation, and evaluator dispatch
+  consume that one carrier. The exact Partial receipt remains 59 compiler rows,
+  10 dependencies, and 11 strata; all 10 body goals use the wrapper.
+- The layout blocker landed as `1c0a28475`. Checked Datalog has no rows for
+  stored-relation selection, `set|log`, layout keys, artifact roles, or encoded
+  representations. These choices are held in `@dl7-layout-rulings`, and the
+  layout planner depends on it.
+- Commercial Common Prolog research landed as `dd100f858`. The active
+  executable labs also completed: logadat provides a naive finite Datalog
+  fixpoint; si-kanren provides unification, occurs checking, fair bounded
+  search, and disequality/type/absento constraint stores. Their reviewed lab
+  receipts are under `v7/labs/16_logadat` and `v7/labs/17_si_kanren`.
+- The layout/adapter correction landed as `d562a4ac2`: target-neutral layout
+  rows stop before SQLite names, DDL, statements, and ProgramJson seed
+  placement. Those fields have a separate target-adapter ruling card.
+- Independent gates after the planning changes: SWI 7 of 7 passed in 0.3
+  seconds; Tree-sitter 1 of 1 passed in 3.2 seconds.
+
+## Tree-sitter parser replacement
+
+- Added `v7/justfile`; `just build` is the first V7 build gate.
+- Added `v7/tree-sitter-dl7/grammar.js` and generated C parser metadata.
+- The grammar owns parenthesized nesting, strings, comments, token boundaries,
+  source coordinates, and recoverable syntax errors.
+- A maximal `bare_token` preserves the existing delimiter law. Classification
+  into names, integers, symbols, variables, or diagnostics remains an adapter
+  responsibility.
+- Added one corpus case covering nested prefix syntax, strings, symbols,
+  variables, integers, empty expressions, and malformed whole-token examples.
+- `just build`: 1 parse, 1 successful, 0 failed.
+- Existing fixtures `0_minimal.dl7`, `2_partial.dl7`, and prelude
+  `0_types.dl7` parse without `ERROR` or `MISSING` nodes.
+- Added the C ABI declaration `tree_sitter_dl7()` and verified the header with
+  C, C++, and Zig frontends.
+- The current SWI parser remains connected until the canonical syntax adapter
+  reproduces `read_dl7/5` output.
 
 ## Basement restart
 
@@ -306,3 +507,115 @@ one SWI process.
   clauses (`cons/3`, `intern/3`).
 - Partial implementation occurrences in reader, compiler, and evaluator: 0.
 - Runtime checked data is retained; runtime runner modules in this slice: 0.
+
+## Checked Datalog foundation
+
+- `checked_goal(positive, Call)` is the uniform checked body carrier. The
+  evaluator, dependency extractor, authored-order checker, and normalized
+  runtime oracle all consume that term.
+- Checked declarations now use
+  `relation(ref(RelationIdentity), Arity, KeySets)`. Source products currently
+  carry `[]`. Kernel keys are `':'/4` with `[[0,1],[0,3]]`, `cons/3` with
+  `[[0,1],[2]]`, and `intern/3` with `[[0,1]]`.
+- `validate_functional_rows/3` checks each declared zero-based key against the
+  final sorted closure. The compiler returns no artifact when unequal rows
+  share a key.
+- `check_goal_sequence/4` folds checked goals in authored order. Ordinary
+  positive calls bind their variables. Positive `cons/3` requires argument 2
+  or arguments 0 and 1; positive `intern/3` requires arguments 0 and 1.
+  Negative constructive kernel goals are refused. Rule-head variables seed
+  the demand context; the separate range-safety check still requires every
+  head variable to occur in the body.
+- `stratify_rules/3` is pure libtime code shared with checking. Positive edges
+  have gap 0, negative edges gap 1, level relaxation returns the least derived
+  strata, and a strict edge on a dependency cycle returns one sorted named
+  diagnostic before evaluator installation.
+- Commits: `568f71038`, `bca56c573`, `fbaf13db1`.
+- Consolidated SWI command: 10 passed, 0 failed, 0 choicepoint warnings.
+- Tree-sitter command: 1 parse passed, 0 failed.
+- The normalized compiler-row stream before and after this checkpoint has the
+  same SHA-256 after replacing the worktree path:
+  `02de0eea2a3809397244eb10e05b621c72c067a03e44e0abe3fe723978b6a499`.
+
+## Bounded relational cons
+
+- `cons/3` dispatches by the grounded determining side. A ground `List`
+  deconstructs; otherwise a ground `Head` and `Tail` construct.
+- Singleton deconstruction returns `const(symbol(nil))`. Longer proper lists
+  return their nonempty proper suffix as `const(Tail)`.
+- `const([])` and improper lists have no `cons/3` tuple.
+- The consolidated oracle constructs singleton and two-element lists, walks a
+  three-element value through every suffix and the nil tail, rejects empty and
+  improper inputs, checks the source-positioned underconstraint diagnostic,
+  and observes zero temporary evaluator clauses after completion.
+- Implementation commit: `8ffe6ae51`.
+- Consolidated SWI command: 11 passed, 0 failed, 0 choicepoint warnings.
+- Tree-sitter command: 1 parse passed, 0 failed.
+
+## Checked ordered edge indices
+
+- Added relation-shaped kernel node
+  `predecessor(Owner, EarlierIndex, LaterIndex)` with keys
+  `[[0,1],[0,2]]`.
+- After source and kernel colon edges pass dense-index checks, every edge at
+  index `N > 0` contributes the sorted checked seed `(N-1, N)` for its owner.
+- A consolidated source unit proves that empty and singleton products emit no
+  rows, a three-edge product emits `0→1` and `1→2`, and ordinary positive
+  recursion derives `0→1`, `0→2`, and `1→2`.
+- Partial's normalized runtime counts are now
+  `30/28/12/16/5/10/12`; compiler closure size is 79. The 15 new checked seeds
+  are predecessor rows, while two kernel node/classifier rows and three kernel
+  signature edges account for the remaining compiler rows.
+- Implementation commit: `cf974641f`.
+- Consolidated SWI command: 12 passed, 0 failed, 0 choicepoint warnings.
+- Tree-sitter command: 1 parse passed, 0 failed.
+
+## Checked stratified negation
+
+- Prefix `(not (Relation Arguments...))` lowers to
+  `pending_goal(negative, Call)` and checks as
+  `checked_goal(negative, call(ref(Relation), Arguments))`. Ordinary goals use
+  the same carriers with `positive` polarity.
+- Authored-order safety tracks caller-available and body-produced variable sets
+  separately. Constructive kernels may consume caller inputs; negative goals
+  may consume only variables produced by preceding body goals.
+- The shared stratifier assigns negative dependencies gap 1. Strict cycles
+  return one sorted relation payload; the checker attaches the first authored
+  negative goal's reader node.
+- `evaluate/4` runs ascending strata. Each stratum tables positive recursion
+  over current rules and seeds plus immutable completed lower rows. Negative
+  goals query only those lower rows.
+- The consolidated anti-join derives only `allowed("a")` from candidates
+  `"a"`, `"b"` and blocked `"b"`. Its checked body is positive candidate then
+  negative blocked; levels are candidate 0, blocked 0, allowed 1.
+- Exact receipts also cover negative-before-binding refusal, source-positioned
+  negative-cycle refusal, negative `cons/3` refusal, and zero remaining rule,
+  seed, and lower-row clauses after success, diagnostic, and exception paths.
+- The normalized Partial compiler-row SHA-256 before and after evaluator
+  scheduling is unchanged:
+  `6d1c6ee03f48e5a76a8eb6e0f440243eac5c3c03256acc04686bd8147142c5bc`.
+- Commits: `e4517c3eb`, `e642d8c9f`.
+- Consolidated SWI command: 13 passed, 0 failed, 0 choicepoint warnings.
+- Tree-sitter command: 1 parse passed, 0 failed.
+
+## Completed-stratum count
+
+- One rule-head `(count Argument)` lowers to
+  `aggregate(count, Argument)`. A second count descriptor, malformed count
+  shape, count body goal, and unrelated nested head form each stop with a
+  deterministic lowering diagnostic.
+- Every dependency of an aggregate-headed rule has strict gap 1. A strict
+  cycle containing an aggregate edge returns
+  `aggregate_dependency_cycle(Relations)`, distinct from negative cycles.
+- Before current-stratum tabling, `derive_aggregate_rows/4` enumerates complete
+  body proofs over immutable completed lower rows. Plain head positions form
+  the group key; the count descriptor becomes `const(BagLength)`.
+- The grouped receipt maps two east sale proofs and one west proof to
+  `region_count("east", 2)` and `region_count("west", 1)`. Both east proofs
+  contribute even though the count expression has the same value. Empty bags
+  emit no row, and group rows are sorted.
+- The normalized Partial compiler-row SHA-256 remains
+  `6d1c6ee03f48e5a76a8eb6e0f440243eac5c3c03256acc04686bd8147142c5bc`.
+- Commits: `f1a25c814`, `7e8c08f20`.
+- Consolidated SWI command: 14 passed, 0 failed, 0 choicepoint warnings.
+- Tree-sitter command: 1 parse passed, 0 failed.

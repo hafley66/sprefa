@@ -1,0 +1,111 @@
+; Ordinary products serve as structural contracts.
+(: Named
+   (* (: name text)))
+
+(: Identified
+   (* (: id int)))
+
+(: UserContract
+   (* (: id int)
+      (: name text)))
+
+(: User
+   (* (: id int)
+      (: name text)
+      (: active int)))
+
+(User 7 "Ada" 1)
+
+(: MissingName
+   (* (: id int)))
+
+(: UserConformance (Conforms User UserContract))
+
+; A failed full call drives an intern request without creating a failed bind.
+(: conformance_attempt
+   (* (: source type)
+      (: contract type)))
+
+(<- (conformance_attempt MissingName Named)
+    (Conforms MissingName Named ?Proof))
+
+; Contract conjunction is a closed cons list built by an ordinary relation.
+(: user_contracts
+   (* (: return any)))
+
+(<- (user_contracts ?Contracts)
+    (nil ?Empty)
+    (cons Named ?Empty ?Tail)
+    (cons Identified ?Tail ?Contracts))
+
+(: all_contract_proof
+   (* (: proof type)))
+
+(<- (all_contract_proof ?Proof)
+    (user_contracts ?Contracts)
+    (ConformsAll User ?Contracts ?Proof))
+
+; Relation-valued edges use the same type identities as every other edge.
+(: HashFunction
+   (* (: input type)
+      (: return int)))
+
+(: Hashable
+   (* (: hash HashFunction)))
+
+(: UserHashWitness
+   (* (: hash HashFunction)))
+
+(: BrokenHashWitness
+   (* (: hash int)))
+
+(implements Hashable User UserHashWitness)
+(implements Hashable User BrokenHashWitness)
+
+; Generic constraints are ordinary conformance goals in the body.
+(: NamedBox
+   (* (: source type)
+      (: return type)))
+
+(<- (NamedBox ?Source ?Result)
+    (Conforms ?Source Named ?Proof)
+    (nil ?Empty)
+    (cons ?Source ?Empty ?Arguments)
+    (intern NamedBox ?Arguments ?Result))
+
+(: UserBox (NamedBox User))
+
+(: box_attempt
+   (* (: source type)))
+
+(<- (box_attempt MissingName)
+    (NamedBox MissingName ?Result))
+
+; Intersection keeps left order, deduplicates name, then appends updated.
+(: IdentifiedNamed
+   (* (: id int)
+      (: name text)))
+
+(: NamedTimestamped
+   (* (: name text)
+      (: updated int)))
+
+(: UserView (Intersect IdentifiedNamed NamedTimestamped))
+(: ExtendedUserView (Extend IdentifiedNamed NamedTimestamped))
+
+(: NumericName
+   (* (: name int)))
+
+(: intersection_attempt
+   (* (: left type)
+      (: right type)))
+
+(<- (intersection_attempt Named NumericName)
+    (Intersect Named NumericName ?Result))
+
+; HistoryV1 reads its source contract from ordinary options data.
+(: HistoryOptions
+   (* (: mode "copy")
+      (: contract UserContract)))
+
+(: UserHistory (HistoryV1 User HistoryOptions))

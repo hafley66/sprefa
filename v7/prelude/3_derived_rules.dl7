@@ -1,0 +1,168 @@
+(<- (contains ?List ?Value)
+    (cons ?Value ?Tail ?List))
+
+(<- (contains ?List ?Value)
+    (cons ?Head ?Tail ?List)
+    (contains ?Tail ?Value))
+
+(<- (closed_names ?Empty)
+    (nil ?Empty))
+
+(<- (closed_names ?List)
+    (cons ?Head ?Tail ?List)
+    (closed_names ?Tail))
+
+(<- (before ?Owner ?Earlier ?Later)
+    (predecessor ?Owner ?Earlier ?Later))
+
+(<- (before ?Owner ?Earlier ?Later)
+    (predecessor ?Owner ?Earlier ?Middle)
+    (before ?Owner ?Middle ?Later))
+
+(<- (keyed_edge ?Source ?Name ?Options ?Target ?SourceIndex)
+    (edge_snapshot ?Source ?Label ?Target ?SourceIndex)
+    (intern_snapshot Key ?Arguments ?Label)
+    (cons ?Name ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Options ?Empty ?TailArguments))
+
+(<- (key_predecessor ?Source ?SourceIndex ?PriorIndex)
+    (keyed_edge ?Source ?Name ?Options ?Target ?SourceIndex)
+    (keyed_edge ?Source ?PriorName ?PriorOptions ?PriorTarget ?PriorIndex)
+    (before ?Source ?PriorIndex ?SourceIndex))
+
+(<- (key_has_predecessor ?Source ?SourceIndex)
+    (key_predecessor ?Source ?SourceIndex ?PriorIndex))
+
+(<- (key_rank ?Source ?SourceIndex (count ?PriorIndex))
+    (key_predecessor ?Source ?SourceIndex ?PriorIndex))
+
+(<- (key_rank ?Source ?SourceIndex 0)
+    (keyed_edge ?Source ?Name ?Options ?Target ?SourceIndex)
+    (not (key_has_predecessor ?Source ?SourceIndex)))
+
+(<- (composite_key ?Source ?ResultIndex ?Name ?Options)
+    (keyed_edge ?Source ?Name ?Options ?Target ?SourceIndex)
+    (key_rank ?Source ?SourceIndex ?ResultIndex))
+
+(<- (pick_edge ?Source ?Names ?Name ?Target ?SourceIndex)
+    (Pick ?Source ?Names ?Result)
+    (edge_snapshot ?Source ?Name ?Target ?SourceIndex)
+    (contains ?Names ?Name))
+
+(<- (pick_predecessor ?Source ?Names ?SourceIndex ?PriorIndex)
+    (pick_edge ?Source ?Names ?Name ?Target ?SourceIndex)
+    (pick_edge ?Source ?Names ?PriorName ?PriorTarget ?PriorIndex)
+    (before ?Source ?PriorIndex ?SourceIndex))
+
+(<- (pick_has_predecessor ?Source ?Names ?SourceIndex)
+    (pick_predecessor ?Source ?Names ?SourceIndex ?PriorIndex))
+
+(<- (pick_rank ?Source ?Names ?SourceIndex (count ?PriorIndex))
+    (pick_predecessor ?Source ?Names ?SourceIndex ?PriorIndex))
+
+(<- (pick_rank ?Source ?Names ?SourceIndex 0)
+    (pick_edge ?Source ?Names ?Name ?Target ?SourceIndex)
+    (not (pick_has_predecessor ?Source ?Names ?SourceIndex)))
+
+(<- (: ?Result ?Name ?Target ?ResultIndex)
+    (Pick ?Source ?Names ?Result)
+    (pick_edge ?Source ?Names ?Name ?Target ?SourceIndex)
+    (pick_rank ?Source ?Names ?SourceIndex ?ResultIndex))
+
+(<- (excluded_name ?Source ?Names ?Name)
+    (Exclude ?Source ?Names ?Result)
+    (edge_snapshot ?Source ?Name ?Target ?SourceIndex)
+    (contains ?Names ?Name))
+
+(<- (exclude_edge ?Source ?Names ?Name ?Target ?SourceIndex)
+    (Exclude ?Source ?Names ?Result)
+    (edge_snapshot ?Source ?Name ?Target ?SourceIndex)
+    (closed_names ?Names)
+    (not (excluded_name ?Source ?Names ?Name)))
+
+(<- (exclude_predecessor ?Source ?Names ?SourceIndex ?PriorIndex)
+    (exclude_edge ?Source ?Names ?Name ?Target ?SourceIndex)
+    (exclude_edge ?Source ?Names ?PriorName ?PriorTarget ?PriorIndex)
+    (before ?Source ?PriorIndex ?SourceIndex))
+
+(<- (exclude_has_predecessor ?Source ?Names ?SourceIndex)
+    (exclude_predecessor ?Source ?Names ?SourceIndex ?PriorIndex))
+
+(<- (exclude_rank ?Source ?Names ?SourceIndex (count ?PriorIndex))
+    (exclude_predecessor ?Source ?Names ?SourceIndex ?PriorIndex))
+
+(<- (exclude_rank ?Source ?Names ?SourceIndex 0)
+    (exclude_edge ?Source ?Names ?Name ?Target ?SourceIndex)
+    (not (exclude_has_predecessor ?Source ?Names ?SourceIndex)))
+
+(<- (: ?Result ?Name ?Target ?ResultIndex)
+    (Exclude ?Source ?Names ?Result)
+    (exclude_edge ?Source ?Names ?Name ?Target ?SourceIndex)
+    (exclude_rank ?Source ?Names ?SourceIndex ?ResultIndex))
+
+; Partial application results are ordinary product nodes.
+(<- (node ?Result)
+    (Partial ?Source ?Result))
+
+(<- (product ?Result)
+    (Partial ?Source ?Result))
+
+(<- (node ?Result)
+    (Pick ?Source ?Names ?Result))
+
+(<- (product ?Result)
+    (Pick ?Source ?Names ?Result))
+
+(<- (node ?Result)
+    (Exclude ?Source ?Names ?Result))
+
+(<- (product ?Result)
+    (Exclude ?Source ?Names ?Result))
+
+(<- (node ?Result)
+    (Key ?Name ?Options ?Result))
+
+; Each source edge keeps its label and ordinal while Option maps the target.
+(<- (: ?Result ?Name ?OptionalTarget ?Index)
+    (Partial ?Source ?Result)
+    (edge_snapshot ?Source ?Name ?Target ?Index)
+    (Option ?Target ?OptionalTarget))
+
+; HistoryV1 emits both type-graph rows and a checked executable rule through
+; the public generated-program carrier. The generated rule copies source rows
+; in this first proof; temporal storage policy remains a later userland layer.
+(<- (history_v1_edge ?Source ?Options ?Result ?Name ?Target ?SourceIndex)
+    (HistoryV1 ?Source ?Options ?Result)
+    (edge_snapshot ?Source ?Name ?Target ?SourceIndex))
+
+(<- (node ?Result)
+    (HistoryV1 ?Source ?Options ?Result))
+
+(<- (product ?Result)
+    (HistoryV1 ?Source ?Options ?Result))
+
+(<- (: ?Result ?Name ?Target ?SourceIndex)
+    (history_v1_edge ?Source ?Options ?Result
+                     ?Name ?Target ?SourceIndex))
+
+(<- (history_v1_arity ?Result (count ?SourceIndex))
+    (history_v1_edge ?Source ?Options ?Result
+                     ?Name ?Target ?SourceIndex))
+
+(<- (def ?Result ?Arity)
+    (history_v1_arity ?Result ?Arity))
+
+(<- (head ?Result ?Result)
+    (HistoryV1 ?Source ?Options ?Result))
+
+(<- (head_arg ?Result ?Position "variable" ?Name)
+    (history_v1_edge ?Source ?Options ?Result
+                     ?Name ?Target ?Position))
+
+(<- (body ?Result 0 "positive" ?Source)
+    (HistoryV1 ?Source ?Options ?Result))
+
+(<- (body_arg ?Result 0 ?Position "variable" ?Name)
+    (history_v1_edge ?Source ?Options ?Result
+                     ?Name ?Target ?Position))

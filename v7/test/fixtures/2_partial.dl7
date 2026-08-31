@@ -2,7 +2,51 @@
    (* (: id int)
       (: name text)))
 
-(: partial_request
-   (* (: source type)))
+(User 7 "Ada")
 
-(partial_request User)
+(: UserContract
+   (* (: id int)
+      (: name text)))
+
+(: HistoryOptions
+   (* (: mode "copy")
+      (: contract UserContract)))
+
+(: history_request
+   (* (: result type)))
+
+(<- (history_request ?Result)
+    (HistoryV1 User HistoryOptions ?Result))
+
+(: UserPatch (Partial User))
+(: MaybePatch (Option (Partial User)))
+
+(: PrimaryKeyOptions
+   (* (: unique "yes")))
+
+(: Ledger
+   (* (: (Key "account" PrimaryKeyOptions) int)
+      (: payload text)
+      (: (Key "revision" PrimaryKeyOptions) int)))
+
+(: selected_request
+   (* (: result type)))
+
+(<- (selected_request ?Result)
+    (Partial User ?Partial)
+    (edge_snapshot ?Partial ?FirstName ?FirstType 0)
+    (edge_snapshot ?Partial ?SecondName ?SecondType 1)
+    (nil ?Empty)
+    (cons ?SecondName ?Empty ?Tail)
+    (cons ?FirstName ?Tail ?Names)
+    (Pick ?Partial ?Names ?Result))
+
+(: excluded_request
+   (* (: result type)))
+
+(<- (excluded_request ?Result)
+    (selected_request ?Selected)
+    (edge_snapshot ?Selected ?RemovedName ?RemovedType 0)
+    (nil ?Empty)
+    (cons ?RemovedName ?Empty ?Names)
+    (Exclude ?Selected ?Names ?Result))

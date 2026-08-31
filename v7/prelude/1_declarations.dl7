@@ -1,0 +1,124 @@
+; Shared relational helpers for closed name collections and edge order.
+(: contains
+   (* (: list any)
+      (: value any)))
+
+(: closed_names
+   (* (: list any)))
+
+(: before
+   (* (: owner type)
+      (: earlier int)
+      (: later int)))
+
+(: Pick
+   (* (: source type)
+      (: names any)
+      (: return type)))
+
+(: pick_edge
+   (* (: source type)
+      (: names any)
+      (: name any)
+      (: target type)
+      (: source_index int)))
+
+(: pick_predecessor
+   (* (: source type)
+      (: names any)
+      (: source_index int)
+      (: prior_index int)))
+
+(: pick_has_predecessor
+   (* (: source type)
+      (: names any)
+      (: source_index int)))
+
+(: pick_rank
+   (* (: source type)
+      (: names any)
+      (: source_index int)
+      (: result_index int)))
+
+(: Exclude
+   (* (: source type)
+      (: names any)
+      (: return type)))
+
+(: HistoryV1
+   (* (: source type)
+      (: options type)
+      (: return type)))
+
+(: Key
+   (* (: name text)
+      (: options type)
+      (: return type)))
+
+(: keyed_edge
+   (* (: source type)
+      (: name text)
+      (: options type)
+      (: target any)
+      (: source_index int)))
+
+(: key_predecessor
+   (* (: source type)
+      (: source_index int)
+      (: prior_index int)))
+
+(: key_has_predecessor
+   (* (: source type)
+      (: source_index int)))
+
+(: key_rank
+   (* (: source type)
+      (: source_index int)
+      (: result_index int)))
+
+(: composite_key
+   (* (: source type)
+      (: position int)
+      (: name text)
+      (: options type)))
+
+(: history_v1_edge
+   (* (: source type)
+      (: options type)
+      (: result type)
+      (: name text)
+      (: target any)
+      (: source_index int)))
+
+(: history_v1_arity
+   (* (: result type)
+      (: arity int)))
+
+(: excluded_name
+   (* (: source type)
+      (: names any)
+      (: name any)))
+
+(: exclude_edge
+   (* (: source type)
+      (: names any)
+      (: name any)
+      (: target type)
+      (: source_index int)))
+
+(: exclude_predecessor
+   (* (: source type)
+      (: names any)
+      (: source_index int)
+      (: prior_index int)))
+
+(: exclude_has_predecessor
+   (* (: source type)
+      (: names any)
+      (: source_index int)))
+
+(: exclude_rank
+   (* (: source type)
+      (: names any)
+      (: source_index int)
+      (: result_index int)))
