@@ -56,9 +56,12 @@
     (cons ?Names ?Empty ?TailArguments))
 
 ; HistoryV1 options are ordinary typed data. The first version accepts copy
-; mode and interns source plus options as the specialization identity.
+; mode plus a source contract and interns source plus options as the
+; specialization identity.
 (<- (HistoryV1 ?Source ?Options ?Result)
     (edge_snapshot ?Options ?Mode "copy" 0)
+    (edge_snapshot ?Options ?ContractName ?Contract 1)
+    (Conforms ?Source ?Contract ?Proof)
     (nil ?Empty)
     (cons ?Options ?Empty ?TailArguments)
     (cons ?Source ?TailArguments ?Arguments)
@@ -69,5 +72,6 @@
     (cons ?Source ?TailArguments ?Arguments)
     (nil ?Empty)
     (cons ?Options ?Empty ?TailArguments)
-    (edge_snapshot ?Options ?Mode "copy" 0))
-
+    (edge_snapshot ?Options ?Mode "copy" 0)
+    (edge_snapshot ?Options ?ContractName ?Contract 1)
+    (Conforms ?Source ?Contract ?Proof))

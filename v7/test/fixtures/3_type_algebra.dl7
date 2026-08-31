@@ -35,8 +35,8 @@
 
 (<- (user_contracts ?Contracts)
     (nil ?Empty)
-    (cons Identified ?Empty ?Tail)
-    (cons Named ?Tail ?Contracts))
+    (cons Named ?Empty ?Tail)
+    (cons Identified ?Tail ?Contracts))
 
 (: all_contract_proof
    (* (: proof type)))
@@ -109,4 +109,3 @@
       (: contract UserContract)))
 
 (: UserHistory (HistoryV1 User HistoryOptions))
-

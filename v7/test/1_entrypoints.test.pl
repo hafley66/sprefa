@@ -501,14 +501,14 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 1178,
+                    [], [], 2709,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(102, 164, 49, 117, 63, 106, 49),
+                    runtime(counts(152, 276, 74, 204, 99, 175, 74),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
@@ -539,6 +539,33 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                     evaluator(temporary_rules(0), temporary_seeds(0),
                               temporary_lower_rows(0), temporary_requests(0)),
                     true, true),
+    !.
+
+test(userland_type_algebra_proves_contracts_and_constructs_products) :-
+    compile_dl7('v7/test/fixtures/3_type_algebra.dl7',
+                Rows, Runtime, Diagnostics),
+    type_algebra_snapshot(Rows, Runtime, Snapshot),
+    Observed = type_algebra_result(Diagnostics, Snapshot),
+    Observed == type_algebra_result(
+                    [],
+                    type_algebra(
+                        conformance(
+                            proof(canonical, node),
+                            missing(name, text, 0),
+                            all([identified, named])),
+                        relation_edge(hash, relation_type),
+                        generic(user_box, rejected_missing_name),
+                        intersection(
+                            [edge(0, id, int),
+                             edge(1, name, text),
+                             edge(2, updated, int)],
+                            extend_same_identity,
+                            conflict(name),
+                            rejected_conflict),
+                        impl(valid_user_hash,
+                             invalid(hash, relation_type, 0)),
+                        history(contract(user_contract),
+                                runtime_row([7, "Ada", 1])))),
     !.
 
 test(final_closure_rejects_declared_functional_key_conflicts) :-
@@ -1273,6 +1300,104 @@ history_v1_snapshot(
               Rules),
     memberchk(depends(ref(History), ref(User), positive), Depends),
     memberchk(stratum(ref(History), 0), Strata).
+
+type_algebra_snapshot(
+    Rows,
+    checked_datalog(_, datalog_program(Relations, _, _), _, _),
+    type_algebra(
+        conformance(proof(canonical, node), missing(name, text, 0),
+                    all([identified, named])),
+        relation_edge(hash, relation_type),
+        generic(user_box, rejected_missing_name),
+        intersection(IntersectionEdges, extend_same_identity,
+                     conflict(name), rejected_conflict),
+        impl(valid_user_hash, invalid(hash, relation_type, 0)),
+        history(contract(user_contract), runtime_row([7, "Ada", 1])))) :-
+    named_owner(Rows, 'User', User),
+    named_owner(Rows, 'UserContract', UserContract),
+    named_owner(Rows, 'Named', Named),
+    named_owner(Rows, 'Identified', Identified),
+    named_owner(Rows, 'MissingName', MissingName),
+    named_owner(Rows, 'Conforms', Conforms),
+    named_owner(Rows, 'UserConformance', UserConformance),
+    UserConformance = application(Conforms, [User, UserContract]),
+    memberchk(call(ref(Conforms),
+                   [ref(User), ref(UserContract), ref(UserConformance)]),
+              Rows),
+    memberchk(call(ref(kernel(node)), [ref(UserConformance)]), Rows),
+    named_owner(Rows, missing_contract_edge, MissingContractEdge),
+    memberchk(call(ref(MissingContractEdge),
+                   [ ref(MissingName), ref(Named), const(name),
+                     ref(primitive(text)), const(0)
+                   ]), Rows),
+    named_owner(Rows, user_contracts, UserContracts),
+    memberchk(call(ref(UserContracts), [const(Contracts)]), Rows),
+    Contracts = [ref(Identified), ref(Named)],
+    named_owner(Rows, 'ConformsAll', ConformsAll),
+    named_owner(Rows, all_contract_proof, AllContractProof),
+    memberchk(call(ref(AllContractProof), [ref(AllProof)]), Rows),
+    AllProof = application(ConformsAll, [User, Contracts]),
+    memberchk(call(ref(ConformsAll),
+                   [ref(User), const(Contracts), ref(AllProof)]), Rows),
+    named_owner(Rows, 'HashFunction', HashFunction),
+    named_owner(Rows, 'Hashable', Hashable),
+    memberchk(call(ref(kernel(':')),
+                   [ ref(Hashable), const(hash), ref(HashFunction), const(0)
+                   ]), Rows),
+    named_owner(Rows, 'NamedBox', NamedBox),
+    named_owner(Rows, 'UserBox', UserBox),
+    UserBox = application(NamedBox, [User]),
+    named_owner(Rows, box_attempt, BoxAttempt),
+    \+ member(call(ref(BoxAttempt), _), Rows),
+    named_owner(Rows, 'Intersect', Intersect),
+    named_owner(Rows, 'IdentifiedNamed', IdentifiedNamed),
+    named_owner(Rows, 'NamedTimestamped', NamedTimestamped),
+    named_owner(Rows, 'UserView', UserView),
+    named_owner(Rows, 'ExtendedUserView', ExtendedUserView),
+    UserView = application(Intersect, [IdentifiedNamed, NamedTimestamped]),
+    ExtendedUserView = UserView,
+    ordered_primitive_edges(Rows, UserView, IntersectionEdges),
+    named_owner(Rows, 'NumericName', NumericName),
+    named_owner(Rows, intersection_conflict, IntersectionConflict),
+    memberchk(call(ref(IntersectionConflict),
+                   [ref(Named), ref(NumericName), const(name)]), Rows),
+    \+ member(call(ref(Intersect),
+                   [ref(Named), ref(NumericName), _]), Rows),
+    named_owner(Rows, 'UserHashWitness', UserHashWitness),
+    named_owner(Rows, 'BrokenHashWitness', BrokenHashWitness),
+    named_owner(Rows, valid_impl, ValidImpl),
+    memberchk(call(ref(ValidImpl),
+                   [ref(Hashable), ref(User), ref(UserHashWitness)]), Rows),
+    named_owner(Rows, invalid_impl_edge, InvalidImplEdge),
+    memberchk(call(ref(InvalidImplEdge),
+                   [ ref(Hashable), ref(User), ref(BrokenHashWitness),
+                     const(hash), ref(HashFunction), const(0)
+                   ]), Rows),
+    named_owner(Rows, 'HistoryOptions', HistoryOptions),
+    memberchk(call(ref(kernel(':')),
+                   [ ref(HistoryOptions), const(contract), ref(UserContract),
+                     const(1)
+                   ]), Rows),
+    named_owner(Rows, 'HistoryV1', HistoryV1),
+    named_owner(Rows, 'UserHistory', UserHistory),
+    UserHistory = application(HistoryV1, [User, HistoryOptions]),
+    memberchk(call(ref(UserHistory),
+                   [const(7), const("Ada"), const(1)]), Rows),
+    memberchk(relation(ref(UserHistory), 3, []), Relations).
+
+ordered_primitive_edges(Rows, Owner, Edges) :-
+    findall(Index-edge(Index, Name, Primitive),
+            member(call(ref(kernel(':')),
+                        [ ref(Owner), const(Name),
+                          ref(primitive(Primitive)), const(Index)
+                        ]), Rows),
+            IndexedEdges),
+    keysort(IndexedEdges, Ordered),
+    indexed_edge_values(Ordered, Edges).
+
+indexed_edge_values([], []).
+indexed_edge_values([_-Edge | Indexed], [Edge | Edges]) :-
+    indexed_edge_values(Indexed, Edges).
 
 named_owner(Rows, Name, Owner) :-
     member(call(ref(kernel(':')),
