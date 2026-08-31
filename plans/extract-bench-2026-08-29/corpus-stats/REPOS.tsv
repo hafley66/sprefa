@@ -2,9 +2,9 @@ repo	url	lang	pinned_sha
 gin	https://github.com/gin-gonic/gin	go	dcaa4296d111981ffb31ac3eba90bb63e1eb5ab9
 hugo	https://github.com/gohugoio/hugo	go	850f11c060b45628b0e010afae0c2aee4dfbdda8
 caddy	https://github.com/caddyserver/caddy	go	8257349b5872d98052155e1f4fe5a79f2b4e8f26
-zod	https://github.com/colinhacks/zod	ts	
-hono	https://github.com/honojs/hono	ts	
-express	https://github.com/expressjs/express	ts	
+zod	https://github.com/colinhacks/zod	ts	b801439b5fb160d651084ff7d7c27a61e24a7334
+hono	https://github.com/honojs/hono	ts	e2740d5a1bd0b4254e517e3af8b60789284bc7bd
+express	https://github.com/expressjs/express	ts	023767fe9872e029271df1418f73401bff20ff40
 flask	https://github.com/pallets/flask	python	
 requests	https://github.com/psf/requests	python	
 click	https://github.com/pallets/click	python	
