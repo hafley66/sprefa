@@ -27,9 +27,10 @@ test(numbered_prelude_files_are_loaded_in_lexical_order) :-
     type_prelude_paths(Paths),
     maplist(file_base_name, Paths, Names),
     Names == ['0_constructors.dl7', '1_declarations.dl7',
-              '2_constructor_rules.dl7', '3_derived_rules.dl7'],
+              '2_constructor_rules.dl7', '3_derived_rules.dl7',
+              '4_type_algebra.dl7'],
     maplist(file_exists, Paths, Exists),
-    Exists == [true, true, true, true].
+    Exists == [true, true, true, true, true].
 
 test(split_prelude_loads_all_existing_type_algebra_declarations) :-
     compile_dl7('v7/test/fixtures/2_partial.dl7', Rows, _Runtime, Diagnostics),
