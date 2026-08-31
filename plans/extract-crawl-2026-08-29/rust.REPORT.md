@@ -2421,8 +2421,12 @@ The loader fix alone costs 22 s of type inference the tier never used to do:
 | build | ratchet wall, 3 runs | verdict |
 |---|---|---|
 | baseline `e26fbb228` | 12,535 / 11,698 / 11,488 ms | green |
-| sysroot + set_test, sequential walk | 34,818 ms | **over the 30,000 ms budget** (`tests/bench/mod.rs:790`) |
-| sysroot + set_test, parallel walk | 15,415 / 13,813 / 14,868 ms | green |
+| sysroot + set_test, sequential walk | 34,818 ms, run 1 | **over the 30,000 ms budget** (`tests/bench/mod.rs:790`) |
+| sysroot + set_test, parallel walk | 12,155 / 11,950 / 12,945 ms | green, level with baseline |
+
+Measured on an otherwise idle machine. The same build read 15,415 / 13,813 /
+14,868 ms while two other lanes were compiling, which is the lane-load effect
+CLAUDE.md warns about; the parallel walk absorbs the loader's whole cost.
 
 `RootDatabase` is `Clone` and the clone shares the salsa storage, but it carries
 a thread-local query stack, so it is `Send` and NOT `Sync`. The walk therefore
