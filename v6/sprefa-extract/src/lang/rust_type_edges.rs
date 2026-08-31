@@ -2,15 +2,14 @@
 //! (field/variant/generic/impl/uses) that `Resolve<TypeF>` binds. Port of v5
 //! `edges_from`.
 
-use syn::spanned::Spanned;
 use syn::{Fields, GenericParam, Path, Type, TypeParamBound, WherePredicate};
 
 use crate::family::{TypeEdgeCandidate, TypeEdgeKind, TypeF};
 use crate::rows::FamilyBundle;
 use crate::shape::{Span, Strings};
 
-use super::rust::{primary_type, syn_span};
-use super::rust_type_refs::{collect_path_args, path_name, type_refs};
+use super::rust::syn_span;
+use super::rust_type_refs::{collect_path_args, path_name, primary_type, type_refs};
 
 // ── type-edge candidates (4d-i; the Resolve<TypeF> input) ───────────────────
 //
