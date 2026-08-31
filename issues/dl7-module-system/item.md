@@ -19,11 +19,17 @@ Evolve V7 from the current combined prelude-plus-file unit into separately owned
 ## Acceptance Criteria
 
 - [ ] Prefix import, alias, and export syntax is decided.
-- [ ] Separate files preserve declaring-module type identities.
+- [x] Separate files preserve declaring-module type identities.
 - [ ] Dotted and aliased references resolve through one path model.
 - [ ] Cycles and ambiguous names produce positioned diagnostics.
 
 ## Tests Run
 
-- [ ] Consolidated module fixture passes.
-- [ ] Existing V7 gates pass.
+- [x] Consolidated module fixture passes.
+- [x] Existing V7 gates pass.
+
+## Agent Runs
+
+### 2026-08-31T06:20:41Z · @codex
+
+Internal module substrate reached milestones 1-9 from plans/2026-08-31-dl7-module-system.md. Milestone 10 remains the user-selected prefix import/export syntax and its parser integration.
