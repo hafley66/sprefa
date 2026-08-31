@@ -268,12 +268,7 @@ impl GoProjection {
     /// The projection ratchet rows use: `go.codeql2.call.tsv` scores in
     /// codeql shape, `go.oracle.call.vta.bare.tsv` in vta shape.
     pub fn per_oracle(oracle_file: &str, oracle_rows: &BTreeSet<String>) -> Option<GoProjection> {
-        let oracle_srcs = || {
-            oracle_rows
-                .iter()
-                .map(|row| row.split('\t').next().unwrap_or("").to_string())
-                .collect::<BTreeSet<String>>()
-        };
+        let oracle_srcs = || src_paths(oracle_rows);
         match oracle_file {
             "go.codeql2.call.tsv" => Some(GoProjection {
                 scope_oracle: Some(oracle_srcs()),
@@ -304,14 +299,7 @@ pub fn go_project(
                 scope.contains(row.split('\t').next().unwrap_or(""))
             })
         })
-        .filter(|row| {
-            !projection.closure
-                || !row
-                    .split('\t')
-                    .nth(1)
-                    .unwrap_or("")
-                    .starts_with("closure@")
-        })
+        .filter(|row| !projection.closure || !row_cols(row)[1].starts_with("closure@"))
         .cloned()
         .collect();
     if projection.iface == Some(GoIface::Method) {
@@ -325,16 +313,16 @@ pub fn go_project(
             .iter()
             .filter(|row| call_kinds.get(*row).map(String::as_str) == Some("implements"))
             .map(|row| {
-                let cols: Vec<&str> = row.split('\t').collect();
-                [cols[0].to_string(), cols[1].to_string(), cols[3].to_string()]
+                let c = row_cols(row);
+                [c[0].to_string(), c[1].to_string(), c[3].to_string()]
             })
             .collect();
         rows.retain(|row| {
             if call_kinds.get(row).map(String::as_str) == Some("implements") {
                 return true;
             }
-            let cols: Vec<&str> = row.split('\t').collect();
-            !impl_triples.contains(&[cols[0].to_string(), cols[1].to_string(), cols[3].to_string()])
+            let c = row_cols(row);
+            !impl_triples.contains(&[c[0].to_string(), c[1].to_string(), c[3].to_string()])
         });
     }
     rows
@@ -455,6 +443,15 @@ fn row_cols(row: &str) -> [&str; 4] {
     ]
 }
 
+/// Column 0 of every row: the caller (src) paths as root-relative paths.
+/// Both projections scope a side's rows against a src-path set built this
+/// way (go: oracle srcs; rust: the dst-scoped oracle's srcs).
+fn src_paths(rows: &BTreeSet<String>) -> BTreeSet<String> {
+    rows.iter()
+        .map(|row| row.split('\t').next().unwrap_or("").to_string())
+        .collect()
+}
+
 /// rust.project.py over a call pair, ported. Returns both projected sets:
 /// the oracle side drops rows whose dst_path is outside the corpus and
 /// closure rows with a mirror; the ours side drops rows whose src_path the
@@ -476,10 +473,7 @@ pub fn rust_project(
         .collect();
     // Our side: the caller must be a file the (dst-scoped) oracle calls
     // from, the `--scope corpus` ours leg.
-    let oracle_srcs: BTreeSet<&str> = oracle_scoped
-        .iter()
-        .map(|row| row.split('\t').next().unwrap_or(""))
-        .collect();
+    let oracle_srcs: BTreeSet<String> = src_paths(&oracle_scoped);
     let ours_scoped: BTreeSet<String> = ours
         .iter()
         .filter(|row| oracle_srcs.contains(row.split('\t').next().unwrap_or("")))
