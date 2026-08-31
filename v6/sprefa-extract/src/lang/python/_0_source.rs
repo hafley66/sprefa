@@ -46,6 +46,16 @@ pub const MODULE: TypeEntityKind = TypeEntityKind::Ext(LangKind {
     lang: "python",
     tag: "module",
 });
+/// The module as a CALL caller: a nameless whole-file cover def minted by
+/// `project_call` so a module-level call site has a caller under
+/// `Resolve<CallF>`. Not a call_def wire row (skipped in `flatten_call`, v5
+/// emits no such def); `caller_name` answers null, the bench join's empty
+/// src_name for module-level rows. Tag "module" collides with the TypeF ext
+/// tag above only across families, which the vocab rail allows.
+pub const MODULE_CALLER: CallKind = CallKind::Ext(LangKind {
+    lang: "python",
+    tag: "module",
+});
 
 // ── the tree-sitter-python parse (one parse feeds type/call) ─────────────────
 
@@ -409,6 +419,12 @@ fn project_call(
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
 ) {
+    // The module as a nameless covering def (whole-file span): a module-level
+    // call site then has a caller for `Resolve<CallF>`'s covering-def join.
+    // Skipped in call_def wire rows; MODULE_CALLER answers a null caller_name,
+    // the bench join's empty src_name for module-level rows.
+    sink.nodes
+        .push(Node::new(node_span(root), MODULE_CALLER));
     py_walk_call_defs(root, src, strings, sink, None, false);
     py_walk_call_sites(root, src, strings, sink);
     py_module_specifiers(root, src, strings, sink);
@@ -1925,8 +1941,9 @@ impl Resolve<TypeF> for PythonSource {
 
 // ── Resolve<CallF>: the go arm's twin. NameResolve (same-file wins, else a
 // unique corpus blob, else no row) with the scip-python override leg when the
-// corpus scip index and a reader are both present. A site outside every def
-// (module level) emits no row. ──────────────────────────────────────────────
+// corpus scip index and a reader are both present. A site outside every
+// function def falls to the module def node minted by `project_call`
+// (CallKind::Module): the module is the caller of top-level code. ────────────
 
 impl PythonSource {
     pub fn call_name_match(
@@ -1939,14 +1956,25 @@ impl PythonSource {
             let span = call.node(r).span;
             if let Some(site) = corpus_defs(index, callee)
                 .iter()
-                .find(|site| site.span == span)
+                .find(|site| site.span == span && site.family == FamilyTag::Call)
             {
                 return Some((site.blob.clone(), site.span));
             }
         }
+        // `Callee()` is a call to `Callee.__init__` (PyCG's oracle semantics);
+        // the class itself is a TypeF def and never the oracle's edge target.
+        // Same file first, then a unique corpus blob. A class with no
+        // `__init__` resolves to nothing (imported_call_without_init).
+        if let Some((blob, span)) = init_of_class(output, index, callee) {
+            return Some((blob, span));
+        }
+        // Bare-name fallback over CALL defs only: a class name reaching here
+        // took the ctor leg above; resolving it to the TypeF class def minted
+        // class-name rows the PyCG oracle never has (37/136 rows, precision
+        // 71.32 -> floor breach, 2026-08-31 rescore).
         let sites = corpus_defs(index, callee);
         let mut blobs: Vec<ContentId> = Vec::new();
-        for site in sites {
+        for site in sites.iter().filter(|s| s.family == FamilyTag::Call) {
             if !blobs.contains(&site.blob) {
                 blobs.push(site.blob.clone());
             }
@@ -1956,10 +1984,79 @@ impl PythonSource {
         };
         let site = sites
             .iter()
-            .find(|s| s.family == FamilyTag::Call)
+            .find(|s| s.family == FamilyTag::Call && s.blob == *blob)
             .unwrap_or(&sites[0]);
         Some((blob.clone(), site.span))
     }
+}
+
+/// The `__init__` call def of a class named `callee`, same file first, then a
+/// unique corpus blob. `None` when the name is not a class or the class has no
+/// `__init__`.
+fn init_of_class(
+    output: &ExtractOutput,
+    index: &DefIndex,
+    callee: &str,
+) -> Option<(ContentId, Span)> {
+    let strings = &output.strings;
+    // Same file: a TypeF class def named `callee`, and a Method call def named
+    // `__init__` whose span sits inside the class span.
+    if let Some(types) = &output.types {
+        let class_span = types
+            .nodes
+            .iter()
+            .find(|n| n.name.map_or(false, |id| strings.lookup(id) == callee))
+            .map(|n| n.span);
+        if let Some(class_span) = class_span {
+            if let Some(init) = output.call.as_ref().and_then(|call| {
+                call.nodes.iter().find(|n| {
+                    n.name.map_or(false, |id| strings.lookup(id) == "__init__")
+                        && n.span.start >= class_span.start
+                        && n.span.end() <= class_span.end()
+                })
+            }) {
+                let span = init.span;
+                if let Some(site) = corpus_defs(index, "__init__")
+                    .iter()
+                    .find(|s| s.span == span)
+                {
+                    return Some((site.blob.clone(), site.span));
+                }
+            }
+            return None;
+        }
+    }
+    // Cross-file: corpus TypeF defs named `callee`; the `__init__` call def in
+    // the same blob whose span the class span contains. One unique blob wins.
+    let mut hits: Vec<(ContentId, Span)> = Vec::new();
+    for class in corpus_defs(index, callee)
+        .iter()
+        .filter(|s| s.family == FamilyTag::Type)
+    {
+        for init in corpus_defs(index, "__init__")
+            .iter()
+            .filter(|s| s.family == FamilyTag::Call && s.blob == class.blob)
+        {
+            if init.span.start >= class.span.start && init.span.end() <= class.span.end() {
+                if !hits.iter().any(|(b, _)| *b == class.blob) {
+                    hits.push((class.blob.clone(), init.span));
+                }
+                break;
+            }
+        }
+    }
+    let mut blobs: Vec<&ContentId> = Vec::new();
+    for (blob, _) in &hits {
+        if !blobs.contains(&blob) {
+            blobs.push(blob);
+        }
+    }
+    let [blob] = blobs.as_slice() else {
+        return None;
+    };
+    hits.iter()
+        .find(|(b, _)| b == *blob)
+        .map(|(b, s)| (b.clone(), *s))
 }
 
 fn scip_call_target<'a>(

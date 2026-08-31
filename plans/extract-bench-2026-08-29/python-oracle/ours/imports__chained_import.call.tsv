@@ -1,1 +1,2 @@
 imports/chained_import/from_import.py	func2	imports/chained_import/chained_import.py	func1
+imports/chained_import/main.py		imports/chained_import/from_import.py	func2

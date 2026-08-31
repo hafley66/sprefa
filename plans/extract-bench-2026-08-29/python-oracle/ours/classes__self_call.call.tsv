@@ -1,2 +1,4 @@
+classes/self_call/main.py		classes/self_call/main.py	__init__
+classes/self_call/main.py		classes/self_call/main.py	func2
 classes/self_call/main.py	__init__	classes/self_call/main.py	func1
 classes/self_call/main.py	func2	classes/self_call/main.py	func1

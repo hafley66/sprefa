@@ -125,9 +125,11 @@ fn resolve_cli_reaches_the_markdown_doc_ref_arm() {
     );
 }
 
-/// FAIL-FIRST RECEIPT: `"callee_name":null` on the `Widget()` row. A class is
-/// not a CallF def, so the shared def index answered from the TypeF plane and
-/// the call-plane span table had no name at that span.
+/// FAIL-FIRST RECEIPT (2026-08-31): `"callee_name":null` on the `Widget()` row
+/// was the original defect, pinned dead by the no-null assertion below. The
+/// callee ruling flipped in the same test: a constructor call resolves to the
+/// class's `__init__` (PyCG oracle semantics), not the class TypeF def — the
+/// class-name row was 37 of 136 bench rows of false precision.
 #[test]
 fn resolve_cli_names_a_class_constructor_callee() {
     let rows = stdout_of(&["--resolve", PY_CLASS, PY_CALLER]);
@@ -136,8 +138,12 @@ fn resolve_cli_names_a_class_constructor_callee() {
         "every resolved edge must name its callee:\n{rows}"
     );
     assert!(
-        rows.contains(r#""callee_name":"Widget""#),
-        "the constructor edge must name the class:\n{rows}"
+        rows.contains(r#""callee_name":"__init__""#),
+        "the constructor edge must name __init__:\n{rows}"
+    );
+    assert!(
+        !rows.contains(r#""callee_name":"Widget""#),
+        "a constructor edge never names the class def itself:\n{rows}"
     );
 }
 

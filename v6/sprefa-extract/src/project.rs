@@ -1202,7 +1202,7 @@ fn call_facts(
             let target = targets.input(&edge.dst_blob)?;
             Some(FlatFact::ResolvedEdge {
                 caller_path: input.path.clone(),
-                caller_name: Some(caller_name(call, &input.output, edge.src)),
+                caller_name: caller_name(call, &input.output, edge.src),
                 callee_path: target.path.clone(),
                 callee_name: callee_name(targets, target, edge.dst_span),
                 caller_site_start: edge.call_site.map_or(0, |span| span.start),
@@ -1340,16 +1340,21 @@ fn type_facts(input: &ProjectInput, targets: &TargetIndex<'_>, cx: &ProjectCx) -
 
 /// A closure def carries no name, and `resolve_at` types caller_name `text`
 /// (`v6/dl/fixtures/flagship-flow.dl6:35`): a null drops the whole row.
-fn caller_name<F: crate::family::Family>(
-    bundle: &FamilyBundle<F>,
+fn caller_name(
+    bundle: &FamilyBundle<crate::types::CallF>,
     output: &ExtractOutput,
     src: crate::shape::NodeRef,
-) -> String {
+) -> Option<String> {
     let node = bundle.node(src);
-    match node.name {
+    // The python module-as-caller ext kind answers null: the 4-col bench join
+    // turns a null into the empty src_name the oracle uses for module rows.
+    if node.kind == crate::lang::python::MODULE_CALLER {
+        return None;
+    }
+    Some(match node.name {
         Some(name) => output.strings.lookup(name).to_string(),
         None => format!("closure@{}", node.span.start),
-    }
+    })
 }
 
 /// Test-only filesystem `BlobSource`: project-relative path in, bytes out,
