@@ -203,3 +203,53 @@ Pins: `tests/71_go_residual.rs`, 17 tests, fixtures `tests/fixtures/go_residual`
 HEAD failure (13 of 17) is in that file's header. Classes beside this file:
 `go.codeql_agreed_missed.residual5.classes.tsv`; run row
 `go.resolve.residual5.runs.tsv`.
+
+<a id="residual-six"></a>
+## Lane `fix/extract-go-residual-6`: the bound-type qualifier, the Elem hop, the promoted field
+
+Same corpus and the residual-five recipe, with ONE change: `xargs -n 10000`
+forces a single process. The `xargs -s 900000` recipe above SPLITS 5,075
+files into two invocations (5,000 + 75, macOS xargs' per-invocation cap), and
+the second process resolves against a DefIndex of only its own 75 files, so
+every cross-package leg dies for those files. That is the filed
+order-dependence defect: find vs sort order only changed which 75 files fell
+into the tail batch. Every number below is one process.
+
+| receipt | #579 | this lane |
+|---|---:|---:|
+| ours rows | 91,837 | 93,728 |
+| overlap with vta bare | 46,517 | 47,251 |
+| recall (overlap / 55,099) | 84.42% | **85.76%** |
+| precision (overlap / ours) | 50.65% | 50.41% |
+| recall against codeql (overlap / 48,529) | 97.17% | 98.73% |
+| agreed and missed | 1,083 | **351** |
+| median wall, one process, 3 runs | 11,969 ms | **6,860 ms** (7.74 / 6.82 / 6.86) |
+
+`go_gap_classify` rerun over the 351 (full set,
+`go.codeql_agreed_missed.residual6.classes.tsv`):
+
+| class | #579 | this lane | what took it |
+|---|---:|---:|---|
+| one-hop receiver never typed | 487 | 155 | two root causes: (a) `ret_of` stores the result type as the DECLARING file writes it (`*types.Widget` through its own import) and `go_qualify_bound_type` prefixed the caller's qualifier, yielding `callee.types.Widget` whose first dot named the wrong package — every downstream define on such a call died with it; (b) a range over a call result had no chain: `ret_of` recorded NO text for slice/array/map results, so `for _, it := range sh.Items()` typed nothing |
+| embedded-struct promoted method | 289 | 8 | the embed walk cap 4 -> 9 (the ast.Node hierarchy height); wall stays under the law |
+| multi-hop receiver chain | 195 | 139 | a chain's Field hop now follows Go's field promotion through embeds (`node.Kind.String()` where `Kind` sits on `TypeSyntaxBase`); the residual needs var-reassignment binds and mid-chain type assertions, filed below |
+| alias receiver | 89 | 26 | rode the same bound-type fix; the residual pairs an alias with a multi-hop operand |
+| bare in-package call, not unique | 12 | 12 | untouched |
+| import-qualified call shadowed | 11 | 11 | untouched |
+
+Filed, not taken:
+
+- `x := y.M()` REASSIGNMENT (`=` on a name declared elsewhere) records no
+  bind plan row, so a receiver typed from a reassigned value never binds
+  (~40 of the one-hop residual, e.g. `userPreferences = workingSnapshot
+  .UserPreferences()`).
+- A mid-chain type assertion (`x.(*ast.Node).Name()`) has no chain step: the
+  asserted type is written and static, but `go_chain_of` and the replay have
+  no `Assert` hop (~30 of the multi-hop residual).
+- The macOS xargs split above is a HARNESS defect, not an extractor one; the
+  recipe in this file now pins `-n 10000`.
+
+Pins: `tests/72_go_bound_qualify.rs`, `tests/73_go_range_elem.rs`,
+`tests/74_go_field_promote.rs`, and `tests/69_go_promoted.rs`'s
+`depth_five_embed` (rewritten from `depth_five_declines`). HEAD failures in
+each file's header.
