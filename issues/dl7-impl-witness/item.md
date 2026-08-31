@@ -2,7 +2,7 @@
 created: 2026-08-31
 updated: 2026-08-31
 type: task
-status: open
+status: done
 priority: high
 epic: dl7-type-algebra
 labels:
@@ -12,6 +12,10 @@ lane: dl7-type-algebra
 lane_seq: 8
 collision: [v7-prelude, v7-test]
 blocked_by: ['@dl7-structural-conformance', '@dl7-relation-contract']
+commits:
+- hash: c16546295
+  summary: Prove DL7 userland type algebra
+closed: 2026-08-31
 ---
 
 # Validate explicit impl witnesses
@@ -24,10 +28,10 @@ Treat implements(Contract, Source, Witness) as authored evidence and derive vali
 
 ## Acceptance Criteria
 
-- [ ] Valid witnesses derive proof rows.
-- [ ] Invalid witnesses retain failed edge data.
-- [ ] No impl syntax form is added.
+- [x] Valid witnesses derive proof rows.
+- [x] Invalid witnesses retain failed edge data.
+- [x] No impl syntax form is added.
 
 ## Tests Run
 
-- [ ] Valid and invalid witness receipts pass.
+- [x] Valid and invalid witness receipts pass.

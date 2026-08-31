@@ -2,7 +2,7 @@
 created: 2026-08-31
 updated: 2026-08-31
 type: task
-status: open
+status: done
 priority: high
 epic: dl7-type-algebra
 labels:
@@ -12,6 +12,10 @@ lane: dl7-type-algebra
 lane_seq: 10
 collision: [v7-prelude, v7-test]
 blocked_by: ['@dl7-intersection-edges']
+commits:
+- hash: c16546295
+  summary: Prove DL7 userland type algebra
+closed: 2026-08-31
 ---
 
 # Compose a userland type operator
@@ -24,9 +28,9 @@ Implement one additional userland type composition relation by calling Intersect
 
 ## Acceptance Criteria
 
-- [ ] Composition leaves no bespoke compiler implementation.
-- [ ] Nested expression application reaches the canonical result.
+- [x] Composition leaves no bespoke compiler implementation.
+- [x] Nested expression application reaches the canonical result.
 
 ## Tests Run
 
-- [ ] Nested composition receipt passes.
+- [x] Nested composition receipt passes.

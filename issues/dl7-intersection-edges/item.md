@@ -2,7 +2,7 @@
 created: 2026-08-31
 updated: 2026-08-31
 type: task
-status: open
+status: done
 priority: high
 epic: dl7-type-algebra
 labels:
@@ -12,6 +12,10 @@ lane: dl7-type-algebra
 lane_seq: 7
 collision: [v7-prelude, v7-test]
 blocked_by: ['@dl7-intersection-apply']
+commits:
+- hash: c16546295
+  summary: Prove DL7 userland type algebra
+closed: 2026-08-31
 ---
 
 # Merge ordered intersection edges
@@ -24,10 +28,10 @@ Emit left edges followed by right-only edges, deduplicate equal pairs, compute d
 
 ## Acceptance Criteria
 
-- [ ] Compatible intersections produce one product.
-- [ ] Duplicate edge pairs occur once.
-- [ ] Conflicting targets derive intersection_conflict and no result edges.
+- [x] Compatible intersections produce one product.
+- [x] Duplicate edge pairs occur once.
+- [x] Conflicting targets derive intersection_conflict and no result edges.
 
 ## Tests Run
 
-- [ ] Ordered merge, deduplication, and conflict receipts pass.
+- [x] Ordered merge, deduplication, and conflict receipts pass.
