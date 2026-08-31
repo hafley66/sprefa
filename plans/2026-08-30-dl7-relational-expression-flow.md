@@ -19,15 +19,14 @@ The programmable compiler branch already proves the harder downstream pieces:
   rules in a later compiler round;
 - `HistoryV1` generates both a relation shape and executable behavior.
 
-The remaining surface gap is the one discussed in favorites 26 through 37:
-an expression-position relation call omits one declared result column, lowering
-inserts a fresh logical variable in that column, and the surrounding construct
-uses that variable. A type expression is an ordinary relation expression whose
-result column has type `type`.
+The implemented surface discussed in favorites 26 through 37 treats an
+expression-position relation call as a call omitting one declared result
+column. Lowering inserts a fresh logical variable in that column, and the
+surrounding construct uses that variable. A type expression is an ordinary
+relation expression whose result column has type `type`.
 
-The current `partial_request/1` fixture is temporary scaffolding. The word
-`request` has no place in the language model. An occurrence of `(Partial User)`
-is sufficient to drive `Partial(User, Result)`.
+The former `partial_request/1` fixture was temporary scaffolding and has been
+removed. An occurrence of `(Partial User)` drives `Partial(User, Result)`.
 
 ## Decisions
 
@@ -231,7 +230,10 @@ reader form
 - Suite budget per implementation lane: focused SWI up to four runs, complete
   V7 SWI once, Tree-sitter once.
 
-<!-- todo(feature): Complete milestones 1 through 4: expression carrier, declared return position, RHS calls, and nested applications. -->
-<!-- todo(feature): Complete milestones 5 through 8: uniform nested positions, removal of partial_request, reverse-query parity, and expression mode checks. -->
-<!-- todo(feature): Complete milestone 9: compile-known partial application erased before checked runtime Datalog. -->
-<!-- todo(feature): Complete milestone 10: compound edge labels and the userland Key proof. -->
+## Completion receipt
+
+- Milestones 1 through 10 completed on `feature/dl7-count-aggregate`.
+- Final implementation commit: `ff9884516`.
+- SWI: 23 of 23 passed in 2.67 seconds.
+- Tree-sitter: 1 of 1 passed.
+- Executable V7 sources contain no `partial_request` relation.

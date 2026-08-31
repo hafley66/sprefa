@@ -20,16 +20,30 @@ expression-position call
 - Blast-radius receipts:
   - `v7/tasks/results/15_EXPRESSION_FLOW_REVIEW.md`.
   - `v7/tasks/results/16_EXPRESSION_BLAST_RADIUS.md`.
-- `lower_expression/7` now carries atomic values, generated goals, source
-  origins, and diagnostics without changing explicit relation calls.
-- `expression_return_position/5` reads one return-labeled declaration edge;
-  missing and multiple declarations retain the expression source position.
-- Completed feature commits: `0c38a71c8`, `b01046b8b`.
-- Focused gate after milestone 2: SWI 13 of 13 passed in 1.4 seconds.
-- Current boundary: a computed bind result is unavailable to declaration-time
-  name resolution. The independent review at
-  `v7/tasks/17_DEFERRED_BIND_REVIEW.OPUS.BRIEF.md` is checking a derived
-  `:/4` rule plus ordinary `:/4` lookup goals before RHS call lowering lands.
+  - `v7/tasks/results/17_DEFERRED_BIND_REVIEW.md`.
+- Milestones 1 through 10 are implemented:
+  1. expression result carrier;
+  2. declared return position;
+  3. RHS relation application;
+  4. nested application flattening;
+  5. one expression lowerer for binds, heads, and bodies;
+  6. removal of `partial_request` from executable V7 sources;
+  7. full-tuple reverse-query parity;
+  8. expression projection mode checks;
+  9. compile-known partial application erased to a direct call;
+  10. expression-produced edge labels and userland composite `Key` rows.
+- A full call retains every relation column. An expression call omits the one
+  declared `return` column and lowers to an ordinary goal carrying a fresh
+  logical value.
+- `((Pair User) Order)` lowers to `Pair(User, Order, Result)` and leaves no
+  partial-application carrier in checked runtime Datalog.
+- `(: (Key "account" Options) int)` derives an ordered edge whose label is the
+  interned `Key` node. Multiple keyed edges produce dense `composite_key`
+  positions while preserving the same options node.
+- Feature commits: `0c38a71c8`, `b01046b8b`, `504aed475`, `a7bf8c2ef`,
+  `5d79f6f73`, `1636e9795`, `04f4f010b`, `27b621fb3`, `0dd3d92d4`,
+  `1641f78c3`, `37ed50976`, `3f90e7b5a`, `ff9884516`.
+- Final gates: SWI 23 of 23 passed in 2.67 seconds; Tree-sitter 1 of 1 passed.
 
 ## 2026-08-30 programmable compiler fragments
 
