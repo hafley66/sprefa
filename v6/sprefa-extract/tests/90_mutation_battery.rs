@@ -18,11 +18,6 @@
 //! - F1 shadow_python: a param named imported_fn does not shadow the
 //!   module-level import; the call inside the enclosing def keeps a
 //!   corpus_unique edge to helper.py's def.
-//! - F2 duplicate_def_go: a second Trim in package docs leaves docs.go's
-//!   corpus_unique edge alive, same dst, origin unchanged.
-//! - F3 relocation_go_call: moving Trim to another file of the SAME package
-//!   drops the edge entirely, though go package scope spans files and the go
-//!   TYPES leg does follow the same move (relocation_go_types, green).
 //! - F4 duplicate_def_ts: a second free-fn step leaves generator.ts's
 //!   corpus_unique edge alive, same dst, origin unchanged.
 //! - F5 duplicate_def_python_same_file: a second local_fn in another file
@@ -539,7 +534,6 @@ fn go_scenarios() -> Vec<Scenario> {
 /// package sample, which the duplicate never touches, so that row is a
 /// bystander and must survive (it does).
 #[test]
-#[ignore = "FINDING F2: duplicate Trim in package docs keeps the corpus_unique edge"]
 fn duplicate_def_go() {
     let (base, after) = run(&go_scenarios()[0]);
     assert!(
@@ -578,7 +572,6 @@ fn duplicate_def_go() {
 /// binds in the language's own terms; the go TYPES leg follows exactly this
 /// shape (relocation_go_types, green), the call leg does not.
 #[test]
-#[ignore = "FINDING F3: cross-file move inside one package drops the call edge"]
 fn relocation_go_call() {
     let (base, after) = run(&go_scenarios()[1]);
     assert_eq!(

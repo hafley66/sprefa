@@ -205,6 +205,9 @@ pub struct GoModuleIndex {
     facts: HashMap<String, GoModuleFacts>,
     // directory -> its declared package name; first file supplied wins.
     package_of_dir: HashMap<String, String>,
+    // file -> (directory, package clause): a per-site package-membership
+    // lookup is one HashMap get, never a same_dir component walk.
+    package_of_file: HashMap<String, (String, String)>,
 }
 
 impl GoModuleIndex {
@@ -219,13 +222,16 @@ impl GoModuleIndex {
                 // the directory's files arrive in.
                 match index.package_of_dir.get(&key) {
                     None => {
-                        index.package_of_dir.insert(key, name.clone());
+                        index.package_of_dir.insert(key.clone(), name.clone());
                     }
                     Some(existing) if is_test_package(existing) && !is_test_package(name) => {
-                        index.package_of_dir.insert(key, name.clone());
+                        index.package_of_dir.insert(key.clone(), name.clone());
                     }
                     _ => {}
                 }
+                index
+                    .package_of_file
+                    .insert(path.clone(), (key, name.clone()));
             }
         }
         index.facts = files.into_iter().collect();
@@ -335,6 +341,31 @@ impl GoModuleIndex {
         name: &str,
     ) -> Option<(ContentId, Span)> {
         unique_blob(&self.free_sites_in_dir(dir, def_index, paths, name))
+    }
+
+    /// The corpus-unique tier scoped to `file`'s own package: the directory's
+    /// files declaring the same package clause, not the dir alone.
+    pub fn free_sites_in_own_package<'a>(
+        &self,
+        file: &str,
+        def_index: &'a DefIndex,
+        paths: &PathIndex,
+        name: &str,
+    ) -> Vec<&'a DefSite> {
+        let Some(own) = self.package_of_file.get(file) else {
+            return Vec::new();
+        };
+        corpus_defs(def_index, name)
+            .iter()
+            .filter(|site| {
+                paths.get(&site.blob).is_some_and(|site_path| {
+                    self.package_of_file
+                        .get(site_path)
+                        .is_some_and(|site_pkg| site_pkg == own)
+                        && !go_is_method_def(site_path, site.span)
+                })
+            })
+            .collect()
     }
 
     /// `sites_in_dir` with method defs cut: a `pkg.F()` or bare `F()` call
