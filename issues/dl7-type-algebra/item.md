@@ -3,9 +3,17 @@ created: 2026-08-31
 updated: 2026-08-31
 type: epic
 owner: chris
-status: open
+status: done
 priority: high
 labels: [compiler]
+commits:
+- hash: '1095987e5'
+  summary: Draft DL7 userland type algebra
+- hash: c16546295
+  summary: Prove DL7 userland type algebra
+- hash: faf5f11ef
+  summary: Document the DL7 type algebra
+closed: 2026-08-31
 ---
 
 # DL7 userland type algebra
@@ -18,16 +26,16 @@ Implement plans/2026-08-31-dl7-type-algebra.md: structural contracts, ordinary c
 
 ## Acceptance Criteria
 
-- [ ] All child tasks close with commit receipts.
-- [ ] Contracts and proofs are ordinary DL7 relations.
-- [ ] Intersection emits deterministic product edges and conflict facts.
-- [ ] Generic constraints and impl evidence use conformance goals.
-- [ ] HistoryV1 requires an authored contract option.
+- [x] All child tasks close with commit receipts.
+- [x] Contracts and proofs are ordinary DL7 relations.
+- [x] Intersection emits deterministic product edges and conflict facts.
+- [x] Generic constraints and impl evidence use conformance goals.
+- [x] HistoryV1 requires an authored contract option.
 
 ## Tests Run
 
-- [ ] Complete V7 SWI suite passes.
-- [ ] Consolidated Tree-sitter corpus passes.
+- [x] Complete V7 SWI suite passes.
+- [x] Consolidated Tree-sitter corpus passes.
 
 ## Implementation Notes
 
