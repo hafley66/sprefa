@@ -3915,14 +3915,6 @@ fn go_chain_receiver_target(
     Some((blob, span, ty.1))
 }
 
-/// A def's declared first result as a `GoTypeId`, read through the DECLARING
-/// file's imports. None when the def declares none or its result is generic.
-fn go_ret_type_id(blob: &ContentId, span: Span, paths: &PathIndex) -> Option<GoTypeId> {
-    let path = paths.get(blob)?;
-    let written = ret_first_of(blob, span, paths)?;
-    go_type_id_in_file(path, &written)
-}
-
 /// A def's declared first result type from its file facts; None when the def
 /// declares none or its result is generic (a chain stops at both).
 fn ret_first_of(blob: &ContentId, span: Span, paths: &PathIndex) -> Option<String> {
