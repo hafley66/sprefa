@@ -1,5 +1,6 @@
 :- module(dl7_compiler,
           [ compile_dl7/4,
+            compile_dl7_project/5,
             compile_unit/3,
             compile_units/3,
             type_prelude_paths/1
@@ -7,6 +8,7 @@
 
 :- use_module(library(readutil), [read_file_to_string/3]).
 :- use_module('../0_reader/2_embedder', [dl7_text_unit/5]).
+:- use_module('../0_reader/4_module_loader', [load_dl7_project/4]).
 :- use_module('../1_libtime/0_evaluator',
               [ evaluate/4,
                 validate_functional_rows/3
@@ -16,6 +18,7 @@
                 lower_units_with_exporter/5,
                 merge_module_basements/4
               ]).
+:- use_module('0b_filesystem_grapher', [install_project_graph/6]).
 :- use_module('1_checker',
               [ check_datalog/4,
                 check_resolved_rules/5
@@ -30,11 +33,7 @@
 compile_dl7(Path, CompilerRows, RuntimeProgram, Diagnostics) :-
     once(absolute_file_name(Path, ProgramPath,
                             [access(read), file_errors(error)])),
-    once(type_prelude_paths(PreludePaths)),
-    read_prelude_texts(PreludePaths, PreludeTexts),
-    join_prelude_texts(PreludeTexts, PreludeText),
-    dl7_text_unit(prelude, prelude, PreludeText,
-                  PreludeUnit, PreludeDiagnostics),
+    load_type_prelude(PreludeUnit, PreludeDiagnostics),
     read_file_to_string(ProgramPath, ProgramText, [encoding(utf8)]),
     dl7_text_unit(file(ProgramPath), ProgramPath, ProgramText,
                   ProgramUnit, ProgramDiagnostics),
@@ -44,6 +43,30 @@ compile_dl7(Path, CompilerRows, RuntimeProgram, Diagnostics) :-
     compiled_outputs(Compiled, CompilerRows, RuntimeProgram),
     !,
     garbage_collect.
+
+%% compile_dl7_project(+Root, +Paths,
+%%                     -CompilerRows, -RuntimeProgram, -Diagnostics) is det.
+%
+% Load several filesystem-owned source units, add their directory and module
+% products to the initial graph, then run the same checker and fixpoint used
+% by the single-file compiler.
+compile_dl7_project(Root, Paths,
+                    CompilerRows, RuntimeProgram, Diagnostics) :-
+    load_type_prelude(PreludeUnit, PreludeDiagnostics),
+    load_dl7_project(Root, Paths, Project, ProjectDiagnostics),
+    append(PreludeDiagnostics, ProjectDiagnostics, ReaderDiagnostics),
+    compile_after_project_reads(ReaderDiagnostics, PreludeUnit, Project,
+                                Compiled, Diagnostics),
+    compiled_outputs(Compiled, CompilerRows, RuntimeProgram),
+    !,
+    garbage_collect.
+
+load_type_prelude(PreludeUnit, Diagnostics) :-
+    once(type_prelude_paths(PreludePaths)),
+    read_prelude_texts(PreludePaths, PreludeTexts),
+    join_prelude_texts(PreludeTexts, PreludeText),
+    dl7_text_unit(prelude, prelude, PreludeText,
+                  PreludeUnit, Diagnostics).
 
 type_prelude_paths(Paths) :-
     once(source_file(dl7_compiler:compile_dl7(_, _, _, _), SourcePath)),
@@ -87,6 +110,15 @@ compile_after_reads([], Units, Compiled, Diagnostics) :-
     compile_units(Units, Compiled, Diagnostics).
 compile_after_reads(Diagnostics, _, [], Diagnostics).
 
+compile_after_project_reads([], PreludeUnit,
+                            dl7_project(CanonicalRoot, Units),
+                            Compiled, Diagnostics) :-
+    !,
+    compile_project_units(
+        dl7_project(CanonicalRoot, Units),
+        [PreludeUnit | Units], Compiled, Diagnostics).
+compile_after_project_reads(Diagnostics, _, _, [], Diagnostics).
+
 compiled_outputs(compiled_unit(_, RuntimeProgram, CompilerRows),
                  CompilerRows, RuntimeProgram).
 compiled_outputs([], [], []).
@@ -112,6 +144,28 @@ compile_units(Units, Compiled, Diagnostics) :-
                              Compiled, Diagnostics),
     !,
     garbage_collect.
+
+compile_project_units(Project, Units, Compiled, Diagnostics) :-
+    lower_compiler_units(Units, ModuleBasements0, ModuleOrigins0,
+                         LowerDiagnostics),
+    install_project_after_lower(
+        LowerDiagnostics, Project, ModuleBasements0, ModuleOrigins0,
+        ModuleBasements, ModuleOrigins, ProjectDiagnostics),
+    compile_after_unit_lower(ProjectDiagnostics,
+                             ModuleBasements, ModuleOrigins,
+                             Compiled, Diagnostics),
+    !,
+    garbage_collect.
+
+install_project_after_lower(
+    [], Project, Basements0, Origins0,
+    Basements, Origins, Diagnostics) :-
+    !,
+    install_project_graph(Project, Basements0, Origins0,
+                          Basements, Origins, Diagnostics).
+install_project_after_lower(
+    Diagnostics, _, Basements, Origins,
+    Basements, Origins, Diagnostics).
 
 lower_compiler_units(Units, ModuleBasements, ModuleOrigins, Diagnostics) :-
     (   select(PreludeUnit, Units, ImporterUnits),

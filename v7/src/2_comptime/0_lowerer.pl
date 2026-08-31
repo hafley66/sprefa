@@ -75,7 +75,8 @@ finish_lowered_executables(
     basement_program(root_graph(Nodes, Edges),
                      datalog_program(Relations, Seeds, Rules)),
     Origins, []) :-
-    Nodes = [node(ModuleOwner), module(ModuleOwner) | Nodes0],
+    Nodes = [node(ModuleOwner), module(ModuleOwner), product(ModuleOwner)
+            | Nodes0],
     append(DerivedRules, AuthoredRules, Rules),
     append([DeclarationOrigins, DerivedOrigins, ExecutableOrigins], Origins).
 finish_lowered_executables(
@@ -497,6 +498,16 @@ lower_call(Node, Owner, Environment, Result) :-
     lower_call_mode(plain, Node, Owner, Environment, Result).
 
 lower_call_mode(Mode,
+           node(NodeId,
+                form([ node(_, atom(':')),
+                       OwnerNode, LabelNode, TargetNode, IndexNode
+                     ])),
+           Owner, Environment, Result) :-
+    !,
+    lower_colon_arguments(Mode, OwnerNode, LabelNode, TargetNode, IndexNode,
+                          Owner, Environment, ArgumentResult),
+    finish_call_arguments(Mode, ':', NodeId, Owner, ArgumentResult, Result).
+lower_call_mode(Mode,
            node(NodeId, form([node(_, atom(Name)) | ArgumentNodes])),
            Owner, Environment, Result) :-
     !,
@@ -537,6 +548,45 @@ finish_call_arguments(_, Name, _, Owner,
                          Goals, GoalNodes)).
 
 count_aggregate(aggregate(count, _)).
+
+lower_colon_arguments(Mode, OwnerNode, LabelNode, TargetNode, IndexNode,
+                      Owner, Environment, Result) :-
+    lower_argument(Mode, OwnerNode, Owner, Environment, OwnerResult),
+    lower_colon_label(Mode, LabelNode, Owner, Environment, LabelResult),
+    lower_argument(Mode, TargetNode, Owner, Environment, TargetResult),
+    lower_argument(Mode, IndexNode, Owner, Environment, IndexResult),
+    combine_argument_results(
+        [OwnerResult, LabelResult, TargetResult, IndexResult], Result).
+
+lower_colon_label(_, node(_, atom(Name)), _, _,
+                  ok(const(Name), [], [])) :-
+    !.
+lower_colon_label(_, node(_, literal(symbol(Name))), _, _,
+                  ok(const(Name), [], [])) :-
+    !.
+lower_colon_label(Mode, Node, Owner, Environment, Result) :-
+    lower_argument(Mode, Node, Owner, Environment, Result).
+
+combine_argument_results(Results, Result) :-
+    combine_argument_results(Results, [], [], [], Result).
+
+combine_argument_results([], Arguments0, Goals0, GoalNodes0,
+                         ok(Arguments, Goals, GoalNodes)) :-
+    reverse(Arguments0, Arguments),
+    reverse(Goals0, Goals),
+    reverse(GoalNodes0, GoalNodes).
+combine_argument_results([error(Diagnostic) | _], _, _, _,
+                         error(Diagnostic)) :-
+    !.
+combine_argument_results(
+    [ok(Argument, OwnGoals, OwnGoalNodes) | Results],
+    Arguments0, Goals0, GoalNodes0, Result) :-
+    reverse(OwnGoals, ReversedOwnGoals),
+    reverse(OwnGoalNodes, ReversedOwnGoalNodes),
+    append(ReversedOwnGoals, Goals0, Goals1),
+    append(ReversedOwnGoalNodes, GoalNodes0, GoalNodes1),
+    combine_argument_results(Results, [Argument | Arguments0],
+                             Goals1, GoalNodes1, Result).
 
 lower_arguments(_, [], _, _, ok([], [], [])).
 lower_arguments(Mode, [Node | Nodes], Owner, Environment, Result) :-
