@@ -6,7 +6,8 @@ file in the same PR; discovering one adds a row.
 
 | # | problem | numbers | detail lives at | next action |
 |---|---|---|---|---|
-| 1 | rust type residual categories | 3,195 missing rows classified into 14 classes at 61.70/93.75; 2,072 are oracle convention or scope, 474 the impl-owner drop, 439 resolution, 204 rejected on precision, 6 residual | rust.REPORT.md sec 28, join script `rust.type_census.py` | grind the impl-owner drop (`rust_type_edges.rs:89`, one root cause, 5.68 pt) |
+| 1 | rust type residual categories | 2,922 missing at 64.98/93.95 after the impl-owner arc; 2,070 oracle convention or scope, 418 resolution, 204 rejected on precision, 180 E1b unmintable, 6 residual | rust.REPORT.md sec 28-30, join script `rust.type_census.py` | see row 11 — the resolution block is one mechanism |
+| 11 | rust type plane is blind to macro_rules-minted types | 255 of the 418 resolution-block rows name a dst with no top-level declaration (`TraitId` 25, `FunctionId` 23, `ImplId` 17, all `impl_intern!`); ceiling 3.06 pt | rust.REPORT.md sec 30 | MBE expansion exists for the CALL plane (sec 14); wiring the type plane is a design arc (span of a macro-minted decl, corpus-unique eligibility, cross-crate same-name) and needs the user |
 | 2 | python dynamic shapes | args 42.86%, dicts 26.32%, decorators 36.36%, assignments 0%, exceptions 0% recall | py.REPORT.md (PyCG suite section) | higher-order + container dispatch need dataflow or checker tier |
 | 3 | go agreed-missed residual | 351 rows: one-hop 155, multi-hop 139, alias 26, bare 12, qualified 11, promoted 8 | go.GAPS.md residual-six section | one-hop reassignment shape (x = y.M()) records no bind-plan row |
 | 4 | ts madge module recall | 50.57% recall / 32.85% precision, never grinded | RATCHET.tsv ts5 module row | dependency-cruiser proposed as better oracle (PRIOR-ART.md sec 9) |

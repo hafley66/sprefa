@@ -2113,19 +2113,26 @@ arguments and its bounds together. 474 rows, five examples:
 (`src/project.rs:1321`) drops it. Counting corpus declarations of each dst with
 a `struct|enum|union|trait|type` scan:
 
-| class | rows | dst has 0 syntactic decls | exactly 1 | 2+ |
+| class | rows | dst has 0 top-level decls | exactly 1 | 2+ |
 |---|---:|---:|---:|---:|
-| K field | 215 | 66 | 80 | 69 |
-| B variant payload | 162 | 91 | 35 | 36 |
-| F bound head | 27 | 0 | 14 | 13 |
-| A alias rhs | 18 | 0 | 6 | 12 |
-| D1 bound generic args | 17 | 0 | 7 | 10 |
+| K field | 215 | 123 | 46 | 46 |
+| B variant payload | 162 | 126 | 21 | 15 |
+| A alias rhs | 18 | 3 | 6 | 9 |
+| D1 bound generic args | 13 | 1 | 6 | 6 |
+| F bound head | 10 | 2 | 6 | 2 |
+| **total** | **418** | **255** | **85** | **78** |
 
 The `2+` column is the corpus-uniqueness bail in `unique_declared_type`
-(`src/lang/rust.rs:450-453`) doing its job. The `0` column is dsts minted by
-macro expansion, which the oracle sees through ra's HIR and no syntactic walk
-reaches. The `142` rows with exactly one declaration are the ones that should
-already bind and do not.
+(`src/lang/rust.rs:450-453`) doing its job. **255 rows, 61% of the block, name a
+dst with NO top-level declaration anywhere in the corpus** — section 30 names
+the mechanism.
+
+Count declarations at COLUMN 0 only. An earlier cut of this table counted any
+indented `type X = ..` as a declaration and read `0/1/2+` as `157/142/119`; that
+made an associated type look like a declaration (`type TraitId =
+TraitIdWrapper`, `crates/hir-ty/src/next_solver/interner.rs:904`) and put 42
+`TraitId`/`ImplId` rows in the "should already bind" column when the real
+declarations are macro-minted. The corrected split is above.
 
 **We almost never point at the wrong file.** Across all 3,195 missing rows, only
 17 have an `ours` row sharing `(src_file, owner, dst_name)` with a different
@@ -2233,3 +2240,59 @@ first shape. The realistic ceiling for this shape was 294 rows, not 474.
 Fixture `tests/fixtures/rust_findings/impl_owner/`, test
 `tests/80_rust_impl_owner.rs`. Fail-first receipt at `bb1d46441`: the fixture
 emitted ZERO `resolved_type_edge` rows, all three impls dropped.
+
+## 30. The resolution block is one mechanism: macro-minted types (arc 3, diagnosed not built)
+
+Section 28.3's second block is 418 rows whose candidate already exists and binds
+nothing. It is not a resolution-tuning problem.
+
+### 30.1 The checker is not the cause
+
+`resolve_type_dst` (`src/lang/rust.rs:384-391`) lets the checker tier answer
+first, and `CheckerAnswer::External` returns `None` before the name-match legs
+run, so the checker declining is the obvious suspect. Measured by re-dumping the
+same tree with `--features cli` (no `rust-checker`):
+
+| tier | recall | precision | K field misses |
+|---|---:|---:|---:|
+| checker on | **64.98** | **93.95** | 215 |
+| checker off | 59.25 | 92.31 | 395 |
+
+The checker already RECOVERS 180 K rows. Hypothesis closed.
+
+### 30.2 The cause: `macro_rules!` mints types the type plane never sees
+
+`impl_intern!(TraitId, TraitLoc)` (`crates/hir-def/src/lib.rs:319`) and its 40-odd
+siblings mint the ID structs hir-def's whole API is built from. `item_entity`
+(`src/lang/rust.rs:133-207`) matches `syn::Item::{Struct,Enum,Union,Type,Trait,
+Fn,Impl,Mod}` and never a `syn::Item::Macro`, so no `TypeF` node exists for any
+of them, `build_def_index` has no site, and `unique_declared_type` returns
+`None` for every reference.
+
+The dst names that carry the block, all macro-minted:
+
+| dst | rows | minted at |
+|---|---:|---|
+| `TraitId` | 25 | `hir-def/src/lib.rs:319` `impl_intern!` |
+| `ImplId` | 17 | `hir-def/src/lib.rs:332` `impl_intern!` |
+| `FunctionId` | 23 | `hir-def/src/lib.rs:258` `impl_intern!` |
+
+`FunctionId` is the sharpest receipt: the only column-0 `struct FunctionId` in
+the corpus is `crates/hir-ty/src/tests/traits.rs:4102`, inside an inline test
+FIXTURE STRING, and the real one is macro-minted.
+
+### 30.3 Why this is a lane, not a grind
+
+The MBE machinery already exists — section 14 landed `macro_rules` expansion for
+the CALL plane (`feature-extract-rust-mbe`, kink 2). The type plane does not
+consume it. Wiring it means deciding what span a macro-minted type declares at,
+whether an expanded declaration may answer a corpus-unique lookup, and what
+happens when one macro mints the same name in two crates — the same
+`is_alias`-shaped refusal question arc 2 of #605 had to answer, at four resolve
+points. That is a design arc with the user in the room, not a class grind, so
+this lane stops here and hands it over with the receipt.
+
+Ceiling if fully landed: 255 rows, **3.06 pt**, plus an unknown share of the 78
+ambiguous rows that are ambiguous only because one of the two candidates is
+macro-minted (`GenericArgs`, 13 rows, is one: `hir-def/src/expr_store/path.rs:59`
+is syntactic, `next_solver/generic_arg.rs`'s is not, and we bind the wrong one).
