@@ -110,6 +110,9 @@ pub struct ResolveRequest<'a> {
     /// The cargo workspace root the rust CHECKER tier loads. Its own field
     /// because `project_root` also adopts a fresh SCIP index by freshness.
     pub rust_checker: Option<&'a Path>,
+    /// The project root the ts CHECKER tier loads a `ts.Program` over. Its
+    /// own field for the same reason `rust_checker` has one.
+    pub ts_checker: Option<&'a Path>,
 }
 
 /// Why a project resolve could not run. Distinct from a resolve that ran and
@@ -298,6 +301,16 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         }
     }
 
+    if let Some(checker_root) = request.ts_checker {
+        if let Some(index) = load_ts_checker(checker_root, &inputs, &corpus, &cx) {
+            cx.indexes
+                .ts_checker
+                .set(index)
+                .ok()
+                .expect("fresh project checker tier (ts)");
+        }
+    }
+
     // One resolve per input, shared by the `call` arm and the `flow` join: the
     // N+1 law applied to work rather than to rows.
     let mut resolved_calls: Vec<(ContentId, Vec<ProjectEdge<CallF>>)> =
@@ -424,6 +437,55 @@ fn load_rust_checker(
         unjoined = index.unjoined,
         external = index.external,
         "rust checker tier loaded"
+    );
+    Some(index)
+}
+
+/// The ts twin of `load_rust_checker`. Every failure is one `tracing::info`
+/// line and a `None`; the syntax leg then answers every site as before.
+fn load_ts_checker(
+    root: &Path,
+    inputs: &[ProjectInput],
+    corpus: &[(String, ContentId)],
+    cx: &ProjectCx,
+) -> Option<crate::lang::ts_checker::TsCheckerIndex> {
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let files: Vec<(String, PathBuf)> = inputs
+        .iter()
+        .filter(|input| {
+            let path = input.path.as_str();
+            [".ts", ".tsx", ".mts", ".cts"]
+                .iter()
+                .any(|suffix| path.ends_with(suffix))
+        })
+        .map(|input| {
+            let absolute =
+                std::fs::canonicalize(&input.path).unwrap_or_else(|_| PathBuf::from(&input.path));
+            (input.path.clone(), absolute)
+        })
+        .collect();
+    if files.is_empty() {
+        return None;
+    }
+    let answers = match crate::lang::ts_checker::answer(&root, &files) {
+        Ok(answers) => answers,
+        Err(err) => {
+            tracing::info!("ts checker tier off: {err}");
+            return None;
+        }
+    };
+    let index = crate::lang::ts_checker::TsCheckerIndex::build(
+        answers,
+        corpus,
+        cx.indexes.def_index.get().expect("the def index is set"),
+    );
+    tracing::info!(
+        load_ms = index.load.as_millis() as u64,
+        walk_ms = index.walk.as_millis() as u64,
+        files = index.files_answered,
+        unjoined = index.unjoined,
+        external = index.external,
+        "ts checker tier loaded"
     );
     Some(index)
 }
@@ -623,6 +685,7 @@ pub fn diet_scip(paths: &[PathBuf]) -> Result<Vec<FlatFact>, ProjectError> {
         scip_records: ScipRecords::all(),
         occurrence_text: false,
         rust_checker: None,
+        ts_checker: None,
     })
 }
 

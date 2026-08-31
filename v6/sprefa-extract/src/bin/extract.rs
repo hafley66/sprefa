@@ -36,6 +36,7 @@ mod help;
 use help::{
     BENCH_LONG, DEPS_LONG, FAMILY_LONG, FILE_FACT_LONG, LONG_ABOUT, MAX_BYTES_LONG,
     OCCURRENCE_TEXT_LONG, PACKAGE_DEPS_LONG, PATH_LONG, PROJECT_ROOT_LONG, RUST_CHECKER_LONG,
+    TS_CHECKER_LONG,
     SCIP_BUILD_LONG,
     SCIP_CACHE_LONG, SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG, SCIP_RECORD_LONG,
     SCIP_TIMEOUT_LONG,
@@ -100,6 +101,15 @@ struct Cli {
         long_help = RUST_CHECKER_LONG,
     )]
     rust_checker: bool,
+
+    /// Answer ts call and type destinations with the TypeScript compiler's own
+    /// resolution instead of the syntax leg's name match.
+    #[arg(
+        long = "ts-checker",
+        requires = "project_root",
+        long_help = TS_CHECKER_LONG,
+    )]
+    ts_checker: bool,
 
     /// Build the index with the language's own indexer, then load it.
     #[arg(
@@ -509,6 +519,7 @@ fn scip_request(cli: &Cli) -> Result<ResolveRequest<'_>, String> {
         },
         occurrence_text: cli.occurrence_text,
         rust_checker: cli.rust_checker.then(|| cli.project_root.as_deref()).flatten(),
+        ts_checker: cli.ts_checker.then(|| cli.project_root.as_deref()).flatten(),
     })
 }
 

@@ -224,6 +224,9 @@ rust-checker = [
     "dep:ra_ap_project_model",
     "dep:ra_ap_vfs",
 ]
+# The ts checker tier, `--features cli,ts-checker`. Off by default and out of
+# `cli`: it pulls no crate, but it makes every ts resolve able to spawn `node`.
+ts-checker = []
 
 [[bin]]
 name = "extract"

@@ -1768,6 +1768,8 @@ pub struct IndexBag {
     /// the rust CHECKER tier's answers, joined to corpus def coordinates. Unset
     /// without `--rust-checker`, and unset when the workspace load fell back.
     pub rust_checker: std::sync::OnceLock<crate::lang::rust_checker::RustCheckerIndex>,
+    /// the ts CHECKER tier's answers, same discipline as `rust_checker`.
+    pub ts_checker: std::sync::OnceLock<crate::lang::ts_checker::TsCheckerIndex>,
 }
 
 /// Blob -> supplied path, for the whole resolve universe. Built ONCE per
