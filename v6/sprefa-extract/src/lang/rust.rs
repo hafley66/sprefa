@@ -688,6 +688,12 @@ fn item_edge_candidates(
                 if let Some(to) = path_name(path) {
                     push_candidate(sink, strings, owner, &to, TypeEdgeKind::Impl);
                 }
+                arg_candidates(owner, path, strings, sink);
+            }
+            // The self type's own HEAD names the owner; only its arguments are
+            // references.
+            if let Type::Path(self_path) = strip_type(&i.self_ty) {
+                arg_candidates(owner, &self_path.path, strings, sink);
             }
         }
         syn::Item::Mod(m) => {
@@ -763,6 +769,35 @@ fn bound_candidate(
         if let Some(to) = path_name(&t.path) {
             push_candidate(sink, strings, owner, &to, TypeEdgeKind::Generic);
         }
+        arg_candidates(owner, &t.path, strings, sink);
+    }
+}
+
+/// One candidate per named reference under a path's GENERIC ARGUMENTS, the
+/// `collect_path_args` recursion a field type already gets through `type_refs`.
+fn arg_candidates(
+    owner: Span,
+    path: &Path,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    let mut args = Vec::new();
+    collect_path_args(path, &mut args);
+    args.sort();
+    args.dedup();
+    for to in args {
+        push_candidate(sink, strings, owner, &to, TypeEdgeKind::Generic);
+    }
+}
+
+/// A type with its wrappers peeled: `&mut Foo<T>` and `(Foo<T>)` are `Foo<T>`.
+fn strip_type(ty: &Type) -> &Type {
+    match ty {
+        Type::Group(t) => strip_type(&t.elem),
+        Type::Paren(t) => strip_type(&t.elem),
+        Type::Ptr(t) => strip_type(&t.elem),
+        Type::Reference(t) => strip_type(&t.elem),
+        other => other,
     }
 }
 
