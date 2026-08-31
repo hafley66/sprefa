@@ -8,12 +8,10 @@
 //! `Span { start: node.start_byte(), len: node.end_byte() - node.start_byte() }`
 //! is the whole story. This is simpler than the rust port.
 //!
-//! Commit A (skeleton): GoSource wires cst via ast-grep + a tree-sitter-go parse;
-//! type/call/df projections are stubbed empty. Commit B ports `walk_go_entities`
-//! (TypeF nodes + arrow-type sigs); commit C ports `go_walk_call_defs` +
-//! `go_walk_call_sites` (CallF); commit D ports `go_dataflow_from` (DfF nodes +
-//! Direct edges). 4d-i-go ports `go_type_spec_edges` (type-edge candidates in
-//! phase 1) + lands `Resolve<TypeF>`; 4d-ii-go lands `Resolve<CallF>` (the
+//! GoSource wires cst via ast-grep + a tree-sitter-go parse feeding the type/call/df
+//! projections: `walk_go_entities` (TypeF nodes + arrow-type sigs), `go_walk_call_defs`
+//! + `go_walk_call_sites` (CallF), `go_dataflow_from` (DfF nodes + Direct edges),
+//! `go_type_spec_edges` (type-edge candidates) + `Resolve<TypeF>` / `Resolve<CallF>` (the
 //! scip-ratcheted twin of the TsSource arm).
 //!
 //! Deferred follow-ups: df literal/loop/nesting aux. Df argument slots,
@@ -90,14 +88,13 @@ pub(crate) fn go_text<'a>(node: tree_sitter::Node, src: &'a [u8]) -> &'a str {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// TypeF: entity nodes + arrow-type sigs + type-edge candidates. Commit B; the
-// candidates land with 4d-i-go.
+// TypeF: entity nodes + arrow-type sigs + type-edge candidates.
 //
 // Ports v5 `walk_go_entities` (the entity half) + `go_fn_type` (the arrow-type
 // payload) + `go_type_spec_edges` (the UNRESOLVED type-edge candidates: struct
 // field / struct embed / interface embed / generic constraint, owner span +
-// to-name as written + kind - the 4b-iii TypeFAux.candidates pattern). The
-// name-resolved type EDGES themselves land with `Resolve<TypeF>` (4d-i-go
+// to-name as written + kind - the TypeFAux.candidates pattern). The
+// name-resolved type EDGES themselves are bound by `Resolve<TypeF>`
 // below); phase 1 stays pure-content span rows.
 // No const facet (v5 go emits none: walk_go_entities skips const_declaration and
 // extract leaves consts empty, so v6 matches by emitting none).
@@ -648,7 +645,7 @@ fn go_receiver_type(method: tree_sitter::Node, src: &[u8]) -> Option<String> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// CallF: callable definitions (nodes) + call sites (aux). Commit C.
+// CallF: callable definitions (nodes) + call sites (aux).
 //
 // Ports v5 `go_walk_call_defs` (defs, incl. func_literal lambdas) +
 // `go_walk_call_sites` (sites). v5's `mint_sym`/`lambda_sym`/`end` line are
@@ -1792,7 +1789,7 @@ fn go_collect_receivers(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// DfF: intra-procedural value flow (nodes + Direct edges). Commit D.
+// DfF: intra-procedural value flow (nodes + Direct edges).
 //
 // Ports v5 `go_dataflow_from` (src/graph/typegraph/go.rs:576). Every value-bearing
 // position in a callable's body becomes a NODE; local value flow becomes a Direct
@@ -2705,8 +2702,8 @@ impl Source for GoSource {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Resolve<TypeF> for GoSource (commit 4d-i-go). The exact twin of the TsSource
-// arm (4b-iii): candidates in, no AST. The candidate row IS the parity target
+// Resolve<TypeF> for GoSource. The exact twin of the TsSource
+// arm: candidates in, no AST. The candidate row IS the parity target
 // (user ruling 2026-07-24, option (a)): v5's `type_edge.to` is free text, so
 // text dsts STAY text — a candidate whose `to` names no corpus node (a
 // qualified `pkg.Type` ref, a constraint naming no local decl) emits a ZERO dst
@@ -2716,9 +2713,8 @@ impl Source for GoSource {
 // bundle gives the span, and the DefIndex span-join gives the blob (the output
 // carries no hash of its own). Corpus fallback: a UNIQUE site only.
 // The helper triplication with ts.rs (`type_edge_candidates` /
-// `resolve_type_dst`) is DELIBERATE per the design audit's SEQUENCING RULING
-// (2026-07-24): ALL dedup lands in ONE sweep AFTER the Resolve pass (4a-4d)
-// fully lands, never interleaved with a resolve arm.
+// `resolve_type_dst`) is DELIBERATE: ALL dedup happens in ONE sweep AFTER the
+// Resolve pass, never interleaved with a resolve arm.
 // ════════════════════════════════════════════════════════════════════════════
 
 impl GoSource {
@@ -2859,13 +2855,13 @@ impl Resolve<TypeF> for GoSource {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Resolve<CallF> for GoSource (commit 4d-ii-go). The exact twin of the TsSource
-// arm (4c-ii), two legs per the user rulings (2026-07-24: scip-override
+// Resolve<CallF> for GoSource. The exact twin of the TsSource
+// arm, two legs per the user rulings (scip-override
 // ALLOWED; the v5-shaped name-match stays primary):
 //   NameResolve — callee name -> unique def. Same-file WINS via the span-join
 //     (def_named in THIS CallF bundle -> its span -> the DefIndex gives the
 //     blob); cross-file a UNIQUE corpus blob (CallF facet preferred);
-//     ambiguous/absent -> NO ROW (the 4b-iii discipline). For go the
+//     ambiguous/absent -> NO ROW. For go the
 //     cross-package ambiguity is the common case: two packages exporting the
 //     same func name make the name-match abstain (exactly the case scip then
 //     settles through the import).
@@ -2886,14 +2882,13 @@ impl Resolve<TypeF> for GoSource {
 // has no module caller. A site whose `callee_path` names an import takes the
 // IMPORTED leg: go binds `pkg.F` in pkg, never in the file that writes it.
 // The helper triplication with ts.rs (`call_name_match` / `scip_call_target`)
-// is DELIBERATE per the design audit's SEQUENCING RULING (2026-07-24): ALL
-// dedup lands in ONE sweep AFTER the Resolve pass (4a-4d) fully lands.
+// is DELIBERATE: ALL dedup happens in ONE sweep AFTER the Resolve pass.
 // ════════════════════════════════════════════════════════════════════════════
 
 impl GoSource {
     /// The name-match target of one callee (the NameResolve leg). Pub so the
     /// scip ratchet re-runs it to classify overrides — same discipline as
-    /// `type_edge_candidates` in 4d-i-go. Same-file wins via the span-join;
+    /// `type_edge_candidates`. Same-file wins via the span-join;
     /// cross-file a unique corpus blob (the CallF facet's site preferred);
     /// ambiguous/absent -> None.
     pub fn call_name_match(
@@ -4071,12 +4066,6 @@ impl Resolve<CallF> for GoSource {
             } else {
                 None
             };
-            if std::env::var_os("SPREF_DEBUG_Q").is_some()
-                && own_path.as_deref() == Some("internal/ast/ast_generated.go")
-                && site.span.start == 100524
-            {
-                eprintln!("DBG8 recv={:?} plan={:?}", receiver.is_some(), plan.is_some());
-            }
             let name_t: Option<(ContentId, Span, CallEdgeKind)> = match receiver {
                 Some(ReceiverOutcome::Named(type_id)) => {
                     let type_name = output.strings.lookup(*type_id);

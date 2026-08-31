@@ -11,7 +11,7 @@ use crate::shape::{Span, Strings};
 use super::rust::syn_span;
 use super::rust_type_refs::{collect_path_args, path_name, primary_type, type_refs};
 
-// ── type-edge candidates (4d-i; the Resolve<TypeF> input) ───────────────────
+// ── type-edge candidates (the Resolve<TypeF> input) ───────────────
 //
 // A candidate carries an owner SPAN, so an impl on a self type declared
 // OUTSIDE this file has no owner to point at and is skipped.
@@ -46,7 +46,7 @@ fn item_edge_candidates(
             generic_candidates(owner, &e.generics, strings, sink);
             for variant in &e.variants {
                 // The `to` is v5's synthetic `Owner::Member` text — text dsts
-                // STAY text (the 4b-iii ruling).
+                // STAY text.
                 push_candidate(
                     sink,
                     strings,

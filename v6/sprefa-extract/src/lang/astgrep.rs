@@ -1,4 +1,4 @@
-//! The ast-grep Parser + the CstF projection (commit 1's only family).
+//! The ast-grep Parser + the CstF projection.
 //!
 //! ast-grep-language ships the tree-sitter grammars for rust/ts/tsx/js/go in
 //! ONE dep; `SupportLang::from_path` picks the grammar from the path. The parse
@@ -214,7 +214,7 @@ impl Project<CstF> for CstProjector {
 // ════════════════════════════════════════════════════════════════════════════
 // AstgrepSource: the CST-only Source (the floor for every ast-grep lang). Epic U.
 //
-// Commit 1's AstGrepParser + CstProjector repurposed as a Source: cst-only (the
+// AstGrepParser + CstProjector as a Source: cst-only (the
 // other families are None). The roster's fallback behind the lang-specific
 // TsSource; a .rs/.go/... that has no native parser still gets the lossless CST.
 // ════════════════════════════════════════════════════════════════════════════

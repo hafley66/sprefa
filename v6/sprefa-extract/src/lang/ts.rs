@@ -2,16 +2,16 @@
 //! signatures). oxc is the arena AST front-end v5 carried
 //! (`src/graph/typegraph/ts`). `Program<'a>` borrows the `Allocator` AND the
 //! source text, so the dispatch owns the arena and the parse ties `content` to
-//! `'a` (the GAT seam from commit 2a).
+//! `'a` (the GAT seam).
 //!
-//! Commit 2b ports v5 `ts_entities_from`: the type declarations (class /
+//! v5 `ts_entities_from` port: the type declarations (class /
 //! interface / alias / enum / function / method) become span-addressed
-//! `Node<TypeF>`. Commit 2c ports the arrow-type half of v5
+//! `Node<TypeF>`. The arrow-type half of v5
 //! `ts_fn_signature_edges`: each callable's param + return type references
 //! become `TypeSig` rows in the bundle's aux (the D-arrow-type payload: a
-//! function IS a type, `[...A] => B`). The target stays a bare name (phase-1
-//! honest; `Resolve<TypeF>` binds it to a declaration span at commit 4). The
-//! name-resolved type EDGES (field / impl / uses / ...) still land with
+//! function IS a type, `[...A] => B`). The target stays a bare name
+//! (`Resolve<TypeF>` binds it to a declaration span). The
+//! name-resolved type EDGES (field / impl / uses / ...) are bound by
 //! `Resolve<TypeF>`; phase 1 stays pure-content.
 
 use std::collections::{BTreeSet, HashMap};
@@ -631,7 +631,7 @@ fn var_fn_entity(
 /// join back to that node at the wire and the resolution seam. When
 /// `record_candidates` (the Function-entity call sites — v5 emits no method-
 /// signature type_edges), each ref ALSO lands as an unresolved param/returns
-/// type-edge candidate (4b-iii); the sigs and the candidates then share ONE
+/// type-edge candidate; the sigs and the candidates then share ONE
 /// refs walk, so they cannot drift.
 fn fn_sigs(
     owner: oxc_span::Span,
@@ -684,7 +684,7 @@ fn push_sig(
 
 /// The callable's declared type-parameter names (the exclusion set: a generic
 /// `<T>` referencing itself is not a sig). Port of v5 `ts_param_edges`'s name
-/// collection (constraint refs as "generic" edges are deferred to commit 4).
+/// collection (constraint refs as "generic" edges are deferred).
 fn type_param_names(
     tp: &Option<oxc_allocator::Box<ts::TSTypeParameterDeclaration>>,
 ) -> BTreeSet<String> {
@@ -736,7 +736,7 @@ fn ts_type_name(name: &ts::TSTypeName) -> Option<String> {
     }
 }
 
-// ── type-edge candidates (TypeFAux.candidates; commit 4b-iii) ───────────────
+// ── type-edge candidates (TypeFAux.candidates) ───────────────
 //
 // Port of v5 `ts_edges_from` (src/graph/typegraph/ts/mod.rs:103-421) onto the
 // candidate row: the same top-level walk (v5 itself runs edges as a second
@@ -1117,7 +1117,7 @@ fn enum_edge_candidates(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// CallF: callable definitions (nodes) + call sites (aux). Commit 3a.
+// CallF: callable definitions (nodes) + call sites (aux).
 //
 // Ports v5 `ts_call_defs_from` (defs) + `TsCallSites` (sites) + `TsNestedFnDefs`
 // (nested named-fn defs) + `ts_push_lambda_defs` (lambda defs). v5's
@@ -1134,7 +1134,7 @@ fn enum_edge_candidates(
 
 /// The CallF projector: emits one def node per callable (Free / Method /
 /// Lambda) and one site per call expression. Sites are unresolved in phase 1
-/// (the callee as written); `Resolve<CallF>` binds them at commit 4.
+/// (the callee as written); `Resolve<CallF>` binds them.
 pub struct CallProjector<'a> {
     /// The source text, needed for the `unresolved` detail slice (the computed
     /// expression's exact source at its span). Same shape as `DfProjector`.
@@ -1257,7 +1257,7 @@ fn push_value_refs(
     }
 }
 
-// ── module specifiers (CallFAux.specifiers; commit 4b-ii) ───────────────────
+// ── module specifiers (CallFAux.specifiers) ───────────────────
 //
 // Port of v5's TS `module_binding` local-name semantics (src/graph/modgraph/
 // ts.rs `parse_ts_module_bindings`) onto the 4a Specifier row: `name` is the
@@ -1475,7 +1475,7 @@ fn module_export_name<'a>(name: &ts::ModuleExportName<'a>) -> &'a str {
     }
 }
 
-// ── the move's per-file specifier rows (arc 2) ──────────────────────────────
+// ── the move's per-file specifier rows ──────────────────────────────
 
 /// A module specifier as written. `module_span` covers the whole string literal
 /// including quotes; `module` is the parsed path, so a re-aim re-quotes.
@@ -2064,7 +2064,7 @@ impl<'a> OxcVisit<'a> for UnresolvedWalker<'_> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// DfF: intra-procedural value flow (nodes + edges). Commit 3b.
+// DfF: intra-procedural value flow (nodes + edges).
 //
 // Ports v5 `ts_dataflow_from` (ts/flow.rs). Every value-bearing position in a
 // callable's body becomes a NODE; local value flow becomes an EDGE (Direct).
@@ -3397,7 +3397,7 @@ impl Source for TsSource {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Resolve<TypeF> for TsSource (commit 4b-iii). Pure: candidates + sigs in, no
+// Resolve<TypeF> for TsSource. Pure: candidates + sigs in, no
 // AST. The candidate row IS the parity target (user ruling 2026-07-24, option
 // (a)): v5's `type_edge.to` is free text, so text dsts STAY text — a candidate
 // whose `to` names no corpus node (v5's synthetic `Owner::Member`, externals)
@@ -3427,7 +3427,7 @@ impl TsSource {
 /// The dst leg of one candidate: same-file TypeF entity first (its span joined
 /// through the `DefIndex` for the blob), else a unique corpus site, else None
 /// (text stays text — the zero leg). Name-only resolution, per the 4a ADDENDUM
-/// site-key discipline (no receiver typing anywhere in commit 4).
+/// site-key discipline (no receiver typing).
 fn resolve_type_dst(
     types: &FamilyBundle<TypeF>,
     strings: &Strings,
@@ -3496,12 +3496,12 @@ impl Resolve<TypeF> for TsSource {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Resolve<CallF> for TsSource (commit 4c-ii). Two legs per the user rulings
+// Resolve<CallF> for TsSource. Two legs per the user rulings
 // (2026-07-24: scip-override ALLOWED; the v5-shaped name-match stays primary):
 //   NameResolve — callee name -> unique def. Same-file WINS via the span-join
 //     (def_named in THIS CallF bundle -> its span -> the DefIndex gives the
 //     blob); cross-file a UNIQUE corpus blob (CallF facet preferred);
-//     ambiguous/absent -> NO ROW (the 4b-iii discipline).
+//     ambiguous/absent -> NO ROW.
 //   ScipOverride — scip's occurrence resolution for the site disagrees with
 //     the name-match outcome (a different corpus target, or any corpus target
 //     where the name-match bound none): scip's target WINS the edge, the
@@ -3518,7 +3518,7 @@ impl Resolve<TypeF> for TsSource {
 // has no module caller. `callee_path` stays None for ts: filling it would
 // change the committed sample.callf.snap and UPDATE_SNAP is forbidden for
 // this increment (the addendum's ts catch-up is DEFERRED to a declared
-// snapshot increment — flagged in the 4c-ii report).
+// snapshot increment — flagged in the report).
 // ════════════════════════════════════════════════════════════════════════════
 
 /// This file's supplied path, learned the way `own_blob` learns its blob: the
@@ -3666,7 +3666,7 @@ fn module_target(
 impl TsSource {
     /// The name-match target of one callee (the NameResolve leg). Pub so the
     /// scip ratchet re-runs it to classify overrides — same discipline as
-    /// `type_edge_candidates` in 4b-iii. Same-file wins via the span-join;
+    /// `type_edge_candidates`. Same-file wins via the span-join;
     /// cross-file a unique corpus blob (the CallF facet's site preferred);
     /// ambiguous/absent -> None.
     pub fn call_name_match(

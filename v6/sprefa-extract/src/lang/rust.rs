@@ -1,27 +1,18 @@
 //! The Rust extractor arm: syn front-end for type/call/df/const, ast-grep for cst.
 //! Mirrors TsSource (same shape, different front-end): cst via ast-grep's rust
 //! grammar + one `syn::parse_file` feeding the type/call/df/const projections.
-//!
-//! Commit A (skeleton): RustSource wires cst via ast-grep + a syn parse.
-//! Commit B (this): TypeF entity nodes + arrow-type sigs + the const facet.
-//! Commits C/D port `rust_call_defs_from`/`rust_call_sites_from` and
-//! `rust_dataflow_from` from v5 (`src/graph/typegraph/rust/mod.rs`).
+//! Type edges ride `TypeFAux` candidates out of the one parse (port of v5
+//! `edges_from`: field/variant/generic/impl — v5 rust emits NO param/returns
+//! and NO uses). Resolve<CallF> is NameResolve primary, ScipOverride on scip
+//! disagreement; the rust-analyzer `local `-symbol adaptation is documented on
+//! the arm. Df argument slots, parameter positions, field names and literal
+//! texts are emitted.
 //!
 //! Span bridge: syn's proc_macro2 spans are line/col; v6 `Span` is byte offsets,
 //! so one `line_starts` table + `line_col_to_byte` converts (the rust-specific
 //! bit oxc gives for free). v5's `rust_line` used `span.start().line`; the
 //! parity oracle (v5_normalize) reconstructs the byte as `line_starts[line-1] +
 //! col`, which is exactly `line_col_to_byte`.
-//!
-//! Commit 4d-i lands the type EDGES: unresolved candidates ride `TypeFAux` out
-//! of the one parse (port of v5 `edges_from`: field/variant/generic/impl — v5
-//! rust emits NO param/returns and NO uses), and `Resolve<TypeF>` binds them
-//! (the 4b-iii discipline, mirrored from the ts arm). Commit 4d-ii lands
-//! `Resolve<CallF>` (the 4c-ii ts arm mirrored: NameResolve primary,
-//! ScipOverride on scip disagreement; the rust-analyzer `local `-symbol
-//! adaptation documented on the arm) + the scip ratchet. Deferred follow-ups:
-//! the docs facet (`rust_docs_from`); df loop/nesting aux. Df argument slots,
-//! parameter positions, field names and literal texts are emitted.
 
 use std::collections::BTreeSet;
 
@@ -97,12 +88,12 @@ pub(crate) fn syn_span(line_starts: &[u32], span: proc_macro2::Span) -> Span {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// TypeF: entity nodes + arrow-type sigs + the const facet. Commit B.
+// TypeF: entity nodes + arrow-type sigs + the const facet.
 //
 // Ports v5 `rust_entities_from` (the entity half) + `rust_fn_type` (the arrow-
 // type payload) + `rust_const_values_from` (Const entities + ConstValue rows).
-// The name-resolved type EDGES (field/impl/variant/uses/generic) land with
-// `Resolve<TypeF>` (commit 4); phase 1 stays pure-content span nodes.
+// The name-resolved type EDGES (field/impl/variant/uses/generic) are bound by
+// `Resolve<TypeF>`; phase 1 stays pure-content span nodes.
 //
 // v5 stores `parent`/`sym`/`mint_sym`; v6 drops them (a node is span+kind+name;
 // the parent linkage is span-containment at the seam). v5 maps Union -> Struct
@@ -337,7 +328,7 @@ fn const_values_in_items(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Resolve<TypeF> for RustSource (commit 4d-i). The 4b-iii discipline, mirrored
+// Resolve<TypeF> for RustSource.
 // from the ts arm: the candidate row IS the parity target; text dsts STAY
 // text — a candidate whose `to` names no corpus node (v5's synthetic
 // `Owner::Member` variant text, externals) emits a ZERO dst leg. The
@@ -383,7 +374,7 @@ fn resolve_type_dst(
     // A candidate is interned AS WRITTEN (`hir::Struct`), and every index here
     // keys on a bare declaration name, so the trailing segment is the key. A
     // Variant candidate's `to` is v5's synthetic `Enum::Variant` text, not a
-    // path: text dsts stay text (the 4b-iii ruling).
+    // path: text dsts stay text.
     let (qualifier, trailing) = match name.rsplit_once("::") {
         Some((qualifier, trailing)) if kind != TypeEdgeKind::Variant => (Some(qualifier), trailing),
         _ => (None, name),
@@ -544,13 +535,13 @@ impl Resolve<TypeF> for RustSource {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Resolve<CallF> for RustSource (commit 4d-ii). The 4c-ii ts arm mirrored, two
+// Resolve<CallF> for RustSource, two
 // legs per the user rulings (scip-override ALLOWED; the v5-shaped name-match
 // stays primary):
 //   NameResolve — callee name -> unique def. Same-file WINS via the span-join
 //     (def_named in THIS CallF bundle -> its span -> the DefIndex gives the
 //     blob); cross-file a UNIQUE corpus blob (CallF facet preferred);
-//     ambiguous/absent -> NO ROW (the 4b-iii discipline).
+//     ambiguous/absent -> NO ROW.
 //   ScipOverride — scip's occurrence resolution for the site disagrees with
 //     the name-match outcome: scip's corpus target WINS the edge, the
 //     name-match is displaced. Needs the corpus scip index
@@ -607,7 +598,7 @@ fn same_file_call_match(
 impl RustSource {
     /// The name-match target of one callee (the NameResolve leg). Pub so the
     /// scip ratchet re-runs it to classify overrides — same discipline as
-    /// `type_edge_candidates` in 4d-i. Mirror of `TsSource::call_name_match`
+    /// `type_edge_candidates`. Mirror of `TsSource::call_name_match`
     /// (the post-4d dedup sweep owns unifying the per-lang copies).
     pub fn call_name_match(
         output: &ExtractOutput,
@@ -1285,7 +1276,7 @@ fn enclosing_named_def(sorted: &[(Span, NodeRef)], site: Span) -> Option<NodeRef
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// CallF: callable definitions (nodes) + call sites (aux). Commit C.
+// CallF: callable definitions (nodes) + call sites (aux).
 //
 // Ports v5 `rust_call_defs_from` (defs, incl. the nested-fn/closure walker) +
 // `rust_call_sites_from` (sites). v5's `mint_sym`/`lambda_sym`/`end` line are
@@ -1953,7 +1944,7 @@ fn peel_parens(expr: &syn::Expr) -> &syn::Expr {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// DfF: intra-procedural value flow (nodes + Direct edges). Commit D.
+// DfF: intra-procedural value flow (nodes + Direct edges).
 //
 // Ports v5 `rust_dataflow_from` (src/graph/typegraph/rust/mod.rs:746-1332). Every
 // value-bearing position in a callable's body becomes a NODE; local value flow
