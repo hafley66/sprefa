@@ -607,24 +607,8 @@ fn const_values_in_items(
 
 // ── type-edge candidates (4d-i; the Resolve<TypeF> input) ───────────────────
 //
-// Port of v5 `edges_from` (src/graph/typegraph/rust/mod.rs:88-183), collected
-// during the ONE syn parse into TypeFAux.candidates — the 4b-iii ruling (the
-// CallFAux.specifiers pattern: unresolved rows; owner span + to-name as
-// written + kind; resolve binds purely, phase 2 stays zero-AST). v5 rust emits
-// field/variant/generic/impl ONLY — NO param/returns (v5's rust edges_from
-// never walks a fn signature, so the ts arm's Function-only sig filter has no
-// rust analogue; per-lang toward v5 per the v5-is-correct ruling) and NO uses
-// (ts-only). TWO v5 rows are unrepresentable in the candidate shape (the
-// owner is a Span; v5's `from` is free text) and are SKIPPED with this comment
-// as the loud marker — NEITHER is exercised by any fixture or oracle row, so
-// the asserted oracle diff stays green; the honest fix is a candidate-shape
-// evolution (an adjudicated increment, not a silent skip):
-//  - enum-variant FIELD edges: v5's from is the synthetic `Owner::Variant`
-//    text and no entity exists for the owner span to point at.
-//  - impl-owned edges (generic bounds + the trait `impl` edge) on a self-type
-//    declared OUTSIDE this file: no in-file entity carries the owner name.
-//    An impl on an IN-FILE self-type IS minted (owner = that entity's span;
-//    v5's from-text is exactly the entity name).
+// A candidate carries an owner SPAN, so an impl on a self type declared
+// OUTSIDE this file has no owner to point at and is skipped.
 
 /// Collect one file's unresolved type-edge candidates. Port of v5 `edges_from`
 /// + `item_edges`.
@@ -656,8 +640,7 @@ fn item_edge_candidates(
             generic_candidates(owner, &e.generics, strings, sink);
             for variant in &e.variants {
                 // The `to` is v5's synthetic `Owner::Member` text — text dsts
-                // STAY text (the 4b-iii ruling). The variant's own field edges
-                // are unrepresentable (see the section comment).
+                // STAY text (the 4b-iii ruling).
                 push_candidate(
                     sink,
                     strings,
@@ -665,6 +648,7 @@ fn item_edge_candidates(
                     &format!("{}::{}", e.ident, variant.ident),
                     TypeEdgeKind::Variant,
                 );
+                field_candidates(owner, &variant.fields, strings, sink);
             }
         }
         // v5 maps Union to Struct for entities and walks its fields the same way.
