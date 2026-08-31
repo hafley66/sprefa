@@ -6,7 +6,8 @@
 :- use_module('../src/0_reader/3_file_loader', [load_dl7/3]).
 :- use_module('../src/2_comptime/2_compiler',
               [ compile_dl7/4,
-                compile_unit/3
+                compile_unit/3,
+                type_prelude_paths/1
               ]).
 :- use_module('../src/2_comptime/0_lowerer', [lower_datalog/4]).
 :- use_module('../src/2_comptime/1_checker',
@@ -21,6 +22,27 @@
                 validate_functional_rows/3
               ]).
 :- use_module('fixtures/1_embedded', []).
+
+test(numbered_prelude_files_are_loaded_in_lexical_order) :-
+    type_prelude_paths(Paths),
+    maplist(file_base_name, Paths, Names),
+    Names == ['0_constructors.dl7', '1_declarations.dl7',
+              '2_constructor_rules.dl7', '3_derived_rules.dl7'],
+    maplist(file_exists, Paths, Exists),
+    Exists == [true, true, true, true].
+
+test(split_prelude_loads_all_existing_type_algebra_declarations) :-
+    compile_dl7('v7/test/fixtures/2_partial.dl7', Rows, _Runtime, Diagnostics),
+    once(type_operator_snapshot(Rows, Snapshot)),
+    Observed = prelude_load(Diagnostics, Snapshot),
+    Observed = prelude_load([], _),
+    compound(Snapshot),
+    !.
+
+file_exists(Path, true) :-
+    exists_file(Path),
+    !.
+file_exists(_, false).
 
 test(file_and_bare_quasi_share_reader_and_expansion_pipeline) :-
     load_dl7('v7/test/fixtures/0_minimal.dl7',
