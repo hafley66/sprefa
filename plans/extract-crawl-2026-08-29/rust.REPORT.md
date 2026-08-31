@@ -1858,3 +1858,77 @@ entity converts unresolved candidates into resolved rows and moves precision
 UP. Every other arc mints new candidates and pays a precision toll; the floor
 is 89.31 - 0.10 = 89.21, which allows roughly 156 wrong rows across the whole
 grind at the arc-2 row count.
+
+### 26.5 What the four arcs moved
+
+| arc | class | commit | recall | precision |
+|---|---|---|---:|---:|
+| — | the floor this lane inherited | `01be4114e` | 27.33 | 89.31 |
+| 2 | A, the type alias on both legs | `9db85027e` | **38.97** | 93.07 |
+| 3 | B, the enum variant payload | `012f784ae` | **50.46** | 93.20 |
+| 4 | C, the qualified path's trailing segment | `0e29983b7` | **57.88** | 93.62 |
+| 5 | D, generic arguments in bounds and impl headers | `da9d4c359` | **61.70** | 93.75 |
+
+Recall +34.37 pt and precision +4.44 pt over the four. Ours grew 2,553 -> 5,491
+rows; the oracle-agreeing overlap grew 2,280 -> 5,148. The three call rows moved
+too, all inside tolerance: ra 93.68/55.98 -> 93.69/55.93, raw scip 77.89/41.02 ->
+78.26/41.15, codeql 73.36/78.78 -> 73.37/78.71.
+
+Arc 2 carries one finding the other three do not. An alias rides the shared
+`DefIndex` as a type entity, and the call plane's type-facet fallback exists for
+tuple-struct and variant constructors, whose def IS the constructed item. An
+alias's is not: `InFile(a, b)` constructs `InFileWrapper`, and without a refusal
+the checker tier and the name match both bound the alias, 319 wrong call rows.
+`RustModuleIndex::is_alias` carries the coordinates; the checker, name-match and
+scip legs all filter on it.
+
+### 26.6 The residual, same classification, same join
+
+Missing 6,063 -> **3,195**. Recall against the oracle minus the three
+warranted-exclusion classes (X1 192, X2 1,374, X3 193 = 1,759): **78.19%**.
+
+| class | rows | % oracle | still open because |
+|---|---:|---:|---|
+| X2 self-edge | 1,374 | 16.47% | oracle convention, 26.3 |
+| A1 alias / assoc-type owner | 276 | 3.31% | the ASSOC-type half; see 26.7 |
+| D2 impl self type | 257 | 3.08% | its head names a type declared in ANOTHER file, so it is class E, not a generic argument |
+| E1 impl self type declared elsewhere | 205 | 2.46% | `entity_span_named` finds no in-file entity and `item_edge_candidates` returns |
+| X3 owner is a path prefix | 193 | 2.31% | oracle convention, 26.3 |
+| H bare name, unresolved | 192 | 2.30% | residual resolution |
+| X1 outside the corpus | 192 | 2.30% | oracle scope, 26.3 |
+| E2 implements, impl in another file | 184 | 2.21% | the oracle keys the row on the ADT's DECLARING file; a file-local candidate walk cannot mint it |
+| B enum variant payload | 162 | 1.94% | residual resolution, not candidate coverage |
+| D1 bound generic args | 74 | 0.89% | residual resolution |
+| C qualified path | 33 | 0.40% | residual resolution |
+| A3, A2, J, G | 53 | 0.64% | residual |
+
+**E1 + D2 + E2 = 646 rows, 7.75 pt, is the largest buildable block left**, and
+all three are one shape: the impl's owner is not an entity of the impl's own
+file. A `TypeEdgeCandidate` carries an owner SPAN, so the owner must be a node
+of this file's `TypeF` bundle; minting one for every `impl X` header would
+register X as a definition in every file that impls it, and the corpus-unique
+lookups both planes rely on would go ambiguous corpus-wide. The fix is a
+candidate-shape evolution plus the `is_alias`-style refusal at four resolve
+points, and it wants its own lane.
+
+### 26.7 The associated-type arc, measured and dropped
+
+`type Made = Payload;` inside an impl is an `ast::TypeAlias` to the oracle's
+`owner_of`, so its row is owned by `Made`. Minting the entity and walking the
+right-hand side was built, measured and reverted, twice:
+
+| shape | recall | precision | new rows | of them wrong | oracle rows lost |
+|---|---:|---:|---:|---:|---:|
+| entity + candidates, no ranking | 63.67 | 92.14 | 322 | 118 | 40 |
+| + one non-alias declaration outranks the alias set | 64.16 | 92.10 | 330 | 123 | 2 |
+| + an associated type never answers a unique lookup | 64.16 | **92.87** | 282 | 75 | 2 |
+
+The floor is 93.75 - 0.10 = 93.65 and the best of the three is 92.87, so the arc
+does not ship. The 40 lost rows in the first shape name the mechanism: `type Ty
+= ..` appears in a dozen impl blocks, so `Ty` stops being a corpus-unique type
+declaration and every reference to the real `next_solver/ty.rs Ty` unbinds. The
+two ranking rules recover them. What remains is 75 rows whose owner is the
+associated type itself (`Result`, `DefaultEmpty`, `Span`, `TokenStream`) binding
+a right-hand side loosely, plus generic PARAMETERS (`Key -> K`, `Key -> V`)
+which cannot be blanket-filtered because the oracle itself holds
+`dyn_map.rs KeyMap -> K`. Worth 2.46 pt of recall to whoever clears them.
