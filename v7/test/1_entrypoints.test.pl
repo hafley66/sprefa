@@ -4,12 +4,18 @@
 :- use_module(library(process), [process_create/3, process_wait/2]).
 :- use_module('../src/0_reader/2_embedder', [dl7_text_unit/5]).
 :- use_module('../src/0_reader/3_file_loader', [load_dl7/3]).
+:- use_module('../src/0_reader/4_module_loader', [load_dl7_units/3]).
 :- use_module('../src/2_comptime/2_compiler',
               [ compile_dl7/4,
                 compile_unit/3,
                 type_prelude_paths/1
               ]).
 :- use_module('../src/2_comptime/0_lowerer', [lower_datalog/4]).
+:- use_module('../src/2_comptime/0a_module_lowerer',
+              [ lower_units/4,
+                merge_module_basements/4,
+                install_module_aliases/6
+              ]).
 :- use_module('../src/2_comptime/1_checker',
               [ check_datalog/4,
                 check_goal_sequence/4
@@ -22,6 +28,88 @@
                 validate_functional_rows/3
               ]).
 :- use_module('fixtures/1_embedded', []).
+
+test(module_loader_preserves_separate_file_units) :-
+    load_dl7_units(
+        [ 'v7/test/fixtures/0_minimal.dl7',
+          'v7/test/fixtures/2_partial.dl7'
+        ],
+        Units, Diagnostics),
+    maplist(unit_file_name, Units, FileNames),
+    Observed = module_units(Diagnostics, FileNames),
+    Observed == module_units([], ['0_minimal.dl7', '2_partial.dl7']).
+
+test(module_owner_is_stable_across_content_revisions) :-
+    Origin = file('/virtual/module.dl7'),
+    UnitA = dl7_unit(Origin, content_sha256(first), [], [], []),
+    UnitB = dl7_unit(Origin, content_sha256(second), [], [], []),
+    lower_datalog(UnitA, BasementA, _, []),
+    lower_datalog(UnitB, BasementB, _, []),
+    basement_module_owner(BasementA, OwnerA),
+    basement_module_owner(BasementB, OwnerB),
+    Observed = module_owners(OwnerA, OwnerB),
+    Observed ==
+        module_owners(module(file('/virtual/module.dl7')),
+                      module(file('/virtual/module.dl7'))).
+
+test(separate_module_basements_merge_without_local_name_collapse) :-
+    dl7_text_unit(file('/virtual/a.dl7'), '/virtual/a.dl7',
+                  "(: Shared (* (: id int)))", UnitA, []),
+    dl7_text_unit(file('/virtual/b.dl7'), '/virtual/b.dl7',
+                  "(: Shared (* (: name text)))", UnitB, []),
+    lower_units([UnitA, UnitB], ModuleBasements, ModuleOrigins, []),
+    merge_module_basements(ModuleBasements, ModuleOrigins,
+                           Basement, Origins),
+    Basement = basement_program(root_graph(_, Edges),
+                                datalog_program(Relations, _, _)),
+    findall(Owner,
+            member(pending_edge(Owner, 'Shared', _, 0), Edges),
+            SharedOwners),
+    maplist(module_origin_count, ModuleOrigins, OriginCounts),
+    length(Relations, RelationCount),
+    length(Origins, OriginCount),
+    Observed = module_merge(SharedOwners, OriginCounts,
+                            RelationCount, OriginCount),
+    Observed ==
+        module_merge(
+            [ module(file('/virtual/a.dl7')),
+              module(file('/virtual/b.dl7'))
+            ],
+            [ module(file('/virtual/a.dl7'))-4,
+              module(file('/virtual/b.dl7'))-4
+            ],
+            2, 8).
+
+test(module_alias_edges_preserve_exporting_type_identity) :-
+    PreludeOwner = module(prelude),
+    ProgramOwner = module(file('/virtual/program.dl7')),
+    dl7_text_unit(prelude, prelude,
+                  "(: Box (* (: value int)))", PreludeUnit, []),
+    dl7_text_unit(file('/virtual/program.dl7'), '/virtual/program.dl7',
+                  "(: Use (* (: field Box)))", ProgramUnit, []),
+    lower_units([PreludeUnit, ProgramUnit],
+                Basements0, Origins0, []),
+    install_module_aliases(PreludeOwner, [ProgramOwner],
+                           Basements0, Origins0, Basements, ModuleOrigins),
+    merge_module_basements(Basements, ModuleOrigins, Basement, Origins),
+    check_datalog(Basement, Origins, Checked, Diagnostics),
+    Checked = checked_datalog(root_graph(_, Edges), _, _, _),
+    memberchk(':'(PreludeOwner, 'Box', ref(Box), 0), Edges),
+    memberchk(':'(ProgramOwner, 'Box', ref(Box), 1), Edges),
+    memberchk(':'(ProgramOwner, 'Use', ref(Use), 0), Edges),
+    memberchk(':'(Use, field, ref(Box), 0), Edges),
+    Observed = module_alias(Diagnostics, same_target, alias_index(1)),
+    Observed == module_alias([], same_target, alias_index(1)).
+
+unit_file_name(dl7_unit(file(Path), _, _, _, _), FileName) :-
+    file_base_name(Path, FileName).
+
+basement_module_owner(
+    basement_program(root_graph(Nodes, _), _), Owner) :-
+    memberchk(module(Owner), Nodes).
+
+module_origin_count(module_origins(Module, Origins), Module-Count) :-
+    length(Origins, Count).
 
 test(numbered_prelude_files_are_loaded_in_lexical_order) :-
     type_prelude_paths(Paths),
@@ -501,14 +589,14 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 2709,
+                    [], [], 3984,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(152, 276, 74, 204, 99, 175, 74),
+                    runtime(counts(154, 325, 74, 252, 99, 175, 74),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
@@ -1493,7 +1581,7 @@ driver_run(Status, Stdout, Stderr) :-
     process_create(
         path(swipl),
         [ '-q',
-          '-s', 'v7/src/0_reader/4_cli_mainer.pl',
+          '-s', 'v7/src/0_reader/5_cli_mainer.pl',
           '--', 'v7/test/fixtures/0_minimal.dl7'
         ],
         [ stdout(pipe(StdoutStream)),
