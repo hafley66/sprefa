@@ -6,7 +6,7 @@
 
 use sprefa_extract::{
     flow_edges, CallEdgeKind, CallF, ContentId, DfArg, DfF, DfNodeKind, DfParam, ExtractOutput,
-    FamilyBundle, FlowEdgeKind, Node, NodeRef, ProjectEdge, Span,
+    FamilyBundle, FlowEdgeKind, Node, NodeRef, ProjectEdge, ResolutionOrigin, Span,
 };
 
 fn span(start: u32, len: u32) -> Span {
@@ -54,6 +54,7 @@ fn join_emits_arg_to_param_and_ret_to_call_res() {
         callee_blob.clone(),
         span(35, 15),
         CallEdgeKind::NameResolve,
+        ResolutionOrigin::CorpusUnique,
     )
     .with_call_site(span(18, 6));
 
@@ -115,6 +116,7 @@ fn receiver_slot_is_skipped() {
         callee_blob.clone(),
         span(25, 10),
         CallEdgeKind::NameResolve,
+        ResolutionOrigin::CorpusUnique,
     )
     .with_call_site(span(8, 6));
 

@@ -168,6 +168,12 @@ pub struct NormalForms {
     /// edge); a row seen under several kinds keeps `implements` if it ever
     /// carried it.
     pub call_kinds: BTreeMap<String, String>,
+    /// call row -> every `resolution_origin` that produced it. A set because
+    /// the normal form drops spans, so two sites answered by different legs
+    /// collapse onto one row.
+    pub call_origins: BTreeMap<String, BTreeSet<String>>,
+    /// The same for type rows.
+    pub type_origins: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// `FlatFact` rows to the three tsv families, exactly as normalize.py's
@@ -181,6 +187,8 @@ pub fn normal_form(root: &Path, facts: &[FlatFact]) -> NormalForms {
         type_edges: BTreeSet::new(),
         module: BTreeSet::new(),
         call_kinds: BTreeMap::new(),
+        call_origins: BTreeMap::new(),
+        type_origins: BTreeMap::new(),
     };
     for fact in facts {
         match fact {
@@ -190,6 +198,7 @@ pub fn normal_form(root: &Path, facts: &[FlatFact]) -> NormalForms {
                 callee_path,
                 callee_name,
                 kind,
+                resolution_origin,
                 ..
             } => {
                 let row = edge_row(
@@ -209,6 +218,11 @@ pub fn normal_form(root: &Path, facts: &[FlatFact]) -> NormalForms {
                     }
                     _ => {}
                 }
+                forms
+                    .call_origins
+                    .entry(row.clone())
+                    .or_default()
+                    .insert(resolution_origin.clone());
                 forms.call.insert(row);
             }
             FlatFact::ResolvedTypeEdge {
@@ -216,15 +230,22 @@ pub fn normal_form(root: &Path, facts: &[FlatFact]) -> NormalForms {
                 owner_name,
                 target_path,
                 target_name,
+                resolution_origin,
                 ..
             } => {
-                forms.type_edges.insert(edge_row(
+                let row = edge_row(
                     root,
                     owner_path,
                     owner_name.as_deref(),
                     target_path,
                     target_name.as_deref(),
-                ));
+                );
+                forms
+                    .type_origins
+                    .entry(row.clone())
+                    .or_default()
+                    .insert(resolution_origin.clone());
+                forms.type_edges.insert(row);
             }
             FlatFact::ResolvedImportRow {
                 src_path, target_path, ..
@@ -590,6 +611,22 @@ pub struct Score {
     pub recall: f64,
     /// overlap / |ours|, percent.
     pub precision: f64,
+    /// The ours-only rows, split three ways. `matched` is `overlap`; the two
+    /// others partition `ours - overlap`, so the three sum to `ours`.
+    pub buckets: Buckets,
+}
+
+/// An ours-only row is a precision miss ONLY where the oracle says otherwise
+/// for the same caller. Where the oracle never speaks about that caller it has
+/// no opinion, and flat precision charges the row anyway.
+pub struct Buckets {
+    /// In the oracle as written.
+    pub matched: usize,
+    /// The oracle holds a row for this (src_path, src_name) with a different
+    /// dst: a real disagreement.
+    pub contradicted: usize,
+    /// The oracle holds no row for this (src_path, src_name) at all.
+    pub unjudged: usize,
 }
 
 fn pct(overlap: usize, total: usize) -> f64 {
@@ -608,7 +645,71 @@ pub fn score(ours: &BTreeSet<String>, oracle: &BTreeSet<String>) -> Score {
         overlap,
         recall: pct(overlap, oracle.len()),
         precision: pct(overlap, ours.len()),
+        buckets: buckets(ours, oracle),
     }
+}
+
+/// The 3-bucket split of ours. Keyed on (src_path, src_name), the first two
+/// columns of the 4-column normal form: the match protocol itself is
+/// untouched, this only asks whether the oracle SPOKE about the caller a
+/// non-matching row came from.
+pub fn buckets(ours: &BTreeSet<String>, oracle: &BTreeSet<String>) -> Buckets {
+    let judged: BTreeSet<[&str; 2]> = oracle
+        .iter()
+        .map(|row| {
+            let cols = row_cols(row);
+            [cols[0], cols[1]]
+        })
+        .collect();
+    let mut found = Buckets {
+        matched: 0,
+        contradicted: 0,
+        unjudged: 0,
+    };
+    for row in ours {
+        if oracle.contains(row) {
+            found.matched += 1;
+            continue;
+        }
+        let cols = row_cols(row);
+        if judged.contains(&[cols[0], cols[1]]) {
+            found.contradicted += 1;
+        } else {
+            found.unjudged += 1;
+        }
+    }
+    found
+}
+
+#[test]
+fn three_buckets_partition_ours_and_split_silence_from_disagreement() {
+    // 4 ours rows against an oracle that speaks about ONE caller: the exact
+    // row matches, a second dst from the same caller is a disagreement, and
+    // the two rows from callers the oracle never mentions are unjudged. Flat
+    // precision charges all three misses; only one is a real one.
+    let matched = "a.ts	f	b.ts	g";
+    let other_dst = "a.ts	f	c.ts	g";
+    let silent_caller = "z.ts	q	b.ts	g";
+    let silent_caller2 = "z.ts	r	b.ts	g";
+    let ours: BTreeSet<String> = [matched, other_dst, silent_caller, silent_caller2]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let oracle: BTreeSet<String> = [matched, "a.ts	h	d.ts	k"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+
+    let verdict = score(&ours, &oracle);
+    assert_eq!(verdict.buckets.matched, 1);
+    assert_eq!(verdict.buckets.contradicted, 1, "a.ts/f: oracle says c.ts is wrong");
+    assert_eq!(verdict.buckets.unjudged, 2, "z.ts callers: the oracle is silent");
+    assert_eq!(
+        verdict.buckets.matched + verdict.buckets.contradicted + verdict.buckets.unjudged,
+        verdict.ours,
+        "the three buckets partition ours"
+    );
+    assert_eq!(verdict.buckets.matched, verdict.overlap);
 }
 
 // ── measurement ─────────────────────────────────────────────────────────────
@@ -807,6 +908,43 @@ pub const RSS_TOLERANCE_PCT: f64 = 10.0;
 /// this far below it, outside the run-to-run band.
 pub const CEILING_TIGHTEN_MARGIN: f64 = 0.90;
 
+/// Rows per origin, over the corpus's own normal-form rows (before any oracle
+/// projection): a leg that starts answering 10x more moves a count here before
+/// it moves precision anywhere. A row carrying several origins counts under
+/// each, so the columns need not sum to the row total.
+fn print_origin_table(lang: &str, forms: &NormalForms) {
+    let tally = |origins: &BTreeMap<String, BTreeSet<String>>| {
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        for row_origins in origins.values() {
+            for origin in row_origins {
+                *counts.entry(origin.clone()).or_default() += 1;
+            }
+        }
+        counts
+    };
+    let call = tally(&forms.call_origins);
+    let types = tally(&forms.type_origins);
+    let mut names: BTreeSet<&String> = call.keys().collect();
+    names.extend(types.keys());
+    println!(
+        "\n{:<6} {:<16} {:>10} {:>10}",
+        "lang", "origin", "call_rows", "type_rows"
+    );
+    for name in names {
+        println!(
+            "{lang:<6} {name:<16} {:>10} {:>10}",
+            call.get(name).copied().unwrap_or(0),
+            types.get(name).copied().unwrap_or(0),
+        );
+    }
+    println!(
+        "{lang:<6} {:<16} {:>10} {:>10}",
+        "TOTAL rows",
+        forms.call.len(),
+        forms.type_edges.len()
+    );
+}
+
 /// One corpus: measure, print the table, then check (default) or bump
 /// (`RATCHET_BUMP=1`). `RATCHET_FORCE=1` alongside bump rewrites every
 /// measured row regardless of direction.
@@ -821,6 +959,7 @@ pub fn ratchet(lang: &str) {
         return;
     }
     let measurement = measure(&corpus);
+    print_origin_table(corpus.lang, &measurement.forms);
     let sha = measured_at_sha();
     let mut floors = read_ratchet().unwrap_or_default();
     let bump = std::env::var("RATCHET_BUMP").is_ok();
@@ -935,6 +1074,16 @@ pub fn ratchet(lang: &str) {
             measurement.wall_ms,
             measurement.rss_mb,
             line_verdict
+        );
+        println!(
+            "{:<6} {:<8} {:<32} 3-bucket: matched {} / contradicted {} / unjudged {} (of {} ours)",
+            corpus.lang,
+            family,
+            oracle_file,
+            verdict.buckets.matched,
+            verdict.buckets.contradicted,
+            verdict.buckets.unjudged,
+            verdict.ours,
         );
 
         if bump {

@@ -1,1 +1,1 @@
-{"record":"resolved_edge","caller_path":"tests/fixtures/resolve/3_kotlin.kt","caller_name":"caller","callee_path":"tests/fixtures/resolve/3_kotlin.kt","callee_name":"helper","caller_site_start":19,"caller_site_end":25,"kind":"name_resolve"}
+{"record":"resolved_edge","caller_path":"tests/fixtures/resolve/3_kotlin.kt","caller_name":"caller","callee_path":"tests/fixtures/resolve/3_kotlin.kt","callee_name":"helper","caller_site_start":19,"caller_site_end":25,"kind":"name_resolve","resolution_origin":"corpus_unique"}

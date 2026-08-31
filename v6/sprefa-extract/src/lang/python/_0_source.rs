@@ -22,6 +22,7 @@ use crate::family::{
     DfParam, DocFact, DocTag, ProjectEdge, PyBind, PyCallArg, PyDecor, PyDefault, PyParam,
     PyRetCall, PyReturn, PySubCall, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
     TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
+    ResolutionOrigin,
 };
 use crate::lang::{AstGrepParser, CstProjector};
 use crate::rows::{Edge, FamilyBundle, Node};
@@ -2397,7 +2398,7 @@ fn resolve_type_dst(
     strings: &Strings,
     index: Option<&DefIndex>,
     name: &str,
-) -> Option<(ContentId, Span)> {
+) -> Option<(ContentId, Span, ResolutionOrigin)> {
     let same_file = types
         .nodes
         .iter()
@@ -2406,11 +2407,15 @@ fn resolve_type_dst(
         return corpus_defs(index, name)
             .iter()
             .find(|site| site.span == node.span)
-            .map(|site| (site.blob.clone(), site.span));
+            .map(|site| (site.blob.clone(), site.span, ResolutionOrigin::SameFile));
     }
     let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
     match sites {
-        [only] => Some((only.blob.clone(), only.span)),
+        [only] => Some((
+            only.blob.clone(),
+            only.span,
+            ResolutionOrigin::CorpusUnique,
+        )),
         _ => None,
     }
 }
@@ -2430,18 +2435,19 @@ impl Resolve<TypeF> for PythonSource {
             else {
                 continue;
             };
-            let (dst_blob, dst_span) = resolve_type_dst(
+            let (dst_blob, dst_span, origin) = resolve_type_dst(
                 types,
                 &output.strings,
                 index,
                 output.strings.lookup(candidate.to),
             )
-            .unwrap_or((ZERO_CONTENT_ID, Span::empty()));
+            .unwrap_or((ZERO_CONTENT_ID, Span::empty(), ResolutionOrigin::Unresolved));
             edges.push(ProjectEdge::new(
                 NodeRef(src_ix as u32),
                 dst_blob,
                 dst_span,
                 candidate.kind,
+                origin,
             ));
         }
         edges
@@ -2674,9 +2680,11 @@ impl Resolve<CallF> for PythonSource {
             let push = |edges: &mut Vec<ProjectEdge<CallF>>,
                         dst_blob: ContentId,
                         dst_span: Span,
-                        kind: CallEdgeKind| {
+                        kind: CallEdgeKind,
+                        origin: ResolutionOrigin| {
                 edges.push(
-                    ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span),
+                    ProjectEdge::new(caller, dst_blob, dst_span, kind, origin)
+                        .with_call_site(site.span),
                 );
             };
             // Tier order: scip (compiler) -> dynamic shapes -> name-match.
@@ -2686,14 +2694,33 @@ impl Resolve<CallF> for PythonSource {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
             });
             if let Some((dst_blob, dst_span, _)) = scip_t {
-                push(&mut edges, dst_blob, dst_span, CallEdgeKind::ScipOverride);
-            } else if let Some((dst_blob, dst_span)) = resolver.resolve_site(site, &mut Vec::new())
+                push(
+                    &mut edges,
+                    dst_blob,
+                    dst_span,
+                    CallEdgeKind::ScipOverride,
+                    ResolutionOrigin::Scip,
+                );
+            } else if let Some((dst_blob, dst_span, origin)) =
+                resolver.resolve_site(site, &mut Vec::new())
             {
-                push(&mut edges, dst_blob, dst_span, CallEdgeKind::NameResolve);
+                push(
+                    &mut edges,
+                    dst_blob,
+                    dst_span,
+                    CallEdgeKind::NameResolve,
+                    origin,
+                );
             } else if let Some((dst_blob, dst_span)) =
                 PythonSource::call_name_match(output, def_index, callee)
             {
-                push(&mut edges, dst_blob, dst_span, CallEdgeKind::NameResolve);
+                push(
+                    &mut edges,
+                    dst_blob,
+                    dst_span,
+                    CallEdgeKind::NameResolve,
+                    ResolutionOrigin::CorpusUnique,
+                );
             }
             // The applied decorator of a `@factory()` site: a second edge.
             if let Some((_, t)) = resolver
@@ -2701,7 +2728,13 @@ impl Resolve<CallF> for PythonSource {
                 .iter()
                 .find(|(span, _)| *span == site.span)
             {
-                push(&mut edges, t.0.clone(), t.1, CallEdgeKind::NameResolve);
+                push(
+                    &mut edges,
+                    t.0.clone(),
+                    t.1,
+                    CallEdgeKind::NameResolve,
+                    ResolutionOrigin::Decorator,
+                );
             }
         }
         edges
@@ -2794,7 +2827,11 @@ impl<'a> PyResolver<'a> {
     /// param -> alias, else subscript element, else return-of-call. A callee
     /// shadowed by an enclosing def's parameter never falls through to the
     /// module-level alias: the parameter is what that name means there.
-    fn resolve_site(&self, site: &CallSite, visited: &mut Vec<Span>) -> Option<(ContentId, Span)> {
+    fn resolve_site(
+        &self,
+        site: &CallSite,
+        visited: &mut Vec<Span>,
+    ) -> Option<(ContentId, Span, ResolutionOrigin)> {
         if visited.contains(&site.span) {
             return None;
         }
@@ -2803,16 +2840,20 @@ impl<'a> PyResolver<'a> {
         let callee = strings.lookup(site.callee);
         if !callee.is_empty() {
             if let Some(t) = self.decor_target(callee, site.span) {
-                return Some(t);
+                return Some((t.0, t.1, ResolutionOrigin::Decorator));
             }
             if let Some(t) = self.param_target(callee, site.span) {
-                return Some(t);
+                return Some((t.0, t.1, ResolutionOrigin::Param));
             }
             if self.shadowed(callee, site.span) {
                 return None;
             }
             return PythonSource::call_name_match(self.output, self.index, callee)
-                .or_else(|| self.alias_target(callee, site.span));
+                .map(|(blob, span)| (blob, span, ResolutionOrigin::CorpusUnique))
+                .or_else(|| {
+                    self.alias_target(callee, site.span)
+                        .map(|(blob, span)| (blob, span, ResolutionOrigin::AliasChain))
+                });
         }
         if let Some(sub) = self
             .call
@@ -2824,7 +2865,9 @@ impl<'a> PyResolver<'a> {
             let base = strings.lookup(sub.base);
             let key = strings.lookup(sub.key);
             let value = self.latest_bind(base, Some(key), site.span)?;
-            return self.name_target(strings.lookup(value), site.span, &mut Vec::new());
+            return self
+                .name_target(strings.lookup(value), site.span, &mut Vec::new())
+                .map(|(blob, span)| (blob, span, ResolutionOrigin::Subscript));
         }
         if let Some(rc) = self
             .call
@@ -2833,7 +2876,9 @@ impl<'a> PyResolver<'a> {
             .iter()
             .find(|rc| rc.span == site.span)
         {
-            return self.retcall_target(rc, visited);
+            return self
+                .retcall_target(rc, visited)
+                .map(|(blob, span)| (blob, span, ResolutionOrigin::ReturnCall));
         }
         None
     }
@@ -2953,7 +2998,7 @@ impl<'a> PyResolver<'a> {
     /// inner call passed (unique arg).
     fn retcall_target(&self, rc: &PyRetCall, visited: &mut Vec<Span>) -> Option<(ContentId, Span)> {
         let inner_site = self.call.aux.sites.iter().find(|s| s.span == rc.inner)?;
-        let (blob, dspan) = self.resolve_site(inner_site, visited)?;
+        let (blob, dspan, _) = self.resolve_site(inner_site, visited)?;
         if Some(&blob) != self.own.as_ref() {
             return None;
         }

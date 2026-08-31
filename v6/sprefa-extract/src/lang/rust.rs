@@ -30,6 +30,7 @@ use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
     DfField, DfLit, DfNodeKind, DfParam, MethodOwner, ProjectEdge, SigSlot,
     Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
+    ResolutionOrigin,
 };
 use crate::project::ResolveDrop;
 use crate::rows::{Edge, FamilyBundle, Node};
@@ -370,7 +371,7 @@ fn resolve_type_dst(
     own_path: Option<&str>,
     name: &str,
     kind: TypeEdgeKind,
-) -> Option<(ContentId, Span)> {
+) -> Option<(ContentId, Span, ResolutionOrigin)> {
     // A candidate is interned AS WRITTEN (`hir::Struct`), and every index here
     // keys on a bare declaration name, so the trailing segment is the key. A
     // Variant candidate's `to` is v5's synthetic `Enum::Variant` text, not a
@@ -385,7 +386,9 @@ fn resolve_type_dst(
         .zip(own_path)
         .and_then(|(checker, from)| checker.type_at(from, trailing))
     {
-        Some(CheckerAnswer::Corpus(blob, span)) => return Some((blob, span)),
+        Some(CheckerAnswer::Corpus(blob, span)) => {
+            return Some((blob, span, ResolutionOrigin::Checker))
+        }
         Some(CheckerAnswer::External) => return None,
         None => {}
     }
@@ -406,7 +409,13 @@ fn resolve_type_dst(
             .last()
             .is_some_and(|last| modules.is_some_and(|m| m.names_a_module(last)));
     module_scoped_type(index, paths, own_path, &segments, trailing)
-        .or_else(|| in_corpus.then(|| unique_declared_type(index, trailing)).flatten())
+        .map(|(blob, span)| (blob, span, ResolutionOrigin::ModulePlane))
+        .or_else(|| {
+            in_corpus
+                .then(|| unique_declared_type(index, trailing))
+                .flatten()
+                .map(|(blob, span)| (blob, span, ResolutionOrigin::CorpusUnique))
+        })
 }
 
 /// The name-match legs over ONE key: this file's own entity, the file's `use`
@@ -418,7 +427,7 @@ fn name_match_type_dst(
     modules: Option<&crate::lang::rust_modules::RustModuleIndex>,
     own_path: Option<&str>,
     name: &str,
-) -> Option<(ContentId, Span)> {
+) -> Option<(ContentId, Span, ResolutionOrigin)> {
     let same_file = types
         .nodes
         .iter()
@@ -427,15 +436,17 @@ fn name_match_type_dst(
         if let Some(found) = corpus_defs(index, name)
             .iter()
             .find(|site| site.span == node.span)
-            .map(|site| (site.blob.clone(), site.span))
+            .map(|site| (site.blob.clone(), site.span, ResolutionOrigin::SameFile))
         {
             return Some(found);
         }
     }
-    if let Some(found) = modules.zip(own_path).and_then(|(m, from)| m.type_target(from, name)) {
-        return Some(found);
+    if let Some((blob, span)) = modules.zip(own_path).and_then(|(m, from)| m.type_target(from, name))
+    {
+        return Some((blob, span, ResolutionOrigin::ModulePlane));
     }
     unique_declared_type(index, name)
+        .map(|(blob, span)| (blob, span, ResolutionOrigin::CorpusUnique))
 }
 
 /// The one corpus TYPE declaration of `name`, or nothing. A call-plane def
@@ -520,7 +531,7 @@ impl Resolve<TypeF> for RustSource {
             else {
                 continue;
             };
-            let (dst_blob, dst_span) = resolve_type_dst(
+            let (dst_blob, dst_span, origin) = resolve_type_dst(
                 types,
                 &output.strings,
                 index,
@@ -531,12 +542,13 @@ impl Resolve<TypeF> for RustSource {
                 output.strings.lookup(candidate.to),
                 candidate.kind,
             )
-            .unwrap_or((ZERO_CONTENT_ID, Span::empty()));
+            .unwrap_or((ZERO_CONTENT_ID, Span::empty(), ResolutionOrigin::Unresolved));
             edges.push(ProjectEdge::new(
                 NodeRef(src_ix as u32),
                 dst_blob,
                 dst_span,
                 candidate.kind,
+                origin,
             ));
         }
         edges
@@ -1038,48 +1050,93 @@ impl Resolve<CallF> for RustSource {
                     .and_then(|m| m.impl_target(&ty, callee, own_path))
                     .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
             });
-            let name_t: Option<(ContentId, Span, CallEdgeKind)> = if let Some(t) = recv_t {
-                Some(t)
-            } else if recv_known {
-                // A KNOWN receiver type with no corpus impl target is
-                // definitive (std, an external crate, trait dispatch).
-                None
-            } else {
-                match (qualifier, own_path, paths) {
-                    (Some(qualifier), Some(from), Some(paths)) => {
-                        let segments: Vec<String> = qualifier
-                            .iter()
-                            .map(|segment| segment.to_string())
-                            .collect();
-                        match modules
-                            .map(|m| m.module_call(from, &segments, callee))
-                            .unwrap_or(crate::lang::rust_modules::ModuleCallTarget::Miss)
-                        {
-                            crate::lang::rust_modules::ModuleCallTarget::Target(blob, span) => {
-                                Some((blob, span, CallEdgeKind::NameResolve))
-                            }
-                            _ => RustSource::call_name_match_in_module(
-                                def_index, paths, from, &qualifier, callee,
-                            )
-                            .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve)),
-                        }
-                    }
-                    _ => assoc_t
-                        .or(self_t)
-                        .or_else(|| {
-                            same_file_call_match(output, def_index, own.as_ref(), callee)
-                                .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
-                        })
-                        .or_else(|| {
-                            import_bound_target(modules, own_path, callee)
-                                .map(|(blob, span)| (blob, span, CallEdgeKind::ImportResolve))
-                        })
-                        .or_else(|| {
-                            RustSource::call_name_match_in(output, def_index, own.as_ref(), callee)
-                                .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
-                        }),
-                }
+            // Each leg names ITSELF: `kind` is `name_resolve` for nearly all
+            // of them, so only the origin separates the receiver plane from the
+            // module plane from the corpus-wide guess.
+            let tag = |found: Option<(ContentId, Span, CallEdgeKind)>, origin| {
+                found.map(|(blob, span, kind)| (blob, span, kind, origin))
             };
+            let name_t: Option<(ContentId, Span, CallEdgeKind, ResolutionOrigin)> =
+                if recv_t.is_some() {
+                    tag(recv_t, ResolutionOrigin::Receiver)
+                } else if recv_known {
+                    // A KNOWN receiver type with no corpus impl target is
+                    // definitive (std, an external crate, trait dispatch).
+                    None
+                } else {
+                    match (qualifier, own_path, paths) {
+                        (Some(qualifier), Some(from), Some(paths)) => {
+                            let segments: Vec<String> = qualifier
+                                .iter()
+                                .map(|segment| segment.to_string())
+                                .collect();
+                            match modules
+                                .map(|m| m.module_call(from, &segments, callee))
+                                .unwrap_or(crate::lang::rust_modules::ModuleCallTarget::Miss)
+                            {
+                                crate::lang::rust_modules::ModuleCallTarget::Target(blob, span) => {
+                                    Some((
+                                        blob,
+                                        span,
+                                        CallEdgeKind::NameResolve,
+                                        ResolutionOrigin::ModulePlane,
+                                    ))
+                                }
+                                _ => RustSource::call_name_match_in_module(
+                                    def_index, paths, from, &qualifier, callee,
+                                )
+                                .map(|(blob, span)| {
+                                    (
+                                        blob,
+                                        span,
+                                        CallEdgeKind::NameResolve,
+                                        ResolutionOrigin::ModulePlane,
+                                    )
+                                }),
+                            }
+                        }
+                        _ => tag(assoc_t, ResolutionOrigin::SelfType)
+                            .or_else(|| tag(self_t, ResolutionOrigin::SelfType))
+                            .or_else(|| {
+                                same_file_call_match(output, def_index, own.as_ref(), callee).map(
+                                    |(blob, span)| {
+                                        (
+                                            blob,
+                                            span,
+                                            CallEdgeKind::NameResolve,
+                                            ResolutionOrigin::SameFile,
+                                        )
+                                    },
+                                )
+                            })
+                            .or_else(|| {
+                                import_bound_target(modules, own_path, callee).map(|(blob, span)| {
+                                    (
+                                        blob,
+                                        span,
+                                        CallEdgeKind::ImportResolve,
+                                        ResolutionOrigin::ModulePlane,
+                                    )
+                                })
+                            })
+                            .or_else(|| {
+                                RustSource::call_name_match_in(
+                                    output,
+                                    def_index,
+                                    own.as_ref(),
+                                    callee,
+                                )
+                                .map(|(blob, span)| {
+                                    (
+                                        blob,
+                                        span,
+                                        CallEdgeKind::NameResolve,
+                                        ResolutionOrigin::CorpusUnique,
+                                    )
+                                })
+                            }),
+                    }
+                };
             // A def coordinate several names share is one macro expansion's
             // collapsed span: it names nothing, so no name match binds there.
             // A `type X = ..` coordinate names no CALLABLE: `X(..)` constructs
@@ -1087,7 +1144,7 @@ impl Resolve<CallF> for RustSource {
             let callable = |blob: &ContentId, span: Span| {
                 !modules.is_some_and(|m| m.is_collapsed(blob, span) || m.is_alias(blob, span))
             };
-            let name_t = name_t.filter(|(blob, span, _)| callable(blob, *span));
+            let name_t = name_t.filter(|(blob, span, _, _)| callable(blob, *span));
             // The CHECKER tier: rust-analyzer's own answer for this site wins
             // over both the name match and scip, and only where it has one.
             match checker
@@ -1108,6 +1165,7 @@ impl Resolve<CallF> for RustSource {
                         dst_blob,
                         dst_span,
                         CallEdgeKind::CheckerResolve,
+                        ResolutionOrigin::Checker,
                     );
                     continue;
                 }
@@ -1126,16 +1184,20 @@ impl Resolve<CallF> for RustSource {
             // call FACET while scip can name the type facet — one definition,
             // two facet coordinates (the ORACLE entry's "the models differ by
             // construction").
-            let ((dst_blob, dst_span), kind) = match (name_t, scip_t) {
-                (Some((blob, span, _)), Some(s)) if blob == s.0 && callee == s.2 => {
-                    ((blob, span), CallEdgeKind::NameResolve)
+            let ((dst_blob, dst_span), kind, origin) = match (name_t, scip_t) {
+                (Some((blob, span, _, origin)), Some(s)) if blob == s.0 && callee == s.2 => {
+                    ((blob, span), CallEdgeKind::NameResolve, origin)
                 }
-                (_, Some(s)) => ((s.0, s.1), CallEdgeKind::ScipOverride),
-                (Some((blob, span, kind)), None) => ((blob, span), kind),
+                (_, Some(s)) => (
+                    (s.0, s.1),
+                    CallEdgeKind::ScipOverride,
+                    ResolutionOrigin::Scip,
+                ),
+                (Some((blob, span, kind, origin)), None) => ((blob, span), kind, origin),
                 (None, None) => continue,
             };
             push_call_edge(
-                &mut edges, call, &named, caller, site.span, dst_blob, dst_span, kind,
+                &mut edges, call, &named, caller, site.span, dst_blob, dst_span, kind, origin,
             );
         }
         edges
@@ -1154,16 +1216,23 @@ fn push_call_edge(
     dst_blob: ContentId,
     dst_span: Span,
     kind: CallEdgeKind,
+    origin: ResolutionOrigin,
 ) {
     if call.node(caller).name.is_none() {
         if let Some(enclosing) = enclosing_named_def(named, site) {
             edges.push(
-                ProjectEdge::new(enclosing, dst_blob.clone(), dst_span, CallEdgeKind::NameResolve)
-                    .with_call_site(site),
+                ProjectEdge::new(
+                    enclosing,
+                    dst_blob.clone(),
+                    dst_span,
+                    CallEdgeKind::NameResolve,
+                    origin,
+                )
+                .with_call_site(site),
             );
         }
     }
-    edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site));
+    edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind, origin).with_call_site(site));
 }
 
 /// One `unresolved` row per site the `Resolve<CallF>` pass dropped. The reason

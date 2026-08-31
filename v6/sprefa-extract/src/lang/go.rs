@@ -32,6 +32,7 @@ use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
     DfParam, DocFact, DocTag, MethodOwner, ProjectEdge, ReceiverBinding, ReceiverOutcome, SigSlot,
     Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
+    ResolutionOrigin,
 };
 use crate::project::ResolveDrop;
 use crate::rows::{Edge, FamilyBundle, Node};
@@ -2773,14 +2774,16 @@ fn resolve_type_dst(
     paths: Option<&PathIndex>,
     own_path: Option<&str>,
     name: &str,
-) -> Option<(ContentId, Span)> {
+) -> Option<(ContentId, Span, ResolutionOrigin)> {
     if let Some((pkg, bare)) = name.split_once('.') {
         let modules = modules?;
         let own_path = own_path?;
         let module = go_module_of(own_path)?;
         let import_path = modules.import_path_for(own_path, pkg)?;
         let dir = go_package_dir(&module, &import_path)?;
-        return modules.resolve_type_in_dir(&dir, index?, paths?, bare);
+        return modules
+            .resolve_type_in_dir(&dir, index?, paths?, bare)
+            .map(|(blob, span)| (blob, span, ResolutionOrigin::ModulePlane));
     }
     let same_file = types.nodes.iter().find(|node| {
         is_go_type_decl(node.kind) && node.name.map_or(false, |id| strings.lookup(id) == name)
@@ -2789,7 +2792,7 @@ fn resolve_type_dst(
         return corpus_defs(index, name)
             .iter()
             .find(|site| site.span == node.span)
-            .map(|site| (site.blob.clone(), site.span));
+            .map(|site| (site.blob.clone(), site.span, ResolutionOrigin::SameFile));
     }
     // Go's package scope: a bare name binds in the referring file's own
     // directory before any corpus-wide name match is allowed to guess.
@@ -2799,13 +2802,17 @@ fn resolve_type_dst(
         paths,
         own_path.and_then(|path| Path::new(path).parent()),
     ) {
-        if let Some(hit) = modules.resolve_type_in_own_dir(dir, index, paths, name) {
-            return Some(hit);
+        if let Some((blob, span)) = modules.resolve_type_in_own_dir(dir, index, paths, name) {
+            return Some((blob, span, ResolutionOrigin::SameFile));
         }
     }
     let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
     match type_decl_sites(sites, modules, paths).as_slice() {
-        [only] => Some((only.blob.clone(), only.span)),
+        [only] => Some((
+            only.blob.clone(),
+            only.span,
+            ResolutionOrigin::CorpusUnique,
+        )),
         _ => None,
     }
 }
@@ -2833,7 +2840,7 @@ impl Resolve<TypeF> for GoSource {
             else {
                 continue;
             };
-            let (dst_blob, dst_span) = resolve_type_dst(
+            let (dst_blob, dst_span, origin) = resolve_type_dst(
                 types,
                 &output.strings,
                 index,
@@ -2842,12 +2849,13 @@ impl Resolve<TypeF> for GoSource {
                 own_path,
                 output.strings.lookup(candidate.to),
             )
-            .unwrap_or((ZERO_CONTENT_ID, Span::empty()));
+            .unwrap_or((ZERO_CONTENT_ID, Span::empty(), ResolutionOrigin::Unresolved));
             edges.push(ProjectEdge::new(
                 NodeRef(src_ix as u32),
                 dst_blob,
                 dst_span,
                 candidate.kind,
+                origin,
             ));
         }
         edges
@@ -4046,7 +4054,7 @@ impl Resolve<CallF> for GoSource {
         // Per-site fan-out source: the interface a Named receiver resolved
         // through, when that receiver type is an interface.
         let mut iface_recv: Vec<Option<String>> = vec![None; sites.len()];
-        let mut results: Vec<Option<(NodeRef, ContentId, Span, CallEdgeKind)>> =
+        let mut results: Vec<Option<(NodeRef, ContentId, Span, CallEdgeKind, ResolutionOrigin)>> =
             vec![None; sites.len()];
         for ix in order {
             let site = &sites[ix];
@@ -4066,7 +4074,10 @@ impl Resolve<CallF> for GoSource {
             } else {
                 None
             };
-            let name_t: Option<(ContentId, Span, CallEdgeKind)> = match receiver {
+            // Each leg names ITSELF: `kind` is `name_resolve` for nearly all
+            // of them, so only the origin tells the receiver plane, the package
+            // block and the corpus-wide guess apart.
+            let name_t: Option<(ContentId, Span, CallEdgeKind, ResolutionOrigin)> = match receiver {
                 Some(ReceiverOutcome::Named(type_id)) => {
                     let type_name = output.strings.lookup(*type_id);
                     let target = go_receiver_target(
@@ -4084,7 +4095,14 @@ impl Resolve<CallF> for GoSource {
                             iface_recv[ix] = Some(bare.to_string());
                         }
                     }
-                    target.map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                    target.map(|(blob, span)| {
+                        (
+                            blob,
+                            span,
+                            CallEdgeKind::NameResolve,
+                            ResolutionOrigin::Receiver,
+                        )
+                    })
                 }
                 Some(ReceiverOutcome::Inferred) => {
                     let bound = plan
@@ -4105,7 +4123,14 @@ impl Resolve<CallF> for GoSource {
                             type_name,
                             callee,
                         )
-                        .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve)),
+                        .map(|(blob, span)| {
+                            (
+                                blob,
+                                span,
+                                CallEdgeKind::NameResolve,
+                                ResolutionOrigin::Receiver,
+                            )
+                        }),
                         None => None,
                     }
                 }
@@ -4126,19 +4151,40 @@ impl Resolve<CallF> for GoSource {
                         site,
                         callee,
                     )
-                    .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                    .map(|(blob, span)| {
+                        (
+                            blob,
+                            span,
+                            CallEdgeKind::NameResolve,
+                            ResolutionOrigin::Receiver,
+                        )
+                    })
                     .or_else(|| match (&module, paths, modules) {
                         (Some(module), Some(paths), Some(modules)) => {
                             go_package_dir(module, import).and_then(|dir| {
                                 modules
                                     .resolve_in_dir(&dir, def_index, paths, callee)
-                                    .map(|(blob, span)| (blob, span, CallEdgeKind::ImportResolve))
+                                    .map(|(blob, span)| {
+                                        (
+                                            blob,
+                                            span,
+                                            CallEdgeKind::ImportResolve,
+                                            ResolutionOrigin::ModulePlane,
+                                        )
+                                    })
                                     .or_else(|| {
                                         if !is_exported(callee) {
                                             return None;
                                         }
                                         GoSource::call_name_match(output, def_index, callee).map(
-                                            |(blob, span)| (blob, span, CallEdgeKind::NameResolve),
+                                            |(blob, span)| {
+                                                (
+                                                    blob,
+                                                    span,
+                                                    CallEdgeKind::NameResolve,
+                                                    ResolutionOrigin::CorpusUnique,
+                                                )
+                                            },
                                         )
                                     })
                             })
@@ -4169,7 +4215,12 @@ impl Resolve<CallF> for GoSource {
                             if go_iface_fanout(def_index, paths, bare).is_iface {
                                 iface_recv[ix] = Some(bare.to_string());
                             }
-                            Some((blob, span, CallEdgeKind::NameResolve))
+                            Some((
+                                blob,
+                                span,
+                                CallEdgeKind::NameResolve,
+                                ResolutionOrigin::AliasChain,
+                            ))
                         } else {
                             // Go's package block first: a same-package func
                             // shadows every corpus-wide name guess.
@@ -4179,17 +4230,37 @@ impl Resolve<CallF> for GoSource {
                                     let dir = Path::new(path).parent()?;
                                     modules.resolve_call_in_own_dir(dir, def_index, paths?, callee)
                                 })
-                                .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                                .map(|(blob, span)| {
+                                    (
+                                        blob,
+                                        span,
+                                        CallEdgeKind::NameResolve,
+                                        ResolutionOrigin::SameFile,
+                                    )
+                                })
                                 .or_else(|| {
-                                    GoSource::call_name_match(output, def_index, callee)
-                                        .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                                    GoSource::call_name_match(output, def_index, callee).map(
+                                        |(blob, span)| {
+                                            (
+                                                blob,
+                                                span,
+                                                CallEdgeKind::NameResolve,
+                                                ResolutionOrigin::CorpusUnique,
+                                            )
+                                        },
+                                    )
                                 })
                                 .or_else(|| {
                                     modules.zip(own_path).and_then(|(modules, path)| {
                                         modules
                                             .resolve_dot_imported(path, def_index, paths?, callee)
                                             .map(|(blob, span)| {
-                                                (blob, span, CallEdgeKind::ImportResolve)
+                                                (
+                                                    blob,
+                                                    span,
+                                                    CallEdgeKind::ImportResolve,
+                                                    ResolutionOrigin::ModulePlane,
+                                                )
                                             })
                                     })
                                 })
@@ -4206,14 +4277,19 @@ impl Resolve<CallF> for GoSource {
             // coordinates (the ORACLE entry's "the models differ by
             // construction").
             let final_t = match (name_t, scip_t) {
-                (Some((blob, span, _)), Some(s)) if blob == s.0 && callee == s.2 => {
-                    Some(((blob, span), CallEdgeKind::NameResolve))
+                (Some((blob, span, _, origin)), Some(s)) if blob == s.0 && callee == s.2 => {
+                    Some(((blob, span), CallEdgeKind::NameResolve, origin))
                 }
-                (_, Some(s)) => Some(((s.0, s.1), CallEdgeKind::ScipOverride)),
-                (Some((blob, span, kind)), None) => Some(((blob, span), kind)),
+                (_, Some(s)) => Some((
+                    (s.0, s.1),
+                    CallEdgeKind::ScipOverride,
+                    ResolutionOrigin::Scip,
+                )),
+                (Some((blob, span, kind, origin)), None) => Some(((blob, span), kind, origin)),
                 (None, None) => None,
             };
-            if let (Some(plan), Some(((dst_blob, dst_span), _))) = (plan.as_ref(), final_t.as_ref())
+            if let (Some(plan), Some(((dst_blob, dst_span), _, _))) =
+                (plan.as_ref(), final_t.as_ref())
             {
                 if let Some((top, names)) = plan.binds.get(&site.span.start) {
                     let rets = paths
@@ -4257,7 +4333,8 @@ impl Resolve<CallF> for GoSource {
                     }
                 }
             }
-            results[ix] = final_t.map(|((blob, span), kind)| (caller, blob, span, kind));
+            results[ix] =
+                final_t.map(|((blob, span), kind, origin)| (caller, blob, span, kind, origin));
         }
         // The closure-caller mirror: a caller whose def is a Lambda
         // (`closure@<n>`) gets ONE extra edge onto the innermost NAMED def
@@ -4269,7 +4346,7 @@ impl Resolve<CallF> for GoSource {
         let named = go_named_def_spans(call);
         let mut edges = Vec::new();
         for (ix, (site, result)) in sites.iter().zip(results).enumerate() {
-            let Some((caller, dst_blob, dst_span, kind)) = result else {
+            let Some((caller, dst_blob, dst_span, kind, origin)) = result else {
                 continue;
             };
             if call.node(caller).name.is_none() {
@@ -4280,13 +4357,16 @@ impl Resolve<CallF> for GoSource {
                             dst_blob.clone(),
                             dst_span,
                             CallEdgeKind::NameResolve,
+                            origin,
                         )
                         .with_call_site(site.span),
                     );
                 }
             }
-            edges
-                .push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
+            edges.push(
+                ProjectEdge::new(caller, dst_blob, dst_span, kind, origin)
+                    .with_call_site(site.span),
+            );
             let Some(iface) = &iface_recv[ix] else {
                 continue;
             };
@@ -4304,8 +4384,14 @@ impl Resolve<CallF> for GoSource {
             for methods in &fanout.impls {
                 if let Some((blob, span)) = methods.get(callee) {
                     edges.push(
-                        ProjectEdge::new(caller, blob.clone(), *span, CallEdgeKind::Implements)
-                            .with_call_site(site.span),
+                        ProjectEdge::new(
+                            caller,
+                            blob.clone(),
+                            *span,
+                            CallEdgeKind::Implements,
+                            ResolutionOrigin::IfaceImpl,
+                        )
+                        .with_call_site(site.span),
                     );
                 }
             }
@@ -4392,7 +4478,13 @@ fn go_interface_implements(
         .flat_map(|methods| {
             specs.iter().filter_map(move |(node_ref, spec_name)| {
                 methods.get(spec_name).map(|(blob, span)| {
-                    ProjectEdge::new(*node_ref, blob.clone(), *span, CallEdgeKind::Implements)
+                    ProjectEdge::new(
+                        *node_ref,
+                        blob.clone(),
+                        *span,
+                        CallEdgeKind::Implements,
+                        ResolutionOrigin::IfaceImpl,
+                    )
                 })
             })
         })

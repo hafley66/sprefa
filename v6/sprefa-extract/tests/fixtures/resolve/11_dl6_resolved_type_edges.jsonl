@@ -1,1 +1,1 @@
-{"record":"resolved_type_edge","owner_path":"tests/fixtures/dl6/3_typecaller.dl6","owner_name":"friend","owner_start":0,"owner_end":40,"target_path":"tests/fixtures/dl6/4_typedef.dl6","target_name":"person","kind":"field"}
+{"record":"resolved_type_edge","owner_path":"tests/fixtures/dl6/3_typecaller.dl6","owner_name":"friend","owner_start":0,"owner_end":40,"target_path":"tests/fixtures/dl6/4_typedef.dl6","target_name":"person","kind":"field","resolution_origin":"corpus_unique"}

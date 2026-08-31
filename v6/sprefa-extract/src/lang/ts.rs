@@ -28,6 +28,7 @@ use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
     DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier,
     SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF,
+    ResolutionOrigin,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range_cached, definition_of, join_documents, site_occurrence};
@@ -3433,7 +3434,7 @@ fn resolve_type_dst(
     strings: &Strings,
     index: Option<&DefIndex>,
     name: &str,
-) -> Option<(ContentId, Span)> {
+) -> Option<(ContentId, Span, ResolutionOrigin)> {
     let same_file = types
         .nodes
         .iter()
@@ -3442,11 +3443,15 @@ fn resolve_type_dst(
         return corpus_defs(index, name)
             .iter()
             .find(|site| site.span == node.span)
-            .map(|site| (site.blob.clone(), site.span));
+            .map(|site| (site.blob.clone(), site.span, ResolutionOrigin::SameFile));
     }
     let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
     match sites {
-        [only] => Some((only.blob.clone(), only.span)),
+        [only] => Some((
+            only.blob.clone(),
+            only.span,
+            ResolutionOrigin::CorpusUnique,
+        )),
         _ => None,
     }
 }
@@ -3478,17 +3483,24 @@ impl Resolve<TypeF> for TsSource {
                 continue;
             };
             let referenced = output.strings.lookup(candidate.to);
-            let (dst_blob, dst_span) = modules
+            let (dst_blob, dst_span, origin) = modules
                 .and_then(|(modules, path)| module_target(modules, path, referenced, None).ok())
                 .flatten()
-                .map(|found| (found.target_blob, found.target_span))
+                .map(|found| {
+                    (
+                        found.target_blob,
+                        found.target_span,
+                        ResolutionOrigin::ModulePlane,
+                    )
+                })
                 .or_else(|| resolve_type_dst(types, &output.strings, index, referenced))
-                .unwrap_or((ZERO_CONTENT_ID, Span::empty()));
+                .unwrap_or((ZERO_CONTENT_ID, Span::empty(), ResolutionOrigin::Unresolved));
             edges.push(ProjectEdge::new(
                 NodeRef(src_ix as u32),
                 dst_blob,
                 dst_span,
                 candidate.kind,
+                origin,
             ));
         }
         edges
@@ -3967,7 +3979,7 @@ impl Resolve<CallF> for TsSource {
         // scope WROTE it); a nested arrow reads it off the lexical chain.
         let mut bound_types: HashMap<NodeRef, HashMap<String, (String, ContentId)>> =
             HashMap::new();
-        let mut results: Vec<Option<(NodeRef, ContentId, Span, CallEdgeKind)>> =
+        let mut results: Vec<Option<(NodeRef, ContentId, Span, CallEdgeKind, ResolutionOrigin)>> =
             vec![None; sites.len()];
         for ix in order {
             let site = &sites[ix];
@@ -4058,24 +4070,35 @@ impl Resolve<CallF> for TsSource {
                 ),
                 _ => None,
             };
-            // The scip leg keeps its answer: it types the receiver, this does not.
+            // The scip leg keeps its answer: it types the receiver, this does
+            // not. Each arm names its own leg: `kind` collapses all three
+            // name-match legs into `name_resolve`.
+            let name_match = || {
+                TsSource::call_name_match(output, def_index, callee)
+                    .filter(|t| !receiver_blind_builtin(output, call, site, callee, kinds, t))
+                    .map(|(blob, span)| (blob, span, ResolutionOrigin::CorpusUnique))
+            };
             let own_t = match (&import_t, &seat_t) {
-                (Some(found), _) => Some((found.target_blob.clone(), found.target_span)),
-                (None, Some(found)) => Some(found.clone()),
+                (Some(found), _) => Some((
+                    found.target_blob.clone(),
+                    found.target_span,
+                    ResolutionOrigin::ModulePlane,
+                )),
+                (None, Some((blob, span))) => {
+                    Some((blob.clone(), *span, ResolutionOrigin::ModulePlane))
+                }
                 // A destructured receiver is a one-hop guess and yields to the
                 // name match; every other traced receiver owns its site.
                 (None, None)
                     if matches!(receiver, Some(ts_receivers::TypeBinding::Field(_, _))) =>
                 {
-                    recv_t.or_else(|| {
-                        TsSource::call_name_match(output, def_index, callee).filter(|t| {
-                            !receiver_blind_builtin(output, call, site, callee, kinds, t)
-                        })
-                    })
+                    recv_t
+                        .map(|(blob, span)| (blob, span, ResolutionOrigin::Receiver))
+                        .or_else(name_match)
                 }
-                (None, None) if receiver.is_some() => recv_t,
-                (None, None) => TsSource::call_name_match(output, def_index, callee)
-                    .filter(|t| !receiver_blind_builtin(output, call, site, callee, kinds, t)),
+                (None, None) if receiver.is_some() => recv_t
+                    .map(|(blob, span)| (blob, span, ResolutionOrigin::Receiver)),
+                (None, None) => name_match(),
             };
             let own_kind = match (&import_t, &seat_t) {
                 (Some(_), _) | (None, Some(_)) => CallEdgeKind::ImportResolve,
@@ -4089,15 +4112,21 @@ impl Resolve<CallF> for TsSource {
             // facet (the class) — one definition, two facet coordinates (the
             // ORACLE entry's "the models differ by construction").
             let final_t = match (own_t, scip_t) {
-                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => Some(((n.0, n.1), own_kind)),
-                (_, Some(s)) => Some(((s.0, s.1), CallEdgeKind::ScipOverride)),
-                (Some(n), None) => Some((n, own_kind)),
+                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => {
+                    Some(((n.0, n.1), own_kind, n.2))
+                }
+                (_, Some(s)) => Some((
+                    (s.0, s.1),
+                    CallEdgeKind::ScipOverride,
+                    ResolutionOrigin::Scip,
+                )),
+                (Some(n), None) => Some(((n.0, n.1), own_kind, n.2)),
                 (None, None) => None,
             };
             // The one-hop return-type inference: a `const x = f()` init call
             // that just resolved hands its declared return type to the var, in
             // source order, keyed by the covering def.
-            if let (Some(facts), Some(((dst_blob, dst_span), _))) =
+            if let (Some(facts), Some(((dst_blob, dst_span), _, _))) =
                 (own_facts.as_ref(), final_t.as_ref())
             {
                 if let Some(var) = facts.binds.get(&site.span.start) {
@@ -4111,7 +4140,8 @@ impl Resolve<CallF> for TsSource {
                     }
                 }
             }
-            results[ix] = final_t.map(|((blob, span), kind)| (caller, blob, span, kind));
+            results[ix] =
+                final_t.map(|((blob, span), kind, origin)| (caller, blob, span, kind, origin));
         }
         // A Lambda caller (`closure@<n>`) also emits onto the innermost NAMED
         // def covering the site; the closure row stays, it names the frame.
@@ -4121,7 +4151,7 @@ impl Resolve<CallF> for TsSource {
             .copied()
             .collect();
         for (site, result) in call.aux.sites.iter().zip(results) {
-            let Some((caller, dst_blob, dst_span, kind)) = result else {
+            let Some((caller, dst_blob, dst_span, kind, origin)) = result else {
                 continue;
             };
             if call.node(caller).name.is_none() {
@@ -4132,13 +4162,16 @@ impl Resolve<CallF> for TsSource {
                             dst_blob.clone(),
                             dst_span,
                             CallEdgeKind::NameResolve,
+                            origin,
                         )
                         .with_call_site(site.span),
                     );
                 }
             }
-            edges
-                .push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
+            edges.push(
+                ProjectEdge::new(caller, dst_blob, dst_span, kind, origin)
+                    .with_call_site(site.span),
+            );
         }
         // A callable NAMED as a value: no site, so no scip occurrence to
         // consult, and the name match is the whole answer.
@@ -4153,14 +4186,21 @@ impl Resolve<CallF> for TsSource {
             let bound = modules
                 .and_then(|(modules, path)| modules.bind(path, named).ok())
                 .flatten()
-                .map(|found| (found.target_blob, found.target_span));
-            let Some((blob, span)) =
-                bound.or_else(|| TsSource::call_name_match(output, def_index, named))
-            else {
+                .map(|found| {
+                    (
+                        found.target_blob,
+                        found.target_span,
+                        ResolutionOrigin::ModulePlane,
+                    )
+                });
+            let Some((blob, span, origin)) = bound.or_else(|| {
+                TsSource::call_name_match(output, def_index, named)
+                    .map(|(blob, span)| (blob, span, ResolutionOrigin::CorpusUnique))
+            }) else {
                 continue;
             };
             edges.push(
-                ProjectEdge::new(caller, blob, span, CallEdgeKind::ValueRef)
+                ProjectEdge::new(caller, blob, span, CallEdgeKind::ValueRef, origin)
                     .with_call_site(reference.span),
             );
         }

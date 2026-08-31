@@ -45,8 +45,8 @@ RECORD SHAPES
   record=specifier  family=call            span={start,end}   name=<string>  kind=<slug>  module=<string|null>  imported=<string|null>
   record=unresolved  family=call           path=<string, only under --resolve>  span={start,end}   reason=<slug>  detail=<string>
   record=capture  query=<id>  capture=<name>  text=<string>  start=<u32>  end=<u32>  match_start=<u32>  match_end=<u32>
-  record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  caller_site_start=<u32>  caller_site_end=<u32>  kind=<slug>
-  record=resolved_type_edge  owner_path=<string>  owner_name=<string|null>  owner_start=<u32>  owner_end=<u32>  target_path=<string>  target_name=<string|null>  kind=<slug>
+  record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  caller_site_start=<u32>  caller_site_end=<u32>  kind=<slug>  resolution_origin=<slug>
+  record=resolved_type_edge  owner_path=<string>  owner_name=<string|null>  owner_start=<u32>  owner_end=<u32>  target_path=<string>  target_name=<string|null>  kind=<slug>  resolution_origin=<slug>
   record=resolved_import  src_path=<string>  name=<string>  local=<string>  target_path=<string>  target_name=<string|null>  kind=<slug>  hops=<u32>
   record=flow_edge  family=flow  kind=<slug>  from_blob=<hex>  from={start,end}  to_blob=<hex>  to={start,end}
   record=file_edge  src_path=<string>  dst_path=<string>  kind=<slug>  symbols=<u32>
@@ -187,6 +187,12 @@ KIND VOCABULARIES (the `kind` field)
                     Precedence when several apply: namespace, star, indirect,
                     default, local.
   resolved_type_edge kind  field | impl | variant | generic | uses | doc_ref
+  resolution_origin        WHICH resolver leg answered, on resolved_edge and
+                    resolved_type_edge alike: same_file | corpus_unique |
+                    module_plane | checker | alias_chain | param | receiver |
+                    self_type | iface_impl | decorator | subscript |
+                    return_call | scip | unresolved. `kind` says what the edge
+                    means; this says who produced it.
   doc_node kind            heading | code_block
 
 CONTROL FLOW (--family cfg)
