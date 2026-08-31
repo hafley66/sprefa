@@ -64,21 +64,29 @@ The issuectl epic is `dl7-module-system`; its first task is
 ```prolog
 load_dl7_units(+Paths, -Units, -Diagnostics).
 
-compile_units(+Units, -CompilerRows, -RuntimeProgram, -Diagnostics).
+compile_units(+Units, -CompiledUnit, -Diagnostics).
 
 lower_units(+Units, -ModuleBasements, -Origins, -Diagnostics).
 
-merge_module_basements(+ModuleBasements, -Program, -Diagnostics).
+lower_units_with_exporter(+ExporterUnit, +ImporterUnits,
+                          -ModuleBasements, -ModuleOrigins, -Diagnostics).
 
-resolve_module_graph(+Modules, +ImportSpecs,
-                     -AliasEdges, -Dependencies, -Diagnostics).
+merge_module_basements(+ModuleBasements, +ModuleOrigins,
+                       -Program, -Origins).
 
 resolve_path(+StartOwner, +Segments, +Edges,
              -Target, -ResolutionProof, -Diagnostics).
 
-check_module_cycles(+Dependencies, -Diagnostics).
+check_visible_name_collisions(+LocalEdges, +ImportSpecs, -Diagnostics).
 
-check_visible_name_collisions(+Modules, +AliasEdges, -Diagnostics).
+check_module_cycles(+ImportSpecs, -Diagnostics).
+```
+
+The remaining surface-integration signatures are:
+
+```prolog
+resolve_module_graph(+Modules, +ImportSpecs,
+                     -AliasEdges, -Dependencies, -Diagnostics).
 ```
 
 The initial public entrypoint remains compatible:
@@ -88,7 +96,7 @@ compile_dl7(+EntryPath, -CompilerRows, -RuntimeProgram, -Diagnostics).
 ```
 
 Its body loads the prelude module plus the entry module and delegates to
-`compile_units/4`.
+`compile_units/3`.
 
 ## Instance timelines
 
@@ -180,6 +188,13 @@ definitions.
     cycle oracles.
 
 Milestones 1 through 9 do not depend on the unresolved surface spelling.
+
+## Implementation status
+
+Milestones 1 through 9 are implemented on `feature/dl7-module-system`.
+Milestone 10 remains open because prefix import, alias, and export spelling is
+still a user decision. The executable receipts are listed in
+`v7/tasks/19_MODULE_SYSTEM_PROGRESS.md`.
 
 ## Verification
 
