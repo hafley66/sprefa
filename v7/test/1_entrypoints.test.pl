@@ -11,6 +11,10 @@
                 type_prelude_paths/1
               ]).
 :- use_module('../src/2_comptime/0_lowerer', [lower_datalog/4]).
+:- use_module('../src/2_comptime/0a_module_lowerer',
+              [ lower_units/4,
+                merge_module_basements/4
+              ]).
 :- use_module('../src/2_comptime/1_checker',
               [ check_datalog/4,
                 check_goal_sequence/4
@@ -47,12 +51,43 @@ test(module_owner_is_stable_across_content_revisions) :-
         module_owners(module(file('/virtual/module.dl7')),
                       module(file('/virtual/module.dl7'))).
 
+test(separate_module_basements_merge_without_local_name_collapse) :-
+    dl7_text_unit(file('/virtual/a.dl7'), '/virtual/a.dl7',
+                  "(: Shared (* (: id int)))", UnitA, []),
+    dl7_text_unit(file('/virtual/b.dl7'), '/virtual/b.dl7',
+                  "(: Shared (* (: name text)))", UnitB, []),
+    lower_units([UnitA, UnitB], ModuleBasements, ModuleOrigins, []),
+    merge_module_basements(ModuleBasements, ModuleOrigins,
+                           Basement, Origins),
+    Basement = basement_program(root_graph(_, Edges),
+                                datalog_program(Relations, _, _)),
+    findall(Owner,
+            member(pending_edge(Owner, 'Shared', _, 0), Edges),
+            SharedOwners),
+    maplist(module_origin_count, ModuleOrigins, OriginCounts),
+    length(Relations, RelationCount),
+    length(Origins, OriginCount),
+    Observed = module_merge(SharedOwners, OriginCounts,
+                            RelationCount, OriginCount),
+    Observed ==
+        module_merge(
+            [ module(file('/virtual/a.dl7')),
+              module(file('/virtual/b.dl7'))
+            ],
+            [ module(file('/virtual/a.dl7'))-4,
+              module(file('/virtual/b.dl7'))-4
+            ],
+            2, 8).
+
 unit_file_name(dl7_unit(file(Path), _, _, _, _), FileName) :-
     file_base_name(Path, FileName).
 
 basement_module_owner(
     basement_program(root_graph(Nodes, _), _), Owner) :-
     memberchk(module(Owner), Nodes).
+
+module_origin_count(module_origins(Module, Origins), Module-Count) :-
+    length(Origins, Count).
 
 test(numbered_prelude_files_are_loaded_in_lexical_order) :-
     type_prelude_paths(Paths),

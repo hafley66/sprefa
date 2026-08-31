@@ -23,7 +23,8 @@ lower_datalog(Unit, Program, Origins, Diagnostics) :-
     ;   Program = [],
         Origins = [],
         Diagnostics = [diagnostic(lower, unit, invalid_dl7_unit(Unit))]
-    ).
+    ),
+    !.
 
 lower_after_declarations(error(Diagnostic), _, _, [], [], [Diagnostic]).
 lower_after_declarations(
