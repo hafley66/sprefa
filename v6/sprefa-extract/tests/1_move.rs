@@ -232,8 +232,8 @@ fn shim_leaves_a_reexport_behind_and_swipl_still_loads() {
     loads_clean(&fixture.root);
 }
 
-// The specifier rule and the fact gate, on the three shapes the hand-built walk
-// used to reach through the prolog extractor's specifier kinds.
+// The specifier rule and the fact gate, over three importer shapes: a used-name
+// import, a bare module import, and an empty subdirectory module.
 const WIDE_A_PL: &str = ":- module(a, [check/0]).\n:- use_module('lib/b', [b_fact/1]).\n:- use_module(library(lists)).\n\ncheck :- b_fact(1).\n";
 const WIDE_C_PL: &str = ":- module(c, []).\n:- use_module('lib/b').\n";
 const WIDE_SUB_B_PL: &str = ":- module(sub_b, []).\n";

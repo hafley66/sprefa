@@ -1,6 +1,8 @@
-//! Row dump plus the syntactic-shape census for the rust type leg, the
-//! diagnosis half of the recall grind. Ignored by default for the same reason
-//! `ratchet_recall.rs` is: the corpus is a machine-local checkout.
+//! Row dump plus the syntactic-shape census for the rust type leg: the
+//! diagnosis tool the recall-grind arcs (68_rust_receivers .. 79_rust_variant_payload)
+//! were ground against. It is for the NEXT grind — join a missed oracle row to
+//! the syntactic position our walk never visits. Ignored by default for the same
+//! reason `ratchet_recall.rs` is: the corpus is a machine-local checkout.
 
 mod bench;
 
