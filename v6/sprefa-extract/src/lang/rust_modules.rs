@@ -924,6 +924,12 @@ impl RustModuleIndex {
         self.aliases.contains(&(blob.clone(), span))
     }
 
+    /// Whether any corpus file's module path ends in `segment`. A qualifier no
+    /// corpus module answers (`std::result`) names an EXTERNAL declaration.
+    pub fn names_a_module(&self, segment: &str) -> bool {
+        self.by_last_segment.contains_key(segment)
+    }
+
     /// `target` re-aimed at the TYPE facet: the export table prefers the call
     /// facet, and a type reference to it emits a nameless row.
     pub fn type_target(&self, path: &str, local: &str) -> Option<(ContentId, Span)> {
