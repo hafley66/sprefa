@@ -1,6 +1,7 @@
 :- module(dl7_compiler,
           [ compile_dl7/4,
-            compile_unit/3
+            compile_unit/3,
+            type_prelude_paths/1
           ]).
 
 :- use_module(library(readutil), [read_file_to_string/3]).
@@ -24,22 +25,52 @@
 compile_dl7(Path, CompilerRows, RuntimeProgram, Diagnostics) :-
     once(absolute_file_name(Path, ProgramPath,
                             [access(read), file_errors(error)])),
-    once(type_prelude_path(PreludePath)),
-    read_file_to_string(PreludePath, PreludeText, [encoding(utf8)]),
+    once(type_prelude_paths(PreludePaths)),
+    read_prelude_texts(PreludePaths, PreludeTexts),
+    join_prelude_texts(PreludeTexts, PreludeText),
     read_file_to_string(ProgramPath, ProgramText, [encoding(utf8)]),
     format(string(Text), "~s~n~s", [PreludeText, ProgramText]),
-    Origin = combined(PreludePath, ProgramPath),
+    Origin = combined(PreludePaths, ProgramPath),
     dl7_text_unit(Origin, Origin, Text, Unit, ReaderDiagnostics),
     compile_after_read(ReaderDiagnostics, Unit, Compiled, Diagnostics),
     compiled_outputs(Compiled, CompilerRows, RuntimeProgram).
 
-type_prelude_path(Path) :-
+type_prelude_paths(Paths) :-
     once(source_file(dl7_compiler:compile_dl7(_, _, _, _), SourcePath)),
-    file_directory_name(SourcePath, ComptimeDirectory),
-    directory_file_path(ComptimeDirectory, '../../prelude/0_types.dl7',
-                        RelativePath),
-    absolute_file_name(RelativePath, Path,
-                       [access(read), file_errors(error)]).
+    once(absolute_file_name(SourcePath, AbsoluteSourcePath,
+                            [access(read), file_errors(error)])),
+    file_directory_name(AbsoluteSourcePath, ComptimeDirectory),
+    directory_file_path(ComptimeDirectory, '../../prelude', PreludeDirectory),
+    once(absolute_file_name(PreludeDirectory, AbsolutePreludeDirectory,
+                            [file_type(directory), access(read),
+                             file_errors(error)])),
+    directory_files(AbsolutePreludeDirectory, Entries),
+    include(numbered_dl7_file, Entries, NumberedEntries),
+    sort(NumberedEntries, SortedEntries),
+    maplist(prelude_path(AbsolutePreludeDirectory), SortedEntries, Paths).
+
+numbered_dl7_file(Entry) :-
+    file_name_extension(Stem, dl7, Entry),
+    sub_atom(Stem, Before, 1, _, '_'),
+    Before > 0,
+    sub_atom(Stem, 0, Before, _, Prefix),
+    atom_number(Prefix, _).
+
+prelude_path(Directory, Entry, Path) :-
+    directory_file_path(Directory, Entry, Path).
+
+read_prelude_texts([], []).
+read_prelude_texts([Path|Paths], [Text|Texts]) :-
+    read_file_to_string(Path, Text, [encoding(utf8)]),
+    read_prelude_texts(Paths, Texts).
+
+join_prelude_texts([], "").
+join_prelude_texts([Text|Texts], Joined) :-
+    join_prelude_texts(Texts, TextsJoined),
+    (   Texts == []
+    ->  Joined = Text
+    ;   format(string(Joined), "~s~n~s", [Text, TextsJoined])
+    ).
 
 compile_after_read([], Unit, Compiled, Diagnostics) :-
     !,
