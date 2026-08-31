@@ -42,6 +42,10 @@ pub struct CheckerAnswers {
     /// The per-file resolve walk over the loaded workspace.
     pub walk: Duration,
     pub files_answered: usize,
+    /// Every `MethodCallExpr` the walk visited, and the count rust-analyzer
+    /// declined to name a function for: the tier's own answer-coverage gap.
+    pub method_sites: usize,
+    pub method_unresolved: usize,
 }
 
 /// Why the tier could not run. Every one falls back to the syntax leg.
@@ -92,6 +96,8 @@ pub struct RustCheckerIndex {
     pub load: Duration,
     pub walk: Duration,
     pub files_answered: usize,
+    pub method_sites: usize,
+    pub method_unresolved: usize,
 }
 
 impl RustCheckerIndex {
@@ -110,6 +116,8 @@ impl RustCheckerIndex {
             load: answers.load,
             walk: answers.walk,
             files_answered: answers.files_answered,
+            method_sites: answers.method_sites,
+            method_unresolved: answers.method_unresolved,
             ..RustCheckerIndex::default()
         };
         for (path, refs) in answers.calls {
