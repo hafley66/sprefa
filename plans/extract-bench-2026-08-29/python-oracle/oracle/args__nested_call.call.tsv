@@ -1,0 +1,3 @@
+args/nested_call/main.py		args/nested_call/main.py	func
+args/nested_call/main.py	func	args/nested_call/main.py	param_func
+args/nested_call/main.py	param_func	args/nested_call/main.py	nested_func

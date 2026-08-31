@@ -1,0 +1,4 @@
+generators/iterable/main.py		generators/iterable/main.py	__init__
+generators/iterable/main.py		generators/iterable/main.py	__iter__
+generators/iterable/main.py		generators/iterable/main.py	__next__
+generators/iterable/main.py	__next__	generators/iterable/<external>	<builtin>.StopIteration

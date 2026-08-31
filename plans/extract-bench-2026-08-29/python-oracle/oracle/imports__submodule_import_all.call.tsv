@@ -1,0 +1,2 @@
+imports/submodule_import_all/main.py		imports/submodule_import_all/from_module/nested_module.py	func1
+imports/submodule_import_all/main.py		imports/submodule_import_all/from_module/nested_module.py	func2

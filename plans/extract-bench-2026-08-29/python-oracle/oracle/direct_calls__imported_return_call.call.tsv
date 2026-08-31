@@ -1,0 +1,2 @@
+direct_calls/imported_return_call/main.py		direct_calls/imported_return_call/to_import.py	func
+direct_calls/imported_return_call/main.py		direct_calls/imported_return_call/to_import.py	return_func

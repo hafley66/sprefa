@@ -1,0 +1,4 @@
+kwargs/chained_call/main.py		kwargs/chained_call/main.py	func1
+kwargs/chained_call/main.py	func1	kwargs/chained_call/main.py	func2
+kwargs/chained_call/main.py	func2	kwargs/chained_call/main.py	func2
+kwargs/chained_call/main.py	func2	kwargs/chained_call/main.py	func3

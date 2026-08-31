@@ -1,0 +1,2 @@
+imports/init_func_import/main.py		imports/init_func_import/nested/__init__.py	func
+imports/init_func_import/main.py		imports/init_func_import/nested/mod.py	func2

@@ -1,0 +1,6 @@
+decorators/nested_decorators/main.py		decorators/nested_decorators/main.py	dec1
+decorators/nested_decorators/main.py		decorators/nested_decorators/main.py	dec2
+decorators/nested_decorators/main.py		decorators/nested_decorators/main.py	func
+decorators/nested_decorators/main.py		decorators/nested_decorators/main.py	inner
+decorators/nested_decorators/main.py	inner	decorators/nested_decorators/main.py	func
+decorators/nested_decorators/main.py	inner	decorators/nested_decorators/main.py	inner

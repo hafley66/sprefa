@@ -1,0 +1,3 @@
+generators/iterable_assigned/main.py		generators/iterable_assigned/main.py	__init__
+generators/iterable_assigned/main.py		generators/iterable_assigned/main.py	__iter__
+generators/iterable_assigned/main.py		generators/iterable_assigned/main.py	__next__

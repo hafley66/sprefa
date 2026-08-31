@@ -1,0 +1,3 @@
+external/attribute_assigned/main.py		external/attribute_assigned/<external>	ext.Cls
+external/attribute_assigned/main.py		external/attribute_assigned/main.py	fn
+external/attribute_assigned/main.py	fn	external/attribute_assigned/<external>	ext.Cls.fun
