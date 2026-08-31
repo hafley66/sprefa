@@ -71,7 +71,7 @@ fn identity_decorator_keeps_the_def_its_own_target() {
     );
     assert!(
         !edges.iter().any(|e| e["callee_name"] == "wrapper"
-            && e["caller_name"] == Some(&serde_json::json!("func2"))),
+            && e["caller_name"] == "func2"),
         "no wrapper fan-out for the identity decorator"
     );
 }
