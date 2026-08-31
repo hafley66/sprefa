@@ -3937,10 +3937,43 @@ fn ret_first_of(blob: &ContentId, span: Span, paths: &PathIndex) -> Option<Strin
 
 /// `ty`'s `field`, as (the field type's id, is it a collection OF that type).
 /// Reads the whole DECLARING package, so a struct split across files answers.
+/// A field the struct declares on an EMBEDDED base promotes to the selector
+/// (Go's rule: the shallowest embed wins, a tie at one depth binds nothing).
 fn go_field_type_of(ty: &GoTypeId, field: &str, paths: &PathIndex) -> Option<(GoTypeId, bool)> {
-    go_fields_of_dir(&ty.0, paths)
-        .get(&(ty.1.clone(), field.to_string()))
-        .cloned()
+    let fields = go_fields_of_dir(&ty.0, paths);
+    if let Some(hit) = fields.get(&(ty.1.clone(), field.to_string())) {
+        return Some(hit.clone());
+    }
+    let mut seen: std::collections::HashSet<GoTypeId> = std::collections::HashSet::from([ty.clone()]);
+    let mut frontier = vec![ty.clone()];
+    for _ in 0..GO_EMBED_DEPTH {
+        let mut next = Vec::new();
+        for (dir, name) in &frontier {
+            for embed in go_embeds_of_dir(dir, paths).get(name).into_iter().flatten() {
+                if seen.insert(embed.clone()) {
+                    next.push(embed.clone());
+                }
+            }
+        }
+        if next.is_empty() {
+            return None;
+        }
+        let mut hits: Vec<(GoTypeId, bool)> = next
+            .iter()
+            .filter_map(|(dir, name)| {
+                go_fields_of_dir(dir, paths)
+                    .get(&(name.clone(), field.to_string()))
+                    .cloned()
+            })
+            .collect();
+        hits.dedup();
+        match hits.as_slice() {
+            [hit] => return Some(hit.clone()),
+            [] => frontier = next,
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// One directory's (struct, field) -> the field type's id, ONE pass per run.
@@ -4046,6 +4079,12 @@ impl Resolve<CallF> for GoSource {
             } else {
                 None
             };
+            if std::env::var_os("SPREF_DEBUG_Q").is_some()
+                && own_path.as_deref() == Some("internal/ast/ast_generated.go")
+                && site.span.start == 100524
+            {
+                eprintln!("DBG8 recv={:?} plan={:?}", receiver.is_some(), plan.is_some());
+            }
             let name_t: Option<(ContentId, Span, CallEdgeKind)> = match receiver {
                 Some(ReceiverOutcome::Named(type_id)) => {
                     let type_name = output.strings.lookup(*type_id);
