@@ -11,8 +11,14 @@ class Near {
   }
 }
 
+// No declared return type: the receiver leg cannot trace `far`, which keeps
+// this the ScipIndexLoad witness (a receiver-typed call only scip can bind).
+function castFar() {
+  return new Far();
+}
+
 export function reach(): number {
   const near = new Near();
-  const far = new Far();
+  const far = castFar();
   return near.probe() + far.probe();
 }

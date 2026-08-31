@@ -174,7 +174,7 @@ fn anchor_symbol(
             )
             .is_some_and(|span| span.start == declared.1 && span.end() == declared.2)
         })
-        .map(|occurrence| occurrence.symbol.clone())
+        .map(|occurrence| index.symbol(occurrence.symbol).to_string())
 }
 
 /// Every occurrence of `symbol` whose bytes spell the old name. A document the
@@ -199,7 +199,7 @@ fn anchor_sites(
         if !document
             .occurrences
             .iter()
-            .any(|occurrence| occurrence.symbol == symbol)
+            .any(|occurrence| index.symbol(occurrence.symbol) == symbol)
         {
             continue;
         }
@@ -208,7 +208,9 @@ fn anchor_sites(
         };
         let lines = LineTable::build(&content);
         for occurrence in &document.occurrences {
-            if occurrence.symbol != symbol || !is_seat_role(occurrence.roles) {
+            if index.symbol(occurrence.symbol) != symbol
+                || !is_seat_role(occurrence.roles)
+            {
                 continue;
             }
             let Some(span) = byte_range_at(

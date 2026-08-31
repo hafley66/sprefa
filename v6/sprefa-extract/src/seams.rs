@@ -11,9 +11,9 @@
 //! `OccurrenceRole` / `PositionEncoding` / `ScipError`); the build/load logic
 //! lives in `crate::scip`.
 pub use crate::types::{
-    build_def_index, containing_def_site, corpus_defs, covering_def, def_named, own_blob,
-    BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap, OccurrenceRole, ParseError,
-    Parser, PositionEncoding, Project, ProjectCx, ProjectDigest, Resolve, ScipDiagnostic,
-    ScipDocument, ScipError, ScipIndex, ScipMetadata, ScipOccurrence, ScipRelationship,
-    ScipSignature, ScipSource, ScipSymbolInfo,
+    build_def_index, containing_def_site, containing_def_site_in, corpus_defs, covering_def,
+    def_named, own_blob, BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap,
+    OccurrenceRole, ParseError, Parser, PositionEncoding, Project, ProjectCx, ProjectDigest,
+    Resolve, ScipDiagnostic, ScipDocument, ScipError, ScipIndex, ScipMetadata, ScipOccurrence,
+    ScipRelationship, ScipSignature, ScipSource, ScipSymbolInfo,
 };

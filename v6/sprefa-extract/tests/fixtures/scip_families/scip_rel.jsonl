@@ -13,3 +13,5 @@
 {"record":"scip_name","symbol":"scip-typescript npm . . `animal.ts`/Dog#","name":"Dog"}
 {"record":"scip_name","symbol":"scip-typescript npm . . `animal.ts`/Dog#sound().","name":"sound"}
 {"record":"scip_ref","file":"animal.ts","symbol":"scip-typescript npm . . `animal.ts`/Animal#","def_file":"animal.ts","repo":"scip_rel"}
+{"record":"scip_relationship","symbol":"scip-typescript npm . . `animal.ts`/Dog#","related_symbol":"scip-typescript npm . . `animal.ts`/Animal#","is_reference":false,"is_implementation":true,"is_type_definition":false,"is_definition":false}
+{"record":"scip_relationship","symbol":"scip-typescript npm . . `animal.ts`/Dog#sound().","related_symbol":"scip-typescript npm . . `animal.ts`/Animal#sound().","is_reference":true,"is_implementation":true,"is_type_definition":false,"is_definition":false}

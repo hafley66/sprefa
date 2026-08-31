@@ -32,6 +32,7 @@ use syn::{
 };
 
 use super::astgrep::{AstGrepParser, CstProjector};
+use super::rust_checker::CheckerAnswer;
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
     DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, MethodOwner, ProjectEdge, SigSlot,
@@ -39,7 +40,7 @@ use crate::family::{
 };
 use crate::project::ResolveDrop;
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
+use crate::scip::{byte_range_cached, definition_of, join_documents, site_occurrence};
 use crate::seams::{
     containing_def_site, corpus_defs, covering_def, def_named, own_blob, DefIndex, Parser, Project,
     Resolve,
@@ -49,7 +50,10 @@ use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
 use crate::types::LangKind;
 use crate::types::ScipIndex;
-use crate::types::{CfgScope, DefSite, PathIndex, TestOnlyCall, UnresolvedReason};
+use crate::types::{
+    CfgScope, DefSite, MacroSite, MacroSiteSource, PathIndex, ReceiverOutcome, TestOnlyCall,
+    UnresolvedReason,
+};
 
 // ── span bridge: proc_macro2 line/col -> v6 byte Span ───────────────────────
 
@@ -805,27 +809,64 @@ impl RustSource {
 /// (text stays text — the zero leg). Name-only resolution, per the 4a ADDENDUM
 /// site-key discipline. Mirror of the ts arm's `resolve_type_dst` (the post-4d
 /// dedup sweep owns unifying the per-lang copies).
+#[allow(clippy::too_many_arguments)]
 fn resolve_type_dst(
     types: &FamilyBundle<TypeF>,
     strings: &Strings,
     index: Option<&DefIndex>,
+    modules: Option<&crate::lang::rust_modules::RustModuleIndex>,
+    checker: Option<&crate::lang::rust_checker::RustCheckerIndex>,
+    own_path: Option<&str>,
     name: &str,
 ) -> Option<(ContentId, Span)> {
+    // The CHECKER tier answers first: a name one file resolves two ways is the
+    // only shape it declines, and the name-match legs below then run.
+    match checker
+        .zip(own_path)
+        .and_then(|(checker, from)| checker.type_at(from, name))
+    {
+        Some(CheckerAnswer::Corpus(blob, span)) => return Some((blob, span)),
+        Some(CheckerAnswer::External) => return None,
+        None => {}
+    }
     let same_file = types
         .nodes
         .iter()
         .find(|node| node.name.map_or(false, |id| strings.lookup(id) == name));
     if let (Some(node), Some(index)) = (same_file, index) {
-        return corpus_defs(index, name)
+        if let Some(found) = corpus_defs(index, name)
             .iter()
             .find(|site| site.span == node.span)
-            .map(|site| (site.blob.clone(), site.span));
+            .map(|site| (site.blob.clone(), site.span))
+        {
+            return Some(found);
+        }
     }
-    let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
-    match sites {
+    if let Some(found) = modules.zip(own_path).and_then(|(m, from)| m.type_target(from, name)) {
+        return Some(found);
+    }
+    // Type declarations first: a call-plane def sharing the name (an enum
+    // variant, a fn) must not make the corpus-unique pick ambiguous.
+    let declared: Vec<&DefSite> = index
+        .map(|index| corpus_defs(index, name))
+        .unwrap_or(&[])
+        .iter()
+        .filter(|site| site.family == FamilyTag::Type)
+        .collect();
+    match declared.as_slice() {
         [only] => Some((only.blob.clone(), only.span)),
         _ => None,
     }
+}
+
+/// A bare name with no same-file def: the `use` binding named `name` in
+/// `own_path`, resolved through the module plane.
+fn import_bound_target(
+    modules: Option<&crate::lang::rust_modules::RustModuleIndex>,
+    own_path: Option<&str>,
+    name: &str,
+) -> Option<(ContentId, Span)> {
+    modules?.target(own_path?, name)
 }
 
 impl Resolve<TypeF> for RustSource {
@@ -834,11 +875,14 @@ impl Resolve<TypeF> for RustSource {
             return Vec::new();
         };
         let index = cx.indexes.def_index.get();
+        let modules = cx.indexes.rust_modules.get();
+        let checker = cx.indexes.rust_checker.get();
+        let own_path = own_blob(cx, output)
+            .zip(cx.indexes.paths.get())
+            .and_then(|(blob, paths)| paths.get(&blob).map(str::to_string));
         let mut edges = Vec::new();
         for candidate in RustSource::type_edge_candidates(output) {
-            // src: the TypeF entity at the owner span. Exists by construction
-            // (candidates are minted beside their entity); a miss would break
-            // the parity golden's zip count loudly, so it is not hidden here.
+            // src: the TypeF entity at the owner span, exists by construction.
             let Some(src_ix) = types
                 .nodes
                 .iter()
@@ -850,6 +894,9 @@ impl Resolve<TypeF> for RustSource {
                 types,
                 &output.strings,
                 index,
+                modules,
+                checker,
+                own_path.as_deref(),
                 output.strings.lookup(candidate.to),
             )
             .unwrap_or((ZERO_CONTENT_ID, Span::empty()));
@@ -894,6 +941,37 @@ impl Resolve<TypeF> for RustSource {
 // A site outside every CallF def (module level) emits no row.
 // ════════════════════════════════════════════════════════════════════════════
 
+/// The SAME-FILE def named `callee`, extracted so `rust_modules.rs` can run it
+/// before an import-binding leg: a local def shadows an import.
+fn same_file_call_match(
+    output: &ExtractOutput,
+    index: &DefIndex,
+    own: Option<&ContentId>,
+    callee: &str,
+) -> Option<(ContentId, Span)> {
+    let call = output.call.as_ref()?;
+    let r = def_named(call, &output.strings, callee)?;
+    let span = call.node(r).span;
+    // Every def spliced out of one macro expansion carries the macro call's
+    // span, so a span several names share cannot name one target.
+    let shared = call.nodes.iter().any(|node| {
+        node.span == span
+            && node
+                .name
+                .is_some_and(|id| output.strings.lookup(id) != callee)
+    });
+    if shared {
+        return None;
+    }
+    // The span join must land on THIS file's DefSite: a byte-identical
+    // (name, span) def can exist in two files.
+    let blob = own?;
+    corpus_defs(index, callee)
+        .iter()
+        .find(|site| site.span == span && &site.blob == blob)
+        .map(|site| (site.blob.clone(), site.span))
+}
+
 impl RustSource {
     /// The name-match target of one callee (the NameResolve leg). Pub so the
     /// scip ratchet re-runs it to classify overrides — same discipline as
@@ -916,22 +994,8 @@ impl RustSource {
         own: Option<&ContentId>,
         callee: &str,
     ) -> Option<(ContentId, Span)> {
-        let call = output.call.as_ref()?;
-        if let Some(r) = def_named(call, &output.strings, callee) {
-            let span = call.node(r).span;
-            // The span join must land on THIS file's DefSite: two corpus files
-            // can carry a byte-identical (name, span) def (the same helper at
-            // the top of both), so the candidate blob has to cover the whole
-            // named-def span set of this file, the first span alone is not a
-            // file identity.
-            if let Some(blob) = own {
-                if let Some(site) = corpus_defs(index, callee)
-                    .iter()
-                    .find(|site| site.span == span && &site.blob == blob)
-                {
-                    return Some((site.blob.clone(), site.span));
-                }
-            }
+        if let Some(found) = same_file_call_match(output, index, own, callee) {
+            return Some(found);
         }
         let sites = corpus_defs(index, callee);
         let mut blobs: Vec<ContentId> = Vec::new();
@@ -985,6 +1049,46 @@ impl RustSource {
     }
 }
 
+/// The type an associated-call path names: the LAST uppercase-leading
+/// segment before the callee (`ast::MethodCallExpr::cast` -> `MethodCallExpr`).
+/// All-lowercase paths are module-qualified, not associated.
+fn assoc_path_type(callee_path: Option<&str>) -> Option<String> {
+    let path = callee_path?;
+    let segments: Vec<&str> = path.split("::").collect();
+    if segments.len() < 2 {
+        return None;
+    }
+    segments[..segments.len() - 1]
+        .iter()
+        .rev()
+        .find(|segment| {
+            segment
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_uppercase())
+        })
+        .map(|segment| (*segment).to_string())
+}
+
+/// The enclosing impl's self type for a `Self::f()` site: the caller def's
+/// span lies inside a method def whose method-owner row names it.
+fn self_impl_type(
+    call: &FamilyBundle<CallF>,
+    strings: &Strings,
+    caller: NodeRef,
+) -> Option<String> {
+    let caller_span = &call.node(caller).span;
+    call.aux
+        .method_owners
+        .iter()
+        .find(|owner| {
+            owner.self_type.is_some()
+                && owner.span.start <= caller_span.start
+                && caller_span.end() <= owner.span.end()
+        })
+        .and_then(|owner| owner.self_type.map(|name| strings.lookup(name).to_string()))
+}
+
 /// A `callee_path`'s leading segments when every one is MODULE-shaped, else
 /// None: receiver typing is out of scope, so `Widget::build` keeps the name leg.
 fn module_qualifier(callee_path: &str) -> Option<Vec<&str>> {
@@ -1006,7 +1110,7 @@ fn module_qualifier(callee_path: &str) -> Option<Vec<&str>> {
 
 /// The module path a file spells: minus `.rs`, `src` dropped, `mod`/`lib`/`main`
 /// collapsing to the directory, `-` read as `_` (`crates/ide-db` is `ide_db`).
-fn module_segments(path: &str) -> Vec<String> {
+pub(crate) fn module_segments(path: &str) -> Vec<String> {
     let stem = path.strip_suffix(".rs").unwrap_or(path);
     let mut segments: Vec<String> = stem
         .split('/')
@@ -1024,17 +1128,19 @@ fn module_segments(path: &str) -> Vec<String> {
 
 /// What a resolved qualifier demands of a candidate file: a module-path suffix,
 /// and under `crate::` the caller's own crate directory as a path prefix.
-struct ModuleTarget {
-    suffix: Vec<String>,
-    crate_root: Option<String>,
+pub(crate) struct ModuleTarget {
+    pub(crate) suffix: Vec<String>,
+    pub(crate) crate_root: Option<String>,
 }
 
 impl ModuleTarget {
-    fn covers(&self, candidate: &[String]) -> bool {
+    /// `crate::a::b` is anchored at the crate root: root ++ suffix EXACTLY,
+    /// so `crate::tests` never also names `src/context/tests.rs`.
+    pub(crate) fn covers(&self, candidate: &[String]) -> bool {
         if let Some(root) = &self.crate_root {
-            if !candidate.starts_with(&module_segments(root)) {
-                return false;
-            }
+            let mut anchored = module_segments(root);
+            anchored.extend(self.suffix.iter().cloned());
+            return candidate == anchored.as_slice();
         }
         candidate.ends_with(&self.suffix)
     }
@@ -1042,7 +1148,7 @@ impl ModuleTarget {
 
 /// `qualifier` read from `from`'s position: `crate` restarts at the crate root,
 /// `self` extends the caller's module, `super` pops one, else absolute suffix.
-fn module_target(from: &str, qualifier: &[&str]) -> Option<ModuleTarget> {
+pub(crate) fn module_target(from: &str, qualifier: &[&str]) -> Option<ModuleTarget> {
     let own = module_segments(from);
     let normalize = |rest: &[&str]| -> Vec<String> {
         rest.iter()
@@ -1082,7 +1188,7 @@ fn module_target(from: &str, qualifier: &[&str]) -> Option<ModuleTarget> {
 
 /// The crate directory holding `path`: the prefix ending at the segment before
 /// the first `src`. None where the file sits outside a Cargo layout.
-fn crate_root_of(path: &str) -> Option<String> {
+pub(crate) fn crate_root_of(path: &str) -> Option<String> {
     let (root, _) = path.split_once("/src/")?;
     Some(root.to_string())
 }
@@ -1156,13 +1262,13 @@ fn scip_call_target<'a>(
     let doc = &index.documents[doc_ix];
     let (_, content) = joined[doc_ix].as_ref()?;
     let occ = site_occurrence(doc, content, site.span, callee)?;
-    if occ.symbol.starts_with("local ") {
+    if index.symbol(occ).starts_with("local ") {
         return None;
     }
-    let (def_doc_ix, def_occ) = definition_of(index, doc_ix, &occ.symbol)?;
+    let (def_doc_ix, def_range) = definition_of(index, doc_ix, occ)?;
     let def_doc = &index.documents[def_doc_ix];
     let (def_blob, def_content) = joined[def_doc_ix].as_ref()?;
-    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+    let ident = byte_range_cached(def_doc, def_content, def_range, def_doc.position_encoding)?;
     let (name, def_site) = containing_def_site(def_index, def_blob.clone(), ident)?;
     Some((def_blob.clone(), def_site.span, name))
 }
@@ -1188,7 +1294,7 @@ impl Resolve<CallF> for RustSource {
                     .indexes
                     .joined_documents
                     .get_or_init(|| join_documents(index, reader));
-                let blob = own_blob(output, def_index)?;
+                let blob = own_blob(cx, output)?;
                 let doc_ix = joined
                     .iter()
                     .position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
@@ -1201,6 +1307,8 @@ impl Resolve<CallF> for RustSource {
             .as_ref()
             .zip(paths)
             .and_then(|(blob, paths)| paths.get(blob));
+        let modules = cx.indexes.rust_modules.get();
+        let checker = cx.indexes.rust_checker.get();
         // Sorted once per file: the mirror lookup runs per closure-caller site,
         // and a per-site scan of the def table is the shape kink 1 was.
         let named = named_def_spans(call);
@@ -1217,14 +1325,158 @@ impl Resolve<CallF> for RustSource {
                 .callee_path
                 .map(|id| output.strings.lookup(id))
                 .and_then(module_qualifier);
-            let name_t = match (qualifier, own_path, paths) {
-                (Some(qualifier), Some(from), Some(paths)) => {
-                    RustSource::call_name_match_in_module(
-                        def_index, paths, from, &qualifier, callee,
+            // The receiver leg (the go twin): a method site whose receiver's
+            // type the compiler could see in scope binds ONLY through the
+            // corpus (T, m) impl table; the name-match never runs for it.
+            let recv_named: Option<String> = call
+                .aux
+                .receivers
+                .iter()
+                .find(|r| r.call_site == site.span)
+                .and_then(|r| match &r.outcome {
+                    ReceiverOutcome::Named(name) => Some(output.strings.lookup(*name).to_string()),
+                    _ => None,
+                });
+            let recv_t = recv_named.as_ref().and_then(|ty| {
+                modules
+                    .and_then(|m| {
+                        m.impl_target(ty, callee, own_path)
+                            // The receiver names a corpus trait (`dyn T`,
+                            // `impl T`, a bound param): the trait's own fn
+                            // def (class 6).
+                            .or_else(|| {
+                                m.is_trait(ty)
+                                    .then_some(())
+                                    .and_then(|()| m.trait_fn_target(ty, callee, own_path))
+                            })
+                            // No impl defines the method; a trait the type
+                            // implements provides a default body (class 4).
+                            .or_else(|| m.trait_default_target(ty, callee, own_path))
+                    })
+                    .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+            });
+            // The receiver's type was SEEN in scope (even if no impl binds).
+            let recv_known = call.aux.receivers.iter().any(|r| {
+                r.call_site == site.span && matches!(r.outcome, ReceiverOutcome::Named(_))
+            });
+            // The associated leg: `T::f()` / `a::T::f()` names T's impl block;
+            // `Self::f()` names the enclosing impl's self type via the file's
+            // own method-owner rows.
+            let assoc_t = (qualifier.is_none() && recv_named.is_none())
+                .then_some(())
+                .and_then(|()| {
+                    assoc_path_type(site.callee_path.map(|id| output.strings.lookup(id))).and_then(
+                        |ty| {
+                            modules
+                                .and_then(|m| m.impl_target(&ty, callee, own_path))
+                                .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                                // 0 impls and a variant of the enum: the path names
+                                // the enum itself.
+                                .or_else(|| {
+                                    modules
+                                        .and_then(|m| m.variant_ctor_target(&ty, callee))
+                                        .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                                })
+                                // Trait dispatch: T a corpus trait (class 12, impl
+                                // first), else a trait-provided fn with no impl
+                                // override (class 8's zero-impl arm).
+                                .or_else(|| {
+                                    modules.and_then(|m| {
+                                        m.trait_impl_target(&ty, callee, own_path)
+                                            .or_else(|| m.trait_fn_target(&ty, callee, own_path))
+                                            .or_else(|| m.trait_default_target(&ty, callee, own_path))
+                                            .map(|(blob, span)| {
+                                                (blob, span, CallEdgeKind::NameResolve)
+                                            })
+                                    })
+                                })
+                        },
                     )
+                });
+            let self_t = (qualifier.is_none()
+                && recv_named.is_none()
+                && site
+                    .callee_path
+                    .map(|id| output.strings.lookup(id).split("::").next() == Some("Self"))
+                    .unwrap_or(false))
+            .then_some(())
+            .and_then(|()| self_impl_type(call, &output.strings, caller))
+            .and_then(|ty| {
+                modules
+                    .and_then(|m| m.impl_target(&ty, callee, own_path))
+                    .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+            });
+            let name_t: Option<(ContentId, Span, CallEdgeKind)> = if let Some(t) = recv_t {
+                Some(t)
+            } else if recv_known {
+                // A KNOWN receiver type with no corpus impl target is
+                // definitive (std, an external crate, trait dispatch).
+                None
+            } else {
+                match (qualifier, own_path, paths) {
+                    (Some(qualifier), Some(from), Some(paths)) => {
+                        let segments: Vec<String> = qualifier
+                            .iter()
+                            .map(|segment| segment.to_string())
+                            .collect();
+                        match modules
+                            .map(|m| m.module_call(from, &segments, callee))
+                            .unwrap_or(crate::lang::rust_modules::ModuleCallTarget::Miss)
+                        {
+                            crate::lang::rust_modules::ModuleCallTarget::Target(blob, span) => {
+                                Some((blob, span, CallEdgeKind::NameResolve))
+                            }
+                            _ => RustSource::call_name_match_in_module(
+                                def_index, paths, from, &qualifier, callee,
+                            )
+                            .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve)),
+                        }
+                    }
+                    _ => assoc_t
+                        .or(self_t)
+                        .or_else(|| {
+                            same_file_call_match(output, def_index, own.as_ref(), callee)
+                                .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                        })
+                        .or_else(|| {
+                            import_bound_target(modules, own_path, callee)
+                                .map(|(blob, span)| (blob, span, CallEdgeKind::ImportResolve))
+                        })
+                        .or_else(|| {
+                            RustSource::call_name_match_in(output, def_index, own.as_ref(), callee)
+                                .map(|(blob, span)| (blob, span, CallEdgeKind::NameResolve))
+                        }),
                 }
-                _ => RustSource::call_name_match_in(output, def_index, own.as_ref(), callee),
             };
+            // A def coordinate several names share is one macro expansion's
+            // collapsed span: it names nothing, so no name match binds there.
+            let name_t = name_t.filter(|(blob, span, _)| {
+                !modules.is_some_and(|m| m.is_collapsed(blob, *span))
+            });
+            // The CHECKER tier: rust-analyzer's own answer for this site wins
+            // over both the name match and scip, and only where it has one.
+            match checker
+                .zip(own_path)
+                .and_then(|(index, path)| index.call_at(path, site.span, callee))
+            {
+                Some(CheckerAnswer::Corpus(dst_blob, dst_span)) => {
+                    push_call_edge(
+                        &mut edges,
+                        call,
+                        &named,
+                        caller,
+                        site.span,
+                        dst_blob,
+                        dst_span,
+                        CallEdgeKind::CheckerResolve,
+                    );
+                    continue;
+                }
+                // No corpus definition IS this callee, so no name-match leg
+                // may invent one; `call_drops` reads the same answer.
+                Some(CheckerAnswer::External) => continue,
+                None => {}
+            }
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
             });
@@ -1233,35 +1485,53 @@ impl Resolve<CallF> for RustSource {
             // two facet coordinates (the ORACLE entry's "the models differ by
             // construction").
             let ((dst_blob, dst_span), kind) = match (name_t, scip_t) {
-                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => (n, CallEdgeKind::NameResolve),
+                (Some((blob, span, _)), Some(s)) if blob == s.0 && callee == s.2 => {
+                    ((blob, span), CallEdgeKind::NameResolve)
+                }
                 (_, Some(s)) => ((s.0, s.1), CallEdgeKind::ScipOverride),
-                (Some(n), None) => (n, CallEdgeKind::NameResolve),
+                (Some((blob, span, kind)), None) => ((blob, span), kind),
                 (None, None) => continue,
             };
-            // Nothing names `closure@<n>` as a callee, so a walk over named
-            // defs stops at one. The closure row stays; it names the frame.
-            if call.node(caller).name.is_none() {
-                if let Some(enclosing) = enclosing_named_def(&named, site.span) {
-                    edges.push(
-                        ProjectEdge::new(
-                            enclosing,
-                            dst_blob.clone(),
-                            dst_span,
-                            CallEdgeKind::NameResolve,
-                        )
-                        .with_call_site(site.span),
-                    );
-                }
-            }
-            edges
-                .push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
+            push_call_edge(
+                &mut edges, call, &named, caller, site.span, dst_blob, dst_span, kind,
+            );
         }
         edges
     }
 }
 
+/// One site's edge, plus the mirror row a closure caller needs: nothing names
+/// `closure@<n>` as a callee, so a walk over named defs stops at one.
+#[allow(clippy::too_many_arguments)]
+fn push_call_edge(
+    edges: &mut Vec<ProjectEdge<CallF>>,
+    call: &FamilyBundle<CallF>,
+    named: &[(Span, NodeRef)],
+    caller: NodeRef,
+    site: Span,
+    dst_blob: ContentId,
+    dst_span: Span,
+    kind: CallEdgeKind,
+) {
+    if call.node(caller).name.is_none() {
+        if let Some(enclosing) = enclosing_named_def(named, site) {
+            edges.push(
+                ProjectEdge::new(enclosing, dst_blob.clone(), dst_span, CallEdgeKind::NameResolve)
+                    .with_call_site(site),
+            );
+        }
+    }
+    edges.push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site));
+}
+
 /// One `unresolved` row per site the `Resolve<CallF>` pass dropped. The reason
 /// reads the corpus def count for the callee's name: none, or more than one.
+/// std::prelude::v1's callable items: a bare name here is never a corpus
+/// reference, so its drop says `external`.
+const PRELUDE_ITEMS: &[&str] = &[
+    "Box", "Err", "Ok", "Option", "Result", "Some", "String", "Vec", "drop", "format",
+];
+
 pub fn call_drops(
     output: &ExtractOutput,
     cx: &ProjectCx,
@@ -1270,9 +1540,22 @@ pub fn call_drops(
     let (Some(call), Some(def_index)) = (&output.call, cx.indexes.def_index.get()) else {
         return Vec::new();
     };
+    let modules = cx.indexes.rust_modules.get();
+    let checker = cx.indexes.rust_checker.get();
+    let own_path = own_file_blob(output, def_index)
+        .as_ref()
+        .zip(cx.indexes.paths.get())
+        .and_then(|(blob, paths)| paths.get(blob));
     let bound: BTreeSet<(u32, u32)> = edges
         .iter()
         .filter_map(|edge| edge.call_site.map(|span| (span.start, span.end())))
+        .collect();
+    let inferred: BTreeSet<(u32, u32)> = call
+        .aux
+        .receivers
+        .iter()
+        .filter(|r| matches!(r.outcome, ReceiverOutcome::Inferred))
+        .map(|r| (r.call_site.start, r.call_site.end()))
         .collect();
     call.aux
         .sites
@@ -1280,7 +1563,39 @@ pub fn call_drops(
         .filter(|site| !bound.contains(&(site.span.start, site.span.end())))
         .map(|site| {
             let callee = output.strings.lookup(site.callee);
-            let reason = if corpus_defs(def_index, callee).is_empty() {
+            let qualifier = site
+                .callee_path
+                .map(|id| output.strings.lookup(id))
+                .and_then(|path| module_qualifier(path));
+            let external_prefix = qualifier
+                .as_ref()
+                .zip(own_path)
+                .and_then(|(qualifier, from)| {
+                    let segments: Vec<String> = qualifier
+                        .iter()
+                        .map(|segment| segment.to_string())
+                        .collect();
+                    matches!(
+                        modules.map(|m| m.module_call(from, &segments, callee)),
+                        Some(crate::lang::rust_modules::ModuleCallTarget::External)
+                    )
+                    .then_some(())
+                });
+            let checker_external = matches!(
+                checker
+                    .zip(own_path)
+                    .and_then(|(index, path)| index.call_at(path, site.span, callee)),
+                Some(CheckerAnswer::External)
+            );
+            let reason = if checker_external {
+                UnresolvedReason::External
+            } else if inferred.contains(&(site.span.start, site.span.end())) {
+                UnresolvedReason::Inferred
+            } else if external_prefix.is_some()
+                || (qualifier.is_none() && PRELUDE_ITEMS.contains(&callee))
+            {
+                UnresolvedReason::External
+            } else if corpus_defs(def_index, callee).is_empty() {
                 UnresolvedReason::NoCorpusDef
             } else {
                 UnresolvedReason::Ambiguous
@@ -1340,7 +1655,11 @@ fn enclosing_named_def(sorted: &[(Span, NodeRef)], site: Span) -> Option<NodeRef
 
 /// A proc_macro2 span pair -> v6 byte Span covering `[start.start, end.end)`.
 /// The def span covers the whole callable body for span-containment resolution.
-fn def_span(line_starts: &[u32], start: proc_macro2::Span, end: proc_macro2::Span) -> Span {
+pub(crate) fn def_span(
+    line_starts: &[u32],
+    start: proc_macro2::Span,
+    end: proc_macro2::Span,
+) -> Span {
     let start_lc = start.start();
     let end_lc = end.end();
     let start_byte = line_col_to_byte(line_starts, start_lc.line as u32, start_lc.column as u32);
@@ -1349,6 +1668,13 @@ fn def_span(line_starts: &[u32], start: proc_macro2::Span, end: proc_macro2::Spa
         start: start_byte,
         len: end_byte.saturating_sub(start_byte),
     }
+}
+
+/// One enum variant's def span, the ident alone. None unless the span covers
+/// exactly the ident: wider is an mbe-expanded variant reporting the macro call.
+pub(crate) fn variant_def_span(line_starts: &[u32], variant: &syn::Variant) -> Option<Span> {
+    let span = syn_span(line_starts, variant.ident.span());
+    (span.len as usize == variant.ident.to_string().len()).then_some(span)
 }
 
 /// Descends inline `mod name { .. }`: the SITE half walks the whole file, so a
@@ -1417,6 +1743,17 @@ fn call_defs_in_items(
                             syn::visit::visit_block(defs, block);
                         }
                     }
+                }
+            }
+            // A variant constructor is a call target in every rust call oracle:
+            // `Alpha::First(3)` names `First`, never `Alpha`.
+            syn::Item::Enum(e) => {
+                for variant in &e.variants {
+                    let Some(span) = variant_def_span(line_starts, variant) else {
+                        continue;
+                    };
+                    defs.push(span, Some(variant.ident.to_string()), CallKind::Free);
+                    note(span, scopes);
                 }
             }
             syn::Item::Mod(m) => {
@@ -1637,6 +1974,7 @@ fn project_call(
     }
 
     module_specifiers(&parsed.items, line_starts, strings, sink);
+    super::rust_receivers::collect_receivers(parsed, line_starts, strings, sink);
 }
 
 // ── module specifiers (CallFAux.specifiers) ─────────────────────────────────
@@ -1798,7 +2136,7 @@ fn push_use_leaf(
 
 /// `#[path = "x.rs"]`: the literal a resolver must resolve, so it becomes the
 /// module text as written (`src/graph/modgraph/rust.rs:50-64`).
-fn mod_path_attr(attrs: &[syn::Attribute]) -> Option<String> {
+pub(crate) fn mod_path_attr(attrs: &[syn::Attribute]) -> Option<String> {
     attrs.iter().find_map(|attr| {
         if !attr.path().is_ident("path") {
             return None;
@@ -3092,6 +3430,53 @@ fn df_edge(sink: &mut FamilyBundle<DfF>, src: NodeRef, dst: NodeRef) {
 // across all four families.
 // ════════════════════════════════════════════════════════════════════════════
 
+/// Re-runs `project_call` over `rust_mbe::expand_file`'s spliced text, folding
+/// in only the defs/sites born inside a macro expansion, span-mapped back.
+fn splice_macro_expansions(src: &str, strings: &mut Strings, bundle: &mut FamilyBundle<CallF>) {
+    let Some(expanded) = super::rust_mbe::expand_file(src) else {
+        return;
+    };
+    let Ok(expanded_parsed) = syn::parse_file(&expanded.text) else {
+        return;
+    };
+    let expanded_line_starts = build_line_starts(&expanded.text);
+    let mut expanded_bundle = FamilyBundle::<CallF>::default();
+    project_call(
+        &expanded_parsed,
+        &expanded_line_starts,
+        strings,
+        &mut expanded_bundle,
+    );
+
+    for mut node in expanded_bundle.nodes {
+        let range = node.span.start..node.span.start + node.span.len;
+        if !expanded.is_macro_span(range.clone()) {
+            continue;
+        }
+        if let Some(mapped) = expanded.map_span(range) {
+            node.span = mapped;
+            bundle.nodes.push(node);
+        }
+    }
+    for mut site in expanded_bundle.aux.sites {
+        let range = site.span.start..site.span.start + site.span.len;
+        if !expanded.is_macro_span(range.clone()) {
+            continue;
+        }
+        if let Some(mapped) = expanded.map_span(range) {
+            site.span = mapped;
+            bundle.aux.sites.push(site);
+        }
+    }
+    for (span, name) in expanded.macro_sites() {
+        bundle.aux.macro_sites.push(MacroSite {
+            span,
+            macro_name: strings.intern(name),
+            source: MacroSiteSource::Mbe,
+        });
+    }
+}
+
 /// The Rust `Source`. `matches` = the path ends in `.rs`. cst via ast-grep's rust
 /// grammar; type/call/df/const via one `syn::parse_file`.
 #[derive(Default)]
@@ -3188,6 +3573,7 @@ impl Source for RustSource {
                         let _entered = span.enter();
                         let mut bundle = FamilyBundle::<CallF>::default();
                         project_call(&parsed, &line_starts, &mut strings, &mut bundle);
+                        splice_macro_expansions(src, &mut strings, &mut bundle);
                         trace::record_bundle(&span, &bundle, bundle.aux.sites.len());
                         call = Some(bundle);
                     }

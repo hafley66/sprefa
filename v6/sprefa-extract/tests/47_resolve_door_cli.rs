@@ -184,21 +184,22 @@ fn resolve_cli_accepts_one_path_and_says_so() {
     );
 }
 
-/// The `unresolved` record is a PHASE-1 per-file row with no path field
-/// (`src/wire.rs:290`), so it cannot name its file in a multi-file phase-2
-/// stream. `--resolve` therefore does not carry it, and the help says which
-/// invocation does.
+/// The PHASE-1 `unresolved` rows (dynamic import, computed member, spread
+/// args) have no path field (`src/wire.rs:290`), so they cannot name their
+/// file in a multi-file phase-2 stream: `--resolve` never carries them. The
+/// phase-2 drops channel DOES emit `unresolved` rows (path included) when a
+/// resolve arm declines a site it traced, same discipline as the go arm.
 #[test]
 fn resolve_cli_documents_the_phase_one_records_it_drops() {
     let rows = stdout_of(&["--resolve", TS_UNRESOLVED, TS_SAMPLE]);
     assert!(
-        !rows.contains(r#""record":"unresolved""#),
-        "phase-2 mode carries phase-2 records only:\n{rows}"
+        !rows.contains(r#""reason":"dynamic-import""#),
+        "phase-1 rows never ride --resolve:\n{rows}"
     );
     let per_file = stdout_of(&[TS_UNRESOLVED]);
     assert!(
-        per_file.contains(r#""record":"unresolved""#),
-        "the per-file door is where the record lives:\n{per_file}"
+        per_file.contains(r#""reason":"dynamic-import""#),
+        "the per-file door is where the phase-1 record lives:\n{per_file}"
     );
     let help = stdout_of(&["--help"]);
     assert!(

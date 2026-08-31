@@ -48,7 +48,7 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
     for document in &index.documents {
         let path = document.relative_path.as_str();
         for occurrence in &document.occurrences {
-            let symbol = occurrence.symbol.as_str();
+            let symbol = index.symbol(occurrence.symbol);
             if !usable_symbol(symbol) || !is_definition(occurrence) {
                 continue;
             }
@@ -77,7 +77,7 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
         let path = document.relative_path.as_str();
         let callables = fn_defs.get(path);
         for occurrence in &document.occurrences {
-            let symbol = occurrence.symbol.as_str();
+            let symbol = index.symbol(occurrence.symbol);
             // Locals are filtered out of the main path by `usable_symbol` and
             // collected here instead: a local DEFINITION is the binding site,
             // attributed to its enclosing callable by the same predecessor
@@ -125,19 +125,35 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
     // Occurrences alone never carry the virtual-dispatch hop, so this is the
     // only place the interface-to-impl path exists.
     let mut impls: BTreeSet<(&str, &str)> = BTreeSet::new();
+    let mut relationships: BTreeSet<(&str, &str, bool, bool, bool, bool)> = BTreeSet::new();
     let infos = index
         .documents
         .iter()
         .flat_map(|document| document.symbols.iter())
         .chain(index.external_symbols.iter());
     for info in infos {
-        if info.symbol.is_empty() {
+        if index.symbol(info.symbol).is_empty() {
             continue;
         }
         for related in &info.relationships {
-            if related.is_implementation && !related.symbol.is_empty() {
-                impls.insert((info.symbol.as_str(), related.symbol.as_str()));
+            if index.symbol(related.symbol).is_empty() {
+                continue;
             }
+            if related.is_implementation {
+                impls.insert((index.symbol(info.symbol), index.symbol(related.symbol)));
+            }
+            // The raw relationship row is the v5 family's unprojection: every
+            // flag scip carried rides the wire, so a consumer can answer
+            // subclass-of, trait-member and override questions the impl
+            // projection throws away.
+            relationships.insert((
+                index.symbol(info.symbol),
+                index.symbol(related.symbol),
+                related.is_reference,
+                related.is_implementation,
+                related.is_type_definition,
+                related.is_definition,
+            ));
         }
     }
 
@@ -155,7 +171,8 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
             + fn_edges.len()
             + callee_types.len()
             + locals.len()
-            + impls.len(),
+            + impls.len()
+            + relationships.len(),
     );
     out.extend(
         defs.into_iter()
@@ -223,6 +240,25 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
                 iface: iface.to_string(),
             }),
     );
+    out.extend(relationships.into_iter().map(
+        |(
+            symbol,
+            related_symbol,
+            is_reference,
+            is_implementation,
+            is_type_definition,
+            is_definition,
+        )| {
+            FlatFact::ScipRelationshipRow {
+                symbol: symbol.to_string(),
+                related_symbol: related_symbol.to_string(),
+                is_reference,
+                is_implementation,
+                is_type_definition,
+                is_definition,
+            }
+        },
+    ));
     out
 }
 
@@ -376,7 +412,7 @@ fn display_names(index: &ScipIndex) -> BTreeMap<(&str, &str), &str> {
         for info in &document.symbols {
             if !info.display_name.is_empty() {
                 names.insert(
-                    (document.relative_path.as_str(), info.symbol.as_str()),
+                    (document.relative_path.as_str(), index.symbol(info.symbol)),
                     info.display_name.as_str(),
                 );
             }

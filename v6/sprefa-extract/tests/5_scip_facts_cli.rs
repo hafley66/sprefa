@@ -179,11 +179,12 @@ fn an_unknown_scip_record_kind_is_a_named_error() {
 fn diagnostics_and_signatures_reach_the_wire() {
     use sprefa_extract::{
         flatten_scip, OccurrenceRole, ScipDiagnostic, ScipDocument, ScipIndex, ScipOccurrence,
-        ScipSignature, ScipSymbolInfo,
+        ScipSignature, ScipSymbolInfo, SymbolInterner,
     };
 
+    let mut syms = SymbolInterner::default();
     let occurrence = ScipOccurrence {
-        symbol: "Dog#sound().".to_string(),
+        symbol: syms.intern("Dog#sound()."),
         range: [0, 0, 0, 5],
         roles: OccurrenceRole::DEFINITION,
         syntax_kind: 7,
@@ -198,7 +199,7 @@ fn diagnostics_and_signatures_reach_the_wire() {
         }],
     };
     let symbol = ScipSymbolInfo {
-        symbol: "Dog#sound().".to_string(),
+        symbol: syms.intern("Dog#sound()."),
         display_name: "sound".to_string(),
         kind: 26,
         relationships: Vec::new(),
@@ -207,7 +208,7 @@ fn diagnostics_and_signatures_reach_the_wire() {
             language: "typescript".to_string(),
             text: "sound(): string".to_string(),
             occurrences: vec![ScipOccurrence {
-                symbol: "string#".to_string(),
+                symbol: syms.intern("string#"),
                 range: [0, 9, 0, 15],
                 roles: OccurrenceRole::default(),
                 syntax_kind: 0,
@@ -225,6 +226,7 @@ fn diagnostics_and_signatures_reach_the_wire() {
             symbols: vec![symbol],
             ..ScipDocument::default()
         }],
+        symbols: syms.table(),
         ..ScipIndex::default()
     };
     let reader = |_: &str| Some(b"sound(): string\n".to_vec());

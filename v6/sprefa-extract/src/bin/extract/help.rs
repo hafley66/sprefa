@@ -179,6 +179,23 @@ index means one indexer, so every supplied path must be the same language;
 ts uses scip-typescript, go uses scip-go, rust uses rust-analyzer. This spawns a
 foreign process and is slow: prefer --scip-index when you already have one.";
 
+pub const RUST_CHECKER_LONG: &str = "\
+Load --project-root's cargo workspace into rust-analyzer (from cargo metadata, no
+cargo build) and let it name the destination of every call and type reference the
+parse found. The caller, the site spans and the unresolved rows stay this
+binary's; only the destination changes hands.
+
+This is the RUST tier. go and ts stay on the syntax leg by design: their call and
+type shapes are name-matchable, rust's are not (a method call's destination needs
+the receiver's inferred type and the trait solver).
+
+Cost is index-build class, not per-run: the workspace load is seconds and holds
+the whole crate graph in memory for the run. A root with no Cargo.toml, or a
+cargo metadata that fails, logs one line and falls back to the syntax leg.
+
+Needs a binary built with --features rust-checker; without it the flag logs the
+same fallback line and changes nothing.";
+
 pub const SCIP_FACTS_LONG: &str = "\
 Load a SCIP index (--scip-index or --scip-build) and stream EVERYTHING it
 carries as flat facts: scip_metadata, scip_document, scip_occurrence (byte

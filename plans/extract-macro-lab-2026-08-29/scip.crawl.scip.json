@@ -1,0 +1,375 @@
+{
+ "defs_total": 19924,
+ "edges_total": 53958,
+ "program_roots": 75,
+ "program_handlers": 73,
+ "test_roots": 7905,
+ "program_reachable": 335,
+ "test_reachable": 11604,
+ "union_reachable": 11877,
+ "program_depth_hist": [
+  [
+   0,
+   75
+  ],
+  [
+   1,
+   76
+  ],
+  [
+   2,
+   59
+  ],
+  [
+   3,
+   59
+  ],
+  [
+   4,
+   41
+  ],
+  [
+   5,
+   18
+  ],
+  [
+   6,
+   7
+  ]
+ ],
+ "test_depth_hist": [
+  [
+   0,
+   7905
+  ],
+  [
+   1,
+   627
+  ],
+  [
+   2,
+   594
+  ],
+  [
+   3,
+   691
+  ],
+  [
+   4,
+   532
+  ],
+  [
+   5,
+   382
+  ],
+  [
+   6,
+   211
+  ],
+  [
+   7,
+   180
+  ],
+  [
+   8,
+   152
+  ],
+  [
+   9,
+   109
+  ],
+  [
+   10,
+   81
+  ],
+  [
+   11,
+   60
+  ],
+  [
+   12,
+   46
+  ],
+  [
+   13,
+   22
+  ],
+  [
+   14,
+   8
+  ],
+  [
+   15,
+   2
+  ],
+  [
+   16,
+   2
+  ]
+ ],
+ "unreachable_total": 8047,
+ "unreachable_top20": [
+  {
+   "path": "crates/ide-db/src/generated/lints.rs",
+   "name": "FEATURES",
+   "span_bytes": 378402,
+   "in_edges": 0,
+   "out_edges": 1
+  },
+  {
+   "path": "crates/ide-db/src/generated/lints.rs",
+   "name": "DEFAULT_LINTS",
+   "span_bytes": 64206,
+   "in_edges": 0,
+   "out_edges": 1
+  },
+  {
+   "path": "crates/hir-ty/src/mir/lower.rs",
+   "name": "lower_expr_to_place_without_adjust",
+   "span_bytes": 41423,
+   "in_edges": 3,
+   "out_edges": 56
+  },
+  {
+   "path": "crates/hir-expand/src/inert_attr_macro.rs",
+   "name": "INERT_ATTRIBUTES",
+   "span_bytes": 27988,
+   "in_edges": 0,
+   "out_edges": 2
+  },
+  {
+   "path": "crates/hir-ty/src/display.rs",
+   "name": "hir_fmt",
+   "span_bytes": 27701,
+   "in_edges": 12,
+   "out_edges": 32
+  },
+  {
+   "path": "crates/hir-expand/src/builtin/derive_macro.rs",
+   "name": "coerce_pointee_expand",
+   "span_bytes": 20634,
+   "in_edges": 0,
+   "out_edges": 14
+  },
+  {
+   "path": "crates/hir-ty/src/mir/lower/pattern_matching.rs",
+   "name": "pattern_match_inner",
+   "span_bytes": 18540,
+   "in_edges": 4,
+   "out_edges": 30
+  },
+  {
+   "path": "crates/hir/src/diagnostics.rs",
+   "name": "inference_diagnostic",
+   "span_bytes": 18486,
+   "in_edges": 0,
+   "out_edges": 50
+  },
+  {
+   "path": "crates/hir/src/semantics.rs",
+   "name": "descend_into_macros_impl",
+   "span_bytes": 16782,
+   "in_edges": 2,
+   "out_edges": 14
+  },
+  {
+   "path": "crates/hir/src/lib.rs",
+   "name": "diagnostics",
+   "span_bytes": 16592,
+   "in_edges": 2,
+   "out_edges": 31
+  },
+  {
+   "path": "crates/hir/src/source_analyzer.rs",
+   "name": "resolve_path",
+   "span_bytes": 16402,
+   "in_edges": 1,
+   "out_edges": 16
+  },
+  {
+   "path": "crates/rust-analyzer/src/main_loop.rs",
+   "name": "handle_event",
+   "span_bytes": 15984,
+   "in_edges": 1,
+   "out_edges": 28
+  },
+  {
+   "path": "crates/hir-def/src/lang_item.rs",
+   "name": "assign_lang_item",
+   "span_bytes": 15355,
+   "in_edges": 0,
+   "out_edges": 0
+  },
+  {
+   "path": "crates/hir-def/src/lang_item.rs",
+   "name": "from_lang_items",
+   "span_bytes": 15355,
+   "in_edges": 0,
+   "out_edges": 0
+  },
+  {
+   "path": "crates/hir-def/src/lang_item.rs",
+   "name": "merge_prefer_self",
+   "span_bytes": 15355,
+   "in_edges": 0,
+   "out_edges": 0
+  },
+  {
+   "path": "crates/hir-def/src/lang_item.rs",
+   "name": "fill_non_lang_core_items",
+   "span_bytes": 15355,
+   "in_edges": 0,
+   "out_edges": 0
+  },
+  {
+   "path": "crates/hir-def/src/lang_item.rs",
+   "name": "from_symbol",
+   "span_bytes": 15355,
+   "in_edges": 0,
+   "out_edges": 0
+  },
+  {
+   "path": "crates/hir-ty/src/layout.rs",
+   "name": "layout_of_ty_query",
+   "span_bytes": 15204,
+   "in_edges": 0,
+   "out_edges": 10
+  },
+  {
+   "path": "crates/ide/src/hover/render.rs",
+   "name": "definition",
+   "span_bytes": 14664,
+   "in_edges": 0,
+   "out_edges": 10
+  },
+  {
+   "path": "crates/rust-analyzer/src/flycheck.rs",
+   "name": "run",
+   "span_bytes": 13778,
+   "in_edges": 2,
+   "out_edges": 10
+  }
+ ],
+ "out_degree_top20": [
+  {
+   "path": "crates/ide-diagnostics/src/lib.rs",
+   "name": "semantic_diagnostics",
+   "out_degree": 88,
+   "depth": 2
+  },
+  {
+   "path": "crates/hir-ty/src/infer/expr.rs",
+   "name": "infer_expr_inner",
+   "out_degree": 59,
+   "depth": 6
+  },
+  {
+   "path": "crates/hir-ty/src/mir/lower.rs",
+   "name": "lower_expr_to_place_without_adjust",
+   "out_degree": 56,
+   "depth": -1
+  },
+  {
+   "path": "crates/hir/src/diagnostics.rs",
+   "name": "inference_diagnostic",
+   "out_degree": 50,
+   "depth": -1
+  },
+  {
+   "path": "crates/hir-def/src/expr_store/lower.rs",
+   "name": "maybe_collect_expr",
+   "out_degree": 48,
+   "depth": 6
+  },
+  {
+   "path": "crates/parser/src/grammar/expressions/atom.rs",
+   "name": "atom_expr",
+   "out_degree": 36,
+   "depth": -1
+  },
+  {
+   "path": "crates/hir-ty/src/display.rs",
+   "name": "hir_fmt",
+   "out_degree": 32,
+   "depth": -1
+  },
+  {
+   "path": "crates/hir-ty/src/mir/eval/shim.rs",
+   "name": "exec_intrinsic",
+   "out_degree": 32,
+   "depth": 7
+  },
+  {
+   "path": "crates/hir/src/lib.rs",
+   "name": "diagnostics",
+   "out_degree": 31,
+   "depth": -1
+  },
+  {
+   "path": "crates/hir/src/semantics.rs",
+   "name": "to_def",
+   "out_degree": 31,
+   "depth": -1
+  },
+  {
+   "path": "crates/hir-def/src/nameres/collector.rs",
+   "name": "collect",
+   "out_degree": 31,
+   "depth": 1
+  },
+  {
+   "path": "crates/ide-completion/src/render/function.rs",
+   "name": "render",
+   "out_degree": 31,
+   "depth": 5
+  },
+  {
+   "path": "crates/hir-def/src/expr_store/lower.rs",
+   "name": "collect_pat",
+   "out_degree": 30,
+   "depth": 8
+  },
+  {
+   "path": "crates/hir-expand/src/lib.rs",
+   "name": "expand_speculative",
+   "out_degree": 30,
+   "depth": -1
+  },
+  {
+   "path": "crates/hir-ty/src/infer/closure/analysis.rs",
+   "name": "analyze_closure",
+   "out_degree": 30,
+   "depth": 8
+  },
+  {
+   "path": "crates/hir-ty/src/mir/eval.rs",
+   "name": "interpret_mir",
+   "out_degree": 30,
+   "depth": 3
+  },
+  {
+   "path": "crates/hir-ty/src/mir/lower/pattern_matching.rs",
+   "name": "pattern_match_inner",
+   "out_degree": 30,
+   "depth": -1
+  },
+  {
+   "path": "crates/ide-completion/src/render/literal.rs",
+   "name": "render",
+   "out_degree": 30,
+   "depth": 5
+  },
+  {
+   "path": "crates/project-model/src/workspace.rs",
+   "name": "load_cargo",
+   "out_degree": 30,
+   "depth": 4
+  },
+  {
+   "path": "crates/mbe/src/expander/matcher.rs",
+   "name": "match_loop_inner",
+   "out_degree": 28,
+   "depth": 5
+  }
+ ]
+}

@@ -26,6 +26,8 @@ use std::sync::{Arc, LazyLock};
 
 use rayon::prelude::*;
 
+use crate::lang::go_modules::{GoModuleFacts, GoModuleIndex};
+use crate::lang::rust_modules::{RustModuleFacts, RustModuleIndex};
 use crate::lang::ts_resolve::{ModuleFacts, TsModuleIndex};
 use crate::lang::{
     source_for, DlSource, GoSource, KotlinSource, MarkdownSource, PrologSource, PythonSource,
@@ -105,6 +107,9 @@ pub struct ResolveRequest<'a> {
     /// Whether `scip_occurrence` rows also carry the source slice at their
     /// span. Off by default so a plain `--scip-facts` run stays byte-identical.
     pub occurrence_text: bool,
+    /// The cargo workspace root the rust CHECKER tier loads. Its own field
+    /// because `project_root` also adopts a fresh SCIP index by freshness.
+    pub rust_checker: Option<&'a Path>,
 }
 
 /// Why a project resolve could not run. Distinct from a resolve that ran and
@@ -163,6 +168,10 @@ pub(crate) struct ProjectInput {
     /// This file's module facts, built while its bytes are in hand so the
     /// plane costs no second read. `None` outside a module-plane run.
     module: Option<ModuleFacts>,
+    /// The rust module plane's own facts, same discipline as `module`.
+    rust_module: Option<RustModuleFacts>,
+    /// The go module plane's own facts, same discipline as `module`.
+    go_module: Option<GoModuleFacts>,
 }
 
 /// Run the requested arms over the whole supplied file set and return the flat
@@ -248,39 +257,121 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         ))
         .ok()
         .expect("fresh project module plane");
+    let rust_module_files: Vec<(String, RustModuleFacts)> = inputs
+        .iter()
+        .filter_map(|input| Some((input.path.clone(), input.rust_module.clone()?)))
+        .collect();
+    cx.indexes
+        .rust_modules
+        .set(RustModuleIndex::build(
+            rust_module_files,
+            &corpus,
+            cx.indexes.def_index.get().expect("the def index is set"),
+        ))
+        .ok()
+        .expect("fresh project module plane (rust)");
+    let go_module_files: Vec<(String, GoModuleFacts)> = inputs
+        .iter()
+        .filter_map(|input| Some((input.path.clone(), input.go_module.clone()?)))
+        .collect();
+    // The go resolve arms read their per-file facts from this publish step
+    // (computed in the module plane's shared parse); the parse fallback in
+    // go.rs only serves library/test paths with no module plane.
+    for input in inputs.iter() {
+        if let Some(facts) = input.go_module.as_ref().and_then(GoModuleFacts::file_facts) {
+            crate::lang::go::go_publish_file_facts(&input.path, Some(&input.blob), facts.clone());
+        }
+    }
+    cx.indexes
+        .go_modules
+        .set(GoModuleIndex::build(go_module_files))
+        .ok()
+        .expect("fresh project module plane (go)");
+
+    if let Some(checker_root) = request.rust_checker {
+        if let Some(index) = load_rust_checker(checker_root, &inputs, &corpus, &cx) {
+            cx.indexes
+                .rust_checker
+                .set(index)
+                .ok()
+                .expect("fresh project checker tier (rust)");
+        }
+    }
 
     // One resolve per input, shared by the `call` arm and the `flow` join: the
     // N+1 law applied to work rather than to rows.
-    let resolved_calls: Vec<(ContentId, Vec<ProjectEdge<CallF>>)> =
+    let mut resolved_calls: Vec<(ContentId, Vec<ProjectEdge<CallF>>)> =
         if request.arms.call || request.arms.flow {
-            inputs
-                .iter()
-                .map(|input| {
-                    (
-                        input.blob.clone(),
-                        resolve_call_edges(&input.path, &input.output, &cx),
-                    )
-                })
-                .collect()
+            use rayon::prelude::*;
+            EXTRACT_POOL.install(|| {
+                inputs
+                    .par_iter()
+                    .map(|input| {
+                        // The per-file identity the resolve seam carries: each
+                        // arm reads its own blob off the thread-local pin
+                        // instead of guessing it from span matches (a wrong
+                        // guess when two files share a named span).
+                        crate::types::set_own(Some(input.blob.clone()));
+                        let edges = resolve_call_edges(&input.path, &input.output, &cx);
+                        crate::types::set_own(None);
+                        (input.blob.clone(), edges)
+                    })
+                    .collect()
+            })
         } else {
             Vec::new()
         };
 
-    let targets = TargetIndex::build(&inputs);
-    let mut facts = Vec::new();
+    // The scip macro post-pass: call edges for calls written inside macro
+    // invocations, which the per-file resolve never sees (the parse mints no
+    // site there). No scip index -> a no-op that emits nothing. The rows land
+    // per FILE, inside that file's block of the stream, so a row-line consumer
+    // can attribute each one to the caller_path the block's edges carry.
+    let mut macro_rows: Vec<Vec<crate::lang::rust_scip_macros::MacroSiteRow>> = Vec::new();
     if request.arms.call {
-        for (input, (_, edges)) in inputs.iter().zip(resolved_calls.iter()) {
+        let macro_files: Vec<crate::lang::rust_scip_macros::ScipMacroFile> = inputs
+            .iter()
+            .map(|input| crate::lang::rust_scip_macros::ScipMacroFile {
+                path: &input.path,
+                blob: &input.blob,
+                output: input.output.as_ref(),
+            })
+            .collect();
+        macro_rows =
+            crate::lang::rust_scip_macros::mint_macro_edges(&macro_files, &cx, &mut resolved_calls);
+    }
+
+    let mut facts = Vec::new();
+    let targets = TargetIndex::build(&inputs);
+    if request.arms.call {
+        for ((input, (_, edges)), rows) in inputs
+            .iter()
+            .zip(resolved_calls.iter())
+            .zip(macro_rows.into_iter().chain(std::iter::repeat(Vec::new())))
+        {
+            crate::types::set_own(Some(input.blob.clone()));
             facts.extend(call_facts(input, &targets, edges));
             facts.extend(call_drop_facts(input, &cx, edges));
+            for row in rows {
+                facts.push(FlatFact::MacroSiteOut {
+                    family: crate::shape::FamilyTag::Call,
+                    span: crate::wire::SpanOut::new(row.span.start, row.span.end()),
+                    macro_name: row.macro_name,
+                    source: row.source.to_string(),
+                });
+            }
         }
     }
+
     if request.arms.call || request.arms.types {
         for input in &inputs {
+            crate::types::set_own(Some(input.blob.clone()));
             facts.extend(import_facts(input, &cx));
         }
     }
     for input in &inputs {
         if request.arms.types {
+            crate::types::set_own(Some(input.blob.clone()));
             facts.extend(type_facts(input, &targets, &cx));
         }
     }
@@ -288,6 +379,53 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         facts.extend(flatten_flow(&flow_edges(&pairs, &resolved_calls)));
     }
     Ok(facts)
+}
+
+/// The workspace load is an index-build-class cost, so it carries the SCIP
+/// exception to the 10-second law rather than the per-run ceiling.
+const CHECKER_BUDGET: std::time::Duration = std::time::Duration::from_secs(900);
+
+/// Every failure is one `tracing::info` line and a `None`: the syntax leg then
+/// answers every site exactly as it did before.
+fn load_rust_checker(
+    root: &Path,
+    inputs: &[ProjectInput],
+    corpus: &[(String, ContentId)],
+    cx: &ProjectCx,
+) -> Option<crate::lang::rust_checker::RustCheckerIndex> {
+    // A relative root reaches rust-analyzer as a relative `AbsPathBuf` and its
+    // workspace discovery then finds only part of the crate graph.
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let files: Vec<(String, PathBuf)> = inputs
+        .iter()
+        .filter(|input| input.path.ends_with(".rs"))
+        .map(|input| {
+            let absolute = std::fs::canonicalize(&input.path)
+                .unwrap_or_else(|_| PathBuf::from(&input.path));
+            (input.path.clone(), absolute)
+        })
+        .collect();
+    let answers = match crate::lang::rust_checker::answer(&root, &files, CHECKER_BUDGET) {
+        Ok(answers) => answers,
+        Err(err) => {
+            tracing::info!("rust checker tier off: {err}");
+            return None;
+        }
+    };
+    let index = crate::lang::rust_checker::RustCheckerIndex::build(
+        answers,
+        corpus,
+        cx.indexes.def_index.get().expect("the def index is set"),
+    );
+    tracing::info!(
+        load_ms = index.load.as_millis() as u64,
+        walk_ms = index.walk.as_millis() as u64,
+        files = index.files_answered,
+        unjoined = index.unjoined,
+        external = index.external,
+        "rust checker tier loaded"
+    );
+    Some(index)
 }
 
 /// Load the SCIP index the request names and flatten it to raw index facts:
@@ -484,6 +622,7 @@ pub fn diet_scip(paths: &[PathBuf]) -> Result<Vec<FlatFact>, ProjectError> {
         project_root: None,
         scip_records: ScipRecords::all(),
         occurrence_text: false,
+        rust_checker: None,
     })
 }
 
@@ -533,6 +672,16 @@ fn read_inputs_inner(paths: &[PathBuf], modules: bool) -> Result<Vec<ProjectInpu
 /// The module facts of one file, when this run wants them.
 fn module_facts_of(path: &str, content: &[u8], wanted: bool) -> Option<ModuleFacts> {
     wanted.then(|| crate::lang::ts_resolve::module_facts(path, content))?
+}
+
+/// The rust module plane's own facts, same discipline as `module_facts_of`.
+fn rust_module_facts_of(path: &str, content: &[u8], wanted: bool) -> Option<RustModuleFacts> {
+    wanted.then(|| crate::lang::rust_modules::rust_module_facts(path, content))?
+}
+
+/// The go module plane's own facts, same discipline as `module_facts_of`.
+fn go_module_facts_of(path: &str, content: &[u8], wanted: bool) -> Option<GoModuleFacts> {
+    wanted.then(|| crate::lang::go_modules::go_module_facts(path, content))?
 }
 
 /// Extraction thread budget. One worker is held back below the clamp so the
@@ -598,11 +747,15 @@ fn read_inputs_plain(paths: &[PathBuf], modules: bool) -> Result<Vec<ProjectInpu
                 let path = path.to_string_lossy().to_string();
                 let output = crate::dispatch(&path, &content, resolve_mask(&path));
                 let module = module_facts_of(&path, &content, modules);
+                let rust_module = rust_module_facts_of(&path, &content, modules);
+                let go_module = go_module_facts_of(&path, &content, modules);
                 Ok(output.map(|output| ProjectInput {
                     blob: content_id_of(&content),
                     path,
                     output,
                     module,
+                    rust_module,
+                    go_module,
                 }))
             })
             .collect()
@@ -644,11 +797,15 @@ fn read_inputs_batched(
                 let path = path.to_string_lossy().to_string();
                 let output = crate::dispatch(&path, content, resolve_mask(&path));
                 let module = module_facts_of(&path, content, modules);
+                let rust_module = rust_module_facts_of(&path, content, modules);
+                let go_module = go_module_facts_of(&path, content, modules);
                 Ok(output.map(|output| ProjectInput {
                     blob: content_id_of(content),
                     path,
                     output,
                     module,
+                    rust_module,
+                    go_module,
                 }))
             })
             .collect()
@@ -676,7 +833,29 @@ fn load_scip(
     inputs: &[ProjectInput],
 ) -> Result<Option<ScipIndex>, ProjectError> {
     let source = match request.scip {
-        ScipMode::Off => return Ok(None),
+        ScipMode::Off => {
+            // Informed-by-default: a resolve with no explicit SCIP flags still
+            // adopts a FRESH index (one whose recorded set matches this file
+            // set) so the scip leg pays for itself; anything else stays plain.
+            if let Some(root) = request.project_root {
+                if let Some(path) =
+                    crate::scip_ensure::fresh_index_for_set(root, &index_set_of(inputs).digest())
+                {
+                    tracing::info!(
+                        "scip-informed resolve: fresh index {} (plain flags, adopted by freshness)",
+                        path.display()
+                    );
+                    return crate::scip_decode::load_index(&path)
+                        .map(Some)
+                        .map_err(ProjectError::Scip);
+                }
+                tracing::info!(
+                    "scip-informed resolve: no fresh index under {}, plain name-match leg",
+                    root.display()
+                );
+            }
+            return Ok(None);
+        }
         ScipMode::Load(path) => {
             let Some(_) = request.project_root else {
                 return Err(ProjectError::ScipNeedsRoot);
@@ -833,7 +1012,7 @@ pub static RESOLVE_ARMS: &[ResolveArm] = &[
         name: "go",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&GoSource, out, cx)),
         types: Some(|out, cx| Resolve::<TypeF>::resolve(&GoSource, out, cx)),
-        drops: None,
+        drops: Some(crate::lang::go::call_drops),
         type_plane: TypePlane::Nodes,
     },
     ResolveArm {
@@ -1034,25 +1213,57 @@ fn call_facts(
         .collect()
 }
 
-/// Every import binding one input writes, resolved through the module plane.
-/// Not an arm output: the plane answers per FILE, ahead of any family.
+/// Every import binding one input writes. A file belongs to at most one
+/// language's plane, so only one of the two closures below yields rows.
 fn import_facts(input: &ProjectInput, cx: &ProjectCx) -> Vec<FlatFact> {
-    let Some(modules) = cx.indexes.ts_modules.get() else {
-        return Vec::new();
-    };
-    modules
-        .bindings(&input.path)
+    let ts_rows = cx.indexes.ts_modules.get().into_iter().flat_map(|modules| {
+        modules
+            .bindings(&input.path)
+            .into_iter()
+            .map(|row| FlatFact::ResolvedImportRow {
+                src_path: input.path.clone(),
+                name: row.name,
+                local: row.local,
+                target_path: row.target_path,
+                target_name: row.target_name,
+                kind: row.kind.as_str().to_string(),
+                hops: row.hops,
+            })
+    });
+    let rust_rows = cx
+        .indexes
+        .rust_modules
+        .get()
         .into_iter()
-        .map(|row| FlatFact::ResolvedImportRow {
-            src_path: input.path.clone(),
-            name: row.name,
-            local: row.local,
-            target_path: row.target_path,
-            target_name: row.target_name,
-            kind: row.kind.as_str().to_string(),
-            hops: row.hops,
-        })
-        .collect()
+        .flat_map(|modules| {
+            modules
+                .bindings(&input.path)
+                .into_iter()
+                .map(|row| FlatFact::ResolvedImportRow {
+                    src_path: input.path.clone(),
+                    name: row.name,
+                    local: row.local,
+                    target_path: row.target_path,
+                    target_name: row.target_name,
+                    kind: row.kind.as_str().to_string(),
+                    hops: row.hops,
+                })
+        });
+    let go_rows = cx.indexes.go_modules.get().into_iter().flat_map(|modules| {
+        modules
+            .bindings(&input.path)
+            .into_iter()
+            .map(|row| FlatFact::ResolvedImportRow {
+                src_path: input.path.clone(),
+                name: row.name,
+                local: row.local,
+                target_path: row.target_path,
+                target_name: row.target_name,
+                kind: row.kind.as_str().to_string(),
+                hops: 0,
+            })
+    });
+    ts_rows.chain(rust_rows).chain(go_rows).collect()
 }
 
 /// The `unresolved` rows for one input: the sites its `call` arm dropped. The

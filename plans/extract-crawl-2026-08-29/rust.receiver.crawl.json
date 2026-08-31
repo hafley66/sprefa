@@ -1,0 +1,431 @@
+{
+ "defs_total": 19249,
+ "edges_total": 83331,
+ "program_roots": 75,
+ "program_handlers": 73,
+ "test_roots": 7774,
+ "program_reachable": 3731,
+ "test_reachable": 12826,
+ "union_reachable": 13244,
+ "program_depth_hist": [
+  [
+   0,
+   75
+  ],
+  [
+   1,
+   144
+  ],
+  [
+   2,
+   155
+  ],
+  [
+   3,
+   112
+  ],
+  [
+   4,
+   224
+  ],
+  [
+   5,
+   240
+  ],
+  [
+   6,
+   273
+  ],
+  [
+   7,
+   421
+  ],
+  [
+   8,
+   469
+  ],
+  [
+   9,
+   411
+  ],
+  [
+   10,
+   366
+  ],
+  [
+   11,
+   225
+  ],
+  [
+   12,
+   151
+  ],
+  [
+   13,
+   137
+  ],
+  [
+   14,
+   109
+  ],
+  [
+   15,
+   72
+  ],
+  [
+   16,
+   64
+  ],
+  [
+   17,
+   29
+  ],
+  [
+   18,
+   26
+  ],
+  [
+   19,
+   18
+  ],
+  [
+   20,
+   8
+  ],
+  [
+   21,
+   2
+  ]
+ ],
+ "test_depth_hist": [
+  [
+   0,
+   7774
+  ],
+  [
+   1,
+   607
+  ],
+  [
+   2,
+   626
+  ],
+  [
+   3,
+   874
+  ],
+  [
+   4,
+   837
+  ],
+  [
+   5,
+   785
+  ],
+  [
+   6,
+   460
+  ],
+  [
+   7,
+   331
+  ],
+  [
+   8,
+   218
+  ],
+  [
+   9,
+   130
+  ],
+  [
+   10,
+   73
+  ],
+  [
+   11,
+   58
+  ],
+  [
+   12,
+   39
+  ],
+  [
+   13,
+   11
+  ],
+  [
+   14,
+   2
+  ],
+  [
+   15,
+   1
+  ]
+ ],
+ "unreachable_total": 6005,
+ "unreachable_top20": [
+  {
+   "path": "crates/ide-db/src/generated/lints.rs",
+   "name": "FEATURES",
+   "span_bytes": 378402,
+   "in_edges": 0,
+   "out_edges": 1
+  },
+  {
+   "path": "crates/ide-db/src/generated/lints.rs",
+   "name": "DEFAULT_LINTS",
+   "span_bytes": 64206,
+   "in_edges": 0,
+   "out_edges": 2
+  },
+  {
+   "path": "crates/hir-ty/src/mir/lower.rs",
+   "name": "lower_expr_to_place_without_adjust",
+   "span_bytes": 41423,
+   "in_edges": 3,
+   "out_edges": 80
+  },
+  {
+   "path": "crates/hir-expand/src/inert_attr_macro.rs",
+   "name": "INERT_ATTRIBUTES",
+   "span_bytes": 27988,
+   "in_edges": 0,
+   "out_edges": 3
+  },
+  {
+   "path": "crates/hir-ty/src/infer/expr.rs",
+   "name": "infer_expr_inner",
+   "span_bytes": 26606,
+   "in_edges": 19,
+   "out_edges": 73
+  },
+  {
+   "path": "crates/hir-expand/src/builtin/derive_macro.rs",
+   "name": "coerce_pointee_expand",
+   "span_bytes": 20634,
+   "in_edges": 0,
+   "out_edges": 22
+  },
+  {
+   "path": "crates/hir-ty/src/mir/lower/pattern_matching.rs",
+   "name": "pattern_match_inner",
+   "span_bytes": 18540,
+   "in_edges": 4,
+   "out_edges": 37
+  },
+  {
+   "path": "crates/hir/src/diagnostics.rs",
+   "name": "inference_diagnostic",
+   "span_bytes": 18486,
+   "in_edges": 1,
+   "out_edges": 61
+  },
+  {
+   "path": "crates/rust-analyzer/src/cli/analysis_stats.rs",
+   "name": "run_inference",
+   "span_bytes": 17673,
+   "in_edges": 2,
+   "out_edges": 27
+  },
+  {
+   "path": "crates/hir/src/lib.rs",
+   "name": "diagnostics",
+   "span_bytes": 16592,
+   "in_edges": 2,
+   "out_edges": 74
+  },
+  {
+   "path": "crates/hir/src/source_analyzer.rs",
+   "name": "resolve_path",
+   "span_bytes": 16402,
+   "in_edges": 0,
+   "out_edges": 44
+  },
+  {
+   "path": "crates/hir-def/src/lang_item.rs",
+   "name": "assign_lang_item",
+   "span_bytes": 15355,
+   "in_edges": 0,
+   "out_edges": 0
+  },
+  {
+   "path": "crates/hir-def/src/lang_item.rs",
+   "name": "fill_non_lang_core_items",
+   "span_bytes": 15355,
+   "in_edges": 0,
+   "out_edges": 0
+  },
+  {
+   "path": "crates/hir-def/src/lang_item.rs",
+   "name": "from_lang_items",
+   "span_bytes": 15355,
+   "in_edges": 0,
+   "out_edges": 0
+  },
+  {
+   "path": "crates/hir-def/src/lang_item.rs",
+   "name": "merge_prefer_self",
+   "span_bytes": 15355,
+   "in_edges": 0,
+   "out_edges": 0
+  },
+  {
+   "path": "crates/hir-def/src/lang_item.rs",
+   "name": "from_symbol",
+   "span_bytes": 15355,
+   "in_edges": 0,
+   "out_edges": 0
+  },
+  {
+   "path": "crates/rust-analyzer/src/cli/analysis_stats.rs",
+   "name": "run",
+   "span_bytes": 14078,
+   "in_edges": 0,
+   "out_edges": 42
+  },
+  {
+   "path": "crates/hir-ty/src/infer.rs",
+   "name": "resolve_variant",
+   "span_bytes": 13893,
+   "in_edges": 0,
+   "out_edges": 25
+  },
+  {
+   "path": "crates/ide-assists/src/handlers/inline_call.rs",
+   "name": "inline",
+   "span_bytes": 13375,
+   "in_edges": 4,
+   "out_edges": 29
+  },
+  {
+   "path": "crates/ide-assists/src/handlers/convert_closure_to_fn.rs",
+   "name": "convert_closure_to_fn",
+   "span_bytes": 12702,
+   "in_edges": 0,
+   "out_edges": 43
+  }
+ ],
+ "out_degree_top20": [
+  {
+   "path": "crates/syntax/src/ast/generated/nodes.rs",
+   "name": "from",
+   "out_degree": 126,
+   "depth": -1
+  },
+  {
+   "path": "crates/syntax/src/ast/generated/nodes.rs",
+   "name": "cast",
+   "out_degree": 125,
+   "depth": 4
+  },
+  {
+   "path": "crates/ide-diagnostics/src/lib.rs",
+   "name": "semantic_diagnostics",
+   "out_degree": 95,
+   "depth": 3
+  },
+  {
+   "path": "crates/hir-ty/src/mir/lower.rs",
+   "name": "lower_expr_to_place_without_adjust",
+   "out_degree": 80,
+   "depth": -1
+  },
+  {
+   "path": "crates/hir/src/diagnostics.rs",
+   "name": "from",
+   "out_degree": 79,
+   "depth": -1
+  },
+  {
+   "path": "crates/hir-def/src/expr_store/lower.rs",
+   "name": "maybe_collect_expr",
+   "out_degree": 75,
+   "depth": 6
+  },
+  {
+   "path": "crates/hir/src/lib.rs",
+   "name": "diagnostics",
+   "out_degree": 74,
+   "depth": -1
+  },
+  {
+   "path": "crates/hir-ty/src/infer/expr.rs",
+   "name": "infer_expr_inner",
+   "out_degree": 73,
+   "depth": -1
+  },
+  {
+   "path": "crates/hir/src/diagnostics.rs",
+   "name": "inference_diagnostic",
+   "out_degree": 61,
+   "depth": -1
+  },
+  {
+   "path": "crates/ide-completion/src/context/analysis.rs",
+   "name": "classify_name_ref",
+   "out_degree": 58,
+   "depth": 4
+  },
+  {
+   "path": "crates/rust-analyzer/src/main_loop.rs",
+   "name": "handle_event",
+   "out_degree": 53,
+   "depth": 6
+  },
+  {
+   "path": "crates/ide-assists/src/handlers/extract_function.rs",
+   "name": "extract_function",
+   "out_degree": 50,
+   "depth": -1
+  },
+  {
+   "path": "crates/hir-ty/src/display.rs",
+   "name": "hir_fmt",
+   "out_degree": 48,
+   "depth": 7
+  },
+  {
+   "path": "crates/hir/src/display.rs",
+   "name": "hir_fmt",
+   "out_degree": 47,
+   "depth": -1
+  },
+  {
+   "path": "crates/hir-def/src/nameres/collector.rs",
+   "name": "collect",
+   "out_degree": 45,
+   "depth": 8
+  },
+  {
+   "path": "crates/hir-ty/src/mir/eval/shim.rs",
+   "name": "exec_intrinsic",
+   "out_degree": 45,
+   "depth": 9
+  },
+  {
+   "path": "crates/hir/src/source_analyzer.rs",
+   "name": "resolve_path",
+   "out_degree": 44,
+   "depth": -1
+  },
+  {
+   "path": "crates/hir-ty/src/infer/closure/analysis.rs",
+   "name": "analyze_closure",
+   "out_degree": 43,
+   "depth": 12
+  },
+  {
+   "path": "crates/ide-assists/src/handlers/convert_closure_to_fn.rs",
+   "name": "convert_closure_to_fn",
+   "out_degree": 43,
+   "depth": -1
+  },
+  {
+   "path": "crates/hir-def/src/expr_store/lower.rs",
+   "name": "collect_pat",
+   "out_degree": 42,
+   "depth": 8
+  }
+ ]
+}

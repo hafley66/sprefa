@@ -1,0 +1,306 @@
+getDefinitionAtPosition	getSourceFile	method on a class instance created in another file	recv=node init=getTouchingPropertyName(sourceFile, position)
+getMode	getModeForUsageLocation	other: bare call, local function	decl=src/compiler/program.ts
+getCodeActions	getSourceFiles	interface receiver (signature in another file)	recv=program type=Program
+<module>	getSymbolWalker	interface receiver (signature in another file)	recv=checker type=TypeChecker
+value	isConstructorDeclaration	bare call, callee imported	decl=src/compiler/factory/nodeTests.ts
+getAllCodeActions	codeFixAll	bare call, callee imported	decl=src/services/codeFixProvider.ts
+getInfo	isImplementationOfOverload	method on a class instance created in another file	recv=typeChecker init=context.program.getTypeChecker()
+update	updatePosition	other: bare call, local function	decl=src/harness/fourslashImpl.ts
+getBaseTypes	getBaseTypes	receiver from a `this.` field	recv=this.checker type=TypeChecker
+edit	ensureFileOrFolder	receiver typed through a union or intersection	recv=sys type=TestServerHostTrackingWrittenFiles
+makeAssertChanges	emitNextAffectedFile	interface receiver (signature in another file)	recv=builderProgram type=EmitAndSemanticDiagnosticsBuilderProgram
+useCaseSensitiveFileNames	useCaseSensitiveFileNames	interface receiver (signature in another file)	recv=host type=TypeCheckerHost
+isLocationProjectReferenceRedirect	getProgram	interface receiver (signature in another file)	recv=project.getLanguageService() type=LanguageService
+tryDeleteParameter	deleteModifier	concrete class receiver, method in another file	recv=changes type=ChangeTracker
+printLinks	combinePaths	MANUAL(site not locatable)	
+addInlineAssertion	replaceNode	method on a class instance created in another file	recv=changeTracker init=textChanges.ChangeTracker.fromContext(context)
+promoteFromTypeOnly	deleteRange	concrete class receiver, method in another file	recv=changes type=ChangeTracker
+getInstantiationCount	getTypeChecker	other: bare call, local function	decl=src/compiler/program.ts
+<module>	serializeState	receiver typed through a union or intersection	recv=system type=TestServerHostTrackingWrittenFiles
+getCodeActionsToConvertToTypeOnlyExport	fixSingleExportDeclaration	other: bare call, local function	decl=src/services/codefixes/convertToTypeOnlyExport.ts
+visit	forEachChild	bare call, callee imported	decl=src/compiler/parser.ts
+afterProgramEmitAndDiagnostics	reportStatistics	other: bare call, local function	decl=src/compiler/executeCommandLine.ts
+configure	configure	concrete class receiver, method in another file	recv=(this.languageService as ts.server.SessionClient) type=SessionClient
+searchDirectoryAndAncestors	addOrUpdate	other: bare call, local function	decl=src/server/packageJsonCache.ts
+testConfiguredProjectNodeModules	runPendingInstalls	method on a class instance created in another file	recv=host init=TestServerHost.createServerHost(
+                [app, jsconfig, pkgJson, comma
+getCodeActions	createCodeFixActionWithoutFixAll	bare call, callee imported	decl=src/services/codeFixProvider.ts
+createSetup	TestSession.constructor	other: constructor call on a local class	decl=src/testRunner/unittests/helpers/tsserver.ts
+verifyScenario	TestSession.constructor	other: constructor call on a local class	decl=src/testRunner/unittests/helpers/tsserver.ts
+<module>	getSnapshot	method on a class instance created in another file	recv=svc init=ts.server.ScriptVersionCache.fromString(testContent)
+createBaseIdentifierNode	getIdentifierConstructor	interface receiver (signature in another file)	recv=objectAllocator type=ObjectAllocator
+getEditInfoForConvertToNamedFunction	with	MANUAL(checker threw)	Debug Failure. False expression: Should only get Alias here.
+combineAnonymousTypes	createIndexInfo	method on a class instance created in another file	recv=checker init=program.getTypeChecker()
+getAllCodeActions	getCallName	other: bare call, local function	decl=src/services/codefixes/fixMissingCallParentheses.ts
+createSignatureDeclarationFromSignature	getTypeChecker	interface receiver (signature in another file)	recv=program type=Program
+forEachChildInTypeReference	visitNodes	other: bare call, local function	decl=src/compiler/parser.ts
+sys	writeFile	method on a class instance created in another file	recv=sys init=getSysForSampleProjectReferences()
+getCodeActions	isArrayBindingPattern	bare call, callee imported	decl=src/compiler/factory/nodeTests.ts
+hoistExportEquals	hoistVariableDeclaration	bare call, callee imported	decl=src/compiler/transformers/esnext.ts
+validateEdit	getText	method on a class instance created in another file	recv=snapshot init=lineIndex.edit(position, deleteLength, insertString)
+execSyncAndLog	isEnabled	receiver from a `this.` field	recv=this.log type=Log
+visitEachChildOfExternalModuleReference	checkDefined	namespace member through a (nested) namespace	recv=Debug
+getAllCodeActions	getInfo	other: bare call, local function	decl=src/services/codefixes/convertLiteralTypeToMappedType.ts
+sys	createWatchedSystem	concrete class receiver, method in another file	recv=TestServerHost type=typeof TestServerHost
+edit	modifyFile	receiver typed through a union or intersection	recv=sys type=TestServerHostTrackingWrittenFiles
+getCodeActions	tryPrefixDeclaration	other: bare call, local function	decl=src/services/codefixes/fixUnusedIdentifier.ts
+forEachChildInJSDocFunctionType	visitNode	other: bare call, local function	decl=src/compiler/parser.ts
+visitEachChildOfWithStatement	checkDefined	namespace member through a (nested) namespace	recv=Debug
+runTest	findChild	other: bare call, local function	decl=src/testRunner/unittests/services/textChanges.ts
+getCodeActionsToFixUnmatchedParameter	getInfo	other: bare call, local function	decl=src/services/codefixes/fixUnmatchedParameter.ts
+evaluate	evaluateEntityNameExpression	bare call, callee imported	decl=src/compiler/utilities.ts
+getAllCodeActions	createCombinedCodeActions	bare call, callee imported	decl=src/services/codeFixProvider.ts
+updateGraphWorker	attachToProject	receiver typed through a union or intersection	recv=scriptInfo type=ScriptInfo | undefined
+getSemanticDiagnosticsOfNextAffectedFile	withProgramOrUndefined	other: bare call, local function	decl=src/compiler/tsbuildPublic.ts
+edit	prependFile	receiver typed through a union or intersection	recv=sys type=TestServerHostTrackingWrittenFiles
+verifyWatchDirectoriesCaseSensitivity	writeFile	method on a class instance created in another file	recv=host init=TestServerHost.createServerHost(projectFiles, { useCaseSensitiveFileNames })
+createArrayBindingOrAssignmentPattern	makeArrayAssignmentPattern	other: bare call, local function	decl=src/compiler/transformers/destructuring.ts
+writeLiteral	escapingWrite	other: bare call, local function	decl=src/services/completions.ts
+doChange	replaceNode	concrete class receiver, method in another file	recv=changes type=ChangeTracker
+writeLine	commitPendingTrailingSemicolon	other: bare call, local function	decl=src/compiler/utilities.ts
+forEachChildInTypeOfExpression	visitNode	other: bare call, local function	decl=src/compiler/parser.ts
+createBaseNode	makeSynthetic	other: bare call, local function	decl=src/compiler/factory/nodeFactory.ts
+getCompletionEntryDetails	getLanguageService	concrete class receiver, method in another file	recv=project type=Project
+forEachChildInTemplateSpan	visitNode	other: bare call, local function	decl=src/compiler/parser.ts
+createLateBoundIndexSignatures	isPropertyDeclaration	bare call, callee imported	decl=src/compiler/factory/nodeTests.ts
+edit	deleteFile	receiver typed through a union or intersection	recv=sys type=TestServerHostTrackingWrittenFiles
+visit	getNewNameIfConflict	other: bare call, local function	decl=src/services/codefixes/convertToAsyncFunction.ts
+transformExtendsClauseWithExpression	replaceRange	method on a class instance created in another file	recv=changeTracker init=textChanges.ChangeTracker.fromContext(context)
+addInlineAssertion	insertNodeAt	method on a class instance created in another file	recv=changeTracker init=textChanges.ChangeTracker.fromContext(context)
+emitTrailingCommentsOfNode	enter	bare call, callee imported	decl=src/compiler/emitter.ts
+createAssignHelper	createIdentifier	interface receiver (signature in another file)	recv=factory type=NodeFactory
+addDefaultValueAssignmentForInitializer	createBlock	interface receiver (signature in another file)	recv=factory type=NodeFactory
+clearMarks	clearMarks	receiver typed through a union or intersection	recv=performanceImpl type=Performance | undefined
+walk	isStringOrNumericLiteralLike	bare call, callee imported	decl=src/compiler/utilities.ts
+visitEachChildOfCatchClause	checkDefined	namespace member through a (nested) namespace	recv=Debug
+forEachChildInObjectLiteralExpression	visitNodes	other: bare call, local function	decl=src/compiler/parser.ts
+forEachChildInGetAccessor	visitNode	other: bare call, local function	decl=src/compiler/parser.ts
+getCompletionEntryCodeActionsAndSourceDisplay	with	MANUAL(checker threw)	Debug Failure. False expression: Should only get Alias here.
+getQuickInfoWorker	positionToLineOffset	concrete class receiver, method in another file	recv=scriptInfo type=ScriptInfo
+createLateBoundIndexSignatures	filter	bare call, callee imported	decl=src/compiler/core.ts
+getCodeActionsToAddMissingAwait	getDeclarationSiteFix	other: bare call, local function	decl=src/services/codefixes/addMissingAwait.ts
+forEachChildInFunctionDeclaration	visitNodes	other: bare call, local function	decl=src/compiler/parser.ts
+files	jsonToReadableText	bare call, callee imported	decl=src/testRunner/unittests/helpers.ts
+getCompletionEntryDetails	getCompletionEntryDetails	namespace member through a (nested) namespace	recv=Completions
+checkGrammarRegularExpressionLiteral	setScriptTarget	interface receiver (signature in another file)	recv=scanner type=Scanner
+getCodeActionsToConvertConstToLet	doChange	other: bare call, local function	decl=src/services/codefixes/convertConstToLet.ts
+classifySymbol	getFlags	interface receiver (signature in another file)	recv=symbol type=Symbol
+errorInfo	chainDiagnosticMessages	bare call, callee imported	decl=src/compiler/utilities.ts
+visitor	computeLineStarts	namespace member through a (nested) namespace	recv=ts
+requiresAddingImplicitUndefined	isOptionalDeclaration	bare call, callee imported	decl=src/compiler/utilities.ts
+runProjectTestCase	verifyJavaScriptOutput	concrete class receiver, method in another file	recv=projectTestCase type=ProjectTestCase
+trackCreatedInode	Symlink.constructor	other: constructor call on a local class	decl=src/harness/vfsUtil.ts
+<module>	TestSession.constructor	other: constructor call on a local class	decl=src/testRunner/unittests/helpers/tsserver.ts
+serializePropertySymbol	createGetAccessorDeclaration	method on a class instance created in another file	recv=factory init=if (name !== originalName) {
+                        return name;
+          
+emitFile	createHash	MANUAL(checker threw)	Debug Failure. False expression: Should only get Alias here.
+hasSyntacticDiagnostics	getSyntacticDiagnostics	interface receiver (signature in another file)	recv=program type=Program
+createImportCallExpressionAMD	getEmitHelperFactory	MANUAL(site not locatable)	
+handleNoEmitOptions	getCompilerOptions	receiver typed through a union or intersection	recv=program type=Program | T
+sys	jsonToReadableText	bare call, callee imported	decl=src/testRunner/unittests/helpers.ts
+edit	replaceFileText	receiver typed through a union or intersection	recv=sys type=TestServerHostTrackingWrittenFiles
+getSymbolForProgram	getSymbolAtLocation	method on a class instance created in another file	recv=checker init=program.getTypeChecker()
+getInfo	getSuggestedSymbolForNonexistentJSXAttribute	method on a class instance created in another file	recv=checker init=context.program.getTypeChecker()
+getNextInvalidatedProject	setupInitialBuild	other: bare call, local function	decl=src/compiler/tsbuildPublic.ts
+addExtendsHelperIfNeeded	getEmitHelperFactory	MANUAL(site not locatable)	
+sys	prependFile	method on a class instance created in another file	recv=sys init=getSysForDemoProjectReferences()
+visitEachChildOfSatisfiesExpression	checkDefined	namespace member through a (nested) namespace	recv=Debug
+getCodeActions	doChange	other: bare call, local function	decl=src/services/codefixes/fixForgottenThisPropertyAccess.ts
+canReuseTypeNode	canReuseTypeNode	other: bare call, local function	decl=src/compiler/checker.ts
+transformAsyncFunctionBody	hasNodeCheckFlag	method on a class instance created in another file	recv=resolver init=context.getEmitResolver()
+forEachChildInJSDocImplementsTag	visitNode	other: bare call, local function	decl=src/compiler/parser.ts
+verifyJavaScriptOutput	resolvePath	MANUAL(checker threw)	Debug Failure. False expression: Should only get Alias here.
+forEachChildInTypeAssertionExpression	visitNode	other: bare call, local function	decl=src/compiler/parser.ts
+createTestCompilerHost	getSourceFile	interface receiver (signature in another file)	recv=oldProgram type=ProgramWithSourceTexts
+getBuildInfo	getBuildInfo	interface receiver (signature in another file)	recv=program type=Program
+visitDeclarationSubtree	isDefinitelyReferenceToGlobalSymbolObject	method on a class instance created in another file	recv=resolver init=context.getEmitResolver()
+edit	prependFile	receiver typed through a union or intersection	recv=sys type=TestServerHostTrackingWrittenFiles
+signatureToSignatureDeclaration	signatureToSignatureDeclarationHelper	other: bare call, local function	decl=src/compiler/checker.ts
+createLateBoundIndexSignatures	getTypeOfSymbol	other: bare call, local function	decl=src/compiler/checker.ts
+addObjectLiteralProperties	replaceNode	concrete class receiver, method in another file	recv=changes type=ChangeTracker
+getAllCodeActions	doChange	other: bare call, local function	decl=src/services/codefixes/correctQualifiedNameToIndexedAccessType.ts
+writeSymbol	writeSymbol	interface receiver (signature in another file)	recv=writer type=EmitTextWriter
+serializePropertySymbol	modifiersLength	other: bare call, local function	decl=src/compiler/checker.ts
+getSemanticDiagnostics	getSemanticDiagnostics	receiver from a `this.` field	recv=this.state type=TestState
+edit	deleteFile	receiver typed through a union or intersection	recv=sys type=TestServerHostTrackingWrittenFiles
+getDirectories	combinePaths	MANUAL(site not locatable)	
+getCommonSourceDirectory	getCommonSourceDirectory	interface receiver (signature in another file)	recv=program type=Program
+updateGraph	updateProjectIfDirty	other: bare call, local function	decl=src/server/editorServices.ts
+readFile	getLength	interface receiver (signature in another file)	recv=snap type=IScriptSnapshot
+createSolutionBuilderHostBase	getModifiedTime	other: bare call, local function	decl=src/compiler/tsbuildPublic.ts
+transformForAwaitOfStatement	getEmitHelperFactory	MANUAL(site not locatable)	
+getFilenameForExceededTotalSizeLimitForNonTsFiles	getFileSize	receiver from a `this.` field	recv=this.host type=ServerHost
+getCodeActionsToAddMissingAsync	find	bare call, callee imported	decl=src/compiler/core.ts
+directoryExists	directoryExists	receiver from a `this.` field	recv=this.sys type=System
+doChange	getStart	interface receiver (signature in another file)	recv=statement type=Statement
+getSemanticDiagnosticsOfNextAffectedFile	getSemanticDiagnosticsOfNextAffectedFile	interface receiver (signature in another file)	recv=(program as any as SemanticDiagnosticsBuilderProgram) type=SemanticDiagnosticsBuilderProgram
+getFileNames	getCompilerOptions	receiver from a `this.` field	recv=this.program type=Program
+combineTypes	getAnyType	method on a class instance created in another file	recv=checker init=program.getTypeChecker()
+getRefactorActionsToGenerateGetAndSetAccessors	getAccessorConvertiblePropertyAtPosition	namespace member through a (nested) namespace	recv=codefix
+baselineHost	serializeState	receiver typed through a union or intersection	recv=host type=TestSessionAndServiceHost
+fileExists	getNormalizedAbsolutePath	namespace member through a (nested) namespace	recv=ts
+forEachChildInHeritageClause	visitNodes	other: bare call, local function	decl=src/compiler/parser.ts
+createNodeArray	createNodeArray	other: bare call, local function	decl=src/compiler/parser.ts
+getNearestAncestorDirectoryWithPackageJson	fileExists	receiver from a `this.` field	recv=this.host type=ServerHost
+getSignatureHelpItems	getScriptInfoForNormalizedPath	receiver from a `this.` field	recv=this.projectService type=ProjectService
+getOptionsDiagnostics	withProgramOrEmptyArray	other: bare call, local function	decl=src/compiler/tsbuildPublic.ts
+add	isExternalModuleSymbol	bare call, callee imported	decl=src/compiler/utilities.ts
+handleRequest	executeCommand	concrete class receiver, method in another file	recv=this type=this
+getGoToDefinitionAndBoundSpan	getDefinitionAndBoundSpan	receiver from a `this.` field	recv=this.languageService type=LanguageService
+insertLines	type	receiver from a `this.` field	recv=this.state type=TestState
+assertQuickInfoJSDoc	TestSession.constructor	other: constructor call on a local class	decl=src/testRunner/unittests/helpers/tsserver.ts
+tryDeleteParameter	delete	concrete class receiver, method in another file	recv=changes type=ChangeTracker
+doInterfaceChange	replaceNodeRange	concrete class receiver, method in another file	recv=changes type=ChangeTracker
+visitEachChildOfJsxElement	checkDefined	namespace member through a (nested) namespace	recv=Debug
+getAccessibleFileSystemEntries	isFile	method on a class instance created in another file	recv=stats init=this.vfs.statSync(vpath.combine(path, file))
+assertIsExternal	getSourceFile	interface receiver (signature in another file)	recv=program type=Program
+getPackageJsonTypesVersionsPaths	test	method on a class instance created in another file	recv=keyRange init=VersionRange.tryParse(key)
+functionExpressionToDeclaration	convertToFunctionBlock	MANUAL(checker threw)	Debug Failure. False expression: Should only get Alias here.
+forEachChildInImportEqualsDeclaration	visitNode	other: bare call, local function	decl=src/compiler/parser.ts
+sys	getSysForDemoProjectReferences	bare call, callee imported	decl=src/testRunner/unittests/helpers/demoProjectReferences.ts
+doChange	replaceNode	concrete class receiver, method in another file	recv=changes type=ChangeTracker
+toggleLineComment	getScriptInfo	receiver from a `this.` field	recv=this.projectService type=ProjectService
+create	jsonToReadableText	bare call, callee imported	decl=src/testRunner/unittests/helpers.ts
+codeActionForFix	with	MANUAL(checker threw)	Debug Failure. False expression: Should only get Alias here.
+changeDefaultToNamedImport	insertNodeAtEndOfList	concrete class receiver, method in another file	recv=changes type=ChangeTracker
+getErrForProjectRequest	dependencyProjectDiagnostics	other: bare call, local function	decl=src/testRunner/unittests/tsserver/projectReferenceErrors.ts
+getRefactorActionsToConvertBetweenNamedAndNamespacedImports	isRefactorErrorInfo	bare call, callee imported	decl=src/services/refactors/helpers.ts
+visit	syntaxRequiresTrailingSemicolonOrASI	other: bare call, local function	decl=src/services/utilities.ts
+<module>	TestSession.constructor	other: constructor call on a local class	decl=src/testRunner/unittests/helpers/tsserver.ts
+getConvertableOverloadListAtPosition	getSignatureFromDeclaration	method on a class instance created in another file	recv=checker init=program.getTypeChecker()
+sys	jsonToReadableText	bare call, callee imported	decl=src/testRunner/unittests/helpers.ts
+compile	commandLineCallbacks	bare call, callee imported	decl=src/testRunner/unittests/helpers/baseline.ts
+getAllCodeActions	codeFixAll	bare call, callee imported	decl=src/services/codeFixProvider.ts
+localDefine	isAmdDefineArgsNamedModule	other: bare call, local function	decl=src/harness/evaluatorImpl.ts
+getAmbientCandidatesByClimbingAccessChain	getProgram	method on a class instance created in another file	recv=ls init=project.getLanguageService()
+readDirectory	readDirectory	interface receiver (signature in another file)	recv=system type=System
+typePredicateToInlayHintParts	typePredicateToTypePredicateNode	method on a class instance created in another file	recv=checker init=program.getTypeChecker()
+cb	directoryExists	receiver typed through a union or intersection	recv=session.host type=TestSessionAndServiceHost
+printNavigationItems	printNavigationItems	receiver from a `this.` field	recv=this.state type=TestState
+transformFunctionBody	endLexicalEnvironment	bare call, callee imported	decl=src/compiler/transformers/es2018.ts
+makeSampleSession	TestSession.constructor	other: constructor call on a local class	decl=src/testRunner/unittests/helpers/tsserver.ts
+addTypeProperties	getApparentProperties	interface receiver (signature in another file)	recv=type type=Type
+getDeclarationDiagnostics	getDeclarationDiagnostics	MANUAL(checker threw)	Debug Failure. False expression: Should only get Alias here.
+getNodeCount	getSourceFiles	interface receiver (signature in another file)	recv=host type=TypeCheckerHost
+getCodeActions	with	MANUAL(checker threw)	Debug Failure. False expression: Should only get Alias here.
+sys	jsonToReadableText	bare call, callee imported	decl=src/testRunner/unittests/helpers.ts
+getInfo	isTypeAssignableTo	method on a class instance created in another file	recv=checker init=program.getTypeChecker()
+select	select	receiver from a `this.` field	recv=this.state type=TestState
+getLinkedEditingBaselineWorker	getLinkedEditingRangeAtPosition	interface receiver (signature in another file)	recv=languageService type=LanguageService
+stringLiteralCompletionsFromProperties	getApparentProperties	interface receiver (signature in another file)	recv=type type=Type
+baselineRename	baselineRename	receiver from a `this.` field	recv=this.state type=TestState
+exceptionRaisingHandler	f1	other: bare call, local function	decl=src/testRunner/unittests/tsserver/session.ts
+getSymbolCount	getTypeChecker	other: bare call, local function	decl=src/compiler/program.ts
+<module>	edit	concrete class receiver, method in another file	recv=lineIndex type=LineIndex
+serializeTypeOfDeclaration	serializeInferredTypeForDeclaration	other: bare call, local function	decl=src/compiler/checker.ts
+getRefactorEditsToExtractType	doTypeAliasChange	other: bare call, local function	decl=src/services/refactors/extractType.ts
+getNavigationTree	getScriptInfoForNormalizedPath	receiver from a `this.` field	recv=this.projectService type=ProjectService
+getPreEmitDiagnostics	getConfigFileParsingDiagnostics	receiver typed through a union or intersection	recv=program type=Program | BuilderProgram
+getPerProjectReferences	isCancellationRequested	method on a class instance created in another file	recv=cancellationToken init=defaultProject.getCancellationToken()
+assignOrphanScriptInfosToInferredProject	isOrphan	concrete class receiver, method in another file	recv=info type=ScriptInfo
+getRefactorActionsToMoveToNewFile	getLineAndCharacterOfPosition	bare call, callee imported	decl=src/compiler/scanner.ts
+assertSignatureHelpJSDoc	TestSession.constructor	other: constructor call on a local class	decl=src/testRunner/unittests/helpers/tsserver.ts
+baselineQuickInfo	getQuickInfoAtPosition	receiver from a `this.` field	recv=this.languageService type=LanguageService
+transformEnumBody	startLexicalEnvironment	bare call, callee imported	decl=src/compiler/transformers/ts.ts
+getRefactorEditsToMoveToFile	hasTSFileExtension	bare call, callee imported	decl=src/compiler/utilities.ts
+value	isInferTypeNode	bare call, callee imported	decl=src/compiler/factory/nodeTests.ts
+visitImportDeclaration	hoistVariableDeclaration	bare call, callee imported	decl=src/compiler/transformers/module/system.ts
+reportNonSerializableProperty	markError	other: bare call, local function	decl=src/compiler/checker.ts
+createBaseIdentifierNode	makeSynthetic	other: bare call, local function	decl=src/compiler/factory/nodeFactory.ts
+verify	writeFile	method on a class instance created in another file	recv=host init=TestServerHost.createServerHost({
+                    "/user/username/projects/
+walk	isIdentifier	bare call, callee imported	decl=src/compiler/factory/nodeTests.ts
+createLateBoundIndexSignatures	length	bare call, callee imported	decl=src/compiler/core.ts
+getAllCodeActions	getTokenAtPosition	bare call, callee imported	decl=src/services/utilities.ts
+parsePartial	Version.constructor	other: constructor call on a local class	decl=src/compiler/semver.ts
+timeouts	runQueuedTimeoutCallbacks	receiver typed through a union or intersection	recv=sys type=TestServerHostTrackingWrittenFiles
+normalizeFileSetEntry	Directory.constructor	other: constructor call on a local class	decl=src/harness/vfsUtil.ts
+writeLiteral	writeLiteral	interface receiver (signature in another file)	recv=writer type=EmitTextWriter
+<module>	TestSession.constructor	other: constructor call on a local class	decl=src/testRunner/unittests/helpers/tsserver.ts
+clear	clear	method on a class instance created in another file	recv=baseWriter init=createTextWriter("")
+fixImportOfModuleExports	replaceNode	concrete class receiver, method in another file	recv=changes type=ChangeTracker
+setup	TestSession.constructor	other: constructor call on a local class	decl=src/testRunner/unittests/helpers/tsserver.ts
+writeLiteral	writeLiteral	method on a class instance created in another file	recv=baseWriter init=textChanges.createWriter(getNewLineCharacter(printerOptions))
+createResolutionCache	getCurrentDirectory	bare call, callee imported	decl=src/compiler/resolutionCache.ts
+initializeSourceMapSpanWriter	WriteLine	concrete class receiver, method in another file	recv=sourceMapRecorder type=WriterAggregator
+getAllCodeActions	getInfo	other: bare call, local function	decl=src/services/codefixes/fixNaNEquality.ts
+verifyNpmInstall	TestSession.constructor	other: constructor call on a local class	decl=src/testRunner/unittests/helpers/tsserver.ts
+getJsxNamespace	getJsxNamespace	other: bare call, local function	decl=src/compiler/checker.ts
+doSourcemapBaseline	getNumberOfJsFiles	concrete class receiver, method in another file	recv=result type=CompilationResult
+forEachChildInTypeQuery	visitNodes	other: bare call, local function	decl=src/compiler/parser.ts
+runOnce	transpileModule	namespace member through a (nested) namespace	recv=ts
+getDefaultLibFileName	getDefaultLibFileName	namespace member through a (nested) namespace	recv=ts
+runFailedLookupTest	runQueuedTimeoutCallbacks	method on a class instance created in another file	recv=host init=TestServerHost.createServerHost(files)
+loadTypesRegistryFile	isEnabled	interface receiver (signature in another file)	recv=log type=Log
+getCodeActionsToConvertToTypeOnlyImport	createCodeFixActionWithoutFixAll	bare call, callee imported	decl=src/services/codeFixProvider.ts
+getAllCodeActions	addFunctionDeclaration	other: bare call, local function	decl=src/services/codefixes/fixAddMissingMember.ts
+loadEntrypointsFromTargetExports	getCurrentDirectory	receiver typed through a union or intersection	recv=state.host type=ModuleResolutionHost & GetPackageJsonEntrypointsHost
+getDiagnostics	getSuggestionDiagnostics	receiver from a `this.` field	recv=this.languageService type=LanguageService
+startDelayed	enable	concrete class receiver, method in another file	recv=progressBars type=ProgressBars
+baselineParseConfigWith	getParsedCommandJson	MANUAL(site not locatable)	
+importUnresolvedIdentifiers	isIdentifier	bare call, callee imported	decl=src/compiler/factory/nodeTests.ts
+getAllCodeActions	getNewLineOrDefaultFromHost	bare call, callee imported	decl=src/services/utilities.ts
+evaluate	evaluateElementAccessExpression	bare call, callee imported	decl=src/compiler/utilities.ts
+doChange	replaceNode	concrete class receiver, method in another file	recv=changes type=ChangeTracker
+fileExists	toPath	namespace member through a (nested) namespace	recv=ts
+writeFile	fileExtensionIs	bare call, callee imported	decl=src/compiler/path.ts
+forEachChildInJSDocSignature	visitNode	other: bare call, local function	decl=src/compiler/parser.ts
+<module>	modifyFile	method on a class instance created in another file	recv=host init=TestServerHost.createServerHost(files)
+rimrafSync	isSymbolicLink	concrete class receiver, method in another file	recv=stats type=Stats
+getMoveToRefactoringFileSuggestions	getLanguageService	concrete class receiver, method in another file	recv=project type=Project
+visitEachChildOfNewExpression	checkDefined	namespace member through a (nested) namespace	recv=Debug
+getMoveToRefactoringFileSuggestions	getScriptInfoForNormalizedPath	concrete class receiver, method in another file	recv=project type=Project
+serializeNameOfParameter	parameterToParameterDeclarationName	other: bare call, local function	decl=src/compiler/checker.ts
+getContextualKeywords	getLineAndCharacterOfPosition	method on a class instance created in another file	recv=file init=contextToken.getSourceFile()
+<module>	baselineHost	receiver typed through a union or intersection	recv=session.host type=TestSessionAndServiceHost
+baselineGoToImplementation	baselineGoToImplementation	receiver from a `this.` field	recv=this.state type=TestState
+timeouts	runQueuedTimeoutCallbacks	receiver typed through a union or intersection	recv=sys type=TestServerHostTrackingWrittenFiles
+getCodeActions	getTokenAtPosition	bare call, callee imported	decl=src/services/utilities.ts
+getAllCodeActions	doChange	other: bare call, local function	decl=src/services/codefixes/convertConstToLet.ts
+createRestHelper	createAdd	interface receiver (signature in another file)	recv=factory type=NodeFactory
+formatOnType	getFormattingEditsAfterKeystroke	receiver from a `this.` field	recv=this.languageService type=LanguageService
+getCodeActions	doChange	other: bare call, local function	decl=src/services/codefixes/fixAddMissingParam.ts
+getUnresolvedImports	getAmbientModules	interface receiver (signature in another file)	recv=program.getTypeChecker() type=TypeChecker
+getAllCodeActions	codeFixAll	bare call, callee imported	decl=src/services/codeFixProvider.ts
+inferTypeFromPropertyDeclaration	getTypeAtLocation	method on a class instance created in another file	recv=checker init=program.getTypeChecker()
+visitEachChildOfInferTypeNode	checkDefined	namespace member through a (nested) namespace	recv=Debug
+getCodeActions	with	MANUAL(checker threw)	Debug Failure. False expression: Should only get Alias here.
+visitReferencedPropertyName	hoistVariableDeclaration	bare call, callee imported	decl=src/compiler/transformers/esDecorators.ts
+typeFromSpreads	replaceNode	method on a class instance created in another file	recv=changeTracker init=textChanges.ChangeTracker.fromContext(context)
+findSourceDefinition	getLanguageService	concrete class receiver, method in another file	recv=project type=Project
+getApplicableSpanForArguments	getEnd	interface receiver (signature in another file)	recv=argumentsList type=Node
+edit	writeFile	receiver typed through a union or intersection	recv=sys type=TestServerHostTrackingWrittenFiles
+sys	changeCaseFile	other: bare call, local function	decl=src/testRunner/unittests/tsc/declarationEmit.ts
+combineAnonymousTypes	getTypeOfSymbolAtLocation	method on a class instance created in another file	recv=checker init=program.getTypeChecker()
+getDocumentPositionMapper	getLineInfo	MANUAL(checker threw)	Debug Failure. False expression: Should only get Alias here.
+getInputsAndOutputs	resolvePath	MANUAL(site not locatable)	
+uncommentSelection	uncommentSelection	receiver from a `this.` field	recv=this.languageService type=LanguageService
+verifyRange	getEnd	interface receiver (signature in another file)	recv=actual type=Node
+formatNodeLines	getStart	interface receiver (signature in another file)	recv=node type=Node
+chain	chainDiagnosticMessages	bare call, callee imported	decl=src/compiler/utilities.ts
+doChange	insertExportModifier	concrete class receiver, method in another file	recv=changes type=ChangeTracker
+evaluateJavaScript	FileSystem.constructor	MANUAL(site not locatable)	
+<module>	TestSession.constructor	other: constructor call on a local class	decl=src/testRunner/unittests/helpers/tsserver.ts
+assertCompletionsJSDoc	TestSession.constructor	other: constructor call on a local class	decl=src/testRunner/unittests/helpers/tsserver.ts
+transformPrivateIdentifierInInExpression	getEmitHelperFactory	MANUAL(site not locatable)	
+getAllCodeActions	getClass	other: bare call, local function	decl=src/services/codefixes/fixClassIncorrectlyImplementsInterface.ts
+logMessage	log	interface receiver (signature in another file)	recv=loggingHost type=LoggingHost
+getCodeActionsToConvertToTypeOnlyExport	createCodeFixAction	bare call, callee imported	decl=src/services/codeFixProvider.ts
+reportInferenceFallback	reportInferenceFallback	receiver from a `this.` field	recv=this.inner type=SymbolTracker
+combineAnonymousTypes	createAnonymousType	method on a class instance created in another file	recv=checker init=program.getTypeChecker()
+verifyUnresolvedImportResolutions	runQueuedTimeoutCallbacks	method on a class instance created in another file	recv=host init=TestServerHost.createServerHost(
+            [app, fooo],
+            { typing
+combineAnonymousTypes	getNumberType	method on a class instance created in another file	recv=checker init=program.getTypeChecker()
+getContainingList	getStart	interface receiver (signature in another file)	recv=node type=Node
+assertCompletionDetailsOk	getProgram	interface receiver (signature in another file)	recv=project.getLanguageService(/*ensureSynchronized*/ true) type=LanguageService
+forEachFreeIdentifier	forEachChild	interface receiver (signature in another file)	recv=node type=Node
+_getLinks	SortedMap.constructor	MANUAL(site not locatable)	
+getAllCodeActions	fail	namespace member through a (nested) namespace	recv=Debug
+collectStats	getCompilerOptions	method on a class instance created in another file	recv=program init=project.getCurrentProgram()
+tryGetImportAttributesCompletionSymbols	getTypeAtLocation	method on a class instance created in another file	recv=typeChecker init=program.getTypeChecker()
+modifySystem	getTypeScriptLibTestLocation	bare call, callee imported	decl=src/testRunner/unittests/helpers/contents.ts
+forEachChildInPropertyAssignment	visitNode	other: bare call, local function	decl=src/compiler/parser.ts
+visitEachChildOfTypeReferenceNode	checkDefined	namespace member through a (nested) namespace	recv=Debug
+getCompletionData	getSymbolAtLocation	method on a class instance created in another file	recv=typeChecker init=program.getTypeChecker()

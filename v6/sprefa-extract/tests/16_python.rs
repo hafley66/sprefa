@@ -212,6 +212,11 @@ fn python_doc_tags() {
         .collect();
     assert_eq!(
         texts,
-        ["Module docstring.", "An engine.", "Run it.", "single-quoted doc"]
+        [
+            "Module docstring.",
+            "An engine.",
+            "Run it.",
+            "single-quoted doc"
+        ]
     );
 }

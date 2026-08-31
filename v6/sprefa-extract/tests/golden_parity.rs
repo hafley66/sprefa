@@ -31,7 +31,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use sprefa_extract::{
-    build_def_index, byte_range, containing_def_site, content_id_of, covering_def, definition_of,
+    build_def_index, byte_range_cached, containing_def_site, content_id_of, covering_def, definition_of,
     dispatch, flatten, join_documents, site_occurrence, CallEdgeKind, ContentId, ExtractOutput,
     FamilyMask, FamilyTag, FileSet, FlatFact, GoSource, IndexBag, ManifestMap, ProjectCx,
     ProjectDigest, PythonSource, Resolve, RustSource, ScipGo, ScipRust, ScipSource, ScipTypescript,
@@ -204,6 +204,31 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
         .enumerate()
         .map(|(ix, start)| (start, ix as u32))
         .collect();
+    // An interface method spec is a v6-only call_def (no v5 construct mints
+    // one): skip it via its method_owner naming a `kind=interface` type node.
+    let interface_names: std::collections::BTreeSet<&str> = facts
+        .iter()
+        .filter_map(|fact| match fact {
+            FlatFact::Node {
+                family: FamilyTag::Type,
+                kind,
+                name: Some(name),
+                ..
+            } if kind == "interface" => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let interface_spec_spans: std::collections::BTreeSet<(u32, u32)> = facts
+        .iter()
+        .filter_map(|fact| match fact {
+            FlatFact::MethodOwnerOut {
+                owner,
+                self_type: Some(self_type),
+                ..
+            } if interface_names.contains(self_type.as_str()) => Some((owner.start, owner.end)),
+            _ => None,
+        })
+        .collect();
     let mut set = BTreeSet::new();
     for fact in facts {
         match fact {
@@ -221,11 +246,13 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
                     ));
                 }
                 FamilyTag::Call => {
-                    set.insert(format!(
-                        "call_def\t{kind}\t{}\t{}",
-                        name.as_deref().unwrap_or(""),
-                        line_of(bytes, span.start)
-                    ));
+                    if !interface_spec_spans.contains(&(span.start, span.end)) {
+                        set.insert(format!(
+                            "call_def\t{kind}\t{}\t{}",
+                            name.as_deref().unwrap_or(""),
+                            line_of(bytes, span.start)
+                        ));
+                    }
                 }
                 FamilyTag::Df => {
                     set.insert(format!(
@@ -785,6 +812,13 @@ fn deferred_and_v6_only_ledger() {
                             CallEdgeKind::ValueRef => {}
                             // The module plane binds a NAME, not an occurrence.
                             CallEdgeKind::ImportResolve => name_resolve += 1,
+                            CallEdgeKind::Implements => {}
+                            // Minted by the project post-pass, never by this
+                            // arm: the name-match leg the ledger counts here
+                            // never produces one.
+                            CallEdgeKind::ScipMacro => {}
+                            // The checker tier is off in the goldens.
+                            CallEdgeKind::CheckerResolve => {}
                         }
                     }
                 }
@@ -798,6 +832,13 @@ fn deferred_and_v6_only_ledger() {
                             CallEdgeKind::ValueRef => {}
                             // The module plane binds a NAME, not an occurrence.
                             CallEdgeKind::ImportResolve => name_resolve += 1,
+                            CallEdgeKind::Implements => {}
+                            // Minted by the project post-pass, never by this
+                            // arm: the name-match leg the ledger counts here
+                            // never produces one.
+                            CallEdgeKind::ScipMacro => {}
+                            // The checker tier is off in the goldens.
+                            CallEdgeKind::CheckerResolve => {}
                         }
                     }
                 }
@@ -811,6 +852,13 @@ fn deferred_and_v6_only_ledger() {
                             CallEdgeKind::ValueRef => {}
                             // The module plane binds a NAME, not an occurrence.
                             CallEdgeKind::ImportResolve => name_resolve += 1,
+                            CallEdgeKind::Implements => {}
+                            // Minted by the project post-pass, never by this
+                            // arm: the name-match leg the ledger counts here
+                            // never produces one.
+                            CallEdgeKind::ScipMacro => {}
+                            // The checker tier is off in the goldens.
+                            CallEdgeKind::CheckerResolve => {}
                         }
                     }
                 }
@@ -967,11 +1015,11 @@ fn call_resolve_scip_ratchet_ts() {
                 lines.push(format!("MISSING-OCCURRENCE {rel}:{line} {callee}"));
             }
             let scip_t = occ
-                .and_then(|o| definition_of(scip_index, doc_ix, &o.symbol))
-                .and_then(|(def_doc_ix, def_occ)| {
+                .and_then(|sym| definition_of(scip_index, doc_ix, sym))
+                .and_then(|(def_doc_ix, def_range)| {
                     let def_doc = &scip_index.documents[def_doc_ix];
                     let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
-                    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+                    let ident = byte_range_cached(def_doc, def_content, def_range, def_doc.position_encoding)?;
                     containing_def_site(def_index, def_blob.clone(), ident)
                         .map(|(name, s)| (def_blob.clone(), s.span, name))
                 });
@@ -1050,6 +1098,12 @@ fn call_resolve_scip_ratchet_ts() {
                 // The twin re-derives the NAME-MATCH leg only, so it mints no
                 // import_resolve edge for the ratchet to classify.
                 (Some((_, _, CallEdgeKind::ImportResolve)), _) => {}
+                (Some((_, _, CallEdgeKind::Implements)), _) => {}
+                // The twin re-derives the per-site legs only; a ScipMacro
+                // edge is minted by the project post-pass, not by a site.
+                (Some((_, _, CallEdgeKind::ScipMacro)), _) => {}
+                // The checker tier is off in the goldens.
+                (Some((_, _, CallEdgeKind::CheckerResolve)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(
@@ -1267,11 +1321,11 @@ fn call_resolve_scip_ratchet_go() {
                 lines.push(format!("MISSING-OCCURRENCE {rel}:{line} {callee}"));
             }
             let scip_t = occ
-                .and_then(|o| definition_of(scip_index, doc_ix, &o.symbol))
-                .and_then(|(def_doc_ix, def_occ)| {
+                .and_then(|sym| definition_of(scip_index, doc_ix, sym))
+                .and_then(|(def_doc_ix, def_range)| {
                     let def_doc = &scip_index.documents[def_doc_ix];
                     let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
-                    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+                    let ident = byte_range_cached(def_doc, def_content, def_range, def_doc.position_encoding)?;
                     containing_def_site(def_index, def_blob.clone(), ident)
                         .map(|(name, s)| (def_blob.clone(), s.span, name))
                 });
@@ -1350,6 +1404,12 @@ fn call_resolve_scip_ratchet_go() {
                 // The twin re-derives the NAME-MATCH leg only, so it mints no
                 // import_resolve edge for the ratchet to classify.
                 (Some((_, _, CallEdgeKind::ImportResolve)), _) => {}
+                (Some((_, _, CallEdgeKind::Implements)), _) => {}
+                // The twin re-derives the per-site legs only; a ScipMacro
+                // edge is minted by the project post-pass, not by a site.
+                (Some((_, _, CallEdgeKind::ScipMacro)), _) => {}
+                // The checker tier is off in the goldens.
+                (Some((_, _, CallEdgeKind::CheckerResolve)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(
@@ -1556,12 +1616,12 @@ fn call_resolve_scip_ratchet_rust() {
                 lines.push(format!("MISSING-OCCURRENCE {rel}:{line} {callee}"));
             }
             let scip_t = occ
-                .filter(|o| !o.symbol.starts_with("local "))
-                .and_then(|o| definition_of(scip_index, doc_ix, &o.symbol))
-                .and_then(|(def_doc_ix, def_occ)| {
+                .filter(|sym| !scip_index.symbol(*sym).starts_with("local "))
+                .and_then(|sym| definition_of(scip_index, doc_ix, sym))
+                .and_then(|(def_doc_ix, def_range)| {
                     let def_doc = &scip_index.documents[def_doc_ix];
                     let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
-                    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+                    let ident = byte_range_cached(def_doc, def_content, def_range, def_doc.position_encoding)?;
                     containing_def_site(def_index, def_blob.clone(), ident)
                         .map(|(name, s)| (def_blob.clone(), s.span, name))
                 });
@@ -1640,6 +1700,12 @@ fn call_resolve_scip_ratchet_rust() {
                 // The twin re-derives the NAME-MATCH leg only, so it mints no
                 // import_resolve edge for the ratchet to classify.
                 (Some((_, _, CallEdgeKind::ImportResolve)), _) => {}
+                (Some((_, _, CallEdgeKind::Implements)), _) => {}
+                // The twin re-derives the per-site legs only; a ScipMacro
+                // edge is minted by the project post-pass, not by a site.
+                (Some((_, _, CallEdgeKind::ScipMacro)), _) => {}
+                // The checker tier is off in the goldens.
+                (Some((_, _, CallEdgeKind::CheckerResolve)), _) => {}
                 (None, Some(s)) => {
                     counts.misses += 1;
                     lines.push(format!(

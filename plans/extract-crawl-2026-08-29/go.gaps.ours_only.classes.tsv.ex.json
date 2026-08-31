@@ -1,0 +1,22 @@
+{
+ "other: concrete struct/pkg call missed": [
+  "internal/ls/lsconv/converters_test.go\tnewTestConverters\tinternal/ls/lsconv/linemap.go\tComputeLSPLineStarts",
+  "internal/fourslash/tests/gen/documentHighlights02_test.go\tTestDocumentHighlights02\tinternal/fourslash/fourslash.go\tVerifyBaselineDocumentHighlightsWithOptions",
+  "internal/project/checkerpool_test.go\tTestCheckerPoolDiagnosticsCheckerStableIdentity\tinternal/project/session.go\tGetLanguageService",
+  "internal/fourslash/tests/gen/arityErrorAfterSignatureHelp_test.go\tTestArityErrorAfterSignatureHelp\tinternal/fourslash/fourslash.go\tVerifyCodeFixNotAvailable",
+  "internal/sourcemap/generator_test.go\tTestSourceMapGenerator_AddSourceMapping\tinternal/sourcemap/generator.go\tAddSourceMapping"
+ ],
+ "interface method dispatch": [
+  "internal/project/snapshotfs_test.go\tclosure@32641\tinternal/project/snapshotfs.go\tGetFile",
+  "internal/ls/findallreferences.go\tclosure@105125\tinternal/checker/types.go\tSymbol",
+  "internal/fswatch/watcher.go\tWatchFile\tinternal/fswatch/fallback_test.go\tWatchFile",
+  "internal/ls/completions.go\tcompletionInfoFromData\tinternal/collections/set.go\tAdd",
+  "internal/execute/tsc/help.go\tgenerateOptionOutput\tinternal/execute/tsc/compile.go\tGetWidthOfTerminal"
+ ],
+ "multi-hop receiver chain": [
+  "internal/checker/exports.go\tRequiresAddingImplicitUndefined\tinternal/checker/exports.go\tRequiresAddingImplicitUndefined"
+ ],
+ "interface method dispatch (single impl)": [
+  "internal/api/encoder/decoder_test.go\tTestDecodeSourceFile_ClassDeclaration\tinternal/ast/ast_generated.go\tAsClassDeclaration"
+ ]
+}

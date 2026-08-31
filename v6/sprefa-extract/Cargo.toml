@@ -27,6 +27,11 @@ features = ["cli"]
 # The newline scan behind the per-document line table. Already unified in the
 # workspace lock through regex/aho-corasick, so this pins no new copy.
 memchr = "2"
+# Allocator candidate (2026-08-29 speed lane): the default nanov2 malloc shows
+# ~2% self time in frees on the go corpus. Kept behind a feature until it wins
+# on all three corpora; default build is byte-identical and allocator-unchanged.
+mimalloc = { version = "0.1", optional = true }
+
 # @comment-ok: build-vs-buy candidate table, the law every dep comment here carries.
 # The directory walker soopy itself uses (`soopy/src/_3a_files.rs:6`), already in
 # this lock as an ast-grep transitive, so the pin adds no copy. soopy's own
@@ -70,6 +75,32 @@ oxc_resolver = "11.24"
 # in lang/rust.rs.
 syn = { version = "2", features = ["full", "visit", "parsing", "extra-traits"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
+# In-process macro_rules expander, plans/extract-macro-lab-2026-08-29/PLAN.md
+# Option 1. Versions pinned to the lab's, commit dae353d75.
+ra_ap_syntax = "0.0.349"
+ra_ap_mbe = "0.0.349"
+ra_ap_tt = "0.0.349"
+ra_ap_parser = "0.0.349"
+ra_ap_span = "0.0.349"
+ra_ap_syntax-bridge = "0.0.349"
+ra_ap_intern = "0.0.349"
+salsa = { version = "0.28.2", default-features = false, features = ["macros", "rayon"] }
+# @comment-ok: build-vs-buy candidate table, the law every dep comment here carries.
+# The rust CHECKER tier: rust-analyzer's own name resolution and type inference,
+# in-process, same pins as the expander above. `load-cargo` reads `cargo
+# metadata` (never a build) into a salsa db; `hir` answers a method call's
+# receiver type and a path's def; `ide_db`/`vfs` carry the file ids the answers
+# name. REJECTED: a bespoke trait solver or inference pass (the standing
+# build-vs-buy law, and rustc's own solver is the thing being asked); `rustc_*`
+# via rustc-dev (nightly-only, unstable ABI, no semver); running `rust-analyzer
+# scip` as a subprocess (measured already as `rust.scip_override.call.tsv`, and
+# it re-parses instead of sharing this crate's arena).
+ra_ap_hir = { version = "0.0.349", optional = true }
+ra_ap_ide = { version = "0.0.349", optional = true }
+ra_ap_ide_db = { version = "0.0.349", optional = true }
+ra_ap_load-cargo = { version = "0.0.349", optional = true }
+ra_ap_project_model = { version = "0.0.349", optional = true }
+ra_ap_vfs = { version = "0.0.349", optional = true }
 # tree-sitter is the Go AST front-end v5 carried (src/graph/typegraph/go.rs).
 # These versions match what ast-grep-language already transitively pulls
 # (tree-sitter 0.25.10 + tree-sitter-go 0.23.4), so cargo UNIFIES them: one copy
@@ -180,14 +211,36 @@ features = ["env-filter", "json"]
 optional = true
 
 [features]
-cli = ["dep:clap", "dep:tracing-subscriber", "dep:hafley-observe"]
+cli = ["dep:clap", "dep:tracing-subscriber", "dep:hafley-observe", "mimalloc"]
+# Optional global allocator; measured in plans/extract-bench-2026-08-29/SPEED.REPORT.md.
+mimalloc = ["dep:mimalloc"]
+# The rust checker tier, `--features cli,rust-checker`. Off by default and out
+# of `cli`: it pulls the whole rust-analyzer crate graph (380s cold build).
+rust-checker = [
+    "dep:ra_ap_hir",
+    "dep:ra_ap_ide",
+    "dep:ra_ap_ide_db",
+    "dep:ra_ap_load-cargo",
+    "dep:ra_ap_project_model",
+    "dep:ra_ap_vfs",
+]
 
 [[bin]]
 name = "extract"
 path = "src/bin/extract.rs"
 required-features = ["cli"]
 
+# @comment-ok: build-vs-buy candidate table, the law this file's every dep
+# comment carries. getrusage for the ratchet's peak-RSS row: libc is one
+# syscall wrapper already unified in this lock (soopy -> rustix -> errno pins
+# 0.2.189), so it adds no copy. REJECTED: `memory-stats` (+sysinfo on linux,
+# mach-sysbindings on mac, a second copy of the same call behind its own
+# types) and `sysinfo` (a whole process/CPU/NIC survey for one field).
+[dev-dependencies]
+libc = "0.2"
+
 # cargo-dist builds with this profile; mirrors the root workspace's.
 [profile.dist]
 inherits = "release"
 lto = "thin"
+

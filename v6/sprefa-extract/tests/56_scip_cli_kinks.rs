@@ -21,11 +21,7 @@ fn scip_build_honors_scip_timeout_on_the_go_arm() {
     let root = scratch.join("mod");
     std::fs::create_dir_all(&bin_dir).unwrap();
     std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(
-        root.join("go.mod"),
-        "module example.com/kink\n\ngo 1.21\n",
-    )
-    .unwrap();
+    std::fs::write(root.join("go.mod"), "module example.com/kink\n\ngo 1.21\n").unwrap();
     std::fs::write(root.join("kink.go"), "package kink\n\nfunc F() {}\n").unwrap();
 
     let planted = bin_dir.join("scip-go");

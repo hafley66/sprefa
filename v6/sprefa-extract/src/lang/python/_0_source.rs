@@ -24,7 +24,7 @@ use crate::family::{
 };
 use crate::lang::{AstGrepParser, CstProjector};
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
+use crate::scip::{byte_range_cached, definition_of, join_documents, site_occurrence};
 use crate::seams::{
     containing_def_site, corpus_defs, covering_def, def_named, own_blob, DefIndex, Parser,
     Project, Resolve,
@@ -1973,10 +1973,10 @@ fn scip_call_target<'a>(
     let doc = &index.documents[doc_ix];
     let (_, content) = joined[doc_ix].as_ref()?;
     let occ = site_occurrence(doc, content, site.span, callee)?;
-    let (def_doc_ix, def_occ) = definition_of(index, doc_ix, &occ.symbol)?;
+    let (def_doc_ix, def_range) = definition_of(index, doc_ix, occ)?;
     let def_doc = &index.documents[def_doc_ix];
     let (def_blob, def_content) = joined[def_doc_ix].as_ref()?;
-    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+    let ident = byte_range_cached(def_doc, def_content, def_range, def_doc.position_encoding)?;
     let (name, def_site) = containing_def_site(def_index, def_blob.clone(), ident)?;
     Some((def_blob.clone(), def_site.span, name))
 }
@@ -1999,7 +1999,7 @@ impl Resolve<CallF> for PythonSource {
                     .indexes
                     .joined_documents
                     .get_or_init(|| join_documents(index, reader));
-                let blob = own_blob(output, def_index)?;
+                let blob = own_blob(cx, output)?;
                 let doc_ix = joined
                     .iter()
                     .position(|j| j.as_ref().is_some_and(|(b, _)| *b == blob))?;

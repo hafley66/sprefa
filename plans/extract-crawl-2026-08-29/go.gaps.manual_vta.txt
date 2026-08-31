@@ -1,0 +1,249 @@
+### MANUAL(direct single-def)
+internal/transformers/estransforms/classfields.go | createMemberAccessForPropertyName -> internal/ast/ast_generated.go | NewPropertyAccessExpression
+1299: tx.Factory().NewPropertyAccessExpression(visitedTarget, node.QuestionDotToken, tx.Factory().NewIdentifier("call"), ast.NodeFlagsOptionalChai
+1308: tx.Factory().NewPropertyAccessExpression(visitedTarget, nil, tx.Factory().NewIdentifier("call"), ast.NodeFlagsNone),
+1344: tx.Factory().NewPropertyAccessExpression(tx.Visitor().VisitNode(target), nil, tx.Factory().NewIdentifier("bind"), ast.NodeFlagsNone),
+3446: expression = factory.NewPropertyAccessExpression(receiver, nil, name, ast.NodeFlagsNone)
+3466: target = tx.Factory().NewPropertyAccessExpression(
+3495: returnExpr := tx.Factory().NewPropertyAccessExpression(
+
+### MANUAL(direct single-def)
+internal/compiler/fileInclude.go | computeDiagnostic -> internal/tsoptions/parsedcommandline.go | ConfigName
+185: return ast.NewCompilerDiagnostic(diagnostics.Matched_by_include_pattern_0_in_1, matchedIncludeSpec, toFileName(config.ConfigName()))
+
+### MANUAL(direct single-def)
+internal/printer/printer.go | emitExpression -> internal/ast/ast_generated.go | AsObjectLiteralExpression
+3256: p.emitObjectLiteralExpression(node.AsObjectLiteralExpression())
+
+### MANUAL(direct single-def)
+internal/checker/checker.go | checkImportDeclaration -> internal/ast/ast_generated.go | AsImportClause
+5364: if importClause != nil && !c.checkGrammarImportClause(importClause.AsImportClause()) {
+5369: namedBindings := importClause.AsImportClause().NamedBindings
+7340: namedBindings := node.AsImportClause().NamedBindings
+
+### MANUAL(direct single-def)
+internal/ast/ast.go | SetExpression -> internal/ast/ast_generated.go | AsSatisfiesExpression
+333: return n.AsSatisfiesExpression().Expression
+422: n.AsSatisfiesExpression().Expression = expr
+655: return n.AsSatisfiesExpression().Type
+716: n.AsSatisfiesExpression().Type = t
+
+### MANUAL(direct single-def)
+internal/transformers/declarations/tracker.go | ReportInferenceFallback -> internal/checker/emitresolver.go | IsExpandoFunctionDeclarationUnsafe
+68: return s.resolver.IsExpandoFunctionDeclarationUnsafe(ref)
+88: if s.state.resolver.IsExpandoFunctionDeclarationUnsafe(node) { // within a node builder call that should already lock the checker, use the u
+
+### MANUAL(no site in caller)
+internal/ls/documenthighlights.go | useParent -> internal/ls/documenthighlights.go | getBreakOrContinueStatementOccurrences
+622: func getBreakOrContinueStatementOccurrences(node *ast.Node, sourceFile *ast.SourceFile) []*ast.Node {
+
+### MANUAL(direct single-def)
+internal/printer/printer.go | emitExpression -> internal/ast/ast_generated.go | AsAwaitExpression
+3282: p.emitAwaitExpression(node.AsAwaitExpression())
+
+### MANUAL(direct single-def)
+internal/tsoptions/showconfig.go | serializeCompilerOptions -> internal/tsoptions/commandlineoption.go | EnumMap
+198: enumMap := optionDecl.EnumMap()
+225: if elem != nil && elem.EnumMap() != nil {
+227: elemMap := elem.EnumMap()
+369: enumMap := optionDecl.EnumMap()
+
+### MANUAL(direct single-def)
+internal/transformers/estransforms/esdecorator.go | createDescriptorMethod -> internal/printer/emitcontext.go | SetSourceMapRange
+525: tx.EmitContext().SetSourceMapRange(initializer, nameRange.Loc)
+527: tx.EmitContext().SetSourceMapRange(initializer, transformers.MoveRangePastDecorators(node))
+539: tx.EmitContext().SetSourceMapRange(initializer, nameRange.Loc)
+541: tx.EmitContext().SetSourceMapRange(initializer, transformers.MoveRangePastDecorators(node))
+807: ec.SetSourceMapRange(esDecorateStatement, transformers.MoveRangePastDecorators(node))
+827: ec.SetSourceMapRange(initializerStatement, ec.SourceMapRange(initializer))
+
+### MANUAL(direct single-def)
+internal/ls/lsconv/converters.go | FileNameToDocumentURI -> internal/bundled/embed.go | IsBundled
+326: if bundled.IsBundled(fileName) {
+
+### MANUAL(direct single-def)
+internal/ls/callhierarchy.go | createCallHierarchyItem -> internal/spanmap/spanmap.go | IsNone
+514: if spanFidelity.IsNone() || sourceFile.ContentMapper() != "" && !lspRangeContains(span, selectionSpan) {
+576: if lspRange, fidelity := l.converters.ToLSPRangeForFeature(sourceFile, entry.textRange, spanmap.FeatureCallHierarchy); !fidelity.IsNone() {
+644: if _, fidelity := l.converters.ToLSPPositionForFeature(locationFile, core.TextPos(locationStart), spanmap.FeatureCallHierarchy); fidelity.Is
+946: if lspRange, fidelity := l.converters.ToLSPRangeForFeature(sourceFile, entry.textRange, spanmap.FeatureCallHierarchy); !fidelity.IsNone() {
+
+### MANUAL(direct single-def)
+internal/printer/factory.go | NewObjectDefinePropertyCall -> internal/ast/ast_generated.go | NewPropertyAccessExpression
+290: propAccess := f.NewPropertyAccessExpression(left, nil, right, ast.NodeFlagsNone)
+359: f.NewPropertyAccessExpression(object, nil, methodName, ast.NodeFlagsNone),
+367: f.NewPropertyAccessExpression(object, nil, methodName, ast.NodeFlagsNone),
+565: qualifiedName := f.NewPropertyAccessExpression(ns, nil /*questionDotToken*/, name, ast.NodeFlagsNone)
+734: f.NewPropertyAccessExpression(
+750: f.NewPropertyAccessExpression(
+
+### MANUAL(direct single-def)
+internal/transformers/estransforms/esdecorator.go | transformClassLike -> internal/printer/factory.go | NewUniqueNameEx
+289: tx.outerThis = tx.Factory().NewUniqueNameEx("_outerThis", printer.AutoGenerateOptions{
+465: return tx.Factory().NewUniqueNameEx(
+487: metadataReference: f.NewUniqueNameEx("_metadata", printer.AutoGenerateOptions{
+506: ci.classThis = f.NewUniqueNameEx("_classThis", printer.AutoGenerateOptions{Flags: flags})
+513: ci.staticMethodExtraInitializersName = f.NewUniqueNameEx("_staticExtraInitializers", printer.AutoGenerateOptions{
+533: ci.instanceMethodExtraInitializersName = f.NewUniqueNameEx("_instanceExtraInitializers", printer.AutoGenerateOptions{
+
+### MANUAL(no site in caller)
+internal/execute/build/buildtask.go | reportDiagnostic -> internal/execute/tsc/diagnostics.go | QuietDiagnosticReporter
+(no hits)
+
+### MANUAL(direct single-def)
+internal/printer/printer.go | emitStatement -> internal/ast/ast_generated.go | AsTypeAliasDeclaration
+1814: p.emitTypeAliasDeclaration(node.AsTypeAliasDeclaration())
+4205: p.emitTypeAliasDeclaration(node.AsTypeAliasDeclaration())
+
+### MANUAL(direct single-def)
+internal/checker/grammarchecks.go | checkGrammarObjectLiteralExpression -> internal/ast/ast_generated.go | AsNumericLiteral
+1090: c.checkGrammarNumericLiteral(name.AsNumericLiteral())
+
+### MANUAL(direct single-def)
+internal/ls/lsconv/converters.go | lspRangeToVirtual -> internal/spanmap/spanmap.go | OriginalToVirtualSpans
+207: return spans.OriginalToVirtualSpans(origRange, feature)
+
+### MANUAL(direct single-def)
+internal/transformers/estransforms/taggedtemplate.go | processTaggedTemplateExpression -> internal/printer/factory.go | NewUniqueName
+109: tempVar := f.NewUniqueName("templateObject")
+
+### MANUAL(no site in caller)
+internal/execute/tsc/init.go | WriteConfigFile -> internal/execute/tsc/diagnostics.go | QuietDiagnosticReporter
+(no hits)
+
+### MANUAL(direct single-def)
+internal/printer/emitcontext.go | VisitFunctionBody -> internal/ast/ast_generated.go | UpdateBlock
+958: return c.Factory.UpdateBlock(
+965: return c.Factory.UpdateBlock(
+989: return c.Factory.UpdateBlock(updated.AsBlock(), statementsList, updated.AsBlock().MultiLine)
+
+### MANUAL(direct single-def)
+internal/ls/symbols.go | ProvideWorkspaceSymbols -> internal/spanmap/spanmap.go | IsSingleSegment
+333: if !selectionFidelity.IsSingleSegment() {
+600: if !fidelity.IsSingleSegment() {
+
+### MANUAL(direct single-def)
+internal/checker/grammarchecks.go | checkGrammarAccessor -> internal/ast/ast_generated.go | AsParameterDeclaration
+562: } else if node.Kind == ast.KindParameter && (flags&ast.ModifierFlagsParameterPropertyModifier != 0) && node.AsParameterDeclaration().DotDotD
+692: parameter := parameters.Nodes[i].AsParameterDeclaration()
+731: parameter := n.AsParameterDeclaration()
+803: parameter := paramNodes[0].AsParameterDeclaration()
+1326: parameter := parameterNode.AsParameterDeclaration()
+
+### MANUAL(direct single-def)
+internal/testutil/contentmappertest/supplemental_diagnostics.go | HandleRequest -> internal/spanmap/spanmap.go | Marshal
+31: }}).Marshal()
+
+### MANUAL(direct single-def)
+internal/printer/printer.go | emitJsxAttributeLike -> internal/ast/ast_generated.go | AsJsxSpreadAttribute
+4348: p.emitJsxSpreadAttribute(node.AsJsxSpreadAttribute())
+5215: p.emitJsxSpreadAttribute(node.AsJsxSpreadAttribute())
+
+### MANUAL(direct single-def)
+internal/ast/utilities.go | getImportTypeNodeLiteral -> internal/ast/ast_generated.go | IsStringLiteral
+1339: return IsImportTypeNode(node) && IsLiteralTypeNode(node.AsImportTypeNode().Argument) && IsStringLiteral(node.AsImportTypeNode().Argument.AsL
+1936: if IsStringLiteral(node.AsModuleDeclaration().Name()) {
+1959: if IsStringLiteral(literalTypeNode.Literal) {
+4188: if !IsStringLiteral(node) {
+4598: return (IsIdentifier(node) || IsStringLiteral(node)) && node.Text() == "__proto__"
+
+### MANUAL(no site in caller)
+internal/api/session.go | handleGetExportSpecifierLocalTargetSymbol -> internal/compiler/checkerpool.go | noop
+(no hits)
+
+### MANUAL(direct single-def)
+internal/transformers/estransforms/esdecorator.go | getHelperVariableName -> internal/ast/utilities.go | IsStatic
+458: if ast.IsStatic(node) {
+997: if ast.IsStatic(member) != isStatic {
+1331: ast.IsStatic(member),
+1358: if ast.IsStatic(member) {
+1392: if ast.IsStatic(member) {
+1449: if ast.IsStatic(member) {
+
+### MANUAL(direct single-def)
+internal/transformers/estransforms/esdecorator.go | createCallBinding -> internal/ast/ast_generated.go | AsPropertyAccessExpression
+1758: pa := node.AsPropertyAccessExpression()
+1956: } else if ast.IsPropertyAccessExpression(bin.Left) && ast.IsIdentifier(bin.Left.AsPropertyAccessExpression().Name()) {
+1957: setterName = f.NewStringLiteralFromNode(bin.Left.AsPropertyAccessExpression().Name())
+2039: } else if ast.IsPropertyAccessExpression(operand) && ast.IsIdentifier(operand.AsPropertyAccessExpression().Name()) {
+2040: setterName = f.NewStringLiteralFromNode(operand.AsPropertyAccessExpression().Name())
+2145: } else if ast.IsPropertyAccessExpression(node) && ast.IsIdentifier(node.AsPropertyAccessExpression().Name()) {
+
+### MANUAL(direct single-def)
+internal/transformers/tstransforms/legacydecorators.go | elideNodes -> internal/ast/ast.go | NewNodeList
+101: replacement := f.NewNodeList([]*ast.Node{})
+446: tx.Factory().NewNodeList([]*ast.Node{tx.Factory().NewExpressionStatement(
+452: newList := tx.Factory().NewNodeList(memberList)
+486: varDeclList := tx.Factory().NewVariableDeclarationList(tx.Factory().NewNodeList([]*ast.Node{varDecl}), ast.NodeFlagsLet)
+802: members = tx.Factory().NewNodeList(
+805: tx.Factory().NewClassStaticBlockDeclaration(nil, tx.Factory().NewBlock(tx.Factory().NewNodeList(decorationStatements), true)),
+
+### MANUAL(direct single-def)
+internal/printer/printer.go | emitStatement -> internal/ast/ast_generated.go | AsSwitchStatement
+4185: p.emitSwitchStatement(node.AsSwitchStatement())
+6024: p.generateNames(node.AsSwitchStatement().CaseBlock)
+
+### MANUAL(direct single-def)
+internal/ls/string_completions.go | getAlreadyUsedTypesInStringLiteralUnion -> internal/ast/ast_generated.go | AsUnionTypeNode
+1936: typesList := union.AsUnionTypeNode().Types
+
+### MANUAL(no site in caller)
+internal/api/session.go | handleGetTypesAtPositions -> internal/project/checkerpool.go | noop
+(no hits)
+
+### MANUAL(no site in caller)
+internal/ls/api.go | GetTypeOfSymbol -> internal/compiler/checkerpool.go | noop
+(no hits)
+
+### MANUAL(no site in caller)
+internal/ast/utilities.go | FindManyAncestors -> internal/ast/ast_generated.go | IsImportEqualsDeclaration
+2481: return IsImportEqualsDeclaration(node) && node.AsImportEqualsDeclaration().ModuleReference.Kind != KindExternalModuleReference
+4089: return IsImportDeclaration(node) || IsImportEqualsDeclaration(node)
+
+### MANUAL(direct single-def)
+internal/printer/emitcontext.go | VisitIterationBody -> internal/ast/ast.go | Statements
+986: statements = append(statements, updated.Statements()...)
+
+### MANUAL(no site in caller)
+internal/transformers/estransforms/definitions.go | GetESTransformer -> internal/transformers/estransforms/logicalassignment.go | newLogicalAssignmentTransformer
+(no hits)
+
+### MANUAL(direct single-def)
+internal/transformers/estransforms/esdecorator.go | createMethodDescriptorForwarder -> internal/ast/ast_generated.go | NewPropertyAccessExpression
+794: classNameReference := f.NewPropertyAccessExpression(renamedClassThis, nil, f.NewIdentifier("name"), ast.NodeFlagsNone)
+812: classDescriptorValueRef := f.NewPropertyAccessExpression(ci.classDescriptorName, nil, f.NewIdentifier("value"), ast.NodeFlagsNone)
+2419: target := f.NewPropertyAccessExpression(assign, nil, pa.Name(), ast.NodeFlagsNone)
+2561: f.NewPropertyAccessExpression(f.NewThisExpression(), nil, backingFieldName, ast.NodeFlagsNone),
+2573: f.NewPropertyAccessExpression(f.NewThisExpression(), nil, backingFieldName, ast.NodeFlagsNone),
+2597: f.NewPropertyAccessExpression(descriptorName, nil, f.NewIdentifier("value"), ast.NodeFlagsNone),
+
+### MANUAL(direct single-def)
+internal/project/snapshot.go | Clone -> internal/project/programcounter.go | Ref
+536: session.programCounter.Ref(project.Program)
+
+### MANUAL(no site in caller)
+internal/ls/rename.go | getRenameInfoForNode -> internal/compiler/checkerpool.go | noop
+(no hits)
+
+### MANUAL(direct single-def)
+internal/checker/grammarchecks.go | isInitializerSimpleLiteralEnumReference -> internal/ast/ast_generated.go | AsElementAccessExpression
+1397: expression = ast.SkipParentheses(node.AsElementAccessExpression().ArgumentExpression)
+1984: elementAccess := expr.AsElementAccessExpression()
+
+### MANUAL(no site in caller)
+internal/ast/utilities.go | isCalleeWorker -> internal/ast/ast_generated.go | IsTaggedTemplateExpression
+3649: if IsTaggedTemplateExpression(node) {
+
+### MANUAL(direct single-def)
+internal/compiler/fileloader.go | resolveImportsAndModuleAugmentations -> internal/ast/utilities.go | IsExternalModule
+826: isExternalModuleFile := ast.IsExternalModule(file)
+
+### MANUAL(direct single-def)
+internal/printer/utilities.go | getContainingNodeArray -> internal/ast/ast.go | StatementList
+527: return parent.StatementList()
+540: return parent.StatementList()
+
+### MANUAL(closure-caller, no site)
+internal/format/rulecontext.go | isOptionDisabledOrUndefinedOrTokensOnSameLine$1 -> internal/format/rulecontext.go | placeOpenBraceOnNewLineForControlBlocksOption
+86: func placeOpenBraceOnNewLineForControlBlocksOption(options lsutil.FormatCodeSettings) core.Tristate {
+

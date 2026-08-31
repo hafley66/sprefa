@@ -1,0 +1,301 @@
+path	line	callee	receiver_type	impls_of_pair	class
+crates/base-db/src/change.rs	70	Arc::new	-norow-	0	10 `T::f()`, T external or an alias
+crates/base-db/src/input.rs	1020	Default::default	-norow-	0	12 `T::f()`, T a corpus trait (`Default::default`)
+crates/hir-def/src/attrs.rs	230	insert	AttrFlags	0	3b receiver type undeclared in corpus (std/external)
+crates/hir-def/src/attrs/docs.rs	702	TextSize::of	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-def/src/attrs/docs.rs	757	TextSize::of	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-def/src/builtin_type.rs	122	write_str	Formatter	0	3b receiver type undeclared in corpus (std/external)
+crates/hir-def/src/expr_store.rs	919	la_arena::RawIdx::from_u32	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-def/src/expr_store/lower.rs	171	collect_param_as_ident	LabelRib	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir-def/src/expr_store/lower/asm.rs	27	Default::default	-norow-	0	12 `T::f()`, T a corpus trait (`Default::default`)
+crates/hir-def/src/find_path.rs	406	search	-norow-	0	9 free fn / bare name / struct literal
+crates/hir-def/src/hir.rs	544	contains	AsmOptions	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir-def/src/hir/format_args.rs	185	Default::default	-norow-	0	12 `T::f()`, T a corpus trait (`Default::default`)
+crates/hir-def/src/import_map.rs	515	matches_assoc_mode	Query	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir-def/src/item_scope.rs	182	LazyLock::new	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-def/src/item_scope.rs	220	iter	FxIndexMap	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-def/src/item_scope.rs	323	values	FxHashMap	0	3b receiver type undeclared in corpus (std/external)
+crates/hir-def/src/item_scope.rs	740	iter_mut	ThinVec	0	3b receiver type undeclared in corpus (std/external)
+crates/hir-def/src/item_tree.rs	747	clone	ModPath	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir-def/src/item_tree/attrs.rs	68	AttrInput::Literal	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/hir-def/src/item_tree/lower.rs	121	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir-def/src/item_tree/lower.rs	511	alloc	Arena	0	3b receiver type undeclared in corpus (std/external)
+crates/hir-def/src/item_tree/pretty.rs	93	as_ref	AttrsOrCfg	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir-def/src/lib.rs	1291	lookup	MacroRulesId	0	3b receiver type undeclared in corpus (std/external)
+crates/hir-def/src/macro_expansion_tests/mod.rs	174	String::new	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/hir-def/src/nameres.rs	672	map	BlockInfo	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir-def/src/nameres/assoc.rs	289	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir-def/src/nameres/assoc.rs	363	mem::replace	-norow-	0	11 module-qualified path `mod::f()`
+crates/hir-def/src/nameres/collector.rs	393	Arc::get_mut	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-def/src/nameres/collector.rs	749	into	ProcMacroId	0	3b receiver type undeclared in corpus (std/external)
+crates/hir-def/src/per_ns.rs	153	or	TypesItem	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-def/src/resolver.rs	240	ResolvePathResultPrefixInfo::default	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/hir-def/src/signatures.rs	255	into	EnumId	0	3b receiver type undeclared in corpus (std/external)
+crates/hir-def/src/signatures.rs	256	EnumFlags::empty	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-def/src/signatures.rs	550	into	TraitId	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-def/src/signatures.rs	821	lookup	TypeAliasId	0	3b receiver type undeclared in corpus (std/external)
+crates/hir-expand/src/builtin/attr_macro.rs	43	expander	BuiltinAttrExpander	0	3b receiver type undeclared in corpus (std/external)
+crates/hir-expand/src/builtin/attr_macro.rs	159	ExpandResult::ok	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-expand/src/builtin/derive_macro.rs	1284	Vec::new	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-expand/src/builtin/derive_macro.rs	1512	segments	Path	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir-expand/src/builtin/fn_macro.rs	902	ExpandResult::ok	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-expand/src/eager.rs	64	MacroCallId::new	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/hir-expand/src/eager.rs	197	data	Crate	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir-expand/src/eager.rs	222	with_value	InFile	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-expand/src/files.rs	244	syntax	T	0	6 receiver type is a corpus TRAIT (dyn/impl/bound)
+crates/hir-expand/src/fixup.rs	333	kind	SyntaxNode	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/autoderef.rs	296	infcx	Ctx	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir-ty/src/db.rs	62	crate::mir::mir_body_query	-norow-	0	11 module-qualified path `mod::f()`
+crates/hir-ty/src/diagnostics/expr.rs	134	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir-ty/src/diagnostics/expr.rs	266	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir-ty/src/diagnostics/expr.rs	367	alloc	Arena	0	3b receiver type undeclared in corpus (std/external)
+crates/hir-ty/src/display.rs	1283	mem::replace	-norow-	0	11 module-qualified path `mod::f()`
+crates/hir-ty/src/display.rs	2363	containing_module	ModuleId	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/dyn_compatibility.rs	102	into	TraitId	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/infer.rs	1265	iter	ArenaMap	0	3b receiver type undeclared in corpus (std/external)
+crates/hir-ty/src/infer.rs	1964	store	Ty	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir-ty/src/infer/callee.rs	507	output	FnSig	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/infer/closure/analysis/expr_use_visitor.rs	1214	into	PatId	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/infer/closure/analysis/expr_use_visitor.rs	1290	into	ExprId	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/infer/closure/analysis/expr_use_visitor.rs	1600	ProjectionKind::Field	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/hir-ty/src/infer/coerce.rs	683	infcx	D	0	6 receiver type is a corpus TRAIT (dyn/impl/bound)
+crates/hir-ty/src/infer/coerce.rs	1585	Resolver	-norow-	0	9 free fn / bare name / struct literal
+crates/hir-ty/src/infer/expr.rs	1318	into	ExprId	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/infer/expr.rs	1331	into	ExprId	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/infer/expr.rs	1520	map	ExprId	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/infer/expr.rs	1945	into	ExprId	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/layout.rs	516	kind	Const	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir-ty/src/layout/adt.rs	140	c	ReprOptions	0	3b receiver type undeclared in corpus (std/external)
+crates/hir-ty/src/lib.rs	284	rustc_type_ir::BoundVar::from_usize	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-ty/src/lower.rs	2460	usize::from	-norow-	0	11 module-qualified path `mod::f()`
+crates/hir-ty/src/lower.rs	2787	GenericArg::from	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/hir-ty/src/lower.rs	2883	EarlyBinder::bind	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-ty/src/lower.rs	2992	push	ImplTraitLoweringState	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir-ty/src/method_resolution.rs	714	Box::new	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-ty/src/method_resolution/confirm.rs	260	into	ExprId	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/method_resolution/probe.rs	729	RefCell::default	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-ty/src/mir/eval.rs	113	get	Vec	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/mir/eval.rs	3239	ptr_size	Interval	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir-ty/src/mir/eval/shim.rs	245	contains	AttrFlags	0	3b receiver type undeclared in corpus (std/external)
+crates/hir-ty/src/mir/lower/pattern_matching.rs	189	into	PatId	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/mir/monomorphization.rs	96	as_slice	GenericArgs	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir-ty/src/next_solver.rs	190	ManuallyDrop::new	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-ty/src/next_solver.rs	232	ManuallyDrop::new	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-ty/src/next_solver/fulfill.rs	246	typing_mode_raw	InferCtxt	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir-ty/src/next_solver/generic_arg.rs	207	kind	GenericArg	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir-ty/src/next_solver/infer/canonical/canonicalizer.rs	438	root_const_var	InferCtxt	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir-ty/src/next_solver/infer/canonical/instantiate.rs	141	get	FxHashMap	0	3b receiver type undeclared in corpus (std/external)
+crates/hir-ty/src/next_solver/infer/canonical/instantiate.rs	427	PredicateObligations::new	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-ty/src/next_solver/infer/canonical/mod.rs	71	universe	InferCtxt	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir-ty/src/next_solver/infer/mod.rs	548	evaluate_obligations_error_on_ambiguity	InferCtxtInner	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir-ty/src/next_solver/infer/opaque_types/table.rs	106	iter	Vec	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/next_solver/infer/relate/generalize.rs	107	register_predicates	R	0	6b generic param name (T, S, R)
+crates/hir-ty/src/next_solver/infer/relate/generalize.rs	363	relate	Generalizer	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir-ty/src/next_solver/interner.rs	375	tls_cache::reinit_cache	-norow-	0	11 module-qualified path `mod::f()`
+crates/hir-ty/src/next_solver/interner.rs	771	TypeFlags::empty	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir-ty/src/next_solver/interner.rs	1959	Region::new_bound	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/hir-ty/src/next_solver/ir_print.rs	37	def_id	AliasTerm	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/next_solver/normalize.rs	173	try_super_fold_with	Binder	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/next_solver/predicate.rs	882	skip_binder	Binder	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir-ty/src/test_db.rs	86	set_file_text	TestDB	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir-ty/src/tests.rs	236	salsa::attach	-norow-	0	11 module-qualified path `mod::f()`
+crates/hir-ty/src/tests.rs	385	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir/src/attrs.rs	439	BuiltinType::from	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/hir/src/lib.rs	363	cfg_options	Crate	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir/src/lib.rs	776	extend	Vec	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir/src/lib.rs	1261	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir/src/lib.rs	3968	as_slice	GenericArgs	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir/src/lib.rs	5769	into	TraitId	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir/src/lib.rs	6479	EarlyBinder::bind	-norow-	0	10 `T::f()`, T external or an alias
+crates/hir/src/lib.rs	7234	name	Param	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir/src/semantics.rs	1537	token_at_offset	SyntaxNode	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir/src/semantics.rs	2354	borrow	RefCell	0	3b receiver type undeclared in corpus (std/external)
+crates/hir/src/semantics/child_by_source.rs	108	AttrDefId::from	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/hir/src/source_analyzer.rs	1938	BuiltinType::from	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/hir/src/source_analyzer.rs	2111	segments	Path	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/hir/src/symbols.rs	170	insert	FxIndexSet	0	3a receiver type is a corpus ALIAS to an external type
+crates/hir/src/term_search.rs	270	insert	TermSearchConfig	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/hir/src/term_search/expr.rs	267	Adt::Struct	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/ide-assists/src/handlers/add_missing_match_arms.rs	623	suggest_name::NameGenerator::default	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/ide-assists/src/handlers/convert_named_struct_to_tuple_struct.rs	161	Definition::Adt	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/ide-assists/src/handlers/extract_function.rs	517	kind	Param	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/ide-assists/src/handlers/extract_struct_from_enum_variant.rs	160	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/ide-assists/src/handlers/extract_struct_from_enum_variant.rs	161	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/ide-assists/src/handlers/generate_blanket_trait_impl.rs	175	to_def	Semantics	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/ide-assists/src/handlers/generate_blanket_trait_impl.rs	281	where_clause	Fn	0	4 corpus struct/enum, method is a corpus trait DEFAULT body
+crates/ide-assists/src/handlers/generate_default_from_new.rs	133	std::iter::empty	-norow-	0	11 module-qualified path `mod::f()`
+crates/ide-assists/src/handlers/generate_deref.rs	212	to_def	Semantics	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/ide-assists/src/handlers/generate_documentation_template.rs	496	name	Fn	0	4 corpus struct/enum, method is a corpus trait DEFAULT body
+crates/ide-assists/src/handlers/generate_function.rs	1141	add_edge	TargetInfo	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/ide-assists/src/handlers/inline_call.rs	130	into_iter	Vec	0	3a receiver type is a corpus ALIAS to an external type
+crates/ide-assists/src/handlers/inline_local_variable.rs	145	to_def	Semantics	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/ide-assists/src/handlers/move_guard.rs	249	is_empty	TextRange	0	3b receiver type undeclared in corpus (std/external)
+crates/ide-assists/src/handlers/replace_derive_with_manual_impl.rs	92	hir::ModuleDef::Trait	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/ide-assists/src/handlers/replace_derive_with_manual_impl.rs	154	as_ref	ModPath	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/ide-assists/src/handlers/replace_is_method_with_if_let_method.rs	105	arg_list	MethodCallExpr	0	4 corpus struct/enum, method is a corpus trait DEFAULT body
+crates/ide-assists/src/handlers/replace_method_eager_lazy.rs	35	arg_list	MethodCallExpr	0	4 corpus struct/enum, method is a corpus trait DEFAULT body
+crates/ide-assists/src/handlers/replace_turbofish_with_explicit_type.rs	109	expr	Expr	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/ide-assists/src/handlers/toggle_ignore.rs	61	attrs	Fn	0	4 corpus struct/enum, method is a corpus trait DEFAULT body
+crates/ide-assists/src/tests.rs	114	crate::assists	-norow-	0	11 module-qualified path `mod::f()`
+crates/ide-completion/src/completions.rs	746	r#type::complete_type_path	-norow-	0	11 module-qualified path `mod::f()`
+crates/ide-completion/src/completions/flyimport.rs	290	key	-norow-	0	9 free fn / bare name / struct literal
+crates/ide-completion/src/completions/item_list/trait_impl.rs	1795	check	-norow-	0	9 free fn / bare name / struct literal
+crates/ide-completion/src/completions/postfix.rs	426	clone	Expr	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/ide-completion/src/completions/type.rs	61	hir::Trait::from	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/ide-completion/src/context.rs	633	attrs	Trait	0	4 corpus struct/enum, method is a corpus trait DEFAULT body
+crates/ide-completion/src/context/analysis.rs	415	TextSize::new	-norow-	0	10 `T::f()`, T external or an alias
+crates/ide-completion/src/context/analysis.rs	499	clone	SyntaxToken	0	3a receiver type is a corpus ALIAS to an external type
+crates/ide-completion/src/context/analysis.rs	1434	PathKind::Expr	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/ide-completion/src/context/analysis.rs	1945	TextSize::try_from	-norow-	0	10 `T::f()`, T external or an alias
+crates/ide-completion/src/context/analysis.rs	1952	covering_element	SyntaxNode	0	3a receiver type is a corpus ALIAS to an external type
+crates/ide-completion/src/context/tests.rs	13	hir::attach_db	-norow-	0	11 module-qualified path `mod::f()`
+crates/ide-completion/src/lib.rs	65	contains	FxHashSet	0	3a receiver type is a corpus ALIAS to an external type
+crates/ide-completion/src/render.rs	306	String::from	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/ide-completion/src/render.rs	4335	check_edit	-norow-	0	9 free fn / bare name / struct literal
+crates/ide-completion/src/tests/expression.rs	403	check	-norow-	0	9 free fn / bare name / struct literal
+crates/ide-completion/src/tests/expression.rs	711	check	-norow-	0	9 free fn / bare name / struct literal
+crates/ide-completion/src/tests/expression.rs	1981	check	-norow-	0	9 free fn / bare name / struct literal
+crates/ide-completion/src/tests/expression.rs	2024	check	-norow-	0	9 free fn / bare name / struct literal
+crates/ide-completion/src/tests/expression.rs	2502	check	-norow-	0	9 free fn / bare name / struct literal
+crates/ide-completion/src/tests/expression.rs	2587	check	-norow-	0	9 free fn / bare name / struct literal
+crates/ide-completion/src/tests/item.rs	281	check_edit	-norow-	0	9 free fn / bare name / struct literal
+crates/ide-completion/src/tests/pattern.rs	59	check	-norow-	0	9 free fn / bare name / struct literal
+crates/ide-completion/src/tests/special.rs	1211	check	-norow-	0	9 free fn / bare name / struct literal
+crates/ide-completion/src/tests/use_tree.rs	264	check	-norow-	0	9 free fn / bare name / struct literal
+crates/ide-db/src/imports/import_assets.rs	267	scope	Semantics	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/ide-db/src/imports/merge_imports.rs	77	into	MergeBehavior	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/ide-db/src/path_transform.rs	73	into	Trait	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/ide-db/src/path_transform.rs	325	extend	Vec	0	3a receiver type is a corpus ALIAS to an external type
+crates/ide-db/src/ra_fixture.rs	173	add	RaFixtureConfig	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/ide-db/src/rename.rs	196	source	Semantics	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/ide-db/src/rename.rs	685	rename_conflicts	Semantics	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/ide-db/src/source_change.rs	222	SourceChange::default	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/ide-db/src/symbol_index.rs	251	LibraryRoots::get	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/ide-db/src/symbol_index.rs	1190	iter	Vec	0	3a receiver type is a corpus ALIAS to an external type
+crates/ide-diagnostics/src/handlers/field_shorthand.rs	102	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/ide-diagnostics/src/handlers/generic_args_prohibited.rs	62	TextRange::new	-norow-	0	10 `T::f()`, T external or an alias
+crates/ide-diagnostics/src/handlers/type_mismatch.rs	463	fix	-norow-	0	9 free fn / bare name / struct literal
+crates/ide-diagnostics/src/handlers/unlinked_file.rs	33	is_none	Vec	0	3a receiver type is a corpus ALIAS to an external type
+crates/ide-diagnostics/src/handlers/useless_braces.rs	45	SyntaxNodePtr::new	-norow-	0	10 `T::f()`, T external or an alias
+crates/ide-diagnostics/src/tests.rs	78	hir::attach_db	-norow-	0	11 module-qualified path `mod::f()`
+crates/ide-ssr/src/lib.rs	344	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/ide-ssr/src/matching.rs	782	find	SyntaxElementChildren	0	3a receiver type is a corpus ALIAS to an external type
+crates/ide-ssr/src/nester.rs	46	ancestors_with_macros	Semantics	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/ide-ssr/src/resolving.rs	252	clone	SyntaxNode	0	3a receiver type is a corpus ALIAS to an external type
+crates/ide/src/annotations.rs	63	FxIndexSet::default	-norow-	0	10 `T::f()`, T external or an alias
+crates/ide/src/doc_links.rs	522	take	CowStr	0	3b receiver type undeclared in corpus (std/external)
+crates/ide/src/doc_links.rs	548	Url::parse	-norow-	0	10 `T::f()`, T external or an alias
+crates/ide/src/doc_links.rs	562	Url::parse	-norow-	0	10 `T::f()`, T external or an alias
+crates/ide/src/goto_definition.rs	297	type_of_expr	Semantics	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/ide/src/highlight_related.rs	801	entry	FxHashMap	0	3b receiver type undeclared in corpus (std/external)
+crates/ide/src/hover/render.rs	1127	as_str	Either	0	3b receiver type undeclared in corpus (std/external)
+crates/ide/src/inlay_hints.rs	97	Vec::new	-norow-	0	10 `T::f()`, T external or an alias
+crates/ide/src/inlay_hints.rs	604	into	str	0	3b receiver type undeclared in corpus (std/external)
+crates/ide/src/inlay_hints/bind_pat.rs	924	check_with_config	-norow-	0	9 free fn / bare name / struct literal
+crates/ide/src/inlay_hints/lifetime.rs	483	check_with_config	-norow-	0	9 free fn / bare name / struct literal
+crates/ide/src/join_lines.rs	66	text_range	SyntaxToken	0	3a receiver type is a corpus ALIAS to an external type
+crates/ide/src/join_lines.rs	72	text	SyntaxToken	0	3a receiver type is a corpus ALIAS to an external type
+crates/ide/src/move_item.rs	133	SyntaxElement::Node	-norow-	0	10 `T::f()`, T external or an alias
+crates/ide/src/navigation_target.rs	448	ast::HasName::name	-norow-	0	12 `T::f()`, T a corpus trait (`Default::default`)
+crates/ide/src/parent_module.rs	60	crate_def_map	-norow-	0	9 free fn / bare name / struct literal
+crates/ide/src/rename.rs	302	token_at_offset	SyntaxNode	0	3a receiver type is a corpus ALIAS to an external type
+crates/ide/src/rename.rs	556	SourceChange::default	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/ide/src/signature_help.rs	260	String::new	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/ide/src/signature_help.rs	373	String::new	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/ide/src/signature_help.rs	582	text_range	SyntaxToken	0	3a receiver type is a corpus ALIAS to an external type
+crates/ide/src/syntax_highlighting.rs	525	clone	SyntaxToken	0	3a receiver type is a corpus ALIAS to an external type
+crates/ide/src/syntax_highlighting/highlight.rs	411	HlTag::Symbol	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/ide/src/syntax_highlighting/highlight.rs	535	HlTag::Symbol	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/ide/src/syntax_highlighting/highlight.rs	623	HlTag::Symbol	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/ide/src/typing/on_enter.rs	112	text_range	SyntaxToken	0	3a receiver type is a corpus ALIAS to an external type
+crates/intern/src/gc.rs	185	erase	RawTable	0	3b receiver type undeclared in corpus (std/external)
+crates/intern/src/gc.rs	329	GarbageCollector::default	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/intern/src/intern.rs	270	std::mem::transmute	-norow-	0	11 module-qualified path `mod::f()`
+crates/load-cargo/src/lib.rs	866	FileSetConfigBuilder::default	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/mbe/src/benchmark.rs	172	tt::Leaf::from	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/mbe/src/expander/matcher.rs	223	Vec::new	-norow-	0	1 method site, still no receiver row (macro-expanded span)
+crates/mbe/src/expander/matcher.rs	281	Vec::new	-norow-	0	1 method site, still no receiver row (macro-expanded span)
+crates/mbe/src/expander/matcher.rs	308	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/mbe/src/expander/matcher.rs	443	push	-norow-	0	9 free fn / bare name / struct literal
+crates/mbe/src/expander/transcriber.rs	20	ExpandError::new	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/mbe/src/lib.rs	121	write_str	Formatter	0	3b receiver type undeclared in corpus (std/external)
+crates/parser/src/frontmatter.rs	202	clone	Span	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/parser/src/frontmatter.rs	348	fmt	String	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/parser/src/lexed_str.rs	309	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/parser/src/output.rs	100	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/parser/src/shortcuts.rs	286	starts_with	str	0	3b receiver type undeclared in corpus (std/external)
+crates/parser/src/tests.rs	48	String::new	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/proc-macro-api/src/legacy_protocol/msg.rs	337	TextRange::empty	-norow-	0	10 `T::f()`, T external or an alias
+crates/proc-macro-api/src/legacy_protocol/msg/flat.rs	669	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/proc-macro-api/src/transport/postcard.rs	25	io::Error::new	-norow-	0	12 `T::f()`, T a corpus trait (`Default::default`)
+crates/proc-macro-srv/src/tests/utils.rs	61	SpanId	-norow-	0	9 free fn / bare name / struct literal
+crates/proc-macro-srv/src/token_stream.rs	265	derive_ranged	S	0	6 receiver type is a corpus TRAIT (dyn/impl/bound)
+crates/project-model/src/cargo_workspace.rs	438	insert	CargoFeatures	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/project-model/src/cargo_workspace.rs	668	to_path_buf	ManifestPath	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/project-model/src/env.rs	72	as_ref	CargoConfigFile	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/project-model/src/sysroot.rs	142	map	AbsPathBuf	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/project-model/src/sysroot.rs	278	stitched::Stitched	-norow-	0	11 module-qualified path `mod::f()`
+crates/project-model/src/sysroot.rs	447	Utf8PathBuf::from	-norow-	0	10 `T::f()`, T external or an alias
+crates/project-model/src/workspace.rs	266	clone	ManifestPath	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/project-model/src/workspace.rs	997	clone	TargetLoadResult	0	3a receiver type is a corpus ALIAS to an external type
+crates/rust-analyzer/src/cli/lsif.rs	60	FxHashMap::default	-norow-	0	10 `T::f()`, T external or an alias
+crates/rust-analyzer/src/cli/run_tests.rs	89	extend	Vec	0	3a receiver type is a corpus ALIAS to an external type
+crates/rust-analyzer/src/cli/scip.rs	206	Default::default	-norow-	0	12 `T::f()`, T a corpus trait (`Default::default`)
+crates/rust-analyzer/src/cli/scip.rs	208	Default::default	-norow-	0	12 `T::f()`, T a corpus trait (`Default::default`)
+crates/rust-analyzer/src/config.rs	2258	iter	Vec	0	3a receiver type is a corpus ALIAS to an external type
+crates/rust-analyzer/src/config.rs	3736	len	str	0	3b receiver type undeclared in corpus (std/external)
+crates/rust-analyzer/src/diagnostics.rs	97	extend	FxHashSet	0	3a receiver type is a corpus ALIAS to an external type
+crates/rust-analyzer/src/flycheck.rs	687	take	Receiver	0	3b receiver type undeclared in corpus (std/external)
+crates/rust-analyzer/src/global_state.rs	378	insert	FxHashMap	0	3b receiver type undeclared in corpus (std/external)
+crates/rust-analyzer/src/handlers/notification.rs	251	ConfigChange::default	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/rust-analyzer/src/handlers/request.rs	1665	split	str	0	3b receiver type undeclared in corpus (std/external)
+crates/rust-analyzer/src/lsp.rs	118	update	LspError	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/rust-analyzer/src/lsp/semantic_tokens.rs	246	write_str	Formatter	0	3b receiver type undeclared in corpus (std/external)
+crates/rust-analyzer/src/lsp/to_proto.rs	388	lsp_types::CompletionItem	-norow-	0	11 module-qualified path `mod::f()`
+crates/rust-analyzer/src/lsp/utils.rs	143	into	str	0	3b receiver type undeclared in corpus (std/external)
+crates/rust-analyzer/src/reload.rs	988	Vec::default	-norow-	0	10 `T::f()`, T external or an alias
+crates/rust-analyzer/src/reload.rs	1064	len	str	0	3b receiver type undeclared in corpus (std/external)
+crates/rust-analyzer/src/session.rs	183	components	PathBuf	0	3b receiver type undeclared in corpus (std/external)
+crates/rust-analyzer/src/target_spec.rs	171	Default::default	-norow-	0	12 `T::f()`, T a corpus trait (`Default::default`)
+crates/rust-analyzer/src/target_spec.rs	349	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/stdx/src/anymap.rs	126	TypeId::of	-norow-	0	10 `T::f()`, T external or an alias
+crates/stdx/src/anymap.rs	218	TypeId::of	-norow-	0	10 `T::f()`, T external or an alias
+crates/stdx/src/non_empty_vec.rs	37	pop	Vec	0	3a receiver type is a corpus ALIAS to an external type
+crates/syntax-bridge/src/lib.rs	185	errors	Converter	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/syntax-bridge/src/lib.rs	358	build_skip_top_subtree	Converter	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/syntax-bridge/src/lib.rs	682	remove	FxHashMap	0	3b receiver type undeclared in corpus (std/external)
+crates/syntax-bridge/src/lib.rs	802	usize::from	-norow-	0	11 module-qualified path `mod::f()`
+crates/syntax/src/ast/edit.rs	216	name	IdentPat	0	4 corpus struct/enum, method is a corpus trait DEFAULT body
+crates/syntax/src/ast/generated/nodes.rs	117	support::token	-norow-	0	11 module-qualified path `mod::f()`
+crates/syntax/src/ast/generated/nodes.rs	168	support::token	-norow-	0	11 module-qualified path `mod::f()`
+crates/syntax/src/ast/generated/nodes.rs	710	support::token	-norow-	0	11 module-qualified path `mod::f()`
+crates/syntax/src/ast/generated/nodes.rs	1621	support::token	-norow-	0	11 module-qualified path `mod::f()`
+crates/syntax/src/ast/generated/nodes.rs	1693	support::token	-norow-	0	11 module-qualified path `mod::f()`
+crates/syntax/src/ast/generated/nodes.rs	2041	support::child	-norow-	0	11 module-qualified path `mod::f()`
+crates/syntax/src/ast/generated/nodes.rs	2552	hash	SyntaxNode	0	3a receiver type is a corpus ALIAS to an external type
+crates/syntax/src/ast/generated/nodes.rs	3448	hash	SyntaxNode	0	3a receiver type is a corpus ALIAS to an external type
+crates/syntax/src/ast/generated/nodes.rs	4248	hash	SyntaxNode	0	3a receiver type is a corpus ALIAS to an external type
+crates/syntax/src/ast/generated/nodes.rs	4863	clone	SyntaxNode	0	3a receiver type is a corpus ALIAS to an external type
+crates/syntax/src/ast/generated/nodes.rs	6623	clone	SyntaxNode	0	3a receiver type is a corpus ALIAS to an external type
+crates/syntax/src/ast/generated/nodes.rs	6879	clone	SyntaxNode	0	3a receiver type is a corpus ALIAS to an external type
+crates/syntax/src/ast/generated/nodes.rs	7895	kind	SyntaxNode	0	3a receiver type is a corpus ALIAS to an external type
+crates/syntax/src/ast/generated/nodes.rs	8428	kind	SyntaxNode	0	3a receiver type is a corpus ALIAS to an external type
+crates/syntax/src/ast/generated/nodes.rs	8656	kind	SyntaxNode	0	3a receiver type is a corpus ALIAS to an external type
+crates/syntax/src/ast/generated/tokens.rs	123	hash	SyntaxToken	0	3a receiver type is a corpus ALIAS to an external type
+crates/syntax/src/ast/node_ext.rs	116	kind	SyntaxNode	0	3a receiver type is a corpus ALIAS to an external type
+crates/syntax/src/ast/prec.rs	236	precedence	Expr	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/syntax/src/ast/syntax_factory/constructors.rs	373	where_clause	Impl	0	4 corpus struct/enum, method is a corpus trait DEFAULT body
+crates/syntax/src/ast/syntax_factory/constructors.rs	419	type_bound_list	TypeAlias	0	4 corpus struct/enum, method is a corpus trait DEFAULT body
+crates/syntax/src/ast/token_ext.rs	93	CommentKind	-norow-	0	9 free fn / bare name / struct literal
+crates/syntax/src/ast/token_ext.rs	494	str::from_utf8	-norow-	0	11 module-qualified path `mod::f()`
+crates/syntax/src/ptr.rs	63	to_node	SyntaxNodePtr	0	3a receiver type is a corpus ALIAS to an external type
+crates/syntax/src/syntax_editor.rs	250	get	FxHashMap	0	3b receiver type undeclared in corpus (std/external)
+crates/syntax/src/syntax_editor.rs	824	make::ext::simple_ident_pat	-norow-	0	11 module-qualified path `mod::f()`
+crates/syntax/src/validation.rs	346	push	Vec	2	7 Named receiver, 2+ corpus impls of (T, m)
+crates/test-fixture/src/lib.rs	495	String::from	-norow-	0	8 `T::f()`, T a corpus struct/enum
+crates/test-utils/src/lib.rs	404	fs::write	-norow-	0	11 module-qualified path `mod::f()`
+crates/tt/src/storage.rs	294	u64::from	-norow-	0	11 module-qualified path `mod::f()`
+crates/tt/src/storage.rs	546	u32::from	-norow-	0	11 module-qualified path `mod::f()`
+crates/tt/src/storage.rs	906	u32::from	-norow-	0	11 module-qualified path `mod::f()`
+crates/tt/src/storage.rs	1121	build	UninitBuffer	0	5 corpus struct/enum, method from an external trait or a Deref
+crates/vfs-notify/src/lib.rs	48	send	Sender	0	3a receiver type is a corpus ALIAS to an external type

@@ -230,7 +230,12 @@ impl ModuleFacts {
 
 /// One file's module facts off its own parse, a SECOND one: phase 1's arena
 /// dies with dispatch and the `Parser` seam returns a `Program` alone.
+/// Consumes the handoff the ts extract pass stashed for these exact bytes on
+/// this thread (`ts_stash_module_facts`), so one oxc parse serves both.
 pub fn module_facts(path: &str, content: &[u8]) -> Option<ModuleFacts> {
+    if let Some(stashed) = take_ts_module_facts(path, content) {
+        return Some(stashed);
+    }
     let source_type = crate::lang::ts::source_type_for(path)?;
     let source = std::str::from_utf8(content).ok()?;
     let allocator = Allocator::default();
@@ -238,6 +243,11 @@ pub fn module_facts(path: &str, content: &[u8]) -> Option<ModuleFacts> {
     if parsed.panicked {
         return None;
     }
+    Some(ts_module_facts_from_parsed(&parsed))
+}
+
+/// The module facts off the extract pass's own oxc parse, so no second parse.
+pub(crate) fn ts_module_facts_from_parsed(parsed: &oxc_parser::ParserReturn<'_>) -> ModuleFacts {
     let mut facts = ModuleFacts::default();
     for entry in &parsed.module_record.import_entries {
         let imported = match &entry.import_name {
@@ -298,7 +308,35 @@ pub fn module_facts(path: &str, content: &[u8]) -> Option<ModuleFacts> {
         }
     }
     typescript_module_forms(&parsed.program, &mut facts);
-    Some(facts)
+    facts
+}
+
+/// The extract pass's handoff slot: dispatch parses, the module plane
+/// consumes on the same worker thread. Single entry, consumed on read.
+static TS_MODULE_FACTS_HANDOFF: std::sync::Mutex<Option<(String, crate::shape::ContentId, ModuleFacts)>> =
+    std::sync::Mutex::new(None);
+
+/// Stash the module facts computed off the extract parse. The next
+/// `module_facts` call for the same content on this thread consumes it.
+pub(crate) fn ts_stash_module_facts(path: &str, content: &[u8], facts: ModuleFacts) {
+    let mut slot = TS_MODULE_FACTS_HANDOFF
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    *slot = Some((
+        path.to_string(),
+        crate::shape::content_id_of(content),
+        facts,
+    ));
+}
+
+fn take_ts_module_facts(path: &str, content: &[u8]) -> Option<ModuleFacts> {
+    let mut slot = TS_MODULE_FACTS_HANDOFF
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    slot.take().filter(|(stashed_path, id, _)| {
+        stashed_path == path && *id == crate::shape::content_id_of(content)
+    })
+    .map(|(_, _, facts)| facts)
 }
 
 /// TypeScript's own module forms, absent from the ECMAScript `ModuleRecord`.
@@ -587,6 +625,20 @@ impl TsModuleIndex {
     /// What `local` is bound to by an import statement in `path`.
     pub fn import(&self, path: &str, local: &str) -> Option<&ImportBinding> {
         self.facts.get(path)?.imports.get(local)
+    }
+
+    /// The corpus blob of one corpus path.
+    pub fn blob_of(&self, path: &str) -> Option<&ContentId> {
+        self.blobs.get(path)
+    }
+
+    /// Where one name EXPORTED by `path` is written, as (file, identifier
+    /// span). `bind` needs a def node; a `namespace` or typed `const` has none.
+    pub fn export_seat(&self, path: &str, name: &str) -> Option<(String, Span)> {
+        match self.resolve_export(path, name) {
+            ExportResolution::Binding { path, span, .. } => Some((path.to_string(), span)),
+            _ => None,
+        }
     }
 
     /// The corpus file a specifier written in `path` names.

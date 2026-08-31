@@ -56,7 +56,7 @@ pub fn scip_import_sites(cx: &MoveCx, index: &ScipIndex) -> Vec<ScipSite> {
         for occurrence in &document.occurrences {
             if occurrence.roles.contains(OccurrenceRole::DEFINITION) {
                 defining
-                    .entry(occurrence.symbol.as_str())
+                    .entry(index.symbol(occurrence.symbol))
                     .or_insert(document.relative_path.as_str());
             }
         }
@@ -89,14 +89,14 @@ pub fn scip_import_sites(cx: &MoveCx, index: &ScipIndex) -> Vec<ScipSite> {
                 continue;
             };
             let target = defining
-                .get(occurrence.symbol.as_str())
+                .get(index.symbol(occurrence.symbol))
                 .filter(|path| **path != importer && cx.contains(path))
                 .map(|path| path.to_string());
             sites.push(ScipSite {
                 importer: importer.to_string(),
                 span,
                 text: text.to_string(),
-                symbol: occurrence.symbol.clone(),
+                symbol: index.symbol(occurrence.symbol).to_string(),
                 target,
             });
         }

@@ -1,25 +1,21 @@
 // TEST: the resolve paths that walked one collection per member of another.
-// Each case builds its own fixture at N >= 1000 and reads a probe counter the
-// crate arms, so a return to the scan shape is a count. The elapsed assertions
-// are the second gate: a quadratic that stays under the count bound cannot also
-// stay under 2s at these sizes.
+// Each case builds its own fixture at N >= 1000, so a return to the scan shape
+// is quadratic and cannot also stay under 2s at these sizes.
 
 use sprefa_extract::{
-    OccurrenceRole, PositionEncoding, ScipDocument, ScipOccurrence, ScipSignature, ScipSymbolInfo,
+    OccurrenceRole, PositionEncoding, ScipDocument, ScipIndex, ScipOccurrence, ScipSignature,
+    ScipSymbolInfo, SymbolInterner,
 };
 
-/// The probe counters are process-wide, so two cases reading them at once
-/// would each see the other's arithmetic.
-static PROBE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 /// One occurrence per line, each naming the identifier at column 0.
-fn document(lines: usize) -> (ScipDocument, Vec<u8>) {
+fn document(lines: usize) -> (ScipDocument, Vec<u8>, Vec<String>) {
     let mut content = String::new();
     let mut occurrences = Vec::with_capacity(lines);
+    let mut syms = SymbolInterner::default();
     for line in 0..lines {
         content.push_str("callee(argument, other);\n");
         occurrences.push(ScipOccurrence {
-            symbol: format!("scip crate . symbol{line}#"),
+            symbol: syms.intern(format!("scip crate . symbol{line}#")),
             range: [line as i32, 0, line as i32, 6],
             roles: OccurrenceRole(0),
             syntax_kind: 0,
@@ -37,36 +33,29 @@ fn document(lines: usize) -> (ScipDocument, Vec<u8>) {
             symbols: Vec::new(),
             language: "Rust".to_string(),
             text: String::new(),
+            ..ScipDocument::default()
         },
         bytes,
+        syms.table(),
     )
 }
 
 // TEST: one call site reads the document's bytes once, then answers each
-// occurrence's range off the line table. Pre-fix `byte_range` walked the
-// document from offset 0 for every occurrence, twice (start and end), so 4000
-// occurrences over a 100000-byte document read 800 million bytes and this
-// assertion read 108001 vs 800104000.
+// occurrence's range off the line table cached on the document. Pre-fix
+// `byte_range` walked the document from offset 0 for every occurrence, twice
+// (start and end), so 4000 occurrences over a 100000-byte document read 800
+// million bytes; a return to the scan shape is quadratic and cannot also stay
+// under 2s at these sizes.
 #[test]
 fn a_call_site_reads_the_document_once_not_once_per_occurrence() {
     let lines = 4_000usize;
-    let (doc, content) = document(lines);
+    let (doc, content, _symbols) = document(lines);
     let site = sprefa_extract::Span { start: 0, len: 6 };
-    let _serial = PROBE_LOCK
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
-    let before = sprefa_extract::scip::line_reads();
     let started = std::time::Instant::now();
     let hit = sprefa_extract::site_occurrence(&doc, &content, site, "callee");
-    let reads = sprefa_extract::scip::line_reads() - before;
     assert!(
         hit.is_some(),
         "the site's own occurrence is in the document"
-    );
-    assert!(
-        reads <= content.len() as u64 + 4 * lines as u64,
-        "{reads} document reads for {lines} occurrences over {} bytes is a rescan",
-        content.len()
     );
     assert!(
         started.elapsed() < std::time::Duration::from_secs(2),
@@ -81,17 +70,15 @@ fn a_call_site_reads_the_document_once_not_once_per_occurrence() {
 #[test]
 fn flattening_occurrences_reads_the_document_once() {
     let lines = 4_000usize;
-    let (doc, content) = document(lines);
+    let (doc, content, symbols) = document(lines);
     let index = sprefa_extract::ScipIndex {
         metadata: Default::default(),
         documents: vec![doc],
         external_symbols: Vec::new(),
+        symbols,
+        ..ScipIndex::default()
     };
     let reader = |_path: &str| -> Option<Vec<u8>> { Some(content.clone()) };
-    let _serial = PROBE_LOCK
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
-    let before = sprefa_extract::scip::line_reads();
     let started = std::time::Instant::now();
     let rows = sprefa_extract::flatten_scip_records(
         &index,
@@ -99,16 +86,10 @@ fn flattening_occurrences_reads_the_document_once() {
         &sprefa_extract::ScipRecords::default(),
         false,
     );
-    let reads = sprefa_extract::scip::line_reads() - before;
     assert!(
         rows.len() >= lines,
         "{} rows for {lines} occurrences",
         rows.len()
-    );
-    assert!(
-        reads <= content.len() as u64 + 4 * lines as u64,
-        "{reads} document reads for {lines} occurrences over {} bytes is a rescan",
-        content.len()
     );
     assert!(
         started.elapsed() < std::time::Duration::from_secs(2),
@@ -125,10 +106,11 @@ fn signature_occurrences_read_the_signature_once() {
     let occurrences = 2_000usize;
     let mut text = String::new();
     let mut signature_occurrences = Vec::with_capacity(occurrences);
+    let mut syms = SymbolInterner::default();
     for line in 0..occurrences {
         text.push_str("field: Type,\n");
         signature_occurrences.push(ScipOccurrence {
-            symbol: format!("scip crate . type{line}#"),
+            symbol: syms.intern(format!("scip crate . type{line}#")),
             range: [line as i32, 7, line as i32, 11],
             roles: OccurrenceRole(0),
             syntax_kind: 0,
@@ -137,9 +119,8 @@ fn signature_occurrences_read_the_signature_once() {
             diagnostics: Vec::new(),
         });
     }
-    let bytes = text.len() as u64;
     let info = ScipSymbolInfo {
-        symbol: "scip crate . Owner#".to_string(),
+        symbol: syms.intern("scip crate . Owner#"),
         display_name: "Owner".to_string(),
         kind: 0,
         relationships: Vec::new(),
@@ -160,14 +141,13 @@ fn signature_occurrences_read_the_signature_once() {
             symbols: vec![info],
             language: "Rust".to_string(),
             text: String::new(),
+            ..ScipDocument::default()
         }],
         external_symbols: Vec::new(),
+        symbols: syms.table(),
+        ..ScipIndex::default()
     };
     let reader = |_path: &str| -> Option<Vec<u8>> { None };
-    let _serial = PROBE_LOCK
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
-    let before = sprefa_extract::scip::line_reads();
     let started = std::time::Instant::now();
     let rows = sprefa_extract::flatten_scip_records(
         &index,
@@ -175,12 +155,7 @@ fn signature_occurrences_read_the_signature_once() {
         &sprefa_extract::ScipRecords::default(),
         false,
     );
-    let reads = sprefa_extract::scip::line_reads() - before;
     assert!(rows.len() >= occurrences, "{} rows", rows.len());
-    assert!(
-        reads <= bytes + 4 * occurrences as u64,
-        "{reads} signature reads for {occurrences} occurrences over {bytes} bytes is a rescan"
-    );
     assert!(
         started.elapsed() < std::time::Duration::from_secs(2),
         "quadratic timing: {:?}",

@@ -14,7 +14,7 @@
 //! name-resolved type EDGES (field / impl / uses / ...) still land with
 //! `Resolve<TypeF>`; phase 1 stays pure-content.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast as ts;
@@ -23,24 +23,26 @@ use oxc_ast_visit::Visit as OxcVisit;
 use oxc_span::{GetSpan, SourceType};
 
 use super::astgrep::{AstGrepParser, CstProjector};
-use super::ts_resolve::{ResolvedImport, TsModuleIndex};
+use super::ts_resolve::{ImportedName, ResolvedImport, TsModuleIndex};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
     DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier,
     SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
-use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
+use crate::scip::{byte_range_cached, definition_of, join_documents, site_occurrence};
 use crate::seams::{
-    corpus_defs, covering_def, def_named, own_blob, DefIndex, DefSite, ParseError, Parser, Project,
-    Resolve,
+    containing_def_site_in, corpus_defs, covering_def, def_named, own_blob, DefIndex, DefSite,
+    ParseError, Parser, Project, Resolve,
 };
 use crate::shape::{ContentId, FamilyTag, NameId, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::trace;
 use crate::types::LangKind;
+use crate::types::{content_id_of, RefPosition, Reference, Unresolved, UnresolvedReason};
 use crate::types::{KindIndex, ScipIndex};
-use crate::types::{RefPosition, Reference, Unresolved, UnresolvedReason};
+
+use super::ts_receivers;
 
 /// `oxc_span::Span` (start + end) -> our byte `Span` (start + len). One
 /// coordinate; the engine derives line/col from the file bytes when needed.
@@ -1176,12 +1178,24 @@ impl Project<CallF> for CallProjector<'_> {
         // `ts_push_lambda_defs`). name=None (v5's empty name); span = the
         // arrow/fn-expr's own span (body-covering, like rust's `def_span`) so
         // a site inside the body binds to this lambda by containment.
-        let mut lambdas = LambdaDefs { out: Vec::new() };
+        let mut lambdas = LambdaDefs {
+            out: Vec::new(),
+            named: Vec::new(),
+        };
         for stmt in with_module_bodies(&program.body) {
             lambda_entry_stmt(&mut lambdas, stmt);
         }
         for span in lambdas.out {
-            sink.nodes.push(Node::new(to_span(span), CallKind::Lambda));
+            let name = lambdas
+                .named
+                .iter()
+                .find(|(named_span, _)| *named_span == span)
+                .map(|(_, name)| name.clone());
+            let node = Node::new(to_span(span), CallKind::Lambda);
+            sink.nodes.push(match name {
+                Some(name) => node.with_name(strings.intern(&name)),
+                None => node,
+            });
         }
         // Conditional because v5 has no module-def facet: an unconditional row
         // is a v6-only line in the PORTED `call_def` set (tests/golden_parity.rs).
@@ -1206,6 +1220,14 @@ impl Project<CallF> for CallProjector<'_> {
             });
         }
         push_value_refs(sink, strings, walker.value_refs);
+        // Receiver typing for member calls: one scope-threaded pass per
+        // function body. The rows live in the per-blob facts store (never in
+        // the wired aux, so the phase-1 wire stays byte-identical); the
+        // resolve leg joins them by `CallSite.span`.
+        ts_receivers::store_facts(
+            content_id_of(self.content.as_bytes()),
+            ts_receivers::collect(program),
+        );
     }
 }
 
@@ -1514,7 +1536,32 @@ fn call_defs(program: &Program<'_>, strings: &mut Strings, sink: &mut FamilyBund
             S::ClassDeclaration(class) => class_call_defs(class, strings, sink),
             S::FunctionDeclaration(func) => fn_call_def(func, strings, sink),
             S::VariableDeclaration(var) => var_call_defs(var, strings, sink),
+            S::TSInterfaceDeclaration(interface) => interface_member_defs(interface, strings, sink),
             _ => {}
+        }
+    }
+}
+
+/// An interface's method signatures are callable defs: a member call on an
+/// interface-typed receiver binds the SIGNATURE (the oracle's coordinate),
+/// never an implementer. Class methods carry the same shape at their own
+/// definition spans; a signature has no body, so no other def exists there.
+fn interface_member_defs(
+    interface: &ts::TSInterfaceDeclaration,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    for member in &interface.body.body {
+        if let ts::TSSignature::TSMethodSignature(method) = member {
+            if let ts::PropertyKey::StaticIdentifier(key) = &method.key {
+                push_def(
+                    sink,
+                    strings,
+                    method.span,
+                    key.name.to_string(),
+                    CallKind::Method,
+                );
+            }
         }
     }
 }
@@ -1524,6 +1571,9 @@ fn call_decl_def(decl: &ts::Declaration, strings: &mut Strings, sink: &mut Famil
         ts::Declaration::ClassDeclaration(class) => class_call_defs(class, strings, sink),
         ts::Declaration::FunctionDeclaration(func) => fn_call_def(func, strings, sink),
         ts::Declaration::VariableDeclaration(var) => var_call_defs(var, strings, sink),
+        ts::Declaration::TSInterfaceDeclaration(interface) => {
+            interface_member_defs(interface, strings, sink)
+        }
         _ => {}
     }
 }
@@ -1637,6 +1687,7 @@ fn lambda_entry_decl(walker: &mut LambdaDefs, decl: &ts::Declaration) {
             }
         }
         ts::Declaration::ClassDeclaration(class) => lambda_entry_class(walker, class),
+        ts::Declaration::VariableDeclaration(var) => walker.visit_variable_declaration(var),
         _ => {}
     }
 }
@@ -1664,11 +1715,38 @@ fn lambda_entry_class(walker: &mut LambdaDefs, class: &ts::Class) {
 /// gap, same class as the rust port's visitor discipline: statement kinds the
 /// DfF walker does not recurse into — try/switch/throw — ARE walked here, so
 /// an inline lambda nested only under those mints a def v5 lacks.)
+/// The span of an arrow / fn-expr value, for property-named lambdas.
+fn lambda_value_span(value: &ts::Expression) -> Option<oxc_span::Span> {
+    match value {
+        ts::Expression::ArrowFunctionExpression(arrow) => Some(arrow.span),
+        ts::Expression::FunctionExpression(func) if func.body.is_some() => Some(func.span),
+        _ => None,
+    }
+}
+
 struct LambdaDefs {
     out: Vec<oxc_span::Span>,
+    /// Arrows / fn-exprs that are an object-literal property's value: the
+    /// oracle names the enclosing callable by that property
+    /// (`getAllCodeActions: context => codeFixAll(...)`), so the lambda def
+    /// carries the property name and its sites name it as their caller.
+    named: Vec<(oxc_span::Span, String)>,
 }
 
 impl<'a> OxcVisit<'a> for LambdaDefs {
+    fn visit_object_property(&mut self, prop: &ts::ObjectProperty<'a>) {
+        use ts::PropertyKey as K;
+        if let Some(name) = match &prop.key {
+            K::StaticIdentifier(id) => Some(id.name.to_string()),
+            _ => None,
+        } {
+            if let Some(body) = lambda_value_span(&prop.value) {
+                self.named.push((body, name));
+            }
+        }
+        oxc_ast_visit::walk::walk_object_property(self, prop);
+    }
+
     fn visit_arrow_function_expression(&mut self, arrow: &ts::ArrowFunctionExpression<'a>) {
         self.out.push(arrow.span);
         oxc_ast_visit::walk::walk_arrow_function_expression(self, arrow);
@@ -1680,6 +1758,12 @@ impl<'a> OxcVisit<'a> for LambdaDefs {
         // (Method defs) are not lambdas.
         if func.r#type == ts::FunctionType::FunctionExpression && func.body.is_some() {
             self.out.push(func.span);
+            // A fn-expr with its own identifier (`[K.A]: function forEachChildInX
+            // (...) {}`, `setTimeout(function handler() {})`) is named by that
+            // identifier; the oracle calls sites inside it by this name.
+            if let Some(id) = &func.id {
+                self.named.push((func.span, id.name.to_string()));
+            }
         }
         oxc_ast_visit::walk::walk_function(self, func, flags);
     }
@@ -1727,6 +1811,46 @@ fn module_scope_owns_a_call(sink: &FamilyBundle<CallF>) -> bool {
         let cut = reach.partition_point(|(start, _)| *start <= site.span.start);
         cut == 0 || reach[cut - 1].1 < site.span.end()
     })
+}
+
+/// Every CallF def as (span, ref), sorted by (start, end).
+fn def_spans_sorted(defs: &FamilyBundle<CallF>) -> Vec<(Span, NodeRef)> {
+    let mut sorted: Vec<(Span, NodeRef)> = defs
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(ix, node)| (node.span, NodeRef(ix as u32)))
+        .collect();
+    sorted.sort_by_key(|(span, _)| (span.start, span.end()));
+    sorted
+}
+
+/// Every def covering `site`, innermost first: the lexical chain a nested
+/// arrow closes over when it reads an outer `const`.
+fn covering_chain(sorted: &[(Span, NodeRef)], site: Span) -> Vec<NodeRef> {
+    let cut = sorted.partition_point(|(span, _)| span.start <= site.start);
+    let mut covers: Vec<(u32, NodeRef)> = sorted[..cut]
+        .iter()
+        .filter(|(span, _)| site.end() <= span.end())
+        .map(|(span, r)| (span.end() - span.start, *r))
+        .collect();
+    covers.sort_by_key(|(len, _)| *len);
+    covers.into_iter().map(|(_, r)| r).collect()
+}
+
+/// The innermost NAMED def covering `site`. `covering_def` takes the innermost
+/// def of any kind, which is the lambda wherever one is in the way.
+fn enclosing_named_def(sorted: &[(Span, NodeRef)], site: Span) -> Option<NodeRef> {
+    let cut = sorted.partition_point(|(span, _)| span.start <= site.start);
+    let mut best: Option<(Span, NodeRef)> = None;
+    for &(span, r) in &sorted[..cut] {
+        if site.end() <= span.end()
+            && best.map_or(true, |(b, _)| span.end() - span.start < b.end() - b.start)
+        {
+            best = Some((span, r));
+        }
+    }
+    best.map(|(_, r)| r)
 }
 
 fn push_def(
@@ -3400,7 +3524,7 @@ impl Resolve<TypeF> for TsSource {
 /// This file's supplied path, learned the way `own_blob` learns its blob: the
 /// resolve seam carries neither, and the `PathIndex` is the join.
 fn own_path<'a>(output: &ExtractOutput, cx: &'a ProjectCx) -> Option<&'a str> {
-    let blob = own_blob(output, cx.indexes.def_index.get()?)?;
+    let blob = own_blob(cx, output)?;
     cx.indexes.paths.get()?.get(&blob)
 }
 
@@ -3428,6 +3552,33 @@ pub fn call_drops(
         .filter_map(|site| {
             let callee = output.strings.lookup(site.callee);
             let written = site.callee_path.map(|id| output.strings.lookup(id));
+            // A traced receiver says WHY the site dropped, like the go arm:
+            // an untyped (`inferred`) or union (`ambiguous`) receiver is a
+            // policy boundary, never a missing declaration.
+            let own_facts = own_blob(cx, output)
+                .as_ref()
+                .and_then(|blob| ts_receivers::facts_of(blob, None));
+            let receiver = own_facts.as_ref().and_then(|facts| {
+                facts
+                    .rows
+                    .iter()
+                    .find(|(start, end, _)| *start == site.span.start && *end == site.span.end())
+                    .map(|(_, _, outcome)| outcome)
+            });
+            if let Some(outcome) = receiver {
+                let reason = match outcome {
+                    ts_receivers::TypeBinding::Decl(_) | ts_receivers::TypeBinding::Field(_, _) => {
+                        return None
+                    }
+                    ts_receivers::TypeBinding::Inferred => UnresolvedReason::Inferred,
+                    ts_receivers::TypeBinding::Ambiguous => UnresolvedReason::Ambiguous,
+                };
+                return Some(crate::project::ResolveDrop {
+                    span: site.span,
+                    reason,
+                    detail: callee.to_string(),
+                });
+            }
             module_target(modules, path, callee, written)
                 .err()
                 .map(|()| crate::project::ResolveDrop {
@@ -3437,6 +3588,65 @@ pub fn call_drops(
                 })
         })
         .collect()
+}
+
+/// The file and identifier span a dotted receiver path names, one module-plane
+/// segment at a time: `ts.factory` hops the import, then asks it for `factory`.
+fn receiver_seat(modules: &TsModuleIndex, path: &str, receiver: &str) -> Option<(String, Span)> {
+    let mut segments = receiver.split('.');
+    let binding = modules.import(path, segments.next()?)?;
+    let mut module = modules.target(path, &binding.module)?.to_string();
+    let mut seat = match &binding.imported {
+        ImportedName::Namespace => None,
+        ImportedName::Default => Some(modules.export_seat(&module, "default")?),
+        ImportedName::Named(name) => Some(modules.export_seat(&module, name)?),
+    };
+    for segment in segments {
+        // Only a namespace segment can be walked further: a named binding
+        // already names a declaration, whose members are not module exports.
+        if seat.is_some() {
+            return None;
+        }
+        let found = modules.export_seat(&module, segment)?;
+        module = found.0.clone();
+        seat = Some(found);
+    }
+    seat
+}
+
+/// The corpus def of `member` on an IMPORTED receiver that seats no def node:
+/// a `namespace X {}`, or an exported `const x: T` whose type has the member.
+fn imported_member_target(
+    modules: &TsModuleIndex,
+    paths: Option<&crate::types::PathIndex>,
+    path: &str,
+    receiver: &str,
+    member: &str,
+) -> Option<(ContentId, Span)> {
+    let (seat_path, seat_span) = receiver_seat(modules, path, receiver)?;
+    let seat_blob = modules.blob_of(&seat_path)?.clone();
+    let facts = ts_receivers::facts_of(&seat_blob, paths)?;
+    if let Some(members) = facts.namespace_members.get(&seat_span.start) {
+        if let Some((_, found)) = members.iter().find(|(name, _)| name == member) {
+            return Some((
+                seat_blob,
+                Span {
+                    start: found.0,
+                    len: found.1 - found.0,
+                },
+            ));
+        }
+    }
+    let declared = facts.const_type.get(&seat_span.start)?.clone();
+    ts_receivers::receiver_member_target(
+        &ts_receivers::RecvSpec::Type(declared),
+        member,
+        &seat_blob,
+        &facts,
+        Some(&seat_path),
+        Some(modules),
+        paths,
+    )
 }
 
 /// The module-plane target of one name USED in `path`: an import binding here,
@@ -3510,10 +3720,10 @@ fn scip_call_target<'a>(
     let doc = &index.documents[doc_ix];
     let (_, content) = joined[doc_ix].as_ref()?;
     let occ = site_occurrence(doc, content, site.span, callee)?;
-    let (def_doc_ix, def_occ) = definition_of(index, doc_ix, &occ.symbol)?;
+    let (def_doc_ix, def_range) = definition_of(index, doc_ix, occ)?;
     let def_doc = &index.documents[def_doc_ix];
     let (def_blob, def_content) = joined[def_doc_ix].as_ref()?;
-    let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
+    let ident = byte_range_cached(def_doc, def_content, def_range, def_doc.position_encoding)?;
     let (name, def_site) = containing_ts_def(def_index, def_blob.clone(), ident)?;
     Some((def_blob.clone(), def_site.span, name))
 }
@@ -3521,36 +3731,9 @@ fn scip_call_target<'a>(
 /// `containing_def_site` minus the `<module>` def, which spans the whole file
 /// and would win the shared seam's CallF bias over any module-level entity.
 fn containing_ts_def(index: &DefIndex, blob: ContentId, span: Span) -> Option<(&str, DefSite)> {
-    let mut best: Option<(&str, DefSite)> = None;
-    for (name, sites) in &index.map {
-        if name == MODULE_DEF_NAME {
-            continue;
-        }
-        for site in sites {
-            if site.blob != blob
-                || !(site.span.start <= span.start && span.end() <= site.span.end())
-            {
-                continue;
-            }
-            let better = match best {
-                None => true,
-                Some((_, ref incumbent)) => {
-                    let call_bias = (
-                        site.family == FamilyTag::Call,
-                        incumbent.family == FamilyTag::Call,
-                    );
-                    call_bias.0 && !call_bias.1
-                        || (call_bias.0 == call_bias.1
-                            && site.span.end() - site.span.start
-                                < incumbent.span.end() - incumbent.span.start)
-                }
-            };
-            if better {
-                best = Some((name.as_str(), site.clone()));
-            }
-        }
-    }
-    best
+    // The shared binary-searched containment join, minus the module-synthesis
+    // name: a module def covers the whole file and would win every probe.
+    containing_def_site_in(index, blob, span, Some(MODULE_DEF_NAME))
 }
 
 /// ECMAScript standard-library member and global-object function names. A
@@ -3740,7 +3923,7 @@ impl Resolve<CallF> for TsSource {
                     .indexes
                     .joined_documents
                     .get_or_init(|| join_documents(index, reader));
-                let blob = own_blob(output, def_index)?;
+                let blob = own_blob(cx, output)?;
                 let doc_ix = joined
                     .iter()
                     .position(|j| j.as_ref().map_or(false, |(b, _)| *b == blob))?;
@@ -3755,7 +3938,39 @@ impl Resolve<CallF> for TsSource {
             .zip(own_path(output, cx))
             .filter(|(modules, path)| modules.knows(path));
         let mut edges = Vec::new();
-        for site in &call.aux.sites {
+        // The receiver leg: phase 1 typed each member-call site's receiver
+        // (one scope-threaded pass per body). A traceable receiver REPLACES
+        // the name match: the member is looked up on the receiver's declared
+        // type, and a missing member is a drop, never a fallback. The one-hop
+        // `const x = f()` binds resolve in source order, so the sites are
+        // processed sorted and emitted in file order.
+        let own = own_blob(cx, output);
+        let paths = cx.indexes.paths.get();
+        let own_facts = own
+            .as_ref()
+            .and_then(|blob| ts_receivers::facts_of(blob, paths));
+        let recv_map: HashMap<(u32, u32), &ts_receivers::TypeBinding> = own_facts
+            .as_ref()
+            .map(|facts| {
+                facts
+                    .rows
+                    .iter()
+                    .map(|(start, end, outcome)| ((*start, *end), outcome))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let sites = &call.aux.sites;
+        let mut order: Vec<usize> = (0..sites.len()).collect();
+        order.sort_by_key(|&ix| (sites[ix].span.start, sites[ix].span.end()));
+        let def_spans = def_spans_sorted(call);
+        // Per covering def, var name -> (declared type name, the blob whose
+        // scope WROTE it); a nested arrow reads it off the lexical chain.
+        let mut bound_types: HashMap<NodeRef, HashMap<String, (String, ContentId)>> =
+            HashMap::new();
+        let mut results: Vec<Option<(NodeRef, ContentId, Span, CallEdgeKind)>> =
+            vec![None; sites.len()];
+        for ix in order {
+            let site = &sites[ix];
             // The caller is the innermost covering CallF def (the 4a
             // caller-binding discipline); the `<module>` def covers the rest.
             let Some(caller) = covering_def(call, site.span) else {
@@ -3766,15 +3981,105 @@ impl Resolve<CallF> for TsSource {
             let import_t = modules
                 .and_then(|(modules, path)| module_target(modules, path, callee, written).ok())
                 .flatten();
+            let receiver = recv_map.get(&(site.span.start, site.span.end()));
+            // The spec, and the blob the type name was written in when the
+            // receiver came one hop through an initializer.
+            let recv_spec: Option<(ts_receivers::RecvSpec, Option<ContentId>)> = match receiver {
+                Some(ts_receivers::TypeBinding::Decl(name))
+                | Some(ts_receivers::TypeBinding::Field(name, _)) => {
+                    let base = name.clone();
+                    Some((
+                        own_facts
+                            .as_ref()
+                            .and_then(|facts| facts.field_recv.get(&site.span.start))
+                            .map(|(base, field)| {
+                                ts_receivers::RecvSpec::Field(base.clone(), field.clone())
+                            })
+                            .unwrap_or(ts_receivers::RecvSpec::Type(base)),
+                        None,
+                    ))
+                }
+                Some(ts_receivers::TypeBinding::Inferred) => own_facts
+                    .as_ref()
+                    .and_then(|facts| facts.inferred_recv.get(&site.span.start))
+                    .and_then(|var| {
+                        covering_chain(&def_spans, site.span)
+                            .iter()
+                            .find_map(|def| bound_types.get(def).and_then(|names| names.get(var)))
+                    })
+                    .map(|(bound, ctx)| {
+                        (
+                            ts_receivers::RecvSpec::Type(bound.clone()),
+                            Some(ctx.clone()),
+                        )
+                    }),
+                Some(ts_receivers::TypeBinding::Ambiguous) | None => None,
+            };
+            // A traceable receiver owns the site: a member bind is the answer,
+            // and a missing member is a drop, never a name-match fallback.
+            let recv_t = match (&import_t, receiver) {
+                (Some(_), _) | (_, None) => None,
+                (None, Some(_)) => match (own.as_ref(), own_facts.as_ref()) {
+                    (Some(blob), Some(facts)) => recv_spec.as_ref().and_then(|(receiver, ctx)| {
+                        // The type name's own file anchors it: a `const x =
+                        // f()` receiver names a type the caller never imports.
+                        let ctx_facts = match ctx {
+                            Some(ctx) if ctx != blob => {
+                                ts_receivers::facts_of(ctx, paths).map(|facts| (ctx.clone(), facts))
+                            }
+                            _ => None,
+                        };
+                        let (ctx_blob, ctx_facts, ctx_path) = match &ctx_facts {
+                            Some((blob, facts)) => {
+                                (blob, facts, paths.and_then(|paths| paths.get(blob)))
+                            }
+                            None => (blob, facts, own_path(output, cx)),
+                        };
+                        ts_receivers::receiver_member_target(
+                            receiver,
+                            callee,
+                            ctx_blob,
+                            ctx_facts,
+                            ctx_path,
+                            modules.map(|(modules, _)| modules),
+                            paths,
+                        )
+                    }),
+                    _ => None,
+                },
+            };
+            // An imported receiver seating no def node (`Debug.assert`,
+            // `factory.createX`) binds ahead of the local typed-receiver leg.
+            let seat_t = match (&import_t, receiver, written) {
+                (None, None, Some(written)) => written.rsplit_once('.').zip(modules).and_then(
+                    |((receiver, _), (modules, path))| {
+                        imported_member_target(modules, paths, path, receiver, callee)
+                    },
+                ),
+                _ => None,
+            };
             // The scip leg keeps its answer: it types the receiver, this does not.
-            let own_t = match &import_t {
-                Some(found) => Some((found.target_blob.clone(), found.target_span)),
-                None => TsSource::call_name_match(output, def_index, callee)
+            let own_t = match (&import_t, &seat_t) {
+                (Some(found), _) => Some((found.target_blob.clone(), found.target_span)),
+                (None, Some(found)) => Some(found.clone()),
+                // A destructured receiver is a one-hop guess and yields to the
+                // name match; every other traced receiver owns its site.
+                (None, None)
+                    if matches!(receiver, Some(ts_receivers::TypeBinding::Field(_, _))) =>
+                {
+                    recv_t.or_else(|| {
+                        TsSource::call_name_match(output, def_index, callee).filter(|t| {
+                            !receiver_blind_builtin(output, call, site, callee, kinds, t)
+                        })
+                    })
+                }
+                (None, None) if receiver.is_some() => recv_t,
+                (None, None) => TsSource::call_name_match(output, def_index, callee)
                     .filter(|t| !receiver_blind_builtin(output, call, site, callee, kinds, t)),
             };
-            let own_kind = match import_t {
-                Some(_) => CallEdgeKind::ImportResolve,
-                None => CallEdgeKind::NameResolve,
+            let own_kind = match (&import_t, &seat_t) {
+                (Some(_), _) | (None, Some(_)) => CallEdgeKind::ImportResolve,
+                (None, None) => CallEdgeKind::NameResolve,
             };
             let scip_t = scip.as_ref().and_then(|(index, joined, doc_ix)| {
                 scip_call_target(index, joined, *doc_ix, site, callee, def_index)
@@ -3783,12 +4088,55 @@ impl Resolve<CallF> for TsSource {
             // call FACET (e.g. the ctor def) while scip may name the type
             // facet (the class) — one definition, two facet coordinates (the
             // ORACLE entry's "the models differ by construction").
-            let ((dst_blob, dst_span), kind) = match (own_t, scip_t) {
-                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => (n, own_kind),
-                (_, Some(s)) => ((s.0, s.1), CallEdgeKind::ScipOverride),
-                (Some(n), None) => (n, own_kind),
-                (None, None) => continue,
+            let final_t = match (own_t, scip_t) {
+                (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => Some(((n.0, n.1), own_kind)),
+                (_, Some(s)) => Some(((s.0, s.1), CallEdgeKind::ScipOverride)),
+                (Some(n), None) => Some((n, own_kind)),
+                (None, None) => None,
             };
+            // The one-hop return-type inference: a `const x = f()` init call
+            // that just resolved hands its declared return type to the var, in
+            // source order, keyed by the covering def.
+            if let (Some(facts), Some(((dst_blob, dst_span), _))) =
+                (own_facts.as_ref(), final_t.as_ref())
+            {
+                if let Some(var) = facts.binds.get(&site.span.start) {
+                    if let Some(dst_facts) = ts_receivers::facts_of(dst_blob, paths) {
+                        if let Some(declared) = dst_facts.ret_of.get(&dst_span.start) {
+                            bound_types
+                                .entry(caller)
+                                .or_default()
+                                .insert(var.clone(), (declared.clone(), dst_blob.clone()));
+                        }
+                    }
+                }
+            }
+            results[ix] = final_t.map(|((blob, span), kind)| (caller, blob, span, kind));
+        }
+        // A Lambda caller (`closure@<n>`) also emits onto the innermost NAMED
+        // def covering the site; the closure row stays, it names the frame.
+        let named: Vec<(Span, NodeRef)> = def_spans
+            .iter()
+            .filter(|(_, node_ref)| call.node(*node_ref).name.is_some())
+            .copied()
+            .collect();
+        for (site, result) in call.aux.sites.iter().zip(results) {
+            let Some((caller, dst_blob, dst_span, kind)) = result else {
+                continue;
+            };
+            if call.node(caller).name.is_none() {
+                if let Some(enclosing) = enclosing_named_def(&named, site.span) {
+                    edges.push(
+                        ProjectEdge::new(
+                            enclosing,
+                            dst_blob.clone(),
+                            dst_span,
+                            CallEdgeKind::NameResolve,
+                        )
+                        .with_call_site(site.span),
+                    );
+                }
+            }
             edges
                 .push(ProjectEdge::new(caller, dst_blob, dst_span, kind).with_call_site(site.span));
         }

@@ -1,0 +1,13 @@
+src/compiler	diet_scip	77	0	1958	68422
+src/deprecatedCompat	diet_scip	3	0	430	46
+src/harness	diet_scip	38	0	377	3278
+src/jsTyping	diet_scip	6	0	330	90
+src/server	diet_scip	15	0	445	3383
+src/services	diet_scip	168	0	580	12677
+src/testRunner	diet_scip	279	0	764	13268
+src/tsc	diet_scip	2	0	429	1
+src/tsserver	diet_scip	3	0	523	34
+src/typescript	diet_scip	3	0	534	1
+src/typingsInstaller	diet_scip	1	0	567	14
+src/typingsInstallerCore	diet_scip	4	0	514	44
+src/watchGuard	diet_scip	1	0	504	0

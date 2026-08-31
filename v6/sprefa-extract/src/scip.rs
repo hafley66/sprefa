@@ -31,13 +31,14 @@
 //! EVERY SPAWN HERE IS BUDGETED. The child runs in its own process group and
 //! the whole group dies on the deadline: these indexers fork.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::scip_decode::load_index;
 use crate::scip_ensure::{run_capped, Capped};
 use crate::shape::Span;
 use crate::types::{
-    OccurrenceRole, PositionEncoding, ScipDocument, ScipError, ScipIndex, ScipOccurrence,
+    DefMap, OccurrenceRole, PositionEncoding, ScipDocument, ScipError, ScipIndex, SymbolId,
     ScipSource,
 };
 
@@ -492,23 +493,30 @@ pub fn byte_range(content: &[u8], range: [i32; 4], encoding: PositionEncoding) -
     byte_range_at(content, &LineTable::build(content), range, encoding)
 }
 
+/// The cached-content form of `byte_range`: the def document's line table
+/// rides the document's span cache (`ScipDocument::spans`), so one table per
+/// document serves every site conversion and every def conversion. The
+/// content passed here is the join's pairing of this very document
+/// (`join_documents`), the same bytes that built the cache.
+pub fn byte_range_cached(
+    doc: &ScipDocument,
+    content: &[u8],
+    range: [i32; 4],
+    encoding: PositionEncoding,
+) -> Option<Span> {
+    let cache = doc.spans.get_or_init(|| build_doc_spans(doc, content));
+    byte_range_at(content, &cache.lines, range, encoding)
+}
+
 /// Byte offset of each 0-based line start, with the document end as the final
 /// entry. One per document, never one per range.
+#[derive(Clone, Debug)]
 pub struct LineTable {
     starts: Vec<u32>,
 }
 
-/// Document bytes a range conversion reads: one per line lookup under the
-/// table, one per byte of the document under a scan.
-static LINE_READS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-pub fn line_reads() -> u64 {
-    LINE_READS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
 impl LineTable {
     pub fn build(content: &[u8]) -> LineTable {
-        LINE_READS.fetch_add(content.len() as u64, std::sync::atomic::Ordering::Relaxed);
         let mut starts = Vec::new();
         starts.push(0u32);
         for at in memchr::memchr_iter(b'\n', content) {
@@ -523,7 +531,6 @@ impl LineTable {
     }
 
     fn line_start(&self, line: i32) -> Option<usize> {
-        LINE_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if line < 0 {
             return None;
         }
@@ -587,6 +594,53 @@ pub fn byte_range_at(
 //    golden_parity scip ratchet — the arm and the test MUST read the same
 //    occurrence the same way, so the conventions live here exactly once) ────
 
+// ── the index-the-index caches ────────────────────────────────────────────────
+// The seam functions below are called once per call site over an immutable
+// `ScipIndex`. Each doc's range->span table lives ON the document
+// (`ScipDocument::spans`, filled lazily on the first `site_occurrence` call,
+// since the spans need the document's content) and the index's symbol->def
+// map lives on the index (`ScipIndex::defs`, filled at the end of decode, or
+// on first use for a hand-built index). Nothing is keyed on an address, so
+// two indexes in one process never share a cache.
+
+/// Per document: the byte span of every convertible occurrence, sorted by
+/// (start, end), plus the document's line table. `site_occurrence` binary
+/// searches this instead of scanning `doc.occurrences` and rebuilding the
+/// line table per site. The third slot is the occurrence's interned symbol
+/// (`ScipIndex::symbol`), so the search never touches the occurrence rows.
+#[derive(Clone, Debug)]
+pub struct DocSpans {
+    pub spans: Vec<(u32, u32, SymbolId)>,
+    pub lines: LineTable,
+}
+
+pub(crate) fn build_doc_spans(doc: &ScipDocument, content: &[u8]) -> DocSpans {
+    let lines = LineTable::build(content);
+    let mut spans: Vec<(u32, u32, SymbolId)> = Vec::with_capacity(doc.occurrences.len());
+    for occ in &doc.occurrences {
+        if let Some(span) = byte_range_at(content, &lines, occ.range, doc.position_encoding) {
+            spans.push((span.start, span.end(), occ.symbol));
+        }
+    }
+    spans.sort_unstable_by_key(|(start, end, _)| (*start, *end));
+    DocSpans { spans, lines }
+}
+
+/// The definition-role map for one index, first-wins in document order —
+/// the same resolution `definition_of` answers by scan.
+pub(crate) fn build_def_map(index: &ScipIndex) -> DefMap {
+    let mut map: DefMap = HashMap::new();
+    for (doc_ix, doc) in index.documents.iter().enumerate() {
+        for (occ_ix, occ) in doc.occurrences.iter().enumerate() {
+            if !occ.roles.contains(OccurrenceRole::DEFINITION) {
+                continue;
+            }
+            map.entry(occ.symbol).or_insert((doc_ix, occ_ix as u32));
+        }
+    }
+    map
+}
+
 /// The content join for one loaded index: for every document, its content id +
 /// bytes from the rev-correct reader (None when the reader can't read the
 /// document — it is then external to the corpus). Parallel to
@@ -614,60 +668,53 @@ pub fn join_documents(
 /// inside either) whose source text equals the callee name (the trailing
 /// segment; filters the receiver/path occurrences — `Math` in `Math.sqrt` —
 /// and the argument occurrences inside a new-expression). Deterministic:
-/// first by (start, end).
-pub fn site_occurrence<'a>(
-    doc: &'a ScipDocument,
+/// first by (start, end). Returns the site's interned symbol.
+pub fn site_occurrence(
+    doc: &ScipDocument,
     content: &[u8],
     site: Span,
     callee: &str,
-) -> Option<&'a ScipOccurrence> {
-    let lines = LineTable::build(content);
-    let mut hit: Option<(&'a ScipOccurrence, [i32; 4])> = None;
-    for occ in &doc.occurrences {
-        let Some(span) = byte_range_at(content, &lines, occ.range, doc.position_encoding) else {
-            continue;
-        };
-        if !(site.start <= span.start && span.end() <= site.end()) {
-            continue;
-        }
-        let text = &content[span.start as usize..span.end() as usize];
-        if text != callee.as_bytes() {
-            continue;
-        }
-        if hit.map_or(true, |(_, r)| occ.range < r) {
-            hit = Some((occ, occ.range));
-        }
-    }
-    hit.map(|(occ, _)| occ)
+) -> Option<SymbolId> {
+    let cache = doc.spans.get_or_init(|| build_doc_spans(doc, content));
+    // Containment needs span.start >= site.start, so the first candidate is
+    // the first cached span at or after the site's start byte.
+    let first = cache
+        .spans
+        .partition_point(|(start, _, _)| *start < site.start);
+    // The spans are sorted by (start, end), so the first text match IS the
+    // min-(start, end) hit the range comparison used to pick.
+    cache.spans[first..]
+        .iter()
+        .take_while(|&&(start, _, _)| start <= site.end())
+        .filter(|&&(_, end, _)| end <= site.end())
+        .find(|&&(start, end, _)| &content[start as usize..end as usize] == callee.as_bytes())
+        .map(|&(_, _, symbol)| symbol)
 }
 
 /// The definition occurrence of a symbol: `local ` symbols are DOCUMENT-
 /// scoped (scip reuses `local 0` per file — v5's per-document keying), so the
 /// search starts and ends at the site's own document; global symbols are
 /// corpus-unique, so the first definition-role occurrence across all
-/// documents answers. Returns (document_ix, occurrence) — None means the
+/// documents answers. Returns (document_ix, def range) — None means the
 /// symbol has no definition in the indexed corpus (an EXTERNAL: a library
 /// symbol, or an unresolved reference).
-pub fn definition_of<'a>(
-    index: &'a ScipIndex,
+pub fn definition_of(
+    index: &ScipIndex,
     doc_ix: usize,
-    symbol: &str,
-) -> Option<(usize, &'a ScipOccurrence)> {
-    let is_def = |occ: &'a ScipOccurrence| {
-        occ.symbol == symbol && occ.roles.contains(OccurrenceRole::DEFINITION)
-    };
-    if symbol.starts_with("local ") {
+    symbol: SymbolId,
+) -> Option<(usize, [i32; 4])> {
+    if index.symbol(symbol).starts_with("local ") {
+        // `local N` is per-document: the map's first-wins entry names some
+        // other file's local, so the search stays at the site's own document.
         let doc = &index.documents[doc_ix];
         return doc
             .occurrences
             .iter()
-            .find(|occ| is_def(occ))
-            .map(|occ| (doc_ix, occ));
+            .find(|occ| occ.symbol == symbol && occ.roles.contains(OccurrenceRole::DEFINITION))
+            .map(|occ| (doc_ix, occ.range));
     }
-    for (ix, doc) in index.documents.iter().enumerate() {
-        if let Some(occ) = doc.occurrences.iter().find(|occ| is_def(occ)) {
-            return Some((ix, occ));
-        }
-    }
-    None
+    let map = index.defs.get_or_init(|| build_def_map(index));
+    let (def_doc_ix, occ_ix) = map.get(&symbol)?;
+    let occ = &index.documents[*def_doc_ix].occurrences[*occ_ix as usize];
+    Some((*def_doc_ix, occ.range))
 }

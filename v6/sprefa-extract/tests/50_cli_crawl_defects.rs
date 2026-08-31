@@ -255,8 +255,5 @@ fn error_line_skips_panic_notes() {
         "last"
     );
     // Only note lines: fall back to the last one rather than empty.
-    assert!(sprefa_extract::scip_ensure::last_error_line(
-        "note: only\n"
-    )
-    .starts_with("note:"));
+    assert!(sprefa_extract::scip_ensure::last_error_line("note: only\n").starts_with("note:"));
 }

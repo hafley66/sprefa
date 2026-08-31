@@ -114,6 +114,7 @@ fn type_edges(paths: &[PathBuf]) -> Result<Vec<TypeEdge>, String> {
         project_root: None,
         scip_records: Default::default(),
         occurrence_text: false,
+        rust_checker: None,
     };
     let facts = resolve_project(&request).map_err(|err| err.to_string())?;
     Ok(facts

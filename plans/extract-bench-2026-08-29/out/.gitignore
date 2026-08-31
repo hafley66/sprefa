@@ -1,0 +1,4 @@
+# Receipts over the 1 MB git law stay machine-local; the inventory is in SCIP.REPORT.md.
+*.raw.jsonl
+*.call.tsv
+*.type.tsv

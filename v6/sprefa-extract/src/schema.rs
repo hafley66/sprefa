@@ -34,6 +34,7 @@ RECORD SHAPES
   record=method_owner  family=call         owner={start,end}  self_type=<string|null>  trait=<string|null>
   record=cfg_scope  family=call            span={start,end}   cfg=<string>   (only for cfg-guarded defs)
   record=test_only_call  family=call        callee=<name>  cfg=<string>   (only for callees every site in the file names under a cfg naming `test`)
+  record=macro_site  family=call            span={start,end}   macro_name=<string>  source=<mbe|scip>
   record=reference  family=call            span={start,end}   functor=<name/arity>  position=<goal|head_arg|term_arg>
   record=const  family=type                owner={start,end}  field=<string|null>  text=<string>  kind=<lit|template>
   record=doc    family=type                owner={start,end}  parent=<string|null>  text=<string>
@@ -161,8 +162,11 @@ KIND VOCABULARIES (the `kind` field)
   const kind  lit (cooked literal) | template (raw source slice, holes intact)
   sig slot    param | ret
   unresolved reason  dynamic-import | computed-member-call | spread-call-args
-                    (phase 1) | no_corpus_def | ambiguous (--resolve, one row
-                    per call site the resolve arm dropped)
+                    (phase 1) | no_corpus_def | ambiguous | builtin | inferred |
+                    external | fanout_cap (interface dispatch with more than
+                    64 implementers: the spec edge stays, detail carries the
+                    count) (--resolve, one row per call site or import spec
+                    the resolve arm dropped)
   specifier kind    named | default | namespace | side_effect | reexport |
                     include | reexport_module | dynamic_import | require
   file_edge kind    the specifier kind that bound the crossing, or `unknown`
@@ -251,9 +255,22 @@ MODULE PLANE (--resolve)
   call edges it binds carry kind=import_resolve.
   Two `export *` arms offering DIFFERENT bindings for one name is the spec's
   AMBIGUOUS outcome: no edge, and an `unresolved` row with reason=ambiguous.
-  The go and rust arms take the same resolved_import row shape when their
-  planes land; neither emits one today, so a corpus of those languages produces
-  no row here and its call edges stay kind=name_resolve.
+  rust runs the Rust Reference's own name resolution over its `use`/`mod`
+  facts (a dedicated second parse, `src/lang/rust_modules.rs`): `crate::`/
+  `self::`/`super::`/absolute paths to a home file (reusing the kink-4
+  qualifier-to-file match), `pub use` re-export chains to any depth, `use
+  a::*` globs (ambiguous on disagreement, precedence namespace > star >
+  indirect > local, `default` never occurs), and `use a::b;` where `b` is a
+  module rather than an item (namespace). A local def always shadows an
+  import. go runs its own directory-scoped plane (`src/lang/go_modules.rs`):
+  each import spec resolves to the target directory's REAL package name (its
+  `package` clause, never the import path's last segment), kind=local, or
+  kind=namespace for a dot import; an unresolvable directory emits an
+  unresolved row reason=external instead. A `pkg.Name` call or type reference
+  binds through the plane at kind=import_resolve, exported names only (Go's
+  own capitalization rule); a bare name may still bind through a dot import
+  after same-file/corpus-unique matching declines, so a local declaration
+  always shadows it. Interface and receiver dispatch (PR #554) are unchanged.
 
 PACKAGE EDGES (--package-deps)
   Reads the supplied manifests and emits package_edge rows for the dependency

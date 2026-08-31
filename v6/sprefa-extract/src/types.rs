@@ -18,7 +18,7 @@
 //! family. The sketch below stays as the shape a revival would take.
 // @comment-ok: the module header is a crate-level doc block predating the rail
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -443,10 +443,7 @@ impl CallKind {
 }
 
 /// How a resolved call edge's callee was bound. Emitted by Resolve<CallF>.
-/// ADDENDUM 4a (site-key discipline): method resolution is NAME-ONLY — the
-/// callee name binds via the corpus `DefIndex` (`NameResolve`) and SCIP may
-/// override that binding (`ScipOverride`). Receiver typing (type-of-receiver ->
-/// method set) is OUT OF SCOPE for commit 4: no lang resolve arm invents it.
+/// `Implements` is additive: only go emits it (interface spec -> implementer).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CallEdgeKind {
     /// The callee name resolved to exactly one def in the corpus.
@@ -459,6 +456,15 @@ pub enum CallEdgeKind {
     /// The callee is an import binding, bound through the language's own module
     /// plane (ResolveExport) rather than by name-matching across the corpus.
     ImportResolve,
+    /// An interface method spec bound to one implementing type's method.
+    Implements,
+    /// The call is written inside a macro invocation: the parse walk never saw
+    /// a site, so the scip occurrence at the expanded position bound the edge.
+    /// Minted by the project post-pass, never by a per-file `Resolve` arm.
+    ScipMacro,
+    /// The language's own checker named the destination; the syntax leg's
+    /// answer, where it had one, was overridden.
+    CheckerResolve,
 }
 
 impl CallEdgeKind {
@@ -468,6 +474,9 @@ impl CallEdgeKind {
             CallEdgeKind::ScipOverride => "scip_override",
             CallEdgeKind::ValueRef => "value_ref",
             CallEdgeKind::ImportResolve => "import_resolve",
+            CallEdgeKind::Implements => "implements",
+            CallEdgeKind::ScipMacro => "scip_macro",
+            CallEdgeKind::CheckerResolve => "checker_resolve",
         }
     }
 }
@@ -494,6 +503,25 @@ pub struct MethodOwner {
     pub self_type: Option<NameId>,
     /// The implemented or declaring trait; `None` for an inherent impl.
     pub trait_name: Option<NameId>,
+}
+
+/// A call site's receiver-type outcome, keyed by `CallSite.span` (`call_site`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReceiverBinding {
+    pub call_site: Span,
+    pub outcome: ReceiverOutcome,
+}
+
+/// How a call site's receiver expression's static type was determined.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReceiverOutcome {
+    /// The declared type name (var/param/field/receiver, pointer/slice/map
+    /// unwrapped to the element or value type).
+    Named(NameId),
+    /// A `:=` bound to a call result: out of scope by policy.
+    Inferred,
+    /// Two conflicting type declarations bind the same name in this scope.
+    Ambiguous,
 }
 
 /// A Prolog term-occurrence reference: a compound constructed or destructured in
@@ -578,15 +606,28 @@ pub struct Unresolved {
 
 /// The closed v5 vocabulary (`src/engine/family/mod.rs:552-570`) plus two
 /// resolve-phase reasons (`issues/extract-unresolved-resolve-phase-reasons`).
+/// `Builtin`/`Inferred` are additive; every existing arm keeps emitting only
+/// its original reasons.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum UnresolvedReason {
     DynamicImport,
     ComputedMemberCall,
     SpreadCallArgs,
-    /// No corpus def bears the callee's name: std, a dependency, or a builtin.
+    /// No corpus def bears the callee's name: std or a dependency.
     NoCorpusDef,
     /// The corpus defines the name and this tier cannot say which one is meant.
     Ambiguous,
+    /// A predeclared identifier (builtin func or conversion), not a corpus gap.
+    Builtin,
+    /// A receiver type this tier declines to trace (a `:=` bound to a call
+    /// result), not a missing declaration.
+    Inferred,
+    /// An import spec whose target directory carries no corpus file: outside
+    /// the declaring module, or simply not part of this run's file set.
+    External,
+    /// An interface dispatch site whose interface has more than 64
+    /// implementers: the `I.M` spec edge stays, the fan-out is capped.
+    FanoutCap,
 }
 
 impl UnresolvedReason {
@@ -597,6 +638,10 @@ impl UnresolvedReason {
             UnresolvedReason::SpreadCallArgs => "spread-call-args",
             UnresolvedReason::NoCorpusDef => "no_corpus_def",
             UnresolvedReason::Ambiguous => "ambiguous",
+            UnresolvedReason::Builtin => "builtin",
+            UnresolvedReason::Inferred => "inferred",
+            UnresolvedReason::External => "external",
+            UnresolvedReason::FanoutCap => "fanout_cap",
         }
     }
 }
@@ -666,6 +711,39 @@ pub struct CallFAux {
     /// One row per callee this file names ONLY from cfg-guarded sites, so a
     /// consumer can subtract the name and still keep every shipped call.
     pub test_only_calls: Vec<TestOnlyCall>,
+    /// One row per call site whose receiver type this file could trace, joined
+    /// to `CallSite.span`. Go populates it; other languages leave it empty.
+    pub receivers: Vec<ReceiverBinding>,
+    /// One row per macro invocation that minted a def/site elsewhere in this
+    /// bundle, joined by span to whatever phase-1 arm found the expansion.
+    pub macro_sites: Vec<MacroSite>,
+}
+
+/// One macro invocation whose expansion is folded into this bundle's own
+/// nodes/sites. `span` is the invocation's span, never the expansion's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MacroSite {
+    pub span: Span,
+    pub macro_name: NameId,
+    pub source: MacroSiteSource,
+}
+
+/// Which arm minted the expansion this `MacroSite` reports.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum MacroSiteSource {
+    /// In-process `macro_rules!` expansion (`rust_mbe::expand_file`).
+    Mbe,
+    /// A scip occurrence inside a macro invocation span, joined post-resolve.
+    Scip,
+}
+
+impl MacroSiteSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            MacroSiteSource::Mbe => "mbe",
+            MacroSiteSource::Scip => "scip",
+        }
+    }
 }
 
 /// A def the compiler only builds under a cfg predicate. Carried so a caller
@@ -1432,7 +1510,8 @@ pub struct ProjectCx<'a> {
     pub manifests: &'a ManifestMap,
     /// Rev-correct content reader: project-relative path -> bytes, or None.
     /// Injected by the engine; None in unit tests. Spec: `_2_traits.rs`:41-43.
-    pub reader: Option<&'a dyn Fn(&str) -> Option<Vec<u8>>>,
+    /// Send + Sync so a parallel per-file resolve can share one `&ProjectCx`.
+    pub reader: Option<&'a (dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync)>,
     /// The fold of `files` + `manifests` that invalidates phase-2 on change; the
     /// middle component of the phase-2 cache key (see `Resolve`). Spec:
     /// `_2_traits.rs`:44-45.
@@ -1441,6 +1520,21 @@ pub struct ProjectCx<'a> {
     /// GoIndex). Opaque here; each language module owns its concrete index type
     /// behind a OnceLock. Spec: `_2_traits.rs`:46-51 (field) + :59-61 (IndexBag).
     pub indexes: IndexBag,
+}
+
+/// The blob of the output currently being resolved. Thread-local rather than a
+/// `ProjectCx` field so the per-file resolve loop can run on the extract pool:
+/// each worker pins its own current blob, and a shared `&ProjectCx` stays Sync.
+/// `None` in hand-built contexts (unit tests), where `own_blob` falls back to
+/// the deterministic span-count rule.
+thread_local! {
+    static OWN: std::cell::RefCell<Option<ContentId>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Pin the calling thread's current blob before a per-file resolve (or clear it
+/// after, so pool threads never leak a stale blob into a later task).
+pub fn set_own(blob: Option<ContentId>) {
+    OWN.with(|own| *own.borrow_mut() = blob);
 }
 
 /// The file set: project-relative paths that exist at this rev. Hollow in 4a
@@ -1475,6 +1569,13 @@ pub struct IndexBag {
     pub paths: std::sync::OnceLock<PathIndex>,
     pub kinds: std::sync::OnceLock<KindIndex>,
     pub ts_modules: std::sync::OnceLock<crate::lang::ts_resolve::TsModuleIndex>,
+    /// the rust module plane, same discipline as `ts_modules`.
+    pub rust_modules: std::sync::OnceLock<crate::lang::rust_modules::RustModuleIndex>,
+    /// the go module plane, same discipline as `ts_modules`/`rust_modules`.
+    pub go_modules: std::sync::OnceLock<crate::lang::go_modules::GoModuleIndex>,
+    /// the rust CHECKER tier's answers, joined to corpus def coordinates. Unset
+    /// without `--rust-checker`, and unset when the workspace load fell back.
+    pub rust_checker: std::sync::OnceLock<crate::lang::rust_checker::RustCheckerIndex>,
 }
 
 /// Blob -> supplied path, for the whole resolve universe. Built ONCE per
@@ -1557,6 +1658,26 @@ pub struct DefSite {
 #[derive(Clone, Debug, Default)]
 pub struct DefIndex {
     pub map: std::collections::HashMap<String, Vec<DefSite>>,
+    /// Per-blob span index over the SAME sites `map` holds, sorted by span
+    /// start, each entry carrying the max end of every entry up to and
+    /// including it (the prefix max). `containing_def_site` binary-searches
+    /// this instead of scanning every name's site list per call.
+    spans: std::collections::HashMap<ContentId, Vec<DefSpanEntry>>,
+    /// The name behind each `DefSpanEntry::name_ix` (one String per indexed
+    /// name, mirrored from `map`'s keys at build time).
+    names: Vec<String>,
+}
+
+/// One entry of the per-blob span index. `max_end` is the running max of
+/// `span.end()` over the blob's entries [0..=self] in sorted order: once it
+/// drops below the probe's end while walking left, no earlier entry contains
+/// the probe either.
+#[derive(Clone, Debug)]
+struct DefSpanEntry {
+    span: Span,
+    family: FamilyTag,
+    name_ix: u32,
+    max_end: u32,
 }
 
 /// Build THE `DefIndex` ONCE per refresh, from every file's phase-1
@@ -1600,7 +1721,41 @@ pub fn build_def_index(outputs: &[(ContentId, &ExtractOutput)]) -> DefIndex {
             }
         }
     }
+    index.build_span_index();
     index
+}
+
+impl DefIndex {
+    /// Fill the per-blob span index from `map`: one entry per site, sorted by
+    /// (start, end), each carrying the prefix max end. The name vector is
+    /// rebuilt in the same pass, so entries can name their def by index.
+    fn build_span_index(&mut self) {
+        self.names.clear();
+        self.spans.clear();
+        let mut spans: std::collections::HashMap<ContentId, Vec<DefSpanEntry>> =
+            std::collections::HashMap::new();
+        for (name, sites) in &self.map {
+            let name_ix = self.names.len() as u32;
+            self.names.push(name.clone());
+            for site in sites {
+                spans.entry(site.blob.clone()).or_default().push(DefSpanEntry {
+                    span: site.span,
+                    family: site.family,
+                    name_ix,
+                    max_end: 0,
+                });
+            }
+        }
+        for entries in spans.values_mut() {
+            entries.sort_unstable_by_key(|e| (e.span.start, e.span.end()));
+            let mut running_max = 0u32;
+            for entry in entries.iter_mut() {
+                running_max = running_max.max(entry.span.end());
+                entry.max_end = running_max;
+            }
+        }
+        self.spans = spans;
+    }
 }
 
 /// Caller binding: the CallF def node whose span most tightly CONTAINS `site`
@@ -1609,24 +1764,25 @@ pub fn build_def_index(outputs: &[(ContentId, &ExtractOutput)]) -> DefIndex {
 /// every lang emits body-covering def spans by design, so one sorted-span
 /// search serves ts, rust, and go uniformly. Pure fn over the bundle; zero AST.
 pub fn covering_def(defs: &FamilyBundle<CallF>, site: Span) -> Option<NodeRef> {
-    // Sort (span, ref) by (start, end); every container of `site` starts at or
-    // before it, so binary-search that cut and scan the prefix for the tightest
-    // cover. Def spans nest properly (a body-covering def never partially
-    // overlaps another), so min span length IS the innermost def.
-    let mut sorted: Vec<(Span, NodeRef)> = defs
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(ix, node)| (node.span, NodeRef(ix as u32)))
-        .collect();
-    sorted.sort_by_key(|(span, _)| (span.start, span.end()));
-    let cut = sorted.partition_point(|(span, _)| span.start <= site.start);
+    // One linear pass for the tightest cover, no sort and no allocation. The
+    // previous form sorted the whole bundle per call; ties break the same way
+    // the sorted order did (min length, then min (start, end), then node order).
     let mut best: Option<(Span, NodeRef)> = None;
-    for &(span, r) in &sorted[..cut] {
-        if site.end() <= span.end()
-            && best.map_or(true, |(b, _)| span.end() - span.start < b.end() - b.start)
-        {
-            best = Some((span, r));
+    for (ix, node) in defs.nodes.iter().enumerate() {
+        let span = node.span;
+        if span.start > site.start || site.end() > span.end() {
+            continue;
+        }
+        let key = (span.end() - span.start, span.start, span.end());
+        let better = match best {
+            None => true,
+            Some((b, _)) => {
+                let bkey = (b.end() - b.start, b.start, b.end());
+                key < bkey
+            }
+        };
+        if better {
+            best = Some((span, NodeRef(ix as u32)));
         }
     }
     best.map(|(_, r)| r)
@@ -1650,13 +1806,19 @@ pub fn corpus_defs<'a>(index: &'a DefIndex, name: &str) -> &'a [DefSite] {
     index.map.get(name).map(Vec::as_slice).unwrap_or(&[])
 }
 
-/// Which blob produced `output`: the 4b-iii self-blob trick generalized. A
-/// named def node in THIS output (CallF def or TypeF entity) joined against
-/// its own `DefSite` gives the file's content key — the arm learns its own
-/// blob with NO path and NO bytes (the resolve seam carries neither). None
-/// when the output has no named def (a file with nothing to resolve FROM) or
-/// the output was not in the index's corpus.
-pub fn own_blob(output: &ExtractOutput, index: &DefIndex) -> Option<ContentId> {
+/// Which blob produced `output`. When `cx.own` is set (the `resolve_project`
+/// path) it IS the answer: the caller knows which output it handed in, and any
+/// span search is a guess. The fallback (hand-built contexts) counts, per
+/// blob, how many of the output's named spans match a `DefSite` in the index
+/// and returns the single highest-count blob; a tie means the index cannot
+/// distinguish the files, so None. Blobs are scored in sorted `ContentId`
+/// order so the fallback stays stable under any later tie-break. One pass
+/// over the index, never one pass per named span.
+pub fn own_blob(cx: &ProjectCx, output: &ExtractOutput) -> Option<ContentId> {
+    if let Some(own) = OWN.with(|own| own.borrow().clone()) {
+        return Some(own);
+    }
+    let index = cx.indexes.def_index.get()?;
     let mut named_spans: Vec<Span> = Vec::new();
     if let Some(call) = &output.call {
         named_spans.extend(
@@ -1677,12 +1839,26 @@ pub fn own_blob(output: &ExtractOutput, index: &DefIndex) -> Option<ContentId> {
     }
     named_spans.sort();
     named_spans.dedup();
-    for span in named_spans {
-        if let Some(site) = index.map.values().flatten().find(|site| site.span == span) {
-            return Some(site.blob.clone());
+    let mut counts: Vec<(ContentId, usize)> = Vec::new();
+    for sites in index.map.values() {
+        for site in sites {
+            if named_spans.binary_search(&site.span).is_ok() {
+                match counts.iter_mut().find(|(blob, _)| *blob == site.blob) {
+                    Some((_, count)) => *count += 1,
+                    None => counts.push((site.blob.clone(), 1)),
+                }
+            }
         }
     }
-    None
+    if counts.len() < 2 {
+        return counts.into_iter().next().map(|(blob, _)| blob);
+    }
+    counts.sort_by(|a, b| (b.1, &a.0).cmp(&(a.1, &b.0)));
+    let (top_blob, top_count) = &counts[0];
+    if counts[1].1 == *top_count {
+        return None;
+    }
+    Some(top_blob.clone())
 }
 
 /// The corpus def site in `blob` whose node span CONTAINS `span` (the scip
@@ -1696,26 +1872,56 @@ pub fn containing_def_site(
     blob: ContentId,
     span: Span,
 ) -> Option<(&str, DefSite)> {
+    containing_def_site_in(index, blob, span, None)
+}
+
+/// The same containment join with one name excluded (`containing_ts_def`
+/// skips the module-synthesis name). The search is a binary search over the
+/// blob's span-sorted entries (built by `build_def_index`) plus a bounded
+/// leftward walk whose prefix-max-end prune guarantees every visited entry
+/// could contain `span`: candidate starts all sit at or before `span.start`,
+/// and once the running max end of everything at or before the cursor drops
+/// below `span.end()` no earlier entry contains it either.
+pub fn containing_def_site_in<'a>(
+    index: &'a DefIndex,
+    blob: ContentId,
+    span: Span,
+    skip_name: Option<&str>,
+) -> Option<(&'a str, DefSite)> {
+    let entries = index.spans.get(&blob)?;
+    // Every container has span.start <= probe.start, so candidates live in
+    // entries[..p). Walk left from the innermost candidate.
+    let p = entries.partition_point(|entry| entry.span.start <= span.start);
     let mut best: Option<(&str, DefSite)> = None;
-    for (name, sites) in &index.map {
-        for site in sites {
-            if site.blob != blob
-                || !(site.span.start <= span.start && span.end() <= site.span.end())
-            {
-                continue;
+    for entry in entries[..p].iter().rev() {
+        if entry.max_end < span.end() {
+            break;
+        }
+        if entry.span.end() < span.end() {
+            continue;
+        }
+        let name = index.names[entry.name_ix as usize].as_str();
+        if skip_name == Some(name) {
+            continue;
+        }
+        let better = match &best {
+            None => true,
+            Some((_, b)) => {
+                let call_bias = (entry.family == CallF::TAG, b.family == CallF::TAG);
+                call_bias.0 && !call_bias.1
+                    || (call_bias.0 == call_bias.1
+                        && entry.span.end() - entry.span.start < b.span.end() - b.span.start)
             }
-            let better = match best {
-                None => true,
-                Some((_, ref b)) => {
-                    let call_bias = (site.family == CallF::TAG, b.family == CallF::TAG);
-                    call_bias.0 && !call_bias.1
-                        || (call_bias.0 == call_bias.1
-                            && site.span.end() - site.span.start < b.span.end() - b.span.start)
-                }
-            };
-            if better {
-                best = Some((name.as_str(), site.clone()));
-            }
+        };
+        if better {
+            best = Some((
+                name,
+                DefSite {
+                    blob: blob.clone(),
+                    span: entry.span,
+                    family: entry.family,
+                },
+            ));
         }
     }
     best
@@ -1811,6 +2017,42 @@ impl PositionEncoding {
     }
 }
 
+/// An interned scip symbol: an index into `ScipIndex::symbols`, minted at
+/// decode. One copy of each distinct symbol string serves every occurrence,
+/// symbol information and relationship that references it (a 950k-occurrence
+/// index holds ~30k distinct symbols; per-occurrence `String`s held 75 MB of
+/// duplicated text on the go corpus).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SymbolId(pub u32);
+
+/// The decode-time interner: dedupes symbol strings into `SymbolId`s and
+/// yields the finished `ScipIndex::symbols` table.
+#[derive(Default)]
+pub struct SymbolInterner {
+    ids: std::collections::HashMap<String, SymbolId>,
+    table: Vec<String>,
+}
+
+impl SymbolInterner {
+    /// Mint (or reuse) the id for one symbol string.
+    pub fn intern(&mut self, symbol: impl Into<String>) -> SymbolId {
+        let symbol = symbol.into();
+        let next = SymbolId(self.table.len() as u32);
+        *self
+            .ids
+            .entry(symbol.clone())
+            .or_insert_with(|| {
+                self.table.push(symbol);
+                next
+            })
+    }
+
+    /// The finished table: `ScipIndex::symbols`, `SymbolId`s index into it.
+    pub fn table(self) -> Vec<String> {
+        self.table
+    }
+}
+
 /// One occurrence: a (symbol, range, roles) triple — a definition or a
 /// reference site (seed `_4_scip.rs`:26-35). `range` is scip.proto's packed
 /// quad normalized to `[start_line, start_col, end_line, end_col]` (the 3-
@@ -1826,7 +2068,8 @@ impl PositionEncoding {
 /// is the dl layer's call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScipOccurrence {
-    pub symbol: String,
+    /// The interned symbol; resolve the text with `ScipIndex::symbol`.
+    pub symbol: SymbolId,
     pub range: [i32; 4],
     pub roles: OccurrenceRole,
     /// scip.proto `SyntaxKind` ordinal (0 = UnspecifiedSyntaxKind).
@@ -1868,7 +2111,8 @@ pub struct ScipSignature {
 /// diet and are passed through as of the scip-passthrough lane.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScipSymbolInfo {
-    pub symbol: String,
+    /// The interned symbol; resolve the text with `ScipIndex::symbol`.
+    pub symbol: SymbolId,
     pub display_name: String,
     pub kind: i32,
     /// Relationships to other symbols (implements / type-definition /
@@ -1891,7 +2135,8 @@ pub struct ScipSymbolInfo {
 /// (an overriding method is both a reference and an implementation).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ScipRelationship {
-    pub symbol: String,
+    /// The interned related symbol; resolve the text with `ScipIndex::symbol`.
+    pub symbol: SymbolId,
     pub is_reference: bool,
     pub is_implementation: bool,
     pub is_type_definition: bool,
@@ -1902,7 +2147,7 @@ pub struct ScipRelationship {
 /// symbol infos (seed `_4_scip.rs`:96-104). NO blob leg: the content join
 /// (relative_path -> reader/content) is the consumer's — the seed's
 /// `ScipDocument.blob` is a join product, not a parse product.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct ScipDocument {
     pub relative_path: String,
     pub position_encoding: PositionEncoding,
@@ -1914,7 +2159,30 @@ pub struct ScipDocument {
     /// the client to read the file; it is set for virtual/in-memory documents,
     /// where the file system has no copy to read.
     pub text: String,
+    /// The occurrence span table (`crate::scip::DocSpans`): the byte span of
+    /// every convertible occurrence, sorted by (start, end), plus the
+    /// document's line table. Built on the first `site_occurrence` call
+    /// against this document and stored HERE, so two indexes in one process
+    /// never share a table. Lazy because the spans need the document's
+    /// content, which only the consumer holds.
+    pub spans: std::sync::OnceLock<crate::scip::DocSpans>,
 }
+
+impl PartialEq for ScipDocument {
+    fn eq(&self, other: &Self) -> bool {
+        // The span table is a content-derived cache: two documents equal in
+        // their parsed fields answer equally no matter which content each
+        // was joined against.
+        self.relative_path == other.relative_path
+            && self.position_encoding == other.position_encoding
+            && self.occurrences == other.occurrences
+            && self.symbols == other.symbols
+            && self.language == other.language
+            && self.text == other.text
+    }
+}
+
+impl Eq for ScipDocument {}
 
 /// One parsed index.scip: the index metadata + documents + the symbols the
 /// corpus references and does not define.
@@ -1923,13 +2191,31 @@ pub struct ScipIndex {
     pub documents: Vec<ScipDocument>,
     pub external_symbols: Vec<ScipSymbolInfo>,
     pub metadata: ScipMetadata,
+    /// The symbol interner table built at decode; `SymbolId`s index into it.
+    pub symbols: Vec<String>,
+    /// symbol -> (document ix, occurrence ix) for the first definition-role
+    /// occurrence, first-wins in document order. Filled at the end of
+    /// `scip_decode::load_index`; a hand-built index (tests, fixtures) fills
+    /// it on the first `definition_of` call instead.
+    pub defs: std::sync::OnceLock<DefMap>,
 }
+
+/// symbol -> (document ix, occurrence ix) for the first definition-role
+/// occurrence, first-wins in document order — the same resolution
+/// `definition_of` answers by scan.
+pub type DefMap = HashMap<SymbolId, (usize, u32)>;
 
 impl ScipIndex {
     /// The producing indexer's identity, "name version" (the ledger line the
     /// parity goldens print). Derived from metadata rather than stored twice.
     pub fn tool(&self) -> String {
         format!("{} {}", self.metadata.tool_name, self.metadata.tool_version)
+    }
+
+    /// The text behind an interned symbol. Unknown ids (a hand-built index
+    /// with an empty table) read as the empty string, never a panic.
+    pub fn symbol(&self, id: SymbolId) -> &str {
+        self.symbols.get(id.0 as usize).map(String::as_str).unwrap_or("")
     }
 }
 
@@ -2516,6 +2802,15 @@ pub enum FlatFact {
         family: FamilyTag,
         callee: String,
         cfg: String,
+    },
+    /// CallF macro site: the invocation `span` whose expansion minted a
+    /// def/site elsewhere in this file, and which arm found it.
+    #[serde(rename = "macro_site")]
+    MacroSiteOut {
+        family: FamilyTag,
+        span: SpanOut,
+        macro_name: String,
+        source: String,
     },
     /// A Prolog term-occurrence reference: a compound in argument position,
     /// tagged goal | head_arg | term_arg. Deliberately exceeds the LSP/SCIP
