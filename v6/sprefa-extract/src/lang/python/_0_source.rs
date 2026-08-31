@@ -2711,16 +2711,20 @@ impl Resolve<CallF> for PythonSource {
                     CallEdgeKind::NameResolve,
                     origin,
                 );
-            } else if let Some((dst_blob, dst_span)) =
-                PythonSource::call_name_match(output, def_index, callee)
-            {
-                push(
-                    &mut edges,
-                    dst_blob,
-                    dst_span,
-                    CallEdgeKind::NameResolve,
-                    ResolutionOrigin::CorpusUnique,
-                );
+            } else if !resolver.shadowed(callee, site.span) {
+                // Shadowed names stay dropped: the corpus match must not
+                // resurrect the module-level binding resolve_site declined.
+                if let Some((dst_blob, dst_span)) =
+                    PythonSource::call_name_match(output, def_index, callee)
+                {
+                    push(
+                        &mut edges,
+                        dst_blob,
+                        dst_span,
+                        CallEdgeKind::NameResolve,
+                        ResolutionOrigin::CorpusUnique,
+                    );
+                }
             }
             // The applied decorator of a `@factory()` site: a second edge.
             if let Some((_, t)) = resolver

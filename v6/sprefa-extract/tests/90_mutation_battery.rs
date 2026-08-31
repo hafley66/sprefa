@@ -133,6 +133,7 @@ fn resolve(dir: &Path, rels: &[&str]) -> Rows {
         scip_records: Default::default(),
         occurrence_text: false,
         rust_checker: None,
+        ts_checker: None,
     })
     .expect("the mutated corpus resolves");
     let mut rows = Rows::default();
@@ -397,7 +398,6 @@ fn duplicate_def_python_same_file() {
 /// leg exists (py_findings/args mints origin `param`) but loses precedence to
 /// the corpus name match.
 #[test]
-#[ignore = "FINDING F1: a same-named parameter does not shadow the corpus def"]
 fn shadow_python() {
     let (base, after) = run(&python_scenarios()[3]);
     assert!(
