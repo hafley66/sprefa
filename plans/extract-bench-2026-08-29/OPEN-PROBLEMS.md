@@ -6,7 +6,7 @@ file in the same PR; discovering one adds a row.
 
 | # | problem | numbers | detail lives at | next action |
 |---|---|---|---|---|
-| 1 | rust type residual categories | micro-shape classes at 0% on the PyCG-style census: report sec 26 residual (post-#605 recall 61.70%) | rust.REPORT.md sec 26 | classify remaining 38.3% by shape, grind top classes |
+| 1 | rust type residual categories | 3,195 missing rows classified into 14 classes at 61.70/93.75; 2,072 are oracle convention or scope, 474 the impl-owner drop, 439 resolution, 204 rejected on precision, 6 residual | rust.REPORT.md sec 28, join script `rust.type_census.py` | grind the impl-owner drop (`rust_type_edges.rs:89`, one root cause, 5.68 pt) |
 | 2 | python dynamic shapes | args 42.86%, dicts 26.32%, decorators 36.36%, assignments 0%, exceptions 0% recall | py.REPORT.md (PyCG suite section) | higher-order + container dispatch need dataflow or checker tier |
 | 3 | go agreed-missed residual | 351 rows: one-hop 155, multi-hop 139, alias 26, bare 12, qualified 11, promoted 8 | go.GAPS.md residual-six section | one-hop reassignment shape (x = y.M()) records no bind-plan row |
 | 4 | ts madge module recall | 50.57% recall / 32.85% precision, never grinded | RATCHET.tsv ts5 module row | dependency-cruiser proposed as better oracle (PRIOR-ART.md sec 9) |
