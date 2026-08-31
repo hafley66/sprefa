@@ -216,14 +216,21 @@ fn a_member_missing_on_the_receiver_type_binds_nothing() {
 /// receiver table is ONE pass per body, and the per-file facts parse once per
 /// blob, process-wide.
 fn resolve_wall(paths: &[String]) -> f64 {
-    let start = Instant::now();
-    let out = Command::new(env!("CARGO_BIN_EXE_extract"))
-        .arg("--resolve")
-        .args(paths)
-        .output()
-        .expect("extract binary runs");
-    assert!(out.status.success(), "resolve failed");
-    start.elapsed().as_secs_f64()
+    // Min of 3 runs: at ~20 ms absolute walls, scheduler jitter from the
+    // parallel test suite can inflate one run past RATIO_BUDGET; the minimum
+    // is the noise-free wall the linear-growth assertion needs.
+    (0..3)
+        .map(|_| {
+            let start = Instant::now();
+            let out = Command::new(env!("CARGO_BIN_EXE_extract"))
+                .arg("--resolve")
+                .args(paths)
+                .output()
+                .expect("extract binary runs");
+            assert!(out.status.success(), "resolve failed");
+            start.elapsed().as_secs_f64()
+        })
+        .fold(f64::INFINITY, f64::min)
 }
 
 #[test]
