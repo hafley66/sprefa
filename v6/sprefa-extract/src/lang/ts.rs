@@ -3501,23 +3501,28 @@ impl Resolve<TypeF> for TsSource {
                 ));
                 continue;
             }
+            let zero = || (ZERO_CONTENT_ID, Span::empty(), ResolutionOrigin::Unresolved);
+            let name_match = || {
+                modules
+                    .and_then(|(modules, path)| {
+                        module_target(modules, path, referenced, None).ok()
+                    })
+                    .flatten()
+                    .map(|found| {
+                        (
+                            found.target_blob,
+                            found.target_span,
+                            ResolutionOrigin::ModulePlane,
+                        )
+                    })
+                    .or_else(|| resolve_type_dst(types, &output.strings, index, referenced))
+                    .unwrap_or_else(zero)
+            };
             // No corpus declaration IS this type, so no name-match leg may
             // invent one; the zero leg carries the row instead.
-            let (dst_blob, dst_span, origin) = if checked == Some(TsCheckerAnswer::External) {
-                (ZERO_CONTENT_ID, Span::empty(), ResolutionOrigin::Unresolved)
-            } else {
-                modules
-                .and_then(|(modules, path)| module_target(modules, path, referenced, None).ok())
-                .flatten()
-                .map(|found| {
-                    (
-                        found.target_blob,
-                        found.target_span,
-                        ResolutionOrigin::ModulePlane,
-                    )
-                })
-                .or_else(|| resolve_type_dst(types, &output.strings, index, referenced))
-                .unwrap_or((ZERO_CONTENT_ID, Span::empty(), ResolutionOrigin::Unresolved))
+            let (dst_blob, dst_span, origin) = match checked {
+                Some(TsCheckerAnswer::External) => zero(),
+                _ => name_match(),
             };
             edges.push(ProjectEdge::new(
                 NodeRef(src_ix as u32),
