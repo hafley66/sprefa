@@ -79,6 +79,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:628 — Select ID-valued or tagged runtime ingress and egress for anonymous sums.
 - `decision` plans/2026-08-23-relational-history-annotations.md:413 — Choose the logical timestamp type and physical unit for recorded_at; preserve tick as the deterministic ordering field.
 - `decision` plans/2026-08-23-relational-history-annotations.md:414 — Specify the durable commit identity or idempotency witness used to prevent version duplication across restart and replay.
+- `decision` plans/2026-08-25-extract-astgrep-soopy.PLAN.md:6 — arc C FactMatcher reads ~/.agent/dl6.db read-only; the one-server-one-db law means the db must already be the live store, not a copy
+- `decision` plans/2026-08-31-dl7-module-system.md:56 — Select prefix import, alias, and export spelling without adding a second declaration language.
+- `decision` plans/2026-08-31-dl7-module-system.md:58 — Select whether `::` exposes an edge identity while `.` projects its target.
+- `decision` plans/2026-08-31-dl7-module-system.md:60 — Select the user-visible rows for source closure and comptime fixpoint closure.
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:105 — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:106 — comment_node.text strips comment tokens — state it in the relations table row, not only the buried authoring bullet
@@ -145,7 +149,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-08-12-dd-plan-emitter-seam.md:91 — final-state writer for the dd arms (§2.7) — dd-runner emits no final-state line, so the dd adapters omit <perf-out>.final.jsonl; a final-state SELECT would close the third check when dd-runner grows one.
 - `feature` plans/2026-08-12-fs-effects-recon.RESEARCH.md:337 — a write host's answer is the only evidence a write happened; 6-ordinal.dl6 shows a response column collision shadows it (F-findings note in 7.2/7.5).
 - `feature` plans/2026-08-12-uniform-surrogate-id.md:117 — zero-column reference target still refused (reference_target_has_no_columns); the fix needs registration in analyze.pl + lowering + type plane, outside this lane.
-- `feature` plans/2026-08-13-generic-interface-type-ir.md:219 — Add emitter policy tests proving that one catalog can render preserved generics and concrete monomorphizations.
+- `feature` plans/2026-08-13-generic-interface-type-ir.md:223 — Add emitter policy tests proving that one catalog can render preserved generics and concrete monomorphizations.
 - `feature` plans/2026-08-13-soopy-source-mechanics-boundary.md:243 — Add typed repository, Git worktree, search, and selection interfaces to Soopy after source-coordinate invariants are fixed.
 - `feature` plans/2026-08-13-soopy-source-mechanics-boundary.md:245 — Implement native Rust text search over `SourceQuery` using the ripgrep library stack.
 - `feature` plans/2026-08-13-soopy-source-mechanics-boundary.md:247 — Replace the `fzf` subprocess with high-level `nucleo` ranking exposed through the existing `clap` command surface and stable selection identities.
@@ -190,11 +194,17 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `perf` plans/2026-07-25-analysis-engine-bakeoff-labs.md:117 — RAM budget per lab declared BEFORE its first C2 run — exceeding = fail (30GB lesson)
 - `perf` plans/2026-08-12-uniform-surrogate-id.md:116 — public set-rel tables moved off WITHOUT ROWID; fixpoint 10-18% slower (grid/layered/chain), RSS up to ~20% higher. Bench numbers banked in plans/2026-08-12-uniform-surrogate-id.md.
 - `perf` plans/2026-08-19-shared-sqlite-frontier.md:187 — Replace relation-specific transient SQLite plans with shared frontier and support state while preserving one typed durable table per materialized relation.
+- `perf` plans/2026-08-25-move-rule-perf.PLAN.md:197 — Arc A bounded rule: verify a directive using an operator_atom or quoted functor ('use_module'(...)) still matches, add a test case if the corpus lacks one
+- `perf` plans/2026-08-25-move-rule-perf.PLAN.md:198 — Arc B name-gate: confirm old itself is always admitted (it contains its own stem) and its module name still parses
+- `perf` plans/2026-08-25-move-rule-perf.PLAN.md:199 — Arc C parallel drain: assert edit_stage order equals sorted rel order in a unit test before relying on the byte-identical receipt
 - `triage` plans/2026-07-11-cross-harness-agent-tooling.md:147 — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
 - `triage` plans/2026-07-11-docs-and-dogfood-audit.md:40 — re-enable hooks (timeout+advisory) — relights the dark event arm; Chris flips
 - `triage` plans/2026-07-11-engine-mod-split.md:72 — SG_LANG_TABLE final home (src/sg.rs vs engine/lang_tables.rs) when the lang_tables cluster moves
 - `triage` plans/2026-07-15-structural-parsing-coverage.md:119 — CSS comment_node coverage depends on tree-sitter-css being published for tree-sitter 0.25; verify availability
 - `triage` plans/2026-07-25-analysis-engine-bakeoff-labs.md:60 — corpus tiers C0–C3 pinned revs committed to labs/bakeoff/CORPUS.md; parse-only, no builds allowed for any candidate
+- `triage` plans/2026-08-25-extract-move-typescript.PLAN.md:6 — resolve_file on a bare specifier that aliases into the source tree is a move target; a bare specifier resolving to node_modules is not. The within_root gate decides.
+- `triage` plans/2026-08-27-leaky-types-review.PLAN.md:58 — leaky-types review rows #3 DfNodeKind, #16 FlatFact, #2 ExtractLang need a design pass with Chris (per-lang impl shape) before any lane picks them up
+- `triage` plans/2026-08-27-leaky-types-review.PLAN.md:60 — tasks.rs trait set (Reach/Cascade/Reconcile/GraphStore/GraphStorePlan) has zero references in the repo; confirm delete-vs-privatize
 <!-- END: plans-by-category -->
 
 ## By plan
@@ -352,7 +362,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-08-12-fs-effects-recon.RESEARCH.visual.human.unga.md:165 `decision` — pick watch surface.
 - plans/2026-08-12-uniform-surrogate-id.md:116 `perf` — public set-rel tables moved off WITHOUT ROWID; fixpoint 10-18% slower (grid/layered/chain), RSS up to ~20% higher. Bench numbers banked in plans/2026-08-12-uniform-surrogate-id.md.
 - plans/2026-08-12-uniform-surrogate-id.md:117 `feature` — zero-column reference target still refused (reference_target_has_no_columns); the fix needs registration in analyze.pl + lowering + type plane, outside this lane.
-- plans/2026-08-13-generic-interface-type-ir.md:219 `feature` — Add emitter policy tests proving that one catalog can render preserved generics and concrete monomorphizations.
+- plans/2026-08-13-generic-interface-type-ir.md:223 `feature` — Add emitter policy tests proving that one catalog can render preserved generics and concrete monomorphizations.
 - plans/2026-08-13-soopy-source-mechanics-boundary.md:214 `bug` — Interpret `repo_files` and `repo_files_at` pathspecs relative to the selected repository root; only `files` and `files_at` use the process working directory.
 - plans/2026-08-13-soopy-source-mechanics-boundary.md:216 `bug` — Validate every worktree `RepoPath` before joining it to the repository root so absolute and parent-traversal paths cannot escape the repository.
 - plans/2026-08-13-soopy-source-mechanics-boundary.md:218 `bug` — Validate committed reads against `commit:path` before returning the caller-supplied expected blob.
@@ -387,6 +397,16 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-08-23-relational-history-annotations.md:416 `feature` — Implement the history(Source) derived constructor using canonical source key and member rows.
 - plans/2026-08-23-relational-history-annotations.md:417 `feature` — Add atomic commit-boundary history capture with per-identity versions, ticks, recorded time, put/delete operations, and replay safety.
 - plans/2026-08-23-relational-history-annotations.md:418 `feature` — Prove one composite-key history timeline through Prolog, TS plus SQLite, Rust plus SQLite, typegen, and catalog artifacts.
+- plans/2026-08-25-extract-astgrep-soopy.PLAN.md:6 `decision` — arc C FactMatcher reads ~/.agent/dl6.db read-only; the one-server-one-db law means the db must already be the live store, not a copy
+- plans/2026-08-25-extract-move-typescript.PLAN.md:6 `triage` — resolve_file on a bare specifier that aliases into the source tree is a move target; a bare specifier resolving to node_modules is not. The within_root gate decides.
+- plans/2026-08-25-move-rule-perf.PLAN.md:197 `perf` — Arc A bounded rule: verify a directive using an operator_atom or quoted functor ('use_module'(...)) still matches, add a test case if the corpus lacks one
+- plans/2026-08-25-move-rule-perf.PLAN.md:198 `perf` — Arc B name-gate: confirm old itself is always admitted (it contains its own stem) and its module name still parses
+- plans/2026-08-25-move-rule-perf.PLAN.md:199 `perf` — Arc C parallel drain: assert edit_stage order equals sorted rel order in a unit test before relying on the byte-identical receipt
+- plans/2026-08-27-leaky-types-review.PLAN.md:58 `triage` — leaky-types review rows #3 DfNodeKind, #16 FlatFact, #2 ExtractLang need a design pass with Chris (per-lang impl shape) before any lane picks them up
+- plans/2026-08-27-leaky-types-review.PLAN.md:60 `triage` — tasks.rs trait set (Reach/Cascade/Reconcile/GraphStore/GraphStorePlan) has zero references in the repo; confirm delete-vs-privatize
+- plans/2026-08-31-dl7-module-system.md:56 `decision` — Select prefix import, alias, and export spelling without adding a second declaration language.
+- plans/2026-08-31-dl7-module-system.md:58 `decision` — Select whether `::` exposes an edge identity while `.` projects its target.
+- plans/2026-08-31-dl7-module-system.md:60 `decision` — Select the user-visible rows for source closure and comptime fixpoint closure.
 <!-- END: plans-by-plan -->
 
 ## By code file
