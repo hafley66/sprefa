@@ -43,6 +43,7 @@ use crate::types::LangKind;
 use crate::types::{content_id_of, RefPosition, Reference, Unresolved, UnresolvedReason};
 use crate::types::{KindIndex, ScipIndex};
 
+use super::ts_checker::TsCheckerAnswer;
 use super::ts_receivers;
 
 /// `oxc_span::Span` (start + end) -> our byte `Span` (start + len). One
@@ -3470,6 +3471,8 @@ impl Resolve<TypeF> for TsSource {
             .get()
             .zip(own_path(output, cx))
             .filter(|(modules, path)| modules.knows(path));
+        let checker = cx.indexes.ts_checker.get();
+        let own = own_path(output, cx);
         let mut edges = Vec::new();
         for candidate in TsSource::type_edge_candidates(output) {
             // src: the TypeF entity at the owner span. Exists by construction
@@ -3483,18 +3486,44 @@ impl Resolve<TypeF> for TsSource {
                 continue;
             };
             let referenced = output.strings.lookup(candidate.to);
-            let (dst_blob, dst_span, origin) = modules
-                .and_then(|(modules, path)| module_target(modules, path, referenced, None).ok())
-                .flatten()
-                .map(|found| {
-                    (
-                        found.target_blob,
-                        found.target_span,
-                        ResolutionOrigin::ModulePlane,
-                    )
-                })
-                .or_else(|| resolve_type_dst(types, &output.strings, index, referenced))
-                .unwrap_or((ZERO_CONTENT_ID, Span::empty(), ResolutionOrigin::Unresolved));
+            // The CHECKER tier answers first: a name one file resolves two ways
+            // is the only shape it declines, and the legs below then run.
+            let checked = checker
+                .zip(own)
+                .and_then(|(checker, from)| checker.type_at(from, referenced));
+            if let Some(TsCheckerAnswer::Corpus(blob, span)) = checked {
+                edges.push(ProjectEdge::new(
+                    NodeRef(src_ix as u32),
+                    blob,
+                    span,
+                    candidate.kind,
+                    ResolutionOrigin::Checker,
+                ));
+                continue;
+            }
+            let zero = || (ZERO_CONTENT_ID, Span::empty(), ResolutionOrigin::Unresolved);
+            let name_match = || {
+                modules
+                    .and_then(|(modules, path)| {
+                        module_target(modules, path, referenced, None).ok()
+                    })
+                    .flatten()
+                    .map(|found| {
+                        (
+                            found.target_blob,
+                            found.target_span,
+                            ResolutionOrigin::ModulePlane,
+                        )
+                    })
+                    .or_else(|| resolve_type_dst(types, &output.strings, index, referenced))
+                    .unwrap_or_else(zero)
+            };
+            // No corpus declaration IS this type, so no name-match leg may
+            // invent one; the zero leg carries the row instead.
+            let (dst_blob, dst_span, origin) = match checked {
+                Some(TsCheckerAnswer::External) => zero(),
+                _ => name_match(),
+            };
             edges.push(ProjectEdge::new(
                 NodeRef(src_ix as u32),
                 dst_blob,
@@ -3957,6 +3986,7 @@ impl Resolve<CallF> for TsSource {
         // `const x = f()` binds resolve in source order, so the sites are
         // processed sorted and emitted in file order.
         let own = own_blob(cx, output);
+        let checker = cx.indexes.ts_checker.get().zip(own_path(output, cx));
         let paths = cx.indexes.paths.get();
         let own_facts = own
             .as_ref()
@@ -4111,7 +4141,7 @@ impl Resolve<CallF> for TsSource {
             // call FACET (e.g. the ctor def) while scip may name the type
             // facet (the class) — one definition, two facet coordinates (the
             // ORACLE entry's "the models differ by construction").
-            let final_t = match (own_t, scip_t) {
+            let syntax_t = match (own_t, scip_t) {
                 (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => {
                     Some(((n.0, n.1), own_kind, n.2))
                 }
@@ -4122,6 +4152,21 @@ impl Resolve<CallF> for TsSource {
                 )),
                 (Some(n), None) => Some(((n.0, n.1), own_kind, n.2)),
                 (None, None) => None,
+            };
+            // The CHECKER tier: the compiler's own answer for this site wins
+            // over the name match, the receiver leg and scip alike.
+            let final_t = match checker
+                .and_then(|(index, path)| index.call_at(path, site.span, callee))
+            {
+                Some(TsCheckerAnswer::Corpus(blob, span)) => Some((
+                    (blob, span),
+                    CallEdgeKind::CheckerResolve,
+                    ResolutionOrigin::Checker,
+                )),
+                // No corpus definition IS this callee, so no name-match leg
+                // may invent one.
+                Some(TsCheckerAnswer::External) => None,
+                None => syntax_t,
             };
             // The one-hop return-type inference: a `const x = f()` init call
             // that just resolved hands its declared return type to the var, in

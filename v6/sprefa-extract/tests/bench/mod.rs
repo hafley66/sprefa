@@ -745,6 +745,7 @@ fn request<'a>(files: &'a [PathBuf], corpus: &'a Corpus) -> ResolveRequest<'a> {
         scip_records: ScipRecords::all(),
         occurrence_text: false,
         rust_checker: checker.then_some(corpus.root.as_path()),
+        ts_checker: None,
     }
 }
 

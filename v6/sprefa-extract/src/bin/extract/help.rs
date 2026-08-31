@@ -185,9 +185,9 @@ cargo build) and let it name the destination of every call and type reference th
 parse found. The caller, the site spans and the unresolved rows stay this
 binary's; only the destination changes hands.
 
-This is the RUST tier. go and ts stay on the syntax leg by design: their call and
-type shapes are name-matchable, rust's are not (a method call's destination needs
-the receiver's inferred type and the trait solver).
+This is the RUST tier; --ts-checker is its ts twin. go stays on the syntax leg by
+design: its call and type shapes are name-matchable, rust's are not (a method
+call's destination needs the receiver's inferred type and the trait solver).
 
 Cost is index-build class, not per-run: the workspace load is seconds and holds
 the whole crate graph in memory for the run. A root with no Cargo.toml, or a
@@ -195,6 +195,24 @@ cargo metadata that fails, logs one line and falls back to the syntax leg.
 
 Needs a binary built with --features rust-checker; without it the flag logs the
 same fallback line and changes nothing.";
+
+pub const TS_CHECKER_LONG: &str = "\
+Load --project-root as one ts.Program (the project's own tsconfig options, emit
+cleared) and let the TypeScript compiler name the destination of every call and
+type reference the parse found. The caller, the site spans and the unresolved
+rows stay this binary's; only the destination changes hands.
+
+The compiler is the project's own: `typescript` resolved from --project-root,
+else a TypeScript checkout's built lib/typescript.js. It runs as one `node`
+subprocess, once per resolve, in its own process group under the same wall cap
+every scip indexer runs under (SPREFA_SCIP_TIMEOUT_SECS, default 600s).
+
+An answer the checker gives OUTSIDE the corpus suppresses the name-match leg for
+that site: the compiler knowing the destination is a dependency is knowledge, and
+a name match may not invent a corpus edge over it.
+
+Needs a binary built with --features ts-checker, and node on PATH; without
+either the flag logs one fallback line and changes nothing.";
 
 pub const SCIP_FACTS_LONG: &str = "\
 Load a SCIP index (--scip-index or --scip-build) and stream EVERYTHING it

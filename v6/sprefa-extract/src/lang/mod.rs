@@ -38,6 +38,7 @@ pub mod rust_type_edges;
 pub mod rust_type_refs;
 pub mod ts;
 pub mod ts_paths;
+pub mod ts_checker;
 pub mod ts_receivers;
 pub mod ts_rehome;
 pub mod ts_rename;
