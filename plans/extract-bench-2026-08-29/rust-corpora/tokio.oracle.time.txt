@@ -1,0 +1,22 @@
+workspace loaded in 0.88s
+rs files in vfs under root: 793
+type edges: kinded=6586 bare=6420 typedecl=1827 ref_hits=9658 implements=204 wall=5.69s
+files_visited=793/793 defs_seen=7318 edges=8180 wall=0.50s
+        7.17 real         6.54 user         0.95 sys
+           972849152  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              109106  page reclaims
+                   7  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                 213  messages sent
+                 425  messages received
+                   1  signals received
+                4422  voluntary context switches
+                7332  involuntary context switches
+             9920313  instructions retired
+             3813988  cycles elapsed
+             1180544  peak memory footprint
