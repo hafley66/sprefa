@@ -1,0 +1,340 @@
+; Structural contracts are ordinary product nodes. Conformance returns one
+; canonical proof identity after every contract edge matches the source.
+(: Conforms
+   (* (: source type)
+      (: contract type)
+      (: return type)))
+
+(: conformance_candidate
+   (* (: source type)
+      (: contract type)
+      (: proof type)))
+
+(: matching_contract_edge
+   (* (: source type)
+      (: contract type)
+      (: name any)
+      (: target any)
+      (: contract_index int)))
+
+(: missing_contract_edge
+   (* (: source type)
+      (: contract type)
+      (: name any)
+      (: target any)
+      (: contract_index int)))
+
+(: has_missing_contract_edge
+   (* (: source type)
+      (: contract type)))
+
+(: valid_conformance
+   (* (: source type)
+      (: contract type)))
+
+; A closed cons list represents conjunction over several contracts.
+(: ConformsAll
+   (* (: source type)
+      (: contracts any)
+      (: return type)))
+
+(: conforms_all_candidate
+   (* (: source type)
+      (: contracts any)
+      (: proof type)))
+
+(: all_contracts_conform
+   (* (: source type)
+      (: current any)
+      (: root any)))
+
+; Intersection constructs a canonical product from two ordered edge sets.
+(: Intersect
+   (* (: left type)
+      (: right type)
+      (: return type)))
+
+(: intersection_candidate
+   (* (: left type)
+      (: right type)
+      (: result type)))
+
+(: intersection_left_name
+   (* (: left type)
+      (: right type)
+      (: name any)))
+
+(: same_intersection_target
+   (* (: left type)
+      (: right type)
+      (: name any)))
+
+(: intersection_conflict
+   (* (: left type)
+      (: right type)
+      (: name any)))
+
+(: has_intersection_conflict
+   (* (: left type)
+      (: right type)))
+
+(: valid_intersection
+   (* (: left type)
+      (: right type)))
+
+(: intersection_edge_candidate
+   (* (: left type)
+      (: right type)
+      (: side text)
+      (: name any)
+      (: target any)
+      (: source_index int)))
+
+(: intersection_predecessor
+   (* (: left type)
+      (: right type)
+      (: side text)
+      (: source_index int)
+      (: prior_side text)
+      (: prior_index int)))
+
+(: intersection_has_predecessor
+   (* (: left type)
+      (: right type)
+      (: side text)
+      (: source_index int)))
+
+(: intersection_rank
+   (* (: left type)
+      (: right type)
+      (: side text)
+      (: source_index int)
+      (: result_index int)))
+
+; Extend is an ordinary userland alias over intersection.
+(: Extend
+   (* (: base type)
+      (: extension type)
+      (: return type)))
+
+; Impl evidence is authored data. The witness is checked structurally.
+(: implements
+   (* (: contract type)
+      (: source type)
+      (: witness type)))
+
+(: valid_impl
+   (* (: contract type)
+      (: source type)
+      (: witness type)))
+
+(: invalid_impl_edge
+   (* (: contract type)
+      (: source type)
+      (: witness type)
+      (: name any)
+      (: target any)
+      (: contract_index int)))
+
+; Conformance application records its intern request before proof validation.
+; A failed proof therefore becomes inspectable in a later compiler round.
+(<- (Conforms ?Source ?Contract ?Proof)
+    (nil ?Empty)
+    (cons ?Contract ?Empty ?TailArguments)
+    (cons ?Source ?TailArguments ?Arguments)
+    (intern Conforms ?Arguments ?Proof)
+    (valid_conformance ?Source ?Contract))
+
+(<- (Conforms ?Source ?Contract ?Proof)
+    (intern_snapshot Conforms ?Arguments ?Proof)
+    (cons ?Source ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Contract ?Empty ?TailArguments)
+    (valid_conformance ?Source ?Contract))
+
+(<- (conformance_candidate ?Source ?Contract ?Proof)
+    (intern_snapshot Conforms ?Arguments ?Proof)
+    (cons ?Source ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Contract ?Empty ?TailArguments))
+
+(<- (matching_contract_edge
+       ?Source ?Contract ?Name ?Target ?ContractIndex)
+    (conformance_candidate ?Source ?Contract ?Proof)
+    (edge_snapshot ?Contract ?Name ?Target ?ContractIndex)
+    (edge_snapshot ?Source ?Name ?Target ?SourceIndex))
+
+(<- (missing_contract_edge
+       ?Source ?Contract ?Name ?Target ?ContractIndex)
+    (conformance_candidate ?Source ?Contract ?Proof)
+    (edge_snapshot ?Contract ?Name ?Target ?ContractIndex)
+    (not (matching_contract_edge
+           ?Source ?Contract ?Name ?Target ?ContractIndex)))
+
+(<- (has_missing_contract_edge ?Source ?Contract)
+    (missing_contract_edge
+      ?Source ?Contract ?Name ?Target ?ContractIndex))
+
+(<- (valid_conformance ?Source ?Contract)
+    (conformance_candidate ?Source ?Contract ?Proof)
+    (not (has_missing_contract_edge ?Source ?Contract)))
+
+(<- (node ?Proof)
+    (Conforms ?Source ?Contract ?Proof))
+
+; Contract-list application and recursive conjunction.
+(<- (ConformsAll ?Source ?Contracts ?Proof)
+    (nil ?Empty)
+    (cons ?Contracts ?Empty ?TailArguments)
+    (cons ?Source ?TailArguments ?Arguments)
+    (intern ConformsAll ?Arguments ?Proof)
+    (all_contracts_conform ?Source ?Contracts ?Contracts))
+
+(<- (ConformsAll ?Source ?Contracts ?Proof)
+    (intern_snapshot ConformsAll ?Arguments ?Proof)
+    (cons ?Source ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Contracts ?Empty ?TailArguments)
+    (all_contracts_conform ?Source ?Contracts ?Contracts))
+
+(<- (conforms_all_candidate ?Source ?Contracts ?Proof)
+    (intern_snapshot ConformsAll ?Arguments ?Proof)
+    (cons ?Source ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Contracts ?Empty ?TailArguments))
+
+(<- (all_contracts_conform ?Source ?Empty ?Root)
+    (conforms_all_candidate ?Source ?Root ?Proof)
+    (nil ?Empty))
+
+(<- (all_contracts_conform ?Source ?Current ?Root)
+    (conforms_all_candidate ?Source ?Root ?Proof)
+    (cons ?Contract ?Tail ?Current)
+    (Conforms ?Source ?Contract ?ContractProof)
+    (all_contracts_conform ?Source ?Tail ?Root))
+
+(<- (node ?Proof)
+    (ConformsAll ?Source ?Contracts ?Proof))
+
+; Intersection application records the candidate identity before validation.
+(<- (Intersect ?Left ?Right ?Result)
+    (nil ?Empty)
+    (cons ?Right ?Empty ?TailArguments)
+    (cons ?Left ?TailArguments ?Arguments)
+    (intern Intersect ?Arguments ?Result)
+    (valid_intersection ?Left ?Right))
+
+(<- (Intersect ?Left ?Right ?Result)
+    (intern_snapshot Intersect ?Arguments ?Result)
+    (cons ?Left ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Right ?Empty ?TailArguments)
+    (valid_intersection ?Left ?Right))
+
+(<- (intersection_candidate ?Left ?Right ?Result)
+    (intern_snapshot Intersect ?Arguments ?Result)
+    (cons ?Left ?TailArguments ?Arguments)
+    (nil ?Empty)
+    (cons ?Right ?Empty ?TailArguments))
+
+(<- (intersection_left_name ?Left ?Right ?Name)
+    (intersection_candidate ?Left ?Right ?Result)
+    (edge_snapshot ?Left ?Name ?Target ?Index))
+
+(<- (same_intersection_target ?Left ?Right ?Name)
+    (intersection_candidate ?Left ?Right ?Result)
+    (edge_snapshot ?Left ?Name ?Target ?LeftIndex)
+    (edge_snapshot ?Right ?Name ?Target ?RightIndex))
+
+(<- (intersection_conflict ?Left ?Right ?Name)
+    (intersection_candidate ?Left ?Right ?Result)
+    (edge_snapshot ?Left ?Name ?LeftTarget ?LeftIndex)
+    (edge_snapshot ?Right ?Name ?RightTarget ?RightIndex)
+    (not (same_intersection_target ?Left ?Right ?Name)))
+
+(<- (has_intersection_conflict ?Left ?Right)
+    (intersection_conflict ?Left ?Right ?Name))
+
+(<- (valid_intersection ?Left ?Right)
+    (intersection_candidate ?Left ?Right ?Result)
+    (not (has_intersection_conflict ?Left ?Right)))
+
+(<- (intersection_edge_candidate
+       ?Left ?Right "left" ?Name ?Target ?SourceIndex)
+    (valid_intersection ?Left ?Right)
+    (edge_snapshot ?Left ?Name ?Target ?SourceIndex))
+
+(<- (intersection_edge_candidate
+       ?Left ?Right "right" ?Name ?Target ?SourceIndex)
+    (valid_intersection ?Left ?Right)
+    (edge_snapshot ?Right ?Name ?Target ?SourceIndex)
+    (not (intersection_left_name ?Left ?Right ?Name)))
+
+; Within-side predecessors preserve source order.
+(<- (intersection_predecessor
+       ?Left ?Right "left" ?SourceIndex "left" ?PriorIndex)
+    (intersection_edge_candidate
+      ?Left ?Right "left" ?Name ?Target ?SourceIndex)
+    (intersection_edge_candidate
+      ?Left ?Right "left" ?PriorName ?PriorTarget ?PriorIndex)
+    (before ?Left ?PriorIndex ?SourceIndex))
+
+(<- (intersection_predecessor
+       ?Left ?Right "right" ?SourceIndex "right" ?PriorIndex)
+    (intersection_edge_candidate
+      ?Left ?Right "right" ?Name ?Target ?SourceIndex)
+    (intersection_edge_candidate
+      ?Left ?Right "right" ?PriorName ?PriorTarget ?PriorIndex)
+    (before ?Right ?PriorIndex ?SourceIndex))
+
+; Every retained left edge precedes every right-only edge.
+(<- (intersection_predecessor
+       ?Left ?Right "right" ?SourceIndex "left" ?PriorIndex)
+    (intersection_edge_candidate
+      ?Left ?Right "right" ?Name ?Target ?SourceIndex)
+    (intersection_edge_candidate
+      ?Left ?Right "left" ?PriorName ?PriorTarget ?PriorIndex))
+
+(<- (intersection_has_predecessor
+       ?Left ?Right ?Side ?SourceIndex)
+    (intersection_predecessor
+      ?Left ?Right ?Side ?SourceIndex ?PriorSide ?PriorIndex))
+
+(<- (intersection_rank
+       ?Left ?Right ?Side ?SourceIndex (count ?PriorIndex))
+    (intersection_predecessor
+      ?Left ?Right ?Side ?SourceIndex ?PriorSide ?PriorIndex))
+
+(<- (intersection_rank ?Left ?Right ?Side ?SourceIndex 0)
+    (intersection_edge_candidate
+      ?Left ?Right ?Side ?Name ?Target ?SourceIndex)
+    (not (intersection_has_predecessor
+           ?Left ?Right ?Side ?SourceIndex)))
+
+(<- (: ?Result ?Name ?Target ?ResultIndex)
+    (Intersect ?Left ?Right ?Result)
+    (intersection_edge_candidate
+      ?Left ?Right ?Side ?Name ?Target ?SourceIndex)
+    (intersection_rank
+      ?Left ?Right ?Side ?SourceIndex ?ResultIndex))
+
+(<- (node ?Result)
+    (Intersect ?Left ?Right ?Result))
+
+(<- (product ?Result)
+    (Intersect ?Left ?Right ?Result))
+
+(<- (Extend ?Base ?Extension ?Result)
+    (Intersect ?Base ?Extension ?Result))
+
+; Impl validation reuses conformance and retains failed contract edges.
+(<- (valid_impl ?Contract ?Source ?Witness)
+    (implements ?Contract ?Source ?Witness)
+    (Conforms ?Witness ?Contract ?Proof))
+
+(<- (invalid_impl_edge
+       ?Contract ?Source ?Witness ?Name ?Target ?ContractIndex)
+    (implements ?Contract ?Source ?Witness)
+    (missing_contract_edge
+      ?Witness ?Contract ?Name ?Target ?ContractIndex))
+

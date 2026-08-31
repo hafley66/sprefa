@@ -4,8 +4,13 @@
 
 (User 7 "Ada")
 
+(: UserContract
+   (* (: id int)
+      (: name text)))
+
 (: HistoryOptions
-   (* (: mode "copy")))
+   (* (: mode "copy")
+      (: contract UserContract)))
 
 (: history_request
    (* (: result type)))
