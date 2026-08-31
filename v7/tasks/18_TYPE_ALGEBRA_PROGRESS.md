@@ -11,3 +11,4 @@
 - Prelude split commit: `ac4cd47e1` (`Split the ordered DL7 prelude`).
 - Test receipt: SWI consolidated V7 reader and entrypoint surface, 25 passed;
   Tree-sitter DL7 grammar surface, 1 parse passed.
+- Extractor move dry-run receipt: `move source is not a file: /Users/chrishafley/projects/sprefa/.boop-worktrees/feature/dl7-prelude-split/v7/prelude/0_types.dl7` (exit 2). The split already contains `0_constructors.dl7` through `4_type_algebra.dl7`; no extractor commit move was attempted.
