@@ -48,3 +48,29 @@ improves only, `RATCHET_FORCE=1` rewrites). File rules: ts5 `src/**` minus
 `src/lib`, go every `.go` under the root, rust every `.rs` under `crates/`
 with a `src` path component; roots overridable via `RATCHET_TS_ROOT`,
 `RATCHET_GO_ROOT`, `RATCHET_RUST_ROOT`.
+
+## Measure signature (user-set 2026-08-31, every report, every PR body, every chat number)
+
+A percent with no fraction beside it is banned. Every accuracy number carries
+all six slots:
+
+```
+⟨lang.family.tier⟩ vs ⟨oracle⟩ on ⟨corpus, n files⟩ :
+    ⟨metric⟩ = numerator/denominator ⟨row unit⟩
+```
+
+Example: `rust.call.checker vs codeql on rust-analyzer(873f): recall 73.37% =
+37,915 matched / 51,679 oracle edge-rows`.
+
+The only denominators that exist:
+
+| metric | fraction | plain reading |
+|---|---|---|
+| recall | matched / ORACLE's rows | of what exists, found |
+| precision | matched / OUR rows | of what we said, true |
+| 3-bucket | OUR rows = matched + contradicted + unjudged | contradicted = oracle names a different dst for the same src |
+| wall | ms, one process over the stated file count | |
+| rss | MB, that process's getrusage high-water | |
+
+Tier ∈ {syntax, checker, scip}. An edge-row is one (caller, callee) pair in
+the 4-col normal form. `matched` is always the byte-equal 4-col intersection.
