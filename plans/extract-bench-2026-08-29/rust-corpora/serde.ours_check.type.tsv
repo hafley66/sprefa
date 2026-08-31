@@ -1,0 +1,171 @@
+serde/src/private/de.rs	AdjacentlyTaggedEnumVariantSeed	serde_core/src/de/mod.rs	Deserialize
+serde/src/private/de.rs	AdjacentlyTaggedEnumVariantSeed	serde_core/src/de/mod.rs	DeserializeSeed
+serde/src/private/de.rs	AdjacentlyTaggedEnumVariantVisitor	serde_core/src/de/mod.rs	Deserialize
+serde/src/private/de.rs	AdjacentlyTaggedEnumVariantVisitor	serde_core/src/de/mod.rs	Visitor
+serde/src/private/de.rs	Borrowed	serde/src/private/de.rs	IdentifierDeserializer
+serde/src/private/de.rs	BorrowedStrDeserializer	serde_core/src/de/mod.rs	Deserializer
+serde/src/private/de.rs	ContentDeserializer	serde/src/private/de.rs	
+serde/src/private/de.rs	ContentDeserializer	serde_core/src/de/mod.rs	Deserializer
+serde/src/private/de.rs	ContentRefDeserializer	serde/src/private/de.rs	
+serde/src/private/de.rs	ContentRefDeserializer	serde_core/src/de/mod.rs	Deserializer
+serde/src/private/de.rs	ContentVisitor	serde/src/private/de.rs	
+serde/src/private/de.rs	ContentVisitor	serde_core/src/de/mod.rs	DeserializeSeed
+serde/src/private/de.rs	ContentVisitor	serde_core/src/de/mod.rs	Visitor
+serde/src/private/de.rs	EnumDeserializer	serde/src/private/de.rs	
+serde/src/private/de.rs	EnumRefDeserializer	serde/src/private/de.rs	
+serde/src/private/de.rs	ExpectedInMap	serde_core/src/de/mod.rs	Expected
+serde/src/private/de.rs	ExpectedInSeq	serde_core/src/de/mod.rs	Expected
+serde/src/private/de.rs	FlatMapAccess	serde/src/private/de.rs	
+serde/src/private/de.rs	FlatMapAccess	serde_core/src/de/mod.rs	MapAccess
+serde/src/private/de.rs	FlatMapDeserializer	serde/src/private/de.rs	
+serde/src/private/de.rs	FlatMapDeserializer	serde_core/src/de/mod.rs	Deserializer
+serde/src/private/de.rs	FlatStructAccess	serde/src/private/de.rs	
+serde/src/private/de.rs	FlatStructAccess	serde_core/src/de/mod.rs	MapAccess
+serde/src/private/de.rs	InternallyTaggedUnitVisitor	serde_core/src/de/mod.rs	Visitor
+serde/src/private/de.rs	MapDeserializer	serde/src/private/de.rs	
+serde/src/private/de.rs	MapDeserializer	serde_core/src/de/mod.rs	Deserializer
+serde/src/private/de.rs	MapDeserializer	serde_core/src/de/mod.rs	MapAccess
+serde/src/private/de.rs	MapDeserializer	serde_core/src/de/mod.rs	SeqAccess
+serde/src/private/de.rs	MapRefDeserializer	serde/src/private/de.rs	
+serde/src/private/de.rs	MapRefDeserializer	serde_core/src/de/mod.rs	Deserializer
+serde/src/private/de.rs	MapRefDeserializer	serde_core/src/de/mod.rs	MapAccess
+serde/src/private/de.rs	MapRefDeserializer	serde_core/src/de/mod.rs	SeqAccess
+serde/src/private/de.rs	PairDeserializer	serde/src/private/de.rs	
+serde/src/private/de.rs	PairDeserializer	serde_core/src/de/mod.rs	Deserializer
+serde/src/private/de.rs	PairRefDeserializer	serde/src/private/de.rs	
+serde/src/private/de.rs	PairRefDeserializer	serde_core/src/de/mod.rs	Deserializer
+serde/src/private/de.rs	PairRefVisitor	serde/src/private/de.rs	
+serde/src/private/de.rs	PairRefVisitor	serde_core/src/de/mod.rs	SeqAccess
+serde/src/private/de.rs	PairVisitor	serde/src/private/de.rs	
+serde/src/private/de.rs	PairVisitor	serde_core/src/de/mod.rs	SeqAccess
+serde/src/private/de.rs	SeqDeserializer	serde/src/private/de.rs	
+serde/src/private/de.rs	SeqDeserializer	serde_core/src/de/mod.rs	Deserializer
+serde/src/private/de.rs	SeqDeserializer	serde_core/src/de/mod.rs	SeqAccess
+serde/src/private/de.rs	SeqRefDeserializer	serde/src/private/de.rs	
+serde/src/private/de.rs	SeqRefDeserializer	serde_core/src/de/mod.rs	Deserializer
+serde/src/private/de.rs	SeqRefDeserializer	serde_core/src/de/mod.rs	SeqAccess
+serde/src/private/de.rs	StrDeserializer	serde_core/src/de/mod.rs	Deserializer
+serde/src/private/de.rs	TagContentOtherFieldVisitor	serde_core/src/de/mod.rs	DeserializeSeed
+serde/src/private/de.rs	TagContentOtherFieldVisitor	serde_core/src/de/mod.rs	Visitor
+serde/src/private/de.rs	TagOrContentFieldVisitor	serde_core/src/de/mod.rs	DeserializeSeed
+serde/src/private/de.rs	TagOrContentFieldVisitor	serde_core/src/de/mod.rs	Visitor
+serde/src/private/de.rs	TagOrContentVisitor	serde/src/private/de.rs	TagOrContent
+serde/src/private/de.rs	TagOrContentVisitor	serde_core/src/de/mod.rs	DeserializeSeed
+serde/src/private/de.rs	TagOrContentVisitor	serde_core/src/de/mod.rs	Visitor
+serde/src/private/de.rs	TaggedContentVisitor	serde_core/src/de/mod.rs	Deserialize
+serde/src/private/de.rs	TaggedContentVisitor	serde_core/src/de/mod.rs	Visitor
+serde/src/private/de.rs	UntaggedUnitVisitor	serde_core/src/de/mod.rs	Visitor
+serde/src/private/de.rs	VariantDeserializer	serde/src/private/de.rs	
+serde/src/private/de.rs	VariantRefDeserializer	serde/src/private/de.rs	
+serde/src/private/ser.rs	AdjacentlyTaggedEnumVariant	serde_core/src/ser/mod.rs	Serialize
+serde/src/private/ser.rs	Content	serde_core/src/ser/mod.rs	Serialize
+serde/src/private/ser.rs	ContentSerializer	serde_core/src/ser/mod.rs	Serializer
+serde/src/private/ser.rs	FlatMapSerializeMap	serde/src/private/ser.rs	SerializeMap
+serde/src/private/ser.rs	FlatMapSerializeStruct	serde/src/private/ser.rs	SerializeMap
+serde/src/private/ser.rs	FlatMapSerializeStructVariantAsMapValue	serde/src/private/ser.rs	Content
+serde/src/private/ser.rs	FlatMapSerializeStructVariantAsMapValue	serde/src/private/ser.rs	SerializeMap
+serde/src/private/ser.rs	FlatMapSerializeTupleVariantAsMapValue	serde/src/private/ser.rs	Content
+serde/src/private/ser.rs	FlatMapSerializeTupleVariantAsMapValue	serde/src/private/ser.rs	SerializeMap
+serde/src/private/ser.rs	FlatMapSerializer	serde/src/private/ser.rs	SerializeMap
+serde/src/private/ser.rs	FlatMapSerializer	serde_core/src/ser/mod.rs	Serializer
+serde/src/private/ser.rs	SerializeMap	serde/src/private/ser.rs	Content
+serde/src/private/ser.rs	SerializeSeq	serde/src/private/ser.rs	Content
+serde/src/private/ser.rs	SerializeStruct	serde/src/private/ser.rs	Content
+serde/src/private/ser.rs	SerializeStructVariant	serde/src/private/ser.rs	Content
+serde/src/private/ser.rs	SerializeStructVariantAsMapValue	serde/src/private/ser.rs	Content
+serde/src/private/ser.rs	SerializeTuple	serde/src/private/ser.rs	Content
+serde/src/private/ser.rs	SerializeTupleStruct	serde/src/private/ser.rs	Content
+serde/src/private/ser.rs	SerializeTupleVariant	serde/src/private/ser.rs	Content
+serde/src/private/ser.rs	SerializeTupleVariantAsMapValue	serde/src/private/ser.rs	Content
+serde/src/private/ser.rs	TaggedSerializer	serde_core/src/ser/mod.rs	Serializer
+serde_core/src/de/ignored_any.rs	IgnoredAny	serde_core/src/de/mod.rs	Deserialize
+serde_core/src/de/ignored_any.rs	IgnoredAny	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	ArrayVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	BoolVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	BytesVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	CStringVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	CharVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	Field	serde_core/src/de/mod.rs	Deserialize
+serde_core/src/de/impls.rs	FromStrVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	OptionVisitor	serde_core/src/de/mod.rs	Deserialize
+serde_core/src/de/impls.rs	OptionVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	OsStringVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	PathBufVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	PathVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	PhantomDataVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	RangeFromVisitor	serde_core/src/de/mod.rs	Deserialize
+serde_core/src/de/impls.rs	RangeFromVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	RangeToVisitor	serde_core/src/de/mod.rs	Deserialize
+serde_core/src/de/impls.rs	RangeToVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	RangeVisitor	serde_core/src/de/mod.rs	Deserialize
+serde_core/src/de/impls.rs	RangeVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	StrVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	StringInPlaceVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	StringVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/impls.rs	UnitVisitor	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/mod.rs	DeserializeOwned	serde_core/src/de/mod.rs	Deserialize
+serde_core/src/de/value.rs	BorrowedBytesDeserializer	serde_core/src/de/mod.rs	Deserializer
+serde_core/src/de/value.rs	BorrowedBytesDeserializer	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/de/value.rs	BorrowedStrDeserializer	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/de/value.rs	BytesDeserializer	serde_core/src/de/mod.rs	Deserializer
+serde_core/src/de/value.rs	BytesDeserializer	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/de/value.rs	CowStrDeserializer	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/de/value.rs	EnumAccessDeserializer	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/de/value.rs	ExpectedInMap	serde_core/src/de/mod.rs	Expected
+serde_core/src/de/value.rs	ExpectedInSeq	serde_core/src/de/mod.rs	Expected
+serde_core/src/de/value.rs	MapAccessDeserializer	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/de/value.rs	MapAsEnum	serde_core/src/de/mod.rs	MapAccess
+serde_core/src/de/value.rs	MapAsEnum	serde_core/src/de/mod.rs	VariantAccess
+serde_core/src/de/value.rs	MapDeserializer	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/de/value.rs	NeverDeserializer	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/de/value.rs	PairDeserializer	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/de/value.rs	PairVisitor	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/de/value.rs	SeedStructVariant	serde_core/src/de/mod.rs	DeserializeSeed
+serde_core/src/de/value.rs	SeedStructVariant	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/value.rs	SeedTupleVariant	serde_core/src/de/mod.rs	DeserializeSeed
+serde_core/src/de/value.rs	SeedTupleVariant	serde_core/src/de/mod.rs	Visitor
+serde_core/src/de/value.rs	SeqAccessDeserializer	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/de/value.rs	SeqDeserializer	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/de/value.rs	StrDeserializer	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/de/value.rs	StringDeserializer	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/de/value.rs	U32Deserializer	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/de/value.rs	UnitDeserializer	serde_core/src/de/mod.rs	IntoDeserializer
+serde_core/src/private/seed.rs	InPlaceSeed	serde_core/src/de/mod.rs	Deserialize
+serde_core/src/private/seed.rs	InPlaceSeed	serde_core/src/de/mod.rs	DeserializeSeed
+serde_core/src/ser/impossible.rs	Impossible	serde_core/src/ser/impossible.rs	Void
+serde_core/src/ser/impossible.rs	Impossible	serde_core/src/ser/mod.rs	SerializeMap
+serde_core/src/ser/impossible.rs	Impossible	serde_core/src/ser/mod.rs	SerializeSeq
+serde_core/src/ser/impossible.rs	Impossible	serde_core/src/ser/mod.rs	SerializeStruct
+serde_core/src/ser/impossible.rs	Impossible	serde_core/src/ser/mod.rs	SerializeStructVariant
+serde_core/src/ser/impossible.rs	Impossible	serde_core/src/ser/mod.rs	SerializeTuple
+serde_core/src/ser/impossible.rs	Impossible	serde_core/src/ser/mod.rs	SerializeTupleStruct
+serde_core/src/ser/impossible.rs	Impossible	serde_core/src/ser/mod.rs	SerializeTupleVariant
+serde_derive/src/de.rs	DeImplGenerics	serde_derive/src/de.rs	Parameters
+serde_derive/src/de.rs	DeTypeGenerics	serde_derive/src/de.rs	Parameters
+serde_derive/src/de.rs	FieldWithAliases	serde_derive/src/internals/name.rs	Name
+serde_derive/src/de.rs	InPlaceImplGenerics	serde_derive/src/de.rs	Parameters
+serde_derive/src/de.rs	InPlaceTypeGenerics	serde_derive/src/de.rs	Parameters
+serde_derive/src/de.rs	Parameters	serde_derive/src/de.rs	BorrowedLifetimes
+serde_derive/src/fragment.rs	Expr	serde_derive/src/fragment.rs	Fragment
+serde_derive/src/fragment.rs	Match	serde_derive/src/fragment.rs	Fragment
+serde_derive/src/fragment.rs	Stmts	serde_derive/src/fragment.rs	Fragment
+serde_derive/src/internals/ast.rs	Container	serde_derive/src/internals/ast.rs	Data
+serde_derive/src/internals/ast.rs	Variant	serde_derive/src/internals/ast.rs	Field
+serde_derive/src/internals/ast.rs	Variant	serde_derive/src/internals/ast.rs	Style
+serde_derive/src/internals/attr.rs	Attr	serde_derive/src/internals/ctxt.rs	Ctxt
+serde_derive/src/internals/attr.rs	Attr	serde_derive/src/internals/symbol.rs	Symbol
+serde_derive/src/internals/attr.rs	BoolAttr	serde_derive/src/internals/attr.rs	Attr
+serde_derive/src/internals/attr.rs	Container	serde_derive/src/internals/attr.rs	Default
+serde_derive/src/internals/attr.rs	Container	serde_derive/src/internals/attr.rs	Identifier
+serde_derive/src/internals/attr.rs	Container	serde_derive/src/internals/attr.rs	RenameAllRules
+serde_derive/src/internals/attr.rs	Container	serde_derive/src/internals/attr.rs	TagType
+serde_derive/src/internals/attr.rs	Container	serde_derive/src/internals/name.rs	MultiName
+serde_derive/src/internals/attr.rs	Field	serde_derive/src/internals/attr.rs	Default
+serde_derive/src/internals/attr.rs	Field	serde_derive/src/internals/name.rs	MultiName
+serde_derive/src/internals/attr.rs	RenameAllRules	serde_derive/src/internals/case.rs	RenameRule
+serde_derive/src/internals/attr.rs	Variant	serde_derive/src/internals/attr.rs	BorrowAttribute
+serde_derive/src/internals/attr.rs	Variant	serde_derive/src/internals/attr.rs	RenameAllRules
+serde_derive/src/internals/attr.rs	Variant	serde_derive/src/internals/name.rs	MultiName
+serde_derive/src/internals/attr.rs	VecAttr	serde_derive/src/internals/ctxt.rs	Ctxt
+serde_derive/src/internals/attr.rs	VecAttr	serde_derive/src/internals/symbol.rs	Symbol
+serde_derive/src/internals/name.rs	MultiName	serde_derive/src/internals/name.rs	Name

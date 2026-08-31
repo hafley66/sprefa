@@ -1,0 +1,11 @@
+class	src_path	src_name	dst_path	dst_name
+filepair-match-different-name	tests-integration/src/bin/test-mem.rs	main	tokio/src/runtime/builder.rs	build
+filepair-match-different-name	tests-integration/src/bin/test-mem.rs	main	tokio/src/runtime/builder.rs	enable_io
+filepair-match-different-name	tokio-stream/src/stream_ext/chain.rs	is_terminated	tokio-stream/src/stream_ext/fuse.rs	is_terminated
+filepair-match-different-name	tokio-stream/src/stream_ext/chain.rs	size_hint	tokio-stream/src/stream_ext/fuse.rs	size_hint
+filepair-match-different-name	tokio-stream/src/stream_ext/chunks_timeout.rs	size_hint	tokio-stream/src/stream_ext/fuse.rs	size_hint
+filepair-absent	tests-integration/src/bin/test-mem.rs	main	tokio/src/net/tcp/listener.rs	bind
+filepair-absent	tests-integration/src/bin/test-mem.rs	main	tokio/src/task/spawn.rs	spawn
+filepair-absent	tokio-stream/src/stream_ext.rs	throttle	tokio-stream/src/stream_ext/throttle.rs	throttle
+filepair-absent	tokio-stream/src/stream_ext/peekable.rs	new	tokio-stream/src/stream_ext.rs	fuse
+filepair-absent	tokio-stream/src/stream_ext/peekable.rs	peek	tokio-stream/src/stream_ext.rs	next

@@ -1,0 +1,30 @@
+# rust-corpora: 5 extra rust repos, same arms as the ratchet rust leg (2026-08-31, lane bench-extract-rust-corpora)
+#
+# recall = overlap/|oracle|, precision = overlap/|ours|, percent, exact 4-col match,
+# ratchet rust projection (tests/bench/mod.rs rust_project port: oracle dst-scoped
+# to the corpus file list, ours src-scoped to the oracle's caller set, closure
+# enclosing both sides). scope=dst is that faithful recipe; scope=dst+src adds the
+# caller-symmetric scope (oracle rows whose CALLER is outside the corpus file list
+# also drop). wall = 1 run, s; rss = process peak, MB.
+# sha = pinned shallow-clone commit the run measured (see CORPORA.md).
+repo	arm	scope	files	ours_rows	oracle_rows	overlap	recall_pct	precision_pct	wall_s	rss_mb	sha
+ripgrep	diet	dst	63	4889	1515	1188	78.42	24.30	0.21	98	3fce3b5bb0236da2df6d99672afb8a719642eca7
+ripgrep	checker	dst	63	4918	1515	1298	85.68	26.39	1.13	330	3fce3b5bb0236da2df6d99672afb8a719642eca7
+ripgrep	diet	dst+src	63	4889	1306	1188	90.96	24.30	0.21	98	3fce3b5bb0236da2df6d99672afb8a719642eca7
+ripgrep	checker	dst+src	63	4918	1306	1298	99.39	26.39	1.13	330	3fce3b5bb0236da2df6d99672afb8a719642eca7
+tokio	diet	dst	497	4641	6717	2159	32.14	46.52	0.41	144	ea91b33ca57ff0581b38e735cc108f831bccbdaa
+tokio	checker	dst	497	4982	6717	2737	40.75	54.94	4.19	865	ea91b33ca57ff0581b38e735cc108f831bccbdaa
+tokio	diet	dst+src	497	4641	2938	2159	73.49	46.52	0.41	144	ea91b33ca57ff0581b38e735cc108f831bccbdaa
+tokio	checker	dst+src	497	4982	2938	2737	93.16	54.94	4.19	865	ea91b33ca57ff0581b38e735cc108f831bccbdaa
+serde	diet	dst	53	1334	1118	942	84.26	70.61	1.03	137	a874a1b1bb1cc16cf5ee3b1b7b527af5705742bb
+serde	checker	dst	53	1360	1118	975	87.21	71.69	2.24	407	a874a1b1bb1cc16cf5ee3b1b7b527af5705742bb
+serde	diet	dst+src	53	1334	1071	942	87.96	70.61	1.03	137	a874a1b1bb1cc16cf5ee3b1b7b527af5705742bb
+serde	checker	dst+src	53	1360	1071	975	91.04	71.69	2.24	407	a874a1b1bb1cc16cf5ee3b1b7b527af5705742bb
+clap	diet	dst	119	3140	2254	1639	72.72	52.20	0.42	415	6982fb1c98c7247e38a6d4f04191b94e30497e7b
+clap	checker	dst	119	3226	2254	1755	77.86	54.40	2.29	609	6982fb1c98c7247e38a6d4f04191b94e30497e7b
+clap	diet	dst+src	119	3140	1771	1639	92.55	52.20	0.42	415	6982fb1c98c7247e38a6d4f04191b94e30497e7b
+clap	checker	dst+src	119	3226	1771	1755	99.10	54.40	2.29	609	6982fb1c98c7247e38a6d4f04191b94e30497e7b
+alacritty	diet	dst	85	2865	1906	1447	75.92	50.51	0.32	104	ede2ac144da4dec4c075bfa803aacf3b3739bce6
+alacritty	checker	dst	85	3115	1906	1763	92.50	56.60	4.33	934	ede2ac144da4dec4c075bfa803aacf3b3739bce6
+alacritty	diet	dst+src	85	2865	1904	1447	76.00	50.51	0.32	104	ede2ac144da4dec4c075bfa803aacf3b3739bce6
+alacritty	checker	dst+src	85	3115	1904	1763	92.59	56.60	4.33	934	ede2ac144da4dec4c075bfa803aacf3b3739bce6
