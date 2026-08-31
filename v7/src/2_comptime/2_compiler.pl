@@ -30,10 +30,12 @@ compile_dl7(Path, CompilerRows, RuntimeProgram, Diagnostics) :-
     join_prelude_texts(PreludeTexts, PreludeText),
     read_file_to_string(ProgramPath, ProgramText, [encoding(utf8)]),
     format(string(Text), "~s~n~s", [PreludeText, ProgramText]),
-    Origin = combined(PreludePaths, ProgramPath),
+    Origin = combined(prelude, ProgramPath),
     dl7_text_unit(Origin, Origin, Text, Unit, ReaderDiagnostics),
     compile_after_read(ReaderDiagnostics, Unit, Compiled, Diagnostics),
-    compiled_outputs(Compiled, CompilerRows, RuntimeProgram).
+    compiled_outputs(Compiled, CompilerRows, RuntimeProgram),
+    !,
+    garbage_collect.
 
 type_prelude_paths(Paths) :-
     once(source_file(dl7_compiler:compile_dl7(_, _, _, _), SourcePath)),
@@ -89,7 +91,9 @@ compiled_outputs([], [], []).
 compile_unit(Unit, Compiled, Diagnostics) :-
     lower_datalog(Unit, Basement, Origins, LowerDiagnostics),
     compile_after_lower(LowerDiagnostics, Basement, Origins,
-                        Compiled, Diagnostics).
+                        Compiled, Diagnostics),
+    !,
+    garbage_collect.
 
 compile_after_lower([], Basement, Origins, Compiled, Diagnostics) :-
     !,
