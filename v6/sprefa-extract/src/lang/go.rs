@@ -3238,7 +3238,9 @@ fn go_collect_file_facts(node: tree_sitter::Node, src: &[u8], facts: &mut GoFile
 impl GoFileFacts {
     /// The callable's ordered declared result types, keyed by its def span.
     /// A `*T` names T; type arguments are cut (`Wrapper[T]` -> `Wrapper`); a
-    /// func literal or a type-parameter result never lands here.
+    /// func literal or a type-parameter result never lands here. A slice,
+    /// array or map result lands as `[]elem`, the marker the chain replay's
+    /// `go_written_elem` splits for an `Elem` hop.
     fn insert_ret(&mut self, decl: tree_sitter::Node, src: &[u8]) {
         let Some(result) = decl.child_by_field_name("result") else {
             return;
@@ -3252,11 +3254,11 @@ impl GoFileFacts {
                     .child_by_field_name("type")
                     .filter(|_| matches!(param.kind(), "parameter_declaration"))
                 {
-                    rets.push(go_named_type_text(ty, src));
+                    rets.push(go_ret_type_text(ty, src));
                 }
             }
         } else {
-            rets.push(go_named_type_text(result, src));
+            rets.push(go_ret_type_text(result, src));
         }
         rets.retain(|t| !t.is_empty());
         if rets.is_empty() {
@@ -3292,6 +3294,25 @@ fn is_generic_ret(decl: tree_sitter::Node) -> bool {
                 .children(&mut ty.walk())
                 .any(|child| child.kind() == "generic_type")
     })
+}
+
+/// A result type's fact text: a slice, array or map result lands as
+/// `[]elem` (the `Elem`-hop marker), everything else as `go_named_type_text`
+/// names it. A channel result stays out: a one-name range binds no chain.
+fn go_ret_type_text(ty: tree_sitter::Node, src: &[u8]) -> String {
+    match ty.kind() {
+        "slice_type" | "array_type" | "map_type" => {
+            let value = match ty.kind() {
+                "map_type" => ty.child_by_field_name("value"),
+                _ => ty.child_by_field_name("element"),
+            };
+            match value.map(|v| go_named_type_text(v, src)) {
+                Some(elem) if !elem.is_empty() => format!("[]{elem}"),
+                _ => String::new(),
+            }
+        }
+        _ => go_named_type_text(ty, src),
+    }
 }
 
 /// The declared type's name text: `*T` -> `T`, `pkg.T` kept whole, type
@@ -3458,24 +3479,35 @@ fn go_qualify_bound_type(
     };
     // The written name resolves through the DECLARING file's imports to the
     // result type's real (dir, bare name) pair; a written `*types.Widget` and
-    // a bare `Widget` in the declaring package are one identity here.
-    let Some((dir, bare)) = go_type_id_in_file(dst_path, type_name) else {
+    // a bare `Widget` in the declaring package are one identity here. A
+    // collection marker rides in front: `[]elem` stays `[]<qualified elem>`,
+    // so the chain replay's `Elem` hop still reads it as a collection.
+    let (elem_written, collection) = go_written_elem(type_name);
+    let Some((dir, bare)) = go_type_id_in_file(dst_path, elem_written) else {
         return type_name.to_string();
     };
-    if same_dir(&dir, Path::new(own_path).parent().unwrap_or(Path::new(own_path))) {
-        return bare;
-    }
-    // The caller names that directory through its own imports; without such
-    // an import the written name rides unchanged (the caller may import the
-    // result's package itself, which `go_type_id` then resolves directly).
-    let qualifier = imports.iter().find_map(|(qualifier, import)| {
-        go_package_dir(module, import)
-            .filter(|imported| same_dir(imported, &dir))
-            .map(|_| qualifier)
-    });
-    match qualifier {
-        Some(q) => format!("{q}.{bare}"),
-        None => type_name.to_string(),
+    let named = if same_dir(
+        &dir,
+        Path::new(own_path).parent().unwrap_or(Path::new(own_path)),
+    ) {
+        bare
+    } else {
+        let qualifier = imports.iter().find_map(|(qualifier, import)| {
+            go_package_dir(module, import)
+                .filter(|imported| same_dir(imported, &dir))
+                .map(|_| qualifier)
+        });
+        match qualifier {
+            Some(q) => format!("{q}.{bare}"),
+            // The written name rides unchanged: the caller may import the
+            // result's package itself, which `go_type_id` resolves directly.
+            None => return type_name.to_string(),
+        }
+    };
+    if collection {
+        format!("[]{named}")
+    } else {
+        named
     }
 }
 
@@ -3784,6 +3816,41 @@ type EmbedsOfDir = HashMap<String, Vec<(PathBuf, String)>>;
 /// (resolve-run identity, normalized dir) -> that dir's embed table.
 type EmbedsCache = HashMap<(usize, PathBuf), Arc<EmbedsOfDir>>;
 
+/// A written type's (element, is_collection): a slice/map/channel written
+/// shape (`[]ast.SourceFile`) names its ELEMENT for an `Elem` hop; anything
+/// else names itself. The chain replay reads every written result through
+/// this, so a range or index over a call result takes the element hop.
+fn go_written_elem(written: &str) -> (&str, bool) {
+    if let Some(rest) = written.strip_prefix("[]") {
+        return (rest, true);
+    }
+    if let Some(rest) = written.strip_prefix("map[") {
+        if let Some(end) = rest.rfind(']') {
+            return (&rest[end + 1..], true);
+        }
+    }
+    for prefix in ["chan ", "<-chan ", "chan<- "] {
+        if let Some(rest) = written.strip_prefix(prefix) {
+            return (rest, true);
+        }
+    }
+    (written, false)
+}
+
+/// A def's declared first result as a `(GoTypeId, is_collection)`, read
+/// through the DECLARING file's imports; a written slice/map/channel result
+/// carries its element, so a following `Elem` hop resolves.
+fn go_ret_type_id_collection(
+    blob: &ContentId,
+    span: Span,
+    paths: &PathIndex,
+) -> Option<(GoTypeId, bool)> {
+    let path = paths.get(blob)?;
+    let written = ret_first_of(blob, span, paths)?;
+    let (elem, collection) = go_written_elem(&written);
+    go_type_id_in_file(path, elem).map(|id| (id, collection))
+}
+
 /// The multi-hop replay: type the chain's operand left to right as `GoTypeId`s,
 /// then bind `callee` on it. Third result: the fan-out gate's receiver name.
 #[allow(clippy::too_many_arguments)]
@@ -3809,7 +3876,8 @@ fn go_chain_receiver_target(
                 Some(t) => t.clone(),
                 None => bound_types.get(top)?.get(name)?.clone(),
             };
-            go_type_id(module, paths, own, imports, &written).map(|id| (id, false))
+            let (elem, collection) = go_written_elem(&written);
+            go_type_id(module, paths, own, imports, elem).map(|id| (id, collection))
         }
         GoChainBase::Import {
             callee: base_callee,
@@ -3820,7 +3888,7 @@ fn go_chain_receiver_target(
                     .and_then(|dir| modules.resolve_in_dir(&dir, def_index, paths, base_callee))?,
                 _ => return None,
             };
-            go_ret_type_id(&blob, span, paths).map(|id| (id, false))
+            go_ret_type_id_collection(&blob, span, paths)
         }
     };
     for step in &chain.steps {
@@ -3835,7 +3903,7 @@ fn go_chain_receiver_target(
             GoChainStep::Field(field) => go_field_type_of(&cur, field, paths),
             GoChainStep::Call(method) => {
                 let (blob, span) = go_method_on_type(def_index, paths, &cur, method)?;
-                go_ret_type_id(&blob, span, paths).map(|id| (id, false))
+                go_ret_type_id_collection(&blob, span, paths)
             }
         };
     }
