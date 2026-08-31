@@ -2296,3 +2296,85 @@ Ceiling if fully landed: 255 rows, **3.06 pt**, plus an unknown share of the 78
 ambiguous rows that are ambiguous only because one of the two candidates is
 macro-minted (`GenericArgs`, 13 rows, is one: `hir-def/src/expr_store/path.rs:59`
 is syntactic, `next_solver/generic_arg.rs`'s is not, and we bind the wrong one).
+
+## 31. The CodeQL call gap, every miss classed (lane `research/rust-codeql-gap`, 2026-08-31)
+
+User word 2026-08-31: "we _want_ non syntax tier working at codeql level."
+RATCHET.tsv line 8 (rust call vs `rust.codeql.call.tsv`, checker tier) reads
+recall 73.37 / precision 78.71. This section names and counts the miss set
+behind the 26.63 missing points so the user can pick which class to fund. The
+extractor changed zero files; the census is
+`plans/extract-bench-2026-08-29/rust.call_census.py`.
+
+### 31.1 Method and receipt
+
+| item | value |
+|---|---|
+| ours | 57,056 rows from `RUST_CALL_DUMP=... cargo test --release --features cli,rust-checker --test 79_rust_type_dump dump_rust_type_rows -- --ignored` (873 files, the bench `wants` rule) |
+| projection | the census ports `rust_project` from `tests/bench/mod.rs:433`; it prints recall **73.37** / precision **78.71**, byte-identical to RATCHET.tsv line 8 |
+| miss set | 13,764 rows (oracle 51,679, ours-projected 48,168, overlap 37,915) |
+| ours-only | 10,253 rows: **contradicted 8,819** (the oracle judges the same caller against a different dst), **unjudged 1,434** |
+| drop reasons | one diet CLI run over the same 873 files, `--project-root` at a CoW copy of the corpus whose `.dl/.state/index.scip` is absent; the log line `no fresh index ... plain name-match leg` and 0 `macro_site` facts prove the scip leg stayed off (the 24.7 trap) |
+| checker tier, same run | files 873, **unjoined 4,185**, external 17,402, load 0.54 s, walk 67.1 s |
+| binary / corpus | `e89b986c7` / `af4111f0bf85d9d66f4161b007b0081860e0a21c` |
+
+### 31.2 The class table
+
+Classes are computed, not assumed: each row classes by ours-side joins
+first (same edge under a `closure@` caller; same callee aimed elsewhere; same
+dst under another name), then by caller-file text (caller name absent; callee
+name absent; callee only inside macro-invocation arguments), then by what
+declares the callee in the dst file. The `drops` column is the drop-reason
+shape of the class's sites in the diet run.
+
+| class | rows | % | drops | mechanism |
+|---|---:|---:|---|---|
+| A2 same dst file, different callee name | 3,723 | 27.05 | inferred 10,270 / ambiguous 1,658 | the real call drops `inferred`: the receiver is a call-result binding the receiver leg will not name by policy (`types.rs:530`) and the checker has no bound answer; a name-match then binds a different method of the same file |
+| T2 impl method, ours rows disjoint | 2,512 | 18.25 | inferred 7,727 | site minted, checker silent, receiver inferred: drop |
+| M1 macro-minted caller | 1,928 | 14.01 | site-not-minted 1,725 | the caller is a derive- or macro-generated fn body (`import_map.rs:23` `#[derive(... PartialOrd ...)]` mints the `partial_cmp` that calls `name.rs:45`); CodeQL expands proc macros, our parse sees no body |
+| S3 operator/derive sugar, dst names the impl | 1,052 | 7.64 | inferred 7,462 | `x == y`, `x[i]`, `.clone()` desugar to trait methods CodeQL aims at the corpus impl (`vfs_path.rs:106` `clone -> clone [paths/src/lib.rs]`); the site is not a call site for our parse, or drops inferred |
+| S1 operator/derive sugar, ours re-spells at the same dst | 935 | 6.79 | inferred 20,091 | same sugar calls where a same-file method binds under the sugar's name |
+| A1 same callee, different dst | 901 | 6.55 | inferred 1,242 | ours and CodeQL disagree which file owns the callee, mostly salsa query methods: `has_source.rs:62` `definition_source_file_id` we aim at `has_source.rs`, CodeQL at `nameres.rs` |
+| M3 callee only inside macro-invocation arguments | 450 | 3.27 | site-not-minted 400 | the call text sits inside `assert!`/`quote!`/`expect!` argument lists; the parse mints no site there (std macros are outside the sec 14 MBE leg) |
+| T1 trait default method | 466 | 3.38 | inferred 1,268 | trait default method call, same inferred drop (`analysis_stats.rs:423` `run_data_layout -> layout_of_adt [db.rs]`) |
+| T2 impl method, caller emits nothing | 411 | 2.99 | inferred 651 / site-not-minted 222 | impl-method call whose caller has no ours row at all |
+| O2 callee has no `fn` declaration in the dst | 444 | 3.23 | inferred 1,834 / ambiguous 1,341 | the callee is proc-macro-minted in the dst: salsa getters and query methods (`input.rs` `data`, `editioned_file_id.rs:17` `field`, `config.rs:766` `imports_preferNoStd` from the `config_data!` table); 465 of the 1,040 callee-absent rows have `salsa` text in the dst |
+| S2 operator sugar, name never spelled | 324 | 2.35 | site-not-minted 324 | pure operator desugars (`==` -> `eq`, `x[i]` -> `index`) with no textual callee |
+| M2 callee name absent, not sugar | 273 | 1.98 | site-not-minted 273 | macro-minted callee names never spelled at the site (salsa internals: `ingredient_`, `as_id`, `zalsa_register_downcaster`) |
+| F1 free fn, unresolved | 237 | 1.72 | site-not-minted 219 | free-fn calls whose sites the batch never mints (fixture strings, `minicore.rs` test bodies) |
+| X1 caller file outside the corpus | 104 | 0.76 | site-not-minted 104 | callers under `crates/*/tests/` (20 files, `slow-tests/main.rs` 23 rows) lack the `src` path component the bench rule requires, so we never read them |
+| M4 callee macro-minted in dst | 4 | 0.03 | external 2 | residual |
+
+Rows sum to 13,764 = 100.0%. The three examples per class print from
+`python3 plans/extract-bench-2026-08-29/rust.call_census.py <ours.tsv>
+--drops <diet.jsonl> --drops-root <copy> --examples 3`; the tables above cite
+the verified ones.
+
+### 31.3 What the classes say about funding
+
+Grouped by the lever that answers them, as fractions of the 13,764-row miss
+set:
+
+| lever | classes | rows | % | note |
+|---|---|---:|---:|---|
+| checker answer coverage | A2 + T2 + T1 + O2 disjoint | 7,145 | 51.9 | the tier already loads and answers; 4,185 references lose the def-index join (`rust_checker.rs:128` `unjoined`), and every `inferred` drop is a site the checker could have answered but has no bound for |
+| expansion (proc macro + derive) | M1 + M3 + S2 + M2 | 2,975 | 21.6 | CodeQL expands; sec 14's MBE leg covers workspace `macro_rules!`, not proc macros or std macros |
+| oracle convention or enumeration | A1 + S1 + S3 + X1 | 2,992 | 21.7 | which file owns a salsa method, where sugar aims, test files outside the bench rule: projection and corpus-rule decisions, no engine work |
+
+The groups overlap by design (S3 sites are also checker-answerable); the
+census prints the exact per-class counts to re-cut them. One number the
+checker lever does NOT promise: A1's 901 rows are cases where the checker
+DID answer and CodeQL disagrees with the aim.
+
+### 31.4 What this census does not decide
+
+- Why `call_at` returns nothing for plain method sites the ra walk visits
+  (`remove_underscore.rs:63` `ctx.config.rename_config()`: walk covers
+  `MethodCallExpr` at `rust_checker_ra.rs:94`, single-file probe logs
+  `unjoined=0`, yet the diet run drops the site `inferred`). Naming that
+  gap inside the checker is the first task of the fix lane.
+- Whether the oracle's dst convention for salsa-minted methods (the file
+  carrying the macro attribute) is the convention we should adopt. That is
+  an oracle-semantics call with the user, not a measurement.
+- The contradicted 8,819 ours-only rows are counted here, not classed; a
+  precision census is the mirror image of this one and was not in the brief.
