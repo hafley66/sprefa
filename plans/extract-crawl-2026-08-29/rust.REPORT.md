@@ -2378,3 +2378,136 @@ DID answer and CodeQL disagrees with the aim.
   an oracle-semantics call with the user, not a measurement.
 - The contradicted 8,819 ours-only rows are counted here, not classed; a
   precision census is the mirror image of this one and was not in the brief.
+
+## 32. The checker lever, cut at the loader (lane `fix-extract-rust-checker-wiring`, 2026-08-31)
+
+Sec 31.3 funded 7,145 rows (51.9% of the miss set) as "checker answer
+coverage" and sec 31.4 named the first task: why `call_at` returns nothing for
+plain method sites the ra walk visits. It is not four join legs. It is one
+loader field, and it sits upstream of A2, T2, T1 and F1 at once.
+
+### 32.1 The mechanism, in one sentence
+
+`CargoConfig::default()` leaves `sysroot` unset, so the crate graph rust-analyzer
+builds has no `core`/`std`, and rust-analyzer declines to name a function for
+every method call whose receiver type flows through one — which includes every
+`?`, every `Option`/`Vec`/slice hop, and `str::len` itself.
+
+The counter that proves it is new (`rust_checker.rs`, logged beside `unjoined`
+and `external`): every `MethodCallExpr` the walk visits, and the count with no
+answer.
+
+| probe | method_sites | method_unresolved | share |
+|---|---:|---:|---:|
+| `raw_string.rs` + `token_ext.rs`, before | 259 | 172 | 66.4% |
+| the same two files, after | 259 | **0** | 0% |
+| 873-file corpus, after | 84,627 | 2,591 | 3.1% |
+
+Sec 31.4's own example reads the same way. At `raw_string.rs:105`
+`token.syntax()` the receiver comes from `ctx.find_token_at_offset::<ast::AnyString>()?`;
+the `?` needs `Try` from core, so with no sysroot `token` has no type and the
+method site has no answer. The two-file probe hid it because a corpus of two
+files makes the name unique and `origin=corpus_unique` bound the row anyway.
+At 873 files the name match stops being unique and the row is simply gone.
+
+`set_test` is the second field: a `#[cfg(test)]` body is outside the module tree
+unless the loader turns the `test` cfg on, and rust-analyzer's own corpus is
+mostly `mod tests`. It is measured separately below.
+
+### 32.2 The wall budget, and why the walk is now parallel
+
+The loader fix alone costs 22 s of type inference the tier never used to do:
+
+| build | ratchet wall, 3 runs | verdict |
+|---|---|---|
+| baseline `e26fbb228` | 12,535 / 11,698 / 11,488 ms | green |
+| sysroot + set_test, sequential walk | 34,818 ms | **over the 30,000 ms budget** (`tests/bench/mod.rs:790`) |
+| sysroot + set_test, parallel walk | 15,415 / 13,813 / 14,868 ms | green |
+
+`RootDatabase` is `Clone` and the clone shares the salsa storage, but it carries
+a thread-local query stack, so it is `Send` and NOT `Sync`. The walk therefore
+chunks the file list, moves one handle into each chunk, and calls `attach_db`
+per worker on the extract pool (never rayon's global pool, so the thread cap
+holds). Walk wall over the corpus: 29,897 ms -> 12,361 ms, with `unjoined`,
+`external`, `method_sites` and `method_unresolved` byte-identical across the two
+shapes.
+
+### 32.3 The census, re-run on this binary
+
+Same script, same corpus sha `af4111f0bf85d9d66f4161b007b0081860e0a21c`, same
+projection. The baseline column reproduces sec 31.2 row for row.
+
+| item | before | after |
+|---|---:|---:|
+| recall | 73.37 | **84.28** |
+| precision | 78.71 | **83.64** |
+| missing | 13,764 | 8,126 |
+| ours-only, contradicted | 8,819 | **7,379** |
+| ours-only, unjudged | 1,434 | 1,141 |
+
+The precision guard sec 31 asked for holds in the right direction: contradicted
+rows FALL by 1,440. `external` answers rose 17,402 -> 83,294, and an external
+answer forbids the name-match leg from inventing a corpus edge, which is where
+that fall comes from.
+
+Attribution of the two loader fields, each measured on its own build:
+
+| build | recall | precision | missing | contradicted |
+|---|---:|---:|---:|---:|
+| baseline | 73.37 | 78.71 | 13,764 | 8,819 |
+| `sysroot` only | 82.66 | 83.07 | 8,962 | 7,560 |
+| `sysroot` + `set_test` | 84.28 | 83.64 | 8,126 | 7,379 |
+
+### 32.4 Per class
+
+| class | before | after | delta |
+|---|---:|---:|---:|
+| A2 same dst file, different callee name | 3,723 | 1,435 | **-2,288** |
+| T2 impl method, ours rows disjoint | 2,512 | 504 | **-2,008** |
+| M1 macro-minted caller | 1,928 | 1,928 | 0 |
+| S3 sugar, dst names the impl | 1,052 | 816 | -236 |
+| S1 sugar, ours re-spells at the same dst | 935 | 856 | -79 |
+| A1 same callee, different dst | 901 | 488 | -413 |
+| M3 callee only inside macro arguments | 450 | 375 | -75 |
+| T1 trait default method, ours rows disjoint | 427 | 28 | **-399** |
+| T2 impl method, caller emits nothing | 411 | 355 | -56 |
+| S2 sugar, name never spelled | 324 | 313 | -11 |
+| O2 no `fn` in the dst, ours rows disjoint | 280 | 265 | -15 |
+| M2 callee name absent, not sugar | 273 | 271 | -2 |
+| O2 no `fn` in the dst, no ours row | 164 | 169 | +5 |
+| F1 free fn, no ours row from this caller | 120 | 105 | -15 |
+| F1 free fn, ours rows disjoint | 117 | 83 | -34 |
+| X1 caller file outside the corpus | 104 | 104 | 0 |
+| T1 trait default method, no ours row | 39 | 27 | -12 |
+| M4 callee macro-minted in dst | 4 | 4 | 0 |
+| **total** | **13,764** | **8,126** | **-5,638** |
+
+The four funded classes go 7,349 -> 2,537. A1 was called out in sec 31.3 as the
+one group the checker lever did NOT promise; it fell 413 anyway, because a real
+answer replaces a wrong aim as well as a missing one.
+
+### 32.5 Fixtures
+
+`tests/93_rust_checker_wiring.rs` over `tests/fixtures/rust_checker_wiring/`,
+one test per class shape. Every callee in the fixture is declared twice (in
+`decoys.rs`) so a corpus-wide name match cannot bind a site by name alone and
+only the checker's answer picks the right file.
+
+Fail-pre-fix receipt, taken on a binary with only the two loader fields
+reverted: the tier logs `walk_ms=3 external=0` and the three method sites come
+out `{"record":"unresolved","reason":"inferred","detail":"replace"|"render"|"label"}`
+with no `resolved_edge` naming them.
+
+### 32.6 What this lane did not close
+
+- **M1 + M3 + S2 + M2, 2,887 rows.** Proc-macro and std-macro expansion. The
+  loader still runs `ProcMacroServerChoice::None`, and turning it on needs a
+  `proc-macro-srv` binary and a build-script pass (`load_out_dirs_from_check`),
+  which is a seam change, not a join fix. Out of scope by the brief's rule.
+- **F1's residual, 188 rows.** The drop shape is `site-not-minted`: the sites
+  are inside fixture strings and `minicore.rs` test bodies, so no answer can
+  reach a site the parse never minted. Not a checker gap.
+- **X1, 104 rows.** `crates/*/tests/` callers lack the `src` path component the
+  bench corpus rule requires; a corpus-rule decision, unchanged here.
+- **The 2,591 method sites still unanswered** (3.1%). Not classified. Whether
+  they are proc-macro bodies or a real rust-analyzer limit is the next census.

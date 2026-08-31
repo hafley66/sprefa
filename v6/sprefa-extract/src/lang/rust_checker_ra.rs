@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use ra_ap_hir::{ModuleDef, PathResolution, Semantics, attach_db};
 use ra_ap_ide::{AnalysisHost, NavigationTarget, RootDatabase, TryToNav};
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
-use ra_ap_project_model::CargoConfig;
+use ra_ap_project_model::{CargoConfig, RustLibSource};
 use ra_ap_syntax::{AstNode, ast};
 
 use super::rust_checker::{CheckerAnswers, CheckerError, CheckerRef, OffsetMap};
@@ -34,10 +34,16 @@ pub fn answer(
         num_worker_threads: 4,
         proc_macro_processes: 0,
     };
+    // A crate graph with no sysroot declines every method whose receiver type
+    // flows through std; `set_test` puts `#[cfg(test)]` bodies in the tree.
+    let cargo_config = CargoConfig {
+        sysroot: Some(RustLibSource::Discover),
+        set_test: true,
+        ..CargoConfig::default()
+    };
     let started = Instant::now();
-    let (db, vfs, _proc_macro) =
-        load_workspace_at(root, &CargoConfig::default(), &load_config, &|_| {})
-            .map_err(|err| CheckerError::NoWorkspace(err.to_string()))?;
+    let (db, vfs, _proc_macro) = load_workspace_at(root, &cargo_config, &load_config, &|_| {})
+        .map_err(|err| CheckerError::NoWorkspace(err.to_string()))?;
     let load = started.elapsed();
     if load > budget {
         return Err(CheckerError::Budget(budget));
