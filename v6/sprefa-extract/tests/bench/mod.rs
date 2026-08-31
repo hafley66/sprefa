@@ -313,16 +313,16 @@ pub fn go_project(
             .iter()
             .filter(|row| call_kinds.get(*row).map(String::as_str) == Some("implements"))
             .map(|row| {
-                let c = row_cols(row);
-                [c[0].to_string(), c[1].to_string(), c[3].to_string()]
+                let cols = row_cols(row);
+                [cols[0].to_string(), cols[1].to_string(), cols[3].to_string()]
             })
             .collect();
         rows.retain(|row| {
             if call_kinds.get(row).map(String::as_str) == Some("implements") {
                 return true;
             }
-            let c = row_cols(row);
-            !impl_triples.contains(&[c[0].to_string(), c[1].to_string(), c[3].to_string()])
+            let cols = row_cols(row);
+            !impl_triples.contains(&[cols[0].to_string(), cols[1].to_string(), cols[3].to_string()])
         });
     }
     rows
@@ -495,14 +495,14 @@ fn closure_enclosing(rows: &BTreeSet<String>) -> BTreeSet<String> {
     let plain_triples: BTreeSet<[&str; 3]> = rows
         .iter()
         .filter_map(|row| {
-            let c = row_cols(row);
-            (!c[1].starts_with("closure@")).then_some([c[0], c[2], c[3]])
+            let cols = row_cols(row);
+            (!cols[1].starts_with("closure@")).then_some([cols[0], cols[2], cols[3]])
         })
         .collect();
     rows.iter()
         .filter(|row| {
-            let c = row_cols(row);
-            !c[1].starts_with("closure@") || !plain_triples.contains(&[c[0], c[2], c[3]])
+            let cols = row_cols(row);
+            !cols[1].starts_with("closure@") || !plain_triples.contains(&[cols[0], cols[2], cols[3]])
         })
         .cloned()
         .collect()
