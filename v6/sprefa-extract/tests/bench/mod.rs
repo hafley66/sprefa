@@ -651,6 +651,19 @@ fn request<'a>(files: &'a [PathBuf], corpus: &'a Corpus) -> ResolveRequest<'a> {
 /// are a pure function of the file set, so any run's rows are the set; the
 /// last one is kept so the earlier copies free before RSS is read.
 pub fn measure(corpus: &Corpus) -> Measurement {
+    // Floors were measured on release builds; dev-profile walls run 4-14x the
+    // ceilings and read as fake regressions (failure-modes.md entry 101).
+    assert!(
+        !cfg!(debug_assertions),
+        "ratchet {}: dev-profile build; run `just extract-ratchet` (cargo test --release)",
+        corpus.lang,
+    );
+    // Without the feature the checker field is inert and the leg silently
+    // measures diet (~75% recall) against checker floors (~94%).
+    assert!(
+        corpus.lang != "rust" || cfg!(feature = "rust-checker"),
+        "ratchet rust: built without the rust-checker feature; run `just extract-ratchet`",
+    );
     let files = enumerate(corpus);
     assert!(
         files.len() >= 500,
