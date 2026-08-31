@@ -141,6 +141,11 @@ NamedBox(Source, Result) <-
 12. Consolidate exact fixture and PLUnit receipts.
 13. Record the type-algebra surface and compiler-round behavior in V7 docs.
 
+Module ownership, imports, aliases, mounted paths, and cycle diagnostics are
+tracked by the separate `dl7-module-system` epic. Its implementation inventory
+starts with `v6/prolog/use_resolve.pl`, `v6/prolog/0_dot_expand.pl`, and
+`v6/prolog/executor_modules.pl` after a prefix import surface is decided.
+
 ## Verification
 
 - Parse every ordered prelude file with Tree-sitter.
@@ -159,4 +164,3 @@ NamedBox(Source, Result) <-
 - The coordinating high-reasoning lane owns conformance, intersection,
   HistoryV1 integration, final review, PR, and merge.
 - Each implementation cluster receives its own commit.
-
