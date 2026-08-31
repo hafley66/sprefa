@@ -5,9 +5,9 @@ caddy	https://github.com/caddyserver/caddy	go	8257349b5872d98052155e1f4fe5a79f2b
 zod	https://github.com/colinhacks/zod	ts	b801439b5fb160d651084ff7d7c27a61e24a7334
 hono	https://github.com/honojs/hono	ts	e2740d5a1bd0b4254e517e3af8b60789284bc7bd
 express	https://github.com/expressjs/express	ts	023767fe9872e029271df1418f73401bff20ff40
-flask	https://github.com/pallets/flask	python	
-requests	https://github.com/psf/requests	python	
-click	https://github.com/pallets/click	python	
+flask	https://github.com/pallets/flask	python	d318b683471101618febed18996405ad26462110
+requests	https://github.com/psf/requests	python	5460f467b02e49471c0fd6cfc9ca0adab6351f98
+click	https://github.com/pallets/click	python	36baa15ff831b939a22bc527cd76ce653ef6f66d
 ripgrep	https://github.com/BurntSushi/ripgrep	rust	3fce3b5bb0236da2df6d99672afb8a719642eca7
 tokio	https://github.com/tokio-rs/tokio	rust	ea91b33ca57ff0581b38e735cc108f831bccbdaa
 serde	https://github.com/serde-rs/serde	rust	a874a1b1bb1cc16cf5ee3b1b7b527af5705742bb
