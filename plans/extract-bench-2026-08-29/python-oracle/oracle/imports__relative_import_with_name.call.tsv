@@ -1,0 +1,2 @@
+imports/relative_import_with_name/main.py		imports/relative_import_with_name/nested/to_import.py	func1
+imports/relative_import_with_name/nested/to_import.py	func1	imports/relative_import_with_name/nested/relative.py	func2

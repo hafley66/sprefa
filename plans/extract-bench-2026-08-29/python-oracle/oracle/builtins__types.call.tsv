@@ -1,0 +1,3 @@
+builtins/types/main.py		builtins/types/<external>	<**PyDict**>.items
+builtins/types/main.py		builtins/types/<external>	<**PyStr**>.join
+builtins/types/main.py		builtins/types/<external>	<**PyStr**>.split

@@ -1,0 +1,4 @@
+generators/iter_return/main.py		generators/iter_return/main.py	__init__
+generators/iter_return/main.py		generators/iter_return/main.py	__iter__
+generators/iter_return/main.py		generators/iter_return/main.py	__next__
+generators/iter_return/main.py		generators/iter_return/main.py	func

@@ -1,0 +1,2 @@
+args/imported_assigned_call/main.py		args/imported_assigned_call/to_import.py	func
+args/imported_assigned_call/to_import.py	func	args/imported_assigned_call/main.py	param_func

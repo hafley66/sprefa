@@ -1,0 +1,3 @@
+external/cls_parent/main.py		external/cls_parent/<external>	ext.parent.__init__
+external/cls_parent/main.py		external/cls_parent/main.py	fn
+external/cls_parent/main.py	fn	external/cls_parent/<external>	ext.parent.parent_fn
