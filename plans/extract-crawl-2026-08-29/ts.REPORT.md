@@ -13,6 +13,8 @@ Corpus `/Users/chrishafley/projects/TypeScript` @ `9a8581c3`, read-only.
 6. [Step 4: scip comparison](#6-step-4-scip-comparison)
 7. [Step 5: kinks](#7-step-5-kinks)
 8. [What stays untested and why](#8-what-stays-untested-and-why)
+9. [Jelly as a second call oracle](#9-jelly-as-a-second-call-oracle-lane-feat-extract-jelly-comparator-2026-08-31)
+10. [The checker tier: the TypeScript compiler answers the destination](#10-the-checker-tier-the-typescript-compiler-answers-the-destination-lane-featextract-ts-checker-2026-08-31)
 
 ---
 
@@ -589,3 +591,114 @@ Verdict: no discriminating signal beyond tsc + codeql2. 28,096 jelly-only
 rows reduce to mostly `sys.ts callback` natives-model fan-in, module-init
 `<module>` edges, and edges into the 4 Babel-dropped files; jelly misses
 33,021 rows tsc and codeql2 agree on. Negative result, report-only.
+
+---
+
+## 10. The checker tier: the TypeScript compiler answers the destination (lane feat/extract-ts-checker, 2026-08-31)
+
+`--ts-checker --project-root <root>`, built with `--features cli,ts-checker`.
+One `node` subprocess per resolve drives one `ts.createProgram` over the
+supplied files and answers, per reference site, `Corpus(path, span)` /
+`External` / absent. The caller, the site spans and the drop rows stay this
+crate's; only the destination changes hands. `External` SUPPRESSES the
+name-match leg: the compiler knowing a callee is a lib global is knowledge, and
+no name match may hand that site the corpus definition that shares its name.
+
+### 10.1 Build-vs-buy: driving tsc from Rust
+
+| candidate | what it is | verdict | why |
+|---|---|---|---|
+| tsserver over its protocol | spawn `tsserver`, JSON request per position | REJECTED | one request/response per position, no batch command ([Standalone Server wiki](https://github.com/microsoft/TypeScript/wiki/Standalone-Server-(tsserver))). ts5 needs 146,876 positions (92,166 call + 54,710 type) for what one program walk answers in 5.0s. |
+| a node script linking the project's `typescript` | one `ts.createProgram`, one walk, JSONL out | **CHOSEN** | `getResolvedSignature` and `getSymbolAtLocation` are batch-shaped over a program already in memory. Measured below. |
+| stc (dudykr) | rust-native TS type checker | REJECTED | archived by its owner 2025-03-12, read-only ([repo](https://github.com/dudykr/stc)). |
+| ezno (kaleidawave) | rust-native TS checker/compiler | REJECTED | its own README: does not support enough features to check existing projects, and does not aim at tsc parity ([repo](https://github.com/kaleidawave/ezno)). |
+| typescript-go (`tsgo`) | the Go-native port | REJECTED, revisit | its API surface is a session/LSP server (`internal/api/session.go`, `internal/lsp`), the same per-position request shape as tsserver, plus a second toolchain to build. Worth pricing again if it grows a batch symbol API. |
+| swc | rust TS parser/transpiler | REJECTED | no type checker; the swc author's checker effort IS stc. |
+| oxc | this crate's own TS parser | REJECTED | parser and semantic pass only, no type checker. |
+
+The process discipline is the scip indexers' own: `scip_ensure::run_capped`
+spawns `node` in its OWN PROCESS GROUP, stdout and stderr to files rather than
+pipes, and SIGKILLs the whole group on the deadline
+(`SPREFA_SCIP_TIMEOUT_SECS`, default 600s). The engine links executors and this
+is EXTRACT, where scip already spawns indexers.
+
+### 10.2 Measured: ts5 `src/**` minus `src/lib`, 600 `.ts` files
+
+Release binary, `nice -n 15`, one process per leg, both legs scored by
+`ts5.checker.measure.py` (the python twin of `tests/bench/mod.rs`; that file
+stays the reference and is not edited). The syntax row reproduces the committed
+`RATCHET.tsv` ts5/codeql2 row exactly, which is the harness's own check.
+
+| oracle | leg | recall % | precision % | ours | matched | contradicted | unjudged |
+|---|---|---|---|---|---|---|---|
+| `ts5.oracle.call.tsv` | syntax | 88.20 | 76.13 | 68769 | 52353 | 4691 | 11725 |
+| `ts5.oracle.call.tsv` | checker | 95.02 | 76.73 | 73502 | 56399 | 4121 | 12982 |
+| `ts.codeql2.call.tsv` | syntax | 92.07 | 71.15 | 68769 | 48928 | 7588 | 12253 |
+| `ts.codeql2.call.tsv` | checker | 97.33 | 70.36 | 73502 | 51719 | 8166 | 13617 |
+
+Deltas, checker minus syntax:
+
+| oracle | recall | flat precision | contradicted | contradicted as % of ours |
+|---|---|---|---|---|
+| `ts5.oracle.call.tsv` | +6.82 | +0.60 | -570 | 6.82 -> 5.61 |
+| `ts.codeql2.call.tsv` | +5.25 | -0.78 | +578 | 11.03 -> 11.11 |
+
+**Flat precision against codeql fell 0.78 points and that is arithmetic, not a
+regression in agreement.** The tier adds 4733 call rows; codeql matches
+2791 of them, contradicts 578, and is silent about 1364. Real
+disagreement per emitted row is flat (11.03% -> 11.11%), and against the
+ts5 oracle it FALLS (6.82% -> 5.61%). This is the split arc C's
+3-bucket instrument exists to show: flat precision charges every row the
+oracle never spoke about, and 1364 of the new rows are exactly that.
+
+The user's want was "non syntax tier working at codeql level" on the worst
+precision row. Recall reaches it and passes it (+5.25 to 97.33%); flat
+precision does not move up. **No floor changed in this PR.** The ratchet leg
+still runs the syntax tier (`tests/bench/mod.rs` passes `ts_checker: None`).
+
+### 10.3 Which leg answered
+
+| leg | syntax run | checker run |
+|---|---|---|
+| `checker` | 0 | 68644 |
+| `corpus_unique` | 34376 | 2682 |
+| `module_plane` | 29005 | 2391 |
+| `receiver` | 5413 | 7 |
+
+The checker answers 93.4% of emitted rows; the three name-match legs
+fall from 68769 rows to 4858.
+
+### 10.4 Cost
+
+| figure | syntax | checker |
+|---|---|---|
+| wall, whole run | 2.77 s | 7.83 s |
+| `extract` peak RSS | 392.0 MB | 1120.3 MB |
+| `node` peak RSS (own process group, measured separately) | n/a | 1131 MB |
+| driver `createProgram` | n/a | 1.2 s |
+| driver walk over 600 files | n/a | 5.0 s |
+| references answered | n/a | 92,166 call + 54,710 type |
+
+Both legs sit under the ten-second law. Two costs are named rather than
+excused: `node` holds 1131 MB for the compiler's own program, and `extract`
+takes 728 MB more than the syntax leg to hold 18 MB of driver output plus
+the joined index. The seam reads the driver's stdout with one
+`read_to_string`; streaming it per line is the obvious first cut and is not
+done here.
+
+### 10.5 What stays untested and why
+
+- **The `.tsx` and JSX leg.** The driver answers `JsxOpeningElement` tag names
+  and the ts5 corpus rule is `.ts` only, so no measurement covers it.
+- **A project with several tsconfigs whose options disagree.** The driver picks
+  ONE config, found from the first supplied file upward, and applies it to
+  every root name. ts5's per-project configs all extend one base, so this
+  corpus cannot show the disagreement.
+- **Type-family recall.** No committed ts type oracle exists
+  (`corpus("ts5")` lists call and module only), so the type edges the tier now
+  answers with `resolution_origin: checker` are unscored.
+- **Externals as drop rows.** The rust tier mints `UnresolvedReason::External`
+  for a checker-external site. The ts `call_drops` deliberately emits rows only
+  for ambiguous module targets and traced receivers, and a row per external
+  callee would be tens of thousands of new facts; suppression already happens
+  by emitting no edge, so the reason vocabulary is left alone.
