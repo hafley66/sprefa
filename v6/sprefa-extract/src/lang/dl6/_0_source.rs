@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, Family, ProjectEdge, SigSlot,
     Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
+    ResolutionOrigin,
 };
 use crate::lang::extract_lang::ExtractLang;
 use crate::rows::{Edge, FamilyBundle, Node};
@@ -458,8 +459,14 @@ impl Resolve<CallF> for DlSource {
                 let callee = output.strings.lookup(site.callee);
                 let (blob, target) = Self::call_name_match(output, index, callee)?;
                 Some(
-                    ProjectEdge::new(caller, blob, target, CallEdgeKind::NameResolve)
-                        .with_call_site(site.span),
+                    ProjectEdge::new(
+                        caller,
+                        blob,
+                        target,
+                        CallEdgeKind::NameResolve,
+                        ResolutionOrigin::CorpusUnique,
+                    )
+                    .with_call_site(site.span),
                 )
             })
             .collect()
@@ -491,18 +498,22 @@ impl Resolve<TypeF> for DlSource {
                 .filter(|site| site.family == TypeF::TAG)
                 .collect();
             let matched_site = if sites.len() == 1 {
-                Some(&sites[0])
+                Some((&sites[0], ResolutionOrigin::CorpusUnique))
             } else if let Some(own_hash) = &own {
-                sites.iter().find(|site| site.blob == *own_hash)
+                sites
+                    .iter()
+                    .find(|site| site.blob == *own_hash)
+                    .map(|site| (site, ResolutionOrigin::SameFile))
             } else {
                 None
             };
-            if let Some(target) = matched_site {
+            if let Some((target, origin)) = matched_site {
                 edges.push(ProjectEdge::new(
                     owner_ref,
                     target.blob.clone(),
                     target.span,
                     cand.kind,
+                    origin,
                 ));
             }
         }

@@ -1,1 +1,1 @@
-{"record":"resolved_edge","caller_path":"tests/fixtures/dl6/1_caller.dl6","caller_name":"derived","callee_path":"tests/fixtures/dl6/2_callee.dl6","callee_name":"helper","caller_site_start":89,"caller_site_end":105,"kind":"name_resolve"}
+{"record":"resolved_edge","caller_path":"tests/fixtures/dl6/1_caller.dl6","caller_name":"derived","callee_path":"tests/fixtures/dl6/2_callee.dl6","callee_name":"helper","caller_site_start":89,"caller_site_end":105,"kind":"name_resolve","resolution_origin":"corpus_unique"}

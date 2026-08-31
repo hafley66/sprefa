@@ -1516,6 +1516,66 @@ impl<F: Family> FamilyBundle<F> {
     }
 }
 
+/// WHICH resolver leg answered a `ProjectEdge`. CLOSED: a new leg gets a new
+/// variant, never a new spelling at the call site.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ResolutionOrigin {
+    /// The referring file's own scope: the file itself, or its package block
+    /// where the language scopes one (go's directory).
+    SameFile,
+    /// Exactly one corpus declaration carries the name, so the name IS the
+    /// coordinate. The weakest leg: it guesses wherever the corpus is unique.
+    CorpusUnique,
+    /// The language's own import/module plane bound the name.
+    ModulePlane,
+    /// A real type checker (rust-analyzer) answered for this site.
+    Checker,
+    /// An alias, re-export or multi-hop selector chain was followed to a def.
+    AliasChain,
+    /// A parameter's or local binding's declared/inferred type answered.
+    Param,
+    /// A call's receiver expression was typed, and the type's method set
+    /// carried the callee.
+    Receiver,
+    /// The enclosing impl's self type, or an associated path through it.
+    SelfType,
+    /// An interface/trait method fanned out to its implementers, or an
+    /// implementer was matched back to the interface it satisfies.
+    IfaceImpl,
+    /// A decorator application rebound the name to what the decorator returns.
+    Decorator,
+    /// A subscript binding (`table["key"]`) named the callee.
+    Subscript,
+    /// The callee is the value a already-resolved call returns (`f()()`).
+    ReturnCall,
+    /// A SCIP index (the compiler's own answer) named the target.
+    Scip,
+    /// No leg answered; the edge carries a placeholder target, which the flat
+    /// wire then drops. Type-edge candidates are the only minters.
+    Unresolved,
+}
+
+impl ResolutionOrigin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ResolutionOrigin::SameFile => "same_file",
+            ResolutionOrigin::CorpusUnique => "corpus_unique",
+            ResolutionOrigin::ModulePlane => "module_plane",
+            ResolutionOrigin::Checker => "checker",
+            ResolutionOrigin::AliasChain => "alias_chain",
+            ResolutionOrigin::Param => "param",
+            ResolutionOrigin::Receiver => "receiver",
+            ResolutionOrigin::SelfType => "self_type",
+            ResolutionOrigin::IfaceImpl => "iface_impl",
+            ResolutionOrigin::Decorator => "decorator",
+            ResolutionOrigin::Subscript => "subscript",
+            ResolutionOrigin::ReturnCall => "return_call",
+            ResolutionOrigin::Scip => "scip",
+            ResolutionOrigin::Unresolved => "unresolved",
+        }
+    }
+}
+
 /// A project-phase edge: `dst` lives in ANOTHER blob (resolved across the file
 /// set). The seed's `ProjectEdge` (`_0_shape.rs`:222-232) made generic over the
 /// family — the seed's `EdgeKind` sum is deleted per D-families, so `kind` is
@@ -1530,6 +1590,9 @@ pub struct ProjectEdge<F: Family> {
     /// The target node's coordinate inside `dst_blob`.
     pub dst_span: Span,
     pub kind: F::EdgeKind,
+    /// Which resolver leg answered. Constructor-required: a leg that cannot
+    /// name itself is a leg nothing can count.
+    pub origin: ResolutionOrigin,
     /// The phase-1 call site that produced this edge, when the edge is a
     /// resolved CallF row. TypeF and legacy resolver rows leave this empty.
     pub call_site: Option<Span>,
@@ -1537,12 +1600,19 @@ pub struct ProjectEdge<F: Family> {
 }
 
 impl<F: Family> ProjectEdge<F> {
-    pub fn new(src: NodeRef, dst_blob: ContentId, dst_span: Span, kind: F::EdgeKind) -> Self {
+    pub fn new(
+        src: NodeRef,
+        dst_blob: ContentId,
+        dst_span: Span,
+        kind: F::EdgeKind,
+        origin: ResolutionOrigin,
+    ) -> Self {
         Self {
             src,
             dst_blob,
             dst_span,
             kind,
+            origin,
             call_site: None,
             _f: PhantomData,
         }
@@ -2998,6 +3068,8 @@ pub enum FlatFact {
         caller_site_start: u32,
         caller_site_end: u32,
         kind: String,
+        /// Which resolver leg answered (`ResolutionOrigin::as_str`).
+        resolution_origin: String,
     },
     /// A project-mode `Resolve<TypeF>` edge: one type reference resolved to the
     /// declaration it names. The flat twin of `ProjectEdge`, for the same reason
@@ -3014,6 +3086,8 @@ pub enum FlatFact {
         target_path: String,
         target_name: Option<String>,
         kind: String,
+        /// Which resolver leg answered (`ResolutionOrigin::as_str`).
+        resolution_origin: String,
     },
     // ── the `scip` family: v5's scip_* relation shapes ──────────────────────
     //

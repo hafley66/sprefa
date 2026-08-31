@@ -13,7 +13,7 @@ use crate::seams::{corpus_defs, ProjectCx, Resolve};
 use crate::shape::{NameId, NodeRef, Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, Source};
 use crate::trace;
-use crate::types::{DocNode, DocNodeKind, ProjectEdge, TypeEdgeKind};
+use crate::types::{DocNode, DocNodeKind, ProjectEdge, ResolutionOrigin, TypeEdgeKind};
 
 #[derive(Default)]
 pub struct MarkdownSource;
@@ -285,6 +285,7 @@ impl Resolve<TypeF> for MarkdownSource {
                     site.blob.clone(),
                     site.span,
                     TypeEdgeKind::DocRef,
+                    ResolutionOrigin::CorpusUnique,
                 ));
             }
         }

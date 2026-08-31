@@ -41,6 +41,7 @@ use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
     DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
     TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
+    ResolutionOrigin,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{DefIndex, Parser, Project, Resolve, corpus_defs, covering_def, def_named};
@@ -1744,8 +1745,14 @@ impl Resolve<CallF> for KotlinSource {
                 continue;
             };
             edges.push(
-                ProjectEdge::new(caller, dst_blob, dst_span, CallEdgeKind::NameResolve)
-                    .with_call_site(site.span),
+                ProjectEdge::new(
+                    caller,
+                    dst_blob,
+                    dst_span,
+                    CallEdgeKind::NameResolve,
+                    ResolutionOrigin::CorpusUnique,
+                )
+                .with_call_site(site.span),
             );
         }
         edges
@@ -1779,7 +1786,7 @@ fn resolve_type_dst(
     strings: &Strings,
     index: Option<&DefIndex>,
     name: &str,
-) -> Option<(ContentId, Span)> {
+) -> Option<(ContentId, Span, ResolutionOrigin)> {
     let same_file = types
         .nodes
         .iter()
@@ -1788,11 +1795,15 @@ fn resolve_type_dst(
         return corpus_defs(index, name)
             .iter()
             .find(|site| site.span == node.span)
-            .map(|site| (site.blob.clone(), site.span));
+            .map(|site| (site.blob.clone(), site.span, ResolutionOrigin::SameFile));
     }
     let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
     match sites {
-        [only] => Some((only.blob.clone(), only.span)),
+        [only] => Some((
+            only.blob.clone(),
+            only.span,
+            ResolutionOrigin::CorpusUnique,
+        )),
         _ => None,
     }
 }
@@ -1814,18 +1825,19 @@ impl Resolve<TypeF> for KotlinSource {
             else {
                 continue;
             };
-            let (dst_blob, dst_span) = resolve_type_dst(
+            let (dst_blob, dst_span, origin) = resolve_type_dst(
                 types,
                 &output.strings,
                 index,
                 output.strings.lookup(candidate.to),
             )
-            .unwrap_or((ZERO_CONTENT_ID, Span::empty()));
+            .unwrap_or((ZERO_CONTENT_ID, Span::empty(), ResolutionOrigin::Unresolved));
             edges.push(ProjectEdge::new(
                 NodeRef(src_ix as u32),
                 dst_blob,
                 dst_span,
                 candidate.kind,
+                origin,
             ));
         }
         edges

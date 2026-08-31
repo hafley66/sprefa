@@ -19,6 +19,7 @@ fn edge(caller_path: &str, caller_name: Option<&str>, callee_path: &str, callee_
         caller_site_start: 0,
         caller_site_end: 0,
         kind: "name_resolve".to_string(),
+        resolution_origin: "corpus_unique".to_string(),
     }
 }
 
@@ -31,6 +32,7 @@ fn type_edge(owner_path: &str, owner_name: Option<&str>, target_path: &str, targ
         target_path: target_path.to_string(),
         target_name: target_name.map(String::from),
         kind: "uses".to_string(),
+        resolution_origin: "corpus_unique".to_string(),
     }
 }
 

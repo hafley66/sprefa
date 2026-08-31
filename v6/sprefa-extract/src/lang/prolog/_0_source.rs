@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfEdgeKind, DfF, DfNodeKind,
     ProjectEdge, RefPosition, Reference, Specifier, SpecifierKind, TypeEntityKind, TypeF,
+    ResolutionOrigin,
 };
 use crate::lang::extract_lang::ExtractLang;
 use crate::rows::{Edge, FamilyBundle, Node};
@@ -1127,8 +1128,14 @@ impl Resolve<CallF> for PrologSource {
                 let callee = output.strings.lookup(site.callee);
                 let (blob, target) = Self::call_name_match(output, index, callee)?;
                 Some(
-                    ProjectEdge::new(caller, blob, target, CallEdgeKind::NameResolve)
-                        .with_call_site(site.span),
+                    ProjectEdge::new(
+                        caller,
+                        blob,
+                        target,
+                        CallEdgeKind::NameResolve,
+                        ResolutionOrigin::CorpusUnique,
+                    )
+                    .with_call_site(site.span),
                 )
             })
             .collect()

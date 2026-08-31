@@ -26,7 +26,9 @@ use crate::seams::ProjectCx;
 use crate::scip::{byte_range_at, definition_of, LineTable};
 use crate::shape::{ContentId, Span};
 use crate::source::ExtractOutput;
-use crate::types::{containing_def_site, covering_def, CallEdgeKind, CallF, ProjectEdge};
+use crate::types::{
+    containing_def_site, covering_def, CallEdgeKind, CallF, ProjectEdge, ResolutionOrigin,
+};
 
 /// One file handed to the post-pass. `project.rs` builds these in the same
 /// order as the per-file resolved-edge list it already holds.
@@ -260,8 +262,14 @@ pub(crate) fn mint_macro_edges(
                 continue;
             };
             edges.push(
-                ProjectEdge::new(caller, def_site.blob.clone(), def_site.span, CallEdgeKind::ScipMacro)
-                    .with_call_site(span),
+                ProjectEdge::new(
+                    caller,
+                    def_site.blob.clone(),
+                    def_site.span,
+                    CallEdgeKind::ScipMacro,
+                    ResolutionOrigin::Scip,
+                )
+                .with_call_site(span),
             );
             rows
                 .last_mut()

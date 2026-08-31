@@ -1,1 +1,1 @@
-{"record":"resolved_edge","caller_path":"tests/fixtures/resolve/0_caller.ts","caller_name":"run","callee_path":"tests/fixtures/resolve/1_callee.ts","callee_name":"helper","caller_site_start":33,"caller_site_end":39,"kind":"name_resolve"}
+{"record":"resolved_edge","caller_path":"tests/fixtures/resolve/0_caller.ts","caller_name":"run","callee_path":"tests/fixtures/resolve/1_callee.ts","callee_name":"helper","caller_site_start":33,"caller_site_end":39,"kind":"name_resolve","resolution_origin":"corpus_unique"}

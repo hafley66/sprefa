@@ -63,7 +63,8 @@ pub use drain::{
 pub use family::{
     flow_edges, CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfArg, DfEdgeKind, DfF,
     DfFAux, DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, Family, FlowEdge, FlowEdgeKind,
-    FlowF, MethodOwner, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
+    FlowF, MethodOwner, ProjectEdge, ResolutionOrigin, SigSlot, Specifier, SpecifierKind,
+    TypeEdgeCandidate,
     TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };
 pub use lang::{

@@ -1208,6 +1208,7 @@ fn call_facts(
                 caller_site_start: edge.call_site.map_or(0, |span| span.start),
                 caller_site_end: edge.call_site.map_or(0, |span| span.end()),
                 kind: edge.kind.as_str().to_string(),
+                resolution_origin: edge.origin.as_str().to_string(),
             })
         })
         .collect()
@@ -1339,6 +1340,7 @@ fn type_facts(input: &ProjectInput, targets: &TargetIndex<'_>, cx: &ProjectCx) -
                     edge.dst_span,
                 ),
                 kind: edge.kind.as_str().to_string(),
+                resolution_origin: edge.origin.as_str().to_string(),
             })
         })
         .collect()
