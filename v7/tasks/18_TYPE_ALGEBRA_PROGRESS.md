@@ -8,6 +8,6 @@
 - Issuectl epic: `dl7-type-algebra`.
 - Issuectl graph: 13 dependency-ordered child tasks.
 - Active task: `dl7-prelude-files`.
-- Current implementation files are unchanged.
-- Current CI has not been run on this branch.
-
+- Prelude split commit: `ac4cd47e1` (`Split the ordered DL7 prelude`).
+- Test receipt: SWI consolidated V7 reader and entrypoint surface, 25 passed;
+  Tree-sitter DL7 grammar surface, 1 parse passed.
