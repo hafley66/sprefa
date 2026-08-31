@@ -20,7 +20,7 @@ driver_exit_code([Path], Code) :-
     unit_exit(Diagnostics, Unit, Code).
 driver_exit_code(_, 1) :-
     format(user_error,
-           "usage: swipl -q -s v7/src/0_reader/4_cli_mainer.pl -- path/to/program.dl7~n",
+           "usage: swipl -q -s v7/src/0_reader/5_cli_mainer.pl -- path/to/program.dl7~n",
            []).
 
 unit_exit([], Unit, 0) :-

@@ -152,7 +152,7 @@ command through `5_driver.pl` and record the hook limitation with an official
 SWI reference. In both cases this command must work:
 
 ```text
-swipl -q -s v7/src/0_reader/4_cli_mainer.pl -- path/to/program.dl7
+swipl -q -s v7/src/0_reader/5_cli_mainer.pl -- path/to/program.dl7
 ```
 
 The driver prints canonical reader/expansion output suitable for a golden or

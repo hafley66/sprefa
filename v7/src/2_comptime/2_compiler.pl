@@ -1,6 +1,7 @@
 :- module(dl7_compiler,
           [ compile_dl7/4,
             compile_unit/3,
+            compile_units/3,
             type_prelude_paths/1
           ]).
 
@@ -10,7 +11,11 @@
               [ evaluate/4,
                 validate_functional_rows/3
               ]).
-:- use_module('0_lowerer', [lower_datalog/4]).
+:- use_module('0a_module_lowerer',
+              [ lower_units/4,
+                lower_units_with_exporter/5,
+                merge_module_basements/4
+              ]).
 :- use_module('1_checker',
               [ check_datalog/4,
                 check_resolved_rules/5
@@ -28,11 +33,14 @@ compile_dl7(Path, CompilerRows, RuntimeProgram, Diagnostics) :-
     once(type_prelude_paths(PreludePaths)),
     read_prelude_texts(PreludePaths, PreludeTexts),
     join_prelude_texts(PreludeTexts, PreludeText),
+    dl7_text_unit(prelude, prelude, PreludeText,
+                  PreludeUnit, PreludeDiagnostics),
     read_file_to_string(ProgramPath, ProgramText, [encoding(utf8)]),
-    format(string(Text), "~s~n~s", [PreludeText, ProgramText]),
-    Origin = combined(prelude, ProgramPath),
-    dl7_text_unit(Origin, Origin, Text, Unit, ReaderDiagnostics),
-    compile_after_read(ReaderDiagnostics, Unit, Compiled, Diagnostics),
+    dl7_text_unit(file(ProgramPath), ProgramPath, ProgramText,
+                  ProgramUnit, ProgramDiagnostics),
+    append(PreludeDiagnostics, ProgramDiagnostics, ReaderDiagnostics),
+    compile_after_reads(ReaderDiagnostics, [PreludeUnit, ProgramUnit],
+                        Compiled, Diagnostics),
     compiled_outputs(Compiled, CompilerRows, RuntimeProgram),
     !,
     garbage_collect.
@@ -74,10 +82,10 @@ join_prelude_texts([Text|Texts], Joined) :-
     ;   format(string(Joined), "~s~n~s", [Text, TextsJoined])
     ).
 
-compile_after_read([], Unit, Compiled, Diagnostics) :-
+compile_after_reads([], Units, Compiled, Diagnostics) :-
     !,
-    compile_unit(Unit, Compiled, Diagnostics).
-compile_after_read(Diagnostics, _, [], Diagnostics).
+    compile_units(Units, Compiled, Diagnostics).
+compile_after_reads(Diagnostics, _, [], Diagnostics).
 
 compiled_outputs(compiled_unit(_, RuntimeProgram, CompilerRows),
                  CompilerRows, RuntimeProgram).
@@ -89,11 +97,40 @@ compiled_outputs([], [], []).
 % complete checked program survives as runtime input while compiler closure is
 % retained as immutable artifact data.
 compile_unit(Unit, Compiled, Diagnostics) :-
-    lower_datalog(Unit, Basement, Origins, LowerDiagnostics),
-    compile_after_lower(LowerDiagnostics, Basement, Origins,
-                        Compiled, Diagnostics),
+    compile_units([Unit], Compiled, Diagnostics).
+
+%% compile_units(+Units, -Compiled, -Diagnostics) is det.
+%
+% Lower source modules independently, expose the synthetic prelude through
+% ordinary alias edges, merge the owned rows, then enter the existing checker
+% and comptime fixpoint.
+compile_units(Units, Compiled, Diagnostics) :-
+    lower_compiler_units(Units, ModuleBasements, ModuleOrigins,
+                         LowerDiagnostics),
+    compile_after_unit_lower(LowerDiagnostics,
+                             ModuleBasements, ModuleOrigins,
+                             Compiled, Diagnostics),
     !,
     garbage_collect.
+
+lower_compiler_units(Units, ModuleBasements, ModuleOrigins, Diagnostics) :-
+    (   select(PreludeUnit, Units, ImporterUnits),
+        unit_has_origin(PreludeUnit, prelude)
+    ->  lower_units_with_exporter(PreludeUnit, ImporterUnits,
+                                  ModuleBasements, ModuleOrigins,
+                                  Diagnostics)
+    ;   lower_units(Units, ModuleBasements, ModuleOrigins, Diagnostics)
+    ).
+
+unit_has_origin(dl7_unit(Origin, _, _, _, _), Origin).
+
+compile_after_unit_lower([], ModuleBasements, ModuleOrigins,
+                         Compiled, Diagnostics) :-
+    !,
+    merge_module_basements(ModuleBasements, ModuleOrigins,
+                           Basement, Origins),
+    compile_after_lower([], Basement, Origins, Compiled, Diagnostics).
+compile_after_unit_lower(Diagnostics, _, _, [], Diagnostics).
 
 compile_after_lower([], Basement, Origins, Compiled, Diagnostics) :-
     !,
