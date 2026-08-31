@@ -1,5 +1,6 @@
 :- module(dl7_lowerer,
           [ lower_datalog/4,
+            lower_datalog/5,
             kernel_relation/2
           ]).
 
@@ -12,13 +13,24 @@
 % complete file-owner reservation table. The result remains ground compiler
 % data; reference resolution and Datalog checks run later in this module.
 lower_datalog(Unit, Program, Origins, Diagnostics) :-
+    EmptyEnvironment = expression_environment([], [], []),
+    lower_datalog(Unit, EmptyEnvironment, Program, Origins, Diagnostics).
+
+%% lower_datalog(+Unit, +ImportedEnvironment,
+%%               -Program, -Origins, -Diagnostics) is det.
+%
+% Imported callable declarations participate in expression lowering while the
+% emitted basement retains only rows declared by this unit.
+lower_datalog(Unit, ImportedEnvironment, Program, Origins, Diagnostics) :-
     must_be(ground, Unit),
+    must_be(ground, ImportedEnvironment),
     (   Unit = dl7_unit(Origin, _, Forms, _, _)
     ->  ModuleIdentity = Origin,
         ModuleOwner = module(ModuleIdentity),
         lower_declarations(Forms, ModuleOwner, ModuleIdentity,
                            DeclarationResult),
         lower_after_declarations(DeclarationResult, Forms, ModuleOwner,
+                                 ImportedEnvironment,
                                  Program, Origins, Diagnostics)
     ;   Program = [],
         Origins = [],
@@ -26,11 +38,20 @@ lower_datalog(Unit, Program, Origins, Diagnostics) :-
     ),
     !.
 
-lower_after_declarations(error(Diagnostic), _, _, [], [], [Diagnostic]).
+lower_after_declarations(error(Diagnostic), _, _, _, [], [], [Diagnostic]).
 lower_after_declarations(
     ok(Nodes0, Edges, Relations, DeclarationOrigins, Reservations),
-    Forms, ModuleOwner, Program, Origins, Diagnostics) :-
-    Environment = expression_environment(Reservations, Relations, Edges),
+    Forms, ModuleOwner, ImportedEnvironment,
+    Program, Origins, Diagnostics) :-
+    ImportedEnvironment = expression_environment(
+                              ImportedReservations,
+                              ImportedRelations,
+                              ImportedEdges),
+    append(Reservations, ImportedReservations, VisibleReservations),
+    append(Relations, ImportedRelations, VisibleRelations),
+    append(Edges, ImportedEdges, VisibleEdges),
+    Environment = expression_environment(
+                      VisibleReservations, VisibleRelations, VisibleEdges),
     lower_derived_bind_rules(Reservations, Environment, 0,
                              DerivedResult),
     (   DerivedResult = ok(DerivedRules, DerivedOrigins)

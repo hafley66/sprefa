@@ -1,10 +1,11 @@
 :- module(dl7_module_lowerer,
           [ lower_units/4,
+            lower_units_with_exporter/5,
             merge_module_basements/4,
             install_module_aliases/6
           ]).
 
-:- use_module('0_lowerer', [lower_datalog/4]).
+:- use_module('0_lowerer', [lower_datalog/4, lower_datalog/5]).
 
 %% lower_units(+Units, -ModuleBasements, -ModuleOrigins, -Diagnostics) is det.
 %
@@ -21,6 +22,98 @@ lower_units([Unit | Units],
     append(UnitDiagnostics, RestDiagnostics, Diagnostics).
 
 unit_module_owner(dl7_unit(Origin, _, _, _, _), module(Origin)).
+
+%% lower_units_with_exporter(+ExporterUnit, +ImporterUnits,
+%%                           -ModuleBasements, -ModuleOrigins,
+%%                           -Diagnostics) is det.
+%
+% Lower the exporter first. Its top-level callable declarations become the
+% expression environment used while lowering every importer. The resulting
+% basements still contain only rows authored by their own source units; alias
+% edges are installed after all units have lowered successfully.
+lower_units_with_exporter(ExporterUnit, ImporterUnits,
+                          ModuleBasements, ModuleOrigins, Diagnostics) :-
+    unit_module_owner(ExporterUnit, ExporterOwner),
+    lower_datalog(ExporterUnit, ExporterBasement, ExporterOrigins,
+                  ExporterDiagnostics),
+    lower_importers_after_exporter(
+        ExporterDiagnostics, ExporterOwner,
+        ExporterBasement, ExporterOrigins, ImporterUnits,
+        ModuleBasements, ModuleOrigins, Diagnostics).
+
+lower_importers_after_exporter(
+    [], ExporterOwner, ExporterBasement, ExporterOrigins, ImporterUnits,
+    ModuleBasements, ModuleOrigins, Diagnostics) :-
+    !,
+    module_expression_environment(ExporterOwner, ExporterBasement,
+                                  ImportedEnvironment),
+    lower_importing_units(ImporterUnits, ImportedEnvironment,
+                          ImporterBasements, ImporterOrigins,
+                          ImporterDiagnostics),
+    ExporterBasements = [module_basement(ExporterOwner, ExporterBasement)
+                        | ImporterBasements],
+    ExporterModuleOrigins = [module_origins(ExporterOwner, ExporterOrigins)
+                            | ImporterOrigins],
+    expose_lowered_importers(
+        ImporterDiagnostics, ExporterOwner, ImporterUnits,
+        ExporterBasements, ExporterModuleOrigins,
+        ModuleBasements, ModuleOrigins, Diagnostics).
+lower_importers_after_exporter(
+    Diagnostics, ExporterOwner, ExporterBasement, ExporterOrigins, _,
+    [module_basement(ExporterOwner, ExporterBasement)],
+    [module_origins(ExporterOwner, ExporterOrigins)], Diagnostics).
+
+module_expression_environment(
+    ExporterOwner,
+    basement_program(root_graph(_, Edges),
+                     datalog_program(Relations, _, _)),
+    expression_environment(Reservations, Relations, Edges)) :-
+    findall(
+        reservation(imported, Name, target(Callable), product),
+        ( member(pending_edge(ExporterOwner, Name,
+                              target(Callable), _), Edges),
+          memberchk(relation(Callable, _, _), Relations)
+        ),
+        Reservations).
+
+lower_importing_units([], _, [], [], []).
+lower_importing_units(
+    [Unit | Units],
+    expression_environment(Reservations0, Relations, Edges),
+    [module_basement(ModuleOwner, Basement) | ModuleBasements],
+    [module_origins(ModuleOwner, Origins) | ModuleOrigins],
+    Diagnostics) :-
+    unit_module_owner(Unit, ModuleOwner),
+    reown_expression_reservations(Reservations0, ModuleOwner, Reservations),
+    Environment = expression_environment(Reservations, Relations, Edges),
+    lower_datalog(Unit, Environment, Basement, Origins, UnitDiagnostics),
+    lower_importing_units(Units,
+                          expression_environment(Reservations0,
+                                                 Relations, Edges),
+                          ModuleBasements, ModuleOrigins, RestDiagnostics),
+    append(UnitDiagnostics, RestDiagnostics, Diagnostics).
+
+reown_expression_reservations([], _, []).
+reown_expression_reservations(
+    [reservation(_, Name, Target, Kind) | Reservations], Owner,
+    [reservation(Owner, Name, Target, Kind) | Reowned]) :-
+    reown_expression_reservations(Reservations, Owner, Reowned).
+
+expose_lowered_importers(
+    [], ExporterOwner, ImporterUnits, Basements0, Origins0,
+    Basements, Origins, []) :-
+    !,
+    unit_module_owners(ImporterUnits, ImporterOwners),
+    install_module_aliases(ExporterOwner, ImporterOwners,
+                           Basements0, Origins0, Basements, Origins).
+expose_lowered_importers(
+    Diagnostics, _, _, Basements, Origins,
+    Basements, Origins, Diagnostics).
+
+unit_module_owners([], []).
+unit_module_owners([Unit | Units], [Owner | Owners]) :-
+    unit_module_owner(Unit, Owner),
+    unit_module_owners(Units, Owners).
 
 %% merge_module_basements(+ModuleBasements, +ModuleOrigins,
 %%                        -Program, -Origins) is det.
