@@ -2167,3 +2167,69 @@ Section 26.2 carried 9 unexplained rows and section 26.6 folded them into a
 
 Three are one mechanism (alias transparency on the owner leg), three are dead
 with the reason above.
+
+## 29. The impl-owner drop, cut (lane `fix-extract-rust-type-residual`, arc 2)
+
+Section 28.3's largest buildable block. `item_edge_candidates` required the
+impl's self type to name an entity of the impl's OWN file
+(`src/lang/rust_type_edges.rs:89`); `entity_span_named` returned `None` and the
+`return` dropped the whole block — its trait leg, its self-type generic
+arguments and its bounds together.
+
+### 29.1 Why the owner is not a node
+
+Section 26.6 held this open because "a `TypeEdgeCandidate` carries an owner
+SPAN, so the owner must be a node of this file's `TypeF` bundle; minting one for
+every `impl X` header would register X as a definition in every file that impls
+it, and the corpus-unique lookups both planes rely on would go ambiguous
+corpus-wide." That is correct and `build_def_index` (`src/types.rs:1717`) is
+where it bites: it indexes EVERY named `TypeF` node.
+
+So the owner is not a node. `TypeFAux` gains `impl_owners: Vec<ImplOwner>`, and
+the candidate's `NodeRef` addresses it PAST the node vec — the same trick
+`TypePlane::DocNodes` already uses to address an aux vec by `NodeRef`, with an
+offset because rust mixes the two. Three consequences, each checked by a test:
+
+| index | sees the impl owner? | why |
+|---|---|---|
+| `build_def_index` | no | walks `types.nodes` only, so `Widget` stays declared once |
+| `flatten_type` (the wire) | no | walks `bundle.nodes`, so no new `type_entity` row |
+| `name_match_type_dst` same-file leg | no | walks `types.nodes`, so an impl does not make its type resolvable in the impl's file |
+
+### 29.2 A qualified self type is excluded, with its warrant
+
+The first shape scored recall **64.99** / precision **92.56** against a 93.65
+floor: 367 new rows, 274 right, 93 wrong. 77 of the 93 have a QUALIFIED impl
+self type, and the reason is section 26.3's X3 convention — the oracle's
+`impl_self_name` takes the FIRST path segment, so `impl AsName for tt::Ident`
+(`crates/hir-expand/src/name.rs`) is owned by `tt`, and a row keyed on the
+trailing segment names an owner the oracle never writes. `self_ty_head` mints
+only for a single-segment self type. That cut 87 wrong rows and lost 1 right
+one.
+
+### 29.3 What the arc moved
+
+| shape | recall | precision | ours | overlap | excess |
+|---|---:|---:|---:|---:|---:|
+| the floor this arc inherited (`bb1d46441`) | 61.70 | 93.75 | 5,491 | 5,148 | 343 |
+| every impl self type | 64.99 | 92.56 | 5,858 | 5,422 | 436 |
+| bare self types only | **64.98** | **93.95** | 5,770 | 5,421 | 349 |
+
+Recall +3.28 pt and precision +0.20 pt, against a 93.65 precision floor. The
+class the arc targeted, by the section-28 census:
+
+| class | before | after |
+|---|---:|---:|
+| E1 implements | 279 | 40 |
+| D2 impl self type | 15 | 4 |
+| F bound head | 27 | 10 |
+| D1 bound generic args | 17 | 13 |
+
+The 180 `E1b` rows do NOT move and cannot: the oracle keys those on the ADT's
+DECLARING file, and a file-local candidate walk has no owner there. Minting them
+on the impl's file is exactly what produced the 67 remaining wrong rows in the
+first shape. The realistic ceiling for this shape was 294 rows, not 474.
+
+Fixture `tests/fixtures/rust_findings/impl_owner/`, test
+`tests/80_rust_impl_owner.rs`. Fail-first receipt at `bb1d46441`: the fixture
+emitted ZERO `resolved_type_edge` rows, all three impls dropped.

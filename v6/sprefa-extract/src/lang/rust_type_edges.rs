@@ -4,7 +4,7 @@
 
 use syn::{Fields, GenericParam, Path, Type, TypeParamBound, WherePredicate};
 
-use crate::family::{TypeEdgeCandidate, TypeEdgeKind, TypeF};
+use crate::family::{ImplOwner, TypeEdgeCandidate, TypeEdgeKind, TypeF};
 use crate::rows::FamilyBundle;
 use crate::shape::{Span, Strings};
 
@@ -13,8 +13,8 @@ use super::rust_type_refs::{collect_path_args, path_name, primary_type, type_ref
 
 // ── type-edge candidates (the Resolve<TypeF> input) ───────────────
 //
-// A candidate carries an owner SPAN, so an impl on a self type declared
-// OUTSIDE this file has no owner to point at and is skipped.
+// A candidate carries an owner SPAN. An impl whose self type is declared
+// outside this file points at an `ImplOwner` instead of a node.
 
 /// Collect one file's unresolved type-edge candidates. Port of v5 `edges_from`
 /// + `item_edges`.
@@ -81,13 +81,18 @@ fn item_edge_candidates(
         }
         syn::Item::Impl(i) => {
             // Port of v5: the whole impl is skipped when the self-type has no
-            // primary name. The owner is the IN-FILE entity of that name; an
-            // external self-type is unrepresentable (see the section comment).
+            // primary name (a tuple or a bare fn self type reaches no owner).
             let Some(owner_name) = primary_type(&i.self_ty) else {
                 return;
             };
-            let Some(owner) = entity_span_named(sink, strings, &owner_name) else {
-                return;
+            let owner = match entity_span_named(sink, strings, &owner_name) {
+                Some(span) => span,
+                None => {
+                    let Some((span, head)) = self_ty_head(&i.self_ty, line_starts) else {
+                        return;
+                    };
+                    impl_owner_span(sink, strings, span, &head)
+                }
             };
             generic_candidates(owner, &i.generics, strings, sink);
             if let Some((_, path, _)) = &i.trait_ {
@@ -121,6 +126,36 @@ fn entity_span_named(sink: &FamilyBundle<TypeF>, strings: &Strings, name: &str) 
         .iter()
         .find(|node| node.name.map_or(false, |id| strings.lookup(id) == name))
         .map(|node| node.span)
+}
+
+/// The impl self type's ident and span, BARE self types only: a qualified one
+/// is owned by its qualifier (`impl T for tt::Ident` is owned by `tt`).
+fn self_ty_head(ty: &Type, line_starts: &[u32]) -> Option<(Span, String)> {
+    match strip_type(ty) {
+        Type::Path(t) if t.qself.is_none() && t.path.segments.len() == 1 => {
+            let seg = t.path.segments.first()?;
+            Some((
+                syn_span(line_starts, seg.ident.span()),
+                seg.ident.to_string(),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Record an owner the file declares nowhere and hand back its span. Deduped on
+/// span, so every impl of one type in one file shares the entry.
+fn impl_owner_span(
+    sink: &mut FamilyBundle<TypeF>,
+    strings: &mut Strings,
+    span: Span,
+    name: &str,
+) -> Span {
+    if !sink.aux.impl_owners.iter().any(|owner| owner.span == span) {
+        let name = strings.intern(name);
+        sink.aux.impl_owners.push(ImplOwner { span, name });
+    }
+    span
 }
 
 /// One field candidate per named type reference under each field's type. Port
