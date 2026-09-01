@@ -2600,7 +2600,7 @@ one falls back to the name-match legs.
 spellings anyway, so the recall a span key would add is the subset the
 name-match legs miss and is unmeasured. Pricing it needs a reference span on
 `TypeEdgeCandidate`, which is shared by the ts, go, kotlin, python and dl6
-arms — a cross-lang arc, outside this lane's ownership.
+arms: a cross-lang arc, outside this lane's ownership.
 
 ### 33.4 The pin
 
