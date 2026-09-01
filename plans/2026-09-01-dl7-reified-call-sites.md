@@ -13,6 +13,10 @@ callable node. Emitters query that graph as relations. An emitter may be
 implemented as SWI-Prolog predicates today or as DL7 rules as the self-hosted
 compiler surface grows.
 
+The pipeline contains DL7 source, SWI-Prolog compilation, closed compiler
+relations, and selected emitters. TypeSpec remains outside the pipeline; its
+emitter ergonomics are only a comparison point.
+
 ## Decisions
 
 1. Calls, supplied slots, and partial specializations become compiler facts.
@@ -79,9 +83,7 @@ specialization and forwarding rule in the prelude, then calls that generated
 relation from authored facts and rules. Nested completion continues to erase
 directly during lowering while the carrier is generalized.
 
-<!-- todo(feature): Reify escaping partial applications as callable specialization facts and generate their forwarding relations in the DL7 prelude. -->
 <!-- todo(refactor): Reify every call site and move named, punned, omitted, and defaulted slot policy from 0_lowerer.pl into prelude rules. -->
-<!-- todo(feature): Repeat source lowering and compiler evaluation until newly generated callable declarations and dependent partial specializations stabilize. -->
 <!-- todo(feature): Add the compiler-relation emitter protocol and monomorphic Datalog application emitter boundary. -->
 
 ## Verification
