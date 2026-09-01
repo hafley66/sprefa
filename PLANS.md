@@ -170,7 +170,6 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-09-01-dl7-callable-relations.md:169 — Normalize explicit, punned, omitted, and defaulted argument slots.
 - `feature` plans/2026-09-01-dl7-callable-relations.md:171 — Generate callable sum alternatives and userland match coverage.
 - `feature` plans/2026-09-01-dl7-callable-relations.md:172 — Convert final userland compiler-error rows into positioned diagnostics.
-- `feature` plans/2026-09-01-dl7-reified-call-sites.md:87 — Add the compiler-relation emitter protocol and monomorphic Datalog application emitter boundary.
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:189 — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:190 — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
@@ -412,7 +411,6 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-09-01-dl7-callable-relations.md:171 `feature` — Generate callable sum alternatives and userland match coverage.
 - plans/2026-09-01-dl7-callable-relations.md:172 `feature` — Convert final userland compiler-error rows into positioned diagnostics.
 - plans/2026-09-01-dl7-reified-call-sites.md:86 `refactor` — Reify every call site and move named, punned, omitted, and defaulted slot policy from 0_lowerer.pl into prelude rules.
-- plans/2026-09-01-dl7-reified-call-sites.md:87 `feature` — Add the compiler-relation emitter protocol and monomorphic Datalog application emitter boundary.
 <!-- END: plans-by-plan -->
 
 ## By code file

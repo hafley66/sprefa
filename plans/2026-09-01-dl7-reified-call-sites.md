@@ -84,7 +84,6 @@ relation from authored facts and rules. Nested completion continues to erase
 directly during lowering while the carrier is generalized.
 
 <!-- todo(refactor): Reify every call site and move named, punned, omitted, and defaulted slot policy from 0_lowerer.pl into prelude rules. -->
-<!-- todo(feature): Add the compiler-relation emitter protocol and monomorphic Datalog application emitter boundary. -->
 
 ## Verification
 
