@@ -241,6 +241,10 @@ decimal_digit(Code) :-
 valid_atom_codes(Codes) :-
     memberchk(Codes, [[0':], [0'*], [0'+], [0'-, 0'>], [0'<, 0'-]]),
     !.
+valid_atom_codes(Codes) :-
+    append(NameCodes, [0':], Codes),
+    valid_identifier_codes(NameCodes),
+    !.
 valid_atom_codes(Codes) :- valid_identifier_codes(Codes).
 
 valid_identifier_codes([First | Rest]) :-

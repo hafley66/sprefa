@@ -487,6 +487,58 @@ test(full_tuple_calls_preserve_reverse_relational_queries) :-
                     [], patch_matches(true), source_derived(true)),
     !.
 
+test(named_punned_mixed_and_omitted_slots_lower_to_one_relation_tuple) :-
+    Text = "(: User (* (: id int) (: name text) (: email text)))\n(: selected (* (: name text) (: id int)))\n(: explicit (* (: name text)))\n(: mixed (* (: name text)))\n(User 7 \"Ada\" \"ada@example.test\")\n(<- (selected ?name ?id) (User ?name ?id))\n(<- (explicit ?name) (User (name: ?name) (id: 7)))\n(<- (mixed ?name) (User (name: ?name) 7))\n",
+    dl7_text_unit(named_calls, named_calls_source, Text, Unit, []),
+    compile_unit(Unit,
+                 compiled_unit(_, RuntimeProgram, CompilerRows),
+                 Diagnostics),
+    named_owner(CompilerRows, 'User', User),
+    named_owner(CompilerRows, selected, Selected),
+    named_owner(CompilerRows, explicit, Explicit),
+    named_owner(CompilerRows, mixed, Mixed),
+    row_presence(CompilerRows,
+                 call(ref(Selected), [const("Ada"), const(7)]),
+                 SelectedPresent),
+    row_presence(CompilerRows,
+                 call(ref(Explicit), [const("Ada")]), ExplicitPresent),
+    row_presence(CompilerRows,
+                 call(ref(Mixed), [const("Ada")]), MixedPresent),
+    RuntimeProgram = checked_datalog(
+                         _, datalog_program(_, _, Rules), _, _),
+    memberchk(
+        rule(call(ref(Selected), [var(Name), var(Id)]),
+             [checked_goal(
+                  positive,
+                  call(ref(User),
+                       [var(Id), var(Name), var(_OmittedEmail)]))]),
+        Rules),
+    named_call_diagnostics(DuplicateDiagnostic, UnknownDiagnostic),
+    Observed = named_calls(
+                   Diagnostics,
+                   rows(SelectedPresent, ExplicitPresent, MixedPresent),
+                   diagnostics(DuplicateDiagnostic, UnknownDiagnostic)),
+    Observed == named_calls(
+                    [], rows(true, true, true),
+                    diagnostics(
+                        duplicate_argument_slot(1),
+                        unknown_argument_label(missing))),
+    !.
+
+named_call_diagnostics(DuplicateReason, UnknownReason) :-
+    DuplicateText = "(: User (* (: id int) (: name text)))\n(<- (User (name: ?name) ?name) (User 1 \"Ada\"))\n",
+    dl7_text_unit(named_duplicate, named_duplicate_source,
+                  DuplicateText, DuplicateUnit, []),
+    compile_unit(
+        DuplicateUnit, [],
+        [diagnostic(lower, _, DuplicateReason)]),
+    UnknownText = "(: User (* (: id int)))\n(<- (User (missing: ?value)) (User 1))\n",
+    dl7_text_unit(named_unknown, named_unknown_source,
+                  UnknownText, UnknownUnit, []),
+    compile_unit(
+        UnknownUnit, [],
+        [diagnostic(lower, _, UnknownReason)]).
+
 test(compile_known_partial_application_erases_to_one_direct_call) :-
     Text = "(: User (*))\n(: Order (*))\n(: PairResult (*))\n(: Pair (* (: left type) (: right type) (: return type)))\n(Pair User Order PairResult)\n(: Curried ((Pair User) Order))\n",
     dl7_text_unit(partial_application, partial_application_source,
@@ -527,6 +579,34 @@ test(compile_known_partial_application_erases_to_one_direct_call) :-
                         node(22),
                         partial_application_requires_more_arguments(
                             'PairUser'))),
+    !.
+
+test(named_and_punned_expression_slots_complete_direct_and_partial_calls) :-
+    Text = "(: User (*))\n(: Order (*))\n(: PairResult (*))\n(: Pair (* (: left type) (: right type) (: return type)))\n(Pair User Order PairResult)\n(: Direct (Pair (right: Order) (left: User)))\n(: Curried ((Pair (right: Order)) (left: User)))\n(: Punned (Pair ?right ?left))\n",
+    dl7_text_unit(named_expressions, named_expressions_source,
+                  Text, Unit, []),
+    compile_unit(Unit,
+                 compiled_unit(_, RuntimeProgram, CompilerRows),
+                 Diagnostics),
+    compile_unit(Unit,
+                 compiled_unit(_, RuntimeProgram2, CompilerRows2),
+                 Diagnostics2),
+    named_owner(CompilerRows, 'PairResult', PairResult),
+    named_owner(CompilerRows, 'Direct', Direct),
+    named_owner(CompilerRows, 'Curried', Curried),
+    named_owner(CompilerRows, 'Punned', Punned),
+    maplist(equality(PairResult), [Direct, Curried, Punned], Equalities),
+    residual_partial_terms(RuntimeProgram, ResidualPartials),
+    equality(CompilerRows, CompilerRows2, RowsRepeat),
+    equality(RuntimeProgram, RuntimeProgram2, RuntimeRepeat),
+    Observed = named_expressions(
+                   diagnostics(Diagnostics, Diagnostics2), Equalities,
+                   residual_partial_terms(ResidualPartials),
+                   repeat(rows(RowsRepeat), runtime(RuntimeRepeat))),
+    Observed == named_expressions(
+                    diagnostics([], []), [true, true, true],
+                    residual_partial_terms(0),
+                    repeat(rows(true), runtime(true))),
     !.
 
 partial_application_escape_receipt(unsaturated(node(NodeIndex), Reason)) :-
@@ -628,6 +708,46 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               temporary_lower_rows(0), temporary_requests(0)),
                     true, true),
     !.
+
+test(generated_relations_are_callable_after_declarations_freeze) :-
+    Path = 'v7/test/fixtures/4_generated_call.dl7',
+    compile_dl7(Path, Rows1, Runtime1, Diagnostics1),
+    compile_dl7(Path, Rows2, Runtime2, Diagnostics2),
+    named_owner(Rows1, 'UserHistory', UserHistory),
+    Runtime1 = checked_datalog(
+                   _, datalog_program(Relations, Seeds, Rules), _, _),
+    named_owner(Rows1, 'SourceCopy', SourceCopy),
+    named_owner(Rows1, names, Names),
+    memberchk(relation(ref(UserHistory), 2, []), Relations),
+    memberchk(call(ref(UserHistory), [const(7), const("Ada")]), Seeds),
+    memberchk(rule(call(_, [var(Id), var(Name)]),
+                   [checked_goal(
+                        positive,
+                        call(ref(UserHistory), [var(Id), var(Name)]))]),
+              Rules),
+    memberchk(rule(call(ref(UserHistory), [var(HeadId), var(HeadName)]),
+                   [checked_goal(
+                        positive,
+                        call(ref(SourceCopy),
+                             [var(HeadId), var(HeadName)]))]),
+              Rules),
+    memberchk(rule(call(ref(Names), [var(PunnedName)]),
+                   [checked_goal(
+                        positive,
+                        call(ref(UserHistory),
+                             [var(omitted(_, 0)), var(PunnedName)]))]),
+              Rules),
+    residual_partial_terms(Runtime1, ResidualPartials),
+    equality(Rows1, Rows2, RowsEqual),
+    equality(Runtime1, Runtime2, RuntimeEqual),
+    Observed = generated_callable(
+                   diagnostics(Diagnostics1, Diagnostics2),
+                   repeatable(RowsEqual, RuntimeEqual),
+                   residual_partial_terms(ResidualPartials)),
+    Observed == generated_callable(
+                    diagnostics([], []),
+                    repeatable(true, true),
+                    residual_partial_terms(0)).
 
 test(userland_type_algebra_proves_contracts_and_constructs_products) :-
     compile_dl7('v7/test/fixtures/3_type_algebra.dl7',

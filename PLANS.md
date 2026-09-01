@@ -80,9 +80,6 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-08-23-relational-history-annotations.md:413 — Choose the logical timestamp type and physical unit for recorded_at; preserve tick as the deterministic ordering field.
 - `decision` plans/2026-08-23-relational-history-annotations.md:414 — Specify the durable commit identity or idempotency witness used to prevent version duplication across restart and replay.
 - `decision` plans/2026-08-25-extract-astgrep-soopy.PLAN.md:6 — arc C FactMatcher reads ~/.agent/dl6.db read-only; the one-server-one-db law means the db must already be the live store, not a copy
-- `decision` plans/2026-08-31-dl7-module-system.md:56 — Select prefix import, alias, and export spelling without adding a second declaration language.
-- `decision` plans/2026-08-31-dl7-module-system.md:58 — Select whether `::` exposes an edge identity while `.` projects its target.
-- `decision` plans/2026-08-31-dl7-module-system.md:60 — Select the user-visible rows for source closure and comptime fixpoint closure.
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:105 — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:106 — comment_node.text strips comment tokens — state it in the relations table row, not only the buried authoring bullet
@@ -170,6 +167,9 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-08-23-relational-history-annotations.md:416 — Implement the history(Source) derived constructor using canonical source key and member rows.
 - `feature` plans/2026-08-23-relational-history-annotations.md:417 — Add atomic commit-boundary history capture with per-identity versions, ticks, recorded time, put/delete operations, and replay safety.
 - `feature` plans/2026-08-23-relational-history-annotations.md:418 — Prove one composite-key history timeline through Prolog, TS plus SQLite, Rust plus SQLite, typegen, and catalog artifacts.
+- `feature` plans/2026-09-01-dl7-callable-relations.md:169 — Normalize explicit, punned, omitted, and defaulted argument slots.
+- `feature` plans/2026-09-01-dl7-callable-relations.md:171 — Generate callable sum alternatives and userland match coverage.
+- `feature` plans/2026-09-01-dl7-callable-relations.md:172 — Convert final userland compiler-error rows into positioned diagnostics.
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:189 — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:190 — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
@@ -197,6 +197,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `perf` plans/2026-08-25-move-rule-perf.PLAN.md:197 — Arc A bounded rule: verify a directive using an operator_atom or quoted functor ('use_module'(...)) still matches, add a test case if the corpus lacks one
 - `perf` plans/2026-08-25-move-rule-perf.PLAN.md:198 — Arc B name-gate: confirm old itself is always admitted (it contains its own stem) and its module name still parses
 - `perf` plans/2026-08-25-move-rule-perf.PLAN.md:199 — Arc C parallel drain: assert edit_stage order equals sorted rel order in a unit test before relying on the byte-identical receipt
+- `refactor` plans/2026-09-01-dl7-callable-relations.md:170 — Reify call sites so slot normalization and partial completion move from 0_lowerer.pl into prelude rules.
 - `triage` plans/2026-07-11-cross-harness-agent-tooling.md:147 — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
 - `triage` plans/2026-07-11-docs-and-dogfood-audit.md:40 — re-enable hooks (timeout+advisory) — relights the dark event arm; Chris flips
 - `triage` plans/2026-07-11-engine-mod-split.md:72 — SG_LANG_TABLE final home (src/sg.rs vs engine/lang_tables.rs) when the lang_tables cluster moves
@@ -404,9 +405,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-08-25-move-rule-perf.PLAN.md:199 `perf` — Arc C parallel drain: assert edit_stage order equals sorted rel order in a unit test before relying on the byte-identical receipt
 - plans/2026-08-27-leaky-types-review.PLAN.md:58 `triage` — leaky-types review rows #3 DfNodeKind, #16 FlatFact, #2 ExtractLang need a design pass with Chris (per-lang impl shape) before any lane picks them up
 - plans/2026-08-27-leaky-types-review.PLAN.md:60 `triage` — tasks.rs trait set (Reach/Cascade/Reconcile/GraphStore/GraphStorePlan) has zero references in the repo; confirm delete-vs-privatize
-- plans/2026-08-31-dl7-module-system.md:56 `decision` — Select prefix import, alias, and export spelling without adding a second declaration language.
-- plans/2026-08-31-dl7-module-system.md:58 `decision` — Select whether `::` exposes an edge identity while `.` projects its target.
-- plans/2026-08-31-dl7-module-system.md:60 `decision` — Select the user-visible rows for source closure and comptime fixpoint closure.
+- plans/2026-09-01-dl7-callable-relations.md:169 `feature` — Normalize explicit, punned, omitted, and defaulted argument slots.
+- plans/2026-09-01-dl7-callable-relations.md:170 `refactor` — Reify call sites so slot normalization and partial completion move from 0_lowerer.pl into prelude rules.
+- plans/2026-09-01-dl7-callable-relations.md:171 `feature` — Generate callable sum alternatives and userland match coverage.
+- plans/2026-09-01-dl7-callable-relations.md:172 `feature` — Convert final userland compiler-error rows into positioned diagnostics.
 <!-- END: plans-by-plan -->
 
 ## By code file

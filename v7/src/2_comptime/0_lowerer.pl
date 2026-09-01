@@ -1,6 +1,7 @@
 :- module(dl7_lowerer,
           [ lower_datalog/4,
             lower_datalog/5,
+            lower_datalog_deferred/5,
             kernel_relation/2
           ]).
 
@@ -22,6 +23,23 @@ lower_datalog(Unit, Program, Origins, Diagnostics) :-
 % Imported callable declarations participate in expression lowering while the
 % emitted basement retains only rows declared by this unit.
 lower_datalog(Unit, ImportedEnvironment, Program, Origins, Diagnostics) :-
+    lower_datalog_mode(strict, Unit, ImportedEnvironment,
+                       Program, Origins, Diagnostics).
+
+%% lower_datalog_deferred(+Unit, +ImportedEnvironment,
+%%                        -Program, -Origins, -Diagnostics) is det.
+%
+% Bootstrap lowering may encounter calls whose relation identities will be
+% emitted by the compiler fixpoint. Hold back only those executable forms;
+% every other lowering error remains immediate. The compiler strictly lowers
+% the original unit again after generated declarations freeze.
+lower_datalog_deferred(Unit, ImportedEnvironment,
+                       Program, Origins, Diagnostics) :-
+    lower_datalog_mode(defer_unknown_calls, Unit, ImportedEnvironment,
+                       Program, Origins, Diagnostics).
+
+lower_datalog_mode(CallPolicy, Unit, ImportedEnvironment,
+                   Program, Origins, Diagnostics) :-
     must_be(ground, Unit),
     must_be(ground, ImportedEnvironment),
     (   Unit = dl7_unit(Origin, _, Forms, _, _)
@@ -29,7 +47,8 @@ lower_datalog(Unit, ImportedEnvironment, Program, Origins, Diagnostics) :-
         ModuleOwner = module(ModuleIdentity),
         lower_declarations(Forms, ModuleOwner, ModuleIdentity,
                            DeclarationResult),
-        lower_after_declarations(DeclarationResult, Forms, ModuleOwner,
+        lower_after_declarations(CallPolicy, DeclarationResult,
+                                 Forms, ModuleOwner,
                                  ImportedEnvironment,
                                  Program, Origins, Diagnostics)
     ;   Program = [],
@@ -38,8 +57,10 @@ lower_datalog(Unit, ImportedEnvironment, Program, Origins, Diagnostics) :-
     ),
     !.
 
-lower_after_declarations(error(Diagnostic), _, _, _, [], [], [Diagnostic]).
+lower_after_declarations(_, error(Diagnostic), _, _, _,
+                         [], [], [Diagnostic]).
 lower_after_declarations(
+    CallPolicy,
     ok(Nodes0, Edges, Relations, DeclarationOrigins, Reservations),
     Forms, ModuleOwner, ImportedEnvironment,
     Program, Origins, Diagnostics) :-
@@ -56,7 +77,7 @@ lower_after_declarations(
                              DerivedResult),
     (   DerivedResult = ok(DerivedRules, DerivedOrigins)
     ->  length(DerivedRules, RuleIndex),
-        lower_executables(Forms, ModuleOwner, Environment,
+        lower_executables(CallPolicy, Forms, ModuleOwner, Environment,
                           RuleIndex, ExecutableResult),
         finish_lowered_executables(
             ExecutableResult, DerivedRules, DerivedOrigins,
@@ -377,33 +398,41 @@ finish_compound_edge_bind(
     Origins = [origin(edge(Owner, Marker, Index), BindNodeId) | Origins0].
 
 %% Pass 3: lower facts and rules after all declarations are reserved.
-lower_executables(Forms, Owner, Environment, RuleIndex, Result) :-
-    lower_executables(Forms, Owner, Environment, 0, RuleIndex, Result).
+lower_executables(CallPolicy, Forms, Owner, Environment,
+                  RuleIndex, Result) :-
+    lower_executables(CallPolicy, Forms, Owner, Environment,
+                      0, RuleIndex, Result).
 
-lower_executables([], _, _, _, _, ok([], [], [])).
-lower_executables([Form | Forms], Owner, Environment,
+lower_executables(_, [], _, _, _, _, ok([], [], [])).
+lower_executables(CallPolicy, [Form | Forms], Owner, Environment,
                   SeedIndex, RuleIndex, Result) :-
     (   bind_form(Form, _, _, _)
-    ->  lower_executables(Forms, Owner, Environment,
+    ->  lower_executables(CallPolicy, Forms, Owner, Environment,
                           SeedIndex, RuleIndex, Result)
     ;   rule_form(Form, RuleNodeId, HeadNode, BodyNodes)
     ->  lower_rule(HeadNode, BodyNodes, Owner, Environment,
                    RuleIndex, RuleNodeId, RuleResult),
         NextRuleIndex is RuleIndex + 1,
-        continue_rule(RuleResult, Forms, Owner, Environment,
-                      SeedIndex, NextRuleIndex, Result)
+        continue_rule(CallPolicy, RuleResult, Forms, Owner, Environment,
+                      SeedIndex, RuleIndex, NextRuleIndex, Result)
     ;   lower_seed(Form, Owner, Environment, SeedIndex,
                    SeedResult),
         NextSeedIndex is SeedIndex + 1,
-        continue_seed(SeedResult, Forms, Owner, Environment,
-                      NextSeedIndex, RuleIndex, Result)
+        continue_seed(CallPolicy, SeedResult, Forms, Owner, Environment,
+                      SeedIndex, NextSeedIndex, RuleIndex, Result)
     ).
 
-continue_rule(error(Diagnostic), _, _, _, _, _, error(Diagnostic)).
-continue_rule(ok(Rule, RuleOrigins), Forms, Owner, Environment,
-              SeedIndex, RuleIndex, Result) :-
-    lower_executables(Forms, Owner, Environment,
-                      SeedIndex, RuleIndex, RestResult),
+continue_rule(defer_unknown_calls, error(Diagnostic), Forms,
+              Owner, Environment, SeedIndex, RuleIndex, _, Result) :-
+    deferred_call_diagnostic(Diagnostic),
+    !,
+    lower_executables(defer_unknown_calls, Forms, Owner, Environment,
+                      SeedIndex, RuleIndex, Result).
+continue_rule(_, error(Diagnostic), _, _, _, _, _, _, error(Diagnostic)).
+continue_rule(CallPolicy, ok(Rule, RuleOrigins), Forms, Owner, Environment,
+              SeedIndex, _, NextRuleIndex, Result) :-
+    lower_executables(CallPolicy, Forms, Owner, Environment,
+                      SeedIndex, NextRuleIndex, RestResult),
     prepend_rule(RestResult, Rule, RuleOrigins, Result).
 
 prepend_rule(error(Diagnostic), _, _, error(Diagnostic)).
@@ -411,12 +440,21 @@ prepend_rule(ok(Seeds, Rules, Origins0), Rule, RuleOrigins,
              ok(Seeds, [Rule | Rules], Origins)) :-
     append(RuleOrigins, Origins0, Origins).
 
-continue_seed(error(Diagnostic), _, _, _, _, _, error(Diagnostic)).
-continue_seed(ok(Seed, SeedOrigin), Forms, Owner, Environment,
-              SeedIndex, RuleIndex, Result) :-
-    lower_executables(Forms, Owner, Environment,
-                      SeedIndex, RuleIndex, RestResult),
+continue_seed(defer_unknown_calls, error(Diagnostic), Forms,
+              Owner, Environment, SeedIndex, _, RuleIndex, Result) :-
+    deferred_call_diagnostic(Diagnostic),
+    !,
+    lower_executables(defer_unknown_calls, Forms, Owner, Environment,
+                      SeedIndex, RuleIndex, Result).
+continue_seed(_, error(Diagnostic), _, _, _, _, _, _, error(Diagnostic)).
+continue_seed(CallPolicy, ok(Seed, SeedOrigin), Forms, Owner, Environment,
+              _, NextSeedIndex, RuleIndex, Result) :-
+    lower_executables(CallPolicy, Forms, Owner, Environment,
+                      NextSeedIndex, RuleIndex, RestResult),
     prepend_seed(RestResult, Seed, SeedOrigin, Result).
+
+deferred_call_diagnostic(diagnostic(lower, _, undeclared_relation(_))).
+deferred_call_diagnostic(diagnostic(lower, _, not_relation(_))).
 
 prepend_seed(error(Diagnostic), _, _, error(Diagnostic)).
 prepend_seed(ok(Seeds, Rules, Origins), Seed, SeedOrigin,
@@ -512,18 +550,13 @@ lower_call_mode(Mode,
            Owner, Environment, Result) :-
     !,
     expression_callable(Name, Owner, Environment, CallableResult),
-    (   CallableResult = ok(_, Arity, _)
-    ->
-        length(ArgumentNodes, ObservedArity),
-        (   ObservedArity =:= Arity
-        ->  lower_arguments(Mode, ArgumentNodes, Owner, Environment,
-                            ArgumentResult),
-            finish_call_arguments(Mode, Name, NodeId, Owner,
-                                  ArgumentResult, Result)
-        ;   Result = error(diagnostic(
-                               lower, NodeId,
-                               arity_mismatch(Name, Arity, ObservedArity)))
-        )
+    (   CallableResult = ok(Callable, Arity, _)
+    ->  callable_slots(Callable, Arity, Environment, Slots),
+        normalize_call_arguments(
+            Mode, Name, NodeId, Slots, ArgumentNodes,
+            Owner, Environment, ArgumentResult),
+        finish_call_arguments(Mode, Name, NodeId, Owner,
+                              ArgumentResult, Result)
     ;   CallableResult = error(Reason),
         Result = error(diagnostic(lower, NodeId, Reason))
     ).
@@ -602,6 +635,209 @@ lower_arguments(Mode, [Node | Nodes], Owner, Environment, Result) :-
     ;   Result = ArgumentResult
     ).
 
+%% A call's declaration edges are its argument slots. Named forms and variable
+%% puns reserve slots first; remaining positional forms fill the remaining
+%% ordinals. Omitted full-call slots become deterministic fresh variables so
+%% reverse and projection queries remain ordinary relation calls.
+normalize_call_arguments(Mode, Name, NodeId, Slots, ArgumentNodes,
+                         Owner, Environment, Result) :-
+    classify_argument_nodes(ArgumentNodes, Slots, Classified,
+                            ClassificationDiagnostics),
+    (   ClassificationDiagnostics == []
+    ->  assign_argument_slots(Classified, Slots, [], Assigned,
+                              AssignmentDiagnostics),
+        (   AssignmentDiagnostics == []
+        ->  lower_assigned_arguments(Mode, Assigned, Owner, Environment,
+                                     Bound, Goals, GoalNodes,
+                                     LowerDiagnostics),
+            finish_normalized_call_arguments(
+                LowerDiagnostics, Name, NodeId, Slots, Bound,
+                Goals, GoalNodes, Result)
+        ;   AssignmentDiagnostics = [Reason | _],
+            normalized_call_argument_reason(
+                Reason, Name, Slots, ArgumentNodes, NormalizedReason),
+            Result = error(diagnostic(lower, NodeId, NormalizedReason))
+        )
+    ;   ClassificationDiagnostics = [Reason | _],
+        Result = error(diagnostic(lower, NodeId, Reason))
+    ).
+
+normalized_call_argument_reason(too_many_arguments, Name, Slots,
+                                ArgumentNodes,
+                                arity_mismatch(Name, Arity,
+                                               ObservedArity)) :-
+    !,
+    length(Slots, Arity),
+    length(ArgumentNodes, ObservedArity).
+normalized_call_argument_reason(Reason, _, _, _, Reason).
+
+finish_normalized_call_arguments([], _, NodeId, Slots, Bound,
+                                 Goals, GoalNodes,
+                                 ok(Arguments, Goals, GoalNodes)) :-
+    fill_slot_arguments(Slots, Bound, NodeId, Arguments).
+finish_normalized_call_arguments([Diagnostic | _], _, _, _, _, _, _,
+                                 error(Diagnostic)).
+
+callable_slots(Callable, Arity, Environment, Slots) :-
+    positions(Arity, Positions),
+    maplist(callable_slot(Callable, Environment), Positions, Slots).
+
+callable_slot(target(Callable), expression_environment(_, _, Edges), Index,
+              slot(Index, Label)) :-
+    memberchk(pending_edge(Callable, Candidate, _, Index), Edges),
+    atom(Candidate),
+    !,
+    Label = Candidate.
+callable_slot(kernel(Name), _, Index, slot(Index, Label)) :-
+    kernel_slot_label(Name, Index, Label),
+    !.
+callable_slot(_, _, Index, slot(Index, none)).
+
+kernel_slot_label(':', 0, owner).
+kernel_slot_label(':', 1, name).
+kernel_slot_label(':', 2, target).
+kernel_slot_label(':', 3, index).
+kernel_slot_label(edge_snapshot, 0, owner).
+kernel_slot_label(edge_snapshot, 1, name).
+kernel_slot_label(edge_snapshot, 2, target).
+kernel_slot_label(edge_snapshot, 3, index).
+kernel_slot_label(nil, 0, return).
+kernel_slot_label(cons, 0, head).
+kernel_slot_label(cons, 1, tail).
+kernel_slot_label(cons, 2, return).
+kernel_slot_label(intern, 0, constructor).
+kernel_slot_label(intern, 1, arguments).
+kernel_slot_label(intern, 2, return).
+kernel_slot_label(intern_snapshot, 0, constructor).
+kernel_slot_label(intern_snapshot, 1, arguments).
+kernel_slot_label(intern_snapshot, 2, return).
+kernel_slot_label(predecessor, 0, owner).
+kernel_slot_label(predecessor, 1, earlier).
+kernel_slot_label(predecessor, 2, later).
+
+positions(Arity, Positions) :-
+    positions(0, Arity, Positions).
+
+positions(Index, Arity, []) :-
+    Index >= Arity,
+    !.
+positions(Index, Arity, [Index | Positions]) :-
+    NextIndex is Index + 1,
+    positions(NextIndex, Arity, Positions).
+
+classify_argument_nodes([], _, [], []).
+classify_argument_nodes([Node | Nodes], Slots, [Classified | ClassifiedNodes],
+                        Diagnostics) :-
+    classify_argument_node(Node, Slots, Classified, OwnDiagnostics),
+    classify_argument_nodes(Nodes, Slots, ClassifiedNodes, RestDiagnostics),
+    append(OwnDiagnostics, RestDiagnostics, Diagnostics).
+
+classify_argument_node(
+    node(_, form([node(_, atom(':')), node(_, atom(Label)), ValueNode])),
+    Slots, named(Index, Label, ValueNode), Diagnostics) :-
+    !,
+    (   memberchk(slot(Index, Label), Slots)
+    ->  Diagnostics = []
+    ;   Index = none,
+        Diagnostics = [unknown_argument_label(Label)]
+    ).
+classify_argument_node(
+    node(_, form([node(_, atom(':')), node(_, atom(Label)) | Values])),
+    _, invalid, [named_argument_requires_one_value(Label, Count)]) :-
+    !,
+    length(Values, Count).
+classify_argument_node(Node, Slots, named(Index, Name, Node), []) :-
+    Node = node(_, variable(_, Name)),
+    Name \== '_',
+    memberchk(slot(Index, Name), Slots),
+    !.
+classify_argument_node(Node, _, positional(Node), []).
+
+assign_argument_slots(Classified, Slots, Reserved0, Assigned, Diagnostics) :-
+    named_indices(Classified, NamedIndices),
+    append(Reserved0, NamedIndices, AllReserved),
+    duplicate_index(AllReserved, Duplicate),
+    (   Duplicate \== none
+    ->  Assigned = [],
+        Diagnostics = [duplicate_argument_slot(Duplicate)]
+    ;   available_slot_indices(Slots, AllReserved, Available),
+        assign_argument_slots_in_order(
+            Classified, Available, Assigned, _Remaining, Diagnostics)
+    ).
+
+named_indices([], []).
+named_indices([named(Index, _, _) | Classified], [Index | Indices]) :-
+    !,
+    named_indices(Classified, Indices).
+named_indices([_ | Classified], Indices) :-
+    named_indices(Classified, Indices).
+
+duplicate_index(Indices, Duplicate) :-
+    msort(Indices, Sorted),
+    adjacent_duplicate(Sorted, Duplicate),
+    !.
+duplicate_index(_, none).
+
+adjacent_duplicate([Index, Index | _], Index) :- !.
+adjacent_duplicate([_ | Indices], Duplicate) :-
+    adjacent_duplicate(Indices, Duplicate).
+
+available_slot_indices([], _, []).
+available_slot_indices([slot(Index, _) | Slots], Reserved, Available) :-
+    available_slot_indices(Slots, Reserved, Rest),
+    (   memberchk(Index, Reserved)
+    ->  Available = Rest
+    ;   Available = [Index | Rest]
+    ).
+
+assign_argument_slots_in_order([], Available, [], Available, []).
+assign_argument_slots_in_order(
+    [named(Index, Label, Node) | Classified], Available,
+    [assigned(Index, Label, Node) | Assigned], Remaining, Diagnostics) :-
+    !,
+    assign_argument_slots_in_order(Classified, Available, Assigned,
+                                   Remaining, Diagnostics).
+assign_argument_slots_in_order(
+    [positional(Node) | Classified], [Index | Available],
+    [assigned(Index, positional, Node) | Assigned], Remaining,
+    Diagnostics) :-
+    !,
+    assign_argument_slots_in_order(Classified, Available, Assigned,
+                                   Remaining, Diagnostics).
+assign_argument_slots_in_order(
+    [positional(_) | _], [], [], [], [too_many_arguments]).
+assign_argument_slots_in_order(
+    [invalid | _], _, [], [], [invalid_argument]).
+
+lower_assigned_arguments(_, [], _, _, [], [], [], []).
+lower_assigned_arguments(Mode,
+                         [assigned(Index, _, Node) | Assigned],
+                         Owner, Environment,
+                         [bound(Index, Argument) | Bound],
+                         Goals, GoalNodes, Diagnostics) :-
+    lower_argument(Mode, Node, Owner, Environment, ArgumentResult),
+    lower_assigned_arguments(Mode, Assigned, Owner, Environment,
+                             Bound, RestGoals, RestGoalNodes,
+                             RestDiagnostics),
+    (   ArgumentResult = ok(Argument, OwnGoals, OwnGoalNodes)
+    ->  append(OwnGoals, RestGoals, Goals),
+        append(OwnGoalNodes, RestGoalNodes, GoalNodes),
+        Diagnostics = RestDiagnostics
+    ;   ArgumentResult = error(Diagnostic),
+        Goals = RestGoals,
+        GoalNodes = RestGoalNodes,
+        Diagnostics = [Diagnostic | RestDiagnostics]
+    ).
+
+fill_slot_arguments([], _, _, []).
+fill_slot_arguments([slot(Index, _) | Slots], Bound, NodeId,
+                    [Argument | Arguments]) :-
+    (   memberchk(bound(Index, Supplied), Bound)
+    ->  Argument = Supplied
+    ;   Argument = var(omitted(NodeId, Index))
+    ),
+    fill_slot_arguments(Slots, Bound, NodeId, Arguments).
+
 %% lower_expression(+Node, +Owner, +Environment,
 %%                  -Value, -Goals, -Origins, -Diagnostics) is det.
 %
@@ -665,7 +901,11 @@ expression_callable(Name, Owner,
 
 scoped_reservation(Owner, Name, Reservations, Visited, Reservation) :-
     \+ memberchk(Owner, Visited),
-    (   memberchk(reservation(Owner, Name, Target, Kind), Reservations)
+    (   memberchk(reservation(Owner, Name, target(Callable), product),
+                  Reservations)
+    ->  Reservation = reservation(
+                           Owner, Name, target(Callable), product)
+    ;   memberchk(reservation(Owner, Name, Target, Kind), Reservations)
     ->  Reservation = reservation(Owner, Name, Target, Kind)
     ;   reservation_parent(Owner, Reservations, Parent),
         scoped_reservation(Parent, Name, Reservations, [Owner | Visited],
@@ -703,55 +943,46 @@ lower_expression_call(ok(Callable, Arity, KeySets), Name, NodeId,
     expression_return_position(Callable, Environment, NodeId,
                                ReturnIndex, ReturnDiagnostics),
     (   ReturnDiagnostics == []
-    ->  ExpectedArity is Arity - 1,
-        length(ArgumentNodes, ObservedArity),
-        (   ObservedArity =:= ExpectedArity
-        ->  expression_mode_diagnostics(
-                Name, ReturnIndex, Arity, KeySets, NodeId, ModeDiagnostics),
-            (   ModeDiagnostics == []
-            ->  lower_expression_arguments(
-                    ArgumentNodes, Owner, Environment,
-                    Arguments, ArgumentGoals, ArgumentOrigins,
-                    ArgumentDiagnostics),
-                finish_expression_call_arguments(
-                    ArgumentDiagnostics, Name, NodeId, ReturnIndex,
-                    Arguments, ArgumentGoals, ArgumentOrigins, Owner,
-                    Value, Goals, Origins, Diagnostics)
-            ;   Value = none,
-                Goals = [],
-                Origins = [],
-                Diagnostics = ModeDiagnostics
-            )
-        ;   ObservedArity < ExpectedArity
-        ->  lower_expression_arguments(
-                ArgumentNodes, Owner, Environment,
-                Arguments, ArgumentGoals, ArgumentOrigins,
-                ArgumentDiagnostics),
-            finish_partial_application(
-                ArgumentDiagnostics,
-                callable(Owner, Name, Callable, Arity, KeySets, ReturnIndex),
-                Arguments, ArgumentGoals, ArgumentOrigins,
-                Value, Goals, Origins, Diagnostics)
-        ;   Value = none,
-            Goals = [],
-            Origins = [],
-            Diagnostics = [diagnostic(
-                               lower, NodeId,
-                               expression_arity_mismatch(
-                                   Name, ExpectedArity, ObservedArity))]
-        )
+    ->  callable_slots(Callable, Arity, Environment, AllSlots),
+        exclude_slot(ReturnIndex, AllSlots, InputSlots),
+        normalize_expression_arguments(
+            Name, NodeId, InputSlots, [], ArgumentNodes,
+            Owner, Environment,
+            Bound, ArgumentGoals, ArgumentOrigins,
+            ArgumentDiagnostics),
+        finish_expression_bindings(
+            ArgumentDiagnostics,
+            callable(Owner, Name, Callable, Arity, KeySets, ReturnIndex),
+            NodeId, InputSlots, Bound, ArgumentGoals, ArgumentOrigins,
+            Value, Goals, Origins, Diagnostics)
     ;   Value = none,
         Goals = [],
         Origins = [],
         Diagnostics = ReturnDiagnostics
     ).
 
-finish_partial_application(
-    [], Callable, Arguments, Goals, Origins,
-    partial_application(Callable, Arguments), Goals, Origins, []) :-
+finish_expression_bindings(
+    [Diagnostic | _], _, _, _, _, _, _,
+    none, [], [], [Diagnostic]) :-
     !.
-finish_partial_application([Diagnostic | _], _, _, _, _,
-                           none, [], [], [Diagnostic]).
+finish_expression_bindings(
+    [], Callable, NodeId, InputSlots, Bound, PrefixGoals, PrefixOrigins,
+    Value, Goals, Origins, Diagnostics) :-
+    missing_bound_slots(InputSlots, Bound, Missing),
+    (   Missing == []
+    ->  Callable = callable(CallOwner, Name, _, Arity, KeySets, ReturnIndex),
+        expression_mode_diagnostics(
+            Name, ReturnIndex, Arity, KeySets, NodeId, ModeDiagnostics),
+        ordered_bound_values(InputSlots, Bound, Arguments),
+        finish_expression_call_arguments(
+            ModeDiagnostics, Name, NodeId, ReturnIndex,
+            Arguments, PrefixGoals, PrefixOrigins, CallOwner,
+            Value, Goals, Origins, Diagnostics)
+    ;   Value = partial_application(Callable, Bound),
+        Goals = PrefixGoals,
+        Origins = PrefixOrigins,
+        Diagnostics = []
+    ).
 
 apply_expression_operator(
     [Diagnostic | _], _, _, _, _, _, _, _,
@@ -766,16 +997,19 @@ apply_expression_operator(
     OperatorGoals, OperatorOrigins,
     Value, Goals, Origins, Diagnostics) :-
     !,
-    lower_expression_arguments(
-        ArgumentNodes, Owner, Environment,
-        Arguments, ArgumentGoals, ArgumentOrigins, ArgumentDiagnostics),
-    append(BoundArguments, Arguments, CombinedArguments),
+    callable_slots(Callable, Arity, Environment, AllSlots),
+    exclude_slot(ReturnIndex, AllSlots, InputSlots),
+    normalize_expression_arguments(
+        Name, NodeId, InputSlots, BoundArguments, ArgumentNodes,
+        Owner, Environment,
+        CombinedArguments, ArgumentGoals, ArgumentOrigins,
+        ArgumentDiagnostics),
     append(OperatorGoals, ArgumentGoals, CombinedGoals),
     append(OperatorOrigins, ArgumentOrigins, CombinedOrigins),
     finish_partial_application_step(
         ArgumentDiagnostics,
         callable(CallOwner, Name, Callable, Arity, KeySets, ReturnIndex),
-        NodeId, CombinedArguments, CombinedGoals, CombinedOrigins,
+        NodeId, InputSlots, CombinedArguments, CombinedGoals, CombinedOrigins,
         Value, Goals, Origins, Diagnostics).
 apply_expression_operator([], Operator, NodeId, _, _, _, _, _,
                           none, [], [],
@@ -784,36 +1018,107 @@ apply_expression_operator([], Operator, NodeId, _, _, _, _, _,
                                           Operator))]).
 
 finish_partial_application_step(
-    [Diagnostic | _], _, _, _, _, _,
+    [Diagnostic | _], _, _, _, _, _, _,
     none, [], [], [Diagnostic]) :-
     !.
 finish_partial_application_step(
     [], Callable,
-    NodeId, Arguments, PrefixGoals, PrefixOrigins,
+    NodeId, InputSlots, Bound, PrefixGoals, PrefixOrigins,
     Value, Goals, Origins, Diagnostics) :-
     Callable = callable(CallOwner, Name, _, Arity, KeySets, ReturnIndex),
-    ExpectedArity is Arity - 1,
-    length(Arguments, ObservedArity),
-    (   ObservedArity < ExpectedArity
-    ->  Value = partial_application(Callable, Arguments),
+    missing_bound_slots(InputSlots, Bound, Missing),
+    (   Missing \== []
+    ->  Value = partial_application(Callable, Bound),
         Goals = PrefixGoals,
         Origins = PrefixOrigins,
         Diagnostics = []
-    ;   ObservedArity =:= ExpectedArity
-    ->  expression_mode_diagnostics(
+    ;   expression_mode_diagnostics(
             Name, ReturnIndex, Arity, KeySets, NodeId, ModeDiagnostics),
+        ordered_bound_values(InputSlots, Bound, Arguments),
         finish_expression_call_arguments(
             ModeDiagnostics, Name, NodeId, ReturnIndex,
             Arguments, PrefixGoals, PrefixOrigins, CallOwner,
             Value, Goals, Origins, Diagnostics)
-    ;   Value = none,
-        Goals = [],
-        Origins = [],
-        Diagnostics = [diagnostic(
-                           lower, NodeId,
-                           expression_arity_mismatch(
-                               Name, ExpectedArity, ObservedArity))]
     ).
+
+exclude_slot(_, [], []).
+exclude_slot(Index, [slot(Index, _) | Slots], Remaining) :-
+    !,
+    exclude_slot(Index, Slots, Remaining).
+exclude_slot(Index, [Slot | Slots], [Slot | Remaining]) :-
+    exclude_slot(Index, Slots, Remaining).
+
+normalize_expression_arguments(Name, NodeId, Slots, ExistingBound,
+                               ArgumentNodes, Owner, Environment,
+                               Bound, Goals, Origins, Diagnostics) :-
+    classify_argument_nodes(ArgumentNodes, Slots, Classified,
+                            ClassificationDiagnostics),
+    bound_indices(ExistingBound, ExistingIndices),
+    (   ClassificationDiagnostics == []
+    ->  assign_argument_slots(Classified, Slots, ExistingIndices,
+                              Assigned, AssignmentDiagnostics),
+        (   AssignmentDiagnostics == []
+        ->  lower_assigned_expressions(
+                Assigned, Owner, Environment,
+                NewBound, Goals, Origins, LowerDiagnostics),
+            append(ExistingBound, NewBound, CombinedBound),
+            sort(CombinedBound, Bound),
+            Diagnostics = LowerDiagnostics
+        ;   AssignmentDiagnostics = [Reason | _],
+            normalized_expression_argument_reason(
+                Reason, Name, Slots, ExistingBound, ArgumentNodes,
+                NodeId, Diagnostics),
+            Bound = [], Goals = [], Origins = []
+        )
+    ;   ClassificationDiagnostics = [Reason | _],
+        Bound = [], Goals = [], Origins = [],
+        Diagnostics = [diagnostic(lower, NodeId, Reason)]
+    ).
+
+normalized_expression_argument_reason(
+    too_many_arguments, Name, Slots, ExistingBound, ArgumentNodes,
+    NodeId,
+    [diagnostic(lower, NodeId,
+                expression_arity_mismatch(Name, ExpectedArity,
+                                          ObservedArity))]) :-
+    !,
+    length(Slots, ExpectedArity),
+    length(ExistingBound, ExistingCount),
+    length(ArgumentNodes, NewCount),
+    ObservedArity is ExistingCount + NewCount.
+normalized_expression_argument_reason(
+    Reason, _, _, _, _, NodeId, [diagnostic(lower, NodeId, Reason)]).
+
+bound_indices([], []).
+bound_indices([bound(Index, _) | Bound], [Index | Indices]) :-
+    bound_indices(Bound, Indices).
+
+lower_assigned_expressions([], _, _, [], [], [], []).
+lower_assigned_expressions(
+    [assigned(Index, _, Node) | Assigned], Owner, Environment,
+    [bound(Index, Value) | Bound], Goals, Origins, Diagnostics) :-
+    lower_expression(Node, Owner, Environment,
+                     Value, OwnGoals, OwnOrigins, OwnDiagnostics),
+    lower_assigned_expressions(Assigned, Owner, Environment,
+                               Bound, RestGoals, RestOrigins,
+                               RestDiagnostics),
+    append(OwnGoals, RestGoals, Goals),
+    append(OwnOrigins, RestOrigins, Origins),
+    append(OwnDiagnostics, RestDiagnostics, Diagnostics).
+
+missing_bound_slots([], _, []).
+missing_bound_slots([slot(Index, Label) | Slots], Bound, Missing) :-
+    missing_bound_slots(Slots, Bound, Rest),
+    (   memberchk(bound(Index, _), Bound)
+    ->  Missing = Rest
+    ;   Missing = [slot(Index, Label) | Rest]
+    ).
+
+ordered_bound_values([], _, []).
+ordered_bound_values([slot(Index, _) | Slots], Bound,
+                     [Value | Values]) :-
+    memberchk(bound(Index, Value), Bound),
+    ordered_bound_values(Slots, Bound, Values).
 
 expression_mode_diagnostics(Name, ReturnIndex, Arity, KeySets, NodeId,
                             Diagnostics) :-

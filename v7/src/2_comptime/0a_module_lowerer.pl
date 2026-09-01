@@ -1,11 +1,19 @@
 :- module(dl7_module_lowerer,
           [ lower_units/4,
+            lower_units_deferred/4,
+            lower_units_with_environment/5,
             lower_units_with_exporter/5,
+            lower_units_with_exporter_deferred/5,
+            lower_units_with_exporter_and_environment/6,
             merge_module_basements/4,
             install_module_aliases/6
           ]).
 
-:- use_module('0_lowerer', [lower_datalog/4, lower_datalog/5]).
+:- use_module('0_lowerer',
+              [ lower_datalog/4,
+                lower_datalog/5,
+                lower_datalog_deferred/5
+              ]).
 
 %% lower_units(+Units, -ModuleBasements, -ModuleOrigins, -Diagnostics) is det.
 %
@@ -19,6 +27,41 @@ lower_units([Unit | Units],
     unit_module_owner(Unit, ModuleOwner),
     lower_datalog(Unit, Basement, Origins, UnitDiagnostics),
     lower_units(Units, ModuleBasements, ModuleOrigins, RestDiagnostics),
+    append(UnitDiagnostics, RestDiagnostics, Diagnostics).
+
+%% lower_units_deferred(+Units, -Basements, -Origins, -Diagnostics) is det.
+%
+% Bootstrap lowering retains all declarations while holding back executable
+% forms that refer to relations generated later by the compiler fixpoint.
+lower_units_deferred(Units, Basements, Origins, Diagnostics) :-
+    EmptyEnvironment = expression_environment([], [], []),
+    lower_units_deferred(Units, EmptyEnvironment,
+                         Basements, Origins, Diagnostics).
+
+lower_units_deferred([], _, [], [], []).
+lower_units_deferred(
+    [Unit | Units], Environment,
+    [module_basement(ModuleOwner, Basement) | ModuleBasements],
+    [module_origins(ModuleOwner, Origins) | ModuleOrigins], Diagnostics) :-
+    unit_module_owner(Unit, ModuleOwner),
+    lower_datalog_deferred(Unit, Environment, Basement, Origins,
+                           UnitDiagnostics),
+    lower_units_deferred(Units, Environment,
+                         ModuleBasements, ModuleOrigins, RestDiagnostics),
+    append(UnitDiagnostics, RestDiagnostics, Diagnostics).
+
+%% lower_units_with_environment(+Units, +Environment,
+%%                              -Basements, -Origins, -Diagnostics) is det.
+lower_units_with_environment([], _, [], [], []).
+lower_units_with_environment(
+    [Unit | Units], Environment,
+    [module_basement(ModuleOwner, Basement) | ModuleBasements],
+    [module_origins(ModuleOwner, Origins) | ModuleOrigins], Diagnostics) :-
+    unit_module_owner(Unit, ModuleOwner),
+    lower_datalog(Unit, Environment, Basement, Origins, UnitDiagnostics),
+    lower_units_with_environment(Units, Environment,
+                                 ModuleBasements, ModuleOrigins,
+                                 RestDiagnostics),
     append(UnitDiagnostics, RestDiagnostics, Diagnostics).
 
 unit_module_owner(dl7_unit(Origin, _, _, _, _), module(Origin)).
@@ -40,6 +83,135 @@ lower_units_with_exporter(ExporterUnit, ImporterUnits,
         ExporterDiagnostics, ExporterOwner,
         ExporterBasement, ExporterOrigins, ImporterUnits,
         ModuleBasements, ModuleOrigins, Diagnostics).
+
+%% lower_units_with_exporter_deferred(+Exporter, +Importers,
+%%                                    -Basements, -Origins,
+%%                                    -Diagnostics) is det.
+lower_units_with_exporter_deferred(ExporterUnit, ImporterUnits,
+                                   ModuleBasements, ModuleOrigins,
+                                   Diagnostics) :-
+    unit_module_owner(ExporterUnit, ExporterOwner),
+    EmptyEnvironment = expression_environment([], [], []),
+    lower_datalog_deferred(ExporterUnit, EmptyEnvironment,
+                           ExporterBasement, ExporterOrigins,
+                           ExporterDiagnostics),
+    lower_importers_after_deferred_exporter(
+        ExporterDiagnostics, ExporterOwner,
+        ExporterBasement, ExporterOrigins, ImporterUnits,
+        ModuleBasements, ModuleOrigins, Diagnostics).
+
+lower_importers_after_deferred_exporter(
+    [], ExporterOwner, ExporterBasement, ExporterOrigins, ImporterUnits,
+    ModuleBasements, ModuleOrigins, Diagnostics) :-
+    !,
+    module_expression_environment(ExporterOwner, ExporterBasement,
+                                  ImportedEnvironment),
+    lower_importing_units_deferred(
+        ImporterUnits, ImportedEnvironment,
+        ImporterBasements, ImporterOrigins, ImporterDiagnostics),
+    ExporterBasements = [module_basement(ExporterOwner, ExporterBasement)
+                        | ImporterBasements],
+    ExporterModuleOrigins = [module_origins(ExporterOwner, ExporterOrigins)
+                            | ImporterOrigins],
+    expose_lowered_importers(
+        ImporterDiagnostics, ExporterOwner, ImporterUnits,
+        ExporterBasements, ExporterModuleOrigins,
+        ModuleBasements, ModuleOrigins, Diagnostics).
+lower_importers_after_deferred_exporter(
+    Diagnostics, ExporterOwner, ExporterBasement, ExporterOrigins, _,
+    [module_basement(ExporterOwner, ExporterBasement)],
+    [module_origins(ExporterOwner, ExporterOrigins)], Diagnostics).
+
+lower_importing_units_deferred([], _, [], [], []).
+lower_importing_units_deferred(
+    [Unit | Units],
+    expression_environment(Reservations0, Relations, Edges),
+    [module_basement(ModuleOwner, Basement) | ModuleBasements],
+    [module_origins(ModuleOwner, Origins) | ModuleOrigins], Diagnostics) :-
+    unit_module_owner(Unit, ModuleOwner),
+    reown_expression_reservations(Reservations0, ModuleOwner, Reservations),
+    Environment = expression_environment(Reservations, Relations, Edges),
+    lower_datalog_deferred(Unit, Environment, Basement, Origins,
+                           UnitDiagnostics),
+    lower_importing_units_deferred(
+        Units, expression_environment(Reservations0, Relations, Edges),
+        ModuleBasements, ModuleOrigins, RestDiagnostics),
+    append(UnitDiagnostics, RestDiagnostics, Diagnostics).
+
+%% lower_units_with_exporter_and_environment(+Exporter, +Importers,
+%%                                           +GeneratedEnvironment,
+%%                                           -Basements, -Origins,
+%%                                           -Diagnostics) is det.
+%
+% Strict final lowering combines ordinary prelude imports with exact-owner
+% callable bindings frozen from compiler output.
+lower_units_with_exporter_and_environment(
+    ExporterUnit, ImporterUnits, GeneratedEnvironment,
+    ModuleBasements, ModuleOrigins, Diagnostics) :-
+    unit_module_owner(ExporterUnit, ExporterOwner),
+    lower_datalog(ExporterUnit, GeneratedEnvironment,
+                  ExporterBasement, ExporterOrigins,
+                  ExporterDiagnostics),
+    lower_importers_after_exporter_environment(
+        ExporterDiagnostics, ExporterOwner,
+        ExporterBasement, ExporterOrigins, ImporterUnits,
+        GeneratedEnvironment,
+        ModuleBasements, ModuleOrigins, Diagnostics).
+
+lower_importers_after_exporter_environment(
+    [], ExporterOwner, ExporterBasement, ExporterOrigins, ImporterUnits,
+    GeneratedEnvironment,
+    ModuleBasements, ModuleOrigins, Diagnostics) :-
+    !,
+    module_expression_environment(ExporterOwner, ExporterBasement,
+                                  PreludeEnvironment),
+    lower_importing_units_with_environment(
+        ImporterUnits, PreludeEnvironment, GeneratedEnvironment,
+        ImporterBasements, ImporterOrigins, ImporterDiagnostics),
+    ExporterBasements = [module_basement(ExporterOwner, ExporterBasement)
+                        | ImporterBasements],
+    ExporterModuleOrigins = [module_origins(ExporterOwner, ExporterOrigins)
+                            | ImporterOrigins],
+    expose_lowered_importers(
+        ImporterDiagnostics, ExporterOwner, ImporterUnits,
+        ExporterBasements, ExporterModuleOrigins,
+        ModuleBasements, ModuleOrigins, Diagnostics).
+lower_importers_after_exporter_environment(
+    Diagnostics, ExporterOwner, ExporterBasement, ExporterOrigins, _, _,
+    [module_basement(ExporterOwner, ExporterBasement)],
+    [module_origins(ExporterOwner, ExporterOrigins)], Diagnostics).
+
+lower_importing_units_with_environment([], _, _, [], [], []).
+lower_importing_units_with_environment(
+    [Unit | Units],
+    expression_environment(Reservations0, Relations0, Edges0),
+    GeneratedEnvironment,
+    [module_basement(ModuleOwner, Basement) | ModuleBasements],
+    [module_origins(ModuleOwner, Origins) | ModuleOrigins], Diagnostics) :-
+    unit_module_owner(Unit, ModuleOwner),
+    reown_expression_reservations(Reservations0, ModuleOwner,
+                                  PreludeReservations),
+    PreludeOwned = expression_environment(
+                       PreludeReservations, Relations0, Edges0),
+    merge_expression_environments(GeneratedEnvironment, PreludeOwned,
+                                  Environment),
+    lower_datalog(Unit, Environment, Basement, Origins, UnitDiagnostics),
+    lower_importing_units_with_environment(
+        Units, expression_environment(Reservations0, Relations0, Edges0),
+        GeneratedEnvironment,
+        ModuleBasements, ModuleOrigins, RestDiagnostics),
+    append(UnitDiagnostics, RestDiagnostics, Diagnostics).
+
+merge_expression_environments(
+    expression_environment(Reservations0, Relations0, Edges0),
+    expression_environment(Reservations1, Relations1, Edges1),
+    expression_environment(Reservations, Relations, Edges)) :-
+    append(Reservations0, Reservations1, Reservations2),
+    append(Relations0, Relations1, Relations2),
+    append(Edges0, Edges1, Edges2),
+    sort(Reservations2, Reservations),
+    sort(Relations2, Relations),
+    sort(Edges2, Edges).
 
 lower_importers_after_exporter(
     [], ExporterOwner, ExporterBasement, ExporterOrigins, ImporterUnits,
