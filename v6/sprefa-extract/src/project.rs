@@ -436,6 +436,7 @@ fn load_rust_checker(
         files = index.files_answered,
         unjoined = index.unjoined,
         external = index.external,
+        type_ambiguous = index.type_ambiguous,
         method_sites = index.method_sites,
         method_unresolved = index.method_unresolved,
         "rust checker tier loaded"
