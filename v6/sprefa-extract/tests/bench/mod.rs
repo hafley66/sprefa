@@ -103,14 +103,94 @@ pub enum Projection {
     RustCorpus,
 }
 
-/// One measured cell = one RATCHET.tsv accuracy row.
+/// One measured cell = one RATCHET.tsv accuracy row. The four key fields stay
+/// four columns: the cost file joins on (lang, tier) alone, and a joined
+/// string would be re-parsed on every join.
 pub struct Case {
     pub lang: &'static str,
     pub family: &'static str,
     pub tier: Tier,
-    /// Oracle tsv file name; the file must sit in BENCH_DIR.
+    /// The oracle's tool, plus an optional variant joined by `-`. Never a file
+    /// name: a file name repeats lang and family, and its dotted variant makes
+    /// the four-part id unparseable.
     pub oracle: &'static str,
     pub projection: Projection,
+}
+
+impl Case {
+    /// `{lang}.{family}.{tier}.{oracle}`, the measure signature of
+    /// COMMON.md:72 as one greppable string.
+    pub fn id(&self) -> String {
+        format!(
+            "{}.{}.{}.{}",
+            self.lang,
+            self.family,
+            self.tier.as_str(),
+            self.oracle
+        )
+    }
+
+    /// The inverse of `id`. `-` joins a variant precisely so this split is
+    /// unambiguous; lang, family and tier never carry one.
+    pub fn parse_id(text: &str) -> (String, String, Tier, String) {
+        let parts: Vec<&str> = text.split('.').collect();
+        assert!(
+            parts.len() == 4,
+            "measure id '{text}' has {} dot-delimited parts, expected 4 (lang.family.tier.oracle); a variant joins with '-'",
+            parts.len()
+        );
+        (
+            parts[0].to_string(),
+            parts[1].to_string(),
+            Tier::parse(parts[2]),
+            parts[3].to_string(),
+        )
+    }
+
+    /// The tsv this case scores against.
+    pub fn oracle_path(&self) -> PathBuf {
+        oracle_path(self.lang, self.family, self.oracle)
+    }
+}
+
+/// One committed oracle tsv, addressed by the key fields that pick it. Tier is
+/// absent: the syntax and checker legs score against the same file.
+struct OracleFile {
+    lang: &'static str,
+    family: &'static str,
+    oracle: &'static str,
+    file: &'static str,
+}
+
+/// The key-to-file map. The names are not derivable: ts5 scores against `ts.*`
+/// files for every tool but its own, and a variant is dots in a file name
+/// where it is dashes in `oracle`.
+fn oracle_files() -> &'static [OracleFile] {
+    &[
+        OracleFile { lang: "ts5", family: "call", oracle: "oracle", file: "ts5.oracle.call.tsv" },
+        OracleFile { lang: "ts5", family: "call", oracle: "codeql2", file: "ts.codeql2.call.tsv" },
+        OracleFile { lang: "ts5", family: "module", oracle: "madge", file: "ts.madge.module.tsv" },
+        OracleFile { lang: "go", family: "call", oracle: "oracle-vta-bare", file: "go.oracle.call.vta.bare.tsv" },
+        OracleFile { lang: "go", family: "call", oracle: "codeql2", file: "go.codeql2.call.tsv" },
+        OracleFile { lang: "go", family: "module", oracle: "oracle", file: "go.oracle.module.tsv" },
+        OracleFile { lang: "go", family: "type", oracle: "oracle-typedecl", file: "go.oracle.type.typedecl.tsv" },
+        OracleFile { lang: "rust", family: "call", oracle: "oracle", file: "rust.oracle.call.tsv" },
+        OracleFile { lang: "rust", family: "call", oracle: "scip_override", file: "rust.scip_override.call.tsv" },
+        OracleFile { lang: "rust", family: "call", oracle: "codeql", file: "rust.codeql.call.tsv" },
+        OracleFile { lang: "rust", family: "type", oracle: "oracle-typedecl", file: "rust.oracle.type.typedecl.tsv" },
+    ]
+}
+
+/// The tsv under BENCH_DIR for one key. An unlisted key is a panic: a case
+/// whose file cannot be named is a case that silently never scored.
+pub fn oracle_path(lang: &str, family: &str, oracle: &str) -> PathBuf {
+    let entry = oracle_files()
+        .iter()
+        .find(|entry| entry.lang == lang && entry.family == family && entry.oracle == oracle)
+        .unwrap_or_else(|| {
+            panic!("no oracle file for {lang}.{family}.<tier>.{oracle}; add a row to oracle_files()")
+        });
+    Path::new(BENCH_DIR).join(entry.file)
 }
 
 /// The whole matrix, one place. Hand-listed, never a cartesian product: a
@@ -118,25 +198,57 @@ pub struct Case {
 /// go has no checker tier and no corpus has a scip-tier oracle yet.
 pub fn cases() -> &'static [Case] {
     &[
-        Case { lang: "ts5", family: "call", tier: Tier::Syntax, oracle: "ts5.oracle.call.tsv", projection: Projection::Raw },
-        Case { lang: "ts5", family: "call", tier: Tier::Syntax, oracle: "ts.codeql2.call.tsv", projection: Projection::Raw },
-        Case { lang: "ts5", family: "module", tier: Tier::Syntax, oracle: "ts.madge.module.tsv", projection: Projection::Raw },
-        Case { lang: "ts5", family: "call", tier: Tier::Checker, oracle: "ts5.oracle.call.tsv", projection: Projection::Raw },
-        Case { lang: "ts5", family: "call", tier: Tier::Checker, oracle: "ts.codeql2.call.tsv", projection: Projection::Raw },
-        Case { lang: "ts5", family: "module", tier: Tier::Checker, oracle: "ts.madge.module.tsv", projection: Projection::Raw },
-        Case { lang: "go", family: "call", tier: Tier::Syntax, oracle: "go.oracle.call.vta.bare.tsv", projection: Projection::GoImpl },
-        Case { lang: "go", family: "call", tier: Tier::Syntax, oracle: "go.codeql2.call.tsv", projection: Projection::GoMethod },
-        Case { lang: "go", family: "module", tier: Tier::Syntax, oracle: "go.oracle.module.tsv", projection: Projection::Raw },
-        Case { lang: "go", family: "type", tier: Tier::Syntax, oracle: "go.oracle.type.typedecl.tsv", projection: Projection::Raw },
-        Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "rust.oracle.call.tsv", projection: Projection::RustCorpus },
-        Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "rust.scip_override.call.tsv", projection: Projection::RustCorpus },
-        Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "rust.codeql.call.tsv", projection: Projection::RustCorpus },
-        Case { lang: "rust", family: "type", tier: Tier::Syntax, oracle: "rust.oracle.type.typedecl.tsv", projection: Projection::Raw },
-        Case { lang: "rust", family: "call", tier: Tier::Checker, oracle: "rust.oracle.call.tsv", projection: Projection::RustCorpus },
-        Case { lang: "rust", family: "call", tier: Tier::Checker, oracle: "rust.scip_override.call.tsv", projection: Projection::RustCorpus },
-        Case { lang: "rust", family: "call", tier: Tier::Checker, oracle: "rust.codeql.call.tsv", projection: Projection::RustCorpus },
-        Case { lang: "rust", family: "type", tier: Tier::Checker, oracle: "rust.oracle.type.typedecl.tsv", projection: Projection::Raw },
+        Case { lang: "ts5", family: "call", tier: Tier::Syntax, oracle: "oracle", projection: Projection::Raw },
+        Case { lang: "ts5", family: "call", tier: Tier::Syntax, oracle: "codeql2", projection: Projection::Raw },
+        Case { lang: "ts5", family: "module", tier: Tier::Syntax, oracle: "madge", projection: Projection::Raw },
+        Case { lang: "ts5", family: "call", tier: Tier::Checker, oracle: "oracle", projection: Projection::Raw },
+        Case { lang: "ts5", family: "call", tier: Tier::Checker, oracle: "codeql2", projection: Projection::Raw },
+        Case { lang: "ts5", family: "module", tier: Tier::Checker, oracle: "madge", projection: Projection::Raw },
+        Case { lang: "go", family: "call", tier: Tier::Syntax, oracle: "oracle-vta-bare", projection: Projection::GoImpl },
+        Case { lang: "go", family: "call", tier: Tier::Syntax, oracle: "codeql2", projection: Projection::GoMethod },
+        Case { lang: "go", family: "module", tier: Tier::Syntax, oracle: "oracle", projection: Projection::Raw },
+        Case { lang: "go", family: "type", tier: Tier::Syntax, oracle: "oracle-typedecl", projection: Projection::Raw },
+        Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "oracle", projection: Projection::RustCorpus },
+        Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "scip_override", projection: Projection::RustCorpus },
+        Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "codeql", projection: Projection::RustCorpus },
+        Case { lang: "rust", family: "type", tier: Tier::Syntax, oracle: "oracle-typedecl", projection: Projection::Raw },
+        Case { lang: "rust", family: "call", tier: Tier::Checker, oracle: "oracle", projection: Projection::RustCorpus },
+        Case { lang: "rust", family: "call", tier: Tier::Checker, oracle: "scip_override", projection: Projection::RustCorpus },
+        Case { lang: "rust", family: "call", tier: Tier::Checker, oracle: "codeql", projection: Projection::RustCorpus },
+        Case { lang: "rust", family: "type", tier: Tier::Checker, oracle: "oracle-typedecl", projection: Projection::Raw },
     ]
+}
+
+/// TEST: sabotage receipt. Spelling `go.oracle.call.vta.bare.tsv` into the
+/// oracle field gives 7 parts and fails the length assert; joining the variant
+/// with `-` gives 4. The round trip is what keeps the rule load-checked rather
+/// than a convention in a comment.
+#[test]
+fn every_case_id_round_trips_through_four_parts() {
+    for case in cases() {
+        let id = case.id();
+        assert_eq!(
+            id.split('.').count(),
+            4,
+            "measure id '{id}' is not four dot-delimited parts"
+        );
+        assert_eq!(
+            Case::parse_id(&id),
+            (
+                case.lang.to_string(),
+                case.family.to_string(),
+                case.tier,
+                case.oracle.to_string()
+            ),
+            "measure id '{id}' does not parse back to its case"
+        );
+        let path = case.oracle_path();
+        assert!(
+            path.is_file(),
+            "measure id '{id}' resolves to {}, which is not a file",
+            path.display()
+        );
+    }
 }
 
 /// The file rule the bench lab measured against (ORACLES.REPORT.md:30-31):
@@ -908,7 +1020,7 @@ pub fn run(lang: &str, tier: Tier) -> Run {
 
 /// The cheap half. No extraction, no IO beyond loading the oracle tsv.
 pub fn score_case(case: &Case, run: &Run) -> Score {
-    let oracle = load_tsv(&Path::new(BENCH_DIR).join(case.oracle));
+    let oracle = load_tsv(&case.oracle_path());
     let sides = project(case.projection, run, case.family, &oracle);
     score(&sides.ours, &sides.oracle)
 }
@@ -929,7 +1041,8 @@ pub fn peak_rss_mb() -> u64 {
 
 // ── RATCHET.tsv (accuracy) and RATCHET.cost.tsv (cost) ──────────────────────
 
-pub const RATCHET_HEADER: &str = "# extract ratchet, accuracy: one row per (lang, family, tier, oracle), every row scored by score_case over ONE extraction per (lang, tier) against the committed oracle tsvs;\n\
+pub const RATCHET_HEADER: &str = "# extract ratchet, accuracy: one row per (lang, family, tier, oracle) = the measure id {lang}.{family}.{tier}.{oracle}, every row scored by score_case over ONE extraction per (lang, tier) against the committed oracle tsvs;\n\
+     # oracle is the oracle's TOOL plus an optional variant joined by '-' (never a file name, never a dot); the tsv the id resolves to is oracle_files() in tests/bench/mod.rs.\n\
      # recall = overlap/|oracle|, precision = overlap/|ours|, percent; check: 0.10 pt; cost lives beside this in RATCHET.cost.tsv; local-only (COMMON.md), never CI; bump: RATCHET_BUMP=1 improves floors, RATCHET_FORCE=1 rewrites.\n\
      lang\tfamily\ttier\toracle\trecall\tprecision\tmeasured_at_sha";
 
@@ -1182,14 +1295,15 @@ pub fn ratchet(lang: &str, tier: Tier) {
     }
 
     println!(
-        "\n{:<6} {:<8} {:<8} {:<32} {:>7} {:>7} {:>7} {:>8} {:>9} verdict",
-        "lang", "family", "tier", "oracle", "ours", "oracle", "overlap", "recall", "precision"
+        "\n{:<34} {:>7} {:>7} {:>7} {:>8} {:>9} verdict",
+        "case", "ours", "oracle", "overlap", "recall", "precision"
     );
     let mut failures = Vec::new();
     let mut improved = 0usize;
     let mut unchanged = 0usize;
     for case in leg_cases {
-        let oracle_path = Path::new(BENCH_DIR).join(case.oracle);
+        let id = case.id();
+        let oracle_path = case.oracle_path();
         let row_key = |rows: &[RatchetRow]| {
             rows.iter().position(|row| {
                 row.lang == case.lang
@@ -1198,17 +1312,13 @@ pub fn ratchet(lang: &str, tier: Tier) {
                     && row.oracle == case.oracle
             })
         };
-        if !oracle_path.is_file() {
-            println!(
-                "{:<6} {:<8} {:<8} {:<32} absent ({} missing), skipped",
-                case.lang,
-                case.family,
-                case.tier.as_str(),
-                case.oracle,
-                oracle_path.display()
-            );
-            continue;
-        }
+        // A committed oracle that is not on disk means the leg scored fewer
+        // cells than the matrix claims; skipping it would pass green.
+        assert!(
+            oracle_path.is_file(),
+            "ratchet {leg}: case {id} resolves to {}, which is not a file",
+            oracle_path.display()
+        );
         let verdict = score_case(case, &measured);
         let floor = row_key(&floors).map(|index| floors[index].clone());
         let mut line_verdict = String::from("no-floor");
@@ -1216,9 +1326,7 @@ pub fn ratchet(lang: &str, tier: Tier) {
             let before = failures.len();
             if verdict.recall < floor.recall - RECALL_TOLERANCE_PT {
                 failures.push(format!(
-                    "ratchet {leg} {} {}: recall {:.2} below floor {:.2} by {:.2} pt (tolerance {RECALL_TOLERANCE_PT})",
-                    case.family,
-                    case.oracle,
+                    "ratchet {id}: recall {:.2} below floor {:.2} by {:.2} pt (tolerance {RECALL_TOLERANCE_PT})",
                     verdict.recall,
                     floor.recall,
                     floor.recall - verdict.recall
@@ -1226,9 +1334,7 @@ pub fn ratchet(lang: &str, tier: Tier) {
             }
             if verdict.precision < floor.precision - RECALL_TOLERANCE_PT {
                 failures.push(format!(
-                    "ratchet {leg} {} {}: precision {:.2} below floor {:.2} by {:.2} pt (tolerance {RECALL_TOLERANCE_PT})",
-                    case.family,
-                    case.oracle,
+                    "ratchet {id}: precision {:.2} below floor {:.2} by {:.2} pt (tolerance {RECALL_TOLERANCE_PT})",
                     verdict.precision,
                     floor.precision,
                     floor.precision - verdict.precision
@@ -1237,11 +1343,7 @@ pub fn ratchet(lang: &str, tier: Tier) {
             line_verdict = if failures.len() == before { "ok" } else { "FAIL" }.to_string();
         }
         println!(
-            "{:<6} {:<8} {:<8} {:<32} {:>7} {:>7} {:>7} {:>8.2} {:>9.2} {}",
-            case.lang,
-            case.family,
-            case.tier.as_str(),
-            case.oracle,
+            "{id:<34} {:>7} {:>7} {:>7} {:>8.2} {:>9.2} {}",
             verdict.ours,
             verdict.oracle,
             verdict.overlap,
@@ -1250,11 +1352,7 @@ pub fn ratchet(lang: &str, tier: Tier) {
             line_verdict
         );
         println!(
-            "{:<6} {:<8} {:<8} {:<32} 3-bucket: matched {} / contradicted {} / unjudged {} (of {} ours)",
-            case.lang,
-            case.family,
-            case.tier.as_str(),
-            case.oracle,
+            "{id:<34} 3-bucket: matched {} / contradicted {} / unjudged {} (of {} ours)",
             verdict.buckets.matched,
             verdict.buckets.contradicted,
             verdict.buckets.unjudged,
@@ -1278,9 +1376,7 @@ pub fn ratchet(lang: &str, tier: Tier) {
                     let worse = row.recall < floor.recall || row.precision < floor.precision;
                     if better || (force && worse) {
                         println!(
-                            "bump {leg} {} {}: recall {:.2}->{:.2} precision {:.2}->{:.2} ({})",
-                            case.family,
-                            case.oracle,
+                            "bump {id}: recall {:.2}->{:.2} precision {:.2}->{:.2} ({})",
                             floor.recall,
                             row.recall,
                             floor.precision,
@@ -1295,8 +1391,8 @@ pub fn ratchet(lang: &str, tier: Tier) {
                 }
                 None => {
                     println!(
-                        "bump {leg} {} {}: new row (recall {:.2}, precision {:.2})",
-                        case.family, case.oracle, row.recall, row.precision
+                        "bump {id}: new row (recall {:.2}, precision {:.2})",
+                        row.recall, row.precision
                     );
                     floors.push(row);
                     improved += 1;
