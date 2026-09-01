@@ -7,6 +7,16 @@
 
 :- multifile dl7_syntax_rewrite/3.
 
+%% A trailing colon on the first form item rotates into the canonical prefix
+%% operator. The replacement re-enters the ordinary recursive expansion path,
+%% so nested binds and call arguments share one representation downstream.
+dl7_syntax_rewrite(form([Label, atom(':') | Arguments]), infix_colon,
+                   form([atom(':'), Label | Arguments])).
+dl7_syntax_rewrite(form([atom(Infix) | Arguments]), infix_colon,
+                   form([atom(':'), atom(Name) | Arguments])) :-
+    atom_concat(Name, ':', Infix),
+    Name \== ''.
+
 expand_dl7(Forms, SourceRows,
            ExpandedForms, ExpandedSourceRows,
            ExpansionRows, Diagnostics) :-

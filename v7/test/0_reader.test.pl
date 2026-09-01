@@ -2,6 +2,7 @@
 
 :- use_module('../src/0_reader/0_parser', [read_dl7/5]).
 :- use_module('../src/0_reader/3_file_loader', [load_dl7/3]).
+:- use_module('../src/0_reader/2_embedder', [dl7_text_unit/5]).
 
 test(standalone_fixture_has_canonical_reader_snapshot) :-
     load_dl7('v7/test/fixtures/0_minimal.dl7',
@@ -46,6 +47,34 @@ test(malformed_form_returns_one_positioned_diagnostic) :-
                          unterminated_form,
                          position(2, 2, 1))
             ]).
+
+test(infix_colon_rotates_to_the_canonical_prefix_tree_at_every_depth) :-
+    Text = "(User: (* (id: int) (name: text)))\n((Key \"account\" Options): int)\n",
+    dl7_text_unit(infix_colon, infix_colon_source, Text, Unit, Diagnostics),
+    Unit = dl7_unit(_, _, Forms, _, ExpansionRows),
+    maplist(payload_tree, Forms, Trees),
+    Observed = infix_colon(Diagnostics, Trees, ExpansionRows),
+    Observed = infix_colon(
+                   [],
+                   [ form([atom(':'), atom('User'),
+                           form([atom('*'),
+                                 form([atom(':'), atom(id), atom(int)]),
+                                 form([atom(':'), atom(name), atom(text)])])]),
+                     form([atom(':'),
+                           form([atom('Key'), literal("account"),
+                                 atom('Options')]),
+                           atom(int)])
+                   ],
+                   [_ | _]).
+
+payload_tree(node(_, Payload), Tree) :-
+    payload_tree_value(Payload, Tree).
+
+payload_tree_value(atom(Name), atom(Name)).
+payload_tree_value(literal(Value), literal(Value)).
+payload_tree_value(variable(_, Name), variable(Name)).
+payload_tree_value(form(Nodes), form(Trees)) :-
+    maplist(payload_tree, Nodes, Trees).
 
 unit_snapshot(
     dl7_unit(file(_), content_sha256(Digest),
