@@ -22,3 +22,18 @@
 
 (<- (copied ?id ?name)
     (UserHistory ?id ?name))
+
+(: SourceCopy
+   (* (: id int)
+      (: name text)))
+
+(SourceCopy 8 "Grace")
+
+(<- (UserHistory ?id ?name)
+    (SourceCopy ?id ?name))
+
+(: names
+   (* (: name text)))
+
+(<- (names ?name)
+    (UserHistory ?name))

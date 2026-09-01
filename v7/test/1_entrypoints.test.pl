@@ -716,12 +716,26 @@ test(generated_relations_are_callable_after_declarations_freeze) :-
     named_owner(Rows1, 'UserHistory', UserHistory),
     Runtime1 = checked_datalog(
                    _, datalog_program(Relations, Seeds, Rules), _, _),
+    named_owner(Rows1, 'SourceCopy', SourceCopy),
+    named_owner(Rows1, names, Names),
     memberchk(relation(ref(UserHistory), 2, []), Relations),
     memberchk(call(ref(UserHistory), [const(7), const("Ada")]), Seeds),
     memberchk(rule(call(_, [var(Id), var(Name)]),
                    [checked_goal(
                         positive,
                         call(ref(UserHistory), [var(Id), var(Name)]))]),
+              Rules),
+    memberchk(rule(call(ref(UserHistory), [var(HeadId), var(HeadName)]),
+                   [checked_goal(
+                        positive,
+                        call(ref(SourceCopy),
+                             [var(HeadId), var(HeadName)]))]),
+              Rules),
+    memberchk(rule(call(ref(Names), [var(PunnedName)]),
+                   [checked_goal(
+                        positive,
+                        call(ref(UserHistory),
+                             [var(omitted(_, 0)), var(PunnedName)]))]),
               Rules),
     residual_partial_terms(Runtime1, ResidualPartials),
     equality(Rows1, Rows2, RowsEqual),
