@@ -177,3 +177,10 @@
 (: curry_arity
    (* (: result type)
       (: arity int)))
+
+; An emitter node names each artifact and the relation whose closed rows form
+; that artifact. Host-Prolog and DL7 emitters consume the same compiler view.
+(: emits
+   (* (: emitter type)
+      (: name text)
+      (: output type)))

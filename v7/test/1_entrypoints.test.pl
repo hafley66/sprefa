@@ -22,6 +22,7 @@
               ]).
 :- use_module('../src/2_comptime/1a_generated_program_assembler',
               [assemble_generated_program/5]).
+:- use_module('../src/3_emit/0_artifact_emitter', [emit_compiled/4]).
 :- use_module('../src/1_libtime/0_evaluator',
               [ evaluate/4,
                 stratify_rules/3,
@@ -669,14 +670,14 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 5314,
+                    [], [], 5456,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(176, 377, 84, 294, 116, 197, 84),
+                    runtime(counts(178, 382, 85, 298, 116, 197, 85),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
@@ -807,6 +808,44 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
                     chained(arity(3), arity(2), return(true)),
                     repeat(rows(true), runtime(true)),
                     residual_partial_terms(0)).
+
+test(prolog_and_dl7_emitters_share_the_closed_compiler_view) :-
+    Path = 'v7/test/fixtures/5_curry.dl7',
+    compile_dl7(Path, CompilerRows, RuntimeProgram, Diagnostics),
+    named_owner(CompilerRows, 'CurryEmitter', CurryEmitter),
+    named_owner(CompilerRows, curry_artifact, CurryArtifact),
+    Compiled = compiled_unit([], RuntimeProgram, CompilerRows),
+    emit_compiled(
+        dl7(CurryEmitter), Compiled,
+        Dl7Artifact, Dl7Diagnostics),
+    emit_compiled(
+        prolog(plunit_dl7_entrypoints:compiler_row_count), Compiled,
+        PrologArtifact, PrologDiagnostics),
+    emit_compiled(
+        monomorphic_datalog, Compiled,
+        DatalogArtifact, DatalogDiagnostics),
+    findall(
+        [ref(Source), ref(Specialization)],
+        member(call(ref(CurryArtifact),
+                    [ref(Source), ref(Specialization)]),
+               CompilerRows),
+        ExpectedRows0),
+    sort(ExpectedRows0, ExpectedRows),
+    length(CompilerRows, RowCount),
+    Observed = emitter_protocol(
+                   compile(Diagnostics),
+                   dl7(Dl7Diagnostics, Dl7Artifact),
+                   prolog(PrologDiagnostics, PrologArtifact),
+                   datalog(DatalogDiagnostics, DatalogArtifact)),
+    Observed == emitter_protocol(
+                    compile([]),
+                    dl7([], artifacts([
+                        artifact("specializations", CurryArtifact,
+                                 ExpectedRows)
+                    ])),
+                    prolog([], compiler_rows(RowCount)),
+                    datalog([], artifact(monomorphic_datalog,
+                                         RuntimeProgram))).
 
 test(userland_type_algebra_proves_contracts_and_constructs_products) :-
     compile_dl7('v7/test/fixtures/3_type_algebra.dl7',
@@ -1671,6 +1710,10 @@ named_owner(Rows, Name, Owner) :-
                 [ref(_), const(Name), ref(Owner), const(_)]),
            Rows),
     !.
+
+compiler_row_count(compiler_view(_, CompilerRows, _),
+                   compiler_rows(Count)) :-
+    length(CompilerRows, Count).
 
 relation_pairs(Rows, Relation, Owner, Pairs) :-
     findall(Earlier-Later,

@@ -38,3 +38,15 @@
 (: TripleDone (TripleUserOrder Region))
 
 (TripleUserOrder Region TripleResult)
+
+; A DL7-authored emitter publishes ordinary derived rows.
+(: CurryEmitter (*))
+
+(: curry_artifact
+   (* (: source type)
+      (: specialization type)))
+
+(emits CurryEmitter "specializations" curry_artifact)
+
+(<- (curry_artifact ?Source ?Specialization)
+    (curry_specialization ?Source ?Specialization))
