@@ -4004,6 +4004,29 @@ type FieldsOfDir = HashMap<(String, String), (GoTypeId, bool)>;
 /// (resolve-run identity, normalized dir) -> that dir's field table.
 type FieldsCache = HashMap<(usize, PathBuf), Arc<FieldsOfDir>>;
 
+/// `call_name_match` with go's package block ahead of the corpus-wide count:
+/// one own-package def binds wherever it sits, two are a redeclaration.
+fn go_call_name_match(
+    output: &ExtractOutput,
+    def_index: &DefIndex,
+    callee: &str,
+    own_path: Option<&str>,
+    modules: Option<&GoModuleIndex>,
+    paths: Option<&PathIndex>,
+) -> Option<(ContentId, Span)> {
+    match (own_path, modules, paths) {
+        (Some(file), Some(modules), Some(paths)) => {
+            let sites = modules.free_sites_in_own_package(file, def_index, paths, callee);
+            if sites.is_empty() {
+                GoSource::call_name_match(output, def_index, callee)
+            } else {
+                unique_blob(&sites)
+            }
+        }
+        _ => GoSource::call_name_match(output, def_index, callee),
+    }
+}
+
 impl Resolve<CallF> for GoSource {
     fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<CallF>> {
         let Some(call) = &output.call else {
@@ -4239,16 +4262,22 @@ impl Resolve<CallF> for GoSource {
                                     )
                                 })
                                 .or_else(|| {
-                                    GoSource::call_name_match(output, def_index, callee).map(
-                                        |(blob, span)| {
-                                            (
-                                                blob,
-                                                span,
-                                                CallEdgeKind::NameResolve,
-                                                ResolutionOrigin::CorpusUnique,
-                                            )
-                                        },
+                                    go_call_name_match(
+                                        output,
+                                        def_index,
+                                        callee,
+                                        own_path,
+                                        modules,
+                                        paths,
                                     )
+                                    .map(|(blob, span)| {
+                                        (
+                                            blob,
+                                            span,
+                                            CallEdgeKind::NameResolve,
+                                            ResolutionOrigin::CorpusUnique,
+                                        )
+                                    })
                                 })
                                 .or_else(|| {
                                     modules.zip(own_path).and_then(|(modules, path)| {
