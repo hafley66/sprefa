@@ -122,8 +122,52 @@ Prelude responsibilities:
 - call-mode facts and result-edge selection;
 - match arms, wildcard coverage, exhaustiveness, and overlap relations.
 
-<!-- todo(feature): Freeze generated relation declarations before final authored-call validation. -->
+### Implemented boundary
+
+The compiler now performs a permissive bootstrap lowering, executes compiler
+rules to closure, freezes generated declarations and their final `:` bindings,
+then strictly lowers the original source. Generated relations can consequently
+appear in authored facts, rule heads, and rule bodies. The final runtime graph
+is checked again and contains no deferred-call transport.
+
+Named, punned, positional, omitted, and partially supplied arguments currently
+normalize inside `0_lowerer.pl`. This proves their static Datalog erasure and
+keeps runtime IR clean, but it does not yet satisfy the maximal-userland side of
+the design.
+
+### Next generic carrier
+
+One reified call-site protocol replaces the remaining call-policy predicates:
+
+```text
+call_site(Call, Callable, Use, Source)
+supplied_slot(Call, Index, Value, SupplyKind)
+declared_slot(Callable, Index, Label, Target)
+
+                 userland compiler rules
+                            │
+                            ▼
+effective_slot(Call, Index, Value)
+partial_call(Call, Callable)
+completed_call(Call, Callable)
+compiler_error(Source, Reason)
+```
+
+The kernel then needs only two generic operations:
+
+1. expose source calls and declaration edges as immutable rows;
+2. assemble each `completed_call` plus its dense effective slots into one
+   statically addressed Datalog tuple.
+
+Defaults become ordinary rules joining omitted slots to annotation edges.
+Punning becomes a rule joining variable spelling to declared labels. Partial
+application becomes set difference between declared and effective slot
+ordinals. Match exhaustiveness becomes set difference between sum-alternative
+edges and arm rows. Their behavior can change in the prelude without changing
+the reader, checker, evaluator, or runtime IR.
+
 <!-- todo(feature): Normalize explicit, punned, omitted, and defaulted argument slots. -->
+<!-- todo(refactor): Reify call sites so slot normalization and partial completion move from 0_lowerer.pl into prelude rules. -->
 <!-- todo(feature): Generate callable sum alternatives and userland match coverage. -->
 <!-- todo(feature): Convert final userland compiler-error rows into positioned diagnostics. -->
 
@@ -132,6 +176,7 @@ Prelude responsibilities:
 Focused tests will cover:
 
 - a generated relation called by authored facts and rules in the same unit;
+- a generated relation used as an authored rule head;
 - forward and reverse calls containing unground variables;
 - explicit named arguments in shuffled order;
 - variable-name puns, mixed punned and positional arguments, and alpha-sensitive
