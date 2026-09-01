@@ -19,3 +19,22 @@
 
 (<- (selected ?Result)
     (PairUser Order ?Result))
+
+; A generated callable can itself be partially applied after the next
+; compiler refreeze.
+(: Region (*))
+(: TripleResult (*))
+
+(: Triple
+   (* (left: type)
+      (middle: type)
+      (right: type)
+      (return: type)))
+
+(Triple User Order Region TripleResult)
+
+(: TripleUser (Triple User))
+(: TripleUserOrder (TripleUser Order))
+(: TripleDone (TripleUserOrder Region))
+
+(TripleUserOrder Region TripleResult)

@@ -2,9 +2,11 @@
           [ lower_units/4,
             lower_units_deferred/4,
             lower_units_with_environment/5,
+            lower_units_with_environment_deferred/5,
             lower_units_with_exporter/5,
             lower_units_with_exporter_deferred/5,
             lower_units_with_exporter_and_environment/6,
+            lower_units_with_exporter_and_environment_deferred/6,
             merge_module_basements/4,
             install_module_aliases/6
           ]).
@@ -63,6 +65,11 @@ lower_units_with_environment(
                                  ModuleBasements, ModuleOrigins,
                                  RestDiagnostics),
     append(UnitDiagnostics, RestDiagnostics, Diagnostics).
+
+lower_units_with_environment_deferred(
+    Units, Environment, ModuleBasements, ModuleOrigins, Diagnostics) :-
+    lower_units_deferred(Units, Environment,
+                         ModuleBasements, ModuleOrigins, Diagnostics).
 
 unit_module_owner(dl7_unit(Origin, _, _, _, _), module(Origin)).
 
@@ -158,6 +165,42 @@ lower_units_with_exporter_and_environment(
         GeneratedEnvironment,
         ModuleBasements, ModuleOrigins, Diagnostics).
 
+lower_units_with_exporter_and_environment_deferred(
+    ExporterUnit, ImporterUnits, GeneratedEnvironment,
+    ModuleBasements, ModuleOrigins, Diagnostics) :-
+    unit_module_owner(ExporterUnit, ExporterOwner),
+    lower_datalog_deferred(ExporterUnit, GeneratedEnvironment,
+                           ExporterBasement, ExporterOrigins,
+                           ExporterDiagnostics),
+    lower_importers_after_exporter_environment_deferred(
+        ExporterDiagnostics, ExporterOwner,
+        ExporterBasement, ExporterOrigins, ImporterUnits,
+        GeneratedEnvironment,
+        ModuleBasements, ModuleOrigins, Diagnostics).
+
+lower_importers_after_exporter_environment_deferred(
+    [], ExporterOwner, ExporterBasement, ExporterOrigins, ImporterUnits,
+    GeneratedEnvironment,
+    ModuleBasements, ModuleOrigins, Diagnostics) :-
+    !,
+    module_expression_environment(ExporterOwner, ExporterBasement,
+                                  PreludeEnvironment),
+    lower_importing_units_with_environment_deferred(
+        ImporterUnits, PreludeEnvironment, GeneratedEnvironment,
+        ImporterBasements, ImporterOrigins, ImporterDiagnostics),
+    ExporterBasements = [module_basement(ExporterOwner, ExporterBasement)
+                        | ImporterBasements],
+    ExporterModuleOrigins = [module_origins(ExporterOwner, ExporterOrigins)
+                            | ImporterOrigins],
+    expose_lowered_importers(
+        ImporterDiagnostics, ExporterOwner, ImporterUnits,
+        ExporterBasements, ExporterModuleOrigins,
+        ModuleBasements, ModuleOrigins, Diagnostics).
+lower_importers_after_exporter_environment_deferred(
+    Diagnostics, ExporterOwner, ExporterBasement, ExporterOrigins, _, _,
+    [module_basement(ExporterOwner, ExporterBasement)],
+    [module_origins(ExporterOwner, ExporterOrigins)], Diagnostics).
+
 lower_importers_after_exporter_environment(
     [], ExporterOwner, ExporterBasement, ExporterOrigins, ImporterUnits,
     GeneratedEnvironment,
@@ -197,6 +240,28 @@ lower_importing_units_with_environment(
                                   Environment),
     lower_datalog(Unit, Environment, Basement, Origins, UnitDiagnostics),
     lower_importing_units_with_environment(
+        Units, expression_environment(Reservations0, Relations0, Edges0),
+        GeneratedEnvironment,
+        ModuleBasements, ModuleOrigins, RestDiagnostics),
+    append(UnitDiagnostics, RestDiagnostics, Diagnostics).
+
+lower_importing_units_with_environment_deferred([], _, _, [], [], []).
+lower_importing_units_with_environment_deferred(
+    [Unit | Units],
+    expression_environment(Reservations0, Relations0, Edges0),
+    GeneratedEnvironment,
+    [module_basement(ModuleOwner, Basement) | ModuleBasements],
+    [module_origins(ModuleOwner, Origins) | ModuleOrigins], Diagnostics) :-
+    unit_module_owner(Unit, ModuleOwner),
+    reown_expression_reservations(Reservations0, ModuleOwner,
+                                  PreludeReservations),
+    PreludeOwned = expression_environment(
+                       PreludeReservations, Relations0, Edges0),
+    merge_expression_environments(GeneratedEnvironment, PreludeOwned,
+                                  Environment),
+    lower_datalog_deferred(Unit, Environment, Basement, Origins,
+                           UnitDiagnostics),
+    lower_importing_units_with_environment_deferred(
         Units, expression_environment(Reservations0, Relations0, Edges0),
         GeneratedEnvironment,
         ModuleBasements, ModuleOrigins, RestDiagnostics),

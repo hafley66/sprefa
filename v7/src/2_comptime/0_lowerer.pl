@@ -73,7 +73,7 @@ lower_after_declarations(
     append(Edges, ImportedEdges, VisibleEdges),
     Environment = expression_environment(
                       VisibleReservations, VisibleRelations, VisibleEdges),
-    lower_derived_bind_rules(Reservations, Environment, 0,
+    lower_derived_bind_rules(CallPolicy, Reservations, Environment, 0,
                              DerivedResult),
     (   DerivedResult = ok(DerivedRules, DerivedOrigins)
     ->  length(DerivedRules, RuleIndex),
@@ -103,8 +103,9 @@ finish_lowered_executables(
 finish_lowered_executables(
     error(Diagnostic), _, _, _, _, _, _, _, _, [], [Diagnostic]).
 
-lower_derived_bind_rules([], _, _, ok([], [])).
+lower_derived_bind_rules(_, [], _, _, ok([], [])).
 lower_derived_bind_rules(
+    CallPolicy,
     [reservation(Owner, _,
                  derived_compound_edge(
                      LabelNode, TargetTerm, BindNodeId, Index),
@@ -129,13 +130,14 @@ lower_derived_bind_rules(
         indexed_goal_origins(GoalNodes, RuleIndex, 0, GoalOrigins),
         RuleOrigins = [origin(rule(RuleIndex), BindNodeId) | GoalOrigins],
         NextRuleIndex is RuleIndex + 1,
-        lower_derived_bind_rules(Reservations, Environment, NextRuleIndex,
-                                 RestResult),
+        lower_derived_bind_rules(CallPolicy, Reservations, Environment,
+                                 NextRuleIndex, RestResult),
         prepend_derived_rule(RestResult, Rule, RuleOrigins, Result)
     ;   Diagnostics = [Diagnostic | _],
         Result = error(Diagnostic)
     ).
 lower_derived_bind_rules(
+    CallPolicy,
     [reservation(Owner, Name,
                  deferred_expression(TargetNode, BindNodeId, Index),
                  expression) | Reservations],
@@ -149,7 +151,8 @@ lower_derived_bind_rules(
             Owner, Name, BindNodeId, Index, Callable, Bound, Environment,
             RuleIndex, PartialResult),
         continue_partial_bind_rules(
-            PartialResult, Reservations, Environment, Result)
+            PartialResult, CallPolicy,
+            Reservations, Environment, Result)
     ;   Diagnostics == []
     ->  BindValue = var(derived_bind(BindNodeId)),
         replace_expression_value(Value, BindValue, Goals, BindGoals),
@@ -159,15 +162,21 @@ lower_derived_bind_rules(
         indexed_goal_origins(GoalNodes, RuleIndex, 0, GoalOrigins),
         RuleOrigins = [origin(rule(RuleIndex), BindNodeId) | GoalOrigins],
         NextRuleIndex is RuleIndex + 1,
-        lower_derived_bind_rules(Reservations, Environment, NextRuleIndex,
-                                 RestResult),
+        lower_derived_bind_rules(CallPolicy, Reservations, Environment,
+                                 NextRuleIndex, RestResult),
         prepend_derived_rule(RestResult, Rule, RuleOrigins, Result)
+    ;   CallPolicy == defer_unknown_calls,
+        Diagnostics = [Diagnostic | _],
+        deferred_call_diagnostic(Diagnostic)
+    ->  lower_derived_bind_rules(
+            CallPolicy, Reservations, Environment, RuleIndex, Result)
     ;   Diagnostics = [Diagnostic | _],
         Result = error(Diagnostic)
     ).
-lower_derived_bind_rules([_ | Reservations], Environment, RuleIndex,
-                         Result) :-
-    lower_derived_bind_rules(Reservations, Environment, RuleIndex, Result).
+lower_derived_bind_rules(CallPolicy, [_ | Reservations], Environment,
+                         RuleIndex, Result) :-
+    lower_derived_bind_rules(
+        CallPolicy, Reservations, Environment, RuleIndex, Result).
 
 partial_bind_rules(
     Owner, Name, BindNodeId, Index,
@@ -235,11 +244,12 @@ indexed_empty_rule_origins(Count, RuleIndex, NodeId,
     indexed_empty_rule_origins(
         NextCount, NextRuleIndex, NodeId, Origins).
 
-continue_partial_bind_rules(error(Diagnostic), _, _, error(Diagnostic)).
+continue_partial_bind_rules(error(Diagnostic), _, _, _, error(Diagnostic)).
 continue_partial_bind_rules(
-    ok(Rules, Origins0, NextRuleIndex), Reservations, Environment, Result) :-
+    ok(Rules, Origins0, NextRuleIndex), CallPolicy,
+    Reservations, Environment, Result) :-
     lower_derived_bind_rules(
-        Reservations, Environment, NextRuleIndex, RestResult),
+        CallPolicy, Reservations, Environment, NextRuleIndex, RestResult),
     (   RestResult = ok(RestRules, RestOrigins)
     ->  append(Rules, RestRules, AllRules),
         append(Origins0, RestOrigins, Origins),
