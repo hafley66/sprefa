@@ -421,7 +421,7 @@ fn load_rust_checker(
     let answers = match crate::lang::rust_checker::answer(&root, &files, CHECKER_BUDGET) {
         Ok(answers) => answers,
         Err(err) => {
-            tracing::info!("rust checker tier off: {err}");
+            tracing::warn!("rust checker tier off, syntax tier answers alone: {err}");
             return None;
         }
     };
@@ -430,6 +430,14 @@ fn load_rust_checker(
         corpus,
         cx.indexes.def_index.get().expect("the def index is set"),
     );
+    if index.files_answered == 0 {
+        tracing::warn!(
+            root = %root.display(),
+            unjoined = index.unjoined,
+            "rust checker tier loaded a workspace containing NONE of the supplied files; every answer falls to syntax — is --project-root the right Cargo workspace?"
+        );
+        return None;
+    }
     tracing::info!(
         load_ms = index.load.as_millis() as u64,
         walk_ms = index.walk.as_millis() as u64,
