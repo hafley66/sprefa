@@ -2515,3 +2515,113 @@ with no `resolved_edge` naming them.
   bench corpus rule requires; a corpus-rule decision, unchanged here.
 - **The 2,591 method sites still unanswered** (3.1%). Not classified. Whether
   they are proc-macro bodies or a real rust-analyzer limit is the next census.
+
+## 33. The type plane's checker tier, measured against its own absence (lane `feat/extract-rust-checker-types`, 2026-08-31)
+
+The lane brief asked for a second answer kind on the ra seam, "type_of /
+definition-of-type-reference", on the reading that rust carried call answers
+only. That reading is stale. Both answer kinds landed together at **#598**:
+
+| leg | site |
+|---|---|
+| the walk's type arm | `rust_checker_ra.rs:219` `type_ref`, `Adt \| Trait \| TypeAlias` |
+| the per-file answers | `rust_checker.rs:90` `types`, `:182` `type_at` |
+| the resolve consumer | `rust.rs:385-394`, ahead of every name-match leg |
+| External suppression | `rust.rs:392`, `return None` before the name match |
+| the origin slug | `ResolutionOrigin::Checker`, emitted as `checker` |
+
+What was missing is a PIN and a current measurement. Sec 30.1's on/off table
+predates the sysroot fix (#625), which changed what the tier answers.
+
+### 33.1 The table, re-measured at 8cb781d9d
+
+One release process per leg, `nice -n 15`, 873 files, the same
+`crates/*/src/**.rs` set the ratchet enumerates. `ours` rows join to
+`rust.oracle.type.typedecl.tsv` through `rust.type_census.py`.
+
+| tier | recall | precision | wall | rss |
+|---|---|---|---:|---:|
+| rust.type.syntax vs typedecl on rust-analyzer(873f) | 59.25% = 4,943 matched / 8,343 oracle type-rows | 92.31% = 4,943 matched / 5,355 emitted | 2,550 ms | 719 MB |
+| rust.type.checker vs typedecl on rust-analyzer(873f) | **64.93%** = 5,417 matched / 8,343 oracle type-rows | **98.26%** = 5,417 matched / 5,513 emitted | 17,590 ms | 2,600 MB |
+
+3-bucket, OUR rows = matched + contradicted + unjudged:
+
+| tier | ours | matched | contradicted | unjudged |
+|---|---:|---:|---:|---:|
+| syntax | 5,355 | 4,943 | 12 | 400 |
+| checker | 5,513 | 5,417 | 6 | 90 |
+
+The checker leg reproduces RATCHET.tsv row 11 (64.93 / 98.26) exactly, so the
+syntax leg beside it is scored on the same set. RATCHET.tsv is untouched by
+this lane.
+
+Read the two cost columns against each other, not against RATCHET.tsv's 13,465
+ms / 3,756 MB: those are a median of 3 IN-PROCESS runs, these are one CLI
+process each, startup and json emission included, and the peak is read after
+one run rather than three.
+
+### 33.2 Precision is the tier's larger contribution, and it is External
+
+Recall moves +5.68 pt; precision moves +5.95 pt. The precision half is one
+mechanism: 316 of our 412 excess rows disappear because `CheckerAnswer::External`
+tells the name-match legs that a std or dependency type is not the corpus type
+that shares its name. The `external=83,294` counter is the two planes together
+(`rust_checker.rs:131` and `:152` both raise it), so it prices the answer kind,
+not the type plane's share of it.
+
+Which classes the tier closes, syntax leg -> checker leg:
+
+| class | syntax | checker | closed |
+|---|---:|---:|---:|
+| K field | 395 | 215 | 180 |
+| E1 implements | 177 | 40 | 137 |
+| B enum variant payload | 281 | 162 | 119 |
+| A alias rhs | 47 | 18 | 29 |
+| F bound head | 15 | 10 | 5 |
+| D1 bound generic args | 15 | 13 | 2 |
+| D2 impl self type | 6 | 4 | 2 |
+| **missing** | **3,400** | **2,926** | **474** |
+
+The four convention/scope classes (X2 1,378, X2b 302, X3 202, X1 192) and A1
+(204) are identical under both legs: they are warranted exclusions (28.3), not
+resolution outcomes.
+
+### 33.3 The answers the tier holds and cannot hand over
+
+`type_ambiguous=459` (new counter, `rust_checker.rs:98`, logged beside
+`unjoined` and `external`). The type plane keys the tier's answers on
+(file, name) because a `TypeEdgeCandidate` (`types.rs:342`) carries an OWNER
+span and no reference span; the call plane keys on the reference span and has
+no such collapse. 459 type names resolve two ways inside one file, and each
+one falls back to the name-match legs.
+
+459 is the ceiling, not the prize. On a fixture where the collapse fires
+(`rust_checker_types/src/lib.rs` `Mixed`), the module plane binds both
+spellings anyway, so the recall a span key would add is the subset the
+name-match legs miss and is unmeasured. Pricing it needs a reference span on
+`TypeEdgeCandidate`, which is shared by the ts, go, kotlin, python and dl6
+arms: a cross-lang arc, outside this lane's ownership.
+
+### 33.4 The pin
+
+`tests/94_rust_checker_types.rs`, the rust twin of
+`92_ts_checker.rs:the_checker_answers_the_type_plane_too`. Five tests over one
+fixture run twice. The fail-pre-fix receipt is a test of its own:
+`the_syntax_leg_alone_binds_a_std_name_to_its_decoy` asserts
+`Located -> decoys.rs PathBuf | corpus_unique`, the wrong binding
+`an_external_type_answer_suppresses_the_name_match` then shows absent.
+
+The fixture also records what the syntax leg already does WITHOUT the tier:
+the module plane chases glob imports (`use crate::widget::*`), renaming
+re-exports (`as Gadget`) and two-hop re-exports on its own. On synthetic
+corpora the tier's only unique answer is the External one; its recall
+contribution shows up at corpus scale, in the 474 rows of 33.2.
+
+### 33.5 What this lane did not move
+
+Row 11's macro-minted block (255 rows, 3.06 pt) is untouched and unchanged:
+the resolution block is still 418 rows (K 215, B 162, A 18, D1 13, F 10),
+the same split sec 28.3 measured. The tier is at its ceiling there because
+`answer_of` needs a `DefIndex` site for the destination and no `TypeF` node
+exists for a macro-minted type. That remains a design arc with the user in the
+room (30.3).
