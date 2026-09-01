@@ -170,6 +170,9 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-09-01-dl7-callable-relations.md:169 — Normalize explicit, punned, omitted, and defaulted argument slots.
 - `feature` plans/2026-09-01-dl7-callable-relations.md:171 — Generate callable sum alternatives and userland match coverage.
 - `feature` plans/2026-09-01-dl7-callable-relations.md:172 — Convert final userland compiler-error rows into positioned diagnostics.
+- `feature` plans/2026-09-01-dl7-reified-call-sites.md:82 — Reify escaping partial applications as callable specialization facts and generate their forwarding relations in the DL7 prelude.
+- `feature` plans/2026-09-01-dl7-reified-call-sites.md:84 — Repeat source lowering and compiler evaluation until newly generated callable declarations and dependent partial specializations stabilize.
+- `feature` plans/2026-09-01-dl7-reified-call-sites.md:85 — Add the compiler-relation emitter protocol and monomorphic Datalog application emitter boundary.
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:189 — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:190 — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
@@ -198,6 +201,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `perf` plans/2026-08-25-move-rule-perf.PLAN.md:198 — Arc B name-gate: confirm old itself is always admitted (it contains its own stem) and its module name still parses
 - `perf` plans/2026-08-25-move-rule-perf.PLAN.md:199 — Arc C parallel drain: assert edit_stage order equals sorted rel order in a unit test before relying on the byte-identical receipt
 - `refactor` plans/2026-09-01-dl7-callable-relations.md:170 — Reify call sites so slot normalization and partial completion move from 0_lowerer.pl into prelude rules.
+- `refactor` plans/2026-09-01-dl7-reified-call-sites.md:83 — Reify every call site and move named, punned, omitted, and defaulted slot policy from 0_lowerer.pl into prelude rules.
 - `triage` plans/2026-07-11-cross-harness-agent-tooling.md:147 — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
 - `triage` plans/2026-07-11-docs-and-dogfood-audit.md:40 — re-enable hooks (timeout+advisory) — relights the dark event arm; Chris flips
 - `triage` plans/2026-07-11-engine-mod-split.md:72 — SG_LANG_TABLE final home (src/sg.rs vs engine/lang_tables.rs) when the lang_tables cluster moves
@@ -409,6 +413,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-09-01-dl7-callable-relations.md:170 `refactor` — Reify call sites so slot normalization and partial completion move from 0_lowerer.pl into prelude rules.
 - plans/2026-09-01-dl7-callable-relations.md:171 `feature` — Generate callable sum alternatives and userland match coverage.
 - plans/2026-09-01-dl7-callable-relations.md:172 `feature` — Convert final userland compiler-error rows into positioned diagnostics.
+- plans/2026-09-01-dl7-reified-call-sites.md:82 `feature` — Reify escaping partial applications as callable specialization facts and generate their forwarding relations in the DL7 prelude.
+- plans/2026-09-01-dl7-reified-call-sites.md:83 `refactor` — Reify every call site and move named, punned, omitted, and defaulted slot policy from 0_lowerer.pl into prelude rules.
+- plans/2026-09-01-dl7-reified-call-sites.md:84 `feature` — Repeat source lowering and compiler evaluation until newly generated callable declarations and dependent partial specializations stabilize.
+- plans/2026-09-01-dl7-reified-call-sites.md:85 `feature` — Add the compiler-relation emitter protocol and monomorphic Datalog application emitter boundary.
 <!-- END: plans-by-plan -->
 
 ## By code file
