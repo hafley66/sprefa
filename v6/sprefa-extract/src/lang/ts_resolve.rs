@@ -14,7 +14,7 @@
 //! monorepo's sibling packages are all outside the supplied universe. The two
 //! stay separate; neither replaces the other.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use oxc_allocator::Allocator;
@@ -545,6 +545,9 @@ pub struct TsModuleIndex {
     /// Each module's export table, built on first ask. A table reached through
     /// a re-export CYCLE is incomplete by construction and is never cached.
     tables: std::sync::Mutex<HashMap<String, std::sync::Arc<ExportTable>>>,
+    /// Blobs some corpus specifier names: the module graph's reached set,
+    /// separating a real twin file from one no import touches.
+    reached: HashSet<ContentId>,
 }
 
 impl TsModuleIndex {
@@ -614,6 +617,11 @@ impl TsModuleIndex {
             }
         }
         index.facts = files.into_iter().collect();
+        index.reached = index
+            .targets
+            .values()
+            .filter_map(|target| index.blobs.get(target).cloned())
+            .collect();
         index
     }
 
@@ -646,6 +654,11 @@ impl TsModuleIndex {
         self.targets
             .get(&(path.to_string(), specifier.to_string()))
             .map(String::as_str)
+    }
+
+    /// Whether any corpus import names `blob`'s file.
+    pub fn reached(&self, blob: &ContentId) -> bool {
+        self.reached.contains(blob)
     }
 
     /// Every import binding `path` writes, resolved. One row per binding, in

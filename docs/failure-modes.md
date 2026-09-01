@@ -2847,3 +2847,27 @@ The observed standard, in order — no step is optional:
 - **Fail-pre-fix**: on the pre-rail tree, `cargo test --features cli --test ratchet_recall -- --ignored --test-threads=1 ratchet_rust` fails with 10 regressed rows (recall 75.66 vs floor 93.69) instead of naming the protocol error; the same command on the post-rail tree dies in `measure()` before enumerating a file.
 - **Rail**: two asserts at the top of `measure()` (`tests/bench/mod.rs`): a dev-profile build panics with "run `just extract-ratchet`" for every leg, and a rust leg built without the `rust-checker` feature panics the same way. Both fire before any measurement exists to misread.
 - **Entry**: `just extract-ratchet` on the #615 tree: rc=0, all rows hold, all three legs (ts5, go, rust), release, per-leg processes. The wrong-protocol run on the same tree: rust 75.66/49.78 FAIL, walls 4-14x ceilings.
+
+## 102. Eight lane spawns died silently because a squash-merge sha only existed on GitHub
+
+- **Incident** (2026-08-31): `boop beep lane create --base-sha <sha>` died instantly ~8 times across the evening — "lane dispatch starting" with no "dispatched", no tmux session, no lane record. Retries sometimes worked, which pointed falsely at a boop race. The real error surfaced only after a boop rebuild (0.0.10 774373d -> 35df3b6): `git worktree add ... fatal: not a valid branch point`, because `gh pr merge --squash` mints the merge commit remotely and the local repo had never fetched it.
+- **RCA**: two defects. The coordinator passed freshly minted merge shas straight into `--base-sha` without `git fetch origin`; and pre-rebuild boop swallowed the `git worktree add` stderr, converting a one-line fatal into a silent instant death.
+- **Fail-pre-fix**: any spawn with an unfetched sha on pre-rebuild boop: 3 consecutive deaths for `feat/extract-ts-checker` (2026-08-31 18:2x), all with zero diagnostics.
+- **Rail**: coordinator law — `git fetch origin` in the spawn repo before EVERY `lane create`, no exception; and rebuilt boop prints the git error verbatim. Remaining boop ask (issue to file): surface the worktree-add failure in the `lane create` exit line itself, plus the still-open first-spawn-after-merge flake where a fetched sha dies once and the identical retry lives.
+- **Entry**: post-rule spawns (fix/extract-py-mutation-findings after fetch, fix/extract-go-mutation-findings retry, fix/extract-ts-mutation-finding retry): dispatched + PANE-ALIVE.
+
+## 103. The disk hit 100% mid-grade because every worktree carried its own multi-GB cargo target
+
+- **Incident** (2026-08-31 ~20:00): a grade run died with `No space left on device`; `df` read 927G/927G, 275 MB free. 53 GB had been free three hours earlier. Four dirs held 84 GB: the main checkout's `v6/sprefa-extract/target` (35.6 GiB, mostly stale debug artifacts), two live lane worktrees' targets (18G + 16G), and `~/.cache/boop` (16G shared cache).
+- **RCA**: every lane worktree builds its own full debug AND release target (~15-18 GB each with the ra_ap dependency tree); merged-lane worktrees were being deleted (reclaiming theirs) but the MAIN checkout's target only grew, and nothing watched `df`.
+- **Fail-pre-fix**: task bfcjur8uu's first run: `suite rc=101` with the bash spawn itself failing on `/tmp` writes.
+- **Rail**: coordinator tick duty — `df` every tick, floor 15G free; under floor, `cargo clean` the stalest non-live target first (main checkout's is always safe: `just boop-start` re-caches the release binary keyed by src digest). Worktree removal at merge remains the primary reclaim.
+- **Entry**: `cargo clean` on the main target returned 35.6 GiB in ~90 s; grade re-ran green (suite 135/135); merging the two finished lanes returned another 34 GB (46G free at 20:30).
+
+## 104. A wall-budget perf test failed on two trees at once and blamed the newest PR
+
+- **Incident** (2026-08-31 19:1x): `emit_throughput_350k_rows_under_budget` (tests/45_emit_throughput.rs:89, fixed 5.5 s budget) failed 3x-isolated in PR #624's worktree at 7.04 s — and the same test had passed 25 minutes earlier in a sibling worktree. The PR was nearly returned as a throughput regression.
+- **RCA**: the budget is wall-clock on a debug binary while an opus lane ran full release builds beside it; the control run on main read 6.83 s — red for the identical environmental reason. A fixed wall budget cannot distinguish "the code got slower" from "the machine got busier"; the 3x-isolated protocol repeats the same bias when the load is continuous.
+- **Fail-pre-fix**: PR branch 7.04 s and main 6.83 s against the 5.5 s budget in the same quarter hour, both rc=101, zero code overlap with the emit path in the PR diff.
+- **Rail**: the control-on-main run is now part of the grading protocol for any perf-budget failure: same test, main tree, same machine window; PR-red + main-red = environmental, merge on the accuracy receipts. Candidate code rail (unbuilt): the budget assert should read the 1-minute load average and skip-with-note above a threshold, like the measure() rails of entry 101.
+- **Entry**: #624 merged on accuracy receipts (PyCG 69.49% = 164/236 recall, 100.00% = 164/164 precision, battery green); the throughput test passed again once the lane builds finished.

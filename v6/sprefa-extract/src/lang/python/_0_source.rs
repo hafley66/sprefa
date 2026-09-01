@@ -2467,13 +2467,24 @@ impl PythonSource {
         callee: &str,
     ) -> Option<(ContentId, Span)> {
         let call = output.call.as_ref()?;
-        if let Some(r) = def_named(call, &output.strings, callee) {
-            let span = call.node(r).span;
-            if let Some(site) = corpus_defs(index, callee)
-                .iter()
-                .find(|site| site.span == span && site.family == FamilyTag::Call)
-            {
-                return Some((site.blob.clone(), site.span));
+        let sites = corpus_defs(index, callee);
+        let mut blobs: Vec<ContentId> = Vec::new();
+        for site in sites.iter().filter(|s| s.family == FamilyTag::Call) {
+            if !blobs.contains(&site.blob) {
+                blobs.push(site.blob.clone());
+            }
+        }
+        // Every leg below needs the name to own exactly one corpus file: a
+        // duplicate def anywhere makes any dst, same-file or not, a guess.
+        if blobs.len() == 1 {
+            if let Some(r) = def_named(call, &output.strings, callee) {
+                let span = call.node(r).span;
+                if let Some(site) = sites
+                    .iter()
+                    .find(|site| site.span == span && site.family == FamilyTag::Call)
+                {
+                    return Some((site.blob.clone(), site.span));
+                }
             }
         }
         // `Callee()` is a call to `Callee.__init__` (PyCG's oracle semantics);
@@ -2487,13 +2498,6 @@ impl PythonSource {
         // took the ctor leg above; resolving it to the TypeF class def minted
         // class-name rows the PyCG oracle never has (37/136 rows, precision
         // 71.32 -> floor breach, 2026-08-31 rescore).
-        let sites = corpus_defs(index, callee);
-        let mut blobs: Vec<ContentId> = Vec::new();
-        for site in sites.iter().filter(|s| s.family == FamilyTag::Call) {
-            if !blobs.contains(&site.blob) {
-                blobs.push(site.blob.clone());
-            }
-        }
         let [blob] = blobs.as_slice() else {
             return None;
         };
@@ -2711,16 +2715,20 @@ impl Resolve<CallF> for PythonSource {
                     CallEdgeKind::NameResolve,
                     origin,
                 );
-            } else if let Some((dst_blob, dst_span)) =
-                PythonSource::call_name_match(output, def_index, callee)
-            {
-                push(
-                    &mut edges,
-                    dst_blob,
-                    dst_span,
-                    CallEdgeKind::NameResolve,
-                    ResolutionOrigin::CorpusUnique,
-                );
+            } else if !resolver.shadowed(callee, site.span) {
+                // Shadowed names stay dropped: the corpus match must not
+                // resurrect the module-level binding resolve_site declined.
+                if let Some((dst_blob, dst_span)) =
+                    PythonSource::call_name_match(output, def_index, callee)
+                {
+                    push(
+                        &mut edges,
+                        dst_blob,
+                        dst_span,
+                        CallEdgeKind::NameResolve,
+                        ResolutionOrigin::CorpusUnique,
+                    );
+                }
             }
             // The applied decorator of a `@factory()` site: a second edge.
             if let Some((_, t)) = resolver
