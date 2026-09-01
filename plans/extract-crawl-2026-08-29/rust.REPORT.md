@@ -2555,6 +2555,11 @@ The checker leg reproduces RATCHET.tsv row 11 (64.93 / 98.26) exactly, so the
 syntax leg beside it is scored on the same set. RATCHET.tsv is untouched by
 this lane.
 
+Read the two cost columns against each other, not against RATCHET.tsv's 13,465
+ms / 3,756 MB: those are a median of 3 IN-PROCESS runs, these are one CLI
+process each, startup and json emission included, and the peak is read after
+one run rather than three.
+
 ### 33.2 Precision is the tier's larger contribution, and it is External
 
 Recall moves +5.68 pt; precision moves +5.95 pt. The precision half is one
