@@ -277,8 +277,6 @@ deferrable_source_diagnostics_rest([Diagnostic | Diagnostics]) :-
     deferrable_source_diagnostics_rest(Diagnostics).
 
 deferrable_source_diagnostic(
-    diagnostic(lower, _, undeclared_relation(_))).
-deferrable_source_diagnostic(
     diagnostic(lower, _, not_relation(_))).
 
 expand_after_deferred_check(
