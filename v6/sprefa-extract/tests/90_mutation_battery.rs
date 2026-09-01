@@ -18,8 +18,6 @@
 //! - F1 shadow_python: a param named imported_fn does not shadow the
 //!   module-level import; the call inside the enclosing def keeps a
 //!   corpus_unique edge to helper.py's def.
-//! - F4 duplicate_def_ts: a second free-fn step leaves generator.ts's
-//!   corpus_unique edge alive, same dst, origin unchanged.
 //! - F5 duplicate_def_python_same_file: a second local_fn in another file
 //!   leaves main.py's corpus_unique edge alive; the cross-file duplicate
 //!   (duplicate_def_python_cross_file, green) does flip to absent, so the
@@ -726,7 +724,6 @@ fn ts_scenarios() -> Vec<Scenario> {
 /// shape holds for a duplicated method (this.tidy in known_receiver), so it
 /// is not a function-vs-method bucketing artifact.
 #[test]
-#[ignore = "FINDING F4: duplicate step keeps the corpus_unique edge"]
 fn duplicate_def_ts() {
     let (base, after) = run(&ts_scenarios()[0]);
     assert_duplicate_def(&base, &after, "step");
