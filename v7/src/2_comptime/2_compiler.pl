@@ -14,8 +14,10 @@
                 validate_functional_rows/3
               ]).
 :- use_module('0a_module_lowerer',
-              [ lower_units/4,
-                lower_units_with_exporter/5,
+              [ lower_units_deferred/4,
+                lower_units_with_environment/5,
+                lower_units_with_exporter_deferred/5,
+                lower_units_with_exporter_and_environment/6,
                 merge_module_basements/4
               ]).
 :- use_module('0b_filesystem_grapher', [install_project_graph/6]).
@@ -139,7 +141,8 @@ compile_unit(Unit, Compiled, Diagnostics) :-
 compile_units(Units, Compiled, Diagnostics) :-
     lower_compiler_units(Units, ModuleBasements, ModuleOrigins,
                          LowerDiagnostics),
-    compile_after_unit_lower(LowerDiagnostics,
+    Context = compile_context(Units, none),
+    compile_after_unit_lower(LowerDiagnostics, Context,
                              ModuleBasements, ModuleOrigins,
                              Compiled, Diagnostics),
     !,
@@ -151,7 +154,8 @@ compile_project_units(Project, Units, Compiled, Diagnostics) :-
     install_project_after_lower(
         LowerDiagnostics, Project, ModuleBasements0, ModuleOrigins0,
         ModuleBasements, ModuleOrigins, ProjectDiagnostics),
-    compile_after_unit_lower(ProjectDiagnostics,
+    Context = compile_context(Units, project(Project)),
+    compile_after_unit_lower(ProjectDiagnostics, Context,
                              ModuleBasements, ModuleOrigins,
                              Compiled, Diagnostics),
     !,
@@ -170,37 +174,41 @@ install_project_after_lower(
 lower_compiler_units(Units, ModuleBasements, ModuleOrigins, Diagnostics) :-
     (   select(PreludeUnit, Units, ImporterUnits),
         unit_has_origin(PreludeUnit, prelude)
-    ->  lower_units_with_exporter(PreludeUnit, ImporterUnits,
-                                  ModuleBasements, ModuleOrigins,
-                                  Diagnostics)
-    ;   lower_units(Units, ModuleBasements, ModuleOrigins, Diagnostics)
+    ->  lower_units_with_exporter_deferred(
+            PreludeUnit, ImporterUnits,
+            ModuleBasements, ModuleOrigins, Diagnostics)
+    ;   lower_units_deferred(Units, ModuleBasements, ModuleOrigins,
+                             Diagnostics)
     ).
 
 unit_has_origin(dl7_unit(Origin, _, _, _, _), Origin).
 
-compile_after_unit_lower([], ModuleBasements, ModuleOrigins,
+compile_after_unit_lower([], Context, ModuleBasements, ModuleOrigins,
                          Compiled, Diagnostics) :-
     !,
     merge_module_basements(ModuleBasements, ModuleOrigins,
                            Basement, Origins),
-    compile_after_lower([], Basement, Origins, Compiled, Diagnostics).
-compile_after_unit_lower(Diagnostics, _, _, [], Diagnostics).
+    compile_after_lower([], Context, Basement, Origins,
+                        Compiled, Diagnostics).
+compile_after_unit_lower(Diagnostics, _, _, _, [], Diagnostics).
 
-compile_after_lower([], Basement, Origins, Compiled, Diagnostics) :-
+compile_after_lower([], Context, Basement, Origins, Compiled, Diagnostics) :-
     !,
     check_datalog(Basement, Origins, Checked, CheckDiagnostics),
-    compile_after_check(CheckDiagnostics, Checked, Compiled, Diagnostics).
-compile_after_lower(Diagnostics, _, _, [], Diagnostics).
+    compile_after_check(CheckDiagnostics, Context, Checked,
+                        Compiled, Diagnostics).
+compile_after_lower(Diagnostics, _, _, _, [], Diagnostics).
 
-compile_after_check([], Checked, Compiled, Diagnostics) :-
+compile_after_check([], Context, Checked, Compiled, Diagnostics) :-
     !,
-    evaluate_checked(Checked, Compiled, Diagnostics).
-compile_after_check(Diagnostics, _, [], Diagnostics).
+    evaluate_checked(Context, Checked, Compiled, Diagnostics).
+compile_after_check(Diagnostics, _, _, [], Diagnostics).
 
 evaluate_checked(
+    Context,
     checked_datalog(Graph,
                     datalog_program(Relations, AuthoredSeeds, Rules),
-                    Depends, Strata),
+                    _, _),
     Compiled,
     Diagnostics) :-
     graph_seeds(Graph, GraphSeeds),
@@ -212,51 +220,200 @@ evaluate_checked(
                              InitialRequests, [], [], 1,
                              CompilerFacts, GeneratedProgram,
                              EvaluationDiagnostics),
-    finish_evaluation(EvaluationDiagnostics, Relations, CompilerFacts,
-                      GeneratedProgram,
-                      Graph, AuthoredSeeds, Rules, Depends, Strata,
+    finish_evaluation(EvaluationDiagnostics, Context,
+                      CompilerFacts, GeneratedProgram,
                       Compiled, Diagnostics).
 
-finish_evaluation([], Relations, CompilerFacts, GeneratedProgram,
-                  Graph, AuthoredSeeds, Rules,
-                  Depends, Strata, Compiled, Diagnostics) :-
+finish_evaluation([], Context, CompilerFacts, GeneratedProgram,
+                  Compiled, Diagnostics) :-
     !,
     GeneratedProgram = generated_program(GeneratedRelations, _, _, _),
-    append(Relations, GeneratedRelations, AllRelations0),
-    sort(AllRelations0, AllRelations),
-    validate_functional_rows(AllRelations, CompilerFacts, KeyDiagnostics),
-    finish_key_validation(KeyDiagnostics, CompilerFacts, Graph, Relations,
-                          AuthoredSeeds, Rules, Depends, Strata,
-                          GeneratedProgram,
-                          Compiled, Diagnostics).
-finish_evaluation(Diagnostics, _, _, _, _, _, _, _, _, [], Diagnostics).
+    final_checked_program(Context, CompilerFacts, GeneratedRelations,
+                          FinalChecked, FinalDiagnostics),
+    finish_final_check(FinalDiagnostics, FinalChecked,
+                       CompilerFacts, GeneratedProgram,
+                       Compiled, Diagnostics).
+finish_evaluation(Diagnostics, _, _, _, [], Diagnostics).
 
-finish_key_validation([], CompilerFacts, Graph, Relations, AuthoredSeeds,
-                      Rules, Depends, Strata, GeneratedProgram,
-                      compiled_unit(TypeGraphFacts, RuntimeProgram,
-                                    CompilerFacts), []) :-
+finish_final_check([], FinalChecked, CompilerFacts, GeneratedProgram,
+                   Compiled, Diagnostics) :-
+    !,
+    FinalChecked = checked_datalog(
+                       _, datalog_program(Relations, _, _), _, _),
+    validate_functional_rows(Relations, CompilerFacts, KeyDiagnostics),
+    finish_key_validation(KeyDiagnostics, CompilerFacts, FinalChecked,
+                          GeneratedProgram, Compiled, Diagnostics).
+finish_final_check(Diagnostics, _, _, _, [], Diagnostics).
+
+finish_key_validation([], CompilerFacts,
+                      checked_datalog(Graph,
+                                      datalog_program(Relations,
+                                                      AuthoredSeeds, Rules),
+                                      _, _),
+                      GeneratedProgram, Compiled, Diagnostics) :-
     !,
     type_graph_facts(CompilerFacts, TypeGraphFacts),
     GeneratedProgram = generated_program(
-                           GeneratedRelations, GeneratedRules,
-                           GeneratedDepends, GeneratedStrata),
+                           GeneratedRelations, GeneratedRules, _, _),
     append(Relations, GeneratedRelations, RuntimeRelations0),
     sort(RuntimeRelations0, RuntimeRelations),
     append(Rules, GeneratedRules, RuntimeRules0),
     sort(RuntimeRules0, RuntimeRules),
-    (   GeneratedRelations == [],
-        GeneratedRules == []
-    ->  RuntimeDepends = Depends,
-        RuntimeStrata = Strata
-    ;   RuntimeDepends = GeneratedDepends,
-        RuntimeStrata = GeneratedStrata
-    ),
-    RuntimeProgram = checked_datalog(
-                         Graph,
-                         datalog_program(RuntimeRelations, AuthoredSeeds,
-                                         RuntimeRules),
-                         RuntimeDepends, RuntimeStrata).
-finish_key_validation(Diagnostics, _, _, _, _, _, _, _, _, [], Diagnostics).
+    check_resolved_rules(RuntimeRelations, RuntimeRules,
+                         RuntimeDepends, RuntimeStrata,
+                         RuntimeDiagnostics),
+    finish_runtime_program(
+        RuntimeDiagnostics, Graph, RuntimeRelations, AuthoredSeeds,
+        RuntimeRules, RuntimeDepends, RuntimeStrata,
+        CompilerFacts, TypeGraphFacts,
+        Compiled, Diagnostics).
+finish_key_validation(Diagnostics, _, _, _, [], Diagnostics).
+
+finish_runtime_program([], Graph, Relations, Seeds, Rules,
+                       Depends, Strata, CompilerFacts, TypeGraphFacts,
+                       compiled_unit(
+                           TypeGraphFacts,
+                           checked_datalog(
+                               Graph,
+                               datalog_program(Relations, Seeds, Rules),
+                               Depends, Strata),
+                           CompilerFacts), []).
+finish_runtime_program(Diagnostics, _, _, _, _, _, _, _, _,
+                       [], Diagnostics).
+
+%% final_checked_program(+Context, +CompilerFacts, +GeneratedRelations,
+%%                       -Checked, -Diagnostics) is det.
+%
+% Generated declarations and their final owner bindings form an ordinary
+% expression environment for one strict source lowering. The resulting
+% basement then passes through the same resolver and Datalog checker as every
+% authored program.
+final_checked_program(Context, CompilerFacts, GeneratedRelations,
+                      Checked, Diagnostics) :-
+    generated_expression_environment(
+        CompilerFacts, GeneratedRelations, Environment),
+    Context = compile_context(Units, ProjectContext),
+    lower_final_units(Units, Environment,
+                      ModuleBasements0, ModuleOrigins0, LowerDiagnostics),
+    freeze_after_final_lower(
+        LowerDiagnostics, Environment,
+        ModuleBasements0, ModuleOrigins0,
+        ModuleBasements1, ModuleOrigins1, FreezeDiagnostics),
+    install_final_project_graph(
+        FreezeDiagnostics, ProjectContext,
+        ModuleBasements1, ModuleOrigins1,
+        ModuleBasements, ModuleOrigins, ProjectDiagnostics),
+    check_final_basements(ProjectDiagnostics,
+                          ModuleBasements, ModuleOrigins,
+                          GeneratedRelations, Checked, Diagnostics).
+
+lower_final_units(Units, Environment,
+                  ModuleBasements, ModuleOrigins, Diagnostics) :-
+    (   select(PreludeUnit, Units, ImporterUnits),
+        unit_has_origin(PreludeUnit, prelude)
+    ->  lower_units_with_exporter_and_environment(
+            PreludeUnit, ImporterUnits, Environment,
+            ModuleBasements, ModuleOrigins, Diagnostics)
+    ;   lower_units_with_environment(
+            Units, Environment,
+            ModuleBasements, ModuleOrigins, Diagnostics)
+    ).
+
+freeze_after_final_lower(
+    [], Environment, Basements0, Origins,
+    Basements, Origins, []) :-
+    !,
+    freeze_module_basements(Environment, Basements0, Basements).
+freeze_after_final_lower(
+    Diagnostics, _, Basements, Origins,
+    Basements, Origins, Diagnostics).
+
+freeze_module_basements(_, [], []).
+freeze_module_basements(
+    Environment,
+    [module_basement(Owner,
+                     basement_program(root_graph(Nodes, Edges0), Program))
+     | Basements0],
+    [module_basement(Owner,
+                     basement_program(root_graph(Nodes, Edges), Program))
+     | Basements]) :-
+    Environment = expression_environment(Reservations, _, _),
+    maplist(freeze_pending_edge(Reservations), Edges0, Edges),
+    freeze_module_basements(Environment, Basements0, Basements).
+
+freeze_pending_edge(
+    Reservations,
+    pending_edge(Owner, Name, deferred_expression(_), Index),
+    pending_edge(Owner, Name, target(Relation), Index)) :-
+    memberchk(reservation(Owner, Name, target(Relation), product),
+              Reservations),
+    !.
+freeze_pending_edge(_, Edge, Edge).
+
+install_final_project_graph(
+    [], none, Basements, Origins,
+    Basements, Origins, []) :-
+    !.
+install_final_project_graph(
+    [], project(Project), Basements0, Origins0,
+    Basements, Origins, Diagnostics) :-
+    !,
+    install_project_graph(Project, Basements0, Origins0,
+                          Basements, Origins, Diagnostics).
+install_final_project_graph(
+    Diagnostics, _, Basements, Origins,
+    Basements, Origins, Diagnostics).
+
+check_final_basements([], ModuleBasements, ModuleOrigins,
+                      GeneratedRelations, Checked, Diagnostics) :-
+    !,
+    merge_module_basements(ModuleBasements, ModuleOrigins,
+                           Basement0, Origins),
+    add_generated_relations(Basement0, GeneratedRelations, Basement),
+    check_datalog(Basement, Origins, Checked, Diagnostics).
+check_final_basements(Diagnostics, _, _, _, [], Diagnostics).
+
+add_generated_relations(
+    basement_program(Graph,
+                     datalog_program(Relations0, Seeds, Rules)),
+    GeneratedRelations,
+    basement_program(Graph,
+                     datalog_program(Relations, Seeds, Rules))) :-
+    maplist(unref_generated_relation,
+            GeneratedRelations, SourceGeneratedRelations),
+    append(Relations0, SourceGeneratedRelations, Relations1),
+    sort(Relations1, Relations).
+
+unref_generated_relation(relation(ref(Relation), Arity, KeySets),
+                         relation(Relation, Arity, KeySets)).
+
+generated_expression_environment(
+    CompilerFacts, GeneratedRelations,
+    expression_environment(Reservations, Relations, Edges)) :-
+    maplist(unref_generated_relation, GeneratedRelations, Relations0),
+    sort(Relations0, Relations),
+    findall(
+        reservation(Owner, Name, target(Relation), product),
+        ( member(call(ref(kernel(':')),
+                      [ ref(Owner), const(Name), ref(Relation), const(_) ]),
+                 CompilerFacts),
+          memberchk(relation(Relation, _, _), Relations),
+          atom(Name)
+        ),
+        Reservations0),
+    sort(Reservations0, Reservations),
+    findall(
+        pending_edge(Owner, Name, Target, Index),
+        ( member(call(ref(kernel(':')),
+                      [ ref(Owner), const(Name), Value, const(Index) ]),
+                 CompilerFacts),
+          compiler_value_target(Value, Target)
+        ),
+        Edges0),
+    sort(Edges0, Edges).
+
+compiler_value_target(ref(Identity), target(Identity)).
+compiler_value_target(const(Value), const(Value)).
 
 %% evaluate_compiler_rounds(+Rules, +Relations, +BaseSeeds, +FrozenEdges,
 %%                          +FrozenRequests, +FrozenGeneratedRelations,

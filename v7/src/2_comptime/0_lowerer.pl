@@ -1,6 +1,7 @@
 :- module(dl7_lowerer,
           [ lower_datalog/4,
             lower_datalog/5,
+            lower_datalog_deferred/5,
             kernel_relation/2
           ]).
 
@@ -22,6 +23,23 @@ lower_datalog(Unit, Program, Origins, Diagnostics) :-
 % Imported callable declarations participate in expression lowering while the
 % emitted basement retains only rows declared by this unit.
 lower_datalog(Unit, ImportedEnvironment, Program, Origins, Diagnostics) :-
+    lower_datalog_mode(strict, Unit, ImportedEnvironment,
+                       Program, Origins, Diagnostics).
+
+%% lower_datalog_deferred(+Unit, +ImportedEnvironment,
+%%                        -Program, -Origins, -Diagnostics) is det.
+%
+% Bootstrap lowering may encounter calls whose relation identities will be
+% emitted by the compiler fixpoint. Hold back only those executable forms;
+% every other lowering error remains immediate. The compiler strictly lowers
+% the original unit again after generated declarations freeze.
+lower_datalog_deferred(Unit, ImportedEnvironment,
+                       Program, Origins, Diagnostics) :-
+    lower_datalog_mode(defer_unknown_calls, Unit, ImportedEnvironment,
+                       Program, Origins, Diagnostics).
+
+lower_datalog_mode(CallPolicy, Unit, ImportedEnvironment,
+                   Program, Origins, Diagnostics) :-
     must_be(ground, Unit),
     must_be(ground, ImportedEnvironment),
     (   Unit = dl7_unit(Origin, _, Forms, _, _)
@@ -29,7 +47,8 @@ lower_datalog(Unit, ImportedEnvironment, Program, Origins, Diagnostics) :-
         ModuleOwner = module(ModuleIdentity),
         lower_declarations(Forms, ModuleOwner, ModuleIdentity,
                            DeclarationResult),
-        lower_after_declarations(DeclarationResult, Forms, ModuleOwner,
+        lower_after_declarations(CallPolicy, DeclarationResult,
+                                 Forms, ModuleOwner,
                                  ImportedEnvironment,
                                  Program, Origins, Diagnostics)
     ;   Program = [],
@@ -38,8 +57,10 @@ lower_datalog(Unit, ImportedEnvironment, Program, Origins, Diagnostics) :-
     ),
     !.
 
-lower_after_declarations(error(Diagnostic), _, _, _, [], [], [Diagnostic]).
+lower_after_declarations(_, error(Diagnostic), _, _, _,
+                         [], [], [Diagnostic]).
 lower_after_declarations(
+    CallPolicy,
     ok(Nodes0, Edges, Relations, DeclarationOrigins, Reservations),
     Forms, ModuleOwner, ImportedEnvironment,
     Program, Origins, Diagnostics) :-
@@ -56,7 +77,7 @@ lower_after_declarations(
                              DerivedResult),
     (   DerivedResult = ok(DerivedRules, DerivedOrigins)
     ->  length(DerivedRules, RuleIndex),
-        lower_executables(Forms, ModuleOwner, Environment,
+        lower_executables(CallPolicy, Forms, ModuleOwner, Environment,
                           RuleIndex, ExecutableResult),
         finish_lowered_executables(
             ExecutableResult, DerivedRules, DerivedOrigins,
@@ -377,33 +398,41 @@ finish_compound_edge_bind(
     Origins = [origin(edge(Owner, Marker, Index), BindNodeId) | Origins0].
 
 %% Pass 3: lower facts and rules after all declarations are reserved.
-lower_executables(Forms, Owner, Environment, RuleIndex, Result) :-
-    lower_executables(Forms, Owner, Environment, 0, RuleIndex, Result).
+lower_executables(CallPolicy, Forms, Owner, Environment,
+                  RuleIndex, Result) :-
+    lower_executables(CallPolicy, Forms, Owner, Environment,
+                      0, RuleIndex, Result).
 
-lower_executables([], _, _, _, _, ok([], [], [])).
-lower_executables([Form | Forms], Owner, Environment,
+lower_executables(_, [], _, _, _, _, ok([], [], [])).
+lower_executables(CallPolicy, [Form | Forms], Owner, Environment,
                   SeedIndex, RuleIndex, Result) :-
     (   bind_form(Form, _, _, _)
-    ->  lower_executables(Forms, Owner, Environment,
+    ->  lower_executables(CallPolicy, Forms, Owner, Environment,
                           SeedIndex, RuleIndex, Result)
     ;   rule_form(Form, RuleNodeId, HeadNode, BodyNodes)
     ->  lower_rule(HeadNode, BodyNodes, Owner, Environment,
                    RuleIndex, RuleNodeId, RuleResult),
         NextRuleIndex is RuleIndex + 1,
-        continue_rule(RuleResult, Forms, Owner, Environment,
-                      SeedIndex, NextRuleIndex, Result)
+        continue_rule(CallPolicy, RuleResult, Forms, Owner, Environment,
+                      SeedIndex, RuleIndex, NextRuleIndex, Result)
     ;   lower_seed(Form, Owner, Environment, SeedIndex,
                    SeedResult),
         NextSeedIndex is SeedIndex + 1,
-        continue_seed(SeedResult, Forms, Owner, Environment,
-                      NextSeedIndex, RuleIndex, Result)
+        continue_seed(CallPolicy, SeedResult, Forms, Owner, Environment,
+                      SeedIndex, NextSeedIndex, RuleIndex, Result)
     ).
 
-continue_rule(error(Diagnostic), _, _, _, _, _, error(Diagnostic)).
-continue_rule(ok(Rule, RuleOrigins), Forms, Owner, Environment,
-              SeedIndex, RuleIndex, Result) :-
-    lower_executables(Forms, Owner, Environment,
-                      SeedIndex, RuleIndex, RestResult),
+continue_rule(defer_unknown_calls, error(Diagnostic), Forms,
+              Owner, Environment, SeedIndex, RuleIndex, _, Result) :-
+    deferred_call_diagnostic(Diagnostic),
+    !,
+    lower_executables(defer_unknown_calls, Forms, Owner, Environment,
+                      SeedIndex, RuleIndex, Result).
+continue_rule(_, error(Diagnostic), _, _, _, _, _, _, error(Diagnostic)).
+continue_rule(CallPolicy, ok(Rule, RuleOrigins), Forms, Owner, Environment,
+              SeedIndex, _, NextRuleIndex, Result) :-
+    lower_executables(CallPolicy, Forms, Owner, Environment,
+                      SeedIndex, NextRuleIndex, RestResult),
     prepend_rule(RestResult, Rule, RuleOrigins, Result).
 
 prepend_rule(error(Diagnostic), _, _, error(Diagnostic)).
@@ -411,12 +440,21 @@ prepend_rule(ok(Seeds, Rules, Origins0), Rule, RuleOrigins,
              ok(Seeds, [Rule | Rules], Origins)) :-
     append(RuleOrigins, Origins0, Origins).
 
-continue_seed(error(Diagnostic), _, _, _, _, _, error(Diagnostic)).
-continue_seed(ok(Seed, SeedOrigin), Forms, Owner, Environment,
-              SeedIndex, RuleIndex, Result) :-
-    lower_executables(Forms, Owner, Environment,
-                      SeedIndex, RuleIndex, RestResult),
+continue_seed(defer_unknown_calls, error(Diagnostic), Forms,
+              Owner, Environment, SeedIndex, _, RuleIndex, Result) :-
+    deferred_call_diagnostic(Diagnostic),
+    !,
+    lower_executables(defer_unknown_calls, Forms, Owner, Environment,
+                      SeedIndex, RuleIndex, Result).
+continue_seed(_, error(Diagnostic), _, _, _, _, _, _, error(Diagnostic)).
+continue_seed(CallPolicy, ok(Seed, SeedOrigin), Forms, Owner, Environment,
+              _, NextSeedIndex, RuleIndex, Result) :-
+    lower_executables(CallPolicy, Forms, Owner, Environment,
+                      NextSeedIndex, RuleIndex, RestResult),
     prepend_seed(RestResult, Seed, SeedOrigin, Result).
+
+deferred_call_diagnostic(diagnostic(lower, _, undeclared_relation(_))).
+deferred_call_diagnostic(diagnostic(lower, _, not_relation(_))).
 
 prepend_seed(error(Diagnostic), _, _, error(Diagnostic)).
 prepend_seed(ok(Seeds, Rules, Origins), Seed, SeedOrigin,
@@ -863,7 +901,11 @@ expression_callable(Name, Owner,
 
 scoped_reservation(Owner, Name, Reservations, Visited, Reservation) :-
     \+ memberchk(Owner, Visited),
-    (   memberchk(reservation(Owner, Name, Target, Kind), Reservations)
+    (   memberchk(reservation(Owner, Name, target(Callable), product),
+                  Reservations)
+    ->  Reservation = reservation(
+                           Owner, Name, target(Callable), product)
+    ;   memberchk(reservation(Owner, Name, Target, Kind), Reservations)
     ->  Reservation = reservation(Owner, Name, Target, Kind)
     ;   reservation_parent(Owner, Reservations, Parent),
         scoped_reservation(Parent, Name, Reservations, [Owner | Visited],

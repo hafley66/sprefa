@@ -709,6 +709,32 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                     true, true),
     !.
 
+test(generated_relations_are_callable_after_declarations_freeze) :-
+    Path = 'v7/test/fixtures/4_generated_call.dl7',
+    compile_dl7(Path, Rows1, Runtime1, Diagnostics1),
+    compile_dl7(Path, Rows2, Runtime2, Diagnostics2),
+    named_owner(Rows1, 'UserHistory', UserHistory),
+    Runtime1 = checked_datalog(
+                   _, datalog_program(Relations, Seeds, Rules), _, _),
+    memberchk(relation(ref(UserHistory), 2, []), Relations),
+    memberchk(call(ref(UserHistory), [const(7), const("Ada")]), Seeds),
+    memberchk(rule(call(_, [var(Id), var(Name)]),
+                   [checked_goal(
+                        positive,
+                        call(ref(UserHistory), [var(Id), var(Name)]))]),
+              Rules),
+    residual_partial_terms(Runtime1, ResidualPartials),
+    equality(Rows1, Rows2, RowsEqual),
+    equality(Runtime1, Runtime2, RuntimeEqual),
+    Observed = generated_callable(
+                   diagnostics(Diagnostics1, Diagnostics2),
+                   repeatable(RowsEqual, RuntimeEqual),
+                   residual_partial_terms(ResidualPartials)),
+    Observed == generated_callable(
+                    diagnostics([], []),
+                    repeatable(true, true),
+                    residual_partial_terms(0)).
+
 test(userland_type_algebra_proves_contracts_and_constructs_products) :-
     compile_dl7('v7/test/fixtures/3_type_algebra.dl7',
                 Rows, Runtime, Diagnostics),
