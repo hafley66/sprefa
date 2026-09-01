@@ -3741,6 +3741,49 @@ impl TsSource {
             .unwrap_or(&sites[0]);
         Some((blob.clone(), site.span))
     }
+
+    /// `call_name_match` with the module plane ahead of the corpus-wide count:
+    /// among twins the caller's own binding survives, unless it is module-private and no twin is an import claim's target.
+    fn ts_call_name_match(
+        output: &ExtractOutput,
+        def_index: &DefIndex,
+        callee: &str,
+        modules: Option<&TsModuleIndex>,
+        paths: Option<&crate::types::PathIndex>,
+        member: bool,
+    ) -> Option<(ContentId, Span)> {
+        let sites = corpus_defs(def_index, callee);
+        let mut blobs: Vec<&ContentId> = Vec::new();
+        for site in sites {
+            if !blobs.contains(&&site.blob) {
+                blobs.push(&site.blob);
+            }
+        }
+        if blobs.len() <= 1 {
+            return TsSource::call_name_match(output, def_index, callee);
+        }
+        let call = output.call.as_ref()?;
+        let node = def_named(call, &output.strings, callee)?;
+        let span = call.node(node).span;
+        let site = sites.iter().find(|site| site.span == span)?;
+        // A module-private def with unclaimed twins is spelling noise: no dst
+        // is distinguishable from a guess. Everything else owns its file.
+        let private = paths
+            .and_then(|paths| paths.get(&site.blob))
+            .and_then(|path| modules.map(|modules| (path, modules)))
+            .map(|(path, modules)| modules.export_seat(path, callee).is_none())
+            .unwrap_or(false);
+        let twins_reached = modules.is_some_and(|modules| {
+            sites
+                .iter()
+                .all(|twin| twin.blob == site.blob || modules.reached(&twin.blob))
+        });
+        if member || !private || twins_reached {
+            Some((site.blob.clone(), site.span))
+        } else {
+            None
+        }
+    }
 }
 
 /// The scip-resolved corpus target of one call site: the site's occurrence
@@ -4103,10 +4146,22 @@ impl Resolve<CallF> for TsSource {
             // The scip leg keeps its answer: it types the receiver, this does
             // not. Each arm names its own leg: `kind` collapses all three
             // name-match legs into `name_resolve`.
+            // A member call by spelling (`this.load`) binds the receiver's own
+            // class; corpus twins of the member name cannot veto it.
+            let member = site
+                .callee_path
+                .is_some_and(|path| output.strings.lookup(path).contains('.'));
             let name_match = || {
-                TsSource::call_name_match(output, def_index, callee)
-                    .filter(|t| !receiver_blind_builtin(output, call, site, callee, kinds, t))
-                    .map(|(blob, span)| (blob, span, ResolutionOrigin::CorpusUnique))
+                Self::ts_call_name_match(
+                    output,
+                    def_index,
+                    callee,
+                    modules.map(|(modules, _)| modules),
+                    paths,
+                    member,
+                )
+                .filter(|t| !receiver_blind_builtin(output, call, site, callee, kinds, t))
+                .map(|(blob, span)| (blob, span, ResolutionOrigin::CorpusUnique))
             };
             let own_t = match (&import_t, &seat_t) {
                 (Some(found), _) => Some((
@@ -4239,8 +4294,15 @@ impl Resolve<CallF> for TsSource {
                     )
                 });
             let Some((blob, span, origin)) = bound.or_else(|| {
-                TsSource::call_name_match(output, def_index, named)
-                    .map(|(blob, span)| (blob, span, ResolutionOrigin::CorpusUnique))
+                Self::ts_call_name_match(
+                    output,
+                    def_index,
+                    named,
+                    modules.map(|(modules, _)| modules),
+                    paths,
+                    false,
+                )
+                .map(|(blob, span)| (blob, span, ResolutionOrigin::CorpusUnique))
             }) else {
                 continue;
             };
