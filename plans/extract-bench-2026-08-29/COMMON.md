@@ -50,6 +50,49 @@ this machine only, one test process per `(lang, tier)` leg: 3 `diet_scip`
 | `RATCHET.tsv` | `(lang, family, tier, oracle)` | recall, precision | 0.10 pt |
 | `RATCHET.cost.tsv` | `(lang, tool, tier)` | files, wall_ms, rss_mb, pid | wall +15%, rss +10% |
 
+### The measure id
+
+The accuracy key joins into one greppable string,
+`{lang}.{family}.{tier}.{oracle}`, four dot-delimited parts and no part
+repeating another. `Case::id` writes it, `Case::parse_id` reads it back, and
+`every_case_id_round_trips_through_four_parts` in
+`v6/sprefa-extract/tests/bench/mod.rs` asserts the round trip over every row of
+`cases()`.
+
+| part | values |
+|---|---|
+| `lang` | `ts5`, `go`, `rust` |
+| `family` | `call`, `module`, `type` |
+| `tier` | `syntax`, `checker`, `scip` |
+| `oracle` | the oracle's TOOL (`codeql`, `codeql2`, `madge`, `scip_override`, `oracle` for our own reference producer), plus an optional variant |
+
+A variant joins to its tool with `-`, never `.`: the go VTA-bare oracle is
+`oracle-vta-bare`, the typedecl-projected type oracles are `oracle-typedecl`.
+`-` appears in no `lang`, `family` or `tier`, so the four-way split stays
+unambiguous. The 18 ids:
+
+```
+go.call.syntax.codeql2            rust.call.checker.codeql
+go.call.syntax.oracle-vta-bare    rust.call.checker.oracle
+go.module.syntax.oracle           rust.call.checker.scip_override
+go.type.syntax.oracle-typedecl    rust.type.syntax.oracle-typedecl
+rust.call.syntax.codeql           rust.type.checker.oracle-typedecl
+rust.call.syntax.oracle           ts5.call.syntax.codeql2
+rust.call.syntax.scip_override    ts5.call.syntax.oracle
+ts5.call.checker.codeql2          ts5.module.syntax.madge
+ts5.call.checker.oracle           ts5.module.checker.madge
+```
+
+**No file name lives in an id or in `RATCHET.tsv`.** The tsv a case scores
+against is a lookup, `oracle_files()` beside `cases()`, keyed on
+`(lang, family, oracle)`; tier never picks a file, since the syntax and checker
+legs score against the same oracle. The map is not derivable from the key: ts5
+scores against `ts.*` files for every tool but its own (`ts5.oracle.call.tsv`),
+and a variant that is `-` in an id is `.` in a file name
+(`go.oracle.call.vta.bare.tsv`). A key with no listed file, or a listed file
+that is not on disk, is a named panic in both `oracle_path` and the ratchet leg,
+never a skipped row.
+
 Cost belongs to the PRODUCER: `rss_mb` is `getrusage(RUSAGE_SELF)` of the named
 pid, so a row is truthful only for the process that folded its rows. Our own
 rows carry `tool=sprefa`; an out-of-process producer (codeql, madge, node/tsc)
