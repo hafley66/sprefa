@@ -2525,7 +2525,7 @@ only. That reading is stale. Both answer kinds landed together at **#598**:
 | leg | site |
 |---|---|
 | the walk's type arm | `rust_checker_ra.rs:219` `type_ref`, `Adt \| Trait \| TypeAlias` |
-| the per-file answers | `rust_checker.rs:90` `types`, `:178` `type_at` |
+| the per-file answers | `rust_checker.rs:90` `types`, `:182` `type_at` |
 | the resolve consumer | `rust.rs:385-394`, ahead of every name-match leg |
 | External suppression | `rust.rs:392`, `return None` before the name match |
 | the origin slug | `ResolutionOrigin::Checker`, emitted as `checker` |
@@ -2565,7 +2565,9 @@ one run rather than three.
 Recall moves +5.68 pt; precision moves +5.95 pt. The precision half is one
 mechanism: 316 of our 412 excess rows disappear because `CheckerAnswer::External`
 tells the name-match legs that a std or dependency type is not the corpus type
-that shares its name. `external=83,294` references carry that answer.
+that shares its name. The `external=83,294` counter is the two planes together
+(`rust_checker.rs:131` and `:152` both raise it), so it prices the answer kind,
+not the type plane's share of it.
 
 Which classes the tier closes, syntax leg -> checker leg:
 
@@ -2586,7 +2588,7 @@ resolution outcomes.
 
 ### 33.3 The answers the tier holds and cannot hand over
 
-`type_ambiguous=459` (new counter, `rust_checker.rs:96`, logged beside
+`type_ambiguous=459` (new counter, `rust_checker.rs:98`, logged beside
 `unjoined` and `external`). The type plane keys the tier's answers on
 (file, name) because a `TypeEdgeCandidate` (`types.rs:342`) carries an OWNER
 span and no reference span; the call plane keys on the reference span and has
