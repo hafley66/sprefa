@@ -15,7 +15,7 @@ Rust or Kotlin or CodeQL is.
 7. [Adding Kotlin](#7-adding-kotlin)
 8. [The one thing that will not match](#8-the-one-thing-that-will-not-match)
 9. [Order of work](#9-order-of-work)
-10. [Four things I need you to decide](#10-four-things-i-need-you-to-decide)
+10. [Four decisions, made](#10-four-decisions-made)
 
 ---
 
@@ -319,14 +319,16 @@ we already link.
 
 ---
 
-## 10. Four things I need you to decide
+## 10. Four decisions, made
 
-| # | question | why it is yours |
-|---|---|---|
-| 1 | **Is fuzzy matching a real metric?** There are 379 lines of fuzzy-match scoring and a committed results file, but the agreed metric list has five entries and fuzzy is not one of them. Adding it changes the contract every report is written against. | contract change |
-| 2 | **Accept the one-time cost re-baseline?** Section 8. The eleven rows' time and memory numbers change meaning once, and I would record old and new together in one commit. | the floors' history |
-| 3 | **Where does the table live?** I put it in the lab folder, but labs get deleted when they land and this thing outlives the lab. | file location |
-| 4 | **A python file stays frozen in the tree.** One script is explicitly marked as the reference the Rust version is checked against. Keeping it means python stays, even though nothing runs it. | keeping python around |
+You said go ahead, so I called all four. Every one flips on a word.
+
+| # | question | call | why |
+|---|---|---|---|
+| 1 | Is fuzzy matching a real metric? | **no** | the agreed metric list has five entries and fuzzy is not one. Adding it rewrites the contract every report is written against, which is a bigger change than a runtime feature. The fuzzy script stays a lab tool and the runtime never links it. |
+| 2 | Accept the one-time cost re-baseline? | **yes, old and new recorded together** | this already happened once today for the rust memory ceiling, with a ledger entry saying it was accepted under protest rather than swept up. Same shape here. |
+| 3 | Where does the table live? | **next to the code that reads it**, not the lab folder | labs get deleted when they land, and the harness reads this file every run. It is configuration, so it ships with the crate. |
+| 4 | Does the python reference stay frozen? | **delete it, record where the last copy was** | it only existed because the Rust side could not measure the TypeScript compiler tier. It can now, and that measurement is checked by a gate on every run. A number a gate re-checks beats a script nobody runs. |
 
 ---
 

@@ -21,7 +21,9 @@ on carry real cost.
 10. [Reproduction, the acceptance test](#10-reproduction-the-acceptance-test)
 11. [Migration table: every script and every leg](#11-migration-table-every-script-and-every-leg)
 12. [Arc list with dependency order](#12-arc-list-with-dependency-order)
-13. [Forks needing the user](#13-forks-needing-the-user)
+13. [Forks, decided](#13-forks-decided)
+13b. [Forks still open](#13b-forks-still-open)
+13c. [Superseded by work that landed while this plan was written](#13c-superseded-by-work-that-landed-while-this-plan-was-written)
 14. [Corrections to the brief](#14-corrections-to-the-brief)
 
 ---
@@ -1025,7 +1027,39 @@ of `EMISSIONS.tsv` via the already-linked `hafley-observe`
 
 ---
 
-## 13. Forks needing the user
+## 13. Forks, decided
+
+Decided by the coordinator 2026-09-01 on the user's "sures", after #632 and
+#633 landed the tier axis and the measure id. Each is reversible; say the word
+and it flips.
+
+| # | fork | decision | reason |
+|---|---|---|---|
+| 1 | does the runtime carry a fuzzy metric | **NO** | `COMMON.md:65-73` enumerates recall, precision, 3-bucket, wall and rss as the metrics that exist, and that list is the user's measure-signature law. A fourth metric is a contract change, not a runtime feature. `fuzzy_bench.py` stays a lab script and the runtime does not link it. |
+| 2 | the one-time cost re-baseline | **ACCEPT, both values recorded** | the precedent already landed: `RATCHET.cost.tsv` in #632 planted the measured rust checker RSS with `docs/failure-modes.md` 105 naming it accepted under protest. The runtime's re-baseline follows the same shape, old and new side by side in the same commit. |
+| 3 | where the manifest lives | **`v6/sprefa-extract/bench/`**, NOT a lab dir | labs die on landing, so `plans/extract-eval-2026-08-31/` cannot hold a file the harness reads at run time. The manifest is code-adjacent configuration and belongs beside the crate that parses it, versioned with it. The committed oracle tsvs stay where they are; the manifest names their paths. |
+| 4 | `ts5.checker.measure.py` freezes or deletes | **DELETE, record the last-copy hash** | it existed because the Rust harness could not express `ts5 + checker`. #632 removed that limit and #633 put the pairing under a committed floor that runs on every `just extract-ratchet`. A floor a gate re-checks is a stronger reference than a script nobody runs. Labs-die-on-landing says record the hash in this doc and delete the file; the deletion belongs to arc 6, alongside the reproduction gate that replaces it. |
+
+---
+
+## 13b. Forks still open
+
+None. Section 13 closed every row.
+
+---
+
+## 13c. Superseded by work that landed while this plan was written
+
+Two PRs merged after this plan's receipts were gathered, and both move arcs 5
+and 6 closer without changing the design.
+
+| PR | what landed | effect on this plan |
+|---|---|---|
+| #632 | tier is a column: `score_case(Case{lang, family, tier, oracle})`, `RATCHET.tsv` keyed on all four, `RATCHET.cost.tsv` keyed on `(lang, tool, tier)` with a pid | the in-process half of arc 6 is done; the reproduction gate now has 18 accuracy rows to reproduce rather than 11, and cost already carries the producer's pid |
+| #633 | the measure id `{lang}.{family}.{tier}.{oracle}`, oracle field holds `tool[-variant]`, file names moved to an `oracle_files()` lookup | arc 2's manifest gains a settled id spelling and a settled reason the file name is data rather than key: the map is not derivable, since ts5 scores against `ts.*` files for every tool but its own |
+
+Section 14's correction that `RATCHET.cost.tsv` was absent is now stale: it
+landed in #632.
 
 | # | fork | why it needs a word |
 |---|---|---|
