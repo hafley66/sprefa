@@ -93,6 +93,9 @@ pub struct RustCheckerIndex {
     pub unjoined: usize,
     /// References the checker resolved outside the corpus.
     pub external: usize,
+    /// Type names one file resolved two ways: an answer the tier HAS and the
+    /// (file, name) key cannot carry.
+    pub type_ambiguous: usize,
     pub load: Duration,
     pub walk: Duration,
     pub files_answered: usize,
@@ -153,6 +156,7 @@ impl RustCheckerIndex {
                     }
                     std::collections::hash_map::Entry::Occupied(mut slot) => {
                         if slot.get().as_ref() != Some(&answer) {
+                            index.type_ambiguous += slot.get().is_some() as usize;
                             slot.insert(None);
                         }
                     }
