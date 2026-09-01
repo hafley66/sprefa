@@ -6,7 +6,7 @@
 //! `decoys.rs` holds the only corpus declaration of the name, so the
 //! corpus-unique leg hands the field the decoy. With the tier on, the row is
 //! absent. Measured on the rust-analyzer corpus the same suppression is the
-//! type plane's precision: 92.31 checker-off, 98.26 on (REPORT sec 30.1, 33).
+//! type plane's precision: 92.31 checker-off, 98.26 on (REPORT sec 33.2).
 //!
 //! The rust twin of `92_ts_checker.rs:the_checker_answers_the_type_plane_too`,
 //! which pinned the ts type plane while rust carried call assertions only.
