@@ -1,0 +1,9 @@
+# extract ratchet, cost: one row per (lang, tool, tier), 3 runs of diet_scip (resolve call+types), median wall / process-peak rss over the stated file count;
+# rss is getrusage(RUSAGE_SELF) of the stated pid, so a row is truthful only for the process that PRODUCED its rows; an out-of-process producer (codeql, madge, node/tsc) gets its own tool row, never sprefa's.
+# check: wall +15% / rss +10% (ceilings at the worst of repeated runs); bump: RATCHET_BUMP=1 tightens a ceiling only by a 10%+ margin, RATCHET_FORCE=1 rewrites.
+lang	tool	tier	files	wall_ms	rss_mb	pid	measured_at_sha
+go	sprefa	syntax	5097	2998	831	68923	41333391a
+rust	sprefa	syntax	873	564	666	69937	41333391a
+rust	sprefa	checker	873	12269	4765	70299	41333391a
+ts5	sprefa	syntax	600	826	530	67326	41333391a
+ts5	sprefa	checker	600	6728	531	67914	41333391a

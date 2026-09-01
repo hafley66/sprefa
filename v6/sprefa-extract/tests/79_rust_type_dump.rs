@@ -17,7 +17,7 @@ fn dump_rust_type_rows() {
     };
     let corpus = bench::corpus("rust");
     assert!(corpus.root.is_dir(), "corpus root {} missing", corpus.root.display());
-    let measurement = bench::measure(&corpus);
+    let measurement = bench::run("rust", bench::Tier::Checker);
     let body: Vec<&str> = measurement.forms.type_edges.iter().map(String::as_str).collect();
     std::fs::write(&out, body.join("\n") + "\n").unwrap();
     println!("wrote {} rows to {out}", body.len());

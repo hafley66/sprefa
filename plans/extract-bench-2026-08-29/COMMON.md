@@ -39,12 +39,26 @@ Laws: no em dashes, no eprintln, descriptive names, never --no-verify.
 ## Ratchet (2026-08-29, `just extract-ratchet`, LOCAL-ONLY)
 
 The corpora above are machine-local checkouts under `/Users/chrishafley/projects`,
-so the ratchet leg (`v6/sprefa-extract/tests/ratchet_recall.rs`, RATCHET.tsv in
+so the ratchet leg (`v6/sprefa-extract/tests/ratchet_recall.rs`, the two tsvs in
 this dir) never runs in CI and is not a CI-KNOWN-RED row. It runs in-process on
-this machine only: 3 `diet_scip` (resolve call+types) runs per corpus, median
-wall, process-peak RSS, recall/precision against the oracle tsvs, floors in
-RATCHET.tsv (tolerances 0.10 pt / +15% wall / +10% rss; `RATCHET_BUMP=1`
-improves only, `RATCHET_FORCE=1` rewrites). File rules: ts5 `src/**` minus
+this machine only, one test process per `(lang, tier)` leg: 3 `diet_scip`
+(resolve call+types) runs, median wall, process-peak RSS, then every
+`bench::cases()` row naming that leg scored against its oracle tsv.
+
+| file | key | what it holds | tolerance |
+|---|---|---|---|
+| `RATCHET.tsv` | `(lang, family, tier, oracle)` | recall, precision | 0.10 pt |
+| `RATCHET.cost.tsv` | `(lang, tool, tier)` | files, wall_ms, rss_mb, pid | wall +15%, rss +10% |
+
+Cost belongs to the PRODUCER: `rss_mb` is `getrusage(RUSAGE_SELF)` of the named
+pid, so a row is truthful only for the process that folded its rows. Our own
+rows carry `tool=sprefa`; an out-of-process producer (codeql, madge, node/tsc)
+gets its own `tool` row rather than borrowing that figure.
+
+`RATCHET_BUMP=1` improves only, `RATCHET_FORCE=1` rewrites; a duplicate key in
+either file is a panic. The legs are `ts5.syntax`, `ts5.checker`, `go.syntax`,
+`rust.syntax`, `rust.checker`; `just extract-ratchet` runs all five under one
+feature set (`cli,rust-checker,ts-checker`). File rules: ts5 `src/**` minus
 `src/lib`, go every `.go` under the root, rust every `.rs` under `crates/`
 with a `src` path component; roots overridable via `RATCHET_TS_ROOT`,
 `RATCHET_GO_ROOT`, `RATCHET_RUST_ROOT`.
