@@ -2625,3 +2625,76 @@ the same split sec 28.3 measured. The tier is at its ceiling there because
 `answer_of` needs a `DefIndex` site for the destination and no `TypeF` node
 exists for a macro-minted type. That remains a design arc with the user in the
 room (30.3).
+## 34. M1 re-censused post-sysroot and split by minter (lane `fix-extract-rust-macro-callers`, 2026-08-31)
+
+The brief's first step: re-run the census before touching the extractor, because
+the sysroot fix (sec 32) may have shrunk M1. It did not.
+
+### 33.1 The re-census receipt
+
+| item | value |
+|---|---|
+| binary | worktree at `21ca6d1b8` (post-sysroot, PR #625), fresh `cargo test --release --features cli,rust-checker` |
+| ours | 63,574 rows from `RUST_CALL_DUMP` on `tests/79_rust_type_dump.rs` |
+| corpus | `af4111f0bf85d9d66f4161b007b0081860e0a21c`, 873 files, no `*.rs.expanded.rs` leftovers |
+| projection | `rust.call_census.py`, same as sec 31/32 |
+| recall / precision | **84.28 / 83.64** — byte-identical to sec 32.3 |
+| missing / contradicted / unjudged | 8,126 / 7,379 / 1,141 — byte-identical to sec 32.3 |
+| M1 | **1,928 rows (23.73% of the miss set), delta 0** — still the largest single class |
+
+Why M1 could not move: the sysroot fix made the checker ANSWER method sites
+the parse had already minted. An M1 row has no site at all — the call text lives
+in a macro body the invocation file never contains — so no checker answer can
+reach it. The largest surviving M-class is M1 (1,928) over M3 (375), M2 (271),
+M4 (4).
+
+### 33.2 M1 split by what mints the caller
+
+Every M1 row's caller name is absent from the caller file. The minter is one of
+two machines, and they split 1,931 caller-absent oracle rows (1,928 of them in
+the miss set) as follows, measured by joining each row's caller name to the
+`fn` idents inside `macro_rules!` bodies of files the caller file actually
+invokes:
+
+| minter | rows | examples |
+|---|---:|---|
+| cross-file `macro_rules!` (def file differs from the invocation file) | **62** | `interned_slice!` 47, `impl_stored_interned!` 11, `impl_empty_upmap_from_ra_fixture!` 3, `impl_stored_interned_slice!` 1 |
+| proc-macro / derive (zalsa + std derives) | 1,869 | `inner_` 440, `eq` 290, `clone` 124, `with_source_map_` 60, `fn_ingredient_` 56 |
+
+The proc-macro share carries concatenated identifiers (`inner_`, `fn_ingredient_`)
+that never appear as literal `fn NAME` in any corpus text — they are minted by
+the zalsa proc macros — plus the std-derive methods (`eq`, `clone`, `partial_cmp`).
+
+Three cited rows, verified at path:line:
+
+1. `crates/hir-ty/src/next_solver/region.rs:308` invokes `interned_slice!`
+   (def `crates/hir-ty/src/next_solver/interner.rs:71`). The expansion mints
+   `empty`, `new_from_slice`, `new_from_iter`, `as_slice`, `iter`, `len`,
+   `is_empty`, `into_iter`, `deref`, `default`. Oracle rows:
+   `len -> as_slice [region.rs]` (the minted `len` body calls the minted
+   `as_slice`, same file), `new_from_slice -> from_header_and_slice
+   [crates/intern/src/intern_slice.rs]`, `into_iter -> iter [region.rs]`.
+2. `crates/hir-ty/src/next_solver/region.rs:33` invokes `impl_stored_interned!`
+   (def `crates/hir-ty/src/next_solver/interner.rs:292`). The expansion mints
+   `store`/`new`/`as_ref`/`fmt`; oracle rows `store -> new [region.rs]` (the
+   minted `store` body calls the minted `$stored_name::new`, same file) and
+   `as_ref -> as_ref [crates/intern/src/intern_slice.rs]` (the minted `as_ref`
+   body calls `self.interned.as_ref()`).
+3. `crates/base-db/src/input.rs:32` `#[derive(Debug, Clone, PartialEq, ...)]`
+   mints `eq`/`clone` bodies the oracle aims at other derive-minted impls
+   (`eq -> eq [crates/cfg/src/lib.rs]`) — the 1,869-row shape.
+
+### 33.3 The fixable mechanism, and why sec 14 does not cover it
+
+Sec 14's MBE leg (`rust_mbe::expand_file`) splices a `macro_rules!` invocation
+using defs collected from the SAME file only (`collect_rules` over the file's
+own syntax tree; a name with no local def is untouched, `rust_mbe.rs:212`).
+All 62 fixable rows invoke a macro whose def lives in another crate file
+(re-exported with `pub(crate) use`), so the splice never runs for them: no
+minted fn def, no site, no caller. CodeQL expands by def-site resolution, not
+by file locality.
+
+The 1,869-row proc-macro share stays out of scope by the brief's rule and sec
+32.6's stop: it needs a proc-macro server (`proc-macro-srv` +
+`load_out_dirs_from_check`), a seam change. This lane fixes the 62-row
+macro_rules share and writes the stop for the rest.
