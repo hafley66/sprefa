@@ -34,8 +34,6 @@ pub const WALL_BUDGET_MS: u128 = 30_000;
 pub struct Corpus {
     pub lang: &'static str,
     pub root: PathBuf,
-    /// (family, oracle tsv file name) pairs; every file must sit in BENCH_DIR.
-    pub oracles: &'static [(&'static str, &'static str)],
 }
 
 /// The three corpora in COMMON.md order. Roots are machine-local checkouts;
@@ -51,34 +49,94 @@ pub fn corpus(lang: &str) -> Corpus {
         "ts5" => Corpus {
             lang: "ts5",
             root: root("RATCHET_TS_ROOT", "/Users/chrishafley/projects/TypeScript-5.9"),
-            oracles: &[
-                ("call", "ts5.oracle.call.tsv"),
-                ("call", "ts.codeql2.call.tsv"),
-                ("module", "ts.madge.module.tsv"),
-            ],
         },
         "go" => Corpus {
             lang: "go",
             root: root("RATCHET_GO_ROOT", "/Users/chrishafley/projects/typescript-go"),
-            oracles: &[
-                ("call", "go.oracle.call.vta.bare.tsv"),
-                ("call", "go.codeql2.call.tsv"),
-                ("module", "go.oracle.module.tsv"),
-                ("type", "go.oracle.type.typedecl.tsv"),
-            ],
         },
         "rust" => Corpus {
             lang: "rust",
             root: root("RATCHET_RUST_ROOT", "/Users/chrishafley/projects/rust-analyzer"),
-            oracles: &[
-                ("call", "rust.oracle.call.tsv"),
-                ("call", "rust.scip_override.call.tsv"),
-                ("call", "rust.codeql.call.tsv"),
-                ("type", "rust.oracle.type.typedecl.tsv"),
-            ],
         },
         other => panic!("unknown ratchet corpus '{other}'"),
     }
+}
+
+// ── the measure key: lang.family.tier vs oracle (COMMON.md:52-76) ───────────
+
+/// The three tiers of COMMON.md:75. Nothing else is a tier.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Tier {
+    Syntax,
+    Checker,
+    Scip,
+}
+
+impl Tier {
+    /// The RATCHET.tsv spelling and the `--exact` test-name suffix.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Tier::Syntax => "syntax",
+            Tier::Checker => "checker",
+            Tier::Scip => "scip",
+        }
+    }
+
+    pub fn parse(text: &str) -> Tier {
+        match text {
+            "syntax" => Tier::Syntax,
+            "checker" => Tier::Checker,
+            "scip" => Tier::Scip,
+            other => panic!("unknown tier '{other}'; COMMON.md:75 fixes syntax|checker|scip"),
+        }
+    }
+}
+
+/// Which shape rewrite a case scores under. Named on the case row rather than
+/// matched off an oracle file name: a literal-name lookup is the shape this
+/// repo bans (.claude/skills/sprefa-v5-no-magic-rels).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Projection {
+    Raw,
+    GoMethod,
+    GoImpl,
+    RustCorpus,
+}
+
+/// One measured cell = one RATCHET.tsv accuracy row.
+pub struct Case {
+    pub lang: &'static str,
+    pub family: &'static str,
+    pub tier: Tier,
+    /// Oracle tsv file name; the file must sit in BENCH_DIR.
+    pub oracle: &'static str,
+    pub projection: Projection,
+}
+
+/// The whole matrix, one place. Hand-listed, never a cartesian product: a
+/// (lang, family, tier, oracle) whose oracle tsv does not exist is not a case.
+/// go has no checker tier and no corpus has a scip-tier oracle yet.
+pub fn cases() -> &'static [Case] {
+    &[
+        Case { lang: "ts5", family: "call", tier: Tier::Syntax, oracle: "ts5.oracle.call.tsv", projection: Projection::Raw },
+        Case { lang: "ts5", family: "call", tier: Tier::Syntax, oracle: "ts.codeql2.call.tsv", projection: Projection::Raw },
+        Case { lang: "ts5", family: "module", tier: Tier::Syntax, oracle: "ts.madge.module.tsv", projection: Projection::Raw },
+        Case { lang: "ts5", family: "call", tier: Tier::Checker, oracle: "ts5.oracle.call.tsv", projection: Projection::Raw },
+        Case { lang: "ts5", family: "call", tier: Tier::Checker, oracle: "ts.codeql2.call.tsv", projection: Projection::Raw },
+        Case { lang: "ts5", family: "module", tier: Tier::Checker, oracle: "ts.madge.module.tsv", projection: Projection::Raw },
+        Case { lang: "go", family: "call", tier: Tier::Syntax, oracle: "go.oracle.call.vta.bare.tsv", projection: Projection::GoImpl },
+        Case { lang: "go", family: "call", tier: Tier::Syntax, oracle: "go.codeql2.call.tsv", projection: Projection::GoMethod },
+        Case { lang: "go", family: "module", tier: Tier::Syntax, oracle: "go.oracle.module.tsv", projection: Projection::Raw },
+        Case { lang: "go", family: "type", tier: Tier::Syntax, oracle: "go.oracle.type.typedecl.tsv", projection: Projection::Raw },
+        Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "rust.oracle.call.tsv", projection: Projection::RustCorpus },
+        Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "rust.scip_override.call.tsv", projection: Projection::RustCorpus },
+        Case { lang: "rust", family: "call", tier: Tier::Syntax, oracle: "rust.codeql.call.tsv", projection: Projection::RustCorpus },
+        Case { lang: "rust", family: "type", tier: Tier::Syntax, oracle: "rust.oracle.type.typedecl.tsv", projection: Projection::Raw },
+        Case { lang: "rust", family: "call", tier: Tier::Checker, oracle: "rust.oracle.call.tsv", projection: Projection::RustCorpus },
+        Case { lang: "rust", family: "call", tier: Tier::Checker, oracle: "rust.scip_override.call.tsv", projection: Projection::RustCorpus },
+        Case { lang: "rust", family: "call", tier: Tier::Checker, oracle: "rust.codeql.call.tsv", projection: Projection::RustCorpus },
+        Case { lang: "rust", family: "type", tier: Tier::Checker, oracle: "rust.oracle.type.typedecl.tsv", projection: Projection::Raw },
+    ]
 }
 
 /// The file rule the bench lab measured against (ORACLES.REPORT.md:30-31):
@@ -285,27 +343,6 @@ pub struct GoProjection {
     pub iface: Option<GoIface>,
 }
 
-impl GoProjection {
-    /// The projection ratchet rows use: `go.codeql2.call.tsv` scores in
-    /// codeql shape, `go.oracle.call.vta.bare.tsv` in vta shape.
-    pub fn per_oracle(oracle_file: &str, oracle_rows: &BTreeSet<String>) -> Option<GoProjection> {
-        let oracle_srcs = || src_paths(oracle_rows);
-        match oracle_file {
-            "go.codeql2.call.tsv" => Some(GoProjection {
-                scope_oracle: Some(oracle_srcs()),
-                closure: true,
-                iface: Some(GoIface::Method),
-            }),
-            "go.oracle.call.vta.bare.tsv" => Some(GoProjection {
-                scope_oracle: Some(oracle_srcs()),
-                closure: true,
-                iface: Some(GoIface::Impl),
-            }),
-            _ => None,
-        }
-    }
-}
-
 /// go.project.py over a call set, ported. `call_kinds` marks which rows are
 /// `implements` fan-out edges.
 pub fn go_project(
@@ -432,26 +469,6 @@ pub struct RustProjection {
     /// exists: same src_path, dst_path and dst_name with a non-closure
     /// caller. The ra_ap_ide oracle has no closure rows; raw scip does.
     pub closure: bool,
-}
-
-impl RustProjection {
-    /// Every rust call oracle scores under the full projection. The oracle's
-    /// own rows drive the ours-side scope (a caller file the oracle never
-    /// calls from cannot match).
-    pub fn per_oracle(
-        oracle_file: &str,
-        corpus_files: &BTreeSet<String>,
-    ) -> Option<RustProjection> {
-        match oracle_file {
-            "rust.oracle.call.tsv"
-            | "rust.scip_override.call.tsv"
-            | "rust.codeql.call.tsv" => Some(RustProjection {
-                corpus_files: Some(corpus_files.clone()),
-                closure: true,
-            }),
-            _ => None,
-        }
-    }
 }
 
 fn row_cols(row: &str) -> [&str; 4] {
@@ -593,6 +610,58 @@ pub fn family_rows<'a>(forms: &'a NormalForms, family: &str) -> &'a BTreeSet<Str
     }
 }
 
+/// Both sides of one comparison, after projection.
+pub struct Sides {
+    pub ours: BTreeSet<String>,
+    pub oracle: BTreeSet<String>,
+}
+
+/// The projections behind the `Projection` a case names. `GoMethod`/`GoImpl`
+/// rewrite ours into the oracle's own iface shape (GO-PARITY.REPORT.md);
+/// `RustCorpus` scopes both sides to the corpus file list and mirrors closure
+/// rows (RUST-PARITY.REPORT.md); `Raw` compares the normal form as folded.
+pub fn project(
+    kind: Projection,
+    run: &Run,
+    family: &str,
+    oracle: &BTreeSet<String>,
+) -> Sides {
+    let ours = family_rows(&run.forms, family);
+    match kind {
+        Projection::Raw => Sides {
+            ours: ours.clone(),
+            oracle: oracle.clone(),
+        },
+        Projection::GoMethod | Projection::GoImpl => Sides {
+            ours: go_project(
+                ours,
+                &run.forms.call_kinds,
+                &GoProjection {
+                    scope_oracle: Some(src_paths(oracle)),
+                    closure: true,
+                    iface: Some(if kind == Projection::GoMethod {
+                        GoIface::Method
+                    } else {
+                        GoIface::Impl
+                    }),
+                },
+            ),
+            oracle: oracle.clone(),
+        },
+        Projection::RustCorpus => {
+            let (ours, oracle) = rust_project(
+                ours,
+                oracle,
+                &RustProjection {
+                    corpus_files: Some(run.files_rel.clone()),
+                    closure: true,
+                },
+            );
+            Sides { ours, oracle }
+        }
+    }
+}
+
 pub fn load_tsv(path: &Path) -> BTreeSet<String> {
     let text = std::fs::read_to_string(path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
     text.lines()
@@ -714,7 +783,9 @@ fn three_buckets_partition_ours_and_split_silence_from_disagreement() {
 
 // ── measurement ─────────────────────────────────────────────────────────────
 
-pub struct Measurement {
+/// One extraction. Every `Case` sharing (lang, tier) scores off ONE of these:
+/// the extraction is the expensive half, scoring is free.
+pub struct Run {
     pub files: usize,
     /// Corpus files as root-relative paths, the enumeration that produced
     /// the rows; the rust projection scopes oracle rows against it.
@@ -726,11 +797,11 @@ pub struct Measurement {
     pub forms: NormalForms,
 }
 
-fn request<'a>(files: &'a [PathBuf], corpus: &'a Corpus) -> ResolveRequest<'a> {
+fn request<'a>(files: &'a [PathBuf], corpus: &'a Corpus, tier: Tier) -> ResolveRequest<'a> {
     // The diet_scip arms the CLI builds for `--family diet_scip` / `--resolve
     // --family call,type` (parse_arms in src/bin/extract.rs; diet_scip in
     // src/project.rs). ScipMode::Off is what makes the family diet.
-    let checker = corpus.lang == "rust";
+    let checker = tier == Tier::Checker;
     ResolveRequest {
         paths: files,
         arms: ResolveArms {
@@ -744,62 +815,85 @@ fn request<'a>(files: &'a [PathBuf], corpus: &'a Corpus) -> ResolveRequest<'a> {
         project_root: None,
         scip_records: ScipRecords::all(),
         occurrence_text: false,
-        rust_checker: checker.then_some(corpus.root.as_path()),
-        ts_checker: None,
+        rust_checker: (checker && corpus.lang == "rust").then_some(corpus.root.as_path()),
+        ts_checker: (checker && corpus.lang == "ts5").then_some(corpus.root.as_path()),
     }
 }
 
-/// 3 in-process runs, median wall, the last run's rows normalized. The rows
-/// are a pure function of the file set, so any run's rows are the set; the
-/// last one is kept so the earlier copies free before RSS is read.
-pub fn measure(corpus: &Corpus) -> Measurement {
+/// The expensive half: 3 in-process runs, median wall, the last run's rows
+/// normalized. The rows are a pure function of the file set, so any run's rows
+/// are the set; the last one is kept so the earlier copies free before RSS is
+/// read. Panics rather than silently degrading when the tier's machinery is
+/// not compiled in.
+pub fn run(lang: &str, tier: Tier) -> Run {
+    let corpus = corpus(lang);
     // Floors were measured on release builds; dev-profile walls run 4-14x the
     // ceilings and read as fake regressions (failure-modes.md entry 101).
     assert!(
         !cfg!(debug_assertions),
-        "ratchet {}: dev-profile build; run `just extract-ratchet` (cargo test --release)",
-        corpus.lang,
+        "ratchet {} {}: dev-profile build; run `just extract-ratchet` (cargo test --release)",
+        lang,
+        tier.as_str(),
     );
     // Without the feature the checker field is inert and the leg silently
-    // measures diet (~75% recall) against checker floors (~94%).
-    assert!(
-        corpus.lang != "rust" || cfg!(feature = "rust-checker"),
-        "ratchet rust: built without the rust-checker feature; run `just extract-ratchet`",
-    );
-    let files = enumerate(corpus);
+    // measures syntax rows against checker floors.
+    match (lang, tier) {
+        (_, Tier::Syntax) => {}
+        ("rust", Tier::Checker) => assert!(
+            cfg!(feature = "rust-checker"),
+            "ratchet rust checker: built without the rust-checker feature; run `just extract-ratchet`",
+        ),
+        ("ts5", Tier::Checker) => assert!(
+            cfg!(feature = "ts-checker"),
+            "ratchet ts5 checker: built without the ts-checker feature; run `just extract-ratchet`",
+        ),
+        ("go", Tier::Checker) => panic!("go has no checker tier"),
+        (other, Tier::Checker) => panic!("{other} has no checker tier"),
+        (_, Tier::Scip) => panic!("the scip tier has no case yet"),
+    }
+    let files = enumerate(&corpus);
     assert!(
         files.len() >= 500,
-        "ratchet {}: enumerated only {} files under {}; corpus rule broken?",
-        corpus.lang,
+        "ratchet {} {}: enumerated only {} files under {}; corpus rule broken?",
+        lang,
+        tier.as_str(),
         files.len(),
         corpus.root.display(),
     );
     println!(
-        "ratchet {}: {} files under {}",
-        corpus.lang,
+        "ratchet {} {}: {} files under {}",
+        lang,
+        tier.as_str(),
         files.len(),
         corpus.root.display()
     );
     let mut walls = Vec::with_capacity(3);
     let mut facts = Vec::new();
-    for run in 0..3 {
+    for attempt in 0..3 {
         let start = Instant::now();
-        let out = resolve_project(&request(&files, corpus))
-            .unwrap_or_else(|err| panic!("ratchet {}: resolve failed: {err}", corpus.lang));
+        let out = resolve_project(&request(&files, &corpus, tier)).unwrap_or_else(|err| {
+            panic!("ratchet {} {}: resolve failed: {err}", lang, tier.as_str())
+        });
         let wall_ms = start.elapsed().as_millis();
         assert!(
             wall_ms <= WALL_BUDGET_MS,
-            "ratchet {} run {}: wall {wall_ms} ms over the {} ms per-call budget",
-            corpus.lang,
-            run + 1,
+            "ratchet {} {} run {}: wall {wall_ms} ms over the {} ms per-call budget",
+            lang,
+            tier.as_str(),
+            attempt + 1,
             WALL_BUDGET_MS,
         );
-        println!("ratchet {}: run {} wall {wall_ms} ms", corpus.lang, run + 1);
+        println!(
+            "ratchet {} {}: run {} wall {wall_ms} ms",
+            lang,
+            tier.as_str(),
+            attempt + 1
+        );
         walls.push(wall_ms);
         facts = out;
     }
     walls.sort();
-    Measurement {
+    Run {
         files: files.len(),
         files_rel: files
             .iter()
@@ -810,6 +904,13 @@ pub fn measure(corpus: &Corpus) -> Measurement {
         rss_mb: peak_rss_mb(),
         forms: normal_form(&corpus.root, &facts),
     }
+}
+
+/// The cheap half. No extraction, no IO beyond loading the oracle tsv.
+pub fn score_case(case: &Case, run: &Run) -> Score {
+    let oracle = load_tsv(&Path::new(BENCH_DIR).join(case.oracle));
+    let sides = project(case.projection, run, case.family, &oracle);
+    score(&sides.ours, &sides.oracle)
 }
 
 /// `getrusage` high-water RSS in MB. ru_maxrss is bytes on darwin and
@@ -826,25 +927,51 @@ pub fn peak_rss_mb() -> u64 {
     (bytes / (1024.0 * 1024.0)).round() as u64
 }
 
-// ── RATCHET.tsv ─────────────────────────────────────────────────────────────
+// ── RATCHET.tsv (accuracy) and RATCHET.cost.tsv (cost) ──────────────────────
 
-pub const RATCHET_HEADER: &str = "# extract ratchet: diet_scip (resolve call+types, 3 runs per corpus, median wall / process-peak rss) vs the committed oracle tsvs;\n\
-     # recall = overlap/|oracle|, precision = overlap/|ours|, percent; check: 0.10 pt / wall +15% / rss +10% (ceilings at the worst of repeated runs); local-only (COMMON.md), never CI; bump: RATCHET_BUMP=1 improves floors/ceilings (walls/rss only by 10%+ margins), RATCHET_FORCE=1 rewrites.\n\
-     lang\tfamily\toracle\trecall\tprecision\twall_ms\trss_mb\tmeasured_at_sha";
+pub const RATCHET_HEADER: &str = "# extract ratchet, accuracy: one row per (lang, family, tier, oracle), every row scored by score_case over ONE extraction per (lang, tier) against the committed oracle tsvs;\n\
+     # recall = overlap/|oracle|, precision = overlap/|ours|, percent; check: 0.10 pt; cost lives beside this in RATCHET.cost.tsv; local-only (COMMON.md), never CI; bump: RATCHET_BUMP=1 improves floors, RATCHET_FORCE=1 rewrites.\n\
+     lang\tfamily\ttier\toracle\trecall\tprecision\tmeasured_at_sha";
+
+pub const COST_HEADER: &str = "# extract ratchet, cost: one row per (lang, tool, tier), 3 runs of diet_scip (resolve call+types), median wall / process-peak rss over the stated file count;\n\
+     # rss is getrusage(RUSAGE_SELF) of the stated pid, so a row is truthful only for the process that PRODUCED its rows; an out-of-process producer (codeql, madge, node/tsc) gets its own tool row, never sprefa's.\n\
+     # check: wall +15% / rss +10% (ceilings at the worst of repeated runs); bump: RATCHET_BUMP=1 tightens a ceiling only by a 10%+ margin, RATCHET_FORCE=1 rewrites.\n\
+     lang\ttool\ttier\tfiles\twall_ms\trss_mb\tpid\tmeasured_at_sha";
+
+/// The producer this harness measures. `peak_rss_mb` reads RUSAGE_SELF, so
+/// only rows this process folded may be costed under this name.
+pub const COST_TOOL: &str = "sprefa";
 
 pub fn ratchet_path() -> PathBuf {
     Path::new(BENCH_DIR).join("RATCHET.tsv")
+}
+
+pub fn cost_path() -> PathBuf {
+    Path::new(BENCH_DIR).join("RATCHET.cost.tsv")
 }
 
 #[derive(Clone)]
 pub struct RatchetRow {
     pub lang: String,
     pub family: String,
+    pub tier: Tier,
     pub oracle: String,
     pub recall: f64,
     pub precision: f64,
+    pub sha: String,
+}
+
+#[derive(Clone)]
+pub struct CostRow {
+    pub lang: String,
+    /// The producer of the rows this cost prices, `COST_TOOL` for our own.
+    pub tool: String,
+    pub tier: Tier,
+    pub files: usize,
     pub wall_ms: u128,
     pub rss_mb: u64,
+    /// The pid whose getrusage high-water `rss_mb` is.
+    pub pid: u32,
     pub sha: String,
 }
 
@@ -861,29 +988,44 @@ pub fn measured_at_sha() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+/// The data lines of a ratchet tsv: comments, the header row and blanks drop.
+fn ratchet_lines(text: &str) -> impl Iterator<Item = &str> {
+    text.lines()
+        .filter(|line| !(line.starts_with('#') || line.starts_with("lang\t") || line.is_empty()))
+}
+
 pub fn read_ratchet() -> Option<Vec<RatchetRow>> {
     let text = std::fs::read_to_string(ratchet_path()).ok()?;
     let mut rows = Vec::new();
-    for line in text.lines() {
-        if line.starts_with('#') || line.starts_with("lang\t") || line.is_empty() {
-            continue;
-        }
+    let mut seen = BTreeSet::new();
+    for line in ratchet_lines(&text) {
         let cols: Vec<&str> = line.split('\t').collect();
         assert!(
-            cols.len() == 8,
-            "RATCHET.tsv row has {} columns, expected 8: {line}",
+            cols.len() == 7,
+            "RATCHET.tsv row has {} columns, expected 7: {line}",
             cols.len()
         );
-        rows.push(RatchetRow {
+        let row = RatchetRow {
             lang: cols[0].to_string(),
             family: cols[1].to_string(),
-            oracle: cols[2].to_string(),
-            recall: cols[3].parse().unwrap_or_else(|_| panic!("RATCHET.tsv recall: {line}")),
-            precision: cols[4].parse().unwrap_or_else(|_| panic!("RATCHET.tsv precision: {line}")),
-            wall_ms: cols[5].parse().unwrap_or_else(|_| panic!("RATCHET.tsv wall_ms: {line}")),
-            rss_mb: cols[6].parse().unwrap_or_else(|_| panic!("RATCHET.tsv rss_mb: {line}")),
-            sha: cols[7].to_string(),
-        });
+            tier: Tier::parse(cols[2]),
+            oracle: cols[3].to_string(),
+            recall: cols[4].parse().unwrap_or_else(|_| panic!("RATCHET.tsv recall: {line}")),
+            precision: cols[5].parse().unwrap_or_else(|_| panic!("RATCHET.tsv precision: {line}")),
+            sha: cols[6].to_string(),
+        };
+        // A duplicate key is a panic, never a last-wins: two rows for one cell
+        // means one of them is silently unchecked.
+        assert!(
+            seen.insert((
+                row.lang.clone(),
+                row.family.clone(),
+                row.tier,
+                row.oracle.clone()
+            )),
+            "RATCHET.tsv: duplicate (lang, family, tier, oracle) key: {line}"
+        );
+        rows.push(row);
     }
     Some(rows)
 }
@@ -893,11 +1035,66 @@ pub fn write_ratchet(rows: &[RatchetRow]) {
     text.push('\n');
     for row in rows {
         text.push_str(&format!(
-            "{}\t{}\t{}\t{:.2}\t{:.2}\t{}\t{}\t{}\n",
-            row.lang, row.family, row.oracle, row.recall, row.precision, row.wall_ms, row.rss_mb, row.sha
+            "{}\t{}\t{}\t{}\t{:.2}\t{:.2}\t{}\n",
+            row.lang,
+            row.family,
+            row.tier.as_str(),
+            row.oracle,
+            row.recall,
+            row.precision,
+            row.sha
         ));
     }
     std::fs::write(ratchet_path(), text).expect("write RATCHET.tsv");
+}
+
+pub fn read_cost_ratchet() -> Option<Vec<CostRow>> {
+    let text = std::fs::read_to_string(cost_path()).ok()?;
+    let mut rows = Vec::new();
+    let mut seen = BTreeSet::new();
+    for line in ratchet_lines(&text) {
+        let cols: Vec<&str> = line.split('\t').collect();
+        assert!(
+            cols.len() == 8,
+            "RATCHET.cost.tsv row has {} columns, expected 8: {line}",
+            cols.len()
+        );
+        let row = CostRow {
+            lang: cols[0].to_string(),
+            tool: cols[1].to_string(),
+            tier: Tier::parse(cols[2]),
+            files: cols[3].parse().unwrap_or_else(|_| panic!("RATCHET.cost.tsv files: {line}")),
+            wall_ms: cols[4].parse().unwrap_or_else(|_| panic!("RATCHET.cost.tsv wall_ms: {line}")),
+            rss_mb: cols[5].parse().unwrap_or_else(|_| panic!("RATCHET.cost.tsv rss_mb: {line}")),
+            pid: cols[6].parse().unwrap_or_else(|_| panic!("RATCHET.cost.tsv pid: {line}")),
+            sha: cols[7].to_string(),
+        };
+        assert!(
+            seen.insert((row.lang.clone(), row.tool.clone(), row.tier)),
+            "RATCHET.cost.tsv: duplicate (lang, tool, tier) key: {line}"
+        );
+        rows.push(row);
+    }
+    Some(rows)
+}
+
+pub fn write_cost_ratchet(rows: &[CostRow]) {
+    let mut text = String::from(COST_HEADER);
+    text.push('\n');
+    for row in rows {
+        text.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            row.lang,
+            row.tool,
+            row.tier.as_str(),
+            row.files,
+            row.wall_ms,
+            row.rss_mb,
+            row.pid,
+            row.sha
+        ));
+    }
+    std::fs::write(cost_path(), text).expect("write RATCHET.cost.tsv");
 }
 
 // ── the ratchet itself ──────────────────────────────────────────────────────
@@ -913,7 +1110,7 @@ pub const CEILING_TIGHTEN_MARGIN: f64 = 0.90;
 /// projection): a leg that starts answering 10x more moves a count here before
 /// it moves precision anywhere. A row carrying several origins counts under
 /// each, so the columns need not sum to the row total.
-fn print_origin_table(lang: &str, forms: &NormalForms) {
+fn print_origin_table(leg: &str, forms: &NormalForms) {
     let tally = |origins: &BTreeMap<String, BTreeSet<String>>| {
         let mut counts: BTreeMap<String, usize> = BTreeMap::new();
         for row_origins in origins.values() {
@@ -928,100 +1125,100 @@ fn print_origin_table(lang: &str, forms: &NormalForms) {
     let mut names: BTreeSet<&String> = call.keys().collect();
     names.extend(types.keys());
     println!(
-        "\n{:<6} {:<16} {:>10} {:>10}",
-        "lang", "origin", "call_rows", "type_rows"
+        "\n{:<13} {:<16} {:>10} {:>10}",
+        "lang.tier", "origin", "call_rows", "type_rows"
     );
     for name in names {
         println!(
-            "{lang:<6} {name:<16} {:>10} {:>10}",
+            "{leg:<13} {name:<16} {:>10} {:>10}",
             call.get(name).copied().unwrap_or(0),
             types.get(name).copied().unwrap_or(0),
         );
     }
     println!(
-        "{lang:<6} {:<16} {:>10} {:>10}",
+        "{leg:<13} {:<16} {:>10} {:>10}",
         "TOTAL rows",
         forms.call.len(),
         forms.type_edges.len()
     );
 }
 
-/// One corpus: measure, print the table, then check (default) or bump
-/// (`RATCHET_BUMP=1`). `RATCHET_FORCE=1` alongside bump rewrites every
-/// measured row regardless of direction.
-pub fn ratchet(lang: &str) {
+
+/// One (lang, tier) leg: ONE extraction, then every case that names it, then
+/// check (default) or bump (`RATCHET_BUMP=1`). `RATCHET_FORCE=1` alongside a
+/// bump rewrites every measured row regardless of direction. Accuracy lands in
+/// RATCHET.tsv keyed on (lang, family, tier, oracle); cost lands in
+/// RATCHET.cost.tsv keyed on (lang, tier).
+pub fn ratchet(lang: &str, tier: Tier) {
     let corpus = corpus(lang);
+    let leg = format!("{lang}.{}", tier.as_str());
     if !corpus.root.is_dir() {
         println!(
-            "ratchet {}: absent (corpus root {} missing), skipped",
-            corpus.lang,
+            "ratchet {leg}: absent (corpus root {} missing), skipped",
             corpus.root.display()
         );
         return;
     }
-    let measurement = measure(&corpus);
-    print_origin_table(corpus.lang, &measurement.forms);
+    let leg_cases: Vec<&Case> = cases()
+        .iter()
+        .filter(|case| case.lang == lang && case.tier == tier)
+        .collect();
+    assert!(
+        !leg_cases.is_empty(),
+        "ratchet {leg}: no case rows in cases(); nothing to score"
+    );
+
+    let measured = run(lang, tier);
+    print_origin_table(&leg, &measured.forms);
     let sha = measured_at_sha();
     let mut floors = read_ratchet().unwrap_or_default();
+    let mut ceilings = read_cost_ratchet().unwrap_or_default();
     let bump = std::env::var("RATCHET_BUMP").is_ok();
     let force = std::env::var("RATCHET_FORCE").is_ok();
     if floors.is_empty() && !bump {
         panic!(
-            "ratchet: {} has no RATCHET.tsv rows; run once with RATCHET_BUMP=1 to plant the floors",
-            corpus.lang
+            "ratchet: {leg} has no RATCHET.tsv rows; run once with RATCHET_BUMP=1 to plant the floors"
         );
     }
 
     println!(
-        "\n{:<6} {:<8} {:<32} {:>7} {:>7} {:>7} {:>8} {:>9} {:>8} {:>7} verdict",
-        "lang", "family", "oracle", "ours", "oracle", "overlap", "recall", "precision", "wall_ms", "rss_mb"
+        "\n{:<6} {:<8} {:<8} {:<32} {:>7} {:>7} {:>7} {:>8} {:>9} verdict",
+        "lang", "family", "tier", "oracle", "ours", "oracle", "overlap", "recall", "precision"
     );
     let mut failures = Vec::new();
     let mut improved = 0usize;
     let mut unchanged = 0usize;
-    for (family, oracle_file) in corpus.oracles {
-        let oracle_path = Path::new(BENCH_DIR).join(oracle_file);
+    for case in leg_cases {
+        let oracle_path = Path::new(BENCH_DIR).join(case.oracle);
         let row_key = |rows: &[RatchetRow]| {
-            rows.iter()
-                .position(|row| row.lang == corpus.lang && row.family == *family && row.oracle == *oracle_file)
+            rows.iter().position(|row| {
+                row.lang == case.lang
+                    && row.family == case.family
+                    && row.tier == case.tier
+                    && row.oracle == case.oracle
+            })
         };
         if !oracle_path.is_file() {
             println!(
-                "{:<6} {:<8} {:<32} absent ({} missing), skipped",
-                corpus.lang, family, oracle_file, oracle_path.display()
+                "{:<6} {:<8} {:<8} {:<32} absent ({} missing), skipped",
+                case.lang,
+                case.family,
+                case.tier.as_str(),
+                case.oracle,
+                oracle_path.display()
             );
             continue;
         }
-        let mut oracle_rows = load_tsv(&oracle_path);
-        // The go call projection (GO-PARITY.REPORT.md): score our rows in the
-        // oracle's own shape so recall and precision are comparable. The rust
-        // call projection (RUST-PARITY.REPORT.md) scopes to the corpus file
-        // list and mirrors closure rows on both sides. Every other family
-        // and corpus scores raw.
-        let mut ours = match GoProjection::per_oracle(oracle_file, &oracle_rows) {
-            Some(projection) => go_project(
-                family_rows(&measurement.forms, family),
-                &measurement.forms.call_kinds,
-                &projection,
-            ),
-            None => family_rows(&measurement.forms, family).clone(),
-        };
-        if let Some(projection) = RustProjection::per_oracle(oracle_file, &measurement.files_rel) {
-            let (ours_projected, oracle_projected) =
-                rust_project(&ours, &oracle_rows, &projection);
-            ours = ours_projected;
-            oracle_rows = oracle_projected;
-        }
-        let verdict = score(&ours, &oracle_rows);
+        let verdict = score_case(case, &measured);
         let floor = row_key(&floors).map(|index| floors[index].clone());
         let mut line_verdict = String::from("no-floor");
         if let Some(floor) = &floor {
+            let before = failures.len();
             if verdict.recall < floor.recall - RECALL_TOLERANCE_PT {
                 failures.push(format!(
-                    "ratchet {} {} {}: recall {:.2} below floor {:.2} by {:.2} pt (tolerance {RECALL_TOLERANCE_PT})",
-                    corpus.lang,
-                    family,
-                    oracle_file,
+                    "ratchet {leg} {} {}: recall {:.2} below floor {:.2} by {:.2} pt (tolerance {RECALL_TOLERANCE_PT})",
+                    case.family,
+                    case.oracle,
                     verdict.recall,
                     floor.recall,
                     floor.recall - verdict.recall
@@ -1029,58 +1226,35 @@ pub fn ratchet(lang: &str) {
             }
             if verdict.precision < floor.precision - RECALL_TOLERANCE_PT {
                 failures.push(format!(
-                    "ratchet {} {} {}: precision {:.2} below floor {:.2} by {:.2} pt (tolerance {RECALL_TOLERANCE_PT})",
-                    corpus.lang,
-                    family,
-                    oracle_file,
+                    "ratchet {leg} {} {}: precision {:.2} below floor {:.2} by {:.2} pt (tolerance {RECALL_TOLERANCE_PT})",
+                    case.family,
+                    case.oracle,
                     verdict.precision,
                     floor.precision,
                     floor.precision - verdict.precision
                 ));
             }
-            if measurement.wall_ms as f64 > floor.wall_ms as f64 * (1.0 + WALL_TOLERANCE_PCT / 100.0) {
-                failures.push(format!(
-                    "ratchet {} {} {}: wall {} ms above ceiling {} ms by {:.1}% (tolerance {WALL_TOLERANCE_PCT}%)",
-                    corpus.lang,
-                    family,
-                    oracle_file,
-                    measurement.wall_ms,
-                    floor.wall_ms,
-                    (measurement.wall_ms as f64 / floor.wall_ms as f64 - 1.0) * 100.0
-                ));
-            }
-            if measurement.rss_mb as f64 > floor.rss_mb as f64 * (1.0 + RSS_TOLERANCE_PCT / 100.0) {
-                failures.push(format!(
-                    "ratchet {} {} {}: rss {} MB above ceiling {} MB by {:.1}% (tolerance {RSS_TOLERANCE_PCT}%)",
-                    corpus.lang,
-                    family,
-                    oracle_file,
-                    measurement.rss_mb,
-                    floor.rss_mb,
-                    (measurement.rss_mb as f64 / floor.rss_mb as f64 - 1.0) * 100.0
-                ));
-            }
-            line_verdict = if failures.is_empty() { "ok" } else { "FAIL" }.to_string();
+            line_verdict = if failures.len() == before { "ok" } else { "FAIL" }.to_string();
         }
         println!(
-            "{:<6} {:<8} {:<32} {:>7} {:>7} {:>7} {:>8.2} {:>9.2} {:>8} {:>7} {}",
-            corpus.lang,
-            family,
-            oracle_file,
+            "{:<6} {:<8} {:<8} {:<32} {:>7} {:>7} {:>7} {:>8.2} {:>9.2} {}",
+            case.lang,
+            case.family,
+            case.tier.as_str(),
+            case.oracle,
             verdict.ours,
             verdict.oracle,
             verdict.overlap,
             verdict.recall,
             verdict.precision,
-            measurement.wall_ms,
-            measurement.rss_mb,
             line_verdict
         );
         println!(
-            "{:<6} {:<8} {:<32} 3-bucket: matched {} / contradicted {} / unjudged {} (of {} ours)",
-            corpus.lang,
-            family,
-            oracle_file,
+            "{:<6} {:<8} {:<8} {:<32} 3-bucket: matched {} / contradicted {} / unjudged {} (of {} ours)",
+            case.lang,
+            case.family,
+            case.tier.as_str(),
+            case.oracle,
             verdict.buckets.matched,
             verdict.buckets.contradicted,
             verdict.buckets.unjudged,
@@ -1088,46 +1262,32 @@ pub fn ratchet(lang: &str) {
         );
 
         if bump {
-            let measured = RatchetRow {
-                lang: corpus.lang.to_string(),
-                family: family.to_string(),
-                oracle: oracle_file.to_string(),
+            let row = RatchetRow {
+                lang: case.lang.to_string(),
+                family: case.family.to_string(),
+                tier: case.tier,
+                oracle: case.oracle.to_string(),
                 recall: verdict.recall,
                 precision: verdict.precision,
-                wall_ms: measurement.wall_ms,
-                rss_mb: measurement.rss_mb,
                 sha: sha.clone(),
             };
             match row_key(&floors) {
                 Some(index) => {
                     let floor = &floors[index];
-                    // Wall and rss swing run to run (go rss 750-833 MB at one
-                    // sha), so a bump tightens their ceilings only outside
-                    // that noise band; otherwise every lucky run would drag
-                    // the ceiling onto the optimistic end and the next normal
-                    // run would go red. Recall/precision are stable to 0.01
-                    // pt and move on any improvement.
-                    let better = measured.recall > floor.recall
-                        || measured.precision > floor.precision
-                        || (measured.wall_ms as f64) < (floor.wall_ms as f64) * CEILING_TIGHTEN_MARGIN
-                        || (measured.rss_mb as f64) < (floor.rss_mb as f64) * CEILING_TIGHTEN_MARGIN;
-                    let worse = measured.recall < floor.recall
-                        || measured.precision < floor.precision
-                        || measured.wall_ms > floor.wall_ms
-                        || measured.rss_mb > floor.rss_mb;
+                    let better = row.recall > floor.recall || row.precision > floor.precision;
+                    let worse = row.recall < floor.recall || row.precision < floor.precision;
                     if better || (force && worse) {
                         println!(
-                            "bump {} {} {}: recall {:.2}->{:.2} precision {:.2}->{:.2} wall {}->{} rss {}->{} ({})",
-                            corpus.lang,
-                            family,
-                            oracle_file,
-                            floor.recall, measured.recall,
-                            floor.precision, measured.precision,
-                            floor.wall_ms, measured.wall_ms,
-                            floor.rss_mb, measured.rss_mb,
+                            "bump {leg} {} {}: recall {:.2}->{:.2} precision {:.2}->{:.2} ({})",
+                            case.family,
+                            case.oracle,
+                            floor.recall,
+                            row.recall,
+                            floor.precision,
+                            row.precision,
                             if force && worse { "forced" } else { "improved" }
                         );
-                        floors[index] = measured;
+                        floors[index] = row;
                         improved += 1;
                     } else {
                         unchanged += 1;
@@ -1135,22 +1295,115 @@ pub fn ratchet(lang: &str) {
                 }
                 None => {
                     println!(
-                        "bump {} {} {}: new row (recall {:.2}, precision {:.2}, wall {}, rss {})",
-                        corpus.lang, family, oracle_file, measured.recall, measured.precision, measured.wall_ms, measured.rss_mb
+                        "bump {leg} {} {}: new row (recall {:.2}, precision {:.2})",
+                        case.family, case.oracle, row.recall, row.precision
                     );
-                    floors.push(measured);
+                    floors.push(row);
                     improved += 1;
                 }
             }
         }
     }
+
+    // Cost is per (lang, tool, tier), not per oracle: one extraction by THIS
+    // pid produced every row above, so one ceiling row prices it.
+    println!(
+        "\n{:<6} {:<8} {:<8} {:>7} {:>9} {:>8} {:>8} verdict",
+        "lang", "tool", "tier", "files", "wall_ms", "rss_mb", "pid"
+    );
+    let cost_key = |rows: &[CostRow]| {
+        rows.iter()
+            .position(|row| row.lang == lang && row.tool == COST_TOOL && row.tier == tier)
+    };
+    let ceiling = cost_key(&ceilings).map(|index| ceilings[index].clone());
+    let mut cost_verdict = String::from("no-ceiling");
+    if let Some(ceiling) = &ceiling {
+        let before = failures.len();
+        if measured.wall_ms as f64 > ceiling.wall_ms as f64 * (1.0 + WALL_TOLERANCE_PCT / 100.0) {
+            failures.push(format!(
+                "ratchet {leg}: wall {} ms above ceiling {} ms by {:.1}% (tolerance {WALL_TOLERANCE_PCT}%)",
+                measured.wall_ms,
+                ceiling.wall_ms,
+                (measured.wall_ms as f64 / ceiling.wall_ms as f64 - 1.0) * 100.0
+            ));
+        }
+        if measured.rss_mb as f64 > ceiling.rss_mb as f64 * (1.0 + RSS_TOLERANCE_PCT / 100.0) {
+            failures.push(format!(
+                "ratchet {leg}: rss {} MB above ceiling {} MB by {:.1}% (tolerance {RSS_TOLERANCE_PCT}%)",
+                measured.rss_mb,
+                ceiling.rss_mb,
+                (measured.rss_mb as f64 / ceiling.rss_mb as f64 - 1.0) * 100.0
+            ));
+        }
+        cost_verdict = if failures.len() == before { "ok" } else { "FAIL" }.to_string();
+    }
+    println!(
+        "{:<6} {:<8} {:<8} {:>7} {:>9} {:>8} {:>8} {}",
+        lang,
+        COST_TOOL,
+        tier.as_str(),
+        measured.files,
+        measured.wall_ms,
+        measured.rss_mb,
+        std::process::id(),
+        cost_verdict
+    );
+
     if bump {
-        floors.sort_by(|a, b| (&a.lang, &a.family, &a.oracle).cmp(&(&b.lang, &b.family, &b.oracle)));
+        let row = CostRow {
+            lang: lang.to_string(),
+            tool: COST_TOOL.to_string(),
+            tier,
+            files: measured.files,
+            wall_ms: measured.wall_ms,
+            rss_mb: measured.rss_mb,
+            pid: std::process::id(),
+            sha: sha.clone(),
+        };
+        match cost_key(&ceilings) {
+            Some(index) => {
+                let ceiling = &ceilings[index];
+                // Wall and rss swing run to run (go rss 750-833 MB at one sha), so a
+                // bump tightens a ceiling only outside that band; a lucky run must not drag it.
+                let better = (row.wall_ms as f64) < (ceiling.wall_ms as f64) * CEILING_TIGHTEN_MARGIN
+                    || (row.rss_mb as f64) < (ceiling.rss_mb as f64) * CEILING_TIGHTEN_MARGIN;
+                let worse = row.wall_ms > ceiling.wall_ms || row.rss_mb > ceiling.rss_mb;
+                if better || (force && worse) {
+                    println!(
+                        "bump {leg} cost: wall {}->{} rss {}->{} files {}->{} ({})",
+                        ceiling.wall_ms,
+                        row.wall_ms,
+                        ceiling.rss_mb,
+                        row.rss_mb,
+                        ceiling.files,
+                        row.files,
+                        if force && worse { "forced" } else { "improved" }
+                    );
+                    ceilings[index] = row;
+                    improved += 1;
+                } else {
+                    unchanged += 1;
+                }
+            }
+            None => {
+                println!(
+                    "bump {leg} cost: new row (files {}, wall {}, rss {})",
+                    row.files, row.wall_ms, row.rss_mb
+                );
+                ceilings.push(row);
+                improved += 1;
+            }
+        }
+        floors.sort_by(|a, b| {
+            (&a.lang, &a.family, a.tier, &a.oracle).cmp(&(&b.lang, &b.family, b.tier, &b.oracle))
+        });
+        ceilings.sort_by(|a, b| (&a.lang, &a.tool, a.tier).cmp(&(&b.lang, &b.tool, b.tier)));
         write_ratchet(&floors);
+        write_cost_ratchet(&ceilings);
         println!(
-            "ratchet {}: wrote {} ({improved} rows moved, {unchanged} held)",
-            corpus.lang,
-            ratchet_path().display()
+            "ratchet {leg}: wrote {} and {} ({improved} rows moved, {unchanged} held)",
+            ratchet_path().display(),
+            cost_path().display()
         );
         return;
     }
@@ -1159,10 +1412,9 @@ pub fn ratchet(lang: &str) {
             println!("{failure}");
         }
         panic!(
-            "ratchet {}: {} row(s) regressed against RATCHET.tsv",
-            corpus.lang,
+            "ratchet {leg}: {} row(s) regressed against RATCHET.tsv / RATCHET.cost.tsv",
             failures.len()
         );
     }
-    println!("ratchet {}: all rows hold", corpus.lang);
+    println!("ratchet {leg}: all rows hold");
 }

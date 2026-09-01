@@ -74,19 +74,17 @@ oracle-knip:
 scip-families:
     cd {{ v6 }}/tsv2 && {{ capped }} "${SCIP_FAMILIES_BUDGET_S:-600}" bash scripts/scip-families.sh
 
-# extract ratchet (LOCAL-ONLY, never in CI): diet_scip recall/precision/wall/RSS vs
-# plans/extract-bench-2026-08-29/RATCHET.tsv (0.10pt/+15%/+10%; RATCHET_BUMP=1 improves only)
+# extract ratchet (LOCAL-ONLY, never in CI): one process per (lang, tier) leg, so rss_mb is that pair's peak alone.
+# Floors: plans/extract-bench-2026-08-29/RATCHET.tsv (lang, family, tier, oracle; 0.10pt) + RATCHET.cost.tsv (lang, tool, tier; +15%/+10%).
 extract-ratchet:
     #!/usr/bin/env bash
     set -euo pipefail
     cd {{ v6 }}/sprefa-extract
-    # rust runs WITH the language's own machinery (user 2026-08-30), so its
-    # floors are the checker tier's and its leg needs the ra_ap crate graph.
-    for lang in ts5 go; do
-      {{ capped }} "${EXTRACT_RATCHET_BUDGET_S:-900}" cargo test --release --features cli --test ratchet_recall -- --exact --ignored --nocapture "ratchet_${lang}"
+    for leg in ts5_syntax ts5_checker go_syntax rust_syntax rust_checker; do
+      {{ capped }} "${EXTRACT_RATCHET_BUDGET_S:-900}" cargo test --release --features cli,rust-checker,ts-checker --test ratchet_recall -- --exact --ignored --nocapture "ratchet_${leg}"
     done
-    {{ capped }} "${EXTRACT_RATCHET_BUDGET_S:-900}" cargo test --release --features cli,rust-checker --test ratchet_recall -- --exact --ignored --nocapture ratchet_rust
-    {{ capped }} "${EXTRACT_RATCHET_BUDGET_S:-900}" cargo test --release --features cli --test bench_normal_form -- --exact --ignored --nocapture rust_normal_form_agrees_with_normalize_py_over_the_go_corpus
+    # Same feature set as the legs above: a narrower one rebuilds the whole tree.
+    {{ capped }} "${EXTRACT_RATCHET_BUDGET_S:-900}" cargo test --release --features cli,rust-checker,ts-checker --test bench_normal_form -- --exact --ignored --nocapture rust_normal_form_agrees_with_normalize_py_over_the_go_corpus
 
 # architecture claims machine-check + atlas re-emit
 # budget: measured 0.9s, default 300s (ARCH_BUDGET_S)
