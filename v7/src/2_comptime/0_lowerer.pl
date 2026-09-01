@@ -144,11 +144,12 @@ lower_derived_bind_rules(
     lower_expression(TargetNode, Owner, Environment,
                      Value, Goals, GoalNodes, Diagnostics),
     (   Diagnostics == [],
-        Value = partial_application(_, _)
-    ->  Result = error(diagnostic(
-                           lower, BindNodeId,
-                           partial_application_requires_more_arguments(
-                               Name)))
+        Value = partial_application(Callable, Bound)
+    ->  partial_bind_rules(
+            Owner, Name, BindNodeId, Index, Callable, Bound, Environment,
+            RuleIndex, PartialResult),
+        continue_partial_bind_rules(
+            PartialResult, Reservations, Environment, Result)
     ;   Diagnostics == []
     ->  BindValue = var(derived_bind(BindNodeId)),
         replace_expression_value(Value, BindValue, Goals, BindGoals),
@@ -167,6 +168,84 @@ lower_derived_bind_rules(
 lower_derived_bind_rules([_ | Reservations], Environment, RuleIndex,
                          Result) :-
     lower_derived_bind_rules(Reservations, Environment, RuleIndex, Result).
+
+partial_bind_rules(
+    Owner, Name, BindNodeId, Index,
+    callable(_, _, Callable0, _, _, _), Bound,
+    expression_environment(Reservations, _, _), RuleIndex,
+    Result) :-
+    (   callable_identity(Callable0, Callable),
+        scoped_reservation(
+            Owner, 'Curry', Reservations, [],
+            reservation(_, 'Curry', target(Curry), product)),
+        partial_bound_rows(Bound, BoundRows)
+    ->  Partial = application(Curry, [Callable, BoundRows]),
+        EdgeRule = rule(
+                       call(name(Owner, ':'),
+                            [ ref(Owner), const(Name), ref(Partial),
+                              const(Index)
+                            ]),
+                       []),
+        SpecializationRule = rule(
+                                 call(name(Owner,
+                                           curry_specialization),
+                                      [ref(Callable), ref(Partial)]),
+                                 []),
+        partial_bound_rules(Owner, Partial, BoundRows, BoundRules),
+        append([EdgeRule, SpecializationRule], BoundRules, Rules),
+        length(Rules, RuleCount),
+        indexed_empty_rule_origins(
+            RuleCount, RuleIndex, BindNodeId, Origins),
+        NextRuleIndex is RuleIndex + RuleCount,
+        Result = ok(Rules, Origins, NextRuleIndex)
+    ;   Result = error(diagnostic(
+                           lower, BindNodeId,
+                           partial_application_requires_more_arguments(
+                               Name)))
+    ).
+
+callable_identity(target(Identity), Identity).
+callable_identity(kernel(Name), kernel(Name)).
+
+partial_bound_rows([], []).
+partial_bound_rows([bound(Index, Value) | Bound],
+                   [bound(Index, Kind, Value) | Rows]) :-
+    partial_bound_kind(Value, Kind),
+    partial_bound_rows(Bound, Rows).
+
+partial_bound_kind(ref(_), "reference").
+partial_bound_kind(const(_), "constant").
+
+partial_bound_rules(_, _, [], []).
+partial_bound_rules(Owner, Partial,
+                    [bound(Index, Kind, Value) | Bound],
+                    [Rule | Rules]) :-
+    Rule = rule(
+               call(name(Owner, curry_bound),
+                    [ ref(Partial), const(Index), const(Kind), Value ]),
+               []),
+    partial_bound_rules(Owner, Partial, Bound, Rules).
+
+indexed_empty_rule_origins(0, _, _, []) :- !.
+indexed_empty_rule_origins(Count, RuleIndex, NodeId,
+                           [origin(rule(RuleIndex), NodeId) | Origins]) :-
+    Count > 0,
+    NextCount is Count - 1,
+    NextRuleIndex is RuleIndex + 1,
+    indexed_empty_rule_origins(
+        NextCount, NextRuleIndex, NodeId, Origins).
+
+continue_partial_bind_rules(error(Diagnostic), _, _, error(Diagnostic)).
+continue_partial_bind_rules(
+    ok(Rules, Origins0, NextRuleIndex), Reservations, Environment, Result) :-
+    lower_derived_bind_rules(
+        Reservations, Environment, NextRuleIndex, RestResult),
+    (   RestResult = ok(RestRules, RestOrigins)
+    ->  append(Rules, RestRules, AllRules),
+        append(Origins0, RestOrigins, Origins),
+        Result = ok(AllRules, Origins)
+    ;   Result = RestResult
+    ).
 
 edge_rule_target(target(Target), ref(Target)).
 edge_rule_target(Target, Target).
@@ -863,6 +942,12 @@ lower_expression(node(NodeId, atom(Name)), Owner,
                       [ ref(BindOwner), const(Name), Value, const(Index)
                       ]))],
     Origins = [NodeId].
+lower_expression(node(_, atom(Name)), Owner,
+                 expression_environment(Reservations, _, _),
+                 ref(Target), [], [], []) :-
+    scoped_reservation(Owner, Name, Reservations, [],
+                       reservation(_, Name, target(Target), _)),
+    !.
 lower_expression(node(_, atom(Name)), Owner, _,
                  name(Owner, Name), [], [], []).
 lower_expression(

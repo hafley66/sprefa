@@ -1,0 +1,21 @@
+(: User (*))
+(: Order (*))
+(: PairResult (*))
+
+(: Pair
+   (* (left: type)
+      (right: type)
+      (return: type)))
+
+(Pair User Order PairResult)
+
+; This bind returns a callable relation with `left` captured as User.
+(: PairUser (Pair User))
+
+(PairUser Order PairResult)
+
+(: selected
+   (* (result: type)))
+
+(<- (selected ?Result)
+    (PairUser Order ?Result))

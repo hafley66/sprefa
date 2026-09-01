@@ -669,14 +669,14 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 3986,
+                    [], [], 5314,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(156, 325, 74, 252, 99, 175, 74),
+                    runtime(counts(176, 377, 84, 294, 116, 197, 84),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
@@ -747,6 +747,40 @@ test(generated_relations_are_callable_after_declarations_freeze) :-
     Observed == generated_callable(
                     diagnostics([], []),
                     repeatable(true, true),
+                    residual_partial_terms(0)).
+
+test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
+    Path = 'v7/test/fixtures/5_curry.dl7',
+    compile_dl7(Path, Rows1, Runtime1, Diagnostics1),
+    compile_dl7(Path, Rows2, Runtime2, Diagnostics2),
+    named_owner(Rows1, 'User', User),
+    named_owner(Rows1, 'Order', Order),
+    named_owner(Rows1, 'PairResult', PairResult),
+    named_owner(Rows1, 'Pair', Pair),
+    named_owner(Rows1, 'PairUser', PairUser),
+    Runtime1 = checked_datalog(
+                   _, datalog_program(Relations, Seeds, Rules), _, _),
+    memberchk(relation(ref(PairUser), 2, _), Relations),
+    memberchk(call(ref(PairUser),
+                   [ref(Order), ref(PairResult)]), Seeds),
+    memberchk(rule(call(ref(PairUser), ForwardArguments),
+                   [checked_goal(
+                        positive,
+                        call(ref(Pair),
+                             [ref(User) | ForwardArguments]))]),
+              Rules),
+    residual_partial_terms(Runtime1, ResidualPartials),
+    equality(Rows1, Rows2, RowsRepeat),
+    equality(Runtime1, Runtime2, RuntimeRepeat),
+    Observed = returned_callable(
+                   diagnostics(Diagnostics1, Diagnostics2),
+                   arity(2), capture(left, User),
+                   repeat(rows(RowsRepeat), runtime(RuntimeRepeat)),
+                   residual_partial_terms(ResidualPartials)),
+    Observed == returned_callable(
+                    diagnostics([], []),
+                    arity(2), capture(left, User),
+                    repeat(rows(true), runtime(true)),
                     residual_partial_terms(0)).
 
 test(userland_type_algebra_proves_contracts_and_constructs_products) :-
