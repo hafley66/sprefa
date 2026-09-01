@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use ra_ap_hir::{ModuleDef, PathResolution, Semantics, attach_db};
 use ra_ap_ide::{AnalysisHost, NavigationTarget, RootDatabase, TryToNav};
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
-use ra_ap_project_model::CargoConfig;
+use ra_ap_project_model::{CargoConfig, RustLibSource};
 use ra_ap_syntax::{AstNode, ast};
 
 use super::rust_checker::{CheckerAnswers, CheckerError, CheckerRef, OffsetMap};
@@ -34,10 +34,16 @@ pub fn answer(
         num_worker_threads: 4,
         proc_macro_processes: 0,
     };
+    // A crate graph with no sysroot declines every method whose receiver type
+    // flows through std; `set_test` puts `#[cfg(test)]` bodies in the tree.
+    let cargo_config = CargoConfig {
+        sysroot: Some(RustLibSource::Discover),
+        set_test: true,
+        ..CargoConfig::default()
+    };
     let started = Instant::now();
-    let (db, vfs, _proc_macro) =
-        load_workspace_at(root, &CargoConfig::default(), &load_config, &|_| {})
-            .map_err(|err| CheckerError::NoWorkspace(err.to_string()))?;
+    let (db, vfs, _proc_macro) = load_workspace_at(root, &cargo_config, &load_config, &|_| {})
+        .map_err(|err| CheckerError::NoWorkspace(err.to_string()))?;
     let load = started.elapsed();
     if load > budget {
         return Err(CheckerError::Budget(budget));
@@ -62,14 +68,14 @@ pub fn answer(
 
     let host = AnalysisHost::with_database(db);
     let db = host.raw_database();
-    let sema = Semantics::new(db);
     let walk_started = Instant::now();
     let mut answers = CheckerAnswers { load, ..CheckerAnswers::default() };
 
-    // The next-solver interner reads a thread-attached db; without this every
+    // The next-solver interner reads a THREAD-attached db; without this every
     // resolve panics in hir_ty's `next_solver/interner.rs`.
-    attach_db(db, || {
-        let walk_files: Vec<WalkFile> = by_file_id
+    let walk_files: Vec<WalkFile> = attach_db(db, || {
+        let sema = Semantics::new(db);
+        by_file_id
             .iter()
             .map(|(file_id, path)| {
                 let text = sema.parse_guess_edition(*file_id).syntax().text().to_string();
@@ -80,57 +86,100 @@ pub fn answer(
                     text,
                 }
             })
-            .collect();
-        // Every destination coordinate is read in the SOURCE file's own offset
-        // unit, so a nav into any corpus file needs that file's map in hand.
-        let destination: HashMap<ra_ap_ide::FileId, &WalkFile> =
-            walk_files.iter().map(|file| (file.file_id, file)).collect();
-        answers.files_answered = walk_files.len();
-        for file in &walk_files {
-            let source = sema.parse_guess_edition(file.file_id);
-            let mut calls: Vec<CheckerRef> = Vec::new();
-            let mut types: Vec<CheckerRef> = Vec::new();
-            for node in source.syntax().descendants() {
-                if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
-                    if let Some(reference) =
-                        method_call_ref(&sema, &destination, file, &call)
-                    {
-                        calls.push(reference);
-                    }
-                    continue;
-                }
-                if let Some(call) = ast::CallExpr::cast(node.clone()) {
-                    if let Some(ast::Expr::PathExpr(path_expr)) = call.expr() {
-                        if let Some(path) = path_expr.path() {
-                            if let Some(reference) =
-                                path_call_ref(&sema, &destination, file, &path)
-                            {
-                                calls.push(reference);
-                            }
-                        }
-                    }
-                    continue;
-                }
-                if let Some(record) = ast::RecordExpr::cast(node.clone()) {
-                    if let Some(path) = record.path() {
-                        if let Some(reference) = path_call_ref(&sema, &destination, file, &path) {
-                            calls.push(reference);
-                        }
-                    }
-                    continue;
-                }
-                if let Some(path) = ast::Path::cast(node) {
-                    if let Some(reference) = type_ref(&sema, &destination, file, &path) {
-                        types.push(reference);
+            .collect()
+    });
+    // Every destination coordinate is read in the SOURCE file's own offset
+    // unit, so a nav into any corpus file needs that file's map in hand.
+    let destination: HashMap<ra_ap_ide::FileId, &WalkFile> =
+        walk_files.iter().map(|file| (file.file_id, file)).collect();
+    answers.files_answered = walk_files.len();
+
+    // A salsa handle shares the storage and carries a thread-local query stack,
+    // so it is Send and NOT Sync: each chunk owns a moved clone, never a borrow.
+    let pool = crate::project::extract_pool();
+    let chunk_size = walk_files.len().div_ceil(pool.current_num_threads().max(1)).max(1);
+    let chunks: Vec<(RootDatabase, &[WalkFile])> = walk_files
+        .chunks(chunk_size)
+        .map(|chunk| (db.clone(), chunk))
+        .collect();
+    let per_file: Vec<FileAnswers> = pool.install(|| {
+        use rayon::prelude::*;
+        chunks
+            .into_par_iter()
+            .flat_map_iter(|(db, chunk)| {
+                attach_db(&db, || {
+                    let sema = Semantics::new(&db);
+                    chunk
+                        .iter()
+                        .map(|file| walk_file(&sema, &destination, file))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect()
+    });
+
+    for answered in per_file {
+        answers.method_sites += answered.method_sites;
+        answers.method_unresolved += answered.method_unresolved;
+        answers.calls.insert(answered.path.clone(), answered.calls);
+        answers.types.insert(answered.path, answered.types);
+    }
+    answers.walk = walk_started.elapsed();
+    Ok(answers)
+}
+
+/// One file's share of the walk, kept per-worker so the fold is the only
+/// contended write.
+#[derive(Default)]
+struct FileAnswers {
+    path: String,
+    calls: Vec<CheckerRef>,
+    types: Vec<CheckerRef>,
+    method_sites: usize,
+    method_unresolved: usize,
+}
+
+fn walk_file(
+    sema: &Semantics<'_, RootDatabase>,
+    destination: &HashMap<ra_ap_ide::FileId, &WalkFile>,
+    file: &WalkFile,
+) -> FileAnswers {
+    let source = sema.parse_guess_edition(file.file_id);
+    let mut out = FileAnswers { path: file.path.clone(), ..FileAnswers::default() };
+    for node in source.syntax().descendants() {
+        if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
+            out.method_sites += 1;
+            match method_call_ref(sema, destination, file, &call) {
+                Some(reference) => out.calls.push(reference),
+                None => out.method_unresolved += 1,
+            }
+            continue;
+        }
+        if let Some(call) = ast::CallExpr::cast(node.clone()) {
+            if let Some(ast::Expr::PathExpr(path_expr)) = call.expr() {
+                if let Some(path) = path_expr.path() {
+                    if let Some(reference) = path_call_ref(sema, destination, file, &path) {
+                        out.calls.push(reference);
                     }
                 }
             }
-            answers.calls.insert(file.path.clone(), calls);
-            answers.types.insert(file.path.clone(), types);
+            continue;
         }
-    });
-    answers.walk = walk_started.elapsed();
-    Ok(answers)
+        if let Some(record) = ast::RecordExpr::cast(node.clone()) {
+            if let Some(path) = record.path() {
+                if let Some(reference) = path_call_ref(sema, destination, file, &path) {
+                    out.calls.push(reference);
+                }
+            }
+            continue;
+        }
+        if let Some(path) = ast::Path::cast(node) {
+            if let Some(reference) = type_ref(sema, destination, file, &path) {
+                out.types.push(reference);
+            }
+        }
+    }
+    out
 }
 
 /// `recv.m(..)`: the method the compiler dispatches to, receiver type and trait
