@@ -2516,7 +2516,7 @@ with no `resolved_edge` naming them.
 - **The 2,591 method sites still unanswered** (3.1%). Not classified. Whether
   they are proc-macro bodies or a real rust-analyzer limit is the next census.
 
-## 33. M1 re-censused post-sysroot and split by minter (lane `fix-extract-rust-macro-callers`, 2026-08-31)
+## 34. M1 re-censused post-sysroot and split by minter (lane `fix-extract-rust-macro-callers`, 2026-08-31)
 
 The brief's first step: re-run the census before touching the extractor, because
 the sysroot fix (sec 32) may have shrunk M1. It did not.
