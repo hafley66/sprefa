@@ -66,7 +66,7 @@ tsi.primitive(TypeId, PrimitiveClass)
 tsi.edge(EdgeId, OwnerTypeId, Label, TargetTypeId, Position)
 
 tsi.parameter(ParameterTypeId, ConstructorTypeId, Position, Variance)
-tsi.constructed(ResultTypeId, ConstructorTypeId, ArgumentListId)
+tsi.called(ResultTypeId, CalleeTypeId, ArgumentListId)
 tsi.argument(ArgumentListId, Position, ArgumentTypeId)
 
 tsi.input(CallableTypeId, Position, InputTypeId)
@@ -87,7 +87,7 @@ Identity follows four rules:
 1. A nominal source type derives its identity from the resolved source symbol.
 2. An anonymous structural type derives its identity from its closed ordered
    edge graph.
-3. A constructed generic type derives its identity from its constructor and ordered
+3. A type call result derives its identity from its callee and ordered
    argument IDs.
 4. A generic parameter derives its identity from its declaration symbol and
    ordinal.
@@ -102,7 +102,7 @@ families preserve native rules that do not have one common interpretation.
 
 ```text
 Common graph facts
-  tsi.product, tsi.sum, tsi.edge, tsi.parameter, tsi.constructed,
+  tsi.product, tsi.sum, tsi.edge, tsi.parameter, tsi.called,
   tsi.argument, tsi.input, tsi.output
 
 Common semantic relations
@@ -172,11 +172,11 @@ ts.optional(user_name_edge)
 For `User<number>`, the checker or comptime closure adds:
 
 ```text
-tsi.constructed(user_number_type, user_type, user_number_args)
+tsi.called(user_number_type, user_type, user_number_args)
 tsi.argument(user_number_args, 0, number_type)
 ```
 
-The constructed node represents one canonical closed type. Rules may project
+The result node represents one canonical closed type. Rules may project
 its substituted edges without erasing the constructor, argument, source, or
 TypeScript-specific facts.
 
