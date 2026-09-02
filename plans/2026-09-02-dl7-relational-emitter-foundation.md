@@ -152,6 +152,10 @@ Implementation receipts on 2026-09-02:
 - `just compiler-perf` measured 62,761,010 cold inferences, seven closure
   rounds, 6,774 compiler rows, and 1,822 warm inferences. The measured wall
   times were 14,197 ms cold and 264 ms warm.
+- The relation-specific native table backend reduced the same cold fixture to
+  4,629 ms and warm compilation to 14 ms while retaining seven snapshot rounds
+  and 6,774 compiler rows. The gate now caps cold wall time at 7,000 ms, cold
+  inferences at 40,000,000, and warm wall time at 100 ms.
 
 ## Staffing
 

@@ -6,6 +6,7 @@
             type_prelude_paths/1
           ]).
 
+:- use_module(library(ordsets), [ord_subtract/3]).
 :- use_module(library(readutil), [read_file_to_string/3]).
 :- use_module('../0_reader/2_embedder', [dl7_text_unit/5]).
 :- use_module('../0_reader/4_module_loader', [load_dl7_project/4]).
@@ -789,7 +790,11 @@ compiler_round_metrics(
       metric(closure_rows, ClosureCount),
       metric(derived_rows, DerivedCount),
       metric(frozen_edges, FrozenEdgeCount),
+      metric(added_edges, AddedEdgeCount),
+      metric(removed_edges, RemovedEdgeCount),
       metric(frozen_interns, FrozenRequestCount),
+      metric(added_interns, AddedRequestCount),
+      metric(removed_interns, RemovedRequestCount),
       metric(generated_relations, GeneratedRelationCount),
       metric(generated_rules, GeneratedRuleCount)
     ]) :-
@@ -798,7 +803,18 @@ compiler_round_metrics(
     length(Closure, ClosureCount),
     DerivedCount is max(0, ClosureCount - SeedCount),
     length(FrozenEdges, FrozenEdgeCount),
+    strip_snapshot_rows(Closure, CompilerRows),
+    colon_rows(CompilerRows, NextEdges),
+    ord_subtract(NextEdges, FrozenEdges, AddedEdges),
+    ord_subtract(FrozenEdges, NextEdges, RemovedEdges),
+    length(AddedEdges, AddedEdgeCount),
+    length(RemovedEdges, RemovedEdgeCount),
     length(FrozenRequests, FrozenRequestCount),
+    intern_rows(CompilerRows, NextRequests),
+    ord_subtract(NextRequests, FrozenRequests, AddedRequests),
+    ord_subtract(FrozenRequests, NextRequests, RemovedRequests),
+    length(AddedRequests, AddedRequestCount),
+    length(RemovedRequests, RemovedRequestCount),
     length(FrozenGeneratedRelations, GeneratedRelationCount),
     length(FrozenGeneratedRules, GeneratedRuleCount).
 

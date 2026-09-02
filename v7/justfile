@@ -22,7 +22,7 @@ tree-sitter-parse path:
 build: tree-sitter-test
 
 # Compile the representative type-program fixture cold and warm. Structural
-# budgets use inference, closure-round, and row counts; wall time is reported.
+# Budgets cover wall time, inferences, closure rounds, and compiler row counts.
 compiler-perf:
     swipl -q -s "{{ v7 }}/bench/0_compiler_performance.pl" -- "{{ v7 }}/test/fixtures/2_partial.dl7"
 

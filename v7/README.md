@@ -34,5 +34,5 @@ comptime fixpoint row counts. Set `DL7_TRACE=json` and optionally
 compile.
 
 Run `cd v7 && just compiler-perf` for the cold/warm compiler checkpoint. It
-reports wall time and enforces inference, closure-round, compiler-row, and
-warm-cache output budgets on `2_partial.dl7`.
+enforces wall-time, inference, closure-round, compiler-row, and warm-cache
+output budgets on `2_partial.dl7`.
