@@ -47,6 +47,12 @@ carry supplied and derived tuple values at callable positions.
    prove parity, switch one consumer, then remove its legacy carrier.
 7. Helper relations such as `curry_unbound`, `curry_rank`, and `curry_edge` may
    remain derived views. They do not own application state.
+8. Curry carrier removal requires the application graph to be complete at the
+   start of a compiler round. Reading live `:/4` edges creates an aggregate
+   dependency cycle through `curry_rank`; reading `edge_snapshot/4` while the
+   source lowerer still emits call edges exhausted the 16-round source-refreeze
+   limit. The next migration must move call-edge production across that phase
+   boundary before replacing the carriers.
 
 Rejected alternatives:
 
@@ -77,7 +83,7 @@ generated callable signature and forwarding rule
 fixed-arity Datalog
 ```
 
-<!-- todo(refactor): Derive Curry specialization and bound-slot views from application nodes and edges, then remove lowerer-authored curry_specialization and curry_bound rows. -->
+<!-- todo(refactor): Make the application graph complete at the compiler-round boundary, derive Curry specialization and bound-slot views from it, then remove lowerer-authored curry_specialization and curry_bound rows. -->
 <!-- todo(feature): Box compiler variables and primitive literals as value nodes so generated argument carriers no longer store a separate kind string. -->
 <!-- todo(refactor): Represent generated rule heads and body goals as application nodes and remove head_arg and body_arg from the assembler protocol. -->
 <!-- todo(refactor): Replace structural application(Constructor, Arguments) identities with opaque interned node identities plus Apply and argument edges. -->
