@@ -6,6 +6,7 @@
 2. Boundary model
 3. Missing adapters
 4. Target flow
+5. Measured common-wire probe
 
 ## 1. Current implementation
 
@@ -109,3 +110,53 @@ fixpoint meaning until the runtime boundary changes. ast-grep supplies
 structural source queries as data-producing operations. `sprefa-extract` is
 the source-fact ingress shared by code intelligence, schema ingestion, and
 compiler effects.
+
+## 5. Measured common-wire probe
+
+On 2026-09-02, the release `extract` binary was run over equivalent generic
+TypeScript and Rust fixtures containing an interface or trait, a generic
+`User<T>`, a mapping method, and one conformance declaration.
+
+```text
+extract --family type,call /private/tmp/tsi_extract_probe.ts
+extract --family type,call /private/tmp/tsi_extract_probe.rs
+
+extract --resolve --family type --project-root /private/tmp \
+  --ts-checker /private/tmp/tsi_extract_probe.ts
+
+extract --resolve --family type --project-root /private/tmp \
+  --rust-checker /private/tmp/tsi_extract_probe.rs
+```
+
+Both source languages emitted the same `FlatFact` JSONL envelope. TypeScript
+produced `node` rows for `Mapper` and `User` with `kind: interface`; Rust
+produced `node` rows with `kind: trait` and `kind: struct`, callable rows, type
+signature rows, and `method_owner` rows. Resolve mode produced one common
+`resolved_type_edge` shape from each language:
+
+```json
+{"owner_name":"User","target_name":"Mapper","kind":"generic","resolution_origin":"same_file"}
+{"owner_name":"User","target_name":"Mapper","kind":"impl","resolution_origin":"same_file"}
+```
+
+The common wire is `FlatFact` in `v6/sprefa-extract/src/types.rs`, serialized
+as one tagged JSON object per line by `v6/sprefa-extract/src/wire.rs`. The
+human-readable contract is available through `extract --schema` and is defined
+in `v6/sprefa-extract/src/schema.rs`.
+
+The probe did not emit generic parameter declarations, concrete generic
+arguments, TypeScript optional or readonly edges, Rust associated-type
+bindings, or resolved callable type expressions. Those rows require the TSI
+semantic adapter above the existing syntax and checker-resolution facts.
+
+The current wire is an output seam. `FlatFact` derives `Serialize` and has no
+`Deserialize` implementation. A repository search found zero JSON decoders for
+`FlatFact`, zero fact-ingest CLI paths, and no adapter from foreign FlatFact
+JSONL into DL7. A foreign producer can spell compatible JSONL today, while a
+reverse-door lab still needs:
+
+1. a versioned fact-stream envelope or a version row;
+2. decoding and schema validation;
+3. canonical sorting and re-emission;
+4. an adapter from accepted rows into DL7 comptime relations;
+5. open namespaced TSI rows for semantics beyond the closed `FlatFact` enum.
