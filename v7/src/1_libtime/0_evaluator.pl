@@ -14,9 +14,9 @@
                 vertices_edges_to_ugraph/3
               ]).
 
-:- dynamic evaluation_rule/2.
-:- dynamic evaluation_seed/2.
-:- dynamic evaluation_lower/2.
+:- dynamic evaluation_rule/3.
+:- dynamic evaluation_seed/3.
+:- dynamic evaluation_lower/3.
 :- dynamic evaluation_request/2.
 
 :- table proves/2.
@@ -400,17 +400,20 @@ install_evaluation(EvaluationId, Rules, Seeds, LowerRows, ClauseReferences) :-
 
 install_rules([], _, []).
 install_rules([Rule | Rules], EvaluationId, [Reference | References]) :-
-    assertz(evaluation_rule(EvaluationId, Rule), Reference),
+    Rule = rule(call(Relation, _), _),
+    assertz(evaluation_rule(EvaluationId, Relation, Rule), Reference),
     install_rules(Rules, EvaluationId, References).
 
 install_seeds([], _, []).
 install_seeds([Seed | Seeds], EvaluationId, [Reference | References]) :-
-    assertz(evaluation_seed(EvaluationId, Seed), Reference),
+    Seed = call(Relation, _),
+    assertz(evaluation_seed(EvaluationId, Relation, Seed), Reference),
     install_seeds(Seeds, EvaluationId, References).
 
 install_lower_rows([], _, []).
 install_lower_rows([Row | Rows], EvaluationId, [Reference | References]) :-
-    assertz(evaluation_lower(EvaluationId, Row), Reference),
+    Row = call(Relation, _),
+    assertz(evaluation_lower(EvaluationId, Relation, Row), Reference),
     install_lower_rows(Rows, EvaluationId, References).
 
 collect_closure(EvaluationId, Closure) :-
@@ -425,12 +428,15 @@ clear_evaluation(EvaluationId, ClauseReferences) :-
     maplist(erase, ClauseReferences).
 
 proves(EvaluationId, Call) :-
-    evaluation_seed(EvaluationId, Call).
+    Call = call(Relation, _),
+    evaluation_seed(EvaluationId, Relation, Call).
 proves(EvaluationId, Call) :-
-    evaluation_lower(EvaluationId, Call).
+    Call = call(Relation, _),
+    evaluation_lower(EvaluationId, Relation, Call).
 proves(_, call(ref(kernel(nil)), [const([])])).
 proves(EvaluationId, Head) :-
-    evaluation_rule(EvaluationId, Rule),
+    Head = call(Relation, _),
+    evaluation_rule(EvaluationId, Relation, Rule),
     instantiate_rule(Rule, Head, Body),
     proves_body(Body, EvaluationId).
 proves(_, call(ref(kernel(cons)), [Head, Tail, List])) :-
@@ -465,7 +471,8 @@ satisfy_goal(EvaluationId, Goal) :-
 satisfy_goal(EvaluationId, Goal) :-
     goal_call(Goal, negative, Call),
     ground(Call),
-    \+ evaluation_lower(EvaluationId, Call).
+    Call = call(Relation, _),
+    \+ evaluation_lower(EvaluationId, Relation, Call).
 
 %% cons_relation(?Head, ?Tail, ?List) is semidet.
 %

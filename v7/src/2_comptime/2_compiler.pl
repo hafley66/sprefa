@@ -29,24 +29,73 @@
               ]).
 :- use_module('1a_generated_program_assembler',
               [assemble_generated_program/5]).
+:- use_module('1b_compiler_tracer',
+              [ with_compile_trace/2,
+                run_compile_phase/3,
+                run_compile_step/4
+              ]).
+:- use_module('1c_compiler_cacher',
+              [ with_prelude_cache/5,
+                with_compilation_cache/5
+              ]).
 
 %% compile_dl7(+Path, -CompilerRows, -RuntimeProgram, -Diagnostics) is det.
 %
 % Load the userland type prelude and one source file through the same reader,
 % then run every compile-known positive rule over the initial type graph.
 compile_dl7(Path, CompilerRows, RuntimeProgram, Diagnostics) :-
+    compile_trace_program_name(Path, ProgramName),
+    with_compile_trace(
+        ProgramName,
+        compile_dl7_traced(
+            Path, CompilerRows, RuntimeProgram, Diagnostics)).
+
+compile_dl7_traced(Path, CompilerRows, RuntimeProgram, Diagnostics) :-
     once(absolute_file_name(Path, ProgramPath,
                             [access(read), file_errors(error)])),
-    load_type_prelude(PreludeUnit, PreludeDiagnostics),
+    run_compile_phase(
+        read,
+        read_program_texts(ProgramPath, PreludeText, ProgramText),
+        _),
+    CompileKey = compile(ProgramPath, PreludeText, ProgramText),
+    run_compile_step(
+        driver, compilation_cache,
+        with_compilation_cache(
+            CompileKey,
+            compile_program_texts(ProgramPath, PreludeText, ProgramText),
+            Compiled, Diagnostics, CacheHit),
+        cache_compile_metrics(CacheHit)),
+    compiled_outputs(Compiled, CompilerRows, RuntimeProgram),
+    !.
+
+read_program_texts(ProgramPath, PreludeText, ProgramText) :-
+    once(type_prelude_paths(PreludePaths)),
+    read_prelude_texts(PreludePaths, PreludeTexts),
+    join_prelude_texts(PreludeTexts, PreludeText),
     read_file_to_string(ProgramPath, ProgramText, [encoding(utf8)]),
-    dl7_text_unit(file(ProgramPath), ProgramPath, ProgramText,
-                  ProgramUnit, ProgramDiagnostics),
+    !.
+
+compile_program_texts(
+    ProgramPath, PreludeText, ProgramText, Compiled, Diagnostics) :-
+    run_compile_phase(
+        expand,
+        parse_program_texts(
+            ProgramPath, PreludeText, ProgramText,
+            PreludeUnit, PreludeDiagnostics,
+            ProgramUnit, ProgramDiagnostics),
+        _),
     append(PreludeDiagnostics, ProgramDiagnostics, ReaderDiagnostics),
     compile_after_reads(ReaderDiagnostics, [PreludeUnit, ProgramUnit],
-                        Compiled, Diagnostics),
-    compiled_outputs(Compiled, CompilerRows, RuntimeProgram),
-    !,
-    garbage_collect.
+                        Compiled, Diagnostics).
+
+parse_program_texts(
+    ProgramPath, PreludeText, ProgramText,
+    PreludeUnit, PreludeDiagnostics,
+    ProgramUnit, ProgramDiagnostics) :-
+    cached_prelude_text_unit(
+        PreludeText, PreludeUnit, PreludeDiagnostics, _),
+    dl7_text_unit(file(ProgramPath), ProgramPath, ProgramText,
+                  ProgramUnit, ProgramDiagnostics).
 
 %% compile_dl7_project(+Root, +Paths,
 %%                     -CompilerRows, -RuntimeProgram, -Diagnostics) is det.
@@ -56,21 +105,61 @@ compile_dl7(Path, CompilerRows, RuntimeProgram, Diagnostics) :-
 % by the single-file compiler.
 compile_dl7_project(Root, Paths,
                     CompilerRows, RuntimeProgram, Diagnostics) :-
-    load_type_prelude(PreludeUnit, PreludeDiagnostics),
-    load_dl7_project(Root, Paths, Project, ProjectDiagnostics),
+    compile_trace_program_name(Root, ProgramName),
+    with_compile_trace(
+        ProgramName,
+        compile_dl7_project_traced(
+            Root, Paths, CompilerRows, RuntimeProgram, Diagnostics)).
+
+compile_dl7_project_traced(Root, Paths,
+                           CompilerRows, RuntimeProgram, Diagnostics) :-
+    run_compile_phase(
+        read,
+        read_project_units(
+            Root, Paths, PreludeUnit, PreludeDiagnostics,
+            Project, ProjectDiagnostics),
+        _),
     append(PreludeDiagnostics, ProjectDiagnostics, ReaderDiagnostics),
     compile_after_project_reads(ReaderDiagnostics, PreludeUnit, Project,
                                 Compiled, Diagnostics),
     compiled_outputs(Compiled, CompilerRows, RuntimeProgram),
-    !,
-    garbage_collect.
+    !.
+
+read_project_units(
+    Root, Paths, PreludeUnit, PreludeDiagnostics,
+    Project, ProjectDiagnostics) :-
+    load_type_prelude(PreludeUnit, PreludeDiagnostics),
+    load_dl7_project(Root, Paths, Project, ProjectDiagnostics).
+
+compile_trace_program_name(Path, ProgramName) :-
+    file_base_name(Path, BaseName),
+    (   file_name_extension(Stem, _, BaseName)
+    ->  ProgramName = Stem
+    ;   ProgramName = BaseName
+    ).
 
 load_type_prelude(PreludeUnit, Diagnostics) :-
     once(type_prelude_paths(PreludePaths)),
     read_prelude_texts(PreludePaths, PreludeTexts),
     join_prelude_texts(PreludeTexts, PreludeText),
-    dl7_text_unit(prelude, prelude, PreludeText,
-                  PreludeUnit, Diagnostics).
+    cached_prelude_text_unit(
+        PreludeText, PreludeUnit, Diagnostics, _).
+
+cached_prelude_text_unit(Text, Unit, Diagnostics, Hit) :-
+    run_compile_step(
+        expand, prelude_cache,
+        with_prelude_cache(
+            Text, parse_prelude_text(Text), Unit, Diagnostics, Hit),
+        cache_compile_metrics(Hit)).
+
+parse_prelude_text(Text, Unit, Diagnostics) :-
+    dl7_text_unit(prelude, prelude, Text, Unit, Diagnostics).
+
+cache_compile_metrics(Hit, [metric(cache_hit, HitValue)]) :-
+    (   Hit == hit
+    ->  HitValue = 1
+    ;   HitValue = 0
+    ).
 
 type_prelude_paths(Paths) :-
     once(source_file(dl7_compiler:compile_dl7(_, _, _, _), SourcePath)),
@@ -141,18 +230,28 @@ compile_unit(Unit, Compiled, Diagnostics) :-
 % ordinary alias edges, merge the owned rows, then enter the existing checker
 % and comptime fixpoint.
 compile_units(Units, Compiled, Diagnostics) :-
-    lower_compiler_units(Units, ModuleBasements, ModuleOrigins,
-                         LowerDiagnostics),
+    with_compile_trace(
+        units,
+        compile_units_traced(Units, Compiled, Diagnostics)).
+
+compile_units_traced(Units, Compiled, Diagnostics) :-
+    run_compile_phase(
+        lower,
+        lower_compiler_units(Units, ModuleBasements, ModuleOrigins,
+                             LowerDiagnostics),
+        _),
     Context = compile_context(Units, none),
     compile_after_unit_lower(LowerDiagnostics, Context,
                              ModuleBasements, ModuleOrigins,
                              Compiled, Diagnostics),
-    !,
-    garbage_collect.
+    !.
 
 compile_project_units(Project, Units, Compiled, Diagnostics) :-
-    lower_compiler_units(Units, ModuleBasements0, ModuleOrigins0,
-                         LowerDiagnostics),
+    run_compile_phase(
+        lower,
+        lower_compiler_units(Units, ModuleBasements0, ModuleOrigins0,
+                             LowerDiagnostics),
+        _),
     install_project_after_lower(
         LowerDiagnostics, Project, ModuleBasements0, ModuleOrigins0,
         ModuleBasements, ModuleOrigins, ProjectDiagnostics),
@@ -160,8 +259,7 @@ compile_project_units(Project, Units, Compiled, Diagnostics) :-
     compile_after_unit_lower(ProjectDiagnostics, Context,
                              ModuleBasements, ModuleOrigins,
                              Compiled, Diagnostics),
-    !,
-    garbage_collect.
+    !.
 
 install_project_after_lower(
     [], Project, Basements0, Origins0,
@@ -188,22 +286,31 @@ unit_has_origin(dl7_unit(Origin, _, _, _, _), Origin).
 compile_after_unit_lower([], Context, ModuleBasements, ModuleOrigins,
                          Compiled, Diagnostics) :-
     !,
-    merge_module_basements(ModuleBasements, ModuleOrigins,
-                           Basement, Origins),
+    run_compile_step(
+        lower, merge_modules,
+        merge_module_basements(ModuleBasements, ModuleOrigins,
+                               Basement, Origins),
+        basement_compile_metrics(Basement)),
     compile_after_lower([], Context, Basement, Origins,
                         Compiled, Diagnostics).
 compile_after_unit_lower(Diagnostics, _, _, _, [], Diagnostics).
 
 compile_after_lower([], Context, Basement, Origins, Compiled, Diagnostics) :-
     !,
-    check_datalog(Basement, Origins, Checked, CheckDiagnostics),
+    run_compile_phase(
+        check,
+        check_datalog(Basement, Origins, Checked, CheckDiagnostics),
+        _),
     compile_after_check(CheckDiagnostics, Context, Checked,
                         Compiled, Diagnostics).
 compile_after_lower(Diagnostics, _, _, _, [], Diagnostics).
 
 compile_after_check([], Context, Checked, Compiled, Diagnostics) :-
     !,
-    evaluate_checked(Context, Checked, Compiled, Diagnostics).
+    run_compile_phase(
+        comptime,
+        evaluate_checked(Context, Checked, Compiled, Diagnostics),
+        _).
 compile_after_check(Diagnostics, _, _, [], Diagnostics).
 
 evaluate_checked(
@@ -636,8 +743,14 @@ evaluate_compiler_rounds(AuthoredRules, BaseRelations, BaseSeeds, FrozenEdges,
     check_resolved_rules(Relations, Rules, Depends, Strata,
                          ProgramDiagnostics),
     compiler_round_seeds(BaseSeeds, FrozenEdges, FrozenRequests, RoundSeeds),
-    evaluate_compiler_program(ProgramDiagnostics, Rules, RoundSeeds,
-                              RoundClosure0, EvaluationDiagnostics),
+    run_compile_step(
+        comptime, evaluate_round(Round),
+        evaluate_compiler_program(ProgramDiagnostics, Rules, RoundSeeds,
+                                  RoundClosure0, EvaluationDiagnostics),
+        compiler_round_metrics(
+            Rules, RoundSeeds, FrozenEdges, FrozenRequests,
+            FrozenGeneratedRelations, FrozenGeneratedRules,
+            RoundClosure0)),
     strip_snapshot_rows(RoundClosure0, RoundClosure),
     continue_compiler_rounds(EvaluationDiagnostics,
                              AuthoredRules, BaseRelations, BaseSeeds,
@@ -651,6 +764,52 @@ evaluate_compiler_program([], Rules, Seeds, Closure, Diagnostics) :-
     evaluate(Rules, Seeds, Closure, Diagnostics).
 evaluate_compiler_program(Diagnostics, _, _, [], Diagnostics).
 
+basement_compile_metrics(
+    basement_program(root_graph(Nodes, Edges),
+                     datalog_program(Relations, Seeds, Rules)),
+    [ metric(nodes, NodeCount),
+      metric(edges, EdgeCount),
+      metric(relations, RelationCount),
+      metric(seeds, SeedCount),
+      metric(rules, RuleCount)
+    ]) :-
+    length(Nodes, NodeCount),
+    length(Edges, EdgeCount),
+    length(Relations, RelationCount),
+    length(Seeds, SeedCount),
+    length(Rules, RuleCount).
+
+compiler_round_metrics(
+    Rules, Seeds, FrozenEdges, FrozenRequests,
+    FrozenGeneratedRelations, FrozenGeneratedRules, Closure,
+    [ metric(rules, RuleCount),
+      metric(seed_rows, SeedCount),
+      metric(closure_rows, ClosureCount),
+      metric(derived_rows, DerivedCount),
+      metric(frozen_edges, FrozenEdgeCount),
+      metric(frozen_interns, FrozenRequestCount),
+      metric(generated_relations, GeneratedRelationCount),
+      metric(generated_rules, GeneratedRuleCount)
+    ]) :-
+    length(Rules, RuleCount),
+    length(Seeds, SeedCount),
+    length(Closure, ClosureCount),
+    DerivedCount is max(0, ClosureCount - SeedCount),
+    length(FrozenEdges, FrozenEdgeCount),
+    length(FrozenRequests, FrozenRequestCount),
+    length(FrozenGeneratedRelations, GeneratedRelationCount),
+    length(FrozenGeneratedRules, GeneratedRuleCount).
+
+assembly_compile_metrics(
+    Closure, GeneratedRelations, GeneratedRules,
+    [ metric(closure_rows, ClosureCount),
+      metric(generated_relations, GeneratedRelationCount),
+      metric(generated_rules, GeneratedRuleCount)
+    ]) :-
+    length(Closure, ClosureCount),
+    length(GeneratedRelations, GeneratedRelationCount),
+    length(GeneratedRules, GeneratedRuleCount).
+
 continue_compiler_rounds([], AuthoredRules, BaseRelations, BaseSeeds,
                          FrozenEdges, FrozenRequests,
                          FrozenGeneratedRelations, FrozenGeneratedRules,
@@ -659,9 +818,14 @@ continue_compiler_rounds([], AuthoredRules, BaseRelations, BaseSeeds,
     !,
     colon_rows(RoundClosure, NextEdges),
     intern_rows(RoundClosure, NextRequests),
-    assemble_generated_program(RoundClosure, BaseRelations,
-                               NextGeneratedRelations, NextGeneratedRules,
-                               AssemblyDiagnostics),
+    run_compile_step(
+        comptime, assemble_round(Round),
+        assemble_generated_program(
+            RoundClosure, BaseRelations,
+            NextGeneratedRelations, NextGeneratedRules,
+            AssemblyDiagnostics),
+        assembly_compile_metrics(
+            RoundClosure, NextGeneratedRelations, NextGeneratedRules)),
     continue_after_assembly(
         AssemblyDiagnostics,
         AuthoredRules, BaseRelations, BaseSeeds,

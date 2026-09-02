@@ -1903,9 +1903,9 @@ evaluator_snapshot(
     evaluator(temporary_rules(RuleFacts), temporary_seeds(SeedFacts),
               temporary_lower_rows(LowerFacts),
               temporary_requests(RequestFacts))) :-
-    aggregate_all(count, dl7_evaluator:evaluation_rule(_, _), RuleFacts),
-    aggregate_all(count, dl7_evaluator:evaluation_seed(_, _), SeedFacts),
-    aggregate_all(count, dl7_evaluator:evaluation_lower(_, _), LowerFacts),
+    aggregate_all(count, dl7_evaluator:evaluation_rule(_, _, _), RuleFacts),
+    aggregate_all(count, dl7_evaluator:evaluation_seed(_, _, _), SeedFacts),
+    aggregate_all(count, dl7_evaluator:evaluation_lower(_, _, _), LowerFacts),
     aggregate_all(count, dl7_evaluator:evaluation_request(_, _),
                   RequestFacts).
 

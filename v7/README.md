@@ -26,3 +26,9 @@ Initial boundary under examination:
 The first build gate is `cd v7 && just build`. It regenerates and tests the
 DL7 Tree-sitter parser. The generated parser exposes a C ABI usable from C,
 C++, Zig, and a later compiler-host adapter.
+
+Every compiler entry point writes one DL6-compatible `COMPILE-TRACE` summary
+to stderr. Set `DL7_TRACE=steps` for cost-sorted compiler steps, including
+comptime fixpoint row counts. Set `DL7_TRACE=json` and optionally
+`DL7_TRACE_FILE=/path/to/compile-trace.jsonl` for one structured object per
+compile.
