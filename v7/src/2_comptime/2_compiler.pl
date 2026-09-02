@@ -216,7 +216,10 @@ evaluate_checked(
     graph_seeds(Graph, GraphSeeds),
     append(GraphSeeds, AuthoredSeeds, BaseSeeds0),
     sort(BaseSeeds0, BaseSeeds),
-    colon_rows(BaseSeeds, InitialEdges),
+    colon_rows(BaseSeeds, BaseEdges),
+    source_application_edges(Rules, SourceApplicationEdges),
+    append(BaseEdges, SourceApplicationEdges, InitialEdges0),
+    sort(InitialEdges0, InitialEdges),
     intern_rows(BaseSeeds, InitialRequests),
     Context = compile_context(Units, ProjectContext),
     derived_bind_slots(Rules, DerivedBindSlots),
@@ -323,7 +326,10 @@ expand_source_compiler(
         graph_seeds(Graph, GraphSeeds),
         append(GraphSeeds, AuthoredSeeds, BaseSeeds0),
         sort(BaseSeeds0, BaseSeeds),
-        colon_rows(CompilerFacts, FrozenEdges),
+        colon_rows(CompilerFacts, CompilerEdges),
+        source_application_edges(Rules, SourceApplicationEdges),
+        append(CompilerEdges, SourceApplicationEdges, FrozenEdges0),
+        sort(FrozenEdges0, FrozenEdges),
         intern_rows(CompilerFacts, FrozenRequests),
         evaluate_compiler_rounds(
             Rules, BaseRelations, BaseSeeds,
@@ -807,6 +813,19 @@ colon_rows(Rows, Edges) :-
     sort(Edges0, Edges).
 
 colon_row(call(ref(kernel(':')), _)).
+
+% Escaping partials lower their call-owned edges as ground fact rules. Expose
+% those edges to edge_snapshot/4 at the start of the same compiler round.
+% Generated type edges still cross the ordinary end-of-round freeze.
+source_application_edges(Rules, Edges) :-
+    findall(
+        Edge,
+        ( member(rule(Edge, []), Rules),
+          Edge = call(ref(kernel(':')),
+                      [ref(call(_, _)), _, _, _])
+        ),
+        Edges0),
+    sort(Edges0, Edges).
 
 graph_seeds(root_graph(Nodes, Edges), Seeds) :-
     maplist(node_seed, Nodes, NodeSeeds),

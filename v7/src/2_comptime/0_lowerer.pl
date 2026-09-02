@@ -217,14 +217,8 @@ partial_bind_rules(
                               const(Index)
                             ]),
                        []),
-        SpecializationRule = rule(
-                                 call(name(Owner,
-                                           curry_specialization),
-                                      [ref(Callable), ref(Partial)]),
-                                 []),
-        partial_bound_rules(Owner, Partial, BoundRows, BoundRules),
         append([[CallNodeRule, ApplyRule], CallEdgeRules,
-                [ReturnEdgeRule, EdgeRule, SpecializationRule], BoundRules],
+                [ReturnEdgeRule, EdgeRule]],
                Rules),
         length(Rules, RuleCount),
         indexed_empty_rule_origins(
@@ -289,16 +283,6 @@ compiler_literal_type(Value, primitive(text)) :-
     string(Value),
     !.
 compiler_literal_type(_, primitive(any)).
-
-partial_bound_rules(_, _, [], []).
-partial_bound_rules(Owner, Partial,
-                    [bound(Index, Kind, Value) | Bound],
-                    [Rule | Rules]) :-
-    Rule = rule(
-               call(name(Owner, curry_bound),
-                    [ ref(Partial), const(Index), const(Kind), Value ]),
-               []),
-    partial_bound_rules(Owner, Partial, Bound, Rules).
 
 indexed_empty_rule_origins(0, _, _, []) :- !.
 indexed_empty_rule_origins(Count, RuleIndex, NodeId,

@@ -142,9 +142,9 @@
       (: scope type)
       (: name text)))
 
-; Curry identities are canonical callable specializations. The compiler
-; supplies only specialization and captured-slot facts; the remaining shape
-; and forwarding program are derived in userland.
+; Curry identities are canonical callable specializations. The source lowerer
+; supplies Apply and call-edge facts. These Curry views, the remaining shape,
+; and the forwarding program are derived in userland.
 (: Curry
    (* (: source type)
       (: bindings any)
@@ -153,6 +153,24 @@
 (: curry_specialization
    (* (: source type)
       (: result type)))
+
+(: curry_call
+   (* (: call type)
+      (: source type)
+      (: result type)
+      (: return_index int)))
+
+(: curry_result_slot
+   (* (: call type)
+      (: source_index int)))
+
+(: curry_supplied
+   (* (: result type)
+      (: source_index int)
+      (: value type)))
+
+(: literal_node
+   (* (: node type)))
 
 (: curry_bound
    (* (: result type)

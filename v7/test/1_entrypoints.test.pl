@@ -13,6 +13,7 @@
 :- use_module('../src/2_comptime/0_lowerer', [lower_datalog/4]).
 :- use_module('../src/2_comptime/0a_module_lowerer',
               [ lower_units/4,
+                lower_units_with_exporter_deferred/5,
                 merge_module_basements/4,
                 install_module_aliases/6
               ]).
@@ -670,14 +671,14 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 5890,
+                    [], [], 6496,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(184, 396, 88, 309, 118, 202, 88),
+                    runtime(counts(192, 414, 92, 323, 125, 213, 92),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
@@ -762,6 +763,8 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
     named_owner(Rows1, 'Apply', Apply),
     named_owner(Rows1, 'Literal', Literal),
     named_owner(Rows1, 'Variable', Variable),
+    named_owner(Rows1, curry_specialization, CurrySpecialization),
+    named_owner(Rows1, curry_bound, CurryBound),
     named_owner(Rows1, 'MixedResult', MixedResult),
     named_owner(Rows1, 'Remaining', Remaining),
     named_owner(Rows1, 'Mixed', Mixed),
@@ -805,6 +808,23 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
                         call(ref(TripleUser),
                              [ref(Order) | TripleUserOrderArguments]))]),
               Rules),
+    memberchk(call(ref(CurrySpecialization),
+                   [ref(Pair), ref(PairUser)]), Rows1),
+    memberchk(call(ref(CurryBound),
+                   [ ref(PairUser), const(0), const("reference"),
+                     ref(User)
+                   ]),
+              Rows1),
+    memberchk(call(ref(CurryBound),
+                   [ ref(MixedUserText), const(0), const("reference"),
+                     ref(User)
+                   ]),
+              Rows1),
+    memberchk(call(ref(CurryBound),
+                   [ ref(MixedUserText), const(1), const("constant"),
+                     const("User")
+                   ]),
+              Rows1),
     findall(Call,
             member(call(ref(Apply), [ref(Call), ref(_)]), Rows1),
             ApplicationCalls0),
@@ -871,6 +891,36 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
                         value_nodes(true)),
                     repeat(rows(true), runtime(true)),
                     residual_partial_terms(0)).
+
+test(partial_source_lowering_omits_legacy_curry_views) :-
+    dl7_compiler:load_type_prelude(PreludeUnit, PreludeDiagnostics),
+    load_dl7('v7/test/fixtures/5_curry.dl7', ProgramUnit,
+             ProgramDiagnostics),
+    lower_units_with_exporter_deferred(
+        PreludeUnit, [ProgramUnit], ModuleBasements, _, LowerDiagnostics),
+    findall(
+        Name,
+        ( member(module_basement(
+                     _, basement_program(
+                            _, datalog_program(_, _, LoweredRules))),
+                 ModuleBasements),
+          member(rule(call(name(_, Name), _), []), LoweredRules),
+          memberchk(Name, ['Apply', curry_specialization, curry_bound])
+        ),
+        CompilerViewHeads),
+    include(=('Apply'), CompilerViewHeads, ApplyHeads),
+    exclude(=('Apply'), CompilerViewHeads, LegacyHeads),
+    length(ApplyHeads, ApplyCount),
+    append([ PreludeDiagnostics, ProgramDiagnostics, LowerDiagnostics ],
+           Diagnostics),
+    Observed = source_lowering(
+                   diagnostics(Diagnostics),
+                   application_rows(ApplyCount),
+                   legacy_curry_rows(LegacyHeads)),
+    Observed == source_lowering(
+                    diagnostics([]),
+                    application_rows(3),
+                    legacy_curry_rows([])).
 
 pair_user_application_graph(Rows, Apply, User, Pair, PairUser, Call) :-
     memberchk(call(ref(kernel(node)), [ref(Call)]), Rows),
