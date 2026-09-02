@@ -14,6 +14,18 @@
 
 (PairUser Order PairResult)
 
+; A relation may return a callable identity. The named bind freezes that
+; identity before its next application, so emitted Datalog stays static.
+(: CallableFactory
+   (* (: source type)
+      (: return type)))
+
+(CallableFactory User Pair)
+
+(: ReturnedPair (CallableFactory User))
+(: ReturnedResult (ReturnedPair User))
+(: ReturnedDone (ReturnedResult Order))
+
 (: selected
    (* (result: type)))
 

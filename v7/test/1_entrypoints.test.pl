@@ -759,6 +759,10 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
     named_owner(Rows1, 'PairResult', PairResult),
     named_owner(Rows1, 'Pair', Pair),
     named_owner(Rows1, 'PairUser', PairUser),
+    named_owner(Rows1, 'CallableFactory', CallableFactory),
+    named_owner(Rows1, 'ReturnedPair', ReturnedPair),
+    named_owner(Rows1, 'ReturnedResult', ReturnedResult),
+    named_owner(Rows1, 'ReturnedDone', ReturnedDone),
     named_owner(Rows1, 'Region', Region),
     named_owner(Rows1, 'TripleResult', TripleResult),
     named_owner(Rows1, 'Triple', Triple),
@@ -795,16 +799,26 @@ test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
     residual_partial_terms(Runtime1, ResidualPartials),
     equality(Rows1, Rows2, RowsRepeat),
     equality(Runtime1, Runtime2, RuntimeRepeat),
+    equality(ReturnedPair, Pair, ReturnedCallable),
+    equality(ReturnedResult, PairUser, ReturnedPartial),
+    equality(ReturnedDone, PairResult, ReturnedValue),
     equality(TripleDone, TripleResult, TripleReturn),
     Observed = returned_callable(
                    diagnostics(Diagnostics1, Diagnostics2),
                    arity(2), capture(left, User),
+                   returned_callable(
+                       factory(CallableFactory),
+                       callable(ReturnedCallable),
+                       partial(ReturnedPartial), value(ReturnedValue)),
                    chained(arity(3), arity(2), return(TripleReturn)),
                    repeat(rows(RowsRepeat), runtime(RuntimeRepeat)),
                    residual_partial_terms(ResidualPartials)),
     Observed == returned_callable(
                     diagnostics([], []),
                     arity(2), capture(left, User),
+                    returned_callable(
+                        factory(CallableFactory),
+                        callable(true), partial(true), value(true)),
                     chained(arity(3), arity(2), return(true)),
                     repeat(rows(true), runtime(true)),
                     residual_partial_terms(0)).

@@ -940,10 +940,10 @@ lower_expression(node(_, literal(Value)), _, _,
 lower_expression(node(NodeId, atom(Name)), Owner,
                  expression_environment(Reservations, _, _),
                  Value, Goals, Origins, []) :-
-    scoped_reservation(Owner, Name, Reservations, [],
-                       reservation(BindOwner, Name,
-                                   deferred_expression(_, _, Index),
-                                   expression)),
+    scoped_deferred_reservation(
+        Owner, Name, Reservations, [],
+        reservation(BindOwner, Name,
+                    deferred_expression(_, _, Index), expression)),
     !,
     Value = var(derived_lookup(NodeId)),
     Goals = [pending_goal(
@@ -986,13 +986,50 @@ lower_expression(node(NodeId, form(_)), _, _,
 expression_callable(Name, Owner,
                     expression_environment(Reservations, Relations, _),
                     Result) :-
-    (   scoped_reservation(Owner, Name, Reservations, [], Reservation)
+    (   scoped_callable_reservation(
+            Owner, Name, Reservations, Relations, [], Reservation)
+    ->  expression_reserved_callable(Reservation, Relations, Name, Result)
+    ;   scoped_reservation(Owner, Name, Reservations, [], Reservation)
     ->  expression_reserved_callable(Reservation, Relations, Name, Result)
     ;   kernel_relation(Name, Arity)
     ->  kernel_relation_keys_for_expression(Name, KeySets),
         Result = ok(kernel(Name), Arity, KeySets)
     ;   Result = error(undeclared_relation(Name))
     ).
+
+scoped_deferred_reservation(
+    Owner, Name, Reservations, Visited, Reservation) :-
+    \+ memberchk(Owner, Visited),
+    (   memberchk(
+            reservation(Owner, Name,
+                        deferred_expression(Target, NodeId, Index),
+                        expression),
+            Reservations)
+    ->  Reservation = reservation(
+                           Owner, Name,
+                           deferred_expression(Target, NodeId, Index),
+                           expression)
+    ;   reservation_parent(Owner, Reservations, Parent),
+        scoped_deferred_reservation(
+            Parent, Name, Reservations, [Owner | Visited], Reservation)
+    ).
+
+scoped_callable_reservation(
+    Owner, Name, Reservations, Relations, Visited, Reservation) :-
+    \+ memberchk(Owner, Visited),
+    (   member(reservation(Owner, Name, target(Callable), Kind),
+               Reservations),
+        callable_reservation_kind(Kind),
+        memberchk(relation(Callable, _, _), Relations)
+    ->  Reservation = reservation(Owner, Name, target(Callable), Kind)
+    ;   reservation_parent(Owner, Reservations, Parent),
+        scoped_callable_reservation(
+            Parent, Name, Reservations, Relations, [Owner | Visited],
+            Reservation)
+    ).
+
+callable_reservation_kind(product).
+callable_reservation_kind(derived_callable).
 
 scoped_reservation(Owner, Name, Reservations, Visited, Reservation) :-
     \+ memberchk(Owner, Visited),
@@ -1011,7 +1048,8 @@ reservation_parent(Owner, Reservations, Parent) :-
     memberchk(reservation(Parent, _, target(Owner), product), Reservations).
 
 expression_reserved_callable(
-    reservation(_, _, target(Callable), product), Relations, _, Result) :-
+    reservation(_, _, target(Callable), Kind), Relations, _, Result) :-
+    callable_reservation_kind(Kind),
     !,
     (   memberchk(relation(Callable, Arity, KeySets), Relations)
     ->  Result = ok(target(Callable), Arity, KeySets)

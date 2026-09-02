@@ -218,13 +218,29 @@ evaluate_checked(
     sort(BaseSeeds0, BaseSeeds),
     colon_rows(BaseSeeds, InitialEdges),
     intern_rows(BaseSeeds, InitialRequests),
+    Context = compile_context(Units, ProjectContext),
+    derived_bind_slots(Rules, DerivedBindSlots),
+    EvaluationContext = compile_context(
+                            Units, ProjectContext, DerivedBindSlots),
     evaluate_compiler_rounds(Rules, Relations, BaseSeeds, InitialEdges,
                              InitialRequests, [], [], 1,
                              CompilerFacts, GeneratedProgram,
                              EvaluationDiagnostics),
-    finish_evaluation(EvaluationDiagnostics, Context,
+    finish_evaluation(EvaluationDiagnostics, EvaluationContext,
                       CompilerFacts, GeneratedProgram,
                       Compiled, Diagnostics).
+
+derived_bind_slots(Rules, Slots) :-
+    findall(
+        derived_bind_slot(Owner, Name, Index),
+        member(rule(call(ref(kernel(':')),
+                         [ ref(Owner), const(Name),
+                           var(derived_bind(_)), const(Index)
+                         ]),
+                    _),
+               Rules),
+        Slots0),
+    sort(Slots0, Slots).
 
 finish_evaluation([], Context, CompilerFacts, GeneratedProgram,
                   Compiled, Diagnostics) :-
@@ -391,8 +407,8 @@ finish_runtime_program(Diagnostics, _, _, _, _, _, _, _, _,
 final_checked_program(Context, CompilerFacts, GeneratedRelations,
                       Checked, Diagnostics) :-
     generated_expression_environment(
-        CompilerFacts, GeneratedRelations, Environment),
-    Context = compile_context(Units, ProjectContext),
+        CompilerFacts, GeneratedRelations, DerivedBindSlots, Environment),
+    Context = compile_context(Units, ProjectContext, DerivedBindSlots),
     lower_final_units(Units, Environment,
                       ModuleBasements0, ModuleOrigins0, LowerDiagnostics),
     freeze_after_final_lower(
@@ -410,8 +426,8 @@ final_checked_program(Context, CompilerFacts, GeneratedRelations,
 deferred_checked_program(Context, CompilerFacts, GeneratedRelations,
                          Checked, Diagnostics) :-
     generated_expression_environment(
-        CompilerFacts, GeneratedRelations, Environment),
-    Context = compile_context(Units, ProjectContext),
+        CompilerFacts, GeneratedRelations, DerivedBindSlots, Environment),
+    Context = compile_context(Units, ProjectContext, DerivedBindSlots),
     lower_deferred_final_units(
         Units, Environment,
         ModuleBasements0, ModuleOrigins0, LowerDiagnostics),
@@ -520,17 +536,19 @@ unref_generated_relation(relation(ref(Relation), Arity, KeySets),
                          relation(Relation, Arity, KeySets)).
 
 generated_expression_environment(
-    CompilerFacts, GeneratedRelations,
+    CompilerFacts, GeneratedRelations, DerivedBindSlots,
     expression_environment(Reservations, Relations, Edges)) :-
     maplist(generated_environment_relation(CompilerFacts),
             GeneratedRelations, Relations0),
     sort(Relations0, Relations),
     findall(
-        reservation(Owner, Name, target(Relation), product),
+        reservation(Owner, Name, target(Relation), Kind),
         ( member(call(ref(kernel(':')),
-                      [ ref(Owner), const(Name), ref(Relation), const(_) ]),
+                      [ ref(Owner), const(Name), ref(Relation), const(Index) ]),
                  CompilerFacts),
-          memberchk(relation(Relation, _, _), Relations),
+          generated_callable_reservation(
+              Owner, Name, Index, Relation,
+              GeneratedRelations, DerivedBindSlots, Kind),
           atom(Name)
         ),
         Reservations0),
@@ -544,6 +562,14 @@ generated_expression_environment(
         ),
         Edges0),
     sort(Edges0, Edges).
+
+generated_callable_reservation(_, _, _, Relation,
+                               GeneratedRelations, _, product) :-
+    memberchk(relation(ref(Relation), _, _), GeneratedRelations),
+    !.
+generated_callable_reservation(Owner, Name, Index, _, _, DerivedBindSlots,
+                               derived_callable) :-
+    memberchk(derived_bind_slot(Owner, Name, Index), DerivedBindSlots).
 
 generated_environment_relation(
     CompilerFacts,
