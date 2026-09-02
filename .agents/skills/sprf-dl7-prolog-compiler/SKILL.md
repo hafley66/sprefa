@@ -27,6 +27,10 @@ Read:
   before changing source-language semantic extraction, stable type identity,
   cross-language type queries, language-native type extensions, or lossy
   schema and target projections.
+- [references/5_soopy_calls_and_higher_types.md](references/5_soopy_calls_and_higher_types.md)
+  before connecting Soopy to SWI or the runtime runner, defining abstract
+  source and Git calls, changing generic type calls, adding higher types, or
+  changing partial-call lowering.
 
 ## Working rule
 
