@@ -533,28 +533,76 @@ def read_scores():
     return rows
 
 
-def cmd_report(args):
-    rows = read_scores()
+def read_skips():
+    if not SKIPS.exists():
+        return []
+    rows = []
+    for line in SKIPS.read_text().splitlines():
+        if line.startswith("#") or line.startswith("repo\t") or not line.strip():
+            continue
+        rows.append(dict(zip(SKIP_COLUMNS, line.split("\t"))))
+    return rows
+
+
+def gap_table(rows):
     tuning = {r["measure_id"]: r for r in rows if r["corpus_class"] == "tuning"}
     heldout = {}
     for row in rows:
         if row["corpus_class"] == "heldout":
             heldout.setdefault(row["measure_id"], []).append(row)
-
-    print("| measure id | tuning corpus | held-out median | gap | n |")
-    print("|---|---|---|---|---|")
+    out = ["| measure id | tuning corpus | held-out median | gap | n held-out |",
+           "|---|---|---|---|---|"]
     for measure_id in sorted(set(tuning) | set(heldout)):
         held = heldout.get(measure_id, [])
         tuned = tuning.get(measure_id)
-        tuned_recall = f"{float(tuned['recall']):.2f}%" if tuned else "not measured"
+        left = (f"{float(tuned['recall']):.2f}% / {float(tuned['precision']):.2f}%"
+                if tuned else "not measured")
         if held:
-            median_recall = statistics.median(float(r["recall"]) for r in held)
-            held_text = f"{median_recall:.2f}%"
-            gap = (f"{median_recall - float(tuned['recall']):+.2f} pt"
+            med_recall = statistics.median(float(r["recall"]) for r in held)
+            med_prec = statistics.median(float(r["precision"]) for r in held)
+            right = f"{med_recall:.2f}% / {med_prec:.2f}%"
+            gap = (f"{med_recall - float(tuned['recall']):+.2f} pt / "
+                   f"{med_prec - float(tuned['precision']):+.2f} pt"
                    if tuned else "no tuning row")
         else:
-            held_text, gap = "not measured", "-"
-        print(f"| {measure_id} | {tuned_recall} | {held_text} | {gap} | {len(held)} |")
+            right, gap = "not measured", "-"
+        out.append(f"| {measure_id} | {left} | {right} | {gap} | {len(held)} |")
+    return out
+
+
+def detail_table(rows):
+    out = ["| measure id | repo | class | files | recall | precision | "
+           "matched | contradicted | unjudged | ours | oracle | wall_ms | sha |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for row in sorted(rows, key=lambda r: (r["measure_id"], r["corpus_class"], r["repo"])):
+        out.append("| " + " | ".join([
+            row["measure_id"], row["repo"], row["corpus_class"], row["files"],
+            row["recall"] + "%", row["precision"] + "%", row["matched"],
+            row["contradicted"], row["unjudged"], row["ours"], row["oracle_rows"],
+            row["wall_ms"], row["sha"],
+        ]) + " |")
+    return out
+
+
+def skip_table(skips):
+    if not skips:
+        return ["No repo skipped."]
+    out = ["| repo | lang | stage | reason | detail |", "|---|---|---|---|---|"]
+    for row in skips:
+        out.append("| " + " | ".join([
+            row["repo"], row["lang"], row["stage"], row["reason"], row["detail"],
+        ]) + " |")
+    return out
+
+
+def cmd_report(args):
+    rows, skips = read_scores(), read_skips()
+    print("## Overfit gap, recall / precision\n")
+    print("\n".join(gap_table(rows)))
+    print("\n## Per repo\n")
+    print("\n".join(detail_table(rows)))
+    print("\n## Skipped\n")
+    print("\n".join(skip_table(skips)))
 
 
 def main():

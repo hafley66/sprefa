@@ -1,0 +1,26 @@
+# one row per (repo, lang, family, tier, oracle). DATA ROWS ONLY: no rollup, no total, no median lives here.
+# recall = matched/oracle_rows, precision = matched/ours, percent; ours = matched + contradicted + unjudged.
+# oracle = the language's own SCIP indexer via `extract --family scip ROOT`; both sides scoped to the `files` extracted.
+repo	lang	corpus_class	family	tier	oracle	measure_id	recall	precision	matched	contradicted	unjudged	ours	oracle_rows	files	wall_ms	sha
+fatedier/frp	go	heldout	call	syntax	scip	go.call.syntax.scip	22.29	73.06	3422	416	846	4684	15352	351	325	832df8dff66d
+mickael-kerjean/filestash	go	heldout	call	syntax	scip	go.call.syntax.scip	18.44	61.30	2580	580	1049	4209	13992	363	708	f24b10ec8f38
+gitleaks/gitleaks	go	heldout	call	syntax	scip	go.call.syntax.scip	29.07	90.68	1596	54	110	1760	5490	204	195	b58d3f102cf3
+oraios/serena	python	heldout	call	syntax	scip	python.call.syntax.scip	11.83	40.95	2498	2921	681	6100	21110	431	461	43ae0211d7f3
+getredash/redash	python	heldout	call	syntax	scip	python.call.syntax.scip	18.34	63.51	2113	1090	124	3327	11524	292	260	4adbeaacc55a
+ultralytics/yolov5	python	heldout	call	syntax	scip	python.call.syntax.scip	11.71	55.01	395	287	36	718	3373	52	157	35b48237aef6
+umami-software/umami	ts	heldout	call	syntax	scip	ts.call.syntax.scip	25.92	60.60	4089	457	2202	6748	15774	1044	308	ca661c705798
+umami-software/umami	ts	heldout	call	checker	scip	ts.call.checker.scip	25.92	60.60	4089	457	2202	6748	15774	1044	307	ca661c705798
+vitejs/vite	ts	heldout	call	syntax	scip	ts.call.syntax.scip	15.62	25.77	1514	393	3968	5875	9691	555	398	f40efefbb363
+vitejs/vite	ts	heldout	call	checker	scip	ts.call.checker.scip	15.62	25.77	1514	393	3968	5875	9691	555	321	f40efefbb363
+trpc/trpc	ts	heldout	call	syntax	scip	ts.call.syntax.scip	8.61	11.07	714	453	5283	6450	8296	864	285	4f5315219f94
+trpc/trpc	ts	heldout	call	checker	scip	ts.call.checker.scip	8.61	11.07	714	453	5283	6450	8296	864	312	4f5315219f94
+TypeScript-5.9	ts	tuning	call	syntax	scip	ts.call.syntax.scip	1.61	28.24	2549	720	5757	9026	158187	4858	1418	7e133bea121a+subsampled
+TypeScript-5.9	ts	tuning	call	checker	scip	ts.call.checker.scip	1.78	29.12	2821	482	6384	9687	158187	4858	4668	7e133bea121a+subsampled
+web-infra-dev/rspack	rust	heldout	call	syntax	scip	rust.call.syntax.scip	19.90	57.59	18651	6104	7633	32388	93732	1365	12962	e153112169a7
+web-infra-dev/rspack	rust	heldout	call	checker	scip	rust.call.checker.scip	25.89	74.24	24269	687	7735	32691	93732	1365	74001	e153112169a7
+BigPizzaV3/CodexPlusPlus	rust	heldout	call	syntax	scip	rust.call.syntax.scip	35.38	77.75	6354	741	1077	8172	17960	117	336	d6b85e36aeb3
+BigPizzaV3/CodexPlusPlus	rust	heldout	call	checker	scip	rust.call.checker.scip	36.54	89.89	6562	85	653	7300	17960	117	11540	d6b85e36aeb3
+rust-lang/rust-clippy	rust	heldout	call	syntax	scip	rust.call.syntax.scip	40.67	48.26	7556	2180	5922	15658	18578	2345	1129	52c139d8b5d8
+rust-lang/rust-clippy	rust	heldout	call	checker	scip	rust.call.checker.scip	41.24	49.75	7662	1896	5842	15400	18578	2345	7236	52c139d8b5d8
+rust-analyzer	rust	tuning	call	syntax	scip	rust.call.syntax.scip	26.01	74.97	40452	4574	8935	53961	155515	1481	1915	af4111f0bf85
+rust-analyzer	rust	tuning	call	checker	scip	rust.call.checker.scip	33.13	79.08	51526	1261	12372	65159	155515	1481	13147	af4111f0bf85
