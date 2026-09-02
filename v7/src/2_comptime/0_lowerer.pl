@@ -180,15 +180,34 @@ lower_derived_bind_rules(CallPolicy, [_ | Reservations], Environment,
 
 partial_bind_rules(
     Owner, Name, BindNodeId, Index,
-    callable(_, _, Callable0, _, _, _), Bound,
-    expression_environment(Reservations, _, _), RuleIndex,
+    callable(_, _, Callable0, Arity, _, ReturnIndex), Bound,
+    Environment, RuleIndex,
     Result) :-
+    Environment = expression_environment(Reservations, _, _),
     (   callable_identity(Callable0, Callable),
         scoped_reservation(
             Owner, 'Curry', Reservations, [],
             reservation(_, 'Curry', target(Curry), product)),
-        partial_bound_rows(Bound, BoundRows)
+        partial_bound_rows(Bound, BoundRows),
+        callable_slots(Callable0, Arity, Environment, AllSlots),
+        exclude_slot(ReturnIndex, AllSlots, InputSlots),
+        Call = call(Owner, BindNodeId),
+        partial_call_edge_rules(Owner, Call, InputSlots, Bound,
+                                CallEdgeRules)
     ->  Partial = application(Curry, [Callable, BoundRows]),
+        CallNodeRule = rule(
+                           call(name(Owner, node), [ref(Call)]),
+                           []),
+        ApplyRule = rule(
+                        call(name(Owner, 'Apply'),
+                             [ref(Call), ref(Callable)]),
+                        []),
+        ReturnEdgeRule = rule(
+                             call(name(Owner, ':'),
+                                  [ ref(Call), const(return), ref(Partial),
+                                    const(ReturnIndex)
+                                  ]),
+                             []),
         EdgeRule = rule(
                        call(name(Owner, ':'),
                             [ ref(Owner), const(Name), ref(Partial),
@@ -201,7 +220,9 @@ partial_bind_rules(
                                       [ref(Callable), ref(Partial)]),
                                  []),
         partial_bound_rules(Owner, Partial, BoundRows, BoundRules),
-        append([EdgeRule, SpecializationRule], BoundRules, Rules),
+        append([[CallNodeRule, ApplyRule], CallEdgeRules,
+                [ReturnEdgeRule, EdgeRule, SpecializationRule], BoundRules],
+               Rules),
         length(Rules, RuleCount),
         indexed_empty_rule_origins(
             RuleCount, RuleIndex, BindNodeId, Origins),
@@ -224,6 +245,17 @@ partial_bound_rows([bound(Index, Value) | Bound],
 
 partial_bound_kind(ref(_), "reference").
 partial_bound_kind(const(_), "constant").
+
+partial_call_edge_rules(_, _, _, [], []).
+partial_call_edge_rules(
+    Owner, Call, InputSlots, [bound(Index, Value) | Bound],
+    [Rule | Rules]) :-
+    memberchk(slot(Index, Label), InputSlots),
+    Rule = rule(
+               call(name(Owner, ':'),
+                    [ref(Call), const(Label), Value, const(Index)]),
+               []),
+    partial_call_edge_rules(Owner, Call, InputSlots, Bound, Rules).
 
 partial_bound_rules(_, _, [], []).
 partial_bound_rules(Owner, Partial,
