@@ -17,6 +17,7 @@ module.exports = grammar({
 
     _expression: $ => choice(
       $.parenthesized_expression,
+      $.query_literal,
       $.string_literal,
       $.bare_token,
     ),
@@ -33,11 +34,23 @@ module.exports = grammar({
       '"',
     )),
 
+    // Embedded Tree-sitter queries remain exact source data. Quotes may
+    // contain a closing brace; host extraction compiles the preserved text.
+    query_literal: _ => token(seq(
+      '{',
+      repeat(choice(
+        /[^}"\\]/,
+        /\\./,
+        seq('"', repeat(choice(/[^"\\]/, /\\./)), '"'),
+      )),
+      '}',
+    )),
+
     // One maximal run between DL7 delimiters. The adapter classifies the
     // complete text as an integer, symbol, variable, name, or diagnostic.
     // Keeping this boundary in the grammar prevents malformed text such as
     // `-12abc` or `'a'b` from becoming two adjacent valid expressions.
-    bare_token: _ => token(/[^\s();"]+/),
+    bare_token: _ => token(/[^\s();"{}]+/),
 
     line_comment: _ => token(seq(';', /[^\n]*/)),
   },

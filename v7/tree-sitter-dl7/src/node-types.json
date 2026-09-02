@@ -16,6 +16,10 @@
           "named": true
         },
         {
+          "type": "query_literal",
+          "named": true
+        },
+        {
           "type": "string_literal",
           "named": true
         }
@@ -37,6 +41,10 @@
         },
         {
           "type": "parenthesized_expression",
+          "named": true
+        },
+        {
+          "type": "query_literal",
           "named": true
         },
         {
@@ -62,6 +70,10 @@
     "type": "line_comment",
     "named": true,
     "extra": true
+  },
+  {
+    "type": "query_literal",
+    "named": true
   },
   {
     "type": "string_literal",

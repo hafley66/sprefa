@@ -14,6 +14,7 @@ Prefix syntax
 -12abc
 'a'b
 ()
+{ (function_item name: (identifier) @name) (#match? @name "^get\\}") }
 
 ---
 
@@ -72,4 +73,5 @@ Prefix syntax
   (bare_token)
   (bare_token)
   (bare_token)
-  (parenthesized_expression))
+  (parenthesized_expression)
+  (query_literal))

@@ -1066,6 +1066,20 @@ test(json_is_an_ordinary_type_capability) :-
     Diagnostics == [],
     !.
 
+test(tree_sitter_query_is_ordinary_ground_call_data) :-
+    Text = "(: cst (* (: path text) (: query any)))\n(cst \"user.js\" { (identifier) @name })\n",
+    dl7_text_unit(query_data, query_data_source, Text, Unit, []),
+    compile_unit(Unit, compiled_unit(_, Runtime, Rows), Diagnostics),
+    named_owner(Rows, cst, Cst),
+    Query = tree_sitter_query(" (identifier) @name "),
+    Runtime = checked_datalog(
+                  _, datalog_program(Relations, Seeds, _), _, _),
+    memberchk(relation(ref(Cst), 2, []), Relations),
+    memberchk(call(ref(Cst), [const("user.js"), const(Query)]), Seeds),
+    memberchk(call(ref(Cst), [const("user.js"), const(Query)]), Rows),
+    Diagnostics == [],
+    !.
+
 test(final_closure_rejects_declared_functional_key_conflicts) :-
     Relation = ref(kernel(':')),
     Relations = [relation(Relation, 4, [[0, 1], [0, 3]])],
