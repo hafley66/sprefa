@@ -1,0 +1,168 @@
+% SABOTAGE RECEIPT: on the base sha `0c_extract_loader.pl` does not exist and
+% `load_files/2` over this file fails before a single test runs.
+
+:- begin_tests(dl7_extract_loader).
+
+:- use_module('../src/2_comptime/0c_extract_loader',
+              [ load_tsi_stream/3,
+                accepted_rows/2,
+                install_tsi_graph/6
+              ]).
+:- use_module('../src/2_comptime/2_compiler', [compile_dl7_project/5]).
+
+% The loader reads primitive classes out of the prelude basement, so the unit
+% cases hand it the one class the fixtures name.
+prelude_stub(
+    [module_basement(
+         module(prelude),
+         basement_program(
+             root_graph([ node(module(prelude)), module(module(prelude)),
+                          product(module(prelude)),
+                          node(prelude_string), product(prelude_string)
+                        ],
+                        [pending_edge(module(prelude), string,
+                                      target(prelude_string), 0)]),
+             datalog_program([], [], [])))]).
+
+stream_path(Name, Path) :-
+    atomic_list_concat(['v7/test/fixtures/', Name, '.jsonl'], Path).
+
+load_streams([], [], []).
+load_streams([Name | Names], Rows, Diagnostics) :-
+    stream_path(Name, Path),
+    load_tsi_stream(Path, StreamRows, StreamDiagnostics),
+    load_streams(Names, RestRows, RestDiagnostics),
+    append(StreamRows, RestRows, Rows),
+    append(StreamDiagnostics, RestDiagnostics, Diagnostics).
+
+install_streams(Names, Basement, Origins, Diagnostics) :-
+    load_streams(Names, Rows, []),
+    prelude_stub(Basements0),
+    install_tsi_graph(Rows, Basements0, [], Basements, Origins, Diagnostics),
+    Basements = [module_basement(_, Basement) | Basements0].
+
+edge_labels(Edges, Owner, Labels) :-
+    findall(Label-Index,
+            member(pending_edge(Owner, Label, _, Index), Edges),
+            Labels0),
+    sort(Labels0, Labels).
+
+accepted_edge_labels(Names, Labels) :-
+    load_streams(Names, Rows, []),
+    accepted_rows(Rows, Accepted),
+    findall(Label,
+            member(extract_fact(_, 'tsi.edge',
+                                [_, _, text(Label), _, _]),
+                   Accepted),
+            Labels0),
+    sort(Labels0, Labels).
+
+syntax_owner(module(tsi('tree-sitter', ['blake3:user']))).
+semantic_owner(module(tsi(tsc, ['blake3:user']))).
+
+test(a_syntax_stream_alone_becomes_a_product_with_dense_edges) :-
+    install_streams(['tsi/0_syntax_user'], Basement, Origins, Diagnostics),
+    syntax_owner(Owner),
+    Basement = basement_program(root_graph(Nodes, Edges),
+                                datalog_program(Relations, Seeds, [])),
+    UserNode = tsi_node(Owner, 0),
+    memberchk(product(UserNode), Nodes),
+    edge_labels(Edges, UserNode, Labels),
+    Labels == [id-0, name-1],
+    Relations == [relation(tsi_relation(Owner, 'ts.readonly'), 1, [])],
+    Seeds == [call(name(Owner, 'ts.readonly'),
+                   [ref(tsi_edge(Owner, 2))])],
+    memberchk(pending_edge(Owner, 'ts.readonly',
+                           target(tsi_relation(Owner, 'ts.readonly')), 0),
+              Edges),
+    Origins = [module_origins(Owner, NodeOrigins) | _],
+    NodeOrigins == [origin(node(UserNode),
+                           extract(typescript, 'blake3:user', 10, 14))],
+    Diagnostics == [].
+
+test(an_edge_to_a_primitive_class_targets_the_prelude_product) :-
+    install_streams(['tsi/0_syntax_user'], Basement, _, _),
+    syntax_owner(Owner),
+    Basement = basement_program(root_graph(Nodes, Edges), _),
+    memberchk(pending_edge(tsi_node(Owner, 0), id,
+                           target(prelude_string), 0),
+              Edges),
+    \+ memberchk(node(tsi_node(Owner, 1)), Nodes),
+    \+ memberchk(product(tsi_node(Owner, 1)), Nodes).
+
+test(a_complete_semantic_run_replaces_the_syntax_edges) :-
+    accepted_edge_labels(['tsi/0_syntax_user', 'tsi/1_semantic_user'],
+                         Labels),
+    Labels == ["id", "name"],
+    load_streams(['tsi/0_syntax_user', 'tsi/1_semantic_user'], Rows, []),
+    accepted_rows(Rows, Accepted),
+    \+ memberchk(extract_fact(4, 'tsi.edge', _), Accepted),
+    \+ memberchk(extract_fact(5, 'tsi.edge', _), Accepted),
+    memberchk(extract_fact(14, 'tsi.edge', _), Accepted),
+    memberchk(extract_fact(15, 'tsi.edge', _), Accepted),
+    memberchk(extract_fact(6, 'ts.readonly', [id(2)]), Accepted).
+
+test(the_newest_complete_semantic_run_wins) :-
+    accepted_edge_labels(['tsi/1_semantic_user', 'tsi/2_semantic_user_v2'],
+                         Labels),
+    Labels == ["id", "label"],
+    load_streams(['tsi/1_semantic_user', 'tsi/2_semantic_user_v2'],
+                 Rows, []),
+    accepted_rows(Rows, Accepted),
+    \+ memberchk(extract_fact(14, 'tsi.edge', _), Accepted),
+    memberchk(extract_fact(24, 'tsi.edge', _), Accepted),
+    memberchk(extract_fact(25, 'tsi.edge', _), Accepted).
+
+test(a_recursive_edge_closes_through_its_own_owner, [timeout(10)]) :-
+    install_streams(['tsi/3_recursive'], Basement, _, Diagnostics),
+    Owner = module(tsi(tsc, ['blake3:node'])),
+    NodeType = tsi_node(Owner, 10),
+    Basement = basement_program(root_graph(Nodes, Edges), _),
+    memberchk(product(NodeType), Nodes),
+    findall(Edge, member(Edge, Edges), AllEdges),
+    AllEdges == [pending_edge(NodeType, next, target(NodeType), 0)],
+    Diagnostics == [].
+
+test(a_value_argument_carries_no_literal_and_is_reported) :-
+    install_streams(['tsi/4_value'], _, _, Diagnostics),
+    memberchk(diagnostic(extract, none, tsi_value_lacks_literal(23)),
+              Diagnostics),
+    memberchk(diagnostic(extract, none, tsi_called_unresolved(21)),
+              Diagnostics).
+
+test(a_protocol_this_door_does_not_speak_voids_the_stream) :-
+    stream_path('tsi_invalid/0_protocol_2', Path),
+    load_tsi_stream(Path, Rows, Diagnostics),
+    Rows == [],
+    Diagnostics == [diagnostic(extract, stream(Path), tsi_protocol(2))].
+
+test(a_relation_outside_the_registry_is_named_and_skipped) :-
+    install_streams(['tsi_invalid/1_unknown_relation'], Basement,
+                    _, Diagnostics),
+    Diagnostics == [diagnostic(extract, none,
+                               tsi_unknown_relation('tsi.frobnicate'))],
+    Basement = basement_program(_, datalog_program(Relations, Seeds, [])),
+    Relations == [],
+    Seeds == [].
+
+test(a_loaded_product_proves_conformance_to_an_authored_contract) :-
+    compile_dl7_project(
+        'v7/test/fixtures/tsi_project',
+        [ 'v7/test/fixtures/tsi_project/0_contract.dl7',
+          tsi_streams(['v7/test/fixtures/tsi/1_semantic_user.jsonl'])
+        ],
+        Rows, Runtime, Diagnostics),
+    Diagnostics == [],
+    Runtime = checked_datalog(root_graph(_, Edges), _, _, _),
+    memberchk(':'(_, tsi_conforms_probe, ref(ProbeRelation), _), Edges),
+    memberchk(':'(_, 'Mapper', ref(Mapper), _), Edges),
+    semantic_owner(Owner),
+    UserNode = tsi_node(Owner, 0),
+    findall(Proof,
+            member(call(ref(ProbeRelation), [ref(UserNode), ref(Proof)]),
+                   Rows),
+            Proofs),
+    Proofs = [application(_, [UserNode, Mapper])],
+    length(Proofs, 1).
+
+:- end_tests(dl7_extract_loader).

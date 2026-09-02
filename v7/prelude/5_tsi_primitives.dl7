@@ -1,0 +1,63 @@
+; One empty product per primitive class a foreign type stream can name.
+; `tsi.primitive(Id, Class)` binds the foreign id to the product declared
+; here, so two languages spelling the same class share one node identity.
+
+; TypeScript classes.
+(: string (* ))
+
+(: number (* ))
+
+(: boolean (* ))
+
+(: bigint (* ))
+
+(: symbol (* ))
+
+(: void (* ))
+
+(: undefined (* ))
+
+(: null (* ))
+
+(: never (* ))
+
+(: unknown (* ))
+
+; The `any` class is absent on purpose: `any` is one of the four names
+; `1_checker.pl:298-301` pins as a primitive, and a prelude edge of that name
+; shadows it for every program. The loader reports the class as absent.
+
+; Rust builtins.
+(: i8 (* ))
+
+(: i16 (* ))
+
+(: i32 (* ))
+
+(: i64 (* ))
+
+(: i128 (* ))
+
+(: u8 (* ))
+
+(: u16 (* ))
+
+(: u32 (* ))
+
+(: u64 (* ))
+
+(: u128 (* ))
+
+(: f32 (* ))
+
+(: f64 (* ))
+
+(: bool (* ))
+
+(: char (* ))
+
+(: str (* ))
+
+(: usize (* ))
+
+(: isize (* ))
