@@ -79,13 +79,20 @@ SKIP_DIRS = {
 
 
 class Lang:
-    def __init__(self, key, exts, markers, checker, tuning_root, gh_language):
+    def __init__(self, key, exts, markers, checker, tuning_root, gh_language,
+                 scip_indexer):
         self.key = key
         self.exts = exts
         self.markers = markers
         self.checker = checker
         self.tuning_root = tuning_root
         self.gh_language = gh_language
+        # The scip_ensure.rs roster name, which is not this key: our "ts" is
+        # the roster's "typescript". Marker detection is any-of and a polyglot
+        # root matches several rows, so the oracle names the one it wants
+        # (failure-modes 107: typescript-go matched go AND typescript, and
+        # scip-typescript ate the whole budget).
+        self.scip_indexer = scip_indexer
 
     @property
     def tiers(self):
@@ -96,18 +103,22 @@ LANGS = {
     "ts": Lang(
         "ts", {".ts", ".tsx", ".mts", ".cts"}, ["tsconfig.json", "package.json"],
         "--ts-checker", "/Users/chrishafley/projects/TypeScript-5.9", "typescript",
+        "typescript",
     ),
     "go": Lang(
         "go", {".go"}, ["go.mod"],
         None, "/Users/chrishafley/projects/typescript-go", "go",
+        "go",
     ),
     "rust": Lang(
         "rust", {".rs"}, ["Cargo.toml"],
         "--rust-checker", "/Users/chrishafley/projects/rust-analyzer", "rust",
+        "rust",
     ),
     "python": Lang(
         "python", {".py"}, ["pyproject.toml", "setup.py", "setup.cfg"],
         None, None, "python",
+        "python",
     ),
 }
 
@@ -412,7 +423,7 @@ def measure(repo, lang, root, corpus_class, sha):
     # Oracle first: a repo the indexer cannot handle costs nothing else.
     oracle_jsonl = work / "oracle.jsonl"
     rc, tail, oracle_ms = run(
-        [str(EXTRACT), "--family", "scip", root],
+        [str(EXTRACT), "--indexer", lang.scip_indexer, "--family", "scip", root],
         timeout=SCIP_BUDGET_SECS + 120, stdout_path=oracle_jsonl,
     )
     if rc != 0:

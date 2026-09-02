@@ -24,3 +24,4 @@ rust-lang/rust-clippy	rust	heldout	call	syntax	scip	rust.call.syntax.scip	40.67	
 rust-lang/rust-clippy	rust	heldout	call	checker	scip	rust.call.checker.scip	41.24	49.75	7662	1896	5842	15400	18578	2345	7236	52c139d8b5d8
 rust-analyzer	rust	tuning	call	syntax	scip	rust.call.syntax.scip	26.01	74.97	40452	4574	8935	53961	155515	1481	1915	af4111f0bf85
 rust-analyzer	rust	tuning	call	checker	scip	rust.call.checker.scip	33.13	79.08	51526	1261	12372	65159	155515	1481	13147	af4111f0bf85
+typescript-go	go	tuning	call	syntax	scip	go.call.syntax.scip	35.27	80.42	74617	9907	8264	92788	211564	4871	4805	89d5d5b2849a+subsampled
