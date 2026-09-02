@@ -22,14 +22,15 @@ static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use clap::Parser;
 
+use sprefa_extract::schema::schema_text;
+use sprefa_extract::tsi::{ingest, Mode, RunOut};
 use sprefa_extract::{
     cfg_bundle, content_id_of, deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact,
     flatten_cfg_each, flatten_each, package_edges_jsonl, query_patterns, resolve_project_jsonl,
     scip_facts_jsonl, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
     size_skip_fact, source_for, AstPatternQuery, FamilyMask, FlatFact, IndexBudget, ResolveArms,
-    ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords, DEFAULT_MAX_BYTES, SCHEMA,
+    ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords, DEFAULT_MAX_BYTES,
 };
-use sprefa_extract::tsi::{Mode, RunOut};
 
 #[path = "extract/help.rs"]
 mod help;
@@ -63,7 +64,7 @@ mod source_rename;
     long_about = LONG_ABOUT,
 )]
 struct Cli {
-    #[arg(required_unless_present = "schema", value_name = "PATH", long_help = PATH_LONG)]
+    #[arg(required_unless_present_any = ["schema", "ingest"], value_name = "PATH", long_help = PATH_LONG)]
     paths: Vec<PathBuf>,
 
     #[arg(long, value_delimiter = ',', long_help = FAMILY_LONG)]
@@ -187,6 +188,19 @@ struct Cli {
         ],
     )]
     witness: bool,
+
+    /// Read foreign TSI JSONL, validate it against the relation registry, and
+    /// re-emit it canonically. Several files are read as one stream.
+    #[arg(
+        long,
+        value_name = "PATH",
+        num_args = 1..,
+        conflicts_with_all = [
+            "paths", "family", "bench", "resolve", "ast_pattern", "deps",
+            "package_deps", "scip_facts", "scip_deps", "file_fact", "witness",
+        ],
+    )]
+    ingest: Vec<PathBuf>,
 
     /// Byte ceiling for one input; over it emits `size_skip` and exits 0. 0 = none.
     #[arg(long = "max-bytes", value_name = "BYTES", long_help = MAX_BYTES_LONG)]
@@ -416,6 +430,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if cli.schema {
         print_schema();
         return Ok(());
+    }
+
+    if !cli.ingest.is_empty() {
+        return stream_ingest(&cli.ingest);
     }
 
     // The two named families are whole-project modes, so they are dispatched
@@ -782,5 +800,28 @@ fn bench(
 /// `sprefa_extract::wire::SCHEMA`, not here, so a library consumer can read the
 /// same contract without shelling out to this binary.
 fn print_schema() {
-    let _ = emit(&SCHEMA.to_string());
+    let _ = emit(&schema_text());
+}
+
+/// The reverse door. Every file is one stream, so line numbers in a stop run
+/// across the whole argument list rather than restarting per file.
+fn stream_ingest(paths: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
+    check_file_paths(paths);
+    let mut lines: Vec<String> = Vec::new();
+    for path in paths {
+        lines.extend(std::fs::read_to_string(path)?.lines().map(str::to_string));
+    }
+    match ingest(lines.into_iter()) {
+        Ok(rows) => {
+            for row in rows {
+                emit(&row)?;
+            }
+            Ok(())
+        }
+        Err(error) => {
+            // @eprintln-ok: CLI-UX stop, off the fact stream, exit 1.
+            eprintln!("extract: {error}");
+            std::process::exit(1);
+        }
+    }
 }

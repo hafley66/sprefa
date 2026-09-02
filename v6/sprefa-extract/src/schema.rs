@@ -360,4 +360,28 @@ PROJECT MODE (--resolve)
   `resolved_type_edge`; `--family call,type` emits both. Adding
   `--project-root DIR` with `--scip-index FILE` or `--scip-build` puts a SCIP
   index in the resolve context, which lets the call arm emit `scip_override`
-  rows where the indexer disagrees with the name match.";
+  rows where the indexer disagrees with the name match.
+
+REVERSE DOOR (--ingest)
+  `--ingest FILE...` reads foreign JSONL, validates every `record=fact` row
+  against the relation registry below, checks that every `{\"id\"}` it names is
+  declared by a tsi.type, tsi.edge or tsi.called row, renumbers ids and fact
+  ordinals into canonical order, adds one method=foreign witness per fact, and
+  prints the stream back sorted behind one protocol row. A stop names the line.
+  ingest(ingest(x)) == ingest(x).";
+
+/// `SCHEMA` plus the relation registry. The rows are PRINTED from `REGISTRY`,
+/// never re-typed, so the contract text cannot drift from what `--ingest` runs.
+pub fn schema_text() -> String {
+    let mut text = String::from(SCHEMA);
+    text.push_str("\n\nTSI RELATION REGISTRY\n");
+    for relation in crate::tsi::registry::REGISTRY {
+        let kinds: Vec<&str> = relation.args.iter().map(|kind| kind.word()).collect();
+        text.push_str(&format!(
+            "  relation={} args=[{}]\n",
+            relation.name,
+            kinds.join(",")
+        ));
+    }
+    text
+}
