@@ -3,7 +3,7 @@ created: 2026-09-02
 updated: 2026-09-02
 type: bug
 reporter: chris
-status: untriaged
+status: open
 priority: high
 provenance: other
 provenance_detail: Codex session measured local release extractor on 2026-09-02
