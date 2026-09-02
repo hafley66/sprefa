@@ -167,8 +167,10 @@ write_compile_summary(Program, Phases, TotalMeasurement) :-
     nl(user_error).
 
 write_phase_field(Phase, Measurement) :-
-    measurement_wall_inferences(Measurement, WallMs, Inferences),
-    format(user_error, ' ~w=~w/~w', [Phase, WallMs, Inferences]).
+    measurement_wall_cpu_inferences(
+        Measurement, WallMs, CpuMs, Inferences),
+    format(user_error, ' ~w=~w/~w ~w_cpu_ms=~w',
+           [Phase, WallMs, Inferences, Phase, CpuMs]).
 
 write_compile_steps(Program, Phases, Steps) :-
     compile_trace_mode(Mode),
@@ -182,10 +184,10 @@ write_compile_steps(Program, Phases, Steps) :-
 write_compile_step_line(
     Program, step(Sequence, Phase, Step, Measurement, Metrics)) :-
     measurement_step_values(
-        Measurement, WallMs, Inferences, GcMs, TableCount),
+        Measurement, WallMs, CpuMs, Inferences, GcMs, TableCount),
     format(user_error,
-           'COMPILE-TRACE-STEP program=~w seq=~w phase=~w step=~w wall_ms=~w inferences=~w gc_ms=~w tables=~w',
-           [ Program, Sequence, Phase, Step, WallMs, Inferences,
+           'COMPILE-TRACE-STEP program=~w seq=~w phase=~w step=~w wall_ms=~w cpu_ms=~w inferences=~w gc_ms=~w tables=~w',
+           [ Program, Sequence, Phase, Step, WallMs, CpuMs, Inferences,
              GcMs, TableCount
            ]),
     maplist(write_metric_field, Metrics),
@@ -219,18 +221,19 @@ compile_trace_dict(Program, Phases, Steps, Dict) :-
 
 phase_trace_dict(phase(Phase, Measurement), Dict) :-
     measurement_step_values(
-        Measurement, WallMs, Inferences, GcMs, TableCount),
-    Dict = _{phase: Phase, wall_ms: WallMs, inferences: Inferences,
+        Measurement, WallMs, CpuMs, Inferences, GcMs, TableCount),
+    Dict = _{phase: Phase, wall_ms: WallMs, cpu_ms: CpuMs,
+             inferences: Inferences,
              gc_ms: GcMs, tables: TableCount}.
 
 step_trace_dict(
     step(Sequence, Phase, Step, Measurement, Metrics), Dict) :-
     measurement_step_values(
-        Measurement, WallMs, Inferences, GcMs, TableCount),
+        Measurement, WallMs, CpuMs, Inferences, GcMs, TableCount),
     trace_name(Step, StepName),
     metrics_dict(Metrics, MetricsDict),
     Dict = _{sequence: Sequence, phase: Phase, step: StepName,
-             wall_ms: WallMs, inferences: Inferences,
+             wall_ms: WallMs, cpu_ms: CpuMs, inferences: Inferences,
              gc_ms: GcMs, tables: TableCount,
              metrics: MetricsDict}.
 
@@ -246,14 +249,14 @@ metrics_dict(Metrics, Dict) :-
 measurement_wall(
     measurement(WallMs, _, _, _, _, _, _, _, _, _, _, _), WallMs).
 
-measurement_wall_inferences(
-    measurement(WallMs, _, Inferences, _, _, _, _, _, _, _, _, _),
-    WallMs, Inferences).
+measurement_wall_cpu_inferences(
+    measurement(WallMs, CpuMs, Inferences, _, _, _, _, _, _, _, _, _),
+    WallMs, CpuMs, Inferences).
 
 measurement_step_values(
-    measurement(WallMs, _, Inferences, _, _, GcMs, _,
+    measurement(WallMs, CpuMs, Inferences, _, _, GcMs, _,
                 TableCount, _, _, _, _),
-    WallMs, Inferences, GcMs, TableCount).
+    WallMs, CpuMs, Inferences, GcMs, TableCount).
 
 statistics_snapshot(
     stats(CpuSeconds, Inferences, WallMilliseconds,

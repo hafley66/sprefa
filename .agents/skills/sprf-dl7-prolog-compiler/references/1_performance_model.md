@@ -390,6 +390,12 @@ later wall measurements unusable while leaving deterministic inference counts
 near their normal value. Check for surviving benchmark processes when wall
 time changes without a comparable inference-count change.
 
+Compiler measurements already contained CPU milliseconds as the second field
+of every `measurement/12` term, but the text and JSON renderers omitted it.
+Render both wall and CPU time. A wall-only increase with stable CPU and
+inference counts identifies scheduling or host contention; CPU and inference
+growth identifies compiler work.
+
 Current normal-mode gates are 600ms cold wall, 6,000,000 cold inferences,
 50ms warm wall, and 50,000 warm inferences. The generic reference oracle is a
 semantic check and intentionally exceeds normal-mode performance budgets.
