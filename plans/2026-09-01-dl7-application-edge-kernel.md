@@ -111,7 +111,6 @@ fixed-arity Datalog
 ```
 
 <!-- todo(refactor): Make the application graph complete at the compiler-round boundary, derive Curry specialization and bound-slot views from it, then remove lowerer-authored curry_specialization and curry_bound rows. -->
-<!-- todo(feature): Box compiler variables and primitive literals as value nodes so generated argument carriers no longer store a separate kind string. -->
 <!-- todo(refactor): Represent generated rule heads and body goals as application nodes and remove head_arg and body_arg from the assembler protocol. -->
 <!-- todo(refactor): Replace structural application(Constructor, Arguments) identities with opaque interned node identities plus Apply and argument edges. -->
 
@@ -129,6 +128,10 @@ fixed-arity Datalog
 - Runtime IR contains no application graph transport after monomorphic
   emission.
 - The complete V7 SWI suite and tree-sitter corpus pass before merge.
+
+The value-node checkpoint passes 38 of 38 SWI tests and the one tree-sitter
+corpus parse. Application edges now target direct relation references or
+boxed literals, and generated Curry variables have scoped interned nodes.
 
 ## Staffing
 
