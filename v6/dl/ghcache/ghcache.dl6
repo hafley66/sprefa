@@ -756,6 +756,38 @@ repo_event_seen(RepoRef, GhId, EventType, Actor, Payload, CreatedAt) <-
                      actor: {login: Actor: text}, payload: Payload,
                      created_at: CreatedAt: text}]).
 
+# The firehose arms: the user/org events feed names the repo it touches in
+# `repo.name`, so the watch list decides what lands. The `watched_repo` join
+# drops an unknown repo silently; the same gh_id that the repo poll already
+# stored is a zero delta through the keyed fold above (the :740-741 comment).
+repo_event_seen(repo(Owner, Name), GhId, EventType, Actor, Payload, CreatedAt) <-
+  watched_global(endpoint_path: EndpointPath, endpoint_kind: 'user_events'),
+  rest_response(endpoint_path: EndpointPath, status: RespStatus, body: Body),
+  RespStatus == 200,
+  decode(Body, [... {id: GhId: text, type: EventType: text,
+                     actor: {login: Actor: text},
+                     repo: {name: RepoSlug: text}, payload: Payload,
+                     created_at: CreatedAt: text}]),
+  SlashAt := instr(RepoSlug, "/"),
+  SlashAt > 0,
+  Owner := substr(RepoSlug, 1, SlashAt - 1),
+  Name := substr(RepoSlug, SlashAt + 1),
+  watched_repo(repo_ref: repo(Owner, Name), owner: Owner, name: Name).
+
+repo_event_seen(repo(Owner, Name), GhId, EventType, Actor, Payload, CreatedAt) <-
+  watched_global(endpoint_path: EndpointPath, endpoint_kind: 'org_events'),
+  rest_response(endpoint_path: EndpointPath, status: RespStatus, body: Body),
+  RespStatus == 200,
+  decode(Body, [... {id: GhId: text, type: EventType: text,
+                     actor: {login: Actor: text},
+                     repo: {name: RepoSlug: text}, payload: Payload,
+                     created_at: CreatedAt: text}]),
+  SlashAt := instr(RepoSlug, "/"),
+  SlashAt > 0,
+  Owner := substr(RepoSlug, 1, SlashAt - 1),
+  Name := substr(RepoSlug, SlashAt + 1),
+  watched_repo(repo_ref: repo(Owner, Name), owner: Owner, name: Name).
+
 repo_event(RepoRef, GhId, EventType, Actor, Payload, CreatedAt) <+
   repo_event_seen(RepoRef, GhId, EventType, Actor, Payload, CreatedAt).
 
