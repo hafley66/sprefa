@@ -963,6 +963,9 @@ fn resolve_request<'a>(
         project_root: Some(root),
         scip_records: sprefa_extract::ScipRecords::all(),
         occurrence_text: false,
+        rust_checker: None,
+        ts_checker: None,
+        witness: false,
     }
 }
 

@@ -42,8 +42,10 @@ use crate::seams::{
 };
 use crate::shape::{content_id_of, ContentId, Span};
 use crate::source::{ExtractOutput, FamilyMask, Resolve, Source};
+use crate::tsi::types::{CoverageOut, Mode, RunOut, WitnessOut, PROTOCOL_VERSION};
 use crate::types::{
-    flow_edges, CallF, ProjectEdge, ScipError, ScipIndex, ScipSource, TypeF, UnresolvedReason,
+    flow_edges, CallF, ProjectEdge, ResolutionOrigin, ScipError, ScipIndex, ScipSource, TypeF,
+    UnresolvedReason,
 };
 use crate::wire::{flatten_flow, FlatFact};
 
@@ -113,6 +115,9 @@ pub struct ResolveRequest<'a> {
     /// The project root the ts CHECKER tier loads a `ts.Program` over. Its
     /// own field for the same reason `rust_checker` has one.
     pub ts_checker: Option<&'a Path>,
+    /// Wrap the answer in the TSI envelope: protocol, one run per tier that
+    /// ran, `fact` ordinals, one witness per leg, partial coverage per family.
+    pub witness: bool,
 }
 
 /// Why a project resolve could not run. Distinct from a resolve that ran and
@@ -162,6 +167,38 @@ impl std::fmt::Display for ProjectError {
 }
 
 impl std::error::Error for ProjectError {}
+
+/// One numbered row's legs, and the language whose checker tier can own the
+/// semantic run a `Checker` leg is filed under.
+struct RowLegs {
+    legs: Vec<ResolutionOrigin>,
+    lang: &'static str,
+}
+
+/// The legs behind every numbered row, in the order the rows were produced.
+/// Off `--witness` nothing is collected and nothing allocates.
+#[derive(Default)]
+struct LegTrail {
+    on: bool,
+    lang: &'static str,
+    rows: Vec<RowLegs>,
+}
+
+impl LegTrail {
+    /// Every row pushed from here on belongs to this language.
+    fn at(&mut self, lang: &'static str) {
+        self.lang = lang;
+    }
+
+    fn push<F: crate::family::Family>(&mut self, edge: &ProjectEdge<F>) {
+        if self.on {
+            self.rows.push(RowLegs {
+                legs: edge.legs(),
+                lang: self.lang,
+            });
+        }
+    }
+}
 
 /// One supplied file, extracted once, kept for the whole resolve.
 pub(crate) struct ProjectInput {
@@ -218,6 +255,7 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
         reader: scip_index.is_some().then_some(&reader),
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
+        witness: request.witness,
     };
     cx.indexes
         .def_index
@@ -355,6 +393,10 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
     }
 
     let mut facts = Vec::new();
+    let mut trail = LegTrail {
+        on: request.witness,
+        ..LegTrail::default()
+    };
     let targets = TargetIndex::build(&inputs);
     if request.arms.call {
         for ((input, (_, edges)), rows) in inputs
@@ -363,7 +405,8 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
             .zip(macro_rows.into_iter().chain(std::iter::repeat(Vec::new())))
         {
             crate::types::set_own(Some(input.blob.clone()));
-            facts.extend(call_facts(input, &targets, edges));
+            trail.at(arm_for(&input.path).map_or("", |arm| arm.name));
+            facts.extend(call_facts(input, &targets, edges, &mut trail));
             facts.extend(call_drop_facts(input, &cx, edges));
             for row in rows {
                 facts.push(FlatFact::MacroSiteOut {
@@ -385,13 +428,116 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
     for input in &inputs {
         if request.arms.types {
             crate::types::set_own(Some(input.blob.clone()));
-            facts.extend(type_facts(input, &targets, &cx));
+            trail.at(arm_for(&input.path).map_or("", |arm| arm.name));
+            facts.extend(type_facts(input, &targets, &cx, &mut trail));
         }
     }
     if request.arms.flow {
         facts.extend(flatten_flow(&flow_edges(&pairs, &resolved_calls)));
     }
+    if request.witness {
+        return Ok(envelope(facts, trail, &inputs, &cx));
+    }
     Ok(facts)
+}
+
+/// The syntax run is always 0; a checker tier that LOADED takes the next id, so
+/// a stream carries a semantic run only where one actually answered.
+fn semantic_runs(cx: &ProjectCx, inputs: &[ProjectInput]) -> Vec<(&'static str, RunOut)> {
+    let scope: Vec<String> = inputs.iter().map(|input| input.blob.to_string()).collect();
+    let tiers = [
+        ("ts", cx.indexes.ts_checker.get().is_some(), "tsc"),
+        (
+            "rust",
+            cx.indexes.rust_checker.get().is_some(),
+            "rust-analyzer",
+        ),
+    ];
+    tiers
+        .into_iter()
+        .filter(|(_, loaded, _)| *loaded)
+        .enumerate()
+        .map(|(rank, (lang, _, tool))| {
+            (
+                lang,
+                RunOut {
+                    run: rank as u32 + 1,
+                    mode: Mode::Semantic,
+                    tool: tool.to_string(),
+                    // The tier reports no version of its own, and a run row
+                    // that borrows this crate's would name the wrong compiler.
+                    version: String::new(),
+                    scope: scope.clone(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// The TSI envelope over a resolve: protocol, one run per tier that ran, a
+/// `fact` ordinal on every resolved row, one witness per leg, coverage.
+fn envelope(
+    facts: Vec<FlatFact>,
+    trail: LegTrail,
+    inputs: &[ProjectInput],
+    cx: &ProjectCx,
+) -> Vec<FlatFact> {
+    const SYNTAX_RUN: u32 = 0;
+    let semantic = semantic_runs(cx, inputs);
+    let mut rows: Vec<FlatFact> = vec![
+        FlatFact::Protocol {
+            version: PROTOCOL_VERSION,
+        },
+        FlatFact::Run(RunOut {
+            run: SYNTAX_RUN,
+            mode: Mode::Syntax,
+            tool: "extract".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            scope: inputs.iter().map(|input| input.blob.to_string()).collect(),
+        }),
+    ];
+    rows.extend(semantic.iter().map(|(_, run)| FlatFact::Run(run.clone())));
+    let mut witnesses: Vec<WitnessOut> = Vec::new();
+    let mut numbered = 0u32;
+    let mut trail = trail.rows.into_iter();
+    for mut fact in facts {
+        let ordinal = fact.fact_slot().map(|slot| {
+            numbered += 1;
+            *slot = Some(numbered);
+            numbered
+        });
+        if let Some(numbered) = ordinal {
+            if let Some(row) = trail.next() {
+                let mut legs = row.legs;
+                legs.sort();
+                witnesses.extend(legs.into_iter().map(|leg| WitnessOut {
+                    fact: numbered,
+                    // A checker leg is the semantic run's answer; every other
+                    // leg is the parse's.
+                    run: match leg {
+                        ResolutionOrigin::Checker => semantic
+                            .iter()
+                            .find(|(lang, _)| *lang == row.lang)
+                            .map_or(SYNTAX_RUN, |(_, run)| run.run),
+                        _ => SYNTAX_RUN,
+                    },
+                    method: leg.method(),
+                }));
+            }
+        }
+        rows.push(fact);
+    }
+    rows.extend(witnesses.into_iter().map(FlatFact::Witness));
+    // A resolve enumerates no relation exhaustively, so both families are
+    // partial and neither semantic run claims coverage of its own.
+    for relation in ["extract.call", "extract.type"] {
+        rows.push(FlatFact::Coverage(CoverageOut {
+            run: SYNTAX_RUN,
+            relation: relation.to_string(),
+            complete: false,
+        }));
+    }
+    rows
 }
 
 /// The workspace load is an index-build-class cost, so it carries the SCIP
@@ -567,7 +713,18 @@ pub fn scip_file_edges_jsonl(request: &ResolveRequest) -> Result<Vec<String>, Pr
 /// Serialize resolved facts to sorted JSONL lines, the byte-stable form the CLI
 /// prints and the goldens pin.
 pub fn resolve_project_jsonl(request: &ResolveRequest) -> Result<Vec<String>, ProjectError> {
-    Ok(sorted_lines(resolve_project(request)?))
+    let facts = resolve_project(request)?;
+    // The envelope header is ORDER, not content: a consumer reads the protocol
+    // before it can read anything, so it never joins the sort.
+    let (header, body): (Vec<FlatFact>, Vec<FlatFact>) = facts
+        .into_iter()
+        .partition(|fact| matches!(fact, FlatFact::Protocol { .. } | FlatFact::Run(_)));
+    let mut lines: Vec<String> = header
+        .iter()
+        .map(|fact| serde_json::to_string(fact).expect("flat fact is serializable"))
+        .collect();
+    lines.extend(sorted_lines(body));
+    Ok(lines)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -697,6 +854,7 @@ pub fn diet_scip(paths: &[PathBuf]) -> Result<Vec<FlatFact>, ProjectError> {
         occurrence_text: false,
         rust_checker: None,
         ts_checker: None,
+        witness: false,
     })
 }
 
@@ -1266,6 +1424,7 @@ fn call_facts(
     input: &ProjectInput,
     targets: &TargetIndex<'_>,
     edges: &[ProjectEdge<CallF>],
+    trail: &mut LegTrail,
 ) -> Vec<FlatFact> {
     let Some(call) = input.output.call.as_ref() else {
         return Vec::new();
@@ -1274,7 +1433,9 @@ fn call_facts(
         .iter()
         .filter_map(|edge| {
             let target = targets.input(&edge.dst_blob)?;
+            trail.push(edge);
             Some(FlatFact::ResolvedEdge {
+                fact: None,
                 caller_path: input.path.clone(),
                 caller_name: caller_name(call, &input.output, edge.src),
                 callee_path: target.path.clone(),
@@ -1391,7 +1552,12 @@ fn type_owner(
     }
 }
 
-fn type_facts(input: &ProjectInput, targets: &TargetIndex<'_>, cx: &ProjectCx) -> Vec<FlatFact> {
+fn type_facts(
+    input: &ProjectInput,
+    targets: &TargetIndex<'_>,
+    cx: &ProjectCx,
+    trail: &mut LegTrail,
+) -> Vec<FlatFact> {
     let Some(types) = input.output.types.as_ref() else {
         return Vec::new();
     };
@@ -1402,7 +1568,9 @@ fn type_facts(input: &ProjectInput, targets: &TargetIndex<'_>, cx: &ProjectCx) -
             let target = targets.input(&edge.dst_blob)?;
             let names = targets.type_names.get(&input.blob);
             let (owner, owner_name) = type_owner(plane, input, types, names, edge.src)?;
+            trail.push(edge);
             Some(FlatFact::ResolvedTypeEdge {
+                fact: None,
                 owner_path: input.path.clone(),
                 owner_name,
                 owner_start: owner.start,

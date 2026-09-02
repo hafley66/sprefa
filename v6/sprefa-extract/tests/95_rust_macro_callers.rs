@@ -44,6 +44,7 @@ fn rows(extra: &[&str]) -> Vec<(String, Option<String>, String, Option<String>)>
         occurrence_text: false,
         rust_checker: None,
         ts_checker: None,
+        witness: false,
     })
     .expect("the fixture corpus resolves");
     facts

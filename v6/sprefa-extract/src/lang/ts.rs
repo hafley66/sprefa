@@ -3486,21 +3486,6 @@ impl Resolve<TypeF> for TsSource {
                 continue;
             };
             let referenced = output.strings.lookup(candidate.to);
-            // The CHECKER tier answers first: a name one file resolves two ways
-            // is the only shape it declines, and the legs below then run.
-            let checked = checker
-                .zip(own)
-                .and_then(|(checker, from)| checker.type_at(from, referenced));
-            if let Some(TsCheckerAnswer::Corpus(blob, span)) = checked {
-                edges.push(ProjectEdge::new(
-                    NodeRef(src_ix as u32),
-                    blob,
-                    span,
-                    candidate.kind,
-                    ResolutionOrigin::Checker,
-                ));
-                continue;
-            }
             let zero = || (ZERO_CONTENT_ID, Span::empty(), ResolutionOrigin::Unresolved);
             let name_match = || {
                 modules
@@ -3516,13 +3501,45 @@ impl Resolve<TypeF> for TsSource {
                         )
                     })
                     .or_else(|| resolve_type_dst(types, &output.strings, index, referenced))
-                    .unwrap_or_else(zero)
             };
+            // The CHECKER tier answers first: a name one file resolves two ways
+            // is the only shape it declines, and the legs below then run.
+            let checked = checker
+                .zip(own)
+                .and_then(|(checker, from)| checker.type_at(from, referenced));
+            if let Some(TsCheckerAnswer::Corpus(blob, span)) = checked {
+                let edge = ProjectEdge::new(
+                    NodeRef(src_ix as u32),
+                    blob.clone(),
+                    span,
+                    candidate.kind,
+                    ResolutionOrigin::Checker,
+                );
+                // Off `witness` the name-match leg never runs here: the checker
+                // already owns the site and the leg costs a corpus walk.
+                match cx.witness.then(&name_match).flatten() {
+                    Some((leg_blob, leg_span, leg)) if leg_blob == blob && leg_span == span => {
+                        edges.push(edge.witnessed_by(leg));
+                    }
+                    Some((leg_blob, leg_span, leg)) => {
+                        edges.push(edge);
+                        edges.push(ProjectEdge::new(
+                            NodeRef(src_ix as u32),
+                            leg_blob,
+                            leg_span,
+                            candidate.kind,
+                            leg,
+                        ));
+                    }
+                    None => edges.push(edge),
+                }
+                continue;
+            }
             // No corpus declaration IS this type, so no name-match leg may
             // invent one; the zero leg carries the row instead.
             let (dst_blob, dst_span, origin) = match checked {
                 Some(TsCheckerAnswer::External) => zero(),
-                _ => name_match(),
+                _ => name_match().unwrap_or_else(zero),
             };
             edges.push(ProjectEdge::new(
                 NodeRef(src_ix as u32),
@@ -4054,6 +4071,14 @@ impl Resolve<CallF> for TsSource {
             HashMap::new();
         let mut results: Vec<Option<(NodeRef, ContentId, Span, CallEdgeKind, ResolutionOrigin)>> =
             vec![None; sites.len()];
+        // The syntax answer the checker displaced, per site. Empty and unread
+        // off `witness`, so a plain resolve allocates nothing for it.
+        let mut displaced: Vec<Option<((ContentId, Span), CallEdgeKind, ResolutionOrigin)>> =
+            if cx.witness {
+                vec![None; sites.len()]
+            } else {
+                Vec::new()
+            };
         for ix in order {
             let site = &sites[ix];
             // The caller is the innermost covering CallF def (the 4a
@@ -4213,11 +4238,18 @@ impl Resolve<CallF> for TsSource {
             let final_t = match checker
                 .and_then(|(index, path)| index.call_at(path, site.span, callee))
             {
-                Some(TsCheckerAnswer::Corpus(blob, span)) => Some((
-                    (blob, span),
-                    CallEdgeKind::CheckerResolve,
-                    ResolutionOrigin::Checker,
-                )),
+                Some(TsCheckerAnswer::Corpus(blob, span)) => {
+                    // The syntax legs already ran; witnessing keeps their answer
+                    // instead of dropping it on the floor.
+                    if cx.witness {
+                        displaced[ix] = syntax_t;
+                    }
+                    Some((
+                        (blob, span),
+                        CallEdgeKind::CheckerResolve,
+                        ResolutionOrigin::Checker,
+                    ))
+                }
                 // No corpus definition IS this callee, so no name-match leg
                 // may invent one.
                 Some(TsCheckerAnswer::External) => None,
@@ -4250,28 +4282,43 @@ impl Resolve<CallF> for TsSource {
             .filter(|(_, node_ref)| call.node(*node_ref).name.is_some())
             .copied()
             .collect();
-        for (site, result) in call.aux.sites.iter().zip(results) {
+        for (ix, (site, result)) in call.aux.sites.iter().zip(results).enumerate() {
             let Some((caller, dst_blob, dst_span, kind, origin)) = result else {
                 continue;
             };
+            // A displaced leg that named the SAME target is a second witness on
+            // one edge; one that named another def is an edge of its own.
+            let leg = displaced.get_mut(ix).and_then(Option::take);
+            let agreed = leg.as_ref().and_then(|((blob, span), _, origin)| {
+                (*blob == dst_blob && *span == dst_span).then_some(*origin)
+            });
             if call.node(caller).name.is_none() {
                 if let Some(enclosing) = enclosing_named_def(&named, site.span) {
-                    edges.push(
-                        ProjectEdge::new(
-                            enclosing,
-                            dst_blob.clone(),
-                            dst_span,
-                            CallEdgeKind::NameResolve,
-                            origin,
-                        )
-                        .with_call_site(site.span),
-                    );
+                    let mirror = ProjectEdge::new(
+                        enclosing,
+                        dst_blob.clone(),
+                        dst_span,
+                        CallEdgeKind::NameResolve,
+                        origin,
+                    )
+                    .with_call_site(site.span);
+                    edges.push(match agreed {
+                        Some(extra) => mirror.witnessed_by(extra),
+                        None => mirror,
+                    });
                 }
             }
-            edges.push(
-                ProjectEdge::new(caller, dst_blob, dst_span, kind, origin)
-                    .with_call_site(site.span),
-            );
+            let edge = ProjectEdge::new(caller, dst_blob, dst_span, kind, origin)
+                .with_call_site(site.span);
+            edges.push(match agreed {
+                Some(extra) => edge.witnessed_by(extra),
+                None => edge,
+            });
+            if let (None, Some(((blob, span), kind, leg))) = (agreed, leg) {
+                edges.push(
+                    ProjectEdge::new(caller, blob, span, kind, leg).with_call_site(site.span),
+                );
+            }
         }
         // A callable NAMED as a value: no site, so no scip occurrence to
         // consult, and the name match is the whole answer.

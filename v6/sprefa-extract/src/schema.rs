@@ -308,13 +308,24 @@ TSI ENVELOPE (--witness)
   exhaustively, so a syntax run never claims complete and emits no diagnostic.
   Coverage relations are named `extract.<family>`: extract.cst, extract.type,
   extract.call, extract.df, extract.data.
-  NOT numbered yet: `unresolved` and `macro_site`, both also minted by the
-  project-mode resolve path, which this flag does not cover.
-  --witness conflicts with the whole-project and single-purpose modes
-  (--resolve, --deps, --package-deps, --scip-facts, --scip-deps, --bench,
-  --ast-pattern, --file-fact) and with --family cfg: their rows come from
-  other flattens, and the protocol row must be the first row of a witnessed
-  stream with every later row numbered.
+  NOT numbered yet: `unresolved` and `macro_site`.
+
+  --witness ALSO covers --resolve, where the stream carries TWO tiers rather
+  than one. Run 0 is mode=syntax tool=extract; a checker tier that LOADED takes
+  the next run id, mode=semantic, tool=tsc or tool=rust-analyzer, version empty
+  (the tier reports none of its own). `resolved_edge` and `resolved_type_edge`
+  carry the `fact` ordinal; every leg that named the target is one `witness` row
+  on that ordinal, with method = that leg's resolution_origin, filed under the
+  semantic run for method=checker and under run 0 for every other leg. Two
+  witnesses on one fact IS the checker and a syntax leg agreeing; legs that name
+  different defs are two facts, each with its own witness and its own
+  resolution_origin. Coverage is `extract.call` and `extract.type`, partial, on
+  run 0; a semantic run claims none, because the checker answers per site
+  instead of enumerating a relation.
+  --witness conflicts with the single-purpose modes (--deps, --package-deps,
+  --scip-facts, --scip-deps, --bench, --ast-pattern, --file-fact) and with
+  --family cfg: their rows come from other flattens, and the protocol row must
+  be the first row of a witnessed stream with every later row numbered.
 
 SIZE CEILING (--max-bytes)
   A single input over the ceiling is NOT parsed. It emits one size_skip row

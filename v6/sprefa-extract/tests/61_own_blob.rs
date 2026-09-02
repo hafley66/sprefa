@@ -44,6 +44,7 @@ fn with_fallback_cx<R>(
         reader: None,
         digest: ProjectDigest::default(),
         indexes: IndexBag::default(),
+        witness: false,
     };
     cx.indexes
         .def_index

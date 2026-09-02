@@ -12,6 +12,7 @@ use sprefa_extract::FlatFact;
 
 fn edge(caller_path: &str, caller_name: Option<&str>, callee_path: &str, callee_name: Option<&str>) -> FlatFact {
     FlatFact::ResolvedEdge {
+        fact: None,
         caller_path: caller_path.to_string(),
         caller_name: caller_name.map(String::from),
         callee_path: callee_path.to_string(),
@@ -25,6 +26,7 @@ fn edge(caller_path: &str, caller_name: Option<&str>, callee_path: &str, callee_
 
 fn type_edge(owner_path: &str, owner_name: Option<&str>, target_path: &str, target_name: Option<&str>) -> FlatFact {
     FlatFact::ResolvedTypeEdge {
+        fact: None,
         owner_path: owner_path.to_string(),
         owner_name: owner_name.map(String::from),
         owner_start: 0,
@@ -131,6 +133,7 @@ fn rust_normal_form_agrees_with_normalize_py_over_the_go_corpus() {
         occurrence_text: false,
         rust_checker: None,
         ts_checker: None,
+        witness: false,
     })
     .expect("go corpus resolves");
     let scratch = std::env::temp_dir().join("extract_ratchet_parity");
