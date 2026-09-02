@@ -73,7 +73,7 @@ lower_after_declarations(
     append(Edges, ImportedEdges, VisibleEdges),
     Environment = expression_environment(
                       VisibleReservations, VisibleRelations, VisibleEdges),
-    lower_derived_bind_rules(Reservations, Environment, 0,
+    lower_derived_bind_rules(CallPolicy, Reservations, Environment, 0,
                              DerivedResult),
     (   DerivedResult = ok(DerivedRules, DerivedOrigins)
     ->  length(DerivedRules, RuleIndex),
@@ -103,8 +103,9 @@ finish_lowered_executables(
 finish_lowered_executables(
     error(Diagnostic), _, _, _, _, _, _, _, _, [], [Diagnostic]).
 
-lower_derived_bind_rules([], _, _, ok([], [])).
+lower_derived_bind_rules(_, [], _, _, ok([], [])).
 lower_derived_bind_rules(
+    CallPolicy,
     [reservation(Owner, _,
                  derived_compound_edge(
                      LabelNode, TargetTerm, BindNodeId, Index),
@@ -129,13 +130,14 @@ lower_derived_bind_rules(
         indexed_goal_origins(GoalNodes, RuleIndex, 0, GoalOrigins),
         RuleOrigins = [origin(rule(RuleIndex), BindNodeId) | GoalOrigins],
         NextRuleIndex is RuleIndex + 1,
-        lower_derived_bind_rules(Reservations, Environment, NextRuleIndex,
-                                 RestResult),
+        lower_derived_bind_rules(CallPolicy, Reservations, Environment,
+                                 NextRuleIndex, RestResult),
         prepend_derived_rule(RestResult, Rule, RuleOrigins, Result)
     ;   Diagnostics = [Diagnostic | _],
         Result = error(Diagnostic)
     ).
 lower_derived_bind_rules(
+    CallPolicy,
     [reservation(Owner, Name,
                  deferred_expression(TargetNode, BindNodeId, Index),
                  expression) | Reservations],
@@ -144,11 +146,13 @@ lower_derived_bind_rules(
     lower_expression(TargetNode, Owner, Environment,
                      Value, Goals, GoalNodes, Diagnostics),
     (   Diagnostics == [],
-        Value = partial_application(_, _)
-    ->  Result = error(diagnostic(
-                           lower, BindNodeId,
-                           partial_application_requires_more_arguments(
-                               Name)))
+        Value = partial_application(Callable, Bound)
+    ->  partial_bind_rules(
+            Owner, Name, BindNodeId, Index, Callable, Bound, Environment,
+            RuleIndex, PartialResult),
+        continue_partial_bind_rules(
+            PartialResult, CallPolicy,
+            Reservations, Environment, Result)
     ;   Diagnostics == []
     ->  BindValue = var(derived_bind(BindNodeId)),
         replace_expression_value(Value, BindValue, Goals, BindGoals),
@@ -158,15 +162,100 @@ lower_derived_bind_rules(
         indexed_goal_origins(GoalNodes, RuleIndex, 0, GoalOrigins),
         RuleOrigins = [origin(rule(RuleIndex), BindNodeId) | GoalOrigins],
         NextRuleIndex is RuleIndex + 1,
-        lower_derived_bind_rules(Reservations, Environment, NextRuleIndex,
-                                 RestResult),
+        lower_derived_bind_rules(CallPolicy, Reservations, Environment,
+                                 NextRuleIndex, RestResult),
         prepend_derived_rule(RestResult, Rule, RuleOrigins, Result)
+    ;   CallPolicy == defer_unknown_calls,
+        Diagnostics = [Diagnostic | _],
+        deferred_call_diagnostic(Diagnostic)
+    ->  lower_derived_bind_rules(
+            CallPolicy, Reservations, Environment, RuleIndex, Result)
     ;   Diagnostics = [Diagnostic | _],
         Result = error(Diagnostic)
     ).
-lower_derived_bind_rules([_ | Reservations], Environment, RuleIndex,
-                         Result) :-
-    lower_derived_bind_rules(Reservations, Environment, RuleIndex, Result).
+lower_derived_bind_rules(CallPolicy, [_ | Reservations], Environment,
+                         RuleIndex, Result) :-
+    lower_derived_bind_rules(
+        CallPolicy, Reservations, Environment, RuleIndex, Result).
+
+partial_bind_rules(
+    Owner, Name, BindNodeId, Index,
+    callable(_, _, Callable0, _, _, _), Bound,
+    expression_environment(Reservations, _, _), RuleIndex,
+    Result) :-
+    (   callable_identity(Callable0, Callable),
+        scoped_reservation(
+            Owner, 'Curry', Reservations, [],
+            reservation(_, 'Curry', target(Curry), product)),
+        partial_bound_rows(Bound, BoundRows)
+    ->  Partial = application(Curry, [Callable, BoundRows]),
+        EdgeRule = rule(
+                       call(name(Owner, ':'),
+                            [ ref(Owner), const(Name), ref(Partial),
+                              const(Index)
+                            ]),
+                       []),
+        SpecializationRule = rule(
+                                 call(name(Owner,
+                                           curry_specialization),
+                                      [ref(Callable), ref(Partial)]),
+                                 []),
+        partial_bound_rules(Owner, Partial, BoundRows, BoundRules),
+        append([EdgeRule, SpecializationRule], BoundRules, Rules),
+        length(Rules, RuleCount),
+        indexed_empty_rule_origins(
+            RuleCount, RuleIndex, BindNodeId, Origins),
+        NextRuleIndex is RuleIndex + RuleCount,
+        Result = ok(Rules, Origins, NextRuleIndex)
+    ;   Result = error(diagnostic(
+                           lower, BindNodeId,
+                           partial_application_requires_more_arguments(
+                               Name)))
+    ).
+
+callable_identity(target(Identity), Identity).
+callable_identity(kernel(Name), kernel(Name)).
+
+partial_bound_rows([], []).
+partial_bound_rows([bound(Index, Value) | Bound],
+                   [bound(Index, Kind, Value) | Rows]) :-
+    partial_bound_kind(Value, Kind),
+    partial_bound_rows(Bound, Rows).
+
+partial_bound_kind(ref(_), "reference").
+partial_bound_kind(const(_), "constant").
+
+partial_bound_rules(_, _, [], []).
+partial_bound_rules(Owner, Partial,
+                    [bound(Index, Kind, Value) | Bound],
+                    [Rule | Rules]) :-
+    Rule = rule(
+               call(name(Owner, curry_bound),
+                    [ ref(Partial), const(Index), const(Kind), Value ]),
+               []),
+    partial_bound_rules(Owner, Partial, Bound, Rules).
+
+indexed_empty_rule_origins(0, _, _, []) :- !.
+indexed_empty_rule_origins(Count, RuleIndex, NodeId,
+                           [origin(rule(RuleIndex), NodeId) | Origins]) :-
+    Count > 0,
+    NextCount is Count - 1,
+    NextRuleIndex is RuleIndex + 1,
+    indexed_empty_rule_origins(
+        NextCount, NextRuleIndex, NodeId, Origins).
+
+continue_partial_bind_rules(error(Diagnostic), _, _, _, error(Diagnostic)).
+continue_partial_bind_rules(
+    ok(Rules, Origins0, NextRuleIndex), CallPolicy,
+    Reservations, Environment, Result) :-
+    lower_derived_bind_rules(
+        CallPolicy, Reservations, Environment, NextRuleIndex, RestResult),
+    (   RestResult = ok(RestRules, RestOrigins)
+    ->  append(Rules, RestRules, AllRules),
+        append(Origins0, RestOrigins, Origins),
+        Result = ok(AllRules, Origins)
+    ;   Result = RestResult
+    ).
 
 edge_rule_target(target(Target), ref(Target)).
 edge_rule_target(Target, Target).
@@ -851,10 +940,10 @@ lower_expression(node(_, literal(Value)), _, _,
 lower_expression(node(NodeId, atom(Name)), Owner,
                  expression_environment(Reservations, _, _),
                  Value, Goals, Origins, []) :-
-    scoped_reservation(Owner, Name, Reservations, [],
-                       reservation(BindOwner, Name,
-                                   deferred_expression(_, _, Index),
-                                   expression)),
+    scoped_deferred_reservation(
+        Owner, Name, Reservations, [],
+        reservation(BindOwner, Name,
+                    deferred_expression(_, _, Index), expression)),
     !,
     Value = var(derived_lookup(NodeId)),
     Goals = [pending_goal(
@@ -863,6 +952,12 @@ lower_expression(node(NodeId, atom(Name)), Owner,
                       [ ref(BindOwner), const(Name), Value, const(Index)
                       ]))],
     Origins = [NodeId].
+lower_expression(node(_, atom(Name)), Owner,
+                 expression_environment(Reservations, _, _),
+                 ref(Target), [], [], []) :-
+    scoped_reservation(Owner, Name, Reservations, [],
+                       reservation(_, Name, target(Target), _)),
+    !.
 lower_expression(node(_, atom(Name)), Owner, _,
                  name(Owner, Name), [], [], []).
 lower_expression(
@@ -891,13 +986,50 @@ lower_expression(node(NodeId, form(_)), _, _,
 expression_callable(Name, Owner,
                     expression_environment(Reservations, Relations, _),
                     Result) :-
-    (   scoped_reservation(Owner, Name, Reservations, [], Reservation)
+    (   scoped_callable_reservation(
+            Owner, Name, Reservations, Relations, [], Reservation)
+    ->  expression_reserved_callable(Reservation, Relations, Name, Result)
+    ;   scoped_reservation(Owner, Name, Reservations, [], Reservation)
     ->  expression_reserved_callable(Reservation, Relations, Name, Result)
     ;   kernel_relation(Name, Arity)
     ->  kernel_relation_keys_for_expression(Name, KeySets),
         Result = ok(kernel(Name), Arity, KeySets)
     ;   Result = error(undeclared_relation(Name))
     ).
+
+scoped_deferred_reservation(
+    Owner, Name, Reservations, Visited, Reservation) :-
+    \+ memberchk(Owner, Visited),
+    (   memberchk(
+            reservation(Owner, Name,
+                        deferred_expression(Target, NodeId, Index),
+                        expression),
+            Reservations)
+    ->  Reservation = reservation(
+                           Owner, Name,
+                           deferred_expression(Target, NodeId, Index),
+                           expression)
+    ;   reservation_parent(Owner, Reservations, Parent),
+        scoped_deferred_reservation(
+            Parent, Name, Reservations, [Owner | Visited], Reservation)
+    ).
+
+scoped_callable_reservation(
+    Owner, Name, Reservations, Relations, Visited, Reservation) :-
+    \+ memberchk(Owner, Visited),
+    (   member(reservation(Owner, Name, target(Callable), Kind),
+               Reservations),
+        callable_reservation_kind(Kind),
+        memberchk(relation(Callable, _, _), Relations)
+    ->  Reservation = reservation(Owner, Name, target(Callable), Kind)
+    ;   reservation_parent(Owner, Reservations, Parent),
+        scoped_callable_reservation(
+            Parent, Name, Reservations, Relations, [Owner | Visited],
+            Reservation)
+    ).
+
+callable_reservation_kind(product).
+callable_reservation_kind(derived_callable).
 
 scoped_reservation(Owner, Name, Reservations, Visited, Reservation) :-
     \+ memberchk(Owner, Visited),
@@ -916,7 +1048,8 @@ reservation_parent(Owner, Reservations, Parent) :-
     memberchk(reservation(Parent, _, target(Owner), product), Reservations).
 
 expression_reserved_callable(
-    reservation(_, _, target(Callable), product), Relations, _, Result) :-
+    reservation(_, _, target(Callable), Kind), Relations, _, Result) :-
+    callable_reservation_kind(Kind),
     !,
     (   memberchk(relation(Callable, Arity, KeySets), Relations)
     ->  Result = ok(target(Callable), Arity, KeySets)

@@ -16,8 +16,10 @@
 :- use_module('0a_module_lowerer',
               [ lower_units_deferred/4,
                 lower_units_with_environment/5,
+                lower_units_with_environment_deferred/5,
                 lower_units_with_exporter_deferred/5,
                 lower_units_with_exporter_and_environment/6,
+                lower_units_with_exporter_and_environment_deferred/6,
                 merge_module_basements/4
               ]).
 :- use_module('0b_filesystem_grapher', [install_project_graph/6]).
@@ -216,13 +218,29 @@ evaluate_checked(
     sort(BaseSeeds0, BaseSeeds),
     colon_rows(BaseSeeds, InitialEdges),
     intern_rows(BaseSeeds, InitialRequests),
+    Context = compile_context(Units, ProjectContext),
+    derived_bind_slots(Rules, DerivedBindSlots),
+    EvaluationContext = compile_context(
+                            Units, ProjectContext, DerivedBindSlots),
     evaluate_compiler_rounds(Rules, Relations, BaseSeeds, InitialEdges,
                              InitialRequests, [], [], 1,
                              CompilerFacts, GeneratedProgram,
                              EvaluationDiagnostics),
-    finish_evaluation(EvaluationDiagnostics, Context,
+    finish_evaluation(EvaluationDiagnostics, EvaluationContext,
                       CompilerFacts, GeneratedProgram,
                       Compiled, Diagnostics).
+
+derived_bind_slots(Rules, Slots) :-
+    findall(
+        derived_bind_slot(Owner, Name, Index),
+        member(rule(call(ref(kernel(':')),
+                         [ ref(Owner), const(Name),
+                           var(derived_bind(_)), const(Index)
+                         ]),
+                    _),
+               Rules),
+        Slots0),
+    sort(Slots0, Slots).
 
 finish_evaluation([], Context, CompilerFacts, GeneratedProgram,
                   Compiled, Diagnostics) :-
@@ -230,10 +248,108 @@ finish_evaluation([], Context, CompilerFacts, GeneratedProgram,
     GeneratedProgram = generated_program(GeneratedRelations, _, _, _),
     final_checked_program(Context, CompilerFacts, GeneratedRelations,
                           FinalChecked, FinalDiagnostics),
-    finish_final_check(FinalDiagnostics, FinalChecked,
-                       CompilerFacts, GeneratedProgram,
-                       Compiled, Diagnostics).
+    continue_source_refreeze(
+        FinalDiagnostics, Context, FinalChecked,
+        CompilerFacts, GeneratedProgram, 1,
+        Compiled, Diagnostics).
 finish_evaluation(Diagnostics, _, _, _, [], Diagnostics).
+
+continue_source_refreeze(
+    [], Context, Checked, CompilerFacts, GeneratedProgram, OuterRound,
+    Compiled, Diagnostics) :-
+    !,
+    Checked = checked_datalog(_, datalog_program(_, _, Rules), _, _),
+    derived_bind_diagnostics(Rules, CompilerFacts, BindDiagnostics),
+    (   BindDiagnostics == []
+    ->  finish_final_check([], Checked, CompilerFacts, GeneratedProgram,
+                           Compiled, Diagnostics)
+    ;   expand_source_compiler(
+            Context, Checked, CompilerFacts, GeneratedProgram, OuterRound,
+            Compiled, Diagnostics)
+    ).
+continue_source_refreeze(
+    Diagnostics0, Context, _, CompilerFacts, GeneratedProgram, OuterRound,
+    Compiled, Diagnostics) :-
+    deferrable_source_diagnostics(Diagnostics0),
+    !,
+    GeneratedProgram = generated_program(GeneratedRelations, _, _, _),
+    deferred_checked_program(
+        Context, CompilerFacts, GeneratedRelations,
+        DeferredChecked, DeferredDiagnostics),
+    expand_after_deferred_check(
+        DeferredDiagnostics, Context, DeferredChecked,
+        CompilerFacts, GeneratedProgram, OuterRound,
+        Compiled, Diagnostics).
+continue_source_refreeze(
+    Diagnostics, _, _, _, _, _, [], Diagnostics).
+
+deferrable_source_diagnostics([Diagnostic | Diagnostics]) :-
+    deferrable_source_diagnostic(Diagnostic),
+    deferrable_source_diagnostics_rest(Diagnostics).
+
+deferrable_source_diagnostics_rest([]).
+deferrable_source_diagnostics_rest([Diagnostic | Diagnostics]) :-
+    deferrable_source_diagnostic(Diagnostic),
+    deferrable_source_diagnostics_rest(Diagnostics).
+
+deferrable_source_diagnostic(
+    diagnostic(lower, _, not_relation(_))).
+
+expand_after_deferred_check(
+    [], Context, Checked, CompilerFacts, GeneratedProgram, OuterRound,
+    Compiled, Diagnostics) :-
+    !,
+    expand_source_compiler(
+        Context, Checked, CompilerFacts, GeneratedProgram, OuterRound,
+        Compiled, Diagnostics).
+expand_after_deferred_check(
+    Diagnostics, _, _, _, _, _, [], Diagnostics).
+
+expand_source_compiler(
+    Context,
+    checked_datalog(Graph,
+                    datalog_program(Relations, AuthoredSeeds, Rules),
+                    _, _),
+    CompilerFacts,
+    generated_program(GeneratedRelations, GeneratedRules, _, _),
+    OuterRound, Compiled, Diagnostics) :-
+    compiler_round_limit(Limit),
+    (   OuterRound >= Limit
+    ->  Compiled = [],
+        Diagnostics = [diagnostic(
+                           compile, none,
+                           source_refreeze_limit_exhausted(Limit))]
+    ;   subtract(Relations, GeneratedRelations, BaseRelations),
+        graph_seeds(Graph, GraphSeeds),
+        append(GraphSeeds, AuthoredSeeds, BaseSeeds0),
+        sort(BaseSeeds0, BaseSeeds),
+        colon_rows(CompilerFacts, FrozenEdges),
+        intern_rows(CompilerFacts, FrozenRequests),
+        evaluate_compiler_rounds(
+            Rules, BaseRelations, BaseSeeds,
+            FrozenEdges, FrozenRequests,
+            GeneratedRelations, GeneratedRules, 1,
+            NextFacts, NextGeneratedProgram, EvaluationDiagnostics),
+        continue_source_expansion(
+            EvaluationDiagnostics, Context,
+            NextFacts, NextGeneratedProgram, OuterRound,
+            Compiled, Diagnostics)
+    ).
+
+continue_source_expansion(
+    [], Context, CompilerFacts, GeneratedProgram, OuterRound,
+    Compiled, Diagnostics) :-
+    !,
+    GeneratedProgram = generated_program(GeneratedRelations, _, _, _),
+    final_checked_program(Context, CompilerFacts, GeneratedRelations,
+                          FinalChecked, FinalDiagnostics),
+    NextOuterRound is OuterRound + 1,
+    continue_source_refreeze(
+        FinalDiagnostics, Context, FinalChecked,
+        CompilerFacts, GeneratedProgram, NextOuterRound,
+        Compiled, Diagnostics).
+continue_source_expansion(
+    Diagnostics, _, _, _, _, [], Diagnostics).
 
 finish_final_check([], FinalChecked, CompilerFacts, GeneratedProgram,
                    Compiled, Diagnostics) :-
@@ -291,10 +407,30 @@ finish_runtime_program(Diagnostics, _, _, _, _, _, _, _, _,
 final_checked_program(Context, CompilerFacts, GeneratedRelations,
                       Checked, Diagnostics) :-
     generated_expression_environment(
-        CompilerFacts, GeneratedRelations, Environment),
-    Context = compile_context(Units, ProjectContext),
+        CompilerFacts, GeneratedRelations, DerivedBindSlots, Environment),
+    Context = compile_context(Units, ProjectContext, DerivedBindSlots),
     lower_final_units(Units, Environment,
                       ModuleBasements0, ModuleOrigins0, LowerDiagnostics),
+    freeze_after_final_lower(
+        LowerDiagnostics, Environment,
+        ModuleBasements0, ModuleOrigins0,
+        ModuleBasements1, ModuleOrigins1, FreezeDiagnostics),
+    install_final_project_graph(
+        FreezeDiagnostics, ProjectContext,
+        ModuleBasements1, ModuleOrigins1,
+        ModuleBasements, ModuleOrigins, ProjectDiagnostics),
+    check_final_basements(ProjectDiagnostics,
+                          ModuleBasements, ModuleOrigins,
+                          GeneratedRelations, Checked, Diagnostics).
+
+deferred_checked_program(Context, CompilerFacts, GeneratedRelations,
+                         Checked, Diagnostics) :-
+    generated_expression_environment(
+        CompilerFacts, GeneratedRelations, DerivedBindSlots, Environment),
+    Context = compile_context(Units, ProjectContext, DerivedBindSlots),
+    lower_deferred_final_units(
+        Units, Environment,
+        ModuleBasements0, ModuleOrigins0, LowerDiagnostics),
     freeze_after_final_lower(
         LowerDiagnostics, Environment,
         ModuleBasements0, ModuleOrigins0,
@@ -315,6 +451,18 @@ lower_final_units(Units, Environment,
             PreludeUnit, ImporterUnits, Environment,
             ModuleBasements, ModuleOrigins, Diagnostics)
     ;   lower_units_with_environment(
+            Units, Environment,
+            ModuleBasements, ModuleOrigins, Diagnostics)
+    ).
+
+lower_deferred_final_units(Units, Environment,
+                           ModuleBasements, ModuleOrigins, Diagnostics) :-
+    (   select(PreludeUnit, Units, ImporterUnits),
+        unit_has_origin(PreludeUnit, prelude)
+    ->  lower_units_with_exporter_and_environment_deferred(
+            PreludeUnit, ImporterUnits, Environment,
+            ModuleBasements, ModuleOrigins, Diagnostics)
+    ;   lower_units_with_environment_deferred(
             Units, Environment,
             ModuleBasements, ModuleOrigins, Diagnostics)
     ).
@@ -388,16 +536,19 @@ unref_generated_relation(relation(ref(Relation), Arity, KeySets),
                          relation(Relation, Arity, KeySets)).
 
 generated_expression_environment(
-    CompilerFacts, GeneratedRelations,
+    CompilerFacts, GeneratedRelations, DerivedBindSlots,
     expression_environment(Reservations, Relations, Edges)) :-
-    maplist(unref_generated_relation, GeneratedRelations, Relations0),
+    maplist(generated_environment_relation(CompilerFacts),
+            GeneratedRelations, Relations0),
     sort(Relations0, Relations),
     findall(
-        reservation(Owner, Name, target(Relation), product),
+        reservation(Owner, Name, target(Relation), Kind),
         ( member(call(ref(kernel(':')),
-                      [ ref(Owner), const(Name), ref(Relation), const(_) ]),
+                      [ ref(Owner), const(Name), ref(Relation), const(Index) ]),
                  CompilerFacts),
-          memberchk(relation(Relation, _, _), Relations),
+          generated_callable_reservation(
+              Owner, Name, Index, Relation,
+              GeneratedRelations, DerivedBindSlots, Kind),
           atom(Name)
         ),
         Reservations0),
@@ -411,6 +562,49 @@ generated_expression_environment(
         ),
         Edges0),
     sort(Edges0, Edges).
+
+generated_callable_reservation(_, _, _, Relation,
+                               GeneratedRelations, _, product) :-
+    memberchk(relation(ref(Relation), _, _), GeneratedRelations),
+    !.
+generated_callable_reservation(Owner, Name, Index, _, _, DerivedBindSlots,
+                               derived_callable) :-
+    memberchk(derived_bind_slot(Owner, Name, Index), DerivedBindSlots).
+
+generated_environment_relation(
+    CompilerFacts,
+    relation(ref(Relation), Arity, KeySets0),
+    relation(Relation, Arity, KeySets)) :-
+    generated_return_key_sets(
+        CompilerFacts, Relation, Arity, KeySets0, KeySets).
+
+generated_return_key_sets(_, _, _, KeySets, KeySets) :-
+    KeySets \== [],
+    !.
+generated_return_key_sets(CompilerFacts, Relation, Arity, [], KeySets) :-
+    findall(
+        Index,
+        member(call(ref(kernel(':')),
+                    [ ref(Relation), const(return), _, const(Index) ]),
+               CompilerFacts),
+        ReturnIndices0),
+    sort(ReturnIndices0, ReturnIndices),
+    (   ReturnIndices = [ReturnIndex]
+    ->  generated_positions_except(0, Arity, ReturnIndex, Inputs),
+        KeySets = [Inputs]
+    ;   KeySets = []
+    ).
+
+generated_positions_except(Index, Arity, _, []) :-
+    Index >= Arity,
+    !.
+generated_positions_except(Index, Arity, Except, Positions) :-
+    NextIndex is Index + 1,
+    generated_positions_except(NextIndex, Arity, Except, Rest),
+    (   Index =:= Except
+    ->  Positions = Rest
+    ;   Positions = [Index | Rest]
+    ).
 
 compiler_value_target(ref(Identity), target(Identity)).
 compiler_value_target(const(Value), const(Value)).

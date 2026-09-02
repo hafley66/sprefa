@@ -22,6 +22,7 @@
               ]).
 :- use_module('../src/2_comptime/1a_generated_program_assembler',
               [assemble_generated_program/5]).
+:- use_module('../src/3_emit/0_artifact_emitter', [emit_compiled/4]).
 :- use_module('../src/1_libtime/0_evaluator',
               [ evaluate/4,
                 stratify_rules/3,
@@ -669,14 +670,14 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 3986,
+                    [], [], 5456,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(156, 325, 74, 252, 99, 175, 74),
+                    runtime(counts(178, 382, 85, 298, 116, 197, 85),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
@@ -748,6 +749,117 @@ test(generated_relations_are_callable_after_declarations_freeze) :-
                     diagnostics([], []),
                     repeatable(true, true),
                     residual_partial_terms(0)).
+
+test(escaping_partial_bind_generates_a_callable_forwarding_relation) :-
+    Path = 'v7/test/fixtures/5_curry.dl7',
+    compile_dl7(Path, Rows1, Runtime1, Diagnostics1),
+    compile_dl7(Path, Rows2, Runtime2, Diagnostics2),
+    named_owner(Rows1, 'User', User),
+    named_owner(Rows1, 'Order', Order),
+    named_owner(Rows1, 'PairResult', PairResult),
+    named_owner(Rows1, 'Pair', Pair),
+    named_owner(Rows1, 'PairUser', PairUser),
+    named_owner(Rows1, 'CallableFactory', CallableFactory),
+    named_owner(Rows1, 'ReturnedPair', ReturnedPair),
+    named_owner(Rows1, 'ReturnedResult', ReturnedResult),
+    named_owner(Rows1, 'ReturnedDone', ReturnedDone),
+    named_owner(Rows1, 'Region', Region),
+    named_owner(Rows1, 'TripleResult', TripleResult),
+    named_owner(Rows1, 'Triple', Triple),
+    named_owner(Rows1, 'TripleUser', TripleUser),
+    named_owner(Rows1, 'TripleUserOrder', TripleUserOrder),
+    named_owner(Rows1, 'TripleDone', TripleDone),
+    Runtime1 = checked_datalog(
+                   _, datalog_program(Relations, Seeds, Rules), _, _),
+    memberchk(relation(ref(PairUser), 2, _), Relations),
+    memberchk(relation(ref(TripleUser), 3, _), Relations),
+    memberchk(relation(ref(TripleUserOrder), 2, _), Relations),
+    memberchk(call(ref(PairUser),
+                   [ref(Order), ref(PairResult)]), Seeds),
+    memberchk(call(ref(TripleUserOrder),
+                   [ref(Region), ref(TripleResult)]), Seeds),
+    memberchk(rule(call(ref(PairUser), ForwardArguments),
+                   [checked_goal(
+                        positive,
+                        call(ref(Pair),
+                             [ref(User) | ForwardArguments]))]),
+              Rules),
+    memberchk(rule(call(ref(TripleUser), TripleUserArguments),
+                   [checked_goal(
+                        positive,
+                        call(ref(Triple),
+                             [ref(User) | TripleUserArguments]))]),
+              Rules),
+    memberchk(rule(call(ref(TripleUserOrder), TripleUserOrderArguments),
+                   [checked_goal(
+                        positive,
+                        call(ref(TripleUser),
+                             [ref(Order) | TripleUserOrderArguments]))]),
+              Rules),
+    residual_partial_terms(Runtime1, ResidualPartials),
+    equality(Rows1, Rows2, RowsRepeat),
+    equality(Runtime1, Runtime2, RuntimeRepeat),
+    equality(ReturnedPair, Pair, ReturnedCallable),
+    equality(ReturnedResult, PairUser, ReturnedPartial),
+    equality(ReturnedDone, PairResult, ReturnedValue),
+    equality(TripleDone, TripleResult, TripleReturn),
+    Observed = returned_callable(
+                   diagnostics(Diagnostics1, Diagnostics2),
+                   arity(2), capture(left, User),
+                   returned_callable(
+                       factory(CallableFactory),
+                       callable(ReturnedCallable),
+                       partial(ReturnedPartial), value(ReturnedValue)),
+                   chained(arity(3), arity(2), return(TripleReturn)),
+                   repeat(rows(RowsRepeat), runtime(RuntimeRepeat)),
+                   residual_partial_terms(ResidualPartials)),
+    Observed == returned_callable(
+                    diagnostics([], []),
+                    arity(2), capture(left, User),
+                    returned_callable(
+                        factory(CallableFactory),
+                        callable(true), partial(true), value(true)),
+                    chained(arity(3), arity(2), return(true)),
+                    repeat(rows(true), runtime(true)),
+                    residual_partial_terms(0)).
+
+test(prolog_and_dl7_emitters_share_the_closed_compiler_view) :-
+    Path = 'v7/test/fixtures/5_curry.dl7',
+    compile_dl7(Path, CompilerRows, RuntimeProgram, Diagnostics),
+    named_owner(CompilerRows, 'CurryEmitter', CurryEmitter),
+    named_owner(CompilerRows, curry_artifact, CurryArtifact),
+    Compiled = compiled_unit([], RuntimeProgram, CompilerRows),
+    emit_compiled(
+        dl7(CurryEmitter), Compiled,
+        Dl7Artifact, Dl7Diagnostics),
+    emit_compiled(
+        prolog(plunit_dl7_entrypoints:compiler_row_count), Compiled,
+        PrologArtifact, PrologDiagnostics),
+    emit_compiled(
+        monomorphic_datalog, Compiled,
+        DatalogArtifact, DatalogDiagnostics),
+    findall(
+        [ref(Source), ref(Specialization)],
+        member(call(ref(CurryArtifact),
+                    [ref(Source), ref(Specialization)]),
+               CompilerRows),
+        ExpectedRows0),
+    sort(ExpectedRows0, ExpectedRows),
+    length(CompilerRows, RowCount),
+    Observed = emitter_protocol(
+                   compile(Diagnostics),
+                   dl7(Dl7Diagnostics, Dl7Artifact),
+                   prolog(PrologDiagnostics, PrologArtifact),
+                   datalog(DatalogDiagnostics, DatalogArtifact)),
+    Observed == emitter_protocol(
+                    compile([]),
+                    dl7([], artifacts([
+                        artifact("specializations", CurryArtifact,
+                                 ExpectedRows)
+                    ])),
+                    prolog([], compiler_rows(RowCount)),
+                    datalog([], artifact(monomorphic_datalog,
+                                         RuntimeProgram))).
 
 test(userland_type_algebra_proves_contracts_and_constructs_products) :-
     compile_dl7('v7/test/fixtures/3_type_algebra.dl7',
@@ -1612,6 +1724,10 @@ named_owner(Rows, Name, Owner) :-
                 [ref(_), const(Name), ref(Owner), const(_)]),
            Rows),
     !.
+
+compiler_row_count(compiler_view(_, CompilerRows, _),
+                   compiler_rows(Count)) :-
+    length(CompilerRows, Count).
 
 relation_pairs(Rows, Relation, Owner, Pairs) :-
     findall(Earlier-Later,

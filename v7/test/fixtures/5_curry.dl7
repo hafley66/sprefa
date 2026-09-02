@@ -1,0 +1,64 @@
+(: User (*))
+(: Order (*))
+(: PairResult (*))
+
+(: Pair
+   (* (left: type)
+      (right: type)
+      (return: type)))
+
+(Pair User Order PairResult)
+
+; This bind returns a callable relation with `left` captured as User.
+(: PairUser (Pair User))
+
+(PairUser Order PairResult)
+
+; A relation may return a callable identity. The named bind freezes that
+; identity before its next application, so emitted Datalog stays static.
+(: CallableFactory
+   (* (: source type)
+      (: return type)))
+
+(CallableFactory User Pair)
+
+(: ReturnedPair (CallableFactory User))
+(: ReturnedResult (ReturnedPair User))
+(: ReturnedDone (ReturnedResult Order))
+
+(: selected
+   (* (result: type)))
+
+(<- (selected ?Result)
+    (PairUser Order ?Result))
+
+; A generated callable can itself be partially applied after the next
+; compiler refreeze.
+(: Region (*))
+(: TripleResult (*))
+
+(: Triple
+   (* (left: type)
+      (middle: type)
+      (right: type)
+      (return: type)))
+
+(Triple User Order Region TripleResult)
+
+(: TripleUser (Triple User))
+(: TripleUserOrder (TripleUser Order))
+(: TripleDone (TripleUserOrder Region))
+
+(TripleUserOrder Region TripleResult)
+
+; A DL7-authored emitter publishes ordinary derived rows.
+(: CurryEmitter (*))
+
+(: curry_artifact
+   (* (: source type)
+      (: specialization type)))
+
+(emits CurryEmitter "specializations" curry_artifact)
+
+(<- (curry_artifact ?Source ?Specialization)
+    (curry_specialization ?Source ?Specialization))

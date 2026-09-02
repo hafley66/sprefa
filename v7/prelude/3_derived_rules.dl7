@@ -166,3 +166,68 @@
 (<- (body_arg ?Result 0 ?Position "variable" ?Name)
     (history_v1_edge ?Source ?Options ?Result
                      ?Name ?Target ?Position))
+
+; A partial callable removes captured source slots, densely reindexes the
+; remaining edges, and emits a forwarding relation through the public
+; generated-program carrier.
+(<- (curry_is_bound ?Result ?SourceIndex)
+    (curry_bound ?Result ?SourceIndex ?Kind ?Value))
+
+(<- (curry_unbound ?Source ?Result ?Name ?Target ?SourceIndex)
+    (curry_specialization ?Source ?Result)
+    (edge_snapshot ?Source ?Name ?Target ?SourceIndex)
+    (not (curry_is_bound ?Result ?SourceIndex)))
+
+(<- (curry_predecessor ?Result ?SourceIndex ?PriorIndex)
+    (curry_unbound ?Source ?Result ?Name ?Target ?SourceIndex)
+    (curry_unbound ?Source ?Result ?PriorName ?PriorTarget ?PriorIndex)
+    (before ?Source ?PriorIndex ?SourceIndex))
+
+(<- (curry_has_predecessor ?Result ?SourceIndex)
+    (curry_predecessor ?Result ?SourceIndex ?PriorIndex))
+
+(<- (curry_rank ?Result ?SourceIndex (count ?PriorIndex))
+    (curry_predecessor ?Result ?SourceIndex ?PriorIndex))
+
+(<- (curry_rank ?Result ?SourceIndex 0)
+    (curry_unbound ?Source ?Result ?Name ?Target ?SourceIndex)
+    (not (curry_has_predecessor ?Result ?SourceIndex)))
+
+(<- (curry_edge ?Source ?Result ?Name ?Target
+                ?SourceIndex ?ResultIndex)
+    (curry_unbound ?Source ?Result ?Name ?Target ?SourceIndex)
+    (curry_rank ?Result ?SourceIndex ?ResultIndex))
+
+(<- (node ?Result)
+    (curry_specialization ?Source ?Result))
+
+(<- (product ?Result)
+    (curry_specialization ?Source ?Result))
+
+(<- (: ?Result ?Name ?Target ?ResultIndex)
+    (curry_edge ?Source ?Result ?Name ?Target
+                ?SourceIndex ?ResultIndex))
+
+(<- (curry_arity ?Result (count ?ResultIndex))
+    (curry_edge ?Source ?Result ?Name ?Target
+                ?SourceIndex ?ResultIndex))
+
+(<- (def ?Result ?Arity)
+    (curry_arity ?Result ?Arity))
+
+(<- (head ?Result ?Result)
+    (curry_specialization ?Source ?Result))
+
+(<- (head_arg ?Result ?ResultIndex "variable" ?Name)
+    (curry_edge ?Source ?Result ?Name ?Target
+                ?SourceIndex ?ResultIndex))
+
+(<- (body ?Result 0 "positive" ?Source)
+    (curry_specialization ?Source ?Result))
+
+(<- (body_arg ?Result 0 ?SourceIndex ?Kind ?Value)
+    (curry_bound ?Result ?SourceIndex ?Kind ?Value))
+
+(<- (body_arg ?Result 0 ?SourceIndex "variable" ?Name)
+    (curry_edge ?Source ?Result ?Name ?Target
+                ?SourceIndex ?ResultIndex))
