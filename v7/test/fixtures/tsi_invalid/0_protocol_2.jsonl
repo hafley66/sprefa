@@ -1,0 +1,4 @@
+{"record":"protocol","version":2}
+{"record":"run","run":0,"mode":"syntax","tool":"tree-sitter","version":"1","scope":["blake3:user"]}
+{"record":"fact","fact":0,"relation":"tsi.type","args":[{"id":0}]}
+{"record":"witness","fact":0,"run":0,"method":"parse"}

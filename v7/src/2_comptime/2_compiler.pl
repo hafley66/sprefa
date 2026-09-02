@@ -23,6 +23,10 @@
                 merge_module_basements/4
               ]).
 :- use_module('0b_filesystem_grapher', [install_project_graph/6]).
+:- use_module('0c_extract_loader',
+              [ load_tsi_stream/3,
+                install_tsi_graph/6
+              ]).
 :- use_module('1_checker',
               [ check_datalog/4,
                 check_resolved_rules/5
@@ -113,23 +117,44 @@ compile_dl7_project(Root, Paths,
 
 compile_dl7_project_traced(Root, Paths,
                            CompilerRows, RuntimeProgram, Diagnostics) :-
+    project_stream_paths(Paths, SourcePaths, StreamPaths),
     run_compile_phase(
         read,
         read_project_units(
-            Root, Paths, PreludeUnit, PreludeDiagnostics,
-            Project, ProjectDiagnostics),
+            Root, SourcePaths, StreamPaths, PreludeUnit, PreludeDiagnostics,
+            Project, ProjectDiagnostics, TsiRows, TsiDiagnostics),
         _),
-    append(PreludeDiagnostics, ProjectDiagnostics, ReaderDiagnostics),
+    append([PreludeDiagnostics, ProjectDiagnostics, TsiDiagnostics],
+           ReaderDiagnostics),
     compile_after_project_reads(ReaderDiagnostics, PreludeUnit, Project,
-                                Compiled, Diagnostics),
+                                TsiRows, Compiled, Diagnostics),
     compiled_outputs(Compiled, CompilerRows, RuntimeProgram),
     !.
 
+% A `tsi_streams(Paths)` term among the project paths names foreign type
+% streams rather than source units.
+project_stream_paths([], [], []).
+project_stream_paths([tsi_streams(Streams) | Paths],
+                     SourcePaths, StreamPaths) :-
+    !,
+    project_stream_paths(Paths, SourcePaths, RestStreamPaths),
+    append(Streams, RestStreamPaths, StreamPaths).
+project_stream_paths([Path | Paths], [Path | SourcePaths], StreamPaths) :-
+    project_stream_paths(Paths, SourcePaths, StreamPaths).
+
 read_project_units(
-    Root, Paths, PreludeUnit, PreludeDiagnostics,
-    Project, ProjectDiagnostics) :-
+    Root, SourcePaths, StreamPaths, PreludeUnit, PreludeDiagnostics,
+    Project, ProjectDiagnostics, TsiRows, TsiDiagnostics) :-
     load_type_prelude(PreludeUnit, PreludeDiagnostics),
-    load_dl7_project(Root, Paths, Project, ProjectDiagnostics).
+    load_dl7_project(Root, SourcePaths, Project, ProjectDiagnostics),
+    load_tsi_streams(StreamPaths, TsiRows, TsiDiagnostics).
+
+load_tsi_streams([], [], []).
+load_tsi_streams([Path | Paths], Rows, Diagnostics) :-
+    load_tsi_stream(Path, StreamRows, StreamDiagnostics),
+    load_tsi_streams(Paths, RestRows, RestDiagnostics),
+    append(StreamRows, RestRows, Rows),
+    append(StreamDiagnostics, RestDiagnostics, Diagnostics).
 
 compile_trace_program_name(Path, ProgramName) :-
     file_base_name(Path, BaseName),
@@ -205,12 +230,12 @@ compile_after_reads(Diagnostics, _, [], Diagnostics).
 
 compile_after_project_reads([], PreludeUnit,
                             dl7_project(CanonicalRoot, Units),
-                            Compiled, Diagnostics) :-
+                            TsiRows, Compiled, Diagnostics) :-
     !,
     compile_project_units(
-        dl7_project(CanonicalRoot, Units),
+        dl7_project(CanonicalRoot, Units), TsiRows,
         [PreludeUnit | Units], Compiled, Diagnostics).
-compile_after_project_reads(Diagnostics, _, _, [], Diagnostics).
+compile_after_project_reads(Diagnostics, _, _, _, [], Diagnostics).
 
 compiled_outputs(compiled_unit(_, RuntimeProgram, CompilerRows),
                  CompilerRows, RuntimeProgram).
@@ -246,30 +271,44 @@ compile_units_traced(Units, Compiled, Diagnostics) :-
                              Compiled, Diagnostics),
     !.
 
-compile_project_units(Project, Units, Compiled, Diagnostics) :-
+compile_project_units(Project, TsiRows, Units, Compiled, Diagnostics) :-
     run_compile_phase(
         lower,
         lower_compiler_units(Units, ModuleBasements0, ModuleOrigins0,
                              LowerDiagnostics),
         _),
     install_project_after_lower(
-        LowerDiagnostics, Project, ModuleBasements0, ModuleOrigins0,
+        LowerDiagnostics, Project, TsiRows, ModuleBasements0, ModuleOrigins0,
         ModuleBasements, ModuleOrigins, ProjectDiagnostics),
-    Context = compile_context(Units, project(Project)),
+    Context = compile_context(Units, project(Project, TsiRows)),
     compile_after_unit_lower(ProjectDiagnostics, Context,
                              ModuleBasements, ModuleOrigins,
                              Compiled, Diagnostics),
     !.
 
 install_project_after_lower(
-    [], Project, Basements0, Origins0,
+    [], Project, TsiRows, Basements0, Origins0,
     Basements, Origins, Diagnostics) :-
     !,
-    install_project_graph(Project, Basements0, Origins0,
-                          Basements, Origins, Diagnostics).
+    install_graphs(Project, TsiRows, Basements0, Origins0,
+                   Basements, Origins, Diagnostics).
 install_project_after_lower(
-    Diagnostics, _, Basements, Origins,
+    Diagnostics, _, _, Basements, Origins,
     Basements, Origins, Diagnostics).
+
+% Foreign rows enter after the filesystem products so the loader reads the
+% prelude's primitive classes out of the basements already installed.
+install_graphs(Project, TsiRows, Basements0, Origins0,
+               Basements, Origins, Diagnostics) :-
+    install_project_graph(Project, Basements0, Origins0,
+                          Basements1, Origins1, ProjectDiagnostics),
+    (   ProjectDiagnostics == []
+    ->  install_tsi_graph(TsiRows, Basements1, Origins1,
+                          Basements, Origins, Diagnostics)
+    ;   Basements = Basements1,
+        Origins = Origins1,
+        Diagnostics = ProjectDiagnostics
+    ).
 
 lower_compiler_units(Units, ModuleBasements, ModuleOrigins, Diagnostics) :-
     (   select(PreludeUnit, Units, ImporterUnits),
@@ -616,11 +655,11 @@ install_final_project_graph(
     Basements, Origins, []) :-
     !.
 install_final_project_graph(
-    [], project(Project), Basements0, Origins0,
+    [], project(Project, TsiRows), Basements0, Origins0,
     Basements, Origins, Diagnostics) :-
     !,
-    install_project_graph(Project, Basements0, Origins0,
-                          Basements, Origins, Diagnostics).
+    install_graphs(Project, TsiRows, Basements0, Origins0,
+                   Basements, Origins, Diagnostics).
 install_final_project_graph(
     Diagnostics, _, Basements, Origins,
     Basements, Origins, Diagnostics).

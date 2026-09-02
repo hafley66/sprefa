@@ -121,9 +121,9 @@ test(numbered_prelude_files_are_loaded_in_lexical_order) :-
     maplist(file_base_name, Paths, Names),
     Names == ['0_constructors.dl7', '1_declarations.dl7',
               '2_constructor_rules.dl7', '3_derived_rules.dl7',
-              '4_type_algebra.dl7'],
+              '4_type_algebra.dl7', '5_tsi_primitives.dl7'],
     maplist(file_exists, Paths, Exists),
-    Exists == [true, true, true, true, true].
+    Exists == [true, true, true, true, true, true].
 
 test(split_prelude_loads_all_existing_type_algebra_declarations) :-
     compile_dl7('v7/test/fixtures/2_partial.dl7', Rows, _Runtime, Diagnostics),
@@ -674,14 +674,14 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 6774,
+                    [], [], 11634,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(192, 411, 92, 320, 129, 224, 92),
+                    runtime(counts(246, 465, 119, 374, 129, 224, 119),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),

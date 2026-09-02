@@ -1,0 +1,11 @@
+{"record":"protocol","version":1}
+{"record":"run","run":3,"mode":"semantic","tool":"tsc","version":"5.4.0","scope":["blake3:node"]}
+{"record":"fact","fact":30,"relation":"tsi.type","args":[{"id":10}]}
+{"record":"fact","fact":31,"relation":"tsi.product","args":[{"id":10}]}
+{"record":"fact","fact":32,"relation":"tsi.edge","args":[{"id":11},{"id":10},{"text":"next"},{"id":10},{"int":0}]}
+{"record":"witness","fact":30,"run":3,"method":"checker_walk"}
+{"record":"witness","fact":31,"run":3,"method":"checker_walk"}
+{"record":"witness","fact":32,"run":3,"method":"checker_walk"}
+{"record":"coverage","run":3,"relation":"tsi.type","coverage":"complete"}
+{"record":"coverage","run":3,"relation":"tsi.product","coverage":"complete"}
+{"record":"coverage","run":3,"relation":"tsi.edge","coverage":"complete"}

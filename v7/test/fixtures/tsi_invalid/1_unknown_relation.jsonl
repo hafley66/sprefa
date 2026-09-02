@@ -1,0 +1,7 @@
+{"record":"protocol","version":1}
+{"record":"run","run":0,"mode":"semantic","tool":"tsc","version":"1","scope":["blake3:user"]}
+{"record":"fact","fact":0,"relation":"tsi.type","args":[{"id":0}]}
+{"record":"fact","fact":1,"relation":"tsi.frobnicate","args":[{"id":0}]}
+{"record":"witness","fact":0,"run":0,"method":"checker_walk"}
+{"record":"witness","fact":1,"run":0,"method":"checker_walk"}
+{"record":"coverage","run":0,"relation":"tsi.type","coverage":"complete"}
