@@ -51,6 +51,17 @@
               "sync_branches": "",
               "checkout_on_sync": 0,
               "checkout_pr_branches": 0
+            },
+            {
+              "owner": "hafley66",
+              "name": "sprefa",
+              "default_branch": "main",
+              "sync_prs": 0,
+              "sync_events": 0,
+              "sync_notifications": 0,
+              "sync_branches": "",
+              "checkout_on_sync": 0,
+              "checkout_pr_branches": 0
             }
           ]
         }
@@ -171,9 +182,9 @@
         "",
         1,
         200,
-        "{\"etag\":\"etag-events-1\",\"x-ratelimit-remaining\":4995,\"x-ratelimit-reset\":1000000}",
-        "[]",
-        2
+        "{\"etag\":\"etag-firehose-1\",\"x-ratelimit-remaining\":4995,\"x-ratelimit-reset\":1000000}",
+        "[{\"id\":\"firehose-watch-1\",\"type\":\"WatchEvent\",\"actor\":{\"login\":\"hafley66\"},\"repo\":{\"name\":\"hafley66/sprefa\"},\"payload\":{\"action\":\"started\"},\"created_at\":\"2026-08-24T00:00:00Z\"}]",
+        177
       ]
     },
     {
@@ -242,32 +253,32 @@
       "rel": "__host_response_http__get",
       "sign": "add",
       "row": [
-        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-1\"}|prev_etag:text=etag-events-1|bucket:int=2",
+        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-firehose-1\"}|prev_etag:text=etag-firehose-1|bucket:int=2",
         0,
         "users/hafley66/events",
-        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-1\"}",
-        "etag-events-1",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-firehose-1\"}",
+        "etag-firehose-1",
         2,
         200,
-        "{\"etag\":\"etag-events-2\",\"x-ratelimit-remaining\":4991,\"x-ratelimit-reset\":1000000}",
-        "[]",
-        2
+        "{\"etag\":\"etag-firehose-2\",\"x-ratelimit-remaining\":4991,\"x-ratelimit-reset\":1000000}",
+        "[{\"id\":\"firehose-watch-1\",\"type\":\"WatchEvent\",\"actor\":{\"login\":\"hafley66\"},\"repo\":{\"name\":\"hafley66/sprefa\"},\"payload\":{\"action\":\"started\"},\"created_at\":\"2026-08-24T00:00:00Z\"}]",
+        177
       ]
     },
     {
       "rel": "__host_response_http__get",
       "sign": "add",
       "row": [
-        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-1\"}|prev_etag:text=|bucket:int=2",
+        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-firehose-1\"}|prev_etag:text=|bucket:int=2",
         0,
         "users/hafley66/events",
-        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-1\"}",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-firehose-1\"}",
         "",
         2,
         200,
-        "{\"etag\":\"etag-events-2\",\"x-ratelimit-remaining\":4990,\"x-ratelimit-reset\":1000000}",
-        "[]",
-        2
+        "{\"etag\":\"etag-firehose-2\",\"x-ratelimit-remaining\":4990,\"x-ratelimit-reset\":1000000}",
+        "[{\"id\":\"firehose-watch-1\",\"type\":\"WatchEvent\",\"actor\":{\"login\":\"hafley66\"},\"repo\":{\"name\":\"hafley66/sprefa\"},\"payload\":{\"action\":\"started\"},\"created_at\":\"2026-08-24T00:00:00Z\"}]",
+        177
       ]
     },
     {
@@ -320,32 +331,32 @@
       "rel": "__host_response_http__get",
       "sign": "add",
       "row": [
-        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-2\"}|prev_etag:text=etag-events-2|bucket:int=3",
+        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-firehose-2\"}|prev_etag:text=etag-firehose-2|bucket:int=3",
         0,
         "users/hafley66/events",
-        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-2\"}",
-        "etag-events-2",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-firehose-2\"}",
+        "etag-firehose-2",
         3,
         200,
-        "{\"etag\":\"etag-events-3\",\"x-ratelimit-remaining\":4987,\"x-ratelimit-reset\":1000000}",
-        "[]",
-        2
+        "{\"etag\":\"etag-firehose-3\",\"x-ratelimit-remaining\":4987,\"x-ratelimit-reset\":1000000}",
+        "[{\"id\":\"firehose-watch-1\",\"type\":\"WatchEvent\",\"actor\":{\"login\":\"hafley66\"},\"repo\":{\"name\":\"hafley66/sprefa\"},\"payload\":{\"action\":\"started\"},\"created_at\":\"2026-08-24T00:00:00Z\"}]",
+        177
       ]
     },
     {
       "rel": "__host_response_http__get",
       "sign": "add",
       "row": [
-        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-2\"}|prev_etag:text=|bucket:int=3",
+        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-firehose-2\"}|prev_etag:text=|bucket:int=3",
         0,
         "users/hafley66/events",
-        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-2\"}",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-firehose-2\"}",
         "",
         3,
         200,
-        "{\"etag\":\"etag-events-3\",\"x-ratelimit-remaining\":4986,\"x-ratelimit-reset\":1000000}",
-        "[]",
-        2
+        "{\"etag\":\"etag-firehose-3\",\"x-ratelimit-remaining\":4986,\"x-ratelimit-reset\":1000000}",
+        "[{\"id\":\"firehose-watch-1\",\"type\":\"WatchEvent\",\"actor\":{\"login\":\"hafley66\"},\"repo\":{\"name\":\"hafley66/sprefa\"},\"payload\":{\"action\":\"started\"},\"created_at\":\"2026-08-24T00:00:00Z\"}]",
+        177
       ]
     },
     {
@@ -398,32 +409,32 @@
       "rel": "__host_response_http__get",
       "sign": "add",
       "row": [
-        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-3\"}|prev_etag:text=etag-events-3|bucket:int=4",
+        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-firehose-3\"}|prev_etag:text=etag-firehose-3|bucket:int=4",
         0,
         "users/hafley66/events",
-        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-3\"}",
-        "etag-events-3",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-firehose-3\"}",
+        "etag-firehose-3",
         4,
         200,
-        "{\"etag\":\"etag-events-4\",\"x-ratelimit-remaining\":4983,\"x-ratelimit-reset\":1000000}",
-        "[]",
-        2
+        "{\"etag\":\"etag-firehose-4\",\"x-ratelimit-remaining\":4983,\"x-ratelimit-reset\":1000000}",
+        "[{\"id\":\"firehose-watch-1\",\"type\":\"WatchEvent\",\"actor\":{\"login\":\"hafley66\"},\"repo\":{\"name\":\"hafley66/sprefa\"},\"payload\":{\"action\":\"started\"},\"created_at\":\"2026-08-24T00:00:00Z\"}]",
+        177
       ]
     },
     {
       "rel": "__host_response_http__get",
       "sign": "add",
       "row": [
-        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-3\"}|prev_etag:text=|bucket:int=4",
+        "witness|http__get|url:text=users/hafley66/events|headers:text={\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-firehose-3\"}|prev_etag:text=|bucket:int=4",
         0,
         "users/hafley66/events",
-        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-events-3\"}",
+        "{\"Accept\":\"application/vnd.github+json\",\"Authorization\":\"Bearer scripted-token\",\"If-None-Match\":\"etag-firehose-3\"}",
         "",
         4,
         200,
-        "{\"etag\":\"etag-events-4\",\"x-ratelimit-remaining\":4982,\"x-ratelimit-reset\":1000000}",
-        "[]",
-        2
+        "{\"etag\":\"etag-firehose-4\",\"x-ratelimit-remaining\":4982,\"x-ratelimit-reset\":1000000}",
+        "[{\"id\":\"firehose-watch-1\",\"type\":\"WatchEvent\",\"actor\":{\"login\":\"hafley66\"},\"repo\":{\"name\":\"hafley66/sprefa\"},\"payload\":{\"action\":\"started\"},\"created_at\":\"2026-08-24T00:00:00Z\"}]",
+        177
       ]
     },
     {
