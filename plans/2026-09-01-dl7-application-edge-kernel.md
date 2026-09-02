@@ -77,7 +77,6 @@ generated callable signature and forwarding rule
 fixed-arity Datalog
 ```
 
-<!-- todo(feature): Emit canonical Apply/2 call nodes and ordinary argument edges beside the current Curry carriers, with exact parity coverage. -->
 <!-- todo(refactor): Derive Curry specialization and bound-slot views from application nodes and edges, then remove lowerer-authored curry_specialization and curry_bound rows. -->
 <!-- todo(feature): Box compiler variables and primitive literals as value nodes so generated argument carriers no longer store a separate kind string. -->
 <!-- todo(refactor): Represent generated rule heads and body goals as application nodes and remove head_arg and body_arg from the assembler protocol. -->
