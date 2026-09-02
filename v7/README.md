@@ -32,3 +32,7 @@ to stderr. Set `DL7_TRACE=steps` for cost-sorted compiler steps, including
 comptime fixpoint row counts. Set `DL7_TRACE=json` and optionally
 `DL7_TRACE_FILE=/path/to/compile-trace.jsonl` for one structured object per
 compile.
+
+Run `cd v7 && just compiler-perf` for the cold/warm compiler checkpoint. It
+reports wall time and enforces inference, closure-round, compiler-row, and
+warm-cache output budgets on `2_partial.dl7`.

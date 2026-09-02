@@ -6,7 +6,8 @@
             run_compile_step/4,
             reset_compile_trace/0,
             collected_compile_phases/1,
-            collected_compile_steps/1
+            collected_compile_steps/1,
+            latest_compile_trace/4
           ]).
 
 :- use_module(library(http/json), [json_write_dict/3]).
@@ -21,6 +22,7 @@
 :- thread_local compile_step_row/5.
 :- thread_local compile_trace_sequence/1.
 :- thread_local compile_trace_mode_now/1.
+:- thread_local latest_compile_trace/4.
 
 :- prolog_load_context(directory, TraceDirectory),
    directory_file_path(TraceDirectory, '../../out/compile-trace.jsonl',
@@ -44,6 +46,7 @@ with_compile_trace(Program, Goal) :-
 
 begin_compile_trace(Program, Before) :-
     reset_compile_trace,
+    retractall(latest_compile_trace(_, _, _, _)),
     assertz(active_compile_trace(Program)),
     statistics_snapshot(Before).
 
@@ -51,6 +54,8 @@ finish_compile_trace(Program, Before) :-
     capture_measurement(Before, TotalMeasurement),
     collected_compile_phases(Phases),
     collected_compile_steps(Steps),
+    assertz(latest_compile_trace(
+                Program, Phases, Steps, TotalMeasurement)),
     write_compile_summary(Program, Phases, TotalMeasurement),
     write_compile_steps(Program, Phases, Steps),
     reset_compile_trace.
@@ -76,7 +81,7 @@ finish_compile_phase(Phase, Before, Measurement) :-
 
 %% run_compile_step(+Phase, +Step, :Goal, :MetricsGoal) is semidet.
 %
-% Steps are measured only when DL7_TRACE is steps or json. MetricsGoal is
+% Steps are measured when DL7_TRACE is steps, json, or collect. MetricsGoal is
 % called as MetricsGoal(-Metrics) after Goal succeeds, outside the measured
 % interval. Metrics is an ordered list of metric(Name, Integer) terms.
 run_compile_step(Phase, Step, Goal, MetricsGoal) :-
@@ -101,7 +106,7 @@ finish_compile_step(Phase, Step, Before, MetricsGoal) :-
 
 compile_step_trace_on :-
     compile_trace_mode(Mode),
-    memberchk(Mode, [steps, json]).
+    memberchk(Mode, [steps, json, collect]).
 
 compile_trace_mode(Mode) :-
     (   compile_trace_mode_now(Mode)
@@ -115,7 +120,7 @@ read_compile_trace_mode(Mode) :-
     ->  atom_string(Name, Raw)
     ;   Name = off
     ),
-    (   memberchk(Name, [steps, json])
+    (   memberchk(Name, [steps, json, collect])
     ->  Mode = Name
     ;   Mode = off
     ).

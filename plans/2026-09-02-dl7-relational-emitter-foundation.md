@@ -69,9 +69,10 @@ and extractor execution belong to later target plans.
    and a logical consumer follows its structured edges. DL7 source has no
    `decode` form.
 7. Tree-sitter query syntax is one raw query literal inside ordinary DL7 call
-   syntax. The reader preserves exact query text and capture names as data.
-   The extraction adapter later joins query demand with files and emits rows.
-   Query parsing does not perform filesystem or parser effects.
+   syntax. The reader preserves exact query text as data. The extraction
+   adapter compiles that text, reports capture names, joins query demand with
+   files, and emits rows. Query reading does not perform filesystem or parser
+   effects.
 8. Compiler performance has two guard surfaces:
    the always-on phase trace and a repeatable performance probe. The probe
    records cold inference counts, closure rounds, row counts, and warm-cache
@@ -116,11 +117,6 @@ and the target-neutral logical program.
 
 ## Migration sequence
 
-<!-- todo(implementation): Reify checked runtime declarations, calls, rules, dependencies, and strata into deterministic target-neutral logical rows. -->
-<!-- todo(implementation): Expose logical rows to Prolog and DL7 emitters without feeding them back into the compiler fixpoint. -->
-<!-- todo(types): Add json(Type) as an ordinary prelude capability and prove that primitive(json) is absent. -->
-<!-- todo(perf): Add a repeatable DL7 compiler performance probe with inference, closure-round, row-count, and warm-cache checkpoints. -->
-<!-- todo(parser): Parse raw Tree-sitter S-expression query literals as exact source data with capture metadata. -->
 <!-- todo(planning): Define target layout rows and representation_bridge derivation without target names in comptime predicates. -->
 <!-- todo(emitter): Implement the first DBSP relational-plan emitter over logical and layout rows. -->
 
@@ -136,11 +132,26 @@ and the target-neutral logical program.
 - Existing Prolog and DL7 emitter tests consume the expanded compiler view.
 - `json(Type)` compiles through ordinary declaration, fact, and relation
   machinery; no JSON primitive or compiler case is added.
-- Query literals round-trip exact Tree-sitter query text, report captures, and
-  cause no extraction effect during compilation.
+- Query literals round-trip exact Tree-sitter query text and cause no
+  extraction effect during compilation. Capture validation belongs to the
+  extraction adapter checkpoint.
 - The performance probe fails on structural budget drift and prints wall-time
   measurements for comparison.
 - The complete V7 SWI suite and Tree-sitter corpus pass before merge.
+
+Implementation receipts on 2026-09-02:
+
+- `0_logical_program_reifier.pl` emits deterministic relation, key, seed,
+  rule, goal, call, argument, dependency, and stratum rows.
+- `compiler_view/2` and the `relational_program` emitter expose those rows
+  without adding them to comptime evaluation.
+- `json(Type)` is an ordinary unary prelude relation; the test fixture contains
+  no `primitive(json)` term.
+- Raw `{ tree-sitter query }` literals are accepted by both readers, preserve
+  exact inner text, and compile as ordinary ground call data.
+- `just compiler-perf` measured 62,761,010 cold inferences, seven closure
+  rounds, 6,774 compiler rows, and 1,822 warm inferences. The measured wall
+  times were 14,197 ms cold and 264 ms warm.
 
 ## Staffing
 

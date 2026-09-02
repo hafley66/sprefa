@@ -28,6 +28,15 @@ emit_compiled(
     artifact(monomorphic_datalog, RuntimeProgram),
     []) :-
     !.
+emit_compiled(
+    relational_program,
+    CompiledUnit,
+    artifact(relational_program, LogicalProgramRows),
+    []) :-
+    !,
+    compiler_view(
+        CompiledUnit,
+        compiler_view(_, _, LogicalProgramRows, _)).
 emit_compiled(prolog(Callable), CompiledUnit, Artifact, Diagnostics) :-
     !,
     compiler_view(CompiledUnit, View),

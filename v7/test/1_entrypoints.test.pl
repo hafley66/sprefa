@@ -674,14 +674,14 @@ test(userland_type_operators_chain_across_compiler_rounds) :-
                               EvaluatorSnapshot,
                               RowsEqual, RuntimeEqual),
     Observed == partial_result(
-                    [], [], 6621,
+                    [], [], 6774,
                     type_operators(
                         partial([mapped(id, option(int), 0),
                                  mapped(name, option(text), 1)]),
                         pick([mapped(id, option(int), 0),
                               mapped(name, option(text), 1)]),
                         exclude([mapped(name, option(text), 0)])),
-                    runtime(counts(190, 408, 91, 318, 129, 224, 91),
+                    runtime(counts(192, 411, 92, 320, 129, 224, 92),
                             normalized(true)),
                     keys(colon([[0, 1], [0, 3]]),
                          edge_snapshot([[0, 1], [0, 3]]),
@@ -971,6 +971,9 @@ test(prolog_and_dl7_emitters_share_the_closed_compiler_view) :-
     emit_compiled(
         monomorphic_datalog, Compiled,
         DatalogArtifact, DatalogDiagnostics),
+    emit_compiled(
+        relational_program, Compiled,
+        RelationalArtifact, RelationalDiagnostics),
     findall(
         [ref(Source), ref(Specialization)],
         member(call(ref(CurryArtifact),
@@ -985,7 +988,9 @@ test(prolog_and_dl7_emitters_share_the_closed_compiler_view) :-
                    compile(Diagnostics),
                    dl7(Dl7Diagnostics, Dl7Artifact),
                    prolog(PrologDiagnostics, PrologArtifact),
-                   datalog(DatalogDiagnostics, DatalogArtifact)),
+                   datalog(DatalogDiagnostics, DatalogArtifact),
+                   relational(RelationalDiagnostics,
+                              RelationalArtifact)),
     Observed == emitter_protocol(
                     compile([]),
                     dl7([], artifacts([
@@ -994,7 +999,9 @@ test(prolog_and_dl7_emitters_share_the_closed_compiler_view) :-
                     ])),
                     prolog([], compiler_rows(RowCount, LogicalRowCount)),
                     datalog([], artifact(monomorphic_datalog,
-                                         RuntimeProgram))).
+                                         RuntimeProgram)),
+                    relational([], artifact(relational_program,
+                                            LogicalRows))).
 
 test(checked_program_reifies_as_target_neutral_rows) :-
     compile_dl7('v7/test/fixtures/4_generated_call.dl7',
