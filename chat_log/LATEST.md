@@ -1,1 +1,1 @@
-20260830.0.sprefa-extract-codeql-bench-and-study.md
+20260902.0.sprefa-extract-tsi-syntax-semantic-modes-plan.md
