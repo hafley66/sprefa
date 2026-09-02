@@ -17,6 +17,9 @@ Read:
 - [references/1_performance_model.md](references/1_performance_model.md) before
   changing evaluator storage, invalidation, caching, incremental evaluation,
   compiler rounds, or performance gates.
+- [references/2_cst_extract_pipeline.md](references/2_cst_extract_pipeline.md)
+  before connecting DL7 to Tree-sitter, ast-grep, `sprefa-extract`, external
+  schema ingestion, or the DBSP application emitter.
 
 ## Working rule
 
@@ -27,4 +30,3 @@ test establishes them.
 
 For evaluator optimizations, retain an exact full-snapshot oracle mode. Compare
 complete sorted closures and diagnostics, rather than row counts alone.
-
