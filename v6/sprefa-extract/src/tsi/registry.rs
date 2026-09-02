@@ -53,9 +53,32 @@ pub const REGISTRY: &[Relation] = &[
         name: "tsi.type",
         args: &[Id],
     },
+    /// A declaration symbol's own id: the declaring row for the symbol
+    /// positions of `tsi.denotes` and `rust.impl`, as `tsi.type` is for types.
+    Relation {
+        name: "tsi.symbol",
+        args: &[Id],
+    },
     Relation {
         name: "tsi.denotes",
         args: &[Id, Id], // symbol, type
+    },
+    /// Optional bridge from a run-local symbol id to the SCIP symbol text,
+    /// present only when a SCIP index also ran; identity stays run-local.
+    Relation {
+        name: "tsi.scip_symbol",
+        args: &[Id, Text], // symbol, scip symbol text
+    },
+    /// A value entity with its type; the declaring row for value ids.
+    /// `tsi.argument` stays type-only; a value in argument position goes
+    /// through `tsi.value_argument`.
+    Relation {
+        name: "tsi.value",
+        args: &[Id, Id], // value, type
+    },
+    Relation {
+        name: "tsi.value_argument",
+        args: &[Id, Int, Id], // argument list, position, value
     },
     Relation {
         name: "tsi.has_type",

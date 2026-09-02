@@ -1,6 +1,6 @@
 # brief: TSI A7, the v7 loader for accepted TSI rows
 
-DISPATCH GATE: Chris's word. This arc decides how foreign type facts become v7 nodes; that is language design (CLAUDE.md "Lang design happens with Chris in the room"). The mapping below is the merged plan's section 7; the lane implements it verbatim and files every fork it hits as a `diagnostic`, never a design choice of its own.
+DISPATCH: approved by Chris 2026-09-02 ("yes go do the things"). This arc decides how foreign type facts become v7 nodes; that is language design (CLAUDE.md "Lang design happens with Chris in the room"). The mapping below is the merged plan's section 7; the lane implements it verbatim and files every fork it hits as a `diagnostic`, never a design choice of its own.
 
 Lane: `feature/tsi-a7-v7-loader`. Base: the `origin/main` sha AFTER the A3 PR merges (coordinator states it; only the wire spec is needed, fixture streams are hand-written).
 FIRST ACTION: `git merge --ff-only <sha>`. Failure = STOP AND REPORT.
@@ -78,6 +78,11 @@ Forbidden: everything under `v6/`, `v7/src/0_reader/**`, `v7/prelude/{0,1,2,3,4}
 %                                     the same term 2_compiler.pl's source_application_edges/2 mints for a written call
 %                                     (read it; do not invent a second application shape)
 %    tsi.primitive(Id, Class)      -> node identity is the prelude product named Class (5_tsi_primitives.dl7), no new node
+%    tsi.symbol(S)                 -> no node; S is a key for tsi.denotes rows only (comptime relation tsi.denotes carries ref(tsi_symbol(Owner, S)))
+%    tsi.value(V, T) + tsi.value_argument(L, Pos, V) -> a value node of type T in the application argument list at Pos:
+%                                     the same value-node shape 2_compiler.pl already mints for a written literal argument
+%                                     (read it; if v7 has no value node yet, STOP and file a diagnostic, do not invent one)
+%    tsi.scip_symbol(S, Text)      -> comptime relation, untouched
 %    tsi.origin(Id, Lang, span(D,S,E)) -> origin(node(tsi_node(Owner, Id)), extract(Lang, D, S, E)) in Origins
 %    tsi.callable/input/output, tsi.parameter, tsi.denotes, tsi.has_type, tsi.conforms,
 %    tsi.subtype/assignable/equivalent, every ts.*, rust.*, go.* row

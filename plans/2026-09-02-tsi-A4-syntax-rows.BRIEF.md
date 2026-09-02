@@ -42,10 +42,10 @@ Ids are file-local, minted by `TsiSink::fresh_id`. A written type name gets ONE 
 | field | `PropertyDefinition`, `TSPropertySignature`, constructor parameter properties (`ts.rs:990-1012`) | `field_candidates` (`rust_type_edges.rs:163`) | `tsi.edge(E, Own, fieldName, Target, pos)`; pos = declaration order from 0; Target = the `tsi.type` id of the written type text (whole annotation text, `T[]` stays `T[]`) |
 | optional | `prop.optional` | | `ts.optional(E)` |
 | readonly | `prop.readonly`, constructor `fp.readonly` | | `ts.readonly(E)` |
-| generic parameter | `type_parameters` | `generics.params`, `GenericParam::Type` | `tsi.type(P)`, `tsi.parameter(P, Own, pos, invariant)`, `tsi.origin(P, lang, span)`; each bound: `tsi.edge(E, P, "bound", Target, pos)` |
+| generic parameter | `type_parameters` | `generics.params`, `GenericParam::Type` | `tsi.type(P)`, `tsi.parameter(P, Own, pos, unspecified)`, `tsi.origin(P, lang, span)`; each bound: `tsi.edge(E, P, "bound", Target, pos)` |
 | extends / implements / impl Trait for | `interface.extends`, `class.super_class`, `class.implements` | `syn::ItemImpl` with `trait_` | `tsi.conforms(Own, Target, syntax)`; rust adds `rust.impl(ImplId, Own, Target)` |
 | method / function / arrow | `ts::Function`, class methods | `syn::ItemFn`, `ImplItem::Fn` | `tsi.type(F)`, `tsi.callable(F)`, `tsi.origin`; `tsi.input(F, pos, Target)` per param; `tsi.output(F, 0, Target)` for a written return type |
-| type alias, non-union | `TSTypeAliasDeclaration` | `syn::ItemType` | `tsi.type(Own)`, `tsi.origin`; if the aliased type is a `TSTypeReference` with `type_arguments` (`Partial<User<number>>`): `tsi.called(Own, Callee, List)`, `tsi.argument(List, pos, Target)` per argument, Callee = the written name's id; a mapped or conditional alias body emits NO body row |
+| type alias, non-union | `TSTypeAliasDeclaration` | `syn::ItemType` | NO own type id: `tsi.symbol(S)`, `tsi.denotes(S, TargetT)` where TargetT is the written target's id; if the aliased type is a `TSTypeReference` with `type_arguments` (`Partial<User<number>>`): `tsi.called(Own, Callee, List)`, `tsi.argument(List, pos, Target)` per argument, Callee = the written name's id; a mapped or conditional alias body emits NO body row |
 
 Not emitted by this tier, by contract (section 4 last paragraph): `tsi.called` for anything other than a written `Name<Args>` reference, `ts.mapped`, `ts.conditional`, `rust.assoc`, `rust.lifetime`, `rust.ownership`, `tsi.has_type`, `tsi.denotes`, `tsi.primitive`, `tsi.subtype`, `tsi.assignable`, `tsi.equivalent`, variance other than `invariant`.
 
@@ -61,11 +61,11 @@ All cases run `extract --witness --family type <fixture>` and parse rows with `s
 |---|---|---|
 | flag off unchanged | `probe.ts` without `--witness` | no `fact` record and no `fact` key; and `cargo test --test golden_parity` passes |
 | product and fields | `probe.ts` `User<T>` | `tsi.product(User)`; `tsi.edge(_, User, "id", T, 0)` with `ts.readonly` on that edge id; `tsi.edge(_, User, "name", string, 1)` with `ts.optional` |
-| interface | `probe.ts` `Mapper<T>` | `ts.interface(Mapper)`, `tsi.parameter(T, Mapper, 0, invariant)` |
+| interface | `probe.ts` `Mapper<T>` | `ts.interface(Mapper)`, `tsi.parameter(T, Mapper, 0, unspecified)` |
 | conforms | `probe.ts` `User<T> extends Mapper<T>` (or `implements`) | `tsi.conforms(User, Mapper, syntax)` |
-| callable | `probe.ts` `map<U>(f: (t: T) => U): U` | `tsi.callable(map)`, `tsi.input(map, 0, <written text>)`, `tsi.output(map, 0, U)`, `tsi.parameter(U, map, 0, invariant)` |
+| callable | `probe.ts` `map<U>(f: (t: T) => U): U` | `tsi.callable(map)`, `tsi.input(map, 0, <written text>)`, `tsi.output(map, 0, U)`, `tsi.parameter(U, map, 0, unspecified)` |
 | generic argument, written | `type Q = Partial<User<number>>` | `tsi.called(Q, Partial, L)`, `tsi.argument(L, 0, <id of "User<number>">)`; zero `tsi.edge` rows owned by Q; `coverage partial` for `tsi.edge` |
-| rust struct | `probe.rs` `struct User<T> { id: T, name: Option<String> }` | `tsi.product`, two edges positions 0 and 1, `tsi.parameter(T, User, 0, invariant)` |
+| rust struct | `probe.rs` `struct User<T> { id: T, name: Option<String> }` | `tsi.product`, two edges positions 0 and 1, `tsi.parameter(T, User, 0, unspecified)` |
 | rust trait and impl | `probe.rs` `trait Mapper<T>`, `impl<T> Mapper<T> for User<T>` | `rust.trait(Mapper)`, `rust.impl(_, User, Mapper)`, `tsi.conforms(User, Mapper, syntax)`; zero `rust.assoc` rows |
 | one id per written name | `probe.ts` | every `tsi.type` id has exactly one `tsi.origin`; two fields typed `string` share one target id |
 | registry clean | both fixtures | every `fact` row's relation is in `REGISTRY` with matching arity; and piping the stream into `extract --ingest /dev/stdin` returns rc=0 |

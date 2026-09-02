@@ -35,13 +35,13 @@ Walk every module of every crate that owns a supplied file (`sema.to_module_def(
 
 | hir item | rows |
 |---|---|
-| `ModuleDef::Adt(Adt::Struct)` | `tsi.type(T)`, `tsi.product(T)`, `tsi.origin(T, rust, nameSpan)`, `tsi.denotes(S, T)`; `struct.fields(db)`: `tsi.edge(E, T, fieldName, fieldT, pos)`; `struct.generic_params`... see generics row |
+| `ModuleDef::Adt(Adt::Struct)` | `tsi.symbol(S)`, `tsi.type(T)`, `tsi.product(T)`, `tsi.origin(T, rust, nameSpan)`, `tsi.denotes(S, T)`; `struct.fields(db)`: `tsi.edge(E, T, fieldName, fieldT, pos)`; `struct.generic_params`... see generics row |
 | `Adt::Enum` | `tsi.type`, `tsi.sum`, `tsi.origin`; per `variant`: `tsi.edge(E, T, variantName, variantT, pos)` where the variant's own id is a `tsi.product` with its fields as edges (tuple fields labeled `"0"`, `"1"`) |
 | `Adt::Union` | as struct |
-| `ModuleDef::Trait` | `tsi.type(T)`, `rust.trait(T)`, `tsi.origin`; `trait.items(db)`: `AssocItem::TypeAlias` -> `rust.assoc(T, aliasName, boundT or a fresh opaque id)`; `AssocItem::Function` -> the callable rows below, owned by the trait |
-| `hir::Impl` (`hir::Impl::all_in_crate`) with `impl.trait_(db)` | `rust.impl(I, selfT, traitT)`, `tsi.conforms(selfT, traitT, declared)`; `impl.items(db)` `TypeAlias` -> `rust.assoc(selfT, name, targetT)` |
+| `ModuleDef::Trait` | `tsi.symbol(S)`, `tsi.type(T)`, `tsi.denotes(S, T)`, `rust.trait(T)`, `tsi.origin`; `trait.items(db)`: `AssocItem::TypeAlias` -> `rust.assoc(T, aliasName, boundT or a fresh opaque id)`; `AssocItem::Function` -> the callable rows below, owned by the trait |
+| `hir::Impl` (`hir::Impl::all_in_crate`) with `impl.trait_(db)` | `rust.impl(I, selfT, traitT)` (position 0 declares `I`), `tsi.conforms(selfT, traitT, declared)`; `impl.items(db)` `TypeAlias` -> `rust.assoc(selfT, name, targetT)` |
 | `ModuleDef::Function`, `AssocItem::Function` | `tsi.type(F)`, `tsi.callable(F)`, `tsi.origin`; `f.params_without_self(db)`: `tsi.input(F, pos, paramT)`; `f.ret_type(db)`: `tsi.output(F, 0, retT)` |
-| generic params (`hir::GenericDef::type_or_const_params`, `lifetime_params`) | type param: `tsi.type(P)`, `tsi.parameter(P, ownerT, pos, invariant)`, bounds -> `tsi.edge(E, P, "bound", traitT, k)`; lifetime param: `rust.lifetime(ownerT, name)` |
+| generic params (`hir::GenericDef::type_or_const_params`, `lifetime_params`) | type param: `tsi.type(P)`, `tsi.parameter(P, ownerT, pos, unspecified)` (rust-analyzer exposes no variance; never claim `invariant`), bounds -> `tsi.edge(E, P, "bound", traitT, k)`; lifetime param: `rust.lifetime(ownerT, name)` |
 | field types (`hir::Type`) | `ty.is_reference()` -> `rust.ownership(E, shared)` or `exclusive` when `is_mutable_reference()`; `ty.as_adt()` named `Box`, `Rc`, `Arc` -> `rust.ownership(E, owned)` for Box, `shared` for Rc/Arc; a plain value -> `rust.ownership(E, owned)` |
 | `ty.type_arguments()` non-empty | `tsi.called(T, ctorT, L)`, `tsi.argument(L, i, argT)` |
 | `ty.as_builtin()` | `tsi.primitive(T, <builtin name>)`: `i32`, `u32`, `f64`, `bool`, `char`, `str`, ... as the atom |
@@ -58,7 +58,7 @@ Coverage claims: `complete` for `tsi.type, tsi.denotes, tsi.origin, tsi.product,
 | case | expected |
 |---|---|
 | two runs | `run mode=semantic tool=rust-analyzer`; every `checker_walk` witness names it |
-| struct | `User`: `tsi.product`, edges `id` pos 0 target `T` (a `tsi.parameter` of User), `name` pos 1 whose target has `tsi.called(_, Option, L)` and `tsi.argument(L, 0, String)` |
+| struct | `User`: `tsi.product`, `tsi.parameter(T, User, 0, unspecified)`, edges `id` pos 0 target `T`, `name` pos 1 whose target has `tsi.called(_, Option, L)` and `tsi.argument(L, 0, String)` |
 | trait and assoc | `rust.trait(Mapper)`, `rust.assoc(Mapper, Output, _)`; the impl: `rust.impl(_, User, Mapper)`, `tsi.conforms(User, Mapper, declared)`, `rust.assoc(User, Output, V)` with `tsi.called(V, Vec, L)` and `tsi.argument(L, 0, T)` |
 | lifetime and ownership | `View`: `rust.lifetime(View, a)`; `text` edge `rust.ownership(_, shared)`; `owned` edge `rust.ownership(_, owned)`; `shared` edge `rust.ownership(_, shared)` and its target id equals `View`'s own id (recursion) |
 | enum | `Shape`: `tsi.sum`, two variant edges, `Square`'s target is a `tsi.product` with a `side` edge to `tsi.primitive(_, f64)` |

@@ -211,6 +211,65 @@ fn dangling_id_is_named() {
     assert!(run.stderr.contains("line 7"), "stderr: {}", run.stderr);
 }
 
+/// A symbol id is declared by `tsi.symbol`, the way a type id is by `tsi.type`:
+/// without it every `tsi.denotes` row a checker walk emits is a dangling id.
+#[test]
+fn a_symbol_declares_the_denotes_subject() {
+    let mut lines = fixture();
+    lines.push(r#"{"record":"fact","fact":90,"relation":"tsi.symbol","args":[{"id":300}]}"#.to_string());
+    lines.push(r#"{"record":"fact","fact":91,"relation":"tsi.denotes","args":[{"id":300},{"id":40}]}"#.to_string());
+    let run = ingest(&lines.join("\n"));
+    assert!(run.ok, "stderr: {}", run.stderr);
+    let undeclared = fixture().into_iter().chain(std::iter::once(
+        r#"{"record":"fact","fact":91,"relation":"tsi.denotes","args":[{"id":301},{"id":40}]}"#.to_string(),
+    )).collect::<Vec<_>>();
+    let run = ingest(&undeclared.join("\n"));
+    assert!(!run.ok, "an undeclared symbol id was accepted");
+    assert!(run.stderr.contains("id 301"), "stderr: {}", run.stderr);
+}
+
+/// A value id is declared by `tsi.value`; `tsi.value_argument` names one and
+/// `tsi.argument` stays type-only, so a value never lands in a type slot.
+#[test]
+fn a_value_declares_itself_and_feeds_value_argument() {
+    let mut lines = fixture();
+    lines.push(r#"{"record":"fact","fact":93,"relation":"tsi.value","args":[{"id":320},{"id":40}]}"#.to_string());
+    lines.push(r#"{"record":"fact","fact":98,"relation":"tsi.type","args":[{"id":321}]}"#.to_string());
+    lines.push(r#"{"record":"fact","fact":94,"relation":"tsi.called","args":[{"id":321},{"id":40},{"id":322}]}"#.to_string());
+    lines.push(r#"{"record":"fact","fact":95,"relation":"tsi.value_argument","args":[{"id":322},{"int":0},{"id":320}]}"#.to_string());
+    let run = ingest(&lines.join("\n"));
+    assert!(run.ok, "stderr: {}", run.stderr);
+    let mut undeclared = fixture();
+    undeclared.push(r#"{"record":"fact","fact":98,"relation":"tsi.type","args":[{"id":321}]}"#.to_string());
+    undeclared.push(r#"{"record":"fact","fact":94,"relation":"tsi.called","args":[{"id":321},{"id":40},{"id":322}]}"#.to_string());
+    undeclared.push(r#"{"record":"fact","fact":95,"relation":"tsi.value_argument","args":[{"id":322},{"int":0},{"id":330}]}"#.to_string());
+    let run = ingest(&undeclared.join("\n"));
+    assert!(!run.ok, "an undeclared value id was accepted");
+    assert!(run.stderr.contains("id 330"), "stderr: {}", run.stderr);
+}
+
+/// `tsi.scip_symbol` bridges a run-local symbol id to SCIP text; the id is
+/// still declared by `tsi.symbol`, never by the bridge.
+#[test]
+fn scip_bridge_does_not_declare_the_symbol() {
+    let mut lines = fixture();
+    lines.push(r#"{"record":"fact","fact":96,"relation":"tsi.scip_symbol","args":[{"id":340},{"text":"scip-typescript npm probe 1.0.0 src/`probe.ts`/User#"}]}"#.to_string());
+    let run = ingest(&lines.join("\n"));
+    assert!(!run.ok, "a bridge row declared a symbol");
+    lines.insert(2, r#"{"record":"fact","fact":97,"relation":"tsi.symbol","args":[{"id":340}]}"#.to_string());
+    let run = ingest(&lines.join("\n"));
+    assert!(run.ok, "stderr: {}", run.stderr);
+}
+
+/// `rust.impl`'s first column is the impl's own symbol, minted by that row.
+#[test]
+fn an_impl_row_declares_its_own_symbol() {
+    let mut lines = fixture();
+    lines.push(r#"{"record":"fact","fact":92,"relation":"rust.impl","args":[{"id":310},{"id":40},{"id":7}]}"#.to_string());
+    let run = ingest(&lines.join("\n"));
+    assert!(run.ok, "stderr: {}", run.stderr);
+}
+
 /// A recursive type closes through ids, so the closure check is one pass and a
 /// self-referencing edge terminates. The wall cap is the 10-second law.
 #[test]
