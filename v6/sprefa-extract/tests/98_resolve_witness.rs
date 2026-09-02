@@ -239,12 +239,13 @@ fn a_loaded_checker_mints_its_own_run() {
         ],
         "one run per tier that ran"
     );
-    assert!(
-        of_record(&facts, "coverage")
-            .iter()
-            .all(|row| row["run"] == 0),
-        "the checker answers per site, so its run claims no coverage"
-    );
+    // The resolve legs enumerate no relation, so run 0 covers only the two
+    // families partially; the checker WALK is a claim of its own and rides run 1.
+    for row in of_record(&facts, "coverage") {
+        let relation = row["relation"].as_str().unwrap_or_default();
+        let expected = if relation.starts_with("extract.") { 0 } else { 1 };
+        assert_eq!(row["run"], expected, "{relation} is covered by the wrong run");
+    }
 }
 
 /// `run` calls the imported `helper`. The checker owns the row, the module

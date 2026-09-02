@@ -40,6 +40,11 @@ pub enum TsCheckerAnswer {
 pub struct TsCheckerAnswers {
     pub calls: HashMap<String, Vec<TsCheckerRef>>,
     pub types: HashMap<String, Vec<TsCheckerRef>>,
+    /// The checker walk's own rows, ids run-local across the whole program. Empty
+    /// unless the caller asked for them: the walk is not free.
+    pub tsi: Vec<crate::tsi::FactOut>,
+    /// (relation, complete, diagnostic). A claim about the whole run, never a file.
+    pub coverage: Vec<(String, bool, Option<String>)>,
     /// `ts.createProgram` over the supplied roots: parse, bind, module resolution.
     pub load: Duration,
     /// The per-file resolve walk over the loaded program.
@@ -89,6 +94,10 @@ pub struct TsCheckerIndex {
     /// A TypeF candidate carries no reference span, so the type plane keys on
     /// (file, name AS WRITTEN); a name one file resolves two ways binds nothing.
     types: HashMap<String, HashMap<String, Option<TsCheckerAnswer>>>,
+    /// The walk's rows, span digests already substituted for the supplied paths
+    /// the driver wrote.
+    tsi: Vec<crate::tsi::FactOut>,
+    coverage: Vec<crate::tsi::CoverageClaim>,
     /// Answers naming a corpus file whose parse minted no def there; they fall
     /// back to the syntax leg, so this is the tier's own miss count.
     pub unjoined: usize,
@@ -115,6 +124,16 @@ impl TsCheckerIndex {
             load: answers.load,
             walk: answers.walk,
             files_answered: answers.files_answered,
+            tsi: stamp_digests(answers.tsi, corpus),
+            coverage: answers
+                .coverage
+                .into_iter()
+                .map(|(relation, complete, diagnostic)| crate::tsi::CoverageClaim {
+                    relation,
+                    complete,
+                    diagnostic,
+                })
+                .collect(),
             ..TsCheckerIndex::default()
         };
         for (path, refs) in answers.calls {
@@ -177,6 +196,48 @@ impl TsCheckerIndex {
     pub fn type_at(&self, path: &str, name: &str) -> Option<TsCheckerAnswer> {
         self.types.get(path)?.get(name)?.clone()
     }
+
+    pub fn semantic_rows(&self) -> &[crate::tsi::FactOut] {
+        &self.tsi
+    }
+
+    pub fn coverage(&self) -> &[crate::tsi::CoverageClaim] {
+        &self.coverage
+    }
+}
+
+impl crate::tsi::SemanticRows for TsCheckerIndex {
+    fn facts(&self) -> &[crate::tsi::FactOut] {
+        self.semantic_rows()
+    }
+
+    fn coverage(&self) -> &[crate::tsi::CoverageClaim] {
+        TsCheckerIndex::coverage(self)
+    }
+}
+
+/// The driver wrote each span's SUPPLIED path; a corpus path becomes the file's
+/// content digest and any other path stays as it is, naming a file off-corpus.
+fn stamp_digests(
+    rows: Vec<crate::tsi::FactOut>,
+    corpus: &[(String, ContentId)],
+) -> Vec<crate::tsi::FactOut> {
+    let digest_of: HashMap<&str, String> = corpus
+        .iter()
+        .map(|(path, blob)| (path.as_str(), blob.to_string()))
+        .collect();
+    rows.into_iter()
+        .map(|mut row| {
+            for arg in &mut row.args {
+                if let crate::tsi::Arg::Span(key, _, _) = arg {
+                    if let Some(digest) = digest_of.get(key.as_str()) {
+                        *key = digest.clone();
+                    }
+                }
+            }
+            row
+        })
+        .collect()
 }
 
 /// A call answer prefers the call facet and settles for the type facet: a class
@@ -223,6 +284,7 @@ fn answer_of(
 pub fn answer(
     _root: &Path,
     _files: &[(String, PathBuf)],
+    _tsi: bool,
 ) -> Result<TsCheckerAnswers, TsCheckerError> {
     Err(TsCheckerError::NotBuilt)
 }
@@ -237,6 +299,9 @@ const DRIVER: &str = include_str!("ts_checker.mjs");
 struct DriverRequest<'a> {
     root: &'a Path,
     files: &'a [(String, PathBuf)],
+    /// The checker walk is the tier's expensive half and answers no resolve
+    /// site, so it runs only for a stream that carries the TSI envelope.
+    tsi: bool,
 }
 
 /// One `[start, end, name, dst_path, dst_name, dst_offset]` wire row.
@@ -249,12 +314,17 @@ struct WireFile {
     path: String,
     calls: Vec<WireRow>,
     types: Vec<WireRow>,
+    /// `[relation, arg, ...]` per row; the ordinal is the wire's, minted here.
+    #[serde(default)]
+    tsi: Vec<Vec<serde_json::Value>>,
 }
 
 #[cfg(feature = "ts-checker")]
 #[derive(serde::Deserialize)]
 struct WireStats {
     stats: WireCosts,
+    #[serde(default)]
+    coverage: Vec<(String, bool, Option<String>)>,
 }
 
 #[cfg(feature = "ts-checker")]
@@ -289,10 +359,36 @@ fn into_refs(rows: Vec<WireRow>) -> Vec<TsCheckerRef> {
         .collect()
 }
 
+/// One driver row `[relation, arg, ...]` into a fact. A row the registry does
+/// not know, or an argument it cannot decode, stops the tier.
+#[cfg(feature = "ts-checker")]
+fn into_fact(row: Vec<serde_json::Value>) -> Result<crate::tsi::FactOut, TsCheckerError> {
+    let mut parts = row.into_iter();
+    let relation = parts
+        .next()
+        .and_then(|head| head.as_str().map(str::to_string))
+        .ok_or_else(|| TsCheckerError::Failed("a tsi row opens with its relation".to_string()))?;
+    let args: Vec<crate::tsi::Arg> = parts
+        .map(serde_json::from_value)
+        .collect::<Result<_, _>>()
+        .map_err(|err| TsCheckerError::Failed(format!("{relation}: {err}")))?;
+    crate::tsi::registry::check(&relation, &args)
+        .map_err(|detail| TsCheckerError::Failed(format!("{relation}: {detail}")))?;
+    Ok(crate::tsi::FactOut {
+        fact: 0,
+        relation,
+        args,
+    })
+}
+
 /// The wall cap, the process group and the file-backed stdout all come from
 /// `run_capped`: the same discipline every scip indexer spawn runs under.
 #[cfg(feature = "ts-checker")]
-pub fn answer(root: &Path, files: &[(String, PathBuf)]) -> Result<TsCheckerAnswers, TsCheckerError> {
+pub fn answer(
+    root: &Path,
+    files: &[(String, PathBuf)],
+    tsi: bool,
+) -> Result<TsCheckerAnswers, TsCheckerError> {
     use crate::scip_ensure::{run_capped, Capped};
 
     let nanos = std::time::SystemTime::now()
@@ -305,7 +401,7 @@ pub fn answer(root: &Path, files: &[(String, PathBuf)]) -> Result<TsCheckerAnswe
     let script = dir.join("ts_checker.mjs");
     let request = dir.join("request.json");
     std::fs::write(&script, DRIVER).map_err(|err| stage(err.to_string()))?;
-    let body = serde_json::to_vec(&DriverRequest { root, files })
+    let body = serde_json::to_vec(&DriverRequest { root, files, tsi })
         .map_err(|err| stage(err.to_string()))?;
     std::fs::write(&request, body).map_err(|err| stage(err.to_string()))?;
 
@@ -327,13 +423,17 @@ pub fn answer(root: &Path, files: &[(String, PathBuf)]) -> Result<TsCheckerAnswe
     for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
         match serde_json::from_str::<WireLine>(line) {
             Ok(WireLine::File(file)) => {
+                for row in file.tsi {
+                    answers.tsi.push(into_fact(row)?);
+                }
                 answers.calls.insert(file.path.clone(), into_refs(file.calls));
                 answers.types.insert(file.path, into_refs(file.types));
             }
-            Ok(WireLine::Stats(WireStats { stats })) => {
+            Ok(WireLine::Stats(WireStats { stats, coverage })) => {
                 answers.load = Duration::from_millis(stats.load_ms);
                 answers.walk = Duration::from_millis(stats.walk_ms);
                 answers.files_answered = stats.files;
+                answers.coverage = coverage;
             }
             Err(err) => return Err(TsCheckerError::Failed(err.to_string())),
         }

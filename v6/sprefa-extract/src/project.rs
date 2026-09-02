@@ -528,8 +528,15 @@ fn envelope(
         rows.push(fact);
     }
     rows.extend(witnesses.into_iter().map(FlatFact::Witness));
+    // The tsc walk enumerates relations rather than answering sites, so its rows
+    // arrive whole and take ordinals after the resolve's.
+    if let Some((_, run)) = semantic.iter().find(|(lang, _)| *lang == "ts") {
+        if let Some(index) = cx.indexes.ts_checker.get() {
+            crate::tsi::emit_semantic(run.run, index, &mut rows);
+        }
+    }
     // A resolve enumerates no relation exhaustively, so both families are
-    // partial and neither semantic run claims coverage of its own.
+    // partial; a checker WALK is the only leg that claims complete.
     for relation in ["extract.call", "extract.type"] {
         rows.push(FlatFact::Coverage(CoverageOut {
             run: SYNTAX_RUN,
@@ -624,7 +631,7 @@ fn load_ts_checker(
     if files.is_empty() {
         return None;
     }
-    let answers = match crate::lang::ts_checker::answer(&root, &files) {
+    let answers = match crate::lang::ts_checker::answer(&root, &files, cx.witness) {
         Ok(answers) => answers,
         Err(err) => {
             tracing::info!("ts checker tier off: {err}");
