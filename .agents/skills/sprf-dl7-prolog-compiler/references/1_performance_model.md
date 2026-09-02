@@ -213,6 +213,13 @@ of kernel `nil` and `intern` rows repeats. Letting the per-relation
 `ord_union/3` deduplicate those rows produced three cold runs of 466-472ms and
 exactly 5,301,140 inferences. Output remained 6,774 rows over seven rounds.
 
+Reference and indexed aggregate evaluation share one grouping, counting, and
+diagnostic path. A tagged source selects either `row_list(CompletedRows)` or
+`row_index(RelationIndex)` only at body-tuple lookup. This keeps the Datalog
+aggregate semantics singular while preserving the generic row-list evaluator
+as the oracle. The dispatch added 49 cold inferences and no measured wall-time
+regression.
+
 ## 5. Requirements for the next evaluator
 
 A useful row-delta implementation needs both:

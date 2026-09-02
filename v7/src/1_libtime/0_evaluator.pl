@@ -204,39 +204,36 @@ relation_level(Strata, Relation, Level) :-
 aggregate_rule(rule(call(_, Arguments), _)) :-
     memberchk(aggregate(count, _), Arguments).
 
-derive_aggregate_rule_rows(_, [], [], []).
-derive_aggregate_rule_rows(CompletedRows, [Rule | Rules], Rows, Diagnostics) :-
-    derive_aggregate_rows(CompletedRows, Rule, OwnRows, OwnDiagnostics),
-    derive_aggregate_rule_rows(CompletedRows, Rules,
-                               RestRows, RestDiagnostics),
+derive_aggregate_rule_rows(CompletedRows, Rules, Rows, Diagnostics) :-
+    derive_aggregate_rule_rows_from(
+        row_list(CompletedRows), Rules, Rows, Diagnostics).
+
+derive_indexed_aggregate_rule_rows(RowIndex, Rules, Rows, Diagnostics) :-
+    derive_aggregate_rule_rows_from(
+        row_index(RowIndex), Rules, Rows, Diagnostics).
+
+derive_aggregate_rule_rows_from(_, [], [], []).
+derive_aggregate_rule_rows_from(
+    Source, [Rule | Rules], Rows, Diagnostics) :-
+    derive_aggregate_rows_from(Source, Rule, OwnRows, OwnDiagnostics),
+    derive_aggregate_rule_rows_from(
+        Source, Rules, RestRows, RestDiagnostics),
     append(OwnRows, RestRows, Rows0),
     sort(Rows0, Rows),
     append(OwnDiagnostics, RestDiagnostics, Diagnostics0),
     sort(Diagnostics0, Diagnostics).
 
-derive_indexed_aggregate_rule_rows(_, [], [], []).
-derive_indexed_aggregate_rule_rows(
-    RowIndex, [Rule | Rules], Rows, Diagnostics) :-
-    derive_indexed_aggregate_rows(
-        RowIndex, Rule, OwnRows, OwnDiagnostics),
-    derive_indexed_aggregate_rule_rows(
-        RowIndex, Rules, RestRows, RestDiagnostics),
-    append(OwnRows, RestRows, Rows0),
-    sort(Rows0, Rows),
-    append(OwnDiagnostics, RestDiagnostics, Diagnostics0),
-    sort(Diagnostics0, Diagnostics).
-
-derive_indexed_aggregate_rows(RowIndex, Rule, Rows, Diagnostics) :-
+derive_aggregate_rows_from(Source, Rule, Rows, Diagnostics) :-
     Rule = rule(call(_, HeadArguments), _),
     aggregate_arguments(HeadArguments, Aggregates),
     length(Aggregates, AggregateCount),
-    derive_checked_indexed_aggregate(
-        AggregateCount, RowIndex, Rule, Rows, Diagnostics).
+    derive_checked_aggregate(
+        AggregateCount, Source, Rule, Rows, Diagnostics).
 
-derive_checked_indexed_aggregate(1, RowIndex, Rule, Rows, Diagnostics) :-
+derive_checked_aggregate(1, Source, Rule, Rows, Diagnostics) :-
     !,
     findall(Head,
-            indexed_aggregate_rule_proof(RowIndex, Rule, Head),
+            aggregate_rule_proof(Source, Rule, Head),
             ProofHeads),
     (   ground(ProofHeads)
     ->  aggregate_proofs(ProofHeads, Proofs0),
@@ -248,14 +245,17 @@ derive_checked_indexed_aggregate(1, RowIndex, Rule, Rows, Diagnostics) :-
         Diagnostics = [diagnostic(evaluate, none,
                                   non_ground_aggregate_proof)]
     ).
-derive_checked_indexed_aggregate(
+derive_checked_aggregate(
     AggregateCount, _, _, [],
     [diagnostic(evaluate, none,
                 malformed_aggregate_head(AggregateCount))]).
 
-indexed_aggregate_rule_proof(RowIndex, Rule, Head) :-
+aggregate_rule_proof(row_index(RowIndex), Rule, Head) :-
     instantiate_rule(Rule, Head, Body),
     indexed_completed_body_holds(Body, RowIndex).
+aggregate_rule_proof(row_list(CompletedRows), Rule, Head) :-
+    instantiate_rule(Rule, Head, Body),
+    completed_body_holds(Body, CompletedRows).
 
 indexed_completed_body_holds([], _).
 indexed_completed_body_holds(
@@ -282,35 +282,8 @@ indexed_completed_body_holds(
 derive_aggregate_rows(CompletedRows, Rule, Rows, Diagnostics) :-
     must_be(ground, CompletedRows),
     must_be(ground, Rule),
-    Rule = rule(call(_, HeadArguments), _),
-    aggregate_arguments(HeadArguments, Aggregates),
-    length(Aggregates, AggregateCount),
-    derive_checked_aggregate(AggregateCount, CompletedRows, Rule,
-                             Rows, Diagnostics).
-
-derive_checked_aggregate(1, CompletedRows, Rule, Rows, Diagnostics) :-
-    !,
-    findall(Head,
-            aggregate_rule_proof(CompletedRows, Rule, Head),
-            ProofHeads),
-    (   ground(ProofHeads)
-    ->  aggregate_proofs(ProofHeads, Proofs0),
-        msort(Proofs0, Proofs),
-        grouped_aggregate_rows(Proofs, Rows0),
-        sort(Rows0, Rows),
-        Diagnostics = []
-    ;   Rows = [],
-        Diagnostics = [diagnostic(evaluate, none,
-                                  non_ground_aggregate_proof)]
-    ).
-derive_checked_aggregate(AggregateCount, _, _, [],
-                         [diagnostic(evaluate, none,
-                                     malformed_aggregate_head(
-                                         AggregateCount))]).
-
-aggregate_rule_proof(CompletedRows, Rule, Head) :-
-    instantiate_rule(Rule, Head, Body),
-    completed_body_holds(Body, CompletedRows).
+    derive_aggregate_rows_from(
+        row_list(CompletedRows), Rule, Rows, Diagnostics).
 
 completed_body_holds([], _).
 completed_body_holds([checked_goal(positive, Call) | Goals], Rows) :-
